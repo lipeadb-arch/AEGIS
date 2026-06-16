@@ -1,0 +1,13 @@
+# Normaliza fim de linha: LF no repositório, nativo no checkout de cada SO.
+# Evita o "arquivo inteiro mudou" ao trabalhar entre máquinas diferentes.
+* text=auto
+
+# Scripts sempre LF
+*.sh   text eol=lf
+
+# Binários — não mexer em fim de linha
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
+*.pdf  binary
