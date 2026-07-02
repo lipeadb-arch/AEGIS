@@ -1,4 +1,4 @@
-// Espelha Stars.Api.Contracts.ExecutiveDashboardDto
+// Espelha AegisScore.Api.Contracts.ExecutiveDashboardDto
 
 export interface ExposureCards {
   criticalProcessesExposed: number;

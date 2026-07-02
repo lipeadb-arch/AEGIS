@@ -25,8 +25,8 @@ import { ExposureCardComponent } from '../components/exposure-card.component';
     <div class="app">
       <header class="topbar">
         <div class="brand">
-          <span class="mark">S.T.A.<b>R</b>.S</span>
-          <span class="sub">System Threat &amp; Architecture Risk Scanner · Synapse OS</span>
+          <span class="mark">Aegis <b>Score</b></span>
+          <span class="sub">Auditoria de Maturidade Cibernética · Synapse OS</span>
         </div>
         <div class="client">
           <span class="label">Cliente</span>

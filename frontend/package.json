@@ -1,7 +1,7 @@
 {
-  "name": "stars-frontend",
+  "name": "aegis-score-frontend",
   "version": "0.2.0",
-  "description": "S.T.A.R.S — dashboard executivo de maturidade cibernética (Angular)",
+  "description": "Aegis Score — dashboard executivo de maturidade cibernética (Angular)",
   "private": true,
   "scripts": {
     "ng": "ng",

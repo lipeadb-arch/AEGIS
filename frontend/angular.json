@@ -3,7 +3,7 @@
   "version": 1,
   "newProjectRoot": "projects",
   "projects": {
-    "stars-frontend": {
+    "aegis-score-frontend": {
       "projectType": "application",
       "root": "",
       "sourceRoot": "src",
@@ -12,7 +12,7 @@
         "build": {
           "builder": "@angular-devkit/build-angular:application",
           "options": {
-            "outputPath": "dist/stars-frontend",
+            "outputPath": "dist/aegis-score-frontend",
             "index": "src/index.html",
             "browser": "src/main.ts",
             "polyfills": ["zone.js"],
@@ -52,10 +52,10 @@
           },
           "configurations": {
             "production": {
-              "buildTarget": "stars-frontend:build:production"
+              "buildTarget": "aegis-score-frontend:build:production"
             },
             "development": {
-              "buildTarget": "stars-frontend:build:development"
+              "buildTarget": "aegis-score-frontend:build:development"
             }
           },
           "defaultConfiguration": "development"

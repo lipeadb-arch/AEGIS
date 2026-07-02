@@ -1,4 +1,4 @@
-# S.T.A.R.S — System Threat & Architecture Risk Scanner
+# Aegis Score — Auditoria de Maturidade Cibernética
 
 Módulo de **auditoria de maturidade cibernética** do portal **Synapse OS**. Motor de IA que
 diagnostica de forma contínua a maturidade de Segurança da Informação com base em **NIST CSF 2.0**
@@ -25,13 +25,13 @@ leitores de API de SIEM/EDR. Um **LLM** atua como normalizador dinâmico do que 
 
 ```
 backend/
-  Stars.sln
+  AegisScore.sln
   src/
-    Stars.Domain            entidades, enums, regras puras
-    Stars.Application       interfaces (IA, conector, tenant) + scoring (Maturidade/Risco/ICR)
-    Stars.Infrastructure    EF Core (PostgreSQL), seeder NIST, IA (Anthropic), registry
-    Stars.Connectors.Microsoft  adapter de exemplo (Secure Score)
-    Stars.Api               ASP.NET Core: Program, controllers, DTOs
+    AegisScore.Domain            entidades, enums, regras puras
+    AegisScore.Application       interfaces (IA, conector, tenant) + scoring (Maturidade/Risco/ICR)
+    AegisScore.Infrastructure    EF Core (PostgreSQL), seeder NIST, IA (Anthropic), registry
+    AegisScore.Connectors.Microsoft  adapter de exemplo (Secure Score)
+    AegisScore.Api               ASP.NET Core: Program, controllers, DTOs
 data/
   nist_csf_2_0_catalog.json   catálogo NIST CSF 2.0 (6 funções / 22 categorias / 106 subcategorias)
 frontend/
@@ -50,7 +50,7 @@ frontend/
 
    ```sql
    CREATE USER stars WITH PASSWORD 'stars';
-   CREATE DATABASE stars OWNER stars;
+   CREATE DATABASE aegis OWNER stars;
    ```
 
 2. (Opcional) Configure a IA — via `appsettings.json` (seção `Ai`) ou variável de ambiente:
@@ -62,7 +62,7 @@ frontend/
 3. Rode a API:
 
    ```bash
-   cd backend/src/Stars.Api
+   cd backend/src/AegisScore.Api
    dotnet restore
    dotnet run
    ```
@@ -73,8 +73,8 @@ frontend/
 > **Produção:** troque `EnsureCreated()` por **migrations** no `Program.cs`:
 > ```bash
 > dotnet tool install --global dotnet-ef
-> dotnet ef migrations add Initial -p ../Stars.Infrastructure -s .
-> dotnet ef database update -p ../Stars.Infrastructure -s .
+> dotnet ef migrations add Initial -p ../AegisScore.Infrastructure -s .
+> dotnet ef database update -p ../AegisScore.Infrastructure -s .
 > ```
 > e use `db.Database.Migrate()`.
 

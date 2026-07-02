@@ -1,6 +1,6 @@
 /**
  * Configuração de runtime do dashboard.
- * - apiBase:  URL base da API S.T.A.R.S.
+ * - apiBase:  URL base da API Aegis Score.
  * - tenantId: GUID do cliente, enviado no header `X-Tenant` (obtido em POST /api/v1/tenants).
  *
  * Substitui os antigos VITE_API_BASE / VITE_TENANT_ID. Sem um tenantId válido o

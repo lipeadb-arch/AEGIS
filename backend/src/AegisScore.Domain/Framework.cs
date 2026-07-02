@@ -1,0 +1,61 @@
+using System.Collections.Generic;
+
+namespace AegisScore.Domain;
+
+/// <summary>A versioned control framework. Today: "NIST CSF 2.0". Reference data, shared across tenants.</summary>
+public class FrameworkVersion : Entity
+{
+    public string Name { get; set; } = "";           // "NIST CSF 2.0"
+    public string? Source { get; set; }              // "NIST CSWP 29 (2024-02-26)"
+    public bool IsActive { get; set; }
+
+    public ICollection<NistFunction> Functions { get; set; } = new List<NistFunction>();
+    public ICollection<MaturityLevel> MaturityLevels { get; set; } = new List<MaturityLevel>();
+}
+
+/// <summary>CSF Function — GOVERN, IDENTIFY, PROTECT, DETECT, RESPOND, RECOVER.</summary>
+public class NistFunction : Entity
+{
+    public Guid FrameworkVersionId { get; set; }
+    public string Code { get; set; } = "";           // "GV"
+    public string Name { get; set; } = "";           // "GOVERN (GV)"
+    public string Definition { get; set; } = "";
+    public int Order { get; set; }
+
+    public ICollection<NistCategory> Categories { get; set; } = new List<NistCategory>();
+}
+
+/// <summary>CSF Category — e.g. Organizational Context (GV.OC).</summary>
+public class NistCategory : Entity
+{
+    public Guid FunctionId { get; set; }
+    public NistFunction? Function { get; set; }
+    public string Code { get; set; } = "";           // "GV.OC"
+    public string Name { get; set; } = "";
+    public string Definition { get; set; } = "";
+
+    public ICollection<NistSubcategory> Subcategories { get; set; } = new List<NistSubcategory>();
+}
+
+/// <summary>CSF Subcategory — the assessable outcome, e.g. GV.OC-01.</summary>
+public class NistSubcategory : Entity
+{
+    public Guid CategoryId { get; set; }
+    public NistCategory? Category { get; set; }
+    public string Code { get; set; } = "";           // "GV.OC-01"
+    public string Description { get; set; } = "";
+    public string? ImplementationExamples { get; set; }
+
+    /// <summary>List of mapped controls (CCM, CRI, CIS, SP 800-53). Stored as jsonb.</summary>
+    public List<string> InformativeReferences { get; set; } = new();
+}
+
+/// <summary>CMMI-style maturity level (1–5) used to score every subcategory.</summary>
+public class MaturityLevel : Entity
+{
+    public Guid FrameworkVersionId { get; set; }
+    public int Level { get; set; }                   // 1..5
+    public string Name { get; set; } = "";           // "Documented"
+    public string Description { get; set; } = "";
+    public int Score { get; set; }                   // == Level, kept explicit per the workbook
+}
