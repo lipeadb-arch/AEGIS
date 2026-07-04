@@ -21,18 +21,16 @@ public class RisksController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<IdResponse>> Create(
-        CreateRiskRequest req, [FromHeader(Name = "X-Tenant")] Guid tenantId, CancellationToken ct)
+    public async Task<ActionResult<IdResponse>> Create(CreateRiskRequest req, CancellationToken ct)
     {
-        if (tenantId == Guid.Empty)
-            return BadRequest("Header X-Tenant é obrigatório.");
-
-        if (await _db.Risks.AnyAsync(x => x.TenantId == tenantId && x.Code == req.Code, ct))
+        // O tenant é implícito: o global query filter escopa esta checagem ao tenant ambiente,
+        // então comparar Code já significa "Code dentro deste tenant".
+        if (await _db.Risks.AnyAsync(x => x.Code == req.Code, ct))
             return Conflict($"Já existe um risco com o código '{req.Code}' neste cliente.");
 
         var r = new Risk
         {
-            TenantId = tenantId,
+            // Sem TenantId aqui — carimbado no SaveChangesAsync (fail-closed).
             Code = req.Code,
             Title = req.Title,
             Description = req.Description,
@@ -50,6 +48,8 @@ public class RisksController : ControllerBase
     [HttpPost("{riskId:guid}/evaluations")]
     public async Task<ActionResult<RiskEvaluationDto>> Evaluate(Guid riskId, RiskEvaluationRequest req, CancellationToken ct)
     {
+        // Já isolado por tenant: o query filter garante que só um Risk do tenant ambiente
+        // pode ser resolvido aqui. Um riskId de outro tenant retorna 404, não vaza.
         var risk = await _db.Risks.FirstOrDefaultAsync(r => r.Id == riskId, ct);
         if (risk is null) return NotFound();
 
@@ -61,6 +61,7 @@ public class RisksController : ControllerBase
 
         _db.RiskEvaluations.Add(new RiskEvaluation
         {
+            // TenantId carimbado automaticamente no SaveChangesAsync.
             RiskId = riskId,
             Phase = req.Phase,
             Probability = req.Probability,

@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
+using AegisScore.Application.Abstractions;
 using AegisScore.Application.Scoring;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -20,21 +21,22 @@ public class DevController : ControllerBase
     /// <summary>Fixed id so the frontend can hard-code it in environment.ts.</summary>
     public static readonly Guid DemoTenantId = Guid.Parse("aa000000-0000-0000-0000-000000000001");
 
-    private readonly AegisScoreDbContext _db;
+    private readonly DbContextOptions<AegisScoreDbContext> _dbOptions;
     private readonly RiskScoringService _risk;
     private readonly IWebHostEnvironment _env;
 
-    public DevController(AegisScoreDbContext db, RiskScoringService risk, IWebHostEnvironment env)
+    public DevController(DbContextOptions<AegisScoreDbContext> dbOptions, RiskScoringService risk, IWebHostEnvironment env)
     {
-        _db = db;
+        _dbOptions = dbOptions;
         _risk = risk;
         _env = env;
     }
 
     /// <summary>
     /// (Re)creates a realistic demo tenant. Idempotent: wipes any prior demo data first.
-    /// Cross-tenant reads/deletes here use .IgnoreQueryFilters() explicitly (the tenant filter
-    /// is fail-closed, so it does not depend on any header being present).
+    /// Runs under a system tenant context (DemoTenantId) so the fail-closed write-stamping
+    /// interceptor is satisfied without any request header. Cross-tenant reads/deletes still
+    /// use .IgnoreQueryFilters() explicitly where they must span the ambient filter.
     /// </summary>
     [HttpPost("seed-demo")]
     public async Task<IActionResult> SeedDemo(CancellationToken ct)
@@ -42,14 +44,18 @@ public class DevController : ControllerBase
         if (!_env.IsDevelopment())
             return NotFound();
 
-        var fw = await _db.FrameworkVersions.FirstOrDefaultAsync(f => f.IsActive, ct);
+        // Dedicated context bound to a system tenant — lives only for this request.
+        // Never trusts (or needs) the X-Tenant header; the ambient tenant is DemoTenantId.
+        await using var db = new AegisScoreDbContext(_dbOptions, new SystemTenantContext(DemoTenantId));
+
+        var fw = await db.FrameworkVersions.FirstOrDefaultAsync(f => f.IsActive, ct);
         if (fw is null)
             return Problem("Catálogo NIST ainda não semeado. Reinicie a API e tente de novo.");
 
-        var subs = await _db.Subcategories.AsNoTracking()
+        var subs = await db.Subcategories.AsNoTracking()
             .Select(s => new { s.Id, s.Code }).ToListAsync(ct);
 
-        await WipeExistingDemoAsync(ct);
+        await WipeExistingDemoAsync(db, ct);
 
         // ---- Tenant, business units, processes ----
         var tenant = new Tenant { Id = DemoTenantId, Name = "Grupo Aegis (Demo)", Slug = "demo", Status = TenantStatus.Active };
@@ -124,6 +130,7 @@ public class DevController : ControllerBase
             var (score, level) = _risk.Evaluate(p, i, pv);
             riskEvals.Add(new RiskEvaluation
             {
+                // TenantId carimbado automaticamente (ambiente = DemoTenantId).
                 RiskId = r.Id,
                 Phase = RiskPhase.Inherent,
                 Probability = p,
@@ -136,6 +143,7 @@ public class DevController : ControllerBase
             {
                 plans.Add(new ActionPlan
                 {
+                    // TenantId carimbado automaticamente (ambiente = DemoTenantId).
                     RiskId = r.Id,
                     Treatment = RiskTreatmentType.Mitigar,
                     Description = "Plano de tratamento (demo)",
@@ -155,16 +163,16 @@ public class DevController : ControllerBase
         AddRisk("SEC0005", "Política de senhas fraca", 2, 2, 2, procs[0].Id, buSec.Id, ActionPlanStatus.Concluido, -10);
         AddRisk("SEC0006", "Treinamento de conscientização irregular", 1, 2, 1, procs[3].Id, buSec.Id, null, null);
 
-        _db.Tenants.Add(tenant);
-        _db.BusinessUnits.AddRange(buSec, buTi);
-        _db.Processes.AddRange(procs);
-        _db.Assessments.Add(assessment);
-        _db.Scopes.AddRange(primaryScope, scope2);
-        _db.Evaluations.AddRange(evals);
-        _db.Risks.AddRange(risks);
-        _db.RiskEvaluations.AddRange(riskEvals);
-        _db.ActionPlans.AddRange(plans);
-        await _db.SaveChangesAsync(ct);
+        db.Tenants.Add(tenant);
+        db.BusinessUnits.AddRange(buSec, buTi);
+        db.Processes.AddRange(procs);
+        db.Assessments.Add(assessment);
+        db.Scopes.AddRange(primaryScope, scope2);
+        db.Evaluations.AddRange(evals);
+        db.Risks.AddRange(risks);
+        db.RiskEvaluations.AddRange(riskEvals);
+        db.ActionPlans.AddRange(plans);
+        await db.SaveChangesAsync(ct);
 
         var overdue = plans.Count(p => p.Status != ActionPlanStatus.Concluido && p.DueDate is { } d && d < today);
 
@@ -181,34 +189,45 @@ public class DevController : ControllerBase
     }
 
     /// <summary>Removes any prior demo-tenant data so the seed can be re-run safely.</summary>
-    private async Task WipeExistingDemoAsync(CancellationToken ct)
+    private async Task WipeExistingDemoAsync(AegisScoreDbContext db, CancellationToken ct)
     {
-        var existing = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == DemoTenantId, ct);
+        var existing = await db.Tenants.FirstOrDefaultAsync(t => t.Id == DemoTenantId, ct);
         if (existing is null)
             return;
 
-        var scopeIds = await _db.Scopes.IgnoreQueryFilters()
+        var scopeIds = await db.Scopes.IgnoreQueryFilters()
             .Where(s => s.TenantId == DemoTenantId).Select(s => s.Id).ToListAsync(ct);
-        _db.Evaluations.RemoveRange(await _db.Evaluations.Where(e => scopeIds.Contains(e.AssessmentScopeId)).ToListAsync(ct));
+        db.Evaluations.RemoveRange(await db.Evaluations.Where(e => scopeIds.Contains(e.AssessmentScopeId)).ToListAsync(ct));
 
-        var riskIds = await _db.Risks.IgnoreQueryFilters()
+        var riskIds = await db.Risks.IgnoreQueryFilters()
             .Where(r => r.TenantId == DemoTenantId).Select(r => r.Id).ToListAsync(ct);
-        _db.ActionPlans.RemoveRange(await _db.ActionPlans.Where(a => riskIds.Contains(a.RiskId)).ToListAsync(ct));
-        _db.RiskEvaluations.RemoveRange(await _db.RiskEvaluations.Where(e => riskIds.Contains(e.RiskId)).ToListAsync(ct));
+        db.ActionPlans.RemoveRange(await db.ActionPlans.IgnoreQueryFilters().Where(a => riskIds.Contains(a.RiskId)).ToListAsync(ct));
+        db.RiskEvaluations.RemoveRange(await db.RiskEvaluations.IgnoreQueryFilters().Where(e => riskIds.Contains(e.RiskId)).ToListAsync(ct));
 
         // EvidenceSignal / Evidence têm o mesmo DemoTenantId fixo mas nenhum FK/cascade — se não
         // forem removidos aqui, sinais de uma sessão anterior "reaparecem" no tenant re-semeado.
-        _db.Signals.RemoveRange(await _db.Signals.IgnoreQueryFilters().Where(s => s.TenantId == DemoTenantId).ToListAsync(ct));
-        _db.Evidence.RemoveRange(await _db.Evidence.IgnoreQueryFilters().Where(ev => ev.TenantId == DemoTenantId).ToListAsync(ct));
+        db.Signals.RemoveRange(await db.Signals.IgnoreQueryFilters().Where(s => s.TenantId == DemoTenantId).ToListAsync(ct));
+        db.Evidence.RemoveRange(await db.Evidence.IgnoreQueryFilters().Where(ev => ev.TenantId == DemoTenantId).ToListAsync(ct));
 
-        _db.Risks.RemoveRange(await _db.Risks.IgnoreQueryFilters().Where(r => r.TenantId == DemoTenantId).ToListAsync(ct));
-        _db.Scopes.RemoveRange(await _db.Scopes.IgnoreQueryFilters().Where(s => s.TenantId == DemoTenantId).ToListAsync(ct));
-        _db.Assessments.RemoveRange(await _db.Assessments.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
-        _db.Processes.RemoveRange(await _db.Processes.IgnoreQueryFilters().Where(p => p.TenantId == DemoTenantId).ToListAsync(ct));
-        _db.BusinessUnits.RemoveRange(await _db.BusinessUnits.IgnoreQueryFilters().Where(bu => bu.TenantId == DemoTenantId).ToListAsync(ct));
-        _db.Tenants.Remove(existing);
+        db.Risks.RemoveRange(await db.Risks.IgnoreQueryFilters().Where(r => r.TenantId == DemoTenantId).ToListAsync(ct));
+        db.Scopes.RemoveRange(await db.Scopes.IgnoreQueryFilters().Where(s => s.TenantId == DemoTenantId).ToListAsync(ct));
+        db.Assessments.RemoveRange(await db.Assessments.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
+        db.Processes.RemoveRange(await db.Processes.IgnoreQueryFilters().Where(p => p.TenantId == DemoTenantId).ToListAsync(ct));
+        db.BusinessUnits.RemoveRange(await db.BusinessUnits.IgnoreQueryFilters().Where(bu => bu.TenantId == DemoTenantId).ToListAsync(ct));
+        db.Tenants.Remove(existing);
 
-        await _db.SaveChangesAsync(ct);
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Privileged, non-HTTP tenant context used to run the demo seeder under an explicit tenant.
+    /// The write-stamping interceptor is fail-closed, so seed writes need a resolved tenant that
+    /// is NOT derived from a request header.
+    /// </summary>
+    private sealed class SystemTenantContext : ITenantContext
+    {
+        public SystemTenantContext(Guid tenantId) => TenantId = tenantId;
+        public Guid? TenantId { get; }
     }
 }
 #endif

@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using AegisScore.Api;
 using AegisScore.Application.Abstractions;
 using AegisScore.Connectors.Microsoft;
@@ -28,18 +29,21 @@ builder.Services.AddCors(o => o.AddPolicy(SpaCors, p => p
 
 var app = builder.Build();
 
-// Create schema and seed the NIST CSF 2.0 catalog on startup.
-// Scaffold uses EnsureCreated for immediate runnability; switch to Database.Migrate()
-// once you add EF migrations (see README).
+// Apply EF migrations and seed the NIST CSF 2.0 catalog on startup.
+// The schema is owned exclusively by migrations now (no more EnsureCreated).
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AegisScoreDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    await db.Database.MigrateAsync();
 
     var catalogPath = builder.Configuration["Seed:CatalogPath"]
         ?? Path.Combine(app.Environment.ContentRootPath, "Data", "nist_csf_2_0_catalog.json");
     await FrameworkSeeder.SeedAsync(db, catalogPath);
 }
+
+// Error boundary — antes de tudo, para capturar qualquer exceção do pipeline e nunca
+// vazar detalhes internos (stack trace, mensagem) ao cliente.
+app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {

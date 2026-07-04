@@ -28,8 +28,9 @@ public class Risk : Entity, ITenantOwned
 }
 
 /// <summary>Inherent or residual evaluation: Probability + Impact + ProcessValue (each 1–4).</summary>
-public class RiskEvaluation : Entity
+public class RiskEvaluation : Entity, ITenantOwned
 {
+    public Guid TenantId { get; set; }   // denormalizado: defesa em profundidade + stamping automático
     public Guid RiskId { get; set; }
     public RiskPhase Phase { get; set; } = RiskPhase.Inherent;
     public int ProcessValue { get; set; }            // 1..4
@@ -41,8 +42,9 @@ public class RiskEvaluation : Entity
 }
 
 /// <summary>Risk treatment / action plan (Plano de Ação): what/who/how/when + status.</summary>
-public class ActionPlan : Entity
+public class ActionPlan : Entity, ITenantOwned
 {
+    public Guid TenantId { get; set; }   // denormalizado: defesa em profundidade + stamping automático
     public Guid RiskId { get; set; }
     public RiskTreatmentType Treatment { get; set; } = RiskTreatmentType.Mitigar;
     public string? Description { get; set; }

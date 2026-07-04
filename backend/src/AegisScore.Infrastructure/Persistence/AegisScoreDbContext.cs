@@ -11,7 +11,8 @@ namespace AegisScore.Infrastructure.Persistence;
 /// The Aegis Score database context (PostgreSQL via Npgsql).
 /// - List-typed columns are stored as <c>jsonb</c>.
 /// - Computed domain properties (Gap, IsOverdue) are not persisted.
-/// - Operational (ITenantOwned) entities carry a global query filter for tenant isolation.
+/// - Operational (ITenantOwned) entities carry a global query filter for tenant isolation
+///   AND are stamped with the ambient TenantId on insert (fail-closed).
 /// Reference/framework data (NIST catalog) is shared across tenants and is not filtered.
 /// </summary>
 public class AegisScoreDbContext : DbContext
@@ -102,6 +103,9 @@ public class AegisScoreDbContext : DbContext
         b.Entity<Evidence>().HasIndex(x => x.TenantId);
         b.Entity<RiskAppetite>().HasIndex(x => x.TenantId);
         b.Entity<IcrScore>().HasIndex(x => x.TenantId);
+        // Children now carry their own TenantId — index it alongside the parent FK.
+        b.Entity<RiskEvaluation>().HasIndex(x => new { x.TenantId, x.RiskId });
+        b.Entity<ActionPlan>().HasIndex(x => new { x.TenantId, x.RiskId });
 
         // Multi-tenant isolation: every operational entity is scoped to the ambient tenant.
         // Fail-CLOSED: when no tenant is resolved (missing/invalid X-Tenant) the filter yields
@@ -118,22 +122,61 @@ public class AegisScoreDbContext : DbContext
         b.Entity<Risk>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<RiskAppetite>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<IcrScore>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // Defense in depth: child entities no longer rely solely on the parent route.
+        // They now filter on their own denormalized TenantId, independent of the Risk filter.
+        b.Entity<RiskEvaluation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<ActionPlan>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
     }
 
-    /// <summary>Stamp audit timestamps automatically on save.</summary>
+    /// <summary>Stamp tenant (fail-closed) + audit timestamps automatically on save.</summary>
     public override int SaveChanges()
     {
-        Stamp();
+        StampTenant();
+        StampAudit();
         return base.SaveChanges();
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken ct = default)
     {
-        Stamp();
+        StampTenant();
+        StampAudit();
         return base.SaveChangesAsync(ct);
     }
 
-    private void Stamp()
+    /// <summary>
+    /// Secure-by-design write stamping: every ITenantOwned entity being inserted receives the
+    /// ambient TenantId. Fail-CLOSED — if no tenant is resolved, or a caller tried to smuggle a
+    /// TenantId that disagrees with the context, we throw instead of persisting a cross-tenant row.
+    /// </summary>
+    private void StampTenant()
+    {
+        var added = ChangeTracker.Entries<ITenantOwned>()
+            .Where(e => e.State == EntityState.Added)
+            .ToList();
+        if (added.Count == 0) return;
+
+        var tenantId = _tenant.TenantId
+            ?? throw new TenantSecurityException(
+                "Gravação de entidade multi-tenant sem tenant resolvido no contexto (fail-closed).");
+
+        if (tenantId == Guid.Empty)
+            throw new TenantSecurityException("TenantId do contexto é inválido (Guid.Empty).");
+
+        foreach (var entry in added)
+        {
+            var supplied = entry.Entity.TenantId;
+
+            // Never trust a client-supplied TenantId that diverges from the ambient tenant.
+            if (supplied != Guid.Empty && supplied != tenantId)
+                throw new TenantSecurityException(
+                    $"TenantId da entidade '{entry.Entity.GetType().Name}' ({supplied}) " +
+                    $"diverge do tenant do contexto ({tenantId}).");
+
+            entry.Entity.TenantId = tenantId;
+        }
+    }
+
+    private void StampAudit()
     {
         foreach (var entry in ChangeTracker.Entries<Entity>())
         {
