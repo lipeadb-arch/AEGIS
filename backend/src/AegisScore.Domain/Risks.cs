@@ -63,7 +63,11 @@ public class ActionPlan : Entity
 public class RiskAppetite : Entity, ITenantOwned
 {
     public Guid TenantId { get; set; }
-    /// <summary>JSON: band cutoffs and appetite limit, e.g. {"baixo":[3,4],"medio":[5,7],...,"limit":8}.</summary>
+    /// <summary>
+    /// JSON com os cortes máximos de cada banda, lido por RiskScoringService.ParseBands:
+    /// <c>{"baixoMax":4,"medioMax":7,"altoMax":9}</c> (score &lt;= baixoMax = Baixo, e assim por diante;
+    /// acima de altoMax = Crítico). Chaves ausentes caem no default (4/7/9).
+    /// </summary>
     public string ThresholdsJson { get; set; } = "";
 }
 

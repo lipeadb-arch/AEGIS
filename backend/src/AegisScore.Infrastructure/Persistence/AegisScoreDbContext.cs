@@ -94,18 +94,30 @@ public class AegisScoreDbContext : DbContext
         b.Entity<Risk>().HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
         b.Entity<EvidenceSignal>().HasIndex(x => new { x.TenantId, x.SignalKey, x.CollectedAt });
 
+        // Tenant-leading indexes for operational entities that don't get one from an FK
+        // convention, so the multi-tenant query filter uses an index instead of a full scan.
+        b.Entity<Asset>().HasIndex(x => x.TenantId);
+        b.Entity<Assessment>().HasIndex(x => x.TenantId);
+        b.Entity<AssessmentScope>().HasIndex(x => new { x.TenantId, x.AssessmentId });
+        b.Entity<Evidence>().HasIndex(x => x.TenantId);
+        b.Entity<RiskAppetite>().HasIndex(x => x.TenantId);
+        b.Entity<IcrScore>().HasIndex(x => x.TenantId);
+
         // Multi-tenant isolation: every operational entity is scoped to the ambient tenant.
-        b.Entity<BusinessUnit>().HasQueryFilter(e => _tenant.TenantId == null || e.TenantId == _tenant.TenantId);
-        b.Entity<BusinessProcess>().HasQueryFilter(e => _tenant.TenantId == null || e.TenantId == _tenant.TenantId);
-        b.Entity<Asset>().HasQueryFilter(e => _tenant.TenantId == null || e.TenantId == _tenant.TenantId);
-        b.Entity<Assessment>().HasQueryFilter(e => _tenant.TenantId == null || e.TenantId == _tenant.TenantId);
-        b.Entity<AssessmentScope>().HasQueryFilter(e => _tenant.TenantId == null || e.TenantId == _tenant.TenantId);
-        b.Entity<Evidence>().HasQueryFilter(e => _tenant.TenantId == null || e.TenantId == _tenant.TenantId);
-        b.Entity<ConnectorConfig>().HasQueryFilter(e => _tenant.TenantId == null || e.TenantId == _tenant.TenantId);
-        b.Entity<EvidenceSignal>().HasQueryFilter(e => _tenant.TenantId == null || e.TenantId == _tenant.TenantId);
-        b.Entity<Risk>().HasQueryFilter(e => _tenant.TenantId == null || e.TenantId == _tenant.TenantId);
-        b.Entity<RiskAppetite>().HasQueryFilter(e => _tenant.TenantId == null || e.TenantId == _tenant.TenantId);
-        b.Entity<IcrScore>().HasQueryFilter(e => _tenant.TenantId == null || e.TenantId == _tenant.TenantId);
+        // Fail-CLOSED: when no tenant is resolved (missing/invalid X-Tenant) the filter yields
+        // no rows, instead of leaking every tenant's data. Seed/maintenance code that must span
+        // tenants uses .IgnoreQueryFilters() explicitly.
+        b.Entity<BusinessUnit>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<BusinessProcess>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<Asset>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<Assessment>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<AssessmentScope>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<Evidence>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<ConnectorConfig>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<EvidenceSignal>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<Risk>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<RiskAppetite>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<IcrScore>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
     }
 
     /// <summary>Stamp audit timestamps automatically on save.</summary>

@@ -27,6 +27,9 @@ public class AssessmentsController : ControllerBase
     public async Task<ActionResult<IdResponse>> Create(
         CreateAssessmentRequest req, [FromHeader(Name = "X-Tenant")] Guid tenantId, CancellationToken ct)
     {
+        if (tenantId == Guid.Empty)
+            return BadRequest("Header X-Tenant é obrigatório.");
+
         var fvId = req.FrameworkVersionId
             ?? (await _db.FrameworkVersions.AsNoTracking().FirstOrDefaultAsync(f => f.IsActive, ct))?.Id
             ?? throw new InvalidOperationException("No active framework version.");
@@ -41,6 +44,13 @@ public class AssessmentsController : ControllerBase
     public async Task<ActionResult<IdResponse>> AddScope(
         Guid assessmentId, CreateScopeRequest req, [FromHeader(Name = "X-Tenant")] Guid tenantId, CancellationToken ct)
     {
+        if (tenantId == Guid.Empty)
+            return BadRequest("Header X-Tenant é obrigatório.");
+
+        // Scoped by the tenant query filter: a foreign / non-existent assessment yields 404, not a 500 FK violation.
+        if (!await _db.Assessments.AnyAsync(a => a.Id == assessmentId, ct))
+            return NotFound($"Assessment {assessmentId} não encontrado.");
+
         var scope = new AssessmentScope
         {
             TenantId = tenantId,

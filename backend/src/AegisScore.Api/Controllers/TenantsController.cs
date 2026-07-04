@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using AegisScore.Api.Contracts;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -16,6 +17,9 @@ public class TenantsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<IdResponse>> Create(CreateTenantRequest req, CancellationToken ct)
     {
+        if (await _db.Tenants.AnyAsync(x => x.Slug == req.Slug, ct))
+            return Conflict($"Já existe um cliente com o slug '{req.Slug}'.");
+
         var t = new Tenant { Name = req.Name, Slug = req.Slug, Status = TenantStatus.Active };
         _db.Tenants.Add(t);
         await _db.SaveChangesAsync(ct);

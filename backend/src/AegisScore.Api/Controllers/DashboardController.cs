@@ -30,6 +30,9 @@ public class DashboardController : ControllerBase
     public async Task<ActionResult<ExecutiveDashboardDto>> Executive(
         [FromHeader(Name = "X-Tenant")] Guid tenantId, CancellationToken ct)
     {
+        if (tenantId == Guid.Empty)
+            return BadRequest("Header X-Tenant é obrigatório.");
+
         var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
         var clientName = tenant?.Name ?? "—";
 
@@ -58,33 +61,43 @@ public class DashboardController : ControllerBase
             .ToList();
 
         // ---- Risk (latest evaluation per risk) ----
+        // Carrega a avaliação + o processo do risco para deduplicar exposição por processo.
         var riskEvals = await (from r in _db.Risks
                                join ev in _db.RiskEvaluations on r.Id equals ev.RiskId
-                               select ev).ToListAsync(ct);
+                               select new { Ev = ev, r.BusinessProcessId })
+                              .AsNoTracking().ToListAsync(ct);
 
         var latest = riskEvals
-            .GroupBy(e => e.RiskId)
-            .Select(g => g.OrderByDescending(x => x.EvaluatedAt).First())
+            .GroupBy(x => x.Ev.RiskId)
+            .Select(g => g.OrderByDescending(x => x.Ev.EvaluatedAt).First())
             .ToList();
 
         var heatmap = latest
-            .GroupBy(e => new { e.Probability, e.Impact })
+            .GroupBy(x => new { x.Ev.Probability, x.Ev.Impact })
             .Select(g => new HeatCellDto(g.Key.Probability, g.Key.Impact, g.Count()))
             .ToList();
 
         var byLevel = latest
-            .GroupBy(e => e.RiskLevel)
+            .GroupBy(x => x.Ev.RiskLevel)
             .Select(g => new RiskLevelCountDto(g.Key.ToString(), g.Count()))
             .ToList();
 
         // ---- Exposure cards ----
         var actionPlans = await (from r in _db.Risks
                                  join ap in _db.ActionPlans on r.Id equals ap.RiskId
-                                 select ap).ToListAsync(ct);
+                                 select ap).AsNoTracking().ToListAsync(ct);
 
         var overdueCount = actionPlans.Count(ap => ap.IsOverdue);
-        var ineffectiveControls = scoreRows.Count(x => (x.CurrentScore ?? 0) <= 2);
-        var criticalExposed = latest.Count(e => e.RiskLevel is RiskLevel.Alto or RiskLevel.Critico);
+        // Apenas subcategorias efetivamente pontuadas (CurrentScore != null) e fracas (<= 2);
+        // null é "ainda não avaliado", não "controle inefetivo".
+        var ineffectiveControls = scoreRows.Count(x => x.CurrentScore.HasValue && x.CurrentScore.Value <= 2);
+        // Processos DISTINTOS com ao menos um risco Alto/Crítico (não a contagem de riscos).
+        var criticalExposed = latest
+            .Where(x => x.Ev.RiskLevel is RiskLevel.Alto or RiskLevel.Critico)
+            .Select(x => x.BusinessProcessId)
+            .Where(id => id != null)
+            .Distinct()
+            .Count();
 
         var exposure = new ExposureCardsDto(
             criticalExposed,

@@ -1,3 +1,4 @@
+#if DEBUG
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -32,7 +33,8 @@ public class DevController : ControllerBase
 
     /// <summary>
     /// (Re)creates a realistic demo tenant. Idempotent: wipes any prior demo data first.
-    /// Call without an X-Tenant header (the global query filter is bypassed when unset).
+    /// Cross-tenant reads/deletes here use .IgnoreQueryFilters() explicitly (the tenant filter
+    /// is fail-closed, so it does not depend on any header being present).
     /// </summary>
     [HttpPost("seed-demo")]
     public async Task<IActionResult> SeedDemo(CancellationToken ct)
@@ -194,6 +196,11 @@ public class DevController : ControllerBase
         _db.ActionPlans.RemoveRange(await _db.ActionPlans.Where(a => riskIds.Contains(a.RiskId)).ToListAsync(ct));
         _db.RiskEvaluations.RemoveRange(await _db.RiskEvaluations.Where(e => riskIds.Contains(e.RiskId)).ToListAsync(ct));
 
+        // EvidenceSignal / Evidence têm o mesmo DemoTenantId fixo mas nenhum FK/cascade — se não
+        // forem removidos aqui, sinais de uma sessão anterior "reaparecem" no tenant re-semeado.
+        _db.Signals.RemoveRange(await _db.Signals.IgnoreQueryFilters().Where(s => s.TenantId == DemoTenantId).ToListAsync(ct));
+        _db.Evidence.RemoveRange(await _db.Evidence.IgnoreQueryFilters().Where(ev => ev.TenantId == DemoTenantId).ToListAsync(ct));
+
         _db.Risks.RemoveRange(await _db.Risks.IgnoreQueryFilters().Where(r => r.TenantId == DemoTenantId).ToListAsync(ct));
         _db.Scopes.RemoveRange(await _db.Scopes.IgnoreQueryFilters().Where(s => s.TenantId == DemoTenantId).ToListAsync(ct));
         _db.Assessments.RemoveRange(await _db.Assessments.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
@@ -204,3 +211,4 @@ public class DevController : ControllerBase
         await _db.SaveChangesAsync(ct);
     }
 }
+#endif

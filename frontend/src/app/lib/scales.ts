@@ -10,19 +10,23 @@ export const C = {
   panel2: '#1a1a28',
 };
 
+/** Mapa único banda → cor, compartilhado por risco e ICR (rótulos sinônimos apontam para a mesma cor). */
+const BAND_COLOR: Record<string, string> = {
+  baixo: C.teal,
+  controlado: C.teal,
+  medio: C.amber,
+  moderado: C.amber,
+  alto: C.orange,
+  critico: C.red,
+};
+
+function bandColor(key: string): string {
+  return BAND_COLOR[key.toLowerCase()] ?? C.muted;
+}
+
+/** Cor por nível de risco (Baixo | Medio | Alto | Critico). */
 export function riskColor(level: string): string {
-  switch (level.toLowerCase()) {
-    case 'baixo':
-      return C.teal;
-    case 'medio':
-      return C.amber;
-    case 'alto':
-      return C.orange;
-    case 'critico':
-      return C.red;
-    default:
-      return C.muted;
-  }
+  return bandColor(level);
 }
 
 /** Cor da célula do mapa de calor a partir da magnitude (2·prob + impacto, faixa 3–12). */
@@ -34,17 +38,7 @@ export function heatColor(probability: number, impact: number): string {
   return C.red;
 }
 
+/** Cor por banda do ICR (Controlado | Moderado | Alto | Critico). */
 export function icrColor(band: string): string {
-  switch (band.toLowerCase()) {
-    case 'controlado':
-      return C.teal;
-    case 'moderado':
-      return C.amber;
-    case 'alto':
-      return C.orange;
-    case 'critico':
-      return C.red;
-    default:
-      return C.muted;
-  }
+  return bandColor(band);
 }

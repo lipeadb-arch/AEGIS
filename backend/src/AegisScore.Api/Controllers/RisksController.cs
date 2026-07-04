@@ -24,6 +24,12 @@ public class RisksController : ControllerBase
     public async Task<ActionResult<IdResponse>> Create(
         CreateRiskRequest req, [FromHeader(Name = "X-Tenant")] Guid tenantId, CancellationToken ct)
     {
+        if (tenantId == Guid.Empty)
+            return BadRequest("Header X-Tenant é obrigatório.");
+
+        if (await _db.Risks.AnyAsync(x => x.TenantId == tenantId && x.Code == req.Code, ct))
+            return Conflict($"Já existe um risco com o código '{req.Code}' neste cliente.");
+
         var r = new Risk
         {
             TenantId = tenantId,

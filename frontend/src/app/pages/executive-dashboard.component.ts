@@ -3,6 +3,7 @@ import { ExecutiveDashboard } from '../models/dashboard.models';
 import { DashboardService } from '../services/dashboard.service';
 import { sampleDashboard } from '../data/sample-dashboard';
 import { icrColor } from '../lib/scales';
+import { environment } from '../../environments/environment';
 import { MaturityRadarComponent } from '../components/maturity-radar.component';
 import { IcrGaugeComponent } from '../components/icr-gauge.component';
 import { RiskHeatmapComponent } from '../components/risk-heatmap.component';
@@ -43,9 +44,15 @@ import { ExposureCardComponent } from '../components/exposure-card.component';
 
       @if (!live()) {
         <div class="notice">
-          Exibindo dados de exemplo. Configure <code>apiBase</code> e <code>tenantId</code> em
-          <code>src/environments/environment.ts</code> para carregar a postura real via
-          <code>GET /api/v1/dashboard/executive</code>.
+          @if (loadError()) {
+            Falha ao carregar dados reais do backend — exibindo dados de exemplo.
+            Verifique se a API está no ar em <code>{{ apiBase }}</code> e se o
+            <code>tenantId</code> existe. Detalhes no console do navegador.
+          } @else {
+            Exibindo dados de exemplo. Configure <code>apiBase</code> e <code>tenantId</code> em
+            <code>src/environments/environment.ts</code> para carregar a postura real via
+            <code>GET /api/v1/dashboard/executive</code>.
+          }
         </div>
       }
 
@@ -118,18 +125,24 @@ export class ExecutiveDashboardComponent implements OnInit {
 
   data = signal<ExecutiveDashboard>(sampleDashboard);
   live = signal(false);
+  loadError = signal(false);
 
   // Exposto ao template para colorir a pílula do ICR.
   protected readonly icrColor = icrColor;
+  // Exposto ao template para orientar o diagnóstico quando a carga falha.
+  protected readonly apiBase = environment.apiBase;
 
   ngOnInit(): void {
     this.svc.fetchExecutive().subscribe({
       next: (d) => {
         this.data.set(d);
         this.live.set(true);
+        this.loadError.set(false);
       },
-      error: () => {
-        /* mantém os dados de exemplo */
+      error: (err) => {
+        // Mantém os dados de exemplo, mas registra a falha e sinaliza um aviso distinto.
+        console.error('Falha ao carregar o dashboard executivo:', err);
+        this.loadError.set(true);
       },
     });
   }

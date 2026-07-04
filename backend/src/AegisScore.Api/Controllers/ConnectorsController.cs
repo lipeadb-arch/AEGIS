@@ -24,7 +24,7 @@ public class ConnectorsController : ControllerBase
     [HttpPost("test")]
     public async Task<ActionResult<ConnectorHealthDto>> Test(Guid tenantId, Guid connectorId, CancellationToken ct)
     {
-        var cfg = await _db.Connectors.FirstOrDefaultAsync(c => c.Id == connectorId, ct);
+        var cfg = await _db.Connectors.FirstOrDefaultAsync(c => c.Id == connectorId && c.TenantId == tenantId, ct);
         if (cfg is null) return NotFound();
 
         var connector = _registry.Resolve(cfg.Provider, cfg.Capability);
@@ -38,7 +38,7 @@ public class ConnectorsController : ControllerBase
     [HttpPost("sync")]
     public async Task<ActionResult<SyncResultDto>> Sync(Guid tenantId, Guid connectorId, CancellationToken ct)
     {
-        var cfg = await _db.Connectors.FirstOrDefaultAsync(c => c.Id == connectorId, ct);
+        var cfg = await _db.Connectors.FirstOrDefaultAsync(c => c.Id == connectorId && c.TenantId == tenantId, ct);
         if (cfg is null) return NotFound();
 
         var connector = _registry.Resolve(cfg.Provider, cfg.Capability);
