@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Api.Contracts;
+using AegisScore.Application.Abstractions;
 using AegisScore.Application.Scoring;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -16,24 +17,24 @@ namespace AegisScore.Api.Controllers;
 public class DashboardController : ControllerBase
 {
     private readonly AegisScoreDbContext _db;
+    private readonly ITenantContext _tenant;
     private readonly MaturityScoringService _maturity;
     private readonly IcrScoringService _icr;
 
-    public DashboardController(AegisScoreDbContext db, MaturityScoringService maturity, IcrScoringService icr)
+    public DashboardController(AegisScoreDbContext db, ITenantContext tenant, MaturityScoringService maturity, IcrScoringService icr)
     {
         _db = db;
+        _tenant = tenant;
         _maturity = maturity;
         _icr = icr;
     }
 
     [HttpGet("executive")]
-    public async Task<ActionResult<ExecutiveDashboardDto>> Executive(
-        [FromHeader(Name = "X-Tenant")] Guid tenantId, CancellationToken ct)
+    public async Task<ActionResult<ExecutiveDashboardDto>> Executive(CancellationToken ct)
     {
-        if (tenantId == Guid.Empty)
-            return BadRequest("Header X-Tenant é obrigatório.");
-
-        var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        // Tenant implícito: o nome do cliente vem da entidade raiz Tenant (não filtrada por design),
+        // resolvida pelo ITenantContext ambiente — a mesma fonte que alimenta os Global Query Filters abaixo.
+        var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == _tenant.TenantId, ct);
         var clientName = tenant?.Name ?? "—";
 
         // ---- Maturity (all evaluations across the tenant's assessments) ----

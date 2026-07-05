@@ -24,17 +24,14 @@ public class AssessmentsController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<IdResponse>> Create(
-        CreateAssessmentRequest req, [FromHeader(Name = "X-Tenant")] Guid tenantId, CancellationToken ct)
+    public async Task<ActionResult<IdResponse>> Create(CreateAssessmentRequest req, CancellationToken ct)
     {
-        if (tenantId == Guid.Empty)
-            return BadRequest("Header X-Tenant é obrigatório.");
-
         var fvId = req.FrameworkVersionId
             ?? (await _db.FrameworkVersions.AsNoTracking().FirstOrDefaultAsync(f => f.IsActive, ct))?.Id
             ?? throw new InvalidOperationException("No active framework version.");
 
-        var a = new Assessment { TenantId = tenantId, FrameworkVersionId = fvId, Name = req.Name };
+        // Sem TenantId aqui — carimbado no SaveChangesAsync (fail-closed), como no RisksController.
+        var a = new Assessment { FrameworkVersionId = fvId, Name = req.Name };
         _db.Assessments.Add(a);
         await _db.SaveChangesAsync(ct);
         return new IdResponse(a.Id);
@@ -42,18 +39,15 @@ public class AssessmentsController : ControllerBase
 
     [HttpPost("{assessmentId:guid}/scopes")]
     public async Task<ActionResult<IdResponse>> AddScope(
-        Guid assessmentId, CreateScopeRequest req, [FromHeader(Name = "X-Tenant")] Guid tenantId, CancellationToken ct)
+        Guid assessmentId, CreateScopeRequest req, CancellationToken ct)
     {
-        if (tenantId == Guid.Empty)
-            return BadRequest("Header X-Tenant é obrigatório.");
-
         // Scoped by the tenant query filter: a foreign / non-existent assessment yields 404, not a 500 FK violation.
         if (!await _db.Assessments.AnyAsync(a => a.Id == assessmentId, ct))
             return NotFound($"Assessment {assessmentId} não encontrado.");
 
         var scope = new AssessmentScope
         {
-            TenantId = tenantId,
+            // Sem TenantId aqui — carimbado no SaveChangesAsync (fail-closed).
             AssessmentId = assessmentId,
             BusinessProcessId = req.BusinessProcessId,
             BusinessUnitId = req.BusinessUnitId
