@@ -163,15 +163,76 @@ public class DevController : ControllerBase
         AddRisk("SEC0005", "Política de senhas fraca", 2, 2, 2, procs[0].Id, buSec.Id, ActionPlanStatus.Concluido, -10);
         AddRisk("SEC0006", "Treinamento de conscientização irregular", 1, 2, 1, procs[3].Id, buSec.Id, null, null);
 
+        // ---- Govern (GV): Document Hub — documentos lidos pela IA + ledger de cobertura ----
+        var polIa = new GovernanceDocument
+        {
+            TenantId = DemoTenantId,
+            Title = "Política de Uso Aceitável de IA",
+            Type = GovernanceDocumentType.Politica,
+            Source = DocumentSource.UploadManual,
+            FileName = "politica-uso-ia.pdf",
+            ContentType = "application/pdf",
+            Sha256 = "seed-demo-politica-ia",
+            Status = GovernanceStatus.Vigente,
+            AnalysisStatus = AiAnalysisStatus.Analyzed,
+            AnalyzedAt = DateTimeOffset.UtcNow.AddDays(-3),
+            AnalysisSummary = "Define uso aceitável de IA generativa e os dados que não podem ser enviados a terceiros.",
+            ModelUsed = "claude-opus-4-8",
+        };
+        polIa.ControlMappings.Add(new DocumentControlMapping { TenantId = DemoTenantId, SubcategoryCode = "GV.PO-01", Confidence = 0.92, Evidence = "Estabelece e revisa anualmente a política de uso de IA." });
+        polIa.ControlMappings.Add(new DocumentControlMapping { TenantId = DemoTenantId, SubcategoryCode = "GV.OC-01", Confidence = 0.78, Evidence = "Contextualiza missão e restrições de tratamento de dados." });
+
+        var diretriz = new GovernanceDocument
+        {
+            TenantId = DemoTenantId,
+            Title = "Diretriz de Classificação de Dados",
+            Type = GovernanceDocumentType.Diretriz,
+            Source = DocumentSource.Integracao,
+            SourceReference = "https://contoso.sharepoint.com/sites/grc/Classificacao",
+            FileName = "classificacao-dados.md",
+            ContentType = "text/markdown",
+            Sha256 = "seed-demo-classificacao",
+            Status = GovernanceStatus.Vigente,
+            AnalysisStatus = AiAnalysisStatus.Pending,   // ainda na fila de leitura da IA
+        };
+
+        // Ledger híbrido: cobertos por documento + gaps que o Auditor Virtual vai investigar.
+        var coverage = new[]
+        {
+            new SubcategoryCoverage { TenantId = DemoTenantId, SubcategoryCode = "GV.PO-01", Status = CoverageStatus.Coberto, EvidenceSource = CoverageEvidenceSource.Document, OriginDocumentId = polIa.Id, Confidence = 0.92, LastEvaluatedAt = DateTimeOffset.UtcNow.AddDays(-3) },
+            new SubcategoryCoverage { TenantId = DemoTenantId, SubcategoryCode = "GV.OC-01", Status = CoverageStatus.Parcial, EvidenceSource = CoverageEvidenceSource.Document, OriginDocumentId = polIa.Id, Confidence = 0.78, LastEvaluatedAt = DateTimeOffset.UtcNow.AddDays(-3) },
+            new SubcategoryCoverage { TenantId = DemoTenantId, SubcategoryCode = "GV.RM-01", Status = CoverageStatus.NaoCoberto, EvidenceSource = CoverageEvidenceSource.None },
+            new SubcategoryCoverage { TenantId = DemoTenantId, SubcategoryCode = "GV.SC-04", Status = CoverageStatus.NaoCoberto, EvidenceSource = CoverageEvidenceSource.None },
+        };
+
+        // ---- Identify (ID.AM): inventário contínuo de ativos ----
+        // Score/nível de risco simulam o motor de IA já tendo avaliado parte do inventário;
+        // dois ativos ficam sem score para exercitar o estado "não avaliado" na grid.
+        var assets = new[]
+        {
+            new Asset { TenantId = DemoTenantId, Name = "AD Domain Controller 01", Category = AssetCategory.Hardware, SubType = "server", Criticality = 4, OwnerName = "Carlos Menezes", ExternalRef = "CMDB-1001", BusinessProcessId = procs[0].Id, DiscoverySource = AssetDiscoverySource.Connector, LastSeenAt = DateTimeOffset.UtcNow.AddHours(-2), RiskScore = 82, RiskLevel = RiskLevel.Critico, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-1) },
+            new Asset { TenantId = DemoTenantId, Name = "Microsoft 365 (Identidade)", Category = AssetCategory.Software, SubType = "saas", Criticality = 4, OwnerName = "Ana Ribeiro", ExternalRef = "SAAS-M365", BusinessProcessId = procs[0].Id, DiscoverySource = AssetDiscoverySource.Connector, LastSeenAt = DateTimeOffset.UtcNow.AddHours(-1), RiskScore = 67, RiskLevel = RiskLevel.Alto, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-1) },
+            new Asset { TenantId = DemoTenantId, Name = "Base de Clientes (PII)", Category = AssetCategory.Data, SubType = "database", Criticality = 4, OwnerName = "Ana Ribeiro", DiscoverySource = AssetDiscoverySource.Manual, RiskScore = 74, RiskLevel = RiskLevel.Alto, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-2) },
+            new Asset { TenantId = DemoTenantId, Name = "Equipe de SOC", Category = AssetCategory.People, SubType = "team", Criticality = 3, OwnerName = "Ana Ribeiro", DiscoverySource = AssetDiscoverySource.Manual, RiskScore = 40, RiskLevel = RiskLevel.Medio, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-4) },
+            new Asset { TenantId = DemoTenantId, Name = "Datacenter São Paulo", Category = AssetCategory.Facilities, SubType = "datacenter", Criticality = 3, OwnerName = "Carlos Menezes", ExternalRef = "FAC-SP01", DiscoverySource = AssetDiscoverySource.Manual, RiskScore = 28, RiskLevel = RiskLevel.Baixo, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-6) },
+            new Asset { TenantId = DemoTenantId, Name = "Provedor de LLM (Anthropic)", Category = AssetCategory.SupplyChain, SubType = "api", Criticality = 3, OwnerName = "Carlos Menezes", ExternalRef = "SC-LLM01", DiscoverySource = AssetDiscoverySource.Import, RiskScore = 55, RiskLevel = RiskLevel.Medio, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-1) },
+            new Asset { TenantId = DemoTenantId, Name = "Gateway VPN", Category = AssetCategory.Hardware, SubType = "appliance", Criticality = 3, OwnerName = "Carlos Menezes", ExternalRef = "CMDB-1042", BusinessProcessId = procs[1].Id, DiscoverySource = AssetDiscoverySource.Connector, LastSeenAt = DateTimeOffset.UtcNow.AddMinutes(-30), RiskScore = 61, RiskLevel = RiskLevel.Alto, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-1) },
+            new Asset { TenantId = DemoTenantId, Name = "Notebook Diretoria", Category = AssetCategory.Hardware, SubType = "endpoint", Criticality = 2, OwnerName = "Diretoria", DiscoverySource = AssetDiscoverySource.Connector, LastSeenAt = DateTimeOffset.UtcNow.AddDays(-3) },
+            new Asset { TenantId = DemoTenantId, Name = "Portal do Cliente", Category = AssetCategory.Software, SubType = "webapp", Criticality = 3, OwnerName = "Carlos Menezes", ExternalRef = "APP-PORTAL", BusinessProcessId = procs[1].Id, DiscoverySource = AssetDiscoverySource.Manual },
+        };
+
         db.Tenants.Add(tenant);
         db.BusinessUnits.AddRange(buSec, buTi);
         db.Processes.AddRange(procs);
+        db.Assets.AddRange(assets);
         db.Assessments.Add(assessment);
         db.Scopes.AddRange(primaryScope, scope2);
         db.Evaluations.AddRange(evals);
         db.Risks.AddRange(risks);
         db.RiskEvaluations.AddRange(riskEvals);
         db.ActionPlans.AddRange(plans);
+        db.GovernanceDocuments.AddRange(polIa, diretriz);
+        db.SubcategoryCoverages.AddRange(coverage);
         await db.SaveChangesAsync(ct);
 
         var overdue = plans.Count(p => p.Status != ActionPlanStatus.Concluido && p.DueDate is { } d && d < today);
@@ -182,9 +243,12 @@ public class DevController : ControllerBase
             message = "Seed de demonstração criado. Use este tenantId no frontend (environment.ts) — já vem pré-configurado.",
             businessUnits = 2,
             processes = procs.Length,
+            assets = assets.Length,
             subcategoriesEvaluated = evals.Count,
             risks = risks.Count,
             overdueActionPlans = overdue,
+            governanceDocuments = 2,
+            coverageEntries = coverage.Length,
         });
     }
 
@@ -209,9 +273,17 @@ public class DevController : ControllerBase
         db.Signals.RemoveRange(await db.Signals.IgnoreQueryFilters().Where(s => s.TenantId == DemoTenantId).ToListAsync(ct));
         db.Evidence.RemoveRange(await db.Evidence.IgnoreQueryFilters().Where(ev => ev.TenantId == DemoTenantId).ToListAsync(ct));
 
+        db.DocumentControlMappings.RemoveRange(await db.DocumentControlMappings.IgnoreQueryFilters().Where(m => m.TenantId == DemoTenantId).ToListAsync(ct));
+        db.GovernanceDocuments.RemoveRange(await db.GovernanceDocuments.IgnoreQueryFilters().Where(d => d.TenantId == DemoTenantId).ToListAsync(ct));
+        db.SubcategoryCoverages.RemoveRange(await db.SubcategoryCoverages.IgnoreQueryFilters().Where(c => c.TenantId == DemoTenantId).ToListAsync(ct));
+        db.GrcInterviewMessages.RemoveRange(await db.GrcInterviewMessages.IgnoreQueryFilters().Where(m => m.TenantId == DemoTenantId).ToListAsync(ct));
+        db.GrcInterviewSessions.RemoveRange(await db.GrcInterviewSessions.IgnoreQueryFilters().Where(s => s.TenantId == DemoTenantId).ToListAsync(ct));
+        db.IdentifiedRisks.RemoveRange(await db.IdentifiedRisks.IgnoreQueryFilters().Where(r => r.TenantId == DemoTenantId).ToListAsync(ct));
+
         db.Risks.RemoveRange(await db.Risks.IgnoreQueryFilters().Where(r => r.TenantId == DemoTenantId).ToListAsync(ct));
         db.Scopes.RemoveRange(await db.Scopes.IgnoreQueryFilters().Where(s => s.TenantId == DemoTenantId).ToListAsync(ct));
         db.Assessments.RemoveRange(await db.Assessments.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
+        db.Assets.RemoveRange(await db.Assets.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
         db.Processes.RemoveRange(await db.Processes.IgnoreQueryFilters().Where(p => p.TenantId == DemoTenantId).ToListAsync(ct));
         db.BusinessUnits.RemoveRange(await db.BusinessUnits.IgnoreQueryFilters().Where(bu => bu.TenantId == DemoTenantId).ToListAsync(ct));
         db.Tenants.Remove(existing);

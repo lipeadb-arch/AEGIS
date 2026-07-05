@@ -44,19 +44,18 @@ import { ExposureCardComponent } from '../components/exposure-card.component';
 
       @if (!live()) {
         <div class="notice">
+          <b>Dados de exemplo.</b>
           @if (loadError()) {
-            Falha ao carregar dados reais do backend — exibindo dados de exemplo.
-            Verifique se a API está no ar em <code>{{ apiBase }}</code> e se o
-            <code>tenantId</code> existe. Detalhes no console do navegador.
+            A postura real não respondeu em <code>{{ apiBase }}</code> — confira o endereço
+            da API e o <code>tenantId</code> do cliente. O console traz o erro completo.
           } @else {
-            Exibindo dados de exemplo. Configure <code>apiBase</code> e <code>tenantId</code> em
-            <code>src/environments/environment.ts</code> para carregar a postura real via
-            <code>GET /api/v1/dashboard/executive</code>.
+            Defina <code>apiBase</code> e <code>tenantId</code> em
+            <code>src/environments/environment.ts</code> para carregar a postura real do cliente.
           }
         </div>
       }
 
-      <p class="eyebrow">Exposição de negócio</p>
+      <p class="eyebrow">Exposição do negócio</p>
       <section class="cards">
         <app-exposure-card
           label="Maturidade geral"
@@ -88,8 +87,8 @@ import { ExposureCardComponent } from '../components/exposure-card.component';
           </div>
           <app-maturity-radar [data]="data().maturityByFunction" />
           <div class="legend">
-            <span><i style="background:#7c5cff"></i> Atual</span>
-            <span><i style="background:#9a9ab4"></i> Alvo</span>
+            <span><i style="background:#26e0ff"></i> Atual</span>
+            <span><i style="background:#ff3d9a"></i> Alvo</span>
           </div>
         </div>
 

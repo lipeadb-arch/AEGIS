@@ -39,15 +39,36 @@ public class BusinessProcess : Entity, ITenantOwned
     public ICollection<Asset> Assets { get; set; } = new List<Asset>();
 }
 
-/// <summary>A digital asset (system/server/service) — the bridge Vulnerability → Asset → Process.</summary>
+/// <summary>
+/// Ativo do inventário contínuo (pilar Identify / ID.AM do NIST CSF 2.0).
+/// Ponte Vulnerabilidade → Ativo → Processo, agora categorizado pelas verticais NIST
+/// e enriquecido com o score/nível de risco calculado pelo motor de IA.
+/// </summary>
 public class Asset : Entity, ITenantOwned
 {
     public Guid TenantId { get; set; }
+
+    // ---- Contexto do ativo ----
     public string Name { get; set; } = "";
-    public string? Type { get; set; }                // server, saas, identity, ...
-    public int Criticality { get; set; } = 1;        // 1–4
+    public AssetCategory Category { get; set; } = AssetCategory.Hardware;  // vertical NIST (mandatório)
+    public string? SubType { get; set; }             // granularidade livre: "server", "saas", "identity"
+    public string? Description { get; set; }
+    public int Criticality { get; set; } = 1;        // 1–4 (declarado pelo negócio)
     public string? OwnerName { get; set; }
+    public string? ExternalRef { get; set; }         // id no CMDB / chave de upsert do conector
+
+    // ---- Ponte com processo de negócio (impacto/risco) ----
     public Guid? BusinessProcessId { get; set; }
     public BusinessProcess? BusinessProcess { get; set; }
-    public string? ExternalRef { get; set; }         // CMDB id
+
+    // ---- Inventário contínuo ----
+    public AssetDiscoverySource DiscoverySource { get; set; } = AssetDiscoverySource.Manual;
+    public DateTimeOffset? LastSeenAt { get; set; }  // heartbeat da descoberta contínua
+    public bool IsActive { get; set; } = true;       // desativado ≠ deletado (histórico preservado)
+
+    // ---- Risco calculado pela IA (nulo até o motor rodar) ----
+    public double? RiskScore { get; set; }           // 0–100 (mesma escala do IcrScore)
+    public RiskLevel? RiskLevel { get; set; }        // banda derivada — reusa o enum existente
+    public DateTimeOffset? RiskScoredAt { get; set; }
+    public string? RiskRationaleJson { get; set; }   // explicabilidade (padrão IcrScore.FactorsJson)
 }

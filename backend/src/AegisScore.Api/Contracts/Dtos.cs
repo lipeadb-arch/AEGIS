@@ -72,3 +72,66 @@ public record GapPointDto(string Code, string Name, double Current, double Targe
 public record HeatCellDto(int Probability, int Impact, int Count);
 public record RiskLevelCountDto(string Level, int Count);
 public record IcrDto(double Score, string Band);
+
+// ---- Govern: Document Hub ----
+public record ConnectDocumentRequest(string Title, GovernanceDocumentType Type, string SourceReference);
+public record DocumentMappingDto(string SubcategoryCode, double Confidence, string? Evidence, bool AnalystConfirmed);
+public record GovernanceDocumentDto(
+    Guid Id, string Title, string Type, string Source, string? SourceReference,
+    string? FileName, string? ContentType, long? FileSizeBytes, string? Sha256,
+    DateOnly? DocumentDate, string Status, string AnalysisStatus, string? AnalysisSummary,
+    string? AnalysisError, DateTimeOffset? AnalyzedAt, IReadOnlyList<DocumentMappingDto> Mappings);
+public record DocumentAcceptedDto(Guid Id, string AnalysisStatus);
+public record ConfirmMappingRequest(bool Confirmed, double? Confidence);
+
+// ---- Govern: cobertura híbrida (documentos + entrevistas) ----
+public record CoverageCellDto(string Code, string Description, string Status, string EvidenceSource);
+public record GovernCategoryCoverageDto(string Code, string Name, IReadOnlyList<CoverageCellDto> Subcategories);
+public record GovernCoverageDto(double CoveredPct, double PartialPct, IReadOnlyList<GovernCategoryCoverageDto> Categories);
+public record GapDto(string Code, string Description, string Status);
+
+// ---- Govern: Auditor Virtual (GRC) ----
+public record StartInterviewRequest(string? Title, Guid? AssessmentId, IReadOnlyList<string>? SubcategoryCodes);
+public record InterviewMessageDto(
+    Guid Id, string Role, string Content, int Sequence, string? TargetSubcategoryCode, DateTimeOffset SentAt);
+public record InterviewSessionDto(
+    Guid Id, string Title, string Status, IReadOnlyList<string> TargetSubcategoryCodes,
+    DateTimeOffset StartedAt, IReadOnlyList<InterviewMessageDto> Messages);
+public record PostAnswerRequest(string Content);
+public record CoverageChangeDto(string SubcategoryCode, string Status, string EvidenceSource);
+public record InterviewTurnDto(
+    Guid SessionId, InterviewMessageDto? Question, bool IsComplete,
+    CoverageChangeDto? CoverageChange, Guid? IdentifiedRiskId);
+public record IdentifiedRiskDto(
+    Guid Id, string Title, string Description, string? Cause, string? Consequence,
+    string SubcategoryCode, Guid? AssessmentId, bool PromotedToRisk, DateTimeOffset IdentifiedAt);
+
+// ---- Identify: inventário de ativos (ID.AM) ----
+public record CreateAssetRequest(
+    string Name, AssetCategory Category, string? SubType, string? Description,
+    int Criticality, string? OwnerName, string? ExternalRef, Guid? BusinessProcessId);
+
+public record UpdateAssetRequest(
+    string Name, AssetCategory Category, string? SubType, string? Description,
+    int Criticality, string? OwnerName, string? ExternalRef, Guid? BusinessProcessId, bool IsActive);
+
+public record AssetDto(
+    Guid Id, string Name, string Category, string? SubType, string? Description,
+    int Criticality, string? OwnerName, string? ExternalRef, Guid? BusinessProcessId,
+    string DiscoverySource, DateTimeOffset? LastSeenAt, bool IsActive,
+    double? RiskScore, string? RiskLevel, DateTimeOffset? RiskScoredAt, DateTimeOffset CreatedAt);
+
+/// <summary>Filtros combinados da grid tática (NIST). Ligados por AND; categorias por OR entre si.</summary>
+public class AssetQuery
+{
+    public List<AssetCategory>? Category { get; set; }   // ?category=Hardware&category=Software
+    public RiskLevel? RiskLevel { get; set; }
+    public int? Criticality { get; set; }
+    public bool? IsActive { get; set; }
+    public string? Search { get; set; }                  // Name / SubType / ExternalRef
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 25;
+}
+
+/// <summary>Envelope de paginação genérico (reutilizável por outras grids).</summary>
+public record PagedResult<T>(IReadOnlyList<T> Items, int Page, int PageSize, long TotalCount, int TotalPages);

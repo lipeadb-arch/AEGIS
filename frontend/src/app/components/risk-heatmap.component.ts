@@ -63,8 +63,8 @@ export class RiskHeatmapComponent {
         return {
           impact,
           count,
-          bg: count > 0 ? heatColor(prob, impact) : '#15151f',
-          color: count > 0 ? '#0a0a11' : '#3a3a4c',
+          bg: count > 0 ? heatColor(prob, impact) : '#0e1422',
+          color: count > 0 ? '#05070f' : '#3a4560',
         };
       }),
     }));

@@ -3,6 +3,7 @@ using System;
 using AegisScore.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AegisScore.Infrastructure.Migrations
 {
     [DbContext(typeof(AegisScoreDbContext))]
-    partial class AegisScoreDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260705041121_Identify_AssetInventory")]
+    partial class Identify_AssetInventory
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -426,48 +429,6 @@ namespace AegisScore.Infrastructure.Migrations
                     b.ToTable("Connectors");
                 });
 
-            modelBuilder.Entity("AegisScore.Domain.DocumentControlMapping", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("AnalystConfirmed")
-                        .HasColumnType("boolean");
-
-                    b.Property<double>("Confidence")
-                        .HasColumnType("double precision");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Evidence")
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("GovernanceDocumentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("SubcategoryCode")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("GovernanceDocumentId");
-
-                    b.HasIndex("TenantId", "GovernanceDocumentId");
-
-                    b.HasIndex("TenantId", "SubcategoryCode");
-
-                    b.ToTable("DocumentControlMappings");
-                });
-
             modelBuilder.Entity("AegisScore.Domain.Evidence", b =>
                 {
                     b.Property<Guid>("Id")
@@ -594,52 +555,35 @@ namespace AegisScore.Infrastructure.Migrations
                     b.ToTable("FrameworkVersions");
                 });
 
-            modelBuilder.Entity("AegisScore.Domain.GovernanceDocument", b =>
+            modelBuilder.Entity("AegisScore.Domain.GovernancePolicy", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("AnalysisError")
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset?>("AnalysisQueuedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("AnalysisStatus")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("AnalysisSummary")
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset?>("AnalyzedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ContentType")
-                        .HasColumnType("text");
-
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateOnly?>("DocumentDate")
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<DateOnly?>("EffectiveDate")
                         .HasColumnType("date");
 
-                    b.Property<string>("FileName")
+                    b.Property<DateOnly?>("ExpiresAt")
+                        .HasColumnType("date");
+
+                    b.Property<string>("MappedSubcategoryCodes")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateOnly?>("NextReviewDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("OwnerArea")
                         .HasColumnType("text");
 
-                    b.Property<long?>("FileSizeBytes")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("ModelUsed")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Sha256")
-                        .HasColumnType("text");
-
-                    b.Property<int>("Source")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("SourceReference")
+                    b.Property<string>("OwnerPerson")
                         .HasColumnType("text");
 
                     b.Property<int>("Status")
@@ -665,97 +609,7 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.HasIndex("TenantId");
 
-                    b.HasIndex("TenantId", "Sha256");
-
-                    b.ToTable("GovernanceDocuments");
-                });
-
-            modelBuilder.Entity("AegisScore.Domain.GrcInterviewMessage", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Content")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("GrcInterviewSessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Role")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTimeOffset>("SentAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Sequence")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("SessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("TargetSubcategoryCode")
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("GrcInterviewSessionId");
-
-                    b.HasIndex("TenantId", "SessionId");
-
-                    b.ToTable("GrcInterviewMessages");
-                });
-
-            modelBuilder.Entity("AegisScore.Domain.GrcInterviewSession", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("AssessmentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset?>("CompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTimeOffset>("StartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("TargetSubcategoryCodes")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId");
-
-                    b.ToTable("GrcInterviewSessions");
+                    b.ToTable("GovernancePolicies");
                 });
 
             modelBuilder.Entity("AegisScore.Domain.IcrScore", b =>
@@ -843,61 +697,6 @@ namespace AegisScore.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("IcrWeightProfiles");
-                });
-
-            modelBuilder.Entity("AegisScore.Domain.IdentifiedRisk", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("AssessmentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Cause")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Consequence")
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset>("IdentifiedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("OriginInterviewSessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("PromotedToRisk")
-                        .HasColumnType("boolean");
-
-                    b.Property<Guid?>("RiskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("SubcategoryCode")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId", "SubcategoryCode");
-
-                    b.ToTable("IdentifiedRisks");
                 });
 
             modelBuilder.Entity("AegisScore.Domain.MaturityLevel", b =>
@@ -1301,54 +1100,6 @@ namespace AegisScore.Infrastructure.Migrations
                     b.ToTable("SignalMappings");
                 });
 
-            modelBuilder.Entity("AegisScore.Domain.SubcategoryCoverage", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<double?>("Confidence")
-                        .HasColumnType("double precision");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("EvidenceSource")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTimeOffset?>("LastEvaluatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Notes")
-                        .HasColumnType("text");
-
-                    b.Property<Guid?>("OriginDocumentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("OriginInterviewSessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("SubcategoryCode")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId", "SubcategoryCode")
-                        .IsUnique();
-
-                    b.ToTable("SubcategoryCoverages");
-                });
-
             modelBuilder.Entity("AegisScore.Domain.SubcategoryEvaluation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1411,6 +1162,105 @@ namespace AegisScore.Infrastructure.Migrations
                     b.HasIndex("SubcategoryId");
 
                     b.ToTable("Evaluations");
+                });
+
+            modelBuilder.Entity("AegisScore.Domain.SupplyChainContract", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContractReference")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ContractUri")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DataClassificationShared")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly?>("ExpiresAt")
+                        .HasColumnType("date");
+
+                    b.Property<bool>("HasDataProcessingAgreement")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("HasSecurityAssessment")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateOnly?>("LastAssessmentDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("MappedSubcategoryCodes")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("ModelOrServiceName")
+                        .HasColumnType("text");
+
+                    b.Property<string>("OwnerArea")
+                        .HasColumnType("text");
+
+                    b.Property<string>("OwnerPerson")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("ProcessesSensitiveData")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateOnly?>("RenewalDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("ServiceDescription")
+                        .HasColumnType("text");
+
+                    b.Property<double?>("SlaAvailabilityTarget")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("SlaNotes")
+                        .HasColumnType("text");
+
+                    b.Property<int?>("SlaResponseTimeHours")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly?>("StartDate")
+                        .HasColumnType("date");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("TrainsOnTenantData")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VendorContactEmail")
+                        .HasColumnType("text");
+
+                    b.Property<string>("VendorContactName")
+                        .HasColumnType("text");
+
+                    b.Property<int>("VendorCriticality")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("VendorName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("VendorType")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("SupplyChainContracts");
                 });
 
             modelBuilder.Entity("AegisScore.Domain.Tenant", b =>
@@ -1516,27 +1366,11 @@ namespace AegisScore.Infrastructure.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("AegisScore.Domain.DocumentControlMapping", b =>
-                {
-                    b.HasOne("AegisScore.Domain.GovernanceDocument", null)
-                        .WithMany("ControlMappings")
-                        .HasForeignKey("GovernanceDocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("AegisScore.Domain.Evidence", b =>
                 {
                     b.HasOne("AegisScore.Domain.AssessmentScope", null)
                         .WithMany("Evidence")
                         .HasForeignKey("AssessmentScopeId");
-                });
-
-            modelBuilder.Entity("AegisScore.Domain.GrcInterviewMessage", b =>
-                {
-                    b.HasOne("AegisScore.Domain.GrcInterviewSession", null)
-                        .WithMany("Messages")
-                        .HasForeignKey("GrcInterviewSessionId");
                 });
 
             modelBuilder.Entity("AegisScore.Domain.MaturityLevel", b =>
@@ -1642,16 +1476,6 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Navigation("Functions");
 
                     b.Navigation("MaturityLevels");
-                });
-
-            modelBuilder.Entity("AegisScore.Domain.GovernanceDocument", b =>
-                {
-                    b.Navigation("ControlMappings");
-                });
-
-            modelBuilder.Entity("AegisScore.Domain.GrcInterviewSession", b =>
-                {
-                    b.Navigation("Messages");
                 });
 
             modelBuilder.Entity("AegisScore.Domain.NistCategory", b =>

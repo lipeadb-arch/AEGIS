@@ -107,3 +107,29 @@ public interface ITenantContext
 {
     Guid? TenantId { get; }
 }
+
+// ---- Document Hub (Govern) --------------------------------------------------
+
+/// <summary>Armazena/recupera o binário de um documento de governança (disco, blob, S3…).</summary>
+public interface IDocumentStorage
+{
+    /// <summary>Persiste o conteúdo e devolve a URI de armazenamento.</summary>
+    Task<string> SaveAsync(Guid tenantId, Guid documentId, string fileName, Stream content, CancellationToken ct);
+    Task<Stream> OpenAsync(string storageUri, CancellationToken ct);
+    Task DeleteAsync(string storageUri, CancellationToken ct);
+}
+
+/// <summary>Extrai o texto de um documento (PDF, DOCX, texto) para a leitura da IA.</summary>
+public interface IDocumentTextExtractor
+{
+    /// <summary>True se este extrator sabe lidar com o contentType/arquivo informado.</summary>
+    bool CanHandle(string? contentType, string? fileName);
+    Task<string> ExtractAsync(Stream content, string? contentType, CancellationToken ct);
+}
+
+/// <summary>Fila de leitura: enfileira documentos para análise assíncrona pela IA.</summary>
+public interface IDocumentAnalysisQueue
+{
+    ValueTask EnqueueAsync(Guid documentId, CancellationToken ct = default);
+    IAsyncEnumerable<Guid> DequeueAllAsync(CancellationToken ct);
+}

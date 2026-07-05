@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Api;
+using AegisScore.Api.Workers;
 using AegisScore.Application.Abstractions;
 using AegisScore.Connectors.Microsoft;
 using AegisScore.Infrastructure;
@@ -21,9 +22,12 @@ builder.Services.AddAegisScoreInfrastructure(builder.Configuration);
 // Stack adapters (add Google/AWS/SIEM/EDR connector packages here).
 builder.Services.AddMicrosoftConnectors();
 
+// Document Hub: worker que lê os documentos enfileirados e mapeia os controles NIST.
+builder.Services.AddHostedService<DocumentAnalysisWorker>();
+
 const string SpaCors = "aegis-spa";
 builder.Services.AddCors(o => o.AddPolicy(SpaCors, p => p
-    .WithOrigins("http://localhost:5173", "http://localhost:3000")
+    .WithOrigins("http://localhost:5173", "http://localhost:5273", "http://localhost:3000")
     .AllowAnyHeader()
     .AllowAnyMethod()));
 

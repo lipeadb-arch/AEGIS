@@ -58,6 +58,14 @@ public class AegisScoreDbContext : DbContext
     public DbSet<IcrScore> IcrScores => Set<IcrScore>();
     public DbSet<IcrWeightProfile> IcrWeightProfiles => Set<IcrWeightProfile>();
 
+    // Govern (GV) — Document Hub + Auditor Virtual (GRC)
+    public DbSet<GovernanceDocument> GovernanceDocuments => Set<GovernanceDocument>();
+    public DbSet<DocumentControlMapping> DocumentControlMappings => Set<DocumentControlMapping>();
+    public DbSet<SubcategoryCoverage> SubcategoryCoverages => Set<SubcategoryCoverage>();
+    public DbSet<GrcInterviewSession> GrcInterviewSessions => Set<GrcInterviewSession>();
+    public DbSet<GrcInterviewMessage> GrcInterviewMessages => Set<GrcInterviewMessage>();
+    public DbSet<IdentifiedRisk> IdentifiedRisks => Set<IdentifiedRisk>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
@@ -82,6 +90,8 @@ public class AegisScoreDbContext : DbContext
             .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
         b.Entity<SubcategoryEvaluation>().Property(x => x.EvidenceRefs)
             .HasConversion(guidList, guidListCmp).HasColumnType("jsonb");
+        b.Entity<GrcInterviewSession>().Property(x => x.TargetSubcategoryCodes)
+            .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
 
         // Computed properties — never persisted.
         b.Entity<SubcategoryEvaluation>().Ignore(x => x.Gap);
@@ -97,12 +107,36 @@ public class AegisScoreDbContext : DbContext
 
         // Tenant-leading indexes for operational entities that don't get one from an FK
         // convention, so the multi-tenant query filter uses an index instead of a full scan.
-        b.Entity<Asset>().HasIndex(x => x.TenantId);
+        b.Entity<Asset>(e =>
+        {
+            e.Property(a => a.Name).HasMaxLength(200).IsRequired();
+            e.Property(a => a.SubType).HasMaxLength(100);
+            e.Property(a => a.ExternalRef).HasMaxLength(200);
+            // Category e RiskLevel são persistidos como integer (default Npgsql) — sem config extra.
+
+            // Grid tática: índices tenant-leading para os filtros NIST combinados.
+            e.HasIndex(a => new { a.TenantId, a.Category });
+            e.HasIndex(a => new { a.TenantId, a.RiskLevel });
+            e.HasIndex(a => new { a.TenantId, a.Criticality });
+
+            // Upsert idempotente vindo de conectores (só ativos com ref externa).
+            e.HasIndex(a => new { a.TenantId, a.ExternalRef })
+                .IsUnique()
+                .HasFilter("\"ExternalRef\" IS NOT NULL");
+        });
         b.Entity<Assessment>().HasIndex(x => x.TenantId);
         b.Entity<AssessmentScope>().HasIndex(x => new { x.TenantId, x.AssessmentId });
         b.Entity<Evidence>().HasIndex(x => x.TenantId);
         b.Entity<RiskAppetite>().HasIndex(x => x.TenantId);
         b.Entity<IcrScore>().HasIndex(x => x.TenantId);
+        b.Entity<GovernanceDocument>().HasIndex(x => x.TenantId);
+        b.Entity<GovernanceDocument>().HasIndex(x => new { x.TenantId, x.Sha256 });   // dedupe por hash
+        b.Entity<DocumentControlMapping>().HasIndex(x => new { x.TenantId, x.GovernanceDocumentId });
+        b.Entity<DocumentControlMapping>().HasIndex(x => new { x.TenantId, x.SubcategoryCode });
+        b.Entity<SubcategoryCoverage>().HasIndex(x => new { x.TenantId, x.SubcategoryCode }).IsUnique();
+        b.Entity<GrcInterviewSession>().HasIndex(x => x.TenantId);
+        b.Entity<GrcInterviewMessage>().HasIndex(x => new { x.TenantId, x.SessionId });
+        b.Entity<IdentifiedRisk>().HasIndex(x => new { x.TenantId, x.SubcategoryCode });
         // Children now carry their own TenantId — index it alongside the parent FK.
         b.Entity<RiskEvaluation>().HasIndex(x => new { x.TenantId, x.RiskId });
         b.Entity<ActionPlan>().HasIndex(x => new { x.TenantId, x.RiskId });
@@ -126,6 +160,12 @@ public class AegisScoreDbContext : DbContext
         // They now filter on their own denormalized TenantId, independent of the Risk filter.
         b.Entity<RiskEvaluation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<ActionPlan>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<GovernanceDocument>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<DocumentControlMapping>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<SubcategoryCoverage>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<GrcInterviewSession>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<GrcInterviewMessage>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<IdentifiedRisk>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
     }
 
     /// <summary>Stamp tenant (fail-closed) + audit timestamps automatically on save.</summary>

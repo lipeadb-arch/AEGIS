@@ -27,7 +27,11 @@ interface LevelRow {
         <div class="level-row">
           <span class="lab">{{ r.label }}</span>
           <span class="bar">
-            <i [style.width.%]="r.pct" [style.background]="r.color"></i>
+            <i
+              [style.width.%]="r.pct"
+              [style.background]="r.color"
+              [style.boxShadow]="'0 0 10px -2px ' + r.color"
+            ></i>
           </span>
           <span class="cnt">{{ r.count }}</span>
         </div>

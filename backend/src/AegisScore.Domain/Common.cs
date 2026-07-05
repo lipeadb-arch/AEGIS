@@ -76,3 +76,45 @@ public enum SnapshotLevel { Overall = 0, Function = 1, Category = 2, Subcategory
 public enum IcrSubjectType { Vulnerability = 0, Asset = 1, Risk = 2, Process = 3 }
 
 public enum IcrBand { Controlado = 0, Moderado = 1, Alto = 2, Critico = 3 }
+
+// ---- Govern (GV) — Document Hub + Auditor Virtual (GRC) ----------------------
+
+/// <summary>Natureza do documento de governança ingerido no hub.</summary>
+public enum GovernanceDocumentType { Politica = 0, Norma = 1, Diretriz = 2, Procedimento = 3, Contrato = 4, Outro = 99 }
+
+/// <summary>Origem do documento no hub (upload manual ou integração SharePoint/Confluence).</summary>
+public enum DocumentSource { UploadManual = 0, Integracao = 1 }
+
+/// <summary>Estágio do pipeline de leitura pela IA (o "Status de Leitura da IA" da UI).</summary>
+public enum AiAnalysisStatus { Pending = 0, Queued = 1, Processing = 2, Analyzed = 3, Failed = 4 }
+
+/// <summary>Validade documental (lifecycle), independente da leitura da IA.</summary>
+public enum GovernanceStatus { Rascunho = 0, Vigente = 1, EmRevisao = 2, Expirado = 3, Descontinuado = 4 }
+
+/// <summary>Estado de cobertura derivado por subcategoria, para o mapa do pilar Govern.</summary>
+public enum CoverageStatus { NaoCoberto = 0, Parcial = 1, Coberto = 2 }
+
+/// <summary>Fonte da evidência que sustenta a cobertura (governança híbrida: documentos + entrevistas).</summary>
+public enum CoverageEvidenceSource { None = 0, Document = 1, Interview = 2, Both = 3 }
+
+/// <summary>Situação de uma sessão de entrevista do Auditor Virtual.</summary>
+public enum GrcInterviewStatus { Active = 0, Completed = 1, Abandoned = 2 }
+
+/// <summary>Autor de uma mensagem na entrevista GRC.</summary>
+public enum GrcMessageRole { System = 0, Assistant = 1, User = 2 }
+
+// ---- Identify (ID) — inventário contínuo de ativos --------------------------
+
+/// <summary>Vertical de ativo segundo o NIST CSF 2.0 (ID.AM — Asset Management).</summary>
+public enum AssetCategory
+{
+    Hardware    = 0,   // Dispositivos físicos / hardware
+    Software    = 1,   // Software, sistemas e aplicações
+    Data        = 2,   // Dados / informações
+    People      = 3,   // Pessoas
+    Facilities  = 4,   // Instalações
+    SupplyChain = 5    // Serviços / cadeia de suprimentos
+}
+
+/// <summary>Como o ativo entrou no inventário (base do inventário contínuo).</summary>
+public enum AssetDiscoverySource { Manual = 0, Connector = 1, Import = 2 }

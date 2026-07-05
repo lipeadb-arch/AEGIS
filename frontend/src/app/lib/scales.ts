@@ -1,13 +1,13 @@
 export const C = {
-  violet: '#7c5cff',
-  violet2: '#9f86ff',
-  red: '#ff4d6d',
-  orange: '#ff8a4d',
-  amber: '#f5a623',
-  teal: '#2dd4bf',
-  muted: '#9a9ab4',
-  line: '#262636',
-  panel2: '#1a1a28',
+  violet: '#8b5cff',
+  violet2: '#a488ff',
+  red: '#ff2d6f',
+  orange: '#ff7a3d',
+  amber: '#ffb020',
+  teal: '#26e0ff',
+  muted: '#8791a8',
+  line: 'rgba(122,145,190,0.14)',
+  panel2: '#0f1524',
 };
 
 /** Mapa único banda → cor, compartilhado por risco e ICR (rótulos sinônimos apontam para a mesma cor). */

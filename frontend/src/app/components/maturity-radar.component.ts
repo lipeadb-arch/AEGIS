@@ -30,8 +30,14 @@ interface Axis {
       height="320"
       preserveAspectRatio="xMidYMid meet"
     >
+      <defs>
+        <linearGradient id="radarGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#26e0ff" />
+          <stop offset="100%" stop-color="#8b5cff" />
+        </linearGradient>
+      </defs>
       @for (ring of ringPolys(); track $index) {
-        <polygon [attr.points]="ring" fill="none" stroke="#262636" />
+        <polygon [attr.points]="ring" fill="none" stroke="rgba(122,145,190,0.12)" />
       }
       @for (a of axes(); track a.label) {
         <line
@@ -39,13 +45,13 @@ interface Axis {
           [attr.y1]="cy"
           [attr.x2]="a.x"
           [attr.y2]="a.y"
-          stroke="#262636"
+          stroke="rgba(122,145,190,0.12)"
         />
         <text
           [attr.x]="a.lx"
           [attr.y]="a.ly"
           [attr.text-anchor]="a.anchor"
-          fill="#9a9ab4"
+          fill="#8791a8"
           font-size="12"
           font-family="JetBrains Mono, monospace"
           dominant-baseline="middle"
@@ -55,17 +61,19 @@ interface Axis {
       }
       <polygon
         [attr.points]="targetPoly()"
-        fill="#9a9ab4"
-        fill-opacity="0.06"
-        stroke="#9a9ab4"
+        fill="#ff3d9a"
+        fill-opacity="0.05"
+        stroke="#ff3d9a"
+        stroke-opacity="0.7"
         stroke-dasharray="4 4"
       />
       <polygon
         [attr.points]="currentPoly()"
-        fill="#7c5cff"
-        fill-opacity="0.34"
-        stroke="#7c5cff"
-        stroke-width="1.5"
+        fill="url(#radarGrad)"
+        fill-opacity="0.3"
+        stroke="#26e0ff"
+        stroke-width="1.6"
+        style="filter: drop-shadow(0 0 6px rgba(38,224,255,0.5))"
       />
     </svg>
   `,
