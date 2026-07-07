@@ -159,8 +159,8 @@ body::after {
 
 /* ---- panel grid ---- */
 .grid { display: grid; gap: 18px; }
-.grid.main { grid-template-columns: 1.5fr 1fr; }
-.grid.lower { grid-template-columns: 1.5fr 1fr; margin-top: 18px; }
+.grid.main { grid-template-columns: 1fr 1fr; }
+.grid.trio { grid-template-columns: repeat(3, 1fr); margin-top: 18px; }
 .panel { padding: 22px; }
 .panel h3 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: 0.02em; }
 .panel .hd { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
@@ -224,6 +224,10 @@ body::after {
   .card { transition: none; }
 }
 
+@media (max-width: 1180px) {
+  .grid.trio { grid-template-columns: 1fr 1fr; }
+}
+
 @media (max-width: 920px) {
-  .grid.main, .grid.lower { grid-template-columns: 1fr; }
+  .grid.main, .grid.trio { grid-template-columns: 1fr; }
 }

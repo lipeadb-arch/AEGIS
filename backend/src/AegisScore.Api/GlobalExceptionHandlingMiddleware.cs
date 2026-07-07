@@ -39,6 +39,16 @@ public sealed class GlobalExceptionHandlingMiddleware
 
             await WriteGenericServerErrorAsync(context);
         }
+        catch (AiUnavailableException ex)
+        {
+            // Dependência externa (motor de IA) indisponível — condição OPERACIONAL, não um bug.
+            // Logamos como aviso e devolvemos 503 (não 500): é transitório e o cliente pode repetir.
+            _logger.LogWarning(ex,
+                "IA indisponível. TraceId={TraceId} Method={Method} Path={Path}",
+                context.TraceIdentifier, context.Request.Method, context.Request.Path.Value);
+
+            await WriteServiceUnavailableAsync(context);
+        }
         catch (Exception ex)
         {
             // Any other unhandled failure: log server-side, never leak internals.
@@ -66,6 +76,24 @@ public sealed class GlobalExceptionHandlingMiddleware
         {
             title = "Erro interno do servidor.",
             status = 500,
+            traceId = context.TraceIdentifier,
+        });
+    }
+
+    /// <summary>Writes a 503 with a correlation id — used when the AI engine dependency is down.</summary>
+    private static async Task WriteServiceUnavailableAsync(HttpContext context)
+    {
+        if (context.Response.HasStarted)
+            return;
+
+        context.Response.Clear();
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        context.Response.ContentType = MediaTypeNames.Application.Json; // application/json
+
+        await context.Response.WriteAsJsonAsync(new
+        {
+            title = "Serviço de IA temporariamente indisponível.",
+            status = 503,
             traceId = context.TraceIdentifier,
         });
     }

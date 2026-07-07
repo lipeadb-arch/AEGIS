@@ -36,6 +36,10 @@ public class AegisScoreDbContext : DbContext
     public DbSet<BusinessProcess> Processes => Set<BusinessProcess>();
     public DbSet<Asset> Assets => Set<Asset>();
 
+    // Auth / Identity
+    public DbSet<User> Users => Set<User>();
+    public DbSet<UserRefreshToken> UserRefreshTokens => Set<UserRefreshToken>();
+
     // Assessments
     public DbSet<Assessment> Assessments => Set<Assessment>();
     public DbSet<AssessmentScope> Scopes => Set<AssessmentScope>();
@@ -124,6 +128,29 @@ public class AegisScoreDbContext : DbContext
                 .IsUnique()
                 .HasFilter("\"ExternalRef\" IS NOT NULL");
         });
+        // Auth: usuário (e-mail único por tenant) e refresh tokens (RTR).
+        b.Entity<User>(e =>
+        {
+            e.Property(u => u.Email).HasMaxLength(256).IsRequired();
+            e.Property(u => u.DisplayName).HasMaxLength(200);
+            e.Property(u => u.PasswordHash).IsRequired();
+            e.HasIndex(u => new { u.TenantId, u.Email }).IsUnique();   // login único no escopo do tenant
+        });
+        b.Entity<UserRefreshToken>(e =>
+        {
+            e.Property(t => t.Token).HasMaxLength(512).IsRequired();
+            e.Property(t => t.ReplacedByToken).HasMaxLength(512);
+            e.HasIndex(t => new { t.TenantId, t.Token }).IsUnique();   // lookup do refresh, tenant-leading
+            e.HasIndex(t => new { t.TenantId, t.UserId });             // revogação em massa por usuário (breach)
+            e.HasOne(t => t.User).WithMany(u => u.RefreshTokens)
+                .HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
+
+            // Estado derivado — nunca persistido.
+            e.Ignore(t => t.IsExpired);
+            e.Ignore(t => t.IsRevoked);
+            e.Ignore(t => t.IsActive);
+        });
+
         b.Entity<Assessment>().HasIndex(x => x.TenantId);
         b.Entity<AssessmentScope>().HasIndex(x => new { x.TenantId, x.AssessmentId });
         b.Entity<Evidence>().HasIndex(x => x.TenantId);
@@ -148,6 +175,8 @@ public class AegisScoreDbContext : DbContext
         b.Entity<BusinessUnit>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<BusinessProcess>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<Asset>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<User>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<UserRefreshToken>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<Assessment>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<AssessmentScope>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<Evidence>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

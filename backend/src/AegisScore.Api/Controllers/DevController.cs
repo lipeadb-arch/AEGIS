@@ -1,4 +1,5 @@
 #if DEBUG
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -16,6 +17,7 @@ namespace AegisScore.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/v1/dev")]
+[AllowAnonymous]   // utilitários de bootstrap (DEBUG): criam tenant/usuário demo antes de haver credencial
 public class DevController : ControllerBase
 {
     /// <summary>Fixed id so the frontend can hard-code it in environment.ts.</summary>
@@ -249,6 +251,47 @@ public class DevController : ControllerBase
             overdueActionPlans = overdue,
             governanceDocuments = 2,
             coverageEntries = coverage.Length,
+        });
+    }
+
+    /// <summary>
+    /// (Re)cria um usuário demo no tenant de demonstração para exercitar o login/refresh da Etapa 2.
+    /// Idempotente. Roda sob o SystemTenantContext (DemoTenantId), então o stamping fail-closed é
+    /// satisfeito sem depender do header X-Tenant.
+    /// </summary>
+    [HttpPost("seed-user")]
+    public async Task<IActionResult> SeedUser([FromServices] IPasswordHasher hasher, CancellationToken ct)
+    {
+        if (!_env.IsDevelopment())
+            return NotFound();
+
+        const string email = "analista@demo.aegis";
+        const string password = "Aegis@12345";
+
+        await using var db = new AegisScoreDbContext(_dbOptions, new SystemTenantContext(DemoTenantId));
+
+        var existing = await db.Users.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.TenantId == DemoTenantId && u.Email == email, ct);
+        if (existing is not null)
+            return Ok(new { message = "Usuário demo já existe.", email, tenantId = DemoTenantId });
+
+        db.Users.Add(new User
+        {
+            TenantId = DemoTenantId,
+            Email = email,
+            DisplayName = "Analista Demo",
+            PasswordHash = hasher.Hash(password),
+            Role = UserRole.TenantAdmin,
+            IsActive = true,
+        });
+        await db.SaveChangesAsync(ct);
+
+        return Ok(new
+        {
+            message = "Usuário demo criado. Faça login com o header X-Tenant apontando para este tenantId.",
+            email,
+            password,
+            tenantId = DemoTenantId,
         });
     }
 

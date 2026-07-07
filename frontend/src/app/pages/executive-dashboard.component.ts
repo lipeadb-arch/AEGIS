@@ -4,19 +4,21 @@ import { DashboardService } from '../services/dashboard.service';
 import { sampleDashboard } from '../data/sample-dashboard';
 import { icrColor } from '../lib/scales';
 import { environment } from '../../environments/environment';
-import { MaturityRadarComponent } from '../components/maturity-radar.component';
 import { IcrGaugeComponent } from '../components/icr-gauge.component';
 import { RiskHeatmapComponent } from '../components/risk-heatmap.component';
 import { GapChartComponent } from '../components/gap-chart.component';
 import { RiskLevelsComponent } from '../components/risk-levels.component';
 import { ExposureCardComponent } from '../components/exposure-card.component';
+import { MaturityGaugeComponent } from '../components/maturity-gauge.component';
+import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bars.component';
 
 @Component({
   selector: 'app-executive-dashboard',
   standalone: true,
   imports: [
-    MaturityRadarComponent,
     IcrGaugeComponent,
+    MaturityGaugeComponent,
+    MaturityBarsComponent,
     RiskHeatmapComponent,
     GapChartComponent,
     RiskLevelsComponent,
@@ -58,11 +60,6 @@ import { ExposureCardComponent } from '../components/exposure-card.component';
       <p class="eyebrow">Exposição do negócio</p>
       <section class="cards">
         <app-exposure-card
-          label="Maturidade geral"
-          [value]="data().exposure.overallMaturity.toFixed(1)"
-          [suffix]="'/ alvo ' + data().exposure.targetMaturity.toFixed(1)"
-        />
-        <app-exposure-card
           label="Processos críticos expostos"
           [value]="data().exposure.criticalProcessesExposed"
           tone="danger"
@@ -79,19 +76,26 @@ import { ExposureCardComponent } from '../components/exposure-card.component';
         />
       </section>
 
+      <!-- Painéis principais (Cenário Hollywood): gauge de maturidade + histograma por função. -->
       <div class="grid main">
         <div class="panel">
           <div class="hd">
-            <h3>Maturidade por função NIST CSF 2.0</h3>
-            <span class="hint">CMMI 1–5</span>
+            <h3>Maturidade Geral</h3>
+            <span class="hint">CMMI 1–5 · alvo {{ maturityTarget().toFixed(1) }}</span>
           </div>
-          <app-maturity-radar [data]="data().maturityByFunction" />
-          <div class="legend">
-            <span><i style="background:#26e0ff"></i> Atual</span>
-            <span><i style="background:#ff3d9a"></i> Alvo</span>
-          </div>
+          <app-maturity-gauge [value]="overallMaturity()" [max]="maturityTarget()" />
         </div>
 
+        <div class="panel">
+          <div class="hd">
+            <h3>Maturidade por Função</h3>
+            <span class="hint">escala 0–{{ maturityTarget().toFixed(0) }}</span>
+          </div>
+          <app-maturity-bars [data]="maturityBars()" [max]="maturityTarget()" />
+        </div>
+      </div>
+
+      <div class="grid trio">
         <div class="panel">
           <div class="hd"><h3>Índice de Criticidade (ICR)</h3></div>
           <app-icr-gauge [icr]="data().icr" />
@@ -100,9 +104,7 @@ import { ExposureCardComponent } from '../components/exposure-card.component';
           </div>
           <app-risk-levels [data]="data().riskByLevel" />
         </div>
-      </div>
 
-      <div class="grid lower">
         <div class="panel">
           <div class="hd">
             <h3>Maiores gaps por categoria</h3>
@@ -125,6 +127,20 @@ export class ExecutiveDashboardComponent implements OnInit {
   data = signal<ExecutiveDashboard>(sampleDashboard);
   live = signal(false);
   loadError = signal(false);
+
+  // ---- Mock visual (Cenário Hollywood) — Signals de apresentação ----
+  /** Maturidade geral apontada pelo gauge (escala CMMI 0 → alvo). */
+  overallMaturity = signal(3.4);
+  maturityTarget = signal(4);
+  /** Maturidade por Função NIST — ordem e valores mockados (escala 0–4). */
+  maturityBars = signal<FunctionScore[]>([
+    { code: 'DE', label: 'Detect', value: 1.0 },
+    { code: 'GV', label: 'Govern', value: 1.1 },
+    { code: 'ID', label: 'Identify', value: 1.0 },
+    { code: 'PR', label: 'Protect', value: 1.0 },
+    { code: 'RC', label: 'Recover', value: 1.0 },
+    { code: 'RS', label: 'Respond', value: 1.0 },
+  ]);
 
   // Exposto ao template para colorir a pílula do ICR.
   protected readonly icrColor = icrColor;

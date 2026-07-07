@@ -1,34 +1,44 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { toSignal } from '@angular/core/rxjs-interop';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router } from '@angular/router';
-import { filter, map } from 'rxjs';
 import { CoverageChange, IdentifiedRisk } from '../models/governance.models';
 
-/** As seis Funções do NIST CSF 2.0 — o "contexto ativo" do Agente Global. */
+/** As seis Funções do NIST CSF 2.0. */
 export type NistFunction = 'Govern' | 'Identify' | 'Protect' | 'Detect' | 'Respond' | 'Recover';
 
-/** Metadados de apresentação de cada Função (código oficial + rótulo PT-BR + se há agente real). */
+/**
+ * Contexto ativo do Agente Global: uma das Funções NIST OU 'General' — a visão neutra das rotas
+ * sem Função dedicada (dashboard, deep-links, rotas futuras). Substitui o antigo fallback que
+ * "prendia" o agente em Govern em qualquer aba fora da Governança.
+ */
+export type AgentContext = NistFunction | 'General';
+
+/** Metadados de apresentação de cada contexto (código oficial + rótulo PT-BR + se há agente real). */
 export interface NistContext {
-  readonly fn: NistFunction;
-  readonly code: string; // GV, ID, PR, DE, RS, RC
+  readonly fn: AgentContext;
+  readonly code: string; // GV, ID, PR, DE, RS, RC — ou '—' para a visão geral
   readonly label: string; // rótulo PT-BR
   readonly ready: boolean; // há um agente dedicado por trás? (só GOVERN hoje)
 }
 
-const CONTEXTS: Record<NistFunction, NistContext> = {
+const CONTEXTS: Record<AgentContext, NistContext> = {
   Govern: { fn: 'Govern', code: 'GV', label: 'Governar', ready: true },
   Identify: { fn: 'Identify', code: 'ID', label: 'Identificar', ready: false },
   Protect: { fn: 'Protect', code: 'PR', label: 'Proteger', ready: false },
   Detect: { fn: 'Detect', code: 'DE', label: 'Detectar', ready: false },
   Respond: { fn: 'Respond', code: 'RS', label: 'Responder', ready: false },
   Recover: { fn: 'Recover', code: 'RC', label: 'Recuperar', ready: false },
+  General: { fn: 'General', code: '—', label: 'Visão Geral', ready: false },
 };
 
-/** 1º segmento da rota → Função NIST. Rotas não mapeadas caem em GOVERN (fallback). */
-const ROUTE_TO_FUNCTION: Record<string, NistFunction> = {
+/**
+ * 1º segmento da rota → contexto do Agente. Só as rotas com Função dedicada são mapeadas;
+ * o dashboard e qualquer rota desconhecida caem em 'General' (fallback neutro).
+ * Obs.: a rota real do pilar Identify é `/assets`.
+ */
+const ROUTE_TO_CONTEXT: Record<string, AgentContext> = {
   governance: 'Govern',
   assets: 'Identify',
-  dashboard: 'Govern',
 };
 
 /**
@@ -40,7 +50,7 @@ const ROUTE_TO_FUNCTION: Record<string, NistFunction> = {
  * mudanças de cobertura/risco produzidas pela entrevista são publicadas aqui, e as telas que
  * exibem cobertura (ex.: o strip de GOVERN) reagem a esses sinais.
  *
- * Padrão da casa: signals puros, zero-dependência.
+ * Padrão da casa: signals puros, standalone, zero-dependência de terceiros.
  */
 @Injectable({ providedIn: 'root' })
 export class AgentStateService {
@@ -48,23 +58,34 @@ export class AgentStateService {
 
   // ---- Contexto ativo (derivado da rota) ----------------------------------
 
-  /** URL corrente — atualiza a cada navegação concluída. */
-  private readonly url = toSignal(
-    this.router.events.pipe(
-      filter((e): e is NavigationEnd => e instanceof NavigationEnd),
-      map((e) => e.urlAfterRedirects),
-    ),
-    { initialValue: this.router.url },
-  );
+  /**
+   * Contexto ativo. Semeado com a URL corrente (cobre o primeiro paint e deep-links) e
+   * reprojetado a cada NavigationEnd — determinístico, sem depender do timing de subscribe.
+   */
+  private readonly _activeFunction = signal<AgentContext>(this.contextForUrl(this.router.url));
 
-  /** Função NIST correspondente à aba atual. */
-  readonly activeFunction = computed<NistFunction>(() => {
-    const seg = this.url().split(/[?#]/)[0].split('/').filter(Boolean)[0] ?? '';
-    return ROUTE_TO_FUNCTION[seg] ?? 'Govern';
-  });
+  /** Função NIST (ou 'General') correspondente à aba atual. */
+  readonly activeFunction = this._activeFunction.asReadonly();
 
   /** Metadados do contexto ativo (código/rótulo/disponibilidade). */
-  readonly context = computed<NistContext>(() => CONTEXTS[this.activeFunction()]);
+  readonly context = computed<NistContext>(() => CONTEXTS[this._activeFunction()]);
+
+  constructor() {
+    // Escuta explicitamente o fim de cada navegação e reprojeta o contexto na aba corrente.
+    // takeUntilDestroyed encerra a assinatura junto com o serviço (limpo em testes/HMR);
+    // em runtime o serviço é singleton root e vive o tempo todo da app.
+    this.router.events.pipe(takeUntilDestroyed()).subscribe((e) => {
+      if (e instanceof NavigationEnd) {
+        this._activeFunction.set(this.contextForUrl(e.urlAfterRedirects));
+      }
+    });
+  }
+
+  /** Deriva o contexto do 1º segmento da URL; rotas sem Função dedicada → 'General'. */
+  private contextForUrl(url: string): AgentContext {
+    const seg = url.split(/[?#]/)[0].split('/').filter(Boolean)[0] ?? '';
+    return ROUTE_TO_CONTEXT[seg] ?? 'General';
+  }
 
   // ---- Drawer -------------------------------------------------------------
 

@@ -10,7 +10,7 @@ public class AiOptions
 {
     public string Provider { get; set; } = "anthropic";
     public string ApiKey { get; set; } = "";
-    public string Model { get; set; } = "claude-sonnet-4-6";
+    public string Model { get; set; } = "claude-sonnet-5";
     public string BaseUrl { get; set; } = "https://api.anthropic.com/v1/messages";
     public string AnthropicVersion { get; set; } = "2023-06-01";
     public int MaxTokens { get; set; } = 2000;
@@ -130,7 +130,9 @@ public class ClaudeAssessmentService : IAiAssessmentService
     private async Task<string> CompleteTextAsync(string system, string user, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_opt.ApiKey))
-            throw new InvalidOperationException("AI engine not configured. Set Ai:ApiKey (or swap the IAiAssessmentService implementation).");
+            throw new AiUnavailableException(
+                "Motor de IA não configurado: defina Ai:ApiKey via 'dotnet user-secrets' " +
+                "(ou registre outra implementação de IAiAssessmentService).");
 
         var body = new
         {

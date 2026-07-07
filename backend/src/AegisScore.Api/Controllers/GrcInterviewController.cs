@@ -45,6 +45,8 @@ public class GrcInterviewController : ControllerBase
         if (targets.Count == 0)
             return BadRequest("Sem gaps a investigar — todas as subcategorias GV já estão cobertas.");
 
+        // A sessão nasce em memória — Entity.Id já é gerado no cliente (Guid.NewGuid()),
+        // então podemos referenciá-lo na chamada à IA antes de qualquer gravação.
         var session = new GrcInterviewSession
         {
             Title = string.IsNullOrWhiteSpace(req.Title) ? $"Diagnóstico de Gaps — {DateTime.UtcNow:yyyy-MM}" : req.Title!,
@@ -52,13 +54,26 @@ public class GrcInterviewController : ControllerBase
             Status = GrcInterviewStatus.Active,
             TargetSubcategoryCodes = targets,
         };
-        _db.GrcInterviewSessions.Add(session);
-        await _db.SaveChangesAsync(ct);   // carimba TenantId e materializa session.Id
 
+        // IA PRIMEIRO: se o motor de IA falhar (ex.: AiUnavailableException → 503), nada é
+        // gravado no PostgreSQL — evita as sessões órfãs (Active, sem mensagens).
         var turn = await _ai.ConductInterviewTurnAsync(
             new InterviewContext(session.Id, session.Title, GapFraming(targets)), ct);
 
-        var question = await AppendMessageAsync(session.Id, GrcMessageRole.Assistant, turn.Question, turn.TargetSubcategoryCode, ct);
+        // Só então persistimos sessão + primeira pergunta juntas, num único SaveChanges
+        // (mesma transação): ou ambas entram, ou nenhuma. O StampTenant carimba as duas.
+        var question = new GrcInterviewMessage
+        {
+            SessionId = session.Id,
+            Role = GrcMessageRole.Assistant,
+            Content = turn.Question ?? "",
+            Sequence = 0,
+            TargetSubcategoryCode = turn.TargetSubcategoryCode,
+        };
+        session.Messages.Add(question);
+        _db.GrcInterviewSessions.Add(session);
+        await _db.SaveChangesAsync(ct);
+
         return new InterviewTurnDto(session.Id, ToDto(question), turn.IsComplete, null, null);
     }
 

@@ -2,11 +2,15 @@ import { Routes } from '@angular/router';
 import { ExecutiveDashboardComponent } from './pages/executive-dashboard.component';
 import { AssetInventoryComponent } from './pages/asset-inventory.component';
 import { DocumentHubComponent } from './pages/document-hub.component';
+import { LoginComponent } from './pages/login.component';
+import { authGuard } from './guards/auth.guard';
 
 export const routes: Routes = [
+  { path: 'login', component: LoginComponent, title: 'Aegis · Entrar' },
+
   { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
-  { path: 'dashboard', component: ExecutiveDashboardComponent, title: 'Aegis · Dashboard Executivo' },
-  { path: 'assets', component: AssetInventoryComponent, title: 'Aegis · Inventário de Ativos' },
-  { path: 'governance', component: DocumentHubComponent, title: 'Aegis · Central de Documentos (Govern)' },
+  { path: 'dashboard', component: ExecutiveDashboardComponent, canActivate: [authGuard], title: 'Aegis · Dashboard Executivo' },
+  { path: 'assets', component: AssetInventoryComponent, canActivate: [authGuard], title: 'Aegis · Inventário de Ativos' },
+  { path: 'governance', component: DocumentHubComponent, canActivate: [authGuard], title: 'Aegis · Central de Documentos (Govern)' },
   { path: '**', redirectTo: 'dashboard' },
 ];

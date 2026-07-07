@@ -2,6 +2,11 @@ using AegisScore.Domain;
 
 namespace AegisScore.Api.Contracts;
 
+// ---- Auth ----
+public record LoginRequest(string Email, string Password);
+/// <summary>O refresh token NÃO trafega aqui — vai apenas no cookie HttpOnly. Só o access token é exposto.</summary>
+public record AuthResponse(string AccessToken, DateTimeOffset AccessTokenExpiresAt);
+
 // ---- Framework ----
 public record FrameworkDto(Guid Id, string Name, string? Source, IReadOnlyList<FunctionDto> Functions);
 public record FunctionDto(string Code, string Name, string Definition, IReadOnlyList<CategoryDto> Categories);

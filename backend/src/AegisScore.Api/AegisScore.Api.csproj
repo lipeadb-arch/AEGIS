@@ -3,8 +3,12 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Habilita o Secret Manager (dotnet user-secrets) para segredos de dev — ex.: Ai:ApiKey.
+         O WebApplication.CreateBuilder carrega esses segredos automaticamente em Development. -->
+    <UserSecretsId>d8f3a1c6-4e2b-47a9-9b7d-2c5e8f0a1b34</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.6">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
