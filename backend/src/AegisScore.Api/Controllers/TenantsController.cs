@@ -1,20 +1,52 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Api.Contracts;
+using AegisScore.Application.Abstractions;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
 namespace AegisScore.Api.Controllers;
 
-/// <summary>Onboarding: register the client, its areas/processes and tool connectors.</summary>
+/// <summary>
+/// Onboarding: cadastro do cliente, suas áreas/processos e conectores.
+///
+/// [Alto 3 / Médio 6] O tenant NUNCA vem da rota (IDOR latente eliminado): as escritas escopadas a um
+/// tenant derivam o TenantId exclusivamente do contexto ambiente (claim do JWT, via ITenantContext), e
+/// o StampTenant do DbContext revalida na gravação (fail-closed). Escritas de configuração exigem o
+/// papel TenantAdmin; criar um novo tenant é operação de PLATAFORMA (PlatformAdmin), fora do fluxo de
+/// um tenant comum.
+/// </summary>
 [ApiController]
 [Route("api/v1/tenants")]
+[Authorize]
 public class TenantsController : ControllerBase
 {
     private readonly AegisScoreDbContext _db;
-    public TenantsController(AegisScoreDbContext db) => _db = db;
+    private readonly ITenantContext _tenant;
+    private readonly IConnectorSecretProtector _secrets;
 
+    public TenantsController(
+        AegisScoreDbContext db, ITenantContext tenant, IConnectorSecretProtector secrets)
+    {
+        _db = db;
+        _tenant = tenant;
+        _secrets = secrets;
+    }
+
+    /// <summary>
+    /// Tenant ambiente resolvido pelo JWT. Garantido não-nulo numa rota autenticada — o
+    /// TenantConsistencyMiddleware barra (403) qualquer token sem claim tenant_id válida.
+    /// </summary>
+    private Guid CurrentTenantId => _tenant.TenantId
+        ?? throw new InvalidOperationException("Rota autenticada sem tenant no contexto.");
+
+    /// <summary>
+    /// [Alto 3] Cria um novo tenant. Operação de PLATAFORMA — exige PlatformAdmin, papel que nenhum
+    /// usuário de tenant comum possui (provisionado fora do onboarding self-service).
+    /// </summary>
     [HttpPost]
+    [Authorize(Roles = "PlatformAdmin")]
     public async Task<ActionResult<IdResponse>> Create(CreateTenantRequest req, CancellationToken ct)
     {
         if (await _db.Tenants.AnyAsync(x => x.Slug == req.Slug, ct))
@@ -26,50 +58,59 @@ public class TenantsController : ControllerBase
         return new IdResponse(t.Id);
     }
 
-    [HttpPost("{tenantId:guid}/business-units")]
-    public async Task<ActionResult<IdResponse>> AddBusinessUnit(Guid tenantId, CreateBusinessUnitRequest req, CancellationToken ct)
+    [HttpPost("business-units")]
+    [Authorize(Roles = "TenantAdmin")]
+    public async Task<ActionResult<IdResponse>> AddBusinessUnit(
+        CreateBusinessUnitRequest req, CancellationToken ct)
     {
         var bu = new BusinessUnit
         {
-            TenantId = tenantId,
+            TenantId = CurrentTenantId,   // do JWT, nunca da rota; StampTenant revalida
             Name = req.Name,
             Code = req.Code,
             ManagerName = req.ManagerName,
-            ManagerEmail = req.ManagerEmail
+            ManagerEmail = req.ManagerEmail,
         };
         _db.BusinessUnits.Add(bu);
         await _db.SaveChangesAsync(ct);
         return new IdResponse(bu.Id);
     }
 
-    [HttpPost("{tenantId:guid}/processes")]
-    public async Task<ActionResult<IdResponse>> AddProcess(Guid tenantId, CreateProcessRequest req, CancellationToken ct)
+    [HttpPost("processes")]
+    [Authorize(Roles = "TenantAdmin")]
+    public async Task<ActionResult<IdResponse>> AddProcess(
+        CreateProcessRequest req, CancellationToken ct)
     {
         var p = new BusinessProcess
         {
-            TenantId = tenantId,
+            TenantId = CurrentTenantId,
             Name = req.Name,
             ProcessCategory = req.ProcessCategory,
             Classification = req.Classification,
-            ProcessValue = req.ProcessValue
+            ProcessValue = req.ProcessValue,
         };
         _db.Processes.Add(p);
         await _db.SaveChangesAsync(ct);
         return new IdResponse(p.Id);
     }
 
-    [HttpPost("{tenantId:guid}/connectors")]
-    public async Task<ActionResult<IdResponse>> AddConnector(Guid tenantId, CreateConnectorRequest req, CancellationToken ct)
+    [HttpPost("connectors")]
+    [Authorize(Roles = "TenantAdmin")]
+    public async Task<ActionResult<IdResponse>> AddConnector(
+        CreateConnectorRequest req, CancellationToken ct)
     {
         var c = new ConnectorConfig
         {
-            TenantId = tenantId,
+            TenantId = CurrentTenantId,
             Provider = req.Provider,
             Capability = req.Capability,
             DisplayName = req.DisplayName,
             AuthType = req.AuthType,
-            EncryptedSettings = req.EncryptedSettings, // caller sends already-encrypted blob
-            SyncIntervalMinutes = req.SyncIntervalMinutes
+            // [Médio 6/Baixo] Segredo do conector (tokens OAuth, API keys) é cifrado NO SERVIDOR via
+            // Data Protection — nunca confiado pré-cifrado do cliente. Em claro só trafega dentro do
+            // TLS; no banco fica cifrado. A decifragem ocorre no momento da coleta (fase de conectores).
+            EncryptedSettings = _secrets.Protect(req.Settings),
+            SyncIntervalMinutes = req.SyncIntervalMinutes,
         };
         _db.Connectors.Add(c);
         await _db.SaveChangesAsync(ct);

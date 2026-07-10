@@ -23,7 +23,7 @@ public record CreateConnectorRequest(
     ConnectorCapability Capability,
     string DisplayName,
     ConnectorAuthType AuthType,
-    string EncryptedSettings,
+    string Settings,             // texto em claro; cifrado no servidor (Data Protection) antes de persistir
     int SyncIntervalMinutes = 360);
 
 public record IdResponse(Guid Id);

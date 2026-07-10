@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
 
@@ -32,6 +33,7 @@ public sealed class AuthController : ControllerBase
 
     /// <summary>Valida credenciais e emite o par de tokens. 401 sem revelar se o e-mail existe.</summary>
     [HttpPost("login")]
+    [EnableRateLimiting("auth-login")]   // [Alto 4] freia brute force / credential stuffing
     public async Task<ActionResult<AuthResponse>> Login(LoginRequest req, CancellationToken ct)
     {
         var pair = await _auth.LoginAsync(req.Email, req.Password, ct);
@@ -44,6 +46,7 @@ public sealed class AuthController : ControllerBase
 
     /// <summary>Rotaciona o refresh token do cookie e devolve um novo access token.</summary>
     [HttpPost("refresh")]
+    [EnableRateLimiting("auth-refresh")]   // [Alto 4] limita o replay em massa (DoS da cascata)
     public async Task<ActionResult<AuthResponse>> Refresh(CancellationToken ct)
     {
         var current = Request.Cookies[RefreshCookie];

@@ -44,6 +44,24 @@ public enum EvidenceSource { SelfDeclared = 0, AiInferred = 1, ApiValidated = 2,
 
 public enum EvaluatedBy { Analyst = 0, Ai = 1 }
 
+/// <summary>Estado de conformidade de um controle NIST para um tenant (núcleo do Aegis Score).</summary>
+public enum ControlStatus { Compliant = 0, NonCompliant = 1, MitigatedByThirdParty = 2 }
+
+/// <summary>
+/// Procedência do veredito aplicado ao ledger de conformidade — define a PRECEDÊNCIA de escrita no
+/// <see cref="TenantControlState"/>. Nome distinto de <see cref="EvidenceSource"/> (procedência de
+/// evidência de assessment, já persistida) e de <see cref="CoverageEvidenceSource"/> (ledger de
+/// cobertura documental): são três eixos diferentes e não devem colidir.
+/// </summary>
+public enum VerdictSource
+{
+    /// <summary>Análise documental (Govern): atesta processo/intenção. Só faz UPGRADE — jamais rebaixa.</summary>
+    Documentary = 0,
+
+    /// <summary>Telemetria (EDR/XDR/SIEM): prova implementação efetiva. AUTORITATIVA — eleva e rebaixa.</summary>
+    Telemetry = 1,
+}
+
 /// <summary>Who/what produced an answer.</summary>
 public enum AnswerSource { SelfDeclared = 0, AiInferred = 1, ApiValidated = 2 }
 

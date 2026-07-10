@@ -49,6 +49,11 @@ public class AegisScoreDbContext : DbContext
     public DbSet<Evidence> Evidence => Set<Evidence>();
     public DbSet<SubcategoryEvaluation> Evaluations => Set<SubcategoryEvaluation>();
 
+    // Aegis Score — estado de conformidade por tenant (desacoplado de campanha de assessment)
+    public DbSet<TenantControlState> TenantControlStates => Set<TenantControlState>();
+    // Aegis Score — inteligência temporal: foto agregada diária p/ o gráfico de tendência de postura
+    public DbSet<TenantScoreSnapshot> TenantScoreSnapshots => Set<TenantScoreSnapshot>();
+
     // Connectors
     public DbSet<ConnectorConfig> Connectors => Set<ConnectorConfig>();
     public DbSet<EvidenceSignal> Signals => Set<EvidenceSignal>();
@@ -103,9 +108,15 @@ public class AegisScoreDbContext : DbContext
 
         // Useful uniqueness / lookups.
         b.Entity<Tenant>().HasIndex(x => x.Slug).IsUnique();
+        // Catálogo NIST — tamanho fixo dos códigos (cabe nos dados do seeder: "GV", "GV.OC",
+        // "GV.OC-01") + unicidade no escopo do pai. O catálogo é versionado por FrameworkVersion,
+        // então um índice único global só em Code colidiria entre versões do framework.
+        b.Entity<NistFunction>().Property(x => x.Code).HasMaxLength(5).IsRequired();
         b.Entity<NistFunction>().HasIndex(x => new { x.FrameworkVersionId, x.Code }).IsUnique();
-        b.Entity<NistCategory>().HasIndex(x => x.Code);
-        b.Entity<NistSubcategory>().HasIndex(x => x.Code);
+        b.Entity<NistCategory>().Property(x => x.Code).HasMaxLength(10).IsRequired();
+        b.Entity<NistCategory>().HasIndex(x => new { x.FunctionId, x.Code }).IsUnique();
+        b.Entity<NistSubcategory>().Property(x => x.Code).HasMaxLength(15).IsRequired();
+        b.Entity<NistSubcategory>().HasIndex(x => new { x.CategoryId, x.Code }).IsUnique();
         b.Entity<Risk>().HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
         b.Entity<EvidenceSignal>().HasIndex(x => new { x.TenantId, x.SignalKey, x.CollectedAt });
 
@@ -168,6 +179,28 @@ public class AegisScoreDbContext : DbContext
         b.Entity<RiskEvaluation>().HasIndex(x => new { x.TenantId, x.RiskId });
         b.Entity<ActionPlan>().HasIndex(x => new { x.TenantId, x.RiskId });
 
+        // Aegis Score — um ÚNICO estado por tenant × subcategoria (o índice único garante que o
+        // "Group By de soma" nunca conte linhas duplicadas). FK para o catálogo global SEM coleção
+        // inversa (o catálogo imutável não referencia dados de tenant); Restrict impede que um
+        // delete no catálogo cascateie sobre o estado do tenant.
+        b.Entity<TenantControlState>(e =>
+        {
+            e.HasIndex(x => new { x.TenantId, x.SubcategoryId }).IsUnique();
+            e.HasOne(x => x.Subcategory).WithMany()
+                .HasForeignKey(x => x.SubcategoryId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Aegis Score — série temporal (Snapshot Agregado Diário). O índice único composto
+        // (TenantId, SnapshotDate) é tenant-leading e faz DUPLO papel: idempotência — o banco
+        // REJEITA fisicamente duas fotos do mesmo tenant no mesmo dia — e performance da consulta
+        // de tendência (seek por tenant + range ordenado por data). DateOnly → coluna `date` nativa
+        // do Npgsql, sem ValueConverter.
+        b.Entity<TenantScoreSnapshot>(e =>
+        {
+            e.HasIndex(x => new { x.TenantId, x.SnapshotDate }).IsUnique();
+        });
+
         // Multi-tenant isolation: every operational entity is scoped to the ambient tenant.
         // Fail-CLOSED: when no tenant is resolved (missing/invalid X-Tenant) the filter yields
         // no rows, instead of leaking every tenant's data. Seed/maintenance code that must span
@@ -195,6 +228,8 @@ public class AegisScoreDbContext : DbContext
         b.Entity<GrcInterviewSession>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<GrcInterviewMessage>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<IdentifiedRisk>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<TenantControlState>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<TenantScoreSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
     }
 
     /// <summary>Stamp tenant (fail-closed) + audit timestamps automatically on save.</summary>

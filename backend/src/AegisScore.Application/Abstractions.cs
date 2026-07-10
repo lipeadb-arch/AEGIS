@@ -36,6 +36,18 @@ public interface IAiAssessmentService
     Task<IReadOnlyList<NormalizedSignal>> NormalizeSignalsAsync(RawSignalBatch batch, CancellationToken ct);
 }
 
+/// <summary>
+/// Transporte de LLM de baixo nível, agnóstico de provedor: entra um par system + user prompt, sai o
+/// texto bruto da conclusão. É o seam que deixa cada serviço dono da própria engenharia de prompt e,
+/// ao mesmo tempo, testável — basta mockar isto para exercitar um serviço (ex.: o avaliador do Aegis
+/// Score) sem chamar um modelo real. Distinto de <see cref="IAiAssessmentService"/> (alto nível, por
+/// caso de uso); este é só o cano de transporte.
+/// </summary>
+public interface ILLMClient
+{
+    Task<string> ExecutePromptAsync(string systemPrompt, string userPrompt, CancellationToken ct = default);
+}
+
 public record DocumentAnalysisRequest(Guid TenantId, string DocumentText, string? FileName);
 public record DocumentClaim(string SubcategoryCode, string Claim, double Confidence);
 public record DocumentAnalysis(string Summary, IReadOnlyList<DocumentClaim> Claims);
@@ -106,6 +118,22 @@ public interface IConnectorRegistry
 public interface ITenantContext
 {
     Guid? TenantId { get; }
+}
+
+// ---- Connector secrets ------------------------------------------------------
+
+/// <summary>
+/// Cifra/decifra o blob de configuração sensível de um conector (tokens OAuth, API keys) ANTES de
+/// persistir. A implementação usa a Data Protection API do ASP.NET Core (chaves gerenciadas fora do
+/// código-fonte). Regra: nunca confiar num blob "já cifrado" enviado pelo cliente.
+/// </summary>
+public interface IConnectorSecretProtector
+{
+    /// <summary>Cifra texto em claro para armazenamento em repouso.</summary>
+    string Protect(string plaintext);
+
+    /// <summary>Decifra o valor cifrado. Lança se o payload foi adulterado ou a chave não confere.</summary>
+    string Unprotect(string protectedValue);
 }
 
 // ---- Document Hub (Govern) --------------------------------------------------

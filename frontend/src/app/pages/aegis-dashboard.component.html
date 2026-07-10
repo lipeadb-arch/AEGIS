@@ -1,0 +1,63 @@
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark">Aegis <b>Score</b></span>
+      <span class="sub">HUD Tático · Tendência de Postura</span>
+    </div>
+    <div class="client">
+      <span class="label">Janela</span>
+      <span class="name">últimos {{ trend().length }} dias</span>
+    </div>
+  </header>
+
+  @if (loadError()) {
+    <div class="notice">
+      <b>Telemetria indisponível.</b> A série de postura não respondeu em
+      <code>{{ apiBase }}</code> — confira o endereço da API, o <code>tenantId</code> e a sessão
+      (token). O console traz o erro completo.
+    </div>
+  }
+
+  <p class="eyebrow">Postura de Segurança</p>
+
+  <!-- Faixa superior: KPIs -->
+  <section class="cards">
+    <article class="card ok hero">
+      <div class="k">Score Atual</div>
+      <div class="v">{{ currentScore().toFixed(1) }}<small>%</small></div>
+    </article>
+
+    <article class="card warn">
+      <div class="k">Controles Pendentes</div>
+      <div class="v">
+        @if (pendingControls() === null) {
+          <span class="v-loading" aria-label="Carregando contagem">···</span>
+        } @else {
+          {{ pendingControls() }}
+        }
+      </div>
+    </article>
+  </section>
+
+  <!-- Corpo central: container reservado para o gráfico de linha (Chart.js será injetado aqui). -->
+  <section class="panel trend-panel">
+    <div class="hd">
+      <h3>Tendência de Postura</h3>
+      <span class="hint">Aegis Score · % diário</span>
+    </div>
+
+    <div
+      class="trend-chart"
+      role="img"
+      aria-label="Gráfico de linha da tendência de postura de segurança dos últimos dias"
+    >
+      @if (loading()) {
+        <span class="trend-chart__status">Carregando telemetria…</span>
+      } @else if (trend().length === 0) {
+        <span class="trend-chart__status">Sem snapshots no período</span>
+      } @else {
+        <canvas #chartCanvas class="trend-chart__canvas"></canvas>
+      }
+    </div>
+  </section>
+</div>

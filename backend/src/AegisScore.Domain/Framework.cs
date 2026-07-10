@@ -46,6 +46,12 @@ public class NistSubcategory : Entity
     public string Description { get; set; } = "";
     public string? ImplementationExamples { get; set; }
 
+    /// <summary>
+    /// Peso máximo (denominador) desta subcategoria no Aegis Score. O cálculo é um Group By de soma:
+    /// SUM(TenantControlState.CurrentScore) / SUM(MaxScorePoints). Populado pelo seeder do catálogo.
+    /// </summary>
+    public int MaxScorePoints { get; set; }
+
     /// <summary>List of mapped controls (CCM, CRI, CIS, SP 800-53). Stored as jsonb.</summary>
     public List<string> InformativeReferences { get; set; } = new();
 }

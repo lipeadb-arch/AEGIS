@@ -19,7 +19,8 @@ public sealed class JwtTokenService : IJwtTokenService
     /// <summary>Claim com o tenant do usuário — base para o isolamento derivado do token.</summary>
     public const string TenantClaim = "tenant_id";
 
-    private const int MinKeyBytes = 32;   // HS256 exige chave de pelo menos 256 bits
+    private const int MinKeyBytes = 32;           // HS256 exige chave de pelo menos 256 bits
+    private const int MaxAccessTokenMinutes = 10;  // [Médio 7] teto rígido de vida do access token
 
     private readonly JwtOptions _opt;
     private readonly SigningCredentials _creds;
@@ -40,7 +41,10 @@ public sealed class JwtTokenService : IJwtTokenService
     public (string Token, DateTimeOffset ExpiresAt) CreateAccessToken(User user)
     {
         var now = DateTimeOffset.UtcNow;
-        var expires = now.AddMinutes(_opt.AccessTokenMinutes);
+        // [Médio 7] Teto rígido de 10 min mesmo que a config peça mais — invariante de segurança
+        // independente de drift em appsettings/env.
+        var minutes = Math.Clamp(_opt.AccessTokenMinutes, 1, MaxAccessTokenMinutes);
+        var expires = now.AddMinutes(minutes);
 
         var claims = new List<Claim>
         {

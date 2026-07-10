@@ -12,6 +12,13 @@
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.19.1" />
+    <!-- Data Protection: só as ABSTRAÇÕES (IDataProtectionProvider/IDataProtector) para cifrar os
+         segredos de conector. A implementação vem do framework via AddDataProtection() no composition
+         root (Api). Pacote enxuto preserva o limite da Clean Architecture e alinha com a linha 8.0.x. -->
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.Abstractions" Version="8.0.0" />
+    <!-- Extração de texto de PDF (Document Hub / Govern) via PdfPig — 100% gerenciado, sem binário
+         nativo. NB: o ID do pacote é "PdfPig"; "UglyToad.PdfPig" é só o namespace do código. -->
+    <PackageReference Include="PdfPig" Version="0.1.15" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\AegisScore.Application\AegisScore.Application.csproj" />

@@ -30,8 +30,12 @@ public class User : Entity, ITenantOwned
     public ICollection<UserRefreshToken> RefreshTokens { get; set; } = new List<UserRefreshToken>();
 }
 
-/// <summary>Papel do usuário no tenant. Base para a autorização (RBAC) das próximas etapas.</summary>
-public enum UserRole { Analyst = 0, Manager = 1, TenantAdmin = 2 }
+/// <summary>
+/// Papel do usuário. Analyst/Manager/TenantAdmin são papéis DENTRO de um tenant. PlatformAdmin é um
+/// papel de PLATAFORMA (operações cross-tenant, ex.: criar tenants) — provisionado fora do onboarding
+/// self-service e que nenhum usuário de tenant comum deve receber.
+/// </summary>
+public enum UserRole { Analyst = 0, Manager = 1, TenantAdmin = 2, PlatformAdmin = 3 }
 
 /// <summary>
 /// Refresh token persistido para Refresh Token Rotation (RTR). Cada token é de uso único:

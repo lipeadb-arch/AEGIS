@@ -220,8 +220,55 @@ body::after {
 }
 .notice code { color: var(--text); background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 4px; }
 
+/* ---- HUD tático: KPI principal + área do gráfico de tendência ---- */
+.card.hero .v { font-size: 46px; }
+.card.hero .k { color: var(--cyan); }
+
+.trend-panel { margin-top: 18px; }
+.trend-chart {
+  position: relative;
+  height: 340px;
+  margin-top: 4px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* Piso de HUD atrás do canvas (a grade fina do gráfico é desenhada no 2D). */
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(0, 229, 160, 0.06), transparent 60%),
+    var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line-2), inset 0 0 60px -30px rgba(0, 229, 160, 0.45);
+}
+.trend-chart__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.trend-chart__status {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Indicador discreto de carregamento no valor de um KPI (ex.: contagem de pendências). */
+.card .v .v-loading {
+  font-family: var(--mono);
+  font-size: 22px;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  animation: v-loading-pulse 1.4s ease-in-out infinite;
+}
+@keyframes v-loading-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.7; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .card { transition: none; }
+  .card .v .v-loading { animation: none; }
 }
 
 @media (max-width: 1180px) {

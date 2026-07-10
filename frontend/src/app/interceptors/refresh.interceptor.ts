@@ -1,6 +1,6 @@
 import { HttpErrorResponse, HttpHandlerFn, HttpInterceptorFn, HttpRequest } from '@angular/common/http';
 import { inject } from '@angular/core';
-import { BehaviorSubject, Observable, catchError, filter, switchMap, take, throwError } from 'rxjs';
+import { BehaviorSubject, Observable, catchError, filter, finalize, switchMap, take, throwError, timeout } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 import { ALREADY_RETRIED, isAuthEndpoint } from './api-endpoints';
 
@@ -19,6 +19,13 @@ type TokenState =
 // "lock" funcionar. isRefreshing é o mutex; gate$ é o canal por onde a fila é liberada.
 let isRefreshing = false;
 const gate$ = new BehaviorSubject<TokenState>({ kind: 'pending' });
+
+/**
+ * Teto de espera do refresh. [Médio 5] Sem ele, um refresh preso (rede pendurada) deixaria isRefreshing
+ * travado em true e TODA a fila bloqueada no portão para sempre — um único request pendurado wedgeava o
+ * app inteiro. Passado o teto, considera-se o refresh falho e libera-se a fila.
+ */
+const REFRESH_TIMEOUT_MS = 10_000;
 
 /**
  * Interceptor EXTERNO da cadeia. Captura 401, coordena um único refresh e refaz as requisições —
@@ -48,7 +55,9 @@ function handle401(req: HttpRequest<unknown>, next: HttpHandlerFn, auth: AuthSer
     return gate$.pipe(
       filter((s) => s.kind !== 'pending'), // bloqueia enquanto o refresh corre
       take(1), // pega só a resolução e encerra a inscrição
+      timeout(REFRESH_TIMEOUT_MS), // [Médio 5] não espera o líder para sempre
       switchMap((s) => (s.kind === 'valid' ? retry(req, next) : failed())),
+      catchError(() => failed()), // timeout do portão → falha esta requisição, sem travar
     );
   }
 
@@ -57,14 +66,18 @@ function handle401(req: HttpRequest<unknown>, next: HttpHandlerFn, auth: AuthSer
   gate$.next({ kind: 'pending' }); // fecha o portão para os que chegarem agora
 
   return auth.refresh().pipe(
-    switchMap((newToken) => {
+    timeout(REFRESH_TIMEOUT_MS), // [Médio 5] refresh preso não pode pendurar o app
+    // Libera o mutex em QUALQUER desfecho (sucesso, erro, timeout, unsubscribe). Fica ANTES do
+    // switchMap para disparar quando o REFRESH resolve — não quando o request refeito termina.
+    finalize(() => {
       isRefreshing = false;
+    }),
+    switchMap((newToken) => {
       gate$.next({ kind: 'valid', token: newToken }); // libera a fila com o token novo
       return retry(req, next);
     }),
     catchError((err) => {
-      isRefreshing = false;
-      gate$.next({ kind: 'failed' }); // libera a fila com falha
+      gate$.next({ kind: 'failed' }); // libera a fila com falha (inclui o timeout acima)
       auth.forceLogout(); // limpa memória + redireciona ao login
       return throwError(() => err);
     }),

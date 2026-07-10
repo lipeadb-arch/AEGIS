@@ -68,6 +68,11 @@ import { AuthService } from './services/auth.service';
           <span class="lb">Dashboard</span>
         </a>
 
+        <a class="nav-item" routerLink="/aegis-score" routerLinkActive="active">
+          <span class="ic" aria-hidden="true">◈</span>
+          <span class="lb">Aegis Score HUD</span>
+        </a>
+
         <p class="nav-group">Funções · NIST CSF 2.0</p>
 
         <!-- Govern e Identify têm tela; as demais Funções são o roadmap (sem rota ainda). -->

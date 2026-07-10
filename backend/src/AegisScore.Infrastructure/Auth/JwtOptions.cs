@@ -15,8 +15,12 @@ public sealed class JwtOptions
     public string Issuer { get; set; } = "aegis-score";
     public string Audience { get; set; } = "aegis-score";
 
-    /// <summary>Vida curta do access token (JWT). Padrão: 15 minutos.</summary>
-    public int AccessTokenMinutes { get; set; } = 15;
+    /// <summary>
+    /// Vida curta do access token (JWT). Padrão: 10 minutos. O <see cref="JwtTokenService"/> aplica
+    /// um teto RÍGIDO de 10 min: como o access token não é revogável até expirar, sua vida curta limita
+    /// o impacto de um token vazado e da cascata de breach (que só derruba refresh tokens).
+    /// </summary>
+    public int AccessTokenMinutes { get; set; } = 10;
 
     /// <summary>Vida do refresh token (janela da sessão com rotação). Padrão: 7 dias.</summary>
     public int RefreshTokenDays { get; set; } = 7;

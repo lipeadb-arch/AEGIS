@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- FluentAssertions fixado em 6.12.0: última linha sob Apache 2.0. A v8+ passou a licença
+         comercial (Xceed) — pino aqui para não introduzir dívida de licença no projeto. -->
+    <PackageReference Include="FluentAssertions" Version="6.12.0" />
+    <!-- Configuração/DI concretos para exercitar o composition root real nos testes de fail-open. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+    <!-- SQLite in-memory: banco relacional real e efêmero para exercitar o FrameworkSeeder ponta a
+         ponta (EnsureCreated + SaveChanges) sem PostgreSQL. Alinhado à linha 8.0.x do EF Core. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.6" />
+    <!-- Eleva o SQLite nativo (transitivo via EF Core Sqlite 8.0.6) para a build mais recente. Escopo
+         de teste apenas — o runtime de produção é PostgreSQL, nunca SQLite. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.10" />
+  </ItemGroup>
+
+  <!-- Auditoria NuGet: o advisory GHSA-2m69-gcr7-jv3q marca toda versão publicada do e_sqlite3 nativo
+       (sem build corrigida upstream). Suprimido de forma explícita e rastreável — NÃO um <NoWarn> cego:
+       o SQLite existe só no ambiente de TESTE (produção é PostgreSQL) e roda apenas com ':memory:' sobre
+       dados que nós mesmos geramos, fora de qualquer superfície de ataque. -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AegisScore.Infrastructure\AegisScore.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

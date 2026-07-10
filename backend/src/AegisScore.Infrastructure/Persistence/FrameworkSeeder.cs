@@ -14,6 +14,10 @@ public static class FrameworkSeeder
 
     public static async Task SeedAsync(AegisScoreDbContext db, string catalogPath, CancellationToken ct = default)
     {
+        // Backfill idempotente: garante peso > 0 em catálogos semeados ANTES de MaxScorePoints existir
+        // (o denominador do Aegis Score nunca pode zerar). Roda antes do guard de existência abaixo.
+        await BackfillMissingWeightsAsync(db, ct);
+
         if (await db.FrameworkVersions.AnyAsync(f => f.Name == "NIST CSF 2.0", ct))
             return;
 
@@ -73,7 +77,9 @@ public static class FrameworkSeeder
                         Code = sub.Code,
                         Description = sub.Description ?? "",
                         ImplementationExamples = sub.ImplementationExamples,
-                        InformativeReferences = sub.InformativeReferences ?? new()
+                        InformativeReferences = sub.InformativeReferences ?? new(),
+                        // Nunca-zero: usa o peso do catálogo; se ausente ou <= 0, deriva da categoria.
+                        MaxScorePoints = sub.MaxScorePoints is > 0 ? sub.MaxScorePoints.Value : DefaultWeight(sub.Code)
                     });
                 }
 
@@ -91,10 +97,44 @@ public static class FrameworkSeeder
         await db.SaveChangesAsync(ct);
     }
 
+    /// <summary>
+    /// Preenche <c>MaxScorePoints</c> ausente/zero em subcategorias já persistidas (idempotente: não
+    /// faz nada quando todas já têm peso). Cobre bases semeadas antes de a coluna existir.
+    /// </summary>
+    private static async Task BackfillMissingWeightsAsync(AegisScoreDbContext db, CancellationToken ct)
+    {
+        var stale = await db.Subcategories.Where(s => s.MaxScorePoints <= 0).ToListAsync(ct);
+        if (stale.Count == 0) return;
+
+        foreach (var s in stale)
+            s.MaxScorePoints = DefaultWeight(s.Code);
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Fallback de peso (garantidamente &gt; 0) para quando o catálogo não traz <c>maxScorePoints</c>.
+    /// Deriva da categoria (prefixo do código, ex.: "PR.AA-01" → "PR.AA") mantendo a mesma gradação
+    /// de criticidade do JSON: identidade/dados no topo, governança/comunicação na base.
+    /// </summary>
+    private static int DefaultWeight(string subcategoryCode)
+    {
+        var dash = subcategoryCode.IndexOf('-');
+        var category = dash > 0 ? subcategoryCode[..dash] : subcategoryCode;
+        return category switch
+        {
+            "PR.AA" or "PR.DS"                                  => 20,  // identidade/acesso e dados (cripto)
+            "PR.PS" or "PR.IR" or "DE.CM" or "ID.RA" or "GV.SC" => 15,  // plataforma, resiliência, risco, cadeia
+            "GV.OC" or "GV.RM" or "GV.RR" or "GV.PO" or "GV.OV"
+                or "RS.CO" or "RC.CO"                           => 5,   // governança, política, comunicação
+            _                                                  => 10,  // médio: demais categorias e códigos novos
+        };
+    }
+
     // ---- JSON shape (matches data/nist_csf_2_0_catalog.json) ----
     private record CatalogDto(string Framework, string? Source, List<LevelDto> MaturityScale, List<FunctionDto> Functions);
     private record LevelDto(string Level, string Name, string? Label, string? Description, int Score);
     private record FunctionDto(string Code, string Name, string? Definition, List<CategoryDto> Categories);
     private record CategoryDto(string Code, string Name, string? Definition, List<SubcategoryDto> Subcategories);
-    private record SubcategoryDto(string Code, string Description, string? ImplementationExamples, List<string>? InformativeReferences);
+    private record SubcategoryDto(string Code, string Description, string? ImplementationExamples, List<string>? InformativeReferences, int? MaxScorePoints);
 }

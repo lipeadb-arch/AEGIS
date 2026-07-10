@@ -2,12 +2,16 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Queries;
 using AegisScore.Application.Scoring;
+using AegisScore.Application.Services;
 using AegisScore.Infrastructure.Ai;
 using AegisScore.Infrastructure.Auth;
 using AegisScore.Infrastructure.Connectors;
 using AegisScore.Infrastructure.Documents;
 using AegisScore.Infrastructure.Persistence;
+using AegisScore.Infrastructure.Queries;
+using AegisScore.Infrastructure.Scoring;
 
 namespace AegisScore.Infrastructure;
 
@@ -25,6 +29,10 @@ public static class DependencyInjection
         services.AddSingleton<IJwtTokenService, JwtTokenService>();       // stateless
         services.AddScoped<IAuthService, AuthService>();                  // usa o DbContext (scoped)
 
+        // [Médio 6/Baixo] Encriptação server-side dos segredos de conector (Data Protection). Depende
+        // de IDataProtectionProvider, registrado por AddDataProtection() no composition root (Program).
+        services.AddSingleton<IConnectorSecretProtector, ConnectorSecretProtector>();
+
         // AI engine (swappable). Bound from the "Ai" config section.
         services.Configure<AiOptions>(config.GetSection("Ai"));
 
@@ -34,6 +42,29 @@ public static class DependencyInjection
             services.AddSingleton<IAiAssessmentService, StubAssessmentService>();
         else
             services.AddHttpClient<IAiAssessmentService, ClaudeAssessmentService>();
+
+        // Aegis Score — avaliador de conformidade por IA: telemetria bruta → veredito NIST CSF 2.0 →
+        // upsert do TenantControlState. ILLMClient é o seam de transporte (mockável nos testes).
+        services.Configure<AegisAiOptions>(config.GetSection(AegisAiOptions.SectionName));
+
+        // Fail-open (espelha o padrão do IAiAssessmentService acima): sem AegisAi:ApiKey usa o stub
+        // determinístico (sem rede nem tokens — a demo nunca quebra por ausência de chave); com a chave
+        // presente (via 'dotnet user-secrets') engata o motor real Gemini 1.5 Flash (HttpClient tipado).
+        if (string.IsNullOrWhiteSpace(config[$"{AegisAiOptions.SectionName}:ApiKey"]))
+            services.AddSingleton<ILLMClient, StubLlmClient>();
+        else
+            services.AddHttpClient<ILLMClient, GeminiLlmClient>();
+        // Escritor ÚNICO do ledger de conformidade (upsert idempotente + regra de scoring). Compartilhado
+        // pelo motor de telemetria e pela ponte do Govern — nenhuma das duas fontes reimplementa scoring.
+        services.AddScoped<IControlStateWriter, ControlStateWriter>();
+        services.AddScoped<IAegisAiEvaluatorService, AegisAiEvaluatorService>();
+
+        // Aegis Score — consultas de leitura do HUD (Score Atual em tempo real + série temporal + KPI
+        // de pendências). Scoped: usam o DbContext e, com ele, o Global Query Filter fail-closed do tenant.
+        services.AddScoped<ICurrentScoreQuery, CurrentScoreQuery>();
+        services.AddScoped<ITenantScoreTrendQuery, TenantScoreTrendQuery>();
+        services.AddScoped<IGetPendingControlsQuery, PendingControlsQuery>();
+        services.AddScoped<IControlStateDashboardQuery, ControlStateDashboardQuery>();
 
         // Connector registry resolves every IEvidenceConnector registered in DI.
         services.AddSingleton<IConnectorRegistry, ConnectorRegistry>();
@@ -49,6 +80,9 @@ public static class DependencyInjection
             ?? Path.Combine(AppContext.BaseDirectory, "document-store");
         services.AddSingleton<IDocumentStorage>(new LocalDocumentStorage(docRoot));
         services.AddSingleton<IDocumentTextExtractor, PlainTextExtractor>();
+        // PDFs (Document Hub / Govern) via PdfPig. Mais um IDocumentTextExtractor na coleção: o
+        // DocumentAnalysisWorker resolve GetServices<>() e escolhe pelo CanHandle (text/* vs application/pdf).
+        services.AddSingleton<IDocumentTextExtractor, PdfTextExtractor>();
         services.AddSingleton<IDocumentAnalysisQueue, ChannelDocumentAnalysisQueue>();
 
         return services;

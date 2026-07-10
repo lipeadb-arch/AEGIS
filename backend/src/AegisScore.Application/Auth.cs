@@ -23,9 +23,10 @@ public interface IAuthService
     Task<TokenPair?> LoginAsync(string email, string password, CancellationToken ct);
 
     /// <summary>
-    /// Rotaciona um refresh token válido, emitindo um novo par e revogando o anterior.
-    /// <c>null</c> = token inválido/expirado. A reutilização de um token já revogado dispara o
-    /// breach (revoga todos os tokens ativos do usuário) e também retorna <c>null</c>.
+    /// Rotaciona um refresh token válido de forma ATÔMICA, emitindo um novo par e revogando o anterior.
+    /// <c>null</c> = token inválido/expirado. Reapresentar o mesmo token dentro da janela de idempotência
+    /// devolve o sucessor já emitido (retry benigno). Fora da janela, a reutilização de um token já
+    /// revogado é breach: revoga a CADEIA (família) daquele token e retorna <c>null</c>.
     /// </summary>
     Task<TokenPair?> RefreshAsync(string refreshToken, CancellationToken ct);
 
