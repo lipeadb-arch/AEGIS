@@ -75,25 +75,25 @@ import { AuthService } from './services/auth.service';
 
         <p class="nav-group">Funções · NIST CSF 2.0</p>
 
-        <!-- Govern e Identify têm tela; as demais Funções são o roadmap (sem rota ainda). -->
+        <!-- Todas as 6 Funções NIST CSF 2.0 têm tela. -->
         <a class="nav-item" routerLink="/governance" routerLinkActive="active">
           <span class="dot" aria-hidden="true"></span><span class="lb">Govern</span><span class="code">GV</span>
         </a>
         <a class="nav-item" routerLink="/assets" routerLinkActive="active">
           <span class="dot" aria-hidden="true"></span><span class="lb">Identify</span><span class="code">ID</span>
         </a>
-        <span class="nav-item soon" title="Em breve">
+        <a class="nav-item" routerLink="/protect" routerLinkActive="active">
           <span class="dot" aria-hidden="true"></span><span class="lb">Protect</span><span class="code">PR</span>
-        </span>
-        <span class="nav-item soon" title="Em breve">
+        </a>
+        <a class="nav-item" routerLink="/detect" routerLinkActive="active">
           <span class="dot" aria-hidden="true"></span><span class="lb">Detect</span><span class="code">DE</span>
-        </span>
-        <span class="nav-item soon" title="Em breve">
+        </a>
+        <a class="nav-item" routerLink="/respond" routerLinkActive="active">
           <span class="dot" aria-hidden="true"></span><span class="lb">Respond</span><span class="code">RS</span>
-        </span>
-        <span class="nav-item soon" title="Em breve">
+        </a>
+        <a class="nav-item" routerLink="/recover" routerLinkActive="active">
           <span class="dot" aria-hidden="true"></span><span class="lb">Recover</span><span class="code">RC</span>
-        </span>
+        </a>
       </nav>
 
       <!-- Gatilho global do Agente: segue no layout raiz, agora no rodapé do sidebar. -->
