@@ -140,3 +140,19 @@ public class AssetQuery
 
 /// <summary>Envelope de paginação genérico (reutilizável por outras grids).</summary>
 public record PagedResult<T>(IReadOnlyList<T> Items, int Page, int PageSize, long TotalCount, int TotalPages);
+
+// ---- Telemetry: ingestão passiva de sinais de segurança (EDR/SIEM → motor de IA) ----
+/// <summary>
+/// Payload do webhook de ingestão de telemetria. Envelope genérico de um alerta de ferramenta de
+/// segurança (Defender, Sentinel, CrowdStrike…). O <paramref name="SubcategoryCode"/> é o que direciona
+/// o motor: diz QUAL controle NIST esta evidência endereça — o mapeamento evento→controle é
+/// responsabilidade do emissor/conector (que conhece a semântica da ferramenta), não do motor, que só
+/// julga se a evidência PROVA o controle. <paramref name="RawData"/> é a evidência técnica crua, tratada
+/// como dado NÃO confiável (fronteira anti-injeção no User Prompt do avaliador).
+/// </summary>
+public record TelemetryIngestionRequest(
+    string Source, string EventName, string Severity, string SubcategoryCode, string RawData);
+
+/// <summary>Veredito devolvido pela ingestão: o status técnico e os pontos já gravados no ledger.</summary>
+public record TelemetryVerdictDto(
+    string SubcategoryCode, string Status, int AwardedScore, int MaxScorePoints, int Percentage, string AiEvidence);

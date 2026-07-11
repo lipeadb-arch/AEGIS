@@ -5,7 +5,7 @@ import { environment } from '../../environments/environment';
 
 /**
  * HUD Tático do Aegis Score — a tendência de postura de segurança do tenant no modelo de um painel
- * de SOC. Consome GET /api/v1/aegis-score/trend e destaca o Score Atual (o dia mais recente).
+ * de SOC. Consome GET /api/v1/scoring/trend e destaca o Score Atual (o dia mais recente).
  */
 @Component({
   selector: 'app-aegis-dashboard',

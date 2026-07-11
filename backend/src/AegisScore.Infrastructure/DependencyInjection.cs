@@ -59,6 +59,10 @@ public static class DependencyInjection
         services.AddScoped<IControlStateWriter, ControlStateWriter>();
         services.AddScoped<IAegisAiEvaluatorService, AegisAiEvaluatorService>();
 
+        // Superfície de ingestão passiva de telemetria (webhook EDR/SIEM) — o CHAMADOR do EvaluateAsync.
+        // Orquestração fina: normaliza o sinal, resolve o tenant e delega ao motor (fonte Telemetry).
+        services.AddScoped<ITelemetryIngestionService, TelemetryIngestionService>();
+
         // Aegis Score — consultas de leitura do HUD (Score Atual em tempo real + série temporal + KPI
         // de pendências). Scoped: usam o DbContext e, com ele, o Global Query Filter fail-closed do tenant.
         services.AddScoped<ICurrentScoreQuery, CurrentScoreQuery>();

@@ -9,34 +9,34 @@ export class AegisScoreService {
   private readonly http = inject(HttpClient);
 
   /**
-   * GET /api/v1/aegis-score/trend — série diária de postura do tenant (default 30 dias, ordem
+   * GET /api/v1/scoring/trend — série diária de postura do tenant (default 30 dias, ordem
    * cronológica). Escopada pelo header X-Tenant; o Bearer do JWT é anexado pelo authInterceptor.
    */
   fetchTrend(days = 30): Observable<TenantTrendDto[]> {
     const params = new HttpParams().set('days', days);
-    return this.http.get<TenantTrendDto[]>(`${environment.apiBase}/api/v1/aegis-score/trend`, {
+    return this.http.get<TenantTrendDto[]>(`${environment.apiBase}/api/v1/scoring/trend`, {
       params,
       headers: { 'X-Tenant': environment.tenantId, Accept: 'application/json' },
     });
   }
 
   /**
-   * GET /api/v1/aegis-score/pending — nº de controles NIST não-conformes do tenant (KPI do HUD).
+   * GET /api/v1/scoring/pending — nº de controles NIST não-conformes do tenant (KPI do HUD).
    * Escopado pelo header X-Tenant; o Bearer do JWT é anexado pelo authInterceptor.
    */
   fetchPendingControls(): Observable<number> {
-    return this.http.get<number>(`${environment.apiBase}/api/v1/aegis-score/pending`, {
+    return this.http.get<number>(`${environment.apiBase}/api/v1/scoring/pending`, {
       headers: { 'X-Tenant': environment.tenantId, Accept: 'application/json' },
     });
   }
 
   /**
-   * GET /api/v1/aegis-score/current — Score Atual (%) do tenant em tempo real, direto do
+   * GET /api/v1/scoring/current — Score Atual (%) do tenant em tempo real, direto do
    * TenantControlState (sem esperar a foto diária). Escopado pelo header X-Tenant; o Bearer do JWT é
    * anexado pelo authInterceptor.
    */
   fetchCurrentScore(): Observable<CurrentScoreDto> {
-    return this.http.get<CurrentScoreDto>(`${environment.apiBase}/api/v1/aegis-score/current`, {
+    return this.http.get<CurrentScoreDto>(`${environment.apiBase}/api/v1/scoring/current`, {
       headers: { 'X-Tenant': environment.tenantId, Accept: 'application/json' },
     });
   }

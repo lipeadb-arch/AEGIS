@@ -44,12 +44,43 @@ public sealed class GeminiLlmClient : ILLMClient
         using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(body) };
         req.Headers.Add("x-goog-api-key", _opt.ApiKey);
 
-        using var resp = await _http.SendAsync(req, ct);
-        resp.EnsureSuccessStatusCode();
+        HttpResponseMessage resp;
+        try
+        {
+            resp = await _http.SendAsync(req, ct);
+        }
+        catch (HttpRequestException ex)
+        {
+            // Falha de transporte (DNS, conexão, TLS): o motor externo está inacessível — condição
+            // OPERACIONAL, não um bug do servidor. Vira AiUnavailableException → 503 no middleware.
+            throw new AiUnavailableException("Falha de transporte ao contatar o motor Gemini.", ex);
+        }
+        catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            // Timeout do HttpClient (não o cancelamento do chamador) — igualmente transitório.
+            throw new AiUnavailableException("Timeout ao contatar o motor Gemini.", ex);
+        }
 
-        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
-        return ExtractText(doc.RootElement);
+        using (resp)
+        {
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+
+            // EnsureSuccessStatusCode lançaria HttpRequestException crua (→ 500). Sob a ótica do avaliador,
+            // qualquer não-2xx é indisponibilidade do motor (404 modelo aposentado/inexistente, 401/403 chave,
+            // 429 quota) — mapeamos para AiUnavailableException (503). O detalhe fica no log, nunca no cliente.
+            if (!resp.IsSuccessStatusCode)
+                throw new AiUnavailableException(
+                    $"Motor Gemini respondeu HTTP {(int)resp.StatusCode} para o modelo '{_opt.Model}'. " +
+                    $"Verifique AegisAi:Model/BaseUrl/ApiKey. Resposta: {Truncate(raw, 300)}");
+
+            using var doc = JsonDocument.Parse(raw);
+            return ExtractText(doc.RootElement);
+        }
     }
+
+    /// <summary>Corta o corpo de erro para o log não inchar (o cliente nunca vê este texto — 503 genérico).</summary>
+    private static string Truncate(string s, int max) =>
+        string.IsNullOrEmpty(s) || s.Length <= max ? s : s[..max] + "…";
 
     /// <summary>
     /// Isola candidates[0].content.parts[0].text de forma defensiva: o Gemini pode devolver 200 OK SEM

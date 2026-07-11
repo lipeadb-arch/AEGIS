@@ -295,6 +295,75 @@ public class DevController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Prova de vida da ponte Govern → Aegis Score (Etapa 2). Reenfileira um documento JÁ ingerido para
+    /// o <c>DocumentAnalysisWorker</c>, que o reprocessa pelo fluxo REAL de produção — extrai o texto,
+    /// mapeia os controles NIST e projeta cada claim no ledger (<c>TenantControlState</c>) através do
+    /// <c>IControlStateWriter</c>, com o teto documental de 50% (<c>MitigatedByThirdParty</c>). É o que
+    /// tira o HUD do 0.0% sem exigir credencial: roda [AllowAnonymous] em DEBUG.
+    ///
+    /// O binário precisa já estar no storage (upload prévio). O tenant NÃO importa aqui: localizamos o
+    /// documento SEM o query filter e apenas o enfileiramos — o worker o reprocessa sob o
+    /// SystemTenantContext do próprio dono, exatamente como no fluxo autenticado de produção.
+    /// </summary>
+    [HttpPost("reprocess-document")]
+    public async Task<IActionResult> ReprocessDocument(
+        [FromServices] IDocumentAnalysisQueue queue,
+        [FromQuery] string fileName = "Politica_Seguranca_Aegis_Tech.pdf",
+        CancellationToken ct = default)
+    {
+        if (!_env.IsDevelopment())
+            return NotFound();
+
+        await using var db = new AegisScoreDbContext(_dbOptions, new SystemTenantContext(DemoTenantId));
+
+        // O documento pode ter sido ingerido sob QUALQUER tenant; localizamos sem o query filter e
+        // pegamos o mais recente com esse nome de arquivo.
+        var doc = await db.GovernanceDocuments.IgnoreQueryFilters().AsNoTracking()
+            .Where(d => d.FileName == fileName)
+            .OrderByDescending(d => d.CreatedAt)
+            .Select(d => new { d.Id, d.TenantId, d.StorageUri, d.FileName, d.AnalysisStatus })
+            .FirstOrDefaultAsync(ct);
+
+        if (doc is null)
+        {
+            // Auto-descoberta: sem o alvo, devolvemos o que existe para o operador escolher o ?fileName.
+            var candidates = await db.GovernanceDocuments.IgnoreQueryFilters().AsNoTracking()
+                .OrderByDescending(d => d.CreatedAt)
+                .Select(d => new { d.Id, d.FileName, d.Title, status = d.AnalysisStatus.ToString(), hasBinary = d.StorageUri != null })
+                .Take(20).ToListAsync(ct);
+
+            return NotFound(new
+            {
+                message = $"Nenhum documento com FileName '{fileName}'. Faça upload via POST /api/v1/governance/documents " +
+                          "ou repita com ?fileName=<nome> a partir da lista abaixo.",
+                requestedFileName = fileName,
+                availableDocuments = candidates,
+            });
+        }
+
+        if (doc.StorageUri is null)
+            return BadRequest(new
+            {
+                message = "Documento encontrado, mas sem binário no storage (StorageUri nulo) — nada a ler. Reenvie o arquivo por upload.",
+                documentId = doc.Id,
+                fileName = doc.FileName,
+            });
+
+        await queue.EnqueueAsync(doc.Id, ct);
+
+        return Accepted(new
+        {
+            message = "Documento reenfileirado. O worker vai reprocessá-lo pela ponte IControlStateWriter e popular " +
+                      "TenantControlStates com o teto documental (MitigatedByThirdParty = 50%). " +
+                      "Aguarde ~2s e consulte GET /api/v1/scoring/dashboard.",
+            documentId = doc.Id,
+            tenantId = doc.TenantId,
+            fileName = doc.FileName,
+            previousStatus = doc.AnalysisStatus.ToString(),
+        });
+    }
+
     /// <summary>Removes any prior demo-tenant data so the seed can be re-run safely.</summary>
     private async Task WipeExistingDemoAsync(AegisScoreDbContext db, CancellationToken ct)
     {

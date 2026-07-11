@@ -14,7 +14,7 @@ public sealed class AegisAiOptions
     public string ApiKey { get; set; } = "";
 
     /// <summary>Modelo Gemini. Flash pela alta velocidade de inferência exigida na avaliação de postura.</summary>
-    public string Model { get; set; } = "gemini-1.5-flash";
+    public string Model { get; set; } = "gemini-2.0-flash";
 
     /// <summary>Raiz REST; o modelo e ':generateContent' são anexados em runtime pelo client.</summary>
     public string BaseUrl { get; set; } = "https://generativelanguage.googleapis.com/v1beta/models";

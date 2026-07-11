@@ -69,15 +69,20 @@ public sealed class GeminiLlmClientTests
 
     [Theory]
     [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.NotFound)]              // modelo aposentado/inexistente (ex.: o antigo gemini-1.5-flash)
     [InlineData(HttpStatusCode.InternalServerError)]
-    public async Task ExecutePromptAsync_QuandoStatusDeErro_EnsureSuccessEstoura(HttpStatusCode status)
+    public async Task ExecutePromptAsync_QuandoStatusDeErro_LancaAiUnavailable(HttpStatusCode status)
     {
+        // Qualquer não-2xx do Gemini é indisponibilidade do motor sob a ótica do avaliador: vira
+        // AiUnavailableException (→ 503 no middleware), NÃO a HttpRequestException crua do
+        // EnsureSuccessStatusCode (que degradaria para um 500 opaco). A mensagem preserva o status.
         var handler = new StubHttpMessageHandler(status, "{\"error\":\"boom\"}");
         var client = CreateClient(handler);
 
         var acao = () => client.ExecutePromptAsync("system", "user");
 
-        await acao.Should().ThrowAsync<HttpRequestException>();
+        (await acao.Should().ThrowAsync<AiUnavailableException>())
+            .Which.Message.Should().Contain(((int)status).ToString(), "o status HTTP fica na mensagem para diagnóstico");
     }
 
     // ---- Guard-clause: sem chave, sem rede ---------------------------------------
