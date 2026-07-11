@@ -35,6 +35,35 @@ public sealed class TelemetryIngestionService : ITelemetryIngestionService
         return await _evaluator.EvaluateAsync(tenantId, signal.SubcategoryCode, payload, ct);
     }
 
+    public async Task<ComplianceVerdict> IngestAssetAsync(AssetTelemetrySignal signal, CancellationToken ct = default)
+    {
+        var tenantId = _tenant.TenantId
+            ?? throw new TenantSecurityException(
+                "Ingestão de telemetria de ativo sem tenant resolvido no contexto (fail-closed).");
+
+        var payload = ComposeAssetPayload(signal);
+        return await _evaluator.EvaluateAsync(tenantId, signal.SubcategoryCode, payload, ct);
+    }
+
+    public async Task<ComplianceVerdict> IngestCategoryAsync(CategoryTelemetrySignal signal, CancellationToken ct = default)
+    {
+        var tenantId = _tenant.TenantId
+            ?? throw new TenantSecurityException(
+                "Ingestão de telemetria de categoria sem tenant resolvido no contexto (fail-closed).");
+
+        var payload = ComposeCategoryPayload(signal);
+        return await _evaluator.EvaluateAsync(tenantId, signal.SubcategoryCode, payload, ct);
+    }
+
+    /// <summary>
+    /// Compõe o payload de UMA categoria (qualquer pilar): um cabeçalho "Pilar / Categoria (control CÓDIGO)"
+    /// e as linhas de métrica já formatadas pelo controller. Os rótulos são o contrato lido pela heurística
+    /// por categoria do StubLlmClient (e pelo prompt do motor real). Aqui só concatenamos — nenhuma regra
+    /// nesta camada. Único compositor para Protect/Detect/Respond/Recover.
+    /// </summary>
+    private static string ComposeCategoryPayload(CategoryTelemetrySignal s) =>
+        $"{s.Pillar} / {s.Category} (control {s.SubcategoryCode}) telemetry:\n{string.Join("\n", s.Metrics)}";
+
     /// <summary>
     /// Compõe um envelope legível a partir dos campos do webhook. O motor injeta isto no User Prompt
     /// dentro de uma fronteira de dados explícita e o trata como conteúdo NÃO confiável (anti-injeção);
@@ -46,5 +75,19 @@ public sealed class TelemetryIngestionService : ITelemetryIngestionService
         Event: {s.EventName}
         Severity: {s.Severity}
         RawData: {s.RawData}
+        """;
+
+    /// <summary>
+    /// Compõe o payload de telemetria de ATIVO num texto estruturado e determinístico. Os rótulos
+    /// ("EDR Coverage: Absent", "OS Lifecycle: EndOfLife", "Critical Vulnerabilities: N") são o contrato
+    /// que a heurística de Identify do StubLlmClient — e o prompt do motor real — leem para decidir a postura.
+    /// </summary>
+    private static string ComposeAssetPayload(AssetTelemetrySignal s) =>
+        $"""
+        Asset Management telemetry for '{s.AssetName}':
+        EDR Coverage: {s.EdrCoverage}
+        OS Lifecycle: {s.OsLifecycle}
+        Critical Vulnerabilities: {s.CriticalVulnerabilitiesCount}
+        Critical Asset: {(s.IsCriticalAsset ? "true" : "false")}
         """;
 }

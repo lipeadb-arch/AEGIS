@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 
 namespace AegisScore.Domain;
 
@@ -136,3 +137,15 @@ public enum AssetCategory
 
 /// <summary>Como o ativo entrou no inventário (base do inventário contínuo).</summary>
 public enum AssetDiscoverySource { Manual = 0, Connector = 1, Import = 2 }
+
+// ---- Identify (ID.AM) — metadados táticos da telemetria de ativo (alimentam a avaliação ativa) ----
+// Serializados como STRING no JSON (payload legível: "Absent" em vez de 2) — anotação contida a estes
+// enums, sem alterar a serialização global da API.
+
+/// <summary>Estado do agente de EDR/antivírus no ativo: comunicando, silencioso/degradado ou ausente.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum EdrCoverageStatus { Active = 0, Degraded = 1, Absent = 2 }
+
+/// <summary>Ciclo de vida do sistema operacional: suportado, próximo do fim de vida ou já obsoleto (EOL).</summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum OsLifecycleStatus { Supported = 0, ApproachingEndOfLife = 1, EndOfLife = 2 }

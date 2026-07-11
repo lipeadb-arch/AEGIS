@@ -111,15 +111,7 @@ public record IdentifiedRiskDto(
     Guid Id, string Title, string Description, string? Cause, string? Consequence,
     string SubcategoryCode, Guid? AssessmentId, bool PromotedToRisk, DateTimeOffset IdentifiedAt);
 
-// ---- Identify: inventário de ativos (ID.AM) ----
-public record CreateAssetRequest(
-    string Name, AssetCategory Category, string? SubType, string? Description,
-    int Criticality, string? OwnerName, string? ExternalRef, Guid? BusinessProcessId);
-
-public record UpdateAssetRequest(
-    string Name, AssetCategory Category, string? SubType, string? Description,
-    int Criticality, string? OwnerName, string? ExternalRef, Guid? BusinessProcessId, bool IsActive);
-
+// ---- Identify: inventário de ativos (ID.AM) — somente leitura (a avaliação é ativa, via telemetria) ----
 public record AssetDto(
     Guid Id, string Name, string Category, string? SubType, string? Description,
     int Criticality, string? OwnerName, string? ExternalRef, Guid? BusinessProcessId,
@@ -152,6 +144,78 @@ public record PagedResult<T>(IReadOnlyList<T> Items, int Page, int PageSize, lon
 /// </summary>
 public record TelemetryIngestionRequest(
     string Source, string EventName, string Severity, string SubcategoryCode, string RawData);
+
+/// <summary>
+/// Telemetria de UM ativo (Identify / ID.AM), com os metadados táticos que decidem a postura: cobertura
+/// de EDR, ciclo de vida do SO, nº de CVEs críticas ativas e se o ativo é vital. O motor os avalia contra
+/// o controle de gestão de ativos (default <c>ID.AM-01</c>) e grava com fonte <c>Telemetry</c>.
+/// </summary>
+public record AssetTelemetryRequest(
+    string AssetName,
+    EdrCoverageStatus EdrCoverage,
+    OsLifecycleStatus OsLifecycle,
+    int CriticalVulnerabilitiesCount,
+    bool IsCriticalAsset,
+    string? SubcategoryCode = null);   // default ID.AM-01 (resolvido no controller)
+
+// ---- Protect (PR): telemetria especializada por categoria (SOC multicloud) ----
+// Contratos específicos por categoria do Protect. Todos carregam o SubcategoryCode — o motor avalia a
+// evidência CONTRA um controle NIST concreto (PR.AA-01, PR.DS-01, PR.PS-01, PR.IR-01).
+
+/// <summary>PR.AA — Identity & Access Management. Privilégio sem MFA integral é falha crítica.</summary>
+public record IdentityProtectTelemetryDto(
+    double PrivilegedMfaCoverage, double StandardMfaCoverage, int StaleAccountsActive,
+    bool ConditionalAccessEnforced, string SubcategoryCode);
+
+/// <summary>PR.DS — Data Security. Criptografia de endpoint insuficiente ou tráfego em claro reprova.</summary>
+public record DataProtectTelemetryDto(
+    double EndpointEncryptionCoverage, int DlpActivePoliciesCount, bool UnencryptedTrafficDetected,
+    string SubcategoryCode);
+
+/// <summary>PR.PS — Platform Security. Hardening CIS abaixo do mínimo ou patch crítico pendente reprova.</summary>
+public record PlatformProtectTelemetryDto(
+    double CisBenchmarkComplianceRate, bool AppLockerEnforced, int MissingCriticalPatchesCount,
+    string SubcategoryCode);
+
+/// <summary>PR.IR — Technology Infrastructure Resilience. Firewall sem política default-deny reprova.</summary>
+public record NetworkProtectTelemetryDto(
+    bool MicrosegmentationActive, bool DefaultDenyFirewallEnforced, string SubcategoryCode);
+
+// ---- Detect (DE): telemetria especializada por categoria (SOC avançado) ----
+// Contratos por categoria do Detect. NB (NIST CSF 2.0): a função DE tem apenas DE.AE (Adverse Event
+// Analysis) e DE.CM (Continuous Monitoring); o antigo DE.DP (Detection Processes) do CSF 1.1 foi absorvido
+// em DE.AE (ex.: DE.AE-06 herda o DE.DP-4). Códigos reais sugeridos: DE.AE-02, DE.CM-01, DE.AE-06.
+
+/// <summary>DE.AE — Adverse Event Analysis. Anomalia grave não investigada ou fadiga de alerta reprova.</summary>
+public record AnomaliesDetectTelemetryDto(
+    int UninvestigatedHighAnomaliesCount, double FalsePositiveRate, int CorrelationRulesFiredCount,
+    string SubcategoryCode);
+
+/// <summary>DE.CM — Continuous Monitoring. Cobertura de logs críticos baixa ou ativo crítico sem monitoração reprova.</summary>
+public record MonitoringDetectTelemetryDto(
+    double CriticalLogSourceCoverage, int UnmonitoredCriticalAssetsCount, double NetworkVisibilityCoverage,
+    string SubcategoryCode);
+
+/// <summary>Detection Engineering (o antigo DE.DP, hoje sob DE.AE). Baixa cobertura MITRE ou ataques simulados não detectados reprova.</summary>
+public record ProcessDetectTelemetryDto(
+    double MitreAttckCoverageRate, int ActiveDetectionRulesCount, double SimulatedAttacksDetectedRate,
+    string SubcategoryCode);
+
+// ---- Respond (RS) & Recover (RC): resposta a incidentes e resiliência (SOC de alta performance) ----
+// Códigos reais no catálogo CSF 2.0: RS.MA-01, RS.MI-01, RC.RP-01.
+
+/// <summary>RS.MA — Incident Analysis. Reconhecimento lento (MTTA) ou baixa cobertura de threat hunting reprova.</summary>
+public record AnalysisRespondTelemetryDto(
+    int MeanTimeToAcknowledgeMins, double ThreatHuntingCoverageRate, string SubcategoryCode);
+
+/// <summary>RS.MI — Incident Mitigation. Sem isolamento automatizado ou resposta lenta (MTTR) reprova.</summary>
+public record MitigationRespondTelemetryDto(
+    bool AutomatedIsolationEnabled, int MeanTimeToRespondMins, string SubcategoryCode);
+
+/// <summary>RC.RP — Recovery Plan Execution. Backup mutável, integridade não-Valid ou RTO não atendido reprova.</summary>
+public record ExecutionRecoverTelemetryDto(
+    bool ImmutableBackupsEnabled, string BackupIntegrityStatus, bool RecoveryTimeObjectiveMet,
+    string SubcategoryCode);
 
 /// <summary>Veredito devolvido pela ingestão: o status técnico e os pontos já gravados no ledger.</summary>
 public record TelemetryVerdictDto(
