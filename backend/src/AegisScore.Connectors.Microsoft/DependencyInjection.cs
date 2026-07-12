@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Services;
 
 namespace AegisScore.Connectors.Microsoft;
 
@@ -15,6 +16,10 @@ public static class DependencyInjection
         // services.AddSingleton<IEvidenceConnector, MicrosoftDefenderExposureConnector>();
         // services.AddSingleton<IEvidenceConnector, MicrosoftPurviewConnector>();
         // services.AddSingleton<IEvidenceConnector, AzureAdvisorConnector>();
+
+        // Govern → Provider Pattern de ingestão de documentos: o SharePoint/M365 como fonte de políticas.
+        // A DocumentIntegrationFactory resolve esta estratégia por ConnectorProvider.Microsoft.
+        services.AddSingleton<IDocumentIntegrationProvider, SharePointProvider>();
         return services;
     }
 }

@@ -75,7 +75,10 @@ public enum ConnectorProvider
 public enum ConnectorCapability
 {
     SecureScore = 0, DefenderExposure = 1, PurviewCompliance = 2, AzureAdvisor = 3,
-    ConfigAnalyzer = 4, Siem = 5, Edr = 6, Cmdb = 7, VulnerabilityScanner = 8
+    ConfigAnalyzer = 4, Siem = 5, Edr = 6, Cmdb = 7, VulnerabilityScanner = 8,
+    // Govern: fonte de DOCUMENTOS de política/governança (SharePoint, Google Workspace…), consumida
+    // pelo Provider Pattern (IDocumentIntegrationProvider) — distinta das capacidades de telemetria acima.
+    PolicyDocuments = 9
 }
 
 public enum ConnectorAuthType { OAuthClientCredentials = 0, ApiKey = 1, ServiceAccount = 2 }

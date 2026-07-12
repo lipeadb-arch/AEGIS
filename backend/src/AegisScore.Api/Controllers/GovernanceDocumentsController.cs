@@ -20,13 +20,18 @@ public class GovernanceDocumentsController : ControllerBase
     private readonly AegisScoreDbContext _db;
     private readonly IDocumentStorage _storage;
     private readonly IDocumentAnalysisQueue _queue;
+    private readonly IPolicySyncTrigger _policySync;
+    private readonly ITenantContext _tenant;
 
     public GovernanceDocumentsController(
-        AegisScoreDbContext db, IDocumentStorage storage, IDocumentAnalysisQueue queue)
+        AegisScoreDbContext db, IDocumentStorage storage, IDocumentAnalysisQueue queue,
+        IPolicySyncTrigger policySync, ITenantContext tenant)
     {
         _db = db;
         _storage = storage;
         _queue = queue;
+        _policySync = policySync;
+        _tenant = tenant;
     }
 
     /// <summary>Upload manual: grava o binário + hash SHA-256 e enfileira a leitura da IA.</summary>
@@ -41,7 +46,9 @@ public class GovernanceDocumentsController : ControllerBase
         await file.CopyToAsync(buffer, ct);
         var sha = Convert.ToHexString(SHA256.HashData(buffer.ToArray())).ToLowerInvariant();
 
-        // Dedupe por hash (o query filter já escopa a checagem ao tenant ambiente).
+        // Dedupe por hash (o query filter já escopa a checagem ao tenant ambiente). Fast-path que evita a
+        // exceção no caso comum; a corrida (dois uploads simultâneos do mesmo arquivo passam ambos por este
+        // AnyAsync antes de qualquer commit) é fechada pelo índice único no SaveChanges, abaixo.
         if (await _db.GovernanceDocuments.AnyAsync(d => d.Sha256 == sha, ct))
             return Conflict("Documento idêntico já ingerido (mesmo hash) neste cliente.");
 
@@ -59,7 +66,16 @@ public class GovernanceDocumentsController : ControllerBase
             AnalysisQueuedAt = DateTimeOffset.UtcNow,
         };
         _db.GovernanceDocuments.Add(doc);
-        await _db.SaveChangesAsync(ct);   // carimba TenantId e materializa doc.Id
+        try
+        {
+            await _db.SaveChangesAsync(ct);   // carimba TenantId e materializa doc.Id
+        }
+        catch (DbUpdateException)
+        {
+            // Corrida perdida: outro upload gravou o mesmo hash entre o nosso AnyAsync e este INSERT. O índice
+            // único (TenantId, Sha256) rejeitou a duplicata — idempotente, resolve no MESMO 409 da checagem prévia.
+            return Conflict("Documento idêntico já ingerido (mesmo hash) neste cliente.");
+        }
 
         doc.StorageUri = await _storage.SaveAsync(doc.TenantId, doc.Id, file.FileName, buffer, ct);
         await _db.SaveChangesAsync(ct);
@@ -86,6 +102,31 @@ public class GovernanceDocumentsController : ControllerBase
         _db.GovernanceDocuments.Add(doc);
         await _db.SaveChangesAsync(ct);
         return new IdResponse(doc.Id);
+    }
+
+    /// <summary>
+    /// Gatilho MANUAL de sincronização das políticas (Govern) para usuários executivos: enfileira o tenant
+    /// do usuário autenticado para o <c>PolicyIngestionWorker</c> puxar as fontes externas (SharePoint,
+    /// Google…) AGORA, sem esperar o ciclo do timer. Assíncrono por design — publica no canal e devolve
+    /// 202 na hora; a ingestão roda em background. Acompanhe o resultado por <c>GET /governance/documents</c>.
+    /// </summary>
+    /// <response code="202">Sincronização enfileirada; será processada em background pelo worker.</response>
+    [HttpPost("sync")]
+    public async Task<ActionResult<PolicySyncAcceptedDto>> Sync(CancellationToken ct)
+    {
+        // Tenant SEMPRE do contexto resolvido (claim tenant_id do JWT), NUNCA de input do cliente — o
+        // mesmo guard fail-closed do resto da escrita. Sob [Authorize] + TenantConsistencyMiddleware, null
+        // aqui é anômalo: tratado como evento de segurança, não como erro de validação.
+        var tenantId = _tenant.TenantId
+            ?? throw new TenantSecurityException(
+                "Sync de políticas sem tenant resolvido no contexto (fail-closed).");
+
+        // Publica e retorna imediatamente — o request não espera o fetch/registro das políticas.
+        await _policySync.RequestSyncAsync(tenantId, ct);
+
+        return Accepted(new PolicySyncAcceptedDto(
+            tenantId, "Queued",
+            "Sincronização de políticas agendada; acompanhe em GET /api/v1/governance/documents."));
     }
 
     /// <summary>Lista os documentos do tenant (filtros por tipo e status de leitura da IA).</summary>

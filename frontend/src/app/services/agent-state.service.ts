@@ -13,6 +13,9 @@ export type NistFunction = 'Govern' | 'Identify' | 'Protect' | 'Detect' | 'Respo
  */
 export type AgentContext = NistFunction | 'General';
 
+/** Escopo de contexto para o backend do Copiloto GRC — o código da tela ativa (Visão Geral → 'GLOBAL'). */
+export type AuditorScope = 'GLOBAL' | 'GV' | 'ID' | 'PR' | 'DE' | 'RS' | 'RC';
+
 /** Metadados de apresentação de cada contexto (código oficial + rótulo PT-BR + se há agente real). */
 export interface NistContext {
   readonly fn: AgentContext;
@@ -39,6 +42,10 @@ const CONTEXTS: Record<AgentContext, NistContext> = {
 const ROUTE_TO_CONTEXT: Record<string, AgentContext> = {
   governance: 'Govern',
   assets: 'Identify',
+  protect: 'Protect',
+  detect: 'Detect',
+  respond: 'Respond',
+  recover: 'Recover',
 };
 
 /**
@@ -70,6 +77,15 @@ export class AgentStateService {
   /** Metadados do contexto ativo (código/rótulo/disponibilidade). */
   readonly context = computed<NistContext>(() => CONTEXTS[this._activeFunction()]);
 
+  /**
+   * Escopo enviado ao backend do Copiloto (POST /auditor/chat): o código da tela ativa, com a Visão Geral
+   * projetada em 'GLOBAL'. É o que ajusta dinamicamente o System Prompt da IA por Função NIST.
+   */
+  readonly contextScope = computed<AuditorScope>(() => {
+    const c = this.context();
+    return c.fn === 'General' ? 'GLOBAL' : (c.code as AuditorScope);
+  });
+
   constructor() {
     // Escuta explicitamente o fim de cada navegação e reprojeta o contexto na aba corrente.
     // takeUntilDestroyed encerra a assinatura junto com o serviço (limpo em testes/HMR);
@@ -92,8 +108,11 @@ export class AgentStateService {
   /** Visibilidade do painel lateral. */
   readonly open = signal(false);
 
-  /** Título fixo do drawer — o subtítulo é que carrega o contexto. */
-  readonly drawerTitle = computed(() => 'Auditor Virtual');
+  /** Título do drawer — agora REAGE ao contexto: "Auditor Virtual — Proteger (PR)" fora da visão geral. */
+  readonly drawerTitle = computed(() => {
+    const c = this.context();
+    return c.fn === 'General' ? 'Auditor Virtual' : `Auditor Virtual — ${c.label} (${c.code})`;
+  });
 
   /** Eyebrow do drawer: contextualiza o agente na Função NIST ativa. */
   readonly drawerSubtitle = computed(() => {

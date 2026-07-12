@@ -52,6 +52,12 @@ public sealed class StubLlmClient : ILLMClient
         if (EvaluateRespondRecover(p) is { } resilienceVerdict)
             return resilienceVerdict;
 
+        // (4.5) Govern (GV) — governança estruturada além dos documentos: cadeia de suprimentos (GV.SC) e
+        //       papéis/autoridades (GV.RR). VEM ANTES do fallback genérico (5): o "third party" de lá casaria
+        //       com o rótulo "Third Party Audited:" e mascararia o veredito real de GV.SC.
+        if (EvaluateGovern(p) is { } governVerdict)
+            return governVerdict;
+
         // (5) Telemetria genérica de EDR/SIEM (Sentinel, CrowdStrike, Defender…).
         if (p.Contains("mssp") || p.Contains("managed service") || p.Contains("third party") || p.Contains("thirdparty"))
             return ("MitigatedByThirdParty", "Stub: log indica cobertura por serviço gerenciado/terceiro (SOC/MSSP).");
@@ -185,6 +191,36 @@ public sealed class StubLlmClient : ILLMClient
             return !immutable || !integrityValid || !rtoMet
                 ? ("NonCompliant", "Stub: RC.RP reprovado — backup sem imutabilidade, integridade não-Valid (corrompido/não testado) ou RTO não atendido. Recuperação não confiável contra ransomware.")
                 : ("Compliant", "Stub: RC.RP conforme — backups imutáveis, íntegros (Valid) e RTO atendido.");
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Regras do pilar GOVERN (GV) avaliadas por TELEMETRIA (não por documento): governança tem métricas
+    /// estruturadas, não só PDFs. Reconhecidas pelos rótulos que o <c>TelemetryIngestionService</c> compõe,
+    /// com parsing dos valores. Retorna <c>null</c> quando o payload não é de Govern (segue o roteamento).
+    /// </summary>
+    private static (string Status, string Evidence)? EvaluateGovern(string p)
+    {
+        // GV.SC — Supply Chain Risk Mgmt: fornecedor de TI com acesso à rede SEM auditoria de terceiros ativa.
+        if (p.Contains("suppliers with network access:") || p.Contains("third party audited:"))
+        {
+            var netAccessSuppliers = Num(p, "suppliers with network access:");
+            var thirdPartyAudited = Flag(p, "third party audited:");
+            return netAccessSuppliers > 0 && !thirdPartyAudited
+                ? ("NonCompliant", $"Stub: GV.SC reprovado — {netAccessSuppliers:0} fornecedor(es) de TI com acesso à rede sem auditoria de terceiros ativa. Elo da cadeia de suprimentos não verificado.")
+                : ("Compliant", "Stub: GV.SC conforme — fornecedores com acesso à rede sob auditoria de terceiros ativa (ou sem exposição de rede a terceiros).");
+        }
+
+        // GV.RR — Roles & Responsibilities: conta de administrador sem revisão periódica de acesso.
+        if (p.Contains("admin accounts without periodic review:") || p.Contains("privileged access review configured:"))
+        {
+            var adminsWithoutReview = Num(p, "admin accounts without periodic review:");
+            var reviewConfigured = Flag(p, "privileged access review configured:");
+            return adminsWithoutReview > 0 || !reviewConfigured
+                ? ("NonCompliant", $"Stub: GV.RR reprovado — {adminsWithoutReview:0} conta(s) de administrador sem revisão periódica, ou revisão de acesso privilegiado não configurada. Autoridade sem accountability.")
+                : ("Compliant", "Stub: GV.RR conforme — contas de administrador sob revisão periódica de acesso configurada.");
         }
 
         return null;

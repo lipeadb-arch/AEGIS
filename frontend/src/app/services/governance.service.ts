@@ -14,6 +14,7 @@ import {
   IdentifiedRisk,
   InterviewSession,
   InterviewTurn,
+  PolicySyncAccepted,
   PostAnswerRequest,
   StartInterviewRequest,
 } from '../models/governance.models';
@@ -50,6 +51,15 @@ export class GovernanceService {
   /** POST /connect — registra um documento vindo de integração (SharePoint/Confluence). */
   connectDocument(req: ConnectDocumentRequest): Observable<{ id: string }> {
     return this.http.post<{ id: string }>(`${this.documents}/connect`, req, { headers: this.headers() });
+  }
+
+  /**
+   * POST /documents/sync — gatilho MANUAL de sincronização das políticas corporativas: enfileira o tenant
+   * para o PolicyIngestionWorker puxar as fontes externas (SharePoint/Google…) via Provider Pattern.
+   * Retorna 202 (agendado); a ingestão roda em background — os documentos aparecem na lista em instantes.
+   */
+  syncPolicies(): Observable<PolicySyncAccepted> {
+    return this.http.post<PolicySyncAccepted>(`${this.documents}/sync`, null, { headers: this.headers() });
   }
 
   /** GET — lista os documentos do tenant, com filtros opcionais por tipo e status de leitura. */

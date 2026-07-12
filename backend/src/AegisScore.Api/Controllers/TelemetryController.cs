@@ -170,6 +170,34 @@ public class TelemetryController : ControllerBase
             $"Recovery Time Objective Met: {Flag(req.RecoveryTimeObjectiveMet)}",
         }, ct);
 
+    // ---- Govern (GV): telemetria estruturada de governança (além da análise documental) --------
+
+    /// <summary>
+    /// GV.SC — Cybersecurity Supply Chain Risk Management. Governança tem métricas, não só PDFs: um
+    /// fornecedor de TI com acesso à rede SEM auditoria de terceiros ativa é um elo não verificado e reprova.
+    /// </summary>
+    [HttpPost("govern/supply-chain")]
+    public Task<ActionResult<TelemetryVerdictDto>> IngestSupplyChainGovern(SupplyChainTelemetryDto req, CancellationToken ct)
+        => IngestCategory(req.SubcategoryCode, "Govern", "Supply Chain", new[]
+        {
+            $"Suppliers With Network Access: {req.SuppliersWithNetworkAccess}",
+            $"Critical Suppliers: {req.CriticalSuppliersCount}",
+            $"Third Party Audited: {Flag(req.ThirdPartyAudited)}",
+        }, ct);
+
+    /// <summary>
+    /// GV.RR — Roles, Responsibilities &amp; Authorities. Conta de administrador SEM revisão periódica de
+    /// acesso configurada é autoridade sem accountability e reprova.
+    /// </summary>
+    [HttpPost("govern/roles")]
+    public Task<ActionResult<TelemetryVerdictDto>> IngestRolesGovern(RolesTelemetryDto req, CancellationToken ct)
+        => IngestCategory(req.SubcategoryCode, "Govern", "Roles", new[]
+        {
+            $"Admin Accounts: {req.TotalAdminAccounts}",
+            $"Admin Accounts Without Periodic Review: {req.AdminAccountsWithoutReview}",
+            $"Privileged Access Review Configured: {Flag(req.PrivilegedAccessReviewConfigured)}",
+        }, ct);
+
     // ---- helpers -------------------------------------------------------------------
 
     /// <summary>

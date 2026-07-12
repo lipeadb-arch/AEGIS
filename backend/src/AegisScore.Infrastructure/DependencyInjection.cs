@@ -73,6 +73,12 @@ public static class DependencyInjection
         // Connector registry resolves every IEvidenceConnector registered in DI.
         services.AddSingleton<IConnectorRegistry, ConnectorRegistry>();
 
+        // Govern → Provider Pattern de ingestão de documentos: a fábrica resolve a estratégia de fonte
+        // (SharePoint, Google Workspace…) por ConnectorProvider. Os providers concretos são registrados
+        // nos pacotes de conector (ex.: AddMicrosoftConnectors → SharePointProvider); adicionar uma fonte
+        // nova não toca aqui. Singleton sobre providers singletons — mesmo idioma do IConnectorRegistry.
+        services.AddSingleton<IDocumentIntegrationFactory, DocumentIntegrationFactory>();
+
         // Pure scoring logic (stateless).
         services.AddSingleton<MaturityScoringService>();
         services.AddSingleton<RiskScoringService>();
@@ -88,6 +94,10 @@ public static class DependencyInjection
         // DocumentAnalysisWorker resolve GetServices<>() e escolhe pelo CanHandle (text/* vs application/pdf).
         services.AddSingleton<IDocumentTextExtractor, PdfTextExtractor>();
         services.AddSingleton<IDocumentAnalysisQueue, ChannelDocumentAnalysisQueue>();
+
+        // Govern: gatilho de sincronização de políticas sob demanda (canal em memória). Singleton para que
+        // o controller (produtor) e o PolicyIngestionWorker (consumidor) compartilhem a MESMA instância.
+        services.AddSingleton<IPolicySyncTrigger, ChannelPolicySyncTrigger>();
 
         return services;
     }

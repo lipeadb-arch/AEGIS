@@ -34,6 +34,85 @@ public interface IAiAssessmentService
     /// without a hand-written parser per product.
     /// </summary>
     Task<IReadOnlyList<NormalizedSignal>> NormalizeSignalsAsync(RawSignalBatch batch, CancellationToken ct);
+
+    /// <summary>
+    /// Copiloto GRC ONIPRESENTE com CONSCIÊNCIA DE CONTEXTO e ROTEAMENTO DE INTENÇÃO (Agentic Routing):
+    /// responde no escopo da tela ativa (<see cref="AuditorScope"/>) com o System Prompt ajustado
+    /// DINAMICAMENTE, e classifica a mensagem numa <see cref="AuditorIntent"/> — dúvida geral (Copilot) ou
+    /// pedido de auditoria (StartInterview, cuja resposta JÁ É a 1ª pergunta do fluxo NIST). A implementação
+    /// obriga a IA a devolver saída ESTRUTURADA. Toda saída é uma SUGESTÃO; o analista permanece no laço.
+    /// </summary>
+    Task<AuditorReply> ChatAsync(AuditorChatRequest request, CancellationToken ct);
+}
+
+// ---- Copiloto GRC (Auditor onipresente, com escopo de contexto) --------------
+
+/// <summary>
+/// Escopo de contexto do Copiloto GRC: a tela/Função NIST onde o usuário está. Ajusta a persona e o foco
+/// de auditoria da IA. <c>Global</c> = visão executiva do Secure Score (fora de uma Função dedicada).
+/// </summary>
+public enum AuditorScope { Global = 0, Govern, Identify, Protect, Detect, Respond, Recover }
+
+/// <summary>Uma fala do histórico do chat (papel + conteúdo). Conteúdo é dado NÃO confiável (anti-injeção).</summary>
+public record AuditorMessage(string Role, string Content);
+
+/// <summary>
+/// Um turno do Copiloto GRC: o escopo ativo, o histórico e a nova mensagem do usuário. O tenant NÃO
+/// trafega aqui — é resolvido do claim do JWT na borda, nunca do corpo (Zero Trust).
+/// </summary>
+public record AuditorChatRequest(AuditorScope Scope, IReadOnlyList<AuditorMessage> History, string UserMessage);
+
+/// <summary>
+/// Intenção roteada pela IA (Agentic Routing): <c>Copilot</c> = dúvida/consulta geral respondida na hora;
+/// <c>StartInterview</c> = o usuário pediu para auditar/fechar lacunas, então a resposta JÁ É a primeira
+/// pergunta do fluxo NIST e a UI deve entrar no modo entrevista.
+/// </summary>
+public enum AuditorIntent { Copilot = 0, StartInterview }
+
+/// <summary>
+/// Carga estruturada opcional da resposta (o <c>Metadata</c>) — o que a UI precisa para reagir à intenção.
+/// Em <see cref="AuditorIntent.StartInterview"/>, semeia a entrevista com a subcategoria NIST investigada.
+/// </summary>
+public record AuditorInterviewSeed(string? TargetSubcategoryCode);
+
+/// <summary>
+/// Resposta do Copiloto com ROTEAMENTO DE INTENÇÃO: a fala (<paramref name="Message"/> — em StartInterview,
+/// já a 1ª pergunta), o escopo, a <paramref name="Intent"/> classificada e um <paramref name="Metadata"/>
+/// estruturado opcional (ex.: <see cref="AuditorInterviewSeed"/>) para a UI reagir.
+/// </summary>
+public record AuditorReply(string Message, AuditorScope Scope, AuditorIntent Intent, object? Metadata = null);
+
+/// <summary>Traduz a <see cref="AuditorIntent"/> de/para o código de fio ("COPILOT"/"START_INTERVIEW") —
+/// enum-string na fronteira, a UI não depende do valor numérico do enum. Default seguro: COPILOT.</summary>
+public static class AuditorIntents
+{
+    public static string ToWire(AuditorIntent intent) => intent switch
+    {
+        AuditorIntent.StartInterview => "START_INTERVIEW",
+        _ => "COPILOT",
+    };
+
+    public static AuditorIntent FromWire(string? code) => (code ?? "").Trim().ToUpperInvariant() switch
+    {
+        "START_INTERVIEW" => AuditorIntent.StartInterview,
+        _ => AuditorIntent.Copilot,
+    };
+}
+
+/// <summary>Mapeia o código de escopo vindo da UI no enum. O escopo NÃO é fronteira de segurança (o chat é
+/// read-only); um valor desconhecido cai em <see cref="AuditorScope.Global"/> (fail-safe, não fail-closed).</summary>
+public static class AuditorScopes
+{
+    public static AuditorScope FromCode(string? code) => (code ?? "").Trim().ToUpperInvariant() switch
+    {
+        "GV" => AuditorScope.Govern,
+        "ID" => AuditorScope.Identify,
+        "PR" => AuditorScope.Protect,
+        "DE" => AuditorScope.Detect,
+        "RS" => AuditorScope.Respond,
+        "RC" => AuditorScope.Recover,
+        _ => AuditorScope.Global,
+    };
 }
 
 /// <summary>
@@ -159,5 +238,20 @@ public interface IDocumentTextExtractor
 public interface IDocumentAnalysisQueue
 {
     ValueTask EnqueueAsync(Guid documentId, CancellationToken ct = default);
+    IAsyncEnumerable<Guid> DequeueAllAsync(CancellationToken ct);
+}
+
+/// <summary>
+/// Gatilho de sincronização de políticas SOB DEMANDA (Govern). Desacopla o request HTTP do trabalho de
+/// ingestão: o controller publica o tenant e devolve 202 na hora; o <c>PolicyIngestionWorker</c> — além do
+/// ciclo periódico do timer — consome o canal e executa o fetch/registro em background. Canal em memória
+/// (mesmo idioma do <see cref="IDocumentAnalysisQueue"/>); em produção troca-se por um broker mantendo a porta.
+/// </summary>
+public interface IPolicySyncTrigger
+{
+    /// <summary>Publica um pedido de sincronização das políticas do tenant. Não bloqueia: só enfileira.</summary>
+    ValueTask RequestSyncAsync(Guid tenantId, CancellationToken ct = default);
+
+    /// <summary>Fluxo assíncrono dos tenants a sincronizar, consumido pelo worker.</summary>
     IAsyncEnumerable<Guid> DequeueAllAsync(CancellationToken ct);
 }

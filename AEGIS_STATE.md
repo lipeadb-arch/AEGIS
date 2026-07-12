@@ -67,9 +67,22 @@ public record CategoryTelemetrySignal(
 
 `ILLMClient` determinístico usado quando **não há `AegisAi:ApiKey`**. Faz **parsing numérico real via regex** (helpers `Num(label)` e `Flag(label)` sobre o payload lowercased), não só keyword-matching. Roteia por família de rótulos: `EvaluateProtect` → `EvaluateDetect` → `EvaluateRespondRecover` → genérico. Cada categoria é **binária** (falha em qualquer condição = `NonCompliant`; passa em tudo = `Compliant`). Motor real: `GeminiLlmClient` (modelo **`gemini-2.0-flash`**, corrigido do `1.5-flash` aposentado; falha HTTP → `AiUnavailableException`/503).
 
-### 2.5 Testes — **57/57 verdes**
+### 2.5 Testes — **67/67 verdes**
 
-`AegisScore.Infrastructure.Tests` (xUnit + FluentAssertions 6.12, SQLite in-memory). Cobrem: precedência de fonte (`ControlStateWriterTests`), o fluxo real ingestão→motor→writer com `StubLlmClient` (`TelemetryIngestionServiceTests`, `AssetTelemetryTests`), transporte Gemini (`GeminiLlmClientTests`). O catálogo de teste semeia PR.AA-01, DE.CM-01, RS.MA-01, RS.MI-01, RC.RP-01, ID.AM-01.
+`AegisScore.Infrastructure.Tests` (xUnit + FluentAssertions 6.12, SQLite in-memory). Cobrem: precedência de fonte (`ControlStateWriterTests`), o fluxo real ingestão→motor→writer com `StubLlmClient` (`TelemetryIngestionServiceTests`, `AssetTelemetryTests`), transporte Gemini (`GeminiLlmClientTests`), dedupe de documentos de governança sob corrida (`GovernanceDocumentDedupeTests`, ver 2.6). O catálogo de teste semeia PR.AA-01, DE.CM-01, RS.MA-01, RS.MI-01, RC.RP-01, ID.AM-01.
+
+### 2.6 Govern — dedupe de documentos agora é invariante de banco (sessão 2026-07-11)
+
+O índice `(TenantId, Sha256)` de `GovernanceDocument` era **não único** — os dois caminhos de ingestão (`GovernanceDocumentsController.Upload` e `PolicyIngestionWorker.SyncTenantAsync`) faziam um `AnyAsync` (checa hash) → `Add` clássico read-then-write, então uma corrida (dois uploads simultâneos do mesmo arquivo, ou o ciclo periódico do worker batendo com o gatilho `/sync` sob demanda no mesmo tenant) podia gravar o mesmo documento duas vezes. O worker mitigava isso com um `SemaphoreSlim _syncGate` 1×1 — um paliativo em memória, inútil entre réplicas/processos.
+
+**Correção — a idempotência virou uma invariante do banco:**
+- `AegisScoreDbContext.OnModelCreating`: índice agora `.IsUnique()`, **parcial** (`WHERE "Sha256" IS NOT NULL` — o caminho `/connect` registra o documento de integração antes de anexar o binário, então vários registros sem hash ainda precisam conviver).
+- `Upload` e `SyncTenantAsync`: o `AnyAsync` prévio virou só o fast-path; o `SaveChangesAsync` do insert ganhou `catch (DbUpdateException)` tratado como idempotente (mesmo padrão já usado em `AegisScoreSnapshotWorker.CaptureTenantAsync`) — no `Upload` vira 409 Conflict; no worker, `db.Entry(doc).State = EntityState.Detached` (o `db` é reusado no `foreach` do lote) + log warning + `continue`.
+- **`SemaphoreSlim _syncGate` e `GuardedSyncAsync` foram REMOVIDOS** do `PolicyIngestionWorker` — deixaram de ser necessários para correção (o banco impõe o dedupe) e tenants distintos agora sincronizam em paralelo sem lock global desnecessário.
+- Migration `20260711222804_UniqueGovernanceDocumentSha256`: dedupe defensivo de linhas pré-existentes (`DELETE` via `ROW_NUMBER() OVER (PARTITION BY TenantId, Sha256 ORDER BY CreatedAt, Id)`, mantém a mais antiga; `ControlMappings` somem via `ON DELETE CASCADE`) antes do `CREATE UNIQUE INDEX` — no-op numa base já limpa. **Aplicada ao banco `aegis_dev`** via `dotnet ef database update` nesta sessão (⚠️ note: `aegis_dev` é o banco real configurado em user-secrets — diverge do `aegis` do `appsettings.json` versionado citado na seção 5/DEV.md; confirmar qual é o nome correto antes de instruções futuras).
+- Teste novo `GovernanceDocumentDedupeTests` prova a corrida real (dois contexts, ambos leem "não existe" antes de qualquer commit, o segundo `SaveChangesAsync` lança `DbUpdateException`, sobra exatamente 1 documento), o filtro parcial (docs sem hash convivem) e o isolamento tenant-leading (mesmo hash em tenants diferentes não colide).
+
+Ainda **não commitado** (segue a convenção da seção topo deste arquivo — o Felipe versiona manualmente).
 
 ---
 
@@ -107,13 +120,13 @@ Regra de negócio implacável de cada categoria no `StubLlmClient`. **Reprova (`
 
 ## 5. Ponto de Parada e Backlog
 
-**Onde paramos:** backend do NIST **completo e provado ao vivo** (12 endpoints de telemetria, 5 pilares por telemetria + Govern por documento, 57/57 testes). Frontend com as 6 abas acesas e painéis-esqueleto renderizando. **Nada commitado** desta sessão.
+**Onde paramos:** backend do NIST **completo e provado ao vivo** (12 endpoints de telemetria, 5 pilares por telemetria + Govern por documento, 67/67 testes) + dedupe de documentos de governança agora garantido por índice único no banco (ver 2.6). Frontend com as 6 abas acesas e painéis-esqueleto renderizando. **Nada commitado** desta sessão (nem da anterior).
 
 **Próximos passos imediatos (prioridade):**
 
-1. **Padrão Strategy / Provider Pattern para ingestão agnóstica de documentos (Govern)** — hoje o `DocumentAnalysisWorker` consome fila local + storage local. Abstrair a **fonte** do documento (upload manual, **SharePoint**, Confluence, Egnyte) atrás de uma porta (`IDocumentSourceConnector` ou similar) para que o conector do SharePoint injete documentos sem tocar o worker. Já há gancho: `POST /governance/documents/connect` + `IEvidenceConnector`/`IConnectorRegistry`.
+1. **`SharePointProvider` ainda é STUB** (`AegisScore.Connectors.Microsoft/SharePointProvider.cs`) — o Provider Pattern JÁ EXISTE (`IDocumentIntegrationFactory`/`IDocumentIntegrationProvider`, `PolicyIngestionWorker` agnóstico, gancho `POST /governance/documents/connect`), mas devolve políticas MOCKADAS em vez de chamar o Microsoft Graph. Falta: autenticação OAuth client credentials (segredos em `ConnectorConfig.EncryptedSettings`) + `GET /sites/{id}/drive/root/children` real. *(Correção da desatualização: o item anterior deste backlog descrevia esse padrão como algo a construir do zero — já está construído, falta só ligar a fonte real.)*
 2. **Integração HTTP do frontend** — os 4 painéis PR/DE/RS/RC precisam consumir `GET /api/v1/scoring/dashboard`, filtrar por Função/prefixo de categoria e listar os controles `NonCompliant` (gráficos nativos canvas/SVG, sem libs, padrão do projeto).
 3. **Ligar o motor real** — `GeminiLlmClient` (`gemini-2.0-flash`) **não testado contra o Google** (quota/chave do Felipe); a prova ao vivo usa o Stub forçado (`$env:AegisAi__ApiKey=' '`).
 4. **HUD `/trend`** só preenche via `AegisScoreSnapshotWorker` (foto à meia-noite UTC com API no ar); considerar snapshot no boot em DEV.
 
-**Ambiente de execução (DEV):** API em `http://localhost:5100` (`dotnet run --launch-profile http`, banco `aegis`). DemoTenant `aa000000-0000-0000-0000-000000000001`; usuário `analista@demo.aegis` / `Aegis@12345` (via `POST /dev/seed-user`). Segredos (JWT, connection string, `AegisAi:ApiKey`) em `dotnet user-secrets` — ver `DEV.md` na raiz.
+**Ambiente de execução (DEV):** API em `http://localhost:5100` (`dotnet run --launch-profile http`). ⚠️ Banco real (via `dotnet user-secrets`, confirmado nesta sessão por `dotnet ef migrations list`) é **`aegis_dev`** — diverge do `Database=aegis` que aparece vazio-de-propósito no `appsettings.json` versionado (DEV.md Passo 1 usa `aegis`; o user-secret local do Felipe aponta para `aegis_dev`). DemoTenant `aa000000-0000-0000-0000-000000000001`; usuário `analista@demo.aegis` / `Aegis@12345` (via `POST /dev/seed-user`). Segredos (JWT, connection string, `AegisAi:ApiKey`) em `dotnet user-secrets` — ver `DEV.md` na raiz. **Schema é aplicado automaticamente no boot** (`db.Database.MigrateAsync()` em `Program.cs`) — não rodar `dotnet ef database update` à mão em uso normal (exceção: aplicação pontual de uma migration nova fora do ciclo de boot, como feito nesta sessão).

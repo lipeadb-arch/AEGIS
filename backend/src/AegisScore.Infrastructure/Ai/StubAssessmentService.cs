@@ -91,6 +91,59 @@ public sealed class StubAssessmentService : IAiAssessmentService
     public Task<IReadOnlyList<NormalizedSignal>> NormalizeSignalsAsync(RawSignalBatch batch, CancellationToken ct)
         => Task.FromResult<IReadOnlyList<NormalizedSignal>>(Array.Empty<NormalizedSignal>());
 
+    /// <summary>
+    /// Copiloto GRC determinístico (sem LLM): devolve uma orientação canned coerente com o FOCO daquele
+    /// escopo — o suficiente para exercitar o fluxo /auditor/chat ponta a ponta sem chave nem tokens.
+    /// </summary>
+    public Task<AuditorReply> ChatAsync(AuditorChatRequest request, CancellationToken ct)
+    {
+        var msg = request.UserMessage.ToLowerInvariant();
+
+        // Roteamento de Intenção determinístico por palavra-chave: pedido de auditoria/diagnóstico/lacunas
+        // → START_INTERVIEW (a resposta já é a 1ª pergunta); qualquer outra coisa → COPILOT.
+        var wantsInterview =
+            msg.Contains("auditar") || msg.Contains("auditoria") || msg.Contains("diagnóstic") ||
+            msg.Contains("diagnostic") || msg.Contains("lacuna") || msg.Contains("entrevista") ||
+            msg.Contains("gap") || msg.Contains("fechar");
+
+        if (wantsInterview)
+        {
+            var (question, code) = FirstInterviewQuestion(request.Scope);
+            return Task.FromResult(new AuditorReply(
+                question, request.Scope, AuditorIntent.StartInterview, new AuditorInterviewSeed(code)));
+        }
+
+        var reply =
+            $"[Copiloto GRC · simulado] No escopo {request.Scope}, o foco é {ScopeFocus(request.Scope)} " +
+            $"Sua mensagem: \"{request.UserMessage}\". (Motor de IA simulado — configure Ai:ApiKey para respostas reais.)";
+        return Task.FromResult(new AuditorReply(reply, request.Scope, AuditorIntent.Copilot));
+    }
+
+    /// <summary>Foco canned por escopo (usado na resposta COPILOT simulada).</summary>
+    private static string ScopeFocus(AuditorScope scope) => scope switch
+    {
+        AuditorScope.Global => "a visão executiva do Secure Score: priorize as Funções com mais controles NonCompliant.",
+        AuditorScope.Protect => "PR.AA/PR.DS: confirme MFA privilegiado (100%) e criptografia de endpoint (≥95%).",
+        AuditorScope.Detect => "DE.AE/DE.CM: verifique cobertura de logs críticos (≥95%) e ativos críticos monitorados.",
+        AuditorScope.Respond => "RS.MA/RS.MI: valide MTTA (≤30 min), MTTR (≤120 min) e isolamento automatizado.",
+        AuditorScope.Recover => "RC.RP: confirme backups imutáveis, íntegros (Valid) e RTO atendido.",
+        AuditorScope.Govern => "GV.SC/GV.RR: audite fornecedores com acesso à rede e a revisão periódica de administradores.",
+        AuditorScope.Identify => "ID.AM: revise o inventário — EDR ativo e sistemas operacionais suportados.",
+        _ => "a postura geral do Aegis Score.",
+    };
+
+    /// <summary>Primeira pergunta canned do fluxo NIST por escopo (+ a subcategoria investigada).</summary>
+    private static (string Question, string? Code) FirstInterviewQuestion(AuditorScope scope) => scope switch
+    {
+        AuditorScope.Protect => ("Qual a cobertura atual de MFA para contas privilegiadas e o Conditional Access está aplicado (PR.AA)?", "PR.AA-01"),
+        AuditorScope.Detect => ("Qual a cobertura de logs das fontes críticas e há ativos críticos fora do monitoramento (DE.CM)?", "DE.CM-01"),
+        AuditorScope.Respond => ("Qual o MTTA médio dos incidentes e a cobertura de threat hunting (RS.MA)?", "RS.MA-01"),
+        AuditorScope.Recover => ("Os backups são imutáveis, testados (integridade Valid) e o RTO é atendido (RC.RP)?", "RC.RP-01"),
+        AuditorScope.Identify => ("O inventário de ativos está completo, com EDR ativo e sistemas suportados (ID.AM)?", "ID.AM-01"),
+        AuditorScope.Govern => ("Como a organização audita os fornecedores de TI com acesso à rede corporativa (GV.SC)?", "GV.SC-01"),
+        _ => ("Por qual Função NIST você quer começar o diagnóstico de lacunas?", null),
+    };
+
     // ---- helpers ----
 
     /// <summary>Extrai (na ordem, sem repetir) os códigos NIST do histórico; se não houver, usa o roteiro padrão.</summary>

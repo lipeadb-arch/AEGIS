@@ -67,6 +67,13 @@ export interface DocumentAccepted {
   analysisStatus: AiAnalysisStatus;
 }
 
+/** Resposta 202 do gatilho manual de sincronização de políticas corporativas (PolicySyncAcceptedDto). */
+export interface PolicySyncAccepted {
+  tenantId: string;
+  status: string;
+  message: string;
+}
+
 /** Registra um documento vindo de integração — SharePoint/Confluence (ConnectDocumentRequest). */
 export interface ConnectDocumentRequest {
   title: string;

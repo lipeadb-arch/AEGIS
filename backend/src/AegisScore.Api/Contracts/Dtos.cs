@@ -88,6 +88,8 @@ public record GovernanceDocumentDto(
     string? AnalysisError, DateTimeOffset? AnalyzedAt, IReadOnlyList<DocumentMappingDto> Mappings);
 public record DocumentAcceptedDto(Guid Id, string AnalysisStatus);
 public record ConfirmMappingRequest(bool Confirmed, double? Confidence);
+/// <summary>Resposta 202 do gatilho manual de sincronização de políticas (Govern): trabalho aceito e enfileirado.</summary>
+public record PolicySyncAcceptedDto(Guid TenantId, string Status, string Message);
 
 // ---- Govern: cobertura híbrida (documentos + entrevistas) ----
 public record CoverageCellDto(string Code, string Description, string Status, string EvidenceSource);
@@ -217,6 +219,38 @@ public record ExecutionRecoverTelemetryDto(
     bool ImmutableBackupsEnabled, string BackupIntegrityStatus, bool RecoveryTimeObjectiveMet,
     string SubcategoryCode);
 
+// ---- Govern (GV): telemetria estruturada de governança (além da análise documental) ----
+// Governança não se resume a ler PDFs: métricas estruturadas de cadeia de suprimentos (GV.SC) e de
+// papéis/autoridades (GV.RR) chegam como telemetria — fonte AUTORITATIVA, não o teto documental de 50%.
+// Códigos reais no catálogo CSF 2.0: GV.SC-01, GV.RR-01.
+
+/// <summary>GV.SC — Cybersecurity Supply Chain Risk Mgmt. Fornecedor de TI com acesso à rede sem auditoria de terceiros ativa reprova.</summary>
+public record SupplyChainTelemetryDto(
+    int SuppliersWithNetworkAccess, int CriticalSuppliersCount, bool ThirdPartyAudited, string SubcategoryCode);
+
+/// <summary>GV.RR — Roles, Responsibilities & Authorities. Conta de administrador sem revisão periódica de acesso reprova.</summary>
+public record RolesTelemetryDto(
+    int TotalAdminAccounts, int AdminAccountsWithoutReview, bool PrivilegedAccessReviewConfigured, string SubcategoryCode);
+
 /// <summary>Veredito devolvido pela ingestão: o status técnico e os pontos já gravados no ledger.</summary>
 public record TelemetryVerdictDto(
     string SubcategoryCode, string Status, int AwardedScore, int MaxScorePoints, int Percentage, string AiEvidence);
+
+// ---- Auditor Virtual (Copiloto GRC onipresente, com escopo de contexto) ----
+/// <summary>Uma fala do histórico do chat (Role: "user"|"assistant"; Content: texto). Dado NÃO confiável.</summary>
+public record AuditorChatMessageDto(string Role, string Content);
+
+/// <summary>
+/// Turno do Copiloto GRC. <paramref name="ContextScope"/> é o código da tela ativa ("GLOBAL","GV","ID",
+/// "PR","DE","RS","RC"), que ajusta dinamicamente o System Prompt da IA. O TenantId NÃO trafega aqui — é
+/// resolvido do claim <c>tenant_id</c> do JWT (Zero Trust).
+/// </summary>
+public record AuditorChatRequestDto(
+    string ContextScope, string Message, IReadOnlyList<AuditorChatMessageDto>? History);
+
+/// <summary>
+/// Resposta do Copiloto com ROTEAMENTO DE INTENÇÃO. <paramref name="Intent"/> ("COPILOT"|"START_INTERVIEW")
+/// diz à UI como reagir; <paramref name="Metadata"/> é a carga estruturada opcional da intenção (em
+/// START_INTERVIEW, semeia a entrevista com a subcategoria investigada).
+/// </summary>
+public record AuditorChatResponseDto(string Reply, string Scope, string Intent, object? Metadata);

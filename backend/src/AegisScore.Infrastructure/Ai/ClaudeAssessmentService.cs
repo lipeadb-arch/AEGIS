@@ -125,6 +125,91 @@ public class ClaudeAssessmentService : IAiAssessmentService
             .ToList();
     }
 
+    public async Task<AuditorReply> ChatAsync(AuditorChatRequest request, CancellationToken ct)
+    {
+        // Roteamento de Intenção: o System Prompt manda a IA classificar (COPILOT vs START_INTERVIEW) e
+        // devolver JSON estruturado. O escopo da tela ativa afina a persona e o foco de auditoria.
+        var system = ChatSystemPrompt(request.Scope);
+        var history = string.Join("\n", request.History.Select(m => $"{m.Role}: {m.Content}"));
+        var user = $"HISTÓRICO:\n{history}\n\nMENSAGEM DO USUÁRIO: {request.UserMessage}";
+
+        var raw = await CompleteTextAsync(system, user, ct);
+        var routed = ParseRouter(raw);
+
+        var intent = AuditorIntents.FromWire(routed.intent);
+        object? metadata = intent == AuditorIntent.StartInterview
+            ? new AuditorInterviewSeed(routed.targetSubcategoryCode)
+            : null;
+        return new AuditorReply(routed.message ?? "", request.Scope, intent, metadata);
+    }
+
+    /// <summary>
+    /// System Prompt do Copiloto com ROTEAMENTO DE INTENÇÃO: persona GRC + foco do escopo ativo
+    /// (<see cref="ScopeFocus"/>) + o CONTRATO de saída estruturada. A IA DEVE devolver só JSON classificando
+    /// a mensagem em COPILOT (dúvida geral, respondida em <c>message</c>) ou START_INTERVIEW (pedido de
+    /// auditoria — <c>message</c> já é a 1ª pergunta do fluxo NIST e <c>targetSubcategoryCode</c> a subcategoria).
+    /// </summary>
+    private static string ChatSystemPrompt(AuditorScope scope) =>
+        "Você é o Copiloto GRC do Aegis Score, um auditor de cibersegurança sênior especialista em NIST CSF " +
+        "2.0. Responda em Português do Brasil, objetivo e acionável; suas respostas são SUGESTÕES (o analista " +
+        "decide) e nunca invente números — se faltar evidência, peça-a.\n\n" +
+        "ROTEIE A INTENÇÃO da mensagem do usuário em uma de duas:\n" +
+        "• \"COPILOT\": dúvida/consulta geral. Responda diretamente no campo \"message\".\n" +
+        "• \"START_INTERVIEW\": o usuário quer AUDITAR, DIAGNOSTICAR ou FECHAR LACUNAS. Então \"message\" JÁ " +
+        "DEVE SER a primeira pergunta investigativa do fluxo NIST, e \"targetSubcategoryCode\" o código da " +
+        "subcategoria investigada (ex.: \"GV.SC-01\").\n\n" +
+        ScopeFocus(scope) + "\n\n" +
+        "Responda ESTRITAMENTE em JSON, sem nenhum texto fora dele: " +
+        "{\"intent\":\"COPILOT|START_INTERVIEW\",\"message\":\"..\",\"targetSubcategoryCode\":\"..|null\"}.";
+
+    /// <summary>Foco de auditoria por escopo (controles-alvo, métricas exigidas, tom) — injetado no prompt.</summary>
+    private static string ScopeFocus(AuditorScope scope) => scope switch
+    {
+        AuditorScope.Global =>
+            "ESCOPO: GLOBAL. Aja como gerador de relatórios executivos do Secure Score atual: sintetize a " +
+            "postura por Função NIST, destaque as maiores lacunas por risco e recomende prioridades para o board. " +
+            "Linguagem de negócio, não jargão técnico.",
+        AuditorScope.Protect =>
+            "ESCOPO: PROTECT (PR). Audite APENAS controles de proteção (PR.AA, PR.DS, PR.PS, PR.IR). Exija " +
+            "métricas concretas: MFA privilegiado (meta 100%), Conditional Access, criptografia de endpoint (≥95%), " +
+            "hardening CIS (≥80%) e zero patch crítico pendente. Privilégio sem MFA é falha crítica.",
+        AuditorScope.Detect =>
+            "ESCOPO: DETECT (DE). Foque em DE.AE e DE.CM: cobertura de logs críticos (≥95%), ativos críticos " +
+            "monitorados, taxa de falso-positivo, cobertura MITRE ATT&CK e detecção de ataques simulados. Ponto cego " +
+            "em ativo crítico é falha.",
+        AuditorScope.Respond =>
+            "ESCOPO: RESPOND (RS). Foque em RS.MA e RS.MI: MTTA (≤30 min), MTTR (≤120 min), isolamento automatizado " +
+            "e cobertura de threat hunting. Resposta lenta amplia o dano.",
+        AuditorScope.Recover =>
+            "ESCOPO: RECOVER (RC). Foque em RC.RP: backups imutáveis, integridade validada (Valid) e RTO atendido — " +
+            "resiliência a ransomware. Backup mutável ou não testado é falha crítica.",
+        AuditorScope.Govern =>
+            "ESCOPO: GOVERN (GV). Foque em GV.SC (cadeia de suprimentos — fornecedores com acesso à rede exigem " +
+            "auditoria de terceiros), GV.RR (papéis/autoridades e revisão periódica de administradores) e GV.PO " +
+            "(política aprovada e revisada).",
+        AuditorScope.Identify =>
+            "ESCOPO: IDENTIFY (ID). Foque em ID.AM (inventário — EDR ativo, SO suportado) e ID.RA (gestão de " +
+            "vulnerabilidades). Ativo sem EDR ou em fim de vida é exposição.",
+        _ => "ESCOPO: GLOBAL.",
+    };
+
+    /// <summary>
+    /// Extrai a resposta roteada do texto do LLM. RESILIENTE (Tolerância Zero na UX): se a IA não devolver
+    /// JSON válido, trata a conclusão inteira como uma resposta COPILOT — o chat nunca quebra por formatação.
+    /// </summary>
+    private static ChatRouterJson ParseRouter(string raw)
+    {
+        try
+        {
+            var dto = JsonSerializer.Deserialize<ChatRouterJson>(ExtractJson(raw), Json);
+            if (dto is not null && !string.IsNullOrWhiteSpace(dto.message))
+                return dto;
+        }
+        catch (JsonException) { /* cai no fallback resiliente abaixo */ }
+
+        return new ChatRouterJson("COPILOT", raw.Trim(), null);
+    }
+
     // ---- transport --------------------------------------------------------
 
     private async Task<string> CompleteTextAsync(string system, string user, CancellationToken ct)
@@ -180,4 +265,5 @@ public class ClaudeAssessmentService : IAiAssessmentService
     private record InterviewJson(string? question, string? targetSubcategoryCode, bool isComplete);
     private record ActionJson(string? subcategoryCode, string? what, string? how, string? priority);
     private record SignalJson(string? signalKey, double? numericValue, string? unit, int? severity, List<string>? mappedSubcategoryCodes);
+    private record ChatRouterJson(string? intent, string? message, string? targetSubcategoryCode);
 }

@@ -13,28 +13,36 @@ import {
 } from '../models/governance.models';
 import { environment } from '../../environments/environment';
 import { AgentStateService } from '../services/agent-state.service';
+import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
+import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
+import { ScoringService } from '../services/scoring.service';
+import { PILLARS, TenantControlStateDto, buildPillarView } from '../models/scoring.models';
+
+type SyncState = 'idle' | 'loading' | 'done' | 'error';
 
 /**
- * GOVERN (GV) → Document Hub. Estrutura base do módulo de Governança: ingestão de documentos
- * (upload → leitura da IA), filtros por tipo/status e o mapa de cobertura resumido do pilar.
- * Segue o padrão do AssetInventoryComponent: standalone, signals, sem @angular/forms
- * (eventos nativos + bindings [value]). Estilização enxuta por ora — o foco é a estrutura
- * e o wiring com o GovernanceService.
+ * GOVERN (GV) → Central de Governança. Reúne as três faces do pilar numa só tela HUD:
+ *   1) POSTURA por telemetria (GV.SC/GV.RR) — reusa o ScoreGauge + ControlComplianceCard dos painéis de
+ *      pilar (DRY): mesma leitura de conformidade de Protect/Detect, só que com o prefixo GV.
+ *   2) INGESTÃO — integração corporativa (sync das fontes externas via Provider Pattern) + upload manual.
+ *   3) HUB — a lista de documentos ingeridos e a leitura da IA.
+ *
+ * Padrão da casa: standalone, Signals para TODO o estado (sem async pipe/RxJS na view), sem @angular/forms.
  */
 @Component({
   selector: 'app-document-hub',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, ScoreGaugeComponent, ControlComplianceCardComponent],
   template: `
     <div class="app">
       <header class="topbar">
         <div class="brand">
-          <span class="mark">Central <b>de Documentos</b></span>
-          <span class="sub">NIST CSF 2.0 · Govern (GV) · Document Hub</span>
+          <span class="mark">Central <b>de Governança</b></span>
+          <span class="sub">NIST CSF 2.0 · Govern (GV)</span>
         </div>
         <div class="client">
           <button type="button" class="auditor-btn" (click)="agent.openAgent()">
-            <span class="pulse"></span> Auditor Virtual
+            <span class="pulse-dot"></span> Auditor Virtual
           </button>
           <span class="label">Cobertura GV</span>
           <span class="name">
@@ -47,11 +55,44 @@ import { AgentStateService } from '../services/agent-state.service';
         </div>
       </header>
 
-      <!-- ---- Cobertura híbrida (resumo) ---- -->
+      <!-- ============ 1) POSTURA DE GOVERNANÇA (telemetria GV.SC / GV.RR) ============ -->
+      <section class="panel gov-score">
+        <div class="hd">
+          <h3>Postura de Governança</h3>
+          <span class="hint">GV.SC · GV.RR — avaliado por telemetria (autoritativo)</span>
+        </div>
+
+        @if (scoringLoading()) {
+          <span class="pulse">Carregando a postura de governança…</span>
+        } @else if (scoringError()) {
+          <p class="score-err">
+            Não foi possível carregar a postura de governança. Verifique a API em <code>{{ apiBase }}</code>.
+          </p>
+        } @else {
+          <div class="gs-grid">
+            <div class="gs-left">
+              <app-score-gauge [percent]="govView().compliancePct" caption="GV CONFORME" />
+              <div class="gs-counts">
+                <span class="c">{{ govView().total }} controles avaliados</span>
+                <span class="c ok">{{ govView().compliant }} conformes</span>
+                @if (govView().partial > 0) {
+                  <span class="c partial">{{ govView().partial }} parciais</span>
+                }
+                <span class="c fail" [class.hot]="govView().nonCompliant > 0">
+                  {{ govView().nonCompliant }} não conformes
+                </span>
+              </div>
+            </div>
+            <app-control-compliance-card [controls]="govView().controls" />
+          </div>
+        }
+      </section>
+
+      <!-- ---- Cobertura documental (híbrida: documentos + entrevistas) ---- -->
       @if (coverage(); as cov) {
         <section class="panel coverage-strip">
           <div class="cov-metric">
-            <span class="cov-k">Coberto</span>
+            <span class="cov-k">Coberto (doc.)</span>
             <span class="cov-v ok">{{ cov.coveredPct }}%</span>
           </div>
           <div class="cov-metric">
@@ -65,9 +106,38 @@ import { AgentStateService } from '../services/agent-state.service';
         </section>
       }
 
-      <!-- ---- Ingestão de documento ---- -->
+      <!-- ============ 2) INGESTÃO — Integração Corporativa ============ -->
+      <section class="panel integration">
+        <p class="eyebrow">Integração Corporativa</p>
+        <div class="int-row">
+          <p class="int-copy">
+            Puxe as políticas das fontes corporativas conectadas (SharePoint, Google Workspace…) para
+            leitura automática pela IA — sem upload manual.
+          </p>
+          <button
+            type="button"
+            class="btn primary sync-btn"
+            (click)="triggerSync()"
+            [disabled]="syncState() === 'loading'"
+          >
+            @if (syncState() === 'loading') {
+              <span class="spin"></span> Sincronizando…
+            } @else {
+              Sincronizar Políticas Corporativas
+            }
+          </button>
+        </div>
+
+        @if (syncState() === 'done') {
+          <p class="int-ok">✓ {{ syncMessage() }}</p>
+        } @else if (syncState() === 'error') {
+          <p class="int-err">{{ syncMessage() }}</p>
+        }
+      </section>
+
+      <!-- ---- Upload manual ---- -->
       <section class="panel uploader">
-        <p class="eyebrow">Ingerir documento</p>
+        <p class="eyebrow">Upload Manual</p>
         <div class="up-row">
           <label class="up-field">
             <span>Arquivo</span>
@@ -140,7 +210,7 @@ import { AgentStateService } from '../services/agent-state.service';
         </div>
       }
 
-      <!-- ---- Tabela de documentos ---- -->
+      <!-- ============ 3) HUB — documentos ingeridos ============ -->
       <section class="panel table-wrap">
         <table class="doc-table">
           <thead>
@@ -192,7 +262,7 @@ import { AgentStateService } from '../services/agent-state.service';
                   @if (loading()) {
                     Carregando documentos…
                   } @else {
-                    Nenhum documento ingerido ainda. Envie o primeiro acima.
+                    Nenhum documento ingerido ainda. Sincronize as fontes ou envie o primeiro acima.
                   }
                 </td>
               </tr>
@@ -200,7 +270,6 @@ import { AgentStateService } from '../services/agent-state.service';
           </tbody>
         </table>
       </section>
-
     </div>
   `,
   styles: [
@@ -212,12 +281,34 @@ import { AgentStateService } from '../services/agent-state.service';
         box-shadow: 0 0 16px -4px rgba(38, 224, 255, 0.6); transition: 0.15s;
       }
       .auditor-btn:hover { box-shadow: 0 0 22px -3px rgba(38, 224, 255, 0.85); }
-      .auditor-btn .pulse { width: 8px; height: 8px; border-radius: 50%; background: #05070f; animation: auditor-pulse 1.8s infinite; }
+      .auditor-btn .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: #05070f; animation: auditor-pulse 1.8s infinite; }
       @keyframes auditor-pulse {
         0% { box-shadow: 0 0 0 0 rgba(5, 7, 15, 0.5); }
         70% { box-shadow: 0 0 0 6px rgba(5, 7, 15, 0); }
         100% { box-shadow: 0 0 0 0 rgba(5, 7, 15, 0); }
       }
+
+      /* ---- 1) Postura de Governança (telemetria GV) ---- */
+      .gov-score { padding: 20px 22px; margin-bottom: 18px; }
+      .gov-score .hd { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; gap: 12px; }
+      .gov-score h3 { margin: 0; font-size: 14px; font-weight: 600; position: relative; padding-left: 13px; }
+      .gov-score h3::before {
+        content: ''; position: absolute; left: 0; top: 2px; bottom: 2px; width: 3px; border-radius: 2px;
+        background: var(--neon); box-shadow: 0 0 10px rgba(38, 224, 255, 0.6);
+      }
+      .gov-score .hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+      .gs-grid { display: grid; grid-template-columns: 300px 1fr; gap: 18px; align-items: start; }
+      .gs-left { display: flex; flex-direction: column; gap: 12px; }
+      .gs-counts { display: flex; flex-direction: column; gap: 8px; }
+      .gs-counts .c { font-family: var(--mono); font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 8px; }
+      .gs-counts .c::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.7; }
+      .gs-counts .c.ok { color: var(--cyan); }
+      .gs-counts .c.partial { color: var(--amber); }
+      .gs-counts .c.fail.hot { color: var(--red); }
+      .gs-counts .c.fail.hot::before { box-shadow: 0 0 8px 0 var(--red); opacity: 1; }
+      .score-err { font-family: var(--mono); font-size: 12px; color: var(--red); margin: 0; }
+      .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: 0.08em; animation: hub-pulse 1.4s ease-in-out infinite; }
+      @keyframes hub-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
 
       .coverage-strip { display: flex; gap: 30px; padding: 16px 20px; margin-bottom: 18px; }
       .cov-metric { display: flex; flex-direction: column; gap: 4px; }
@@ -225,6 +316,17 @@ import { AgentStateService } from '../services/agent-state.service';
       .cov-v { font-family: var(--display); font-weight: 700; font-size: 22px; color: var(--text); }
       .cov-v.ok { color: var(--cyan); }
       .cov-v.warn { color: var(--amber); }
+
+      /* ---- 2) Integração Corporativa ---- */
+      .integration { padding: 18px 20px; margin-bottom: 18px; }
+      .integration .eyebrow { margin-bottom: 14px; }
+      .int-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+      .int-copy { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.55; max-width: 560px; }
+      .sync-btn { display: inline-flex; align-items: center; gap: 9px; white-space: nowrap; }
+      .spin { width: 13px; height: 13px; border: 2px solid rgba(5, 7, 15, 0.35); border-top-color: #05070f; border-radius: 50%; animation: hub-spin 0.7s linear infinite; }
+      @keyframes hub-spin { to { transform: rotate(360deg); } }
+      .int-ok { font-family: var(--mono); font-size: 12px; color: var(--cyan); margin: 12px 0 0; }
+      .int-err { font-family: var(--mono); font-size: 12px; color: var(--red); margin: 12px 0 0; }
 
       .uploader { padding: 18px 20px; margin-bottom: 18px; }
       .uploader .eyebrow { margin-bottom: 14px; }
@@ -285,25 +387,39 @@ import { AgentStateService } from '../services/agent-state.service';
 
       tr.empty td { text-align: center; color: var(--muted); font-family: var(--mono); font-size: 12px; padding: 30px; }
 
+      @media (max-width: 900px) { .gs-grid { grid-template-columns: 1fr; } }
       @media (max-width: 720px) {
         .up-field input[type='text'], .up-field select { min-width: 160px; }
       }
+      @media (prefers-reduced-motion: reduce) { .pulse, .spin, .auditor-btn .pulse-dot { animation: none; } }
     `,
   ],
 })
 export class DocumentHubComponent implements OnInit {
   private readonly svc = inject(GovernanceService);
+  private readonly scoring = inject(ScoringService);
   protected readonly agent = inject(AgentStateService);
 
   constructor() {
-    // O Auditor vive agora no App (global). Quando uma entrevista altera a cobertura, o
-    // AgentStateService sinaliza e recarregamos o strip de cobertura desta tela.
+    // O Auditor vive no App (global). Quando uma entrevista altera a cobertura, o AgentStateService
+    // sinaliza e recarregamos o strip de cobertura documental desta tela.
     effect(() => {
       if (this.agent.coverageVersion() > 0) this.loadCoverage();
     });
   }
 
-  // ---- Dados ----
+  // ---- Postura de Governança (telemetria GV.SC / GV.RR) ----
+  private readonly govControls = signal<TenantControlStateDto[]>([]);
+  scoringLoading = signal(true);
+  scoringError = signal(false);
+  /** Reusa o mesmo agregador dos painéis de pilar (DRY): pct, contagens e ordenação por risco. */
+  readonly govView = computed(() => buildPillarView(PILLARS.GV, this.govControls()));
+
+  // ---- Integração corporativa (sync sob demanda) ----
+  syncState = signal<SyncState>('idle');
+  syncMessage = signal<string | null>(null);
+
+  // ---- Hub de documentos ----
   docs = signal<GovernanceDocument[]>([]);
   coverage = signal<GovernCoverage | null>(null);
   loading = signal(false);
@@ -331,8 +447,49 @@ export class DocumentHubComponent implements OnInit {
   protected readonly apiBase = environment.apiBase;
 
   ngOnInit(): void {
+    this.loadGovernPosture();
     this.loadCoverage();
     this.loadDocuments();
+  }
+
+  /** Postura por telemetria: os controles GV (GV.SC/GV.RR), filtrados no ScoringService pelo prefixo "GV". */
+  private loadGovernPosture(): void {
+    this.scoringLoading.set(true);
+    this.scoring.getPillarControls('GV').subscribe({
+      next: (list) => {
+        this.govControls.set(list);
+        this.scoringLoading.set(false);
+        this.scoringError.set(false);
+      },
+      error: () => {
+        this.scoringError.set(true);
+        this.scoringLoading.set(false);
+      },
+    });
+  }
+
+  /** Dispara a sincronização das fontes corporativas. 202 = agendado; a ingestão roda em background. */
+  triggerSync(): void {
+    if (this.syncState() === 'loading') return;
+    this.syncState.set('loading');
+    this.syncMessage.set(null);
+
+    this.svc.syncPolicies().subscribe({
+      next: (res) => {
+        this.syncState.set('done');
+        this.syncMessage.set(res.message || 'Sincronização agendada — os documentos aparecerão em instantes.');
+        // Ingestão assíncrona (worker): recarrega a lista e a postura pouco depois, para captar os novos.
+        setTimeout(() => {
+          this.loadDocuments();
+          this.loadGovernPosture();
+        }, 2500);
+      },
+      error: (err) => {
+        console.error('Falha ao sincronizar as políticas corporativas:', err);
+        this.syncState.set('error');
+        this.syncMessage.set('Não foi possível agendar a sincronização. Verifique a API e tente novamente.');
+      },
+    });
   }
 
   private loadDocuments(): void {

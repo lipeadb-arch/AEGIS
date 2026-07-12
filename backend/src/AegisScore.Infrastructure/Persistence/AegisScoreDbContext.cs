@@ -168,7 +168,15 @@ public class AegisScoreDbContext : DbContext
         b.Entity<RiskAppetite>().HasIndex(x => x.TenantId);
         b.Entity<IcrScore>().HasIndex(x => x.TenantId);
         b.Entity<GovernanceDocument>().HasIndex(x => x.TenantId);
-        b.Entity<GovernanceDocument>().HasIndex(x => new { x.TenantId, x.Sha256 });   // dedupe por hash
+        // Dedupe por hash NO NÍVEL DO BANCO: o índice ÚNICO (TenantId, Sha256) REJEITA fisicamente um
+        // segundo documento com o mesmo conteúdo no tenant. É ele que torna idempotente a corrida
+        // read-then-write dos dois caminhos de ingestão (Upload e PolicyIngestionWorker.SyncTenantAsync),
+        // que antes dependia de um SemaphoreSlim como paliativo. Índice PARCIAL (mesmo padrão de
+        // Asset.ExternalRef): Sha256 é nullable — a integração registra o documento antes de anexar o
+        // binário — então a unicidade só incide quando há hash; vários registros sem hash convivem.
+        b.Entity<GovernanceDocument>().HasIndex(x => new { x.TenantId, x.Sha256 })
+            .IsUnique()
+            .HasFilter("\"Sha256\" IS NOT NULL");
         b.Entity<DocumentControlMapping>().HasIndex(x => new { x.TenantId, x.GovernanceDocumentId });
         b.Entity<DocumentControlMapping>().HasIndex(x => new { x.TenantId, x.SubcategoryCode });
         b.Entity<SubcategoryCoverage>().HasIndex(x => new { x.TenantId, x.SubcategoryCode }).IsUnique();

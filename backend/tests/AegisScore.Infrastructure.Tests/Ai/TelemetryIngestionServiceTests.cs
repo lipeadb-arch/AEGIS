@@ -35,6 +35,11 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
     private const string RespondMitigationCode = "RS.MI-01";
     private const string RecoverExecutionCode = "RC.RP-01";
 
+    private const int GovernScMaxPoints = 15;      // GV.SC (Supply Chain) — tier alto no catálogo NIST CSF 2.0
+    private const string GovernScCode = "GV.SC-01";
+    private const int GovernRrMaxPoints = 5;       // GV.RR (Roles) — tier de governança (peso 5)
+    private const string GovernRrCode = "GV.RR-01";
+
     private static readonly Guid TenantA = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
     private readonly SqliteConnection _connection;
@@ -274,6 +279,68 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
         verdict.AwardedScore.Should().Be(ResilienceMaxPoints);
     }
 
+    // ---- Govern (GV): telemetria estruturada — governança não se resume a ler PDFs ---
+
+    [Fact]
+    public async Task IngestCategory_GovernSupplyChain_FornecedorComAcessoSemAuditoria_ClassificaNonCompliant()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        // 3 fornecedores de TI com acesso à rede, nenhum sob auditoria de terceiros — elo não verificado (GV.SC).
+        var verdict = await ingestion.IngestCategoryAsync(SupplyChainSignal(
+            suppliersWithNetworkAccess: 3, criticalSuppliers: 1, thirdPartyAudited: false));
+
+        verdict.Status.Should().Be(ControlStatus.NonCompliant, "fornecedor com acesso à rede sem auditoria é elo fraco da cadeia (GV.SC)");
+        verdict.AwardedScore.Should().Be(0);
+
+        await using var assert = NewContext(TenantA);
+        var state = await assert.TenantControlStates.SingleAsync();
+        state.Status.Should().Be(ControlStatus.NonCompliant);
+        state.LastVerdictSource.Should().Be(VerdictSource.Telemetry, "telemetria de governança também é evidência autoritativa");
+    }
+
+    [Fact]
+    public async Task IngestCategory_GovernSupplyChain_FornecedoresAuditados_ClassificaCompliant()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        var verdict = await ingestion.IngestCategoryAsync(SupplyChainSignal(
+            suppliersWithNetworkAccess: 3, criticalSuppliers: 1, thirdPartyAudited: true));
+
+        verdict.Status.Should().Be(ControlStatus.Compliant, "fornecedores com acesso à rede sob auditoria de terceiros ativa");
+        verdict.AwardedScore.Should().Be(GovernScMaxPoints, "GV.SC é tier alto (peso 15) e a telemetria pode levá-lo a 100%");
+        verdict.MaxScorePoints.Should().Be(GovernScMaxPoints);
+    }
+
+    [Fact]
+    public async Task IngestCategory_GovernRoles_AdminSemRevisaoPeriodica_ClassificaNonCompliant()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        // Revisão de acesso configurada, mas 2 contas de admin fora do ciclo — reprova (GV.RR).
+        var verdict = await ingestion.IngestCategoryAsync(RolesSignal(
+            totalAdmins: 8, adminsWithoutReview: 2, reviewConfigured: true));
+
+        verdict.Status.Should().Be(ControlStatus.NonCompliant, "conta de administrador sem revisão periódica é autoridade sem accountability (GV.RR)");
+        verdict.AwardedScore.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task IngestCategory_GovernRoles_AdminsSobRevisao_ClassificaCompliant()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        var verdict = await ingestion.IngestCategoryAsync(RolesSignal(
+            totalAdmins: 8, adminsWithoutReview: 0, reviewConfigured: true));
+
+        verdict.Status.Should().Be(ControlStatus.Compliant, "todas as contas de admin sob revisão periódica configurada");
+        verdict.AwardedScore.Should().Be(GovernRrMaxPoints);
+    }
+
     // ---- infraestrutura do teste ----------------------------------------------------
 
     private AegisScoreDbContext NewContext(Guid? tenantId) =>
@@ -324,6 +391,26 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
             $"Immutable Backups Enabled: {(immutable ? "true" : "false")}",
             $"Backup Integrity Status: {integrity}",
             $"Recovery Time Objective Met: {(rtoMet ? "true" : "false")}",
+        });
+
+    /// <summary>Sinal de GV.SC no MESMO formato de métricas que o TelemetryController produz.</summary>
+    private static CategoryTelemetrySignal SupplyChainSignal(
+        int suppliersWithNetworkAccess, int criticalSuppliers, bool thirdPartyAudited) =>
+        new(GovernScCode, "Govern", "Supply Chain", new[]
+        {
+            $"Suppliers With Network Access: {suppliersWithNetworkAccess}",
+            $"Critical Suppliers: {criticalSuppliers}",
+            $"Third Party Audited: {(thirdPartyAudited ? "true" : "false")}",
+        });
+
+    /// <summary>Sinal de GV.RR no MESMO formato de métricas que o TelemetryController produz.</summary>
+    private static CategoryTelemetrySignal RolesSignal(
+        int totalAdmins, int adminsWithoutReview, bool reviewConfigured) =>
+        new(GovernRrCode, "Govern", "Roles", new[]
+        {
+            $"Admin Accounts: {totalAdmins}",
+            $"Admin Accounts Without Periodic Review: {adminsWithoutReview}",
+            $"Privileged Access Review Configured: {(reviewConfigured ? "true" : "false")}",
         });
 
     /// <summary>Monta a cadeia REAL de produção (ingestão → motor → writer) sob o tenant do contexto.</summary>
@@ -381,6 +468,16 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
         rcRp.Subcategories.Add(new NistSubcategory { Code = RecoverExecutionCode, Description = "The recovery plan is executed.", MaxScorePoints = ResilienceMaxPoints });
         rcFn.Categories.Add(rcRp);
         fv.Functions.Add(rcFn);
+
+        // Quinta função: GOVERN / GV.SC-01 (peso 15) e GV.RR-01 (peso 5) — alvos dos testes de telemetria de Govern.
+        var gvFn = new NistFunction { Code = "GV", Name = "GOVERN" };
+        var gvSc = new NistCategory { Code = "GV.SC", Name = "Cybersecurity Supply Chain Risk Management" };
+        gvSc.Subcategories.Add(new NistSubcategory { Code = GovernScCode, Description = "A cybersecurity supply chain risk management program is established.", MaxScorePoints = GovernScMaxPoints });
+        var gvRr = new NistCategory { Code = "GV.RR", Name = "Roles, Responsibilities, and Authorities" };
+        gvRr.Subcategories.Add(new NistSubcategory { Code = GovernRrCode, Description = "Roles, responsibilities, and authorities are established.", MaxScorePoints = GovernRrMaxPoints });
+        gvFn.Categories.Add(gvSc);
+        gvFn.Categories.Add(gvRr);
+        fv.Functions.Add(gvFn);
 
         ctx.FrameworkVersions.Add(fv);   // catálogo é dado de referência: não é ITenantOwned, não é carimbado
         ctx.SaveChanges();

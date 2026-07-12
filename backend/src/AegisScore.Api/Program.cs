@@ -97,6 +97,10 @@ builder.Services.AddMicrosoftConnectors();
 // Document Hub: worker que lê os documentos enfileirados e mapeia os controles NIST.
 builder.Services.AddHostedService<DocumentAnalysisWorker>();
 
+// Govern: worker que PUXA políticas das fontes externas (SharePoint/Google…) de forma agnóstica via
+// Provider Pattern e as injeta no hub — que o DocumentAnalysisWorker acima então lê. Fetch, não análise.
+builder.Services.AddHostedService<PolicyIngestionWorker>();
+
 // Aegis Score: worker que grava a foto agregada diária por tenant (série do gráfico de tendência).
 builder.Services.AddHostedService<AegisScoreSnapshotWorker>();
 
