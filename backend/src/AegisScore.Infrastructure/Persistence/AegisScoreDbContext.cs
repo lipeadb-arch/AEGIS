@@ -75,6 +75,13 @@ public class AegisScoreDbContext : DbContext
     public DbSet<GrcInterviewMessage> GrcInterviewMessages => Set<GrcInterviewMessage>();
     public DbSet<IdentifiedRisk> IdentifiedRisks => Set<IdentifiedRisk>();
 
+    // Identify (ID.RA) — Raio de Explosão: topologia, ameaças estruturadas e snapshots do raio
+    public DbSet<AssetDependency> AssetDependencies => Set<AssetDependency>();
+    public DbSet<Threat> Threats => Set<Threat>();
+    public DbSet<AssetThreatExposure> AssetThreatExposures => Set<AssetThreatExposure>();
+    public DbSet<BlastRadiusAssessment> BlastRadiusAssessments => Set<BlastRadiusAssessment>();
+    public DbSet<BlastRadiusImpactNode> BlastRadiusImpactNodes => Set<BlastRadiusImpactNode>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
@@ -138,6 +145,13 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(a => new { a.TenantId, a.ExternalRef })
                 .IsUnique()
                 .HasFilter("\"ExternalRef\" IS NOT NULL");
+
+            // ID.RA — matriz de impacto de negócio como Owned Value Object (colunas BusinessImpact_* na
+            // própria tabela do Asset). É a ÚNICA config EF que a adição do VO ao Domain torna OBRIGATÓRIA:
+            // sem ela o EF trata o tipo como entidade sem PK e invalida o modelo inteiro. As tabelas e
+            // relações das demais entidades ID.RA (AssetDependency, Threat, exposições, raio) ficam para a
+            // fase de infraestrutura (DbSets, índices, migration), conforme combinado.
+            e.OwnsOne(a => a.BusinessImpact);
         });
         // Auth: usuário (e-mail único por tenant) e refresh tokens (RTR).
         b.Entity<User>(e =>
@@ -209,6 +223,64 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.SnapshotDate }).IsUnique();
         });
 
+        // ============================================================
+        //  Identify (ID.RA) — Raio de Explosão
+        // ============================================================
+
+        // Grafo de topologia: aresta direcionada Source→Target com payload. DUAS FKs para Asset — AMBAS
+        // Restrict, senão o PostgreSQL rejeita "multiple cascade paths" ao deletar um Asset. Índice único
+        // tenant-leading (idempotência por par + tipo); check barra o auto-laço (A depende de A).
+        b.Entity<AssetDependency>(e =>
+        {
+            e.HasOne(d => d.SourceAsset).WithMany()
+                .HasForeignKey(d => d.SourceAssetId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(d => d.TargetAsset).WithMany()
+                .HasForeignKey(d => d.TargetAssetId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(d => new { d.TenantId, d.SourceAssetId, d.TargetAssetId, d.Type }).IsUnique();
+            e.ToTable(t => t.HasCheckConstraint(
+                "CK_AssetDependency_NoSelfLoop", "\"SourceAssetId\" <> \"TargetAssetId\""));
+        });
+
+        // Catálogo de ameaças (reference data, idioma do IcrWeightProfile): TenantId nulo = global.
+        // Unicidade composta (TenantId, Code, Source). ⚠️ No PostgreSQL NULLs são distintos — dois threats
+        // GLOBAIS de mesmo Code/Source ainda passariam; a ingestão do catálogo público dedupe na origem.
+        b.Entity<Threat>(e =>
+        {
+            e.Property(t => t.Code).HasMaxLength(64).IsRequired();
+            e.HasIndex(t => new { t.TenantId, t.Code, t.Source }).IsUnique();
+        });
+
+        // Exposição ativo↔ameaça: uma linha por par no tenant. FKs Restrict (a exposição é registro de
+        // auditoria — apagar ativo/ameaça não a cascateia).
+        b.Entity<AssetThreatExposure>(e =>
+        {
+            e.HasOne(x => x.Asset).WithMany()
+                .HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Threat).WithMany()
+                .HasForeignKey(x => x.ThreatId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.TenantId, x.AssetId, x.ThreatId }).IsUnique();
+        });
+
+        // Snapshot do raio + nós materializados (1:N). O nó NÃO existe sem o assessment → Cascade PERMITIDO
+        // aqui. As FKs para Asset (root e nó impactado) e para o Threat de cenário são Restrict: o snapshot é
+        // histórico — apagar um ativo/ameaça não apaga avaliações passadas nem cascateia por múltiplos caminhos.
+        b.Entity<BlastRadiusAssessment>(e =>
+        {
+            e.HasOne(a => a.RootAsset).WithMany()
+                .HasForeignKey(a => a.RootAssetId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(a => a.ScenarioThreat).WithMany()
+                .HasForeignKey(a => a.ScenarioThreatId).OnDelete(DeleteBehavior.Restrict);
+            e.HasMany(a => a.ImpactedNodes).WithOne(n => n.Assessment)
+                .HasForeignKey(n => n.AssessmentId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(a => new { a.TenantId, a.RootAssetId });
+        });
+        b.Entity<BlastRadiusImpactNode>(e =>
+        {
+            e.HasOne(n => n.ImpactedAsset).WithMany()
+                .HasForeignKey(n => n.ImpactedAssetId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(n => new { n.TenantId, n.AssessmentId });
+        });
+
         // Multi-tenant isolation: every operational entity is scoped to the ambient tenant.
         // Fail-CLOSED: when no tenant is resolved (missing/invalid X-Tenant) the filter yields
         // no rows, instead of leaking every tenant's data. Seed/maintenance code that must span
@@ -238,6 +310,11 @@ public class AegisScoreDbContext : DbContext
         b.Entity<IdentifiedRisk>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<TenantControlState>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<TenantScoreSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // Identify (ID.RA) — grafo, exposições e snapshots são ITenantOwned (Threat é reference data, sem filtro).
+        b.Entity<AssetDependency>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<AssetThreatExposure>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<BlastRadiusAssessment>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<BlastRadiusImpactNode>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
     }
 
     /// <summary>Stamp tenant (fail-closed) + audit timestamps automatically on save.</summary>

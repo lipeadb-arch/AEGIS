@@ -12,4 +12,7 @@ export const environment = {
   // Tenant de demonstração criado por POST /api/v1/dev/seed-demo (ambiente Development).
   // Troque pelo GUID real (POST /api/v1/tenants) quando for usar dados de produção.
   tenantId: 'aa000000-0000-0000-0000-000000000001',
+  // Ativo-raiz do raio de explosão no seed demo (AD Domain Controller) — usado quando o pedido de
+  // topologia no chat não cita um UUID de ativo. Espelha DevController.DemoRootAssetId.
+  blastRadiusDemoAssetId: 'bb000000-0000-0000-0000-000000000001',
 };

@@ -152,3 +152,32 @@ public enum EdrCoverageStatus { Active = 0, Degraded = 1, Absent = 2 }
 /// <summary>Ciclo de vida do sistema operacional: suportado, próximo do fim de vida ou já obsoleto (EOL).</summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum OsLifecycleStatus { Supported = 0, ApproachingEndOfLife = 1, EndOfLife = 2 }
+
+// ---- Identify (ID.RA) — Risk Assessment / Raio de Explosão -------------------
+
+/// <summary>Natureza da aresta de dependência no grafo de topologia (Asset → Asset).</summary>
+public enum DependencyType
+{
+    RunsOn = 0,           // aplicação roda em host/servidor
+    Hosts = 1,            // host hospeda VM/container
+    ConnectsTo = 2,       // conexão de rede
+    AuthenticatesVia = 3, // depende de IdP/AD para autenticar
+    StoresDataIn = 4,     // persiste dados em DB/storage
+    ConsumesService = 5,  // consome API/serviço (interno ou de terceiro)
+    DependsOn = 99        // dependência genérica
+}
+
+/// <summary>
+/// Força do acoplamento de uma <see cref="DependencyType"/>: define QUANTO a falha do alvo PROPAGA para o
+/// dependente. É o eixo que o motor de raio de explosão traduz em fator de decaimento a cada salto reverso.
+/// </summary>
+public enum DependencyStrength { Hard = 0, Soft = 1, Redundant = 2 }
+
+/// <summary>Procedência de uma ameaça no catálogo (define o vocabulário do Code: CVE, MITRE ATT&amp;CK…).</summary>
+public enum ThreatSource { Cve = 0, MitreAttck = 1, Kev = 2, ThreatIntel = 3, Internal = 99 }
+
+/// <summary>Situação da exposição de um ativo a uma ameaça (a aresta ativo↔ameaça).</summary>
+public enum ExposureStatus { Active = 0, Mitigated = 1, Accepted = 2, FalsePositive = 3 }
+
+/// <summary>Gatilho que originou o cálculo de um raio de explosão.</summary>
+public enum BlastRadiusTrigger { Manual = 0, Scheduled = 1, ThreatDriven = 2 }

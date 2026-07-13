@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Queries;
+using AegisScore.Application.RiskAssessment;
 using AegisScore.Application.Scoring;
 using AegisScore.Application.Services;
 using AegisScore.Infrastructure.Ai;
@@ -11,6 +12,7 @@ using AegisScore.Infrastructure.Connectors;
 using AegisScore.Infrastructure.Documents;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Queries;
+using AegisScore.Infrastructure.RiskAssessment;
 using AegisScore.Infrastructure.Scoring;
 
 namespace AegisScore.Infrastructure;
@@ -83,6 +85,13 @@ public static class DependencyInjection
         services.AddSingleton<MaturityScoringService>();
         services.AddSingleton<RiskScoringService>();
         services.AddSingleton<IcrScoringService>();
+
+        // Identify (ID.RA) — Raio de Explosão: motor PURO (stateless, como os *ScoringService acima) +
+        // orquestrador scoped que carrega o grafo do tenant, chama o motor e persiste o snapshot; o
+        // projector é o hook que penaliza ID.RA-01/05 no ledger quando o raio é alto/amplo.
+        services.AddSingleton<IBlastRadiusCalculator, BlastRadiusCalculator>();
+        services.AddScoped<IBlastRadiusScoreProjector, BlastRadiusScoreProjector>();
+        services.AddScoped<IBlastRadiusAssessmentService, BlastRadiusAssessmentService>();
 
         // Document Hub (Govern): armazenamento, extração de texto e fila de leitura da IA.
         // O worker que consome a fila (DocumentAnalysisWorker) é registrado no host da API.

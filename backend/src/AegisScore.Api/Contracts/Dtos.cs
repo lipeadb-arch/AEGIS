@@ -254,3 +254,23 @@ public record AuditorChatRequestDto(
 /// START_INTERVIEW, semeia a entrevista com a subcategoria investigada).
 /// </summary>
 public record AuditorChatResponseDto(string Reply, string Scope, string Intent, object? Metadata);
+
+// ---- Risk Assessment (ID.RA) — Raio de Explosão ----
+
+/// <summary>Corpo OPCIONAL do POST de raio de explosão: um cenário de ameaça para simulação. Ausente = raio topológico puro.</summary>
+public record BlastRadiusRequestDto(Guid? ScenarioThreatId);
+
+/// <summary>Um ativo colateral no raio de explosão (espelha <see cref="AegisScore.Domain.BlastRadiusImpactNode"/>).</summary>
+public record BlastRadiusNodeDto(Guid ImpactedAssetId, int Distance, double PropagatedImpact, string PathStrength);
+
+/// <summary>Resposta do cálculo: score/nível agregado + métricas + os nós impactados (ordenados por impacto).</summary>
+public record BlastRadiusResponseDto(
+    Guid AssessmentId,
+    Guid RootAssetId,
+    double BlastRadiusScore,
+    string RiskLevel,
+    int ImpactedAssetCount,
+    int ImpactedProcessCount,
+    int MaxDepth,
+    DateTimeOffset ComputedAt,
+    IReadOnlyList<BlastRadiusNodeDto> ImpactedNodes);

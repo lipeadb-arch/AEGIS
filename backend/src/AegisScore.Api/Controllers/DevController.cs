@@ -23,6 +23,9 @@ public class DevController : ControllerBase
     /// <summary>Fixed id so the frontend can hard-code it in environment.ts.</summary>
     public static readonly Guid DemoTenantId = Guid.Parse("aa000000-0000-0000-0000-000000000001");
 
+    /// <summary>Id FIXO do ativo-raiz do raio de explosão (o AD DC) — o frontend o referencia em environment.ts.</summary>
+    public static readonly Guid DemoRootAssetId = Guid.Parse("bb000000-0000-0000-0000-000000000001");
+
     private readonly DbContextOptions<AegisScoreDbContext> _dbOptions;
     private readonly RiskScoringService _risk;
     private readonly IWebHostEnvironment _env;
@@ -212,7 +215,7 @@ public class DevController : ControllerBase
         // dois ativos ficam sem score para exercitar o estado "não avaliado" na grid.
         var assets = new[]
         {
-            new Asset { TenantId = DemoTenantId, Name = "AD Domain Controller 01", Category = AssetCategory.Hardware, SubType = "server", Criticality = 4, OwnerName = "Carlos Menezes", ExternalRef = "CMDB-1001", BusinessProcessId = procs[0].Id, DiscoverySource = AssetDiscoverySource.Connector, LastSeenAt = DateTimeOffset.UtcNow.AddHours(-2), RiskScore = 82, RiskLevel = RiskLevel.Critico, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-1) },
+            new Asset { Id = DemoRootAssetId, TenantId = DemoTenantId, Name = "AD Domain Controller 01", Category = AssetCategory.Hardware, SubType = "server", Criticality = 4, OwnerName = "Carlos Menezes", ExternalRef = "CMDB-1001", BusinessProcessId = procs[0].Id, DiscoverySource = AssetDiscoverySource.Connector, LastSeenAt = DateTimeOffset.UtcNow.AddHours(-2), RiskScore = 82, RiskLevel = RiskLevel.Critico, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-1) },
             new Asset { TenantId = DemoTenantId, Name = "Microsoft 365 (Identidade)", Category = AssetCategory.Software, SubType = "saas", Criticality = 4, OwnerName = "Ana Ribeiro", ExternalRef = "SAAS-M365", BusinessProcessId = procs[0].Id, DiscoverySource = AssetDiscoverySource.Connector, LastSeenAt = DateTimeOffset.UtcNow.AddHours(-1), RiskScore = 67, RiskLevel = RiskLevel.Alto, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-1) },
             new Asset { TenantId = DemoTenantId, Name = "Base de Clientes (PII)", Category = AssetCategory.Data, SubType = "database", Criticality = 4, OwnerName = "Ana Ribeiro", DiscoverySource = AssetDiscoverySource.Manual, RiskScore = 74, RiskLevel = RiskLevel.Alto, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-2) },
             new Asset { TenantId = DemoTenantId, Name = "Equipe de SOC", Category = AssetCategory.People, SubType = "team", Criticality = 3, OwnerName = "Ana Ribeiro", DiscoverySource = AssetDiscoverySource.Manual, RiskScore = 40, RiskLevel = RiskLevel.Medio, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-4) },
@@ -221,6 +224,51 @@ public class DevController : ControllerBase
             new Asset { TenantId = DemoTenantId, Name = "Gateway VPN", Category = AssetCategory.Hardware, SubType = "appliance", Criticality = 3, OwnerName = "Carlos Menezes", ExternalRef = "CMDB-1042", BusinessProcessId = procs[1].Id, DiscoverySource = AssetDiscoverySource.Connector, LastSeenAt = DateTimeOffset.UtcNow.AddMinutes(-30), RiskScore = 61, RiskLevel = RiskLevel.Alto, RiskScoredAt = DateTimeOffset.UtcNow.AddDays(-1) },
             new Asset { TenantId = DemoTenantId, Name = "Notebook Diretoria", Category = AssetCategory.Hardware, SubType = "endpoint", Criticality = 2, OwnerName = "Diretoria", DiscoverySource = AssetDiscoverySource.Connector, LastSeenAt = DateTimeOffset.UtcNow.AddDays(-3) },
             new Asset { TenantId = DemoTenantId, Name = "Portal do Cliente", Category = AssetCategory.Software, SubType = "webapp", Criticality = 3, OwnerName = "Carlos Menezes", ExternalRef = "APP-PORTAL", BusinessProcessId = procs[1].Id, DiscoverySource = AssetDiscoverySource.Manual },
+        };
+
+        // ---- Identify (ID.RA): topologia de dependências + ameaça (Raio de Explosão) ----
+        // Estrela em torno do AD DC (assets[0]): a identidade/autenticação de meio ambiente depende dele.
+        // Raio AMPLO (6 colaterais, alguns a 2 saltos) e CRÍTICO — dispara o hook que penaliza ID.RA-01/05.
+        var ransomware = new Threat
+        {
+            TenantId = DemoTenantId,   // Threat NÃO é ITenantOwned — TenantId setado à mão (limpo pelo wipe do tenant)
+            Code = "T1486",
+            Source = ThreatSource.MitreAttck,
+            Title = "Data Encrypted for Impact (Ransomware)",
+            Description = "Adversário cifra dados em escala para interromper a operação e extorquir resgate.",
+            BaseSeverity = 9.0,
+            Tactic = "Impact",
+            KnownExploited = true,
+            IsActive = true,
+        };
+
+        AssetDependency Depends(Asset source, Asset target, DependencyType type, DependencyStrength strength) => new()
+        {
+            TenantId = DemoTenantId, SourceAssetId = source.Id, TargetAssetId = target.Id,
+            Type = type, Strength = strength, DiscoverySource = AssetDiscoverySource.Connector, IsActive = true,
+        };
+
+        // "Source DEPENDE DE Target": o raio do AD é quem depende dele, direta ou transitivamente.
+        var dependencies = new[]
+        {
+            Depends(assets[1], assets[0], DependencyType.AuthenticatesVia, DependencyStrength.Hard),  // M365 → AD
+            Depends(assets[8], assets[0], DependencyType.AuthenticatesVia, DependencyStrength.Hard),  // Portal do Cliente → AD
+            Depends(assets[2], assets[0], DependencyType.StoresDataIn,     DependencyStrength.Hard),  // Base de Clientes (PII) → AD
+            Depends(assets[6], assets[0], DependencyType.AuthenticatesVia, DependencyStrength.Hard),  // Gateway VPN → AD
+            Depends(assets[7], assets[6], DependencyType.ConnectsTo,       DependencyStrength.Soft),  // Notebook Diretoria → VPN (2 saltos)
+            Depends(assets[3], assets[1], DependencyType.ConsumesService,  DependencyStrength.Soft),  // Equipe de SOC → M365 (2 saltos)
+        };
+
+        var ransomwareExposure = new AssetThreatExposure
+        {
+            TenantId = DemoTenantId,
+            AssetId = DemoRootAssetId,          // o ransomware mira o AD DC (epicentro)
+            ThreatId = ransomware.Id,
+            Likelihood = 4,                     // crítico
+            Status = ExposureStatus.Active,
+            MitigatingSubcategoryCode = "PR.PS-01",
+            DiscoverySource = AssetDiscoverySource.Connector,
+            DetectedAt = DateTimeOffset.UtcNow.AddDays(-1),
         };
 
         db.Tenants.Add(tenant);
@@ -235,6 +283,9 @@ public class DevController : ControllerBase
         db.ActionPlans.AddRange(plans);
         db.GovernanceDocuments.AddRange(polIa, diretriz);
         db.SubcategoryCoverages.AddRange(coverage);
+        db.Threats.Add(ransomware);
+        db.AssetDependencies.AddRange(dependencies);
+        db.AssetThreatExposures.Add(ransomwareExposure);
         await db.SaveChangesAsync(ct);
 
         var overdue = plans.Count(p => p.Status != ActionPlanStatus.Concluido && p.DueDate is { } d && d < today);
@@ -246,6 +297,9 @@ public class DevController : ControllerBase
             businessUnits = 2,
             processes = procs.Length,
             assets = assets.Length,
+            assetDependencies = dependencies.Length,
+            threatExposures = 1,
+            blastRadiusRootAssetId = DemoRootAssetId,
             subcategoriesEvaluated = evals.Count,
             risks = risks.Count,
             overdueActionPlans = overdue,
@@ -395,6 +449,14 @@ public class DevController : ControllerBase
         db.Risks.RemoveRange(await db.Risks.IgnoreQueryFilters().Where(r => r.TenantId == DemoTenantId).ToListAsync(ct));
         db.Scopes.RemoveRange(await db.Scopes.IgnoreQueryFilters().Where(s => s.TenantId == DemoTenantId).ToListAsync(ct));
         db.Assessments.RemoveRange(await db.Assessments.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
+
+        // Identify (ID.RA) — remover ANTES dos Assets (FKs Restrict): nós → snapshots → exposições → arestas → ameaças.
+        db.BlastRadiusImpactNodes.RemoveRange(await db.BlastRadiusImpactNodes.IgnoreQueryFilters().Where(n => n.TenantId == DemoTenantId).ToListAsync(ct));
+        db.BlastRadiusAssessments.RemoveRange(await db.BlastRadiusAssessments.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
+        db.AssetThreatExposures.RemoveRange(await db.AssetThreatExposures.IgnoreQueryFilters().Where(e => e.TenantId == DemoTenantId).ToListAsync(ct));
+        db.AssetDependencies.RemoveRange(await db.AssetDependencies.IgnoreQueryFilters().Where(d => d.TenantId == DemoTenantId).ToListAsync(ct));
+        db.Threats.RemoveRange(await db.Threats.IgnoreQueryFilters().Where(t => t.TenantId == DemoTenantId).ToListAsync(ct));
+
         db.Assets.RemoveRange(await db.Assets.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
         db.Processes.RemoveRange(await db.Processes.IgnoreQueryFilters().Where(p => p.TenantId == DemoTenantId).ToListAsync(ct));
         db.BusinessUnits.RemoveRange(await db.BusinessUnits.IgnoreQueryFilters().Where(bu => bu.TenantId == DemoTenantId).ToListAsync(ct));

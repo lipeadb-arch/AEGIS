@@ -1,24 +1,56 @@
 import { DatePipe } from '@angular/common';
 import { Component, ElementRef, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { environment } from '../../environments/environment';
 import { AgentStateService } from '../services/agent-state.service';
-import { AuditorService } from '../services/auditor.service';
+import { AuditorChatReply, AuditorInterviewSeed, AuditorService, BlastRadiusResponse } from '../services/auditor.service';
+import { BlastRadiusGraphComponent } from './blast-radius-graph.component';
+import { GrcQuestionCardComponent } from './grc-question-card.component';
 
-/** Uma fala do chat do Copiloto GRC. `at` (epoch ms) alimenta o rótulo de hora. */
-interface ChatMessage {
+/**
+ * Uma entrada do fluxo do Copiloto — UNIÃO DISCRIMINADA por `type`. O control-flow nativo (@switch) do
+ * template roteia a renderização por variante, SEM ViewContainerRef: `text` vira bolha de chat;
+ * `interview` vira o cartão de entrevista GRC; `blast_radius` vira o gráfico de topologia (ID.RA) — cada
+ * intenção injeta seu próprio componente de Generative UI nativamente no fluxo.
+ */
+type ChatMessage = TextChatMessage | InterviewChatMessage | BlastRadiusChatMessage;
+
+/** Bolha de texto: fala do usuário (cyan) ou do Copiloto (magenta). `at` (epoch ms) alimenta a hora. */
+interface TextChatMessage {
+  readonly type: 'text';
   readonly role: 'user' | 'assistant';
   readonly content: string;
   readonly at: number;
 }
 
+/** Cartão de entrevista GRC injetado no fluxo (resposta com Intent === START_INTERVIEW). */
+interface InterviewChatMessage {
+  readonly type: 'interview';
+  readonly at: number;
+  readonly seed: AuditorInterviewSeed;
+  readonly prompt: string; // a 1ª pergunta (o `reply` do START_INTERVIEW) que semeia o cartão
+}
+
+/** Gráfico de raio de explosão injetado no fluxo (o Roteador de Intenção detectou análise de topologia). */
+interface BlastRadiusChatMessage {
+  readonly type: 'blast_radius';
+  readonly at: number;
+  readonly data: BlastRadiusResponse;
+}
+
 /**
- * GOVERN → Auditor Virtual, agora o COPILOTO GRC ONIPRESENTE. Chat livre, com consciência de contexto:
- * cada mensagem é enviada no escopo da tela ativa (AgentStateService.contextScope → PR/DE/GLOBAL…), que o
- * backend usa para ajustar dinamicamente o System Prompt. Estado 100% em Signals; sem RxJS na view.
+ * GOVERN → Auditor Virtual, o COPILOTO GRC ONIPRESENTE. Chat livre com consciência de contexto: cada
+ * mensagem viaja no escopo da tela ativa (AgentStateService.contextScope → PR/DE/GLOBAL…), que o backend
+ * usa para ajustar o System Prompt e ROTEAR A INTENÇÃO (Agentic Routing).
+ *
+ * O fluxo é um ROTEADOR VISUAL declarativo: `chatHistory` é uma união discriminada e o template usa
+ * @switch para renderizar cada variante — a bolha de texto de sempre OU o cartão de entrevista GRC
+ * (<app-grc-question-card>) injetado inline quando o backend devolve START_INTERVIEW. Estado 100% em
+ * Signals; sem RxJS na view; sem injeção imperativa de componentes.
  */
 @Component({
   selector: 'app-auditor-chat',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, GrcQuestionCardComponent, BlastRadiusGraphComponent],
   template: `
     <div class="copilot">
       <div class="stream" #scroller>
@@ -29,18 +61,33 @@ interface ChatMessage {
             <p>
               Pergunte sobre a postura de segurança no escopo ativo
               (<span class="chip">{{ currentScope() }}</span>). Analiso os controles NIST, aponto
-              não-conformidades e recomendo prioridades.
+              não-conformidades e recomendo prioridades — ou peça uma <b>auditoria</b> para iniciar a
+              entrevista GRC guiada.
             </p>
           </div>
         }
 
         @for (m of chatHistory(); track $index) {
-          <div class="row" [class.me]="m.role === 'user'">
-            <div class="bubble" [class.user]="m.role === 'user'" [class.auditor]="m.role === 'assistant'">
-              <p class="txt">{{ m.content }}</p>
-              <span class="time">{{ m.at | date: 'HH:mm' }}</span>
-            </div>
-          </div>
+          @switch (m.type) {
+            @case ('text') {
+              <div class="row" [class.me]="m.role === 'user'">
+                <div class="bubble" [class.user]="m.role === 'user'" [class.auditor]="m.role === 'assistant'">
+                  <p class="txt">{{ m.content }}</p>
+                  <span class="time">{{ m.at | date: 'HH:mm' }}</span>
+                </div>
+              </div>
+            }
+            @case ('interview') {
+              <div class="row interview-row">
+                <app-grc-question-card [seed]="m.seed" [prompt]="m.prompt" />
+              </div>
+            }
+            @case ('blast_radius') {
+              <div class="row interview-row">
+                <app-blast-radius-graph [data]="m.data" />
+              </div>
+            }
+          }
         }
 
         @if (isAnalyzing()) {
@@ -97,6 +144,7 @@ interface ChatMessage {
         letter-spacing: 0.05em; color: var(--text);
       }
       .intro p { max-width: 340px; margin: 0 auto; font-size: 12.5px; line-height: 1.6; color: var(--muted); }
+      .intro p b { color: var(--magenta); font-weight: 600; }
       .chip {
         font-family: var(--mono); font-size: 11px; color: var(--cyan);
         border: 1px solid rgba(38, 224, 255, 0.35); border-radius: 999px; padding: 1px 8px;
@@ -105,6 +153,7 @@ interface ChatMessage {
       /* ---- Bolhas ---- */
       .row { display: flex; }
       .row.me { justify-content: flex-end; }
+      .interview-row { width: 100%; }
       .bubble {
         max-width: 86%; padding: 10px 13px; font-size: 13px; line-height: 1.55;
         border: 1px solid var(--line); background: var(--panel-2); position: relative;
@@ -200,23 +249,44 @@ export class AuditorChatComponent {
     });
   }
 
-  /** Envia a mensagem no escopo ativo: anexa a fala, ativa a análise, chama o serviço, anexa a resposta. */
+  /** Envia a mensagem no escopo ativo: anexa a fala, ativa a análise, chama o serviço, roteia a resposta. */
   send(): void {
     const text = this.draft().trim();
     if (!text || this.isAnalyzing()) return;
 
     const scope = this.agent.contextScope();
-    // Histórico ANTES desta fala — é o que o backend recebe como contexto (a nova mensagem vai separada).
-    const priorHistory = this.chatHistory().map((m) => ({ role: m.role, content: m.content }));
+    // Histórico ANTES desta fala — só as bolhas de TEXTO são contexto de conversa para o backend
+    // (os cartões de entrevista pertencem a outro fluxo, o /governance/interviews).
+    const priorHistory = this.chatHistory()
+      .filter((m): m is TextChatMessage => m.type === 'text')
+      .map((m) => ({ role: m.role, content: m.content }));
 
-    this.chatHistory.update((h) => [...h, { role: 'user', content: text, at: Date.now() }]);
+    this.chatHistory.update((h) => [...h, { type: 'text', role: 'user', content: text, at: Date.now() }]);
     this.draft.set('');
     this.error.set(null);
     this.isAnalyzing.set(true);
 
+    // ROTEADOR DE INTENÇÃO (frontend): um pedido de TOPOLOGIA dispara o endpoint de raio de explosão e
+    // injeta o gráfico nativamente; qualquer outra coisa segue para o Copiloto (/auditor/chat). O backend
+    // ainda não roteia BLAST_RADIUS pelo Agentic Routing, então este gatilho vive no frontend.
+    const rootAssetId = this.blastRadiusIntent(text);
+    if (rootAssetId) {
+      this.auditor.assessBlastRadius(rootAssetId).subscribe({
+        next: (data) => {
+          this.chatHistory.update((h) => [...h, { type: 'blast_radius', at: Date.now(), data }]);
+          this.isAnalyzing.set(false);
+        },
+        error: () => {
+          this.isAnalyzing.set(false);
+          this.error.set('Não foi possível calcular o raio de explosão. Verifique o ID do ativo.');
+        },
+      });
+      return;
+    }
+
     this.auditor.chat(scope, text, priorHistory).subscribe({
       next: (res) => {
-        this.chatHistory.update((h) => [...h, { role: 'assistant', content: res.reply, at: Date.now() }]);
+        this.chatHistory.update((h) => [...h, this.toAssistantMessage(res)]);
         this.isAnalyzing.set(false);
       },
       error: () => {
@@ -224,6 +294,32 @@ export class AuditorChatComponent {
         this.error.set('O Copiloto está indisponível no momento. Tente novamente.');
       },
     });
+  }
+
+  /**
+   * Detecta intenção de TOPOLOGIA na mensagem e resolve o ativo-raiz: um UUID citado na fala, senão o
+   * ativo-raiz demo (environment). Retorna null quando não é um pedido de raio de explosão.
+   */
+  private blastRadiusIntent(text: string): string | null {
+    if (!/raio de explos|blast\s*radius|topologia|o que cai se|explos[ãa]o/i.test(text)) return null;
+    const uuid = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
+    return uuid ?? environment.blastRadiusDemoAssetId;
+  }
+
+  /**
+   * ROTEADOR VISUAL: converte a resposta roteada do backend na variante certa do fluxo. START_INTERVIEW
+   * vira um cartão de entrevista (semeado pelo `metadata`); qualquer outra intenção, uma bolha de texto.
+   */
+  private toAssistantMessage(res: AuditorChatReply): ChatMessage {
+    if (res.intent === 'START_INTERVIEW') {
+      return {
+        type: 'interview',
+        at: Date.now(),
+        seed: res.metadata ?? { targetSubcategoryCode: null },
+        prompt: res.reply,
+      };
+    }
+    return { type: 'text', role: 'assistant', content: res.reply, at: Date.now() };
   }
 
   onEnter(event: Event): void {

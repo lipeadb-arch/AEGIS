@@ -71,4 +71,35 @@ public class Asset : Entity, ITenantOwned
     public RiskLevel? RiskLevel { get; set; }        // banda derivada — reusa o enum existente
     public DateTimeOffset? RiskScoredAt { get; set; }
     public string? RiskRationaleJson { get; set; }   // explicabilidade (padrão IcrScore.FactorsJson)
+
+    // ---- Matriz de impacto de negócio (ID.RA) ----
+    /// <summary>
+    /// Perfil CIA + dimensões de negócio que REFINA a <see cref="Criticality"/> escalar. Owned Value Object
+    /// (1:1, mapeado na própria tabela do Asset — sem Id nem ciclo de vida próprio). Nulo = ainda não avaliado.
+    /// </summary>
+    public BusinessImpactProfile? BusinessImpact { get; set; }
+}
+
+/// <summary>
+/// Matriz de impacto de negócio de um ativo (ID.RA-04) — Owned Value Object do <see cref="Asset"/>.
+/// Cada eixo é 1–4 (mesma régua de <see cref="Asset.Criticality"/> / <see cref="BusinessProcess.ProcessValue"/>).
+/// O motor de raio de explosão usa o MÁXIMO das dimensões (high-water mark, à la FIPS 199) como o impacto
+/// intrínseco do ativo. Por ser OWNED não herda de <see cref="Entity"/>: não tem Id próprio.
+/// </summary>
+public class BusinessImpactProfile
+{
+    // Tríade CIA
+    public int Confidentiality { get; set; } = 1;
+    public int Integrity { get; set; } = 1;
+    public int Availability { get; set; } = 1;
+
+    // Dimensões de negócio
+    public int Financial { get; set; } = 1;
+    public int Operational { get; set; } = 1;
+    public int Regulatory { get; set; } = 1;
+    public int Reputational { get; set; } = 1;
+
+    /// <summary>RTO/RPO em minutos (dimensão de disponibilidade — elo com RC.RP). Nulo = não definido.</summary>
+    public int? RecoveryTimeObjectiveMinutes { get; set; }
+    public int? RecoveryPointObjectiveMinutes { get; set; }
 }

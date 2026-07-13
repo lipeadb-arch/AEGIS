@@ -23,6 +23,13 @@ public class Risk : Entity, ITenantOwned
     public string? OriginSubcategoryCode { get; set; }
     public Guid? OriginEvidenceId { get; set; }
 
+    /// <summary>
+    /// Rastreabilidade (ID.RA): a exposição ativo↔ameaça que ORIGINOU este risco, quando ele é promovido a
+    /// partir de um raio de explosão. Nulo para riscos de outra procedência. FK lógica → AssetThreatExposure
+    /// (o mapeamento EF/relacional fica para a fase de infraestrutura).
+    /// </summary>
+    public Guid? OriginExposureId { get; set; }
+
     public ICollection<RiskEvaluation> Evaluations { get; set; } = new List<RiskEvaluation>();
     public ICollection<ActionPlan> ActionPlans { get; set; } = new List<ActionPlan>();
 }

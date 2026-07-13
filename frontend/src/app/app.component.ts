@@ -1,5 +1,6 @@
-import { Component, inject } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Component, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { DrawerComponent } from './components/drawer.component';
 import { AuditorChatComponent } from './components/auditor-chat.component';
 import { AgentStateService } from './services/agent-state.service';
@@ -10,7 +11,7 @@ import { AuthService } from './services/auth.service';
   standalone: true,
   imports: [RouterOutlet, RouterLink, RouterLinkActive, DrawerComponent, AuditorChatComponent],
   template: `
-    @if (auth.isAuthenticated()) {
+    @if (showShell()) {
     <aside class="sidebar">
       <!-- Logo: 'AEGIS' dentro de um escudo (SVG) com a borda dual-neon. -->
       <a class="brand" routerLink="/dashboard" aria-label="AEGIS — Dashboard">
@@ -382,6 +383,25 @@ import { AuthService } from './services/auth.service';
   ],
 })
 export class App {
+  private readonly router = inject(Router);
   protected readonly agent = inject(AgentStateService);
   protected readonly auth = inject(AuthService);
+
+  /** URL corrente, reativa — semeada no boot e reprojetada a cada NavigationEnd. */
+  private readonly currentUrl = signal(this.router.url);
+
+  /**
+   * A CASCA da aplicação (sidebar + drawer do Auditor) só é renderizada autenticado E FORA da tela de
+   * login. A checagem de rota é DEFESA EM PROFUNDIDADE: mesmo que isAuthenticated() ainda esteja true
+   * (ex.: token em memória não limpo ao expirar a sessão), a rota /login nunca herda o sidebar.
+   */
+  protected readonly showShell = computed(() =>
+    this.auth.isAuthenticated() && !this.currentUrl().startsWith('/login'));
+
+  constructor() {
+    // takeUntilDestroyed encerra a assinatura com o componente (limpo em testes/HMR).
+    this.router.events.pipe(takeUntilDestroyed()).subscribe((e) => {
+      if (e instanceof NavigationEnd) this.currentUrl.set(e.urlAfterRedirects);
+    });
+  }
 }
