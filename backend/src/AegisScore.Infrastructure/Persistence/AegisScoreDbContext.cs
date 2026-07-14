@@ -53,6 +53,8 @@ public class AegisScoreDbContext : DbContext
     public DbSet<TenantControlState> TenantControlStates => Set<TenantControlState>();
     // Aegis Score — inteligência temporal: foto agregada diária p/ o gráfico de tendência de postura
     public DbSet<TenantScoreSnapshot> TenantScoreSnapshots => Set<TenantScoreSnapshot>();
+    // Aegis Score — motor consultivo: recomendações de remediação (advisories) por controle NIST
+    public DbSet<RemediationAdvisory> RemediationAdvisories => Set<RemediationAdvisory>();
 
     // Connectors
     public DbSet<ConnectorConfig> Connectors => Set<ConnectorConfig>();
@@ -223,6 +225,16 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.SnapshotDate }).IsUnique();
         });
 
+        // Aegis Score — advisories (motor consultivo). Índice tenant-leading por código de controle: o
+        // caso de uso natural é listar as recomendações de UMA subcategoria do tenant. NÃO é único —
+        // podem coexistir várias versões/revisões de advisory para o mesmo controle (histórico consultivo).
+        b.Entity<RemediationAdvisory>(e =>
+        {
+            e.Property(x => x.SubcategoryCode).HasMaxLength(15).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.SubcategoryCode });
+        });
+
         // ============================================================
         //  Identify (ID.RA) — Raio de Explosão
         // ============================================================
@@ -310,6 +322,7 @@ public class AegisScoreDbContext : DbContext
         b.Entity<IdentifiedRisk>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<TenantControlState>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<TenantScoreSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<RemediationAdvisory>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         // Identify (ID.RA) — grafo, exposições e snapshots são ITenantOwned (Threat é reference data, sem filtro).
         b.Entity<AssetDependency>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<AssetThreatExposure>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

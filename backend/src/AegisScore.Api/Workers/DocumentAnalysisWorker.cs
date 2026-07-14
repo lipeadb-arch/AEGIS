@@ -149,7 +149,7 @@ public sealed class DocumentAnalysisWorker : BackgroundService
                 // Documentary: o writer só aplica se este veredito PONTUAR MAIS que o estado vigente.
                 // Um controle já validado por telemetria (Compliant) nunca é rebaixado por um PDF.
                 await writer.ApplyVerdictAsync(
-                    tenantId, claim.SubcategoryCode, DocumentEvidenceStatus, evidence, VerdictSource.Documentary, ct);
+                    tenantId, claim.SubcategoryCode, DocumentEvidenceStatus, evidence, VerdictSource.Documentary, ct: ct);
             }
             catch (InvalidOperationException ex)
             {

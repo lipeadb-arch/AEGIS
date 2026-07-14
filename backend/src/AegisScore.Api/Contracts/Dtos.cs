@@ -236,6 +236,17 @@ public record RolesTelemetryDto(
 public record TelemetryVerdictDto(
     string SubcategoryCode, string Status, int AwardedScore, int MaxScorePoints, int Percentage, string AiEvidence);
 
+/// <summary>
+/// Corpo OPCIONAL do POST de ingestão do Entra ID. As MÉTRICAS de identidade vêm do provider (Graph/stub),
+/// NÃO do cliente — aqui só trafega o CONTEXTO que o Entra desconhece: o domínio do tenant a consultar e os
+/// controles compensatórios de REDE (isolamento de OT/legado), que o motor pondera para não gerar falso
+/// positivo em ambiente industrial. O TenantId NÃO trafega: é resolvido do claim <c>tenant_id</c> do JWT.
+/// </summary>
+public record EntraIdIdentityIngestionRequest(
+    string? TenantDomain = null,
+    bool HasNetworkIsolation = false,
+    IReadOnlyList<string>? CompensatingControls = null);
+
 // ---- Auditor Virtual (Copiloto GRC onipresente, com escopo de contexto) ----
 /// <summary>Uma fala do histórico do chat (Role: "user"|"assistant"; Content: texto). Dado NÃO confiável.</summary>
 public record AuditorChatMessageDto(string Role, string Content);
@@ -274,3 +285,11 @@ public record BlastRadiusResponseDto(
     int MaxDepth,
     DateTimeOffset ComputedAt,
     IReadOnlyList<BlastRadiusNodeDto> ImpactedNodes);
+
+// ---- Scoring: Recomendações de Remediação (Advisories) ----
+/// <summary>
+/// Corpo do POST de criação de advisory: só o código NIST-alvo trafega. O texto (título, risco, passo a
+/// passo) é REDIGIDO pelo motor de IA no servidor — o cliente não injeta prosa. O TenantId NÃO trafega:
+/// é resolvido do claim <c>tenant_id</c> do JWT (Zero Trust).
+/// </summary>
+public record CreateAdvisoryRequest(string SubcategoryCode);

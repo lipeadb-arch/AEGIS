@@ -1,7 +1,9 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Services;
+using AegisScore.Application.Telemetry.Models;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
@@ -35,7 +37,7 @@ public sealed class ControlStateWriter : IControlStateWriter
 
     public async Task<ComplianceVerdict> ApplyVerdictAsync(
         Guid tenantId, string subcategoryCode, ControlStatus status, string evidence,
-        VerdictSource source, CancellationToken ct = default)
+        VerdictSource source, IReadOnlyList<ComplianceCheck>? checks = null, CancellationToken ct = default)
     {
         // 1) Defesa em profundidade: o tenantId explícito precisa casar com o tenant ambiente (fail-closed).
         var ambient = _tenant.TenantId
@@ -72,7 +74,8 @@ public sealed class ControlStateWriter : IControlStateWriter
                 "({Current} pts, fonte {Source}) no tenant {Tenant}.",
                 sub.Code, state.CurrentScore, state.LastVerdictSource, tenantId);
 
-            return new ComplianceVerdict(state.Status, state.AiEvidence ?? "", state.CurrentScore, sub.MaxScorePoints);
+            return new ComplianceVerdict(state.Status, state.AiEvidence ?? "", state.CurrentScore, sub.MaxScorePoints)
+                { Checks = DeserializeChecks(state.ChecksJson) };
         }
 
         if (state is null)
@@ -84,6 +87,7 @@ public sealed class ControlStateWriter : IControlStateWriter
         state.Status = status;
         state.CurrentScore = awarded;
         state.AiEvidence = evidence;
+        state.ChecksJson = checks is { Count: > 0 } ? JsonSerializer.Serialize(checks) : null;
         state.LastVerdictSource = source;   // a procedência acompanha o estado, e governa a próxima escrita
         state.LastEvaluatedAt = DateTimeOffset.UtcNow;
 
@@ -93,7 +97,16 @@ public sealed class ControlStateWriter : IControlStateWriter
             "Aegis Score: subcategoria {Subcategory} avaliada como {Status} ({Awarded}/{Max}) para o tenant {Tenant}.",
             sub.Code, status, awarded, sub.MaxScorePoints, tenantId);
 
-        return new ComplianceVerdict(status, evidence, awarded, sub.MaxScorePoints);
+        return new ComplianceVerdict(status, evidence, awarded, sub.MaxScorePoints)
+            { Checks = checks ?? Array.Empty<ComplianceCheck>() };
+    }
+
+    /// <summary>Desserializa o checklist persistido; tolera nulo/JSON inválido (devolve vazio, nunca lança).</summary>
+    private static IReadOnlyList<ComplianceCheck> DeserializeChecks(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return Array.Empty<ComplianceCheck>();
+        try { return JsonSerializer.Deserialize<IReadOnlyList<ComplianceCheck>>(json) ?? Array.Empty<ComplianceCheck>(); }
+        catch (JsonException) { return Array.Empty<ComplianceCheck>(); }
     }
 
     /// <summary>

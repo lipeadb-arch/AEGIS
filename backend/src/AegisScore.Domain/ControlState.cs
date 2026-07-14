@@ -43,6 +43,13 @@ public class TenantControlState : Entity, ITenantOwned
 
     /// <summary>Justificativa/evidência produzida pela IA (nulo até o motor avaliar).</summary>
     public string? AiEvidence { get; set; }
+
+    /// <summary>
+    /// Checklist técnico que justifica o veredito, serializado como JSON (lista de <c>ComplianceCheck</c>).
+    /// String simples de propósito — o núcleo trata os checks como um blob explicável de leitura, sem
+    /// modelá-los como entidades relacionais (não há consulta por check). Nulo até o motor decompor o veredito.
+    /// </summary>
+    public string? ChecksJson { get; set; }
 }
 
 /// <summary>

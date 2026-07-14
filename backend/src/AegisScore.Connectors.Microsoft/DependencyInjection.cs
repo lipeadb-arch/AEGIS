@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Services;
+using AegisScore.Application.Telemetry.Providers;
 
 namespace AegisScore.Connectors.Microsoft;
 
@@ -20,6 +21,10 @@ public static class DependencyInjection
         // Govern → Provider Pattern de ingestão de documentos: o SharePoint/M365 como fonte de políticas.
         // A DocumentIntegrationFactory resolve esta estratégia por ConnectorProvider.Microsoft.
         services.AddSingleton<IDocumentIntegrationProvider, SharePointProvider>();
+
+        // Identify/Protect/Govern → telemetria de identidade do Entra ID (postura de IAM). STUB por ora
+        // (dados de alto risco); troca-se por Microsoft Graph + OAuth client credentials mantendo a porta.
+        services.AddSingleton<IEntraIdTelemetryProvider, EntraIdTelemetryProviderStub>();
         return services;
     }
 }

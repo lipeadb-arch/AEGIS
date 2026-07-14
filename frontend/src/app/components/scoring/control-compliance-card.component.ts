@@ -1,6 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { Component, input, signal } from '@angular/core';
 import { ControlStatus, ControlView } from '../../models/scoring.models';
+import { categoryName } from '../../models/nist-glossary';
 
 /**
  * ControlComplianceCardComponent — DUMB. Recebe uma LISTA de controles e a renderiza como linhas de
@@ -26,7 +27,10 @@ import { ControlStatus, ControlView } from '../../models/scoring.models';
         >
           <button type="button" class="ctl-head" (click)="toggle(c.code)" [attr.aria-expanded]="isOpen(c.code)">
             <span class="dot" aria-hidden="true"></span>
-            <span class="code">{{ c.code }}</span>
+            <span class="names">
+              <span class="name">{{ categoryName(c.code) }}</span>
+              <span class="code">{{ c.code }}</span>
+            </span>
             <span class="status">{{ statusLabel(c.status) }}</span>
             <span class="pts">{{ c.scorePoints }}<i>/{{ c.maxScorePoints }}</i></span>
             <span class="chev" [class.open]="isOpen(c.code)" aria-hidden="true">›</span>
@@ -34,6 +38,17 @@ import { ControlStatus, ControlView } from '../../models/scoring.models';
 
           @if (isOpen(c.code)) {
             <div class="ctl-body">
+              @if (c.checks.length > 0) {
+                <ul class="checks">
+                  @for (chk of c.checks; track chk.name) {
+                    <li class="chk" [class.pass]="chk.passed" [class.fail]="!chk.passed">
+                      <span class="ic" aria-hidden="true">{{ chk.passed ? '✓' : '✕' }}</span>
+                      <span class="nm">{{ chk.name }}</span>
+                      <span class="dt">{{ chk.details }}</span>
+                    </li>
+                  }
+                </ul>
+              }
               <p class="evidence">{{ c.evidence || 'Sem evidência registrada para este controle.' }}</p>
               <div class="meta">
                 <span>Fonte: <b>{{ c.source === 'Telemetry' ? 'Telemetria' : 'Documental' }}</b></span>
@@ -73,7 +88,7 @@ import { ControlStatus, ControlView } from '../../models/scoring.models';
       .ctl-head {
         width: 100%;
         display: grid;
-        grid-template-columns: 14px 108px 1fr auto 16px;
+        grid-template-columns: 14px minmax(0, 1fr) auto auto 16px;
         align-items: center;
         gap: 12px;
         padding: 11px 14px;
@@ -90,11 +105,25 @@ import { ControlStatus, ControlView } from '../../models/scoring.models';
         border-radius: 50%;
         background: var(--muted);
       }
+      .names {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .name {
+        font-family: var(--sans);
+        font-size: 13px;
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       .code {
         font-family: var(--mono);
-        font-size: 12.5px;
+        font-size: 10.5px;
         letter-spacing: 0.03em;
-        color: var(--text);
+        color: var(--muted);
       }
       .status {
         font-family: var(--mono);
@@ -158,7 +187,7 @@ import { ControlStatus, ControlView } from '../../models/scoring.models';
         background: var(--red);
         box-shadow: 0 0 10px 1px var(--red);
       }
-      .ctl.is-fail .code {
+      .ctl.is-fail .name {
         color: #ffe3ee;
       }
       .ctl.is-fail .status {
@@ -172,6 +201,38 @@ import { ControlStatus, ControlView } from '../../models/scoring.models';
         border-top: 1px solid var(--line-2);
         margin-top: -1px;
       }
+      /* Checklist técnico — decomposição do veredito em itens ✓/✕ (padrão HUD dual-neon). */
+      .checks {
+        list-style: none;
+        margin: 12px 0 10px;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .chk {
+        display: grid;
+        grid-template-columns: 16px minmax(0, auto) 1fr;
+        align-items: baseline;
+        gap: 9px;
+        font-family: var(--mono);
+        font-size: 11.5px;
+      }
+      .chk .ic { font-size: 12px; line-height: 1; text-align: center; }
+      .chk .nm { color: var(--text); white-space: nowrap; }
+      .chk .dt {
+        color: var(--muted);
+        font-size: 10.5px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* Passou → cyan (contido); falhou → vermelho aceso, salta aos olhos. */
+      .chk.pass .ic { color: var(--cyan); }
+      .chk.pass .nm { opacity: 0.85; }
+      .chk.fail .ic { color: var(--red); text-shadow: 0 0 8px rgba(255, 45, 111, 0.5); }
+      .chk.fail .nm { color: #ffe3ee; }
+
       .evidence {
         font-family: var(--mono);
         font-size: 12px;
@@ -212,6 +273,9 @@ import { ControlStatus, ControlView } from '../../models/scoring.models';
 export class ControlComplianceCardComponent {
   /** Lista de controles do pilar (o Smart Component já a entrega ordenada por risco). */
   readonly controls = input.required<ControlView[]>();
+
+  /** Reexpõe ao template a tradução amigável de categoria (função pura do glossário NIST). */
+  protected readonly categoryName = categoryName;
 
   /** Estado de UI puro: códigos das linhas expandidas. */
   private readonly open = signal<ReadonlySet<string>>(new Set());

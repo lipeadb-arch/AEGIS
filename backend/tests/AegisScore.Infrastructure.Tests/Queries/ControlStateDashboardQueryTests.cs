@@ -91,6 +91,21 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
         rows.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task GetDashboardAsync_DesserializaOChecklistTecnicoPersistido()
+    {
+        // O ChecksJson gravado no ledger (pelo ControlStateWriter) é devolvido como lista tipada ao HUD.
+        const string checksJson = """[{"Name":"Endpoint Encrypted","Passed":false,"Details":"90% (mínimo 95%)."}]""";
+        await SeedStateAsync(TenantA, _prAaId, ControlStatus.NonCompliant, 0, VerdictSource.Telemetry, "reprovado", checksJson);
+
+        await using var db = NewContext(TenantA);
+        var row = (await new ControlStateDashboardQuery(db).GetDashboardAsync()).Should().ContainSingle().Subject;
+
+        row.Checks.Should().ContainSingle();
+        row.Checks[0].Name.Should().Be("Endpoint Encrypted");
+        row.Checks[0].Passed.Should().BeFalse("o checklist técnico atravessa persistência → leitura íntegro");
+    }
+
     // ---- infraestrutura do teste ----------------------------------------------------
 
     private AegisScoreDbContext NewContext(Guid? tenantId) =>
@@ -99,7 +114,8 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
 
     /// <summary>Grava um estado sob o tenant informado (TenantId é carimbado pelo StampTenant).</summary>
     private async Task SeedStateAsync(
-        Guid tenantId, Guid subcategoryId, ControlStatus status, int score, VerdictSource source, string evidence)
+        Guid tenantId, Guid subcategoryId, ControlStatus status, int score, VerdictSource source, string evidence,
+        string? checksJson = null)
     {
         await using var db = NewContext(tenantId);
         db.TenantControlStates.Add(new TenantControlState
@@ -109,6 +125,7 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
             CurrentScore = score,
             LastVerdictSource = source,
             AiEvidence = evidence,
+            ChecksJson = checksJson,
         });
         await db.SaveChangesAsync();
     }

@@ -1,5 +1,6 @@
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Services;
+using AegisScore.Application.Telemetry.Models;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Ai;
 using AegisScore.Infrastructure.Persistence;
@@ -26,6 +27,13 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
 {
     private const int MaxPoints = 20;              // par de propósito: 50% = 10 exato, sem arredondamento
     private const string SubCode = "PR.AA-01";
+
+    private const int DataMaxPoints = 20;          // PR.DS (Data Security) — tier alto (cripto)
+    private const string DataSubCode = "PR.DS-01";
+    private const int PlatformMaxPoints = 15;      // PR.PS (Platform Security) — tier alto
+    private const string PlatformSubCode = "PR.PS-01";
+    private const int NetworkMaxPoints = 15;       // PR.IR (Infrastructure Resilience) — tier alto
+    private const string NetworkSubCode = "PR.IR-01";
 
     private const int DetectMaxPoints = 15;        // peso de DE.CM (tier alto) no catálogo NIST CSF 2.0
     private const string DetectSubCode = "DE.CM-01";
@@ -341,6 +349,163 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
         verdict.AwardedScore.Should().Be(GovernRrMaxPoints);
     }
 
+    // ---- Entra ID: retrato de identidade MULTI-CONTROLE (PR.AA-01 + GV.RR-01) --------
+
+    [Fact]
+    public async Task IngestCategory_EntraIdentity_PrivilegiadosSemMfa_ReprovaProtectPrAa()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        // Retrato de alto risco (Purple Knight/vicunha): 15 admins, 4 sem MFA — a dimensão MFA reprova PR.AA-01.
+        var verdict = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
+            SubCode, totalPrivileged: 15, privilegedWithoutMfa: 4));
+
+        verdict.Status.Should().Be(ControlStatus.NonCompliant, "conta privilegiada do Entra ID sem MFA é falha crítica (PR.AA)");
+        verdict.AwardedScore.Should().Be(0);
+
+        await using var assert = NewContext(TenantA);
+        var state = await assert.TenantControlStates.SingleAsync();
+        state.Status.Should().Be(ControlStatus.NonCompliant);
+        state.LastVerdictSource.Should().Be(VerdictSource.Telemetry);
+    }
+
+    [Fact]
+    public async Task IngestCategory_EntraIdentity_ExcessoDeAdministradores_ReprovaGovernGvRr()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        // O MESMO retrato, agora avaliado como GV.RR-01: 15 contas privilegiadas (>10) quebra o menor privilégio.
+        var verdict = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
+            GovernRrCode, totalPrivileged: 15, privilegedWithoutMfa: 4));
+
+        verdict.Status.Should().Be(ControlStatus.NonCompliant, "mais de 10 contas privilegiadas quebra a governança de identidade (GV.RR)");
+        verdict.AwardedScore.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task IngestCategory_EntraIdentity_MesmoRetrato_DiscriminaPorControle()
+    {
+        // Prova a ÂNCORA DE CÓDIGO do StubLlmClient: um retrato com MFA íntegro (0 sem MFA) mas com excesso
+        // de admins (12) deve APROVAR PR.AA-01 e REPROVAR GV.RR-01 — a regra de um controle não decide o outro.
+        await using (var db = NewContext(TenantA))
+        {
+            var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+            var prAa = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
+                SubCode, totalPrivileged: 12, privilegedWithoutMfa: 0));
+            prAa.Status.Should().Be(ControlStatus.Compliant, "0 privilegiados sem MFA → PR.AA conforme, mesmo com muitos admins");
+            prAa.AwardedScore.Should().Be(MaxPoints);
+        }
+
+        await using (var db = NewContext(TenantA))
+        {
+            var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+            var gvRr = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
+                GovernRrCode, totalPrivileged: 12, privilegedWithoutMfa: 0));
+            gvRr.Status.Should().Be(ControlStatus.NonCompliant, "12 contas privilegiadas (>10) → GV.RR reprova, independente do MFA");
+        }
+    }
+
+    [Fact]
+    public async Task IngestCategory_EntraIdentity_ContasOtSemMfaMasIsoladas_ClassificaMitigated()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        // O falso positivo industrial: contas fabris (urdideira/OT) sem MFA por legado, MAS isoladas na rede.
+        // A IA do Aegis PONDERA o controle compensatório → mitigado (50%), não reprova cegamente como as
+        // ferramentas de mercado. Mesmo retrato de alto risco do stub, agora com hasNetworkIsolation=true.
+        var verdict = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
+            SubCode, totalPrivileged: 15, privilegedWithoutMfa: 4, hasNetworkIsolation: true));
+
+        verdict.Status.Should().Be(ControlStatus.MitigatedByThirdParty,
+            "contas de serviço/OT sem MFA isoladas na rede são risco compensado, não falha crítica");
+        verdict.AwardedScore.Should().Be(MaxPoints / 2, "MitigatedByThirdParty concede 50% do peso do controle");
+
+        await using var assert = NewContext(TenantA);
+        var state = await assert.TenantControlStates.SingleAsync();
+        state.Status.Should().Be(ControlStatus.MitigatedByThirdParty);
+        state.LastVerdictSource.Should().Be(VerdictSource.Telemetry);
+    }
+
+    // ---- Protect (PR.DS/PR.PS/PR.IR): Data, Platform e Network — regras já existentes, agora COBERTAS ----
+    // Exercitam os novos records tipados (Data/Platform/NetworkTelemetrySignal.ToMetricLines()) contra as
+    // heurísticas de EvaluateProtect que já viviam no StubLlmClient — fechando a lacuna de cobertura.
+
+    [Fact]
+    public async Task IngestCategory_ProtectData_CriptografiaAbaixoDoMinimo_ClassificaNonCompliant()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        var verdict = await ingestion.IngestCategoryAsync(DataSignal(encryptionCoverage: 90, unencryptedTraffic: false));
+
+        verdict.Status.Should().Be(ControlStatus.NonCompliant, "criptografia de endpoint abaixo de 95% expõe dados em repouso (PR.DS)");
+        verdict.AwardedScore.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task IngestCategory_ProtectData_CriptografiaAmplaESemTrafegoEmClaro_ClassificaCompliant()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        var verdict = await ingestion.IngestCategoryAsync(DataSignal(encryptionCoverage: 99, unencryptedTraffic: false));
+
+        verdict.Status.Should().Be(ControlStatus.Compliant, "criptografia ampla e tráfego cifrado fim a fim (PR.DS)");
+        verdict.AwardedScore.Should().Be(DataMaxPoints);
+    }
+
+    [Fact]
+    public async Task IngestCategory_ProtectPlatform_PatchCriticoPendente_ClassificaNonCompliant()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        // Hardening CIS ótimo (95%), mas 1 patch crítico pendente — a 2ª condição do OR reprova.
+        var verdict = await ingestion.IngestCategoryAsync(PlatformSignal(cisRate: 95, missingPatches: 1));
+
+        verdict.Status.Should().Be(ControlStatus.NonCompliant, "patch crítico pendente é janela de exploração (PR.PS)");
+        verdict.AwardedScore.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task IngestCategory_ProtectPlatform_HardeningIntegro_ClassificaCompliant()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        var verdict = await ingestion.IngestCategoryAsync(PlatformSignal(cisRate: 88, missingPatches: 0));
+
+        verdict.Status.Should().Be(ControlStatus.Compliant, "benchmark CIS satisfatório e sem patches críticos pendentes (PR.PS)");
+        verdict.AwardedScore.Should().Be(PlatformMaxPoints);
+    }
+
+    [Fact]
+    public async Task IngestCategory_ProtectNetwork_SemDefaultDeny_ClassificaNonCompliant()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        var verdict = await ingestion.IngestCategoryAsync(NetworkSignal(defaultDenyFirewall: false));
+
+        verdict.Status.Should().Be(ControlStatus.NonCompliant, "firewall sem política default-deny deixa o perímetro permissivo (PR.IR)");
+        verdict.AwardedScore.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task IngestCategory_ProtectNetwork_DefaultDenyAplicado_ClassificaCompliant()
+    {
+        await using var db = NewContext(TenantA);
+        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
+
+        var verdict = await ingestion.IngestCategoryAsync(NetworkSignal(defaultDenyFirewall: true));
+
+        verdict.Status.Should().Be(ControlStatus.Compliant, "firewall default-deny aplicado (PR.IR)");
+        verdict.AwardedScore.Should().Be(NetworkMaxPoints);
+    }
+
     // ---- infraestrutura do teste ----------------------------------------------------
 
     private AegisScoreDbContext NewContext(Guid? tenantId) =>
@@ -413,6 +578,42 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
             $"Privileged Access Review Configured: {(reviewConfigured ? "true" : "false")}",
         });
 
+    /// <summary>
+    /// Monta o sinal de categoria a partir do retrato de identidade do Entra ID — via
+    /// <see cref="IdentityTelemetrySignal.ToMetricLines"/>, o MESMO contrato de rótulos que a ingestão real
+    /// produzirá. O código-alvo varia (PR.AA-01 = dimensão MFA; GV.RR-01 = dimensão governança): um único
+    /// retrato, dois controles. O pilar do cabeçalho segue o prefixo do código (não afeta a regra, que
+    /// ancora no código do controle e nos rótulos).
+    /// </summary>
+    private static CategoryTelemetrySignal EntraIdentitySignal(
+        string subcategoryCode, int totalPrivileged, int privilegedWithoutMfa,
+        bool hasNetworkIsolation = false) =>
+        new(subcategoryCode,
+            subcategoryCode.StartsWith("GV") ? "Govern" : "Protect",
+            "Identity",
+            new IdentityTelemetrySignal(
+                TotalPrivilegedAccounts: totalPrivileged,
+                PrivilegedAccountsWithoutMfa: privilegedWithoutMfa,
+                PrivilegedAccountsWithMailbox: 9,
+                InactiveGuestAccountsOver30Days: 6,
+                MfaExemptServiceAccounts: new[] { "svc-urdideira-ot@vicunha.com.br" },
+                HasNetworkIsolation: hasNetworkIsolation).ToMetricLines());
+
+    /// <summary>Sinal de PR.DS a partir do <see cref="DataTelemetrySignal"/> TIPADO (via ToMetricLines) — prova que os rótulos do record casam com a regra PR.DS-01 já existente no StubLlmClient.</summary>
+    private static CategoryTelemetrySignal DataSignal(double encryptionCoverage, bool unencryptedTraffic) =>
+        new(DataSubCode, "Protect", "Data",
+            new DataTelemetrySignal(encryptionCoverage, unencryptedTraffic).ToMetricLines());
+
+    /// <summary>Sinal de PR.PS a partir do <see cref="PlatformTelemetrySignal"/> tipado.</summary>
+    private static CategoryTelemetrySignal PlatformSignal(double cisRate, int missingPatches) =>
+        new(PlatformSubCode, "Protect", "Platform",
+            new PlatformTelemetrySignal(cisRate, missingPatches).ToMetricLines());
+
+    /// <summary>Sinal de PR.IR a partir do <see cref="NetworkTelemetrySignal"/> tipado.</summary>
+    private static CategoryTelemetrySignal NetworkSignal(bool defaultDenyFirewall) =>
+        new(NetworkSubCode, "Protect", "Network",
+            new NetworkTelemetrySignal(defaultDenyFirewall).ToMetricLines());
+
     /// <summary>Monta a cadeia REAL de produção (ingestão → motor → writer) sob o tenant do contexto.</summary>
     private static ITelemetryIngestionService IngestionFor(AegisScoreDbContext db, Guid? tenantId, ILLMClient llm)
     {
@@ -438,6 +639,17 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
             MaxScorePoints = MaxPoints,
         });
         fn.Categories.Add(cat);
+
+        // Demais categorias do PROTECT — PR.DS (peso 20), PR.PS/PR.IR (peso 15) — alvos dos testes de Data/Platform/Network.
+        var prDs = new NistCategory { Code = "PR.DS", Name = "Data Security" };
+        prDs.Subcategories.Add(new NistSubcategory { Code = DataSubCode, Description = "Data-at-rest and data-in-transit are protected.", MaxScorePoints = DataMaxPoints });
+        var prPs = new NistCategory { Code = "PR.PS", Name = "Platform Security" };
+        prPs.Subcategories.Add(new NistSubcategory { Code = PlatformSubCode, Description = "Hardware and software platforms are managed and hardened.", MaxScorePoints = PlatformMaxPoints });
+        var prIr = new NistCategory { Code = "PR.IR", Name = "Technology Infrastructure Resilience" };
+        prIr.Subcategories.Add(new NistSubcategory { Code = NetworkSubCode, Description = "Technology infrastructure resilience is protected.", MaxScorePoints = NetworkMaxPoints });
+        fn.Categories.Add(prDs);
+        fn.Categories.Add(prPs);
+        fn.Categories.Add(prIr);
         fv.Functions.Add(fn);
 
         // Segunda função: DETECT / DE.CM-01 (peso 15) — alvo dos testes de telemetria de Detect.

@@ -2,10 +2,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Advisories;
 using AegisScore.Application.Queries;
 using AegisScore.Application.RiskAssessment;
 using AegisScore.Application.Scoring;
 using AegisScore.Application.Services;
+using AegisScore.Infrastructure.Advisories;
 using AegisScore.Infrastructure.Ai;
 using AegisScore.Infrastructure.Auth;
 using AegisScore.Infrastructure.Connectors;
@@ -71,6 +73,10 @@ public static class DependencyInjection
         services.AddScoped<ITenantScoreTrendQuery, TenantScoreTrendQuery>();
         services.AddScoped<IGetPendingControlsQuery, PendingControlsQuery>();
         services.AddScoped<IControlStateDashboardQuery, ControlStateDashboardQuery>();
+
+        // Aegis Score — motor consultivo: handler de criação de advisories (escrita). Scoped: usa o
+        // DbContext (stamping fail-closed do tenant) + o IAiAssessmentService para redigir o texto.
+        services.AddScoped<IGenerateAdvisoryHandler, GenerateAdvisoryHandler>();
 
         // Connector registry resolves every IEvidenceConnector registered in DI.
         services.AddSingleton<IConnectorRegistry, ConnectorRegistry>();

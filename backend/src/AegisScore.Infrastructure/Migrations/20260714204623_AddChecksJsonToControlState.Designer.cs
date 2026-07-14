@@ -3,6 +3,7 @@ using System;
 using AegisScore.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AegisScore.Infrastructure.Migrations
 {
     [DbContext(typeof(AegisScoreDbContext))]
-    partial class AegisScoreDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260714204623_AddChecksJsonToControlState")]
+    partial class AddChecksJsonToControlState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1333,46 +1336,6 @@ namespace AegisScore.Infrastructure.Migrations
                     b.HasIndex("SubcategoryId");
 
                     b.ToTable("Questions");
-                });
-
-            modelBuilder.Entity("AegisScore.Domain.RemediationAdvisory", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("DocumentedRisk")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("SubcategoryCode")
-                        .IsRequired()
-                        .HasMaxLength(15)
-                        .HasColumnType("character varying(15)");
-
-                    b.Property<string>("TechnicalSteps")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
-
-                    b.Property<DateTimeOffset?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId", "SubcategoryCode");
-
-                    b.ToTable("RemediationAdvisories");
                 });
 
             modelBuilder.Entity("AegisScore.Domain.Risk", b =>

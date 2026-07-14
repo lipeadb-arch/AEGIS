@@ -56,7 +56,7 @@ public sealed class BlastRadiusScoreProjector : IBlastRadiusScoreProjector
         // O tenant vem do assessment JÁ CARIMBADO (fail-closed no SaveChanges); o ControlStateWriter
         // re-valida contra o tenant ambiente (defesa em profundidade).
         foreach (var code in TargetControls)
-            await _ledger.ApplyVerdictAsync(assessment.TenantId, code, status, evidence, VerdictSource.Telemetry, ct);
+            await _ledger.ApplyVerdictAsync(assessment.TenantId, code, status, evidence, VerdictSource.Telemetry, ct: ct);
 
         _log.LogInformation(
             "ID.RA: raio {Level} sobre {Count} ativos penalizou {Controls} como {Status} no tenant {Tenant}.",

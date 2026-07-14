@@ -1,6 +1,8 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Telemetry.Models;
 
 namespace AegisScore.Infrastructure.Ai;
 
@@ -17,7 +19,10 @@ public sealed class StubLlmClient : ILLMClient
     {
         var p = userPrompt.ToLowerInvariant();
         var (status, evidence) = Evaluate(p);
-        return Task.FromResult($"{{\"status\":\"{status}\",\"aiEvidence\":\"{evidence}\"}}");
+        // Além do status, decompõe o veredito do Protect no CHECKLIST técnico (vazio nas demais famílias).
+        // JsonSerializer garante o escaping de aspas/acentos na evidência e nos checks (era interpolação crua).
+        var json = JsonSerializer.Serialize(new { status, aiEvidence = evidence, checks = BuildProtectChecks(p) });
+        return Task.FromResult(json);
     }
 
     /// <summary>
@@ -83,6 +88,30 @@ public sealed class StubLlmClient : ILLMClient
                 : ("Compliant", "Stub: PR.AA conforme — MFA privilegiado integral e Conditional Access aplicado.");
         }
 
+        // PR.AA — Identity Posture (telemetria do Entra ID). Indicador "MFA not configured for privileged
+        // accounts". Ancorado no controle-alvo porque o MESMO retrato também alimenta GV.RR-01 — a âncora
+        // garante que esta regra decida só PR.AA. NÃO reprova cegamente: pondera CONTROLE COMPENSATÓRIO para
+        // ambientes industriais (OT/IoT), onde terminais fabris não suportam MFA por legado mas vivem em rede
+        // isolada — o falso positivo clássico das ferramentas de assessment de mercado.
+        if (TargetsControl(p, "pr.aa") && p.Contains("privileged accounts without mfa:"))
+        {
+            var privWithoutMfa = Num(p, "privileged accounts without mfa:");
+            var totalPriv = Num(p, "total privileged accounts:");
+            if (privWithoutMfa <= 0)
+                return ("Compliant", $"Stub: PR.AA conforme — todas as {totalPriv:0} contas privilegiadas do Entra ID com MFA efetivo.");
+
+            // Há privilégio sem MFA. Controle compensatório: contas de serviço/OT isentas (limitação técnica)
+            // E ativo isolado na rede → risco ATENUADO (mitigado), não falha crítica cega.
+            var exemptServiceAccounts = Num(p, "mfa-exempt service accounts:");
+            var networkIsolation = p.Contains("network isolation = true");
+            if (exemptServiceAccounts > 0 && networkIsolation)
+                return ("MitigatedByThirdParty", $"Stub: PR.AA mitigado — {privWithoutMfa:0} conta(s) sem MFA correspondem a serviço/OT ({exemptServiceAccounts:0} isenta(s) por legado) e o ativo está ISOLADO na rede (controle compensatório). Falso positivo de ambiente industrial evitado.");
+
+            // (Evolução no motor real: exigir privWithoutMfa <= isentas para não mascarar um admin HUMANO sem
+            //  MFA que se escondesse atrás do isolamento das contas OT — aqui o Stub mantém a regra do enunciado.)
+            return ("NonCompliant", $"Stub: PR.AA reprovado — {privWithoutMfa:0} de {totalPriv:0} conta(s) privilegiada(s) do Entra ID sem MFA e SEM controle compensatório (isolamento de rede). Privilégio sem MFA é falha crítica (PoLP).");
+        }
+
         // PR.DS — Data Security: cobertura de criptografia < 95% OU tráfego em claro detectado.
         if (p.Contains("endpoint encryption coverage:"))
         {
@@ -113,6 +142,57 @@ public sealed class StubLlmClient : ILLMClient
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Decompõe as métricas do PROTECT no CHECKLIST técnico (<see cref="ComplianceCheck"/>) que justifica o
+    /// veredito — um item por condição de auditoria, com o valor concreto que o decidiu. Reconhece o payload
+    /// pelos MESMOS rótulos das regras de <see cref="EvaluateProtect"/>; devolve lista vazia fora do Protect.
+    /// Vive à parte para não refatorar a tupla de retorno de todas as famílias — mesma varredura, outra saída.
+    /// </summary>
+    private static IReadOnlyList<ComplianceCheck> BuildProtectChecks(string p)
+    {
+        var checks = new List<ComplianceCheck>();
+
+        // PR.AA — Identity & Access (telemetria de categoria)
+        if (p.Contains("privileged mfa coverage:"))
+        {
+            var privMfa = Num(p, "privileged mfa coverage:");
+            checks.Add(new("MFA Privilegiado Integral", privMfa >= 100, $"MFA em contas privilegiadas: {privMfa:0.#}% (exige 100%)."));
+            checks.Add(new("Conditional Access Aplicado", Flag(p, "conditional access enforced:"), "Políticas de Conditional Access ativas no acesso."));
+        }
+
+        // PR.AA — Identity Posture (Entra ID)
+        if (p.Contains("privileged accounts without mfa:"))
+        {
+            var without = Num(p, "privileged accounts without mfa:");
+            var total = Num(p, "total privileged accounts:");
+            checks.Add(new("Contas Privilegiadas com MFA", without <= 0, $"{without:0} de {total:0} contas privilegiadas sem MFA."));
+            checks.Add(new("Isolamento de Rede (OT)", p.Contains("network isolation = true"), "Ativos sem MFA em rede isolada (controle compensatório)."));
+        }
+
+        // PR.DS — Data Security
+        if (p.Contains("endpoint encryption coverage:"))
+        {
+            var enc = Num(p, "endpoint encryption coverage:");
+            checks.Add(new("Endpoint Encrypted", enc >= 95, $"Criptografia de endpoint em {enc:0.#}% (mínimo 95%)."));
+            checks.Add(new("No Unencrypted Traffic", !Flag(p, "unencrypted traffic detected:"), "Ausência de tráfego em claro na rede."));
+        }
+
+        // PR.PS — Platform Security
+        if (p.Contains("cis benchmark compliance rate:"))
+        {
+            var cis = Num(p, "cis benchmark compliance rate:");
+            var patches = Num(p, "missing critical patches:");
+            checks.Add(new("CIS Hardening", cis >= 80, $"Conformidade CIS em {cis:0.#}% (mínimo 80%)."));
+            checks.Add(new("No Critical Patches Pending", patches <= 0, $"{patches:0} patch(es) crítico(s) pendente(s)."));
+        }
+
+        // PR.IR — Infrastructure Resilience
+        if (p.Contains("default deny firewall enforced:"))
+            checks.Add(new("Default-Deny Firewall", Flag(p, "default deny firewall enforced:"), "Firewall com política default-deny (perímetro restritivo)."));
+
+        return checks;
     }
 
     /// <summary>
@@ -223,8 +303,29 @@ public sealed class StubLlmClient : ILLMClient
                 : ("Compliant", "Stub: GV.RR conforme — contas de administrador sob revisão periódica de acesso configurada.");
         }
 
+        // GV.RR — Identity Governance (telemetria do Entra ID): excesso de contas privilegiadas quebra o
+        // princípio do menor privilégio (indicador "More than 10 Privileged Administrators exist"). Ancorado
+        // no controle-alvo porque o MESMO retrato de identidade também alimenta PR.AA-01.
+        if (TargetsControl(p, "gv.rr") && p.Contains("total privileged accounts:"))
+        {
+            var totalPriv = Num(p, "total privileged accounts:");
+            return totalPriv > 10
+                ? ("NonCompliant", $"Stub: GV.RR reprovado — {totalPriv:0} contas privilegiadas (>10) no Entra ID. Excesso de administradores quebra o menor privilégio e a governança de identidade.")
+                : ("Compliant", $"Stub: GV.RR conforme — {totalPriv:0} contas privilegiadas (≤10), aderente ao menor privilégio.");
+        }
+
         return null;
     }
+
+    /// <summary>
+    /// True se o payload MIRA o controle indicado (prefixo NIST, ex.: "pr.aa"/"gv.rr"). Lê o código-alvo do
+    /// cabeçalho do User Prompt do avaliador ("NIST CSF 2.0 SUBCATEGORY: PR.AA-01") ou do envelope da
+    /// telemetria de categoria ("(control PR.AA-01)"). Necessário porque UM MESMO retrato de identidade do
+    /// Entra ID alimenta dois controles (PR.AA-01 e GV.RR-01): a âncora de código impede a regra de um de
+    /// decidir o veredito do outro durante o roteamento.
+    /// </summary>
+    private static bool TargetsControl(string p, string codePrefix) =>
+        p.Contains("subcategory: " + codePrefix) || p.Contains("(control " + codePrefix);
 
     /// <summary>Extrai o número que segue um rótulo no payload (já lowercased). Fallback 0 se ausente.</summary>
     private static double Num(string p, string label)

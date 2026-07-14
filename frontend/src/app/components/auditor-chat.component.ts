@@ -247,6 +247,17 @@ export class AuditorChatComponent {
         if (el) el.scrollTop = el.scrollHeight;
       });
     });
+
+    // Auditoria dirigida por uma tela (ex.: "Auditar Lacunas" do Identity Dashboard): o AgentStateService
+    // publica um prompt; consumimos e o enviamos como se o usuário o tivesse digitado. O backend o roteia
+    // por Agentic Routing (auditar/lacuna → START_INTERVIEW), injetando o cartão de entrevista GRC inline.
+    effect(() => {
+      const pending = this.agent.pendingPrompt();
+      if (!pending) return;
+      this.agent.consumePendingPrompt(); // limpa antes de enviar (evita reenvio ao re-renderizar)
+      this.draft.set(pending);
+      queueMicrotask(() => this.send()); // fora do contexto reativo; send() lê o draft já setado
+    });
   }
 
   /** Envia a mensagem no escopo ativo: anexa a fala, ativa a análise, chama o serviço, roteia a resposta. */

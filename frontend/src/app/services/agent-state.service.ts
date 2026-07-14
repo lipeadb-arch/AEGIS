@@ -42,6 +42,9 @@ const CONTEXTS: Record<AgentContext, NistContext> = {
 const ROUTE_TO_CONTEXT: Record<string, AgentContext> = {
   governance: 'Govern',
   assets: 'Identify',
+  // Postura de identidade (Entra ID) → Protect: no NIST CSF 2.0 a gestão de identidade e acesso é PR.AA
+  // (Protect), não o pilar Identify (que é inventário/ID.AM). O System Prompt de PR foca em MFA/identidade.
+  identity: 'Protect',
   protect: 'Protect',
   detect: 'Detect',
   respond: 'Respond',
@@ -130,6 +133,30 @@ export class AgentStateService {
 
   toggle(): void {
     this.open.update((v) => !v);
+  }
+
+  // ---- Barramento de auditoria dirigida (tela → Copiloto) ----------------
+
+  /**
+   * Prompt semeado por uma tela ao pedir uma auditoria (ex.: "Auditar Lacunas" do Identity Dashboard).
+   * O AuditorChatComponent observa este signal e envia a mensagem como se o usuário a tivesse digitado —
+   * o backend a roteia por Agentic Routing (auditar/lacuna → START_INTERVIEW), abrindo a entrevista GRC.
+   * É o mesmo padrão de barramento reverso usado por notifyCoverageChanged/notifyRiskIdentified.
+   */
+  private readonly _pendingPrompt = signal<string | null>(null);
+  readonly pendingPrompt = this._pendingPrompt.asReadonly();
+
+  /** Abre o Copiloto no contexto da rota atual e semeia uma mensagem de auditoria para envio automático. */
+  requestAudit(prompt: string): void {
+    this._pendingPrompt.set(prompt);
+    this.open.set(true);
+  }
+
+  /** O chat consome (e limpa) o prompt pendente após injetá-lo, para não reenviar em re-renderizações. */
+  consumePendingPrompt(): string | null {
+    const p = this._pendingPrompt();
+    if (p !== null) this._pendingPrompt.set(null);
+    return p;
   }
 
   // ---- Barramento reverso (entrevista → telas) ----------------------------

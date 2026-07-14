@@ -43,6 +43,15 @@ public interface IAiAssessmentService
     /// obriga a IA a devolver saída ESTRUTURADA. Toda saída é uma SUGESTÃO; o analista permanece no laço.
     /// </summary>
     Task<AuditorReply> ChatAsync(AuditorChatRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// Redige uma Recomendação de Remediação (advisory) para uma subcategoria NIST: título, risco
+    /// documentado (o "porquê", em linguagem de risco) e o passo a passo técnico exportável (o "como
+    /// fazer" que a TI do cliente executa). É a saída CONSULTIVA do Aegis Score — uma SUGESTÃO que o
+    /// analista do SOC revisa antes de entregar. O Stub devolve texto canned ancorado no código do
+    /// controle; o motor real compõe o texto via LLM.
+    /// </summary>
+    Task<AdvisoryDraft> GenerateAdvisoryAsync(AdvisoryGenerationRequest request, CancellationToken ct);
 }
 
 // ---- Copiloto GRC (Auditor onipresente, com escopo de contexto) --------------
@@ -147,6 +156,17 @@ public record ActionPlanRequest(Guid TenantId, IReadOnlyList<(string Subcategory
 public record ActionPlanSuggestion(string SubcategoryCode, string What, string How, string Priority);
 
 public record ExecutiveReportRequest(Guid AssessmentId, string ClientName);
+
+// ---- Recomendações de Remediação (Advisories) -------------------------------
+
+/// <summary>Pedido de redação de um advisory: o código NIST-alvo é o que ancora o texto (canned ou LLM).</summary>
+public record AdvisoryGenerationRequest(string SubcategoryCode);
+
+/// <summary>
+/// Rascunho de advisory produzido pelo motor de IA: título + risco documentado + passo a passo técnico.
+/// É uma SUGESTÃO (o analista do SOC valida antes de entregar ao cliente).
+/// </summary>
+public record AdvisoryDraft(string Title, string DocumentedRisk, string TechnicalSteps);
 
 /// <summary>Raw output from some tool that the core does not understand natively.</summary>
 public record RawSignalBatch(

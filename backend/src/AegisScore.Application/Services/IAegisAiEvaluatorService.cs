@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using AegisScore.Application.Telemetry.Models;
 using AegisScore.Domain;
 
 namespace AegisScore.Application.Services;
@@ -8,8 +10,13 @@ namespace AegisScore.Application.Services;
 /// <summary>
 /// Veredito de conformidade estruturado que a IA produz para uma subcategoria NIST, já traduzido em
 /// pontos do Aegis Score (<paramref name="AwardedScore"/> de 0..<paramref name="MaxScorePoints"/>).
+/// <see cref="Checks"/> é o CHECKLIST técnico que justifica o status (populado pelo motor, persistido com o
+/// estado e expandido no card do HUD) — vazio quando o motor não decompõe o veredito.
 /// </summary>
-public record ComplianceVerdict(ControlStatus Status, string AiEvidence, int AwardedScore, int MaxScorePoints);
+public record ComplianceVerdict(ControlStatus Status, string AiEvidence, int AwardedScore, int MaxScorePoints)
+{
+    public IReadOnlyList<ComplianceCheck> Checks { get; init; } = Array.Empty<ComplianceCheck>();
+}
 
 /// <summary>
 /// Motor de avaliação de conformidade do Aegis Score — a PORTA (a implementação vive na Infrastructure

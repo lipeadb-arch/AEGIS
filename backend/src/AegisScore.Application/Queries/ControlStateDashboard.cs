@@ -1,3 +1,5 @@
+using AegisScore.Application.Telemetry.Models;
+
 namespace AegisScore.Application.Queries;
 
 /// <summary>
@@ -22,7 +24,8 @@ public record TenantControlStateDto(
     string ControlStatus,
     string? AiEvidence,
     DateTimeOffset LastEvaluatedAt,
-    string LastVerdictSource);
+    string LastVerdictSource,
+    IReadOnlyList<ComplianceCheck> Checks);
 
 /// <summary>
 /// Consulta de leitura do estado de conformidade de TODOS os controles do tenant — a matriz que alimenta

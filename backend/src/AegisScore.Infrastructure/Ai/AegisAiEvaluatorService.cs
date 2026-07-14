@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Services;
+using AegisScore.Application.Telemetry.Models;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
@@ -57,15 +58,16 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
         // 3) IA: System Prompt (o core) + telemetria, através do seam mockável ILLMClient.
         var llmRaw = await _llm.ExecutePromptAsync(
             BuildSystemPrompt(), BuildUserPrompt(sub, rawTelemetryPayload), ct);
-        var (status, evidence) = ParseResponse(llmRaw);
+        var (status, evidence, checks) = ParseResponse(llmRaw);
 
         // 4) Persistência: upsert idempotente + scoring, pela regra única do writer. Telemetria é a fonte
-        //    AUTORITATIVA — sobrescreve o estado vigente mesmo que isso rebaixe o controle.
+        //    AUTORITATIVA — sobrescreve o estado vigente mesmo que isso rebaixe o controle. O checklist
+        //    técnico viaja junto e é persistido com o estado (o motor real ainda não o emite → vazio).
         return await _writer.ApplyVerdictAsync(
-            tenantId, subcategoryCode, status, evidence, VerdictSource.Telemetry, ct);
+            tenantId, subcategoryCode, status, evidence, VerdictSource.Telemetry, checks, ct);
     }
 
-    private (ControlStatus Status, string Evidence) ParseResponse(string llmRaw)
+    private (ControlStatus Status, string Evidence, IReadOnlyList<ComplianceCheck> Checks) ParseResponse(string llmRaw)
     {
         VerdictJson? dto;
         try
@@ -80,7 +82,7 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
         if (dto is null || !Enum.TryParse<ControlStatus>(dto.status, ignoreCase: true, out var status))
             throw new AiUnavailableException($"Status de conformidade inválido retornado pela IA: '{dto?.status}'.");
 
-        return (status, (dto.aiEvidence ?? "").Trim());
+        return (status, (dto.aiEvidence ?? "").Trim(), dto.checks ?? Array.Empty<ComplianceCheck>());
     }
 
     // ---- Engenharia de prompt (o core da IA) ------------------------------------
@@ -139,5 +141,5 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
         return (start >= 0 && end > start) ? t[start..(end + 1)] : t;
     }
 
-    private record VerdictJson(string? status, string? aiEvidence);
+    private record VerdictJson(string? status, string? aiEvidence, IReadOnlyList<ComplianceCheck>? checks);
 }

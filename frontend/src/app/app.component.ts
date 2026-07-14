@@ -95,6 +95,11 @@ import { AuthService } from './services/auth.service';
         <a class="nav-item" routerLink="/recover" routerLinkActive="active">
           <span class="dot" aria-hidden="true"></span><span class="lb">Recover</span><span class="code">RC</span>
         </a>
+
+        <p class="nav-group">Telemetria Ativa</p>
+        <a class="nav-item" routerLink="/identity" routerLinkActive="active">
+          <span class="dot" aria-hidden="true"></span><span class="lb">Identidade · Entra</span><span class="code">IAM</span>
+        </a>
       </nav>
 
       <!-- Gatilho global do Agente: segue no layout raiz, agora no rodapé do sidebar. -->

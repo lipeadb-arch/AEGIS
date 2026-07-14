@@ -1,3 +1,4 @@
+using AegisScore.Application.Telemetry.Models;
 using AegisScore.Domain;
 
 namespace AegisScore.Application.Services;
@@ -32,8 +33,9 @@ public interface IControlStateWriter
     /// <param name="status">Veredito de conformidade já decidido pela fonte de evidência.</param>
     /// <param name="evidence">Justificativa auditável (origem + racional), gravada em <c>AiEvidence</c>.</param>
     /// <param name="source">Procedência do veredito — define se a escrita é autoritativa ou condicional.</param>
+    /// <param name="checks">Checklist técnico que justifica o status (persistido como JSON); nulo/vazio quando o motor não decompõe.</param>
     /// <returns>O veredito EFETIVO: o proposto, ou o estado preservado quando o upgrade é recusado.</returns>
     Task<ComplianceVerdict> ApplyVerdictAsync(
         Guid tenantId, string subcategoryCode, ControlStatus status, string evidence,
-        VerdictSource source, CancellationToken ct = default);
+        VerdictSource source, IReadOnlyList<ComplianceCheck>? checks = null, CancellationToken ct = default);
 }

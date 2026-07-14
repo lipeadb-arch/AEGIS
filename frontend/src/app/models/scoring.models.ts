@@ -7,6 +7,13 @@ export type ControlStatus = 'Compliant' | 'MitigatedByThirdParty' | 'NonComplian
 /** Procedência do veredito vigente: Telemetry (autoritativa, até 100%) ou Documentary (teto 50%). */
 export type VerdictSource = 'Telemetry' | 'Documentary';
 
+/** Item do checklist técnico que justifica o veredito (espelha ComplianceCheck do backend, camelCase). */
+export interface ComplianceCheck {
+  name: string;
+  passed: boolean;
+  details: string;
+}
+
 /**
  * Estado atual de UM controle NIST do tenant, exatamente como /scoring/dashboard entrega (JSON camelCase).
  * Contrato de leitura: o frontend jamais recebe a entidade de domínio crua.
@@ -20,6 +27,7 @@ export interface TenantControlStateDto {
   aiEvidence: string | null;
   lastEvaluatedAt: string; // ISO 8601
   lastVerdictSource: VerdictSource;
+  checks: ComplianceCheck[]; // checklist técnico que justifica o status (vazio se o motor não decompôs)
 }
 
 /**
@@ -36,12 +44,14 @@ export interface PillarMeta {
   blurb: string; // subtítulo curto (categorias do pilar)
 }
 
+// Subtítulos (blurb) HUMANIZADOS em PT-BR — os mesmos nomes de categoria do glossário NIST
+// (nist-glossary.ts), para o subtítulo do painel bater com os rótulos das linhas de controle.
 export const PILLARS: Record<PillarKey, PillarMeta> = {
-  PR: { key: 'PR', code: 'PR', label: 'Protect', blurb: 'Identity · Data · Platform · Network' },
-  DE: { key: 'DE', code: 'DE', label: 'Detect', blurb: 'Anomalies · Monitoring · Detection Engineering' },
-  RS: { key: 'RS', code: 'RS', label: 'Respond', blurb: 'Incident Analysis · Mitigation' },
-  RC: { key: 'RC', code: 'RC', label: 'Recover', blurb: 'Recovery Plan Execution' },
-  GV: { key: 'GV', code: 'GV', label: 'Govern', blurb: 'Supply Chain · Roles & Responsibilities · Policy' },
+  PR: { key: 'PR', code: 'PR', label: 'Protect', blurb: 'Identidade e Acesso · Proteção de Dados · Segurança de Plataforma · Rede e Infraestrutura' },
+  DE: { key: 'DE', code: 'DE', label: 'Detect', blurb: 'Análise de Eventos · Monitoramento Contínuo' },
+  RS: { key: 'RS', code: 'RS', label: 'Respond', blurb: 'Gestão e Mitigação de Incidentes' },
+  RC: { key: 'RC', code: 'RC', label: 'Recover', blurb: 'Plano de Recuperação' },
+  GV: { key: 'GV', code: 'GV', label: 'Govern', blurb: 'Cadeia de Suprimentos · Papéis e Responsabilidades · Políticas' },
 };
 
 /** Prefixo do código NIST de um pilar: 'PR' → "PR." (casa "PR.AA-01" mas não "PRX"). */
@@ -63,6 +73,7 @@ export interface ControlView {
   evidence: string | null;
   source: VerdictSource;
   evaluatedAt: string;
+  checks: ComplianceCheck[]; // decomposição técnica do veredito, exibida no accordion do card
 }
 
 /** Postura consolidada de um pilar — o que o Smart Component monta e distribui aos Dumb Components. */
@@ -89,6 +100,7 @@ export function toControlView(d: TenantControlStateDto): ControlView {
     evidence: d.aiEvidence,
     source: d.lastVerdictSource,
     evaluatedAt: d.lastEvaluatedAt,
+    checks: d.checks ?? [],
   };
 }
 

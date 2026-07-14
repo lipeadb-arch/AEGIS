@@ -144,6 +144,68 @@ public sealed class StubAssessmentService : IAiAssessmentService
         _ => ("Por qual Função NIST você quer começar o diagnóstico de lacunas?", null),
     };
 
+    /// <summary>
+    /// Redige um advisory CANNED ancorado no código do controle (sem LLM). Um banco fixo cobre os
+    /// controles do Protect com texto mastigado; para os demais, um fallback genérico compõe uma
+    /// recomendação a partir do próprio código — o suficiente para exercer o fluxo consultivo ponta a
+    /// ponta sem chave nem tokens.
+    /// </summary>
+    public Task<AdvisoryDraft> GenerateAdvisoryAsync(AdvisoryGenerationRequest request, CancellationToken ct)
+    {
+        var code = (request.SubcategoryCode ?? "").Trim().ToUpperInvariant();
+        var draft = AdvisoryBank.TryGetValue(code, out var canned) ? canned : FallbackAdvisory(code);
+        return Task.FromResult(draft);
+    }
+
+    /// <summary>Advisories canned por código de controle (foco no Protect — a Fase 1). Fallback: <see cref="FallbackAdvisory"/>.</summary>
+    private static readonly Dictionary<string, AdvisoryDraft> AdvisoryBank = new()
+    {
+        ["PR.AA-01"] = new AdvisoryDraft(
+            "Impor MFA em todas as contas privilegiadas via Conditional Access",
+            "Contas administrativas sem MFA são o vetor nº 1 de comprometimento de identidade: uma única " +
+            "credencial privilegiada vazada concede movimento lateral e escalonamento imediatos, sem barreira adicional.",
+            "1. No Entra ID, crie uma política de Conditional Access mirando o grupo de contas privilegiadas.\n" +
+            "2. Exija 'Grant access → Require multifactor authentication'.\n" +
+            "3. Publique em modo Report-only, valide os sign-ins e então mude para On (Enforce).\n" +
+            "4. Bloqueie a autenticação legada (POP/IMAP/SMTP), que ignora o MFA.\n" +
+            "5. Evidencie 100% de cobertura no relatório de métodos de autenticação."),
+        ["PR.DS-01"] = new AdvisoryDraft(
+            "Cifrar dados em repouso nos endpoints e eliminar tráfego em claro",
+            "Endpoints sem criptografia de disco e tráfego não cifrado expõem dados sensíveis a exfiltração " +
+            "em caso de perda/roubo do dispositivo ou de interceptação de rede — uma falha direta de confidencialidade.",
+            "1. Force BitLocker (Windows) / FileVault (macOS) via política de MDM em 100% da frota.\n" +
+            "2. Publique o status de criptografia no inventário e bloqueie o acesso de dispositivos não cifrados.\n" +
+            "3. Imponha TLS 1.2+ nos serviços internos; desative protocolos em claro (HTTP, FTP, Telnet).\n" +
+            "4. Ative DLP para monitorar e barrar a saída de dados sensíveis não cifrados."),
+        ["PR.PS-01"] = new AdvisoryDraft(
+            "Aplicar baseline de hardening CIS e zerar o backlog de patches críticos",
+            "Plataformas fora do baseline de configuração e com patches críticos pendentes ampliam a superfície " +
+            "de ataque: cada CVE crítica não corrigida é uma porta conhecida para execução remota de código.",
+            "1. Adote o CIS Benchmark da plataforma como baseline e meça a conformidade (meta ≥ 80%).\n" +
+            "2. Priorize e aplique todos os patches de severidade crítica dentro do SLA.\n" +
+            "3. Automatize a gestão de patches (WSUS/Intune/gerenciador equivalente) com janelas de manutenção.\n" +
+            "4. Monitore o desvio de configuração e reconcilie continuamente contra o baseline."),
+        ["PR.IR-01"] = new AdvisoryDraft(
+            "Impor política de firewall default-deny e microssegmentar a rede",
+            "Sem uma postura default-deny, a rede confia por omissão: um host comprometido alcança livremente " +
+            "outros ativos, transformando um incidente pontual em movimento lateral irrestrito.",
+            "1. Configure o firewall com regra final default-deny; libere apenas fluxos explicitamente necessários.\n" +
+            "2. Microssegmente por zonas (identidade, dados, OT) para conter o raio de explosão.\n" +
+            "3. Revise e remova regras permissivas legadas (any-any).\n" +
+            "4. Registre e alerte sobre os deny para detectar varredura e movimento lateral."),
+    };
+
+    /// <summary>Recomendação genérica para um controle fora do banco canned — ancorada no próprio código.</summary>
+    private static AdvisoryDraft FallbackAdvisory(string code) => new(
+        $"Fechar a lacuna do controle {code}",
+        $"[Simulado] O controle {code} está não-conforme no ledger do tenant. A ausência de evidência técnica " +
+        "deste controle mantém uma lacuna de postura que reduz o Secure Score e eleva a exposição associada.",
+        $"[Simulado · configure Ai:ApiKey para texto real] Recomendação para {code}:\n" +
+        "1. Identifique a evidência técnica exigida pela subcategoria NIST.\n" +
+        "2. Implemente/ajuste o controle na plataforma correspondente.\n" +
+        "3. Colete a telemetria que comprove a implementação efetiva.\n" +
+        "4. Reavalie o controle no Aegis Score para elevar o score.");
+
     // ---- helpers ----
 
     /// <summary>Extrai (na ordem, sem repetir) os códigos NIST do histórico; se não houver, usa o roteiro padrão.</summary>

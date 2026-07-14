@@ -125,6 +125,21 @@ public class ClaudeAssessmentService : IAiAssessmentService
             .ToList();
     }
 
+    public async Task<AdvisoryDraft> GenerateAdvisoryAsync(AdvisoryGenerationRequest request, CancellationToken ct)
+    {
+        const string system =
+            "You are a senior SOC/MSSP remediation advisor specialized in NIST CSF 2.0. Given ONE " +
+            "subcategory code, write a remediation advisory the client's IT team can execute to raise " +
+            "their Secure Score for that control. Reply in Brazilian Portuguese. Provide a short actionable " +
+            "title, a 'documentedRisk' explaining WHY the gap matters (business/risk language), and a " +
+            "numbered, technical 'technicalSteps' the IT team follows. " +
+            "Respond ONLY with JSON: {\"title\":\"..\",\"documentedRisk\":\"..\",\"technicalSteps\":\"..\"}.";
+        var user = $"SUBCATEGORY: {request.SubcategoryCode}";
+
+        var dto = await CompleteJsonAsync<AdvisoryJson>(system, user, ct);
+        return new AdvisoryDraft(dto.title ?? "", dto.documentedRisk ?? "", dto.technicalSteps ?? "");
+    }
+
     public async Task<AuditorReply> ChatAsync(AuditorChatRequest request, CancellationToken ct)
     {
         // Roteamento de Intenção: o System Prompt manda a IA classificar (COPILOT vs START_INTERVIEW) e
@@ -266,4 +281,5 @@ public class ClaudeAssessmentService : IAiAssessmentService
     private record ActionJson(string? subcategoryCode, string? what, string? how, string? priority);
     private record SignalJson(string? signalKey, double? numericValue, string? unit, int? severity, List<string>? mappedSubcategoryCodes);
     private record ChatRouterJson(string? intent, string? message, string? targetSubcategoryCode);
+    private record AdvisoryJson(string? title, string? documentedRisk, string? technicalSteps);
 }
