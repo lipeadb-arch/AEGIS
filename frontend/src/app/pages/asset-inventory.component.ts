@@ -35,6 +35,9 @@ import { environment } from '../../environments/environment';
         </div>
       </header>
 
+      <!-- Subtítulo tático da Função Identify (mesmo padrão dos painéis de pilar / Govern) -->
+      <p class="id-description">{{ idDescription }}</p>
+
       <!-- ---- Barra de filtros combinados ---- -->
       <section class="panel filters">
         <div class="chips">
@@ -184,6 +187,16 @@ import { environment } from '../../environments/environment';
   `,
   styles: [
     `
+      /* Subtítulo tático da Função (logo abaixo da topbar) — mutado, mesmo padrão do Govern. */
+      .id-description {
+        color: var(--muted);
+        font-family: var(--sans);
+        font-size: 13.5px;
+        line-height: 1.6;
+        margin: -14px 0 24px;
+        max-width: 820px;
+      }
+
       .filters { padding: 16px 18px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 14px; }
       .chips { display: flex; flex-wrap: wrap; gap: 8px; }
       .chip {
@@ -294,6 +307,12 @@ export class AssetInventoryComponent implements OnInit {
   );
 
   // Constantes de UI expostas ao template.
+  // Subtítulo tático da Função Identify (ID). ID NÃO faz parte de PILLARS (Identify tem tela própria de
+  // inventário, não o painel de pilar genérico), então o texto vive aqui — a tela que representa a Função.
+  // Mesmo padrão visual (mutado/sans) dos subtítulos dos painéis de pilar e do Govern.
+  protected readonly idDescription =
+    'A base para entender os riscos aos ativos, dados, pessoas e capacidades do negócio. O Aegis rastreia o ' +
+    'inventário contínuo e calcula o Raio de Explosão, medindo o impacto real caso peças fundamentais sejam comprometidas.';
   protected readonly categories = ASSET_CATEGORIES;
   protected readonly riskLevels = RISK_LEVELS;
   protected readonly criticalities = [1, 2, 3, 4];

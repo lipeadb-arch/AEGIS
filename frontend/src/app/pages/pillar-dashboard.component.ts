@@ -24,6 +24,7 @@ import { ScoringService } from '../services/scoring.service';
       <header class="head">
         <h1>{{ meta().label }} <span class="code">{{ meta().code }}</span></h1>
         <p class="blurb">{{ meta().blurb }}</p>
+        <p class="description">{{ meta().description }}</p>
       </header>
 
       @if (loading()) {
@@ -95,6 +96,16 @@ import { ScoringService } from '../services/scoring.service';
         margin: 0;
         font-family: var(--mono);
         letter-spacing: 0.02em;
+      }
+      /* Subtítulo tático: parágrafo de leitura (sans), mutado e contido — informa sem disputar com os
+         gauges/cards. A fonte sans + max-width o distinguem do blurb (mono, categorias). */
+      .head .description {
+        color: var(--muted);
+        font-family: var(--sans);
+        font-size: 13.5px;
+        line-height: 1.6;
+        margin: 12px 0 0;
+        max-width: 820px;
       }
 
       .grid {

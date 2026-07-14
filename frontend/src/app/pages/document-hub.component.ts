@@ -55,6 +55,9 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
         </div>
       </header>
 
+      <!-- Subtítulo tático da Função Govern (mesmo texto dos painéis de pilar) -->
+      <p class="gov-description">{{ govMeta.description }}</p>
+
       <!-- ============ 1) POSTURA DE GOVERNANÇA (telemetria GV.SC / GV.RR) ============ -->
       <section class="panel gov-score">
         <div class="hd">
@@ -288,6 +291,18 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
         100% { box-shadow: 0 0 0 0 rgba(5, 7, 15, 0); }
       }
 
+      /* Subtítulo tático da Função Govern (logo abaixo da topbar). O -14px encurta parte do
+         margin-bottom:30px da topbar global, colando o texto ao título; sans + mutado + contido, para
+         informar sem disputar atenção com o gauge e os cards de controle. */
+      .gov-description {
+        color: var(--muted);
+        font-family: var(--sans);
+        font-size: 13.5px;
+        line-height: 1.6;
+        margin: -14px 0 24px;
+        max-width: 820px;
+      }
+
       /* ---- 1) Postura de Governança (telemetria GV) ---- */
       .gov-score { padding: 20px 22px; margin-bottom: 18px; }
       .gov-score .hd { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; gap: 12px; }
@@ -440,6 +455,7 @@ export class DocumentHubComponent implements OnInit {
   canUpload = computed(() => !this.uploading() && this.uploadFile() !== null);
 
   // Constantes de UI expostas ao template.
+  protected readonly govMeta = PILLARS.GV; // subtítulo tático da Função Govern (mesmo texto dos painéis de pilar)
   protected readonly documentTypes = DOCUMENT_TYPES;
   protected readonly analysisStatuses = ANALYSIS_STATUSES;
   protected readonly typeLabel = documentTypeLabel;

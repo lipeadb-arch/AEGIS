@@ -42,16 +42,52 @@ export interface PillarMeta {
   code: string; // "PR"
   label: string; // "Protect"
   blurb: string; // subtítulo curto (categorias do pilar)
+  description: string; // subtítulo tático: o que a Função significa + o que o Aegis mede nela
 }
 
 // Subtítulos (blurb) HUMANIZADOS em PT-BR — os mesmos nomes de categoria do glossário NIST
 // (nist-glossary.ts), para o subtítulo do painel bater com os rótulos das linhas de controle.
 export const PILLARS: Record<PillarKey, PillarMeta> = {
-  PR: { key: 'PR', code: 'PR', label: 'Protect', blurb: 'Identidade e Acesso · Proteção de Dados · Segurança de Plataforma · Rede e Infraestrutura' },
-  DE: { key: 'DE', code: 'DE', label: 'Detect', blurb: 'Análise de Eventos · Monitoramento Contínuo' },
-  RS: { key: 'RS', code: 'RS', label: 'Respond', blurb: 'Gestão e Mitigação de Incidentes' },
-  RC: { key: 'RC', code: 'RC', label: 'Recover', blurb: 'Plano de Recuperação' },
-  GV: { key: 'GV', code: 'GV', label: 'Govern', blurb: 'Cadeia de Suprimentos · Papéis e Responsabilidades · Políticas' },
+  PR: {
+    key: 'PR',
+    code: 'PR',
+    label: 'Protect',
+    blurb: 'Identidade e Acesso · Proteção de Dados · Segurança de Plataforma · Rede e Infraestrutura',
+    description:
+      'Implementação de barreiras para garantir a entrega de serviços críticos e limitar o impacto de eventos cibernéticos. O Aegis mede a força das defesas construídas em identidades, redes e dados para manter invasores isolados.',
+  },
+  DE: {
+    key: 'DE',
+    code: 'DE',
+    label: 'Detect',
+    blurb: 'Análise de Eventos · Monitoramento Contínuo',
+    description:
+      'Desenvolvimento e implementação de atividades para identificar a ocorrência de um evento de segurança cibernética. O Aegis valida o radar da operação, eliminando pontos cegos e medindo a capacidade de enxergar ameaças reais a tempo.',
+  },
+  RS: {
+    key: 'RS',
+    code: 'RS',
+    label: 'Respond',
+    blurb: 'Gestão e Mitigação de Incidentes',
+    description:
+      'Tomada de medidas apropriadas para conter e mitigar os danos de um incidente detectado. O Aegis quantifica a velocidade e a precisão da resposta (MTTA/MTTR) para garantir o controle absoluto sob pressão.',
+  },
+  RC: {
+    key: 'RC',
+    code: 'RC',
+    label: 'Recover',
+    blurb: 'Plano de Recuperação',
+    description:
+      'Planejamento de atividades de resiliência e restauração de serviços afetados. O Aegis garante a capacidade da organização de se reerguer rapidamente após crises, validando a integridade de backups e as metas operacionais (RTO/RPO).',
+  },
+  GV: {
+    key: 'GV',
+    code: 'GV',
+    label: 'Govern',
+    blurb: 'Cadeia de Suprimentos · Papéis e Responsabilidades · Políticas',
+    description:
+      'Estabelece a estratégia de gestão de riscos cibernéticos, políticas e responsabilidades. O Aegis conecta a segurança à governança da organização, avaliando ativamente desde privilégios de acesso até a cadeia de suprimentos.',
+  },
 };
 
 /** Prefixo do código NIST de um pilar: 'PR' → "PR." (casa "PR.AA-01" mas não "PRX"). */
