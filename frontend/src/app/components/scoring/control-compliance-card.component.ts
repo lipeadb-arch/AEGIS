@@ -1,12 +1,23 @@
 import { DatePipe } from '@angular/common';
-import { Component, input, signal } from '@angular/core';
-import { ControlStatus, ControlView } from '../../models/scoring.models';
+import { Component, inject, input, signal } from '@angular/core';
+import { AdvisoryDto, ControlStatus, ControlView } from '../../models/scoring.models';
 import { categoryName } from '../../models/nist-glossary';
+import { AdvisoryService } from '../../services/advisory.service';
 
 /**
- * ControlComplianceCardComponent — DUMB. Recebe uma LISTA de controles e a renderiza como linhas de
- * status expansíveis (clique revela a evidência técnica da IA). Sem serviço; único estado é o de UI
- * (quais linhas estão abertas), num Signal local.
+ * Estado de UI (por controle) da geração de advisory: ocioso (sem entrada no mapa) → carregando →
+ * carregado (com o advisory) ou erro. União discriminada por `status` — o template roteia com @if/@let.
+ */
+type AdvisoryUiState =
+  | { status: 'loading' }
+  | { status: 'loaded'; advisory: AdvisoryDto }
+  | { status: 'error'; message: string };
+
+/**
+ * ControlComplianceCardComponent — recebe uma LISTA de controles e a renderiza como linhas de status
+ * expansíveis (clique revela a evidência técnica da IA). O estado é majoritariamente de UI local (Signals:
+ * linhas abertas + advisories por controle); a ÚNICA dependência é o AdvisoryService, para gerar sob
+ * demanda a recomendação consultiva de um controle NÃO CONFORME (motor consultivo do Aegis Score).
  *
  * Tolerância Zero visual: NonCompliant salta aos olhos (borda + brilho vermelho, chip aceso); Compliant é
  * contido e silencioso (cinza, sem brilho); Parcial (documental, 50%) usa âmbar. NÃO é uma tabela de logs
@@ -54,6 +65,52 @@ import { categoryName } from '../../models/nist-glossary';
                 <span>Fonte: <b>{{ c.source === 'Telemetry' ? 'Telemetria' : 'Documental' }}</b></span>
                 <span>Avaliado em {{ c.evaluatedAt | date: 'dd/MM/yyyy HH:mm' }}</span>
               </div>
+
+              <!-- Motor consultivo: só em controles NÃO CONFORMES o analista gera a recomendação de
+                   remediação (ação = tema HUD magenta). O advisory é redigido pela IA no servidor. -->
+              @if (c.status === 'NonCompliant') {
+                @let adv = advisoryState(c.code);
+                <div class="advisory">
+                  @if (!adv) {
+                    <button type="button" class="advise-btn" (click)="generateAdvisory(c.code)">
+                      <span class="ai" aria-hidden="true">✦</span> Gerar Recomendação
+                    </button>
+                  } @else if (adv.status === 'loading') {
+                    <div class="advise-loading">
+                      <span class="spin" aria-hidden="true"></span>
+                      <span class="pulse">Gerando recomendação técnica…</span>
+                    </div>
+                  } @else if (adv.status === 'loaded') {
+                    <article class="advise-card">
+                      <header class="advise-hd">
+                        <span class="badge" aria-hidden="true">✦ RECOMENDAÇÃO</span>
+                        <h4>{{ adv.advisory.title }}</h4>
+                      </header>
+                      <section class="advise-sec">
+                        <span class="k">Risco Documentado</span>
+                        <p>{{ adv.advisory.documentedRisk }}</p>
+                      </section>
+                      <section class="advise-sec">
+                        <span class="k">Passo a Passo Técnico</span>
+                        <pre class="steps">{{ adv.advisory.technicalSteps }}</pre>
+                      </section>
+                      <footer class="advise-ft">
+                        <span>Gerado em {{ adv.advisory.createdAt | date: 'dd/MM/yyyy HH:mm' }}</span>
+                        <button type="button" class="advise-regen" (click)="generateAdvisory(c.code)">
+                          Regenerar
+                        </button>
+                      </footer>
+                    </article>
+                  } @else {
+                    <div class="advise-error">
+                      <span>{{ adv.message }}</span>
+                      <button type="button" class="advise-retry" (click)="generateAdvisory(c.code)">
+                        Tentar novamente
+                      </button>
+                    </div>
+                  }
+                </div>
+              }
             </div>
           }
         </li>
@@ -261,10 +318,129 @@ import { categoryName } from '../../models/nist-glossary';
         padding: 18px 4px;
       }
 
+      /* ---- Motor consultivo: botão + card do advisory (tema HUD magenta = AÇÃO) ---- */
+      .advisory { margin-top: 14px; }
+      .advise-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        letter-spacing: 0.06em;
+        color: var(--magenta);
+        background: rgba(255, 61, 154, 0.08);
+        border: 1px solid rgba(255, 61, 154, 0.4);
+        border-radius: 8px;
+        padding: 8px 14px;
+        cursor: pointer;
+        transition: 0.15s;
+      }
+      .advise-btn:hover {
+        border-color: var(--magenta);
+        box-shadow: 0 0 16px -4px rgba(255, 61, 154, 0.6);
+      }
+      .advise-btn .ai { font-size: 12px; }
+
+      .advise-loading { display: inline-flex; align-items: center; gap: 10px; padding: 6px 2px; }
+      .advise-loading .pulse {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--magenta);
+        letter-spacing: 0.06em;
+        animation: advise-pulse 1.4s ease-in-out infinite;
+      }
+      .advise-loading .spin {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 61, 154, 0.25);
+        border-top-color: var(--magenta);
+        animation: advise-spin 0.7s linear infinite;
+      }
+      @keyframes advise-spin { to { transform: rotate(360deg); } }
+      @keyframes advise-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.9; } }
+
+      .advise-card {
+        border: 1px solid rgba(255, 61, 154, 0.28);
+        border-left: 3px solid var(--magenta);
+        border-radius: 10px;
+        background: linear-gradient(90deg, rgba(255, 61, 154, 0.07), rgba(255, 61, 154, 0.01));
+        padding: 13px 15px;
+      }
+      .advise-hd { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+      .advise-hd .badge {
+        font-family: var(--mono);
+        font-size: 9.5px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--magenta);
+      }
+      .advise-hd h4 { margin: 0; font-family: var(--sans); font-size: 14px; font-weight: 600; color: #ffe3ee; }
+      .advise-sec { margin-bottom: 12px; }
+      .advise-sec .k {
+        display: block;
+        font-family: var(--mono);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+        margin-bottom: 5px;
+      }
+      .advise-sec p { margin: 0; font-family: var(--sans); font-size: 12.5px; line-height: 1.55; color: var(--text); }
+      .advise-sec .steps {
+        margin: 0;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        line-height: 1.6;
+        color: var(--text);
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: rgba(0, 0, 0, 0.22);
+        border: 1px solid var(--line-2);
+        border-radius: 8px;
+        padding: 10px 12px;
+      }
+      .advise-ft {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--muted);
+      }
+      .advise-regen,
+      .advise-retry {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--magenta);
+        background: none;
+        border: 1px solid rgba(255, 61, 154, 0.3);
+        border-radius: 7px;
+        padding: 5px 10px;
+        cursor: pointer;
+        transition: 0.15s;
+      }
+      .advise-regen:hover,
+      .advise-retry:hover { border-color: var(--magenta); }
+      .advise-error {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--red);
+      }
+
       @media (prefers-reduced-motion: reduce) {
         .ctl,
         .chev {
           transition: none;
+        }
+        .advise-loading .spin,
+        .advise-loading .pulse {
+          animation: none;
         }
       }
     `,
@@ -277,8 +453,14 @@ export class ControlComplianceCardComponent {
   /** Reexpõe ao template a tradução amigável de categoria (função pura do glossário NIST). */
   protected readonly categoryName = categoryName;
 
+  /** Motor consultivo: gera o advisory sob demanda para um controle não-conforme. */
+  private readonly advisorySvc = inject(AdvisoryService);
+
   /** Estado de UI puro: códigos das linhas expandidas. */
   private readonly open = signal<ReadonlySet<string>>(new Set());
+
+  /** Estado da geração de advisory por controle (código NIST → estado). Ocioso = ausência de chave. */
+  private readonly advisories = signal<ReadonlyMap<string, AdvisoryUiState>>(new Map());
 
   isOpen(code: string): boolean {
     return this.open().has(code);
@@ -288,6 +470,30 @@ export class ControlComplianceCardComponent {
     const next = new Set(this.open());
     next.has(code) ? next.delete(code) : next.add(code);
     this.open.set(next);
+  }
+
+  /** Estado atual da geração de advisory do controle (undefined = ocioso, ainda não solicitado). */
+  advisoryState(code: string): AdvisoryUiState | undefined {
+    return this.advisories().get(code);
+  }
+
+  /**
+   * Gera (ou regenera) a recomendação de remediação do controle. Fluxo: carregando → carregado/erro,
+   * com o estado isolado por código para não vazar entre linhas. Reentrância barrada enquanto carrega.
+   */
+  generateAdvisory(code: string): void {
+    if (this.advisoryState(code)?.status === 'loading') return;
+    this.setAdvisory(code, { status: 'loading' });
+    this.advisorySvc.generate(code).subscribe({
+      next: (advisory) => this.setAdvisory(code, { status: 'loaded', advisory }),
+      error: (err: Error) => this.setAdvisory(code, { status: 'error', message: err.message }),
+    });
+  }
+
+  private setAdvisory(code: string, state: AdvisoryUiState): void {
+    const next = new Map(this.advisories());
+    next.set(code, state);
+    this.advisories.set(next);
   }
 
   statusLabel(status: ControlStatus): string {

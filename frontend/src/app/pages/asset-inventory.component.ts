@@ -9,6 +9,7 @@ import {
   RiskLevel,
   categoryLabel,
 } from '../models/asset.models';
+import { NIST_FUNCTION_DESCRIPTIONS } from '../models/nist-glossary';
 import { riskColor } from '../lib/scales';
 import { environment } from '../../environments/environment';
 
@@ -307,12 +308,9 @@ export class AssetInventoryComponent implements OnInit {
   );
 
   // Constantes de UI expostas ao template.
-  // Subtítulo tático da Função Identify (ID). ID NÃO faz parte de PILLARS (Identify tem tela própria de
-  // inventário, não o painel de pilar genérico), então o texto vive aqui — a tela que representa a Função.
-  // Mesmo padrão visual (mutado/sans) dos subtítulos dos painéis de pilar e do Govern.
-  protected readonly idDescription =
-    'A base para entender os riscos aos ativos, dados, pessoas e capacidades do negócio. O Aegis rastreia o ' +
-    'inventário contínuo e calcula o Raio de Explosão, medindo o impacto real caso peças fundamentais sejam comprometidas.';
+  // Subtítulo tático da Função Identify (ID): a tela de inventário É a landing da Função (ID.AM/ID.RA). O
+  // texto NÃO é mais hardcoded — vem do dicionário único NIST_FUNCTION_DESCRIPTIONS (nist-glossary.ts, DRY).
+  protected readonly idDescription = NIST_FUNCTION_DESCRIPTIONS.ID;
   protected readonly categories = ASSET_CATEGORIES;
   protected readonly riskLevels = RISK_LEVELS;
   protected readonly criticalities = [1, 2, 3, 4];

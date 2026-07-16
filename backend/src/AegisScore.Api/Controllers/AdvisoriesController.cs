@@ -31,6 +31,8 @@ public class AdvisoriesController : ControllerBase
     /// <response code="201">Advisory criado, com título, risco documentado e passo a passo técnico.</response>
     /// <response code="400">Código de subcategoria ausente/vazio.</response>
     [HttpPost]
+    [ProducesResponseType(typeof(RemediationAdvisoryDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<RemediationAdvisoryDto>> Create(
         [FromBody] CreateAdvisoryRequest request, CancellationToken ct)
     {
