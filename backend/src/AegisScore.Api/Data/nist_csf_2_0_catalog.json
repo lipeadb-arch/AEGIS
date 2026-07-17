@@ -1015,7 +1015,7 @@
           "subcategories": [
             {
               "code": "ID.AM-01",
-              "description": "Os ativos sob responsabilidade da área estão devidamente registrados e atualizados?",
+              "description": "Inventories of hardware managed by the organization are maintained",
               "implementationExamples": "Ex1: Manter inventários para todos os tipos de hardware, incluindo TI, IoT, OT e dispositivos móveis.\nEx2: Monitorar constantemente as redes para detectar novos hardwares e atualizar automaticamente os inventários.",
               "informativeReferences": [
                 "CCMv4.0: CCC-04",
@@ -1034,7 +1034,7 @@
             },
             {
               "code": "ID.AM-02",
-              "description": "São mantidos inventários de softwares, serviços e sistemas gerenciados pela organização",
+              "description": "Inventories of software, services, and systems managed by the organization are maintained",
               "implementationExamples": "Ex1: Maintain inventories for all types of software and services, including commercial-off-the-shelf, open-source, custom applications, API services, and cloud-based applications and services\nEx2: Constantly monitor all platforms, including containers and virtual machines, for software and service inventory changes\nEx3: Maintain an inventory of the organization's systems",
               "informativeReferences": [
                 "CCMv4.0: CCC-04",
@@ -1057,7 +1057,7 @@
             },
             {
               "code": "ID.AM-03",
-              "description": "Representações da comunicação autorizada da rede da organização e dos fluxos de dados internos e externos da rede são mantidas",
+              "description": "Representations of the organization's authorized network communication and internal and external network data flows are maintained",
               "implementationExamples": "Ex1: Maintain baselines of communication and data flows within the organization's wired and wireless networks\nEx2: Maintain baselines of communication and data flows between the organization and third parties\nEx3: Maintain baselines of communication and data flows for the organization's infrastructure-as-a-service (IaaS) usage\nEx4: Maintain documentation of expected network ports, protocols, and services that are typically used among authorized systems",
               "informativeReferences": [
                 "CCMv4.0: DSP-05",
@@ -1082,7 +1082,7 @@
             },
             {
               "code": "ID.AM-04",
-              "description": "São mantidos inventários dos serviços prestados pelos fornecedores.",
+              "description": "Inventories of services provided by suppliers are maintained",
               "implementationExamples": "Ex1: Inventory all external services used by the organization, including third-party infrastructure-as-a-service (IaaS), platform-as-a-service (PaaS), and software-as-a-service (SaaS) offerings; APIs; and other externally hosted application services\nEx2: Update the inventory when a new external service is going to be utilized to ensure adequate cybersecurity risk management monitoring of the organization's use of that service",
               "informativeReferences": [
                 "CCMv4.0: CCC-04",
@@ -1102,7 +1102,7 @@
             },
             {
               "code": "ID.AM-05",
-              "description": "Os ativos são priorizados com base na classificação, criticidade, recursos e impacto na missão",
+              "description": "Assets are prioritized based on classification, criticality, resources, and impact on the mission",
               "implementationExamples": "Ex1: Define criteria for prioritizing each class of assets\nEx2: Apply the prioritization criteria to assets\nEx3: Track the asset priorities and update them periodically or when significant changes to the organization occur",
               "informativeReferences": [
                 "CCMv4.0: CEK-04",
@@ -1122,7 +1122,7 @@
             },
             {
               "code": "ID.AM-07",
-              "description": "Inventários de dados e metadados correspondentes para tipos de dados designados são mantidos",
+              "description": "Inventories of data and corresponding metadata for designated data types are maintained",
               "implementationExamples": "Ex1: Maintain a list of the designated data types of interest (e.g., personally identifiable information, protected health information, financial account numbers, organization intellectual property, operational technology data)\nEx2: Continuously discover and analyze ad hoc data to identify new instances of designated data types\nEx3: Assign data classifications to designated data types through tags or labels\nEx4: Track the provenance, data owner, and geolocation of each instance of designated data types",
               "informativeReferences": [
                 "CCMv4.0: DSP-01",
@@ -1144,7 +1144,7 @@
             },
             {
               "code": "ID.AM-08",
-              "description": "Sistemas, hardware, software, serviços e dados são gerenciados ao longo de seus ciclos de vida",
+              "description": "Systems, hardware, software, services, and data are managed throughout their life cycles",
               "implementationExamples": "Ex1: Integrate cybersecurity considerations throughout the life cycles of systems, hardware, software, and services\nEx2: Integrate cybersecurity considerations into product life cycles\nEx3: Identify unofficial uses of technology to meet mission objectives (i.e., shadow IT)\nEx4: Periodically identify redundant systems, hardware, software, and services that unnecessarily increase the organization's attack surface\nEx5: Properly configure and secure systems, hardware, software, and services prior to their deployment in production\nEx6: Update inventories when systems, hardware, software, and services are moved or transferred within the organization\nEx7: Securely destroy stored data based on the organization's data retention policy using the prescribed destruction method, and keep and manage a record of the destructions\nEx8: Securely sanitize data storage when hardware is being retired, decommissioned, reassigned, or sent for repairs or replacement\nEx9: Offer methods for destroying paper, storage media, and other physical forms of data storage",
               "informativeReferences": [
                 "CCMv4.0: AIS-02",
@@ -1216,7 +1216,7 @@
           "subcategories": [
             {
               "code": "ID.RA-01",
-              "description": "Vulnerabilidades em ativos são identificadas, validadas e registradas",
+              "description": "Vulnerabilities in assets are identified, validated, and recorded",
               "implementationExamples": "Ex1: Use vulnerability management technologies to identify unpatched and misconfigured software\nEx2: Assess network and system architectures for design and implementation weaknesses that affect cybersecurity\nEx3: Review, analyze, or test organization-developed software to identify design, coding, and default configuration vulnerabilities\nEx4: Assess facilities that house critical computing assets for physical vulnerabilities and resilience issues\nEx5: Monitor sources of cyber threat intelligence for information on new vulnerabilities in products and services\nEx6: Review processes and procedures for weaknesses that could be exploited to affect cybersecurity",
               "informativeReferences": [
                 "CCMv4.0: AIS-05",
@@ -1254,7 +1254,7 @@
             },
             {
               "code": "ID.RA-02",
-              "description": "A inteligência sobre ameaças cibernéticas é recebida de fóruns e fontes de compartilhamento de informações",
+              "description": "Cyber threat intelligence is received from information sharing forums and sources",
               "implementationExamples": "Ex1: Configure cybersecurity tools and technologies with detection or response capabilities to securely ingest cyber threat intelligence feeds\nEx2: Receive and review advisories from reputable third parties on current threat actors and their tactics, techniques, and procedures (TTPs)\nEx3: Monitor sources of cyber threat intelligence for information on the types of vulnerabilities that emerging technologies may have",
               "informativeReferences": [
                 "CCMv4.0: GRC-08",

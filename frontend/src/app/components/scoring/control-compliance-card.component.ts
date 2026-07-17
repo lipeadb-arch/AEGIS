@@ -3,6 +3,8 @@ import { Component, inject, input, signal } from '@angular/core';
 import { AdvisoryDto, ControlStatus, ControlView } from '../../models/scoring.models';
 import { categoryName } from '../../models/nist-glossary';
 import { AdvisoryService } from '../../services/advisory.service';
+import { SeverityComponent } from './severity.component';
+import { SparklineComponent } from './sparkline.component';
 
 /**
  * Estado de UI (por controle) da geração de advisory: ocioso (sem entrada no mapa) → carregando →
@@ -26,7 +28,7 @@ type AdvisoryUiState =
 @Component({
   selector: 'app-control-compliance-card',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, SeverityComponent, SparklineComponent],
   template: `
     <ul class="controls">
       @for (c of controls(); track c.code) {
@@ -42,6 +44,14 @@ type AdvisoryUiState =
               <span class="name">{{ categoryName(c.code) }}</span>
               <span class="code">{{ c.code }}</span>
             </span>
+            <!-- Slot SEMPRE presente (vazio sem série): a linha é um grid próprio e a coluna fixa
+                 impede que a ausência de histórico desloque severidade/pontos. -->
+            <span class="spark">
+              @if (c.history.length > 1) {
+                <app-sparkline [points]="c.history" />
+              }
+            </span>
+            <app-severity [level]="c.severity" />
             <span class="status">{{ statusLabel(c.status) }}</span>
             <span class="pts">{{ c.scorePoints }}<i>/{{ c.maxScorePoints }}</i></span>
             <span class="chev" [class.open]="isOpen(c.code)" aria-hidden="true">›</span>
@@ -61,56 +71,114 @@ type AdvisoryUiState =
                 </ul>
               }
               <p class="evidence">{{ c.evidence || 'Sem evidência registrada para este controle.' }}</p>
+
+              <!-- Confiança da IA: qualifica a leitura acima. Baixa confiança = revisar antes de virar
+                   tarefa de TI, por isso a barra usa a MESMA régua de cor do resto do produto. -->
+              @if (c.aiConfidence !== null) {
+                <div class="conf">
+                  <span class="k"><i class="ai" aria-hidden="true">✦</i> AI Confidence Score</span>
+                  <div class="conf-row">
+                    <span class="conf-track">
+                      <i
+                        class="conf-fill"
+                        [style.width.%]="c.aiConfidence"
+                        [style.background]="confColor(c.aiConfidence)"
+                        [style.box-shadow]="'0 0 10px -2px ' + confColor(c.aiConfidence)"
+                      ></i>
+                    </span>
+                    <b class="conf-num" [style.color]="confColor(c.aiConfidence)">{{ c.aiConfidence }}%</b>
+                  </div>
+                </div>
+              }
+
+              <!-- Evidência da Telemetria: o rastro CRU da ferramenta, para auditar o veredito da IA
+                   contra a origem. -->
+              @if (c.telemetryEvidence; as tel) {
+                <section class="sec">
+                  <span class="k">Evidência da Telemetria</span>
+                  <div class="tel-hd">
+                    <span class="tool">{{ tel.sourceTool }}</span>
+                    @if (tel.collectedAt) {
+                      <span class="when">coletado em {{ tel.collectedAt | date: 'dd/MM/yyyy HH:mm' }}</span>
+                    }
+                  </div>
+                  <pre class="raw">{{ tel.rawTrace }}</pre>
+                </section>
+              }
+
+              <!-- Mapeamento de Ameaças: o que esta falha abre. -->
+              @if (c.threatLandscape.length > 0) {
+                <section class="sec">
+                  <span class="k">Mapeamento de Ameaças</span>
+                  <ul class="threats">
+                    @for (t of c.threatLandscape; track t) {
+                      <li class="threat">{{ t }}</li>
+                    }
+                  </ul>
+                </section>
+              }
+
+              <!-- Plano de Ação (Remediação): o resumo inline do LLM e/ou o motor consultivo sob demanda.
+                   Aparece em controle NÃO CONFORME (onde há o que remediar) ou quando já existe plano. -->
+              @if (c.status === 'NonCompliant' || c.remediationPlan) {
+                <section class="sec">
+                  <span class="k">Plano de Ação (Remediação)</span>
+                  @if (c.remediationPlan) {
+                    <p class="plan">{{ c.remediationPlan }}</p>
+                  }
+
+                  <!-- Motor consultivo: o passo a passo técnico completo, redigido pela IA no servidor
+                       sob demanda (tema HUD magenta = ação). -->
+                  @if (c.status === 'NonCompliant') {
+                    @let adv = advisoryState(c.code);
+                    <div class="advisory">
+                      @if (!adv) {
+                        <button type="button" class="advise-btn" (click)="generateAdvisory(c.code)">
+                          <span class="ai" aria-hidden="true">✦</span> Gerar Recomendação
+                        </button>
+                      } @else if (adv.status === 'loading') {
+                        <div class="advise-loading">
+                          <span class="spin" aria-hidden="true"></span>
+                          <span class="pulse">Gerando recomendação técnica…</span>
+                        </div>
+                      } @else if (adv.status === 'loaded') {
+                        <article class="advise-card">
+                          <header class="advise-hd">
+                            <span class="badge" aria-hidden="true">✦ RECOMENDAÇÃO</span>
+                            <h4>{{ adv.advisory.title }}</h4>
+                          </header>
+                          <section class="advise-sec">
+                            <span class="k">Risco Documentado</span>
+                            <p>{{ adv.advisory.documentedRisk }}</p>
+                          </section>
+                          <section class="advise-sec">
+                            <span class="k">Passo a Passo Técnico</span>
+                            <pre class="steps">{{ adv.advisory.technicalSteps }}</pre>
+                          </section>
+                          <footer class="advise-ft">
+                            <span>Gerado em {{ adv.advisory.createdAt | date: 'dd/MM/yyyy HH:mm' }}</span>
+                            <button type="button" class="advise-regen" (click)="generateAdvisory(c.code)">
+                              Regenerar
+                            </button>
+                          </footer>
+                        </article>
+                      } @else {
+                        <div class="advise-error">
+                          <span>{{ adv.message }}</span>
+                          <button type="button" class="advise-retry" (click)="generateAdvisory(c.code)">
+                            Tentar novamente
+                          </button>
+                        </div>
+                      }
+                    </div>
+                  }
+                </section>
+              }
+
               <div class="meta">
                 <span>Fonte: <b>{{ c.source === 'Telemetry' ? 'Telemetria' : 'Documental' }}</b></span>
                 <span>Avaliado em {{ c.evaluatedAt | date: 'dd/MM/yyyy HH:mm' }}</span>
               </div>
-
-              <!-- Motor consultivo: só em controles NÃO CONFORMES o analista gera a recomendação de
-                   remediação (ação = tema HUD magenta). O advisory é redigido pela IA no servidor. -->
-              @if (c.status === 'NonCompliant') {
-                @let adv = advisoryState(c.code);
-                <div class="advisory">
-                  @if (!adv) {
-                    <button type="button" class="advise-btn" (click)="generateAdvisory(c.code)">
-                      <span class="ai" aria-hidden="true">✦</span> Gerar Recomendação
-                    </button>
-                  } @else if (adv.status === 'loading') {
-                    <div class="advise-loading">
-                      <span class="spin" aria-hidden="true"></span>
-                      <span class="pulse">Gerando recomendação técnica…</span>
-                    </div>
-                  } @else if (adv.status === 'loaded') {
-                    <article class="advise-card">
-                      <header class="advise-hd">
-                        <span class="badge" aria-hidden="true">✦ RECOMENDAÇÃO</span>
-                        <h4>{{ adv.advisory.title }}</h4>
-                      </header>
-                      <section class="advise-sec">
-                        <span class="k">Risco Documentado</span>
-                        <p>{{ adv.advisory.documentedRisk }}</p>
-                      </section>
-                      <section class="advise-sec">
-                        <span class="k">Passo a Passo Técnico</span>
-                        <pre class="steps">{{ adv.advisory.technicalSteps }}</pre>
-                      </section>
-                      <footer class="advise-ft">
-                        <span>Gerado em {{ adv.advisory.createdAt | date: 'dd/MM/yyyy HH:mm' }}</span>
-                        <button type="button" class="advise-regen" (click)="generateAdvisory(c.code)">
-                          Regenerar
-                        </button>
-                      </footer>
-                    </article>
-                  } @else {
-                    <div class="advise-error">
-                      <span>{{ adv.message }}</span>
-                      <button type="button" class="advise-retry" (click)="generateAdvisory(c.code)">
-                        Tentar novamente
-                      </button>
-                    </div>
-                  }
-                </div>
-              }
             </div>
           }
         </li>
@@ -145,7 +213,8 @@ type AdvisoryUiState =
       .ctl-head {
         width: 100%;
         display: grid;
-        grid-template-columns: 14px minmax(0, 1fr) auto auto 16px;
+        /* dot · nomes · sparkline · severidade · status · pontos · chevron */
+        grid-template-columns: 14px minmax(0, 1fr) auto auto auto auto 16px;
         align-items: center;
         gap: 12px;
         padding: 11px 14px;
@@ -181,6 +250,13 @@ type AdvisoryUiState =
         font-size: 10.5px;
         letter-spacing: 0.03em;
         color: var(--muted);
+      }
+      /* Slot da sparkline: altura reservada mesmo vazio, para a linha não "pular" entre controles
+         com e sem histórico. */
+      .spark {
+        display: inline-flex;
+        align-items: center;
+        min-height: 20px;
       }
       .status {
         font-family: var(--mono);
@@ -311,6 +387,117 @@ type AdvisoryUiState =
         font-weight: 600;
       }
 
+      /* ---- Dossiê do controle: as seções que a IA preenche ---- */
+      .sec {
+        margin: 14px 0 0;
+      }
+
+      /* Evidência da Telemetria — cabeçalho (ferramenta · coleta) + o rastro CRU. */
+      .tel-hd {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 6px;
+      }
+      .tel-hd .tool {
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--cyan);
+        border: 1px solid rgba(38, 224, 255, 0.35);
+        border-radius: 6px;
+        padding: 2px 7px;
+      }
+      .tel-hd .when {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--muted);
+      }
+      /* Rolagem própria: um dump de log não pode empurrar o plano de ação para fora da tela. */
+      .raw {
+        margin: 0;
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1.55;
+        color: var(--text);
+        opacity: 0.9;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 168px;
+        overflow: auto;
+        background: rgba(0, 0, 0, 0.24);
+        border: 1px solid var(--line-2);
+        border-radius: 8px;
+        padding: 9px 11px;
+      }
+
+      /* Mapeamento de Ameaças — cada chip é uma porta que a falha deixou aberta. */
+      .threats {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .threat {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        letter-spacing: 0.04em;
+        color: #ffe3ee;
+        background: rgba(255, 45, 111, 0.1);
+        border: 1px solid rgba(255, 45, 111, 0.35);
+        border-radius: 999px;
+        padding: 3px 9px;
+      }
+
+      /* Plano de Ação — o resumo inline do LLM, acima do motor consultivo sob demanda. */
+      .plan {
+        margin: 0 0 10px;
+        font-family: var(--sans);
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: var(--text);
+      }
+
+      /* AI Confidence Score — trilha flexível + número fixo à direita (o número nunca é empurrado
+         para fora quando a barra satura em 100%). */
+      .conf {
+        margin: 12px 0 0;
+      }
+      .conf .ai {
+        font-style: normal;
+        color: var(--magenta);
+        margin-right: 4px;
+      }
+      .conf-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .conf-track {
+        flex: 1;
+        height: 5px;
+        border-radius: 3px;
+        background: rgba(122, 145, 190, 0.16);
+        overflow: hidden;
+      }
+      .conf-fill {
+        display: block;
+        height: 100%;
+        border-radius: 3px;
+        transition: width 0.3s ease;
+      }
+      .conf-num {
+        font-family: var(--display);
+        font-size: 12.5px;
+        font-weight: 700;
+        min-width: 42px;
+        text-align: right;
+      }
+
       .empty {
         font-family: var(--mono);
         font-size: 12px;
@@ -319,7 +506,9 @@ type AdvisoryUiState =
       }
 
       /* ---- Motor consultivo: botão + card do advisory (tema HUD magenta = AÇÃO) ---- */
-      .advisory { margin-top: 14px; }
+      /* Agrupado sob o rótulo "Plano de Ação" — respiro menor que o de seção, para o botão ler como
+         parte da seção e não como um bloco solto. */
+      .advisory { margin-top: 8px; }
       .advise-btn {
         display: inline-flex;
         align-items: center;
@@ -377,7 +566,10 @@ type AdvisoryUiState =
       }
       .advise-hd h4 { margin: 0; font-family: var(--sans); font-size: 14px; font-weight: 600; color: #ffe3ee; }
       .advise-sec { margin-bottom: 12px; }
-      .advise-sec .k {
+      /* Rótulo de seção: o MESMO em todo o dossiê (advisory, telemetria, ameaças, plano, confiança). */
+      .advise-sec .k,
+      .sec > .k,
+      .conf > .k {
         display: block;
         font-family: var(--mono);
         font-size: 10px;
@@ -433,9 +625,21 @@ type AdvisoryUiState =
         color: var(--red);
       }
 
+      /* Espaço apertado: a sparkline é o primeiro a sair — é contexto. A severidade FICA: é o sinal de
+         risco que o analista precisa ver de relance. */
+      @media (max-width: 860px) {
+        .ctl-head {
+          grid-template-columns: 14px minmax(0, 1fr) auto auto auto 16px;
+        }
+        .spark {
+          display: none;
+        }
+      }
+
       @media (prefers-reduced-motion: reduce) {
         .ctl,
-        .chev {
+        .chev,
+        .conf-fill {
           transition: none;
         }
         .advise-loading .spin,
@@ -505,5 +709,16 @@ export class ControlComplianceCardComponent {
       case 'MitigatedByThirdParty':
         return 'Parcial · 50%';
     }
+  }
+
+  /**
+   * Cor da confiança da IA, na MESMA régua de faixa do ScoreGauge/Sparkline (≥80 cyan · ≥50 âmbar ·
+   * <50 vermelho). Aqui "alto é bom" continua valendo: veredito de baixa confiança pede revisão humana
+   * antes de virar tarefa de TI — daí o vermelho.
+   */
+  confColor(confidence: number): string {
+    if (confidence >= 80) return '#26e0ff';
+    if (confidence >= 50) return '#ffb020';
+    return '#ff2d6f';
   }
 }

@@ -2,7 +2,7 @@ import { Component, OnInit, computed, inject, input, signal } from '@angular/cor
 import { environment } from '../../environments/environment';
 import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
 import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
-import { PILLARS, PillarKey, TenantControlStateDto, buildPillarView } from '../models/scoring.models';
+import { PILLARS, PillarKey, TenantControlStateDto, buildPillarView, formatDuration } from '../models/scoring.models';
 import { ScoringService } from '../services/scoring.service';
 
 /**
@@ -37,6 +37,22 @@ import { ScoringService } from '../services/scoring.service';
           <span>Verifique se a API está no ar em <code>{{ apiBase }}</code> e recarregue.</span>
         </div>
       } @else {
+        <!-- HUD de resposta a incidente: só nas Funções com linha do tempo (DE/RS/RC). -->
+        @if (meta().showsResponseMetrics) {
+          <div class="hud">
+            <div class="hud-card" [class.void]="view().mttdMinutes === null">
+              <span class="hud-k">MTTD</span>
+              <span class="hud-v">{{ mttd() }}</span>
+              <span class="hud-l">Tempo médio de detecção</span>
+            </div>
+            <div class="hud-card" [class.void]="view().mttrMinutes === null">
+              <span class="hud-k">MTTR</span>
+              <span class="hud-v">{{ mttr() }}</span>
+              <span class="hud-l">Tempo médio de resposta</span>
+            </div>
+          </div>
+        }
+
         <div class="grid">
           <!-- Resumo: gauge de conformidade + contagens por status -->
           <div class="panel summary">
@@ -106,6 +122,53 @@ import { ScoringService } from '../services/scoring.service';
         line-height: 1.6;
         margin: 12px 0 0;
         max-width: 820px;
+      }
+
+      /* HUD de resposta: cards pequenos, lidos antes do gauge — é a métrica que o CISO cobra. */
+      .hud {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin: 0 0 18px;
+      }
+      .hud-card {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 172px;
+        padding: 11px 14px;
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--cyan);
+        border-radius: 10px;
+        background: rgba(122, 145, 190, 0.03);
+      }
+      .hud-k {
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--cyan);
+      }
+      .hud-v {
+        font-family: var(--display);
+        font-weight: 700;
+        font-size: 20px;
+        color: var(--text);
+      }
+      .hud-l {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--muted);
+      }
+      /* Sem medição: o card se apaga e mostra "—". Nunca um zero — zero minutos seria uma detecção
+         instantânea, o oposto de "ninguém mediu". */
+      .hud-card.void {
+        border-left-color: var(--line);
+        opacity: 0.7;
+      }
+      .hud-card.void .hud-k,
+      .hud-card.void .hud-v {
+        color: var(--muted);
       }
 
       .grid {
@@ -263,6 +326,10 @@ export class PillarDashboardComponent implements OnInit {
   /** Derivações reativas: metadados do pilar e a view agregada que alimenta os Dumb Components. */
   readonly meta = computed(() => PILLARS[this.pillar()]);
   readonly view = computed(() => buildPillarView(this.meta(), this.controls()));
+
+  /** MTTD/MTTR do pilar já formatados para o HUD ("18 min", "2h 30m", "—" sem medição). */
+  readonly mttd = computed(() => formatDuration(this.view().mttdMinutes));
+  readonly mttr = computed(() => formatDuration(this.view().mttrMinutes));
 
   /** Exposto ao template para orientar o diagnóstico no estado de erro. */
   protected readonly apiBase = environment.apiBase;

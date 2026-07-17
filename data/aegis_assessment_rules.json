@@ -1,0 +1,1389 @@
+[
+  {
+    "subcategory_id": "DE.CM-01",
+    "evaluation_metrics": [
+      "Cobertura de sensores nas interfaces gerenciadas de borda inventariadas (SC-7a)",
+      "Fração do volume de egress com visibilidade de inspeção sobre tráfego cifrado (SI-4(10), SI-4(25))",
+      "Contagem de serviços de rede ativos sem aprovação no processo de autorização (SI-4(22))",
+      "Contagem de access points wireless rogue detectados por varredura (SI-4(14))",
+      "Idade em dias do baseline de tráfego usado para tuning dos sensores (SI-4(13))",
+      "Taxa de falso-positivo das regras de detecção de rede nos últimos 30d (SI-4(13))",
+      "Detecção de anomalias de egress: transferências volumosas, conexões persistentes longas, portas/protocolos incomuns, destinos maliciosos conhecidos (SI-4(11))",
+      "Consolidação das ferramentas de IDS em capacidade única correlacionada (SI-4(1), SI-4(16))"
+    ],
+    "calculation_logic": "cobertura = interfaces_borda_com_sensor / interfaces_borda_inventariadas; visibilidade = bytes_egress_inspecionaveis / bytes_egress_totais; higiene_servicos = 1 - min(1, servicos_rede_nao_autorizados / max(1, servicos_rede_inventariados)); frescor_baseline = 1 - min(1, idade_baseline_dias / 90). score = 0.40*cobertura + 0.25*visibilidade + 0.20*higiene_servicos + 0.15*frescor_baseline. Status = Compliant se score >= 0.85 E cobertura == 1.0 (fail-closed: qualquer ponto de egress sem sensor derruba o controle, pois blind spot em borda invalida a asserção de monitoramento); MitigatedByThirdParty se 0.50 <= score < 0.85 OU se a cobertura for provida por MSSP/terceiro sem repasse de telemetria bruta; NonCompliant se score < 0.50 OU idade_baseline_dias > 180.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: NSG flow logs e logs de firewall/WAF nas interfaces de borda; regras analíticas de anomalia de egress",
+      "Google SecOps: telemetria de rede normalizada em UDM (eventos NETWORK_CONNECTION, NETWORK_DNS, NETWORK_HTTP) para deteccao de C2 e exfiltracao",
+      "Microsoft Defender for Endpoint: tabela DeviceNetworkEvents para conexoes de saida por processo e host",
+      "CrowdStrike Falcon: eventos de rede do sensor para correlacao host-a-fluxo e deteccao de conexoes nao autorizadas",
+      "SentinelOne: telemetria de rede do agente (Deep Visibility) para conexoes remotas e portas nao aprovadas",
+      "Entra ID: named locations e logs de sign-in para caracterizar origem de rede das autenticacoes e detectar acesso de redes nao reconhecidas"
+    ]
+  },
+  {
+    "subcategory_id": "DE.CM-02",
+    "evaluation_metrics": [
+      "Fração de áreas controladas com log de acesso físico ingerido e retido (PE-6b)",
+      "Latência entre evento no PACS e disponibilidade do log na plataforma de análise",
+      "Cobertura de regras para os padrões suspeitos nomeados no PE-6: acesso fora do horário, acessos repetidos a áreas atípicas, permanência de duração incomum, acesso fora de sequência",
+      "Fração de eventos físicos correlacionados com acesso lógico do mesmo identity principal (AU-6(6))",
+      "Reconhecimento automatizado de intrusão com ação de resposta disparada (PE-6(2))",
+      "Cobertura de monitoramento dos espaços que concentram componentes do sistema, além do perímetro da facility (PE-6(4))"
+    ],
+    "calculation_logic": "cobertura_pacs = areas_controladas_com_log_ingerido / areas_controladas_inventariadas; cobertura_regras = regras_padroes_suspeitos_ativas / 4 (os quatro padrões nomeados no PE-6 Discussion); correlacao = eventos_fisicos_correlacionados_com_identidade / eventos_fisicos_de_areas_criticas. score = 0.45*cobertura_pacs + 0.30*cobertura_regras + 0.25*correlacao. Status = Compliant se score >= 0.85 E cobertura_pacs >= 0.95 E latencia_ingestao_p95 <= 15min; MitigatedByThirdParty se o PACS é operado por facility/landlord terceiro que fornece apenas relatório periódico em vez de log contínuo (crédito parcial: existe controle, não existe telemetria auditável); NonCompliant se cobertura_pacs < 0.50 OU nenhum log de PACS ingerido (ausência de fonte = ausência de detecção, não presunção de conformidade).",
+    "evidence_requirements": [
+      "Microsoft Sentinel: log de PACS/badge readers ingerido como fonte customizada (Logs Ingestion API / CEF-Syslog) — nenhuma ferramenta do stack coleta acesso físico nativamente, a ingestão é pré-requisito do controle",
+      "Google SecOps: parser customizado para eventos de controle de acesso físico normalizados em UDM, habilitando correlação com telemetria cyber",
+      "Entra ID: logs de sign-in e named locations para confrontar presença física registrada no PACS contra autenticação lógica do mesmo usuário (correlação exigida por AU-6(6))",
+      "Microsoft Sentinel: regras analíticas de correlação física-lógica (ex.: autenticação on-premises sem badge-in correspondente na janela)"
+    ]
+  },
+  {
+    "subcategory_id": "DE.CM-03",
+    "evaluation_metrics": [
+      "Cobertura de UEBA sobre contas de usuário ativas (AC-2(12): uso atípico de conta)",
+      "Fração de contas privilegiadas sob monitoramento adicional dedicado (SI-4(20))",
+      "Análise de texto integral de comandos privilegiados, não apenas nome do comando (AU-6(8))",
+      "Cobertura de enforcement automatizado da política de software instalado por usuário (CM-11(3))",
+      "Fração de endpoints com detecção de software não autorizado instalado (CM-11c)",
+      "Monitoramento adicional de indivíduos sinalizados como risco elevado e em período probatório (SI-4(19), SI-4(21))",
+      "Monitoramento de divulgação não autorizada em sites open-source e plataformas de código (AU-13a, AU-13(1))"
+    ],
+    "calculation_logic": "cobertura_ueba = contas_com_baseline_comportamental / contas_ativas; cobertura_priv = contas_privilegiadas_monitoradas / contas_privilegiadas_inventariadas; cobertura_sw = endpoints_com_enforcement_automatizado / endpoints_gerenciados; cobertura_disclosure = 1 se AU-13 automatizado ativo senão 0. score = 0.30*cobertura_ueba + 0.35*cobertura_priv + 0.20*cobertura_sw + 0.15*cobertura_disclosure. Status = Compliant se score >= 0.85 E cobertura_priv == 1.0 (fail-closed: conta privilegiada não monitorada é o vetor de maior dano segundo SI-4(20) Discussion); MitigatedByThirdParty se 0.50 <= score < 0.85; NonCompliant se score < 0.50 OU cobertura_priv < 0.80.",
+    "evidence_requirements": [
+      "Entra ID: Identity Protection (risky users, risk detections), sign-in logs e audit logs para uso atípico de conta e elevação via PIM",
+      "Microsoft Defender: alertas de comportamento anômalo de usuário e detecção de aplicações não sancionadas em endpoints gerenciados",
+      "Microsoft Sentinel: regras de UEBA e analytics sobre logs de identidade e endpoint; hunting sobre comandos privilegiados",
+      "Google SecOps: análise de risco de entidade (UDM user/asset context) para desvio de baseline de atividade de pessoal",
+      "CrowdStrike Falcon: telemetria de processo e linha de comando integral para análise de comandos privilegiados (AU-6(8))",
+      "SentinelOne: Deep Visibility para instalação de software não autorizado e execução de binários fora da política"
+    ]
+  },
+  {
+    "subcategory_id": "DE.CM-06",
+    "evaluation_metrics": [
+      "Fração de provedores externos com telemetria de atividade ingerida (SA-9c, PS-7e)",
+      "Cobertura de monitoramento de sessões de administração e manutenção remota executadas por terceiros",
+      "Fração de contas guest/B2B com revisão de acesso e monitoramento de sign-in ativos",
+      "Existência de requisito contratual de fornecimento de log como critério de aquisição (SA-4)",
+      "Latência de detecção de atividade de provedor fora da janela de manutenção acordada",
+      "Fração de provedores cujo monitoramento é contínuo versus atestação periódica"
+    ],
+    "calculation_logic": "cobertura_telemetria = provedores_com_log_ingerido / provedores_externos_inventariados; cobertura_sessao = sessoes_admin_terceiros_gravadas / sessoes_admin_terceiros_totais; cobertura_guest = contas_guest_com_monitoramento_ativo / contas_guest_ativas. score = 0.40*cobertura_telemetria + 0.35*cobertura_sessao + 0.25*cobertura_guest. Status = Compliant se score >= 0.85 E cobertura_sessao >= 0.95; MitigatedByThirdParty se o provedor entrega apenas atestação/relatório periódico (SOC 2, ISO) sem telemetria contínua — este é o caso canônico do status, pois o controle existe no terceiro mas não é observável pelo tenant; NonCompliant se score < 0.50 OU existir provedor com acesso privilegiado e zero telemetria.",
+    "evidence_requirements": [
+      "Entra ID: contas guest/B2B, logs de sign-in de identidades externas, PIM para elevação de terceiros e access reviews",
+      "Microsoft Sentinel: ingestão de logs do provedor externo e regras analíticas de atividade fora de janela de manutenção acordada",
+      "Google SecOps: normalização de logs de provedores de serviço em UDM para correlação com atividade interna",
+      "Microsoft Defender: detecção de acesso remoto e ferramentas de suporte remoto executadas por terceiros em endpoints gerenciados",
+      "CrowdStrike Falcon: telemetria de sessão remota e processos de ferramentas de administração de terceiros",
+      "SentinelOne: eventos de acesso remoto e execução de ferramentas de manutenção em ativos sob gestão terceirizada"
+    ]
+  },
+  {
+    "subcategory_id": "DE.CM-09",
+    "evaluation_metrics": [
+      "Cobertura de agente EDR/monitoramento host-based sobre ativos inventariados (SI-4(23))",
+      "Frequência e cobertura de verificação de integridade de software, firmware e informação (SI-7, SI-7(1))",
+      "Latência entre detecção de violação de integridade e notificação automatizada (SI-7(2))",
+      "Fração de ativos com desvio de configuração detectado contra baseline aprovado (CM-6d)",
+      "Fração de mudanças de configuração detectadas e reconciliadas com CR aprovada (CM-3f)",
+      "Cobertura de detecção em vetores de entrada: e-mail, web, compartilhamento de arquivos e colaboração",
+      "Volume e frescor de IOC coletados e distribuídos às ferramentas de monitoramento (SI-4(24))",
+      "Enforcement de fluxo de informação entre domínios de segurança (AC-4)"
+    ],
+    "calculation_logic": "cobertura_edr = ativos_com_agente_ativo_e_reportando / ativos_inventariados; integridade = ativos_com_verificacao_integridade_no_periodo / ativos_criticos; drift = 1 - min(1, ativos_com_desvio_nao_reconciliado / max(1, ativos_com_baseline)); cobertura_vetores = vetores_de_entrada_monitorados / 4 (e-mail, web, file sharing, colaboração). score = 0.35*cobertura_edr + 0.25*integridade + 0.20*drift + 0.20*cobertura_vetores. Status = Compliant se score >= 0.85 E cobertura_edr >= 0.98 (fail-closed: agente ausente ou silencioso é ponto cego, e SI-4(23) trata host-based monitoring como mecanismo primário); MitigatedByThirdParty se 0.50 <= score < 0.85 OU se a verificação de integridade for apenas documental/atestada; NonCompliant se score < 0.50 OU cobertura_edr < 0.90. Agente instalado mas sem heartbeat em 7d NÃO conta como coberto.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: DeviceInfo (health/onboarding do agente), DeviceFileEvents, DeviceProcessEvents e DeviceRegistryEvents para integridade e execução",
+      "Microsoft Defender for Office 365: detecção de malware e phishing nos vetores de e-mail e colaboração",
+      "CrowdStrike Falcon: status e heartbeat do sensor, detecções de malware, e telemetria de integridade de arquivo e processo",
+      "SentinelOne: health do agente, engine de comportamento e Deep Visibility para alteração não autorizada de binários e configuração",
+      "Microsoft Sentinel: correlação de drift de configuração e alertas de integridade; ingestão de IOC via Threat Intelligence",
+      "Google SecOps: IOC matching contínuo sobre telemetria UDM e detecção de desvio de configuração em runtime",
+      "Entra ID: Conditional Access device compliance como sinal de conformidade de postura do host"
+    ]
+  },
+  {
+    "subcategory_id": "DE.AE-02",
+    "evaluation_metrics": [
+      "Fração de alertas submetidos a análise dentro do SLA de triagem (AU-6a)",
+      "Cobertura de análise automatizada em near real-time sobre o fluxo de eventos (SI-4(2))",
+      "Grau de integração automatizada do processo de revisão/análise/report (AU-6(1))",
+      "Análise integrada de audit records com scan de vulnerabilidade, performance e monitoramento (AU-6(5))",
+      "Taxa de falso-positivo e falso-negativo após tuning por perfis de tráfego e evento (SI-4(13))",
+      "Cobertura de técnicas MITRE ATT&CK endereçadas por regra de detecção ativa",
+      "Tempo médio até análise (MTTA) por severidade"
+    ],
+    "calculation_logic": "triagem = alertas_analisados_dentro_do_sla / alertas_totais_do_periodo; automacao = alertas_processados_por_analise_automatizada / alertas_totais; integracao = fontes_correlacionadas_na_analise / 4 (audit, vuln scan, performance, monitoring, conforme AU-6(5)); qualidade = 1 - min(1, taxa_falso_positivo). score = 0.35*triagem + 0.25*automacao + 0.20*integracao + 0.20*qualidade. Status = Compliant se score >= 0.85 E triagem >= 0.95 E taxa_falso_positivo <= 0.30; MitigatedByThirdParty se a triagem for executada por MSSP/MDR sem repasse do racional de análise (o AEGIS observa o veredito, não a evidência); NonCompliant se score < 0.50 OU triagem < 0.70 (backlog de alertas não analisados descaracteriza a subcategoria: evento coletado e não analisado não é detecção).",
+    "evidence_requirements": [
+      "Microsoft Sentinel: incidentes e alertas com timestamps de criação e primeira ação; métricas de regras analíticas e taxa de falso-positivo",
+      "Google SecOps: regras YARA-L, alert queue e métricas de triagem; enriquecimento automático de contexto de entidade",
+      "Microsoft Defender: fila de incidentes, alert grading automatizado e supressão sintonizada por perfil",
+      "CrowdStrike Falcon: detecções com severidade e status de triagem; correlação em padrões de ataque",
+      "SentinelOne: Storyline para reconstrução automatizada da cadeia de eventos que sustenta a análise",
+      "Microsoft Sentinel: integração de resultados de vulnerabilidade e monitoramento na mesma análise (exigência do AU-6(5))"
+    ]
+  },
+  {
+    "subcategory_id": "DE.AE-03",
+    "evaluation_metrics": [
+      "Número de repositórios de audit record distintos correlacionados em análise cross-source (AU-6(3))",
+      "Existência de capacidade central de revisão e análise multi-componente (AU-6(4))",
+      "Tolerância de correlação temporal entre timestamps de registros do trilha consolidada (AU-12(1))",
+      "Fração de fontes emitindo em formato padronizado ou normalizado no ingest (AU-12(2))",
+      "Skew de relógio máximo observado entre fontes correlacionadas",
+      "Correlação de informação além do domínio cyber: físico e supply chain (SI-4(17))",
+      "Fração de alertas gerados por correlação multi-fonte versus fonte única (SI-4(16))"
+    ],
+    "calculation_logic": "cobertura_fontes = fontes_criticas_onboarded / fontes_criticas_inventariadas; normalizacao = eventos_em_schema_normalizado / eventos_ingeridos; sincronia = 1 se skew_relogio_p99 <= tolerancia_definida senão max(0, 1 - (skew_p99 / (2*tolerancia_definida))); correlacao = alertas_multi_fonte / alertas_totais. score = 0.35*cobertura_fontes + 0.20*normalizacao + 0.25*sincronia + 0.20*correlacao. Status = Compliant se score >= 0.85 E sincronia == 1.0 (fail-closed explícito: AU-12(1) condiciona a trilha correlacionada à ordenação temporal confiável — fora da tolerância, a correlação é ilusória e a conclusão do analista não é defensável em auditoria); MitigatedByThirdParty se 0.50 <= score < 0.85; NonCompliant se score < 0.50 OU cobertura_fontes < 0.60.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: workspace único como ponto central de revisão (AU-6(4)); tabela Heartbeat e métricas de ingestão por conector para cobertura de fontes",
+      "Google SecOps: UDM como schema normalizado unificado; métricas de parser health e cobertura de log sources",
+      "Microsoft Defender: streaming de tabelas avançadas de hunting para o SIEM, garantindo repositório correlacionável",
+      "CrowdStrike Falcon: exportação de telemetria (FDR/streaming API) para correlação fora do console nativo",
+      "SentinelOne: encaminhamento de eventos para SIEM preservando timestamps de origem",
+      "Entra ID: diagnostic settings exportando sign-in e audit logs para o repositório central de correlação"
+    ]
+  },
+  {
+    "subcategory_id": "DE.AE-04",
+    "evaluation_metrics": [
+      "Fração de incidentes com escopo de ativos afetados enumerado automaticamente",
+      "Fração de ativos com criticidade e owner cadastrados, habilitando estimativa de impacto",
+      "Cobertura de enriquecimento de identidade e ativo no momento da análise",
+      "Tempo até determinação de escopo (contas, hosts e dados alcançados) por incidente",
+      "Fração de incidentes com impacto sobre dados pessoais avaliado explicitamente",
+      "Aderência da estimativa inicial de escopo ao escopo confirmado pós-investigação"
+    ],
+    "calculation_logic": "escopo = incidentes_com_escopo_enumerado / incidentes_declarados; contexto = ativos_com_criticidade_e_owner / ativos_inventariados; acuracia = 1 - min(1, media(|escopo_estimado - escopo_confirmado| / max(1, escopo_confirmado))). score = 0.40*escopo + 0.35*contexto + 0.25*acuracia. Status = Compliant se score >= 0.85 E contexto >= 0.90; MitigatedByThirdParty se 0.50 <= score < 0.85 OU se a estimativa de impacto for produzida manualmente por analista sem enriquecimento sistemático; NonCompliant se score < 0.50 OU contexto < 0.50 (sem inventário com criticidade não há denominador de impacto: a estimativa vira opinião). ATENÇÃO DE PROVENIÊNCIA: os controles 800-53 mapeados pelo NIST para esta subcategoria (PM-9, PM-11, PM-18, PM-28, PM-30) são de estratégia de programa e não contêm enhancement técnico nem critério concreto de avaliação; esta lógica é derivada dos implementationExamples do CSF 2.0 e do RA-3, não do mapeamento oficial.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: entity mapping e entity behavior no incidente para enumerar contas, hosts e IPs alcançados; watchlists de criticidade de ativo",
+      "Google SecOps: entity context e asset metadata para ponderar criticidade na estimativa de escopo",
+      "Microsoft Defender: incident graph consolidando dispositivos, identidades e caixas de correio afetadas",
+      "CrowdStrike Falcon: host groups e criticidade para dimensionar alcance da atividade observada",
+      "SentinelOne: Storyline para reconstruir a extensão da atividade no host e ativos adjacentes",
+      "Entra ID: grupos, roles e atribuições para dimensionar o alcance de privilégio de uma identidade comprometida"
+    ]
+  },
+  {
+    "subcategory_id": "DE.AE-06",
+    "evaluation_metrics": [
+      "Latência entre geração do alerta e entrega ao SOC ou à ferramenta de resposta (SI-4(5))",
+      "Fração de alertas roteados com sucesso ao destinatário definido, sem perda silenciosa",
+      "Cobertura de alertas gerados pela organização a partir de fontes externas ao sistema (SI-4(12))",
+      "Fração de eventos suspeitos que disparam notificação automática ao responder identificado por nome ou papel (SI-4(7)(a))",
+      "Existência de ações automatizadas menos disruptivas na detecção (SI-4(7)(b))",
+      "Frequência de execução da capacidade de threat hunting sobre os dados disponibilizados (RA-10b)",
+      "Fração de indicadores de comprometimento distribuídos aos papéis definidos (SI-4(24))"
+    ],
+    "calculation_logic": "entrega = alertas_entregues_ao_destino / alertas_gerados; latencia = 1 - min(1, p95_latencia_entrega_seg / sla_entrega_seg); automacao_resposta = alertas_criticos_com_acao_automatizada / alertas_criticos; hunting = 1 se cadencia_hunting <= cadencia_definida senão 0. score = 0.35*entrega + 0.30*latencia + 0.20*automacao_resposta + 0.15*hunting. Status = Compliant se score >= 0.85 E entrega >= 0.99 (fail-closed: alerta gerado e não entregue é indistinguível de alerta inexistente — a falha de roteamento é silenciosa e por isso deve zerar a asserção); MitigatedByThirdParty se a entrega for para SOC terceirizado sem confirmação de recebimento auditável; NonCompliant se score < 0.50 OU entrega < 0.95.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: automation rules e playbooks (Logic Apps) com log de execução comprovando roteamento e destinatário",
+      "Google SecOps: SOAR playbooks e alert forwarding com registro de entrega e responsável designado",
+      "Microsoft Defender: notificações de incidente e integração com o SIEM comprovando repasse ao SOC",
+      "CrowdStrike Falcon: streaming API e workflows de notificação com evidência de entrega ao responder",
+      "SentinelOne: alertas e políticas de resposta automatizada com registro de ação tomada na detecção",
+      "Entra ID: Identity Protection risk notifications encaminhadas ao SOC e às ferramentas de resposta"
+    ]
+  },
+  {
+    "subcategory_id": "DE.AE-07",
+    "evaluation_metrics": [
+      "Frescor dos feeds de threat intelligence conectados às ferramentas de detecção (PM-16(1))",
+      "Latência entre publicação do IOC e sua ativação como matching na plataforma (SI-4(24))",
+      "Fração de detecções enriquecidas com contexto de TI no momento do alerta",
+      "Fração de assinaturas de detecção alimentadas por TI versus regras estáticas (PM-16(1))",
+      "Cobertura de uso da TI existente pela capacidade de threat hunting (RA-10)",
+      "Fração de IOC distribuídos aos papéis e ferramentas definidos, não apenas coletados",
+      "Contexto de criticidade de ativo incorporado à análise (RA-3)"
+    ],
+    "calculation_logic": "frescor = 1 - min(1, idade_media_feed_horas / 24); ativacao = 1 - min(1, p95_latencia_ioc_para_matching_horas / 4); enriquecimento = deteccoes_com_contexto_ti / deteccoes_totais; alimentacao = assinaturas_derivadas_de_ti / assinaturas_ativas. score = 0.25*frescor + 0.30*ativacao + 0.30*enriquecimento + 0.15*alimentacao. Status = Compliant se score >= 0.85 E ativacao >= 0.90; MitigatedByThirdParty se a TI for consumida embutida no produto do fornecedor (ex.: TI nativa do EDR) sem feed próprio nem capacidade de injetar indicadores da organização — há benefício, não há controle sobre o que o sensor procura, que é o ponto do PM-16(1) Discussion; NonCompliant se score < 0.50 OU nenhum feed de TI ativo.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: Threat Intelligence connectors (TAXII/upload API), tabela ThreatIntelligenceIndicator e regras de matching de IOC",
+      "Google SecOps: Applied Threat Intelligence, IOC matching contínuo e curated detections alimentadas por inteligência",
+      "Microsoft Defender: custom indicators e Threat Analytics para contexto de campanha no alerta",
+      "CrowdStrike Falcon: Falcon Intelligence, IOC management e atribuição de adversário no enriquecimento",
+      "SentinelOne: gestão de IOC e integração de feeds no engine de detecção",
+      "Entra ID: Identity Protection risk detections como sinal de inteligência de identidade agregado à análise"
+    ]
+  },
+  {
+    "subcategory_id": "DE.AE-08",
+    "evaluation_metrics": [
+      "Existência de critério de declaração de incidente documentado e versionado (IR-8)",
+      "Fração de eventos adversos avaliados formalmente contra o critério de declaração",
+      "Tempo entre atendimento do critério e declaração efetiva do incidente",
+      "Consistência da severidade atribuída em incidentes de característica equivalente",
+      "Fração de incidentes declarados que são rastreados e documentados até o encerramento (IR-5)",
+      "Fração de declarações automatizadas versus dependentes de julgamento ad hoc",
+      "Cobertura de tipos de incidente do IR-4 endereçados pelo critério"
+    ],
+    "calculation_logic": "avaliacao = eventos_avaliados_contra_criterio / eventos_adversos_elegiveis; tempestividade = 1 - min(1, p95_tempo_ate_declaracao_min / sla_declaracao_min); rastreio = incidentes_declarados_com_registro_completo / incidentes_declarados; consistencia = 1 - min(1, desvio_padrao_severidade_em_classes_equivalentes / 2). score = 0.30*avaliacao + 0.25*tempestividade + 0.25*rastreio + 0.20*consistencia. Status = Compliant se score >= 0.85 E existe_criterio_documentado == true E rastreio >= 0.95; MitigatedByThirdParty se o critério existir e for aplicado por terceiro (MSSP declara, tenant apenas recebe) sem registro do racional de declaração; NonCompliant se existe_criterio_documentado == false (sem critério não há declaração reprodutível — o gate é binário e precede qualquer score) OU score < 0.50.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: incidentes com severidade, classificação de encerramento e timestamps de criação e declaração; regras que promovem alerta a incidente conforme critério",
+      "Google SecOps: alert-to-case promotion e SOAR case management com registro do critério aplicado",
+      "Microsoft Defender: incident severity, classification e determination como evidência de declaração formal",
+      "CrowdStrike Falcon: detecções promovidas a incidente com severidade e status de ciclo de vida",
+      "SentinelOne: incidentes com analyst verdict e resolução registrada",
+      "Microsoft Sentinel: workbook de métricas de incidente para consistência de severidade entre classes equivalentes"
+    ]
+  },
+  {
+    "subcategory_id": "RS.MA-01",
+    "evaluation_metrics": [
+      "Existência de plano de resposta aprovado, versionado e com incidentes reportáveis definidos (IR-8a.5)",
+      "Designação explícita de responsabilidade por resposta a entidades e papéis nomeados (IR-8a.10)",
+      "Existência de acordo de notificação com entidades da cadeia de suprimento (SR-8)",
+      "Fração de terceiros relevantes com procedimento de coordenação documentado (SR-3a)",
+      "Fração de incidentes declarados com execução do plano registrada e revisada",
+      "Cadência de revisão e aprovação do plano contra a frequência definida (IR-8a.9)",
+      "Existência de relação cooperativa direta com provedores externos de proteção (IR-7(2))",
+      "Cobertura do processo de breach de dados pessoais no plano (IR-8(1))"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE PROCESSO HUMANO — não há cálculo automatizado. A cláusula operativa da subcategoria é 'em coordenação com terceiros relevantes', governada por IR-8 (documento de plano), SR-3 (processos de cadeia de suprimento) e SR-8 (acordos de notificação): nenhum destes emite telemetria. O stack consegue provar que um playbook disparou, mas não consegue provar que os terceiros CORRETOS foram acionados conforme o acordo vigente — isso exige leitura do plano e dos contratos. Procedimento de auditoria: (1) verificar plano de RI aprovado, dentro da cadência de revisão e com responsabilidade designada; (2) verificar acordo SR-8 vigente por fornecedor crítico; (3) amostrar incidentes declarados no período e confrontar o registro de execução contra o plano. Status = Compliant se os três passos passarem e a amostra não apresentar desvio; MitigatedByThirdParty se o plano existir e for executado por MSSP/retainer de IR sem registro auditável do racional de coordenação repassado ao tenant; NonCompliant se não houver plano aprovado vigente, se a responsabilidade não estiver designada, ou se existir fornecedor crítico sem acordo de notificação (gate binário: sem acordo, a coordenação não é exigível nem verificável).",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "RS.MA-02",
+    "evaluation_metrics": [
+      "Fração de reports de incidente validados dentro do SLA de triagem (IR-6a)",
+      "Cobertura de mecanismos automatizados no processo de triagem (IR-4(1))",
+      "Taxa de invalidação: reports promovidos a incidente e posteriormente descartados",
+      "Latência entre report do usuário e primeira validação por analista",
+      "Fração de reports oriundos de canal de suporte formal versus ad hoc (IR-7)",
+      "Fração de incidentes rastreados e documentados desde a validação (IR-5)",
+      "Cobertura de tipos de report validados: e-mail suspeito, evento de cadeia de suprimento, insider (IR-4 Discussion, IR-4(6))"
+    ],
+    "calculation_logic": "validacao = reports_validados_dentro_do_sla / reports_recebidos; automacao = reports_processados_por_mecanismo_automatizado / reports_recebidos; rastreio = reports_com_registro_completo_de_decisao / reports_recebidos; qualidade = 1 - min(1, taxa_invalidacao_tardia). score = 0.35*validacao + 0.25*automacao + 0.25*rastreio + 0.15*qualidade. Status = Compliant se score >= 0.85 E validacao >= 0.95 E rastreio >= 0.95; MitigatedByThirdParty se a triagem for executada por MSSP/MDR que entrega o veredito sem o registro da validação; NonCompliant se score < 0.50 OU validacao < 0.70. Report recebido e não validado conta como falha, não como pendência: o IR-6a condiciona o report a uma janela de tempo definida, e backlog descaracteriza a capacidade.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: incidentes com timestamps de criação, primeira atribuição e classificação de encerramento; automation rules de triagem inicial",
+      "Google SecOps: SOAR case management com fila de triagem, SLA por caso e registro de decisão do analista",
+      "Microsoft Defender: incident queue, alert grading automatizado e determination (TruePositive/FalsePositive) como evidência de validação",
+      "CrowdStrike Falcon: detecções com status de triagem e workflow de validação",
+      "SentinelOne: analyst verdict e resolução registrada por ameaça",
+      "Entra ID: Identity Protection risk detections com confirmação manual de comprometimento (confirm compromised/dismiss) como validação de report de identidade"
+    ]
+  },
+  {
+    "subcategory_id": "RS.MA-03",
+    "evaluation_metrics": [
+      "Fração de incidentes com categoria e prioridade atribuídas na abertura",
+      "Cobertura das classes de incidente definidas pela organização (IR-4(3))",
+      "Consistência da prioridade atribuída entre incidentes de característica equivalente (IR-4d)",
+      "Fração de priorização derivada de criticidade de ativo e identidade versus severidade bruta do alerta",
+      "Taxa de reclassificação de prioridade após início da resposta",
+      "Cobertura de categoria específica para insider threat (IR-4(6))",
+      "Cobertura de categoria específica para evento de cadeia de suprimento (IR-4(10))"
+    ],
+    "calculation_logic": "atribuicao = incidentes_com_categoria_e_prioridade / incidentes_declarados; cobertura_classes = classes_de_incidente_com_regra_de_categorizacao / classes_definidas_pela_organizacao; enriquecimento = incidentes_priorizados_com_criticidade_de_ativo / incidentes_declarados; estabilidade = 1 - min(1, taxa_reclassificacao_de_prioridade). score = 0.30*atribuicao + 0.25*cobertura_classes + 0.25*enriquecimento + 0.20*estabilidade. Status = Compliant se score >= 0.85 E atribuicao >= 0.98 E cobertura_classes == 1.0 (fail-closed: classe de incidente sem regra de categorização é classe que ninguém prioriza, e o IR-4d exige rigor e previsibilidade COMPARÁVEIS em toda a organização); MitigatedByThirdParty se 0.50 <= score < 0.85 OU se a categorização depender integralmente de julgamento manual sem taxonomia aplicada por ferramenta; NonCompliant se score < 0.50 OU atribuicao < 0.80.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: severidade e tactics do incidente, watchlists de criticidade de ativo alimentando a priorização, automation rules de categorização",
+      "Google SecOps: case priority e entity risk score derivado de contexto de ativo para priorização ponderada",
+      "Microsoft Defender: incident severity, category e determination alinhadas à taxonomia da organização",
+      "CrowdStrike Falcon: severidade da detecção, host criticality e mapeamento de tática do adversário",
+      "SentinelOne: classificação de ameaça e severidade por Storyline",
+      "Entra ID: risk level (low/medium/high) e privilégio da identidade afetada como insumo de priorização"
+    ]
+  },
+  {
+    "subcategory_id": "RS.MA-04",
+    "evaluation_metrics": [
+      "Fração de incidentes escalados conforme matriz de escalonamento definida",
+      "Latência entre atendimento do gatilho de escalonamento e a elevação efetiva",
+      "Cobertura de notificação automatizada ao responder identificado por nome ou papel (IR-6(1))",
+      "Fração de escalonamentos disparados por mecanismo automatizado versus decisão ad hoc (IR-4(1))",
+      "Disponibilidade do recurso de suporte a resposta para acionamento (IR-7, IR-7(1))",
+      "Taxa de escalonamento tardio: incidentes elevados após excedido o SLA da severidade",
+      "Fração de incidentes de alta severidade com equipe integrada de resposta acionada (IR-4(11))"
+    ],
+    "calculation_logic": "aderencia = incidentes_escalados_conforme_matriz / incidentes_que_atingiram_gatilho; tempestividade = 1 - min(1, p95_latencia_escalonamento_min / sla_escalonamento_min); automacao = escalonamentos_automatizados / escalonamentos_totais; acionamento = incidentes_alta_severidade_com_equipe_acionada / incidentes_alta_severidade. score = 0.30*aderencia + 0.30*tempestividade + 0.20*automacao + 0.20*acionamento. Status = Compliant se score >= 0.85 E aderencia >= 0.95 E acionamento == 1.0 (fail-closed: incidente de alta severidade sem equipe acionada é a falha que o RS.MA-04 existe para impedir); MitigatedByThirdParty se o escalonamento for para SOC/MSSP terceiro sem confirmação auditável de recebimento e aceite; NonCompliant se score < 0.50 OU aderencia < 0.70 OU inexistir matriz de escalonamento definida.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: automation rules e playbooks de escalonamento com run history comprovando gatilho, destinatário e latência",
+      "Google SecOps: SOAR playbooks de escalonamento com registro de acionamento e aceite do responder",
+      "Microsoft Defender: incident assignment e notificações de elevação de severidade",
+      "CrowdStrike Falcon: streaming API e workflows de notificação com evidência de entrega ao responder designado",
+      "SentinelOne: políticas de notificação e alertas de escalonamento por severidade",
+      "Entra ID: PIM activation para acesso emergencial de responders como evidência de acionamento de equipe"
+    ]
+  },
+  {
+    "subcategory_id": "RS.MA-05",
+    "evaluation_metrics": [
+      "Existência de critério documentado para iniciar recuperação (IR-8a.5, IR-4a)",
+      "Fração de incidentes com o gate de recuperação avaliado e registrado antes da restauração",
+      "Latência entre conclusão da erradicação e decisão de iniciar recuperação",
+      "Fração de decisões de recuperação coordenadas com planejamento de contingência (IR-4b)",
+      "Taxa de recuperação prematura: restauração iniciada com artefato residual ainda presente",
+      "Fração de incidentes com verificação de ausência de persistência antes do gate",
+      "Cobertura de classes de incidente com critério de recuperação específico (IR-4(3))"
+    ],
+    "calculation_logic": "gate = incidentes_com_gate_de_recuperacao_registrado / incidentes_que_atingiram_erradicacao; verificacao = incidentes_com_checagem_de_persistencia_antes_da_restauracao / incidentes_que_atingiram_erradicacao; coordenacao = decisoes_coordenadas_com_contingencia / decisoes_de_recuperacao; prematuridade = 1 - min(1, taxa_recuperacao_prematura). score = 0.30*gate + 0.30*verificacao + 0.15*coordenacao + 0.25*prematuridade. Status = Compliant se score >= 0.85 E existe_criterio_documentado == true E taxa_recuperacao_prematura <= 0.05; MitigatedByThirdParty se o critério existir mas a decisão for tomada por terceiro sem registro do racional; NonCompliant se existe_criterio_documentado == false (gate binário e precedente ao score: sem critério, 'iniciar recuperação' é decisão de ocasião, não controle aplicado) OU score < 0.50 OU taxa_recuperacao_prematura > 0.20.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: transição de status do incidente e comentários de decisão; playbooks de recuperação com pré-condição registrada em run history",
+      "Google SecOps: SOAR case stage transitions comprovando avaliação do gate antes da restauração",
+      "Microsoft Defender: action center com histórico de remediação concluída precedendo a liberação do ativo",
+      "CrowdStrike Falcon: lift containment com registro de quem liberou e quando, confrontável contra a checagem de persistência",
+      "SentinelOne: reconnect/unquarantine de endpoint com registro de decisão e verificação prévia de ameaça mitigada",
+      "Entra ID: reabilitação de conta e revogação de risk state após confirmação de remediação da identidade"
+    ]
+  },
+  {
+    "subcategory_id": "RS.AN-03",
+    "evaluation_metrics": [
+      "Fração de incidentes com causa raiz identificada e registrada no encerramento",
+      "Capacidade de redução e pesquisa de audit records por campo de interesse (AU-7(1))",
+      "Cobertura de análise de código malicioso e artefatos residuais pós-incidente (IR-4(12))",
+      "Cobertura de análise de comportamento anômalo ou adversarial suspeito (IR-4(13))",
+      "Fração de incidentes com linha do tempo de execução reconstruída ponta a ponta",
+      "Disponibilidade de captura de resposta viva e artefato forense no momento da análise (IR-4(1))",
+      "Taxa de reincidência por causa raiz não endereçada"
+    ],
+    "calculation_logic": "causa_raiz = incidentes_com_causa_raiz_registrada / incidentes_encerrados; timeline = incidentes_com_cadeia_de_execucao_reconstruida / incidentes_encerrados; forense = incidentes_com_artefato_preservado_para_analise / incidentes_elegiveis_a_analise_de_codigo; reincidencia = 1 - min(1, incidentes_reincidentes_por_mesma_causa / max(1, incidentes_encerrados)). score = 0.30*causa_raiz + 0.30*timeline + 0.20*forense + 0.20*reincidencia. Status = Compliant se score >= 0.85 E causa_raiz >= 0.90; MitigatedByThirdParty se a análise forense for terceirizada (DFIR retainer) e o tenant receber o laudo sem os artefatos subjacentes; NonCompliant se score < 0.50 OU causa_raiz < 0.60. Incidente encerrado como 'resolvido' sem causa raiz registrada NÃO conta no numerador: encerramento não é explicação.",
+    "evidence_requirements": [
+      "SentinelOne: Storyline como reconstrução automática da cadeia de execução e relação processo-a-processo para causa raiz",
+      "CrowdStrike Falcon: process tree e telemetria de linha de comando integral para reconstrução da intrusão e análise de artefato",
+      "Microsoft Defender: incident graph, timeline de dispositivo e Advanced Hunting sobre DeviceProcessEvents e DeviceFileEvents",
+      "Microsoft Sentinel: hunting queries e bookmarks sobre a trilha consolidada, com capacidade de busca por campo (AU-7(1))",
+      "Google SecOps: UDM search e curated detections para pivot forense sobre entidade, processo e artefato",
+      "Entra ID: audit logs e sign-in logs para reconstruir a cadeia de comprometimento de identidade e elevação de privilégio"
+    ]
+  },
+  {
+    "subcategory_id": "RS.AN-06",
+    "evaluation_metrics": [
+      "Cobertura de log de ações do analista durante a investigação",
+      "Garantia de que a capacidade de redução e report não altera conteúdo original nem ordenação temporal (AU-7b)",
+      "Fração de registros de investigação sob retenção imutável (WORM/lock)",
+      "Rastreabilidade de autoria: fração de ações atribuídas a identidade individual, não a conta compartilhada",
+      "Existência de trilha de auditoria para alteração ou exclusão de registro de investigação",
+      "Fração de ações de resposta executadas via ferramenta (logadas) versus fora de banda",
+      "Retenção do registro de investigação contra o período definido"
+    ],
+    "calculation_logic": "cobertura_log = acoes_de_analista_logadas / acoes_de_analista_estimadas; imutabilidade = 1 se retencao_imutavel_ativa_no_workspace senão 0; autoria = acoes_atribuidas_a_identidade_individual / acoes_logadas; nao_alteracao = 1 se a plataforma preservar conteúdo e ordenação originais conforme AU-7b senão 0. score = 0.25*cobertura_log + 0.30*imutabilidade + 0.25*autoria + 0.20*nao_alteracao. Status = Compliant se score >= 0.85 E imutabilidade == 1 E nao_alteracao == 1 (fail-closed duplo: o AU-7b é textualmente uma proibição — se a plataforma altera conteúdo ou ordenação, a proveniência está quebrada e o registro não sustenta perícia nem contestação judicial, independentemente da cobertura); MitigatedByThirdParty se a investigação for conduzida em tenant/console do MSSP e o cliente receber apenas o relatório; NonCompliant se imutabilidade == 0 OU autoria < 0.80 (ação sob conta compartilhada não tem proveniência).",
+    "evidence_requirements": [
+      "Microsoft Sentinel: immutable retention e delete lock no Log Analytics workspace; SecurityIncident e audit de alterações no incidente por identidade",
+      "Google SecOps: retenção append-only da telemetria e audit log de ações do analista no SOAR case",
+      "Microsoft Defender: action center com histórico de ações de remediação atribuídas ao operador",
+      "CrowdStrike Falcon: audit log de ações do console (Real Time Response session logs) com atribuição de usuário",
+      "SentinelOne: activity log de ações do analista e comandos remotos executados por identidade",
+      "Entra ID: identidade individual e PIM para acesso ao console de resposta, sustentando a atribuição de autoria das ações"
+    ]
+  },
+  {
+    "subcategory_id": "RS.AN-07",
+    "evaluation_metrics": [
+      "Cobertura de coleta automatizada de artefato e metadado no momento da detecção (IR-4(1))",
+      "Fração de artefatos com verificação de integridade (hash) registrada na coleta",
+      "Preservação da ordenação temporal e do conteúdo original dos registros de incidente (AU-7b)",
+      "Retenção do dado de incidente contra o período definido e contra a janela de investigação",
+      "Fração de metadados de proveniência preservados: fonte, timestamp original, agente coletor",
+      "Latência entre detecção e preservação do artefato volátil",
+      "Taxa de perda de artefato por expiração de retenção antes do encerramento do incidente"
+    ],
+    "calculation_logic": "coleta = incidentes_com_artefato_coletado_automaticamente / incidentes_declarados; integridade = artefatos_com_hash_registrado / artefatos_coletados; proveniencia = artefatos_com_metadado_de_origem_e_timestamp_original / artefatos_coletados; retencao = 1 - min(1, artefatos_perdidos_por_expiracao / max(1, artefatos_coletados)). score = 0.25*coleta + 0.30*integridade + 0.25*proveniencia + 0.20*retencao. Status = Compliant se score >= 0.85 E integridade >= 0.95 E retencao == 1.0 (fail-closed: artefato expirado antes do encerramento do incidente é evidência destruída, e nenhuma métrica de coleta compensa isso); MitigatedByThirdParty se a custódia do artefato for do provedor de EDR/MDR sem exportação disponível ao tenant; NonCompliant se score < 0.50 OU integridade < 0.70 (artefato sem hash não tem cadeia de custódia defensável).",
+    "evidence_requirements": [
+      "Microsoft Defender: coleta automatizada de investigation package e file collection com hash do artefato",
+      "CrowdStrike Falcon: Real Time Response para coleta de artefato volátil e Falcon Data Replicator para preservação de telemetria bruta",
+      "SentinelOne: fetch de arquivos e threat file hash preservados por Storyline",
+      "Microsoft Sentinel: retenção configurada por tabela, archive e export para storage imutável preservando timestamp de origem",
+      "Google SecOps: retenção da telemetria em UDM com metadados de proveniência (log source, collection timestamp, event timestamp)",
+      "Entra ID: exportação de audit e sign-in logs via diagnostic settings preservando o timestamp original do evento de identidade"
+    ]
+  },
+  {
+    "subcategory_id": "RS.AN-08",
+    "evaluation_metrics": [
+      "Fração de incidentes com magnitude estimada e posteriormente VALIDADA contra o escopo confirmado",
+      "Desvio médio entre magnitude estimada na abertura e magnitude confirmada no encerramento",
+      "Cobertura de enriquecimento com criticidade de ativo e privilégio de identidade na estimativa (RA-3)",
+      "Fração de estimativas que geraram resposta a risco proporcional à tolerância definida (RA-7)",
+      "Fração de incidentes com alcance de dados pessoais avaliado explicitamente (IR-8(1)(b))",
+      "Correlação de informação de incidente para perspectiva organizacional do alcance (IR-4(4))",
+      "Tempo até fechamento da magnitude validada"
+    ],
+    "calculation_logic": "estimativa = incidentes_com_magnitude_estimada / incidentes_declarados; validacao = incidentes_com_magnitude_validada_no_encerramento / incidentes_com_magnitude_estimada; acuracia = 1 - min(1, media(|magnitude_estimada - magnitude_confirmada| / max(1, magnitude_confirmada))); contexto = incidentes_enriquecidos_com_criticidade_e_privilegio / incidentes_declarados. score = 0.20*estimativa + 0.30*validacao + 0.30*acuracia + 0.20*contexto. Status = Compliant se score >= 0.85 E validacao >= 0.90 E acuracia >= 0.70; MitigatedByThirdParty se a magnitude for estimada por terceiro sem repasse da base de cálculo; NonCompliant se score < 0.50 OU validacao < 0.50. A VALIDAÇÃO é o discriminante desta subcategoria contra DE.AE-04: estimar é detecção, validar contra o confirmado é resposta — estimativa nunca reconciliada não pontua aqui, ainda que exista.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: entity mapping do incidente na abertura versus entidades confirmadas no encerramento, permitindo medir o desvio; watchlists de criticidade de ativo",
+      "Google SecOps: entity context e asset metadata para dimensionar magnitude, com case notes registrando estimativa e confirmação",
+      "Microsoft Defender: incident graph consolidando dispositivos, identidades e caixas afetadas ao longo do ciclo do incidente",
+      "CrowdStrike Falcon: host groups e propagação observada para dimensionar alcance real versus estimado",
+      "SentinelOne: Storyline para delimitar a extensão confirmada da atividade no parque",
+      "Entra ID: roles, grupos e atribuições da identidade afetada para dimensionar o alcance de privilégio na estimativa de magnitude"
+    ]
+  },
+  {
+    "subcategory_id": "RS.CO-02",
+    "evaluation_metrics": [
+      "Fração de incidentes com stakeholders notificados dentro do período definido (IR-6a)",
+      "Latência p95 entre declaração do incidente e notificação efetiva, por classe de stakeholder",
+      "Cobertura de notificação por mecanismo automatizado (IR-6(1))",
+      "Taxa de entrega: notificações confirmadas versus disparadas, sem falha silenciosa",
+      "Fração de incidentes de cadeia de suprimento com o provedor notificado (IR-6(3), SR-8)",
+      "Cobertura da matriz de destinatários: interno, provedor, autoridade reguladora",
+      "Fração de incidentes com dados pessoais que acionaram o processo de avaliação de notificação (IR-8(1)(a))"
+    ],
+    "calculation_logic": "tempestividade = incidentes_notificados_dentro_do_periodo_definido / incidentes_declarados; entrega = notificacoes_com_confirmacao_de_entrega / notificacoes_disparadas; automacao = notificacoes_automatizadas / notificacoes_totais; cobertura_matriz = classes_de_stakeholder_com_canal_ativo / classes_de_stakeholder_definidas. score = 0.35*tempestividade + 0.30*entrega + 0.15*automacao + 0.20*cobertura_matriz. Status = Compliant se score >= 0.85 E tempestividade >= 0.95 E entrega >= 0.99; MitigatedByThirdParty se a notificação regulatória depender de assessoria jurídica externa sem registro no fluxo automatizado; NonCompliant se score < 0.50 OU tempestividade < 0.70. RESSALVA DE ESCOPO: a métrica cobre a NOTIFICAÇÃO TÉCNICA rastreável no stack; a adequação do conteúdo notificado a exigência legal ou regulatória (prazo LGPD, autoridade competente) não é observável por telemetria e permanece sujeita a verificação documental.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: playbooks (Logic Apps) de notificação com run history comprovando destinatário, conteúdo e timestamp de entrega",
+      "Google SecOps: SOAR playbooks de notificação com registro de canal, destinatário e confirmação",
+      "Microsoft Defender: notificações de incidente configuradas por severidade e escopo de dispositivo",
+      "CrowdStrike Falcon: streaming API e workflows de notificação com evidência de disparo e entrega",
+      "SentinelOne: políticas de notificação por severidade com log de envio",
+      "Entra ID: grupos e papéis dos destinatários de notificação, sustentando a matriz de stakeholders internos"
+    ]
+  },
+  {
+    "subcategory_id": "RS.CO-03",
+    "evaluation_metrics": [
+      "Fração de incidentes com informação compartilhada com os stakeholders designados",
+      "Cobertura de compartilhamento de vulnerabilidade associada ao incidente (IR-6(2))",
+      "Fração de incidentes de cadeia de suprimento com informação repassada ao provedor (IR-6(3))",
+      "Existência de correlação e compartilhamento com organizações externas para perspectiva cross-org (IR-4(8))",
+      "Fração de IOC derivados do incidente reinjetados nas ferramentas de detecção",
+      "Aderência do conteúdo compartilhado ao escopo autorizado pelo acordo de informação vigente",
+      "Latência entre encerramento da análise e disponibilização da informação aos destinatários"
+    ],
+    "calculation_logic": "compartilhamento = incidentes_com_informacao_compartilhada / incidentes_que_exigem_compartilhamento; vuln = incidentes_que_revelaram_vulnerabilidade_com_report_emitido / incidentes_que_revelaram_vulnerabilidade; reinjecao = ioc_derivados_reinjetados_em_deteccao / ioc_derivados_do_incidente; latencia = 1 - min(1, p95_latencia_compartilhamento_h / sla_compartilhamento_h). score = 0.30*compartilhamento + 0.25*vuln + 0.25*reinjecao + 0.20*latencia. Status = Compliant se score >= 0.85 E compartilhamento >= 0.90; MitigatedByThirdParty se o compartilhamento externo for intermediado por MSSP ou ISAC sem registro do que foi efetivamente repassado pelo tenant; NonCompliant se score < 0.50 OU reinjecao < 0.30 (incidente cuja inteligência não realimenta a detecção é lição não aprendida — o IR-4c torna a incorporação do aprendizado parte do próprio controle). RESSALVA DE ESCOPO: a suficiência jurídica do compartilhamento com autoridade externa depende dos acordos SR-3/SR-8 e não é observável no stack.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: Threat Intelligence upload API registrando IOC do incidente reinjetados; playbooks de compartilhamento com run history",
+      "Google SecOps: IOC gerados a partir do caso e aplicados como detecção; SOAR com registro de compartilhamento",
+      "Microsoft Defender: custom indicators criados a partir do incidente e propagados ao parque",
+      "CrowdStrike Falcon: IOC management com indicadores derivados da investigação aplicados na política de prevenção",
+      "SentinelOne: blocklist e IOC derivados da ameaça aplicados por escopo",
+      "Entra ID: confirmação de comprometimento realimentando o modelo de risco do Identity Protection"
+    ]
+  },
+  {
+    "subcategory_id": "RS.MI-01",
+    "evaluation_metrics": [
+      "Tempo médio até contenção (MTTC) por severidade, da declaração à contenção efetiva",
+      "Fração de incidentes contidos por reconfiguração dinâmica automatizada (IR-4(2))",
+      "Cobertura de mecanismos de contenção por tipo de ativo: host, identidade, rede, caixa de correio",
+      "Existência de capacidade configurável de desabilitação automática do sistema mediante violação definida (IR-4(5))",
+      "Taxa de sucesso da ação de contenção na primeira tentativa",
+      "Fração de contenções que respeitaram o requisito de continuidade de operações (IR-4(3))",
+      "Latência entre decisão de contenção e efetivação no ativo alvo"
+    ],
+    "calculation_logic": "tempestividade = 1 - min(1, p95_mttc_min / sla_contencao_min_por_severidade); automacao = incidentes_contidos_por_acao_automatizada / incidentes_que_exigiram_contencao; cobertura_tipos = tipos_de_ativo_com_mecanismo_de_contencao_ativo / 4 (host, identidade, rede, e-mail); sucesso = contencoes_efetivadas_na_primeira_tentativa / contencoes_tentadas. score = 0.30*tempestividade + 0.25*automacao + 0.25*cobertura_tipos + 0.20*sucesso. Status = Compliant se score >= 0.85 E cobertura_tipos == 1.0 E sucesso >= 0.90 (fail-closed: tipo de ativo sem mecanismo de contenção é vetor onde o incidente se expande livremente, que é exatamente o que o RS.MI-01 nega); MitigatedByThirdParty se a ação de contenção exigir acionamento de MSSP sem capacidade de execução direta pelo tenant (existe contenção, com latência e dependência de terceiro); NonCompliant se score < 0.50 OU cobertura_tipos < 0.50. Contenção manual fora das ferramentas não conta em automacao nem produz evidência: ação não logada é ação não comprovada.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: isolate device, restrict app execution e ação de contenção com timestamp e operador no action center",
+      "CrowdStrike Falcon: network containment do host com registro de aplicação e liberação",
+      "SentinelOne: disconnect from network, quarantine e mitigation actions por Storyline",
+      "Entra ID: revoke sign-in sessions, disable user e Conditional Access de bloqueio como contenção da identidade comprometida",
+      "Microsoft Sentinel: playbooks de contenção automatizada com run history comprovando latência entre detecção e ação (IR-4(2))",
+      "Google SecOps: SOAR response actions com registro de reconfiguração dinâmica aplicada ao ativo"
+    ]
+  },
+  {
+    "subcategory_id": "RS.MI-02",
+    "evaluation_metrics": [
+      "Fração de incidentes com erradicação verificada por varredura pós-remediação",
+      "Cobertura de análise de código malicioso e artefatos residuais remanescentes (IR-4(12))",
+      "Taxa de reinfecção pelo mesmo artefato em janela de 30 dias após erradicação",
+      "Fração de artefatos maliciosos removidos automaticamente versus por intervenção manual",
+      "Fração de mecanismos de persistência identificados e removidos (tarefa agendada, serviço, chave de execução)",
+      "Latência entre contenção e erradicação concluída",
+      "Fração de erradicações que incorporaram lição aprendida em procedimento ou regra (IR-4c)"
+    ],
+    "calculation_logic": "verificacao = incidentes_com_varredura_pos_remediacao_limpa / incidentes_que_exigiram_erradicacao; residual = incidentes_com_analise_de_artefato_residual / incidentes_com_codigo_malicioso; persistencia = mecanismos_de_persistencia_removidos / mecanismos_de_persistencia_identificados; reinfeccao = 1 - min(1, reinfeccoes_30d / max(1, erradicacoes_no_periodo)). score = 0.30*verificacao + 0.20*residual + 0.25*persistencia + 0.25*reinfeccao. Status = Compliant se score >= 0.85 E verificacao >= 0.90 E persistencia == 1.0 (fail-closed: mecanismo de persistência identificado e não removido significa que o adversário mantém acesso — o incidente não foi erradicado, foi interrompido); MitigatedByThirdParty se a erradicação for executada pelo provedor de MDR sem repasse da verificação pós-remediação; NonCompliant se score < 0.50 OU verificacao < 0.60 OU taxa_reinfeccao_30d > 0.20. Erradicação declarada sem varredura de confirmação NÃO pontua: ausência de alerta não é prova de ausência de ameaça.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: automated investigation and remediation (AIR), action center com remediação aplicada e varredura de confirmação pós-ação",
+      "SentinelOne: mitigation actions (kill, quarantine, remediate, rollback) e status de mitigação por ameaça no Storyline",
+      "CrowdStrike Falcon: quarantine de arquivo, Real Time Response para remoção de persistência e verificação do host pós-remediação",
+      "Microsoft Sentinel: hunting queries de reinfecção e persistência residual sobre a telemetria consolidada após o encerramento",
+      "Google SecOps: retro-hunt do IOC erradicado sobre a janela posterior para confirmar ausência de recorrência no parque",
+      "Entra ID: remoção de persistência em identidade (app consent malicioso, credencial adicional, regra de encaminhamento) e reset de credencial comprometida"
+    ]
+  },
+  {
+    "subcategory_id": "PR.AA-01",
+    "evaluation_metrics": [
+      "Fração de contas ativas com owner identificável e ciclo de vida vinculado ao RH",
+      "Contagem de contas órfãs: credencial ativa sem titular ou sem uso em janela definida (AC-2(3))",
+      "Fração de identidades de serviço e workload com credencial rotacionada dentro do prazo (IA-5)",
+      "Contagem de credenciais compartilhadas ou autenticadores de grupo em uso (IA-2(5))",
+      "Fração de identificadores únicos resolvidos a um indivíduo único (IA-4, IA-12b)",
+      "Contagem de service principals e app registrations com segredo expirado ou de longa duração",
+      "Fração de contas de acesso público ou anônimo formalmente autorizadas (AC-14)",
+      "Latência entre desligamento no RH e desativação efetiva da conta"
+    ],
+    "calculation_logic": "higiene_orfas = 1 - min(1, contas_orfas_ou_inativas / max(1, contas_ativas)); unicidade = contas_atribuiveis_a_individuo_unico / contas_ativas; rotacao = credenciais_de_servico_dentro_do_prazo_de_rotacao / credenciais_de_servico_totais; offboarding = 1 - min(1, p95_latencia_desativacao_h / sla_desativacao_h). score = 0.25*higiene_orfas + 0.30*unicidade + 0.25*rotacao + 0.20*offboarding. Status = Compliant se score >= 0.85 E unicidade >= 0.98 E nenhuma credencial compartilhada em conta privilegiada; MitigatedByThirdParty se o ciclo de vida for operado por provedor de identidade terceiro ou IGA externo sem repasse do registro de provisionamento ao tenant; NonCompliant se score < 0.50 OU unicidade < 0.90. Conta habilitada sem sign-in em 90 dias conta como órfã até prova documental de exceção: credencial viva sem uso é superfície sem dono.",
+    "evidence_requirements": [
+      "Entra ID: lifecycle workflows, access reviews, propriedade de conta e last sign-in activity para detectar órfãs e inativas",
+      "Entra ID: app registrations e service principals com data de expiração de segredo e certificado para medir rotação (IA-5)",
+      "Entra ID: audit logs de criação, alteração e desativação de conta, confrontáveis contra o evento de offboarding",
+      "Microsoft Sentinel: correlação entre evento de desligamento e desativação efetiva; regras de detecção de conta órfã e credencial de longa duração",
+      "Microsoft Defender: detecção de uso de conta local compartilhada em endpoints gerenciados",
+      "Google SecOps: normalização de eventos de identidade em UDM para reconciliação de titularidade entre fontes"
+    ]
+  },
+  {
+    "subcategory_id": "PR.AA-02",
+    "evaluation_metrics": [
+      "Existência de processo de identity proofing aderente a nível de garantia definido (IA-12a, SP 800-63A)",
+      "Fração de contas cujo registro exigiu autorização de supervisor ou patrocinador (IA-12(1))",
+      "Fração de registros com evidência de identidade apresentada e retida (IA-12(2))",
+      "Método de validação e verificação da evidência apresentada (IA-12(3))",
+      "Uso de validação presencial perante autoridade de registro para contas de alto risco (IA-12(4))",
+      "Confirmação de endereço por canal fora de banda no registro (IA-12(5))",
+      "Nível de garantia aceito para identidades proofed externamente (IA-12(6))"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. Identity proofing é um processo de registro executado ANTES de qualquer identidade existir no diretório: o IA-12 e todos os seus enhancements (autorização de supervisor, apresentação de evidência, validação presencial, confirmação por canal fora de banda) produzem registros de RH e de autoridade de registro, não telemetria. Nenhuma ferramenta do stack observa a conferência de um passaporte no ato do enrollment; o Entra ID mostra a conta resultante, jamais o ato de proofing que a originou. Procedimento de auditoria: (1) verificar procedimento de proofing documentado com nível de garantia declarado; (2) amostrar contas criadas no período e confrontar contra evidência de registro retida; (3) verificar que o nível aplicado é proporcional ao privilégio da conta. Status = Compliant se os três passos passarem sem desvio na amostra; MitigatedByThirdParty se o proofing for delegado a provedor externo sob IA-12(6) e o tenant possuir apenas a atestação do nível de garantia, sem os registros subjacentes; NonCompliant se não houver processo documentado ou se a amostra revelar contas criadas sem evidência de proofing.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "PR.AA-03",
+    "evaluation_metrics": [
+      "Fração de contas privilegiadas com MFA imposta por política (IA-2(1))",
+      "Fração de contas não privilegiadas com MFA imposta (IA-2(2))",
+      "Fração de autenticações com método resistente a phishing (FIDO2, certificado, Windows Hello) versus SMS/voz",
+      "Volume residual de autenticação por protocolo legado que contorna MFA",
+      "Fração de MFA com fator provido por dispositivo separado do sistema acessado (IA-2(6))",
+      "Configuração de bloqueio após tentativas malsucedidas de logon (AC-7)",
+      "Configuração de término de sessão por inatividade e por condição definida (AC-12)",
+      "Cobertura de reautenticação em mudança de papel, privilégio ou condição de risco (IA-11)",
+      "Fração de dispositivos autenticados no acesso, não apenas usuários (IA-3)"
+    ],
+    "calculation_logic": "mfa_priv = contas_privilegiadas_com_mfa_imposta / contas_privilegiadas; mfa_geral = contas_com_mfa_imposta / contas_ativas; resistencia = autenticacoes_com_metodo_resistente_a_phishing / autenticacoes_totais; legado = 1 - min(1, autenticacoes_por_protocolo_legado / max(1, autenticacoes_totais)); sessao = 1 se AC-7 e AC-12 configurados conforme política senão 0. score = 0.30*mfa_priv + 0.20*mfa_geral + 0.25*resistencia + 0.15*legado + 0.10*sessao. Status = Compliant se score >= 0.85 E mfa_priv == 1.0 E legado >= 0.99 (fail-closed duplo: conta privilegiada sem MFA é o vetor único de maior impacto, e protocolo legado ativo é bypass estrutural que torna a política de MFA declarativa em vez de efetiva); MitigatedByThirdParty se a autenticação for federada a IdP terceiro que impõe MFA sem repasse do log de método ao tenant; NonCompliant se score < 0.50 OU mfa_priv < 0.95.",
+    "evidence_requirements": [
+      "Entra ID: Conditional Access policies, authentication methods registration e authentication strength por política",
+      "Entra ID: sign-in logs com campo authenticationRequirement, authenticationMethod e detalhe de MFA satisfeita ou contornada",
+      "Entra ID: relatório de autenticação legada (legacy auth) e sign-ins por protocolo herdado",
+      "Entra ID: configuração de smart lockout (AC-7) e políticas de sessão/token lifetime (AC-12, IA-11)",
+      "Microsoft Sentinel: regras analíticas de MFA fatigue, bypass de MFA e autenticação sem método resistente a phishing",
+      "Google SecOps: correlação de eventos de autenticação em UDM para detectar acesso autenticado fora do padrão de método esperado"
+    ]
+  },
+  {
+    "subcategory_id": "PR.AA-04",
+    "evaluation_metrics": [
+      "Fração de aplicações federadas usando protocolo padronizado (SAML 2.0, OIDC) versus integração proprietária",
+      "Validade e cadência de rotação do certificado de assinatura de asserção SAML",
+      "Fração de asserções transportadas exclusivamente sobre canal cifrado",
+      "Volume de falhas de validação de assinatura de asserção por aplicação",
+      "Cobertura de proteção de token contra replay e roubo (token binding, sender-constrained)",
+      "Contagem de relações de federação e trust configuradas versus inventariadas e aprovadas",
+      "Detecção de emissão anômala de asserção: token forjado, IdP não autorizado, SAML com origem inesperada"
+    ],
+    "calculation_logic": "padronizacao = apps_federadas_com_protocolo_padrao / apps_federadas; rotacao = certificados_de_assinatura_dentro_da_janela_de_rotacao / certificados_de_assinatura; protecao_token = sessoes_com_token_protegido_ou_sender_constrained / sessoes_federadas; higiene_trust = trusts_aprovados / trusts_configurados. score = 0.25*padronizacao + 0.25*rotacao + 0.30*protecao_token + 0.20*higiene_trust. Status = Compliant se score >= 0.85 E higiene_trust == 1.0 (fail-closed: relação de federação não aprovada é IdP capaz de emitir asserção aceita pelo tenant — é backdoor de autenticação, não desvio de configuração); MitigatedByThirdParty se a emissão e validação da asserção ocorrerem em IdP terceiro sem repasse do log de validação; NonCompliant se score < 0.50 OU existir certificado de assinatura expirado em uso. ATENÇÃO DE PROVENIÊNCIA: o único controle mapeado pelo NIST para esta subcategoria é IA-13 (Identity Providers and Authorization Servers), que NÃO EXISTE no documento-fonte anexo — o PDF é a Rev 5 original (2020-12-09) e o IA-13 foi introduzido na Rev 5.1.1, versão que o catálogo referencia. Esta lógica deriva dos implementationExamples do CSF 2.0 e da capacidade real do Entra ID, não do texto do 800-53. Requer revalidação contra a Rev 5.1.1.",
+    "evidence_requirements": [
+      "Entra ID: configuração SAML/OIDC por enterprise application, certificado de assinatura de token e data de expiração",
+      "Entra ID: token protection (sender-constrained tokens) em Conditional Access e política de proteção de sessão",
+      "Entra ID: federation trusts e domínios federados configurados, confrontáveis contra o inventário aprovado",
+      "Entra ID: sign-in logs com falhas de validação de asserção e detecção de token anômalo",
+      "Microsoft Sentinel: regras de detecção de Golden SAML, adição não autorizada de federation trust e emissão de token fora do padrão",
+      "Microsoft Defender: alertas de roubo de token e replay de sessão em endpoints gerenciados"
+    ]
+  },
+  {
+    "subcategory_id": "PR.AA-05",
+    "evaluation_metrics": [
+      "Fração de atribuições privilegiadas concedidas just-in-time versus permanentes (AC-6(5))",
+      "Fração de contas operando com privilégio mínimo necessário ao papel (AC-6(1), AC-6(2))",
+      "Cobertura de log de uso de função privilegiada (AC-6(9))",
+      "Cadência e taxa de conclusão da revisão de privilégios de usuário (AC-6(7))",
+      "Contagem de conflitos de segregação de funções ativos (AC-5)",
+      "Fração de acesso remoto autorizado, monitorado e roteado por ponto controlado (AC-17)",
+      "Fração de dispositivos móveis e removíveis sob política de acesso aplicada (AC-19)",
+      "Configuração de limite de sessões concorrentes por conta (AC-10)",
+      "Fração de redes wireless com autenticação e cifragem impostas (AC-18)"
+    ],
+    "calculation_logic": "jit = atribuicoes_privilegiadas_jit / atribuicoes_privilegiadas_totais; revisao = revisoes_de_acesso_concluidas_no_ciclo / revisoes_de_acesso_planejadas; sod = 1 - min(1, conflitos_sod_ativos / max(1, regras_sod_definidas)); log_priv = funcoes_privilegiadas_com_log_de_uso / funcoes_privilegiadas_definidas; remoto = acessos_remotos_por_ponto_controlado / acessos_remotos_totais. score = 0.30*jit + 0.20*revisao + 0.20*sod + 0.15*log_priv + 0.15*remoto. Status = Compliant se score >= 0.85 E log_priv == 1.0 E revisao >= 0.95 (fail-closed: função privilegiada sem log de uso torna o AC-6(9) inverificável, e privilégio não auditável equivale a privilégio não controlado); MitigatedByThirdParty se a governança de entitlements for operada por IGA terceiro sem repasse do registro de aprovação; NonCompliant se score < 0.50 OU jit < 0.30 (parque majoritariamente de privilégio permanente contradiz a premissa de least privilege do AC-6).",
+    "evidence_requirements": [
+      "Entra ID: PIM com atribuições elegíveis versus permanentes, justificativa e aprovação de ativação (AC-6(5))",
+      "Entra ID: access reviews com escopo, ciclo e taxa de conclusão por grupo e papel privilegiado (AC-6(7))",
+      "Entra ID: audit logs de atribuição de papel e alteração de entitlement; Conditional Access para acesso remoto e dispositivo (AC-17, AC-19)",
+      "Microsoft Sentinel: regras de detecção de elevação fora de PIM, conflito de segregação de funções e uso de função privilegiada não logada",
+      "Microsoft Defender: alertas de execução de função privilegiada em endpoint e uso de conta administrativa local",
+      "CrowdStrike Falcon: telemetria de execução com contexto de privilégio do processo para verificar least privilege efetivo",
+      "SentinelOne: eventos de elevação de privilégio e execução administrativa por endpoint"
+    ]
+  },
+  {
+    "subcategory_id": "PR.AA-06",
+    "evaluation_metrics": [
+      "Existência de lista de autorização de acesso físico revisada na cadência definida (PE-2)",
+      "Cobertura de controles físicos de entrada nos pontos de acesso inventariados (PE-3)",
+      "Controles adicionais aplicados a áreas que contêm ativos de alto risco (PE-3, PE-19)",
+      "Fração de visitantes, fornecedores e terceiros escoltados em áreas críticas (PE-3, PE-8)",
+      "Manutenção e revisão do registro de acesso de visitantes (PE-8)",
+      "Controle de acesso a linhas de transmissão e dispositivos de saída (PE-4, PE-5)",
+      "Proteção contra emanação e vazamento de informação por sinal (PE-19)",
+      "Posicionamento de componentes para minimizar exposição física (PE-18)"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. A cláusula operativa desta subcategoria é 'managed and enforced': gestão de lista de autorização, emissão de credencial física, escolta de visitantes, posicionamento de equipamento e proteção de emanação são atos físicos e administrativos que nenhuma ferramenta do stack observa. SEPARAÇÃO DE CONCEITOS: a perna 'monitored' desta subcategoria já é medida por DE.CM-02, que possui a telemetria de PACS ingerida no SIEM e a correlação física-lógica; duplicar aquela lógica aqui criaria duas regras medindo o mesmo evento com denominadores diferentes. Esta regra cobre exclusivamente gestão e enforcement, que são documentais. Procedimento de auditoria: (1) verificar lista de autorização vigente e revisada na cadência; (2) inspecionar controles de entrada por ponto de acesso e controles adicionais em áreas de alto risco; (3) amostrar registro de visitantes e comprovar escolta. Status = Compliant se os três passos passarem sem desvio; MitigatedByThirdParty se a facility for operada por locador ou colocation terceiro que fornece atestação (SOC 2 Type II com escopo físico) sem acesso do tenant aos registros primários; NonCompliant se não existir lista de autorização vigente ou se áreas com ativos críticos não tiverem controle adicional.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "PR.AT-01",
+    "evaluation_metrics": [
+      "Taxa de clique em simulação de phishing por campanha e sua tendência entre campanhas (AT-2(1), AT-2(3))",
+      "Taxa de fornecimento de credencial em simulação: usuários que digitaram senha na página falsa",
+      "Taxa de reporte de mensagem suspeita pelo canal oficial versus mensagens simuladas entregues",
+      "Latência mediana entre entrega da simulação e reporte pelo usuário",
+      "Cobertura da população simulada: fração de usuários ativos incluídos no ciclo",
+      "Fração de usuários reincidentes em cliques entre campanhas consecutivas",
+      "Cobertura de treinamento de ameaça interna e reconhecimento de engenharia social (AT-2(2), AT-2(3))"
+    ],
+    "calculation_logic": "cobertura = usuarios_incluidos_em_simulacao_no_ciclo / usuarios_ativos; eficacia_clique = 1 - min(1, taxa_clique / 0.20); eficacia_credencial = 1 - min(1, taxa_fornecimento_credencial / 0.05); reporte = taxa_reporte_de_suspeita; tendencia = 1 se taxa_clique_atual <= taxa_clique_da_campanha_anterior senão 0. score = 0.25*cobertura + 0.25*eficacia_clique + 0.25*eficacia_credencial + 0.15*reporte + 0.10*tendencia. Status = Compliant se score >= 0.85 E cobertura >= 0.90 E taxa_fornecimento_credencial <= 0.05; MitigatedByThirdParty se o programa de conscientização for entregue por plataforma de LMS terceira sem simulação executada no tenant (existe treinamento, não existe medição de eficácia no ambiente real); NonCompliant se score < 0.50 OU cobertura < 0.50 OU nenhuma simulação executada no período. RESSALVA DE ESCOPO: a métrica mede a EFICÁCIA observável (o que o usuário faz diante de um ataque simulado), que é o que o AT-2(1) chama de exercício prático; o registro de ENTREGA e conclusão do treinamento formal a empregados, contratados, parceiros e fornecedores reside em LMS/RH e permanece sujeito a verificação documental.",
+    "evidence_requirements": [
+      "Microsoft Defender for Office 365: Attack Simulation Training com taxa de clique, fornecimento de credencial, reporte e atribuição de treinamento por campanha",
+      "Microsoft Defender for Office 365: submissions e user-reported messages para medir a taxa de reporte pelo canal oficial",
+      "Entra ID: população de usuários ativos como denominador de cobertura da simulação",
+      "Microsoft Sentinel: correlação entre usuários reincidentes em simulação e incidentes reais de phishing atribuídos à mesma identidade",
+      "Google SecOps: normalização de eventos de reporte de phishing para tendência histórica entre ciclos"
+    ]
+  },
+  {
+    "subcategory_id": "PR.AT-02",
+    "evaluation_metrics": [
+      "Identificação formal dos papéis especializados que exigem treinamento adicional (AT-3)",
+      "Fração de titulares de papel especializado com treinamento baseado em papel concluído no ciclo",
+      "Cobertura de treinamento para papéis com acesso a dado crítico de negócio, incluindo terceiros",
+      "Existência de avaliação ou teste de entendimento específico do papel",
+      "Cadência de reciclagem anual e sua taxa de cumprimento",
+      "Fração de contratados, parceiros e fornecedores em papel especializado cobertos pelo programa",
+      "Aderência do conteúdo do treinamento às responsabilidades efetivas do papel"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. O numerador desta subcategoria é 'indivíduos treinados para o seu papel', e esse dado existe apenas em LMS ou registro de RH: nenhuma ferramenta do stack observa conclusão de treinamento ou resultado de avaliação de entendimento. O Entra ID fornece o DENOMINADOR (quem detém papéis privilegiados e acesso a dado crítico, via PIM e associação de grupo), mas denominador sem numerador não produz métrica. DISTINÇÃO CONTRA PR.AT-01: aquela subcategoria é mensurável porque o Attack Simulation Training exercita conscientização geral contra ataque simulado; treinamento baseado em papel (financeiro, liderança, pessoal de segurança) não tem exercício equivalente observável no stack. Procedimento de auditoria: (1) verificar a lista formal de papéis especializados; (2) confrontá-la contra os detentores reais de papel privilegiado extraídos do Entra ID, para detectar papéis não declarados; (3) amostrar registros de conclusão e avaliação por papel, incluindo terceiros. Status = Compliant se os três passos passarem e a cobertura amostrada for integral; MitigatedByThirdParty se o treinamento de terceiros for atestado contratualmente pelo fornecedor sem repasse do registro individual; NonCompliant se não existir lista formal de papéis especializados ou se houver detentor de papel privilegiado fora do programa.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "PR.DS-01",
+    "evaluation_metrics": [
+      "Fração de endpoints e volumes com cifragem de disco ativa e chave em custódia (SC-28(1))",
+      "Fração de repositórios de dado crítico com cifragem em repouso comprovada",
+      "Proteção de integridade por tecnologia write-once-read-many onde a cifragem não é aplicável (SC-28)",
+      "Cobertura de proteção da informação de sistema em repouso: regras de firewall, configuração de IDS, dados de autenticação",
+      "Fração de chaves criptográficas sob gestão formal, com rotação e custódia (SC-12, SC-28(3))",
+      "Aderência dos algoritmos empregados ao padrão validado definido (SC-13)",
+      "Varredura de código malicioso em dado em repouso onde a cifragem não é alcançável (SC-28 Discussion)",
+      "Fração de mídia removível com cifragem imposta por política (MP-8)"
+    ],
+    "calculation_logic": "cifragem_endpoint = endpoints_com_disco_cifrado_e_chave_em_custodia / endpoints_gerenciados; cifragem_repositorio = repositorios_criticos_com_cifragem_comprovada / repositorios_criticos_inventariados; chaves = chaves_sob_gestao_formal_com_rotacao / chaves_inventariadas; algoritmo = 1 se todos os algoritmos em uso estiverem no padrão validado (SC-13) senão 0. score = 0.30*cifragem_endpoint + 0.30*cifragem_repositorio + 0.25*chaves + 0.15*algoritmo. Status = Compliant se score >= 0.85 E cifragem_endpoint >= 0.98 E algoritmo == 1 (fail-closed: algoritmo fora do padrão validado invalida a asserção de proteção independentemente da cobertura — cifragem fraca é cifragem ausente perante o SC-13); MitigatedByThirdParty se a cifragem for provida e gerenciada pelo provedor de nuvem ou SaaS com chave sob custódia do fornecedor, sem chave gerenciada pelo tenant; NonCompliant se score < 0.50 OU cifragem_endpoint < 0.90. Disco cifrado com chave em escrow não verificável NÃO conta como coberto: chave irrecuperável é dado perdido, não dado protegido.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: DeviceInfo e device health com estado de cifragem de disco por dispositivo gerenciado",
+      "Entra ID: device compliance policy exigindo cifragem como condição de Conditional Access, e status de conformidade por dispositivo",
+      "CrowdStrike Falcon: inventário de host com estado de cifragem de volume e configuração de proteção em repouso",
+      "SentinelOne: postura do endpoint e detecção de volumes sem cifragem no parque gerenciado",
+      "Microsoft Sentinel: regras de detecção de dispositivo não conforme com política de cifragem e de acesso a repositório crítico sem proteção",
+      "Google SecOps: correlação de eventos de acesso a dado em repouso com o estado de proteção do ativo hospedeiro"
+    ]
+  },
+  {
+    "subcategory_id": "PR.DS-02",
+    "evaluation_metrics": [
+      "Fração de conexões negociando versão de TLS aprovada versus versões obsoletas",
+      "Volume residual de tráfego em protocolo de texto claro em rede interna e de borda (SC-8)",
+      "Fração de conexões com cifragem aplicada a dado em trânsito por classificação (SC-8(1))",
+      "Validade e cadência de rotação dos certificados em uso nos pontos de terminação",
+      "Aderência das suítes criptográficas negociadas ao padrão validado (SC-13)",
+      "Cobertura de proteção da trilha de auditoria em trânsito entre sistemas (AU-16)",
+      "Detecção de downgrade de protocolo e de interceptação em trânsito",
+      "Fração de sessões remotas e administrativas por canal cifrado autenticado"
+    ],
+    "calculation_logic": "tls = conexoes_com_versao_tls_aprovada / conexoes_tls_observadas; texto_claro = 1 - min(1, volume_trafego_texto_claro / max(1, volume_trafego_total)); certificados = certificados_validos_e_dentro_da_janela_de_rotacao / certificados_em_uso; suites = 1 se todas as suítes negociadas estiverem no padrão validado (SC-13) senão 0. score = 0.30*tls + 0.30*texto_claro + 0.20*certificados + 0.20*suites. Status = Compliant se score >= 0.85 E texto_claro >= 0.99 E suites == 1 (fail-closed: protocolo em texto claro transportando dado sensível é ausência de controle, não conformidade parcial, e o SC-8 é a asserção que ele nega diretamente); MitigatedByThirdParty se a terminação TLS ocorrer em CDN ou provedor terceiro sem repasse do log de versão e suíte negociada; NonCompliant se score < 0.50 OU existir certificado expirado em uso em ponto de terminação de dado crítico.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: logs de firewall e NSG flow logs para detecção de protocolo em texto claro e portas não cifradas em uso",
+      "Microsoft Defender for Endpoint: DeviceNetworkEvents com detalhe de conexão por processo para identificar tráfego não cifrado originado no host",
+      "Google SecOps: telemetria de rede em UDM (NETWORK_HTTP, NETWORK_CONNECTION) para versão de TLS negociada e downgrade de protocolo",
+      "CrowdStrike Falcon: eventos de rede do sensor para correlacionar processo, destino e ausência de cifragem",
+      "SentinelOne: Deep Visibility para conexões de saída em protocolo herdado ou sem cifragem",
+      "Entra ID: sign-in logs confirmando que autenticação e transporte de asserção ocorrem exclusivamente sobre canal cifrado"
+    ]
+  },
+  {
+    "subcategory_id": "PR.DS-10",
+    "evaluation_metrics": [
+      "Cobertura de proteção de memória contra execução não autorizada: DEP, ASLR, CFG (SI-16)",
+      "Fração de endpoints com regras de redução de superfície de ataque em modo bloqueio",
+      "Volume de tentativas de acesso à memória de processo de credencial (LSASS) bloqueadas versus permitidas",
+      "Prevenção de vazamento de informação por recurso compartilhado entre usuários ou processos (SC-4)",
+      "Cobertura de enforcement de fluxo de informação entre domínios durante o processamento (AC-4)",
+      "Proteção da informação de auditoria contra acesso e modificação por processo em execução (AU-9)",
+      "Fração de processos críticos executando em ambiente isolado (SC-39)",
+      "Detecção de injeção de código e manipulação de processo em runtime"
+    ],
+    "calculation_logic": "memoria = endpoints_com_protecao_de_memoria_ativa / endpoints_gerenciados; asr = endpoints_com_regras_asr_em_bloqueio / endpoints_gerenciados; credencial = 1 - min(1, acessos_a_memoria_de_credencial_permitidos / max(1, tentativas_de_acesso_a_memoria_de_credencial)); isolamento = processos_criticos_isolados / processos_criticos_definidos. score = 0.30*memoria + 0.25*asr + 0.30*credencial + 0.15*isolamento. Status = Compliant se score >= 0.85 E credencial >= 0.95 E asr >= 0.90 (fail-closed: acesso não bloqueado à memória de credencial é a materialização exata do risco de dado em uso — a credencial existe em claro apenas nesse estado); MitigatedByThirdParty se a proteção de runtime for provida por agente de terceiro sem telemetria de bloqueio exportável; NonCompliant se score < 0.50 OU asr em modo auditoria (não-bloqueio) em mais de 50% do parque: regra que apenas observa não protege dado em uso.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: regras de Attack Surface Reduction em modo bloqueio, exploit protection e eventos de proteção de memória (SI-16)",
+      "Microsoft Defender for Endpoint: DeviceEvents com tentativas de acesso a LSASS e bloqueios de roubo de credencial",
+      "CrowdStrike Falcon: prevenção de injeção de código, proteção de memória e política de bloqueio de dump de credencial",
+      "SentinelOne: engine comportamental em runtime, bloqueio de manipulação de processo e proteção contra roubo de credencial em memória",
+      "Microsoft Sentinel: correlação de tentativas de acesso a memória de credencial com contexto de identidade e privilégio",
+      "Google SecOps: detecção de injeção de processo e comportamento anômalo de runtime sobre telemetria UDM",
+      "Entra ID: sinal de comprometimento de identidade correlacionado a roubo de token ou credencial em memória"
+    ]
+  },
+  {
+    "subcategory_id": "PR.DS-11",
+    "evaluation_metrics": [
+      "Fração de dados críticos com backup em near-real-time e demais dados na cadência acordada (CP-9)",
+      "Cadência e resultado do teste de restauração por tipo de fonte de dado (CP-9(1), CP-4)",
+      "Fração de backups armazenados offline e fora do site (CP-9, CP-6)",
+      "Separação geográfica e restrição de geolocalização do armazenamento de backup (CP-6(1), CP-6(3))",
+      "Proteção de confidencialidade e integridade do backup, incluindo cifragem (CP-9(8))",
+      "Tempo de restauração medido versus objetivo definido (RTO) e ponto de recuperação alcançado (RPO)",
+      "Imutabilidade do repositório de backup contra alteração e exclusão"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. Backup e restauração residem em plataformas de proteção de dados (backup enterprise, snapshot de storage, cofre imutável) que não fazem parte do ecossistema declarado: nenhuma das seis ferramentas emite job de backup, resultado de restauração ou estado de cópia offline. Marcar uma fonte de EDR ou SIEM aqui seria inventar conector. A cláusula 'securely store some backups offline and offsite' (Ex3 do CSF) é, por definição, invisível a telemetria online. Procedimento de auditoria: (1) verificar política de backup com cadência por classe de dado; (2) obter evidência do último teste de restauração por tipo de fonte, com RTO e RPO medidos; (3) comprovar cópia offline/offsite e separação geográfica; (4) verificar imutabilidade do repositório. Status = Compliant se os quatro passos passarem e o teste de restauração for de no máximo 12 meses; MitigatedByThirdParty se o backup for operado por provedor de nuvem ou BaaS terceiro com atestação e relatório de job, mas sem teste de restauração conduzido ou verificado pelo tenant; NonCompliant se não houver teste de restauração nos últimos 12 meses (backup nunca restaurado é hipótese, não controle) ou se inexistir cópia offline.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "PR.PS-01",
+    "evaluation_metrics": [
+      "Fração de ativos com baseline de configuração aprovado e vigente (CM-2)",
+      "Fração de mudanças de configuração aprovadas pelo processo de controle de mudança (CM-3)",
+      "Cobertura de análise de impacto de segurança antes da mudança (CM-4)",
+      "Fração de alterações executadas por identidade autorizada e logadas (CM-5)",
+      "Aderência dos parâmetros aplicados ao setting de segurança definido (CM-6)",
+      "Fração de ativos com funcionalidade restrita ao essencial: portas, protocolos e serviços (CM-7)",
+      "Acurácia do inventário de componentes contra o descoberto em telemetria (CM-8)",
+      "Fração de software com licença rastreada e uso conforme acordo (CM-10)"
+    ],
+    "calculation_logic": "baseline = ativos_com_baseline_aprovado_vigente / ativos_inventariados; mudanca_autorizada = mudancas_com_aprovacao_registrada / mudancas_detectadas; settings = ativos_aderentes_ao_setting_definido / ativos_com_baseline; inventario = 1 - min(1, |ativos_descobertos_em_telemetria - ativos_no_inventario| / max(1, ativos_descobertos_em_telemetria)). score = 0.25*baseline + 0.30*mudanca_autorizada + 0.25*settings + 0.20*inventario. Status = Compliant se score >= 0.85 E inventario >= 0.95 E mudanca_autorizada >= 0.90 (fail-closed: inventário divergente da telemetria significa que o denominador de todos os demais controles de PROTECT está errado — o CM-8 é a base sobre a qual as outras coberturas são calculadas); MitigatedByThirdParty se a gestão de configuração for executada por provedor gerenciado sem repasse do registro de aprovação de mudança; NonCompliant se score < 0.50 OU baseline < 0.60. SEPARAÇÃO DE CONCEITOS: esta regra mede o ESTABELECIMENTO e a APLICAÇÃO da prática (baseline existe, mudança é aprovada, setting é aplicado); a DETECÇÃO de desvio em runtime pertence a DE.CM-09 e não é recontada aqui.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: DeviceInfo e DeviceTvmSecureConfigurationAssessment para aderência de setting de segurança por dispositivo (CM-6)",
+      "Microsoft Defender: inventário de dispositivos e software descoberto, confrontável contra o inventário declarado (CM-8)",
+      "CrowdStrike Falcon: inventário de host e aplicações, com estado de configuração do sensor e do sistema",
+      "SentinelOne: inventário de aplicações e postura de configuração do endpoint gerenciado",
+      "Microsoft Sentinel: correlação entre mudança de configuração detectada e registro de aprovação, para medir mudança não autorizada (CM-3, CM-5)",
+      "Entra ID: audit logs de alteração de configuração de tenant e identidade autorizada que executou a mudança",
+      "Google SecOps: reconciliação de inventário entre fontes e detecção de ativo não catalogado"
+    ]
+  },
+  {
+    "subcategory_id": "PR.PS-02",
+    "evaluation_metrics": [
+      "Tempo mediano e p95 até remediação de falha, por severidade, contra o benchmark definido (SI-2(3))",
+      "Fração de atualizações relevantes à segurança instaladas dentro do prazo definido (SI-2c)",
+      "Cobertura de gestão automatizada de patch sobre o parque (SI-2(4))",
+      "Fração de ativos executando software fora de suporte ou em fim de vida",
+      "Fração de versões anteriores removidas após atualização (SI-2(6))",
+      "Cobertura de status automatizado de remediação de falha (SI-2(2))",
+      "Fração de atualizações testadas quanto a efetividade e efeito colateral antes da instalação (SI-2b)",
+      "Fração de software desinstalado ao deixar de ser necessário (CM-11)"
+    ],
+    "calculation_logic": "sla_critico = falhas_criticas_remediadas_no_prazo / falhas_criticas_identificadas; sla_alto = falhas_altas_remediadas_no_prazo / falhas_altas_identificadas; eol = 1 - min(1, ativos_com_software_fora_de_suporte / max(1, ativos_inventariados)); automacao = ativos_sob_gestao_automatizada_de_patch / ativos_inventariados. score = 0.35*sla_critico + 0.20*sla_alto + 0.25*eol + 0.20*automacao. Status = Compliant se score >= 0.85 E sla_critico >= 0.95 E eol >= 0.95; MitigatedByThirdParty se o patching for executado por provedor gerenciado sem repasse do registro de aplicação por ativo, ou se o fornecedor do software não disponibilizar correção e houver mitigação compensatória documentada; NonCompliant se score < 0.50 OU sla_critico < 0.70. O denominador é a falha IDENTIFICADA pelo scanner de vulnerabilidade, não a falha reportada manualmente: o SI-2(3) exige benchmark mensurável, e benchmark sobre denominador declarativo não é auditável.",
+    "evidence_requirements": [
+      "Microsoft Defender Vulnerability Management: inventário de software, CVE por ativo, recomendação de remediação e data de exposição para cálculo de tempo até remediação",
+      "Microsoft Defender for Endpoint: DeviceTvmSoftwareVulnerabilities e DeviceTvmSoftwareInventory para identificar software fora de suporte e versões residuais",
+      "CrowdStrike Falcon Spotlight: vulnerabilidades por host, criticidade e status de remediação",
+      "SentinelOne: inventário de aplicações e risco de versão vulnerável no endpoint gerenciado",
+      "Microsoft Sentinel: correlação entre data de publicação da correção e data de aplicação por ativo, medindo aderência ao benchmark do SI-2(3)",
+      "Google SecOps: normalização de eventos de patch e vulnerabilidade para tendência histórica de tempo até remediação"
+    ]
+  },
+  {
+    "subcategory_id": "PR.PS-03",
+    "evaluation_metrics": [
+      "Fração de hardware dentro da janela de suporte do fabricante versus em fim de vida",
+      "Fração de ativos cujo hardware suporta as capacidades de segurança exigidas (TPM, secure boot, virtualização)",
+      "Fração de dispositivos com firmware atualizado dentro do prazo definido",
+      "Detecção de componente de hardware proibido conectado ao sistema (CM-7(9))",
+      "Cobertura de separação e enforcement de política por mecanismo em hardware (SC-49, SC-51)",
+      "Existência de plano documentado de fim de vida e obsolescência de hardware",
+      "Fração de descartes de hardware com registro auditável de sanitização"
+    ],
+    "calculation_logic": "suporte = ativos_com_hardware_em_suporte / ativos_inventariados; capacidade = ativos_com_hardware_apto_as_capacidades_de_seguranca_exigidas / ativos_inventariados; firmware = ativos_com_firmware_dentro_do_prazo / ativos_inventariados; proibido = 1 - min(1, componentes_de_hardware_proibidos_detectados / max(1, ativos_inventariados)). score = 0.30*suporte + 0.30*capacidade + 0.25*firmware + 0.15*proibido. Status = Compliant se score >= 0.85 E capacidade >= 0.95 (fail-closed: hardware incapaz de sustentar a capacidade de segurança exigida não é remediável por configuração — o Ex1 do CSF trata isso como gatilho de substituição, não de exceção); MitigatedByThirdParty se o parque for arrendado ou gerenciado por terceiro que controla o ciclo de substituição, com atestação de suporte vigente; NonCompliant se score < 0.50 OU suporte < 0.70. RESSALVA DE ESCOPO: a sanitização e o descarte auditável de hardware (Ex3) são atos físicos com registro documental e não são observáveis na telemetria — o cálculo cobre o parque ativo, não o descartado.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: DeviceInfo com modelo, fabricante, versão de OS e capacidade de hardware (TPM, secure boot) por dispositivo",
+      "Microsoft Defender Vulnerability Management: firmware e hardware vulnerável, com versão instalada e recomendação de atualização",
+      "CrowdStrike Falcon: inventário de host com detalhe de plataforma, firmware e capacidade de segurança do hardware",
+      "SentinelOne: inventário de dispositivo e detecção de periférico ou componente não autorizado conectado (CM-7(9))",
+      "Entra ID: device registration com estado de TPM e atestação de integridade de hardware como condição de conformidade",
+      "Microsoft Sentinel: regras de detecção de hardware fora de suporte e de componente proibido conectado ao parque"
+    ]
+  },
+  {
+    "subcategory_id": "PR.PS-04",
+    "evaluation_metrics": [
+      "Fração de fontes de log críticas gerando registro conforme o tipo de evento definido (AU-2, AU-12a)",
+      "Completude do conteúdo do registro: tipo, momento, local, origem, resultado e identidade do evento (AU-3)",
+      "Fração de registros com identidade do sujeito associada ao evento (AU-3(1))",
+      "Retenção efetiva do registro contra o período definido em política (AU-11)",
+      "Capacidade de recuperação de registro de longo prazo (AU-11(1))",
+      "Existência de capacidade de redução e geração de report sem alterar conteúdo ou ordenação original (AU-7, AU-7(1))",
+      "Gap de ingestão: janelas em que a fonte parou de emitir sem alerta",
+      "Fração de componentes do sistema cobertos pela geração de registro (AU-12a)"
+    ],
+    "calculation_logic": "geracao = fontes_criticas_emitindo_conforme_tipo_de_evento_definido / fontes_criticas_inventariadas; completude = registros_com_todos_os_campos_do_AU-3 / registros_amostrados; retencao = 1 se retencao_configurada >= retencao_exigida_em_politica senão retencao_configurada / retencao_exigida; disponibilidade = 1 - min(1, horas_de_gap_de_ingestao / horas_do_periodo). score = 0.30*geracao + 0.25*completude + 0.25*retencao + 0.20*disponibilidade. Status = Compliant se score >= 0.85 E geracao >= 0.95 E retencao == 1.0 (fail-closed: retenção abaixo da política significa que a evidência expira antes da necessidade legal ou investigativa que o AU-11 existe para garantir — é perda de evidência, não cobertura parcial); MitigatedByThirdParty se a geração ocorrer em SaaS terceiro que só disponibiliza log agregado ou com retenção inferior à política; NonCompliant se score < 0.50 OU geracao < 0.70. SEPARAÇÃO DE CONCEITOS: esta regra mede GERAÇÃO, CONTEÚDO e RETENÇÃO do registro; a CORRELAÇÃO entre repositórios e a sincronia temporal pertencem a DE.AE-03, e a ANÁLISE do registro pertence a DE.AE-02 — nenhuma das três recontam a mesma métrica.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: tabela Heartbeat e métricas de ingestão por conector para cobertura de fonte e detecção de gap; retenção configurada por tabela e archive (AU-11)",
+      "Microsoft Sentinel: amostragem de registros para verificar completude dos campos exigidos pelo AU-3",
+      "Google SecOps: parser health, log source coverage e política de retenção da telemetria em UDM",
+      "Microsoft Defender: streaming de tabelas de Advanced Hunting para o SIEM, comprovando geração e disponibilização contínua",
+      "CrowdStrike Falcon: Falcon Data Replicator como evidência de geração e exportação de telemetria bruta do sensor",
+      "SentinelOne: encaminhamento de eventos ao SIEM com preservação de conteúdo e timestamp de origem",
+      "Entra ID: diagnostic settings com sign-in e audit logs exportados e retenção configurada conforme política"
+    ]
+  },
+  {
+    "subcategory_id": "PR.PS-05",
+    "evaluation_metrics": [
+      "Fração de endpoints com allowlisting em modo enforcement versus auditoria (CM-7(5))",
+      "Fração de endpoints com deny-by-exception para software proibido (CM-7(4))",
+      "Volume de tentativas de execução de software não autorizado bloqueadas versus permitidas (CM-7(2))",
+      "Cobertura de verificação de origem e integridade do software antes da instalação (assinatura, hash)",
+      "Fração de plataformas usando exclusivamente serviço de DNS aprovado com bloqueio de domínio malicioso",
+      "Fração de endpoints que permitem instalação apenas de software aprovado",
+      "Cobertura de execução a partir de mídia não modificável onde aplicável (SC-34)",
+      "Contagem de exceções de allowlisting vigentes e sua idade"
+    ],
+    "calculation_logic": "enforcement = endpoints_com_allowlisting_em_bloqueio / endpoints_gerenciados; bloqueio_efetivo = tentativas_de_execucao_nao_autorizada_bloqueadas / tentativas_de_execucao_nao_autorizada_detectadas; origem = instalacoes_com_verificacao_de_assinatura_ou_hash / instalacoes_observadas; dns = endpoints_usando_dns_aprovado_com_filtragem / endpoints_gerenciados; excecoes = 1 - min(1, excecoes_vigentes_com_mais_de_90_dias / max(1, excecoes_vigentes)). score = 0.30*enforcement + 0.25*bloqueio_efetivo + 0.20*origem + 0.15*dns + 0.10*excecoes. Status = Compliant se score >= 0.85 E bloqueio_efetivo >= 0.98 E enforcement >= 0.90; MitigatedByThirdParty se o allowlisting for gerenciado por provedor terceiro sem repasse do log de bloqueio; NonCompliant se score < 0.50 OU enforcement < 0.40. Allowlisting em modo auditoria NÃO conta no numerador de enforcement: a subcategoria exige PREVENIR execução, e regra que apenas observa é detecção — que já é medida por DE.CM-03 e DE.CM-09, e recontá-la aqui inflaria PROTECT com evidência de DETECT.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: Windows Defender Application Control e AppLocker em modo enforcement, com eventos de bloqueio de execução (CM-7(2), CM-7(5))",
+      "Microsoft Defender for Endpoint: regras de Attack Surface Reduction em bloqueio e DeviceEvents com tentativas de execução barradas",
+      "CrowdStrike Falcon: políticas de prevenção, blocklist de aplicação e eventos de execução bloqueada por política",
+      "SentinelOne: application control, blocklist e eventos de mitigação por tentativa de execução não autorizada",
+      "Microsoft Defender: filtragem de DNS e proteção de rede bloqueando resolução de domínio malicioso",
+      "Microsoft Sentinel: correlação entre tentativa de instalação de software não aprovado e a política de exceção vigente",
+      "Google SecOps: detecção de execução de binário não catalogado e de resolução DNS fora do resolvedor aprovado"
+    ]
+  },
+  {
+    "subcategory_id": "PR.PS-06",
+    "evaluation_metrics": [
+      "Existência de ciclo de vida de desenvolvimento seguro documentado e aplicado (SA-3)",
+      "Aplicação de princípios de engenharia de segurança no design (SA-8)",
+      "Cobertura de análise estática, dinâmica e de composição no pipeline (SA-11)",
+      "Densidade de vulnerabilidades por release e sua tendência entre versões (SA-11)",
+      "Existência de processo de gestão de configuração do desenvolvedor com controle de integridade (SA-10)",
+      "Proteção dos componentes do software produzido contra adulteração e acesso não autorizado (SA-10(1))",
+      "Cobertura de requisitos de processo de desenvolvimento, padrões e ferramentas (SA-15)",
+      "Fração de software próprio descartado com segurança ao fim da necessidade"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. Esta subcategoria mede o processo de construção de software (SA-3, SA-8, SA-10, SA-11, SA-15, SA-17), cuja evidência vive em repositório de código, pipeline de CI/CD, ferramenta de SAST/DAST/SCA e registro de revisão de design. Nenhuma dessas fontes pertence ao ecossistema declarado: as seis ferramentas observam software em EXECUÇÃO no parque, jamais o processo que o produziu. Apontar um EDR aqui confundiria o artefato em runtime com a prática de desenvolvimento e inventaria um conector. Procedimento de auditoria: (1) verificar SDLC documentado com portões de segurança definidos; (2) obter evidência de execução de SAST/DAST/SCA por release e a tendência de densidade de vulnerabilidade; (3) verificar controle de integridade e acesso ao repositório e ao pipeline; (4) comprovar processo de descarte seguro de software. Status = Compliant se os quatro passos passarem e os portões forem bloqueantes, não consultivos; MitigatedByThirdParty se o software for majoritariamente adquirido de terceiros e a prática for exigida contratualmente (SA-4) com atestação do fornecedor, sem execução própria; NonCompliant se não houver SDLC documentado ou se os portões de segurança forem não bloqueantes. NOTA: quando o AEGIS integrar telemetria de pipeline, esta regra deve ser reclassificada — a marcação manual reflete o ecossistema atual, não uma limitação do controle.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "PR.IR-01",
+    "evaluation_metrics": [
+      "Fração de interfaces gerenciadas operando em deny-by-default, allow-by-exception (SC-7(5))",
+      "Contagem de pontos de acesso externos versus o limite definido e autorizado (SC-7(3))",
+      "Fração de tráfego externo roteado por proxy autenticado nos pontos de saída (SC-7(8))",
+      "Cobertura de segmentação: fração de componentes críticos em sub-rede isolada (SC-7(21))",
+      "Fração de regras de fronteira com justificativa vigente e revisão dentro da cadência",
+      "Cobertura de enforcement de fluxo de informação entre domínios de segurança (AC-4)",
+      "Proteção contra negação de serviço nos pontos de borda (SC-5)",
+      "Prevenção de vazamento entre recursos compartilhados na infraestrutura (SC-4)",
+      "Contagem de regras permissivas do tipo any-any em fronteira"
+    ],
+    "calculation_logic": "deny_default = interfaces_em_deny_by_default / interfaces_gerenciadas; pontos_acesso = 1 - min(1, pontos_de_acesso_externos_nao_autorizados / max(1, pontos_de_acesso_externos)); segmentacao = componentes_criticos_em_subrede_isolada / componentes_criticos; higiene_regras = 1 - min(1, regras_any_any_em_fronteira / max(1, regras_de_fronteira)); fluxo = 1 se AC-4 aplicado entre domínios definidos senão 0. score = 0.30*deny_default + 0.20*pontos_acesso + 0.25*segmentacao + 0.15*higiene_regras + 0.10*fluxo. Status = Compliant se score >= 0.85 E deny_default == 1.0 E regras_any_any_em_fronteira == 0 (fail-closed: interface sem deny-by-default nega o SC-7(5) textualmente, e uma única regra any-any em fronteira anula a postura de todas as demais); MitigatedByThirdParty se a fronteira for operada por provedor de rede ou SASE terceiro sem repasse do conjunto de regras efetivo; NonCompliant se score < 0.50 OU deny_default < 0.80. SEPARAÇÃO DE CONCEITOS: esta regra mede a PROTEÇÃO e o enforcement na fronteira; o MONITORAMENTO do tráfego e a detecção de anomalia pertencem a DE.CM-01 e não são recontados aqui.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: logs de firewall e NSG com conjunto de regras efetivo, para medir deny-by-default e detectar regras any-any em fronteira",
+      "Microsoft Sentinel: NSG flow logs para verificar segmentação efetiva entre sub-redes e fluxo entre domínios de segurança (AC-4)",
+      "Microsoft Defender for Endpoint: network protection e DeviceNetworkEvents para conexões que contornam o ponto de saída controlado",
+      "Google SecOps: telemetria de rede em UDM para identificar pontos de acesso externos não catalogados e tráfego fora do proxy autenticado",
+      "CrowdStrike Falcon: eventos de rede do sensor para detectar host com rota de saída direta, fora da fronteira gerenciada",
+      "SentinelOne: firewall control do agente e política de rede aplicada por endpoint",
+      "Entra ID: Conditional Access por named location e device compliance como enforcement lógico de acesso à rede corporativa"
+    ]
+  },
+  {
+    "subcategory_id": "PR.IR-02",
+    "evaluation_metrics": [
+      "Proteção contra ameaça de incêndio: detecção, supressão e inspeção periódica (PE-13)",
+      "Controles de temperatura e umidade com monitoramento e alarme (PE-14)",
+      "Proteção contra dano por água e válvulas de corte acessíveis (PE-15)",
+      "Fornecimento de energia de emergência e proteção contra queda (PE-11, PE-9)",
+      "Interruptor de emergência acessível e protegido (PE-10)",
+      "Iluminação de emergência automática nas rotas de saída (PE-12)",
+      "Posicionamento de componentes minimizando exposição a ameaça ambiental (PE-18)",
+      "Requisitos ambientais impostos a provedores que operam sistemas em nome da organização (PE-23, CP-2)"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. Esta subcategoria trata de ameaça ambiental física (incêndio, alagamento, vento, calor e umidade excessivos) e de infraestrutura predial: os controles PE-9 a PE-15, PE-18 e PE-23 produzem laudo de inspeção, certificado de manutenção e leitura de sensor predial, nunca telemetria de segurança. Nenhuma das seis ferramentas do ecossistema observa temperatura de sala, supressão de incêndio ou energia de emergência; apontar qualquer uma delas aqui seria alucinação de fonte. Procedimento de auditoria: (1) obter laudo vigente de inspeção de incêndio e certificado de manutenção da supressão; (2) verificar monitoramento e alarme de temperatura e umidade com registro histórico; (3) comprovar energia de emergência com teste de carga documentado; (4) para sistemas operados por terceiros, verificar que os requisitos ambientais constam do contrato (Ex2 do CSF) e a atestação vigente. Status = Compliant se os quatro passos passarem com evidência dentro da validade; MitigatedByThirdParty se os ativos residirem em colocation ou nuvem pública, hipótese em que o controle é herdado do provedor e a evidência disponível é a certificação de datacenter (SOC 2 Type II, ISO 27001 com escopo físico, Tier Uptime) — este é o cenário PREDOMINANTE para parques majoritariamente em nuvem; NonCompliant se não houver laudo vigente para ativos on-premises sob responsabilidade direta da organização.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "PR.IR-03",
+    "evaluation_metrics": [
+      "Identificação e eliminação de pontos únicos de falha em sistemas e infraestrutura",
+      "Cobertura de balanceamento de carga para capacidade e confiabilidade",
+      "Fração de componentes críticos com redundância (armazenamento, energia, enlace)",
+      "Capacidade do sistema de falhar em estado conhecido e seguro (SC-24)",
+      "Cobertura de processamento e armazenamento distribuídos para reduzir alvo único (SC-36)",
+      "Isolamento de processo para conter falha e comprometimento (SC-39)",
+      "Prevenção de falha previsível por substituição antes do MTBF (SI-13)",
+      "Disponibilidade de recurso protegida contra exaustão por prioridade ou cota (SC-06)"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. Resiliência aqui é propriedade ARQUITETURAL (ausência de ponto único de falha, balanceamento, redundância de storage e energia, fail-safe em estado conhecido): comprova-se por diagrama de arquitetura, teste de failover e registro de contingência, não por telemetria de segurança. O ecossistema declarado observa ameaça e comportamento, não topologia de redundância. RESSALVA DE MAPEAMENTO: os âncoras registrados pelo NIST para esta subcategoria incluem as entradas 'CP' e 'IR' como FAMÍLIAS INTEIRAS, não como controles individuais — o catálogo não resolve quais controles específicos se aplicam, o que impede derivação determinística a partir do 800-53 e reforça a marcação manual. Procedimento de auditoria: (1) verificar análise de ponto único de falha por sistema crítico; (2) obter evidência do último teste de failover com resultado e tempo de comutação; (3) verificar redundância efetiva de componentes críticos; (4) comprovar comportamento de fail-safe em estado conhecido (SC-24). Status = Compliant se os quatro passos passarem e o teste de failover for de no máximo 12 meses; MitigatedByThirdParty se a resiliência for herdada de provedor de nuvem via SLA e zonas de disponibilidade, sem teste de failover conduzido pelo tenant; NonCompliant se existir ponto único de falha conhecido em sistema crítico sem plano de tratamento, ou se não houver teste de failover nos últimos 12 meses.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "PR.IR-04",
+    "evaluation_metrics": [
+      "Monitoramento de uso de armazenamento, energia, computação e banda de rede",
+      "Existência de previsão de necessidade futura com escala de recurso correspondente",
+      "Margem entre capacidade provisionada e pico observado por recurso crítico",
+      "Cadência de revisão do planejamento de capacidade (PM-3, CP-2)",
+      "Capacidade do site alternativo para sustentar a carga essencial (CP-7)",
+      "Redundância e capacidade dos serviços de telecomunicação (CP-8)",
+      "Adequação do armazenamento alternativo ao volume de dado protegido (CP-6)",
+      "Alocação de recurso alinhada ao investimento planejado (PM-3)"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. Capacidade de recurso (armazenamento, energia, computação, banda) é telemetria de OBSERVABILIDADE DE INFRAESTRUTURA e de planejamento orçamentário (PM-3), não de segurança: nenhuma das seis ferramentas do ecossistema mede utilização de CPU, consumo de energia, saturação de enlace ou margem de armazenamento do parque. A tentação de apontar métricas de ingestão do SIEM aqui deve ser resistida — elas medem a capacidade da plataforma de segurança, não a capacidade dos ativos que a subcategoria protege, e confundiriam o instrumento com o objeto medido. Procedimento de auditoria: (1) verificar existência de monitoramento de capacidade por recurso crítico com histórico; (2) obter a previsão de necessidade futura e a evidência de escala correspondente; (3) verificar margem entre provisionado e pico observado; (4) comprovar capacidade do site e do enlace alternativos (CP-7, CP-8). Status = Compliant se os quatro passos passarem e a margem for suficiente para o pico projetado; MitigatedByThirdParty se a capacidade for elástica e gerenciada por provedor de nuvem, com escala automática contratada mas sem previsão conduzida pelo tenant; NonCompliant se não houver monitoramento de capacidade ou se algum recurso crítico operar sem margem para o pico projetado.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "ID.AM-01",
+    "evaluation_metrics": [
+      "Acurácia do inventário de hardware: ativos descobertos em telemetria versus catalogados (CM-08a)",
+      "Latência entre instalação ou remoção de componente e atualização do inventário (CM-08(01))",
+      "Cobertura de manutenção automatizada do inventário: currency, completeness, accuracy e availability (CM-08(02))",
+      "Contagem de hardware não autorizado detectado no parque (CM-08(03))",
+      "Completude da informação de responsabilização por componente: owner, posição, endereço de rede (CM-08(04))",
+      "Existência de repositório centralizado de inventário (CM-08(07))",
+      "Fração de componentes atribuídos a um sistema declarado (CM-08(09))",
+      "Contagem de contabilização duplicada de componente entre inventários (CM-08(05))"
+    ],
+    "calculation_logic": "ÂNCORA ÚNICA — esta subcategoria depende exclusivamente de CM-08 (System Component Inventory) na 5.2.0; PM-05 é o outro mapeamento do NIST e foi descartado por ser administrativo (System Inventory, família de programa). Toda a lógica abaixo deriva das determinations do CM-08 e de seus enhancements 01/02/03/04/07/09. acuracia = 1 - min(1, |ativos_descobertos_em_telemetria - ativos_catalogados| / max(1, ativos_descobertos_em_telemetria)); frescor = 1 - min(1, p95_latencia_atualizacao_apos_instalacao_ou_remocao_h / 24); nao_autorizado = 1 - min(1, hardware_nao_autorizado_detectado / max(1, ativos_descobertos_em_telemetria)); responsabilizacao = componentes_com_owner_e_endereco_registrados / ativos_catalogados. score = 0.35*acuracia + 0.20*frescor + 0.25*nao_autorizado + 0.20*responsabilizacao. Status = Compliant se score >= 0.85 E acuracia >= 0.95 E deteccao_automatizada_de_componente_nao_autorizado_ativa == true (fail-closed: o CM-08(03) trata a detecção de componente não autorizado como capacidade, não como relatório — inventário que só lista o que já se sabe não detecta o intruso físico); MitigatedByThirdParty se o inventário for mantido por provedor de field services ou ITSM terceiro sem reconciliação contra telemetria própria; NonCompliant se score < 0.50 OU acuracia < 0.80. SEPARAÇÃO DE CONCEITOS: aqui mede-se a EXISTÊNCIA e a CORRENTEZA do inventário de hardware; PR.PS-01 consome a acurácia do inventário como um de quatro insumos da prática de gestão de configuração, e PR.PS-03 trata do ciclo de vida (suporte, EOL, firmware) — os três não recontam a mesma métrica.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: DeviceInfo como fonte de descoberta de hardware, confrontável contra o inventário catalogado para medir acurácia (CM-08a)",
+      "Microsoft Defender for Endpoint: device discovery para identificar dispositivo não gerenciado presente na rede (CM-08(03))",
+      "CrowdStrike Falcon: host inventory com modelo, serial e endereço de rede para responsabilização de componente (CM-08(04))",
+      "SentinelOne: inventário de dispositivos e Ranger para descoberta de ativo não gerenciado no parque",
+      "Entra ID: device registration e join como fonte cruzada de existência de ativo, detectando divergência com o inventário de endpoint",
+      "Microsoft Sentinel: reconciliação entre fontes de descoberta e o inventário declarado; alertas de hardware não autorizado e de duplicidade de contabilização"
+    ]
+  },
+  {
+    "subcategory_id": "ID.AM-02",
+    "evaluation_metrics": [
+      "Acurácia do inventário de software instalado versus descoberto em telemetria (CM-08a)",
+      "Fração de sistemas externos em uso com autorização registrada (AC-20)",
+      "Contagem de serviços SaaS e aplicações em uso não catalogados (shadow IT)",
+      "Fração de serviços de sistema externos com controle verificado (SA-09)",
+      "Disponibilidade da documentação administrativa do software inventariado (SA-05)",
+      "Latência entre instalação de software e reflexo no inventário",
+      "Fração de software inventariado com versão e owner registrados",
+      "Contagem de aplicações OAuth consentidas sem revisão"
+    ],
+    "calculation_logic": "acuracia_sw = 1 - min(1, |software_descoberto - software_catalogado| / max(1, software_descoberto)); externos = sistemas_externos_autorizados / sistemas_externos_em_uso_detectados; shadow = 1 - min(1, servicos_saas_nao_catalogados / max(1, servicos_saas_detectados)); metadados = itens_com_versao_e_owner / software_catalogado. score = 0.30*acuracia_sw + 0.25*externos + 0.25*shadow + 0.20*metadados. Status = Compliant se score >= 0.85 E acuracia_sw >= 0.95 E externos >= 0.95; MitigatedByThirdParty se o inventário de software for provido por ITSM ou CMDB terceiro sem reconciliação contra descoberta em telemetria; NonCompliant se score < 0.50 OU acuracia_sw < 0.80. Software descoberto na telemetria e ausente do catálogo conta contra a acurácia mesmo que legítimo: o CM-08 exige completude, e catálogo que ignora o que existe não é inventário, é lista de desejos.",
+    "evidence_requirements": [
+      "Microsoft Defender Vulnerability Management: DeviceTvmSoftwareInventory como descoberta autoritativa de software instalado por ativo",
+      "Microsoft Defender: descoberta de aplicações em nuvem e serviços SaaS em uso, para quantificar shadow IT contra o catálogo (AC-20)",
+      "Entra ID: enterprise applications, service principals e OAuth consents como inventário de serviços e sistemas externos integrados ao tenant",
+      "CrowdStrike Falcon: inventário de aplicações por host com versão instalada",
+      "SentinelOne: application inventory e descoberta de software não catalogado no parque",
+      "Microsoft Sentinel: reconciliação entre software descoberto e catalogado; alertas de serviço externo em uso sem autorização registrada"
+    ]
+  },
+  {
+    "subcategory_id": "ID.AM-03",
+    "evaluation_metrics": [
+      "Fração de fluxos de dados autorizados representados em documentação vigente (PL-08, CA-03)",
+      "Divergência entre fluxo documentado e fluxo observado em telemetria de rede",
+      "Fração de conexões entre sistemas com acordo ou autorização registrada (CA-03)",
+      "Cobertura de enforcement de fluxo de informação entre domínios de segurança (AC-04)",
+      "Fração de serviços internos e externos catalogados no inventário de conexões (CA-09)",
+      "Contagem de fluxos externos observados e não previstos na representação da rede",
+      "Frescor da representação da rede: idade desde a última revisão",
+      "Aderência dos fluxos observados à arquitetura de segurança definida (PL-08)"
+    ],
+    "calculation_logic": "cobertura_doc = fluxos_documentados / fluxos_autorizados_declarados; aderencia = 1 - min(1, fluxos_observados_nao_documentados / max(1, fluxos_observados)); acordos = conexoes_entre_sistemas_com_acordo_registrado / conexoes_entre_sistemas_observadas; frescor = 1 - min(1, idade_da_representacao_dias / 180). score = 0.25*cobertura_doc + 0.35*aderencia + 0.25*acordos + 0.15*frescor. Status = Compliant se score >= 0.85 E aderencia >= 0.90 E frescor > 0 (fail-closed: representação com mais de 180 dias descreve uma rede que não existe mais, e diagrama obsoleto é pior que ausência de diagrama porque induz decisão errada); MitigatedByThirdParty se a topologia for gerenciada por provedor de rede terceiro que fornece diagrama sem exportação de fluxo observado para reconciliação; NonCompliant se score < 0.50 OU aderencia < 0.60. A métrica-chave é a DIVERGÊNCIA entre documentado e observado: a subcategoria pede representação MANTIDA, e manutenção só é verificável confrontando o desenho contra o tráfego real.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: NSG flow logs e logs de firewall como fluxo OBSERVADO, confrontável contra a representação documentada para medir divergência",
+      "Google SecOps: telemetria de rede em UDM (NETWORK_CONNECTION) para mapear fluxos internos e externos efetivos",
+      "Microsoft Defender for Endpoint: DeviceNetworkEvents para descobrir conexões host-a-host e host-a-externo não previstas na arquitetura",
+      "CrowdStrike Falcon: eventos de rede do sensor para identificar comunicação entre segmentos fora do fluxo autorizado",
+      "SentinelOne: Deep Visibility para conexões de saída não catalogadas na representação da rede",
+      "Entra ID: named locations e Conditional Access como declaração dos fluxos de acesso autorizados, confrontável contra os sign-ins observados"
+    ]
+  },
+  {
+    "subcategory_id": "ID.AM-04",
+    "evaluation_metrics": [
+      "Fração de serviços de fornecedores catalogados versus detectados em uso (SA-09)",
+      "Fração de sistemas externos em uso com termos de uso e autorização estabelecidos (AC-20)",
+      "Contagem de integrações SaaS ativas no tenant sem registro no inventário de fornecedores",
+      "Fração de serviços de fornecedor com owner interno designado",
+      "Cobertura de acordos de cadeia de suprimento por serviço crítico (SR-02)",
+      "Contagem de aplicações de terceiros com consentimento OAuth de alto privilégio",
+      "Latência entre contratação de serviço e reflexo no inventário",
+      "Fração de serviços de fornecedor com controle verificado pela organização (SA-09c)"
+    ],
+    "calculation_logic": "catalogacao = servicos_de_fornecedor_catalogados / servicos_de_fornecedor_detectados_em_uso; autorizacao = sistemas_externos_com_autorizacao_registrada / sistemas_externos_em_uso; owner = servicos_com_owner_interno_designado / servicos_catalogados; consentimento = 1 - min(1, apps_terceiros_com_consentimento_alto_privilegio_sem_revisao / max(1, apps_terceiros_consentidos)). score = 0.35*catalogacao + 0.25*autorizacao + 0.20*owner + 0.20*consentimento. Status = Compliant se score >= 0.85 E catalogacao >= 0.90 E consentimento >= 0.95 (fail-closed: aplicação de terceiro com consentimento de alto privilégio e sem revisão é serviço de fornecedor operando dentro do tenant fora de qualquer inventário — é a materialização exata do risco que ID.AM-04 endereça); MitigatedByThirdParty se o inventário de fornecedores for mantido por procurement em ferramenta externa sem reconciliação contra as integrações observadas no tenant; NonCompliant se score < 0.50 OU catalogacao < 0.60. RESSALVA DE ESCOPO: a telemetria descobre o serviço EM USO e a integração ATIVA; o registro contratual do fornecedor (SR-02) reside em procurement e sustenta a perna documental da subcategoria.",
+    "evidence_requirements": [
+      "Entra ID: enterprise applications, service principals, OAuth consent grants e permissões concedidas como inventário efetivo de serviços de terceiros integrados",
+      "Entra ID: contas guest e B2B como indicador de fornecedor com acesso ativo ao ambiente",
+      "Microsoft Defender: descoberta de aplicações em nuvem e serviços SaaS em uso no parque, revelando fornecedor não catalogado (AC-20)",
+      "Microsoft Sentinel: correlação entre serviço detectado em uso e o inventário de fornecedores declarado; alertas de consentimento OAuth de alto privilégio",
+      "Google SecOps: normalização de eventos de acesso a serviços externos para identificar dependência de fornecedor não registrada",
+      "CrowdStrike Falcon: telemetria de processo e rede indicando agente ou ferramenta de fornecedor executando no parque"
+    ]
+  },
+  {
+    "subcategory_id": "ID.AM-05",
+    "evaluation_metrics": [
+      "Fração de ativos com categorização de segurança atribuída (RA-02)",
+      "Fração de ativos com criticidade e impacto na missão registrados",
+      "Aderência da categorização ao tipo de informação processada e armazenada (RA-02, FIPS 199)",
+      "Fração de ativos priorizados cuja criticidade é consumida por decisão automatizada (priorização de alerta, escopo de resposta)",
+      "Cobertura de avaliação de risco por ativo categorizado (RA-03)",
+      "Fração de ativos com risco de cadeia de suprimento avaliado (RA-03(01))",
+      "Fração de ativos com avaliação de criticidade formal (RA-09)",
+      "Divergência entre criticidade declarada e criticidade observada por exposição real"
+    ],
+    "calculation_logic": "categorizacao = ativos_com_categoria_de_seguranca_atribuida / ativos_inventariados; criticidade = ativos_com_criticidade_e_impacto_na_missao_registrados / ativos_inventariados; consumo = ativos_cuja_criticidade_alimenta_priorizacao_automatizada / ativos_com_criticidade_registrada; avaliacao = ativos_com_avaliacao_de_risco_vigente / ativos_criticos. score = 0.30*categorizacao + 0.30*criticidade + 0.25*consumo + 0.15*avaliacao. Status = Compliant se score >= 0.85 E criticidade >= 0.90 E consumo >= 0.80 (fail-closed no CONSUMO: criticidade registrada e nunca consumida por priorização é metadado morto — a subcategoria diz 'assets ARE prioritized', não 'assets are labeled', e rótulo que não muda decisão não prioriza nada); MitigatedByThirdParty se a classificação for herdada de matriz corporativa mantida fora do stack sem sincronização com as ferramentas de resposta; NonCompliant se score < 0.50 OU criticidade < 0.50 (sem criticidade não há denominador de impacto para ID.RA-04 nem para o Raio de Explosão).",
+    "evidence_requirements": [
+      "Microsoft Sentinel: watchlists de criticidade de ativo alimentando priorização de incidente, comprovando que a classificação é consumida e não apenas declarada",
+      "Microsoft Defender: device value e device tags por ativo, com reflexo na priorização de recomendação e de alerta",
+      "CrowdStrike Falcon: host groups e criticidade aplicados à política de prevenção e ao ranking de detecção",
+      "SentinelOne: agrupamento de endpoints por criticidade e política diferenciada por grupo",
+      "Entra ID: privileged roles e grupos de acesso a dado crítico como sinal de criticidade da identidade e do recurso associado",
+      "Google SecOps: entity context e asset metadata com criticidade aplicada ao risk scoring das detecções"
+    ]
+  },
+  {
+    "subcategory_id": "ID.AM-07",
+    "evaluation_metrics": [
+      "Fração de tipos de dado designados com localização identificada e documentada (CM-12)",
+      "Cobertura de ferramentas automatizadas para identificação de localização de informação (CM-12(01))",
+      "Fração de componentes onde dado designado é processado e armazenado, identificados e documentados (CM-12)",
+      "Fração de usuários com acesso aos componentes que processam ou armazenam dado designado, identificados (CM-12)",
+      "Cobertura de rastreamento de mudança de localização do dado (CM-12)",
+      "Fração de dados designados com ação de mapeamento aplicada (CM-13)",
+      "Retenção e gestão do dado e metadado ao longo do ciclo definido (SI-12)",
+      "Contagem de repositórios com dado designado descobertos fora do inventário"
+    ],
+    "calculation_logic": "localizacao = tipos_de_dado_designados_com_localizacao_documentada / tipos_de_dado_designados; automacao = tipos_de_dado_identificados_por_ferramenta_automatizada / tipos_de_dado_designados; acesso = componentes_com_usuarios_de_acesso_identificados / componentes_com_dado_designado; mudanca = mudancas_de_localizacao_documentadas / mudancas_de_localizacao_detectadas. score = 0.30*localizacao + 0.30*automacao + 0.20*acesso + 0.20*mudanca. Status = Compliant se score >= 0.85 E automacao >= 0.80 (fail-closed na AUTOMAÇÃO: o CM-12(01) exige ferramenta automatizada porque localização de dado levantada manualmente desatualiza no dia seguinte — inventário de dado é o único cujo denominador se move sozinho); MitigatedByThirdParty se a descoberta de dado for provida por DLP ou catálogo de dados de terceiro sem repasse do resultado ao tenant; NonCompliant se score < 0.50 OU localizacao < 0.50. A determination do CM-12 na 5.2.0 exige identificar não só ONDE o dado está, mas QUEM tem acesso ao componente que o processa — cobertura de localização sem cobertura de acesso não satisfaz o controle.",
+    "evidence_requirements": [
+      "Microsoft Defender: descoberta e classificação de dado sensível em endpoints e serviços de nuvem, com localização por repositório (CM-12(01))",
+      "Microsoft Defender for Endpoint: DeviceFileEvents para rastrear movimentação de arquivo com dado designado entre componentes",
+      "Microsoft Sentinel: correlação entre repositório descoberto com dado designado e o inventário declarado; alertas de mudança de localização não documentada",
+      "Entra ID: identidades e grupos com acesso aos componentes que processam dado designado, atendendo à determination de identificação de usuários do CM-12",
+      "Google SecOps: normalização de eventos de acesso a dado para mapear onde tipos designados são efetivamente processados",
+      "SentinelOne: Deep Visibility para movimentação de arquivo sensível e exfiltração para repositório fora do inventário"
+    ]
+  },
+  {
+    "subcategory_id": "ID.AM-08",
+    "evaluation_metrics": [
+      "Fração de ativos com estágio de ciclo de vida registrado e atualizado",
+      "Cobertura de verificação de integridade de software e firmware ao longo do uso (SI-07)",
+      "Fração de software em produção com suporte vigente versus não suportado (SA-22)",
+      "Fração de mudanças de ciclo de vida (provisionamento, atualização, descomissionamento) refletidas no inventário (CM-09)",
+      "Cobertura de gestão de dado e metadado ao longo do ciclo (SI-12)",
+      "Fração de componentes de fornecedor com proveniência mantida ao longo do ciclo (SR-05, SR-12)",
+      "Cobertura de manutenção controlada e ferramenta de manutenção autorizada (MA-02, MA-06)",
+      "Fração de ativos descomissionados com sanitização registrada"
+    ],
+    "calculation_logic": "estagio = ativos_com_estagio_de_ciclo_de_vida_registrado / ativos_inventariados; suporte = 1 - min(1, software_em_producao_sem_suporte / max(1, software_em_producao)); integridade = ativos_com_verificacao_de_integridade_ativa / ativos_criticos; transicao = mudancas_de_ciclo_refletidas_no_inventario / mudancas_de_ciclo_detectadas. score = 0.25*estagio + 0.30*suporte + 0.25*integridade + 0.20*transicao. Status = Compliant se score >= 0.85 E suporte >= 0.95; MitigatedByThirdParty se o ciclo de vida for gerenciado por provedor de field services ou por contrato de leasing sem repasse do registro por ativo; NonCompliant se score < 0.50 OU suporte < 0.70. SEPARAÇÃO DE CONCEITOS: aqui mede-se a GESTÃO do ciclo ponta a ponta (estágio conhecido, transição refletida, proveniência mantida); PR.PS-02 mede o SLA de remediação de falha e PR.PS-03 mede a aptidão do hardware — nenhuma das três reconta a outra. RESSALVA DE ESCOPO: a sanitização no descarte é ato físico com registro documental e não é observável na telemetria.",
+    "evidence_requirements": [
+      "Microsoft Defender Vulnerability Management: DeviceTvmSoftwareInventory com fim de suporte e versão, identificando software em produção fora de suporte (SA-22)",
+      "Microsoft Defender for Endpoint: onboarding e offboarding de dispositivo como marcadores de transição de ciclo de vida no parque",
+      "CrowdStrike Falcon: host inventory com data de primeiro e último contato do sensor, evidenciando provisionamento e descomissionamento",
+      "SentinelOne: inventário de agente e status de decomissionamento por endpoint",
+      "Entra ID: device registration, disable e delete como registro de ciclo de vida da identidade do ativo",
+      "Microsoft Sentinel: correlação entre transição de ciclo detectada na telemetria e a atualização do inventário declarado",
+      "Google SecOps: reconciliação de presença de ativo entre fontes para identificar componente ativo fora do ciclo declarado"
+    ]
+  },
+  {
+    "subcategory_id": "ID.RA-01",
+    "evaluation_metrics": [
+      "Cobertura de varredura de vulnerabilidade sobre os ativos inventariados (RA-05)",
+      "Cadência efetiva de varredura versus a definida por categoria de segurança do ativo (RA-05)",
+      "Amplitude e profundidade da cobertura de varredura contra a definida (RA-05(03))",
+      "Fração de varreduras executadas com acesso privilegiado, evitando falso-negativo (RA-05(05))",
+      "Frequência de atualização da base de vulnerabilidades a serem varridas (RA-05(02))",
+      "Fração de vulnerabilidades validadas versus apenas reportadas pelo scanner",
+      "Cobertura de correlação entre resultados de múltiplas varreduras (RA-05(10), RA-05(01))",
+      "Cobertura de fontes frequentemente esquecidas: switches, roteadores, impressoras de rede, scanners (RA-05 Discussion)"
+    ],
+    "calculation_logic": "cobertura = ativos_varridos_no_ciclo / ativos_inventariados; cadencia = 1 se intervalo_p95_de_varredura <= intervalo_definido_por_categoria senão intervalo_definido / intervalo_p95; privilegiado = varreduras_com_acesso_privilegiado / varreduras_executadas; validacao = vulnerabilidades_validadas / vulnerabilidades_reportadas; atualizacao = 1 se base_de_vulnerabilidades_atualizada_no_ciclo senão 0. score = 0.30*cobertura + 0.20*cadencia + 0.20*privilegiado + 0.20*validacao + 0.10*atualizacao. Status = Compliant se score >= 0.85 E cobertura >= 0.95 E atualizacao == 1 (fail-closed: a Discussion do RA-05 na 5.2.0 é explícita em que a capacidade de atualizar a ferramenta conforme novas vulnerabilidades são anunciadas é o que impede que vulnerabilidades novas passem despercebidas — scanner desatualizado produz relatório limpo e falso); MitigatedByThirdParty se a varredura for executada por MSSP sem repasse do resultado bruto por ativo; NonCompliant se score < 0.50 OU cobertura < 0.70. Ativo inventariado e nunca varrido conta contra a cobertura mesmo que inacessível ao scanner: ponto cego declarado continua sendo ponto cego. SEPARAÇÃO DE CONCEITOS: esta regra mede IDENTIFICAÇÃO, VALIDAÇÃO e REGISTRO da vulnerabilidade; o tempo até remediá-la é de PR.PS-02 e não é recontado aqui.",
+    "evidence_requirements": [
+      "Microsoft Defender Vulnerability Management: DeviceTvmSoftwareVulnerabilities com CVE por ativo, cobertura de avaliação e data de detecção",
+      "Microsoft Defender for Endpoint: DeviceInfo para o denominador de ativos elegíveis, revelando ativo inventariado sem avaliação de vulnerabilidade",
+      "CrowdStrike Falcon Spotlight: vulnerabilidades por host com criticidade, evidência de exploração e status de validação",
+      "SentinelOne: application risk e vulnerabilidades identificadas por endpoint gerenciado",
+      "Microsoft Sentinel: correlação entre resultados de múltiplas fontes de varredura para reduzir falso-negativo (RA-05(10))",
+      "Google SecOps: normalização de achados de vulnerabilidade em UDM para tendência de cobertura e cadência por categoria de ativo"
+    ]
+  },
+  {
+    "subcategory_id": "ID.RA-02",
+    "evaluation_metrics": [
+      "Contagem de fontes de inteligência de ameaça conectadas e ativas (SI-05a)",
+      "Frescor dos alertas, advisories e directives recebidos: idade média desde a publicação (SI-05)",
+      "Latência entre publicação do alerta na fonte e sua disponibilidade interna (SI-05b)",
+      "Cobertura de disseminação do alerta aos papéis definidos (SI-05c)",
+      "Fração de alertas recebidos por mecanismo automatizado (SI-05(01))",
+      "Fração de fontes externas de compartilhamento setorial ativas (ISAC, ISAO, CERT)",
+      "Contagem de directives com prazo de conformidade recebidos e rastreados (SI-05d)",
+      "Continuidade de recebimento: janelas sem qualquer ingestão de inteligência"
+    ],
+    "calculation_logic": "ÂNCORA ÚNICA — o único âncora técnico desta subcategoria é SI-05 (Security Alerts, Advisories, and Directives); PM-15 e PM-16 são os outros mapeamentos do NIST e foram descartados por serem de programa (grupos/associações e programa de conscientização de ameaça). Toda a lógica deriva das determinations do SI-05 e do enhancement SI-05(01). fontes = fontes_de_inteligencia_ativas / fontes_de_inteligencia_definidas; frescor = 1 - min(1, idade_media_do_feed_h / 24); latencia = 1 - min(1, p95_latencia_publicacao_ate_disponibilidade_h / 4); disseminacao = alertas_disseminados_aos_papeis_definidos / alertas_recebidos; automacao = alertas_recebidos_por_mecanismo_automatizado / alertas_recebidos. score = 0.25*fontes + 0.20*frescor + 0.20*latencia + 0.20*disseminacao + 0.15*automacao. Status = Compliant se score >= 0.85 E fontes >= 0.90 E automacao >= 0.80; MitigatedByThirdParty se a inteligência for consumida exclusivamente embutida no produto do fornecedor, sem feed próprio nem capacidade de adicionar fonte setorial — há benefício, não há controle sobre quais fontes alimentam a organização; NonCompliant se score < 0.50 OU fontes == 0. SEPARAÇÃO DE CONCEITOS: esta regra mede o RECEBIMENTO da inteligência a partir de fóruns e fontes; a INTEGRAÇÃO dela na análise de detecção é de DE.AE-07 e não é recontada aqui — receber feed e usá-lo em matching são asserções distintas.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: Threat Intelligence connectors (TAXII, upload API) com contagem de fontes ativas, volume e timestamp de ingestão por feed",
+      "Microsoft Sentinel: tabela ThreatIntelligenceIndicator para medir frescor e continuidade do recebimento",
+      "Google SecOps: Applied Threat Intelligence e feeds curados conectados, com cadência de atualização por fonte",
+      "Microsoft Defender: Threat Analytics como fonte de advisories de campanha recebidos e disseminados ao time",
+      "CrowdStrike Falcon Intelligence: relatórios e indicadores recebidos, com data de publicação e disponibilização",
+      "SentinelOne: feeds de IOC conectados ao engine de detecção como evidência de recebimento automatizado"
+    ]
+  },
+  {
+    "subcategory_id": "ID.RA-03",
+    "evaluation_metrics": [
+      "Fração de ameaças internas e externas identificadas e registradas em repositório rastreável (RA-03a.1)",
+      "Cobertura de identificação de ameaça por categoria: externa, interna, cadeia de suprimento",
+      "Fração de ameaças registradas com fonte e data de identificação",
+      "Cadência de revisão e atualização do registro de ameaças (RA-03d, RA-03f)",
+      "Cobertura de ameaça interna com sinal comportamental associado (PM-12 operacionalizado por telemetria)",
+      "Fração de advisories recebidos convertidos em ameaça registrada (SI-05)",
+      "Fração de ameaças registradas com ativos afetados mapeados",
+      "Latência entre identificação da ameaça e seu registro"
+    ],
+    "calculation_logic": "registro = ameacas_identificadas_e_registradas / ameacas_identificadas; cobertura_categorias = categorias_de_ameaca_com_identificacao_ativa / 3 (externa, interna, cadeia de suprimento); conversao = advisories_convertidos_em_ameaca_registrada / advisories_relevantes_recebidos; mapeamento = ameacas_com_ativos_afetados_mapeados / ameacas_registradas; frescor = 1 se registro_revisado_dentro_da_cadencia senão 0. score = 0.25*registro + 0.25*cobertura_categorias + 0.20*conversao + 0.20*mapeamento + 0.10*frescor. Status = Compliant se score >= 0.85 E cobertura_categorias == 1.0 (fail-closed: a subcategoria nomeia explicitamente ameaça INTERNA e EXTERNA, e organização que só cataloga a externa tem um ponto cego estrutural, não uma cobertura parcial); MitigatedByThirdParty se a identificação de ameaça for terceirizada a serviço de inteligência sem repasse do registro contextualizado ao ambiente do tenant; NonCompliant se score < 0.50 OU não houver identificação de ameaça interna ativa. SEPARAÇÃO DE CONCEITOS: aqui mede-se a IDENTIFICAÇÃO e o REGISTRO da ameaça como entidade de risco; DE.CM-03 mede o monitoramento de atividade de pessoal e DE.AE-07 mede o enriquecimento da análise — as três consomem sinais próximos com asserções distintas.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: ThreatIntelligenceIndicator e regras analíticas como registro rastreável de ameaças externas identificadas e seus ativos afetados",
+      "Microsoft Defender: Threat Analytics com campanhas ativas mapeadas contra a exposição real do parque",
+      "Entra ID: Identity Protection risk detections como identificação de ameaça a identidade, incluindo sinal de ameaça interna",
+      "Microsoft Sentinel: regras de UEBA para identificação de ameaça interna com sinal comportamental associado",
+      "CrowdStrike Falcon Intelligence: atribuição de adversário e TTPs identificados como ameaça registrada com contexto",
+      "Google SecOps: entity risk e curated detections para catalogar ameaças observadas no ambiente",
+      "SentinelOne: Storyline e classificação de ameaça observada no parque gerenciado"
+    ]
+  },
+  {
+    "subcategory_id": "ID.RA-04",
+    "evaluation_metrics": [
+      "Fração de ameaças registradas com impacto potencial estimado e registrado (RA-03a.2)",
+      "Fração de ameaças com probabilidade de exploração estimada",
+      "Cobertura de enriquecimento com criticidade de ativo na estimativa de impacto (RA-02)",
+      "Fração de vulnerabilidades com evidência de exploração ativa considerada na probabilidade",
+      "Cobertura de estimativa de impacto sobre indivíduos no processamento de dado pessoal (RA-03a.3)",
+      "Fração de estimativas de impacto com alcance de ativos calculado automaticamente",
+      "Cadência de atualização da estimativa mediante mudança significativa (RA-03f)",
+      "Fração de ativos com avaliação de criticidade formal sustentando a estimativa (RA-09)"
+    ],
+    "calculation_logic": "impacto = ameacas_com_impacto_estimado / ameacas_registradas; probabilidade = ameacas_com_probabilidade_estimada / ameacas_registradas; enriquecimento = estimativas_com_criticidade_de_ativo_aplicada / estimativas_produzidas; exploracao = vulnerabilidades_com_evidencia_de_exploracao_ativa_considerada / vulnerabilidades_de_alta_severidade; frescor = 1 se estimativas_atualizadas_apos_mudanca_significativa senão 0. score = 0.25*impacto + 0.25*probabilidade + 0.20*enriquecimento + 0.20*exploracao + 0.10*frescor. Status = Compliant se score >= 0.85 E enriquecimento >= 0.85 E exploracao >= 0.90 (fail-closed na EXPLORAÇÃO: probabilidade estimada sem considerar se a vulnerabilidade está sendo ativamente explorada no mundo real é numerologia, não análise — a evidência de exploração é o dado que mais move a probabilidade); MitigatedByThirdParty se a estimativa for produzida por metodologia de terceiro sem repasse da base de cálculo; NonCompliant se score < 0.50 OU enriquecimento < 0.40. SEPARAÇÃO DE CONCEITOS: esta regra estima impacto e probabilidade EM POTENCIAL, antes do evento; DE.AE-04 estima escopo de evento adverso já detectado e RS.AN-08 valida a magnitude do incidente ocorrido — três momentos distintos da mesma grandeza.",
+    "evidence_requirements": [
+      "Microsoft Defender Vulnerability Management: exposure score, threat insights e indicação de exploração ativa ou disponível por CVE, alimentando a probabilidade",
+      "Microsoft Defender: Threat Analytics com exposição do parque por campanha, sustentando a estimativa de impacto potencial",
+      "Microsoft Sentinel: watchlists de criticidade de ativo aplicadas à estimativa de impacto; correlação entre ameaça registrada e ativos alcançáveis",
+      "CrowdStrike Falcon Spotlight: ExPRT rating com contexto de exploração real para ponderar probabilidade por vulnerabilidade",
+      "Entra ID: privilégio e alcance da identidade afetada para dimensionar impacto potencial de comprometimento",
+      "Google SecOps: entity context e risk scoring para estimar alcance potencial da ameaça no ambiente",
+      "SentinelOne: risco de aplicação e superfície exposta por endpoint como insumo da estimativa"
+    ]
+  },
+  {
+    "subcategory_id": "ID.RA-05",
+    "evaluation_metrics": [
+      "Fração de riscos inerentes calculados a partir de ameaça, vulnerabilidade, probabilidade e impacto combinados (RA-03)",
+      "Cobertura de priorização de resposta derivada do risco inerente calculado",
+      "Consistência do método de cálculo entre riscos de classe equivalente",
+      "Fração de riscos com categorização de segurança do ativo aplicada ao cálculo (RA-02)",
+      "Correlação entre a prioridade calculada e a ordem efetiva de tratamento observada",
+      "Fração de riscos priorizados com os quatro fatores presentes versus estimativa parcial",
+      "Cadência de recálculo mediante nova ameaça ou vulnerabilidade identificada",
+      "Divergência entre prioridade calculada e prioridade efetivamente executada"
+    ],
+    "calculation_logic": "completude = riscos_com_os_quatro_fatores_presentes / riscos_calculados; cobertura = riscos_calculados / riscos_identificados; priorizacao = riscos_com_prioridade_derivada_do_calculo / riscos_calculados; aderencia = 1 - min(1, divergencia_media_entre_prioridade_calculada_e_executada / max(1, riscos_priorizados)); recalculo = 1 se recalculo_disparado_por_nova_ameaca_ou_vulnerabilidade senão 0. score = 0.25*completude + 0.20*cobertura + 0.25*priorizacao + 0.20*aderencia + 0.10*recalculo. Status = Compliant se score >= 0.85 E completude >= 0.90 E aderencia >= 0.80 (fail-closed na ADERÊNCIA: a subcategoria diz que os fatores são usados para INFORMAR a priorização da resposta — se a ordem de tratamento observada diverge da prioridade calculada, o cálculo não informa nada e o controle é decorativo); MitigatedByThirdParty se o cálculo de risco inerente for produzido por GRC de terceiro sem sincronização com a exposição observada no stack; NonCompliant se score < 0.50 OU completude < 0.50 (risco calculado sem os quatro fatores não é risco inerente, é palpite rotulado).",
+    "evidence_requirements": [
+      "Microsoft Defender Vulnerability Management: exposure score e security recommendations ordenadas por risco, comprovando priorização derivada de cálculo",
+      "Microsoft Sentinel: correlação entre prioridade de risco calculada e a ordem efetiva de remediação observada, medindo aderência",
+      "CrowdStrike Falcon Spotlight: ExPRT rating combinando severidade, exploração e criticidade de host como cálculo de risco inerente",
+      "Microsoft Defender: Threat Analytics relacionando ameaça ativa à exposição do parque para compor probabilidade e impacto",
+      "Entra ID: Identity Protection risk level como fator de risco inerente da identidade aplicado à priorização",
+      "Google SecOps: risk scoring de entidade combinando ameaça, exposição e contexto de ativo",
+      "SentinelOne: risco por aplicação e endpoint como insumo do cálculo de risco inerente"
+    ]
+  },
+  {
+    "subcategory_id": "ID.RA-06",
+    "evaluation_metrics": [
+      "Fração de achados de avaliação, monitoramento e auditoria com resposta a risco escolhida e registrada (RA-07)",
+      "Aderência da resposta escolhida à tolerância a risco declarada",
+      "Fração de respostas com plano de ação e marcos gerados quando a mitigação não é imediata (RA-07 Discussion, CA-05)",
+      "Cobertura de rastreamento da resposta até o encerramento",
+      "Fração de aceitações de risco com justificativa formal e aprovador registrado",
+      "Cobertura de comunicação da resposta aos responsáveis designados",
+      "Idade média das respostas em aberto contra o marco planejado",
+      "Distribuição das respostas entre mitigar, aceitar, compartilhar e evitar"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. ÂNCORA ÚNICA: o único âncora técnico é RA-07 (Risk Response), cujos outros mapeamentos (PM-09, PM-18, PM-30) foram descartados por serem de programa. O RA-07 não possui enhancements e seu texto normativo é uma única sentença: responder a achados de avaliação, monitoramento e auditoria EM CONFORMIDADE COM A TOLERÂNCIA A RISCO ORGANIZACIONAL. A cláusula vinculante é a tolerância a risco — parâmetro de governança que não existe em nenhuma das seis ferramentas. Dos cinco verbos da subcategoria (chosen, prioritized, planned, tracked, communicated), apenas 'tracked' tem sinal parcial no stack: o Defender Vulnerability Management registra atividade de remediação com owner e prazo. Isso comprova que ALGO foi rastreado, jamais que a resposta ESCOLHIDA foi a adequada ao apetite de risco declarado, nem que uma aceitação formal de risco foi deliberada em vez de esquecida. Marcar telemetria aqui converteria evidência de patch em evidência de decisão de risco, que é falsificação de proveniência. Procedimento de auditoria: (1) verificar declaração vigente de tolerância a risco; (2) amostrar achados do período e confrontar a resposta escolhida contra a tolerância; (3) verificar POA&M gerado onde a mitigação não foi imediata; (4) verificar registro de aprovador nas aceitações de risco. Status = Compliant se os quatro passos passarem sem desvio na amostra; MitigatedByThirdParty se a decisão de resposta a risco for tomada por comitê ou GRC externo com atestação, sem repasse do racional ao tenant; NonCompliant se não houver tolerância a risco declarada (sem ela, 'resposta adequada' é indefinível e o RA-07 é inauditável) ou se a amostra revelar achado sem resposta registrada.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "ID.RA-07",
+    "evaluation_metrics": [
+      "Fração de mudanças com análise de impacto de segurança executada antes da implementação (CM-04)",
+      "Fração de mudanças detectadas na telemetria com registro de aprovação correspondente (CM-03)",
+      "Contagem de exceções vigentes com prazo de validade e owner registrados",
+      "Idade das exceções abertas contra o prazo concedido",
+      "Fração de mudanças com risco avaliado e registrado no rastreamento (CM-04, CA-07)",
+      "Cobertura de monitoramento contínuo sobre os ativos com exceção vigente (CA-07)",
+      "Taxa de mudança de emergência aplicada sem aprovação prévia e regularizada a posteriori",
+      "Fração de exceções renovadas sem reavaliação de risco"
+    ],
+    "calculation_logic": "impacto = mudancas_com_analise_de_impacto_registrada / mudancas_implementadas; aprovacao = mudancas_com_aprovacao_registrada / mudancas_detectadas_na_telemetria; excecoes = 1 - min(1, excecoes_vencidas_ou_sem_owner / max(1, excecoes_vigentes)); monitoramento = ativos_com_excecao_sob_monitoramento_reforcado / ativos_com_excecao_vigente; emergencia = 1 - min(1, mudancas_de_emergencia_nao_regularizadas / max(1, mudancas_de_emergencia)). score = 0.25*impacto + 0.25*aprovacao + 0.20*excecoes + 0.20*monitoramento + 0.10*emergencia. Status = Compliant se score >= 0.85 E monitoramento == 1.0 E excecoes >= 0.90 (fail-closed no MONITORAMENTO: exceção é risco deliberadamente aceito, e risco aceito sem vigilância reforçada é risco esquecido — o CA-07 existe exatamente para isso); MitigatedByThirdParty se a gestão de mudança for operada por provedor terceiro sem repasse do registro de análise de impacto; NonCompliant se score < 0.50 OU aprovacao < 0.60 OU existir exceção sem prazo de validade (exceção perpétua é mudança de baseline não declarada). SEPARAÇÃO DE CONCEITOS: PR.PS-01 mede se a mudança PASSOU pelo processo de aprovação; esta regra mede se o RISCO da mudança e da exceção foi avaliado, registrado e vigiado — CM-03 versus CM-04 são controles distintos e as métricas não se recontam.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: correlação entre mudança de configuração detectada e o registro de aprovação e análise de impacto; alertas de exceção vencida",
+      "Microsoft Defender for Endpoint: DeviceTvmSecureConfigurationAssessment para identificar ativo em desvio sob exceção vigente e verificar monitoramento reforçado",
+      "Entra ID: audit logs de alteração de configuração de tenant e de política, com identidade e timestamp para reconciliar contra aprovação",
+      "CrowdStrike Falcon: exclusões e exceções de política vigentes por host, com data de criação e responsável",
+      "SentinelOne: exclusões de política e sua idade, evidenciando exceção sem reavaliação",
+      "Google SecOps: detecção de mudança em ativo com exceção vigente, sustentando o monitoramento contínuo exigido pelo CA-07"
+    ]
+  },
+  {
+    "subcategory_id": "ID.RA-08",
+    "evaluation_metrics": [
+      "Existência de programa de divulgação pública de vulnerabilidade com canal de recebimento (RA-05(11))",
+      "Latência entre recebimento da divulgação e primeira triagem",
+      "Fração de divulgações recebidas que foram analisadas e respondidas",
+      "Existência de canal de recebimento público documentado e monitorado (RA-05(11))",
+      "Fração de divulgações convertidas em vulnerabilidade registrada e rastreada",
+      "Tempo até correção da vulnerabilidade divulgada por severidade",
+      "Fração de divulgações com retorno ao reportador",
+      "Contagem de divulgações recebidas por período e sua tendência"
+    ],
+    "calculation_logic": "ÂNCORA ÚNICA — o único âncora desta subcategoria é RA-05, e a base normativa específica é o enhancement RA-05(11) (Public Disclosure Program), que estabelece o canal de recebimento de informação de vulnerabilidade a partir do público. triagem = divulgacoes_triadas_dentro_do_sla / divulgacoes_recebidas; conversao = divulgacoes_convertidas_em_vulnerabilidade_rastreada / divulgacoes_validas; retorno = divulgacoes_com_retorno_ao_reportador / divulgacoes_recebidas; canal = 1 se canal_publico_documentado_e_monitorado senão 0. score = 0.30*triagem + 0.30*conversao + 0.20*retorno + 0.20*canal. Status = Compliant se score >= 0.85 E canal == 1 E triagem >= 0.90; MitigatedByThirdParty se o programa de divulgação for operado por plataforma de bug bounty terceira, com triagem executada pelo intermediário — há canal e há triagem, mas o registro primário do reporte não pertence ao tenant; NonCompliant se canal == 0 (gate binário e precedente: sem canal público documentado não há como receber divulgação, e a subcategoria exige que o PROCESSO esteja estabelecido) OU score < 0.50. RESSALVA DE ESCOPO: o RECEBIMENTO da divulgação ocorre fora do stack (canal público, e-mail de segurança, plataforma de bounty) e é documental; a telemetria sustenta o que acontece DEPOIS — a conversão da divulgação em vulnerabilidade rastreada e corrigida no parque, que é a parte auditável e a única que este cálculo mede.",
+    "evidence_requirements": [
+      "Microsoft Defender Vulnerability Management: vulnerabilidade divulgada registrada como CVE rastreado no parque, com status de remediação e data de correção",
+      "Microsoft Sentinel: incidente ou caso aberto a partir de divulgação recebida, com timestamps de triagem e encerramento para medir SLA",
+      "Google SecOps: SOAR case criado a partir de reporte de vulnerabilidade, com registro de análise e resposta",
+      "CrowdStrike Falcon Spotlight: presença e status da vulnerabilidade divulgada nos hosts afetados",
+      "SentinelOne: risco de aplicação refletindo a vulnerabilidade divulgada até sua correção",
+      "Microsoft Defender: exposure score antes e depois da correção como evidência de que a divulgação gerou remediação efetiva"
+    ]
+  },
+  {
+    "subcategory_id": "ID.RA-09",
+    "evaluation_metrics": [
+      "Fração de software executado com assinatura digital verificada (SI-07)",
+      "Cobertura de verificação de integridade de software e firmware em uso (SI-07(01))",
+      "Fração de componentes com proveniência mantida e verificável (SR-05, SR-11)",
+      "Contagem de componentes suspeitos de falsificação detectados (SR-11)",
+      "Cobertura de inspeção de sistemas e componentes quanto a adulteração (SR-10)",
+      "Fração de binários executados a partir de origem confiável e catalogada",
+      "Cobertura de resposta automatizada a violação de integridade detectada (SI-07(05))",
+      "Fração de aquisições com requisito de autenticidade contratualizado (SA-04)"
+    ],
+    "calculation_logic": "assinatura = execucoes_com_assinatura_digital_verificada / execucoes_observadas; integridade = ativos_com_verificacao_de_integridade_ativa / ativos_criticos; proveniencia = componentes_com_proveniencia_verificavel / componentes_de_fornecedor_inventariados; falsificacao = 1 - min(1, componentes_suspeitos_de_falsificacao / max(1, componentes_de_fornecedor_inventariados)); resposta = 1 se resposta_automatizada_a_violacao_de_integridade_ativa senão 0. score = 0.30*assinatura + 0.25*integridade + 0.20*proveniencia + 0.15*falsificacao + 0.10*resposta. Status = Compliant se score >= 0.85 E assinatura >= 0.95 E integridade >= 0.90 (fail-closed na ASSINATURA: binário sem assinatura verificada executando em produção é software cuja autenticidade não foi avaliada NO USO, que é metade literal do que a subcategoria exige); MitigatedByThirdParty se a verificação de autenticidade for atestada pelo fornecedor via SBOM ou certificado, sem verificação independente no parque; NonCompliant se score < 0.50 OU assinatura < 0.70. RESSALVA DE ESCOPO: a subcategoria cobre dois momentos — 'prior to acquisition' e 'and use'. A avaliação PRÉ-AQUISIÇÃO é ato de procurement (SA-04, SR-06) com evidência contratual e não é observável no stack; este cálculo mede exclusivamente o momento do USO, onde a telemetria de assinatura, integridade e proveniência é real. A perna pré-aquisição permanece sujeita a verificação documental.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: DeviceProcessEvents e DeviceFileEvents com estado de assinatura digital e signer do binário executado",
+      "Microsoft Defender for Endpoint: alertas de violação de integridade de arquivo e firmware, com resposta automatizada associada (SI-07(05))",
+      "CrowdStrike Falcon: verificação de assinatura e reputação de binário na execução, com detecção de artefato adulterado",
+      "SentinelOne: verificação de integridade e reputação de arquivo em runtime, com bloqueio de binário não assinado",
+      "Microsoft Sentinel: correlação entre binário não assinado executado e o inventário de software aprovado, evidenciando origem não catalogada",
+      "Google SecOps: detecção de execução de artefato com hash desconhecido ou proveniência não verificável"
+    ]
+  },
+  {
+    "subcategory_id": "ID.RA-10",
+    "evaluation_metrics": [
+      "Fração de fornecedores críticos avaliados ANTES da aquisição (SR-06)",
+      "Cobertura da avaliação: processos de segurança e de gestão de risco de cadeia do fornecedor (SR-06 Discussion)",
+      "Verificação de propriedade, controle ou influência estrangeira — FOCI (SR-06 Discussion)",
+      "Capacidade demonstrada do fornecedor de avaliar seus subfornecedores de segundo e terceiro nível",
+      "Fração de avaliações que consideraram processos e controles documentados do fornecedor",
+      "Uso de inteligência all-source e informação publicamente disponível na avaliação",
+      "Fração de avaliações conduzidas por terceiro independente (SR-06)",
+      "Cobertura de teste e análise do fornecedor onde exigido (SR-06(01))"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. ÂNCORA ÚNICO E EXCLUSIVO: SR-06 (Supplier Assessments and Reviews), sem qualquer outro mapeamento no catálogo. A Discussion do SR-06 na 5.2.0 define o escopo da avaliação como processos de segurança e de gestão de risco de cadeia, propriedade/controle/influência estrangeira (FOCI), capacidade do fornecedor de avaliar subfornecedores de segundo e terceiro nível, processos e controles DOCUMENTADOS, inteligência all-source e informação publicamente disponível — e admite que a revisão seja conduzida por terceiro independente. Nada disso emite telemetria. Decisivo: a subcategoria qualifica o momento como ANTES DA AQUISIÇÃO, ou seja, quando o fornecedor ainda não tem presença alguma no ambiente e, por definição, não pode produzir sinal em nenhuma das seis ferramentas. Apontar Entra ID ou EDR aqui mediria fornecedor JÁ CONTRATADO E OPERANDO, que é o objeto de DE.CM-06 e ID.AM-04, invertendo o sentido temporal do controle e falsificando a proveniência. Procedimento de auditoria: (1) verificar critério documentado de criticidade de fornecedor; (2) amostrar aquisições do período junto a procurement e comprovar avaliação anterior à assinatura; (3) verificar cobertura de FOCI e de subfornecedores na avaliação; (4) verificar independência do avaliador onde exigido. Status = Compliant se os quatro passos passarem e nenhuma aquisição crítica da amostra preceder sua avaliação; MitigatedByThirdParty se a avaliação for adquirida de serviço de rating de risco de terceiros (Bitsight, SecurityScorecard e similares) sem análise própria de FOCI e de subfornecedores; NonCompliant se não houver critério de criticidade de fornecedor ou se a amostra revelar fornecedor crítico contratado sem avaliação prévia.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "ID.IM-01",
+    "evaluation_metrics": [
+      "Fração de achados de avaliação automatizada que geraram ação de melhoria rastreada (CA-05, CA-07)",
+      "Latência entre identificação do achado e abertura da ação de melhoria",
+      "Cobertura de suporte automatizado à acurácia e correnteza do POA&M (CA-05(01))",
+      "Fração de ações de melhoria com owner e marco definidos",
+      "Fração de achados de monitoramento contínuo revisados no ciclo (CA-07)",
+      "Taxa de reincidência do mesmo achado após ação de melhoria encerrada",
+      "Fração de recomendações de postura implementadas versus emitidas",
+      "Tendência do score de postura entre ciclos de avaliação"
+    ],
+    "calculation_logic": "conversao = achados_de_avaliacao_com_acao_de_melhoria_rastreada / achados_de_avaliacao_produzidos; latencia = 1 - min(1, p95_latencia_achado_ate_acao_dias / sla_abertura_dias); rastreio = acoes_de_melhoria_com_owner_e_marco / acoes_de_melhoria_abertas; eficacia = 1 - min(1, achados_reincidentes / max(1, acoes_de_melhoria_encerradas)); tendencia = 1 se score_de_postura_atual >= score_do_ciclo_anterior senão 0. score = 0.30*conversao + 0.20*latencia + 0.20*rastreio + 0.20*eficacia + 0.10*tendencia. Status = Compliant se score >= 0.85 E conversao >= 0.85 E eficacia >= 0.80 (fail-closed na EFICÁCIA: achado que reincide após a ação encerrada prova que a melhoria não foi identificada, foi apenas fechada — a subcategoria afirma que melhorias SÃO identificadas a partir das avaliações, e reincidência é a refutação empírica disso); MitigatedByThirdParty se as avaliações forem conduzidas por auditor ou MSSP externo que entrega relatório sem repasse dos achados em formato rastreável; NonCompliant se score < 0.50 OU conversao < 0.50 (avaliação cujos achados não viram ação é relatório arquivado, não ciclo de melhoria). SEPARAÇÃO DE CONCEITOS: esta regra mede a CONVERSÃO do achado em melhoria rastreada e sua eficácia; PR.PS-02 mede o SLA de remediação de falha e ID.RA-01 mede a cobertura de identificação — os denominadores se tocam, mas as asserções são distintas e não se recontam.",
+    "evidence_requirements": [
+      "Microsoft Defender Vulnerability Management: security recommendations e remediation activities com owner, prazo e status, como registro de melhoria identificada a partir de avaliação automatizada",
+      "Microsoft Defender: Secure Score histórico por ciclo, evidenciando tendência de melhoria entre avaliações",
+      "Microsoft Sentinel: correlação entre achado de monitoramento contínuo e ação de melhoria aberta, medindo conversão e latência (CA-07)",
+      "CrowdStrike Falcon: dashboards de postura e recomendações com status de implementação por host",
+      "SentinelOne: achados de postura do endpoint e sua evolução entre ciclos",
+      "Google SecOps: reconciliação entre achados recorrentes e ações encerradas para medir reincidência"
+    ]
+  },
+  {
+    "subcategory_id": "ID.IM-02",
+    "evaluation_metrics": [
+      "Cadência de execução de teste de penetração contra a definida (CA-08)",
+      "Uso de agente ou equipe independente de teste de penetração (CA-08(01))",
+      "Cobertura de exercícios de red team simulando adversário real (CA-08(02))",
+      "Cobertura de teste de penetração físico, incluindo tentativa de burlar controles de acesso físico (CA-08(03))",
+      "Cadência de teste da capacidade de resposta a incidente (IR-03)",
+      "Uso de dado qualitativo e quantitativo dos testes para determinar efetividade e melhorar processos (IR-03(03))",
+      "Coordenação do teste de resposta com os elementos responsáveis por planos relacionados (IR-03(02))",
+      "Fração de achados de teste e exercício convertidos em melhoria rastreada",
+      "Cobertura de testes conduzidos em coordenação com fornecedores e terceiros relevantes"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. Os âncoras técnicos desta subcategoria são CA-08 (Penetration Testing), IR-03 (Incident Response Testing) e CP-04 (Contingency Plan Testing), e todos descrevem ENGAGEMENTS conduzidos por pessoas, não capacidades emissoras de telemetria. A Discussion do CA-08 na 5.2.0 é explícita: o teste é conduzido por agentes e equipes com perícia demonstrável, vai além da varredura automatizada, e o CA-08(03) inclui tentativa de burlar controles de acesso FÍSICO. A do IR-03 nomeia checklists, walk-through, exercícios de mesa e simulações. O produto desses controles é um relatório de engajamento e uma ata de exercício; nenhuma das seis ferramentas registra que um tabletop ocorreu ou que um red team foi contratado. RESSALVA DE FRONTEIRA: o Attack Simulation Training do Defender é 'teste' no sentido de exercício prático de conscientização e já sustenta PR.AT-01 — apontá-lo aqui recontaria a mesma evidência sob outra subcategoria e ainda assim não cobriria pentest, red team nem exercício de resposta. Procedimento de auditoria: (1) obter o último relatório de teste de penetração com escopo, data e independência do executor; (2) obter a ata do último teste de resposta a incidente, com dado qualitativo e quantitativo coletado; (3) verificar a rastreabilidade dos achados até ações de melhoria; (4) verificar cobertura de testes coordenados com fornecedores. Status = Compliant se os quatro passos passarem, os testes estiverem dentro da cadência definida e os achados tiverem ação rastreável; MitigatedByThirdParty se pentest e exercícios forem executados por fornecedor sob contrato e o tenant receber apenas o sumário executivo, sem os achados detalhados que permitiriam rastrear melhoria; NonCompliant se não houver teste de penetração nem exercício de resposta dentro da cadência definida, ou se os achados existirem sem qualquer melhoria associada.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "ID.IM-03",
+    "evaluation_metrics": [
+      "Fração de incidentes encerrados com lição aprendida registrada (IR-04c)",
+      "Fração de lições aprendidas incorporadas a procedimento, treinamento ou teste (IR-04c)",
+      "Cobertura de revisão pós-execução dos processos operacionais de segurança",
+      "Fração de melhorias identificadas a partir da operação e rastreadas até implementação",
+      "Cadência de revisão dos processos operacionais contra a definida",
+      "Taxa de recorrência de falha operacional já endereçada por melhoria anterior",
+      "Fração de ajustes de processo derivados de dado operacional versus de opinião",
+      "Comparabilidade e previsibilidade do rigor das atividades entre execuções (IR-04d)"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. Esta subcategoria afirma que melhorias são identificadas a partir da EXECUÇÃO de processos, procedimentos e atividades operacionais — ou seja, mede o ciclo de aprendizado organizacional, cujo artefato é o registro de lição aprendida, a revisão pós-incidente e a alteração de procedimento. O IR-04c exige incorporar lições aprendidas em procedimentos, treinamento e teste, e o IR-04d exige rigor comparável e previsível entre execuções: ambas são asserções sobre a PRÁTICA da equipe, não sobre o comportamento de um sistema. O stack registra que o incidente foi encerrado; não registra o que a organização aprendeu com ele nem se o procedimento mudou em consequência. RESSALVA DE FRONTEIRA: RS.AN-03 já mede se a causa raiz foi identificada e registrada, e RS.CO-03 já mede se a inteligência do incidente realimentou a detecção — essas são as pernas observáveis do aprendizado e já estão contabilizadas. O que resta a ID.IM-03, e que é exclusivamente seu, é a mudança de PROCESSO, que é documental. Procedimento de auditoria: (1) amostrar incidentes e operações do período e verificar registro de lição aprendida; (2) rastrear as lições até alteração efetiva de procedimento, treinamento ou teste; (3) verificar recorrência de falha operacional já endereçada; (4) verificar a cadência de revisão dos processos. Status = Compliant se os quatro passos passarem e as lições tiverem alteração de procedimento rastreável; MitigatedByThirdParty se a operação for conduzida por MSSP que executa a revisão internamente e entrega apenas relatório de serviço, sem repasse das lições ao tenant; NonCompliant se não houver registro de lição aprendida no período ou se as lições não tiverem qualquer alteração de procedimento associada.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "ID.IM-04",
+    "evaluation_metrics": [
+      "Existência de plano de resposta a incidente aprovado e vigente (IR-08)",
+      "Existência de plano de contingência aprovado e vigente (CP-02)",
+      "Existência de plano de segurança do sistema aprovado e vigente (PL-02)",
+      "Existência de plano de gestão de risco de cadeia de suprimento (SR-02)",
+      "Cadência de revisão e atualização dos planos contra a definida (IR-08c, CP-02d, PL-02c)",
+      "Cobertura de distribuição dos planos ao pessoal e elementos designados (IR-08b, CP-02c)",
+      "Cobertura de comunicação das mudanças de plano aos responsáveis (IR-08d)",
+      "Proteção dos planos contra divulgação e modificação não autorizadas (IR-08e, CP-02)",
+      "Coordenação entre planos relacionados (CP-02, IR-08)"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — não há cálculo automatizado. Os quatro âncoras desta subcategoria — IR-08 (Incident Response Plan), CP-02 (Contingency Plan), PL-02 (System Security Plan) e SR-02 (Supply Chain Risk Management Plan) — são, sem exceção, controles cujo objeto é um DOCUMENTO DE PLANO. Não há aqui um único âncora com telemetria: os verbos da subcategoria (estabelecido, comunicado, mantido, melhorado) descrevem o ciclo de vida de um artefato escrito, e as determinations correspondentes na 5.2.0 versam sobre desenvolver, distribuir, revisar, atualizar, comunicar mudanças e proteger o plano contra divulgação não autorizada. Nenhuma das seis ferramentas do ecossistema sabe se um plano existe, quando foi revisto ou a quem foi distribuído. NOTA DE PROVENIÊNCIA: esta subcategoria não figura entre as lacunas do Mapa de Lacunas porque aquele levantamento classificou como administrativos apenas os controles PM-* e os XX-01 de política; IR-08, CP-02, PL-02 e SR-02 são controles numerados regulares e passaram no filtro estrutural, mas seu conteúdo é integralmente documental. É o limite do critério sintático daquele mapa, não uma divergência de resultado. Procedimento de auditoria: (1) verificar existência e vigência dos quatro planos; (2) verificar aderência à cadência de revisão de cada um; (3) comprovar distribuição ao pessoal designado e comunicação das mudanças; (4) verificar controle de acesso e versionamento dos planos. Status = Compliant se os quatro planos existirem, estiverem dentro da cadência de revisão e tiverem distribuição comprovada; MitigatedByThirdParty se os planos forem mantidos por provedor de serviço gerenciado ou consultoria, com o tenant como destinatário e não como autor, sem controle sobre a cadência de revisão; NonCompliant se qualquer um dos quatro planos inexistir ou estiver fora da cadência de revisão definida.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  }
+]

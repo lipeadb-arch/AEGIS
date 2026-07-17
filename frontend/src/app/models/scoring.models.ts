@@ -9,11 +9,34 @@ export type ControlStatus = 'Compliant' | 'MitigatedByThirdParty' | 'NonComplian
 /** Procedência do veredito vigente: Telemetry (autoritativa, até 100%) ou Documentary (teto 50%). */
 export type VerdictSource = 'Telemetry' | 'Documentary';
 
+/**
+ * Gravidade de um achado — a régua ÚNICA de severidade do produto (espelha o enum SeverityLevel do
+ * backend). Mora aqui, no modelo de scoring, porque TODO controle NIST tem severidade; a tela de
+ * identidade (identity.models) a reimporta daqui em vez de manter uma segunda escala.
+ */
+export type SeverityLevel = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
+
 /** Item do checklist técnico que justifica o veredito (espelha ComplianceCheck do backend, camelCase). */
 export interface ComplianceCheck {
   name: string;
   passed: boolean;
   details: string;
+}
+
+/**
+ * Rastro CRU da ferramenta que gerou a não-conformidade (espelha TelemetryEvidence). Não confundir com
+ * `aiEvidence` (a prosa interpretada do motor): aqui é o que o EntraID/SentinelOne literalmente emitiu.
+ */
+export interface TelemetryEvidence {
+  sourceTool: string; // "EntraID", "SentinelOne"
+  rawTrace: string; // trecho cru do log/JSON (texto multilinha)
+  collectedAt: string | null; // ISO 8601; nulo quando a ferramenta não informa
+}
+
+/** Ponto da série de conformidade do controle — matéria-prima da sparkline de 30 dias. */
+export interface ComplianceHistoryPoint {
+  date: string; // "2026-07-16" (DateOnly do backend)
+  compliancePercent: number; // 0..100 da célula no dia
 }
 
 /**
@@ -30,6 +53,16 @@ export interface TenantControlStateDto {
   lastEvaluatedAt: string; // ISO 8601
   lastVerdictSource: VerdictSource;
   checks: ComplianceCheck[]; // checklist técnico que justifica o status (vazio se o motor não decompôs)
+
+  // ---- Enriquecimento para o HUD (o motor de IA preenche; hoje trafega vazio/nulo) ----
+  severity: SeverityLevel; // do motor, ou o proxy derivado do status — nunca ausente
+  historicalCompliance: ComplianceHistoryPoint[]; // sparkline 30d — VAZIA até existir snapshot por controle
+  telemetryEvidence: TelemetryEvidence | null; // rastro cru da ferramenta
+  remediationPlan: string | null; // plano inline do LLM (o passo a passo completo é o AdvisoryDto)
+  aiConfidenceScore: number | null; // 0..100; nulo em veredito determinístico
+  threatLandscape: string[]; // vetores de ataque abertos pela falha
+  mttdMinutes: number | null; // tempo médio de detecção (DE/RS/RC)
+  mttrMinutes: number | null; // tempo médio de resposta (DE/RS/RC)
 }
 
 // ---- Recomendações de Remediação (Advisories) — espelha /api/v1/scoring/advisories ----
@@ -65,6 +98,12 @@ export interface PillarMeta {
   label: string; // "Protect"
   blurb: string; // subtítulo curto (categorias do pilar)
   description: string; // subtítulo tático: o que a Função significa + o que o Aegis mede nela
+  /**
+   * O HUD deste pilar exibe MTTD/MTTR. Só faz sentido onde há linha do tempo de incidente —
+   * Detect/Respond/Recover; não existe "tempo de detecção" de uma política de governança (GV) nem de um
+   * inventário (ID). É config, não `if` espalhado: mantém os painéis como UM componente.
+   */
+  showsResponseMetrics: boolean;
 }
 
 // Metadados dos pilares. O `blurb` (categorias) é curto e específico do painel; a `description` (subtítulo
@@ -77,6 +116,7 @@ export const PILLARS: Record<PillarKey, PillarMeta> = {
     label: 'Protect',
     blurb: 'Identidade e Acesso · Proteção de Dados · Segurança de Plataforma · Rede e Infraestrutura',
     description: NIST_FUNCTION_DESCRIPTIONS.PR,
+    showsResponseMetrics: false,
   },
   DE: {
     key: 'DE',
@@ -84,6 +124,7 @@ export const PILLARS: Record<PillarKey, PillarMeta> = {
     label: 'Detect',
     blurb: 'Análise de Eventos · Monitoramento Contínuo',
     description: NIST_FUNCTION_DESCRIPTIONS.DE,
+    showsResponseMetrics: true,
   },
   RS: {
     key: 'RS',
@@ -91,6 +132,7 @@ export const PILLARS: Record<PillarKey, PillarMeta> = {
     label: 'Respond',
     blurb: 'Gestão e Mitigação de Incidentes',
     description: NIST_FUNCTION_DESCRIPTIONS.RS,
+    showsResponseMetrics: true,
   },
   RC: {
     key: 'RC',
@@ -98,6 +140,7 @@ export const PILLARS: Record<PillarKey, PillarMeta> = {
     label: 'Recover',
     blurb: 'Plano de Recuperação',
     description: NIST_FUNCTION_DESCRIPTIONS.RC,
+    showsResponseMetrics: true,
   },
   GV: {
     key: 'GV',
@@ -105,6 +148,7 @@ export const PILLARS: Record<PillarKey, PillarMeta> = {
     label: 'Govern',
     blurb: 'Cadeia de Suprimentos · Papéis e Responsabilidades · Políticas',
     description: NIST_FUNCTION_DESCRIPTIONS.GV,
+    showsResponseMetrics: false,
   },
 };
 
@@ -128,6 +172,14 @@ export interface ControlView {
   source: VerdictSource;
   evaluatedAt: string;
   checks: ComplianceCheck[]; // decomposição técnica do veredito, exibida no accordion do card
+  severity: SeverityLevel; // tinge o badge do card
+  history: ComplianceHistoryPoint[]; // sparkline 30d (vazia ⇒ o card a omite)
+  telemetryEvidence: TelemetryEvidence | null;
+  remediationPlan: string | null;
+  aiConfidence: number | null; // 0..100
+  threatLandscape: string[];
+  mttdMinutes: number | null;
+  mttrMinutes: number | null;
 }
 
 /** Postura consolidada de um pilar — o que o Smart Component monta e distribui aos Dumb Components. */
@@ -139,9 +191,15 @@ export interface PillarView {
   partial: number;
   nonCompliant: number;
   controls: ControlView[]; // ordenados: NonCompliant primeiro (o que precisa saltar aos olhos)
+  mttdMinutes: number | null; // média dos controles que reportam (null = ninguém reportou)
+  mttrMinutes: number | null;
 }
 
-/** Projeta o DTO de transporte no modelo de view (deriva categoria + percentual da célula). */
+/**
+ * Projeta o DTO de transporte no modelo de view (deriva categoria + percentual da célula). Os campos de
+ * enriquecimento usam `??` de propósito: o backend pode ser mais antigo que este frontend (ou o motor não
+ * ter emitido o bloco) e o card precisa degradar seção a seção, nunca quebrar.
+ */
 export function toControlView(d: TenantControlStateDto): ControlView {
   const lastDash = d.subcategoryCode.lastIndexOf('-');
   return {
@@ -155,7 +213,30 @@ export function toControlView(d: TenantControlStateDto): ControlView {
     source: d.lastVerdictSource,
     evaluatedAt: d.lastEvaluatedAt,
     checks: d.checks ?? [],
+    severity: d.severity ?? severityForStatus(d.controlStatus),
+    history: d.historicalCompliance ?? [],
+    telemetryEvidence: d.telemetryEvidence ?? null,
+    remediationPlan: d.remediationPlan ?? null,
+    aiConfidence: d.aiConfidenceScore ?? null,
+    threatLandscape: d.threatLandscape ?? [],
+    mttdMinutes: d.mttdMinutes ?? null,
+    mttrMinutes: d.mttrMinutes ?? null,
   };
+}
+
+/**
+ * Severidade PROXY derivada do status — espelha SeverityLevels.FromStatus do backend. É a rede de
+ * segurança do cliente: o backend já resolve a severidade, mas se o campo faltar o badge não some.
+ */
+export function severityForStatus(status: ControlStatus): SeverityLevel {
+  switch (status) {
+    case 'NonCompliant':
+      return 'Critical';
+    case 'MitigatedByThirdParty':
+      return 'Medium';
+    case 'Compliant':
+      return 'Low';
+  }
 }
 
 /** NonCompliant primeiro (risco salta aos olhos), depois parcial, depois conforme; empate por código. */
@@ -182,5 +263,35 @@ export function buildPillarView(meta: PillarMeta, dtos: TenantControlStateDto[])
     partial: controls.filter((c) => c.status === 'MitigatedByThirdParty').length,
     nonCompliant: controls.filter((c) => c.status === 'NonCompliant').length,
     controls,
+    mttdMinutes: averageOf(controls.map((c) => c.mttdMinutes)),
+    mttrMinutes: averageOf(controls.map((c) => c.mttrMinutes)),
   };
+}
+
+/**
+ * Média dos valores REPORTADOS, ignorando os nulos — e `null` quando ninguém reportou. Tratar nulo como
+ * zero afundaria a média e faria o HUD anunciar uma detecção instantânea que não existe: em métrica de
+ * SOC, "não medido" e "zero minutos" são coisas opostas.
+ */
+function averageOf(values: (number | null)[]): number | null {
+  const known = values.filter((v): v is number => v !== null);
+  if (known.length === 0) return null;
+  return Math.round(known.reduce((s, v) => s + v, 0) / known.length);
+}
+
+/**
+ * Formata minutos no idioma do SOC ("18 min", "2h 30m", "1d 4h") — e "—" quando não há medição. Função
+ * PURA de apresentação, ao lado do modelo que a alimenta (mesmo padrão do glossário NIST).
+ */
+export function formatDuration(minutes: number | null): string {
+  if (minutes === null) return '—';
+  if (minutes < 60) return `${minutes} min`;
+
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours < 24) return mins === 0 ? `${hours}h` : `${hours}h ${mins}m`;
+
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  return restHours === 0 ? `${days}d` : `${days}d ${restHours}h`;
 }

@@ -1,5 +1,5 @@
 import { Component, computed, input } from '@angular/core';
-import { SeverityLevel } from '../../models/identity.models';
+import { SeverityLevel } from '../../models/scoring.models';
 
 /**
  * SeverityComponent — DUMB. Renderiza um nível de severidade (escala Purple Knight) como um chip HUD:

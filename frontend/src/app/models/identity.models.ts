@@ -2,10 +2,13 @@
 // POST /api/v1/telemetry/identity/entra-id (lista de TelemetryVerdictDto, camelCase) e projetam-no na
 // "tabela tática de exposição" que os Dumb Components consomem. Funções PURAS (testáveis, sem Angular).
 
-import { ControlStatus } from './scoring.models';
+import { ControlStatus, SeverityLevel, severityForStatus } from './scoring.models';
 
-/** Nível de severidade (escala Purple Knight). O SeverityComponent o renderiza com cor HUD. */
-export type SeverityLevel = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
+// A escala de severidade e o proxy status→severidade nasceram aqui, mas severidade não é assunto de
+// identidade: TODO controle NIST tem uma. Ambos vivem agora em scoring.models (régua única do produto) e
+// são REEXPORTADOS daqui para não quebrar quem já os importava deste módulo.
+export type { SeverityLevel };
+export { severityForStatus };
 
 /** Plataforma de identidade de origem do achado — decide o ícone da coluna Platform. */
 export type IdentityPlatform = 'Entra' | 'AD' | 'Okta';
@@ -60,18 +63,6 @@ const CONTROL_META: Record<string, { name: string; platform: IdentityPlatform }>
   'PR.AA-01': { name: 'Contas Privilegiadas · Cobertura de MFA', platform: 'Entra' },
   'GV.RR-01': { name: 'Governança de Identidade · Menor Privilégio', platform: 'Entra' },
 };
-
-/** Severidade derivada do veredito (proxy: não-conforme = crítico; mitigado = médio; conforme = baixo). */
-export function severityForStatus(status: ControlStatus): SeverityLevel {
-  switch (status) {
-    case 'NonCompliant':
-      return 'Critical';
-    case 'MitigatedByThirdParty':
-      return 'Medium';
-    case 'Compliant':
-      return 'Low';
-  }
-}
 
 /** NonCompliant primeiro (salta aos olhos), depois compensado, depois conforme; empate por código. */
 const STATUS_RANK: Record<ControlStatus, number> = { NonCompliant: 0, MitigatedByThirdParty: 1, Compliant: 2 };

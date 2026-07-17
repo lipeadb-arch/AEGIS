@@ -16,6 +16,13 @@ namespace AegisScore.Application.Services;
 public record ComplianceVerdict(ControlStatus Status, string AiEvidence, int AwardedScore, int MaxScorePoints)
 {
     public IReadOnlyList<ComplianceCheck> Checks { get; init; } = Array.Empty<ComplianceCheck>();
+
+    /// <summary>
+    /// Contexto de inteligência que o motor anexou ao veredito (severidade, rastro cru da ferramenta,
+    /// plano de ação, confiança, ameaças, MTTD/MTTR). Nulo quando o motor não o emite — hoje é o caso de
+    /// todos eles: o seam existe para RECEBER o bloco quando o LLM passar a produzi-lo.
+    /// </summary>
+    public ControlIntelligence? Intelligence { get; init; }
 }
 
 /// <summary>

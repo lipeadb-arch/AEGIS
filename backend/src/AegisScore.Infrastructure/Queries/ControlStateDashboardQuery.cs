@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Application.Queries;
 using AegisScore.Application.Telemetry.Models;
+using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
 namespace AegisScore.Infrastructure.Queries;
@@ -25,8 +26,9 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
 
     public async Task<IReadOnlyList<TenantControlStateDto>> GetDashboardAsync(CancellationToken ct = default)
     {
-        // Projeta as colunas no banco (inclui o ChecksJson cru); a desserialização do checklist roda em
-        // memória — o EF não traduz JSON→objeto no SQL, e o payload por tenant é pequeno.
+        // Projeta as colunas no banco (inclui os blobs crus); a desserialização roda em memória — o EF não
+        // traduz JSON→objeto no SQL, e o payload por tenant é pequeno. Os enums vêm CRUS (não .ToString()):
+        // o status ainda decide a severidade-proxy, então precisamos dele tipado antes de achatar o DTO.
         var rows = await _db.TenantControlStates
             .AsNoTracking()
             .OrderBy(x => x.Subcategory!.Code)
@@ -35,29 +37,60 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
                 x.Subcategory!.Code,
                 x.CurrentScore,
                 x.Subcategory!.MaxScorePoints,   // denominador do catálogo, via JOIN — jamais desnormalizado
-                x.Status.ToString(),
+                x.Status,
                 x.AiEvidence,
                 x.LastEvaluatedAt,
-                x.LastVerdictSource.ToString(),
-                x.ChecksJson))
+                x.LastVerdictSource,
+                x.ChecksJson,
+                x.IntelligenceJson))
             .ToListAsync(ct);
 
-        return rows.Select(r => new TenantControlStateDto(
-            r.SubcategoryId, r.SubcategoryCode, r.ScorePoints, r.MaxScorePoints,
-            r.ControlStatus, r.AiEvidence, r.LastEvaluatedAt, r.LastVerdictSource,
-            DeserializeChecks(r.ChecksJson))).ToList();
+        return rows.Select(ToDto).ToList();
     }
 
-    /// <summary>Desserializa o checklist persistido; tolera nulo/JSON inválido (devolve vazio, nunca lança).</summary>
-    private static IReadOnlyList<ComplianceCheck> DeserializeChecks(string? json)
+    /// <summary>
+    /// Achata a linha crua no contrato do HUD: enums viram string na fronteira e o blob de inteligência é
+    /// espalhado nos campos do DTO. O frontend recebe um objeto plano e não conhece a existência do blob.
+    /// </summary>
+    private static TenantControlStateDto ToDto(Row r)
     {
-        if (string.IsNullOrWhiteSpace(json)) return Array.Empty<ComplianceCheck>();
-        try { return JsonSerializer.Deserialize<IReadOnlyList<ComplianceCheck>>(json) ?? Array.Empty<ComplianceCheck>(); }
-        catch (JsonException) { return Array.Empty<ComplianceCheck>(); }
+        var intel = SafeDeserialize<ControlIntelligence>(r.IntelligenceJson);
+
+        return new TenantControlStateDto(
+            r.SubcategoryId, r.SubcategoryCode, r.ScorePoints, r.MaxScorePoints,
+            r.Status.ToString(), r.AiEvidence, r.LastEvaluatedAt, r.LastVerdictSource.ToString(),
+            SafeDeserialize<IReadOnlyList<ComplianceCheck>>(r.ChecksJson) ?? Array.Empty<ComplianceCheck>())
+        {
+            // A severidade do motor manda; sem ela, o proxy derivado do status (o card nunca fica sem badge).
+            Severity = (intel?.Severity ?? SeverityLevels.FromStatus(r.Status)).ToString(),
+            TelemetryEvidence = intel?.TelemetryEvidence,
+            RemediationPlan = intel?.RemediationPlan,
+            AiConfidenceScore = intel?.AiConfidenceScore,
+            ThreatLandscape = intel?.ThreatLandscape ?? Array.Empty<string>(),
+            MttdMinutes = intel?.MttdMinutes,
+            MttrMinutes = intel?.MttrMinutes,
+
+            // ⚠️ Sem produtor: não existe snapshot POR CONTROLE (só o agregado diário do tenant, que
+            // alimenta o /trend). Entregar vazio é o honesto — a sparkline se omite; sintetizar a série
+            // seria forjar histórico de conformidade. Ver ComplianceHistoryPoint.
+            HistoricalCompliance = Array.Empty<ComplianceHistoryPoint>(),
+        };
     }
 
-    /// <summary>Projeção intermediária: as colunas cruas do banco, antes da desserialização do checklist.</summary>
+    /// <summary>
+    /// Desserializa um blob persistido; tolera nulo/JSON inválido (devolve null, nunca lança). Um blob
+    /// explicável corrompido não pode derrubar o dashboard inteiro — o score é a informação crítica.
+    /// </summary>
+    private static T? SafeDeserialize<T>(string? json) where T : class
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<T>(json); }
+        catch (JsonException) { return null; }
+    }
+
+    /// <summary>Projeção intermediária: as colunas cruas do banco, antes da desserialização dos blobs.</summary>
     private sealed record Row(
         Guid SubcategoryId, string SubcategoryCode, int ScorePoints, int MaxScorePoints,
-        string ControlStatus, string? AiEvidence, DateTimeOffset LastEvaluatedAt, string LastVerdictSource, string? ChecksJson);
+        ControlStatus Status, string? AiEvidence, DateTimeOffset LastEvaluatedAt, VerdictSource LastVerdictSource,
+        string? ChecksJson, string? IntelligenceJson);
 }

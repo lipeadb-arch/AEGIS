@@ -49,6 +49,42 @@ public enum EvaluatedBy { Analyst = 0, Ai = 1 }
 public enum ControlStatus { Compliant = 0, NonCompliant = 1, MitigatedByThirdParty = 2 }
 
 /// <summary>
+/// Gravidade de um achado de controle — a régua ÚNICA de severidade do produto. Responde ao "e daí?" que
+/// o <see cref="ControlStatus"/> não responde: dois controles <c>NonCompliant</c> não doem igual, e é a
+/// severidade (ponderada pelo Raio de Explosão — ID.RA) que decide o que a TI corrige primeiro.
+///
+/// O valor numérico é o RANK de risco (0 = mais grave), então ordenar por ele já traz o crítico ao topo.
+/// A escala é a MESMA que a tela de Postura de Identidade já usa (5 níveis, estilo Purple Knight) — uma
+/// segunda régua de 4 níveis criaria dois vocabulários de risco divergentes no mesmo produto.
+/// </summary>
+public enum SeverityLevel
+{
+    Critical = 0,
+    High = 1,
+    Medium = 2,
+    Low = 3,
+
+    /// <summary>Sem risco material: achado informativo (ex.: controle conforme, registrado por completude).</summary>
+    Informational = 4,
+}
+
+/// <summary>Helpers puros da régua de severidade (mesmo idioma de <c>AuditorScopes</c>).</summary>
+public static class SeverityLevels
+{
+    /// <summary>
+    /// Severidade PROXY derivada do status — o default enquanto o motor de IA não emite a severidade real
+    /// (que virá ponderada pelo Raio de Explosão). Garante que todo controle tenha badge desde o primeiro
+    /// veredito, sem inventar risco: é uma leitura direta do próprio status, não uma estimativa.
+    /// </summary>
+    public static SeverityLevel FromStatus(ControlStatus status) => status switch
+    {
+        ControlStatus.NonCompliant         => SeverityLevel.Critical,
+        ControlStatus.MitigatedByThirdParty => SeverityLevel.Medium,
+        _                                   => SeverityLevel.Low,   // Compliant — risco residual conhecido
+    };
+}
+
+/// <summary>
 /// Procedência do veredito aplicado ao ledger de conformidade — define a PRECEDÊNCIA de escrita no
 /// <see cref="TenantControlState"/>. Nome distinto de <see cref="EvidenceSource"/> (procedência de
 /// evidência de assessment, já persistida) e de <see cref="CoverageEvidenceSource"/> (ledger de

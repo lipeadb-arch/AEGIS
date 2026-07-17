@@ -37,7 +37,8 @@ public sealed class ControlStateWriter : IControlStateWriter
 
     public async Task<ComplianceVerdict> ApplyVerdictAsync(
         Guid tenantId, string subcategoryCode, ControlStatus status, string evidence,
-        VerdictSource source, IReadOnlyList<ComplianceCheck>? checks = null, CancellationToken ct = default)
+        VerdictSource source, IReadOnlyList<ComplianceCheck>? checks = null,
+        ControlIntelligence? intelligence = null, CancellationToken ct = default)
     {
         // 1) Defesa em profundidade: o tenantId explícito precisa casar com o tenant ambiente (fail-closed).
         var ambient = _tenant.TenantId
@@ -75,7 +76,10 @@ public sealed class ControlStateWriter : IControlStateWriter
                 sub.Code, state.CurrentScore, state.LastVerdictSource, tenantId);
 
             return new ComplianceVerdict(state.Status, state.AiEvidence ?? "", state.CurrentScore, sub.MaxScorePoints)
-                { Checks = DeserializeChecks(state.ChecksJson) };
+                {
+                    Checks = DeserializeChecks(state.ChecksJson),
+                    Intelligence = SafeDeserialize<ControlIntelligence>(state.IntelligenceJson),
+                };
         }
 
         if (state is null)
@@ -88,6 +92,9 @@ public sealed class ControlStateWriter : IControlStateWriter
         state.CurrentScore = awarded;
         state.AiEvidence = evidence;
         state.ChecksJson = checks is { Count: > 0 } ? JsonSerializer.Serialize(checks) : null;
+        // O enriquecimento acompanha o veredito que o produziu: quem não o emite ZERA o campo em vez de
+        // herdar o do veredito anterior — inteligência órfã descreveria um estado que não existe mais.
+        state.IntelligenceJson = intelligence is not null ? JsonSerializer.Serialize(intelligence) : null;
         state.LastVerdictSource = source;   // a procedência acompanha o estado, e governa a próxima escrita
         state.LastEvaluatedAt = DateTimeOffset.UtcNow;
 
@@ -98,15 +105,22 @@ public sealed class ControlStateWriter : IControlStateWriter
             sub.Code, status, awarded, sub.MaxScorePoints, tenantId);
 
         return new ComplianceVerdict(status, evidence, awarded, sub.MaxScorePoints)
-            { Checks = checks ?? Array.Empty<ComplianceCheck>() };
+            { Checks = checks ?? Array.Empty<ComplianceCheck>(), Intelligence = intelligence };
     }
 
     /// <summary>Desserializa o checklist persistido; tolera nulo/JSON inválido (devolve vazio, nunca lança).</summary>
-    private static IReadOnlyList<ComplianceCheck> DeserializeChecks(string? json)
+    private static IReadOnlyList<ComplianceCheck> DeserializeChecks(string? json) =>
+        SafeDeserialize<IReadOnlyList<ComplianceCheck>>(json) ?? Array.Empty<ComplianceCheck>();
+
+    /// <summary>
+    /// Desserializa um blob persistido; tolera nulo/JSON inválido (devolve null, nunca lança). Um blob
+    /// explicável corrompido não pode derrubar a leitura do ledger — o score é a informação crítica.
+    /// </summary>
+    private static T? SafeDeserialize<T>(string? json) where T : class
     {
-        if (string.IsNullOrWhiteSpace(json)) return Array.Empty<ComplianceCheck>();
-        try { return JsonSerializer.Deserialize<IReadOnlyList<ComplianceCheck>>(json) ?? Array.Empty<ComplianceCheck>(); }
-        catch (JsonException) { return Array.Empty<ComplianceCheck>(); }
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<T>(json); }
+        catch (JsonException) { return null; }
     }
 
     /// <summary>

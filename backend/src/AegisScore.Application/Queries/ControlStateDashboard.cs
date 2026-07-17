@@ -1,4 +1,5 @@
 using AegisScore.Application.Telemetry.Models;
+using AegisScore.Domain;
 
 namespace AegisScore.Application.Queries;
 
@@ -25,7 +26,43 @@ public record TenantControlStateDto(
     string? AiEvidence,
     DateTimeOffset LastEvaluatedAt,
     string LastVerdictSource,
-    IReadOnlyList<ComplianceCheck> Checks);
+    IReadOnlyList<ComplianceCheck> Checks)
+{
+    // ---- Enriquecimento para o HUD e para a injeção de contexto da IA -------------------------------
+    // Membros ADITIVOS (init) e não parâmetros posicionais, de propósito: o record já tem 9 posições e o
+    // idioma de "campo opcional que o motor preenche" no projeto é o init prop (ver ComplianceVerdict.Checks).
+    // Todos com default seguro — um controle avaliado antes do enriquecimento existir continua serializando.
+
+    /// <summary>
+    /// Gravidade do achado (<c>SeverityLevel</c> como string na fronteira): a do motor de IA quando existe,
+    /// senão o proxy derivado do status. É o que tinge o badge do card e ordena o que dói primeiro.
+    /// </summary>
+    public string Severity { get; init; } = nameof(SeverityLevel.Informational);
+
+    /// <summary>
+    /// Série de conformidade do controle para a sparkline de 30 dias. ⚠️ VAZIA hoje — não existe snapshot
+    /// por controle (só o agregado diário do tenant); ver <see cref="ComplianceHistoryPoint"/>.
+    /// </summary>
+    public IReadOnlyList<ComplianceHistoryPoint> HistoricalCompliance { get; init; } = Array.Empty<ComplianceHistoryPoint>();
+
+    /// <summary>Rastro CRU da ferramenta que gerou a não-conformidade (EntraID, SentinelOne…).</summary>
+    public TelemetryEvidence? TelemetryEvidence { get; init; }
+
+    /// <summary>Plano de ação inline redigido pelo LLM. O passo a passo completo continua no advisory sob demanda.</summary>
+    public string? RemediationPlan { get; init; }
+
+    /// <summary>Confiança auto-declarada do LLM na avaliação (0–100); nula em veredito determinístico.</summary>
+    public double? AiConfidenceScore { get; init; }
+
+    /// <summary>Vetores de ataque abertos pela falha (mapeamento de ameaças).</summary>
+    public IReadOnlyList<string> ThreatLandscape { get; init; } = Array.Empty<string>();
+
+    /// <summary>Tempo médio de detecção em minutos (MTTD) — DE/RS/RC; nulo onde não se aplica.</summary>
+    public int? MttdMinutes { get; init; }
+
+    /// <summary>Tempo médio de resposta em minutos (MTTR) — DE/RS/RC; nulo onde não se aplica.</summary>
+    public int? MttrMinutes { get; init; }
+}
 
 /// <summary>
 /// Consulta de leitura do estado de conformidade de TODOS os controles do tenant — a matriz que alimenta

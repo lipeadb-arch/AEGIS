@@ -87,7 +87,8 @@ public sealed class BlastRadiusScoreProjectorTests
 
         public Task<ComplianceVerdict> ApplyVerdictAsync(
             Guid tenantId, string subcategoryCode, ControlStatus status, string evidence,
-            VerdictSource source, IReadOnlyList<ComplianceCheck>? checks = null, CancellationToken ct = default)
+            VerdictSource source, IReadOnlyList<ComplianceCheck>? checks = null,
+            ControlIntelligence? intelligence = null, CancellationToken ct = default)
         {
             Calls.Add(new LedgerCall(tenantId, subcategoryCode, status, source));
             return Task.FromResult(new ComplianceVerdict(status, evidence, 0, 15));

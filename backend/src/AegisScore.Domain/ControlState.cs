@@ -50,6 +50,16 @@ public class TenantControlState : Entity, ITenantOwned
     /// modelá-los como entidades relacionais (não há consulta por check). Nulo até o motor decompor o veredito.
     /// </summary>
     public string? ChecksJson { get; set; }
+
+    /// <summary>
+    /// Contexto de inteligência do controle (<c>ControlIntelligence</c>) serializado como JSON: severidade,
+    /// rastro cru da ferramenta, plano de ação, confiança da IA, ameaças abertas e MTTD/MTTR.
+    ///
+    /// Mesma decisão de <see cref="ChecksJson"/> — blob explicável de LEITURA, não modelo relacional: o
+    /// enriquecimento é lido junto com a célula e nunca consultado por campo, então normalizá-lo custaria
+    /// joins sem pagar nada. Nulo até o motor de IA emitir o bloco.
+    /// </summary>
+    public string? IntelligenceJson { get; set; }
 }
 
 /// <summary>

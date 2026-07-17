@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Services;
@@ -21,7 +22,13 @@ namespace AegisScore.Infrastructure.Ai;
 /// </summary>
 public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
 {
-    private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
+    // O LLM fala JSON de humano: chaves em camelCase e enums por NOME ("Critical"). O conversor de enum
+    // string é o que permite ao bloco `intelligence` chegar tipado (SeverityLevel) sem parsing manual.
+    private static readonly JsonSerializerOptions Json = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() },
+    };
 
     private readonly AegisScoreDbContext _db;
     private readonly ILLMClient _llm;
@@ -58,16 +65,18 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
         // 3) IA: System Prompt (o core) + telemetria, através do seam mockável ILLMClient.
         var llmRaw = await _llm.ExecutePromptAsync(
             BuildSystemPrompt(), BuildUserPrompt(sub, rawTelemetryPayload), ct);
-        var (status, evidence, checks) = ParseResponse(llmRaw);
+        var (status, evidence, checks, intelligence) = ParseResponse(llmRaw);
 
         // 4) Persistência: upsert idempotente + scoring, pela regra única do writer. Telemetria é a fonte
         //    AUTORITATIVA — sobrescreve o estado vigente mesmo que isso rebaixe o controle. O checklist
-        //    técnico viaja junto e é persistido com o estado (o motor real ainda não o emite → vazio).
+        //    técnico e o contexto de inteligência viajam junto e são persistidos com o estado (nenhum
+        //    motor os emite hoje → nulos/vazios; o parsing existe para quando passarem a emitir).
         return await _writer.ApplyVerdictAsync(
-            tenantId, subcategoryCode, status, evidence, VerdictSource.Telemetry, checks, ct);
+            tenantId, subcategoryCode, status, evidence, VerdictSource.Telemetry, checks, intelligence, ct: ct);
     }
 
-    private (ControlStatus Status, string Evidence, IReadOnlyList<ComplianceCheck> Checks) ParseResponse(string llmRaw)
+    private (ControlStatus Status, string Evidence, IReadOnlyList<ComplianceCheck> Checks, ControlIntelligence? Intelligence)
+        ParseResponse(string llmRaw)
     {
         VerdictJson? dto;
         try
@@ -82,7 +91,7 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
         if (dto is null || !Enum.TryParse<ControlStatus>(dto.status, ignoreCase: true, out var status))
             throw new AiUnavailableException($"Status de conformidade inválido retornado pela IA: '{dto?.status}'.");
 
-        return (status, (dto.aiEvidence ?? "").Trim(), dto.checks ?? Array.Empty<ComplianceCheck>());
+        return (status, (dto.aiEvidence ?? "").Trim(), dto.checks ?? Array.Empty<ComplianceCheck>(), dto.intelligence);
     }
 
     // ---- Engenharia de prompt (o core da IA) ------------------------------------
@@ -141,5 +150,11 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
         return (start >= 0 && end > start) ? t[start..(end + 1)] : t;
     }
 
-    private record VerdictJson(string? status, string? aiEvidence, IReadOnlyList<ComplianceCheck>? checks);
+    /// <summary>
+    /// Forma crua da resposta do LLM. <c>intelligence</c> é o bloco de enriquecimento OPCIONAL: nenhum
+    /// motor o emite hoje (o System Prompt ainda não o pede), então chega nulo e o contrato trafega vazio
+    /// — o campo existe para RECEBER o dado quando a engenharia de prompt do enriquecimento for feita.
+    /// </summary>
+    private record VerdictJson(
+        string? status, string? aiEvidence, IReadOnlyList<ComplianceCheck>? checks, ControlIntelligence? intelligence);
 }
