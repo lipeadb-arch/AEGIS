@@ -21,8 +21,8 @@ public record TelemetryEvidence(string SourceTool, string RawTrace, DateTimeOffs
 ///
 /// TODOS os membros são opcionais de propósito. O motor preenche o que consegue PROVAR e o card renderiza
 /// seção por seção conforme o dado existe — num produto de conformidade, campo vazio é honesto, campo
-/// preenchido por suposição é uma auditoria falsificada. Enquanto o LLM não emitir o bloco, o contrato
-/// trafega vazio: o terreno está pronto, sem mock.
+/// preenchido por suposição é uma auditoria falsificada. O <c>AegisAiEvaluatorService</c> JÁ pede este bloco
+/// no System Prompt e o preenche a partir do LLM real; no caminho de DEV (StubLlmClient) ele trafega vazio.
 /// </summary>
 public record ControlIntelligence
 {

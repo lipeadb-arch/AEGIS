@@ -104,7 +104,7 @@ import { environment } from '../../environments/environment';
 
       <!-- ---- Tabela ---- -->
       <section class="panel table-wrap">
-        <table class="grid">
+        <table class="asset-table">
           <thead>
             <tr>
               <th>Ativo</th>
@@ -223,15 +223,26 @@ import { environment } from '../../environments/environment';
       .clear { font-family: var(--mono); font-size: 11px; color: var(--magenta); background: none; border: 1px solid rgba(255, 61, 154, 0.3); border-radius: 9px; padding: 7px 12px; cursor: pointer; }
 
       .table-wrap { padding: 6px 8px; overflow-x: auto; }
-      table.grid { width: 100%; border-collapse: collapse; font-size: 13px; }
-      table.grid thead th {
+      /* ⚠️ NÃO renomear esta classe de volta para "grid": existe um utilitário GLOBAL
+         ".grid { display: grid }" (styles.css) que casava com esta table e a transformava em container
+         CSS Grid — thead/tbody viravam grid items (display:block), cada tr formava a própria tabela
+         anônima e as colunas do cabeçalho descolavam das do corpo. O alinhamento aqui é NATIVO da
+         table: th e td da mesma coluna compartilham largura por construção do algoritmo de layout,
+         não por fração ajustada à mão. */
+      table.asset-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      table.asset-table thead th {
         font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em;
         color: var(--muted); text-align: left; font-weight: 500;
         padding: 12px 14px; border-bottom: 1px solid var(--line);
       }
-      table.grid th.num, table.grid td.num { text-align: center; }
-      table.grid tbody td { padding: 13px 14px; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
-      table.grid tbody tr:hover td { background: rgba(38, 224, 255, 0.03); }
+      /* Os thead/tbody explícitos NÃO são decoração: sem eles o seletor perde para
+         "table.asset-table thead th" (que fixa text-align:left) — a encapsulação do Angular injeta
+         atributos que empatam a contagem de classes, e o desempate vai para o seletor com mais
+         elementos. Resultado sem isto: cabeçalho à esquerda sobre dado centralizado. */
+      table.asset-table thead th.num,
+      table.asset-table tbody td.num { text-align: center; }
+      table.asset-table tbody td { padding: 13px 14px; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
+      table.asset-table tbody tr:hover td { background: rgba(38, 224, 255, 0.03); }
       .asset-name { font-weight: 600; color: var(--text); }
       .asset-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
       .cat { font-family: var(--mono); font-size: 11.5px; color: var(--cyan-2); }

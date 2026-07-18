@@ -41,9 +41,6 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
           <span class="sub">NIST CSF 2.0 · Govern (GV)</span>
         </div>
         <div class="client">
-          <button type="button" class="auditor-btn" (click)="agent.openAgent()">
-            <span class="pulse-dot"></span> Auditor Virtual
-          </button>
           <span class="label">Cobertura GV</span>
           <span class="name">
             @if (coverage(); as cov) {
@@ -277,20 +274,6 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
   `,
   styles: [
     `
-      .auditor-btn {
-        display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
-        font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em; color: #05070f; font-weight: 600;
-        background: var(--neon-h); border: 1px solid transparent; border-radius: 999px; padding: 8px 15px;
-        box-shadow: 0 0 16px -4px rgba(38, 224, 255, 0.6); transition: 0.15s;
-      }
-      .auditor-btn:hover { box-shadow: 0 0 22px -3px rgba(38, 224, 255, 0.85); }
-      .auditor-btn .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: #05070f; animation: auditor-pulse 1.8s infinite; }
-      @keyframes auditor-pulse {
-        0% { box-shadow: 0 0 0 0 rgba(5, 7, 15, 0.5); }
-        70% { box-shadow: 0 0 0 6px rgba(5, 7, 15, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(5, 7, 15, 0); }
-      }
-
       /* Subtítulo tático da Função Govern (logo abaixo da topbar). O -14px encurta parte do
          margin-bottom:30px da topbar global, colando o texto ao título; sans + mutado + contido, para
          informar sem disputar atenção com o gauge e os cards de controle. */
@@ -406,7 +389,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       @media (max-width: 720px) {
         .up-field input[type='text'], .up-field select { min-width: 160px; }
       }
-      @media (prefers-reduced-motion: reduce) { .pulse, .spin, .auditor-btn .pulse-dot { animation: none; } }
+      @media (prefers-reduced-motion: reduce) { .pulse, .spin { animation: none; } }
     `,
   ],
 })

@@ -20,7 +20,13 @@
     <ProjectReference Include="..\AegisScore.Connectors.Microsoft\AegisScore.Connectors.Microsoft.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Catálogos GRC de posse do projeto da API (Data/). Copiados para o output:
+         o catálogo alimenta o FrameworkSeeder (ContentRootPath/Data/, ver Program.cs) e
+         as regras serão carregadas pelo motor de avaliação no startup da próxima fase. -->
     <Content Update="Data\nist_csf_2_0_catalog.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Update="Data\aegis_assessment_rules.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

@@ -151,7 +151,12 @@ using (var scope = app.Services.CreateScope())
             ?? Path.Combine(app.Environment.ContentRootPath, "Data", "nist_csf_2_0_catalog.json");
         await FrameworkSeeder.SeedAsync(db, catalogPath);
 
-        logger.LogInformation("Startup: migrações aplicadas e catálogo NIST CSF 2.0 verificado/semeado.");
+        // Regras técnicas de avaliação (motor RAG) — passo próprio e idempotente, ao lado do catálogo.
+        var rulesPath = builder.Configuration["Seed:RulesPath"]
+            ?? Path.Combine(app.Environment.ContentRootPath, "Data", "aegis_assessment_rules.json");
+        await FrameworkSeeder.SeedAssessmentRulesAsync(db, rulesPath);
+
+        logger.LogInformation("Startup: migrações aplicadas; catálogo NIST CSF 2.0 e regras de avaliação verificados/semeados.");
     }
     catch (Exception ex)
     {

@@ -118,7 +118,7 @@ public sealed class AssetTelemetryTests : IDisposable
     {
         var ctx = new SystemTenantContext(tenantId);
         var writer = new ControlStateWriter(db, ctx, NullLogger<ControlStateWriter>.Instance);
-        var evaluator = new AegisAiEvaluatorService(db, new StubLlmClient(), ctx, writer);
+        var evaluator = new AegisAiEvaluatorService(db, new StubLlmClient(), ctx, writer, new AssessmentRuleContextBuilder(db));
         return new TelemetryIngestionService(evaluator, ctx);
     }
 

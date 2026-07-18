@@ -78,7 +78,7 @@ O modelo abaixo é derivado **diretamente dos seus artefatos**: o workbook de ma
 - **NistSubcategory** — `Id, CategoryId, Code (GV.OC-01), Description, ImplementationExamples, InformativeReferences (jsonb)`
 - **MaturityLevel** — `Id, FrameworkVersionId, Level (1–5), Name, Description, Score` *(Performed→Documented→Managed→Quantitatively Managed→Optimizing)*
 
-> Seed pronto: `data/nist_csf_2_0_catalog.json` (6/22/106 + 5 níveis), extraído do seu próprio workbook.
+> Seed pronto: `backend/src/AegisScore.Api/Data/nist_csf_2_0_catalog.json` (6/22/106 + 5 níveis), extraído do seu próprio workbook.
 
 ### 5.3 Avaliação (Assessment)
 - **Assessment** *(campanha)* — `Id, TenantId, FrameworkVersionId, Name, Status (Draft|InProgress|InReview|Published), StartDate, EndDate`
@@ -253,8 +253,7 @@ AegisScore.sln
    ├─ AegisScore.Infrastructure     // EF Core (AegisScoreDbContext), seeder, AI (Claude), cripto, tenant ctx
    ├─ AegisScore.Connectors.Microsoft  // plugin de conectores Microsoft (Secure Score, Defender...)
    └─ AegisScore.Api                // ASP.NET Core: Program.cs, controllers, DTOs, auth, DI
-data/
-   └─ nist_csf_2_0_catalog.json   // seed do framework
+       └─ Data/                     // catálogo NIST CSF 2.0 (seed) + regras de avaliação GRC
 frontend/
    └─ src/  // React: ExecutiveDashboard + componentes (radar, heatmap, cards, gaps)
 ```
@@ -351,7 +350,7 @@ Aegis Score é um módulo do portal Synapse OS:
 ## 16. O que vem no scaffold
 
 - `ARCHITECTURE.md` (este documento) e `README.md` (como rodar).
-- `data/nist_csf_2_0_catalog.json` — catálogo NIST CSF 2.0 completo (6/22/106 + 5 níveis).
+- `backend/src/AegisScore.Api/Data/nist_csf_2_0_catalog.json` — catálogo NIST CSF 2.0 completo (6/22/106 + 5 níveis); ao lado, `aegis_assessment_rules.json` — regras técnicas de avaliação por subcategoria (97 regras).
 - **Backend .NET**: `AegisScore.Domain` (modelo completo), `AegisScore.Application` (interfaces + serviços de pontuação Maturidade/Risco/ICR), `AegisScore.Infrastructure` (`AegisScoreDbContext`, seeder, serviço de IA Claude), `AegisScore.Connectors.Microsoft` (conector Secure Score de exemplo), `AegisScore.Api` (Program + controllers principais + DTOs).
 - **Frontend React**: `ExecutiveDashboard.tsx` + componentes + cliente de API tipado.
 

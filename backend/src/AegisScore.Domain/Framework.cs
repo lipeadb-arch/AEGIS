@@ -56,6 +56,37 @@ public class NistSubcategory : Entity
     public List<string> InformativeReferences { get; set; } = new();
 }
 
+/// <summary>
+/// Regra técnica de avaliação de UMA subcategoria do CSF 2.0, extraída do NIST SP 800-53 Rev 5.2.0.
+/// Reference data GLOBAL — é o motor do Aegis, compartilhado entre todos os tenants; por isso NÃO
+/// implementa <see cref="ITenantOwned"/> (não é carimbada nem filtrada por tenant).
+///
+/// Modelada LLM-friendly (RAG): os arrays ficam em <c>jsonb</c> na própria linha, sem tabelas 1-N que
+/// poluiriam o schema e fragmentariam a consulta da IA. A ligação com o framework é transitiva via
+/// <see cref="SubcategoryId"/> → <see cref="NistSubcategory"/>, sem FrameworkVersionId redundante.
+/// </summary>
+public class AegisAssessmentRule : Entity
+{
+    /// <summary>FK RÍGIDA ao catálogo: <see cref="NistSubcategory"/>.Id (resolvido do código no seed).</summary>
+    public Guid SubcategoryId { get; set; }
+    public NistSubcategory? Subcategory { get; set; }
+
+    /// <summary>Código natural da subcategoria (ex.: "DE.CM-01") — legível para RAG e chave do JSON de origem.</summary>
+    public string SubcategoryCode { get; set; } = "";
+
+    /// <summary>O que medir tecnicamente (strings curtas). Array → <c>jsonb</c>.</summary>
+    public List<string> EvaluationMetrics { get; set; } = new();
+
+    /// <summary>
+    /// Lógica técnica/matemática que resolve o status do controle (retorna, no texto, estritamente
+    /// Compliant / NonCompliant / MitigatedByThirdParty). É uma string única no JSON — coluna de texto.
+    /// </summary>
+    public string CalculationLogic { get; set; } = "";
+
+    /// <summary>Fontes de telemetria do ecossistema, ou <c>["MANUAL_AUDIT_REQUIRED"]</c>. Array → <c>jsonb</c>.</summary>
+    public List<string> EvidenceRequirements { get; set; } = new();
+}
+
 /// <summary>CMMI-style maturity level (1–5) used to score every subcategory.</summary>
 public class MaturityLevel : Entity
 {

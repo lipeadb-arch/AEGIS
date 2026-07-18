@@ -29,6 +29,9 @@ public class AegisScoreDbContext : DbContext
     public DbSet<NistSubcategory> Subcategories => Set<NistSubcategory>();
     public DbSet<MaturityLevel> MaturityLevels => Set<MaturityLevel>();
     public DbSet<SignalMapping> SignalMappings => Set<SignalMapping>();
+    // Motor GLOBAL de avaliação: regras técnicas por subcategoria (extraídas do 800-53 5.2.0). Reference
+    // data, sem tenant — como o resto do catálogo NIST.
+    public DbSet<AegisAssessmentRule> AssessmentRules => Set<AegisAssessmentRule>();
 
     // Tenancy
     public DbSet<Tenant> Tenants => Set<Tenant>();
@@ -126,6 +129,25 @@ public class AegisScoreDbContext : DbContext
         b.Entity<NistCategory>().HasIndex(x => new { x.FunctionId, x.Code }).IsUnique();
         b.Entity<NistSubcategory>().Property(x => x.Code).HasMaxLength(15).IsRequired();
         b.Entity<NistSubcategory>().HasIndex(x => new { x.CategoryId, x.Code }).IsUnique();
+
+        // Aegis Assessment Rules — motor GLOBAL de avaliação (reference data, SEM query filter/stamp de
+        // tenant). Uma regra por subcategoria: o índice único em SubcategoryCode reflete que as regras são
+        // únicas por controle. Listas → jsonb (mesmo converter das demais), sem tabelas 1-N. FK RÍGIDA ao
+        // catálogo por Id (não por Code — Code só é único no escopo (CategoryId, Code)), WithMany() sem
+        // coleção inversa e Restrict, como no TenantControlState: apagar uma subcategoria não cascateia
+        // sobre as regras. (Rules globais numa única FrameworkVersion; multi-versão seria migration futura.)
+        b.Entity<AegisAssessmentRule>(e =>
+        {
+            e.Property(x => x.SubcategoryCode).HasMaxLength(15).IsRequired();
+            e.HasIndex(x => x.SubcategoryCode).IsUnique();
+            e.Property(x => x.EvaluationMetrics)
+                .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
+            e.Property(x => x.EvidenceRequirements)
+                .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
+            e.HasOne(x => x.Subcategory).WithMany()
+                .HasForeignKey(x => x.SubcategoryId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
         b.Entity<Risk>().HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
         b.Entity<EvidenceSignal>().HasIndex(x => new { x.TenantId, x.SignalKey, x.CollectedAt });
 

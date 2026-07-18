@@ -19,8 +19,8 @@ public record ComplianceVerdict(ControlStatus Status, string AiEvidence, int Awa
 
     /// <summary>
     /// Contexto de inteligência que o motor anexou ao veredito (severidade, rastro cru da ferramenta,
-    /// plano de ação, confiança, ameaças, MTTD/MTTR). Nulo quando o motor não o emite — hoje é o caso de
-    /// todos eles: o seam existe para RECEBER o bloco quando o LLM passar a produzi-lo.
+    /// plano de ação, confiança, ameaças, MTTD/MTTR). O avaliador por telemetria já pede este bloco ao LLM
+    /// e o preenche; fica nulo quando o motor é determinístico (StubLlmClient de DEV) ou não o produz.
     /// </summary>
     public ControlIntelligence? Intelligence { get; init; }
 }

@@ -1,8 +1,8 @@
 # AEGIS_STATE.md — Snapshot Arquitetural Tático
 
-> **Propósito deste arquivo:** reinjeção de contexto exato em futuras sessões de IA, sem reler o código-fonte. Não é documentação comercial. Última atualização: **2026-07-16**.
+> **Propósito deste arquivo:** reinjeção de contexto exato em futuras sessões de IA, sem reler o código-fonte. Não é documentação comercial. Última atualização: **2026-07-18**.
 >
-> **Base de versionamento:** ⚠️ **MUDOU — a nota anterior desta seção estava obsoleta.** Todo o trabalho das sessões anteriores (Identify → Recover + frontend vivo + Copiloto GRC + ID.RA/Raio de Explosão + Ingestão de Identidade do Entra ID + Checklist Dinâmico + Advisories) **JÁ ESTÁ COMMITADO** na branch **`main`** — HEAD `3fd88d7` (2026-07-16); o commit `dcedf57` citado antes é ancestral de `main`, e a branch `feat/telemetry-ingestion-scoring-consolidation` ficou para trás (existe local, não é mais a base). O ÚNICO trabalho no working tree é o da **seção 10** (enriquecimento do contrato de controle para a IA — 20 arquivos). O Felipe versiona manualmente.
+> **Base de versionamento:** ⚠️ **MUDOU — a nota anterior desta seção estava obsoleta.** Todo o trabalho das sessões anteriores (Identify → Recover + frontend vivo + Copiloto GRC + ID.RA/Raio de Explosão + Ingestão de Identidade do Entra ID + Checklist Dinâmico + Advisories) **JÁ ESTÁ COMMITADO** na branch **`main`** — HEAD `3fd88d7` (2026-07-16); o commit `dcedf57` citado antes é ancestral de `main`, e a branch `feat/telemetry-ingestion-scoring-consolidation` ficou para trás (existe local, não é mais a base). O trabalho no working tree é o da **seção 10** (enriquecimento do contrato de controle para a IA — 20 arquivos) **+ o da seção 11** (Teste de Fogo do RAG: `RagFireTestScenarios.cs` e `DevRagFireTestController.cs` novos; `AegisAiOptions.cs` e `appsettings.json` com o modelo trocado). O andaime de mock do frontend (10.4) **foi removido** — a reversão também está no working tree. Somam-se ainda os **3 arquivos de frontend da seção 12** (`app.component.ts`, `asset-inventory.component.ts`, `document-hub.component.ts` — polimento de UI/UX). O Felipe versiona manualmente.
 
 ---
 
@@ -206,7 +206,7 @@ Padrão do projeto: standalone + signals, gráficos 100% nativos (SVG/canvas, se
 - **Hub preservado**: upload manual, filtros, tabela de documentos, reanalyze/excluir, strip de cobertura documental. Tudo signal-first.
 
 ### 4.3 Copiloto GRC (Auditor Virtual) — global + context-aware
-- **Já era global** (montado no `app.component` dentro de `<app-drawer>`; o `document-hub` só tem o botão de abrir).
+- **Já era global** (montado no `app.component` dentro de `<app-drawer>`). ⚠️ **DESATUALIZADO desde 2026-07-18:** o gatilho deixou de morar no sidebar e o botão duplicado do `document-hub` foi REMOVIDO — hoje o acesso é pelo **FAB flutuante global** (ver 12.4).
 - `AgentStateService` (root, signals): deriva o contexto da rota via `router.events`; `ROUTE_TO_CONTEXT` agora mapeia **todas** as Funções (governance/assets/protect/detect/respond/recover); expõe `contextScope` (`GLOBAL|GV|ID|PR|DE|RS|RC`) e `drawerTitle` reativo.
 - `services/auditor.service.ts`: cliente de `POST /auditor/chat` (envia `contextScope`). `AuditorChatReply` agora carrega `intent` (`COPILOT|START_INTERVIEW`) e `metadata` (`AuditorInterviewSeed{targetSubcategoryCode}`).
 - `components/auditor-chat.component.ts`: **Copiloto real + ROTEADOR VISUAL declarativo** — signals `chatHistory`/`isAnalyzing`, bolhas HUD (cyan usuário / magenta auditor), auto-scroll (`viewChild` + `effect`). O `chatHistory` é uma **união discriminada de 3 variantes** (`TextChatMessage | InterviewChatMessage | BlastRadiusChatMessage`) e o template roteia com **`@switch` nativo, SEM `ViewContainerRef`**: `@case('text')` → bolha; `@case('interview')` → `grc-question-card`; `@case('blast_radius')` → `blast-radius-graph` (ver 4.4). `priorHistory` filtra só as bolhas de texto (type-guard) antes de enviar ao backend.
@@ -238,7 +238,9 @@ As siglas (ex.: `PR.AA-01`) são essenciais ao motor mas hostis na tela. Camada 
 
 ## 5. Ponto de Parada e Backlog
 
-**Onde paramos:** backend NIST completo; **110/110 testes**. **Pilar Protect FECHADO**: PR.AA (identidade Entra + compensação OT) e PR.DS/PR.PS/PR.IR com **sinais tipados** na Application (ver 2.11) e **cobertura de teste** — ⚠️ as 3 regras PR.DS/PS/IR já existiam no `EvaluateProtect` (nada mudou no Stub). **Ingestão de Identidade do Entra ID — COMPLETA e VALIDADA AO VIVO ponta a ponta** (ver 2.10 + 4.6): contratos multi-controle → provider stub → `IdentityTelemetryController` (POST /telemetry/identity/entra-id, reusa a esteira) → **controle compensatório OT** (3 vias em PR.AA-01) → tela HUD `/identity` com toggle de isolamento (demo ao vivo: NonCompliant→Mitigado + badge "COMPENSATED CONTROL") + "Auditar Lacunas" → Copiloto (START_INTERVIEW). **ID.RA (Raio de Explosão) — COMPLETO e VALIDADO AO VIVO** (motor Dijkstra → hook no ledger → Generative UI `blast-radius-graph`, ver 2.9/4.4). **Humanização das siglas NIST** (glossário PT-BR no card + pilares, ver 4.7). Provider Pattern documental + `/sync` prontos (SharePoint STUB). Frontend: 4 painéis de pilar + Govern + Copiloto (Agentic Routing + entrevista GRC) + tela de Identidade; a casca não vaza no `/login` (ver 4.5). ⚠️ **Commitado em `main`** até `3fd88d7` — a afirmação "nada commitado" desta seção venceu; ver o cabeçalho e a seção 10.
+**Onde paramos (2026-07-18):** ⭐ **MOTOR RAG VALIDADO CONTRA A API REAL** — o Gemini lê a regra `jsonb`, executa a rubrica matemática (fail-closed), preenche o `ControlIntelligence` completo e recusa alucinar quando a evidência não existe (**seção 11**). O ledger tem inteligência real gravada, e por isso o mock do frontend foi **deletado** (10.4). Modelo default agora `gemini-flash-latest` (11.4). **UI/UX polida** (seção 12): FAB global da égide substituiu o gatilho do sidebar e o botão duplicado do Govern; rolagem do sidebar no idioma Synapse; seção "Referência" com o link do NIST; e a tabela de ativos alinhada ao desfazer a colisão com o utilitário global `.grid`. Abaixo, o histórico anterior:
+
+**Onde paramos (anterior):** backend NIST completo; **110/110 testes**. **Pilar Protect FECHADO**: PR.AA (identidade Entra + compensação OT) e PR.DS/PR.PS/PR.IR com **sinais tipados** na Application (ver 2.11) e **cobertura de teste** — ⚠️ as 3 regras PR.DS/PS/IR já existiam no `EvaluateProtect` (nada mudou no Stub). **Ingestão de Identidade do Entra ID — COMPLETA e VALIDADA AO VIVO ponta a ponta** (ver 2.10 + 4.6): contratos multi-controle → provider stub → `IdentityTelemetryController` (POST /telemetry/identity/entra-id, reusa a esteira) → **controle compensatório OT** (3 vias em PR.AA-01) → tela HUD `/identity` com toggle de isolamento (demo ao vivo: NonCompliant→Mitigado + badge "COMPENSATED CONTROL") + "Auditar Lacunas" → Copiloto (START_INTERVIEW). **ID.RA (Raio de Explosão) — COMPLETO e VALIDADO AO VIVO** (motor Dijkstra → hook no ledger → Generative UI `blast-radius-graph`, ver 2.9/4.4). **Humanização das siglas NIST** (glossário PT-BR no card + pilares, ver 4.7). Provider Pattern documental + `/sync` prontos (SharePoint STUB). Frontend: 4 painéis de pilar + Govern + Copiloto (Agentic Routing + entrevista GRC) + tela de Identidade; a casca não vaza no `/login` (ver 4.5). ⚠️ **Commitado em `main`** até `3fd88d7` — a afirmação "nada commitado" desta seção venceu; ver o cabeçalho e a seção 10.
 
 **Próximos passos imediatos (prioridade):**
 
@@ -247,12 +249,12 @@ As siglas (ex.: `PR.AA-01`) são essenciais ao motor mas hostis na tela. Camada 
 1. ~~**Ingestão de Identidade do Entra ID (telemetria multi-controle + compensação OT + tela HUD)**~~ ✅ **CONCLUÍDO e VALIDADO AO VIVO** (ver 2.10 + 4.6). **Refinamentos futuros:** (a) `EntraIdTelemetryProviderStub` → OAuth client credentials + Microsoft Graph real; (b) no motor real, exigir `PrivilegedAccountsWithoutMfa <= MfaExemptServiceAccounts` p/ não mascarar admin HUMANO atrás do isolamento OT; (c) **enriquecer o response com findings por INDICADOR** (hoje a tabela mostra 1 linha por controle NIST — o modelo do frontend já suporta N).
 1. ~~**Fechar o Protect (PR.DS/PS/IR) + humanizar as siglas NIST**~~ ✅ **CONCLUÍDO e VALIDADO AO VIVO** (ver 2.11 + 4.7): sinais tipados Data/Platform/Network + 6 testes (lacuna fechada) + glossário PT-BR no card/pilares. **Refinamento opcional:** unificar as rotas `/protect/{data,platform,network}` para consumirem os signals (hoje usam os DTOs da Api mais ricos — Dlp/AppLocker/Microsegmentation), só se quisermos eliminar a composição inline.
 2. **Conectores Microsoft ainda são STUB** — `SharePointProvider.cs` (documentos, falta OAuth client credentials + `GET /sites/{id}/drive/root/children`) **e** `EntraIdTelemetryProviderStub.cs` (identidade, falta OAuth + Graph directoryRoles/authenticationMethods/signInActivity). Ambos com o Provider Pattern JÁ pronto; segredos em `ConnectorConfig.EncryptedSettings`.
-3. **Ligar o motor real de IA** — `GeminiLlmClient` (`gemini-2.0-flash`) e `ClaudeAssessmentService` (Anthropic, `claude-sonnet-5`). ⚠️ **Testado ao vivo em 2026-07-13: o Gemini real respondeu HTTP 429 (quota do Felipe esgotada) → `AiUnavailableException`/503** — as provas E2E usam os Stubs, forçados subindo a API com `AegisAi__ApiKey=' '`/`Ai__ApiKey=' '` (ESPAÇO: no PowerShell `''` REMOVE a env var; um espaço passa `IsNullOrWhiteSpace`=true → o DI cai no Stub). O Copiloto GLOBAL ainda não injeta a postura real do tenant no prompt (hoje só persona por escopo) — hook para as queries de scoring.
+3. **Ligar o motor real de IA** — ✅ **O `GeminiLlmClient` ESTÁ LIGADO E VALIDADO** (seção 11): o 429 de 2026-07-13 era **cota por modelo**, não chave inválida; o default virou `gemini-flash-latest` e o motor avalia de verdade (lê o jsonb, calcula a rubrica, preenche o `ControlIntelligence`). **Falta ainda o `ClaudeAssessmentService`** (Anthropic, `claude-sonnet-5`) — o Copiloto/Advisories seguem no `StubAssessmentService`. Para FORÇAR os Stubs numa prova E2E, subir a API com `AegisAi__ApiKey=' '`/`Ai__ApiKey=' '` (ESPAÇO: no PowerShell `''` REMOVE a env var; um espaço passa `IsNullOrWhiteSpace`=true → o DI cai no Stub). O Copiloto GLOBAL ainda não injeta a postura real do tenant no prompt (hoje só persona por escopo) — hook para as queries de scoring.
 4. **HUD `/trend`** só preenche via `AegisScoreSnapshotWorker` (foto à meia-noite UTC); considerar snapshot no boot em DEV.
 
 **Ambiente de execução (DEV):** API em `http://localhost:5100` (`dotnet run --launch-profile http`). ⚠️ Banco real (via `dotnet user-secrets`) é **`aegis_dev`** — diverge do `Database=aegis` do `appsettings.json` versionado (DEV.md Passo 1). DemoTenant `aa000000-0000-0000-0000-000000000001`; usuário `analista@demo.aegis` / `Aegis@12345` (via `POST /dev/seed-user`). ⚠️ O **login (`POST /auth/login`) exige o header `X-Tenant`** — multi-tenant resolve o usuário dentro do tenant. Segredos (JWT, connection string, `AegisAi:ApiKey`, `Ai:ApiKey`) em `dotnet user-secrets` — ver `DEV.md`. **Schema aplicado no boot** (`db.Database.MigrateAsync()` em `Program.cs`) — não rodar `dotnet ef database update` à mão em uso normal. Frontend: `npm --prefix <frontend> run build` (ou `ng serve`); `environment.tenantId` = DemoTenant. ⚠️ Ao rodar `dotnet build` da solução com a API ativa, o `bin` do Api fica travado (MSB3026) — parar a API ou compilar o Api isolado (`--no-dependencies -o <tmp>`).
 
-⚠️ **CORS (dev):** a política `aegis-spa` (`Program.cs`) só libera `http://localhost:{5173,5273,3000}` — rode o `ng serve` em **`--port 5173`** (a porta padrão 4200 é bloqueada). **Raio de explosão demo:** `DevController.DemoRootAssetId = bb000000-0000-0000-0000-000000000001` (o AD DC), espelhado em `environment.blastRadiusDemoAssetId`. **Motor de IA real (trocar o Stub):** `dotnet user-secrets set "Ai:ApiKey" "sk-ant-…" --project src/AegisScore.Api` — chave Anthropic; o DI (`AddAegisScoreInfrastructure`) troca o `StubAssessmentService` pelo `ClaudeAssessmentService` (`claude-sonnet-5`) no próximo boot. O `StubLlmClient`/`GeminiLlmClient` seguem a MESMA lógica com `AegisAi:ApiKey`. **Demo de identidade (Entra ID):** a tela `/identity` foi validada em `ng serve --port 5273`; o toggle "Rede Isolada (OT)" re-avalia e demonstra a compensação ao vivo (PR.AA-01 NonCompliant→Mitigado).
+⚠️ **CORS (dev):** a política `aegis-spa` (`Program.cs`) só libera `http://localhost:{5173,5273,3000}` — rode o `ng serve` em **`--port 5173`** (a porta padrão 4200 é bloqueada). **Raio de explosão demo:** `DevController.DemoRootAssetId = bb000000-0000-0000-0000-000000000001` (o AD DC), espelhado em `environment.blastRadiusDemoAssetId`. **Motor de IA real (trocar o Stub):** `dotnet user-secrets set "Ai:ApiKey" "sk-ant-…" --project src/AegisScore.Api` — chave Anthropic; o DI (`AddAegisScoreInfrastructure`) troca o `StubAssessmentService` pelo `ClaudeAssessmentService` (`claude-sonnet-5`) no próximo boot. O `StubLlmClient`/`GeminiLlmClient` seguem a MESMA lógica com `AegisAi:ApiKey` (modelo default `gemini-flash-latest` — ver 11.4). **Teste de fogo do RAG:** `POST /api/v1/dev/rag-fire-test?scenario=all` após `POST /api/v1/dev/seed-demo` (ver seção 11). **Demo de identidade (Entra ID):** a tela `/identity` foi validada em `ng serve --port 5273`; o toggle "Rede Isolada (OT)" re-avalia e demonstra a compensação ao vivo (PR.AA-01 NonCompliant→Mitigado).
 
 ---
 
@@ -321,7 +323,7 @@ Fechamento de dívidas técnicas — build .NET verde (0/0) + `ng build` verde (
 
 **Objetivo:** dar ao card de controle NIST o **esqueleto de dados estruturado** que a camada de IA vai preencher, e a leitura visual de risco que o analista precisa ter num relance.
 
-⚠️ **É TERRENO, NÃO MOTOR — leia antes de "consertar" os campos vazios.** Nenhum produtor preenche o enriquecimento hoje: nem o `StubLlmClient` nem o `GeminiLlmClient` emitem o bloco `intelligence` (o System Prompt **não o pede**, de propósito). O caminho **motor → writer → banco → query → DTO → UI** está ligado ponta a ponta e trafega VAZIO. **Zero mock, por decisão:** num produto de conformidade, campo vazio é honesto; campo preenchido por suposição é auditoria falsificada. Build .NET verde (0/0) + **115/115 testes** + `ng build` AOT verde (2026-07-16).
+⚠️ **PREMISSA VENCIDA (era "terreno, não motor") — NÃO redescobrir.** Este bloco dizia que nenhum produtor preenchia o enriquecimento e que "o System Prompt **não o pede**, de propósito". **Isso mudou:** o `BuildSystemPrompt` do `AegisAiEvaluatorService` **PEDE** o bloco `intelligence` (contrato de saída com `severity`/`aiConfidenceScore`/`threatLandscape`/`remediationPlan`) e o **Gemini real o preenche por completo** — validado ao vivo em 2026-07-17/18 (ver **seção 11**). O que segue vazio é só o caminho de DEV do `StubLlmClient` (determinístico, não emite o bloco) e o `HistoricalCompliance` (sem produtor possível — ver 10.3 item 3). **Zero mock permanece a decisão:** campo vazio é honesto, campo preenchido por suposição é auditoria falsificada. Build .NET verde (0/0) + **115/115 testes** + `ng build` AOT verde.
 
 ### 10.1 Backend — o blob de inteligência (mesmo idioma do `ChecksJson`)
 
@@ -355,10 +357,113 @@ Fechamento de dívidas técnicas — build .NET verde (0/0) + `ng build` verde (
 2. **`RemediationPlan` não substitui o motor de Advisories** (seções 7 e 8) — ver 10.2. Dois campos, dois papéis.
 3. **`HistoricalCompliance` é o ÚNICO campo sem produtor POSSÍVEL hoje.** Não existe snapshot POR CONTROLE: o `AegisScoreSnapshotWorker` só tira a foto AGREGADA do tenant (`TenantScoreSnapshot` → `/trend`). A query entrega `Array.Empty<>()` e a sparkline se omite. Preencher = tabela nova + worker + migration (fatia real, não prompt engineering).
 
-**Verificação:** build .NET 0/0, **115/115 testes** (nenhum teste novo — a fatia é contrato + UI, sem regra de negócio nova), `ng build` AOT verde, migration sem drift. ⚠️ **NÃO validado ao vivo** — o click-through autenticado exige login, não digitado pela IA por política de credenciais (mesma pendência da Fase 2, seção 8). O observável hoje subindo API + `ng serve --port 5173`: badge de severidade em TODO controle (via proxy do status) e os cards MTTD/MTTR em "—" nas abas DE/RS/RC.
+**Verificação:** build .NET 0/0, **115/115 testes** (nenhum teste novo — a fatia é contrato + UI, sem regra de negócio nova), `ng build` AOT verde, migration sem drift. ✅ **AGORA VALIDADO AO VIVO (2026-07-17)** — via o andaime de mock da **seção 10.4** (o dossiê de IA renderizou ponta a ponta; ver lá). O observável sem o mock, subindo API + `ng serve`: badge de severidade em TODO controle (via proxy do status) e os cards MTTD/MTTR em "—" nas abas DE/RS/RC.
+
+### 10.4 Andaime de mock DEV — ✅ **APOSENTADO E REMOVIDO em 2026-07-18** (registro histórico)
+
+⚠️ **NÃO recriar.** Este andaime existiu por ~1 dia para provar que o dossiê de IA renderizava enquanto não havia produtor. **A muleta caiu**: a seção 11 ligou o produtor real e o ledger passou a ter inteligência gravada pelo Gemini, então a flag `useMockScoring`, o `data/scoring-mock.data.ts` e o curto-circuito no `ScoringService.getDashboard()` foram **DELETADOS** (`ng build` verde sem eles; zero referências remanescentes). O `/scoring/dashboard` volta a ser a fonte ÚNICA do HUD. O que segue abaixo é o registro do que foi feito, não instrução vigente.
+
+**Contexto (histórico):** a seção 10 trafegava VAZIO (sem produtor), então o dossiê de IA nunca tinha sido visto renderizado. O mock era DEV-only atrás de flag — **não feria o princípio "zero mock" do ledger honesto**: o backend seguia vazio; era andaime de UI client-side, explicitamente reversível, não falsificação do estado do tenant.
+
+- **`data/scoring-mock.data.ts` (NOVO):** `SCORING_MOCK_DASHBOARD: TenantControlStateDto[]` — espelha o contrato de `/scoring/dashboard`, com o bloco `ControlIntelligence` preenchido em TODOS os campos. Cobre o eixo de severidade de ponta a ponta (PR.AA-01 Crítico/NonCompliant enriquecido ao máximo · PR.DS-01 Médio/Parcial · PR.IR-01 Baixo/Compliant) + DE.CM-01 e RS.MA-01 (para o HUD MTTD/MTTR sair do "—"). Códigos NIST escolhidos para resolverem no glossário (`categoryName`).
+- **`environment.ts`:** flag `useMockScoring: true`.
+- **`services/scoring.service.ts`:** `getDashboard()` curto-circuita para `of(SCORING_MOCK_DASHBOARD)` quando a flag está ligada. ⚠️ **Desvio na FONTE de dados, não no componente dumb** — o `ControlComplianceCardComponent` recebe `input.required<ControlView[]>()`; forçar o mock nele quebraria o fluxo Smart/Dumb. Assim os 4 painéis acendem pelo pipeline real (`buildPillarView` → card), sem tocar na renderização (que já estava correta desde 10.2).
+- ✅ **VALIDADO AO VIVO (2026-07-17, `ng serve` porta 5273):** `/protect` renderizou gauge 45%, 3 controles ordenados (NonCompliant no topo). Expandido o PR.AA-01 Crítico, o dossiê saiu completo e no tema HUD — verificado via DOM (`getComputedStyle`, pois screenshot trava com HMR, ver [[aegis-frontend-verification]]): **AI Confidence 94%** com barra cyan `rgb(38,224,255)` (faixa ≥80 correta), Evidência da Telemetria (chip EntraID + `<pre>` do JSON cru), 4 chips de Mapeamento de Ameaças, Plano de Ação + botão "✦ Gerar Recomendação", checklist ✓/✕ e badge CRÍTICO. **Todas as seções da 10.2 provadas renderizando.**
+- ⚠️ **Rotas de pilar são guardadas (`authGuard`):** para a prévia sem subir a API .NET, semeei o token em memória pelo console do Angular (`ng.getComponent(app-login).auth._accessToken.set(...)` → `router.navigateByUrl('/protect')`) — token efêmero, some no reload, **sem alterar código** (técnica registrada em [[aegis-frontend-verification]]).
+- ✅ **REVERTIDO em 2026-07-18** (flag + arquivo + `import`/`if` removidos; `ng build` verde; zero referências).
 
 **Escopo/backlog (em ordem de valor):**
-1. **Ligar um produtor** — fazer o `StubLlmClient` emitir o bloco `intelligence` no Protect (ao lado do `BuildProtectChecks`, ver 6) e o System Prompt do `AegisAiEvaluatorService` pedi-lo ao motor real. É o que enche a UI e permite a prova ao vivo.
+1. ~~**Ligar um produtor**~~ ✅ **CONCLUÍDO e VALIDADO CONTRA A API REAL** (ver **seção 11**): o System Prompt pede o bloco `intelligence` e o Gemini o preenche por completo (severidade, confiança, ameaças MITRE, plano). *(Pendência fina: o `StubLlmClient` do caminho DEV segue sem emitir o bloco — só o motor real produz inteligência.)*
 2. **MTTR é quase de graça; MTTD NÃO TEM FONTE.** ⚠️ Verificado no código (2026-07-16): `EvaluateRespondRecover` já lê `Num(p, "mean time to respond:")` para reprovar RS.MI-01 — o valor decide o veredito e é **descartado**; projetá-lo em `MttrMinutes` é trivial. **Já o MTTD não existe em lugar nenhum** — `EvaluateDetect` não lê tempo algum (DE.AE-02/DE.CM-01/DE.AE-06 usam contagem de anomalias, cobertura de log e cobertura MITRE). ⚠️ **NÃO aliasar `MeanTimeToAcknowledgeMins` (RS.MA-01) como MTTD**: MTTA é o tempo de *reconhecer o alerta*, MTTD é o de *detectar a ameaça* — são métricas de SOC distintas, e trocá-las reportaria número errado num produto de conformidade. MTTD real exige ingestão nova (campo no `AnomaliesTelemetryDto`/`MonitoringTelemetryDto` + rótulo lido pelo Stub).
 3. **Severidade real ponderada pelo Raio de Explosão:** o `BlastRadiusScoreProjector` (2.9) já escreve no ledger via `IControlStateWriter` e agora tem o parâmetro `intelligence` — é o candidato natural a preencher `Severity` + `ThreatLandscape` (as `AssetThreatExposure`/`Threat` do tenant já mapeiam os vetores, ex.: T1486).
 4. **Snapshot por controle** → `HistoricalCompliance` + sparkline viva.
+
+---
+
+## 11. Teste de Fogo — Motor RAG e Inferência Algorítmica VALIDADOS contra a API real
+
+> **Motor RAG e Inferência Algorítmica validados.** O motor **lê o `jsonb`**, **respeita o fail-closed matemático**, **preenche o `ControlIntelligence` completo** e **possui guard-rail contra alucinação de falso-positivo.**
+
+Executado em **2026-07-18** contra o **Gemini REAL** (`gemini-flash-latest`), sem mock em nenhuma camada. Fecha o backlog #1 da seção 10 e aposenta o andaime de mock (10.4).
+
+### 11.1 O caminho provado ponta a ponta
+
+`AegisAssessmentRule` (jsonb, 97 regras) → **RAG por chave** (`AssessmentRuleContextBuilder`) → System/User Prompt → **Gemini real** → parse do bloco `intelligence` (com `JsonStringEnumConverter`) → `ControlStateWriter` → **ledger**. Nenhuma etapa simulada.
+
+### 11.2 Harness (⚠️ DEBUG-ONLY)
+
+- **`Api/Dev/RagFireTestScenarios.cs`** — telemetria FORJADA. ⚠️ **NÃO existe tipo `TelemetryEvent` no domínio** (o seam do avaliador é `string rawTelemetryPayload`, de propósito: o motor precisa ver o log CRU, não um DTO já interpretado); o record é local ao andaime, só para gerar JSON realista.
+- **`Api/Controllers/DevRagFireTestController.cs`** — `#if DEBUG`, `[AllowAnonymous]`, `GET` descreve / `POST` dispara (`?scenario=all|A..D&control=`). Monta o avaliador **à mão** porque as dependências scoped estão presas ao DbContext da requisição, cujo tenant HTTP é nulo num endpoint anônimo — usa um `ITenantContext` não-HTTP (idioma do `DevController.SystemTenantContext`). O `ILLMClient`, esse, vem do DI: é o ponto do teste.
+- ⚠️ **ESCREVE NO LEDGER** do tenant demo (o avaliador persiste por design) — é o que encheu `/scoring/dashboard` com inteligência real e permitiu matar o mock do front.
+- ⚠️ **NÃO é teste automatizado e não deve virar um.** Imprime a EXPECTATIVA ao lado do veredito para conferência humana: um LLM não é determinístico e um `Assert` aqui seria um teste instável que mentiria nas duas direções.
+
+### 11.3 A matriz de prova (4 cenários, cada um isolando UMA afirmação)
+
+| # | Payload forjado | Controle | Prova | Resultado real |
+|---|---|---|---|---|
+| **A** | USB em host restrito (WINEVTLOG 133/134) | PR.DS-01 | **Guard-rail anti-alucinação** | ✅ `NonCompliant` — *"o payload não contém dados para o cálculo da fração de endpoints cifrados… (SC-13) ou gestão de chaves (SC-28)"* |
+| **B** | Alerta EDR crítico (Sentinel) | DE.CM-01 | **Troca de regra por chave** | ✅ `NonCompliant` — citou *"baseline de 214 dias (limite de 180)"* e *"64,2% (27 de 42 interfaces)"* |
+| **C** | Cifragem ACIMA da rubrica | PR.DS-01 | **Cálculo da fórmula** | ✅ `Compliant 20/20` — *"score de **0.96** (acima do limiar de 0.85)"* |
+| **D** | Cifragem ABAIXO da rubrica | PR.DS-01 | **Limiares + fail-closed** | ✅ `NonCompliant 0/20` — *"RC4/3DES **zera o índice criptográfico (SC-13)**… score final de **0,48** (abaixo do mínimo de 0,50)"* |
+
+**A prova decisiva (C e D):** os números do payload foram escolhidos para que a `calculation_logic` do PR.DS-01 (`.30·endpoint + .30·repositório + .25·chaves + .15·algoritmo`) desse um resultado ÚNICO conferível à mão — **0,9647** e **0,4795**. O Gemini reportou **0.96** e **0,48**. Ele não classificou por "vibe": **executou a rubrica do jsonb**. Em D acertou também a cláusula fail-closed (algoritmo fora do padrão validado ⇒ fator 0, independente da cobertura).
+
+**`ControlIntelligence` veio COMPLETO** nos 4: `severity` (`High`/`Informational`), `aiConfidenceScore` (100), `threatLandscape` com MITRE real (`T1052.001 · Exfiltration Over Physical Medium`) e `remediationPlan` acionável em PT-BR. Latência 5,5–8,9 s por controle.
+
+### 11.4 Modelo Gemini — default trocado (⚠️ não reverter para um pin)
+
+Sondagem direta da Generative Language API (2026-07-18): `gemini-2.0-flash` e `gemini-2.0-flash-lite` → **429 RESOURCE_EXHAUSTED** (cota free esgotada, **persistente** desde 2026-07-13 — não é transitório); `gemini-2.5-flash` → **404** ("no longer available to new users"); **`gemini-flash-latest` → 200 OK**.
+
+**`AegisAiOptions.Model` e `appsettings.json` agora usam `gemini-flash-latest`** — alias, não pin, de propósito: um modelo pinado envelhece para 404/429 e derruba a avaliação com 503. Sobrescrevível por `AegisAi:Model`/`AegisAi__Model` quando um pin for necessário. **115/115 testes verdes** após a troca (nenhum teste fixava o modelo).
+
+### 11.5 Divergências do enunciado (decisões Principal — não redescobrir)
+
+1. **`TelemetryEvent` não existe** — ver 11.2.
+2. **A DI do Gemini e o System Prompt já estavam prontos** — os passos "cabear o `ILLMClient`" e "pedir o bloco de IA" do enunciado já estavam feitos; o trabalho real era o harness + os cenários.
+3. **`tenantId` fictício é impossível** — o avaliador exige `tenantId == tenant do contexto` (fail-fast) e o writer precisa da FK real do tenant. Usa-se o `DemoTenantId` (rodar `POST /dev/seed-demo` antes).
+4. **Os 2 cenários do enunciado não exercitavam a rubrica do PR.DS-01** (ela mede cifragem/chaves/algoritmo; USB e execução suspeita não são medíveis por ela). Em vez de descartá-los, viraram os testes de **guard-rail** (A) e **troca de regra** (B) — e C/D foram acrescentados para provar a matemática. É o que transformou a demo em prova.
+
+---
+
+## 12. Polimento de UI/UX — casca, rolagem, FAB da égide e alinhamento da tabela de ativos
+
+Duas rodadas de acabamento (2026-07-18), todas validadas no DOM real. **Arquivos: `app.component.ts`, `pages/asset-inventory.component.ts`, `pages/document-hub.component.ts`.**
+
+### 12.1 ⚠️ Premissa recorrente e FALSA: "o SCSS do sidebar"
+
+**NÃO existe SCSS neste projeto. NÃO existe `sidebar.component.*`. NÃO existe `app.component.html`.** Dois enunciados seguidos pediram para editar `sidebar.component.scss` — o arquivo nunca existiu. A casca inteira (marca, navegação, drawer, FAB) vive **inline** no `app.component.ts` (`template:` + `styles: [\`…\`]`); o ÚNICO `.html` do repositório é `pages/aegis-dashboard.component.html`. Antes de "editar o SCSS de X", conferir que X existe.
+
+### 12.2 Sidebar — rolagem no idioma Synapse
+
+`overflow-x: hidden` + `::-webkit-scrollbar` de 6px (track transparente, thumb `rgba(255,255,255,.1)` → `.22` no hover) + `scrollbar-width`/`scrollbar-color` (as regras `::-webkit-` são ignoradas pelo Firefox).
+
+⚠️ **A causa REAL da barra horizontal era o `.sidebar::after`** — a aresta neon estava ancorada em `right: -1px`, 1px FORA do box, e era ela sozinha que criava o transbordo. Reancorada em `right: 0`: transbordo foi de 1px para **0** (barra morta na origem, não escondida) e a aresta deixou de ser recortada pelo novo `overflow-x: hidden` — que a teria apagado.
+
+### 12.3 Seção "Referência" + link externo
+
+Novo `nav-group` no fim da navegação com "Sobre o NIST CSF 2.0" → `https://www.nist.gov/cyberframework`. Sem `routerLink`/`routerLinkActive` (é `href` externo, não rota) e **com `rel="noopener noreferrer"`** — `target="_blank"` sem isso é vetor de tab-nabbing. O rótulo trunca (`text-overflow: ellipsis`), obrigatório sob o `overflow-x: hidden`.
+
+### 12.4 FAB global do Auditor (saiu do sidebar) + escudo da égide
+
+O gatilho do Agente virou **FAB fixo** no layout raiz: `position: fixed; bottom: 30px; right: 30px; z-index: 9999`, 58×58 (50×50 sob 960px), `border-radius: 50%`, halo neon + sombra de elevação.
+
+⚠️ **O `z-index: 9999` colidia com o drawer** (`z-index: 60`, painel ancorado em `right: 0` — abre exatamente sobre o FAB). Solução: com `agent.open()` o FAB recebe `.is-hidden` (`opacity: 0`, `scale(.8)`, `pointer-events: none`) — ali ele é redundante, o drawer tem o próprio ✕. **NÃO baixar o z-index** para "resolver": ele precisa flutuar sobre todo o conteúdo.
+
+**Ícone:** SVG inline `viewBox="0 0 32 32"` a 26px — anel com o gradiente da marca (`#26e0ff → #8b5cff → #ff3d9a`), 8 traços radiais (serpentes), rosto em triângulo invertido, olhar ciano. Geométrico de propósito: em 26px detalhe figurativo vira sujeira. Substituiu o glifo `✦`.
+
+**O botão duplicado do Govern FOI REMOVIDO** (`document-hub`, `.auditor-btn` + `@keyframes auditor-pulse` + seletor no bloco de reduced-motion). ⚠️ A injeção de `AgentStateService` no `document-hub` **PERMANECE** — é usada por `agent.coverageVersion()` (barramento reverso da entrevista GRC, ver 4.3). Validado: o FAB abre o drawer já escopado em "GOVERNAR (GV)".
+
+### 12.5 ⚠️ Tabela de ativos — colisão com o utilitário GLOBAL `.grid` (a armadilha)
+
+**O bug:** a tabela do inventário era `<table class="grid">` ("grade de dados"). Mas `styles.css:161` define `.grid { display: grid; gap: 18px }` — utilitário de LAYOUT, usado por `<div class="grid">` em executive/identity/pillar-dashboard. A regra global sequestrava a tabela: `display: grid`, `thead`/`tbody` viravam **grid items** (`display: block`), cada `<tr>` formava a própria tabela anônima e as colunas do cabeçalho computavam larguras independentes das do corpo. Medido: col 1 com `th` de 65,8px sobre `td` de 163,7px.
+
+**A correção:** renomear a classe para **`.asset-table`** — remover a colisão, não compensá-la. Volta `display: table` e as colunas alinham **por construção do algoritmo de layout**. ⚠️ **NÃO "resolver" sincronizando `grid-template-columns` entre cabeçalho e linha** (o caminho sugerido no enunciado): seria abraçar o acidente, exigiria manter frações em sincronia para sempre e quebraria o `colspan="8"` da linha de estado vazio.
+
+**Bug secundário (pré-existente):** nas colunas `.num` (Crit./Status) o cabeçalho ficava à esquerda sobre dado centralizado — `table.asset-table thead th` (que fixa `text-align: left`) vencia `table.asset-table th.num`. ⚠️ **Especificidade sob encapsulação do Angular:** os atributos `[_ngcontent-*]` injetados EMPATAM a contagem de classes, e o desempate vai para o seletor com mais ELEMENTOS. Corrigido tornando a regra `.num` explícita em `thead`/`tbody`. Vale para qualquer override em componente com styles encapsulados.
+
+**Medição final:** 8/8 colunas com `deltaLeft = 0`, `deltaWidth = 0` e `text-align` idêntico, em 1280px e 820px. `.table-wrap` rola horizontalmente (intencional); a página não.
+
+### 12.6 ⚠️ Duas armadilhas de FERRAMENTA (custaram iterações — não repetir)
+
+1. **Crase em comentário CSS quebra o build.** Os estilos são template literals JS; uma crase dentro de `/* … */` ENCERRA a string → `FatalDiagnosticError Code 1010: Failed to resolve styles at position 0`. Usar aspas em comentários. **Pior: o `ng serve` NÃO se recupera de falha na INICIALIZAÇÃO do compilador AOT** — segue servindo bundle velho e devolve leituras enganosas até ser reiniciado. Sintoma: o fonte tem o fix, a folha servida tem a regra antiga.
+2. **A aba do Browser pane roda com `visibilityState: "hidden"`** — o compositor CONGELA transições de `opacity`/`transform` em `currentTime: 0`. Ler essas propriedades logo após um toggle dá o valor INICIAL, não o final (foi o que fez o FAB "parecer" visível com o drawer aberto). Antes de medir: `el.getAnimations().forEach(a => a.finish())`. Propriedades não animadas (ex.: `pointer-events`) aplicam normalmente — a divergência entre elas é a assinatura do problema. Complementa [[aegis-frontend-verification]] (screenshot trava com HMR).

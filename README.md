@@ -32,8 +32,7 @@ backend/
     AegisScore.Infrastructure    EF Core (PostgreSQL), seeder NIST, IA (Anthropic), registry
     AegisScore.Connectors.Microsoft  adapter de exemplo (Secure Score)
     AegisScore.Api               ASP.NET Core: Program, controllers, DTOs
-data/
-  nist_csf_2_0_catalog.json   catálogo NIST CSF 2.0 (6 funções / 22 categorias / 106 subcategorias)
+      Data/                      catálogo NIST CSF 2.0 (106 subcats) + regras de avaliação (aegis_assessment_rules.json)
 frontend/
   src/   Angular + TypeScript (dashboard executivo, gráficos em SVG nativo)
 ```

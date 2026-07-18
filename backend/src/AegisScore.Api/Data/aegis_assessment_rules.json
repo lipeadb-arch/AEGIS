@@ -1385,5 +1385,468 @@
     "evidence_requirements": [
       "MANUAL_AUDIT_REQUIRED"
     ]
+  },
+  {
+    "subcategory_id": "RC.RP-01",
+    "evaluation_metrics": [
+      "Fração de incidentes que atingiram a fase de recuperação com ações de restauração efetivamente executadas e logadas (CP-10)",
+      "Aderência da execução à sequência de recuperação prevista no plano (IR-08, IR-04a)",
+      "Latência entre a aplicação do gate de recuperação (RS.MA-05) e a primeira ação de restauração",
+      "Fração de recuperações executadas a partir de informação íntegra e sob controle de configuração (CP-10)",
+      "Cobertura de restauração de sistema a estado conhecido dentro do RTO definido (CP-10, CP-10(04))",
+      "Fração de componentes usados na recuperação que foram protegidos durante a operação (CP-10(06))",
+      "Taxa de recuperações iniciadas fora do processo de resposta a incidente (execução ad hoc)"
+    ],
+    "calculation_logic": "execucao = incidentes_com_acoes_de_restauracao_logadas / incidentes_que_atingiram_recuperacao; aderencia = acoes_executadas_conforme_plano / acoes_de_recuperacao_executadas; origem_integra = recuperacoes_a_partir_de_fonte_integra_e_config_controlada / recuperacoes_executadas; rto = recuperacoes_dentro_do_rto / recuperacoes_executadas. score = 0.30*execucao + 0.25*aderencia + 0.25*origem_integra + 0.20*rto. Status = Compliant se score >= 0.85 E execucao >= 0.95 E origem_integra >= 0.90 (fail-closed em origem_integra: o CP-10 exige restaurar a partir de informação íntegra e sob controle de configuração — reconstituir de fonte não verificada reintroduz o comprometimento, e execução veloz sobre base suja é regressão, não recuperação); MitigatedByThirdParty se a execução da recuperação for conduzida por provedor de DR/MDR sem repasse do log de ações ao tenant; NonCompliant se score < 0.50 OU execucao < 0.70. SEPARAÇÃO DE CONCEITOS: RS.MA-05 mede o GATE que autoriza iniciar a recuperação; esta regra mede se o plano foi de fato EXECUTADO uma vez iniciado; RC.RP-02 mede a QUALIDADE das ações (priorização, sucesso) e RC.RP-05 verifica o ESTADO FINAL — os quatro são elos distintos da cadeia e não se recontam.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: action center com histórico de ações de restauração e remediação por ativo, com timestamp e operador",
+      "CrowdStrike Falcon: Real Time Response e lift containment como registro das ações de recuperação executadas no host",
+      "SentinelOne: rollback e restore de endpoint por Storyline, evidenciando execução da recuperação",
+      "Microsoft Sentinel: playbooks de recuperação com run history, medindo latência entre o gate (RS.MA-05) e a primeira ação",
+      "Entra ID: reabilitação de contas e revogação de risk state como ações de recuperação da camada de identidade",
+      "Google SecOps: SOAR case com as ações de recuperação registradas e sua aderência ao runbook do plano"
+    ]
+  },
+  {
+    "subcategory_id": "RC.RP-02",
+    "evaluation_metrics": [
+      "Fração de ações de recuperação priorizadas por criticidade de ativo e função de missão (CP-10 Discussion, PM-11)",
+      "Tempo médio até restauração (MTTR-restore) por tier de criticidade",
+      "Taxa de sucesso da ação de recuperação na primeira tentativa",
+      "Fração de ações com escopo correto: ativos efetivamente afetados versus ativos tocados na recuperação",
+      "Aderência da ordem de restauração à prioridade de missão declarada",
+      "Fração de recuperações de transação concluídas para sistemas transacionais (CP-10(02))",
+      "Taxa de retrabalho: ativos que exigiram nova ação de recuperação após a primeira"
+    ],
+    "calculation_logic": "priorizacao = acoes_priorizadas_por_criticidade / acoes_de_recuperacao; sucesso = acoes_bem_sucedidas_na_primeira_tentativa / acoes_de_recuperacao; escopo = 1 - min(1, ativos_tocados_nao_afetados / max(1, ativos_afetados)); mttr = 1 - min(1, p95_mttr_restore_por_criticidade / rto_por_criticidade). score = 0.30*priorizacao + 0.25*sucesso + 0.20*escopo + 0.25*mttr. Status = Compliant se score >= 0.85 E priorizacao >= 0.85 E mttr > 0 (fail-closed no RTO: MTTR de restauração acima do RTO por tier significa que a priorização declarada não se traduziu em tempo real de recuperação da função crítica); MitigatedByThirdParty se a execução for de provedor de DR sem repasse das métricas por ação; NonCompliant se score < 0.50 OU priorizacao < 0.50 (recuperação sem priorização por criticidade restaura o trivial antes do crítico, contrariando o CP-10). SEPARAÇÃO DE CONCEITOS: distingue-se de RC.RP-01 (que mede se a execução OCORREU e seguiu o plano) por medir a QUALIDADE das ações — priorização, sucesso e tempo; o denominador é o mesmo, a asserção não.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: action center com duração e resultado por ação de remediação/restauração, para MTTR e taxa de sucesso",
+      "Microsoft Sentinel: watchlists de criticidade de ativo aplicadas à ordem de recuperação; métricas de MTTR-restore por tier",
+      "CrowdStrike Falcon: host groups por criticidade e status das ações de RTR, evidenciando priorização e retrabalho",
+      "SentinelOne: resultado de rollback/remediate por endpoint e reincidência de ação",
+      "Entra ID: ordem de reabilitação de identidades priorizada por privilégio e função crítica",
+      "Google SecOps: SOAR com prioridade do caso derivada de criticidade e tempo por ação de recuperação"
+    ]
+  },
+  {
+    "subcategory_id": "RC.RP-03",
+    "evaluation_metrics": [
+      "Cadência e resultado do teste de integridade e confiabilidade da mídia de backup (CP-09(01))",
+      "Fração de backups com integridade verificada por hash ou assinatura antes do uso (CP-09 Discussion)",
+      "Cobertura de teste de restauração por amostragem como parte do teste de contingência (CP-09(02), CP-04(04))",
+      "Verificação de que o ativo de restauração não está comprometido antes de ser usado",
+      "Fração de backups em armazenamento separado e não colocalizado (CP-09(03))",
+      "Proteção criptográfica e contra modificação não autorizada do backup (CP-09(08), CP-09(04))",
+      "Idade da última verificação de integridade bem-sucedida por conjunto de backup"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — trata-se de controle de planejamento/contingência (família CP), não operável por telemetria do stack. Os âncoras são CP-02 (Contingency Plan), CP-04 (Contingency Plan Testing) e CP-09 (System Backup): backup e verificação pré-restauração residem em plataformas de proteção de dados (backup enterprise, snapshot de storage, cofre imutável) que NÃO fazem parte do ecossistema declarado — nenhuma das seis ferramentas emite resultado de teste de integridade de mídia nem de restauração por amostragem. Apontar EDR ou SIEM aqui inventaria conector. Esta subcategoria é o par pré-restauração de PR.DS-11 (backup) e ambas caem em auditoria documental pela mesma razão. Procedimento de auditoria: (1) obter o último teste de integridade e confiabilidade da mídia (CP-09(01)) com resultado; (2) obter evidência de restauração por amostragem no ciclo de teste de contingência (CP-09(02)); (3) verificar armazenamento separado, proteção criptográfica e contra modificação; (4) confirmar que a verificação de integridade precede o uso do ativo em restauração real. Status = Compliant se os quatro passos passarem e o teste de integridade for de no máximo 12 meses; MitigatedByThirdParty se o backup for operado por BaaS/provedor de nuvem com atestação e relatório de job, sem teste de integridade conduzido ou verificado pelo tenant; NonCompliant se não houver verificação de integridade nos últimos 12 meses (backup cuja integridade nunca foi verificada é restauração sob fé, não sob controle).",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "RC.RP-04",
+    "evaluation_metrics": [
+      "Existência de definição de normas operacionais pós-incidente aprovada (IR-08)",
+      "Consideração das funções críticas de missão no restabelecimento operacional (PM-11)",
+      "Alinhamento das normas pós-incidente à estratégia de gestão de risco (PM-09)",
+      "Cobertura do plano de infraestrutura crítica na definição das normas (PM-08)",
+      "Fração de incidentes cujo encerramento reavaliou as normas operacionais",
+      "Aderência das novas normas à tolerância a risco declarada",
+      "Cadência de revisão das normas operacionais pós-incidente"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de governança/planejamento sem telemetria. Os âncoras são majoritariamente estratégicos: PM-08 (Critical Infrastructure Plan), PM-09 (Risk Management Strategy) e PM-11 (Mission and Business Process Definition) são de programa, IR-01 é política e IR-08 é documento de plano. A cláusula operativa — 'estabelecer normas operacionais pós-incidente considerando funções críticas de missão e gestão de risco' — é uma decisão de governança que pondera apetite de risco e prioridade de missão, parâmetros que não existem em nenhuma das seis ferramentas. Nenhum sinal de EDR, SIEM ou identidade informa se as normas do 'novo normal' foram deliberadas contra a tolerância a risco. Procedimento de auditoria: (1) verificar definição documentada das normas operacionais pós-incidente; (2) confrontá-las contra a estratégia de gestão de risco e a lista de funções críticas de missão; (3) verificar que incidentes relevantes dispararam reavaliação dessas normas; (4) verificar aderência à tolerância a risco. Status = Compliant se os quatro passos passarem sem desvio; MitigatedByThirdParty se as normas forem definidas por comitê de governança ou consultoria externa com atestação, sem repasse do racional ao tenant; NonCompliant se não houver definição documentada de normas operacionais pós-incidente ou se elas não considerarem as funções críticas de missão.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "RC.RP-05",
+    "evaluation_metrics": [
+      "Fração de ativos restaurados com verificação de integridade pós-restauração registrada (CP-10)",
+      "Fração de endpoints restaurados que retornaram ao estado de conformidade e saúde",
+      "Cobertura de confirmação de status operacional normal por serviço crítico (CP-10)",
+      "Fração de ativos restaurados sem persistência ou artefato residual detectado na verificação",
+      "Reestabelecimento do monitoramento contínuo sobre o ativo restaurado (CP-10 Discussion)",
+      "Desativação de capacidades interinas usadas durante a recuperação (CP-10 Discussion)",
+      "Latência entre a restauração e a confirmação de estado normal",
+      "Taxa de reabertura de incidente após confirmação de recuperação"
+    ],
+    "calculation_logic": "ÂNCORA ÚNICO — CP-10 (System Recovery and Reconstitution) é o único âncora desta subcategoria; a lógica deriva de suas determinations, que exigem restaurar o sistema a um estado CONHECIDO e reconstituí-lo a estado plenamente operacional. verificacao = ativos_restaurados_com_checagem_de_integridade / ativos_restaurados; saude = endpoints_restaurados_de_volta_a_conformidade / endpoints_restaurados; confirmacao = servicos_criticos_com_status_normal_confirmado / servicos_criticos_afetados; limpeza = 1 - min(1, ativos_restaurados_com_persistencia_residual / max(1, ativos_restaurados)); monitoramento = ativos_restaurados_com_monitoramento_reestabelecido / ativos_restaurados. score = 0.25*verificacao + 0.20*saude + 0.20*confirmacao + 0.20*limpeza + 0.15*monitoramento. Status = Compliant se score >= 0.85 E limpeza == 1.0 E monitoramento >= 0.95 (fail-closed duplo: ativo devolvido à produção com persistência residual reinicia o incidente, e ativo restaurado sem monitoramento reestabelecido é ponto cego recém-criado — a Discussion do CP-10 nomeia explicitamente o reestabelecimento do monitoramento contínuo como parte da reconstituição); MitigatedByThirdParty se a verificação pós-restauração for do provedor de DR sem repasse do resultado; NonCompliant se score < 0.50 OU limpeza < 0.80. SEPARAÇÃO DE CONCEITOS: RC.RP-03 verifica a integridade do backup ANTES de restaurar (documental); esta regra verifica a integridade do ativo DEPOIS de restaurado (telemetria de EDR) — momentos e fontes opostos.",
+    "evidence_requirements": [
+      "Microsoft Defender for Endpoint: DeviceInfo e device health pós-restauração, com retorno ao estado de conformidade e ausência de detecção residual",
+      "Microsoft Defender for Endpoint: varredura de confirmação e Advanced Hunting sobre o ativo restaurado para persistência remanescente",
+      "CrowdStrike Falcon: estado do sensor e verificação do host pós-recuperação, confirmando ausência de artefato residual",
+      "SentinelOne: status de mitigação e reconexão do endpoint com verificação de ameaça encerrada",
+      "Microsoft Sentinel: reestabelecimento de ingestão e cobertura de monitoramento sobre o ativo restaurado; hunting de reincidência",
+      "Entra ID: identidade restaurada com risk state limpo e monitoramento de Identity Protection reativado",
+      "Google SecOps: retro-hunt sobre o ativo restaurado para confirmar estado limpo e monitoramento contínuo ativo"
+    ]
+  },
+  {
+    "subcategory_id": "RC.RP-06",
+    "evaluation_metrics": [
+      "Existência de critério documentado para declarar o fim da recuperação (IR-08, IR-04a)",
+      "Fração de recuperações encerradas mediante o critério aplicado e registrado",
+      "Fração de incidentes com documentação de recuperação completa no encerramento (IR-04)",
+      "Completude dos campos exigidos no registro de encerramento: ações, causa, escopo, lições",
+      "Latência entre a confirmação de estado normal (RC.RP-05) e a declaração formal de encerramento",
+      "Taxa de reabertura após declaração de fim da recuperação",
+      "Fração de encerramentos com evidência preservada para investigação posterior"
+    ],
+    "calculation_logic": "criterio_aplicado = recuperacoes_encerradas_com_criterio_registrado / recuperacoes_encerradas; documentacao = incidentes_com_documentacao_completa / incidentes_encerrados; completude = campos_obrigatorios_preenchidos / campos_obrigatorios_esperados; estabilidade = 1 - min(1, reaberturas_pos_encerramento / max(1, recuperacoes_encerradas)). score = 0.30*criterio_aplicado + 0.30*documentacao + 0.20*completude + 0.20*estabilidade. Status = Compliant se score >= 0.85 E existe_criterio_documentado == true E documentacao >= 0.95; MitigatedByThirdParty se o encerramento for declarado por MSSP sem repasse do registro de critério e documentação ao tenant; NonCompliant se existe_criterio_documentado == false (gate binário precedente ao score: sem critério, declarar o fim é decisão de ocasião e não controle reprodutível) OU score < 0.50. Recuperação encerrada sem documentação completa NÃO pontua em documentacao: encerramento não é sinônimo de registro. SEPARAÇÃO DE CONCEITOS: RC.RP-05 confirma o ESTADO TÉCNICO normal do ativo; esta regra mede a DECLARAÇÃO formal de fim e a completude documental — a primeira é sobre o sistema, a segunda sobre o processo.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: transição de status do incidente para encerrado, com classificação, timestamps e completude dos campos de encerramento",
+      "Microsoft Sentinel: automation rules que validam critério de encerramento e completude documental antes de fechar o incidente",
+      "Google SecOps: SOAR case closure com critério aplicado e registro de documentação completo",
+      "Microsoft Defender: incident resolution com determination e classificação registradas no encerramento",
+      "CrowdStrike Falcon: fechamento de detecção/incidente com status e registro de resolução",
+      "SentinelOne: resolução de incidente com analyst verdict e documentação associada"
+    ]
+  },
+  {
+    "subcategory_id": "RC.CO-03",
+    "evaluation_metrics": [
+      "Fração de incidentes em recuperação com progresso comunicado aos stakeholders designados (IR-06)",
+      "Latência p95 entre marco de recuperação e comunicação do progresso por classe de stakeholder",
+      "Taxa de entrega confirmada das comunicações de progresso, sem falha silenciosa",
+      "Cobertura da matriz de destinatários: interno, externo e cadeia de suprimento (SR-08)",
+      "Fração de comunicações a fornecedores conforme acordo de notificação vigente (SR-08)",
+      "Cobertura de comunicação por mecanismo automatizado (IR-06(1))",
+      "Fração de marcos de recuperação com atualização de status emitida"
+    ],
+    "calculation_logic": "cobertura = incidentes_em_recuperacao_com_progresso_comunicado / incidentes_em_recuperacao; entrega = comunicacoes_com_entrega_confirmada / comunicacoes_disparadas; latencia = 1 - min(1, p95_latencia_marco_ate_comunicacao_h / sla_comunicacao_h); matriz = classes_de_stakeholder_com_canal_ativo / classes_de_stakeholder_definidas. score = 0.30*cobertura + 0.30*entrega + 0.20*latencia + 0.20*matriz. Status = Compliant se score >= 0.85 E entrega >= 0.99 E cobertura >= 0.90; MitigatedByThirdParty se a comunicação externa for intermediada por MSSP ou assessoria sem registro do que foi efetivamente repassado pelo tenant; NonCompliant se score < 0.50 OU cobertura < 0.60. RESSALVA DE ESCOPO: a métrica cobre a comunicação TÉCNICA rastreável (playbook, canal, entrega); a adequação do conteúdo a exigências contratuais e regulatórias (SR-08, prazos legais) reside nos acordos e permanece sujeita a verificação documental. SEPARAÇÃO DE CONCEITOS: distingue-se de RS.CO-02/RS.CO-03 (que comunicam a DETECÇÃO e a ANÁLISE do incidente) por comunicar especificamente o PROGRESSO DA RECUPERAÇÃO e o restabelecimento de capacidades operacionais.",
+    "evidence_requirements": [
+      "Microsoft Sentinel: playbooks (Logic Apps) de comunicação de progresso de recuperação com run history comprovando destinatário e entrega",
+      "Google SecOps: SOAR playbooks de notificação de status com registro de canal e confirmação por stakeholder",
+      "Microsoft Defender: notificações de progresso de incidente configuradas por severidade e escopo",
+      "CrowdStrike Falcon: streaming API e workflows de notificação com evidência de entrega das atualizações",
+      "SentinelOne: políticas de notificação de status com log de envio",
+      "Entra ID: grupos e papéis dos destinatários internos, sustentando a matriz de stakeholders da comunicação"
+    ]
+  },
+  {
+    "subcategory_id": "RC.CO-04",
+    "evaluation_metrics": [
+      "Existência de processo aprovado de comunicação pública sobre recuperação de incidente (IR-04(15))",
+      "Fração de comunicados públicos emitidos por método e mensagem previamente aprovados",
+      "Aderência da mensagem pública à estratégia de relações públicas e reputação definida",
+      "Existência de porta-voz designado e canal público oficial",
+      "Cobertura de revisão jurídica e de comunicação antes da divulgação pública",
+      "Alinhamento com o plano de contingência quanto à comunicação externa (CP-02)",
+      "Consistência entre o comunicado público e o status real da recuperação"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — comunicação pública é processo de relações públicas e jurídico, sem telemetria de segurança. Os âncoras são CP-02 (Contingency Plan) e IR-04, cujo enhancement pertinente é o IR-04(15) (Public Relations and Reputation Repair): gerir relações públicas do incidente e reparar reputação. A cláusula 'approved methods and messaging' governa canais públicos (site, imprensa, redes sociais, comunicado oficial) e mensagem aprovada por jurídico e comunicação — nada disso passa por SIEM, EDR ou identidade. As seis ferramentas do ecossistema não observam a emissão de um press release nem a aprovação de uma mensagem pública; apontar qualquer uma seria alucinação de fonte. Procedimento de auditoria: (1) verificar processo aprovado de comunicação pública com porta-voz e canais oficiais designados; (2) amostrar comunicados públicos do período e confirmar uso de método e mensagem aprovados; (3) verificar revisão jurídica e de comunicação prévia; (4) verificar consistência entre o comunicado e o status real da recuperação. Status = Compliant se os quatro passos passarem e a amostra não revelar comunicado fora do processo; MitigatedByThirdParty se a comunicação pública for conduzida por agência de RP ou assessoria externa sob aprovação da organização, com atestação do processo; NonCompliant se não houver processo aprovado de comunicação pública ou se a amostra revelar divulgação sem aprovação de método e mensagem.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.OC-02",
+    "evaluation_metrics": [
+      "Existência de mapa de stakeholders internos e externos aprovado e vigente",
+      "Cobertura de necessidades e expectativas de cibersegurança levantadas por classe de stakeholder",
+      "Rastreabilidade de requisitos de fornecedores relevantes registrados (SR-03, SR-05, SR-06, SR-08)",
+      "Cadência de revisão do mapa de stakeholders e suas expectativas",
+      "Fração de expectativas de stakeholder incorporadas à estratégia de risco"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de contexto organizacional sem telemetria. Os âncoras técnicos (SR-03, SR-05, SR-06, SR-08) são de processo de cadeia de suprimento e acordos, e os demais (PM-09, PM-18, PM-30) são de programa: entender stakeholders e suas expectativas é levantamento de governança registrado em documento, não sinal de plataforma. Nenhuma das seis ferramentas do ecossistema observa a compreensão de necessidades de um stakeholder. Procedimento de auditoria: (1) verificar mapa de stakeholders aprovado e vigente; (2) confirmar necessidades e expectativas de cibersegurança documentadas por classe; (3) verificar incorporação dessas expectativas na estratégia de risco. Status = Compliant se os três passos passarem sem desvio; MitigatedByThirdParty se o levantamento for conduzido por consultoria externa com atestação, sem repasse do artefato ao tenant; NonCompliant se não houver mapa de stakeholders vigente ou se as expectativas de cibersegurança não estiverem documentadas.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.OC-04",
+    "evaluation_metrics": [
+      "Existência de registro de objetivos, capacidades e serviços críticos que stakeholders externos esperam",
+      "Cobertura de identificação de ativos críticos via análise de criticidade (CP-02(08), RA-09)",
+      "Fração de serviços críticos com dependências externas mapeadas",
+      "Comunicação formal desses objetivos aos stakeholders externos",
+      "Cadência de revisão do registro de objetivos críticos"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de contexto organizacional. Os âncoras técnicos são CP-02(08) (Identify Critical Assets, via análise de criticidade / BIA) e RA-09 (Criticality Analysis, decomposição funcional de engenharia): ambos produzem análise documental de criticidade, não telemetria. Os demais (PM-08, PM-11, PM-30(01)) são de programa. Entender e comunicar o que stakeholders externos esperam da organização é atividade de governança registrada em BIA e comunicações formais. Procedimento de auditoria: (1) verificar registro de objetivos e serviços críticos esperados por externos; (2) confrontá-lo contra a análise de criticidade (RA-09/CP-02(08)); (3) verificar comunicação formal aos stakeholders. Status = Compliant se os três passos passarem; MitigatedByThirdParty se a análise de criticidade for conduzida por terceiro com atestação, sem repasse do artefato; NonCompliant se não houver análise de criticidade vigente ou registro de objetivos críticos.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.OC-05",
+    "evaluation_metrics": [
+      "Existência de registro de dependências externas: outcomes, capacidades e serviços dos quais a organização depende",
+      "Cobertura de serviços de sistema externos com risco avaliado (SA-09)",
+      "Fração de dependências com resposta a risco definida (RA-07)",
+      "Rastreabilidade de fornecedores relevantes no registro de dependências (SR-05)",
+      "Comunicação formal das dependências às partes responsáveis"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de contexto organizacional. Os âncoras são SA-09 (External System Services), RA-07 (Risk Response) e SR-05 (Acquisition Strategies): serviços externos, resposta a risco e estratégia de aquisição são governança e processo. O monitoramento OPERACIONAL da atividade do provedor externo já é medido por DE.CM-06 e não é recontado aqui; esta subcategoria mede a COMPREENSÃO e a COMUNICAÇÃO das dependências, que é documental. Procedimento de auditoria: (1) verificar registro de dependências externas vigente; (2) confirmar avaliação de risco por dependência crítica; (3) verificar comunicação formal às partes responsáveis. Status = Compliant se os três passos passarem; MitigatedByThirdParty se o mapeamento de dependências for herdado de análise de terceiro sem repasse do artefato; NonCompliant se não houver registro de dependências externas ou se dependências críticas não tiverem risco avaliado.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.RM-01",
+    "evaluation_metrics": [
+      "Existência de objetivos de gestão de risco documentados e formalmente acordados pelos stakeholders",
+      "Aderência dos objetivos à resposta a risco definida (RA-07)",
+      "Cobertura de objetivos de risco de cadeia de suprimento no plano (SR-02)",
+      "Evidência de aprovação por stakeholders organizacionais",
+      "Cadência de revisão dos objetivos de gestão de risco"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle estratégico de gestão de risco. Os âncoras são RA-07 (Risk Response) e SR-02 (Supply Chain Risk Management Plan), ambos de processo/plano; PM-09 é de programa. Estabelecer e ACORDAR objetivos de gestão de risco com stakeholders é ato de governança registrado em ata e documento de estratégia — nenhuma plataforma observa um acordo de objetivos. Procedimento de auditoria: (1) verificar objetivos de gestão de risco documentados; (2) verificar evidência de acordo formal pelos stakeholders; (3) verificar cadência de revisão. Status = Compliant se os três passos passarem; MitigatedByThirdParty se os objetivos forem definidos por comitê de governança externo com atestação, sem repasse do racional; NonCompliant se não houver objetivos documentados ou evidência de acordo pelos stakeholders.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.RM-03",
+    "evaluation_metrics": [
+      "Evidência de integração da gestão de risco cibernético no processo de ERM corporativo",
+      "Fração de riscos cibernéticos refletidos no registro de risco corporativo",
+      "Aderência da resposta a risco cibernético à governança de risco corporativa (RA-07)",
+      "Cobertura de risco de cadeia de suprimento no ERM (SR-02)",
+      "Cadência de reporte do risco cibernético ao comitê de risco corporativo"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle estratégico. Os âncoras RA-07 (Risk Response) e SR-02 (SCRM Plan) são de processo; PM-03, PM-09, PM-30 são de programa. A integração do risco cibernético no ERM (Enterprise Risk Management) é evidenciada por registro de risco corporativo, atas de comitê e reportes — artefatos de governança, não telemetria. Procedimento de auditoria: (1) verificar que o risco cibernético consta do registro de risco corporativo; (2) confirmar reporte periódico ao comitê de risco; (3) verificar aderência da resposta a risco à governança corporativa. Status = Compliant se os três passos passarem; MitigatedByThirdParty se a consolidação do ERM for operada por função corporativa externa com atestação; NonCompliant se o risco cibernético não estiver integrado ao ERM ou não for reportado ao comitê de risco.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.RM-04",
+    "evaluation_metrics": [
+      "Existência de direção estratégica que descreve opções de resposta a risco, aprovada e comunicada",
+      "Cobertura das opções: mitigar, aceitar, transferir, evitar",
+      "Aderência da direção estratégica ao plano de risco de cadeia de suprimento (SR-02)",
+      "Evidência de comunicação da direção às partes responsáveis",
+      "Cadência de revisão da direção estratégica"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle estratégico. O único âncora técnico é SR-02 (Supply Chain Risk Management Plan); PM-09, PM-28, PM-30 são de programa. Estabelecer e COMUNICAR direção estratégica de resposta a risco é ato de liderança registrado em documento de estratégia — sem correlato em plataforma. Procedimento de auditoria: (1) verificar documento de direção estratégica vigente cobrindo as opções de resposta a risco; (2) verificar evidência de comunicação às partes; (3) verificar cadência de revisão. Status = Compliant se os três passos passarem; MitigatedByThirdParty se a direção for formulada por consultoria estratégica externa com atestação, sem repasse; NonCompliant se não houver direção estratégica documentada e comunicada.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.RM-06",
+    "evaluation_metrics": [
+      "Existência de método padronizado de cálculo de risco documentado (RA-03)",
+      "Cobertura das etapas: calcular, documentar, categorizar e priorizar risco",
+      "Consistência do método aplicado entre avaliações de risco de classes equivalentes",
+      "Evidência de comunicação do método às equipes que avaliam risco",
+      "Cadência de revisão do método padronizado"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle estratégico. ÂNCORA GÊMEO: RA-03 (Risk Assessment) é o único âncora técnico e é COMPARTILHADO com GV.RM-07; para evitar dupla-contagem, esta regra (GV.RM-06) foca exclusivamente no MÉTODO de cálculo de risco NEGATIVO — a metodologia padronizada de calcular, documentar, categorizar e priorizar riscos — enquanto GV.RM-07 trata do risco POSITIVO (oportunidades) derivado do mesmo RA-03. O método de risk-scoring é um artefato documental (rubrica, escala, matriz), não uma configuração de plataforma; o Aegis Score IMPLEMENTA um método de cálculo, mas a EXISTÊNCIA e a padronização do método organizacional é o que se audita aqui, documentalmente. Procedimento de auditoria: (1) verificar método padronizado de cálculo de risco documentado e vigente; (2) confirmar cobertura das quatro etapas; (3) verificar aplicação consistente em amostra de avaliações e comunicação às equipes. Status = Compliant se os três passos passarem sem desvio; MitigatedByThirdParty se o método for herdado de framework de terceiro (ex.: FAIR) adotado sem customização documentada ao contexto; NonCompliant se não houver método padronizado documentado ou se a amostra revelar cálculo de risco ad hoc.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.RM-07",
+    "evaluation_metrics": [
+      "Existência de caracterização de oportunidades estratégicas (riscos positivos) documentada",
+      "Fração de discussões de risco organizacional que incluem risco positivo (RA-03)",
+      "Evidência de avaliação de trade-off entre oportunidade e exposição",
+      "Integração das oportunidades ao processo de decisão de risco",
+      "Cadência de revisão do registro de oportunidades estratégicas"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle estratégico. ÂNCORA GÊMEO: RA-03 (Risk Assessment) é COMPARTILHADO com GV.RM-06; a separação de conceitos é explícita — GV.RM-06 mede o método de cálculo de risco NEGATIVO, e esta regra (GV.RM-07) mede exclusivamente a caracterização e inclusão de RISCO POSITIVO (oportunidades estratégicas) nas discussões de risco. As duas derivam do mesmo RA-03 mas medem asserções opostas em sinal, e nenhuma reconta a outra. Caracterizar oportunidades é discussão de governança registrada em ata e documento de estratégia, sem correlato em plataforma. Procedimento de auditoria: (1) verificar que oportunidades estratégicas (riscos positivos) são caracterizadas e documentadas; (2) confirmar sua inclusão nas discussões de risco organizacional; (3) verificar avaliação de trade-off oportunidade versus exposição. Status = Compliant se os três passos passarem; MitigatedByThirdParty se a caracterização de oportunidade for produzida por consultoria estratégica externa com atestação; NonCompliant se as discussões de risco não incluírem risco positivo de forma documentada.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.RR-04",
+    "evaluation_metrics": [
+      "Inclusão de requisitos de cibersegurança nas práticas de RH (contratação, triagem, desligamento)",
+      "Requisitos de segurança de pessoal externo estabelecidos em contrato (PS-07)",
+      "Incorporação de papéis de segurança nas descrições de cargo (PS-09)",
+      "Cobertura de notificação de transferência e desligamento de pessoal externo (PS-07)",
+      "Fração de cargos com responsabilidades de segurança formalmente descritas"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de recursos humanos. Os âncoras PS-07 (External Personnel Security) e PS-09 (Position Descriptions) são processos de RH e contrato: requisitos de segurança em acordos de pessoal externo e papéis de segurança em descrições de cargo residem em RH e jurídico, não em telemetria. SEPARAÇÃO DE CONCEITOS: a operacionalização do offboarding (revogação de acesso ao desligar) já é medida por PR.AA-01 e ID.AM-01 via ciclo de vida de identidade no Entra ID; esta subcategoria mede a INCLUSÃO da cibersegurança nas PRÁTICAS de RH — triagem, contrato, descrição de cargo — que é documental e não recontada aqui. Procedimento de auditoria: (1) verificar requisitos de cibersegurança nas práticas de RH documentados; (2) confirmar requisitos de segurança de pessoal externo em contrato (PS-07); (3) amostrar descrições de cargo e verificar responsabilidades de segurança (PS-09). Status = Compliant se os três passos passarem; MitigatedByThirdParty se o RH for operado por BPO externo com atestação dos requisitos, sem repasse dos registros; NonCompliant se as práticas de RH não incluírem cibersegurança ou se pessoal externo não tiver requisitos de segurança contratados.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.OV-01",
+    "evaluation_metrics": [
+      "Evidência de revisão dos outcomes da estratégia de gestão de risco para ajustar direção",
+      "Cadência de revisão da estratégia contra a definida",
+      "Fração de ajustes de estratégia derivados de outcomes revisados (RA-07)",
+      "Cobertura de revisão de fornecedores na avaliação da estratégia (SR-06)",
+      "Rastreabilidade das decisões de ajuste até os outcomes que as motivaram"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de supervisão (oversight). Os âncoras técnicos RA-07 (Risk Response) e SR-06 (Supplier Assessments) são de processo, cercados por 20 controles XX-01 de política e vários PM — o mapeamento mais administrativo de toda a função. Revisar outcomes da estratégia para ajustar a direção é atividade de conselho e liderança registrada em atas de revisão, não sinal de plataforma. Procedimento de auditoria: (1) verificar evidência de revisão periódica dos outcomes da estratégia; (2) rastrear ajustes de direção até os outcomes que os motivaram; (3) verificar cadência. Status = Compliant se os três passos passarem; MitigatedByThirdParty se a revisão for conduzida por auditoria ou conselho externo com atestação, sem repasse das atas; NonCompliant se não houver evidência de revisão dos outcomes da estratégia no ciclo definido.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.OV-02",
+    "evaluation_metrics": [
+      "Evidência de revisão e ajuste da estratégia para garantir cobertura de requisitos e riscos",
+      "Fração de requisitos organizacionais cobertos pela estratégia revisada",
+      "Fração de riscos emergentes incorporados à estratégia ajustada (RA-07)",
+      "Cobertura de reavaliação de fornecedores no ajuste (SR-06)",
+      "Cadência de revisão de cobertura da estratégia"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de supervisão. Os âncoras RA-07 (Risk Response) e SR-06 (Supplier Assessments) são de processo; PM-09/19/30/31 são de programa. SEPARAÇÃO DE CONCEITOS contra GV.OV-01: aquela mede a revisão dos OUTCOMES para ajustar direção; esta mede o ajuste para garantir COBERTURA de requisitos e riscos — foco em completude da estratégia, não em desempenho. Ambas são atividade de oversight documental. Procedimento de auditoria: (1) verificar revisão da estratégia quanto à cobertura de requisitos organizacionais; (2) confirmar incorporação de riscos emergentes; (3) verificar cadência. Status = Compliant se os três passos passarem; MitigatedByThirdParty se a revisão de cobertura for conduzida por assurance externo com atestação; NonCompliant se não houver revisão de cobertura da estratégia ou se riscos emergentes não forem incorporados.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.OV-03",
+    "evaluation_metrics": [
+      "Existência de métricas de desempenho de gestão de risco cibernético (PM-06 operacionalizado documentalmente)",
+      "Evidência de avaliação e revisão do desempenho para identificar ajustes necessários",
+      "Fração de KPIs de risco com meta definida e resultado medido",
+      "Rastreabilidade dos ajustes até os resultados de desempenho revisados (RA-07)",
+      "Cadência de avaliação de desempenho"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de supervisão. Os âncoras são RA-07 (Risk Response), PM-04 e PM-06 (Measures of Performance): a definição e revisão de métricas de desempenho do programa de risco é governança. NOTA IMPORTANTE: embora o AEGIS PRODUZA métricas quantitativas (o próprio Aegis Score e as 74 regras anteriores são instrumentos de medição de desempenho de controle), a asserção desta subcategoria é a EXISTÊNCIA de um processo organizacional que AVALIA e REVISA o desempenho da gestão de risco para decidir ajustes — um ato de governança sobre as métricas, não as métricas em si. O Aegis Score é insumo desse processo, não o processo. Marcar o próprio produto como telemetria aqui seria circular. Procedimento de auditoria: (1) verificar métricas de desempenho de risco definidas com metas; (2) verificar evidência de avaliação periódica e revisão para ajuste; (3) rastrear ajustes até os resultados revisados. Status = Compliant se os três passos passarem; MitigatedByThirdParty se a avaliação de desempenho for conduzida por auditoria externa com atestação; NonCompliant se não houver métricas de desempenho definidas ou evidência de sua revisão para ajuste.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.SC-01",
+    "evaluation_metrics": [
+      "Existência de programa de C-SCRM com estratégia, objetivos, políticas e processos aprovados (SR-02, SR-03)",
+      "Evidência de acordo do programa pelos stakeholders organizacionais",
+      "Cobertura dos processos de cadeia de suprimento definidos (SR-03)",
+      "Cadência de revisão do programa de C-SCRM",
+      "Designação de responsabilidade pelo programa"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de programa de cadeia de suprimento. Os âncoras SR-02 (SCRM Plan) e SR-03 (Supply Chain Controls and Processes) são, por definição, documentos de plano e processos: estabelecer um programa de C-SCRM com estratégia, políticas e processos é o ato fundacional de governança de cadeia de suprimento, sem qualquer correlato em telemetria de segurança. Procedimento de auditoria: (1) verificar programa de C-SCRM documentado com estratégia, objetivos, políticas e processos; (2) verificar evidência de acordo pelos stakeholders; (3) verificar responsabilidade designada e cadência de revisão. Status = Compliant se os três passos passarem; MitigatedByThirdParty se o programa for provido por consultoria de C-SCRM externa e adotado com atestação, sem customização documentada ao contexto; NonCompliant se não houver programa de C-SCRM estabelecido e acordado.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.SC-02",
+    "evaluation_metrics": [
+      "Papéis e responsabilidades de cibersegurança para fornecedores, clientes e parceiros estabelecidos (SR-02, SR-03)",
+      "Evidência de comunicação e coordenação interna e externa desses papéis (SR-05)",
+      "Fração de relacionamentos com papéis de segurança formalmente atribuídos",
+      "Cobertura de coordenação com terceiros relevantes",
+      "Cadência de revisão da atribuição de papéis"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de cadeia de suprimento. Os âncoras SR-02, SR-03 e SR-05 são de plano, processo e estratégia de aquisição; não há ruído administrativo neste mapeamento, mas nenhum âncora emite telemetria: estabelecer e comunicar papéis de segurança para fornecedores e parceiros é definição contratual e organizacional. Procedimento de auditoria: (1) verificar papéis e responsabilidades de segurança definidos para fornecedores, clientes e parceiros; (2) verificar evidência de comunicação e coordenação interna e externa; (3) verificar cobertura por relacionamento. Status = Compliant se os três passos passarem; MitigatedByThirdParty se os papéis forem definidos em modelo contratual padrão de terceiro adotado com atestação; NonCompliant se os papéis de segurança de cadeia de suprimento não estiverem estabelecidos e comunicados.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.SC-03",
+    "evaluation_metrics": [
+      "Evidência de integração do C-SCRM ao ERM, avaliação de risco e processos de melhoria (SR-02, SR-03, RA-03, RA-07)",
+      "Fração de riscos de cadeia de suprimento refletidos no registro de risco corporativo",
+      "Cobertura de avaliação de risco de cadeia integrada ao ciclo de risco (RA-03)",
+      "Rastreabilidade de resposta a risco de cadeia no processo de melhoria (RA-07)",
+      "Cadência de revisão da integração"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de integração de cadeia de suprimento. Os âncoras técnicos SR-02, SR-03, RA-03 e RA-07 são de plano, processo e avaliação de risco, cercados de 20 controles XX-01 de política e vários PM. A integração do C-SCRM ao ERM e aos processos de avaliação e melhoria é evidenciada por registro de risco e atas, não por telemetria. Procedimento de auditoria: (1) verificar que o risco de cadeia de suprimento consta do ERM e do ciclo de avaliação de risco; (2) confirmar integração ao processo de melhoria; (3) verificar cadência de revisão. Status = Compliant se os três passos passarem; MitigatedByThirdParty se a integração for operada por função de risco corporativa externa com atestação; NonCompliant se o C-SCRM não estiver integrado ao ERM e aos processos de avaliação de risco.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.SC-04",
+    "evaluation_metrics": [
+      "Existência de registro de fornecedores conhecidos e priorizados por criticidade (RA-09, SR-06)",
+      "Cobertura de análise de criticidade aplicada aos fornecedores (RA-09)",
+      "Fração de fornecedores com serviço de sistema externo avaliado (SA-09)",
+      "Rastreabilidade da priorização por criticidade até o critério definido",
+      "Cadência de revisão do registro de fornecedores"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de cadeia de suprimento. Os âncoras RA-09 (Criticality Analysis), SA-09 (External System Services) e SR-06 (Supplier Assessments) são análise e avaliação documental. SEPARAÇÃO DE CONCEITOS: a DESCOBERTA de fornecedores com integração ativa no tenant (enterprise apps, service principals, guests) já é telemetria em ID.AM-04 (inventário de serviços de fornecedor); a asserção DISTINTIVA desta subcategoria é a PRIORIZAÇÃO POR CRITICIDADE — um julgamento de governança registrado em um cadastro de criticidade de fornecedor, que não é observável em plataforma. Apontar o Entra ID aqui recontaria ID.AM-04 sob outra chave. Procedimento de auditoria: (1) verificar registro de fornecedores com criticidade atribuída; (2) confrontar a priorização contra o critério de criticidade definido (RA-09); (3) verificar cobertura versus o inventário de fornecedores de ID.AM-04. Status = Compliant se os três passos passarem e a cobertura for consistente com o inventário; MitigatedByThirdParty se a criticidade de fornecedor for herdada de serviço de rating de terceiros sem critério próprio; NonCompliant se não houver priorização por criticidade documentada ou se ela divergir do inventário de fornecedores.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.SC-05",
+    "evaluation_metrics": [
+      "Requisitos de cibersegurança de cadeia estabelecidos e integrados a contratos (SA-04, SR-03, SR-05)",
+      "Fração de contratos de fornecedor com cláusulas de segurança exigidas (SA-04)",
+      "Cobertura de requisitos de autenticidade e proveniência nos acordos (SR-10, SR-05)",
+      "Priorização dos requisitos por criticidade do fornecedor",
+      "Cadência de revisão dos requisitos contratuais"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de cadeia de suprimento. Os âncoras SA-04 (Acquisition Process), SA-09, SR-03, SR-05, SR-06 e SR-10 são de aquisição e processo de cadeia: estabelecer requisitos de segurança e integrá-los a CONTRATOS é ato jurídico e de procurement, sem correlato em telemetria. Procedimento de auditoria: (1) verificar requisitos de cibersegurança de cadeia definidos e priorizados; (2) amostrar contratos de fornecedor e confirmar cláusulas de segurança (SA-04); (3) verificar requisitos de autenticidade e proveniência nos acordos. Status = Compliant se os três passos passarem sem desvio na amostra; MitigatedByThirdParty se os requisitos forem de modelo contratual padrão de terceiro adotado sem adaptação ao contexto de risco; NonCompliant se não houver requisitos de segurança de cadeia integrados aos contratos ou se a amostra revelar contrato crítico sem cláusulas de segurança.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.SC-06",
+    "evaluation_metrics": [
+      "Evidência de planejamento e due diligence antes de firmar relações com fornecedores (SR-06)",
+      "Fração de fornecedores críticos com due diligence anterior à contratação (SA-04, SR-06)",
+      "Cobertura de avaliação prévia à seleção, aceitação e modificação (SR-05)",
+      "Verificação de risco de serviço externo antes da relação (SA-09)",
+      "Rastreabilidade da decisão de contratar até a due diligence realizada"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de cadeia de suprimento. Os âncoras SA-04, SA-09, SR-05 e SR-06 são de aquisição e avaliação de fornecedor. DECISIVO: a cláusula é 'ANTES de entrar na relação' — o fornecedor ainda não tem presença no ambiente e não pode produzir telemetria, exatamente como em ID.RA-10 (avaliação de fornecedor pré-aquisição, também MANUAL). Due diligence prévia é análise documental de procurement e risco. Procedimento de auditoria: (1) verificar processo de due diligence prévia definido; (2) amostrar contratações do período e confirmar due diligence anterior à assinatura; (3) verificar cobertura de avaliação prévia à seleção e aceitação. Status = Compliant se os três passos passarem e nenhuma contratação crítica preceder sua due diligence; MitigatedByThirdParty se a due diligence for adquirida de serviço de avaliação de risco de terceiros sem análise própria; NonCompliant se não houver due diligence prévia ou se a amostra revelar fornecedor crítico contratado sem avaliação anterior.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.SC-07",
+    "evaluation_metrics": [
+      "Evidência de que o risco de fornecedores e terceiros é registrado, priorizado, avaliado, respondido e monitorado ao longo da relação (SR-06, SR-03)",
+      "Cobertura de análise de criticidade por fornecedor (RA-09)",
+      "Fração de fornecedores com risco monitorado continuamente durante a relação (SR-06)",
+      "Rastreabilidade da resposta a risco por fornecedor (SA-04)",
+      "Cadência de reavaliação de risco de fornecedor"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de cadeia de suprimento. Os âncoras RA-09, SA-04, SA-09, SR-03 e SR-06 são de análise, aquisição e avaliação de fornecedor. NOTA: embora a subcategoria contenha o verbo 'monitored over the course of the relationship', o monitoramento aqui é de RISCO DE FORNECEDOR (postura, FOCI, saúde financeira, incidentes públicos) via SR-06, avaliado por revisão periódica documental — distinto do monitoramento OPERACIONAL da atividade do provedor no ambiente, que é DE.CM-06 e não é recontado. Nenhuma das seis ferramentas avalia risco de fornecedor. Procedimento de auditoria: (1) verificar registro de risco por fornecedor com priorização e resposta; (2) confirmar reavaliação periódica ao longo da relação; (3) verificar cobertura por fornecedor crítico. Status = Compliant se os três passos passarem; MitigatedByThirdParty se o monitoramento de risco de fornecedor for provido por serviço de rating contínuo de terceiros (ex.: Bitsight, SecurityScorecard) sem análise própria de criticidade; NonCompliant se o risco de fornecedor não for registrado e reavaliado ao longo da relação.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.SC-08",
+    "evaluation_metrics": [
+      "Inclusão de fornecedores e terceiros relevantes no planejamento de resposta e recuperação (SR-08, SR-03)",
+      "Existência de acordos de notificação de comprometimento com fornecedores (SR-08)",
+      "Cobertura de coordenação com terceiros no plano de resposta a incidente",
+      "Fração de fornecedores críticos com papel definido em resposta e recuperação",
+      "Cadência de teste da coordenação com terceiros"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de cadeia de suprimento. Os âncoras SA-04, SA-09, SR-02, SR-03 e SR-08 (Notification Agreements) são de acordo e processo. SEPARAÇÃO DE CONCEITOS: RS.MA-01 (também MANUAL) mede a EXECUÇÃO coordenada do plano de resposta com terceiros durante um incidente; esta subcategoria mede a INCLUSÃO prévia de fornecedores no PLANEJAMENTO de resposta e recuperação — o acordo de notificação e o papel definido antes do incidente. Ambas documentais, asserções distintas. Procedimento de auditoria: (1) verificar que fornecedores relevantes constam do plano de resposta e recuperação; (2) verificar acordos de notificação (SR-08) vigentes por fornecedor crítico; (3) verificar teste da coordenação. Status = Compliant se os três passos passarem; MitigatedByThirdParty se a coordenação for intermediada por MSSP que mantém os acordos com sub-fornecedores sem repasse ao tenant; NonCompliant se fornecedores críticos não estiverem incluídos no planejamento de resposta ou não houver acordo de notificação.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.SC-09",
+    "evaluation_metrics": [
+      "Integração das práticas de segurança de cadeia ao programa de cibersegurança e ERM (SR-02, SR-03)",
+      "Evidência de monitoramento de desempenho ao longo do ciclo de vida do produto e serviço (SR-06)",
+      "Cobertura de avaliação de risco de cadeia no ciclo (RA-03, RA-07)",
+      "Fração de fornecedores com autenticidade de componente verificada em aquisição (SA-04)",
+      "Cadência de revisão do desempenho de segurança de cadeia"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de cadeia de suprimento. Os âncoras RA-03, RA-07, SA-04, SA-09, SR-02, SR-03, SR-05, SR-06 são de avaliação, aquisição e processo de cadeia. A integração das práticas de cadeia ao programa e o monitoramento de DESEMPENHO ao longo do ciclo de vida do produto são governança de C-SCRM evidenciada por registro e revisão — o 'monitoramento' aqui é de desempenho de programa, não telemetria de ativo. Procedimento de auditoria: (1) verificar integração das práticas de cadeia ao programa de cibersegurança e ERM; (2) confirmar monitoramento de desempenho ao longo do ciclo de vida; (3) verificar cadência de revisão. Status = Compliant se os três passos passarem; MitigatedByThirdParty se o monitoramento de desempenho de cadeia for operado por função corporativa externa com atestação; NonCompliant se as práticas de cadeia não estiverem integradas ao programa ou se seu desempenho não for monitorado ao longo do ciclo.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
+  },
+  {
+    "subcategory_id": "GV.SC-10",
+    "evaluation_metrics": [
+      "Existência de provisões de C-SCRM para atividades pós-encerramento da relação (SR-02, SR-05)",
+      "Cobertura de revogação de acesso, retorno e destruição de dados no encerramento",
+      "Verificação de sanitização e inspeção de componentes no fim da relação (SR-10)",
+      "Cobertura de avaliação de risco residual pós-encerramento (RA-03, RA-05, RA-07)",
+      "Cadência de revisão das provisões de encerramento nos planos"
+    ],
+    "calculation_logic": "CONFORMIDADE DEPENDENTE DE VALIDAÇÃO DOCUMENTAL — controle de cadeia de suprimento. Os âncoras RA-03, RA-05, RA-07, SA-04, SA-09, SR-02, SR-03, SR-05, SR-06 são de plano, avaliação e processo. As provisões para o PÓS-ENCERRAMENTO da relação (revogação de acesso, retorno/destruição de dados, sanitização de componentes SR-10, risco residual) são cláusulas do plano de C-SCRM e do contrato — documentais. NOTA: a revogação técnica de acesso do fornecedor no encerramento tem sinal parcial no Entra ID (remoção de guest/service principal), mas isso já pertence ao ciclo de vida de identidade de PR.AA-01/ID.AM-04; a asserção aqui é a EXISTÊNCIA das provisões no plano, que é documental. Procedimento de auditoria: (1) verificar provisões de encerramento nos planos de C-SCRM e contratos; (2) amostrar encerramentos do período e confirmar revogação de acesso, retorno/destruição de dados e sanitização; (3) verificar avaliação de risco residual. Status = Compliant se os três passos passarem sem desvio na amostra; MitigatedByThirdParty se o processo de encerramento for executado por procurement ou provedor externo com atestação, sem repasse dos registros; NonCompliant se os planos não contiverem provisões de encerramento ou se a amostra revelar encerramento sem revogação de acesso e tratamento de dados.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED"
+    ]
   }
 ]
