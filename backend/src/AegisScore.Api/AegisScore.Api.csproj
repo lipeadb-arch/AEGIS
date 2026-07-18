@@ -29,5 +29,10 @@
     <Content Update="Data\aegis_assessment_rules.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- Personalidade do Auditor Virtual: lida no startup pelo AuditorPersonaProvider (singleton) a partir
+         do diretório do binário. Ajustar o TOM do motor não exige recompilar — só reiniciar. -->
+    <Content Update="Data\AuditorPersonality.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>

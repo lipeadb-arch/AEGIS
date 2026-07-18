@@ -41,6 +41,7 @@ public sealed class DevRagFireTestController : ControllerBase
     private readonly DbContextOptions<AegisScoreDbContext> _dbOptions;
     private readonly ILLMClient _llm;
     private readonly IOptions<AegisAiOptions> _aiOptions;
+    private readonly IAuditorPersonaProvider _persona;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<DevRagFireTestController> _log;
     private readonly IWebHostEnvironment _env;
@@ -49,6 +50,7 @@ public sealed class DevRagFireTestController : ControllerBase
         DbContextOptions<AegisScoreDbContext> dbOptions,
         ILLMClient llm,
         IOptions<AegisAiOptions> aiOptions,
+        IAuditorPersonaProvider persona,
         ILoggerFactory loggerFactory,
         ILogger<DevRagFireTestController> log,
         IWebHostEnvironment env)
@@ -56,6 +58,7 @@ public sealed class DevRagFireTestController : ControllerBase
         _dbOptions = dbOptions;
         _llm = llm;
         _aiOptions = aiOptions;
+        _persona = persona;
         _loggerFactory = loggerFactory;
         _log = log;
         _env = env;
@@ -111,8 +114,10 @@ public sealed class DevRagFireTestController : ControllerBase
         // ao DbContext da REQUISIÇÃO, cujo tenant HTTP é nulo aqui (endpoint anônimo). O ILLMClient, esse
         // sim, vem do DI — é ele que carrega o Gemini real e é o ponto do teste.
         var writer = new ControlStateWriter(db, new FireTestTenantContext(tenantId), _loggerFactory.CreateLogger<ControlStateWriter>());
+        // A persona VEM do DI (singleton, lida do AuditorPersonality.json): o teste de fogo tem de exercitar
+        // o System Prompt REAL, camada de personalidade inclusa — é ela que decide a redação do plano.
         var evaluator = new AegisAiEvaluatorService(
-            db, _llm, new FireTestTenantContext(tenantId), writer, new AssessmentRuleContextBuilder(db));
+            db, _llm, new FireTestTenantContext(tenantId), writer, new AssessmentRuleContextBuilder(db), _persona);
 
         var results = new List<object>();
         var report = new StringBuilder();

@@ -118,7 +118,11 @@ public sealed class AssetTelemetryTests : IDisposable
     {
         var ctx = new SystemTenantContext(tenantId);
         var writer = new ControlStateWriter(db, ctx, NullLogger<ControlStateWriter>.Instance);
-        var evaluator = new AegisAiEvaluatorService(db, new StubLlmClient(), ctx, writer, new AssessmentRuleContextBuilder(db));
+        // Persona neutra: o veredito NÃO pode depender do tom do Auditor — a personalidade governa a
+        // redação em português, e o Stub nem a lê. Ver StaticAuditorPersonaProvider.
+        var evaluator = new AegisAiEvaluatorService(
+            db, new StubLlmClient(), ctx, writer, new AssessmentRuleContextBuilder(db),
+            StaticAuditorPersonaProvider.Neutral);
         return new TelemetryIngestionService(evaluator, ctx);
     }
 

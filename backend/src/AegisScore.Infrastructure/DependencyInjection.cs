@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Advisories;
 using AegisScore.Application.Queries;
@@ -64,6 +65,15 @@ public static class DependencyInjection
         // RAG por chave: injeta as "Regras do Jogo" (AegisAssessmentRule do 800-53 5.2.0) no prompt do
         // avaliador. Scoped: usa o DbContext. Consumido pelo AegisAiEvaluatorService.
         services.AddScoped<IAssessmentRuleContextBuilder, AssessmentRuleContextBuilder>();
+        // Camada de PERSONALIDADE do Auditor (tom, tradução de siglas, proatividade) — o terceiro bloco do
+        // System Prompt, ao lado do RAG e do contrato de saída. Singleton: o JSON é lido UMA vez no startup.
+        // Caminho relativo ao diretório do binário (o Data/ do Api é copiado para o output).
+        var personalityPath = config[$"{AegisAiOptions.SectionName}:PersonalityPath"]
+            ?? Path.Combine("Data", "AuditorPersonality.json");
+        if (!Path.IsPathRooted(personalityPath))
+            personalityPath = Path.Combine(AppContext.BaseDirectory, personalityPath);
+        services.AddSingleton<IAuditorPersonaProvider>(sp => new AuditorPersonaProvider(
+            personalityPath, sp.GetRequiredService<ILogger<AuditorPersonaProvider>>()));
         services.AddScoped<IAegisAiEvaluatorService, AegisAiEvaluatorService>();
 
         // Superfície de ingestão passiva de telemetria (webhook EDR/SIEM) — o CHAMADOR do EvaluateAsync.

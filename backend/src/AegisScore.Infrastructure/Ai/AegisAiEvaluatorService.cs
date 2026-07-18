@@ -35,16 +35,18 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
     private readonly ITenantContext _tenant;
     private readonly IControlStateWriter _writer;
     private readonly IAssessmentRuleContextBuilder _ruleContext;
+    private readonly IAuditorPersonaProvider _persona;
 
     public AegisAiEvaluatorService(
         AegisScoreDbContext db, ILLMClient llm, ITenantContext tenant, IControlStateWriter writer,
-        IAssessmentRuleContextBuilder ruleContext)
+        IAssessmentRuleContextBuilder ruleContext, IAuditorPersonaProvider persona)
     {
         _db = db;
         _llm = llm;
         _tenant = tenant;
         _writer = writer;
         _ruleContext = ruleContext;
+        _persona = persona;
     }
 
     public async Task<ComplianceVerdict> EvaluateAsync(
@@ -69,9 +71,10 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
         //    5.2.0). Nulo quando a subcategoria não tem regra extraída → o prompt cai na definição pura.
         var ruleContext = await _ruleContext.BuildAsync(subcategoryCode, ct);
 
-        // 4) IA: System Prompt (o core) + regra + telemetria, através do seam mockável ILLMClient.
+        // 4) IA: System Prompt (rubrica + persona + contrato) + regra + telemetria, através do seam
+        //    mockável ILLMClient.
         var llmRaw = await _llm.ExecutePromptAsync(
-            BuildSystemPrompt(), BuildUserPrompt(sub, ruleContext, rawTelemetryPayload), ct);
+            BuildSystemPrompt(_persona.Persona), BuildUserPrompt(sub, ruleContext, rawTelemetryPayload), ct);
         var (status, evidence, checks, intelligence) = ParseResponse(llmRaw);
 
         // 5) Persistência: upsert idempotente + scoring, pela regra única do writer. Telemetria é a fonte
@@ -103,8 +106,24 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
 
     // ---- Engenharia de prompt (o core da IA) ------------------------------------
 
-    /// <summary>System Prompt: auditor Senior SecOps, guiado pela regra do 800-53, com contrato JSON estrito.</summary>
-    private static string BuildSystemPrompt() =>
+    /// <summary>
+    /// System Prompt em TRÊS blocos intercalados, nesta ordem deliberada:
+    ///   1. <see cref="AssessmentRubric"/> — o que julgar e como (fail-closed, anti prompt-injection). Vem
+    ///      primeiro porque é o que NÃO se negocia: se o modelo só ler o começo, lê o rigor.
+    ///   2. <see cref="AuditorPersona.ToPromptBlock"/> — quem escreve (tom, tradução de sigla para impacto,
+    ///      proatividade), carregado de AuditorPersonality.json. Omitido quando não há persona.
+    ///   3. <see cref="OutputContract"/> — a forma da saída (JSON rígido do ControlIntelligence) + a Regra
+    ///      de Ouro da Tradução. Vem por ÚLTIMO porque é a instrução mais próxima da geração — o contrato
+    ///      de formato é o que mais sofre com deriva de atenção, e a persona não pode reescrevê-lo.
+    /// </summary>
+    private static string BuildSystemPrompt(AuditorPersona persona) =>
+        string.Join(
+            "\n\n",
+            new[] { AssessmentRubric, persona.ToPromptBlock(), OutputContract }
+                .Where(block => !string.IsNullOrWhiteSpace(block)));
+
+    /// <summary>Bloco 1 — rubrica de auditoria: papel, autoridade da regra RAG e fail-closed.</summary>
+    private const string AssessmentRubric =
         """
         You are a Senior SecOps auditor performing an EVIDENCE-BASED NIST CSF 2.0 control assessment.
 
@@ -136,19 +155,42 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
           - "MitigatedByThirdParty": the organization itself does not meet it, but the log shows a third
             party / managed service / compensating external control demonstrably covering the risk.
           - "NonCompliant": the telemetry shows the control failing, misconfigured or unproven.
+        """;
+
+    /// <summary>
+    /// Bloco 3 — contrato de saída (JSON rígido do <c>ControlIntelligence</c>) + a REGRA DE OURO DA
+    /// TRADUÇÃO: o plano abre pelo impacto no negócio/prontidão operacional e só então desce ao técnico.
+    /// A regra vive aqui, no código, e não no JSON de personalidade: o JSON ajusta o TOM, mas o formato
+    /// que o front desserializa é contrato de software — não pode ser afrouxado editando configuração.
+    /// </summary>
+    private const string OutputContract =
+        """
+        GOLDEN RULE — TRANSLATION (overrides any instinct to be brief or to sound technical):
+          - The FIRST sentence of "remediationPlan" MUST state the impact on the business or on
+            operational readiness, in plain language a non-technical director understands (what breaks,
+            what is exposed, how long the organization stays blind or down). NEVER open with an acronym.
+          - Only AFTER that first sentence list the technical steps, numbered ("1)", "2)", "3)"), in the
+            order that cuts risk fastest. Each step must be executable by an IT team as written — name the
+            console, policy, setting or query, not the concept.
+          - Close with ONE proactive offer to go further (generate the policy template, build the audit
+            query, draft the rollout plan), phrased as a direct question. Exactly one, and only when the
+            status is not "Compliant".
+          - Keep the whole plan under 8 lines. Didactic means clear, not long.
 
         Output contract — reply with ONE minified JSON object and NOTHING else (no markdown, no code
         fences, no extra keys, no prose before or after). Exactly this shape:
         {"status":"Compliant|NonCompliant|MitigatedByThirdParty","aiEvidence":"<justificativa>","intelligence":{"severity":"Critical|High|Medium|Low|Informational","aiConfidenceScore":<0-100>,"threatLandscape":["<vetor>"],"remediationPlan":"<plano>"}}
           - "aiEvidence": technical justification in Brazilian Portuguese, MAXIMUM 3 lines, citing the
             concrete signal(s) in the log that drive the verdict (field, value, host, rule id, action).
+            This field stays FORENSIC — the persona's didactic tone does NOT apply here; an auditor must
+            be able to trace the verdict back to the raw log.
           - "intelligence.severity": business severity of the finding; "Informational" when Compliant.
           - "intelligence.aiConfidenceScore": integer 0–100, your self-assessed confidence that this
             verdict is correct GIVEN THE EVIDENCE — lower it when the payload is thin, ambiguous or partial.
           - "intelligence.threatLandscape": attack vectors the gap leaves open, MITRE ATT&CK when known
             (e.g. "T1486 · Ransomware"); empty array when Compliant or none apply.
-          - "intelligence.remediationPlan": ONE actionable sentence in Brazilian Portuguese (the "what to
-            do" at a glance); empty string when Compliant.
+          - "intelligence.remediationPlan": the plan in Brazilian Portuguese, written under the GOLDEN
+            RULE above; empty string when Compliant.
         """;
 
     /// <summary>

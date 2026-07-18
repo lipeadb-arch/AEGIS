@@ -620,7 +620,8 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
         var ctx = new SystemTenantContext(tenantId);
         var writer = new ControlStateWriter(db, ctx, NullLogger<ControlStateWriter>.Instance);
         var ruleContext = new AssessmentRuleContextBuilder(db);
-        var evaluator = new AegisAiEvaluatorService(db, llm, ctx, writer, ruleContext);
+        var evaluator = new AegisAiEvaluatorService(
+            db, llm, ctx, writer, ruleContext, StaticAuditorPersonaProvider.Neutral);
         return new TelemetryIngestionService(evaluator, ctx);
     }
 

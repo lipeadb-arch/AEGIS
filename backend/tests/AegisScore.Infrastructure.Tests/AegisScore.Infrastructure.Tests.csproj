@@ -38,4 +38,13 @@
     <ProjectReference Include="..\..\src\AegisScore.Infrastructure\AegisScore.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- O AuditorPersonality.json de PRODUÇÃO, linkado (não copiado) para o output do teste. É editável
+         sem recompilar, então um erro de digitação nele só apareceria em runtime, degradando a persona
+         em silêncio — o AuditorPersonaTests carrega ESTE arquivo para que o CI pegue a quebra. -->
+    <Content Include="..\..\src\AegisScore.Api\Data\AuditorPersonality.json" Link="Data\AuditorPersonality.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>
