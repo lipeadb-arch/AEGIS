@@ -57,15 +57,87 @@ public sealed class StubAssessmentService : IAiAssessmentService
                        "declarada na entrevista, sem documento formal correlato. Nível 3 (Gerenciado) provisório.",
             EvidenceRefs: Array.Empty<Guid>()));
 
+    /// <summary>
+    /// Triagem determinística por tema. Antes devolvia SEMPRE os mesmos dois códigos canned
+    /// (GV.PO-01/GV.RR-01) — e nenhum dos dois tem regra no <c>aegis_assessment_rules.json</c>, então a
+    /// segunda passada do RAG caía direto no fallback e a feature NUNCA era exercitada em DEV. Aqui os
+    /// temas do texto roteiam para controles que TÊM regra, e a esteira documental roda inteira sem rede.
+    /// </summary>
     public Task<DocumentAnalysis> AnalyzeDocumentAsync(DocumentAnalysisRequest request, CancellationToken ct)
-        => Task.FromResult(new DocumentAnalysis(
-            Summary: $"[Simulado] Leitura canned de '{request.FileName ?? "documento"}': o texto declara " +
-                     "controles de governança compatíveis com o NIST CSF 2.0.",
-            Claims: new List<DocumentClaim>
-            {
-                new("GV.PO-01", "Menção a política de segurança da informação aprovada pela direção.", 0.72),
-                new("GV.RR-01", "Definição de papéis e responsabilidades de segurança.", 0.65),
-            }));
+    {
+        var text = (request.DocumentText ?? "").ToLowerInvariant();
+        var claims = new List<DocumentClaim>();
+
+        void Detect(string code, string claim, double confidence, params string[] terms)
+        {
+            if (terms.Any(t => text.Contains(t, StringComparison.Ordinal)))
+                claims.Add(new DocumentClaim(code, claim, confidence));
+        }
+
+        Detect("PR.AA-01", "Exigência de autenticação multifator e revisão de contas privilegiadas.", 0.68,
+            "privilegiad", "multifator", "mfa", "autenticacao", "autenticação");
+        Detect("RC.RP-01", "Menção a plano de continuidade / recuperação de negócios.", 0.55,
+            "continuidade", "recuperacao", "recuperação", "backup");
+        Detect("PR.DS-01", "Tratamento de proteção e criptografia de dados.", 0.60,
+            "criptograf", "dados sensiveis", "dados sensíveis");
+        Detect("GV.PO-01", "Menção a política de segurança da informação aprovada pela direção.", 0.72,
+            "politica", "política", "diretriz");
+        Detect("GV.RR-01", "Definição de papéis e responsabilidades de segurança.", 0.65,
+            "responsavel", "responsável", "papeis", "papéis", "comite", "comitê");
+
+        // Sem nenhum tema reconhecido, mantém o par histórico — a demo nunca fica sem claim algum.
+        if (claims.Count == 0)
+        {
+            claims.Add(new DocumentClaim("GV.PO-01", "Menção a política de segurança da informação aprovada pela direção.", 0.72));
+            claims.Add(new DocumentClaim("GV.RR-01", "Definição de papéis e responsabilidades de segurança.", 0.65));
+        }
+
+        return Task.FromResult(new DocumentAnalysis(
+            Summary: $"[Simulado] Leitura de '{request.FileName ?? "documento"}': {claims.Count} controle(s) " +
+                     "NIST CSF 2.0 endereçado(s) pelo texto.",
+            Claims: claims));
+    }
+
+    /// <summary>
+    /// Segunda passada determinística: pontua o trecho pela presença dos TERMOS DE EXECUÇÃO que separam
+    /// política escrita de controle operante ("responsável", "periodicidade", "registro"…). Não é NLP —
+    /// é o suficiente para o pipeline de duas passadas rodar sem rede e para os testes exercitarem a
+    /// fronteira Coberto × Parcial com dados previsíveis.
+    /// </summary>
+    public Task<DocumentControlVerdict> EvaluateDocumentControlAsync(
+        DocumentControlEvaluationRequest request, CancellationToken ct)
+    {
+        var excerpt = (request.DocumentExcerpt ?? "").ToLowerInvariant();
+
+        if (string.IsNullOrWhiteSpace(excerpt))
+            return Task.FromResult(new DocumentControlVerdict(
+                0.0, $"[Simulado] Nenhum trecho do documento endereça {request.SubcategoryCode}."));
+
+        // Sinais de EXECUÇÃO (o controle roda) contra sinais de INTENÇÃO (o controle é desejado).
+        //
+        // Casamento por RADICAL, não por palavra inteira: uma PSI real escreve "responsabilidade",
+        // "registradas", "revisada" — flexões que a lista de palavras exatas não pegava, fazendo o Stub
+        // rebaixar para Parcial um documento com aprovação executiva, sanções e RACI. Errar para baixo é
+        // melhor que inflar, mas continua sendo errar.
+        string[] execution = ["responsab", "responsav", "accountab", "periodic", "trimestr", "mensal",
+                              "anualmente", "registr", "evidenc", "auditor", "revis", "aprovad",
+                              "sancao", "sanção", "disciplinar", "comite", "comitê", "matriz raci"];
+        string[] intent = ["deve", "deverá", "devera", "recomenda", "pretende", "objetivo", "futuro"];
+
+        var executionHits = execution.Count(t => excerpt.Contains(t, StringComparison.Ordinal));
+        var intentOnly = intent.Any(t => excerpt.Contains(t, StringComparison.Ordinal)) && executionHits == 0;
+
+        // 0.75 passa do limiar de cobertura (0.7); 0.45 fica em Parcial. A fronteira é o ponto do teste.
+        var confidence = intentOnly ? 0.45 : Math.Min(0.75, 0.45 + 0.10 * executionHits);
+
+        var rationale = intentOnly
+            ? $"[Simulado] {request.SubcategoryCode}: o texto DECLARA a intenção, mas não nomeia responsável, " +
+              "periodicidade nem registro de execução — evidência parcial."
+            : $"[Simulado] {request.SubcategoryCode}: o trecho cita {executionHits} elemento(s) de execução " +
+              "(responsável/periodicidade/registro), sustentando cobertura documental.";
+
+        return Task.FromResult(new DocumentControlVerdict(confidence, rationale));
+    }
 
     public Task<IReadOnlyList<ActionPlanSuggestion>> GenerateActionPlanAsync(ActionPlanRequest request, CancellationToken ct)
     {

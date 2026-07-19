@@ -4,6 +4,19 @@ using AegisScore.Domain;
 namespace AegisScore.Application.Queries;
 
 /// <summary>
+/// Uma lacuna de evidência achatada para o HUD (espelha <see cref="MissingRequirement"/> do domínio).
+///
+/// Existe em vez de serializar o record de domínio direto por causa do <c>Type</c>: sem
+/// <c>JsonStringEnumConverter</c> global na API, um enum ANINHADO sairia como número ("type": 1) e o
+/// Angular passaria a depender da ordem do enum C# — exatamente o acoplamento que o resto deste contrato
+/// evita com <c>.ToString()</c>. Aqui o tipo já viaja como nome ("Telemetry"/"Documentation"/"Both").
+/// </summary>
+/// <param name="Type">Natureza da prova ausente — é o que decide o ícone (rede × pasta) no HUD.</param>
+/// <param name="SourceIdentifier">Fonte que deveria supri-la: "Entra ID", "MANUAL_AUDIT_REQUIRED".</param>
+/// <param name="Description">O que falta, em uma frase, pronta para exibição.</param>
+public record MissingRequirementDto(string Type, string SourceIdentifier, string Description);
+
+/// <summary>
 /// Estado atual de UM controle NIST do tenant, achatado para consumo do HUD. É um contrato de leitura:
 /// o frontend jamais recebe a entidade de domínio (<c>TenantControlState</c>) crua, o que nos deixa
 /// evoluir o modelo sem quebrar o Angular — e impede que campos internos vazem por acidente.
@@ -62,6 +75,15 @@ public record TenantControlStateDto(
 
     /// <summary>Tempo médio de resposta em minutos (MTTR) — DE/RS/RC; nulo onde não se aplica.</summary>
     public int? MttrMinutes { get; init; }
+
+    /// <summary>
+    /// Lacunas de evidência que sustentam a não-conformidade, discriminadas entre telemetria e
+    /// documentação. É o que permite ao HUD separar "falta o log" (ícone de rede, ação: ligar conector)
+    /// de "falta a política" (ícone de pasta, ação: subir documento) — duas pendências com donos,
+    /// prazos e orçamentos diferentes. Vazia quando o controle é conforme ou quando a reprovação é de
+    /// MÉRITO (a evidência existia e o controle falhou).
+    /// </summary>
+    public IReadOnlyList<MissingRequirementDto> MissingRequirements { get; init; } = Array.Empty<MissingRequirementDto>();
 }
 
 /// <summary>

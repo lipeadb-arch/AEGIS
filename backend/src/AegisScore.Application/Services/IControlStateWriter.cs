@@ -37,9 +37,14 @@ public interface IControlStateWriter
     /// <param name="intelligence">Contexto de inteligência do controle (severidade, rastro cru, plano, confiança,
     /// ameaças, MTTD/MTTR), persistido como JSON ao lado do checklist. Nulo quando o motor não o emite —
     /// a escrita segue válida: o estado do controle nunca depende do enriquecimento.</param>
+    /// <param name="missingRequirements">Lacunas de evidência discriminadas por natureza (telemetria ×
+    /// documentação) que sustentam a não-conformidade. IGNORADO quando o status é <c>Compliant</c> — a
+    /// invariante "controle conforme não tem pendência" é imposta aqui, no escritor único, e não confiada
+    /// ao chamador.</param>
     /// <returns>O veredito EFETIVO: o proposto, ou o estado preservado quando o upgrade é recusado.</returns>
     Task<ComplianceVerdict> ApplyVerdictAsync(
         Guid tenantId, string subcategoryCode, ControlStatus status, string evidence,
         VerdictSource source, IReadOnlyList<ComplianceCheck>? checks = null,
-        ControlIntelligence? intelligence = null, CancellationToken ct = default);
+        ControlIntelligence? intelligence = null,
+        IReadOnlyList<MissingRequirement>? missingRequirements = null, CancellationToken ct = default);
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -101,6 +102,16 @@ public class AegisScoreDbContext : DbContext
         var guidListCmp = new ValueComparer<List<Guid>>(
             (x, y) => (x ?? new()).SequenceEqual(y ?? new()),
             v => v == null ? 0 : v.Aggregate(0, (h, g) => HashCode.Combine(h, g.GetHashCode())),
+            v => v == null ? new() : v.ToList());
+
+        // Lacunas de evidência do ledger (TenantControlState). MissingRequirement é record: SequenceEqual
+        // e GetHashCode já usam igualdade ESTRUTURAL, então o change tracker detecta a edição de um item
+        // sem que o comparer precise saber dos campos. A cópia é rasa DE PROPÓSITO — o record é imutável,
+        // então clonar a lista basta para o snapshot do tracker.
+        var missingRequirements = JsonbEnumAwareConverter<List<MissingRequirement>>();
+        var missingRequirementsCmp = new ValueComparer<List<MissingRequirement>>(
+            (x, y) => (x ?? new()).SequenceEqual(y ?? new()),
+            v => v == null ? 0 : v.Aggregate(0, (h, m) => HashCode.Combine(h, m.GetHashCode())),
             v => v == null ? new() : v.ToList());
 
         b.Entity<NistSubcategory>().Property(x => x.InformativeReferences)
@@ -235,6 +246,21 @@ public class AegisScoreDbContext : DbContext
             e.HasOne(x => x.Subcategory).WithMany()
                 .HasForeignKey(x => x.SubcategoryId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            // Lacunas de evidência tipadas → jsonb, mesmo idioma das listas do catálogo NIST (converter +
+            // comparer), e NÃO o idioma string-blob de ChecksJson/IntelligenceJson: esta lista é
+            // percorrida e agregada por Type, não repassada opaca à UI. Converter enum-aware para que o
+            // JSON grave "Documentation" e não 1. NOT NULL com default de lista VAZIA — "sem lacuna
+            // registrada" é [], nunca NULL; assim nenhum consumidor precisa de checagem de nulo.
+            //
+            // ⚠️ HasDefaultValue (tipado, atravessa o ValueConverter → literal '[]') e NÃO
+            // HasDefaultValueSql("'[]'::jsonb"): o cast ::jsonb é sintaxe exclusiva do PostgreSQL e
+            // quebraria o EnsureCreated dos testes, que rodam sobre SQLite. O literal serve aos dois.
+            e.Property(x => x.MissingRequirements)
+                .HasConversion(missingRequirements, missingRequirementsCmp)
+                .HasColumnType("jsonb")
+                .HasDefaultValue(new List<MissingRequirement>())
+                .IsRequired();
         });
 
         // Aegis Score — série temporal (Snapshot Agregado Diário). O índice único composto
@@ -412,4 +438,19 @@ public class AegisScoreDbContext : DbContext
     private static ValueConverter<T, string> JsonbConverter<T>() => new(
         v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
         v => JsonSerializer.Deserialize<T>(v, (JsonSerializerOptions?)null)!);
+
+    /// <summary>
+    /// Opções do jsonb para payloads que carregam ENUM. O enum vai como TEXTO ("Documentation"), nunca
+    /// como ordinal: o ledger de conformidade é auditado direto no SQL — <c>{"type": 1}</c> é ilegível
+    /// para quem consulta — e, pior, reordenar o enum reinterpretaria em silêncio todo o histórico
+    /// gravado. Um dado de auditoria não pode mudar de significado por causa de um refactor.
+    /// </summary>
+    private static readonly JsonSerializerOptions JsonbWithEnumNames = new()
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    private static ValueConverter<T, string> JsonbEnumAwareConverter<T>() => new(
+        v => JsonSerializer.Serialize(v, JsonbWithEnumNames),
+        v => JsonSerializer.Deserialize<T>(v, JsonbWithEnumNames)!);
 }

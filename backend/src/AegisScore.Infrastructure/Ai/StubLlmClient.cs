@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Assessment;
 using AegisScore.Application.Telemetry.Models;
+using AegisScore.Domain;
 
 namespace AegisScore.Infrastructure.Ai;
 
@@ -15,14 +17,87 @@ namespace AegisScore.Infrastructure.Ai;
 /// </summary>
 public sealed class StubLlmClient : ILLMClient
 {
+    /// <summary>
+    /// Marcador de simulação: o payload declara que a fonte de telemetria do controle NÃO está integrada
+    /// (Cenário A — Blind Spot). Sem ele, o Stub assume que o sinal EXISTE — e assume certo: se há um
+    /// payload de telemetria sendo avaliado, a fonte respondeu; a reprovação é de mérito, não de prova.
+    /// </summary>
+    private const string TelemetryAbsentMarker = "telemetry source: absent";
+
+    /// <summary>
+    /// Marcador de simulação: o Document Hub JÁ processou uma política que cobre o controle (Cenário B
+    /// invertido). Sem ele, o Stub assume que NÃO há documento — o Stub não consulta o Document Hub, e
+    /// assumir cobertura documental inexistente esconderia uma lacuna real de governança.
+    /// </summary>
+    private const string DocumentProcessedMarker = "policy document: processed";
+
     public Task<string> ExecutePromptAsync(string systemPrompt, string userPrompt, CancellationToken ct = default)
     {
         var p = userPrompt.ToLowerInvariant();
         var (status, evidence) = Evaluate(p);
         // Além do status, decompõe o veredito do Protect no CHECKLIST técnico (vazio nas demais famílias).
         // JsonSerializer garante o escaping de aspas/acentos na evidência e nos checks (era interpolação crua).
-        var json = JsonSerializer.Serialize(new { status, aiEvidence = evidence, checks = BuildProtectChecks(p) });
+        var json = JsonSerializer.Serialize(new
+        {
+            status,
+            aiEvidence = evidence,
+            checks = BuildProtectChecks(p),
+            missingRequirements = BuildMissingRequirements(status, userPrompt, p),
+        });
         return Task.FromResult(json);
+    }
+
+    /// <summary>
+    /// Compila as LACUNAS DE EVIDÊNCIA do veredito — a distinção "falta o log" × "falta a política" que a
+    /// UI traduz em ícone de rede × ícone de pasta.
+    ///
+    /// Só emite em NÃO-CONFORMIDADE: controle conforme não tem pendência (o <c>ControlStateWriter</c>
+    /// impõe a mesma invariante no ledger, então isto aqui é coerência, não a única guarda).
+    ///
+    /// NÃO reimplementa a classificação: delega ao <see cref="RuleEvaluator"/>, o mesmo motor puro que o
+    /// avaliador real usará. A fonte das exigências é o bloco "EXPECTED EVIDENCE SOURCES" que o
+    /// <c>AssessmentRuleContextBuilder</c> injeta no User Prompt a partir da regra do 800-53 — o Stub lê a
+    /// regra REAL do catálogo, sem tocar o banco e sem uma tabela de exigências paralela.
+    /// </summary>
+    private static IReadOnlyList<MissingRequirement> BuildMissingRequirements(
+        string status, string userPrompt, string lowered)
+    {
+        if (status != "NonCompliant")
+            return Array.Empty<MissingRequirement>();
+
+        var evidenceSources = ExtractEvidenceSources(userPrompt);
+        if (evidenceSources.Count == 0)
+            return Array.Empty<MissingRequirement>();   // sem regra no prompt não há como afirmar a natureza
+
+        return RuleEvaluator.Compile(
+            evidenceSources,
+            hasTelemetrySignal: !lowered.Contains(TelemetryAbsentMarker),
+            hasProcessedDocument: lowered.Contains(DocumentProcessedMarker));
+    }
+
+    /// <summary>
+    /// Isola as linhas "  • …" do bloco EXPECTED EVIDENCE SOURCES do User Prompt. Lê o texto ORIGINAL
+    /// (não o lowercased) porque o identificador da fonte vai para a tela: "Entra ID", não "entra id".
+    /// O bloco EVALUATION METRICS usa o mesmo marcador de item, daí a leitura ancorada no cabeçalho.
+    /// </summary>
+    private static IReadOnlyList<string> ExtractEvidenceSources(string userPrompt)
+    {
+        const string header = "EXPECTED EVIDENCE SOURCES";
+        var start = userPrompt.IndexOf(header, StringComparison.Ordinal);
+        if (start < 0)
+            return Array.Empty<string>();
+
+        var sources = new List<string>();
+        foreach (var line in userPrompt[start..].Split('\n').Skip(1))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("•", StringComparison.Ordinal))
+                sources.Add(trimmed[1..].Trim());
+            else if (sources.Count > 0 && trimmed.Length == 0)
+                break;    // linha em branco encerra o bloco — o próximo é a telemetria crua
+        }
+
+        return sources;
     }
 
     /// <summary>

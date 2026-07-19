@@ -23,6 +23,12 @@ public record ComplianceVerdict(ControlStatus Status, string AiEvidence, int Awa
     /// e o preenche; fica nulo quando o motor é determinístico (StubLlmClient de DEV) ou não o produz.
     /// </summary>
     public ControlIntelligence? Intelligence { get; init; }
+
+    /// <summary>
+    /// Lacunas de evidência por trás do veredito, discriminadas entre telemetria e documentação. Vazia
+    /// quando o controle é conforme ou quando a fonte não as decompõe — o consumidor nunca recebe nulo.
+    /// </summary>
+    public IReadOnlyList<MissingRequirement> MissingRequirements { get; init; } = Array.Empty<MissingRequirement>();
 }
 
 /// <summary>

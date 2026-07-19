@@ -2,6 +2,8 @@ using AegisScore.Application.Queries;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Queries;
+using AegisScore.Infrastructure.Scoring;
+using Microsoft.Extensions.Options;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -41,7 +43,7 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
         await SeedStateAsync(TenantA, _prAaId, ControlStatus.Compliant, 20, VerdictSource.Telemetry, "telemetria: MFA ativo");
 
         await using var db = NewContext(TenantA);
-        var rows = await new ControlStateDashboardQuery(db).GetDashboardAsync();
+        var rows = await QueryFor(db).GetDashboardAsync();
 
         var row = rows.Should().ContainSingle().Subject;
         row.SubcategoryId.Should().Be(_prAaId);
@@ -60,7 +62,7 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
         await SeedStateAsync(TenantA, _gvOcId, ControlStatus.MitigatedByThirdParty, 2, VerdictSource.Documentary, "b");
 
         await using var db = NewContext(TenantA);
-        var rows = await new ControlStateDashboardQuery(db).GetDashboardAsync();
+        var rows = await QueryFor(db).GetDashboardAsync();
 
         rows.Select(r => r.SubcategoryCode).Should().ContainInOrder("GV.OC-01", "PR.AA-01");
         rows.Single(r => r.SubcategoryCode == "GV.OC-01").LastVerdictSource.Should().Be("Documentary");
@@ -73,7 +75,7 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
         await SeedStateAsync(TenantB, _gvOcId, ControlStatus.NonCompliant, 0, VerdictSource.Telemetry, "de B");
 
         await using var dbA = NewContext(TenantA);
-        var rowsA = await new ControlStateDashboardQuery(dbA).GetDashboardAsync();
+        var rowsA = await QueryFor(dbA).GetDashboardAsync();
 
         // Sem nenhum .Where(TenantId) na query: o Global Query Filter é quem isola.
         rowsA.Should().ContainSingle().Which.SubcategoryCode.Should().Be("PR.AA-01");
@@ -86,7 +88,7 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
 
         // Fail-CLOSED: sem tenant ambiente o filtro não vaza nada — o oposto de expor a base inteira.
         await using var db = NewContext(null);
-        var rows = await new ControlStateDashboardQuery(db).GetDashboardAsync();
+        var rows = await QueryFor(db).GetDashboardAsync();
 
         rows.Should().BeEmpty();
     }
@@ -99,7 +101,7 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
         await SeedStateAsync(TenantA, _prAaId, ControlStatus.NonCompliant, 0, VerdictSource.Telemetry, "reprovado", checksJson);
 
         await using var db = NewContext(TenantA);
-        var row = (await new ControlStateDashboardQuery(db).GetDashboardAsync()).Should().ContainSingle().Subject;
+        var row = (await QueryFor(db).GetDashboardAsync()).Should().ContainSingle().Subject;
 
         row.Checks.Should().ContainSingle();
         row.Checks[0].Name.Should().Be("Endpoint Encrypted");
@@ -154,4 +156,12 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
         _prAaId = prAaSub.Id;
         _gvOcId = gvOcSub.Id;
     }
+
+    /// <summary>
+    /// A consulta com a auditoria de frescor DESLIGADA (0 horas) — estes casos exercitam a projeção do
+    /// dashboard, não o TTL. O relógio real serve porque, sem janela, nenhuma data é comparada.
+    /// O TTL tem cobertura própria em <c>SignalFreshnessTests</c>.
+    /// </summary>
+    private static ControlStateDashboardQuery QueryFor(AegisScoreDbContext db) =>
+        new(db, Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = 0 }), TimeProvider.System);
 }

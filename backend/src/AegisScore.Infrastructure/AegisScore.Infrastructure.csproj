@@ -7,7 +7,12 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.6" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.4" />
-    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
+    <!-- 8.0.1 é o piso exigido por Microsoft.Extensions.Http.Resilience (via Http.Diagnostics); manter
+         8.0.0 causaria NU1605 (downgrade). Continua na linha 8.0.x do resto do projeto. -->
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
+    <!-- Polly v8 sob a fachada oficial da Microsoft: retry exponencial + circuit breaker nos HttpClients
+         dos motores de IA (Gemini/Claude). Registro em DependencyInjection.cs, nunca nos clients. -->
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="8.10.0" />
     <!-- Fixa a versão corrigida da Caching.Memory (transitiva via EF Core 8.0.6) — corrige GHSA-qj66-m88j-hmgj / aviso NU1903. -->
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />

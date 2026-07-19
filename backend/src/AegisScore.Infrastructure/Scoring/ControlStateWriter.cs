@@ -38,7 +38,8 @@ public sealed class ControlStateWriter : IControlStateWriter
     public async Task<ComplianceVerdict> ApplyVerdictAsync(
         Guid tenantId, string subcategoryCode, ControlStatus status, string evidence,
         VerdictSource source, IReadOnlyList<ComplianceCheck>? checks = null,
-        ControlIntelligence? intelligence = null, CancellationToken ct = default)
+        ControlIntelligence? intelligence = null,
+        IReadOnlyList<MissingRequirement>? missingRequirements = null, CancellationToken ct = default)
     {
         // 1) Defesa em profundidade: o tenantId explícito precisa casar com o tenant ambiente (fail-closed).
         var ambient = _tenant.TenantId
@@ -79,6 +80,9 @@ public sealed class ControlStateWriter : IControlStateWriter
                 {
                     Checks = DeserializeChecks(state.ChecksJson),
                     Intelligence = SafeDeserialize<ControlIntelligence>(state.IntelligenceJson),
+                    // As lacunas VIGENTES, não as do veredito recusado: o retorno descreve o estado que
+                    // ficou de pé. Já vêm tipadas do jsonb — sem desserialização manual aqui.
+                    MissingRequirements = state.MissingRequirements,
                 };
         }
 
@@ -95,6 +99,12 @@ public sealed class ControlStateWriter : IControlStateWriter
         // O enriquecimento acompanha o veredito que o produziu: quem não o emite ZERA o campo em vez de
         // herdar o do veredito anterior — inteligência órfã descreveria um estado que não existe mais.
         state.IntelligenceJson = intelligence is not null ? JsonSerializer.Serialize(intelligence) : null;
+        // Invariante do ledger, imposta AQUI e não confiada ao chamador: controle conforme não carrega
+        // pendência. Nos demais status a lista acompanha o veredito que a produziu — quem não a emite
+        // ZERA (mesma regra do enriquecimento acima), porque lacuna órfã descreveria um estado extinto.
+        state.MissingRequirements = status == ControlStatus.Compliant
+            ? new List<MissingRequirement>()
+            : (missingRequirements ?? Array.Empty<MissingRequirement>()).ToList();
         state.LastVerdictSource = source;   // a procedência acompanha o estado, e governa a próxima escrita
         state.LastEvaluatedAt = DateTimeOffset.UtcNow;
 
@@ -105,7 +115,11 @@ public sealed class ControlStateWriter : IControlStateWriter
             sub.Code, status, awarded, sub.MaxScorePoints, tenantId);
 
         return new ComplianceVerdict(status, evidence, awarded, sub.MaxScorePoints)
-            { Checks = checks ?? Array.Empty<ComplianceCheck>(), Intelligence = intelligence };
+        {
+            Checks = checks ?? Array.Empty<ComplianceCheck>(),
+            Intelligence = intelligence,
+            MissingRequirements = state.MissingRequirements,   // já normalizada pela invariante acima
+        };
     }
 
     /// <summary>Desserializa o checklist persistido; tolera nulo/JSON inválido (devolve vazio, nunca lança).</summary>

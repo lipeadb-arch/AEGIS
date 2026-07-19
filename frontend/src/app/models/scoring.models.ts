@@ -33,6 +33,27 @@ export interface TelemetryEvidence {
   collectedAt: string | null; // ISO 8601; nulo quando a ferramenta não informa
 }
 
+/**
+ * Natureza da prova que falta para um controle (espelha ComplianceRequirementType do backend, que chega
+ * como NOME — nunca como índice de enum). É o eixo que decide o ícone no HUD: rede × pasta.
+ *
+ * ⚠️ Não confundir com `VerdictSource`: aquele diz o que PRODUZIU o veredito vigente; este diz o que
+ * FALTA para prová-lo. Um controle avaliado por telemetria pode estar devendo documentação.
+ */
+export type ComplianceRequirementType = 'Telemetry' | 'Documentation' | 'Both';
+
+/**
+ * Uma lacuna de evidência por trás de uma não-conformidade (espelha MissingRequirementDto). Distingue
+ * "o SOC não emite o log" de "a política nunca foi escrita" — ações com donos e prazos diferentes.
+ */
+export interface MissingRequirement {
+  type: ComplianceRequirementType;
+  /** Fonte que deveria supri-la: "Entra ID", "Microsoft Sentinel", "MANUAL_AUDIT_REQUIRED". */
+  sourceIdentifier: string;
+  /** O que falta, em uma frase, redigido pelo motor de avaliação. */
+  description: string;
+}
+
 /** Ponto da série de conformidade do controle — matéria-prima da sparkline de 30 dias. */
 export interface ComplianceHistoryPoint {
   date: string; // "2026-07-16" (DateOnly do backend)
@@ -63,6 +84,7 @@ export interface TenantControlStateDto {
   threatLandscape: string[]; // vetores de ataque abertos pela falha
   mttdMinutes: number | null; // tempo médio de detecção (DE/RS/RC)
   mttrMinutes: number | null; // tempo médio de resposta (DE/RS/RC)
+  missingRequirements: MissingRequirement[]; // lacunas de prova (vazia em controle conforme ou falha de mérito)
 }
 
 // ---- Recomendações de Remediação (Advisories) — espelha /api/v1/scoring/advisories ----
@@ -152,6 +174,53 @@ export const PILLARS: Record<PillarKey, PillarMeta> = {
   },
 };
 
+/**
+ * Gap Analysis de um pilar: a mesma matriz de controles, particionada pela pergunta que o operador faz
+ * ("o que o Aegis consegue enxergar?" × "onde ele está cego?").
+ *
+ * ⚠️ DERIVADA no cliente, sem endpoint novo. O `/scoring/dashboard` já traz status + `missingRequirements`
+ * por controle — que é exatamente a matéria-prima. Um endpoint dedicado duplicaria a consulta e criaria
+ * uma segunda definição de "coberto" capaz de divergir desta.
+ */
+export interface PillarGapAnalysis {
+  meta: PillarMeta;
+  /** Controles com evidência: o motor conseguiu avaliá-los (conformes ou não). */
+  covered: ControlView[];
+  /** Pontos cegos: controles cuja reprovação é por FALTA DE PROVA, não por falha de prática. */
+  blindSpots: ControlView[];
+  /** Total de lacunas de telemetria entre os pontos cegos (inclui as de dupla evidência). */
+  telemetryGaps: number;
+  /** Total de lacunas documentais entre os pontos cegos (inclui as de dupla evidência). */
+  documentationGaps: number;
+}
+
+/**
+ * Particiona os controles de um pilar entre COBERTO e PONTO CEGO. O critério é a existência de
+ * `missingRequirements` — e não o status: um controle `NonCompliant` cuja telemetria CHEGOU e reprovou
+ * está coberto (o Aegis o enxerga, ele é que está mal). Cego é o controle que o Aegis não consegue
+ * avaliar por falta de fonte. Confundir os dois mandaria o operador ligar conector já funcionando.
+ */
+export function buildPillarGapAnalysis(meta: PillarMeta, dtos: TenantControlStateDto[]): PillarGapAnalysis {
+  const all = buildPillarView(meta, dtos).controls;
+  const isBlind = (c: ControlView) => c.missingGroups.length > 0;
+
+  const blindSpots = all.filter(isBlind);
+  const countOf = (types: ComplianceRequirementType[]) =>
+    blindSpots.reduce(
+      (n, c) => n + c.missingGroups.filter((g) => types.includes(g.type)).reduce((m, g) => m + g.items.length, 0),
+      0,
+    );
+
+  return {
+    meta,
+    covered: all.filter((c) => !isBlind(c)),
+    blindSpots,
+    // 'Both' conta nos DOIS lados: é uma pendência que só fecha com as duas provas.
+    telemetryGaps: countOf(['Telemetry', 'Both']),
+    documentationGaps: countOf(['Documentation', 'Both']),
+  };
+}
+
 /** Prefixo do código NIST de um pilar: 'PR' → "PR." (casa "PR.AA-01" mas não "PRX"). */
 export function pillarPrefix(key: PillarKey): string {
   return `${key}.`;
@@ -180,6 +249,24 @@ export interface ControlView {
   threatLandscape: string[];
   mttdMinutes: number | null;
   mttrMinutes: number | null;
+  /** Lacunas de PROVA, já agrupadas por natureza — o card renderiza um bloco por grupo. */
+  missingGroups: MissingRequirementGroup[];
+}
+
+/**
+ * Lacunas de uma mesma natureza, com a apresentação já resolvida. Agrupar no MODELO (função pura) e não
+ * no template mantém o card burro: ele itera grupos e lê rótulo/ícone/tom prontos, sem `if` por tipo
+ * espalhado pelo HTML.
+ */
+export interface MissingRequirementGroup {
+  type: ComplianceRequirementType;
+  /** Rótulo da seção: "Telemetria Ausente", "Documentação Ausente". */
+  label: string;
+  /** Chave do ícone SVG desenhado no componente ('network' | 'folder' | 'both'). */
+  icon: 'network' | 'folder' | 'both';
+  /** Tom HUD: 'critical' pulsa em vermelho (sensor cego), 'warn' é âmbar (dívida de governança). */
+  tone: 'critical' | 'warn';
+  items: MissingRequirement[];
 }
 
 /** Postura consolidada de um pilar — o que o Smart Component monta e distribui aos Dumb Components. */
@@ -221,7 +308,40 @@ export function toControlView(d: TenantControlStateDto): ControlView {
     threatLandscape: d.threatLandscape ?? [],
     mttdMinutes: d.mttdMinutes ?? null,
     mttrMinutes: d.mttrMinutes ?? null,
+    missingGroups: groupMissingRequirements(d.missingRequirements ?? []),
   };
+}
+
+/**
+ * Metadados de apresentação por natureza de lacuna — o dicionário ÚNICO que decide ícone, rótulo e tom.
+ *
+ * A escolha de tom é semântica, não decorativa: telemetria ausente é um SENSOR CEGO (não sabemos o
+ * estado do controle — vermelho pulsante, urgência de SOC), documentação ausente é DÍVIDA DE PROCESSO
+ * (o controle pode até estar implementado — âmbar, alerta de governança). Pintar as duas de vermelho
+ * apagaria justamente a distinção que este recurso existe para criar.
+ */
+const MISSING_PRESENTATION: Record<
+  ComplianceRequirementType,
+  Omit<MissingRequirementGroup, 'type' | 'items'>
+> = {
+  Telemetry: { label: 'Telemetria Ausente', icon: 'network', tone: 'critical' },
+  Documentation: { label: 'Documentação Ausente', icon: 'folder', tone: 'warn' },
+  Both: { label: 'Telemetria e Documentação Ausentes', icon: 'both', tone: 'critical' },
+};
+
+/** Ordem de exibição: o sensor cego primeiro — é o que impede o Aegis de avaliar o controle. */
+const MISSING_ORDER: ComplianceRequirementType[] = ['Telemetry', 'Both', 'Documentation'];
+
+/**
+ * Agrupa as lacunas por natureza, na ordem de urgência, descartando grupos vazios. Função PURA — o
+ * componente só a consome; testável sem Angular.
+ */
+export function groupMissingRequirements(items: MissingRequirement[]): MissingRequirementGroup[] {
+  return MISSING_ORDER.map((type) => ({
+    type,
+    ...MISSING_PRESENTATION[type],
+    items: items.filter((m) => m.type === type),
+  })).filter((g) => g.items.length > 0);
 }
 
 /**

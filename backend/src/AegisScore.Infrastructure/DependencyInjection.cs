@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Advisories;
@@ -46,7 +47,7 @@ public static class DependencyInjection
         if (string.IsNullOrWhiteSpace(config["Ai:ApiKey"]))
             services.AddSingleton<IAiAssessmentService, StubAssessmentService>();
         else
-            services.AddHttpClient<IAiAssessmentService, ClaudeAssessmentService>();
+            services.AddHttpClient<IAiAssessmentService, ClaudeAssessmentService>().AddAiResilience();
 
         // Aegis Score — avaliador de conformidade por IA: telemetria bruta → veredito NIST CSF 2.0 →
         // upsert do TenantControlState. ILLMClient é o seam de transporte (mockável nos testes).
@@ -58,7 +59,7 @@ public static class DependencyInjection
         if (string.IsNullOrWhiteSpace(config[$"{AegisAiOptions.SectionName}:ApiKey"]))
             services.AddSingleton<ILLMClient, StubLlmClient>();
         else
-            services.AddHttpClient<ILLMClient, GeminiLlmClient>();
+            services.AddHttpClient<ILLMClient, GeminiLlmClient>().AddAiResilience();
         // Escritor ÚNICO do ledger de conformidade (upsert idempotente + regra de scoring). Compartilhado
         // pelo motor de telemetria e pela ponte do Govern — nenhuma das duas fontes reimplementa scoring.
         services.AddScoped<IControlStateWriter, ControlStateWriter>();
@@ -86,6 +87,10 @@ public static class DependencyInjection
         services.AddScoped<ITenantScoreTrendQuery, TenantScoreTrendQuery>();
         services.AddScoped<IGetPendingControlsQuery, PendingControlsQuery>();
         services.AddScoped<IControlStateDashboardQuery, ControlStateDashboardQuery>();
+        // Janela de frescor do sinal (TTL) usada pela auditoria de obsolescência do dashboard. TimeProvider
+        // é o relógio injetável do .NET — mantém a regra de TTL testável sem congelar o sistema todo.
+        services.Configure<ScoringOptions>(config.GetSection(ScoringOptions.SectionName));
+        services.TryAddSingleton(TimeProvider.System);
 
         // Aegis Score — motor consultivo: handler de criação de advisories (escrita). Scoped: usa o
         // DbContext (stamping fail-closed do tenant) + o IAiAssessmentService para redigir o texto.

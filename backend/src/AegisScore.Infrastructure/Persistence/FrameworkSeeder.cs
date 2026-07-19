@@ -106,16 +106,19 @@ public static class FrameworkSeeder
 
     /// <summary>
     /// Semeia as regras técnicas de avaliação (<c>aegis_assessment_rules.json</c>) e as vincula ao
-    /// catálogo por código de subcategoria. Idempotente e INDEPENDENTE do seed do catálogo (guard próprio),
-    /// para rodar mesmo quando o framework já existe. Fail-closed na integridade referencial: uma regra
-    /// cujo código não casa com nenhuma subcategoria do catálogo aborta o seed ANTES de persistir — nunca
-    /// entra FK órfã no banco.
+    /// catálogo por código de subcategoria. INDEPENDENTE do seed do catálogo (guard próprio), para rodar
+    /// mesmo quando o framework já existe. Fail-closed na integridade referencial: uma regra cujo código
+    /// não casa com nenhuma subcategoria do catálogo aborta o seed ANTES de persistir — nunca entra FK
+    /// órfã no banco.
+    ///
+    /// ⚠️ INCREMENTAL, não "tudo ou nada". O guard anterior era <c>if (AnyAsync) return</c>: bastava UMA
+    /// regra no banco para o arquivo inteiro ser ignorado para sempre, de modo que enriquecer o catálogo
+    /// exigia TRUNCATE manual da tabela — operação que ninguém faz em produção e que apagaria qualquer
+    /// ajuste feito no banco. Agora só as regras AUSENTES são inseridas: adicionar um controle ao JSON
+    /// passa a bastar, e as regras já persistidas nunca são sobrescritas (a edição no banco é soberana).
     /// </summary>
     public static async Task SeedAssessmentRulesAsync(AegisScoreDbContext db, string rulesPath, CancellationToken ct = default)
     {
-        if (await db.AssessmentRules.AnyAsync(ct))
-            return;
-
         if (!File.Exists(rulesPath))
             throw new FileNotFoundException($"Assessment rules not found at '{rulesPath}'.", rulesPath);
 
@@ -130,6 +133,11 @@ public static class FrameworkSeeder
         var subIdByCode = await db.Subcategories
             .Select(s => new { s.Code, s.Id })
             .ToDictionaryAsync(s => s.Code, s => s.Id, ct);
+
+        // Regras JÁ persistidas: o que existe no banco não é tocado. O índice único em SubcategoryCode
+        // impede duplicata de qualquer forma; a checagem prévia evita o round-trip perdido.
+        var existing = (await db.AssessmentRules.Select(r => r.SubcategoryCode).ToListAsync(ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var toAdd = new List<AegisAssessmentRule>(rules.Count);
         var unmatched = new List<string>();
@@ -147,6 +155,9 @@ public static class FrameworkSeeder
                 continue;
             }
 
+            if (existing.Contains(r.SubcategoryId))
+                continue;   // já semeada — preserva o que está no banco
+
             toAdd.Add(new AegisAssessmentRule
             {
                 SubcategoryId = subId,
@@ -161,6 +172,9 @@ public static class FrameworkSeeder
             throw new InvalidOperationException(
                 $"{unmatched.Count} assessment rule(s) reference unknown subcategory codes: " +
                 $"{string.Join(", ", unmatched)}. The rules file is out of sync with the NIST catalog.");
+
+        if (toAdd.Count == 0)
+            return;
 
         db.AssessmentRules.AddRange(toAdd);
         await db.SaveChangesAsync(ct);

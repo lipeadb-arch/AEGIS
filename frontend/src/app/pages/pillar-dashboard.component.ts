@@ -1,8 +1,16 @@
 import { Component, OnInit, computed, inject, input, signal } from '@angular/core';
 import { environment } from '../../environments/environment';
+import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
 import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
 import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
-import { PILLARS, PillarKey, TenantControlStateDto, buildPillarView, formatDuration } from '../models/scoring.models';
+import {
+  PILLARS,
+  PillarKey,
+  TenantControlStateDto,
+  buildPillarGapAnalysis,
+  buildPillarView,
+  formatDuration,
+} from '../models/scoring.models';
 import { ScoringService } from '../services/scoring.service';
 
 /**
@@ -17,7 +25,7 @@ import { ScoringService } from '../services/scoring.service';
 @Component({
   selector: 'app-pillar-dashboard',
   standalone: true,
-  imports: [ScoreGaugeComponent, ControlComplianceCardComponent],
+  imports: [ScoreGaugeComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
   template: `
     <section class="pillar">
       <p class="eyebrow">NIST CSF 2.0 · {{ meta().code }}</p>
@@ -73,13 +81,38 @@ import { ScoringService } from '../services/scoring.service';
             </div>
           </div>
 
-          <!-- Lista de controles: NonCompliant primeiro -->
+          <!-- Painel único em DUAS abas: por veredito (Controles) e por cobertura de prova (Pontos
+               Cegos). Eram dois blocos empilhados mostrando a mesma matriz — a aba elimina a
+               redundância sem esconder nenhuma das duas leituras. -->
           <div class="panel list">
-            <div class="hd">
-              <h3>Controles</h3>
-              <span class="hint">não conformes no topo</span>
+            <div class="hd tabs" role="tablist">
+              <button
+                type="button" role="tab" class="tab"
+                [class.on]="tab() === 'controls'" [attr.aria-selected]="tab() === 'controls'"
+                (click)="tab.set('controls')"
+              >
+                Controles
+              </button>
+              <button
+                type="button" role="tab" class="tab blind"
+                [class.on]="tab() === 'blind'" [attr.aria-selected]="tab() === 'blind'"
+                (click)="tab.set('blind')"
+              >
+                Pontos Cegos
+                @if (blindCount() > 0) {
+                  <i>{{ blindCount() }}</i>
+                }
+              </button>
+              <span class="hint">
+                {{ tab() === 'controls' ? 'não conformes no topo' : 'sem prova para avaliar' }}
+              </span>
             </div>
-            <app-control-compliance-card [controls]="view().controls" />
+
+            @if (tab() === 'controls') {
+              <app-control-compliance-card [controls]="view().controls" />
+            } @else {
+              <app-aegis-pillar-checklist [pillar]="pillar()" />
+            }
           </div>
         </div>
       }
@@ -233,6 +266,54 @@ import { ScoringService } from '../services/scoring.service';
         justify-content: space-between;
         margin-bottom: 14px;
       }
+      /* Abas do painel: veredito × cobertura de prova. A dica migra para a direita da barra. */
+      .list .hd.tabs {
+        gap: 4px;
+        justify-content: flex-start;
+        border-bottom: 1px solid var(--line-2);
+        padding-bottom: 0;
+      }
+      .list .hd.tabs .hint {
+        margin-left: auto;
+        padding-bottom: 9px;
+      }
+      .list .tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        background: none;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        padding: 4px 12px 9px;
+        margin-bottom: -1px;
+        cursor: pointer;
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+        transition: color 0.15s ease, border-color 0.15s ease;
+      }
+      .list .tab i {
+        font-style: normal;
+        font-family: var(--display);
+        font-size: 11px;
+        border: 1px solid rgba(255, 45, 111, 0.45);
+        border-radius: 999px;
+        padding: 1px 7px;
+        color: var(--red);
+      }
+      .list .tab:hover {
+        color: var(--text);
+      }
+      .list .tab.on {
+        color: var(--cyan);
+        border-bottom-color: var(--cyan);
+      }
+      .list .tab.blind.on {
+        color: var(--red);
+        border-bottom-color: var(--red);
+      }
       .list h3 {
         margin: 0;
         font-size: 14px;
@@ -330,6 +411,17 @@ export class PillarDashboardComponent implements OnInit {
   /** MTTD/MTTR do pilar já formatados para o HUD ("18 min", "2h 30m", "—" sem medição). */
   readonly mttd = computed(() => formatDuration(this.view().mttdMinutes));
   readonly mttr = computed(() => formatDuration(this.view().mttrMinutes));
+
+  /** Aba ativa do painel de controles: por veredito ou por cobertura de prova. */
+  readonly tab = signal<'controls' | 'blind'>('controls');
+
+  /**
+   * Contagem de pontos cegos, para o badge da aba. Derivada da MESMA matriz já carregada — o checklist
+   * recarrega por conta própria, mas o badge não pode esperar por ele para aparecer.
+   */
+  readonly blindCount = computed(
+    () => buildPillarGapAnalysis(this.meta(), this.controls()).blindSpots.length,
+  );
 
   /** Exposto ao template para orientar o diagnóstico no estado de erro. */
   protected readonly apiBase = environment.apiBase;

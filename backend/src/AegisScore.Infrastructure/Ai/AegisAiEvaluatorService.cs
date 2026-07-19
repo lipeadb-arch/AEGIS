@@ -75,17 +75,19 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
         //    mockável ILLMClient.
         var llmRaw = await _llm.ExecutePromptAsync(
             BuildSystemPrompt(_persona.Persona), BuildUserPrompt(sub, ruleContext, rawTelemetryPayload), ct);
-        var (status, evidence, checks, intelligence) = ParseResponse(llmRaw);
+        var (status, evidence, checks, intelligence, missingRequirements) = ParseResponse(llmRaw);
 
         // 5) Persistência: upsert idempotente + scoring, pela regra única do writer. Telemetria é a fonte
         //    AUTORITATIVA — sobrescreve o estado vigente mesmo que isso rebaixe o controle. O checklist
         //    técnico e o contexto de inteligência viajam junto e são persistidos com o estado (nenhum
         //    motor os emite hoje → nulos/vazios; o parsing existe para quando passarem a emitir).
         return await _writer.ApplyVerdictAsync(
-            tenantId, subcategoryCode, status, evidence, VerdictSource.Telemetry, checks, intelligence, ct: ct);
+            tenantId, subcategoryCode, status, evidence, VerdictSource.Telemetry, checks, intelligence,
+            missingRequirements, ct);
     }
 
-    private (ControlStatus Status, string Evidence, IReadOnlyList<ComplianceCheck> Checks, ControlIntelligence? Intelligence)
+    private (ControlStatus Status, string Evidence, IReadOnlyList<ComplianceCheck> Checks,
+             ControlIntelligence? Intelligence, IReadOnlyList<MissingRequirement> MissingRequirements)
         ParseResponse(string llmRaw)
     {
         VerdictJson? dto;
@@ -101,7 +103,8 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
         if (dto is null || !Enum.TryParse<ControlStatus>(dto.status, ignoreCase: true, out var status))
             throw new AiUnavailableException($"Status de conformidade inválido retornado pela IA: '{dto?.status}'.");
 
-        return (status, (dto.aiEvidence ?? "").Trim(), dto.checks ?? Array.Empty<ComplianceCheck>(), dto.intelligence);
+        return (status, (dto.aiEvidence ?? "").Trim(), dto.checks ?? Array.Empty<ComplianceCheck>(),
+                dto.intelligence, dto.missingRequirements ?? Array.Empty<MissingRequirement>());
     }
 
     // ---- Engenharia de prompt (o core da IA) ------------------------------------
@@ -179,11 +182,20 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
 
         Output contract — reply with ONE minified JSON object and NOTHING else (no markdown, no code
         fences, no extra keys, no prose before or after). Exactly this shape:
-        {"status":"Compliant|NonCompliant|MitigatedByThirdParty","aiEvidence":"<justificativa>","intelligence":{"severity":"Critical|High|Medium|Low|Informational","aiConfidenceScore":<0-100>,"threatLandscape":["<vetor>"],"remediationPlan":"<plano>"}}
+        {"status":"Compliant|NonCompliant|MitigatedByThirdParty","aiEvidence":"<justificativa>","missingRequirements":[{"type":"Telemetry|Documentation|Both","sourceIdentifier":"<fonte>","description":"<o que falta>"}],"intelligence":{"severity":"Critical|High|Medium|Low|Informational","aiConfidenceScore":<0-100>,"threatLandscape":["<vetor>"],"remediationPlan":"<plano>"}}
           - "aiEvidence": technical justification in Brazilian Portuguese, MAXIMUM 3 lines, citing the
             concrete signal(s) in the log that drive the verdict (field, value, host, rule id, action).
             This field stays FORENSIC — the persona's didactic tone does NOT apply here; an auditor must
             be able to trace the verdict back to the raw log.
+          - "missingRequirements": the PROOF that is missing, when the verdict is unproven rather than
+            merely failing. Empty array when the control is Compliant, or when the evidence WAS present
+            and the control simply failed on merit — do not report a gap of proof for a gap of practice.
+            * "type": "Telemetry" when a tool signal named in EXPECTED EVIDENCE SOURCES is not integrated
+              or does not cover the asset; "Documentation" when the source is MANUAL_AUDIT_REQUIRED and no
+              processed policy covers it; "Both" when a single gap needs the two proofs together.
+            * "sourceIdentifier": the source as the operator names it — the tool ("Entra ID", "Microsoft
+              Sentinel") or "MANUAL_AUDIT_REQUIRED". It is the actionable link; never invent one.
+            * "description": one sentence in Brazilian Portuguese saying what is missing.
           - "intelligence.severity": business severity of the finding; "Informational" when Compliant.
           - "intelligence.aiConfidenceScore": integer 0–100, your self-assessed confidence that this
             verdict is correct GIVEN THE EVIDENCE — lower it when the payload is thin, ambiguous or partial.
@@ -234,5 +246,6 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
     /// emite, então chega nulo só nesse caminho — o parse tolera a ausência sem quebrar.
     /// </summary>
     private record VerdictJson(
-        string? status, string? aiEvidence, IReadOnlyList<ComplianceCheck>? checks, ControlIntelligence? intelligence);
+        string? status, string? aiEvidence, IReadOnlyList<ComplianceCheck>? checks, ControlIntelligence? intelligence,
+        IReadOnlyList<MissingRequirement>? missingRequirements);
 }

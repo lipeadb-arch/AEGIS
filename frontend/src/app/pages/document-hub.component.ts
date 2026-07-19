@@ -15,6 +15,7 @@ import { environment } from '../../environments/environment';
 import { AgentStateService } from '../services/agent-state.service';
 import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
 import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
+import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
 import { ScoringService } from '../services/scoring.service';
 import { PILLARS, TenantControlStateDto, buildPillarView } from '../models/scoring.models';
 
@@ -32,7 +33,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
 @Component({
   selector: 'app-document-hub',
   standalone: true,
-  imports: [DatePipe, ScoreGaugeComponent, ControlComplianceCardComponent],
+  imports: [DatePipe, ScoreGaugeComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
   template: `
     <div class="app">
       <header class="topbar">
@@ -105,6 +106,12 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
           </div>
         </section>
       }
+
+      <!-- ---- Pendências de Governança ----
+           Posicionada de propósito ENTRE o diagnóstico e as ações: logo abaixo vêm a sincronização de
+           políticas e o upload manual, que são exatamente como se fecham estas lacunas. Ler "falta a
+           política X" e ter o botão de subir documento na sequência é o fluxo que a tela deve ter. -->
+      <app-aegis-pillar-checklist pillar="GV" heading="Pendências de Governança" />
 
       <!-- ============ 2) INGESTÃO — Integração Corporativa ============ -->
       <section class="panel integration">

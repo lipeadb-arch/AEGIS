@@ -3,6 +3,7 @@ import { Component, inject, input, signal } from '@angular/core';
 import { AdvisoryDto, ControlStatus, ControlView } from '../../models/scoring.models';
 import { categoryName } from '../../models/nist-glossary';
 import { AdvisoryService } from '../../services/advisory.service';
+import { MissingRequirementsComponent } from './missing-requirements.component';
 import { SeverityComponent } from './severity.component';
 import { SparklineComponent } from './sparkline.component';
 
@@ -28,7 +29,7 @@ type AdvisoryUiState =
 @Component({
   selector: 'app-control-compliance-card',
   standalone: true,
-  imports: [DatePipe, SeverityComponent, SparklineComponent],
+  imports: [DatePipe, MissingRequirementsComponent, SeverityComponent, SparklineComponent],
   template: `
     <ul class="controls">
       @for (c of controls(); track c.code) {
@@ -71,6 +72,11 @@ type AdvisoryUiState =
                 </ul>
               }
               <p class="evidence">{{ c.evidence || 'Sem evidência registrada para este controle.' }}</p>
+
+              <!-- Lacunas de EVIDÊNCIA: por que o controle não pôde ser provado. Vem antes do plano de
+                   ação porque é a causa raiz — e separa a pendência de SENSOR (ligar conector) da
+                   pendência de GOVERNANÇA (subir documento), que têm donos diferentes. -->
+              <app-missing-requirements [groups]="c.missingGroups" />
 
               <!-- Confiança da IA: qualifica a leitura acima. Baixa confiança = revisar antes de virar
                    tarefa de TI, por isso a barra usa a MESMA régua de cor do resto do produto. -->

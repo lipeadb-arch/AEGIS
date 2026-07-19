@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Services;
 using AegisScore.Infrastructure.Ai;
 using FluentAssertions;
 using Microsoft.Extensions.Options;
@@ -92,11 +93,14 @@ public sealed class ClaudeAssessmentServiceTests
 
     // ---- helpers ------------------------------------------------------------------
 
-    private static ClaudeAssessmentService CreateService(StubHttpMessageHandler handler, string apiKey = "test-key")
+    private static ClaudeAssessmentService CreateService(
+        StubHttpMessageHandler handler, string apiKey = "test-key", IAuditorPersonaProvider? persona = null)
     {
         var http = new HttpClient(handler);
         var options = Options.Create(new AiOptions { ApiKey = apiKey });
-        return new ClaudeAssessmentService(http, options);
+        // Persona NEUTRA por padrão: estes casos exercitam transporte e parsing, onde o tom é ruído.
+        // A injeção da persona tem cobertura própria em AuditorPersonaTests.
+        return new ClaudeAssessmentService(http, options, persona ?? StaticAuditorPersonaProvider.Neutral);
     }
 
     private static ClaudeAssessmentService CreateService(string anthropicBody, string apiKey = "test-key")

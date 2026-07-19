@@ -1848,5 +1848,31 @@
     "evidence_requirements": [
       "MANUAL_AUDIT_REQUIRED"
     ]
+  },
+  {
+    "subcategory_id": "GV.PO-01",
+    "evaluation_metrics": [
+      "Aderência ao CONTEXTO organizacional: a PSI referencia explicitamente o negócio real da organização — setor de atuação, ativos e processos críticos nomeados, requisitos regulatórios aplicáveis e apetite a risco declarado. Política genérica de modelo, sem nenhum desses elementos, não satisfaz a cláusula 'based on organizational context'.",
+      "Existência de ENFORCEMENT explícito: a PSI define consequências nomeadas para o descumprimento (sanções disciplinares, rescisão, responsabilização contratual de terceiros) e o processo que as aplica, com o papel responsável por aplicá-las. A cláusula 'is enforced' do NIST exige consequência, não recomendação.",
+      "APROVAÇÃO EXECUTIVA formal e VIGÊNCIA documentada: consta a aprovação nominal da alta direção (cargo e data), a data da última revisão dentro do ciclo declarado (tipicamente 12 meses) e a versão vigente. Documento sem aprovador identificável ou com revisão vencida é evidência expirada.",
+      "COMUNICAÇÃO comprovada às partes interessadas: a PSI descreve como é divulgada e a quem (colaboradores, terceiros, fornecedores), com registro de ciência ou aceite formal. A cláusula 'is communicated' não é satisfeita por publicação passiva em repositório."
+    ],
+    "calculation_logic": "weighted_sum — soma ponderada dos quatro eixos, cada um pontuado de 0.0 a 1.0 conforme a evidência textual: contexto organizacional (peso 0.30), enforcement com consequência nomeada (peso 0.30), aprovação executiva e vigência (peso 0.25), comunicação comprovada (peso 0.15). score = 0.30*contexto + 0.30*enforcement + 0.25*aprovacao_vigencia + 0.15*comunicacao. REGRA DE CORTE (fail-closed): se enforcement = 0 OU aprovacao_vigencia = 0, o score final é limitado a no máximo 0.4 — uma política sem consequência aplicável ou sem aprovação formal é declaração de intenção, não controle de governança, e não pode atingir cobertura plena por mais bem escrita que seja.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED. O documento deve ser uma Política de Segurança da Informação (PSI) formal e vigente. O motor RAG deve buscar evidências claras de que a política não é uma 'carta de intenções' genérica, mas sim um documento baseado no contexto real da organização, com regras explícitas de 'enforcement' (sanções e consequências para descumprimento) e evidência de aprovação executiva."
+    ]
+  },
+  {
+    "subcategory_id": "GV.RR-01",
+    "evaluation_metrics": [
+      "NOMEAÇÃO EXPLÍCITA da alta liderança como accountable pelo risco cibernético: a evidência identifica cargo ou pessoa da Diretoria/C-Level (CEO, CISO com assento executivo, Conselho) como responsável FINAL, não delegável. Fórmulas difusas do tipo 'todos são responsáveis pela segurança' ou atribuição exclusiva ao time técnico penalizam a nota — diluir accountability é o oposto de estabelecê-la.",
+      "Formalização da CADEIA DE RESPONSABILIDADE: existe Matriz RACI, termo de responsabilidade assinado ou ata de comitê executivo que distingue quem é Accountable de quem é Responsible, com data e assinatura ou registro de deliberação. Organograma sem atribuição de risco não satisfaz.",
+      "Evidência de FOMENTO À CULTURA risk-aware e ética pela alta gestão: comunicados assinados pela liderança, diretrizes de treinamento e conscientização com periodicidade definida, código de conduta que enderece segurança da informação. Exige-se ação da liderança, não existência de treinamento operado pela TI.",
+      "MELHORIA CONTÍNUA sob supervisão executiva: registro de revisão periódica das responsabilidades pelo comitê, com deliberações datadas — a subcategoria exige cultura 'continually improving', o que demanda cadência comprovada e não um ato isolado."
+    ],
+    "calculation_logic": "weighted_sum — soma ponderada dos quatro eixos, cada um de 0.0 a 1.0: accountability executiva nominal (peso 0.40), formalização da cadeia de responsabilidade (peso 0.25), fomento à cultura pela liderança (peso 0.25), cadência de revisão sob supervisão executiva (peso 0.10). score = 0.40*accountability + 0.25*cadeia + 0.25*cultura + 0.10*cadencia. REGRA DE CORTE (fail-closed): se accountability = 0 — isto é, nenhuma figura executiva nomeada e apenas responsabilidade difusa —, o score final é limitado a no máximo 0.3, independentemente da qualidade dos demais eixos. Responsabilidade de todos é responsabilidade de ninguém, e o controle não pode ser dado como coberto.",
+    "evidence_requirements": [
+      "MANUAL_AUDIT_REQUIRED. A documentação (Matriz RACI, Atas de Comitê Executivo ou Termos de Responsabilidade) deve comprovar inequivocamente que a Diretoria/C-Level assume a responsabilidade (accountability) final pelos riscos cibernéticos. Trechos vagos como 'todos são responsáveis pela segurança' devem penalizar a confiança da nota. Exige-se evidência de promoção de cultura ética e risk-aware pela alta gestão."
+    ]
   }
 ]

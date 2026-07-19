@@ -16,6 +16,13 @@ public interface IAiAssessmentService
     /// <summary>Read a policy/procedure, extract verifiable claims, map to subcategories.</summary>
     Task<DocumentAnalysis> AnalyzeDocumentAsync(DocumentAnalysisRequest request, CancellationToken ct);
 
+    /// <summary>
+    /// Julga UM controle contra o trecho que o endereça, com a regra do 800-53 injetada (RAG dirigido).
+    /// Segunda passada do pipeline documental — ver <see cref="DocumentControlEvaluationRequest"/>.
+    /// </summary>
+    Task<DocumentControlVerdict> EvaluateDocumentControlAsync(
+        DocumentControlEvaluationRequest request, CancellationToken ct);
+
     /// <summary>Suggest a maturity level (1–5) for a subcategory from answers, evidence and signals.</summary>
     Task<MaturitySuggestion> SuggestMaturityAsync(MaturitySuggestionRequest request, CancellationToken ct);
 
@@ -139,6 +146,38 @@ public interface ILLMClient
 public record DocumentAnalysisRequest(Guid TenantId, string DocumentText, string? FileName);
 public record DocumentClaim(string SubcategoryCode, string Claim, double Confidence);
 public record DocumentAnalysis(string Summary, IReadOnlyList<DocumentClaim> Claims);
+
+/// <summary>
+/// SEGUNDA passada do RAG documental: julgar UM controle contra o trecho que o endereça, com a régua do
+/// 800-53 na mão. A primeira passada (<see cref="DocumentAnalysisRequest"/>) é TRIAGEM — descobre quais
+/// controles o documento toca, porque o documento não declara o alvo. Só depois de saber o alvo é
+/// possível carregar a regra e montar este payload enxuto.
+///
+/// O que viaja é estritamente: o trecho relevante + o controle + os critérios de evidência. Nunca o
+/// documento inteiro: além do custo, texto irrelevante dilui a atenção do modelo e o faz ancorar em
+/// parágrafos que não provam o controle sob julgamento.
+/// </summary>
+/// <param name="SubcategoryCode">Controle NIST sob julgamento ("PR.AA-01").</param>
+/// <param name="ControlOutcome">O outcome do catálogo — o que precisa estar demonstrado.</param>
+/// <param name="EvidenceRequirements">Os <c>evidence_requirements</c> da regra do 800-53.</param>
+/// <param name="CalculationLogic">A rubrica de cálculo da regra; vazia quando a regra não a define.</param>
+/// <param name="DocumentExcerpt">Trecho selecionado pelo <c>DocumentChunker</c>, não o documento cru.</param>
+public record DocumentControlEvaluationRequest(
+    string SubcategoryCode,
+    string ControlOutcome,
+    IReadOnlyList<string> EvidenceRequirements,
+    string CalculationLogic,
+    string DocumentExcerpt,
+    string? FileName);
+
+/// <summary>
+/// Veredito documental de UM controle. A <paramref name="Confidence"/> é o que decide entre
+/// <c>CoverageStatus.Coberto</c> e <c>Parcial</c> — por isso o prompt exige que ela caia quando o texto
+/// declara intenção sem evidenciar execução.
+/// </summary>
+/// <param name="Confidence">0..1 — quão bem o trecho PROVA o controle (não quão bonito é o texto).</param>
+/// <param name="Rationale">Justificativa técnica citando o que o documento diz (ou deixa de dizer).</param>
+public record DocumentControlVerdict(double Confidence, string Rationale);
 
 public record MaturitySuggestionRequest(
     string SubcategoryCode,
