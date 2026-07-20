@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Services;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
@@ -24,14 +24,14 @@ public class TenantsController : ControllerBase
 {
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
-    private readonly IConnectorSecretProtector _secrets;
+    private readonly ITenantManagementService _onboarding;
 
     public TenantsController(
-        AegisScoreDbContext db, ITenantContext tenant, IConnectorSecretProtector secrets)
+        AegisScoreDbContext db, ITenantContext tenant, ITenantManagementService onboarding)
     {
         _db = db;
         _tenant = tenant;
-        _secrets = secrets;
+        _onboarding = onboarding;
     }
 
     /// <summary>
@@ -44,18 +44,24 @@ public class TenantsController : ControllerBase
     /// <summary>
     /// [Alto 3] Cria um novo tenant. Operação de PLATAFORMA — exige PlatformAdmin, papel que nenhum
     /// usuário de tenant comum possui (provisionado fora do onboarding self-service).
+    ///
+    /// A regra (normalização do slug, unicidade sob corrida, estado inicial) vive no
+    /// <see cref="ITenantManagementService"/>; aqui só traduzimos o desfecho em HTTP.
     /// </summary>
     [HttpPost]
     [Authorize(Roles = "PlatformAdmin")]
     public async Task<ActionResult<IdResponse>> Create(CreateTenantRequest req, CancellationToken ct)
     {
-        if (await _db.Tenants.AnyAsync(x => x.Slug == req.Slug, ct))
-            return Conflict($"Já existe um cliente com o slug '{req.Slug}'.");
+        var result = await _onboarding.CreateTenantAsync(new CreateTenantCommand(req.Name, req.Slug), ct);
 
-        var t = new Tenant { Name = req.Name, Slug = req.Slug, Status = TenantStatus.Active };
-        _db.Tenants.Add(t);
-        await _db.SaveChangesAsync(ct);
-        return new IdResponse(t.Id);
+        return result.Status switch
+        {
+            TenantProvisioningStatus.Created => new IdResponse(result.TenantId),
+            TenantProvisioningStatus.SlugAlreadyInUse =>
+                Conflict($"Já existe um cliente com o slug '{result.Slug}'."),
+            _ => BadRequest(
+                "Nome obrigatório e slug entre 2 e 64 caracteres, apenas letras minúsculas, dígitos e hífens."),
+        };
     }
 
     [HttpPost("business-units")]
@@ -94,26 +100,37 @@ public class TenantsController : ControllerBase
         return new IdResponse(p.Id);
     }
 
+    /// <summary>
+    /// Configura um conector do tenant ambiente. É UPSERT pela chave natural (Provider + Capability):
+    /// repetir a chamada RECONFIGURA o conector, em vez de empilhar duplicatas ambíguas.
+    ///
+    /// [Médio 6/Baixo] O segredo (tokens OAuth, API keys) é cifrado NO SERVIDOR via Data Protection —
+    /// nunca confiado pré-cifrado do cliente. Em claro só trafega dentro do TLS; no banco fica cifrado, e
+    /// a decifragem ocorre no momento da coleta. A cifragem agora vive no serviço de aplicação: o
+    /// controller não toca mais no segredo, e a resposta jamais o ecoa.
+    /// </summary>
     [HttpPost("connectors")]
     [Authorize(Roles = "TenantAdmin")]
-    public async Task<ActionResult<IdResponse>> AddConnector(
+    public async Task<ActionResult<ConnectorConfigDto>> ConfigureConnector(
         CreateConnectorRequest req, CancellationToken ct)
     {
-        var c = new ConnectorConfig
-        {
-            TenantId = CurrentTenantId,
-            Provider = req.Provider,
-            Capability = req.Capability,
-            DisplayName = req.DisplayName,
-            AuthType = req.AuthType,
-            // [Médio 6/Baixo] Segredo do conector (tokens OAuth, API keys) é cifrado NO SERVIDOR via
-            // Data Protection — nunca confiado pré-cifrado do cliente. Em claro só trafega dentro do
-            // TLS; no banco fica cifrado. A decifragem ocorre no momento da coleta (fase de conectores).
-            EncryptedSettings = _secrets.Protect(req.Settings),
-            SyncIntervalMinutes = req.SyncIntervalMinutes,
-        };
-        _db.Connectors.Add(c);
-        await _db.SaveChangesAsync(ct);
-        return new IdResponse(c.Id);
+        // O TenantId NÃO é passado: o serviço o deriva do contexto (claim do JWT) e o DbContext o
+        // revalida no carimbo de gravação.
+        var result = await _onboarding.ConfigureConnectorAsync(
+            new ConfigureConnectorCommand(
+                req.Provider, req.Capability, req.DisplayName, req.AuthType,
+                req.Settings, req.SyncIntervalMinutes),
+            ct);
+
+        var dto = new ConnectorConfigDto(
+            result.ConnectorId, result.Provider.ToString(), result.Capability.ToString(),
+            result.DisplayName, result.AuthType.ToString(), result.Enabled,
+            result.SyncIntervalMinutes, result.LastSyncAt, result.LastStatus.ToString(),
+            result.HasCredentials);
+
+        // 201 na criação, 200 na reconfiguração — o cliente distingue os dois desfechos do upsert.
+        // Sem Location: o conector ainda não tem GET canônico (ConnectorsController só opera test/sync),
+        // e um CreatedAtAction apontando de volta para este POST seria uma URL mentirosa.
+        return result.Created ? StatusCode(StatusCodes.Status201Created, dto) : Ok(dto);
     }
 }

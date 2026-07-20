@@ -2,6 +2,7 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { DrawerComponent } from './components/drawer.component';
+import { TenantSwitcherComponent } from './components/tenant-switcher.component';
 import { AuditorChatComponent } from './components/auditor-chat.component';
 import { AgentStateService } from './services/agent-state.service';
 import { AuthService } from './services/auth.service';
@@ -9,7 +10,14 @@ import { AuthService } from './services/auth.service';
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, DrawerComponent, AuditorChatComponent],
+  imports: [
+    RouterOutlet,
+    RouterLink,
+    RouterLinkActive,
+    DrawerComponent,
+    AuditorChatComponent,
+    TenantSwitcherComponent,
+  ],
   template: `
     @if (showShell()) {
     <aside class="sidebar">
@@ -104,6 +112,13 @@ import { AuthService } from './services/auth.service';
         <!-- Referência externa: separada das Funções NIST porque NÃO é uma tela do produto — é a fonte
              normativa. Sem routerLink/routerLinkActive de propósito (é um href externo, não uma rota);
              rel="noopener noreferrer" é obrigatório com target="_blank" (anti tab-nabbing). -->
+        <p class="nav-group">Configuração</p>
+        <a class="nav-item" routerLink="/settings/integrations" routerLinkActive="active">
+          <span class="dot" aria-hidden="true"></span>
+          <span class="lb">Integrações</span>
+          <span class="code">API</span>
+        </a>
+
         <p class="nav-group">Referência</p>
         <a
           class="nav-item external"
@@ -119,6 +134,11 @@ import { AuthService } from './services/auth.service';
     </aside>
 
     <div class="app-shell">
+      <!-- HUD superior: seletor de ambiente (SSO simulado). Some sozinho quando a pessoa só tem
+           acesso a um cliente — um dropdown de uma opção só é ruído. -->
+      <header class="hud-topbar">
+        <app-tenant-switcher />
+      </header>
       <router-outlet />
     </div>
 
@@ -445,6 +465,20 @@ import { AuthService } from './services/auth.service';
       .app-shell {
         padding-left: 236px;
         min-height: 100%;
+      }
+
+      /* HUD superior. Sem altura fixa: quando a pessoa só tem um ambiente o switcher não renderiza,
+         e a faixa colapsa sozinha em vez de deixar um vão vazio no topo de toda tela. */
+      .hud-topbar {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0 1.25rem;
+        padding-top: 0.75rem;
+      }
+      .hud-topbar:empty {
+        display: none;
       }
 
       /* ---- Responsivo: o sidebar vira faixa superior ---- */

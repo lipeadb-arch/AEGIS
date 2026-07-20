@@ -3,6 +3,7 @@ using System;
 using AegisScore.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AegisScore.Infrastructure.Migrations
 {
     [DbContext(typeof(AegisScoreDbContext))]
-    partial class AegisScoreDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260719122213_UniqueConnectorConfigNaturalKey")]
+    partial class UniqueConnectorConfigNaturalKey
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1148,35 +1151,6 @@ namespace AegisScore.Infrastructure.Migrations
                     b.ToTable("IdentifiedRisks");
                 });
 
-            modelBuilder.Entity("AegisScore.Domain.IdentityAccount", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Email")
-                        .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
-
-                    b.Property<string>("PasswordHash")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Email")
-                        .IsUnique();
-
-                    b.ToTable("IdentityAccounts");
-                });
-
             modelBuilder.Entity("AegisScore.Domain.MaturityLevel", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1919,14 +1893,20 @@ namespace AegisScore.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
-                    b.Property<Guid>("IdentityAccountId")
-                        .HasColumnType("uuid");
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
                     b.Property<DateTimeOffset?>("LastLoginAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<int>("Role")
                         .HasColumnType("integer");
@@ -1939,9 +1919,7 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("IdentityAccountId");
-
-                    b.HasIndex("TenantId", "IdentityAccountId")
+                    b.HasIndex("TenantId", "Email")
                         .IsUnique();
 
                     b.ToTable("Users");
@@ -2303,17 +2281,6 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Navigation("Subcategory");
                 });
 
-            modelBuilder.Entity("AegisScore.Domain.User", b =>
-                {
-                    b.HasOne("AegisScore.Domain.IdentityAccount", "Account")
-                        .WithMany("Memberships")
-                        .HasForeignKey("IdentityAccountId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Account");
-                });
-
             modelBuilder.Entity("AegisScore.Domain.UserRefreshToken", b =>
                 {
                     b.HasOne("AegisScore.Domain.User", "User")
@@ -2366,11 +2333,6 @@ namespace AegisScore.Infrastructure.Migrations
             modelBuilder.Entity("AegisScore.Domain.GrcInterviewSession", b =>
                 {
                     b.Navigation("Messages");
-                });
-
-            modelBuilder.Entity("AegisScore.Domain.IdentityAccount", b =>
-                {
-                    b.Navigation("Memberships");
                 });
 
             modelBuilder.Entity("AegisScore.Domain.NistCategory", b =>

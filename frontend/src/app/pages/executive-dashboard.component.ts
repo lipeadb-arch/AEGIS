@@ -1,7 +1,13 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
-import { ExecutiveDashboard } from '../models/dashboard.models';
+import { BlastRadiusSummary, ExecutiveDashboard, GapBalance } from '../models/dashboard.models';
+import { ComplianceHistoryPoint, buildGapBalance, trendToSparkline } from '../models/scoring.models';
 import { DashboardService } from '../services/dashboard.service';
+import { AegisScoreService } from '../services/aegis-score.service';
+import { ScoringService } from '../services/scoring.service';
+import { SparklineComponent } from '../components/scoring/sparkline.component';
+import { GapBalanceComponent } from '../components/scoring/gap-balance.component';
+import { BlastRadiusSummaryComponent } from '../components/scoring/blast-radius-summary.component';
 import { sampleDashboard } from '../data/sample-dashboard';
 import { icrColor } from '../lib/scales';
 import { environment } from '../../environments/environment';
@@ -18,6 +24,9 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
   standalone: true,
   imports: [
     DatePipe,
+    SparklineComponent,
+    GapBalanceComponent,
+    BlastRadiusSummaryComponent,
     IcrGaugeComponent,
     MaturityGaugeComponent,
     MaturityBarsComponent,
@@ -120,6 +129,25 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
             <span class="hint">CMMI 1–5 · alvo {{ targetMaturity().toFixed(1) }}</span>
           </div>
           <app-maturity-gauge [value]="overallMaturity()" [max]="chartScale()" />
+
+          <!-- A DERIVADA do risco: o gauge diz onde estamos, a curva diz para onde vamos. Carrega
+               depois do painel principal e se omite sozinha com menos de 2 snapshots. -->
+          @if (trend().length > 1) {
+            <div class="trend-strip">
+              <app-sparkline [points]="trend()" />
+              <span class="ts-meta">
+                <b
+                  class="ts-delta"
+                  [class.up]="(trendDelta() ?? 0) > 0"
+                  [class.down]="(trendDelta() ?? 0) < 0"
+                >
+                  {{ (trendDelta() ?? 0) > 0 ? '▲' : (trendDelta() ?? 0) < 0 ? '▼' : '■' }}
+                  {{ trendDelta() }} p.p.
+                </b>
+                <em>Aegis Score · {{ trend().length }} dias</em>
+              </span>
+            </div>
+          }
         </div>
 
         <div class="panel">
@@ -129,6 +157,34 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
             <span class="hint">escala 0–{{ chartScale().toFixed(1) }} · alvo {{ targetMaturity().toFixed(1) }}</span>
           </div>
           <app-maturity-bars [data]="maturityBars()" [max]="chartScale()" />
+        </div>
+      </div>
+
+      <!-- As duas perguntas de diretoria: "o que falta se compra ou se escreve?" e "quanto custa se
+           cair?". Painéis SECUNDÁRIOS — carregam por conta própria, fora do caminho do FCP. -->
+      <div class="grid main">
+        <div class="panel">
+          <div class="hd">
+            <h3>Onde está o esforço</h3>
+            <span class="hint">ferramenta (capex) × processo (opex)</span>
+          </div>
+          @if (gapBalance()) {
+            <app-gap-balance [balance]="gapBalance()" />
+          } @else {
+            <p class="panel-empty">Consolidando lacunas de evidência…</p>
+          }
+        </div>
+
+        <div class="panel">
+          <div class="hd">
+            <h3>Custo do fracasso</h3>
+            <span class="hint">raio de explosão · pior cenário</span>
+          </div>
+          @if (blastLoaded()) {
+            <app-blast-radius-summary [summary]="blastRadius()" />
+          } @else {
+            <p class="panel-empty">Calculando o alcance do pior cenário…</p>
+          }
         </div>
       </div>
 
@@ -233,6 +289,42 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         font-weight: 600;
       }
 
+      /* Faixa de tendência sob o gauge: a curva + a variação ponta a ponta. */
+      .trend-strip {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line-2);
+      }
+      .ts-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .ts-delta {
+        font-family: var(--display);
+        font-weight: 700;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      /* Subir é bom (cyan), cair é ruim (vermelho) — a MESMA régua do resto do produto. */
+      .ts-delta.up {
+        color: var(--cyan);
+      }
+      .ts-delta.down {
+        color: var(--red);
+      }
+      .ts-meta em {
+        font-style: normal;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--muted);
+        opacity: 0.75;
+      }
+
       /* Painel individual sem dados: nota discreta, nunca um gráfico vazio sem explicação. */
       .panel-empty {
         margin: 6px 0 0;
@@ -268,6 +360,8 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
 })
 export class ExecutiveDashboardComponent implements OnInit {
   private readonly svc = inject(DashboardService);
+  private readonly scoreSvc = inject(AegisScoreService);
+  private readonly scoringSvc = inject(ScoringService);
 
   data = signal<ExecutiveDashboard>(sampleDashboard);
   live = signal(false);
@@ -349,7 +443,28 @@ export class ExecutiveDashboardComponent implements OnInit {
   // Exposto ao template para orientar o diagnóstico quando a carga falha.
   protected readonly apiBase = environment.apiBase;
 
+  // ---- Painéis SECUNDÁRIOS: três cargas independentes, deliberadamente NÃO combinadas ----
+  // Nada de forkJoin/combineLatest aqui: encadear as quatro chamadas faria a tela inteira esperar a
+  // mais lenta, e o FCP do dashboard principal é o que a diretoria vê primeiro. Cada painel tem o
+  // próprio signal e acende quando o seu dado chega; falha de um não derruba os outros.
+
+  /** Série do Aegis Score já no formato do SparklineComponent (vazia = sparkline se omite). */
+  readonly trend = signal<ComplianceHistoryPoint[]>([]);
+  /** Variação ponta a ponta da série, em pontos percentuais. `null` enquanto não há 2 pontos. */
+  readonly trendDelta = computed(() => {
+    const t = this.trend();
+    return t.length > 1 ? Math.round(t[t.length - 1].compliancePercent - t[0].compliancePercent) : null;
+  });
+
+  /** Balanço CAPEX × OPEX das lacunas; `null` enquanto carrega. */
+  readonly gapBalance = signal<GapBalance | null>(null);
+
+  /** Pior raio conhecido; `null` = nunca calculado (204) OU ainda carregando — ver `blastLoaded`. */
+  readonly blastRadius = signal<BlastRadiusSummary | null>(null);
+  readonly blastLoaded = signal(false);
+
   ngOnInit(): void {
+    // 1) Caminho crítico: o dashboard principal. É o único que governa `loading`.
     this.svc.fetchExecutive().subscribe({
       next: (d) => {
         this.data.set(d);
@@ -362,6 +477,31 @@ export class ExecutiveDashboardComponent implements OnInit {
         console.error('Falha ao carregar o dashboard executivo:', err);
         this.loadError.set(true);
         this.loading.set(false);
+      },
+    });
+
+    // 2) Tendência (a DERIVADA do risco). Reusa o AegisScoreService que já consome /scoring/trend —
+    //    duplicar o método no DashboardService criaria dois clientes para o mesmo endpoint.
+    this.scoreSvc.fetchTrend(30).subscribe({
+      next: (t) => this.trend.set(trendToSparkline(t)),
+      error: (err) => console.warn('Tendência indisponível (painel se omite):', err),
+    });
+
+    // 3) Balanço de lacunas — deriva da MESMA matriz que os painéis de pilar já consomem.
+    this.scoringSvc.getDashboard().subscribe({
+      next: (rows) => this.gapBalance.set(buildGapBalance(rows)),
+      error: (err) => console.warn('Balanço de lacunas indisponível:', err),
+    });
+
+    // 4) Raio de explosão. 204 → null (nunca calculado); `blastLoaded` separa isso de "carregando".
+    this.svc.fetchBlastRadiusSummary().subscribe({
+      next: (s) => {
+        this.blastRadius.set(s);
+        this.blastLoaded.set(true);
+      },
+      error: (err) => {
+        console.warn('Raio de explosão indisponível:', err);
+        this.blastLoaded.set(true);
       },
     });
   }

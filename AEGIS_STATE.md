@@ -4,7 +4,15 @@
 >
 > **Base de versionamento:** ⚠️ **MUDOU — a nota anterior desta seção estava obsoleta.** Todo o trabalho das sessões anteriores (Identify → Recover + frontend vivo + Copiloto GRC + ID.RA/Raio de Explosão + Ingestão de Identidade do Entra ID + Checklist Dinâmico + Advisories) **JÁ ESTÁ COMMITADO** na branch **`main`** — HEAD `3fd88d7` (2026-07-16); o commit `dcedf57` citado antes é ancestral de `main`, e a branch `feat/telemetry-ingestion-scoring-consolidation` ficou para trás (existe local, não é mais a base). O trabalho no working tree é o da **seção 10** (enriquecimento do contrato de controle para a IA — 20 arquivos) **+ o da seção 11** (Teste de Fogo do RAG: `RagFireTestScenarios.cs` e `DevRagFireTestController.cs` novos; `AegisAiOptions.cs` e `appsettings.json` com o modelo trocado). O andaime de mock do frontend (10.4) **foi removido** — a reversão também está no working tree. Somam-se ainda os **3 arquivos de frontend da seção 12** (`app.component.ts`, `asset-inventory.component.ts`, `document-hub.component.ts` — polimento de UI/UX) **e todo o arco das seções 13–18** (persona do Auditor, MissingRequirements, TTL de sinal, RAG documental de 2 passadas, resiliência Polly e auditoria do Executivo). O Felipe versiona manualmente.
 >
-> **Arquivos NOVOS do arco 13–18** (para conferir num `git status`): backend — `Api/Data/AuditorPersonality.json`, `Application/Services/IAuditorPersonaProvider.cs`, `Application/Assessment/RuleEvaluator.cs`, `Application/Documents/DocumentChunker.cs`, `Infrastructure/Ai/AuditorPersonaProvider.cs`, `Infrastructure/Ai/AiResilienceExtensions.cs`, `Infrastructure/Scoring/ScoringOptions.cs`, migration `*_ControlState_MissingRequirements`; frontend — `components/scoring/missing-requirements.component.ts`, `components/scoring/aegis-pillar-checklist.component.ts`; testes — `AuditorPersonaTests`, `RuleEvaluatorTests`, `MissingRequirementsTests`, `MissingRequirementScenarioTests`, `SignalFreshnessTests`, `DocumentRagTests`, `AiResilienceTests`.
+> **Arquivos NOVOS do arco 23 — Central de Integrações** (2026-07-19, no working tree): frontend — `models/connector.models.ts`, `services/connector.service.ts`, `pages/integrations.component.ts`. **Modificados:** backend — `Application/Services/ITenantManagementService.cs` (`ConnectorSummary` + `ListConnectorsAsync`), `Infrastructure/Tenancy/TenantManagementService.cs`, `Api/Controllers/{ConnectorsController,TenantsController}.cs`, `Api/Contracts/Dtos.cs`; frontend — `app.routes.ts`, `app.component.ts` (nav "Configuração"), **`package.json` ⚠️ `@angular/forms` NOVO**. Sem migration.
+>
+> **Arquivos NOVOS do arco 22 — SSO simulado** (2026-07-19, no working tree): backend — migration `20260719174626_NormalizeIdentityAccount`; frontend — `components/tenant-switcher.component.ts`. **Modificados:** `Domain/Auth.cs` (`IdentityAccount` nova + `User` virou membership), `Infrastructure/Persistence/AegisScoreDbContext.cs`, `Infrastructure/Auth/{AuthService,JwtTokenService,UserManagementService}.cs`, `Application/Auth.cs`, `Api/Controllers/{AuthController,UsersController,DevController}.cs`, `Api/Contracts/Dtos.cs`, `tests/Auth/UserManagementServiceTests.cs`; frontend — `app.component.ts`, `services/auth.service.ts`, `interceptors/auth.interceptor.ts`, `environments/environment.ts` (⚠️ `tenantId` REMOVIDO), `services/{aegis-score,asset,dashboard,governance}.service.ts` (limpeza do X-Tenant hardcoded). ✅ Migration **APLICADA** em `aegis_dev`.
+>
+> **Arquivos NOVOS do arco 21 — identidades** (2026-07-19, no working tree): backend — `Application/Services/IUserManagementService.cs`, `Infrastructure/Auth/UserManagementService.cs`, `Api/Controllers/UsersController.cs`; testes — `Tests/Auth/UserManagementServiceTests.cs`. **Modificados:** `Api/Contracts/Dtos.cs`, `Infrastructure/DependencyInjection.cs`. **Sem migration** — o domínio já bastava.
+>
+> **Arquivos NOVOS do arco 20 — onboarding** (2026-07-19, no working tree): backend — `Application/Services/ITenantManagementService.cs`, `Infrastructure/Tenancy/TenantManagementService.cs`, migration `20260719122213_UniqueConnectorConfigNaturalKey`; testes — `Tests/Tenancy/TenantManagementServiceTests.cs`. **Modificados:** `Api/Contracts/Dtos.cs`, `Api/Controllers/TenantsController.cs`, `Api/Controllers/ConnectorsController.cs`, `Infrastructure/DependencyInjection.cs`, `Infrastructure/Persistence/AegisScoreDbContext.cs`. ✅ **Migration APLICADA** em `aegis_dev` (ver §20.7 — o startup a aplicou sozinho).
+>
+> **Arquivos NOVOS do arco 13–19** (para conferir num `git status`): backend — `Api/Data/AuditorPersonality.json`, `Application/Services/IAuditorPersonaProvider.cs`, `Application/Assessment/RuleEvaluator.cs`, `Application/Documents/DocumentChunker.cs`, `Infrastructure/Ai/AuditorPersonaProvider.cs`, `Infrastructure/Ai/AiResilienceExtensions.cs`, `Infrastructure/Scoring/ScoringOptions.cs`, migration `*_ControlState_MissingRequirements`; frontend — `components/scoring/missing-requirements.component.ts`, `components/scoring/aegis-pillar-checklist.component.ts`, `components/scoring/gap-balance.component.ts`, `components/scoring/blast-radius-summary.component.ts`; testes — `AuditorPersonaTests`, `RuleEvaluatorTests`, `MissingRequirementsTests`, `MissingRequirementScenarioTests`, `SignalFreshnessTests`, `DocumentRagTests`, `AiResilienceTests`.
 
 ---
 
@@ -53,6 +61,8 @@ public record CategoryTelemetrySignal(
 | Função | Ingestão (escrita no ledger) | Controle-alvo (real, catálogo) |
 |---|---|---|
 | **GV** Govern | Documental: `POST /governance/documents` (upload · `/sync` · worker) · **Telemetria: `POST /telemetry/govern/{supply-chain,roles}`** | GV.PO-01/GV.RR-01 (doc, teto 50%) · **GV.SC-01, GV.RR-01 (telemetria, autoritativa)** |
+
+**Onboarding (§20):** `POST /api/v1/tenants` (PlatformAdmin) · `POST /api/v1/tenants/{business-units,processes,connectors}` (TenantAdmin; o de conectores é UPSERT) · **`POST /api/v1/connectors/{connectorId}/{test,sync}`** — ⚠️ rota MUDOU: era `tenants/{tenantId}/connectors/{connectorId}/…` e era ANÔNIMA (ver §20.2).
 | **ID** Identify | `POST /api/v1/telemetry/asset` (ID.AM) · **`POST /api/v1/risk-assessment/{assetId}/blast-radius`** (ID.RA — Raio de Explosão, ver 2.9) | ID.AM-01 · **ID.RA-01/05 (via hook do raio)** |
 | **PR** Protect | `POST /api/v1/telemetry/protect/{identity,data,platform,network}` · **`POST /api/v1/telemetry/identity/entra-id`** (Entra ID ATIVO → PR.AA-01 + GV.RR-01, ver 2.10) | PR.AA-01, PR.DS-01, PR.PS-01, PR.IR-01 |
 | **DE** Detect | `POST /api/v1/telemetry/detect/{anomalies,monitoring,process}` | DE.AE-02, DE.CM-01, DE.AE-06 |
@@ -74,9 +84,9 @@ public record CategoryTelemetrySignal(
 
 `ILLMClient` determinístico usado quando **não há `AegisAi:ApiKey`**. Faz **parsing numérico real via regex** (helpers `Num(label)` e `Flag(label)` sobre o payload lowercased), não só keyword-matching. Roteia por família de rótulos: `EvaluateProtect` → `EvaluateDetect` → `EvaluateRespondRecover` → **`EvaluateGovern`** → genérico. ⚠️ `EvaluateGovern` VEM ANTES do fallback genérico de propósito: o rótulo `"Third Party Audited:"` contém `"third party"`, que o genérico casaria como `MitigatedByThirdParty` e mascararia o veredito real de GV.SC. Cada categoria é **binária** (falha em qualquer condição = `NonCompliant`; passa em tudo = `Compliant`) — **exceto a telemetria de identidade do Entra ID, de 3 vias** (Compliant/`MitigatedByThirdParty`/NonCompliant, ver 2.10), que ancora no CÓDIGO do controle via `TargetsControl(p, "pr.aa"|"gv.rr")` (o MESMO retrato alimenta PR.AA-01 e GV.RR-01, então a âncora impede a regra de um decidir o outro). Motor real: `GeminiLlmClient` (modelo **`gemini-2.0-flash`**; falha HTTP → `AiUnavailableException`/503).
 
-### 2.5 Testes — **165/165 verdes** (build da solução verde, 0 erros/0 avisos, em 2026-07-18)
+### 2.5 Testes — **219/219 verdes** (build da solução verde, 0 erros, em 2026-07-19)
 
-> ⚠️ **Contagem atualizada:** o corpo desta seção descreve o estado histórico de **110** testes. O arco das seções **13–18** levou a suíte a **165** (110 → 111 → 115 → 120 → 126 → 130 → 137 → 146 → 158 → 160 → 165). Os arquivos novos estão listados no cabeçalho; o detalhe de cada leva está na seção que o introduziu.
+> ⚠️ **Contagem atualizada:** o corpo desta seção descreve o estado histórico de **110** testes. O arco das seções **13–18** levou a suíte a **165** (110 → 111 → 115 → 120 → 126 → 130 → 137 → 146 → 158 → 160 → 165), a **§20** (onboarding) a **187**, a **§21** (identidades) a **210** e a **§22** (SSO simulado) a **219** — a §22 REESCREVEU vários casos da §21, cuja premissa "mesmo e-mail = identidades independentes" foi invertida pela conta global, e acrescentou `TenantSwitchingTests` (8 casos) para cobrir o `AuthService`. A **§23** não trouxe testes novos (ver 23.4). Os arquivos novos estão listados no cabeçalho; o detalhe de cada leva está na seção que o introduziu.
 
 `AegisScore.Infrastructure.Tests` (xUnit + FluentAssertions 6.12, SQLite in-memory). Cobrem:
 - precedência de fonte (`ControlStateWriterTests`);
@@ -242,7 +252,17 @@ As siglas (ex.: `PR.AA-01`) são essenciais ao motor mas hostis na tela. Camada 
 
 ## 5. Ponto de Parada e Backlog
 
-**Onde paramos (2026-07-18, rodada mais recente):** ⭐ **O AUDITOR GANHOU PERSONA, VOCABULÁRIO DE LACUNAS E BLINDAGEM.** Seis frentes fechadas — **165/165 testes**, `ng build` e build .NET verdes:
+**Onde paramos (2026-07-19, rodada mais recente):** ⭐ **CENTRAL DE INTEGRAÇÕES (§23).** Primeira UI dos conectores — até aqui o backend tinha o upsert mas **não havia por onde inserir credencial**. Exigiu abrir o `GET /api/v1/connectors` que faltava (tela de gerenciamento sem listagem fica em branco no F5) e trouxe `@angular/forms` ao projeto, que nunca o tivera. O segredo segue **escrita-apenas**: só o booleano `hasCredentials` sai. **219/219 testes**, `ng build` verde. ⚠️ Sem `DELETE`/toggle de `Enabled` e sem teste de frontend — ver §23.4.
+
+**Onde paramos (2026-07-19, anterior):** ⭐ **SSO SIMULADO — LOGIN SEM SLUG + TENANT SWITCHER (§22).** A credencial subiu para a `IdentityAccount` GLOBAL (e-mail único no sistema) e o `User` virou MEMBERSHIP com FK para ela — o vínculo pessoa↔tenant deixou de ser coincidência de string e virou chave estrangeira. Isso fechou um **bypass de autenticação crítico** que o enunciado literal teria criado (ver §22.1). Login por e-mail+senha, `GET /users/me/tenants` e `POST /auth/switch-tenant` (ancorados na claim NOVA `account_id`); no frontend o `X-Tenant` passou a ser derivado do próprio token e o `environment.tenantId` foi removido. `TenantConsistencyMiddleware`, query filters das demais entidades e o `StampTenant` fail-closed **intocados**. **211/211 testes**, `ng build` verde, migration com backfill aplicada.
+
+**Onde paramos (2026-07-19, anterior):** ⭐ **IDENTIDADES SOBRE A FUNDAÇÃO UM-PARA-MUITOS (§21).** `IUserManagementService` provisiona usuários e concede acesso SEMPRE dentro do tenant ambiente — sem leitura cross-tenant, sem `IgnoreQueryFilters`, sem bypass de `TenantId`, sem migration. Mesmo e-mail em dois tenants = duas identidades independentes (o índice único é `(TenantId, Email)`). `PlatformAdmin` **não é atribuível** por esta superfície, nos dois caminhos (create e update). Política de senha NIST SP 800-63B: 12–128 chars, sem regra de composição. `UsersController` novo e separado do `AuthController` anônimo. **210/210 testes.** ⚠️ A flag `IsGlobalAdmin` do enunciado foi **abortada por decisão do Felipe** — ver §21.1.
+
+**Onde paramos (2026-07-19, anterior):** ⭐ **ONBOARDING CONSOLIDADO E IDOR FECHADO (§20).** O `TenantsController` deixou de ser um script de persistência: normalização/unicidade de slug, cifragem estática de credenciais e vínculo ao tenant correto agora têm dono único no `ITenantManagementService` (porta na Application, adapter na Infrastructure). O `ConnectorsController`, que tinha **`tenantId` de rota sem função de autorização** (IDOR latente — ⚠️ NÃO era anônimo, ver a correção na §20.2), virou `api/v1/connectors/{id}` sob `[Authorize]` explícito. O upsert de conector passou a ser invariante de BANCO (índice único `(TenantId, Provider, Capability)`), com reconvergência para UPDATE na corrida perdida. **187/187 testes**, build verde. ⚠️ **A migration está GERADA mas NÃO aplicada** — ver item 0 abaixo.
+
+**Próxima etapa:** a definir (a etapa de Usuários fechou na §21).
+
+**Onde paramos (2026-07-18):** ⭐ **O AUDITOR GANHOU PERSONA, VOCABULÁRIO DE LACUNAS E BLINDAGEM.** Seis frentes fechadas — **165/165 testes**, `ng build` e build .NET verdes:
 
 - **§13 Persona** — `AuditorPersonality.json` + provider singleton; System Prompt em 3 blocos (rubrica → persona → contrato). Alcança telemetria **e** o caminho documental.
 - **§14 MissingRequirements** — o ledger passou a distinguir **falta de telemetria × falta de documentação**, tipado do domínio (`jsonb`) até o ícone (rede × pasta) na UI. `RuleEvaluator` é o motor único da distinção.
@@ -250,6 +270,7 @@ As siglas (ex.: `PR.AA-01`) são essenciais ao motor mas hostis na tela. Camada 
 - **§16 RAG documental de 2 passadas** — triagem → julgamento dirigido com a regra do 800-53 e trecho selecionado (`DocumentChunker`). Regras **GV.PO-01/GV.RR-01** criadas (97 → 99) e seeder tornado **incremental**.
 - **§17 Resiliência** — Polly v8 (retry exponencial + circuit breaker + timeout) nos HttpClients de IA; shutdown gracioso e recuperação de fila no worker.
 - **§18 Auditoria do Executivo** — campos órfãos ligados, estado vazio elegante, escala do gráfico separada da métrica.
+- **§19 Valor C-Level** — as 3 métricas "esquecidas" que a §18.1 apontou foram IMPLEMENTADAS: tendência (a derivada do risco), balanço CAPEX × OPEX das lacunas e o custo do fracasso (raio de explosão).
 
 **Onde paramos (rodada anterior):** ⭐ **MOTOR RAG VALIDADO CONTRA A API REAL** — o Gemini lê a regra `jsonb`, executa a rubrica matemática (fail-closed), preenche o `ControlIntelligence` completo e recusa alucinar quando a evidência não existe (**seção 11**). O ledger tem inteligência real gravada, e por isso o mock do frontend foi **deletado** (10.4). Modelo default agora `gemini-flash-latest` (11.4). **UI/UX polida** (seção 12): FAB global da égide substituiu o gatilho do sidebar e o botão duplicado do Govern; rolagem do sidebar no idioma Synapse; seção "Referência" com o link do NIST; e a tabela de ativos alinhada ao desfazer a colisão com o utilitário global `.grid`. Abaixo, o histórico anterior:
 
@@ -609,11 +630,11 @@ Testes 160 → 165. Pacote `Microsoft.Extensions.Http.Resilience` 8.10.0.
 - **Sobre `NaN`:** `risk-levels` já se protege (`Math.max(1, …)`), `gap-chart` divide por constante; ⚠️ **`maturity-bars` divide por `max()`** e produziria `Infinity` com 0 — o `chartScale()` garante piso 4, mas o componente segue desprotegido para outros chamadores.
 - **Trend NÃO existe no Executivo:** o `ExecutiveDashboardDto` não tem série temporal (o `ITenantScoreTrendQuery` alimenta `/scoring/trend`, consumido pelo `aegis-dashboard.component`). Não há dado estático a corrigir — há uma ausência.
 
-### 18.1 Métricas de alto valor já calculadas e NÃO aproveitadas (backlog priorizado)
+### 18.1 Métricas de alto valor já calculadas e NÃO aproveitadas — ✅ **AS TRÊS FORAM IMPLEMENTADAS (ver §19)**
 
-1. **Tendência do Aegis Score no Executivo** — `ITenantScoreTrendQuery` entrega 30 dias prontos e o `SparklineComponent` já existe. Um board quer a derivada, não só o valor.
-2. **Lacunas por natureza consolidadas** — `missingRequirements` já vem tipado no `/scoring/dashboard`. *"78% das nossas lacunas são de processo, não de ferramenta"* é a frase orçamentária (processo = gente; ferramenta = capex).
-3. **Raio de Explosão (ID.RA)** — motor completo, mas o resultado só aparece no chat do Auditor.
+1. ~~**Tendência do Aegis Score no Executivo**~~ ✅ — `ITenantScoreTrendQuery` + `SparklineComponent`, ambos já existiam.
+2. ~~**Lacunas por natureza consolidadas**~~ ✅ — `buildGapBalance` sobre o `missingRequirements` que o `/scoring/dashboard` já entregava.
+3. ~~**Raio de Explosão (ID.RA)**~~ ✅ — endpoint novo `/dashboard/blast-radius-summary` + card na vitrine.
 
 ### 18.2 Código morto identificado (⚠️ NÃO removido — decisão do Felipe)
 
@@ -627,3 +648,290 @@ Varredura de todos os tipos e membros públicos de `src/` contra o corpus: **zer
 - **Estado vazio do Executivo** — não há tenant sem dados no `aegis_dev`; validado só por inspeção + build.
 - **`RequeueOrphansAsync` com caso positivo** — o Stub processa sem rede e drena a fila antes de qualquer restart; a janela para criar um órfão é curta demais. Sem teste automatizado porque o worker vive em `AegisScore.Api` e a suíte referencia apenas `Infrastructure` (candidato: mover os workers para a Infra, onde já vivem os demais adaptadores).
 - **Julgamento documental com o motor REAL** — `Ai:ApiKey` (Anthropic) segue não configurada; os percentuais observados vêm do `StubAssessmentService`. O encanamento está provado; a qualidade do julgamento depende do LLM lendo as rubricas.
+
+---
+
+## 19. Valor C-Level — as 3 métricas de alto impacto na vitrine executiva
+
+Fecha o backlog da **§18.1**. Tudo validado ao vivo (build de produção servido, DOM real). `ng build` verde, **165/165** no backend.
+
+### 19.1 Tendência — a DERIVADA do risco
+
+Sparkline sob o gauge de Maturidade Geral + a variação ponta a ponta (**▲ 10 p.p.** em cyan na demo, série de 3 dias: 10,8% → 15,8% → 21,2%). Subir é cyan, cair é vermelho — a régua de cor do produto.
+
+- ⚠️ **`fetchTrend()` JÁ EXISTIA** no `AegisScoreService` (consome `/scoring/trend`). Criar um segundo método no `DashboardService`, como o enunciado pedia, produziria **dois clientes para o mesmo endpoint**. Reusado.
+- `trendToSparkline()` (`scoring.models`, pura) adapta `TenantTrendDto` → `ComplianceHistoryPoint`. O `SparklineComponent` foi escrito para a série POR CONTROLE, mas são os mesmos dois eixos com outros nomes — um segundo componente seria desperdício. Ele já se omite sozinho com < 2 pontos.
+
+### 19.2 Balanço orçamentário — CAPEX × OPEX
+
+Barra dupla + Top 3 pontos cegos, via `GapBalanceComponent` (dumb) alimentado por `buildGapBalance()` (pura). Na demo: **Ferramenta 71% (capex · 5 lacunas) × Processo 29% (opex · 2 lacunas)**.
+
+- **Ordenação por PONTOS NIST em jogo** (`maxScorePoints - scorePoints`), não por contagem: fechar um controle de peso 20 vale mais que dois de peso 5.
+- ⚠️ **`Both` conta nos DOIS lados** — é pendência que só fecha com as duas provas, logo onera os dois orçamentos. Por isso `telemetryCount + documentationCount` pode passar de `total`, e o denominador do percentual é a **soma dos lados**, não o número de controles.
+
+### 19.3 Custo do fracasso — Raio de Explosão na vitrine
+
+`BlastRadiusSummaryComponent`: `100 · Crítico` — *"Se **AD Domain Controller 01** for comprometido, o impacto se propaga por 6 ativos em até 2 saltos"*, com **2 processos de negócio atingidos** em destaque. ⚠️ Processos vêm ANTES de ativos de propósito: ativo é vocabulário de TI, processo é vocabulário de diretoria.
+
+- **Endpoint NOVO `GET /api/v1/dashboard/blast-radius-summary`** + `BlastRadiusSummaryDto`.
+- ⚠️ **DIVERGÊNCIA DELIBERADA do enunciado**, que autorizava expor isso no `ExecutiveDashboardDto`: o `/executive` já roda 6 consultas e É o que decide o First Contentful Paint. Pendurar mais um JOIN nele atrasaria a tela inteira por um painel secundário — contrariando a própria restrição de FCP do enunciado. Endpoint próprio ⇒ o painel carrega sozinho.
+- **Barato por construção:** o `BlastRadiusAssessment` já MATERIALIZA `ImpactedAssetCount`/`ImpactedProcessCount`/`MaxDepth` no traversal — aqui é `ORDER BY BlastRadiusScore DESC … LIMIT 1` com um JOIN para o nome do ativo. Não há grafo a percorrer.
+- **Escolhe o de MAIOR score, não o mais recente:** a diretoria pergunta "qual é o nosso pior cenário?", não "qual rodamos por último".
+- ⚠️ **204 No Content** quando nunca houve cálculo (o `HttpClient` entrega `null`). "Nunca medimos" ≠ "o raio é zero" — o frontend precisa da distinção para escolher entre estado vazio e número. Daí `fetchBlastRadiusSummary(): Observable<BlastRadiusSummary | null>` e o signal `blastLoaded` separando "carregando" de "não existe".
+
+### 19.4 FCP preservado — quatro cargas INDEPENDENTES
+
+⚠️ **Nada de `forkJoin`/`combineLatest`.** Encadear as quatro chamadas faria a tela esperar a mais lenta. Cada painel tem o próprio signal e acende quando o seu dado chega; **só o `/executive` governa o `loading`**. Os três secundários falham com `console.warn` e se omitem — falha de um não derruba os outros.
+
+### 19.5 ⚠️ Bug pego pela verificação ao vivo: vocabulário de máquina vazando
+
+O primeiro render mostrou **`PR.AA-02 · MANUAL_AUDIT_REQUIRED`** na vitrine executiva. A tradução existia — mas como constante **LOCAL** do `MissingRequirementsComponent`, e o painel novo (escrito depois) não a herdou.
+
+**Correção:** `MANUAL_AUDIT_TOKEN` e `sourceLabelOf()` subiram para `scoring.models.ts`; os dois componentes consomem de lá. **A segunda cópia de uma regra de apresentação é exatamente como token técnico chega à tela do board.** Corrigido junto: `CRITICO` → `Crítico` (vem do enum C# `RiskLevel`, sem acento por construção; a classe CSS segue usando o valor original em minúsculas).
+
+### 19.6 CSS e pendências
+
+- **Budget respeitado:** `GapBalanceComponent` e `BlastRadiusSummaryComponent` extraídos como dumb; **nenhum dos dois** aparece nos warnings, e o `executive-dashboard` também não. Os 4 avisos restantes são pré-existentes (`asset-inventory`, `app.component`, `document-hub`, `control-compliance-card`).
+- ⚠️ **Trend pobre na demo (3 pontos)** — o `AegisScoreSnapshotWorker` tira a foto à meia-noite UTC. Reforça o backlog item 4 da §5 (snapshot no boot em DEV).
+- **`buildGapBalance` e `trendToSparkline` não têm teste automatizado** — são funções puras e testáveis, mas o projeto não tem suíte de frontend (só `ng build`). Montar o harness é uma fatia própria.
+
+---
+
+## 20. Onboarding — `ITenantManagementService`, fechamento do IDOR e upsert protegido por índice
+
+Consolidação do onboarding (tenants + conectores) num serviço de aplicação. Três regras que viviam soltas no `TenantsController` passaram a ter dono único: **normalização/unicidade do slug**, **cifragem estática das credenciais** e **vínculo ao tenant correto**. `dotnet build` da solução verde (0 erros / 0 avisos), **187/187** testes.
+
+### 20.1 A porta na Application, o adapter na Infrastructure (⚠️ divergência do enunciado)
+
+O enunciado pedia a implementação em `AegisScore.Application`. **Impossível:** o `.csproj` da Application referencia só o Domain — sem EF Core, sem `AegisScoreDbContext`. Um serviço que faz `_db.Tenants.Add(...)` não compila lá.
+
+Seguido o padrão que o projeto já usa (`IControlStateWriter` → `ControlStateWriter`), inclusive já documentado no XML doc dele: *"A implementação vive na Infrastructure (toca o DbContext); a porta, aqui."*
+
+- **Porta:** `Application/Services/ITenantManagementService.cs` — interface + commands (`CreateTenantCommand`, `ConfigureConnectorCommand`) + results (`TenantProvisioningResult`, `ConnectorConfigurationResult`).
+- **Adapter:** `Infrastructure/Tenancy/TenantManagementService.cs`. Registrado como **Scoped** na `AddAegisScoreInfrastructure`.
+
+**Erro esperado é VALOR, não exceção.** Slug duplicado/malformado viajam no `TenantProvisioningStatus` (→ 409/400 na borda), porque o `GlobalExceptionHandlingMiddleware` traduziria qualquer throw num 500 opaco. Só `TenantSecurityException` sobe — e ela já tem tratamento próprio.
+
+### 20.2 IDOR **latente** fechado no `ConnectorsController` (⚠️ severidade corrigida em 2026-07-19)
+
+> ⚠️ **CORREÇÃO de um erro desta seção.** A primeira redação afirmava que o controller estava "ANÔNIMO" e "aberto a não-autenticados". **É FALSO.** `Program.cs` (~linha 89) define
+> `options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build()` — todo endpoint sem `[AllowAnonymous]` **já exigia autenticação**. Verificado ao vivo: a rota devolvia 401 anônima antes e depois. Não houve superfície anônima exposta em momento algum. O registro fica aqui para que a auditoria futura não herde uma severidade inflada.
+
+O que de fato existia, e foi corrigido: o controller não tinha `[Authorize]` próprio, e a rota `tenants/{tenantId}/connectors/{connectorId}` carregava um `tenantId` que **parecia** governar autorização sem governar nada (quem isolava era o Global Query Filter). Dois defeitos reais:
+
+- **Dependência de um default GLOBAL.** Sem `[Authorize]` local, qualquer mexida na `FallbackPolicy` abriria esta rota em silêncio. Garantia local > garantia herdada.
+- **IDOR latente.** Um parâmetro de tenant que não decide nada convida a próxima pessoa a confiar nele — e a escrever o próximo endpoint filtrando por ele em vez de pelo contexto.
+
+- Rota agora **`api/v1/connectors/{connectorId}`** + `[Authorize]`; o conector é resolvido pelo serviço DENTRO do tenant do JWT.
+- **Id de outro cliente e id inexistente devolvem o MESMO 404** — a borda não confirma a existência de recurso alheio.
+- O controller **não injeta mais o `AegisScoreDbContext`**: `GetConnectorAsync` resolve, `RecordSyncResultAsync` grava sinais + carimbo de sync numa transação só.
+- **`LastStatus` deixou de mentir:** falha de coleta grava `Failed` e RELANÇA (o boundary global loga e responde). Antes era `Healthy` fixo.
+
+### 20.3 Upsert do conector — invariante de banco, não promessa de código
+
+`POST /tenants/connectors` era INSERT puro. Duplicatas de `(tenant, Provider, Capability)` quebravam dois consumidores: o `IConnectorRegistry` (resolve UM adaptador por par) e o `PolicyIngestionWorker` (projeta `(TenantId, Provider)` e sincronizaria a MESMA integração N vezes por ciclo).
+
+- **Migration `20260719122213_UniqueConnectorConfigNaturalKey`** — índice ÚNICO `(TenantId, Provider, Capability)`. O EF suprimiu sozinho o `IX_Connectors_TenantId` (o composto é tenant-leading e cobre o prefixo).
+- **Dedupe defensivo** antes do `CREATE UNIQUE INDEX`, no idioma da §2.6, com **duas diferenças**: (a) o sobrevivente é o **MAIS RECENTE** (`COALESCE(UpdatedAt, CreatedAt) DESC`), porque conectores duplicados carregam credenciais DIFERENTES e a última configuração é a intenção vigente — documentos duplicados são idênticos por hash, conectores não; (b) **`Signals.ConnectorConfigId` NÃO tem FK**, então os sinais do perdedor são REPONTADOS ao sobrevivente antes do DELETE — histórico de coleta é dado de auditoria e não pode evaporar num ajuste de índice.
+- **Recuperação da corrida é DIFERENTE da do tenant:** provisionar tenant duas vezes é erro real (→ 409). *Configurar* um conector é **idempotente por intenção**, então o `DbUpdateException` do INSERT perdido **reconverge para UPDATE** sobre a linha vencedora (uma tentativa; re-SELECT vazio ⇒ não foi o índice natural, relança). Duas chamadas simultâneas convergem para uma linha e **nenhuma falha**.
+- ⚠️ **Consequência de modelagem aceita:** um tenant não pode ter duas contas do MESMO provedor na mesma capacidade (ex.: dois M365 sob um cliente). Suportar isso exigiria discriminador de instância na chave, não este índice.
+
+### 20.4 Segredo é escrita-apenas
+
+- `ConnectorConfigDto` (Api) **não tem `EncryptedSettings`** — o segredo não atravessa a fronteira de saída, nem cifrado. Só o coletor o decifra.
+- **Reconfigurar sem mandar segredo PRESERVA o vigente.** Rotação de credencial é ato explícito, não efeito colateral de quem só quis renomear o conector.
+- ⚠️ **`Protect("")` devolve blob NÃO vazio** — gravá-lo faria o `TestAsync` dos conectores (que checa `IsNullOrWhiteSpace(EncryptedSettings)`) reportar *"credenciais presentes"* para um conector que nunca recebeu nenhuma. Na criação sem segredo grava-se `""`.
+
+### 20.5 Outras mudanças de comportamento (aprovadas)
+
+| Antes | Agora |
+|---|---|
+| `POST /tenants` → `Status = Active` | `Status = Onboarding` (o `AuthService` só barra `Suspended`, então login não trava) |
+| slug cru do cliente | normalizado (trim + minúsculas) e validado `^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$` — 2–64 chars |
+| `AnyAsync` → `Add` sem rede | fast-path + `catch (DbUpdateException)` → 409 (índice único de `Tenant.Slug`) |
+| retorna `IdResponse` | retorna `ConnectorConfigDto` (**201** criou / **200** reconfigurou) |
+
+⚠️ **Nenhuma dessas rotas é consumida pelo frontend** (verificado por varredura) — não há quebra de UI.
+
+### 20.6 Testes — 22 casos novos (165 → 187)
+
+`Tests/Tenancy/TenantManagementServiceTests.cs`, harness SQLite in-memory dos demais. Cobrem normalização/conflito/formato do slug, cifragem em repouso, upsert pela chave natural, preservação de segredo, piso do intervalo de sync, fail-closed sem tenant, isolamento cruzado (Get/Record de outro tenant) e a unicidade como invariante de banco.
+
+⚠️ **Dois bugs REAIS pegos pelos testes durante esta sessão:**
+1. A regex do slug tinha o grupo final **opcional**, aceitando slug de 1 caractere apesar do contrato dizer 2–64.
+2. No refactor da reconvergência, `Apply(config, isInsert: true)` ficou **fixo** em vez de `isInsert: created` — apagava a credencial em TODA reconfiguração sem segredo. Era exatamente a regra de §20.4 que o teste existe para proteger.
+
+⚠️ **`ConnectorConfig.TenantId` tem FK REAL para `Tenant`** (via a coleção `Tenant.Connectors`) — o fixture precisa semear as linhas de `Tenant`, senão o insert de conector morre com `FOREIGN KEY constraint failed`.
+
+⚠️ **Cobertura honesta:** o ramo de reconvergência não tem cobertura DETERMINÍSTICA. O teste concorrente (`Task.WhenAll` sobre dois `DbContext`) valida a INVARIANTE (uma linha, nenhuma exceção), mas o SQLite serializa escritas — a corrida é exercitada oportunisticamente, não garantidamente.
+
+### 20.7 ⚠️ Migrations são AUTO-APLICADAS no startup (fato do projeto — não redescobrir)
+
+`Program.cs` (~linha 148) roda **`await db.Database.MigrateAsync()` em TODO boot**, antes de semear o catálogo. Consequências que valem registrar:
+
+- **Não existe migration "pendente" na prática.** Basta subir a API para aplicar tudo que estiver no assembly. A `UniqueConnectorConfigNaturalKey` foi aplicada assim — pelo restart da API, **não** por um `dotnet ef database update` deliberado (o comando posterior devolveu *"No migrations were applied. The database is already up to date."*).
+- ⚠️ **Deixar uma migration destrutiva "para revisão humana" NÃO funciona neste projeto.** Na §20.3 ela foi conscientemente não-aplicada porque o `Up()` contém `DELETE` de conectores duplicados; o próximo `dotnet run` a aplicou de qualquer forma. **Migration com efeito destrutivo precisa ter o SQL revisado ANTES do commit** — o gate humano depois do commit não existe.
+- **Banco real de dev é `aegis_dev`**, não o `aegis` do `appsettings.json`: a connection string vem de `dotnet user-secrets` (o `Username` vazio no arquivo versionado denuncia o override). Confirmado no log do EF — *"Opening connection to database 'aegis_dev'"*.
+
+---
+
+## 21. Identidades — `IUserManagementService` sobre a fundação Um-para-Muitos
+
+Provisionamento de usuários e concessão de acesso. **210/210** testes, build verde. **Nenhuma migration** — o domínio já bastava.
+
+### 21.1 ⚠️ A contradição do enunciado e a decisão firmada
+
+O enunciado pedia vínculo a "uma **lista** de `TenantIds`" (muitos-para-muitos) **e**, na mesma frase, "conforme definido no **Domínio**". O domínio é inequivocamente **Um-para-Muitos**: `User : ITenantOwned` com UM `Guid TenantId` não-nulável, sem entidade de junção, índice único `(TenantId, Email)`.
+
+Muitos-para-muitos exigiria refatorar o NÚCLEO do isolamento: `JwtTokenService.CreateAccessToken` emite UMA claim `tenant_id` de `user.TenantId`; `AuthService.LoginAsync` acha o usuário **pelo query filter do tenant ambiente** (lookup cross-tenant não existe); `TenantConsistencyMiddleware` dá 403 em token sem `tenant_id` válido. **Decisão do Felipe (2026-07-19): manter Um-para-Muitos. Não refatorar o núcleo de auth, não afrouxar o middleware, não alterar o query filter de `User`.**
+
+**A flag `IsGlobalAdmin` foi ABORTADA.** Usuário sem tenant é impossível por construção (`TenantId` é `Guid` não-nulável, `StampTenant` é fail-closed, `Guid.Empty` na claim leva 403). O papel `UserRole.PlatformAdmin` — que já existe — cobre o caso: cross-tenant por AUTORIZAÇÃO, ancorado a um tenant-sede, sem bypass de `TenantId`.
+
+### 21.2 O que "mesmo e-mail em dois tenants" significa
+
+**Duas identidades independentes**, não um usuário com dois vínculos: senha, papel, `IsActive` e refresh tokens próprios. O índice único é `(TenantId, Email)`, não `Email`. É isso que garante que **nenhum token atravesse a fronteira** — não existe sujeito capaz de "trocar de tenant".
+
+⚠️ Consequência direta: `AssignUserToTenantAsync` **não pode escrever noutro tenant** (o `StampTenant` rejeitaria). Ele opera no tenant AMBIENTE, e o `TenantId` do comando é **asserção de defesa em profundidade** (idioma do `IControlStateWriter.ApplyVerdictAsync`) — divergiu, `TenantSecurityException`. Semântica: *"um TenantAdmin de B concede acesso a B"*, nunca *"um admin de A empurra alguém para B"*.
+
+### 21.3 Superfície
+
+- **Porta:** `Application/Services/IUserManagementService.cs`; **adapter:** `Infrastructure/Auth/UserManagementService.cs` (ao lado do `AuthService`, o outro dono do ciclo de vida da identidade). Scoped.
+- `CreateUserAsync` — criação estrita no tenant ambiente. 409 se o e-mail já existe AQUI.
+- `AssignUserToTenantAsync` — concessão IDEMPOTENTE: ausente → cria (exige `InitialPassword`); presente → aplica papel, **reativa** se inativa, e **preserva a senha vigente** (conceder permissão ≠ resetar credencial).
+- **`UsersController` NOVO**, `[Authorize(Roles = "TenantAdmin")]` — ⚠️ deliberadamente **separado do `AuthController`**, que é `[AllowAnonymous]` (única superfície anônima da API). Pendurar criação de conta lá deixaria uma rota privilegiada dentro de um controller anônimo: um deslize de atributo viraria cadastro sem autenticação.
+- `POST /api/v1/users` (201) · `POST /api/v1/users/access` (201 criou / 200 atualizou).
+
+### 21.4 ⚠️ Escalonamento de privilégio barrado no serviço
+
+`UserRole.PlatformAdmin` **não é atribuível** por esta superfície — nem no create, nem no update (a porta dos fundos). Ele autoriza criar tenants (§20), então emiti-lo por uma rota de tenant transformaria TenantAdmin em admin da PLATAFORMA com um POST. Devolve `RoleNotAssignable` → **403** (recusa de autorização, não de formato: 400 esconderia isso como erro de digitação). Provisionamento de PlatformAdmin segue fora do onboarding self-service, como o próprio enum documenta.
+
+### 21.5 Política de senha — NIST SP 800-63B, sem regra de composição
+
+**12–128 caracteres, e só.** O 800-63B desaconselha exigir maiúscula/dígito/símbolo: empurra o usuário para padrões previsíveis (`Senha@123`) sem ganho real de entropia. 12 é o piso (o 800-63B fixa 8 como mínimo absoluto) por ser console de administração de postura. Detalhes:
+
+- **Nada é truncado** — truncar enfraqueceria a senha que o usuário acredita ter escolhido. Acima de 128 é recusa explícita.
+- **A senha NÃO é trimada** — espaço é caractere legítimo, e aparar quebraria o login seguinte, que compara o valor cru. Senha só de espaços é recusada à parte.
+- E-mail normalizado com a **mesma regra do `AuthService.LoginAsync`** (`Trim().ToLowerInvariant()`) — divergir aqui gravaria uma identidade que o login não acha.
+- **Log sem e-mail:** o identificador auditável é o `UserId`. E-mail é PII e credencial; o `AuthService` também registra Tenant/User/TokenId, nunca o endereço.
+
+### 21.6 Testes — 23 casos novos (187 → 210)
+
+`Tests/Auth/UserManagementServiceTests.cs`. Além do caminho feliz e das validações, cobrem o que este serviço existe para garantir:
+
+- **`MesmoEmailEmTenantsDistintos_SaoIdentidadesIndependentes`** — 2 linhas, hashes distintos, papéis distintos.
+- **`CreateUserAsync_NaoEnxergaIdentidadeDeOutroTenant_AoChecarConflito`** — o 409 NÃO dispara cross-tenant; dispararia é que seria o bug (vazaria a existência de uma conta noutro cliente por canal lateral).
+- **`AssignUserToTenantAsync_TenantDivergenteDoContexto_EhRecusado`** — `TenantSecurityException` antes de qualquer escrita.
+- **`CreateUserAsync_PlatformAdmin_NaoEhAtribuivel`** + **`AssignUserToTenantAsync_NaoPromoveParaPlatformAdmin`** — os dois vetores de escalonamento.
+- **`IndiceUnico_RejeitaSegundaIdentidadeComMesmoEmailNoTenant`** — insert cru: é o índice que barra, não o `if` do C#.
+- **`CreateUserAsync_SenhaLongaSemComposicao_EhAceita`** — trava a regra do 800-63B contra alguém "endurecer" a política com composição no futuro.
+
+---
+
+## 22. SSO Simulado — `IdentityAccount` global, `User` como membership e o Tenant Switcher
+
+O login deixou de exigir slug/tenant: o analista entra com **e-mail e senha** e alterna entre clientes por um dropdown no HUD, como numa plataforma de SOC terceirizado. **211/211** testes, `dotnet build` e `ng build` verdes, migration aplicada em `aegis_dev`.
+
+### 22.1 ⚠️ Por que o enunciado literal era EXPLORÁVEL (não redescobrir)
+
+O pedido original era: login por e-mail com `IgnoreQueryFilters()`, `GET /users/me/tenants` casando por e-mail, e `switch-tenant` validando "esse e-mail tem conta ativa no alvo?". **Sobre o modelo da §21 isso é bypass total de autenticação**, porque lá o mesmo e-mail em dois tenants eram identidades independentes **com hashes diferentes** — "e-mail → tenants" não era vínculo autenticado, era coincidência de string:
+
+| # | Ação | Resultado |
+|---|---|---|
+| 1–2 | Mallory (TenantAdmin de um cliente pequeno) faz `POST /users` com `ceo@bancoX.com` e uma senha que ela escolhe | o serviço só validava FORMATO do e-mail, não posse |
+| 3 | Login com esse e-mail + a senha dela | confere contra a linha do tenant DELA ✅ |
+| 4–5 | `/users/me/tenants` → lista o bancoX; `switch-tenant` → "tem conta ativa lá?" → **sim** | JWT válido do bancoX |
+
+O `TenantConsistencyMiddleware` não ajudaria: o token é internamente consistente. Havia ainda um bug funcional — "primeiro tenant encontrado" sem `ORDER BY` é não-determinístico, e quem tivesse senhas distintas por cliente teria login falhando de forma intermitente.
+
+### 22.2 A correção: a credencial subiu para a PESSOA
+
+- **`IdentityAccount` (NOVA, global):** `Email` (índice único **GLOBAL**), `PasswordHash`. **Não é `ITenantOwned`** — é o sujeito que ATRAVESSA tenants, e a única entidade de identidade com essa natureza.
+- **`User` virou MEMBERSHIP:** mantém `TenantId` (segue `ITenantOwned`, query filter e stamping **intactos**), ganha `IdentityAccountId` (FK, `Restrict`) e mantém `Role`/`IsActive`/`DisplayName`/`LastLoginAt` — o que é POR cliente. `Email` e `PasswordHash` **saíram da tabela**.
+- **Índice único mudou** de `(TenantId, Email)` para `(TenantId, IdentityAccountId)`.
+- O vínculo virou **chave estrangeira**: quem não sabe a senha da pessoa não alcança ambiente nenhum dela. A cadeia da 22.1 morre no passo 3.
+- **Trava correlata em `CreateUserAsync`:** se a conta JÁ existe, a senha informada é **DESCARTADA** — um TenantAdmin concede acesso ao PRÓPRIO tenant, nunca redefine credencial alheia. Teste: `CreateUserAsync_NaoPermiteTrocarASenhaDeContaExistente`.
+
+⚠️ **Risco residual aceito:** um TenantAdmin ainda pode ADICIONAR um e-mail alheio ao próprio tenant (a pessoa passaria a ver aquele cliente no seletor). É incômodo/phishing, **não** vazamento — ele não obtém acesso ao ambiente dela. Um fluxo de convite com aceite fecharia isso (backlog).
+
+### 22.3 Backfill — fusão por e-mail com eleição da senha mais recente
+
+Migration `20260719174626_NormalizeIdentityAccount`. **Decisão do Felipe:** no MSSP o e-mail corporativo é a mesma pessoa física em todos os clientes ⇒ uma conta por e-mail DISTINTO, elegendo o hash de `COALESCE(UpdatedAt, CreatedAt)` mais recente (`DISTINCT ON`, PostgreSQL).
+
+⚠️ **Consequência aceita:** a senha eleita passa a abrir ambientes que ela não abria, e as demais senhas daquele e-mail deixam de valer.
+
+⚠️ **DOIS defeitos do scaffold do EF, corrigidos à mão** — o gerador é ordenador ingênuo, não migrador de dados:
+- **`Up()` derrubava `Email`/`PasswordHash` ANTES de criar `IdentityAccounts`** — apagaria TODA credencial do sistema antes de haver para onde copiar. Ordem reescrita: criar destino → copiar → remover origem.
+- **`Down()` tinha o defeito ESPELHADO** (dropava a tabela antes de devolver e-mail/hash às linhas) — rollback deixaria todo mundo com credencial em branco.
+- `LOWER()` no agrupamento (linhas semeadas à mão podem ter caixa mista) + um bloco `DO $$` que **aborta a migration com mensagem clara** se sobrar linha órfã, em vez de estourar depois numa FK obscura.
+
+### 22.4 Mecânica do SSO simulado
+
+- **`account_id` é claim NOVA** no JWT: a PESSOA, estável através de ambientes. O `sub` continua sendo o MEMBERSHIP e **muda a cada troca**. `CreateAccessToken` passou a receber `(User membership, IdentityAccount account)`.
+- **`POST /auth/login`** — valida contra `IdentityAccount` (sem filtro: ela não tem) e emite para o primeiro membership ativo, com **`ORDER BY CreatedAt, Id`** (ordem ESTÁVEL — sem isso o "primeiro ambiente" dependeria do plano do Postgres).
+- **`GET /users/me/tenants`** — ancorado no `account_id` do token, nunca em e-mail do corpo. Só memberships ATIVOS de tenants não suspensos. Exige apenas `[Authorize]`, **não** TenantAdmin: todo analista vê os próprios acessos. *(Por isso o `[Authorize(Roles="TenantAdmin")]` do `UsersController` desceu da classe para as duas ações de escrita.)*
+- **`POST /auth/switch-tenant`** — confirma membership ativo casando por `IdentityAccountId` (FK, não string), **revoga o refresh anterior** e emite par novo com o papel DAQUELE cliente. Devolve **403** e não 404 para não virar oráculo de existência de tenants.
+- ⚠️ **`IgnoreQueryFilters()` ficou restrito à camada de auth** e SEMPRE ancorado num `IdentityAccountId` já autenticado. Nenhuma outra entidade é lida assim.
+
+### 22.5 ⚠️ Duas armadilhas de framework que quase viraram falha
+
+- **`[AllowAnonymous]` de CLASSE curto-circuita `[Authorize]` de método** no ASP.NET Core. Com ele no topo do `AuthController`, `switch-tenant` ficaria **aberta mesmo anotada**. O atributo desceu para as três ações que de fato são anônimas (login/refresh/logout).
+- **Login e troca escrevem FORA do tenant ambiente** (no login não há tenant; na troca o ambiente é o ANTIGO) e o `StampTenant` fail-closed barraria — corretamente. **A saída NÃO foi afrouxar o carimbo:** `IssuePairAsync` abre um `AegisScoreDbContext` ligado ao tenant de DESTINO via `SystemTenantContext`, o mesmo padrão dos workers. `RefreshAsync` idem, ancorado no tenant que o próprio refresh token declara — o que faz o silent-refresh do F5 funcionar sem o cliente saber onde está.
+
+### 22.6 Frontend — o ambiente ativo é DERIVADO do token
+
+- **`environment.tenantId` foi REMOVIDO.** O `X-Tenant` do `authInterceptor` agora sai da claim `tenant_id` do próprio access token. Token e header vindo da MESMA fonte não podem divergir ⇒ o `TenantConsistencyMiddleware` nunca dispara por engano, e a troca vale para toda a API sem estado paralelo a sincronizar.
+- `AuthService`: `getAvailableTenants()` / `switchTenant(id)`; signals `tenants`, e **`activeTenantId`/`activeTenant`/`activeRole` como `computed` do token** — deliberadamente NÃO editáveis: ambiente ativo como estado próprio do cliente poderia divergir do token e todo request levaria 403.
+- **Quando a lista carrega:** no login (em PARALELO, para não atrasar a navegação) e no `restoreSession()` (F5). O `refresh()` de rotina **não** recarrega — os acessos da pessoa não mudam a cada 10 min.
+- `TenantSwitcherComponent` montado no `.hud-topbar` do `app.component`. Some sozinho com ≤ 1 ambiente (`.hud-topbar:empty { display: none }` colapsa a faixa). Após trocar, faz `navigateByUrl('/')` + `window.location.reload()` — **recarga dura de propósito:** as telas montadas seguram dados do ambiente anterior e não podem seguir exibindo-os sob o novo rótulo.
+- **Dívida limpa:** os 4 `'X-Tenant': environment.tenantId` hardcoded nos serviços foram removidos. Eram inofensivos (o `setHeaders` do interceptor sobrescreve), mas eram código morto enganoso.
+- O componente de login **já era** só e-mail + senha — nada a mudar ali.
+
+### 22.7 Correções de tradução do EF pegas SÓ em execução (não redescobrir)
+
+O arco fechou com quatro falhas de tradução LINQ que **nenhuma checagem estática pega** — só rodar contra um banco real revela. Registradas porque a tentação de reescrever "mais elegante" traz todas de volta:
+
+1. **Projetar direto num `record` dentro de `.Join()`** → *"The LINQ expression could not be translated"* (500 em `GET /users/me/tenants`, pego no smoke test ao vivo, não pelos testes). **Forma que traduz:** query syntax + projeção num tipo ANÔNIMO, montando o record em memória depois. Mesmo cuidado aplicado ao `ListConnectorsAsync` da §23.
+2. **`ORDER BY` sobre `DateTimeOffset`** não é suportado pelo SQLite (provider da suíte). O `orderby u.CreatedAt` do login deixaria o caminho sem cobertura possível → ordenação movida para MEMÓRIA (custo nulo: uma pessoa tem um punhado de acessos).
+3. **`ExecuteUpdate` + Global Query Filter** não traduz (`(Guid?)u.TenantId == __ef_filter__…`). Trocado por entidade RASTREADA + `SaveChangesAsync` em `IssuePairAsync` — que ainda economiza um round-trip, saindo no mesmo commit do refresh token.
+4. **`ExecuteUpdate` + `IgnoreQueryFilters`** idem, na revogação do `SwitchTenantAsync`. Mesma correção.
+
+⚠️ **A lição da §22.7:** a suíte não pegou (1) porque não havia teste do `AuthService` novo. `TenantSwitchingTests` foi criado DEPOIS, justamente para que a consulta seja EXECUTADA contra um banco relacional — falha de tradução acontece no provider, não no compilador.
+
+---
+
+## 23. Central de Integrações — a tela que conecta o Aegis aos ambientes reais
+
+Primeira superfície de UI para os conectores: até aqui o backend tinha o upsert (§20.3) mas **não havia por onde inserir credencial**. `219/219` testes, `dotnet build` e `ng build` verdes.
+
+### 23.1 ⚠️ Faltava o endpoint de LEITURA (a tela era impossível)
+
+O `ConnectorsController` só tinha `POST test`/`sync`, e o `TenantsController` o `POST` de criação. **Nenhum `GET`.** Uma tela de gerenciamento que não lista o que está configurado fica em branco após um F5 — não gerencia nada.
+
+- **`GET /api/v1/connectors` (NOVO)** → `IReadOnlyList<ConnectorConfigDto>`, tenant implícito no JWT.
+- O `{connectorId}` **desceu da rota da CLASSE para as ações** (`[Route("api/v1/connectors")]` + `[HttpPost("{connectorId:guid}/test")]`), abrindo espaço para o `GET` na raiz. ⚠️ As URLs de `test`/`sync` **não mudaram**.
+- Porta nova na Application: `ITenantManagementService.ListConnectorsAsync()` — sem parâmetro de tenant, como o resto (§20.1). Projeta em tipo ANÔNIMO no SQL (ver §22.7 item 1).
+
+### 23.2 O segredo é escrita-apenas — `hasCredentials` é o que a UI recebe
+
+`EncryptedSettings` **nunca** atravessa a fronteira de saída, nem cifrado. Mas a tela precisa distinguir *"configurado"* de *"cadastrado sem credencial"* — daí o booleano:
+
+- `ConnectorSummary.HasCredentials` / `ConnectorConfigDto.hasCredentials` = `EncryptedSettings != ""`. É exatamente a checagem que o `TestAsync` dos conectores faz.
+- ⚠️ **Correção de precisão durante a implementação:** a primeira versão derivava `hasCredentials` do que o CLIENTE enviou (`!IsNullOrWhiteSpace(req.Settings)`). Isso **mentiria numa reconfiguração sem segredo** — o upsert PRESERVA o vigente (§20.4), então renomear um conector reportaria "sem credencial". Passou a refletir o estado REAL após a escrita, calculado no serviço.
+- ✅ **Verificado ao vivo:** segredo enviado no `settings` não aparece na resposta do `POST` nem na do `GET`.
+
+### 23.3 Formulários reativos — ⚠️ dependência NOVA no Angular
+
+**`@angular/forms@19.2.25` foi ADICIONADO.** O projeto nunca teve o pacote: o `login.component` usa template refs justamente por isso ("Sem @angular/forms de propósito"). Ele entrou por pedido explícito de formulários reativos, e **introduz um padrão novo** — as demais telas seguem signal-first sem forms.
+
+- `pages/integrations.component.ts` — `FormGroup` com subgrupo `credentials` **RECONSTRUÍDO a cada troca de provedor**: o catálogo diz quais campos cada um exige.
+- `models/connector.models.ts` — `PROVIDERS` mapeia provedor → `{ authType, capability, fields[] }`, com `secret: true` nos campos que viram input mascarado (+ botão Mostrar/Ocultar). ⚠️ **Os enums viajam como INTEIRO** no POST e voltam como STRING no GET; o catálogo carrega os dois lados.
+- **Por que não um textarea de JSON:** seria trivial de codificar e péssimo de operar. Quem configura um Sentinel às 3h precisa de rótulos, não de sintaxe.
+- Após salvar, o subgrupo de credenciais é **reconstruído** — o segredo não fica no DOM, e a tela nunca o recebe de volta para repopular.
+- `services/connector.service.ts` — **nenhum método recebe TenantId** (§20/§22). Traduz os códigos HTTP que estas rotas realmente emitem, incluindo **501** = sem adaptador registrado para o par provider+capability (situação REAL hoje: só `Microsoft/SecureScore` tem adaptador; o "Testar" num Sentinel devolve 501 legitimamente).
+- Rota `/settings/integrations` + grupo "Configuração" no sidebar.
+
+### 23.4 Lacunas conscientes
+
+- **Sem `DELETE` e sem toggle de `Enabled`** no backend ⇒ a tela cria e reconfigura, mas desativar uma integração ainda exige SQL.
+- ⚠️ **O catálogo de provedores é uma CONVENÇÃO, não um contrato.** Os campos de Sentinel/SecOps/CrowdStrike/AWS/Splunk foram definidos por convenção de cada API. O backend **não valida** esse JSON — só cifra e guarda —, então um campo com nome errado só apareceria como falha na primeira coleta real. Conferir contra o que cada conector for consumir.
+- **Sem teste automatizado da tela** — o projeto não tem suíte de frontend (só `ng build`). O `ListConnectorsAsync` também ficou sem teste unitário; foi validado por smoke test ao vivo (criação → 201, upsert → 200 com 1 linha, credencial preservada, segredo ausente das respostas).

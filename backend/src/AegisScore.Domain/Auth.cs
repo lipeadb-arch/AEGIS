@@ -4,25 +4,55 @@ using System.Collections.Generic;
 namespace AegisScore.Domain;
 
 /// <summary>
-/// Usuário operacional de um tenant (analista, gestor, admin do cliente). Isolado por tenant:
-/// o mesmo e-mail pode coexistir em tenants distintos sem colidir. Nunca guarda a senha em claro —
-/// apenas o hash derivado (PBKDF2). Herda Id/CreatedAt/UpdatedAt de <see cref="Entity"/>.
+/// A PESSOA — identidade global do MSSP, dona da credencial. É referência GLOBAL: NÃO é
+/// <see cref="ITenantOwned"/>, não tem query filter e não é carimbada. O e-mail é único no sistema
+/// inteiro (não por tenant), porque num MSSP o e-mail corporativo representa a mesma pessoa física
+/// através de todos os clientes.
+///
+/// ⚠️ Existe para que o vínculo pessoa↔tenant seja AUTENTICADO por chave estrangeira, e não por
+/// coincidência de string. Antes, <see cref="User"/> guardava e-mail + hash próprios por tenant: um
+/// admin de qualquer cliente podia criar a linha <c>ceo@bancoX.com</c> no PRÓPRIO tenant com uma senha
+/// que ele mesmo escolhia, e qualquer fluxo que casasse "tenants deste e-mail" entregaria a ele um
+/// token do banco X. Com a credencial ÚNICA e global, quem não sabe a senha da pessoa não alcança
+/// nenhum ambiente dela.
+/// </summary>
+public class IdentityAccount : Entity
+{
+    /// <summary>Login. Único GLOBAL. Persistido normalizado (minúsculas).</summary>
+    public string Email { get; set; } = "";
+
+    /// <summary>Hash PBKDF2 no formato <c>iterações.salt.hash</c>. Nunca a senha em claro.</summary>
+    public string PasswordHash { get; set; } = "";
+
+    /// <summary>Os ambientes a que esta pessoa tem acesso (um <see cref="User"/> por tenant).</summary>
+    public ICollection<User> Memberships { get; set; } = new List<User>();
+}
+
+/// <summary>
+/// O MEMBERSHIP: o acesso de uma <see cref="IdentityAccount"/> a UM tenant, com o papel que ela exerce
+/// ALI. Continua <see cref="ITenantOwned"/> com um único <c>TenantId</c> — o query filter e o stamping
+/// fail-closed do DbContext seguem intactos, e é isso que preserva o isolamento das demais rotas.
+///
+/// Não carrega mais e-mail nem senha: a credencial é da pessoa, não do vínculo. Duplicá-la por tenant
+/// convidava à dessincronização (mesma pessoa com senhas divergentes por cliente) e era a raiz do vetor
+/// descrito em <see cref="IdentityAccount"/>. O que É por tenant permanece aqui: papel, ativação,
+/// nome de exibição e último login.
 /// </summary>
 public class User : Entity, ITenantOwned
 {
     public Guid TenantId { get; set; }
 
-    /// <summary>Login do usuário, único por tenant. Persistido normalizado (minúsculas).</summary>
-    public string Email { get; set; } = "";
+    /// <summary>A pessoa dona deste acesso. É o vínculo autenticado — nunca casar por e-mail.</summary>
+    public Guid IdentityAccountId { get; set; }
+    public IdentityAccount? Account { get; set; }
 
+    /// <summary>Nome exibido NESTE cliente (a mesma pessoa pode se apresentar diferente em cada um).</summary>
     public string DisplayName { get; set; } = "";
 
-    /// <summary>Hash PBKDF2 no formato <c>iterações.salt.hash</c>. Nunca a senha em claro.</summary>
-    public string PasswordHash { get; set; } = "";
-
+    /// <summary>Papel exercido NESTE tenant. A troca de ambiente reemite o token com o papel de lá.</summary>
     public UserRole Role { get; set; } = UserRole.Analyst;
 
-    /// <summary>Desativado ≠ deletado: usuário inativo não autentica (fail-closed).</summary>
+    /// <summary>Desativado ≠ deletado: membership inativo não autentica nem aparece no seletor (fail-closed).</summary>
     public bool IsActive { get; set; } = true;
 
     public DateTimeOffset? LastLoginAt { get; set; }

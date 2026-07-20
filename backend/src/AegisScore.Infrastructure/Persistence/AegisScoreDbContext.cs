@@ -41,6 +41,8 @@ public class AegisScoreDbContext : DbContext
     public DbSet<Asset> Assets => Set<Asset>();
 
     // Auth / Identity
+    // A pessoa (global, sem query filter) e o membership por tenant (isolado, ITenantOwned).
+    public DbSet<IdentityAccount> IdentityAccounts => Set<IdentityAccount>();
     public DbSet<User> Users => Set<User>();
     public DbSet<UserRefreshToken> UserRefreshTokens => Set<UserRefreshToken>();
 
@@ -162,6 +164,20 @@ public class AegisScoreDbContext : DbContext
         b.Entity<Risk>().HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
         b.Entity<EvidenceSignal>().HasIndex(x => new { x.TenantId, x.SignalKey, x.CollectedAt });
 
+        // Conector: UM registro por (tenant, provedor, capacidade) — a chave NATURAL da configuração.
+        // O índice único torna o upsert do TenantManagementService.ConfigureConnectorAsync uma invariante
+        // de BANCO, e não uma promessa do read-then-write: duas configurações simultâneas do mesmo
+        // provedor+capacidade não podem mais gerar duas linhas. Duplicatas quebravam dois consumidores —
+        // o IConnectorRegistry, que resolve UM adaptador por par, e o PolicyIngestionWorker, que projeta
+        // (TenantId, Provider) e sincronizaria a MESMA integração N vezes por ciclo.
+        //
+        // ⚠️ Consequência de modelagem: um tenant do Aegis não pode ter duas contas do MESMO provedor na
+        // mesma capacidade (ex.: dois M365 distintos sob um só cliente). Suportar isso exigiria uma chave
+        // com discriminador de instância (o domínio do locatário externo), não este índice.
+        b.Entity<ConnectorConfig>()
+            .HasIndex(x => new { x.TenantId, x.Provider, x.Capability })
+            .IsUnique();
+
         // Tenant-leading indexes for operational entities that don't get one from an FK
         // convention, so the multi-tenant query filter uses an index instead of a full scan.
         b.Entity<Asset>(e =>
@@ -188,13 +204,28 @@ public class AegisScoreDbContext : DbContext
             // fase de infraestrutura (DbSets, índices, migration), conforme combinado.
             e.OwnsOne(a => a.BusinessImpact);
         });
-        // Auth: usuário (e-mail único por tenant) e refresh tokens (RTR).
+        // Auth — a PESSOA (referência global): e-mail único no sistema inteiro. Sem query filter e sem
+        // stamping: IdentityAccount NÃO é ITenantOwned de propósito, é o sujeito que ATRAVESSA tenants.
+        // É a única entidade de identidade com essa natureza; o membership (User) segue isolado.
+        b.Entity<IdentityAccount>(e =>
+        {
+            e.Property(a => a.Email).HasMaxLength(256).IsRequired();
+            e.Property(a => a.PasswordHash).IsRequired();
+            e.HasIndex(a => a.Email).IsUnique();   // login único GLOBAL (era por tenant)
+        });
+
+        // Auth — o MEMBERSHIP: um acesso por (tenant, pessoa). O índice único mudou de
+        // (TenantId, Email) para (TenantId, IdentityAccountId): o e-mail saiu da tabela, e é a FK que
+        // impede duas linhas de acesso da mesma pessoa ao mesmo cliente.
         b.Entity<User>(e =>
         {
-            e.Property(u => u.Email).HasMaxLength(256).IsRequired();
             e.Property(u => u.DisplayName).HasMaxLength(200);
-            e.Property(u => u.PasswordHash).IsRequired();
-            e.HasIndex(u => new { u.TenantId, u.Email }).IsUnique();   // login único no escopo do tenant
+            e.HasIndex(u => new { u.TenantId, u.IdentityAccountId }).IsUnique();
+            // Restrict: apagar a pessoa não cascateia sobre os acessos (e o histórico deles). A remoção
+            // de um membership é ato explícito, como no resto do modelo.
+            e.HasOne(u => u.Account).WithMany(a => a.Memberships)
+                .HasForeignKey(u => u.IdentityAccountId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
         b.Entity<UserRefreshToken>(e =>
         {

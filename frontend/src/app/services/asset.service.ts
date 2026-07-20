@@ -23,7 +23,7 @@ export class AssetService {
 
     return this.http.get<PagedResult<AssetDto>>(`${environment.apiBase}/api/v1/assets`, {
       params,
-      headers: { 'X-Tenant': environment.tenantId, Accept: 'application/json' },
+      headers: { Accept: 'application/json' },
     });
   }
 }

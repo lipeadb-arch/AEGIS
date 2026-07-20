@@ -138,4 +138,41 @@ public class DashboardController : ControllerBase
 
         return new ExecutiveDashboardDto(clientName, DateTimeOffset.UtcNow, exposure, radar, topGaps, heatmap, byLevel, icr);
     }
+
+    /// <summary>
+    /// O PIOR raio de explosão já calculado para o tenant — "se cair o ativo X, quantos outros caem
+    /// junto?". Traduz risco técnico em impacto de negócio para a vitrine executiva.
+    ///
+    /// Endpoint SEPARADO do /executive de propósito (ver <see cref="BlastRadiusSummaryDto"/>): o painel
+    /// é secundário e não pode entrar no caminho crítico do First Contentful Paint.
+    ///
+    /// Barato por construção: o <c>BlastRadiusAssessment</c> já MATERIALIZA as contagens no momento do
+    /// traversal (<c>ImpactedAssetCount</c>, <c>ImpactedProcessCount</c>, <c>MaxDepth</c>), então aqui
+    /// não há grafo a percorrer — é um ORDER BY + LIMIT 1 com um JOIN para o nome do ativo.
+    ///
+    /// Escolhe o de MAIOR score, não o mais recente: a diretoria pergunta "qual é o nosso pior cenário?",
+    /// não "qual foi o último que rodamos". Tenant implícito (Global Query Filter fail-closed).
+    /// </summary>
+    [HttpGet("blast-radius-summary")]
+    [ProducesResponseType(typeof(BlastRadiusSummaryDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<ActionResult<BlastRadiusSummaryDto>> BlastRadiusSummary(CancellationToken ct)
+    {
+        var worst = await _db.BlastRadiusAssessments.AsNoTracking()
+            .OrderByDescending(a => a.BlastRadiusScore)
+            .ThenByDescending(a => a.CreatedAt)
+            .Select(a => new BlastRadiusSummaryDto(
+                a.RootAsset!.Name,
+                a.BlastRadiusScore,
+                a.RiskLevel.ToString(),
+                a.ImpactedAssetCount,
+                a.ImpactedProcessCount,
+                a.MaxDepth,
+                a.CreatedAt))
+            .FirstOrDefaultAsync(ct);
+
+        // 204 e não um DTO zerado: "nunca calculamos um raio" é diferente de "o raio é zero", e o
+        // frontend precisa dessa distinção para escolher entre estado vazio e número.
+        return worst is null ? NoContent() : worst;
+    }
 }

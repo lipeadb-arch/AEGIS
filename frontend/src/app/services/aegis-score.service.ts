@@ -16,7 +16,7 @@ export class AegisScoreService {
     const params = new HttpParams().set('days', days);
     return this.http.get<TenantTrendDto[]>(`${environment.apiBase}/api/v1/scoring/trend`, {
       params,
-      headers: { 'X-Tenant': environment.tenantId, Accept: 'application/json' },
+      headers: { Accept: 'application/json' },
     });
   }
 
@@ -26,7 +26,7 @@ export class AegisScoreService {
    */
   fetchPendingControls(): Observable<number> {
     return this.http.get<number>(`${environment.apiBase}/api/v1/scoring/pending`, {
-      headers: { 'X-Tenant': environment.tenantId, Accept: 'application/json' },
+      headers: { Accept: 'application/json' },
     });
   }
 
@@ -37,7 +37,7 @@ export class AegisScoreService {
    */
   fetchCurrentScore(): Observable<CurrentScoreDto> {
     return this.http.get<CurrentScoreDto>(`${environment.apiBase}/api/v1/scoring/current`, {
-      headers: { 'X-Tenant': environment.tenantId, Accept: 'application/json' },
+      headers: { Accept: 'application/json' },
     });
   }
 }

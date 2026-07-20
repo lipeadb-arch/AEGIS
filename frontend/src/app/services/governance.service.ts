@@ -144,6 +144,6 @@ export class GovernanceService {
 
   /** Header comum: escopo de tenant (X-Tenant) — mesmo contrato do AssetService. */
   private headers(): Record<string, string> {
-    return { 'X-Tenant': environment.tenantId, Accept: 'application/json' };
+    return { Accept: 'application/json' };
   }
 }

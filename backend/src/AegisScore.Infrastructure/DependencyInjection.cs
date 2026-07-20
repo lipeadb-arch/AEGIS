@@ -18,6 +18,7 @@ using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Queries;
 using AegisScore.Infrastructure.RiskAssessment;
 using AegisScore.Infrastructure.Scoring;
+using AegisScore.Infrastructure.Tenancy;
 
 namespace AegisScore.Infrastructure;
 
@@ -35,9 +36,18 @@ public static class DependencyInjection
         services.AddSingleton<IJwtTokenService, JwtTokenService>();       // stateless
         services.AddScoped<IAuthService, AuthService>();                  // usa o DbContext (scoped)
 
+        // Provisionamento de IDENTIDADES (criação + concessão de acesso), sempre dentro do tenant
+        // ambiente. Scoped: usa o DbContext (query filter + stamping fail-closed) e o hasher PBKDF2.
+        services.AddScoped<IUserManagementService, UserManagementService>();
+
         // [Médio 6/Baixo] Encriptação server-side dos segredos de conector (Data Protection). Depende
         // de IDataProtectionProvider, registrado por AddDataProtection() no composition root (Program).
         services.AddSingleton<IConnectorSecretProtector, ConnectorSecretProtector>();
+
+        // Onboarding — provisionamento de clientes e configuração de conectores. Scoped: usa o DbContext
+        // (query filter + stamping fail-closed) e o protetor de segredos. Concentra a cifragem estática
+        // das credenciais, que assim deixa de morar na camada HTTP.
+        services.AddScoped<ITenantManagementService, TenantManagementService>();
 
         // AI engine (swappable). Bound from the "Ai" config section.
         services.Configure<AiOptions>(config.GetSection("Ai"));

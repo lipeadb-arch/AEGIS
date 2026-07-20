@@ -1,17 +1,15 @@
 /**
  * Configuração de runtime do dashboard.
- * - apiBase:  URL base da API Aegis Score.
- * - tenantId: GUID do cliente, enviado no header `X-Tenant` (obtido em POST /api/v1/tenants).
+ * - apiBase: URL base da API Aegis Score.
  *
- * Substitui os antigos VITE_API_BASE / VITE_TENANT_ID. Sem um tenantId válido o
- * dashboard cai automaticamente nos dados de exemplo.
+ * ⚠️ `tenantId` FOI REMOVIDO (§22). O ambiente ativo deixou de ser configuração de build e passou a ser
+ * derivado da claim `tenant_id` do próprio access token — é o que permite o analista alternar entre
+ * clientes pelo seletor do HUD. Como token e header `X-Tenant` saem da MESMA fonte, eles não têm como
+ * divergir e o TenantConsistencyMiddleware nunca é acionado por engano. Ver auth.interceptor.ts.
  */
 export const environment = {
   production: true,
   apiBase: 'http://localhost:5100',
-  // Tenant de demonstração criado por POST /api/v1/dev/seed-demo (ambiente Development).
-  // Troque pelo GUID real (POST /api/v1/tenants) quando for usar dados de produção.
-  tenantId: 'aa000000-0000-0000-0000-000000000001',
   // Ativo-raiz do raio de explosão no seed demo (AD Domain Controller) — usado quando o pedido de
   // topologia no chat não cita um UUID de ativo. Espelha DevController.DemoRootAssetId.
   blastRadiusDemoAssetId: 'bb000000-0000-0000-0000-000000000001',

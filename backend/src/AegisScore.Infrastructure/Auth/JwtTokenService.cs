@@ -19,6 +19,13 @@ public sealed class JwtTokenService : IJwtTokenService
     /// <summary>Claim com o tenant do usuário — base para o isolamento derivado do token.</summary>
     public const string TenantClaim = "tenant_id";
 
+    /// <summary>
+    /// Claim com a PESSOA global (<see cref="IdentityAccount"/>). É o sujeito estável através de
+    /// ambientes: o <c>sub</c> muda a cada troca de tenant (é o membership), este não. É por ele que a
+    /// troca de ambiente é autorizada — casar por e-mail seria casar por string.
+    /// </summary>
+    public const string AccountClaim = "account_id";
+
     private const int MinKeyBytes = 32;           // HS256 exige chave de pelo menos 256 bits
     private const int MaxAccessTokenMinutes = 10;  // [Médio 7] teto rígido de vida do access token
 
@@ -38,7 +45,7 @@ public sealed class JwtTokenService : IJwtTokenService
         _creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
     }
 
-    public (string Token, DateTimeOffset ExpiresAt) CreateAccessToken(User user)
+    public (string Token, DateTimeOffset ExpiresAt) CreateAccessToken(User membership, IdentityAccount account)
     {
         var now = DateTimeOffset.UtcNow;
         // [Médio 7] Teto rígido de 10 min mesmo que a config peça mais — invariante de segurança
@@ -48,11 +55,15 @@ public sealed class JwtTokenService : IJwtTokenService
 
         var claims = new List<Claim>
         {
-            new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new(TenantClaim, user.TenantId.ToString()),
-            new(JwtRegisteredClaimNames.Email, user.Email),
-            new("name", user.DisplayName),
-            new("role", user.Role.ToString()),
+            // sub = o MEMBERSHIP ativo (muda a cada troca de ambiente).
+            new(JwtRegisteredClaimNames.Sub, membership.Id.ToString()),
+            new(TenantClaim, membership.TenantId.ToString()),
+            // account_id = a PESSOA (estável através de ambientes).
+            new(AccountClaim, membership.IdentityAccountId.ToString()),
+            new(JwtRegisteredClaimNames.Email, account.Email),
+            new("name", membership.DisplayName),
+            // Papel DESTE tenant: quem é TenantAdmin no cliente A pode ser Analyst no B.
+            new("role", membership.Role.ToString()),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
 

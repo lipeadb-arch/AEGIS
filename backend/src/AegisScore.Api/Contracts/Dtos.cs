@@ -7,6 +7,39 @@ public record LoginRequest(string Email, string Password);
 /// <summary>O refresh token NÃO trafega aqui — vai apenas no cookie HttpOnly. Só o access token é exposto.</summary>
 public record AuthResponse(string AccessToken, DateTimeOffset AccessTokenExpiresAt);
 
+// ---- Tenant Switcher (SSO simulado) ----
+/// <summary>
+/// Um ambiente disponível no seletor do HUD. <paramref name="Role"/> é o papel NAQUELE cliente — a
+/// mesma pessoa pode ser TenantAdmin num e Analyst noutro.
+/// </summary>
+public record TenantOptionDto(Guid Id, string Name, string Slug, string Role);
+
+/// <summary>
+/// Corpo da troca de ambiente. Só o ALVO trafega: a pessoa vem da claim <c>account_id</c> do JWT, que
+/// o cliente não consegue forjar. Aceitar e-mail/conta aqui reabriria o vetor que a conta global fecha.
+/// </summary>
+public record SwitchTenantRequest(Guid TargetTenantId);
+
+// ---- Users (identidades) ----
+/// <summary>
+/// Criação de identidade no tenant ambiente. O <c>TenantId</c> NÃO trafega: vem do claim
+/// <c>tenant_id</c> do JWT (Zero Trust). A senha trafega em claro dentro do TLS e é imediatamente
+/// derivada em PBKDF2 no servidor — nunca persistida nem registrada em log.
+/// </summary>
+public record CreateUserRequest(string Email, string DisplayName, string Password, UserRole Role);
+
+/// <summary>
+/// Concessão IDEMPOTENTE de acesso ao tenant ambiente. <paramref name="InitialPassword"/> só é exigida
+/// quando a identidade ainda não existe aqui — identidades de tenants distintos são independentes e não
+/// compartilham credencial.
+/// </summary>
+public record AssignUserAccessRequest(string Email, UserRole Role, string? InitialPassword = null);
+
+/// <summary>Identidade na visão da API. Deliberadamente SEM <c>PasswordHash</c> — nem o hash sai daqui.</summary>
+public record UserDto(
+    Guid Id, Guid TenantId, string Email, string DisplayName, string Role,
+    bool IsActive, DateTimeOffset CreatedAt, DateTimeOffset? LastLoginAt);
+
 // ---- Framework ----
 public record FrameworkDto(Guid Id, string Name, string? Source, IReadOnlyList<FunctionDto> Functions);
 public record FunctionDto(string Code, string Name, string Definition, IReadOnlyList<CategoryDto> Categories);
@@ -29,6 +62,20 @@ public record CreateConnectorRequest(
 public record IdResponse(Guid Id);
 
 // ---- Connectors ----
+/// <summary>
+/// Conector configurado, na visão da API. Deliberadamente SEM o blob de credenciais: o segredo é
+/// escrita-apenas (entra em claro no <see cref="CreateConnectorRequest.Settings"/>, é cifrado no
+/// servidor e só o coletor o decifra). Nunca ecoa numa resposta, nem cifrado.
+/// </summary>
+/// <param name="HasCredentials">
+/// Há segredo guardado? Distingue "configurado" de "cadastrado sem credencial" na UI, sem revelar
+/// nada do segredo em si.
+/// </param>
+public record ConnectorConfigDto(
+    Guid Id, string Provider, string Capability, string DisplayName, string AuthType,
+    bool Enabled, int SyncIntervalMinutes, DateTimeOffset? LastSyncAt, string LastStatus,
+    bool HasCredentials);
+
 public record ConnectorHealthDto(string Status, string? Message);
 public record SignalDto(string SignalKey, double? NumericValue, string? Unit, int? Severity, IReadOnlyList<string> MappedSubcategoryCodes, DateTimeOffset CollectedAt);
 public record SyncResultDto(int SignalsCollected, IReadOnlyList<SignalDto> Signals);
@@ -71,6 +118,29 @@ public record ExposureCardsDto(
     int OverdueActionPlans,
     double OverallMaturity,
     double TargetMaturity);
+
+/// <summary>
+/// Resumo do PIOR raio de explosão conhecido do tenant — o "custo do fracasso" em linguagem de negócio.
+///
+/// ⚠️ Vive FORA do <see cref="ExecutiveDashboardDto"/> de propósito. O dashboard executivo já faz 6
+/// consultas e é o que decide o First Contentful Paint; pendurar mais um JOIN nele atrasaria a tela
+/// inteira por um painel secundário. Endpoint próprio ⇒ o painel carrega sozinho, depois, sem bloquear.
+/// </summary>
+/// <param name="RootAssetName">Epicentro — o ativo cujo comprometimento produz o maior alcance.</param>
+/// <param name="Score">Magnitude 0–100 do raio (mesma régua do ICR).</param>
+/// <param name="RiskLevel">Banda de risco do raio ("Critico", "Alto"…).</param>
+/// <param name="ImpactedAssetCount">Ativos alcançados transitivamente a partir do epicentro.</param>
+/// <param name="ImpactedProcessCount">Processos de negócio atingidos — a tradução para a diretoria.</param>
+/// <param name="MaxDepth">Profundidade máxima da propagação, em saltos.</param>
+/// <param name="AssessedAt">Quando este raio foi calculado.</param>
+public record BlastRadiusSummaryDto(
+    string RootAssetName,
+    double Score,
+    string RiskLevel,
+    int ImpactedAssetCount,
+    int ImpactedProcessCount,
+    int MaxDepth,
+    DateTimeOffset AssessedAt);
 
 public record RadarPointDto(string Function, string FunctionName, double Current, double Target);
 public record GapPointDto(string Code, string Name, double Current, double Target, double Gap);

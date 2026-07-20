@@ -1,4 +1,5 @@
-import { NIST_FUNCTION_DESCRIPTIONS } from './nist-glossary';
+import { NIST_FUNCTION_DESCRIPTIONS, categoryName } from './nist-glossary';
+import { BlindSpotRow, GapBalance } from './dashboard.models';
 
 // Espelha AegisScore.Application.Queries.TenantControlStateDto — o contrato de /api/v1/scoring/dashboard.
 // Enums viram string na fronteira (nunca o valor numérico do enum C#, que muda ao reordenar o domínio).
@@ -219,6 +220,92 @@ export function buildPillarGapAnalysis(meta: PillarMeta, dtos: TenantControlStat
     telemetryGaps: countOf(['Telemetry', 'Both']),
     documentationGaps: countOf(['Documentation', 'Both']),
   };
+}
+
+/**
+ * Token do catálogo NIST SP 800-53 que marca "telemetria não prova este controle sozinha" (espelha
+ * `RuleEvaluator.ManualAuditToken`). Chega como `sourceIdentifier` e NUNCA deve ser exibido cru.
+ */
+export const MANUAL_AUDIT_TOKEN = 'MANUAL_AUDIT_REQUIRED';
+
+/**
+ * Rótulo da fonte para exibição. Vive AQUI, e não em cada componente, porque já vazou uma vez: o
+ * `MissingRequirementsComponent` traduzia com uma constante local e o painel de balanço, escrito
+ * depois, mostrou `MANUAL_AUDIT_REQUIRED` cru na vitrine executiva. Vocabulário de máquina na tela do
+ * board é ruído — e a segunda cópia da regra é como ele chega lá.
+ */
+export function sourceLabelOf(sourceIdentifier: string): string {
+  return sourceIdentifier === MANUAL_AUDIT_TOKEN ? 'Auditoria Manual' : sourceIdentifier;
+}
+
+/**
+ * Agrega TODAS as lacunas de evidência do tenant no balanço CAPEX × OPEX, respondendo à pergunta
+ * orçamentária da diretoria: *"o que falta se compra ou se escreve?"*.
+ *
+ * Lacuna de TELEMETRIA fecha com ferramenta/conector (capex, projeto de engenharia); lacuna de
+ * DOCUMENTAÇÃO fecha com processo e gente (opex, trabalho de governança). Saber a proporção decide
+ * para onde vai o orçamento — e é informação que o backend já entrega, mas ninguém consolidava.
+ *
+ * ⚠️ `Both` conta nos DOIS lados: é uma pendência que só fecha com as duas provas, então onera os dois
+ * orçamentos. Por isso `telemetryCount + documentationCount` pode passar de `total` — o denominador do
+ * percentual é a soma dos lados, não o total de controles.
+ *
+ * O Top N ordena por PONTOS NIST em jogo (peso do controle), não por contagem: fechar um controle de
+ * peso 20 vale mais que dois de peso 5. Função PURA — testável e sem Angular.
+ */
+export function buildGapBalance(dtos: TenantControlStateDto[], topN = 3): GapBalance {
+  const blind = dtos.filter((d) => (d.missingRequirements ?? []).length > 0);
+
+  let telemetryCount = 0;
+  let documentationCount = 0;
+
+  for (const d of blind) {
+    for (const m of d.missingRequirements ?? []) {
+      if (m.type === 'Telemetry' || m.type === 'Both') telemetryCount++;
+      if (m.type === 'Documentation' || m.type === 'Both') documentationCount++;
+    }
+  }
+
+  const sides = telemetryCount + documentationCount;
+  const pct = (n: number) => (sides === 0 ? 0 : Math.round((100 * n) / sides));
+
+  const topBlindSpots: BlindSpotRow[] = blind
+    .map((d) => {
+      // A natureza DOMINANTE do controle: 'Both' manda, senão a do primeiro item.
+      const gaps = d.missingRequirements ?? [];
+      const both = gaps.find((g) => g.type === 'Both');
+      const chosen = both ?? gaps[0];
+      return {
+        code: d.subcategoryCode,
+        label: categoryName(d.subcategoryCode),
+        nature: chosen.type,
+        sourceIdentifier: sourceLabelOf(chosen.sourceIdentifier),
+        // O que se perde mantendo o controle cego: o peso ainda NÃO conquistado.
+        pointsAtStake: Math.max(0, d.maxScorePoints - d.scorePoints),
+      };
+    })
+    .sort((a, b) => b.pointsAtStake - a.pointsAtStake || a.code.localeCompare(b.code))
+    .slice(0, topN);
+
+  return {
+    telemetryCount,
+    documentationCount,
+    total: blind.length,
+    telemetryPct: pct(telemetryCount),
+    documentationPct: pct(documentationCount),
+    topBlindSpots,
+  };
+}
+
+/**
+ * Projeta a série do Aegis Score (`/scoring/trend`) no formato que o `SparklineComponent` consome.
+ * O componente foi escrito para a série POR CONTROLE (`ComplianceHistoryPoint`); a do tenant tem os
+ * mesmos dois eixos com outros nomes, então a adaptação é um `map` — não um segundo componente.
+ */
+export function trendToSparkline(
+  trend: { snapshotDate: string; percentage: number }[],
+): ComplianceHistoryPoint[] {
+  return trend.map((t) => ({ date: t.snapshotDate, compliancePercent: Math.round(t.percentage) }));
 }
 
 /** Prefixo do código NIST de um pilar: 'PR' → "PR." (casa "PR.AA-01" mas não "PRX"). */

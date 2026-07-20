@@ -1,11 +1,10 @@
 import { Component, input } from '@angular/core';
-import { MissingRequirement, MissingRequirementGroup } from '../../models/scoring.models';
-
-/**
- * Token do catálogo NIST SP 800-53 que marca "telemetria não prova este controle sozinha" (espelha
- * RuleEvaluator.ManualAuditToken no backend). Chega como `sourceIdentifier` e NUNCA é exibido cru.
- */
-const MANUAL_AUDIT_TOKEN = 'MANUAL_AUDIT_REQUIRED';
+import {
+  MANUAL_AUDIT_TOKEN,
+  MissingRequirement,
+  MissingRequirementGroup,
+  sourceLabelOf,
+} from '../../models/scoring.models';
 
 /**
  * MissingRequirementsComponent — as LACUNAS DE EVIDÊNCIA de um controle, separadas por natureza:
@@ -174,13 +173,9 @@ export class MissingRequirementsComponent {
   /** Grupos já montados pelo modelo (ordem de urgência, sem grupos vazios). */
   readonly groups = input.required<MissingRequirementGroup[]>();
 
-  /**
-   * Rótulo da fonte para exibição. `MANUAL_AUDIT_REQUIRED` é um token do catálogo 800-53, não um nome de
-   * produto: jogá-lo na tela em caixa alta com underscores vazaria vocabulário de máquina para o
-   * analista. As fontes reais ("Entra ID", "Microsoft Sentinel") passam intactas.
-   */
+  /** Rótulo da fonte para exibição — a regra vive no modelo (ver `sourceLabelOf`), não aqui. */
   sourceLabel(m: MissingRequirement): string {
-    return m.sourceIdentifier === MANUAL_AUDIT_TOKEN ? 'Auditoria Manual' : m.sourceIdentifier;
+    return sourceLabelOf(m.sourceIdentifier);
   }
 
   /**

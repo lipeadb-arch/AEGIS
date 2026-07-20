@@ -9,6 +9,7 @@ import { DetectDashboardComponent } from './pages/detect-dashboard.component';
 import { RespondDashboardComponent } from './pages/respond-dashboard.component';
 import { RecoverDashboardComponent } from './pages/recover-dashboard.component';
 import { LoginComponent } from './pages/login.component';
+import { IntegrationsComponent } from './pages/integrations.component';
 import { authGuard } from './guards/auth.guard';
 
 export const routes: Routes = [
@@ -24,5 +25,11 @@ export const routes: Routes = [
   { path: 'detect', component: DetectDashboardComponent, canActivate: [authGuard], title: 'Aegis · Detect (DE)' },
   { path: 'respond', component: RespondDashboardComponent, canActivate: [authGuard], title: 'Aegis · Respond (RS)' },
   { path: 'recover', component: RecoverDashboardComponent, canActivate: [authGuard], title: 'Aegis · Recover (RC)' },
+  {
+    path: 'settings/integrations',
+    component: IntegrationsComponent,
+    canActivate: [authGuard],
+    title: 'Aegis · Integrações',
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];

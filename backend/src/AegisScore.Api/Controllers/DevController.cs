@@ -324,17 +324,26 @@ public class DevController : ControllerBase
 
         await using var db = new AegisScoreDbContext(_dbOptions, new SystemTenantContext(DemoTenantId));
 
+        // A pessoa (global) e o acesso ao tenant demo são entidades distintas desde a normalização
+        // da identidade: a credencial vive na IdentityAccount, o papel no membership.
+        var account = await db.IdentityAccounts.FirstOrDefaultAsync(a => a.Email == email, ct);
+        if (account is null)
+        {
+            account = new IdentityAccount { Email = email, PasswordHash = hasher.Hash(password) };
+            db.IdentityAccounts.Add(account);
+            await db.SaveChangesAsync(ct);
+        }
+
         var existing = await db.Users.IgnoreQueryFilters()
-            .FirstOrDefaultAsync(u => u.TenantId == DemoTenantId && u.Email == email, ct);
+            .FirstOrDefaultAsync(u => u.TenantId == DemoTenantId && u.IdentityAccountId == account.Id, ct);
         if (existing is not null)
             return Ok(new { message = "Usuário demo já existe.", email, tenantId = DemoTenantId });
 
         db.Users.Add(new User
         {
             TenantId = DemoTenantId,
-            Email = email,
+            IdentityAccountId = account.Id,
             DisplayName = "Analista Demo",
-            PasswordHash = hasher.Hash(password),
             Role = UserRole.TenantAdmin,
             IsActive = true,
         });
