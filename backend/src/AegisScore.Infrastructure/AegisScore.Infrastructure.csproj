@@ -5,22 +5,21 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.6" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.4" />
-    <!-- 8.0.1 é o piso exigido por Microsoft.Extensions.Http.Resilience (via Http.Diagnostics); manter
-         8.0.0 causaria NU1605 (downgrade). Continua na linha 8.0.x do resto do projeto. -->
-    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- 10.0.10 é o piso exigido por Microsoft.Extensions.Http.Resilience 10.8.0
+         (via Http.Diagnostics); uma versão inferior causa NU1605. -->
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.10" />
     <!-- Polly v8 sob a fachada oficial da Microsoft: retry exponencial + circuit breaker nos HttpClients
          dos motores de IA (Gemini/Claude). Registro em DependencyInjection.cs, nunca nos clients. -->
-    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="8.10.0" />
-    <!-- Fixa a versão corrigida da Caching.Memory (transitiva via EF Core 8.0.6) — corrige GHSA-qj66-m88j-hmgj / aviso NU1903. -->
-    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.8.0" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.10" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.19.1" />
     <!-- Data Protection: só as ABSTRAÇÕES (IDataProtectionProvider/IDataProtector) para cifrar os
          segredos de conector. A implementação vem do framework via AddDataProtection() no composition
-         root (Api). Pacote enxuto preserva o limite da Clean Architecture e alinha com a linha 8.0.x. -->
-    <PackageReference Include="Microsoft.AspNetCore.DataProtection.Abstractions" Version="8.0.0" />
+         root (Api). Pacote enxuto preserva o limite da Clean Architecture. -->
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.Abstractions" Version="10.0.10" />
     <!-- Extração de texto de PDF (Document Hub / Govern) via PdfPig — 100% gerenciado, sem binário
          nativo. NB: o ID do pacote é "PdfPig"; "UglyToad.PdfPig" é só o namespace do código. -->
     <PackageReference Include="PdfPig" Version="0.1.15" />
