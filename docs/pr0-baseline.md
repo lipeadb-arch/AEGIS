@@ -214,8 +214,9 @@ nesta etapa (para rastreabilidade; correção nas fases indicadas):
 | AEGIS-AUD-031 | Documentação arquitetural desalinhada com o estado real | EP-00 |
 | AEGIS-AUD-033 | Ausência de suíte de testes de frontend | EP-05 |
 
-Sequência de remediação, gates e critérios de aceite: ver `Plano_Diretor_AEGIS_v1.md`
-(EP-00 → EP-07; gates G0 → G7). O PR 0 é a preparação de baseline anterior ao EP-00.
+A sequência de remediação, os gates e os critérios de aceite estão definidos
+no artefato externo de governança "Plano Diretor AEGIS v1.0". O PR 0 é a
+preparação de baseline anterior ao EP-00.
 
 ## 14. Reprodução
 
@@ -227,10 +228,16 @@ dotnet restore backend\AegisScore.sln
 dotnet build   backend\AegisScore.sln -c Debug
 dotnet test    backend\AegisScore.sln
 
-# Frontend (node_modules já presente; use "npm ci" para instalação reproduzível)
+# Frontend: em um clone limpo, instalação reproduzível a partir do package-lock.json
 cd frontend
+npm ci
 npm run build
 ```
+
+Nota sobre a validação original (2026-07-20): o diretório `frontend/node_modules` **já estava
+presente**; portanto **`npm ci` NÃO foi executado** nesta validação (foi exercitado apenas
+`npm run build`). O `npm ci` acima é a reprodução recomendada para um clone limpo; seu sucesso
+**não foi verificado** nesta investigação e não é declarado como aprovado.
 
 Resultado esperado: backend compila (0 erros, 1 warning `CS8604`), testes 219/219,
 frontend build exit 0 com os 4 warnings de budget conhecidos. Qualquer desvio deve ser
