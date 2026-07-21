@@ -18,6 +18,18 @@
 | Sistema de validação | Windows 10 (10.0.19045); PowerShell + Git Bash |
 | Última sincronização remota | `git fetch --prune origin` em 2026-07-20 (podou o ref obsoleto `origin/claude/brave-newton-rovcge`; `origin/main` inalterado) |
 
+**Nota de rastreabilidade — por que aparecem dois commits:** `1efc80e` foi o **commit-base sobre o
+qual a validação técnica desta baseline foi executada** (HEAD da branch de trabalho
+`chore/pr0-baseline`). O **squash-merge do PR #1** produziu `c3a0bd3`, acrescentando o próprio
+`docs/pr0-baseline.md`. Entre esses dois commits, **a única diferença versionada é a inclusão deste
+documento; o código-fonte validado permaneceu inalterado.** `c3a0bd3` é a referência canônica após
+o merge. Verificável por:
+
+```powershell
+git diff --name-status 1efc80e c3a0bd3
+# A       docs/pr0-baseline.md
+```
+
 **Estado do working tree na validação:** limpo (0 staged / 0 unstaged / 0 untracked). Nenhuma
 operação Git em andamento (sem merge/rebase/cherry-pick). `bin/`, `obj/`, `dist/`, `node_modules/`
 e `.env` são ignorados por `.gitignore`.

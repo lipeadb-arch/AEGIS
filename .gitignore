@@ -17,3 +17,8 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Agentes de programação
+# Apenas as preferências LOCAIS de cada máquina. A pasta .claude/ NÃO é ignorada:
+# uma futura configuração compartilhável em .claude/settings.json deve ser versionada.
+.claude/settings.local.json
