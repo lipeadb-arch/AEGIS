@@ -50,7 +50,7 @@ A ordem de confiança é:
 1. repositório local, arquivos atuais e estado Git verificado por comando;
 2. `docs/pr0-baseline.md`;
 3. Pull Requests e commits já integrados no GitHub;
-4. `docs/plano-diretor-remediacao-v1.0.2.md`;
+4. `docs/plano-diretor-remediacao-v1.0.3.md`;
 5. `AEGIS_STATE.md` (snapshot arquitetural histórico);
 6. este `docs/handoff-operacional.md`.
 
@@ -83,15 +83,19 @@ Se houver mudanças locais, conflito, merge, rebase, cherry-pick ou branch inesp
 
 ### 3.1 Referências conhecidas (constatação histórica)
 
-Verificado após o merge do PR #1, em 2026-07-20:
+Verificado após o merge do PR #2, em 2026-07-21:
 
 - repositório: `lipeadb-arch/AEGIS`;
 - branch de referência: `main`;
-- commit da `main` naquele momento: `c3a0bd32e4ace892f26e46e506d0017fdc15b2ce` (`c3a0bd3`);
+- commit da `main` naquele momento: `daa41e80d3149a5c0ca5e3b5b70ba92cd0ddc8c9` (`daa41e8`);
 - divergência com `origin/main` naquele momento: `0 0`;
+- branch do PR #2 removida local e remotamente: `docs/reconcile-operational-state` (removida);
 - branch do PR 0 removida local e remotamente: `chore/pr0-baseline`;
 - branch local antiga preservada e fora do escopo:
   - `feat/telemetry-ingestion-scoring-consolidation`.
+
+Verificado antes, após o merge do PR #1, em 2026-07-20: a `main` estava em
+`c3a0bd32e4ace892f26e46e506d0017fdc15b2ce` (`c3a0bd3`).
 
 A branch antiga não deve ser alterada, removida, resetada ou integrada sem autorização específica.
 
@@ -209,13 +213,13 @@ A ordem abaixo é a sequência aprovada. Não pular etapas nem fundir pacotes.
 
 | # | Pacote | Estado |
 |---|---|---|
-| 1 | **Reconciliação documental** — PR #2 | **EM PR** (não mergeado) |
+| 1 | **Reconciliação documental** — PR #2 | **CONCLUÍDA** (squash-merge `daa41e8`) |
 | 2 | **`AEGIS-TECH-001`** — Alinhamento do backend com .NET 10 e EF Core 10 | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** |
 | 3 | **Atualização da baseline** e dos documentos operacionais após o TECH-001 | **PLANEJADO** |
 | 4 | **`AEGIS-AUD-053`** — Persistência e proteção do Data Protection Key Ring | **PLANEJADO / AGUARDA AEGIS-TECH-001** |
 
 Esta sequência está registrada normativamente na seção 7.1 do
-`docs/plano-diretor-remediacao-v1.0.2.md`, que tem precedência sobre este handoff.
+`docs/plano-diretor-remediacao-v1.0.3.md`, que tem precedência sobre este handoff.
 
 ### 6.1 `AEGIS-TECH-001` — .NET 10 / EF Core 10
 
@@ -355,7 +359,7 @@ Ler nesta ordem:
 docs/handoff-operacional.md              (este arquivo — ponto de partida, resumo)
 AEGIS_STATE.md                           (snapshot arquitetural histórico)
 docs/pr0-baseline.md                     (linha de base técnica)
-docs/plano-diretor-remediacao-v1.0.2.md  (governança: épicos, gates, backlog)
+docs/plano-diretor-remediacao-v1.0.3.md  (governança: épicos, gates, backlog)
 ```
 
 Todos os quatro caminhos acima são **versionados no repositório** — nenhum depende de arquivo
@@ -450,12 +454,14 @@ afirmação permanente.
 
 ```text
 PR 0: concluído via GitHub PR #1
-main: c3a0bd3 (verificado em 2026-07-20, sincronizada 0/0 com origin/main)
+reconciliação documental: CONCLUÍDA via PR #2 — squash-merge daa41e8
+                          branch docs/reconcile-operational-state (removida)
+                          testes não executados — escopo exclusivamente documental
+main: daa41e8 (verificado em 2026-07-21, sincronizada 0/0 com origin/main)
 baseline: docs/pr0-baseline.md
-Plano Diretor: v1.0.2 — docs/plano-diretor-remediacao-v1.0.2.md
-reconciliação documental: EM PR (PR #2, docs/reconcile-operational-state) — NÃO mergeada
+Plano Diretor: v1.0.3 — docs/plano-diretor-remediacao-v1.0.3.md
 próximo pacote: AEGIS-TECH-001 (.NET 10 / EF Core 10) — PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO
-pacote seguinte: AEGIS-AUD-053 — PLANEJADO / AGUARDA AEGIS-TECH-001
+pacote seguinte: AEGIS-AUD-053 — PLANEJADO / AGUARDA AEGIS-TECH-001 e a atualização da baseline
 achados AEGIS-AUD-*: 63, todos abertos
 estado da árvore de trabalho: NÃO PRESUMIR — confirmar com `git status`
 ```
