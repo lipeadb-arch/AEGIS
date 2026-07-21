@@ -50,7 +50,7 @@ A ordem de confiança é:
 1. repositório local, arquivos atuais e estado Git verificado por comando;
 2. `docs/pr0-baseline.md`;
 3. Pull Requests e commits já integrados no GitHub;
-4. `AEGIS_Plano_Diretor_Remediacao_v1.0.1.md`;
+4. `docs/plano-diretor-remediacao-v1.0.1.md`;
 5. `AEGIS_STATE.md` (snapshot arquitetural histórico);
 6. este `docs/handoff-operacional.md`.
 
@@ -349,11 +349,14 @@ Não marcar achados como resolvidos apenas porque foram documentados.
 Ler nesta ordem:
 
 ```text
-docs/handoff-operacional.md        (este arquivo — ponto de partida, resumo)
-AEGIS_STATE.md                     (snapshot arquitetural histórico)
-docs/pr0-baseline.md               (linha de base técnica)
-AEGIS_Plano_Diretor_Remediacao_v1.0.1.md
+docs/handoff-operacional.md              (este arquivo — ponto de partida, resumo)
+AEGIS_STATE.md                           (snapshot arquitetural histórico)
+docs/pr0-baseline.md                     (linha de base técnica)
+docs/plano-diretor-remediacao-v1.0.1.md  (governança: épicos, gates, backlog)
 ```
+
+Todos os quatro caminhos acima são **versionados no repositório** — nenhum depende de arquivo
+externo, pasta de download ou máquina específica.
 
 Depois, ler os arquivos do código relacionados ao pacote atual — e confirmar o estado Git real
 antes de qualquer alteração.
