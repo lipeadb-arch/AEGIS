@@ -50,7 +50,7 @@ A ordem de confiança é:
 1. repositório local, arquivos atuais e estado Git verificado por comando;
 2. `docs/pr0-baseline.md`;
 3. Pull Requests e commits já integrados no GitHub;
-4. `docs/plano-diretor-remediacao-v1.0.2.md`;
+4. `docs/plano-diretor-remediacao-v1.0.3.md`;
 5. `AEGIS_STATE.md` (snapshot arquitetural histórico);
 6. este `docs/handoff-operacional.md`.
 
@@ -83,15 +83,23 @@ Se houver mudanças locais, conflito, merge, rebase, cherry-pick ou branch inesp
 
 ### 3.1 Referências conhecidas (constatação histórica)
 
-Verificado após o merge do PR #1, em 2026-07-20:
+Verificado após o merge do PR #2, em 2026-07-21:
 
 - repositório: `lipeadb-arch/AEGIS`;
 - branch de referência: `main`;
-- commit da `main` naquele momento: `c3a0bd32e4ace892f26e46e506d0017fdc15b2ce` (`c3a0bd3`);
+- commit da `main` naquele momento: `daa41e80d3149a5c0ca5e3b5b70ba92cd0ddc8c9` (`daa41e8`);
 - divergência com `origin/main` naquele momento: `0 0`;
+- branch do PR #2 removida local e remotamente: `docs/reconcile-operational-state` (removida);
 - branch do PR 0 removida local e remotamente: `chore/pr0-baseline`;
 - branch local antiga preservada e fora do escopo:
   - `feat/telemetry-ingestion-scoring-consolidation`.
+
+Verificado antes, após o merge do PR #1, em 2026-07-20: a `main` estava em
+`c3a0bd32e4ace892f26e46e506d0017fdc15b2ce` (`c3a0bd3`).
+
+Verificado após o merge do PR #4, em 2026-07-21: a `main` estava em
+`511c9558771f96b2e98c39c78ab60d8b64deefad` (`511c955`), sincronizada com `origin/main`. O
+AEGIS-TECH-001 foi concluído e sua branch `chore/tech-001-net10-efcore10` foi removida.
 
 A branch antiga não deve ser alterada, removida, resetada ou integrada sem autorização específica.
 
@@ -156,9 +164,10 @@ reproduzível.
 - warning conhecido: `1` aviso `CS8604`;
 - testes: `219/219` aprovados.
 
-> Pendência técnica conhecida: os projetos direcionam `net10.0`, mas a camada de dados permanece
-> na linha EF Core `8.0.x` / Npgsql `8.0.x`. Não é falha (build e testes passam), é desalinhamento.
-> É o objeto do `AEGIS-TECH-001` — ver seção 6.
+- EF Core runtime/Design/SQLite: `10.0.10`;
+- provider PostgreSQL/Npgsql: `10.0.3`;
+- ferramenta local `dotnet-ef`: `10.0.10`;
+- modelo sem mudanças pendentes; migrations históricas e snapshot preservados.
 
 ### Frontend
 
@@ -209,44 +218,33 @@ A ordem abaixo é a sequência aprovada. Não pular etapas nem fundir pacotes.
 
 | # | Pacote | Estado |
 |---|---|---|
-| 1 | **Reconciliação documental** — PR #2 | **EM PR** (não mergeado) |
-| 2 | **`AEGIS-TECH-001`** — Alinhamento do backend com .NET 10 e EF Core 10 | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** |
-| 3 | **Atualização da baseline** e dos documentos operacionais após o TECH-001 | **PLANEJADO** |
-| 4 | **`AEGIS-AUD-053`** — Persistência e proteção do Data Protection Key Ring | **PLANEJADO / AGUARDA AEGIS-TECH-001** |
+| 1 | **Reconciliação documental** — PR #2 | **CONCLUÍDA** (squash-merge `daa41e8`) |
+| 2 | **`AEGIS-TECH-001`** — Alinhamento do backend com .NET 10 e EF Core 10 | **CONCLUÍDO** (PR #4; squash-merge `511c955`) |
+| 3 | **Atualização do Plano Diretor** e dos documentos operacionais | **INCORPORADA NESTA REVISÃO** |
+| 4 | **`AEGIS-AUD-053`** — Persistência e proteção do Data Protection Key Ring | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** |
 
 Esta sequência está registrada normativamente na seção 7.1 do
-`docs/plano-diretor-remediacao-v1.0.2.md`, que tem precedência sobre este handoff.
+`docs/plano-diretor-remediacao-v1.0.3.md`, que tem precedência sobre este handoff.
 
 ### 6.1 `AEGIS-TECH-001` — .NET 10 / EF Core 10
 
-Branch planejada: `chore/tech-001-net10-efcore10`
+Status: **CONCLUÍDO** pelo PR #4, squash-merge `511c955`; branch
+`chore/tech-001-net10-efcore10` removida.
 
-Escopo: atualização coordenada de EF Core runtime/Design/SQLite, do provider Npgsql, dos pacotes
-Microsoft efetivamente vinculados à plataforma, criação de manifesto local de ferramentas
-(`dotnet-ef`), correção dos comentários de `.csproj` que ficarem incorretos e apenas as correções
-mínimas exigidas por breaking changes.
+Resultado: EF Core `10.0.10`, Npgsql `10.0.3` e `dotnet-ef` local `10.0.10`. Restore sem downgrade,
+build com o warning `CS8604` preexistente, testes `219/219`, modelo sem mudanças pendentes e
+migrations/snapshot inalterados. A aplicação das 17 migrations e o boot da API foram validados em
+PostgreSQL descartável, posteriormente removido.
 
-Fora de escopo: qualquer item do `AEGIS-AUD-053`, mudança funcional de schema, refatoração do
-`DbContext`, reescrita de migrations históricas.
-
-**Riscos que governam este pacote:**
-
-- a partir do EF Core 9, `MigrateAsync()` lança exceção se houver mudanças de modelo pendentes em
-  relação ao model snapshot — e o boot da API faz *fail-fast*. O snapshot está em
-  `ProductVersion 8.0.6`;
-- os testes usam `EnsureCreated()` sobre SQLite e **não exercitam migrations**: `219/219` verde
-  não prova que as migrations aplicam;
-- o `ProductVersion` das migrations históricas é metadado imutável — **não reescrever**.
-
-**Pré-requisito de merge:** Docker/PostgreSQL disponíveis para validar migrations em banco vazio e
-a atualização de banco criado pela versão anterior. Gate não executável **não** pode ser declarado
-aprovado.
+Riscos residuais: o banco local `aegis_dev` continua sem `__EFMigrationsHistory` por ter sido criado
+com `EnsureCreated()` (relacionado ao `AEGIS-AUD-052`), e o pacote SQLite de teste permanece sob
+advisory sem versão corrigida publicada. São condições preexistentes, não regressões do upgrade.
 
 ### 6.2 `AEGIS-AUD-053` — Data Protection Key Ring
 
 Severidade: **BLOQUEADOR para produção**. Branch planejada: `fix/aud-053-data-protection-keyring`.
 
-Só deve ser iniciado após a conclusão dos itens 1 a 3. Pontos a investigar quando chegar a vez:
+É o próximo pacote, mas sua implementação ainda exige autorização explícita. Pontos a investigar:
 
 - onde `AddDataProtection()` é configurado e onde é consumido;
 - quais dados dependem das chaves e qual purpose é utilizado;
@@ -355,7 +353,7 @@ Ler nesta ordem:
 docs/handoff-operacional.md              (este arquivo — ponto de partida, resumo)
 AEGIS_STATE.md                           (snapshot arquitetural histórico)
 docs/pr0-baseline.md                     (linha de base técnica)
-docs/plano-diretor-remediacao-v1.0.2.md  (governança: épicos, gates, backlog)
+docs/plano-diretor-remediacao-v1.0.3.md  (governança: épicos, gates, backlog)
 ```
 
 Todos os quatro caminhos acima são **versionados no repositório** — nenhum depende de arquivo
@@ -450,12 +448,15 @@ afirmação permanente.
 
 ```text
 PR 0: concluído via GitHub PR #1
-main: c3a0bd3 (verificado em 2026-07-20, sincronizada 0/0 com origin/main)
+reconciliação documental: CONCLUÍDA via PR #2 — squash-merge daa41e8
+                          branch docs/reconcile-operational-state (removida)
+                          testes não executados — escopo exclusivamente documental
+AEGIS-TECH-001: CONCLUÍDO via PR #4 — squash-merge 511c955
+                    EF Core 10.0.10 / Npgsql 10.0.3; 219/219 testes; sem mudança de schema
+main: 511c955 (verificado em 2026-07-21, sincronizada 0/0 com origin/main)
 baseline: docs/pr0-baseline.md
-Plano Diretor: v1.0.2 — docs/plano-diretor-remediacao-v1.0.2.md
-reconciliação documental: EM PR (PR #2, docs/reconcile-operational-state) — NÃO mergeada
-próximo pacote: AEGIS-TECH-001 (.NET 10 / EF Core 10) — PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO
-pacote seguinte: AEGIS-AUD-053 — PLANEJADO / AGUARDA AEGIS-TECH-001
+Plano Diretor: v1.0.3 — docs/plano-diretor-remediacao-v1.0.3.md
+próximo pacote: AEGIS-AUD-053 — PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO
 achados AEGIS-AUD-*: 63, todos abertos
 estado da árvore de trabalho: NÃO PRESUMIR — confirmar com `git status`
 ```
