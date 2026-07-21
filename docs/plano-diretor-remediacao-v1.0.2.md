@@ -1,12 +1,12 @@
 # AEGIS — Plano Diretor de Remediação v1.0.2
 
-**Classificação:** Documento de governança técnica e segurança  
-**Data de atualização:** 2026-07-21  
-**Situação do programa:** Em execução  
-**Branch de referência:** `main`  
-**Commit de referência após o PR 0:** `c3a0bd3`  
-**Em PR:** Reconciliação documental — PR #2, branch `docs/reconcile-operational-state`  
-**Próximo pacote:** `AEGIS-TECH-001 — Alinhamento do backend com .NET 10 e EF Core 10` — **PRÓXIMO / implementação não autorizada**  
+**Classificação:** Documento de governança técnica e segurança<br>
+**Data de atualização:** 2026-07-21<br>
+**Situação do programa:** Em execução<br>
+**Branch de referência:** `main`<br>
+**Commit de referência após o PR 0:** `c3a0bd3`<br>
+**Em PR:** Reconciliação documental — PR #2, branch `docs/reconcile-operational-state`<br>
+**Próximo pacote:** `AEGIS-TECH-001 — Alinhamento do backend com .NET 10 e EF Core 10` — **PRÓXIMO / implementação não autorizada**<br>
 **Pacote seguinte:** `AEGIS-AUD-053 — Persistir e proteger o Data Protection Key Ring` — **PLANEJADO / aguarda o AEGIS-TECH-001**
 
 > Este documento é a fonte de governança do programa de remediação. O código local e `docs/pr0-baseline.md` são a fonte de verdade para o estado técnico executável.
@@ -194,9 +194,9 @@ Branch sugerida:
 
 ## EP-00 — Linha de base e contenção imediata
 
-**Estado:** EM EXECUÇÃO  
-**Objetivo:** Preservar uma referência reproduzível e remover riscos imediatos antes de mudanças estruturais.  
-**Dependências:** Nenhuma além da baseline técnica concluída.  
+**Estado:** EM EXECUÇÃO<br>
+**Objetivo:** Preservar uma referência reproduzível e remover riscos imediatos antes de mudanças estruturais.<br>
+**Dependências:** Nenhuma além da baseline técnica concluída.<br>
 **Ordem interna:** PR 0 concluído. Reconciliação documental em PR (#2). Próximo pacote obrigatório: **AEGIS-TECH-001** (pacote técnico de precedência, fora do backlog de achados), seguido da atualização da baseline e só então **AEGIS-AUD-053**.
 
 ### Pacotes do épico
@@ -236,9 +236,9 @@ Cada alteração deve ser aditiva ou configurável. Chaves e ciphertext antigos 
 
 ## EP-01 — Identidade, autorização e isolamento multi-tenant
 
-**Estado:** PLANEJADO  
-**Objetivo:** Garantir que uma identidade corporativa possa operar múltiplos tenants sem enfraquecer o isolamento de dados e permissões.  
-**Dependências:** EP-00 aprovado. Baseline e gestão de segredos estáveis.  
+**Estado:** PLANEJADO<br>
+**Objetivo:** Garantir que uma identidade corporativa possa operar múltiplos tenants sem enfraquecer o isolamento de dados e permissões.<br>
+**Dependências:** EP-00 aprovado. Baseline e gestão de segredos estáveis.<br>
 **Ordem interna:** Executar após EP-00. Começar por invariantes de persistência e refresh tokens antes de federação.
 
 ### Pacotes do épico
@@ -284,9 +284,9 @@ Migrations compatíveis, dual-read quando necessário e preservação de claims/
 
 ## EP-02 — Motor determinístico de avaliação e evidências
 
-**Estado:** PLANEJADO  
-**Objetivo:** Tornar o resultado oficial reproduzível, tipado e independente do LLM e de fornecedores.  
-**Dependências:** EP-00 aprovado. Requer decisões sobre fórmula e estados de avaliação.  
+**Estado:** PLANEJADO<br>
+**Objetivo:** Tornar o resultado oficial reproduzível, tipado e independente do LLM e de fornecedores.<br>
+**Dependências:** EP-00 aprovado. Requer decisões sobre fórmula e estados de avaliação.<br>
 **Ordem interna:** Começar por autoridade determinística, persistência de evidência e mapping único; depois consolidar fórmulas e semântica.
 
 ### Pacotes do épico
@@ -331,9 +331,9 @@ Manter a esteira anterior em modo sombra durante a migração, sem permitir que 
 
 ## EP-03 — Projeção executiva, snapshots e relatórios
 
-**Estado:** PLANEJADO  
-**Objetivo:** Criar uma única postura publicável e auditável para dashboard, histórico e relatório.  
-**Dependências:** EP-02 aprovado.  
+**Estado:** PLANEJADO<br>
+**Objetivo:** Criar uma única postura publicável e auditável para dashboard, histórico e relatório.<br>
+**Dependências:** EP-02 aprovado.<br>
 **Ordem interna:** Unificar projeção antes de construir relatórios; snapshot completo precede publicação e histórico.
 
 ### Pacotes do épico
@@ -377,9 +377,9 @@ Preservar snapshots publicados e introduzir revisões, nunca sobrescrita silenci
 
 ## EP-04 — Neutralidade e extensibilidade de conectores
 
-**Estado:** PLANEJADO  
-**Objetivo:** Permitir novos fornecedores sem alterar o núcleo NIST ou criar pipelines específicos.  
-**Dependências:** EP-02 aprovado; parte de EP-03 pode evoluir em paralelo.  
+**Estado:** PLANEJADO<br>
+**Objetivo:** Permitir novos fornecedores sem alterar o núcleo NIST ou criar pipelines específicos.<br>
+**Dependências:** EP-02 aprovado; parte de EP-03 pode evoluir em paralelo.<br>
 **Ordem interna:** Executar depois que a esteira determinística e a persistência de evidências estiverem definidas.
 
 ### Pacotes do épico
@@ -416,9 +416,9 @@ Adapters são removíveis sem alterar contratos do núcleo; feature flags para n
 
 ## EP-05 — Experiência de produto e frontend NIST
 
-**Estado:** PLANEJADO  
-**Objetivo:** Representar de forma simétrica as seis Funções NIST e impedir mistura ou retenção de dados entre tenants.  
-**Dependências:** EP-01 e EP-03 aprovados.  
+**Estado:** PLANEJADO<br>
+**Objetivo:** Representar de forma simétrica as seis Funções NIST e impedir mistura ou retenção de dados entre tenants.<br>
+**Dependências:** EP-01 e EP-03 aprovados.<br>
 **Ordem interna:** Executar após contratos de projeção e scoring estabilizados.
 
 ### Pacotes do épico
@@ -455,9 +455,9 @@ Rotas antigas podem coexistir temporariamente, sem duplicar regra de negócio no
 
 ## EP-06 — Observabilidade, resiliência e engenharia operacional
 
-**Estado:** PLANEJADO  
-**Objetivo:** Tornar o serviço operável, diagnosticável e escalável como plataforma MSSP.  
-**Dependências:** EP-00 aprovado; contratos principais estabilizados.  
+**Estado:** PLANEJADO<br>
+**Objetivo:** Tornar o serviço operável, diagnosticável e escalável como plataforma MSSP.<br>
+**Dependências:** EP-00 aprovado; contratos principais estabilizados.<br>
 **Ordem interna:** Pode iniciar parcialmente após EP-00, mas os gates finais dependem dos fluxos definitivos.
 
 ### Pacotes do épico
@@ -497,9 +497,9 @@ Instrumentação deve ser desabilitável; workers devem ter deploy e rollback in
 
 ## EP-07 — Hardening, privacidade, supply chain e continuidade
 
-**Estado:** PLANEJADO  
-**Objetivo:** Atender ao gate de produção MSSP com controles de segurança operacional, privacidade e recuperação.  
-**Dependências:** G1 a G6 aprovados.  
+**Estado:** PLANEJADO<br>
+**Objetivo:** Atender ao gate de produção MSSP com controles de segurança operacional, privacidade e recuperação.<br>
+**Dependências:** G1 a G6 aprovados.<br>
 **Ordem interna:** Concluir após os épicos técnicos; partes de supply chain e segredo podem começar antes.
 
 ### Pacotes do épico
@@ -677,8 +677,8 @@ Interromper implementação ou implantação quando houver:
 
 ## 21. Decisão de produção
 
-**Arquitetura:** aprovada com ressalvas.  
-**Continuidade do desenvolvimento:** recomendada.  
+**Arquitetura:** aprovada com ressalvas.<br>
+**Continuidade do desenvolvimento:** recomendada.<br>
 **Produção MSSP:** não recomendada enquanto G7 não estiver aprovado.
 
 Não é recomendada uma reescrita ampla. A remediação deve permanecer incremental, orientada por evidência e gates.
