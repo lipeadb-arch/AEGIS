@@ -16,10 +16,15 @@
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.10" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.19.1" />
-    <!-- Data Protection: só as ABSTRAÇÕES (IDataProtectionProvider/IDataProtector) para cifrar os
-         segredos de conector. A implementação vem do framework via AddDataProtection() no composition
-         root (Api). Pacote enxuto preserva o limite da Clean Architecture. -->
+    <!-- Data Protection: as ABSTRAÇÕES (IDataProtectionProvider/IDataProtector) para cifrar os
+         segredos de conector. -->
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.Abstractions" Version="10.0.10" />
+    <!-- AEGIS-AUD-053: persistência do key ring no PostgreSQL que a plataforma já usa (nenhuma infra
+         nova, neutro de fornecedor). Traz junto a IMPLEMENTAÇÃO Microsoft.AspNetCore.DataProtection,
+         necessária aqui porque o DataProtectionKeyDbContext e a resolução das opções (envelope X.509,
+         discriminator) vivem nesta camada. Alinhado em 10.0.10 com o EF Core do projeto: a linha 8.0.x
+         arrastaria System.Security.Cryptography.Xml 8.0.1, que tem advisories de alta severidade. -->
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.10" />
     <!-- Extração de texto de PDF (Document Hub / Govern) via PdfPig — 100% gerenciado, sem binário
          nativo. NB: o ID do pacote é "PdfPig"; "UglyToad.PdfPig" é só o namespace do código. -->
     <PackageReference Include="PdfPig" Version="0.1.15" />
