@@ -1,11 +1,13 @@
-# AEGIS — Plano Diretor de Remediação v1.0.1
+# AEGIS — Plano Diretor de Remediação v1.0.2
 
 **Classificação:** Documento de governança técnica e segurança  
-**Data de atualização:** 2026-07-20  
+**Data de atualização:** 2026-07-21  
 **Situação do programa:** Em execução  
 **Branch de referência:** `main`  
 **Commit de referência após o PR 0:** `c3a0bd3`  
-**Próximo pacote:** `AEGIS-AUD-053 — Persistir e proteger o Data Protection Key Ring`
+**Em PR:** Reconciliação documental — PR #2, branch `docs/reconcile-operational-state`  
+**Próximo pacote:** `AEGIS-TECH-001 — Alinhamento do backend com .NET 10 e EF Core 10` — **PRÓXIMO / implementação não autorizada**  
+**Pacote seguinte:** `AEGIS-AUD-053 — Persistir e proteger o Data Protection Key Ring` — **PLANEJADO / aguarda o AEGIS-TECH-001**
 
 > Este documento é a fonte de governança do programa de remediação. O código local e `docs/pr0-baseline.md` são a fonte de verdade para o estado técnico executável.
 
@@ -17,6 +19,7 @@
 |---|---|---|
 | 1.0 | 2026-07-20 | Consolidação inicial da auditoria, épicos, gates e backlog mestre. |
 | 1.0.1 | 2026-07-20 | Registra a conclusão do PR 0, PR #1, commit de merge `c3a0bd3`, baseline em `docs/pr0-baseline.md` e define `AEGIS-AUD-053` como próximo pacote. |
+| 1.0.2 | 2026-07-21 | Registra a reconciliação documental como PR #2, formaliza o AEGIS-TECH-001 como pacote técnico anterior ao AEGIS-AUD-053 e alinha a sequência de remediação. |
 
 ## 2. Estado executivo atual
 
@@ -29,7 +32,9 @@
 | Frontend tests/lint | **NÃO IMPLEMENTADOS** | Pendência `AEGIS-AUD-033` |
 | CI/CD | **NÃO IMPLEMENTADO** | Pendência `AEGIS-AUD-056` |
 | Produção MSSP | **BLOQUEADA** | Gate G7 não aprovado |
-| Próxima correção | **PLANEJADA** | `AEGIS-AUD-053` |
+| Reconciliação documental | **EM PR** | PR #2; branch `docs/reconcile-operational-state` |
+| Próximo pacote | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** | `AEGIS-TECH-001` |
+| Pacote seguinte | **PLANEJADO / AGUARDA AEGIS-TECH-001** | `AEGIS-AUD-053` |
 
 ### 2.1 O que o PR 0 concluiu
 
@@ -40,7 +45,9 @@
 
 ### 2.2 O que permanece inalterado
 
-- Todos os 63 achados continuam abertos, exceto pela mudança de estado operacional de `AEGIS-AUD-053` para **PRÓXIMO**.
+- **Os 63 achados `AEGIS-AUD-*` continuam todos abertos.** Nenhum foi encerrado nesta revisão.
+- O `AEGIS-AUD-053` permanece aberto e passa de **PRÓXIMO** para **PLANEJADO / aguarda o AEGIS-TECH-001** — é mudança de ordem de execução, não de estado de remediação.
+- **O `AEGIS-TECH-001` é um pacote técnico de precedência, não um novo achado da auditoria.** Ele não entra no backlog mestre e **não altera a contagem de 63 achados**.
 - A liberação para produção continua bloqueada.
 - O Plano Diretor não substitui a inspeção do código local antes de cada mudança.
 
@@ -104,11 +111,75 @@ Estados auxiliares: `BLOQUEADA`, `ADIADA`, `DESCARTADA`.
 
 ## 7. Sequência de remediação
 
-### Próximo pacote imediato
+### 7.1 Sequência oficial aprovada
 
-**`AEGIS-AUD-053 — Persistir e proteger o Data Protection Key Ring`**
+| # | Pacote | Estado |
+|---:|---|---|
+| 1 | Reconciliação documental — PR #2 | **EM PR** |
+| 2 | `AEGIS-TECH-001 — Alinhamento do backend com .NET 10 e EF Core 10` | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** |
+| 3 | Atualização da baseline e dos documentos operacionais | **PLANEJADO** |
+| 4 | `AEGIS-AUD-053 — Persistência e proteção do Data Protection Key Ring` | **PLANEJADO / AGUARDA AEGIS-TECH-001** |
 
-Motivo da prioridade:
+> **A aprovação desta ordem não autoriza a implementação de nenhum pacote.** Ela define apenas a
+> sequência de execução. **Cada pacote exige aprovação explícita própria** para sair de `PLANEJADO`
+> e entrar em implementação. Em particular, **a implementação do `AEGIS-TECH-001` não está
+> autorizada** por este documento.
+
+### 7.2 Próximo pacote imediato
+
+```text
+Identificador: AEGIS-TECH-001
+Título: Alinhamento do backend com .NET 10 e EF Core 10
+Branch planejada: chore/tech-001-net10-efcore10
+Estado: PRÓXIMO / implementação não autorizada
+```
+
+Motivo da precedência sobre o `AEGIS-AUD-053`: os projetos já direcionam `net10.0`, mas a camada de
+persistência permanece na linha EF Core `8.0.x` / Npgsql `8.0.x`. O `AEGIS-AUD-053` introduz
+persistência de key ring — e, portanto, uma migration nova. Executá-lo sobre uma base desalinhada
+tornaria impossível distinguir mudança de schema deliberada de efeito colateral de um upgrade
+posterior de ORM.
+
+**Objetivo:**
+
+- alinhar EF Core, provider PostgreSQL/Npgsql e pacotes Microsoft vinculados à plataforma;
+- preservar o modelo de dados;
+- não gerar migration funcional;
+- validar migrations, snapshot, isolamento de tenant e grafo de dependências;
+- preparar uma base coerente para o `AEGIS-AUD-053`.
+
+**Exclusões explícitas do escopo:**
+
+- persistência do Data Protection Key Ring;
+- tabela `DataProtectionKeys`;
+- certificados;
+- alteração funcional de schema;
+- refatoração ampla do `DbContext`;
+- reescrita de migrations históricas.
+
+**Gates obrigatórios:**
+
+- restore sem conflito ou downgrade;
+- build sem warning novo;
+- testes da baseline;
+- ausência de mudança pendente no modelo;
+- migrations históricas e snapshot sem alteração inesperada;
+- validação em PostgreSQL descartável;
+- banco vazio e banco criado pela versão anterior;
+- isolamento de tenant;
+- auditoria de vulnerabilidades;
+- rollback por reversão do pacote, sem alteração de banco.
+
+**Natureza do pacote:** o `AEGIS-TECH-001` é um **pacote técnico de precedência**, não um achado da
+auditoria. Não recebe identificador `AEGIS-AUD-*`, não entra no backlog mestre e **não altera a
+contagem de 63 achados**.
+
+### 7.3 Pacote seguinte
+
+**`AEGIS-AUD-053 — Persistir e proteger o Data Protection Key Ring`** — **PLANEJADO / aguarda a
+conclusão do `AEGIS-TECH-001`.**
+
+Motivo da prioridade dentro do EP-00:
 
 - é bloqueador direto de produção;
 - possui escopo relativamente isolado;
@@ -126,7 +197,7 @@ Branch sugerida:
 **Estado:** EM EXECUÇÃO  
 **Objetivo:** Preservar uma referência reproduzível e remover riscos imediatos antes de mudanças estruturais.  
 **Dependências:** Nenhuma além da baseline técnica concluída.  
-**Ordem interna:** PR 0 concluído. Próximo pacote obrigatório: AEGIS-AUD-053.
+**Ordem interna:** PR 0 concluído. Reconciliação documental em PR (#2). Próximo pacote obrigatório: **AEGIS-TECH-001** (pacote técnico de precedência, fora do backlog de achados), seguido da atualização da baseline e só então **AEGIS-AUD-053**.
 
 ### Pacotes do épico
 
@@ -134,7 +205,7 @@ Branch sugerida:
 |---:|---|---|---|---|---|
 | 1 | AEGIS-AUD-046 | ALTO | Eliminar dados reais ou identificáveis dos stubs e demos | Privacy / Demo Data / Repository Hygiene | ABERTA |
 | 2 | AEGIS-AUD-057 | MÉDIO | Remover credenciais padrão do arquivo principal de configuração | Configuration Security | ABERTA |
-| 3 | AEGIS-AUD-053 | BLOQUEADOR | Persistir e proteger o Data Protection Key Ring | Cryptography / Connector Secrets | PRÓXIMO |
+| 3 | AEGIS-AUD-053 | BLOQUEADOR | Persistir e proteger o Data Protection Key Ring | Cryptography / Connector Secrets | PLANEJADO / AGUARDA AEGIS-TECH-001 |
 | 4 | AEGIS-AUD-052 | ALTO | Retirar migrations e seed da inicialização concorrente da API | Deployment / Database | ABERTA |
 | 5 | AEGIS-AUD-050 | BLOQUEADOR | Não usar filas em memória como mecanismo operacional durável | Workers / Reliability / Scale-out | ABERTA |
 | 6 | AEGIS-AUD-026 | ALTO | Não substituir falha da API por dados de demonstração em ambiente operacional | Frontend / Data Integrity | ABERTA |
@@ -538,7 +609,7 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | AEGIS-AUD-050 | BLOQUEADOR | Workers / Reliability / Scale-out | Não usar filas em memória como mecanismo operacional durável | EP-00 | ABERTA | — | — |
 | AEGIS-AUD-051 | ALTO | Deployment Architecture | Separar workers da API ou coordená-los para múltiplas réplicas | EP-06 | ABERTA | — | — |
 | AEGIS-AUD-052 | ALTO | Deployment / Database | Retirar migrations e seed da inicialização concorrente da API | EP-00 | ABERTA | — | — |
-| AEGIS-AUD-053 | BLOQUEADOR | Cryptography / Connector Secrets | Persistir e proteger o Data Protection Key Ring | EP-00 | PRÓXIMO | — | — |
+| AEGIS-AUD-053 | BLOQUEADOR | Cryptography / Connector Secrets | Persistir e proteger o Data Protection Key Ring | EP-00 | PLANEJADO / AGUARDA AEGIS-TECH-001 | — | — |
 | AEGIS-AUD-054 | MÉDIO | Error Handling / Sensitive Data | Não persistir mensagem bruta de exceção como erro de documento | EP-06 | ABERTA | — | — |
 | AEGIS-AUD-055 | ALTO | MSSP Operations | Formalizar SLOs, alertas e métricas operacionais por tenant | EP-06 | ABERTA | — | — |
 | AEGIS-AUD-056 | ALTO | CI/CD / Supply Chain | Implementar CI/CD e controles de supply chain | EP-06 | ABERTA | — | — |
@@ -555,7 +626,9 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | Entrega | Estado | Branch | PR | Merge/Commit | Testes | Observações |
 |---|---|---|---|---|---|---|
 | PR 0 — Baseline técnica | CONCLUÍDO | `chore/pr0-baseline` (removida) | #1 | `c3a0bd3` | Backend 219/219; frontend build aprovado | `docs/pr0-baseline.md` |
-| AEGIS-AUD-053 — Data Protection Key Ring | PRÓXIMO | `fix/aud-053-data-protection-keyring` | — | — | A definir após investigação | Não iniciar implementação sem revisão do plano |
+| PR #2 — Reconciliação documental | **EM PR** | `docs/reconcile-operational-state` | #2 | — (não mergeado) | Não executados — escopo documental | Commits `7ea19dc`, `27ee185` e o commit desta revisão do Plano Diretor |
+| AEGIS-TECH-001 — .NET 10 / EF Core 10 | **PRÓXIMO / AGUARDA APROVAÇÃO** | `chore/tech-001-net10-efcore10` (não criada) | — | — | A definir após aprovação | Pacote técnico de precedência, fora do backlog de achados; implementação não autorizada |
+| AEGIS-AUD-053 — Data Protection Key Ring | **PLANEJADO / AGUARDA AEGIS-TECH-001** | `fix/aud-053-data-protection-keyring` | — | — | A definir após investigação | Não iniciar implementação sem revisão do plano nem antes da conclusão do TECH-001 |
 
 ### Campos obrigatórios após cada merge
 
@@ -614,14 +687,16 @@ Não é recomendada uma reescrita ampla. A remediação deve permanecer incremen
 
 Ao iniciar uma nova sessão do Claude:
 
-1. Anexar esta versão `v1.0.1`.
+1. Usar esta versão `v1.0.2`, versionada em `docs/plano-diretor-remediacao-v1.0.2.md` — não anexar
+   cópias externas nem versões anteriores.
 2. Informar que o código local é a fonte de verdade.
-3. Pedir leitura de `docs/pr0-baseline.md`.
-4. Selecionar apenas um pacote ou conjunto coeso.
+3. Pedir leitura de `docs/pr0-baseline.md` e de `docs/handoff-operacional.md`.
+4. Selecionar apenas um pacote ou conjunto coeso, respeitando a sequência oficial da seção 7.1.
 5. Iniciar com investigação sem alterações.
-6. Revisar o plano antes de autorizar implementação.
+6. Revisar o plano antes de autorizar implementação. **A ordem aprovada na seção 7.1 não é
+   autorização de implementação:** cada pacote exige aprovação explícita própria.
 7. Não permitir commit/push sem autorização explícita.
 
 ---
 
-**Fim do Plano Diretor de Remediação v1.0.1**
+**Fim do Plano Diretor de Remediação v1.0.2**

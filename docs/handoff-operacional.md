@@ -50,7 +50,7 @@ A ordem de confiança é:
 1. repositório local, arquivos atuais e estado Git verificado por comando;
 2. `docs/pr0-baseline.md`;
 3. Pull Requests e commits já integrados no GitHub;
-4. `docs/plano-diretor-remediacao-v1.0.1.md`;
+4. `docs/plano-diretor-remediacao-v1.0.2.md`;
 5. `AEGIS_STATE.md` (snapshot arquitetural histórico);
 6. este `docs/handoff-operacional.md`.
 
@@ -209,10 +209,13 @@ A ordem abaixo é a sequência aprovada. Não pular etapas nem fundir pacotes.
 
 | # | Pacote | Estado |
 |---|---|---|
-| 1 | **Reconciliação documental** — este handoff, cabeçalho do `AEGIS_STATE.md`, `.gitignore`, nota de rastreabilidade na baseline | EM EXECUÇÃO |
-| 2 | **`AEGIS-TECH-001`** — Alinhamento do backend com .NET 10 e EF Core 10 | INVESTIGADO / PLANEJADO |
-| 3 | **Atualização da baseline** e dos documentos operacionais após o TECH-001 | PLANEJADO |
-| 4 | **`AEGIS-AUD-053`** — Persistência e proteção do Data Protection Key Ring | PLANEJADO |
+| 1 | **Reconciliação documental** — PR #2 | **EM PR** (não mergeado) |
+| 2 | **`AEGIS-TECH-001`** — Alinhamento do backend com .NET 10 e EF Core 10 | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** |
+| 3 | **Atualização da baseline** e dos documentos operacionais após o TECH-001 | **PLANEJADO** |
+| 4 | **`AEGIS-AUD-053`** — Persistência e proteção do Data Protection Key Ring | **PLANEJADO / AGUARDA AEGIS-TECH-001** |
+
+Esta sequência está registrada normativamente na seção 7.1 do
+`docs/plano-diretor-remediacao-v1.0.2.md`, que tem precedência sobre este handoff.
 
 ### 6.1 `AEGIS-TECH-001` — .NET 10 / EF Core 10
 
@@ -352,7 +355,7 @@ Ler nesta ordem:
 docs/handoff-operacional.md              (este arquivo — ponto de partida, resumo)
 AEGIS_STATE.md                           (snapshot arquitetural histórico)
 docs/pr0-baseline.md                     (linha de base técnica)
-docs/plano-diretor-remediacao-v1.0.1.md  (governança: épicos, gates, backlog)
+docs/plano-diretor-remediacao-v1.0.2.md  (governança: épicos, gates, backlog)
 ```
 
 Todos os quatro caminhos acima são **versionados no repositório** — nenhum depende de arquivo
@@ -449,9 +452,11 @@ afirmação permanente.
 PR 0: concluído via GitHub PR #1
 main: c3a0bd3 (verificado em 2026-07-20, sincronizada 0/0 com origin/main)
 baseline: docs/pr0-baseline.md
-Plano Diretor: v1.0.1
-pacote em execução: reconciliação documental
-próximo pacote: AEGIS-TECH-001 (.NET 10 / EF Core 10) — investigado e planejado; implementação aguarda aprovação explícita
+Plano Diretor: v1.0.2 — docs/plano-diretor-remediacao-v1.0.2.md
+reconciliação documental: EM PR (PR #2, docs/reconcile-operational-state) — NÃO mergeada
+próximo pacote: AEGIS-TECH-001 (.NET 10 / EF Core 10) — PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO
+pacote seguinte: AEGIS-AUD-053 — PLANEJADO / AGUARDA AEGIS-TECH-001
+achados AEGIS-AUD-*: 63, todos abertos
 estado da árvore de trabalho: NÃO PRESUMIR — confirmar com `git status`
 ```
 
