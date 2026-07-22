@@ -139,50 +139,39 @@ builder.Services.AddRateLimiter(o =>
 
 var app = builder.Build();
 
-// Apply EF migrations and seed the NIST CSF 2.0 catalog on startup.
-// The schema is owned exclusively by migrations now (no more EnsureCreated).
+// [AEGIS-AUD-052] Prontidão do banco: CONSTATAR, nunca mutar.
+//
+// A API não aplica mais migrations nem semeia o catálogo. Toda réplica fazia isso no boot, e o seed
+// rodava FORA do lock que o EF Core adquire em MigrateAsync() — duas réplicas subindo juntas podiam
+// inserir dois catálogos completos (nenhum índice o impedia até esta entrega), e o boot passava a
+// falhar para sempre. Agora a preparação do banco é etapa própria de implantação, executada pelo
+// AegisScore.DbMigrator sob advisory lock.
+//
+// Este bloco roda ANTES de app.Run(): builder.Build() apenas CONSTRÓI o host — os hosted services só
+// são iniciados por Run(). Logo, se a verificação reprovar, nenhum worker chega a processar trabalho.
+// Falha em TODOS os ambientes, inclusive Development: subir sobre um catálogo ausente ou duplicado
+// significa reportar postura de segurança falsa, que é pior do que não subir.
 using (var scope = app.Services.CreateScope())
 {
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     try
     {
         var db = scope.ServiceProvider.GetRequiredService<AegisScoreDbContext>();
-        await db.Database.MigrateAsync();
+        // Ausente apenas com key ring efêmero (configuração de teste).
+        var keyRingDb = scope.ServiceProvider.GetService<DataProtectionKeyDbContext>();
 
-        var catalogPath = builder.Configuration["Seed:CatalogPath"]
-            ?? Path.Combine(app.Environment.ContentRootPath, "Data", "nist_csf_2_0_catalog.json");
-        await FrameworkSeeder.SeedAsync(db, catalogPath);
+        await SchemaReadinessGuard.EnsureReadyAsync(db, keyRingDb);
 
-        // Regras técnicas de avaliação (motor RAG) — passo próprio e idempotente, ao lado do catálogo.
-        var rulesPath = builder.Configuration["Seed:RulesPath"]
-            ?? Path.Combine(app.Environment.ContentRootPath, "Data", "aegis_assessment_rules.json");
-        await FrameworkSeeder.SeedAssessmentRulesAsync(db, rulesPath);
-
-        logger.LogInformation("Startup: migrações aplicadas; catálogo NIST CSF 2.0 e regras de avaliação verificados/semeados.");
+        logger.LogInformation(
+            "Startup: banco verificado — migrations aplicadas nos dois contextos, catálogo NIST CSF 2.0 " +
+            "e regras de avaliação presentes e íntegros.");
     }
     catch (Exception ex)
     {
-        // Fail-fast (decisão GRC): um painel sem o catálogo de regras produz falso positivo de
-        // conformidade — falsa sensação de segurança. Registra o erro completo (Critical) e ABORTA o
-        // boot; melhor um serviço que não sobe (falha visível) do que um que mente sobre a postura.
-        logger.LogCritical(ex, "Startup: falha ao aplicar migrações ou semear o catálogo NIST CSF 2.0. Abortando o boot.");
+        logger.LogCritical(ex,
+            "Startup: banco não está preparado para esta versão da API. Abortando o boot. " +
+            "Execute o AegisScore.DbMigrator como etapa de implantação.");
         throw;
-    }
-}
-
-// [AEGIS-AUD-053] Schema do key ring: CONSTATAR, nunca criar. A API não emite DDL para esta tabela —
-// enquanto o AEGIS-AUD-052 não retirar as migrations da inicialização concorrente, um segundo
-// MigrateAsync aqui apenas dobraria a corrida entre réplicas. A migration do contexto dedicado é
-// aplicada por etapa própria de implantação; em Production, subir sem ela é falha de boot.
-using (var scope = app.Services.CreateScope())
-{
-    // Ausente quando a persistência está desligada (testes com key ring efêmero).
-    var keyRingDb = scope.ServiceProvider.GetService<DataProtectionKeyDbContext>();
-    if (keyRingDb is not null)
-    {
-        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        await DataProtectionSchemaGuard.EnsureAppliedAsync(
-            keyRingDb, app.Environment.IsProduction(), logger);
     }
 }
 

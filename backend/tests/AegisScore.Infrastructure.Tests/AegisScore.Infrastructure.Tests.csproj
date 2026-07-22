@@ -19,6 +19,9 @@
     <!-- Configuração/DI concretos para exercitar o composition root real nos testes de fail-open. -->
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+    <!-- AEGIS-AUD-052: host genérico real para provar que builder.Build() NÃO inicia hosted services —
+         premissa que sustenta o posicionamento do guard de prontidão no Program.cs da API. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
     <!-- SQLite in-memory: banco relacional real e efêmero para exercitar o FrameworkSeeder ponta a
          ponta (EnsureCreated + SaveChanges) sem PostgreSQL. Alinhado ao EF Core 10. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
@@ -39,6 +42,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AegisScore.Infrastructure\AegisScore.Infrastructure.csproj" />
+    <!-- AEGIS-AUD-052: o migrator é o único autorizado a preparar o banco, então o parsing de
+         argumentos e o contrato de códigos de saída precisam de cobertura própria. -->
+    <ProjectReference Include="..\..\src\AegisScore.DbMigrator\AegisScore.DbMigrator.csproj" />
   </ItemGroup>
 
   <ItemGroup>
