@@ -133,6 +133,16 @@ public class AegisScoreDbContext : DbContext
 
         // Useful uniqueness / lookups.
         b.Entity<Tenant>().HasIndex(x => x.Slug).IsUnique();
+
+        // [AEGIS-AUD-052] Idempotência do catálogo vira INVARIANTE DE BANCO (mesmo idioma do dedupe de
+        // GovernanceDocument.Sha256 e da chave natural de ConnectorConfig). O FrameworkSeeder decidia
+        // "já semeado?" por um AnyAsync(Name) — read-then-write. Duas execuções concorrentes passavam
+        // juntas pelo guard e inseriam DOIS catálogos completos: os índices únicos de Functions,
+        // Categories e Subcategories são compostos com o Id do PAI, então uma segunda FrameworkVersion
+        // não violava nada. O estrago não era só duplicar linhas — com códigos de subcategoria
+        // repetidos, o ToDictionaryAsync(s => s.Code) do seed de regras passa a lançar, e o boot falha
+        // para sempre, em toda réplica. Aqui o banco recusa fisicamente o segundo catálogo.
+        b.Entity<FrameworkVersion>().HasIndex(x => x.Name).IsUnique();
         // Catálogo NIST — tamanho fixo dos códigos (cabe nos dados do seeder: "GV", "GV.OC",
         // "GV.OC-01") + unicidade no escopo do pai. O catálogo é versionado por FrameworkVersion,
         // então um índice único global só em Code colidiria entre versões do framework.

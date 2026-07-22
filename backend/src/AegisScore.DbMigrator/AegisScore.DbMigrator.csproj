@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AegisScore.DbMigrator</RootNamespace>
+    <!-- Mesmo UserSecretsId da API DE PROPÓSITO: em Development o migrator precisa da MESMA
+         ConnectionStrings:AegisScore já configurada por 'dotnet user-secrets', sem duplicar segredo
+         em outro cofre nem aceitá-lo por linha de comando. -->
+    <UserSecretsId>d8f3a1c6-4e2b-47a9-9b7d-2c5e8f0a1b34</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Configuração por arquivo/env/user-secrets. Nunca por argumento: connection string em argv
+         vaza em histórico de shell e na lista de processos do host. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Infrastructure traz os dois DbContext, o FrameworkSeeder e o SchemaReadinessGuard.
+         NÃO referenciamos AegisScore.Api: puxar o host web para cá arriscaria registrar controllers,
+         rate limiter e hosted services num processo que deve apenas migrar e sair. -->
+    <ProjectReference Include="..\AegisScore.Infrastructure\AegisScore.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Catálogos de posse do projeto da API, LINKADOS (não copiados) para o output e o publish —
+         mesmo padrão já usado pelo projeto de testes com AuditorPersonality.json. Assim o migrator
+         semeia exatamente o mesmo conteúdo que a API valida, sem duplicar os arquivos no repositório. -->
+    <Content Include="..\AegisScore.Api\Data\nist_csf_2_0_catalog.json" Link="Data\nist_csf_2_0_catalog.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\AegisScore.Api\Data\aegis_assessment_rules.json" Link="Data\aegis_assessment_rules.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>
