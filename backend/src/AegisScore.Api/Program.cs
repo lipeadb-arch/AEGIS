@@ -12,6 +12,7 @@ using AegisScore.Application.Abstractions;
 using AegisScore.Connectors.Microsoft;
 using AegisScore.Infrastructure;
 using AegisScore.Infrastructure.Auth;
+using AegisScore.Infrastructure.DataProtection;
 using AegisScore.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -111,10 +112,11 @@ builder.Services.AddCors(o => o.AddPolicy(SpaCors, p => p
     .AllowAnyMethod()
     .AllowCredentials()));   // necessário para o SPA enviar/receber o cookie HttpOnly de refresh
 
-// [Médio 6/Baixo] Data Protection: provê IDataProtectionProvider para cifrar segredos de conector.
-// PRODUÇÃO: persista o key ring fora do processo (PersistKeysToFileSystem/DbContext) + envelope no
-// Key Vault, senão o que foi cifrado no banco não sobrevive a um restart. Ver ConnectorSecretProtector.
-builder.Services.AddDataProtection();
+// [AEGIS-AUD-053] Data Protection: provê IDataProtectionProvider para cifrar segredos de conector.
+// Key ring persistido no PostgreSQL compartilhado (sobrevive a restart e é o MESMO entre réplicas),
+// application discriminator estável por ambiente e envelope das chaves em repouso — obrigatório em
+// Production. Toda a política e o fail-fast vivem em DataProtectionPlan. Ver ConnectorSecretProtector.
+builder.Services.AddAegisDataProtection(builder.Configuration, builder.Environment);
 
 // [Alto 4] Rate limiting nativo do .NET 10: blinda a superfície anônima (login/refresh) contra brute
 // force, credential stuffing (X-Tenant é spoofável) e o DoS por replay da cascata de breach.
@@ -165,6 +167,22 @@ using (var scope = app.Services.CreateScope())
         // boot; melhor um serviço que não sobe (falha visível) do que um que mente sobre a postura.
         logger.LogCritical(ex, "Startup: falha ao aplicar migrações ou semear o catálogo NIST CSF 2.0. Abortando o boot.");
         throw;
+    }
+}
+
+// [AEGIS-AUD-053] Schema do key ring: CONSTATAR, nunca criar. A API não emite DDL para esta tabela —
+// enquanto o AEGIS-AUD-052 não retirar as migrations da inicialização concorrente, um segundo
+// MigrateAsync aqui apenas dobraria a corrida entre réplicas. A migration do contexto dedicado é
+// aplicada por etapa própria de implantação; em Production, subir sem ela é falha de boot.
+using (var scope = app.Services.CreateScope())
+{
+    // Ausente quando a persistência está desligada (testes com key ring efêmero).
+    var keyRingDb = scope.ServiceProvider.GetService<DataProtectionKeyDbContext>();
+    if (keyRingDb is not null)
+    {
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        await DataProtectionSchemaGuard.EnsureAppliedAsync(
+            keyRingDb, app.Environment.IsProduction(), logger);
     }
 }
 
