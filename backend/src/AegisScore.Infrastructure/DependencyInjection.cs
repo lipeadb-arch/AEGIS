@@ -27,8 +27,19 @@ public static class DependencyInjection
     /// <summary>Registers persistence, the AI engine, the connector registry and scoring services.</summary>
     public static IServiceCollection AddAegisScoreInfrastructure(this IServiceCollection services, IConfiguration config)
     {
-        services.AddDbContext<AegisScoreDbContext>(o =>
-            o.UseNpgsql(config.GetConnectionString("AegisScore")));
+        // [AEGIS-AUD-057] A connection string NÃO é mais versionada em appsettings — vem de user-secrets
+        // (Development) ou variável de ambiente/secret manager (demais ambientes). Fail-fast aqui, na
+        // composição, evita que UseNpgsql(null) adie a falha para a primeira conexão (mensagem obscura)
+        // e barra qualquer tentativa de conexão ambígua. A mensagem NUNCA inclui o valor — só diz onde
+        // configurar. Mesmo idioma do fail-fast de Jwt:SigningKey no Program.cs.
+        var connectionString = config.GetConnectionString("AegisScore");
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new InvalidOperationException(
+                "ConnectionStrings:AegisScore ausente ou vazia. Configure a conexão do banco por " +
+                "user-secrets (dev) ou variável de ambiente/secret manager (produção). " +
+                "Credenciais não devem ser versionadas em appsettings.");
+
+        services.AddDbContext<AegisScoreDbContext>(o => o.UseNpgsql(connectionString));
 
         // Autenticação: JWT de acesso + refresh tokens com rotação (RTR). Opções da seção "Jwt".
         services.Configure<JwtOptions>(config.GetSection(JwtOptions.SectionName));
