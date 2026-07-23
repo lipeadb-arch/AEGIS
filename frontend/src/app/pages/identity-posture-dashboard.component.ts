@@ -27,7 +27,7 @@ import { IdentityService } from '../services/identity.service';
       <header class="head">
         <div class="titles">
           <h1>Postura de Identidade <span class="code">Entra ID</span></h1>
-          <p class="blurb">Indicadores de exposição de identidade (estilo Purple Knight), avaliados por IA.</p>
+          <p class="blurb">Indicadores de exposição de identidade, avaliados por IA.</p>
         </div>
 
         <div class="actions">
@@ -220,7 +220,7 @@ export class IdentityPostureDashboardComponent implements OnInit {
   protected readonly apiBase = environment.apiBase;
 
   ngOnInit(): void {
-    // Nasce viva com o cenário CRU (sem isolamento) — o alto risco do relatório Purple Knight.
+    // Nasce viva com o cenário CRU (sem isolamento) — o alto risco do cenário sintético de identidade.
     this.runAnalysis();
   }
 

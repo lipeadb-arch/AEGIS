@@ -4,10 +4,10 @@ namespace AegisScore.Connectors.Microsoft;
 
 /// <summary>
 /// Implementação STUB da porta <see cref="IEntraIdTelemetryProvider"/>. NÃO chama o Microsoft Graph ainda:
-/// sintetiza um retrato de postura de identidade de ALTO RISCO, fiel aos Indicadores de Exposição de um
-/// relatório real de assessment (Purple Knight / tenant vicunha.com.br), para exercitar a degradação de
-/// score em <c>PR.AA-01</c> (privilégio sem MFA) e <c>GV.RR-01</c> (excesso de administradores) ponta a
-/// ponta, ANTES de plugar a chamada OAuth real.
+/// sintetiza um retrato de postura de identidade de ALTO RISCO — um cenário de demonstração inteiramente
+/// fictício, no estilo dos indicadores de exposição de frameworks de assessment de identidade — para
+/// exercitar a degradação de score em <c>PR.AA-01</c> (privilégio sem MFA) e <c>GV.RR-01</c> (excesso de
+/// administradores) ponta a ponta, ANTES de plugar a chamada OAuth real.
 ///
 /// Implementação real (próxima fase): autentica via OAuth client credentials (segredos cifrados em
 /// <c>ConnectorConfig.EncryptedSettings</c>) e agrega as consultas do Microsoft Graph — directoryRoles /
@@ -19,24 +19,23 @@ public sealed class EntraIdTelemetryProviderStub : IEntraIdTelemetryProvider
     public Task<EntraIdIdentityPosture> FetchIdentityPostureAsync(
         Guid tenantId, string tenantDomain, CancellationToken ct = default)
     {
-        // Cenário deliberadamente crítico — cada número corresponde a um Indicador de Exposição do relatório:
-        //   • 15 contas privilegiadas   → PK "More than 10 Privileged Administrators exist"  → reprova GV.RR-01
-        //   •  4 admins sem MFA          → PK "MFA not configured for privileged accounts"     → reprova PR.AA-01
-        //   •  9 admins com mailbox      → PK "Privileged accounts with mailbox"               → superfície de phishing
-        //   •  6 guests inativos > 30d   → PK "Guest accounts that were inactive for more than 30 days"
-        //   • contas OT sem MFA técnico  → terminais fabris (urdideira, costura) que não suportam MFA nativo
+        // Cenário sintético deliberadamente crítico — cada número existe para exercitar uma regra do motor:
+        //   • 12 contas privilegiadas   → excede o limite de menor privilégio (>10)  → reprova GV.RR-01
+        //   •  3 admins sem MFA          → privilégio sem MFA efetivo                 → reprova PR.AA-01
+        //   •  5 admins com mailbox      → superfície de phishing sobre o admin
+        //   •  4 guests inativos > 30d   → acesso de terceiros esquecido
+        //   • contas OT sem MFA técnico  → terminais industriais (PLC/HMI) que não suportam MFA nativo
         var posture = new EntraIdIdentityPosture(
             TenantId: tenantId,
-            TenantDomain: string.IsNullOrWhiteSpace(tenantDomain) ? "vicunha.com.br" : tenantDomain,
-            TotalPrivilegedAccounts: 15,
-            PrivilegedAccountsWithoutMfa: 4,
-            PrivilegedAccountsWithMailbox: 9,
-            InactiveGuestAccountsOver30Days: 6,
+            TenantDomain: string.IsNullOrWhiteSpace(tenantDomain) ? "demo.example.com" : tenantDomain,
+            TotalPrivilegedAccounts: 12,
+            PrivilegedAccountsWithoutMfa: 3,
+            PrivilegedAccountsWithMailbox: 5,
+            InactiveGuestAccountsOver30Days: 4,
             MfaExemptServiceAccounts: new[]
             {
-                "svc-urdideira-ot@vicunha.com.br",
-                "svc-costura-plc@vicunha.com.br",
-                "svc-dashboard-fabril@vicunha.com.br",
+                "svc-ot-plc-01@example.com",
+                "svc-ot-hmi-02@example.com",
             },
             CollectedAt: DateTimeOffset.UtcNow);
 

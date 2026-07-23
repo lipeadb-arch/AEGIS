@@ -357,9 +357,9 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
         await using var db = NewContext(TenantA);
         var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
 
-        // Retrato de alto risco (Purple Knight/vicunha): 15 admins, 4 sem MFA — a dimensão MFA reprova PR.AA-01.
+        // Retrato de alto risco (cenário sintético): 12 contas, 3 sem MFA — a dimensão MFA reprova PR.AA-01.
         var verdict = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
-            SubCode, totalPrivileged: 15, privilegedWithoutMfa: 4));
+            SubCode, totalPrivileged: 12, privilegedWithoutMfa: 3));
 
         verdict.Status.Should().Be(ControlStatus.NonCompliant, "conta privilegiada do Entra ID sem MFA é falha crítica (PR.AA)");
         verdict.AwardedScore.Should().Be(0);
@@ -376,9 +376,9 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
         await using var db = NewContext(TenantA);
         var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
 
-        // O MESMO retrato, agora avaliado como GV.RR-01: 15 contas privilegiadas (>10) quebra o menor privilégio.
+        // O MESMO retrato, agora avaliado como GV.RR-01: 12 contas privilegiadas (>10) quebra o menor privilégio.
         var verdict = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
-            GovernRrCode, totalPrivileged: 15, privilegedWithoutMfa: 4));
+            GovernRrCode, totalPrivileged: 12, privilegedWithoutMfa: 3));
 
         verdict.Status.Should().Be(ControlStatus.NonCompliant, "mais de 10 contas privilegiadas quebra a governança de identidade (GV.RR)");
         verdict.AwardedScore.Should().Be(0);
@@ -413,11 +413,11 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
         await using var db = NewContext(TenantA);
         var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
 
-        // O falso positivo industrial: contas fabris (urdideira/OT) sem MFA por legado, MAS isoladas na rede.
+        // O falso positivo industrial: contas de serviço/OT (PLC/HMI) sem MFA por legado, MAS isoladas na rede.
         // A IA do Aegis PONDERA o controle compensatório → mitigado (50%), não reprova cegamente como as
         // ferramentas de mercado. Mesmo retrato de alto risco do stub, agora com hasNetworkIsolation=true.
         var verdict = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
-            SubCode, totalPrivileged: 15, privilegedWithoutMfa: 4, hasNetworkIsolation: true));
+            SubCode, totalPrivileged: 12, privilegedWithoutMfa: 3, hasNetworkIsolation: true));
 
         verdict.Status.Should().Be(ControlStatus.MitigatedByThirdParty,
             "contas de serviço/OT sem MFA isoladas na rede são risco compensado, não falha crítica");
@@ -594,9 +594,9 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
             new IdentityTelemetrySignal(
                 TotalPrivilegedAccounts: totalPrivileged,
                 PrivilegedAccountsWithoutMfa: privilegedWithoutMfa,
-                PrivilegedAccountsWithMailbox: 9,
-                InactiveGuestAccountsOver30Days: 6,
-                MfaExemptServiceAccounts: new[] { "svc-urdideira-ot@vicunha.com.br" },
+                PrivilegedAccountsWithMailbox: 5,
+                InactiveGuestAccountsOver30Days: 4,
+                MfaExemptServiceAccounts: new[] { "svc-ot-plc-01@example.com" },
                 HasNetworkIsolation: hasNetworkIsolation).ToMetricLines());
 
     /// <summary>Sinal de PR.DS a partir do <see cref="DataTelemetrySignal"/> TIPADO (via ToMetricLines) — prova que os rótulos do record casam com a regra PR.DS-01 já existente no StubLlmClient.</summary>

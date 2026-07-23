@@ -36,7 +36,7 @@ export interface IdentityVerdict {
 /** Uma linha da tabela tática de "Identity Exposure" (o que o Dumb Component recebe, nunca o DTO cru). */
 export interface IdentityFinding {
   code: string; // controle NIST de origem ("PR.AA-01")
-  name: string; // rótulo legível estilo-indicador (Purple Knight)
+  name: string; // rótulo legível estilo-indicador de exposição de identidade
   platform: IdentityPlatform;
   severity: SeverityLevel;
   status: ControlStatus;
@@ -55,7 +55,7 @@ export interface IdentityPostureView {
 }
 
 /**
- * Metadados de apresentação por controle de identidade: o nome legível (estilo indicador do Purple Knight)
+ * Metadados de apresentação por controle de identidade: o nome legível (estilo indicador de exposição)
  * e a plataforma. Extensível — quando o backend enriquecer a análise com mais controles (higiene de
  * convidados, etc.), basta adicionar aqui; a tabela renderiza N linhas sem mudança.
  */
