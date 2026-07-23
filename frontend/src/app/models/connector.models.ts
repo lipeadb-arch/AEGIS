@@ -137,7 +137,7 @@ export const PROVIDERS: ProviderSpec[] = [
     capability: 'Siem',
     capabilityValue: 5,
     fields: [
-      { key: 'baseUrl', label: 'Base URL', secret: false, placeholder: 'https://splunk.cliente.com:8089' },
+      { key: 'baseUrl', label: 'Base URL', secret: false, placeholder: 'https://splunk.demo.example.com:8089' },
       { key: 'token', label: 'Authentication token', secret: true },
     ],
   },
