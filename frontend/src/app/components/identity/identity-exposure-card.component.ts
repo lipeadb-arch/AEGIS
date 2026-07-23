@@ -4,7 +4,7 @@ import { IdentityFinding, IdentityPlatform } from '../../models/identity.models'
 import { SeverityComponent } from '../scoring/severity.component';
 
 /**
- * IdentityExposureCardComponent — DUMB. Renderiza os achados de identidade (Entra ID / Purple Knight) como
+ * IdentityExposureCardComponent — DUMB. Renderiza os achados de identidade (Entra ID) como
  * uma TABELA TÁTICA HUD: colunas Name · Platform · Severity · Status. Cada linha expande para a evidência
  * técnica da IA (os números do indicador e o motivo do veredito). Sem serviço; único estado é o de UI
  * (linhas abertas), num Signal local — mesmo idioma do ControlComplianceCardComponent.

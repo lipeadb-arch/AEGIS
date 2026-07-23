@@ -54,7 +54,7 @@ public enum ControlStatus { Compliant = 0, NonCompliant = 1, MitigatedByThirdPar
 /// severidade (ponderada pelo Raio de Explosão — ID.RA) que decide o que a TI corrige primeiro.
 ///
 /// O valor numérico é o RANK de risco (0 = mais grave), então ordenar por ele já traz o crítico ao topo.
-/// A escala é a MESMA que a tela de Postura de Identidade já usa (5 níveis, estilo Purple Knight) — uma
+/// A escala é a MESMA que a tela de Postura de Identidade já usa (5 níveis de exposição de identidade) — uma
 /// segunda régua de 4 níveis criaria dois vocabulários de risco divergentes no mesmo produto.
 /// </summary>
 public enum SeverityLevel

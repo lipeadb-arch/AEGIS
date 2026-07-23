@@ -163,11 +163,11 @@ public sealed class StubLlmClient : ILLMClient
                 : ("Compliant", "Stub: PR.AA conforme — MFA privilegiado integral e Conditional Access aplicado.");
         }
 
-        // PR.AA — Identity Posture (telemetria do Entra ID). Indicador "MFA not configured for privileged
-        // accounts". Ancorado no controle-alvo porque o MESMO retrato também alimenta GV.RR-01 — a âncora
-        // garante que esta regra decida só PR.AA. NÃO reprova cegamente: pondera CONTROLE COMPENSATÓRIO para
-        // ambientes industriais (OT/IoT), onde terminais fabris não suportam MFA por legado mas vivem em rede
-        // isolada — o falso positivo clássico das ferramentas de assessment de mercado.
+        // PR.AA — Identity Posture (telemetria do Entra ID): privilégio sem MFA efetivo. Ancorado no
+        // controle-alvo porque o MESMO retrato também alimenta GV.RR-01 — a âncora garante que esta regra
+        // decida só PR.AA. NÃO reprova cegamente: pondera CONTROLE COMPENSATÓRIO para ambientes industriais
+        // (OT/IoT), onde terminais industriais OT não suportam MFA por legado mas vivem em rede isolada — o
+        // falso positivo clássico das ferramentas de assessment de mercado.
         if (TargetsControl(p, "pr.aa") && p.Contains("privileged accounts without mfa:"))
         {
             var privWithoutMfa = Num(p, "privileged accounts without mfa:");
@@ -379,7 +379,7 @@ public sealed class StubLlmClient : ILLMClient
         }
 
         // GV.RR — Identity Governance (telemetria do Entra ID): excesso de contas privilegiadas quebra o
-        // princípio do menor privilégio (indicador "More than 10 Privileged Administrators exist"). Ancorado
+        // princípio do menor privilégio (excesso de administradores, >10). Ancorado
         // no controle-alvo porque o MESMO retrato de identidade também alimenta PR.AA-01.
         if (TargetsControl(p, "gv.rr") && p.Contains("total privileged accounts:"))
         {

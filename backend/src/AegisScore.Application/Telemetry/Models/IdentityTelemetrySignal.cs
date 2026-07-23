@@ -2,8 +2,8 @@ namespace AegisScore.Application.Telemetry.Models;
 
 /// <summary>
 /// Retrato de POSTURA DE IDENTIDADE de um tenant, normalizado na borda a partir da telemetria do
-/// Microsoft Entra ID (inspirado nos Indicadores de Exposição de frameworks de assessment de identidade
-/// como o Purple Knight). É o análogo tipado do <c>CategoryTelemetrySignal</c> — mas, diferente daquele
+/// Microsoft Entra ID (inspirado nos indicadores de exposição de frameworks de assessment de identidade).
+/// É o análogo tipado do <c>CategoryTelemetrySignal</c> — mas, diferente daquele
 /// (um sinal por controle), a postura de identidade é MULTI-CONTROLE: o mesmo retrato alimenta tanto
 /// <c>PR.AA-01</c> (a dimensão MFA/menor privilégio) quanto <c>GV.RR-01</c> (a dimensão governança de
 /// identidade / excesso de administradores). Por isso não carrega um único <c>SubcategoryCode</c>: o alvo
@@ -11,14 +11,14 @@ namespace AegisScore.Application.Telemetry.Models;
 ///
 /// Além das métricas de exposição, transporta o CONTEXTO DE REDE (controles compensatórios) — que o Entra
 /// não conhece, pois é conhecimento de infraestrutura (microssegmentação/firewall). É o que permite ao
-/// motor PONDERAR falsos positivos de ambientes industriais (OT/IoT): uma "urdideira" ou terminal fabril
+/// motor PONDERAR falsos positivos de ambientes industriais (OT/IoT): um terminal industrial (PLC/HMI)
 /// sem MFA por limitação de legado, MAS isolado na rede, é risco compensado — não falha crítica cega.
 /// </summary>
-/// <param name="TotalPrivilegedAccounts">Total de contas privilegiadas (Global Admins + demais papéis privilegiados). Indicador PK: "More than 10 Privileged Administrators exist".</param>
-/// <param name="PrivilegedAccountsWithoutMfa">Contas privilegiadas SEM MFA efetivo. Indicador PK: "MFA not configured for privileged accounts" — falha crítica de PR.AA (salvo controle compensatório).</param>
-/// <param name="PrivilegedAccountsWithMailbox">Contas privilegiadas COM caixa de correio ativa (superfície de phishing sobre o admin). Indicador PK: "Privileged accounts with mailbox".</param>
-/// <param name="InactiveGuestAccountsOver30Days">Contas de convidados (Guests) inativas há mais de 30 dias — acesso de terceiros esquecido. Indicador PK: "Guest accounts that were inactive for more than 30 days".</param>
-/// <param name="MfaExemptServiceAccounts">Contas de serviço/OT (ex.: terminais fabris — urdideira, costura) que NÃO suportam MFA por natureza técnica. Base do controle compensatório: sua presença explica o "sem MFA".</param>
+/// <param name="TotalPrivilegedAccounts">Total de contas privilegiadas (Global Admins + demais papéis privilegiados). Excesso (>10) quebra o menor privilégio.</param>
+/// <param name="PrivilegedAccountsWithoutMfa">Contas privilegiadas SEM MFA efetivo — falha crítica de PR.AA (salvo controle compensatório).</param>
+/// <param name="PrivilegedAccountsWithMailbox">Contas privilegiadas COM caixa de correio ativa (superfície de phishing sobre o admin).</param>
+/// <param name="InactiveGuestAccountsOver30Days">Contas de convidados (Guests) inativas há mais de 30 dias — acesso de terceiros esquecido.</param>
+/// <param name="MfaExemptServiceAccounts">Contas de serviço/OT (ex.: terminais industriais — PLC, HMI) que NÃO suportam MFA por natureza técnica. Base do controle compensatório: sua presença explica o "sem MFA".</param>
 /// <param name="HasNetworkIsolation">Controle compensatório: os ativos sem MFA estão em rede isolada/segmentada (VLAN OT, air gap). Informado pela infraestrutura, não pelo Entra. Reduz o risco de privilégio sem MFA de falha crítica para mitigado.</param>
 /// <param name="CompensatingControls">Outras salvaguardas compensatórias declaradas (ex.: "PAM", "Jump Host", "Conditional Access por localização"). Contexto/evidência para o motor; extensível.</param>
 public record IdentityTelemetrySignal(

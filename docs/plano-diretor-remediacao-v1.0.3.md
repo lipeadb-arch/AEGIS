@@ -1,12 +1,12 @@
 # AEGIS — Plano Diretor de Remediação v1.0.3
 
 **Classificação:** Documento de governança técnica e segurança<br>
-**Data de atualização:** 2026-07-21<br>
+**Data de atualização:** 2026-07-22<br>
 **Situação do programa:** Em execução<br>
 **Branch de referência:** `main`<br>
-**Commit de referência após o AEGIS-TECH-001:** `511c955`<br>
-**Última entrega concluída:** AEGIS-TECH-001 — PR #4, squash-merge `511c955`<br>
-**Próximo pacote:** `AEGIS-AUD-053 — Persistir e proteger o Data Protection Key Ring` — **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO**
+**Commit de referência:** `9904729`<br>
+**Última entrega concluída:** AEGIS-AUD-057 — PR #7, squash-merge `9904729`<br>
+**Próximo pacote:** `AEGIS-AUD-046 — Eliminar dados reais ou identificáveis dos stubs e demos` — **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO**
 
 > Este documento é a fonte de governança do programa de remediação. O código local e `docs/pr0-baseline.md` são a fonte de verdade para o estado técnico executável.
 
@@ -27,14 +27,17 @@
 |---|---|---|
 | PR 0 — Linha de base técnica | **CONCLUÍDO** | PR #1; merge `c3a0bd3`; `docs/pr0-baseline.md` |
 | Backend build | **APROVADO COM WARNING CONHECIDO** | 0 erros; 1 warning `CS8604` |
-| Testes backend | **APROVADO** | 219/219, 0 falhas, 0 ignorados |
+| Testes backend | **APROVADO** | 284/284, 0 falhas, 0 ignorados |
 | Frontend build | **APROVADO COM WARNINGS CONHECIDOS** | exit 0; 4 warnings de budget CSS |
 | Frontend tests/lint | **NÃO IMPLEMENTADOS** | Pendência `AEGIS-AUD-033` |
 | CI/CD | **NÃO IMPLEMENTADO** | Pendência `AEGIS-AUD-056` |
 | Produção MSSP | **BLOQUEADA** | Gate G7 não aprovado |
 | Reconciliação documental | **CONCLUÍDA** | PR #2; squash-merge `daa41e8`; branch `docs/reconcile-operational-state` (removida) |
 | Alinhamento .NET 10 / EF Core 10 | **CONCLUÍDO** | AEGIS-TECH-001; PR #4; squash-merge `511c955` |
-| Próximo pacote | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** | `AEGIS-AUD-053` |
+| AEGIS-AUD-053 — Data Protection Key Ring | **CONCLUÍDO** | PR #5; squash-merge `49a6747` |
+| AEGIS-AUD-052 — Migrations/seed fora do startup | **CONCLUÍDO** | PR #6; squash-merge `0ebad27` |
+| AEGIS-AUD-057 — Credencial padrão de configuração | **CONCLUÍDO** | PR #7; squash-merge `9904729` |
+| Próximo pacote | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** | `AEGIS-AUD-046` |
 
 ### 2.1 O que o PR 0 concluiu
 
@@ -45,8 +48,8 @@
 
 ### 2.2 O que permanece inalterado
 
-- **Os 63 achados `AEGIS-AUD-*` continuam todos abertos.** Nenhum foi encerrado nesta revisão.
-- O `AEGIS-AUD-053` permanece aberto e volta a ser o próximo pacote após a conclusão do AEGIS-TECH-001; sua implementação ainda exige autorização explícita.
+- **Dos 63 achados `AEGIS-AUD-*`, três foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7); os demais **60 permanecem abertos**. O total catalogado segue **63**.
+- O próximo pacote passa a ser o `AEGIS-AUD-046`; sua implementação ainda exige autorização explícita.
 - **O `AEGIS-TECH-001` foi concluído como pacote técnico de precedência, não como novo achado da auditoria.** Ele não entra no backlog mestre e **não altera a contagem de 63 achados**.
 - A liberação para produção continua bloqueada.
 - O Plano Diretor não substitui a inspeção do código local antes de cada mudança.
@@ -118,12 +121,15 @@ Estados auxiliares: `BLOQUEADA`, `ADIADA`, `DESCARTADA`.
 | 1 | Reconciliação documental — PR #2 | **CONCLUÍDA** (squash-merge `daa41e8`) |
 | 2 | `AEGIS-TECH-001 — Alinhamento do backend com .NET 10 e EF Core 10` | **CONCLUÍDO** (PR #4; squash-merge `511c955`) |
 | 3 | Atualização do Plano Diretor e dos documentos operacionais | **INCORPORADA NESTA REVISÃO** |
-| 4 | `AEGIS-AUD-053 — Persistência e proteção do Data Protection Key Ring` | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** |
+| 4 | `AEGIS-AUD-053 — Persistência e proteção do Data Protection Key Ring` | **CONCLUÍDO** (PR #5; squash-merge `49a6747`) |
+| 5 | `AEGIS-AUD-052 — Retirar migrations e seed da inicialização concorrente da API` | **CONCLUÍDO** (PR #6; squash-merge `0ebad27`) |
+| 6 | `AEGIS-AUD-057 — Remover credenciais padrão do arquivo principal de configuração` | **CONCLUÍDO** (PR #7; squash-merge `9904729`) |
+| 7 | `AEGIS-AUD-046 — Eliminar dados reais ou identificáveis dos stubs e demos` | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** |
 
 > **A aprovação desta ordem não autoriza a implementação de nenhum pacote.** Ela define apenas a
 > sequência de execução. **Cada pacote exige aprovação explícita própria** para sair de `PLANEJADO`
 > e entrar em implementação. Em particular, **esta revisão não autoriza a implementação do
-> `AEGIS-AUD-053`**.
+> `AEGIS-AUD-046`**.
 
 ### 7.2 Pacote técnico concluído
 
@@ -154,19 +160,15 @@ contagem de 63 achados**.
 
 ### 7.3 Próximo pacote imediato
 
-**`AEGIS-AUD-053 — Persistir e proteger o Data Protection Key Ring`** — **PRÓXIMO / aguarda
+**`AEGIS-AUD-046 — Eliminar dados reais ou identificáveis dos stubs e demos`** — **PRÓXIMO / aguarda
 aprovação explícita de implementação.**
 
-Motivo da prioridade dentro do EP-00:
-
-- é bloqueador direto de produção;
-- possui escopo relativamente isolado;
-- protege a capacidade de descriptografar configurações de conectores após restart e scale-out;
-- permite validar o processo de investigação, implementação, teste e revisão antes das mudanças maiores.
+Concluídos os três pacotes anteriores do EP-00: `AEGIS-AUD-053` (PR #5, `49a6747`),
+`AEGIS-AUD-052` (PR #6, `0ebad27`) e `AEGIS-AUD-057` (PR #7, `9904729`).
 
 Branch sugerida:
 
-`fix/aud-053-data-protection-keyring`
+`fix/aud-046-remove-identifiable-demo-data`
 
 ### Ordem macro
 
@@ -175,16 +177,16 @@ Branch sugerida:
 **Estado:** EM EXECUÇÃO<br>
 **Objetivo:** Preservar uma referência reproduzível e remover riscos imediatos antes de mudanças estruturais.<br>
 **Dependências:** Nenhuma além da baseline técnica concluída.<br>
-**Ordem interna:** PR 0, reconciliação documental e AEGIS-TECH-001 concluídos. Próximo pacote: **AEGIS-AUD-053**, condicionado à aprovação explícita de implementação.
+**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052 e AEGIS-AUD-057 concluídos. Próximo pacote: **AEGIS-AUD-046**, condicionado à aprovação explícita de implementação.
 
 ### Pacotes do épico
 
 | Ordem | ID | Severidade | Pendência | Área | Estado |
 |---:|---|---|---|---|---|
 | 1 | AEGIS-AUD-046 | ALTO | Eliminar dados reais ou identificáveis dos stubs e demos | Privacy / Demo Data / Repository Hygiene | ABERTA |
-| 2 | AEGIS-AUD-057 | MÉDIO | Remover credenciais padrão do arquivo principal de configuração | Configuration Security | ABERTA |
-| 3 | AEGIS-AUD-053 | BLOQUEADOR | Persistir e proteger o Data Protection Key Ring | Cryptography / Connector Secrets | PRÓXIMO / AGUARDA APROVAÇÃO |
-| 4 | AEGIS-AUD-052 | ALTO | Retirar migrations e seed da inicialização concorrente da API | Deployment / Database | ABERTA |
+| 2 | AEGIS-AUD-057 | MÉDIO | Remover credenciais padrão do arquivo principal de configuração | Configuration Security | CONCLUÍDA (PR #7; `9904729`) |
+| 3 | AEGIS-AUD-053 | BLOQUEADOR | Persistir e proteger o Data Protection Key Ring | Cryptography / Connector Secrets | CONCLUÍDA (PR #5; `49a6747`) |
+| 4 | AEGIS-AUD-052 | ALTO | Retirar migrations e seed da inicialização concorrente da API | Deployment / Database | CONCLUÍDA (PR #6; `0ebad27`) |
 | 5 | AEGIS-AUD-050 | BLOQUEADOR | Não usar filas em memória como mecanismo operacional durável | Workers / Reliability / Scale-out | ABERTA |
 | 6 | AEGIS-AUD-026 | ALTO | Não substituir falha da API por dados de demonstração em ambiente operacional | Frontend / Data Integrity | ABERTA |
 | 7 | AEGIS-AUD-031 | MÉDIO | Alinhar documentação arquitetural com a stack e o estado reais | Documentation / Architecture Governance | ABERTA |
@@ -586,12 +588,12 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | AEGIS-AUD-049 | ALTO | Observability | Adicionar métricas, tracing distribuído e correlação fim a fim | EP-06 | ABERTA | — | — |
 | AEGIS-AUD-050 | BLOQUEADOR | Workers / Reliability / Scale-out | Não usar filas em memória como mecanismo operacional durável | EP-00 | ABERTA | — | — |
 | AEGIS-AUD-051 | ALTO | Deployment Architecture | Separar workers da API ou coordená-los para múltiplas réplicas | EP-06 | ABERTA | — | — |
-| AEGIS-AUD-052 | ALTO | Deployment / Database | Retirar migrations e seed da inicialização concorrente da API | EP-00 | ABERTA | — | — |
-| AEGIS-AUD-053 | BLOQUEADOR | Cryptography / Connector Secrets | Persistir e proteger o Data Protection Key Ring | EP-00 | PRÓXIMO / AGUARDA APROVAÇÃO | — | — |
+| AEGIS-AUD-052 | ALTO | Deployment / Database | Retirar migrations e seed da inicialização concorrente da API | EP-00 | CONCLUÍDA | #6 | `0ebad27` |
+| AEGIS-AUD-053 | BLOQUEADOR | Cryptography / Connector Secrets | Persistir e proteger o Data Protection Key Ring | EP-00 | CONCLUÍDA | #5 | `49a6747` |
 | AEGIS-AUD-054 | MÉDIO | Error Handling / Sensitive Data | Não persistir mensagem bruta de exceção como erro de documento | EP-06 | ABERTA | — | — |
 | AEGIS-AUD-055 | ALTO | MSSP Operations | Formalizar SLOs, alertas e métricas operacionais por tenant | EP-06 | ABERTA | — | — |
 | AEGIS-AUD-056 | ALTO | CI/CD / Supply Chain | Implementar CI/CD e controles de supply chain | EP-06 | ABERTA | — | — |
-| AEGIS-AUD-057 | MÉDIO | Configuration Security | Remover credenciais padrão do arquivo principal de configuração | EP-00 | ABERTA | — | — |
+| AEGIS-AUD-057 | MÉDIO | Configuration Security | Remover credenciais padrão do arquivo principal de configuração | EP-00 | CONCLUÍDA | #7 | `9904729` |
 | AEGIS-AUD-058 | MÉDIO | API Security / Deployment | Tornar CORS configurável e validado por ambiente | EP-06 | ABERTA | — | — |
 | AEGIS-AUD-059 | ALTO | Production Hardening | Implementar hardening de produção | EP-07 | ABERTA | — | — |
 | AEGIS-AUD-060 | ALTO | Secrets Management | Formalizar estratégia de gestão de segredos | EP-07 | ABERTA | — | — |
@@ -606,7 +608,10 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | PR 0 — Baseline técnica | CONCLUÍDO | `chore/pr0-baseline` (removida) | #1 | `c3a0bd3` | Backend 219/219; frontend build aprovado | `docs/pr0-baseline.md` |
 | PR #2 — Reconciliação documental | **CONCLUÍDA** | `docs/reconcile-operational-state` (removida) | #2 | `daa41e80d3149a5c0ca5e3b5b70ba92cd0ddc8c9` | Não executados — escopo exclusivamente documental | Squash-merge de 4 commits (`7ea19dc`, `27ee185`, `e6f175c`, `e001866`); versionou o handoff operacional e o Plano Diretor |
 | AEGIS-TECH-001 — .NET 10 / EF Core 10 | **CONCLUÍDO** | `chore/tech-001-net10-efcore10` (removida) | #4 | `511c9558771f96b2e98c39c78ab60d8b64deefad` | Restore; build 0 erros/1 warning preexistente; 219/219; PostgreSQL descartável; modelo sem mudanças pendentes | EF Core 10.0.10 e Npgsql 10.0.3; sem migration ou alteração de schema |
-| AEGIS-AUD-053 — Data Protection Key Ring | **PRÓXIMO / AGUARDA APROVAÇÃO** | `fix/aud-053-data-protection-keyring` | — | — | A definir após investigação | A conclusão do TECH-001 removeu a dependência técnica; implementação ainda não autorizada |
+| AEGIS-AUD-053 — Data Protection Key Ring | **CONCLUÍDO** | `fix/aud-053-data-protection-keyring` (removida) | #5 | `49a6747` | Backend 249/249; PostgreSQL descartável | Key ring no PostgreSQL (contexto dedicado), envelope X.509 em Production; migration aplicada em `aegis_dev` |
+| AEGIS-AUD-052 — Migrations/seed fora do startup | **CONCLUÍDO** | `fix/aud-052-externalize-database-initialization` (removida) | #6 | `0ebad27` | Backend 279/279; PostgreSQL descartável | `AegisScore.DbMigrator` sob advisory lock; índice único em `FrameworkVersion.Name`; migration aplicada em `aegis_dev` (17→18) |
+| AEGIS-AUD-057 — Credencial padrão de configuração | **CONCLUÍDO** | `fix/aud-057-remove-default-db-credentials` (removida) | #7 | `9904729` | Backend 284/284 | Connection string sai do `appsettings.json`; fail-fast quando ausente/vazia |
+| AEGIS-AUD-046 — Eliminar dados reais/identificáveis dos stubs e demos | **EM IMPLEMENTAÇÃO** | `fix/aud-046-sanitize-demo-data` | — | — | A validar no PR | Saneamento de dados de demonstração reais/identificáveis: organização sintética (`demo.example.com` / `example.com`) e cenário determinístico equivalente; sem migration; contratos, payloads e scoring preservados |
 
 ### Campos obrigatórios após cada merge
 

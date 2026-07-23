@@ -11,7 +11,7 @@ namespace AegisScore.Application.Telemetry.Providers;
 /// par <c>DocumentDto</c> (borda) → pipeline documental.
 /// </summary>
 /// <param name="TenantId">Tenant avaliado (o mesmo resolvido do contexto na borda — nunca confiado do corpo).</param>
-/// <param name="TenantDomain">Domínio primário do tenant no Entra (ex.: "vicunha.com.br"), ecoado para rastreabilidade.</param>
+/// <param name="TenantDomain">Domínio primário do tenant no Entra (ex.: "demo.example.com"), ecoado para rastreabilidade.</param>
 /// <param name="TotalPrivilegedAccounts">Total de contas privilegiadas descobertas.</param>
 /// <param name="PrivilegedAccountsWithoutMfa">Quantas dessas contas privilegiadas estão sem MFA efetivo.</param>
 /// <param name="PrivilegedAccountsWithMailbox">Quantas contas privilegiadas têm caixa de correio ativa.</param>
@@ -63,7 +63,7 @@ public interface IEntraIdTelemetryProvider
     /// ingestão), não desta porta.
     /// </summary>
     /// <param name="tenantId">Tenant alvo (deve casar com o tenant do contexto — defesa em profundidade no chamador).</param>
-    /// <param name="tenantDomain">Domínio primário do tenant no Entra, ex.: "vicunha.com.br".</param>
+    /// <param name="tenantDomain">Domínio primário do tenant no Entra, ex.: "demo.example.com".</param>
     Task<EntraIdIdentityPosture> FetchIdentityPostureAsync(
         Guid tenantId, string tenantDomain, CancellationToken ct = default);
 }

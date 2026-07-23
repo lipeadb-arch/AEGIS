@@ -2,7 +2,7 @@ import { Component, computed, input } from '@angular/core';
 import { SeverityLevel } from '../../models/scoring.models';
 
 /**
- * SeverityComponent — DUMB. Renderiza um nível de severidade (escala Purple Knight) como um chip HUD:
+ * SeverityComponent — DUMB. Renderiza um nível de severidade (escala de exposição, 5 níveis) como um chip HUD:
  * uma escada de 5 pips acesos conforme a gravidade + rótulo PT-BR, tingido pela cor de risco. Sem estado,
  * sem serviço: recebe o nível e desenha. Reutilizável em qualquer tabela tática de achados.
  */
