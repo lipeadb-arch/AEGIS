@@ -19,22 +19,24 @@ public class GovernanceDocumentsController : ControllerBase
 {
     private readonly AegisScoreDbContext _db;
     private readonly IDocumentStorage _storage;
-    private readonly IDocumentAnalysisQueue _queue;
-    private readonly IPolicySyncTrigger _policySync;
+    private readonly IPolicySyncQueue _policySync;
     private readonly ITenantContext _tenant;
 
     public GovernanceDocumentsController(
-        AegisScoreDbContext db, IDocumentStorage storage, IDocumentAnalysisQueue queue,
-        IPolicySyncTrigger policySync, ITenantContext tenant)
+        AegisScoreDbContext db, IDocumentStorage storage,
+        IPolicySyncQueue policySync, ITenantContext tenant)
     {
         _db = db;
         _storage = storage;
-        _queue = queue;
         _policySync = policySync;
         _tenant = tenant;
     }
 
-    /// <summary>Upload manual: grava o binário + hash SHA-256 e enfileira a leitura da IA.</summary>
+    /// <summary>
+    /// Upload manual: grava o binário + hash SHA-256 e deixa o documento em <c>Queued</c> — que já É a entrada
+    /// na fila DURÁVEL de análise (AEGIS-AUD-050). O <c>DocumentAnalysisWorker</c> o adquire do banco; não há
+    /// canal em memória para publicar.
+    /// </summary>
     [HttpPost]
     [RequestSizeLimit(50_000_000)]
     public async Task<ActionResult<DocumentAcceptedDto>> Upload(
@@ -77,10 +79,11 @@ public class GovernanceDocumentsController : ControllerBase
             return Conflict("Documento idêntico já ingerido (mesmo hash) neste cliente.");
         }
 
+        // Grava o binário e persiste o StorageUri: só então o documento fica ELEGÍVEL à aquisição durável
+        // (a fila exige StorageUri IS NOT NULL). Persistir Queued É enfileirar — sem publicação em canal.
         doc.StorageUri = await _storage.SaveAsync(doc.TenantId, doc.Id, file.FileName, buffer, ct);
         await _db.SaveChangesAsync(ct);
 
-        await _queue.EnqueueAsync(doc.Id, ct);
         return Accepted(new DocumentAcceptedDto(doc.Id, doc.AnalysisStatus.ToString()));
     }
 
@@ -105,12 +108,12 @@ public class GovernanceDocumentsController : ControllerBase
     }
 
     /// <summary>
-    /// Gatilho MANUAL de sincronização das políticas (Govern) para usuários executivos: enfileira o tenant
-    /// do usuário autenticado para o <c>PolicyIngestionWorker</c> puxar as fontes externas (SharePoint,
-    /// Google…) AGORA, sem esperar o ciclo do timer. Assíncrono por design — publica no canal e devolve
-    /// 202 na hora; a ingestão roda em background. Acompanhe o resultado por <c>GET /governance/documents</c>.
+    /// Gatilho MANUAL de sincronização das políticas (Govern) para usuários executivos: PERSISTE uma
+    /// solicitação DURÁVEL de sync do tenant autenticado (AEGIS-AUD-050) e devolve 202. O
+    /// <c>PolicyIngestionWorker</c> a adquire do banco com lease atômico e puxa as fontes externas
+    /// (SharePoint, Google…) em background. Acompanhe o resultado por <c>GET /governance/documents</c>.
     /// </summary>
-    /// <response code="202">Sincronização enfileirada; será processada em background pelo worker.</response>
+    /// <response code="202">Solicitação de sync persistida com sucesso; será processada em background pelo worker.</response>
     [HttpPost("sync")]
     public async Task<ActionResult<PolicySyncAcceptedDto>> Sync(CancellationToken ct)
     {
@@ -121,12 +124,13 @@ public class GovernanceDocumentsController : ControllerBase
             ?? throw new TenantSecurityException(
                 "Sync de políticas sem tenant resolvido no contexto (fail-closed).");
 
-        // Publica e retorna imediatamente — o request não espera o fetch/registro das políticas.
-        await _policySync.RequestSyncAsync(tenantId, ct);
+        // O 202 só sai DEPOIS de a solicitação estar duravelmente salva (idempotente por tenant). Se a
+        // persistência falhar, o await propaga e o cliente recebe erro — nunca um 202 sobre trabalho perdido.
+        await _policySync.EnqueueAsync(tenantId, ct);
 
         return Accepted(new PolicySyncAcceptedDto(
             tenantId, "Queued",
-            "Sincronização de políticas agendada; acompanhe em GET /api/v1/governance/documents."));
+            "Sincronização de políticas registrada; acompanhe em GET /api/v1/governance/documents."));
     }
 
     /// <summary>Lista os documentos do tenant (filtros por tipo e status de leitura da IA).</summary>
@@ -152,7 +156,11 @@ public class GovernanceDocumentsController : ControllerBase
         return doc is null ? NotFound() : ToDto(doc);
     }
 
-    /// <summary>Re-enfileira a leitura da IA (após anexar binário de integração ou reprocessar).</summary>
+    /// <summary>
+    /// Re-enfileira a leitura da IA (após anexar binário de integração ou reprocessar). Devolve o documento a
+    /// <c>Queued</c> e ZERA o estado de lease/retry anterior — isso já É a entrada na fila DURÁVEL de análise
+    /// (AEGIS-AUD-050), que o <c>DocumentAnalysisWorker</c> adquire do banco. Sem canal para publicar.
+    /// </summary>
     [HttpPost("{id:guid}/reanalyze")]
     public async Task<ActionResult<DocumentAcceptedDto>> Reanalyze(Guid id, CancellationToken ct)
     {
@@ -163,9 +171,13 @@ public class GovernanceDocumentsController : ControllerBase
         doc.AnalysisStatus = AiAnalysisStatus.Queued;
         doc.AnalysisQueuedAt = DateTimeOffset.UtcNow;
         doc.AnalysisError = null;
+        // Zera o lease/retry de uma execução anterior, para o worker adquirir o documento limpo.
+        doc.AnalysisLeaseId = null;
+        doc.AnalysisLeaseExpiresAt = null;
+        doc.AnalysisAttempts = 0;
+        doc.AnalysisNextAttemptAt = null;
         await _db.SaveChangesAsync(ct);
 
-        await _queue.EnqueueAsync(doc.Id, ct);
         return Accepted(new DocumentAcceptedDto(doc.Id, doc.AnalysisStatus.ToString()));
     }
 
