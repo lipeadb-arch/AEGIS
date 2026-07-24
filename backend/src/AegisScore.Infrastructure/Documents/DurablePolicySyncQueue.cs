@@ -38,6 +38,9 @@ public sealed class DurablePolicySyncQueue : IPolicySyncQueue
             throw new InvalidOperationException(error);
     }
 
+    // Elegíveis: Pending disponíveis, Processing com lease EXPIRADO, ou Processing SEM lease
+    // (LeaseExpiresAt IS NULL) — o estado legado/órfão, pelo mesmo motivo do documento (a coluna é nullable,
+    // então `NULL <= now` seria falso e o pedido ficaria preso). Processing com lease VIGENTE é excluído.
     private const string ClaimSql = """
         UPDATE "PolicySyncRequests"
         SET "Status" = @processing,
@@ -50,7 +53,8 @@ public sealed class DurablePolicySyncQueue : IPolicySyncQueue
             WHERE "AvailableAt" <= @now
               AND (
                   "Status" = @pending
-                  OR ("Status" = @processing AND "LeaseExpiresAt" <= @now)
+                  OR ("Status" = @processing
+                      AND ("LeaseExpiresAt" IS NULL OR "LeaseExpiresAt" <= @now))
               )
             ORDER BY "AvailableAt", "CreatedAt"
             {LOCK}

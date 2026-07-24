@@ -120,6 +120,34 @@ public sealed class DurablePolicySyncQueueTests : IDisposable
         second.Attempts.Should().Be(2);
     }
 
+    [Fact]   // CORREÇÃO 1: Processing legado/órfão (sem lease) é adquirível
+    public async Task Claim_LegacyProcessingWithoutLease_IsReclaimable()
+    {
+        Guid id;
+        await using (var db = NewContext(TenantA))
+        {
+            var r = new PolicySyncRequest
+            {
+                Status = PolicySyncStatus.Processing,
+                RequestedAt = _clock.GetUtcNow(),
+                AvailableAt = _clock.GetUtcNow(),
+                LeaseId = null,
+                LeaseExpiresAt = null,
+                Attempts = 0,
+            };
+            db.PolicySyncRequests.Add(r);
+            await db.SaveChangesAsync();
+            id = r.Id;
+        }
+
+        var lease = await _queue.TryClaimNextAsync();
+
+        lease.Should().NotBeNull("Processing sem lease é estado legado/órfão, recuperável");
+        lease!.RequestId.Should().Be(id);
+        lease.LeaseId.Should().NotBeEmpty();
+        lease.Attempts.Should().Be(1);
+    }
+
     [Fact]   // renovação estende o lease
     public async Task Renew_ExtendsLease()
     {

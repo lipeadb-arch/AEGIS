@@ -89,6 +89,39 @@ public sealed class DurableQueuePostgresConcurrencyTests
         reclaim.Attempts.Should().Be(2);
     }
 
+    [Fact]   // CORREÇÃO 1 validada em PostgreSQL real: em PG, `NULL <= now` é UNKNOWN, então a cláusula IS NULL é o que recupera
+    public async Task LegacyProcessingWithoutLease_IsReclaimed_OnRealPostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+
+        var dbOptions = pg.DbOptions();
+        await EnsureSchemaAsync(dbOptions);
+
+        var tenant = Guid.NewGuid();
+        Guid id;
+        await using (var db = new AegisScoreDbContext(dbOptions, new SystemTenantContext(tenant)))
+        {
+            var doc = new GovernanceDocument
+            {
+                Title = "legacy", Type = GovernanceDocumentType.Politica, Source = DocumentSource.Integracao,
+                FileName = "p.pdf", ContentType = "application/pdf", StorageUri = "file://p.pdf",
+                AnalysisStatus = AiAnalysisStatus.Processing, AnalysisQueuedAt = DateTimeOffset.UtcNow,
+                AnalysisLeaseId = null, AnalysisLeaseExpiresAt = null, AnalysisAttempts = 0,
+            };
+            db.GovernanceDocuments.Add(doc);
+            await db.SaveChangesAsync();
+            id = doc.Id;
+        }
+
+        var lease = await NewQueue(dbOptions).TryClaimNextAsync();
+
+        lease.Should().NotBeNull("Processing sem lease (legado) é recuperável no PostgreSQL real");
+        lease!.DocumentId.Should().Be(id);
+        lease.LeaseId.Should().NotBeEmpty();
+        lease.Attempts.Should().Be(1);
+    }
+
     // ---- helpers ----
 
     private static DurableDocumentAnalysisQueue NewQueue(

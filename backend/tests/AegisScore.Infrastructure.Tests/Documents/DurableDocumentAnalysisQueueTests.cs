@@ -86,6 +86,33 @@ public sealed class DurableDocumentAnalysisQueueTests : IDisposable
         (await _queue.TryClaimNextAsync()).Should().BeNull();
     }
 
+    [Fact]   // CORREÇÃO 1: Processing LEGADO/órfão (sem lease) deve ser adquirível — senão fica preso p/ sempre
+    public async Task ClaimNext_LegacyProcessingWithoutLease_IsReclaimable()
+    {
+        // Simula um documento que já estava Processing ANTES do deploy da fila durável: a migration deixou
+        // AnalysisLeaseId/AnalysisLeaseExpiresAt como NULL. Sem a cláusula IS NULL, `NULL <= now` seria falso
+        // e o documento nunca seria readquirido.
+        var id = await SeedDocAsync(TenantA, d =>
+        {
+            d.AnalysisStatus = AiAnalysisStatus.Processing;
+            d.AnalysisLeaseId = null;
+            d.AnalysisLeaseExpiresAt = null;
+            d.AnalysisAttempts = 0;
+        });
+
+        var lease = await _queue.TryClaimNextAsync();
+
+        lease.Should().NotBeNull("Processing sem lease é estado legado/órfão, recuperável");
+        lease!.DocumentId.Should().Be(id);
+        lease.LeaseId.Should().NotBeEmpty("um novo LeaseId deve ser atribuído");
+        lease.Attempts.Should().Be(1, "a tentativa deve ser incrementada");
+
+        var doc = await LoadAsync(id);
+        doc.AnalysisStatus.Should().Be(AiAnalysisStatus.Processing);
+        doc.AnalysisLeaseId.Should().Be(lease.LeaseId);
+        doc.AnalysisLeaseExpiresAt.Should().NotBeNull("o claim carimba uma nova expiração");
+    }
+
     [Fact]   // dois "workers" (sequenciais) não pegam o mesmo item — a versão concorrente é o teste PostgreSQL
     public async Task TwoClaims_DoNotReturnSameLiveItem()
     {
@@ -238,7 +265,10 @@ public sealed class DurableDocumentAnalysisQueueTests : IDisposable
         return await db.GovernanceDocuments.IgnoreQueryFilters().FirstAsync(d => d.Id == id);
     }
 
-    private async Task<Guid> SeedQueuedDocAsync(Guid tenant)
+    private Task<Guid> SeedQueuedDocAsync(Guid tenant) => SeedDocAsync(tenant, _ => { });
+
+    /// <summary>Semeia um documento com binário (elegível ao claim) e aplica a mutação de estado desejada.</summary>
+    private async Task<Guid> SeedDocAsync(Guid tenant, Action<GovernanceDocument> mutate)
     {
         await using var db = NewContext(tenant);
         var doc = new GovernanceDocument
@@ -247,6 +277,7 @@ public sealed class DurableDocumentAnalysisQueueTests : IDisposable
             FileName = "p.pdf", ContentType = "application/pdf", StorageUri = "file://p.pdf",
             AnalysisStatus = AiAnalysisStatus.Queued, AnalysisQueuedAt = _clock.GetUtcNow(),
         };
+        mutate(doc);
         db.GovernanceDocuments.Add(doc);
         await db.SaveChangesAsync();
         return doc.Id;

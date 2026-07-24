@@ -11,8 +11,9 @@ namespace AegisScore.Infrastructure.Documents;
 /// <list type="bullet">
 /// <item>renova a cada <c>interval</c> (menor que a duração do lease), sempre GUARDADO pelo LeaseId (a
 /// renovação vira no-op se o lease já não é nosso);</item>
-/// <item>se a renovação indicar PERDA do lease (expirou e outra réplica assumiu), sinaliza o cancelamento do
-/// processamento (<paramref name="leaseLostSignal"/>) — o worker para de trabalhar em algo que não é mais seu;</item>
+/// <item>FAIL-CLOSED: se a renovação indicar PERDA do lease (retorno <c>false</c>) OU FALHAR (exceção — posse
+/// não comprovável), sinaliza o cancelamento do processamento (<paramref name="leaseLostSignal"/>) — o worker
+/// para de trabalhar em algo cuja posse não pode ser garantida, evitando duas réplicas no mesmo item;</item>
 /// <item>para no sucesso/falha/shutdown, ao dar <see cref="DisposeAsync"/>;</item>
 /// <item>usa <see cref="TimeProvider"/> — testável sem sleeps reais.</item>
 /// </list>
@@ -70,10 +71,13 @@ public sealed class LeaseHeartbeat : IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
-                    // Falha transitória na renovação (ex.: banco momentaneamente indisponível) não derruba o
-                    // processamento; tenta de novo no próximo batimento, ainda ANTES da expiração real do lease.
-                    log.LogWarning(ex, "Batimento de lease falhou; tentará novamente no próximo intervalo.");
-                    continue;
+                    // FAIL-CLOSED: se a renovação FALHA (ex.: banco indisponível), a POSSE do lease não pode ser
+                    // comprovada — ele pode já ter expirado e outra réplica adquirido o item. Seguir processando
+                    // arriscaria dois workers no mesmo item. Trata como lease PERDIDO: cancela o trabalho e para.
+                    log.LogWarning(ex,
+                        "Renovação de lease falhou; posse não comprovável — tratando como lease perdido (fail-closed).");
+                    leaseLostSignal.Cancel();
+                    break;
                 }
 
                 if (!renewed)

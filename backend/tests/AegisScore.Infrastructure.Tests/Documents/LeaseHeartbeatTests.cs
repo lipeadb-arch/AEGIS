@@ -53,28 +53,32 @@ public sealed class LeaseHeartbeatTests
         leaseCts.IsCancellationRequested.Should().BeTrue("perder o lease deve cancelar o processamento");
     }
 
-    [Fact]
-    public async Task FalhaTransitoriaNaRenovacao_NaoCancela_TentaDeNovo()
+    [Fact]   // FAIL-CLOSED: renovação que LANÇA exceção não comprova posse → trata como lease perdido
+    public async Task RenovacaoLancaExcecao_FailClosed_CancelaEEncerra()
     {
         var clock = new FakeTimeProvider();
         using var leaseCts = new CancellationTokenSource();
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        leaseCts.Token.Register(() => cancelled.TrySetResult());
         var attempts = 0;
-        var secondAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         await using var hb = LeaseHeartbeat.Start(
             _ =>
             {
-                var n = Interlocked.Increment(ref attempts);
-                if (n == 1) throw new InvalidOperationException("banco momentaneamente indisponível");
-                secondAttempt.TrySetResult();
-                return Task.FromResult(true);
+                Interlocked.Increment(ref attempts);
+                throw new InvalidOperationException("banco indisponível na renovação");
             },
             Interval, clock, leaseCts, NullLogger.Instance);
 
-        clock.Advance(Interval);   // 1ª renovação lança (transitória)
-        clock.Advance(Interval);   // 2ª renovação tenta de novo e sucede
-        await secondAttempt.Task.WaitAsync(Safety);
+        clock.Advance(Interval);                  // a renovação lança
+        await cancelled.Task.WaitAsync(Safety);   // o sinal de processamento é cancelado
 
-        leaseCts.IsCancellationRequested.Should().BeFalse("uma falha transitória de renovação não derruba o trabalho");
+        leaseCts.IsCancellationRequested.Should().BeTrue(
+            "renovação que falha não comprova posse → lease perdido (fail-closed)");
+
+        // O heartbeat ENCERROU: avançar o relógio não dispara nova renovação — o trabalho não fica esperando.
+        clock.Advance(Interval);
+        clock.Advance(Interval);
+        attempts.Should().Be(1, "após falhar fechado, o heartbeat não tenta renovar de novo");
     }
 }

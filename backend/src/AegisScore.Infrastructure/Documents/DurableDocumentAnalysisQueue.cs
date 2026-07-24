@@ -43,8 +43,10 @@ public sealed class DurableDocumentAnalysisQueue : IDocumentAnalysisQueue
 
     // Aquisição atômica. Só entram documentos COM binário (StorageUri IS NOT NULL): um registro de /connect
     // sem binário nunca é adquirido. Elegíveis: Queued/Pending disponíveis (respeitando o backoff de retry),
-    // ou Processing cujo lease EXPIROU (worker caído). Um Processing com lease vigente é excluído — não se
-    // rouba trabalho em andamento.
+    // ou Processing cujo lease EXPIROU (worker caído), ou Processing SEM lease — LeaseExpiresAt IS NULL, o
+    // estado LEGADO/órfão de um documento que já estava Processing antes do deploy da fila durável (a coluna
+    // é nullable, então `NULL <= now` seria falso e o documento ficaria preso para sempre). Um Processing com
+    // lease VIGENTE (expiração no futuro) é excluído — não se rouba trabalho em andamento.
     private const string ClaimSql = """
         UPDATE "GovernanceDocuments"
         SET "AnalysisStatus" = @processing,
@@ -59,7 +61,8 @@ public sealed class DurableDocumentAnalysisQueue : IDocumentAnalysisQueue
               AND (
                   "AnalysisStatus" = @queued
                   OR "AnalysisStatus" = @pending
-                  OR ("AnalysisStatus" = @processing AND "AnalysisLeaseExpiresAt" <= @now)
+                  OR ("AnalysisStatus" = @processing
+                      AND ("AnalysisLeaseExpiresAt" IS NULL OR "AnalysisLeaseExpiresAt" <= @now))
               )
             ORDER BY "AnalysisQueuedAt" NULLS FIRST, "CreatedAt"
             {LOCK}
