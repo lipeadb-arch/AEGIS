@@ -1,12 +1,12 @@
 # AEGIS — Plano Diretor de Remediação v1.0.3
 
 **Classificação:** Documento de governança técnica e segurança<br>
-**Data de atualização:** 2026-07-22<br>
+**Data de atualização:** 2026-07-23<br>
 **Situação do programa:** Em execução<br>
 **Branch de referência:** `main`<br>
-**Commit de referência:** `9904729`<br>
-**Última entrega concluída:** AEGIS-AUD-057 — PR #7, squash-merge `9904729`<br>
-**Próximo pacote:** `AEGIS-AUD-046 — Eliminar dados reais ou identificáveis dos stubs e demos` — **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO**
+**Commit de referência:** `f9a3ed7`<br>
+**Última entrega concluída:** AEGIS-AUD-046 — PR #8, squash-merge `f9a3ed7`<br>
+**Pacote em andamento:** `AEGIS-AUD-050 — Não usar filas em memória como mecanismo operacional durável` — **EM IMPLEMENTAÇÃO** na branch `fix/aud-050-durable-operational-queues` (aguarda merge; não concluir antes)
 
 > Este documento é a fonte de governança do programa de remediação. O código local e `docs/pr0-baseline.md` são a fonte de verdade para o estado técnico executável.
 
@@ -37,7 +37,8 @@
 | AEGIS-AUD-053 — Data Protection Key Ring | **CONCLUÍDO** | PR #5; squash-merge `49a6747` |
 | AEGIS-AUD-052 — Migrations/seed fora do startup | **CONCLUÍDO** | PR #6; squash-merge `0ebad27` |
 | AEGIS-AUD-057 — Credencial padrão de configuração | **CONCLUÍDO** | PR #7; squash-merge `9904729` |
-| Próximo pacote | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** | `AEGIS-AUD-046` |
+| AEGIS-AUD-046 — Dados de demonstração sintéticos | **CONCLUÍDO** | PR #8; squash-merge `f9a3ed7` |
+| AEGIS-AUD-050 — Filas operacionais duráveis | **EM IMPLEMENTAÇÃO** | branch `fix/aud-050-durable-operational-queues` (aguarda merge) |
 
 ### 2.1 O que o PR 0 concluiu
 
@@ -48,8 +49,8 @@
 
 ### 2.2 O que permanece inalterado
 
-- **Dos 63 achados `AEGIS-AUD-*`, três foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7); os demais **60 permanecem abertos**. O total catalogado segue **63**.
-- O próximo pacote passa a ser o `AEGIS-AUD-046`; sua implementação ainda exige autorização explícita.
+- **Dos 63 achados `AEGIS-AUD-*`, quatro foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7, `AEGIS-AUD-046` via PR #8); os demais **59 permanecem abertos**. O total catalogado segue **63**.
+- O próximo pacote passa a ser o `AEGIS-AUD-050`; sua implementação ainda exige autorização explícita.
 - **O `AEGIS-TECH-001` foi concluído como pacote técnico de precedência, não como novo achado da auditoria.** Ele não entra no backlog mestre e **não altera a contagem de 63 achados**.
 - A liberação para produção continua bloqueada.
 - O Plano Diretor não substitui a inspeção do código local antes de cada mudança.
@@ -124,12 +125,13 @@ Estados auxiliares: `BLOQUEADA`, `ADIADA`, `DESCARTADA`.
 | 4 | `AEGIS-AUD-053 — Persistência e proteção do Data Protection Key Ring` | **CONCLUÍDO** (PR #5; squash-merge `49a6747`) |
 | 5 | `AEGIS-AUD-052 — Retirar migrations e seed da inicialização concorrente da API` | **CONCLUÍDO** (PR #6; squash-merge `0ebad27`) |
 | 6 | `AEGIS-AUD-057 — Remover credenciais padrão do arquivo principal de configuração` | **CONCLUÍDO** (PR #7; squash-merge `9904729`) |
-| 7 | `AEGIS-AUD-046 — Eliminar dados reais ou identificáveis dos stubs e demos` | **PRÓXIMO / AGUARDA APROVAÇÃO DE IMPLEMENTAÇÃO** |
+| 7 | `AEGIS-AUD-046 — Eliminar dados reais ou identificáveis dos stubs e demos` | **CONCLUÍDO** (PR #8; squash-merge `f9a3ed7`) |
+| 8 | `AEGIS-AUD-050 — Não usar filas em memória como mecanismo operacional durável` | **EM IMPLEMENTAÇÃO** (branch `fix/aud-050-durable-operational-queues`; aguarda merge) |
 
 > **A aprovação desta ordem não autoriza a implementação de nenhum pacote.** Ela define apenas a
 > sequência de execução. **Cada pacote exige aprovação explícita própria** para sair de `PLANEJADO`
 > e entrar em implementação. Em particular, **esta revisão não autoriza a implementação do
-> `AEGIS-AUD-046`**.
+> `AEGIS-AUD-050`**.
 
 ### 7.2 Pacote técnico concluído
 
@@ -158,17 +160,17 @@ publicada e por supressão explícita já existente. Nenhum dos dois pontos foi 
 auditoria. Não recebe identificador `AEGIS-AUD-*`, não entra no backlog mestre e **não altera a
 contagem de 63 achados**.
 
-### 7.3 Próximo pacote imediato
+### 7.3 Pacote em implementação
 
-**`AEGIS-AUD-046 — Eliminar dados reais ou identificáveis dos stubs e demos`** — **PRÓXIMO / aguarda
-aprovação explícita de implementação.**
+**`AEGIS-AUD-050 — Não usar filas em memória como mecanismo operacional durável`** — **EM IMPLEMENTAÇÃO**
+(aguarda merge; não concluir antecipadamente).
 
-Concluídos os três pacotes anteriores do EP-00: `AEGIS-AUD-053` (PR #5, `49a6747`),
-`AEGIS-AUD-052` (PR #6, `0ebad27`) e `AEGIS-AUD-057` (PR #7, `9904729`).
+Concluídos os quatro pacotes anteriores do EP-00: `AEGIS-AUD-053` (PR #5, `49a6747`),
+`AEGIS-AUD-052` (PR #6, `0ebad27`), `AEGIS-AUD-057` (PR #7, `9904729`) e `AEGIS-AUD-046` (PR #8, `f9a3ed7`).
 
-Branch sugerida:
+Branch em uso:
 
-`fix/aud-046-remove-identifiable-demo-data`
+`fix/aud-050-durable-operational-queues`
 
 ### Ordem macro
 
@@ -177,17 +179,17 @@ Branch sugerida:
 **Estado:** EM EXECUÇÃO<br>
 **Objetivo:** Preservar uma referência reproduzível e remover riscos imediatos antes de mudanças estruturais.<br>
 **Dependências:** Nenhuma além da baseline técnica concluída.<br>
-**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052 e AEGIS-AUD-057 concluídos. Próximo pacote: **AEGIS-AUD-046**, condicionado à aprovação explícita de implementação.
+**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052, AEGIS-AUD-057 e AEGIS-AUD-046 concluídos. Próximo pacote: **AEGIS-AUD-050**, condicionado à aprovação explícita de implementação.
 
 ### Pacotes do épico
 
 | Ordem | ID | Severidade | Pendência | Área | Estado |
 |---:|---|---|---|---|---|
-| 1 | AEGIS-AUD-046 | ALTO | Eliminar dados reais ou identificáveis dos stubs e demos | Privacy / Demo Data / Repository Hygiene | ABERTA |
+| 1 | AEGIS-AUD-046 | ALTO | Eliminar dados reais ou identificáveis dos stubs e demos | Privacy / Demo Data / Repository Hygiene | CONCLUÍDA (PR #8; `f9a3ed7`) |
 | 2 | AEGIS-AUD-057 | MÉDIO | Remover credenciais padrão do arquivo principal de configuração | Configuration Security | CONCLUÍDA (PR #7; `9904729`) |
 | 3 | AEGIS-AUD-053 | BLOQUEADOR | Persistir e proteger o Data Protection Key Ring | Cryptography / Connector Secrets | CONCLUÍDA (PR #5; `49a6747`) |
 | 4 | AEGIS-AUD-052 | ALTO | Retirar migrations e seed da inicialização concorrente da API | Deployment / Database | CONCLUÍDA (PR #6; `0ebad27`) |
-| 5 | AEGIS-AUD-050 | BLOQUEADOR | Não usar filas em memória como mecanismo operacional durável | Workers / Reliability / Scale-out | ABERTA |
+| 5 | AEGIS-AUD-050 | BLOQUEADOR | Não usar filas em memória como mecanismo operacional durável | Workers / Reliability / Scale-out | EM IMPLEMENTAÇÃO (branch `fix/aud-050-durable-operational-queues`) |
 | 6 | AEGIS-AUD-026 | ALTO | Não substituir falha da API por dados de demonstração em ambiente operacional | Frontend / Data Integrity | ABERTA |
 | 7 | AEGIS-AUD-031 | MÉDIO | Alinhar documentação arquitetural com a stack e o estado reais | Documentation / Architecture Governance | ABERTA |
 
@@ -582,11 +584,11 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | AEGIS-AUD-043 | ALTO | Connectors / Framework Mapping | Definir uma única autoridade de mapeamento sinal → NIST | EP-02 | ABERTA | — | — |
 | AEGIS-AUD-044 | MÉDIO | Unified Schema / Vendor Neutrality | Remover semântica Microsoft das chaves do esquema normalizado | EP-02 | ABERTA | — | — |
 | AEGIS-AUD-045 | ALTO | AI / Connectors / Supply-chain Data | Não usar o LLM como normalizador confiável de ferramentas desconhecidas | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-046 | ALTO | Privacy / Demo Data / Repository Hygiene | Eliminar dados reais ou identificáveis dos stubs e demos | EP-00 | ABERTA | — | — |
+| AEGIS-AUD-046 | ALTO | Privacy / Demo Data / Repository Hygiene | Eliminar dados reais ou identificáveis dos stubs e demos | EP-00 | CONCLUÍDA | #8 | `f9a3ed7` |
 | AEGIS-AUD-047 | MÉDIO | Connector Configuration / Operations | Evoluir EncryptedSettings para configuração tipada e versionada | EP-04 | ABERTA | — | — |
 | AEGIS-AUD-048 | ALTO | Operations / Availability | Implementar health checks de liveness e readiness | EP-06 | ABERTA | — | — |
 | AEGIS-AUD-049 | ALTO | Observability | Adicionar métricas, tracing distribuído e correlação fim a fim | EP-06 | ABERTA | — | — |
-| AEGIS-AUD-050 | BLOQUEADOR | Workers / Reliability / Scale-out | Não usar filas em memória como mecanismo operacional durável | EP-00 | ABERTA | — | — |
+| AEGIS-AUD-050 | BLOQUEADOR | Workers / Reliability / Scale-out | Não usar filas em memória como mecanismo operacional durável | EP-00 | EM IMPLEMENTAÇÃO | — | — |
 | AEGIS-AUD-051 | ALTO | Deployment Architecture | Separar workers da API ou coordená-los para múltiplas réplicas | EP-06 | ABERTA | — | — |
 | AEGIS-AUD-052 | ALTO | Deployment / Database | Retirar migrations e seed da inicialização concorrente da API | EP-00 | CONCLUÍDA | #6 | `0ebad27` |
 | AEGIS-AUD-053 | BLOQUEADOR | Cryptography / Connector Secrets | Persistir e proteger o Data Protection Key Ring | EP-00 | CONCLUÍDA | #5 | `49a6747` |
@@ -611,7 +613,7 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | AEGIS-AUD-053 — Data Protection Key Ring | **CONCLUÍDO** | `fix/aud-053-data-protection-keyring` (removida) | #5 | `49a6747` | Backend 249/249; PostgreSQL descartável | Key ring no PostgreSQL (contexto dedicado), envelope X.509 em Production; migration aplicada em `aegis_dev` |
 | AEGIS-AUD-052 — Migrations/seed fora do startup | **CONCLUÍDO** | `fix/aud-052-externalize-database-initialization` (removida) | #6 | `0ebad27` | Backend 279/279; PostgreSQL descartável | `AegisScore.DbMigrator` sob advisory lock; índice único em `FrameworkVersion.Name`; migration aplicada em `aegis_dev` (17→18) |
 | AEGIS-AUD-057 — Credencial padrão de configuração | **CONCLUÍDO** | `fix/aud-057-remove-default-db-credentials` (removida) | #7 | `9904729` | Backend 284/284 | Connection string sai do `appsettings.json`; fail-fast quando ausente/vazia |
-| AEGIS-AUD-046 — Eliminar dados reais/identificáveis dos stubs e demos | **EM IMPLEMENTAÇÃO** | `fix/aud-046-sanitize-demo-data` | — | — | A validar no PR | Saneamento de dados de demonstração reais/identificáveis: organização sintética (`demo.example.com` / `example.com`) e cenário determinístico equivalente; sem migration; contratos, payloads e scoring preservados |
+| AEGIS-AUD-046 — Eliminar dados reais/identificáveis dos stubs e demos | **CONCLUÍDO** | `fix/aud-046-sanitize-demo-data` (removida) | #8 | `f9a3ed7` | Backend 284/284 (baseline preservada; árvore idêntica ao head validado) | Dados de demonstração integralmente sintéticos (`demo.example.com` / `example.com`); banco local `aegis_dev` saneado e revalidado; sem migration |
 
 ### Campos obrigatórios após cada merge
 

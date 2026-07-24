@@ -1,17 +1,23 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Documents;
 using AegisScore.Application.Services;
 using AegisScore.Domain;
+using AegisScore.Infrastructure.Documents;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Scoring;
 
 namespace AegisScore.Api.Workers;
 
 /// <summary>
-/// Consome a fila de leitura: para cada documento, extrai o texto, chama a IA para mapear os
-/// controles NIST e atualiza o ledger de cobertura. Roda sob um SystemTenantContext do tenant
-/// dono do documento (o stamping é fail-closed e não há header de request aqui).
+/// [AEGIS-AUD-050] Consome a fila operacional DURÁVEL de análise de documentos. Não há mais canal em
+/// memória: o worker SONDA o banco, ADQUIRE o próximo documento disponível com um lease atômico
+/// (<see cref="IDocumentAnalysisQueue"/> → FOR UPDATE SKIP LOCKED), extrai o texto, chama a IA para mapear
+/// os controles NIST e atualiza o ledger — tudo sob um <see cref="SystemTenantContext"/> do tenant DONO do
+/// documento (a varredura cross-tenant vive só na aquisição). O trabalho sobrevive a reinício, encerramento
+/// no meio e múltiplas réplicas: a entrega é at-least-once (idempotente), o lease vencido é reaproveitado, a
+/// falha transitória agenda retry e o limite de tentativas termina em Failed.
 /// </summary>
 public sealed class DocumentAnalysisWorker : BackgroundService
 {
@@ -42,104 +48,84 @@ public sealed class DocumentAnalysisWorker : BackgroundService
 
     private readonly IServiceScopeFactory _scopes;
     private readonly IDocumentAnalysisQueue _queue;
+    private readonly TimeProvider _clock;
     private readonly ILogger<DocumentAnalysisWorker> _log;
+    private readonly TimeSpan _pollInterval;
+    private readonly TimeSpan _heartbeatInterval;
+    private readonly int _maxAttempts;
 
     public DocumentAnalysisWorker(
-        IServiceScopeFactory scopes, IDocumentAnalysisQueue queue, ILogger<DocumentAnalysisWorker> log)
+        IServiceScopeFactory scopes, IDocumentAnalysisQueue queue, TimeProvider clock,
+        IOptions<DocumentAnalysisQueueOptions> options, ILogger<DocumentAnalysisWorker> log)
     {
         _scopes = scopes;
         _queue = queue;
+        _clock = clock;
         _log = log;
+        var opt = options.Value;
+        _pollInterval = TimeSpan.FromSeconds(Math.Max(1, opt.PollSeconds));
+        _heartbeatInterval = TimeSpan.FromSeconds(Math.Max(1, opt.EffectiveHeartbeatSeconds));
+        _maxAttempts = Math.Max(1, opt.MaxAttempts);
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        // A fila é em MEMÓRIA (Channel): um restart perde tudo o que estava enfileirado, e um documento
-        // interrompido no meio ficaria parado para sempre — ninguém o reenfileira sozinho. Sem esta
-        // varredura, "devolver a Pending" no shutdown seria só trocar um limbo por outro.
-        await RequeueOrphansAsync(ct);
-
+        // SEM varredura de órfãos no arranque: a durabilidade a torna desnecessária. Um documento
+        // interrompido fica Processing com lease, que EXPIRA e volta a ser adquirível sozinho; um Queued
+        // nunca saiu da fila. O PeriodicTimer é só o AGENDADOR da sondagem — o transporte e a memória do
+        // trabalho são o banco.
         try
         {
-            await foreach (var docId in _queue.DequeueAllAsync(ct))
+            using var timer = new PeriodicTimer(_pollInterval);
+            do
             {
-                // Shutdown pedido entre dois itens da fila: sai limpo em vez de começar um documento que
-                // será abortado no meio, deixando-o preso em Processing.
-                if (ct.IsCancellationRequested) break;
-
                 try
                 {
-                    await ProcessAsync(docId, ct);
+                    await DrainAsync(ct);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
-                    // Desligamento gracioso NÃO é falha. O catch genérico abaixo registrava um Error a
-                    // cada parada do serviço e poluía o alarme operacional com ruído de deploy.
-                    _log.LogInformation(
-                        "Análise do documento {DocId} interrompida pelo desligamento do serviço; será " +
-                        "reprocessada na próxima execução.", docId);
-                    break;
+                    break;   // desligamento gracioso durante o dreno
                 }
                 catch (Exception ex)
                 {
-                    _log.LogError(ex, "Falha inesperada ao analisar documento {DocId}", docId);
+                    // Um ciclo com falha (ex.: banco momentaneamente indisponível) NUNCA derruba o worker.
+                    _log.LogError(ex, "Ciclo de análise de documentos falhou; retomará no próximo tick.");
                 }
             }
+            while (await timer.WaitForNextTickAsync(ct));
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            // O próprio enumerador da fila é cancelado no shutdown — desfecho esperado, não erro.
+            // Encerramento do host durante a espera — saída limpa, sem ruído de erro no log.
         }
     }
 
-    /// <summary>
-    /// Recupera os documentos que ficaram órfãos entre execuções: os que estavam <c>Processing</c>
-    /// quando o serviço caiu e os que voltaram a <c>Pending</c>/<c>Queued</c> num desligamento. Roda UMA
-    /// vez, no arranque do worker, antes de consumir a fila.
-    ///
-    /// Sem tenant ambiente (é varredura global de manutenção), daí <c>IgnoreQueryFilters</c> — mesmo
-    /// idioma da sondagem de dono em <c>ProcessAsync</c>. Só re-enfileira quem tem binário: documento
-    /// registrado sem <c>StorageUri</c> (caminho /connect) não tem o que analisar.
-    /// </summary>
-    private async Task RequeueOrphansAsync(CancellationToken ct)
+    /// <summary>Adquire e processa documentos em sequência até a fila esvaziar; então aguarda o próximo tick.</summary>
+    private async Task DrainAsync(CancellationToken ct)
     {
-        try
+        while (!ct.IsCancellationRequested)
         {
-            using var scope = _scopes.CreateScope();
-            var options = scope.ServiceProvider.GetRequiredService<DbContextOptions<AegisScoreDbContext>>();
-            await using var db = new AegisScoreDbContext(options, new SystemTenantContext(null));
-
-            var orphans = await db.GovernanceDocuments.IgnoreQueryFilters()
-                .Where(d => d.StorageUri != null
-                         && (d.AnalysisStatus == AiAnalysisStatus.Processing
-                          || d.AnalysisStatus == AiAnalysisStatus.Queued
-                          || d.AnalysisStatus == AiAnalysisStatus.Pending))
-                .Select(d => d.Id)
-                .ToListAsync(ct);
-
-            if (orphans.Count == 0) return;
-
-            foreach (var id in orphans)
-                await _queue.EnqueueAsync(id, ct);
-
-            _log.LogInformation(
-                "Recuperação de fila: {Count} documento(s) pendente(s) reenfileirado(s) no arranque.",
-                orphans.Count);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // Serviço derrubado durante o arranque — nada a recuperar, e o próximo boot tenta de novo.
-        }
-        catch (Exception ex)
-        {
-            // A recuperação é BEST-EFFORT: falhar aqui (banco indisponível no arranque, por exemplo) não
-            // pode impedir o worker de subir e atender os documentos que chegarem a partir de agora.
-            _log.LogWarning(ex, "Não foi possível reenfileirar documentos pendentes no arranque.");
+            var lease = await _queue.TryClaimNextAsync(ct);
+            if (lease is null) return;   // nada disponível agora
+            await ProcessLeasedAsync(lease, ct);
         }
     }
 
-    private async Task ProcessAsync(Guid docId, CancellationToken ct)
+    private async Task ProcessLeasedAsync(DocumentAnalysisLease lease, CancellationToken ct)
     {
+        // Poison reclamado ALÉM do limite — só alcançável por crash repetido ANTES de o catch marcar o
+        // desfecho. Encerra terminal sem reprocessar. O limite no fluxo normal (falha capturada) é tratado
+        // no catch abaixo, onde a última tentativa (== limite) ainda É processada.
+        if (lease.Attempts > _maxAttempts)
+        {
+            await _queue.FailAsync(lease.DocumentId, lease.LeaseId, "AttemptsExhausted", CancellationToken.None);
+            _log.LogWarning(
+                "Documento {DocId} excedeu o limite de tentativas ({Max}) por reaquisições sucessivas; marcado Failed.",
+                lease.DocumentId, _maxAttempts);
+            return;
+        }
+
         using var scope = _scopes.CreateScope();
         var sp = scope.ServiceProvider;
         var options = sp.GetRequiredService<DbContextOptions<AegisScoreDbContext>>();
@@ -147,52 +133,57 @@ public sealed class DocumentAnalysisWorker : BackgroundService
         var storage = sp.GetRequiredService<IDocumentStorage>();
         var extractors = sp.GetServices<IDocumentTextExtractor>().ToList();
 
-        // Descobre o tenant dono (sem tenant ambiente → IgnoreQueryFilters).
-        Guid tenantId;
-        await using (var probe = new AegisScoreDbContext(options, new SystemTenantContext(null)))
-        {
-            var owner = await probe.GovernanceDocuments.IgnoreQueryFilters()
-                .Where(d => d.Id == docId)
-                .Select(d => (Guid?)d.TenantId)
-                .FirstOrDefaultAsync(ct);
-            if (owner is null) return;
-            tenantId = owner.Value;
-        }
-
-        // O writer precisa do MESMO tenant ambiente do DbContext. Fora de um request HTTP não há
-        // ITenantContext utilizável no container (o HttpTenantContext devolveria null e o guard
-        // fail-closed abortaria), então o construímos com o SystemTenantContext do documento —
-        // exatamente como já fazemos com o DbContext. A dependência declarada é a PORTA.
-        var tenantCtx = new SystemTenantContext(tenantId);
+        // O processamento segue sob o tenant DONO do item (resolvido na aquisição) — nunca cross-tenant.
+        // O writer precisa do MESMO tenant ambiente do DbContext; ambos usam o SystemTenantContext do lease.
+        var tenantCtx = new SystemTenantContext(lease.TenantId);
         await using var db = new AegisScoreDbContext(options, tenantCtx);
         IControlStateWriter writer = new ControlStateWriter(
             db, tenantCtx, sp.GetRequiredService<ILogger<ControlStateWriter>>());
 
-        var doc = await db.GovernanceDocuments.FirstOrDefaultAsync(d => d.Id == docId, ct);
-        if (doc is null || doc.StorageUri is null) return;
+        // BATIMENTO DE LEASE: uma extração/IA lenta pode durar mais que o lease. O heartbeat renova o lease
+        // durante o trabalho; se o lease for PERDIDO (expirou e outra réplica assumiu), ele cancela `leaseCts`,
+        // e o processamento aborta. `leaseCts` liga o shutdown (ct) ao sinal de lease-perdido — o trabalho roda
+        // sob `workCt`. É isso que impede duas réplicas no MESMO documento por excesso de duração.
+        using var leaseCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        await using var heartbeat = LeaseHeartbeat.Start(
+            c => _queue.RenewAsync(lease.DocumentId, lease.LeaseId, c),
+            _heartbeatInterval, _clock, leaseCts, _log);
+        var workCt = leaseCts.Token;
 
-        doc.AnalysisStatus = AiAnalysisStatus.Processing;
-        await db.SaveChangesAsync(ct);
+        var doc = await db.GovernanceDocuments.FirstOrDefaultAsync(d => d.Id == lease.DocumentId, workCt);
+        if (doc is null || doc.StorageUri is null)
+        {
+            // A aquisição exige StorageUri IS NOT NULL, então isto é defensivo: sem binário não há o que ler.
+            await _queue.FailAsync(lease.DocumentId, lease.LeaseId, "NoBinary", CancellationToken.None);
+            return;
+        }
 
         try
         {
-            await using var stream = await storage.OpenAsync(doc.StorageUri, ct);
+            await using var stream = await storage.OpenAsync(doc.StorageUri, workCt);
             var extractor = extractors.FirstOrDefault(e => e.CanHandle(doc.ContentType, doc.FileName))
                 ?? throw new NotSupportedException($"Sem extrator de texto para '{doc.ContentType ?? doc.FileName}'.");
-            var text = await extractor.ExtractAsync(stream, doc.ContentType, ct);
+            var text = await extractor.ExtractAsync(stream, doc.ContentType, workCt);
+
+            // Idempotência do reprocessamento (entrega at-least-once): zera os mapeamentos anteriores DESTE
+            // documento antes de regravar — senão uma segunda passada os duplicaria. A cobertura e o ledger
+            // já são upserts idempotentes por (tenant, subcategoria).
+            var priorMappings = await db.DocumentControlMappings
+                .Where(m => m.GovernanceDocumentId == doc.Id).ToListAsync(workCt);
+            if (priorMappings.Count > 0) db.DocumentControlMappings.RemoveRange(priorMappings);
 
             // PASSADA 1 — TRIAGEM: quais controles este documento endereça? O documento não declara um
             // alvo (GovernanceDocument não tem esse campo), então é o modelo que aponta os candidatos.
             // O texto vai TRUNCADO: uma política de 80 páginas não cabe no contexto e a triagem só
             // precisa reconhecer os temas, não julgar o mérito.
             var analysis = await ai.AnalyzeDocumentAsync(
-                new DocumentAnalysisRequest(tenantId, Truncate(text, TriageCharBudget), doc.FileName), ct);
+                new DocumentAnalysisRequest(lease.TenantId, Truncate(text, TriageCharBudget), doc.FileName), workCt);
 
             foreach (var claim in analysis.Claims)
             {
                 // PASSADA 2 — RAG DIRIGIDO: agora que o alvo é conhecido, carrega a regra do 800-53 e
                 // reavalia com payload enxuto (trecho relevante + controle + critérios de evidência).
-                var refined = await RefineWithRuleAsync(db, ai, claim, text, doc.FileName, ct);
+                var refined = await RefineWithRuleAsync(db, ai, claim, text, doc.FileName, workCt);
 
                 db.DocumentControlMappings.Add(new DocumentControlMapping
                 {
@@ -201,46 +192,62 @@ public sealed class DocumentAnalysisWorker : BackgroundService
                     Confidence = refined.Confidence,
                     Evidence = refined.Evidence,
                 });
-                await UpsertCoverageFromDocumentAsync(db, claim.SubcategoryCode, doc.Id, refined.Confidence, ct);
+                await UpsertCoverageFromDocumentAsync(db, claim.SubcategoryCode, doc.Id, refined.Confidence, workCt);
             }
 
             doc.AnalysisSummary = analysis.Summary;
-            doc.AnalysisStatus = AiAnalysisStatus.Analyzed;
-            doc.AnalyzedAt = DateTimeOffset.UtcNow;
-            await db.SaveChangesAsync(ct);
+            await db.SaveChangesAsync(workCt);   // dados de negócio: mapeamentos, cobertura, resumo
 
-            // Ponte Govern → Aegis Score. Roda DEPOIS do commit da trilha documental: a análise é atômica
-            // em si, e a projeção no ledger é um passo idempotente (upsert) — reprocessar o documento
-            // reescreve a mesma célula, nunca duplica. Sem acoplamento ao motor de telemetria: ambas as
-            // fontes de evidência gravam pelo mesmo IControlStateWriter.
-            await ProjectToScoreAsync(writer, tenantId, analysis.Claims, doc.FileName, ct);
+            // Ponte Govern → Aegis Score. Roda DEPOIS do commit da trilha documental e é idempotente
+            // (upsert por subcategoria): reprocessar reescreve a mesma célula, nunca duplica.
+            await ProjectToScoreAsync(writer, lease.TenantId, analysis.Claims, doc.FileName, workCt);
+
+            // Confirmação ATÔMICA guardada pelo lease: Processing → Analyzed. Usa CancellationToken.None — o
+            // trabalho ACABOU e a confirmação não pode ser interrompida por shutdown. Se o lease já não é o
+            // vigente (perdido no fio final), a confirmação vira no-op e a PERDA É DETECTADA (completed=false).
+            var completed = await _queue.CompleteAsync(doc.Id, lease.LeaseId, CancellationToken.None);
+            if (!completed)
+                _log.LogWarning(
+                    "Documento {DocId}: lease não era mais o vigente ao confirmar; outra réplica assumiu.", doc.Id);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // DESLIGAMENTO, não falha do documento. Volta a Pending e o RequeueOrphansAsync do próximo
-            // arranque o recoloca na fila: marcá-lo Failed acusaria de defeito um documento que nunca
-            // chegou a ser julgado, e deixá-lo em Processing o prenderia para sempre.
-            //
-            // ⚠️ Grava com CancellationToken.None DE PROPÓSITO: o token do ciclo já está cancelado e
-            // reusá-lo aqui faria o próprio SaveChanges lançar, que é exatamente como um documento fica
-            // preso em Processing. Esta escrita é curta, local e precisa acontecer para o estado ficar
-            // coerente — é o padrão de "limpeza no encerramento".
-            doc.AnalysisStatus = AiAnalysisStatus.Pending;
-            doc.AnalysisError = null;
-            await db.SaveChangesAsync(CancellationToken.None);
-
-            _log.LogInformation(
-                "Documento {DocId} devolvido à fila (Pending) pelo desligamento do serviço.", docId);
-            throw;   // deixa o ExecuteAsync encerrar o laço com elegância
+            // DESLIGAMENTO, não falha do documento: solta o lease e devolve à fila SEM custar tentativa. Grava
+            // com CancellationToken.None de propósito (o token do ciclo já está cancelado); o próximo boot /
+            // outra réplica o retoma de imediato. É o que garante "shutdown não perde trabalho".
+            await _queue.ReleaseAsync(doc.Id, lease.LeaseId, CancellationToken.None);
+            _log.LogInformation("Documento {DocId} devolvido à fila pelo desligamento do serviço.", doc.Id);
+            throw;   // deixa o dreno/laço encerrar com elegância
+        }
+        catch (OperationCanceledException) when (leaseCts.IsCancellationRequested)
+        {
+            // LEASE PERDIDO no meio do trabalho (o heartbeat detectou expiração + reaquisição por outra
+            // réplica). Abandona SILENCIOSAMENTE: a outra réplica é a dona agora — não confirmamos, não
+            // agendamos retry e não soltamos (mexer no item alheio corromperia a entrega).
+            _log.LogWarning(
+                "Documento {DocId}: lease perdido durante o processamento; abandonando (outra réplica assumiu).",
+                doc.Id);
         }
         catch (Exception ex)
         {
-            doc.AnalysisStatus = AiAnalysisStatus.Failed;
-            doc.AnalysisError = ex.Message;
-            // Idem: se a causa foi um timeout que também cancelou o token, gravar com `ct` esconderia o
-            // erro real por trás de um segundo cancelamento e o documento nunca sairia de Processing.
-            await db.SaveChangesAsync(CancellationToken.None);
-            _log.LogWarning(ex, "Leitura da IA falhou para o documento {DocId}", docId);
+            // Falha ao processar. Categoria SANITIZADA (nome do tipo de exceção), NUNCA a mensagem bruta —
+            // não amplia o AEGIS-AUD-054. Com orçamento de tentativas, agenda retry; no limite, termina Failed.
+            // As transições são guardadas pelo lease: se ele já se perdeu, viram no-op (sem corromper o item alheio).
+            var category = ex.GetType().Name;
+            if (lease.Attempts >= _maxAttempts)
+            {
+                await _queue.FailAsync(doc.Id, lease.LeaseId, category, CancellationToken.None);
+                _log.LogWarning(ex,
+                    "Análise do documento {DocId} falhou na tentativa {Attempt}/{Max}; marcado Failed (terminal).",
+                    doc.Id, lease.Attempts, _maxAttempts);
+            }
+            else
+            {
+                await _queue.ScheduleRetryAsync(doc.Id, lease.LeaseId, CancellationToken.None);
+                _log.LogWarning(ex,
+                    "Análise do documento {DocId} falhou na tentativa {Attempt}/{Max}; reagendada para retry.",
+                    doc.Id, lease.Attempts, _maxAttempts);
+            }
         }
     }
 
