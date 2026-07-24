@@ -146,6 +146,14 @@ public enum DocumentSource { UploadManual = 0, Integracao = 1 }
 /// <summary>Estágio do pipeline de leitura pela IA (o "Status de Leitura da IA" da UI).</summary>
 public enum AiAnalysisStatus { Pending = 0, Queued = 1, Processing = 2, Analyzed = 3, Failed = 4 }
 
+/// <summary>
+/// [AEGIS-AUD-050] Estágio de uma <c>PolicySyncRequest</c> na fila operacional durável. Pending =
+/// disponível para aquisição; Processing = adquirido sob lease; Completed = sincronizado com sucesso;
+/// Failed = falha terminal (esgotou as tentativas). Pending/Processing são os estados ATIVOS que o índice
+/// único parcial dedupe por tenant.
+/// </summary>
+public enum PolicySyncStatus { Pending = 0, Processing = 1, Completed = 2, Failed = 3 }
+
 /// <summary>Validade documental (lifecycle), independente da leitura da IA.</summary>
 public enum GovernanceStatus { Rascunho = 0, Vigente = 1, EmRevisao = 2, Expirado = 3, Descontinuado = 4 }
 

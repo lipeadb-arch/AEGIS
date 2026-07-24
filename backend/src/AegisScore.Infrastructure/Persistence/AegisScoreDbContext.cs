@@ -82,6 +82,8 @@ public class AegisScoreDbContext : DbContext
     public DbSet<GrcInterviewSession> GrcInterviewSessions => Set<GrcInterviewSession>();
     public DbSet<GrcInterviewMessage> GrcInterviewMessages => Set<GrcInterviewMessage>();
     public DbSet<IdentifiedRisk> IdentifiedRisks => Set<IdentifiedRisk>();
+    // [AEGIS-AUD-050] Fila operacional durável de sincronização de políticas (substitui o canal em memória).
+    public DbSet<PolicySyncRequest> PolicySyncRequests => Set<PolicySyncRequest>();
 
     // Identify (ID.RA) — Raio de Explosão: topologia, ameaças estruturadas e snapshots do raio
     public DbSet<AssetDependency> AssetDependencies => Set<AssetDependency>();
@@ -267,12 +269,33 @@ public class AegisScoreDbContext : DbContext
         b.Entity<GovernanceDocument>().HasIndex(x => new { x.TenantId, x.Sha256 })
             .IsUnique()
             .HasFilter("\"Sha256\" IS NOT NULL");
+        // [AEGIS-AUD-050] Índices da fila operacional durável. A aquisição varre por AnalysisStatus ordenando
+        // por AnalysisQueuedAt (trabalho disponível) e reclama Processing por AnalysisLeaseExpiresAt (lease
+        // vencido) — um índice para cada caminho evita full scan na varredura cross-tenant do worker.
+        b.Entity<GovernanceDocument>().HasIndex(x => new { x.AnalysisStatus, x.AnalysisQueuedAt });
+        b.Entity<GovernanceDocument>().HasIndex(x => new { x.AnalysisStatus, x.AnalysisLeaseExpiresAt });
         b.Entity<DocumentControlMapping>().HasIndex(x => new { x.TenantId, x.GovernanceDocumentId });
         b.Entity<DocumentControlMapping>().HasIndex(x => new { x.TenantId, x.SubcategoryCode });
         b.Entity<SubcategoryCoverage>().HasIndex(x => new { x.TenantId, x.SubcategoryCode }).IsUnique();
         b.Entity<GrcInterviewSession>().HasIndex(x => x.TenantId);
         b.Entity<GrcInterviewMessage>().HasIndex(x => new { x.TenantId, x.SessionId });
         b.Entity<IdentifiedRisk>().HasIndex(x => new { x.TenantId, x.SubcategoryCode });
+
+        // [AEGIS-AUD-050] Fila operacional durável de sincronização de políticas. Três índices:
+        //  - claim: (Status, AvailableAt) cobre a varredura por pedido disponível ordenado por disponibilidade;
+        //  - lease: (Status, LeaseExpiresAt) cobre a reclamação de Processing com lease vencido;
+        //  - dedupe: ÚNICO PARCIAL só em TenantId WHERE ativo (Pending=0/Processing=1) — no máximo um pedido
+        //    ativo por tenant, a invariante que torna EnqueueAsync idempotente (mesmo idioma do dedupe de
+        //    GovernanceDocument.Sha256). O filtro usa os ordinais do enum, que o Npgsql persiste como int.
+        b.Entity<PolicySyncRequest>(e =>
+        {
+            e.Property(x => x.ErrorCategory).HasMaxLength(200);
+            e.HasIndex(x => new { x.Status, x.AvailableAt });
+            e.HasIndex(x => new { x.Status, x.LeaseExpiresAt });
+            e.HasIndex(x => x.TenantId)
+                .IsUnique()
+                .HasFilter("\"Status\" IN (0, 1)");
+        });
         // Children now carry their own TenantId — index it alongside the parent FK.
         b.Entity<RiskEvaluation>().HasIndex(x => new { x.TenantId, x.RiskId });
         b.Entity<ActionPlan>().HasIndex(x => new { x.TenantId, x.RiskId });
@@ -409,6 +432,9 @@ public class AegisScoreDbContext : DbContext
         b.Entity<GrcInterviewSession>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<GrcInterviewMessage>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<IdentifiedRisk>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-AUD-050] A solicitação de sync é tenant-owned; a varredura cross-tenant do worker usa
+        // IgnoreQueryFilters (aquisição) explicitamente, como os demais componentes de background.
+        b.Entity<PolicySyncRequest>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<TenantControlState>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<TenantScoreSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<RemediationAdvisory>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

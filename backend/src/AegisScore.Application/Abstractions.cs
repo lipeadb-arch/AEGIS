@@ -293,24 +293,82 @@ public interface IDocumentTextExtractor
     Task<string> ExtractAsync(Stream content, string? contentType, CancellationToken ct);
 }
 
-/// <summary>Fila de leitura: enfileira documentos para análise assíncrona pela IA.</summary>
-public interface IDocumentAnalysisQueue
-{
-    ValueTask EnqueueAsync(Guid documentId, CancellationToken ct = default);
-    IAsyncEnumerable<Guid> DequeueAllAsync(CancellationToken ct);
-}
+// ---- [AEGIS-AUD-050] Filas operacionais DURÁVEIS (PostgreSQL) ----------------
+// Substituem os canais em memória anteriores (sem durabilidade), que perdiam o trabalho em qualquer reinício,
+// não sobreviviam ao encerramento no meio do processamento e não coordenavam múltiplas réplicas. O
+// mecanismo durável é o PostgreSQL já em uso — sem broker externo, portátil entre ambientes. A aquisição é
+// ATÔMICA (FOR UPDATE SKIP LOCKED): duas réplicas nunca pegam o mesmo item. O lease expira sozinho
+// (recupera worker caído), a falha transitória agenda retry, o limite de tentativas fecha em Failed e a
+// entrega é at-least-once, apoiada na idempotência dos invariantes do banco. A VARREDURA cross-tenant vive
+// SOMENTE neste componente de aquisição, sob contexto de sistema explicitamente controlado; após o claim,
+// o processamento segue sob o tenant dono do item.
 
 /// <summary>
-/// Gatilho de sincronização de políticas SOB DEMANDA (Govern). Desacopla o request HTTP do trabalho de
-/// ingestão: o controller publica o tenant e devolve 202 na hora; o <c>PolicyIngestionWorker</c> — além do
-/// ciclo periódico do timer — consome o canal e executa o fetch/registro em background. Canal em memória
-/// (mesmo idioma do <see cref="IDocumentAnalysisQueue"/>); em produção troca-se por um broker mantendo a porta.
+/// Lease adquirido sobre um documento a analisar: o alvo, o tenant dono, a identidade do lease (para
+/// confirmar/soltar o trabalho depois) e o nº de aquisições já feitas (para decidir retry × falha terminal).
 /// </summary>
-public interface IPolicySyncTrigger
-{
-    /// <summary>Publica um pedido de sincronização das políticas do tenant. Não bloqueia: só enfileira.</summary>
-    ValueTask RequestSyncAsync(Guid tenantId, CancellationToken ct = default);
+public sealed record DocumentAnalysisLease(Guid DocumentId, Guid TenantId, Guid LeaseId, int Attempts);
 
-    /// <summary>Fluxo assíncrono dos tenants a sincronizar, consumido pelo worker.</summary>
-    IAsyncEnumerable<Guid> DequeueAllAsync(CancellationToken ct);
+/// <summary>
+/// Fila operacional DURÁVEL de análise de documentos (AEGIS-AUD-050). O próprio <c>GovernanceDocument</c> é
+/// o item de trabalho — o status persistido (Queued/Pending = disponível, Processing = adquirido, Analyzed =
+/// sucesso, Failed = terminal) substitui o canal em memória. Enfileirar é apenas persistir o documento em
+/// Queued (feito pelo controller/worker de ingestão); daí em diante esta porta cuida da entrega segura.
+/// </summary>
+public interface IDocumentAnalysisQueue
+{
+    /// <summary>Adquire atomicamente o próximo documento disponível (Queued/Pending, ou Processing com lease
+    /// VENCIDO) e o marca Processing sob um lease novo, incrementando as tentativas. Null = sem trabalho.</summary>
+    Task<DocumentAnalysisLease?> TryClaimNextAsync(CancellationToken ct = default);
+
+    /// <summary>BATIMENTO de lease: estende a expiração enquanto o trabalho ainda dura, sob a guarda do lease.
+    /// False se o lease já não é o vigente (perdido) — o chamador deve ABORTAR o processamento. É o que impede
+    /// que uma análise mais longa que o lease seja adquirida por outra réplica.</summary>
+    Task<bool> RenewAsync(Guid documentId, Guid leaseId, CancellationToken ct = default);
+
+    /// <summary>Confirma o sucesso (Processing → Analyzed) sob a guarda do lease. False se o lease já não é o
+    /// vigente — outra réplica assumiu e o chamador NÃO deve sobrescrever (a perda é DETECTADA aqui).</summary>
+    Task<bool> CompleteAsync(Guid documentId, Guid leaseId, CancellationToken ct = default);
+
+    /// <summary>Falha TRANSITÓRIA: devolve o documento para nova tentativa (Processing → Pending) com backoff,
+    /// sob a guarda do lease. O nº de tentativas já foi incrementado na aquisição.</summary>
+    Task<bool> ScheduleRetryAsync(Guid documentId, Guid leaseId, CancellationToken ct = default);
+
+    /// <summary>Falha TERMINAL (tentativas esgotadas ou defeito irrecuperável): Processing → Failed, com uma
+    /// categoria de erro SANITIZADA — nunca a mensagem bruta (AEGIS-AUD-054) — sob a guarda do lease.</summary>
+    Task<bool> FailAsync(Guid documentId, Guid leaseId, string errorCategory, CancellationToken ct = default);
+
+    /// <summary>Desligamento gracioso: solta o lease e devolve o documento à fila SEM custar tentativa
+    /// (Processing → Pending, tentativa estornada), para que outra réplica/o próximo boot o retome já.</summary>
+    Task<bool> ReleaseAsync(Guid documentId, Guid leaseId, CancellationToken ct = default);
+}
+
+/// <summary>Lease adquirido sobre uma solicitação de sincronização de políticas (mesmo contrato do documento).</summary>
+public sealed record PolicySyncLease(Guid RequestId, Guid TenantId, Guid LeaseId, int Attempts);
+
+/// <summary>
+/// Fila operacional DURÁVEL de sincronização de políticas (AEGIS-AUD-050). Substitui o gatilho em memória: o
+/// endpoint <c>/governance/documents/sync</c> PERSISTE uma <c>PolicySyncRequest</c> antes de responder 202, e o
+/// ciclo periódico apenas ENFILEIRA o trabalho — o <c>PeriodicTimer</c> é agendador, nunca transporte nem a
+/// única memória do pedido. O <c>PolicyIngestionWorker</c> adquire com lease atômico e processa.
+/// </summary>
+public interface IPolicySyncQueue
+{
+    /// <summary>Enfileira (persiste) um pedido de sync do tenant. Idempotente: um único pedido ATIVO
+    /// (Pending/Processing) por tenant é invariante de banco — se já existe, é no-op. Usado pelo endpoint sob
+    /// demanda e pelo ciclo periódico, sempre com stamping fail-closed do tenant.</summary>
+    Task EnqueueAsync(Guid tenantId, CancellationToken ct = default);
+
+    /// <summary>Adquire atomicamente o próximo pedido disponível (Pending, ou Processing com lease VENCIDO) e o
+    /// marca Processing sob um lease novo. Null = sem trabalho.</summary>
+    Task<PolicySyncLease?> TryClaimNextAsync(CancellationToken ct = default);
+
+    /// <summary>BATIMENTO de lease: estende a expiração enquanto o fetch/ingestão ainda dura, sob a guarda do
+    /// lease. False se o lease foi perdido — o chamador deve abortar.</summary>
+    Task<bool> RenewAsync(Guid requestId, Guid leaseId, CancellationToken ct = default);
+
+    Task<bool> CompleteAsync(Guid requestId, Guid leaseId, CancellationToken ct = default);
+    Task<bool> ScheduleRetryAsync(Guid requestId, Guid leaseId, string errorCategory, CancellationToken ct = default);
+    Task<bool> FailAsync(Guid requestId, Guid leaseId, string errorCategory, CancellationToken ct = default);
+    Task<bool> ReleaseAsync(Guid requestId, Guid leaseId, CancellationToken ct = default);
 }

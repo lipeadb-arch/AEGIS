@@ -1,77 +1,84 @@
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Services;
 using AegisScore.Domain;
+using AegisScore.Infrastructure.Documents;
 using AegisScore.Infrastructure.Persistence;
 
 namespace AegisScore.Api.Workers;
 
 /// <summary>
-/// GOVERN → ingestão AGNÓSTICA de políticas. Fecha o Provider Pattern: descobre os tenants com uma
-/// integração de documentos habilitada, RESOLVE a estratégia da fonte via
-/// <see cref="IDocumentIntegrationFactory"/> e executa <c>FetchPoliciesAsync</c> — sem NUNCA conhecer a
-/// API do fornecedor (SharePoint, Google…). Cada documento puxado vira um <c>GovernanceDocument</c>
-/// (Source = Integracao), tem o binário guardado e é enfileirado para a leitura da IA — daí em diante é o
-/// MESMO pipeline do upload manual (<see cref="DocumentAnalysisWorker"/> → ledger, com teto documental de 50%).
+/// [AEGIS-AUD-050] GOVERN → ingestão AGNÓSTICA de políticas sobre fila DURÁVEL. Fecha o Provider Pattern:
+/// descobre os tenants com integração de documentos, RESOLVE a estratégia da fonte via
+/// <see cref="IDocumentIntegrationFactory"/> e executa <c>FetchPoliciesAsync</c> — sem conhecer a API do
+/// fornecedor. Cada documento puxado vira um <c>GovernanceDocument</c> (Source = Integracao) em
+/// <c>AnalysisStatus.Queued</c>, o que já É a entrada na fila durável de análise (o
+/// <see cref="DocumentAnalysisWorker"/> o adquire de lá).
 ///
-/// DOIS disparos, UM executor idempotente:
+/// DUAS engrenagens, sem canal em memória:
 /// <list type="bullet">
-/// <item>ciclo PERIÓDICO (PeriodicTimer) — varre todos os tenants de tempos em tempos;</item>
-/// <item>gatilho SOB DEMANDA (<see cref="IPolicySyncTrigger"/>) — o executivo aciona <c>POST /governance/documents/sync</c>
-/// e o worker sincroniza aquele tenant AGORA, sem esperar o timer.</item>
+/// <item>o ciclo PERIÓDICO (<c>PeriodicTimer</c>) apenas ENFILEIRA — persiste uma
+/// <see cref="PolicySyncRequest"/> por tenant elegível (idempotente). O timer é agendador, jamais transporte;</item>
+/// <item>o CONSUMIDOR sonda a fila durável (<see cref="IPolicySyncQueue"/>), ADQUIRE cada pedido com lease
+/// atômico e o processa. O gatilho sob demanda (<c>POST /governance/documents/sync</c>) alimenta a MESMA fila.</item>
 /// </list>
-/// Ambos convergem para <see cref="SyncTenantAsync"/>. O dedupe de documento é um read-then-write, mas a
-/// idempotência é imposta pelo BANCO: o índice ÚNICO (TenantId, Sha256) rejeita a duplicata, então dois
-/// syncs concorrentes do MESMO tenant não geram documentos repetidos — a 2ª inserção vira no-op (o
-/// <see cref="DbUpdateException"/> é tratado como idempotente). Dispensa serialização em memória.
-///
-/// Sendo Singleton, abre um escopo por operação e constrói o DbContext à mão sob um
-/// <see cref="SystemTenantContext"/> — mesmo padrão dos demais workers (sem tenant HTTP, o stamping
-/// fail-closed exige tenant explícito por iteração).
+/// Sobrevive a reinício, encerramento no meio e múltiplas réplicas; entrega at-least-once com retry, limite
+/// de tentativas e recuperação de lease vencido. A idempotência da ingestão vem do índice único
+/// (TenantId, Sha256) de <c>GovernanceDocument</c>.
 /// </summary>
 public sealed class PolicyIngestionWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopes;
-    private readonly IPolicySyncTrigger _trigger;
+    private readonly IPolicySyncQueue _queue;
+    private readonly TimeProvider _clock;
     private readonly ILogger<PolicyIngestionWorker> _log;
-    private readonly TimeSpan _period;
+    private readonly TimeSpan _periodicInterval;
+    private readonly TimeSpan _pollInterval;
+    private readonly TimeSpan _heartbeatInterval;
+    private readonly int _maxAttempts;
 
     public PolicyIngestionWorker(
-        IServiceScopeFactory scopes, IPolicySyncTrigger trigger, IConfiguration config,
-        ILogger<PolicyIngestionWorker> log)
+        IServiceScopeFactory scopes, IPolicySyncQueue queue, TimeProvider clock,
+        IOptions<PolicySyncQueueOptions> options, ILogger<PolicyIngestionWorker> log)
     {
         _scopes = scopes;
-        _trigger = trigger;
+        _queue = queue;
+        _clock = clock;
         _log = log;
-        var minutes = int.TryParse(config["PolicyIngestion:IntervalMinutes"], out var m) ? m : 60;
-        _period = TimeSpan.FromMinutes(Math.Max(1, minutes));
+        var opt = options.Value;
+        _periodicInterval = TimeSpan.FromMinutes(Math.Max(1, opt.PeriodicIntervalMinutes));
+        _pollInterval = TimeSpan.FromSeconds(Math.Max(1, opt.PollSeconds));
+        _heartbeatInterval = TimeSpan.FromSeconds(Math.Max(1, opt.EffectiveHeartbeatSeconds));
+        _maxAttempts = Math.Max(1, opt.MaxAttempts);
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        // Duas fontes de disparo rodando em paralelo; a idempotência da ingestão vem do índice único no banco.
+        // Duas engrenagens em paralelo: o timer PERIÓDICO só ENFILEIRA (persiste pedidos); o CONSUMIDOR sonda
+        // a fila durável, adquire com lease e processa. O timer nunca é o transporte nem a memória do pedido.
         await Task.WhenAll(
-            RunPeriodicAsync(ct),
-            RunOnDemandAsync(ct));
+            RunPeriodicEnqueueAsync(ct),
+            RunConsumerAsync(ct));
     }
 
-    /// <summary>Ciclo periódico: um sync no boot (popula a demo) e depois a cada intervalo configurado.</summary>
-    private async Task RunPeriodicAsync(CancellationToken ct)
+    /// <summary>Ciclo periódico: enfileira (persiste) um pedido de sync por tenant elegível — no boot e a cada intervalo.</summary>
+    private async Task RunPeriodicEnqueueAsync(CancellationToken ct)
     {
         try
         {
-            using var timer = new PeriodicTimer(_period);
+            using var timer = new PeriodicTimer(_periodicInterval);
             do
             {
                 try
                 {
-                    await SyncAllTenantsAsync(ct);
+                    await EnqueueEligibleTenantsAsync(ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     // Um ciclo com falha NUNCA derruba o worker; tenta de novo no próximo tick.
-                    _log.LogError(ex, "Ciclo de ingestão de políticas falhou; retomará no próximo tick.");
+                    _log.LogError(ex, "Enfileiramento periódico de sync de políticas falhou; retomará no próximo tick.");
                 }
             }
             while (await timer.WaitForNextTickAsync(ct));
@@ -82,89 +89,156 @@ public sealed class PolicyIngestionWorker : BackgroundService
         }
     }
 
-    /// <summary>Gatilho sob demanda: consome o canal e sincroniza o tenant pedido pelo endpoint /sync.</summary>
-    private async Task RunOnDemandAsync(CancellationToken ct)
+    /// <summary>Consumidor: sonda a fila durável, adquire cada pedido com lease e o processa até esvaziar.</summary>
+    private async Task RunConsumerAsync(CancellationToken ct)
     {
         try
         {
-            await foreach (var tenantId in _trigger.DequeueAllAsync(ct))
+            using var timer = new PeriodicTimer(_pollInterval);
+            do
             {
                 try
                 {
-                    await SyncTenantOnDemandAsync(tenantId, ct);
+                    await DrainAsync(ct);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
-                    // Isola a falha de um pedido: o consumidor segue vivo para os próximos.
-                    _log.LogError(ex, "Sync sob demanda do tenant {Tenant} falhou.", tenantId);
+                    break;   // desligamento gracioso durante o dreno
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "Consumo de sync de políticas falhou; retomará no próximo tick.");
                 }
             }
+            while (await timer.WaitForNextTickAsync(ct));
         }
         catch (OperationCanceledException)
         {
-            // Encerramento do host — o canal foi cancelado. Saída limpa.
+            // Encerramento do host durante a espera — saída limpa.
         }
     }
 
     /// <summary>
-    /// Passada PERIÓDICA: enumera (cross-tenant) as integrações de documentos habilitadas e processa cada
-    /// uma. Sem tenant ambiente (<c>SystemTenantContext(null)</c>), a varredura usa IgnoreQueryFilters —
-    /// senão o filtro fail-closed zera o SELECT.
+    /// Enfileira um pedido de sync por tenant com integração de documentos habilitada. A varredura é
+    /// cross-tenant (<c>SystemTenantContext(null)</c> + IgnoreQueryFilters); <see cref="IPolicySyncQueue.EnqueueAsync"/>
+    /// é idempotente (um único pedido ATIVO por tenant), então re-enfileirar a cada tick não acumula pedidos.
     /// </summary>
-    private async Task SyncAllTenantsAsync(CancellationToken ct)
+    private async Task EnqueueEligibleTenantsAsync(CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
-        var sp = scope.ServiceProvider;
-        var options = sp.GetRequiredService<DbContextOptions<AegisScoreDbContext>>();
-        var factory = sp.GetRequiredService<IDocumentIntegrationFactory>();
+        var options = scope.ServiceProvider.GetRequiredService<DbContextOptions<AegisScoreDbContext>>();
 
-        List<TenantIntegration> integrations;
+        List<Guid> tenantIds;
         await using (var probe = new AegisScoreDbContext(options, new SystemTenantContext(null)))
         {
-            integrations = await probe.Connectors.IgnoreQueryFilters()
+            tenantIds = await probe.Connectors.IgnoreQueryFilters()
                 .Where(c => c.Capability == ConnectorCapability.PolicyDocuments && c.Enabled)
-                .Select(c => new TenantIntegration(c.TenantId, c.Provider))
+                .Select(c => c.TenantId)
+                .Distinct()
                 .ToListAsync(ct);
         }
 
-        await ProcessIntegrationsAsync(sp, options, factory, integrations, ct);
+        foreach (var tenantId in tenantIds)
+            await _queue.EnqueueAsync(tenantId, ct);
     }
 
-    /// <summary>
-    /// Passada SOB DEMANDA para UM tenant (gatilho do endpoint /sync): processa só as integrações daquele
-    /// tenant. Mesmo caminho da varredura periódica — um clique repetido pode correr em paralelo com o
-    /// ciclo do timer sobre o mesmo tenant, mas o índice único (TenantId, Sha256) mantém a ingestão idempotente.
-    /// </summary>
-    private async Task SyncTenantOnDemandAsync(Guid tenantId, CancellationToken ct)
+    /// <summary>Adquire e processa pedidos em sequência até a fila esvaziar; então aguarda o próximo tick.</summary>
+    private async Task DrainAsync(CancellationToken ct)
     {
-        using var scope = _scopes.CreateScope();
-        var sp = scope.ServiceProvider;
-        var options = sp.GetRequiredService<DbContextOptions<AegisScoreDbContext>>();
-        var factory = sp.GetRequiredService<IDocumentIntegrationFactory>();
-
-        List<TenantIntegration> integrations;
-        await using (var probe = new AegisScoreDbContext(options, new SystemTenantContext(null)))
+        while (!ct.IsCancellationRequested)
         {
-            integrations = await probe.Connectors.IgnoreQueryFilters()
-                .Where(c => c.TenantId == tenantId && c.Capability == ConnectorCapability.PolicyDocuments && c.Enabled)
-                .Select(c => new TenantIntegration(c.TenantId, c.Provider))
-                .ToListAsync(ct);
+            var lease = await _queue.TryClaimNextAsync(ct);
+            if (lease is null) return;
+            await ProcessLeasedAsync(lease, ct);
         }
+    }
 
-        if (integrations.Count == 0)
+    private async Task ProcessLeasedAsync(PolicySyncLease lease, CancellationToken ct)
+    {
+        // Poison reclamado além do limite (crash repetido antes do catch): encerra terminal sem reprocessar.
+        if (lease.Attempts > _maxAttempts)
         {
-            _log.LogInformation(
-                "Sync sob demanda ignorado: tenant {Tenant} não tem integração de documentos habilitada.", tenantId);
+            await _queue.FailAsync(lease.RequestId, lease.LeaseId, "AttemptsExhausted", CancellationToken.None);
+            _log.LogWarning(
+                "Sync do tenant {Tenant} excedeu o limite de tentativas ({Max}); marcado Failed.",
+                lease.TenantId, _maxAttempts);
             return;
         }
 
-        await ProcessIntegrationsAsync(sp, options, factory, integrations, ct);
+        using var scope = _scopes.CreateScope();
+        var sp = scope.ServiceProvider;
+        var options = sp.GetRequiredService<DbContextOptions<AegisScoreDbContext>>();
+        var factory = sp.GetRequiredService<IDocumentIntegrationFactory>();
+
+        // BATIMENTO DE LEASE: um fetch/ingestão de conector lento não pode deixar outra réplica adquirir o
+        // mesmo pedido. O heartbeat renova o lease; se ele for perdido, `leaseCts` cancela e o trabalho aborta.
+        using var leaseCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        await using var heartbeat = LeaseHeartbeat.Start(
+            c => _queue.RenewAsync(lease.RequestId, lease.LeaseId, c),
+            _heartbeatInterval, _clock, leaseCts, _log);
+        var workCt = leaseCts.Token;
+
+        try
+        {
+            // Integrações de documentos DESTE tenant. SystemTenantContext(lease.TenantId): leitura
+            // query-filtered ao tenant dono — a varredura cross-tenant ficou só na aquisição.
+            List<TenantIntegration> integrations;
+            await using (var probe = new AegisScoreDbContext(options, new SystemTenantContext(lease.TenantId)))
+            {
+                integrations = await probe.Connectors
+                    .Where(c => c.Capability == ConnectorCapability.PolicyDocuments && c.Enabled)
+                    .Select(c => new TenantIntegration(c.TenantId, c.Provider))
+                    .ToListAsync(workCt);
+            }
+
+            await ProcessIntegrationsAsync(sp, options, factory, integrations, workCt);
+
+            // Confirmação com CancellationToken.None (o trabalho acabou); guardada pelo lease — se ele foi
+            // perdido no fio final, completed=false DETECTA a perda.
+            var completed = await _queue.CompleteAsync(lease.RequestId, lease.LeaseId, CancellationToken.None);
+            if (!completed)
+                _log.LogWarning(
+                    "Sync do tenant {Tenant}: lease não era mais o vigente ao confirmar; outra réplica assumiu.",
+                    lease.TenantId);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Desligamento: devolve à fila SEM custar tentativa; o próximo boot / outra réplica retoma.
+            await _queue.ReleaseAsync(lease.RequestId, lease.LeaseId, CancellationToken.None);
+            _log.LogInformation("Sync do tenant {Tenant} devolvido à fila pelo desligamento do serviço.", lease.TenantId);
+            throw;
+        }
+        catch (OperationCanceledException) when (leaseCts.IsCancellationRequested)
+        {
+            // Lease perdido no meio: abandona silenciosamente — a outra réplica é a dona agora.
+            _log.LogWarning(
+                "Sync do tenant {Tenant}: lease perdido durante o processamento; abandonando (outra réplica assumiu).",
+                lease.TenantId);
+        }
+        catch (Exception ex)
+        {
+            var category = ex.GetType().Name;   // categoria SANITIZADA, nunca a mensagem bruta (AEGIS-AUD-054)
+            if (lease.Attempts >= _maxAttempts)
+            {
+                await _queue.FailAsync(lease.RequestId, lease.LeaseId, category, CancellationToken.None);
+                _log.LogWarning(ex,
+                    "Sync do tenant {Tenant} falhou na tentativa {Attempt}/{Max}; marcado Failed (terminal).",
+                    lease.TenantId, lease.Attempts, _maxAttempts);
+            }
+            else
+            {
+                await _queue.ScheduleRetryAsync(lease.RequestId, lease.LeaseId, category, CancellationToken.None);
+                _log.LogWarning(ex,
+                    "Sync do tenant {Tenant} falhou na tentativa {Attempt}/{Max}; reagendado para retry.",
+                    lease.TenantId, lease.Attempts, _maxAttempts);
+            }
+        }
     }
 
     /// <summary>
-    /// Resolve o provedor de cada integração pela fábrica e o sincroniza sob o gate de concorrência,
-    /// isolando a falha por tenant (os demais seguem). Um provedor não implantado (fábrica devolve null)
-    /// é registrado e ignorado — não quebra os outros.
+    /// Resolve o provedor de cada integração pela fábrica e o sincroniza, isolando a falha por integração.
+    /// Um provedor não implantado (fábrica devolve null) é registrado e ignorado. Uma falha de integração
+    /// PROPAGA (para o pedido inteiro entrar em retry), exceto o cancelamento, que sobe como desligamento.
     /// </summary>
     private async Task ProcessIntegrationsAsync(
         IServiceProvider sp, DbContextOptions<AegisScoreDbContext> options,
@@ -181,29 +255,16 @@ public sealed class PolicyIngestionWorker : BackgroundService
                 continue;
             }
 
-            try
-            {
-                await SyncTenantAsync(sp, options, integration.TenantId, provider, ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;   // propaga o shutdown para encerrar o ciclo
-            }
-            catch (Exception ex)
-            {
-                _log.LogError(ex,
-                    "Falha ao sincronizar políticas do tenant {Tenant} via {Provider}.",
-                    integration.TenantId, integration.Provider);
-            }
+            await SyncTenantAsync(sp, options, integration.TenantId, provider, ct);
         }
     }
 
     /// <summary>
     /// Puxa as políticas do provedor (agnóstico) e as materializa no hub: dedupe por SHA-256, cria o
-    /// <c>GovernanceDocument</c> (Integracao), guarda o binário e enfileira a leitura da IA. Opera sob um
-    /// <see cref="SystemTenantContext"/> do tenant — query filter na leitura, stamping fail-closed na escrita.
-    /// A idempotência sob concorrência é imposta pelo índice único (TenantId, Sha256): o AnyAsync é o
-    /// fast-path e o catch de <see cref="DbUpdateException"/> fecha a corrida (a 2ª passada vira no-op).
+    /// <c>GovernanceDocument</c> (Integracao) em <c>Queued</c> — que já É a entrada na fila durável de análise —
+    /// e guarda o binário. Opera sob um <see cref="SystemTenantContext"/> do tenant: query filter na leitura,
+    /// stamping fail-closed na escrita. A idempotência sob concorrência é imposta pelo índice único
+    /// (TenantId, Sha256): o <c>AnyAsync</c> é fast-path e o catch de <see cref="DbUpdateException"/> fecha a corrida.
     /// </summary>
     private async Task SyncTenantAsync(
         IServiceProvider sp, DbContextOptions<AegisScoreDbContext> options,
@@ -213,7 +274,6 @@ public sealed class PolicyIngestionWorker : BackgroundService
         var policies = await provider.FetchPoliciesAsync(tenantId, ct);
 
         var storage = sp.GetRequiredService<IDocumentStorage>();
-        var queue = sp.GetRequiredService<IDocumentAnalysisQueue>();
         await using var db = new AegisScoreDbContext(options, new SystemTenantContext(tenantId));
 
         var ingested = 0;
@@ -238,7 +298,7 @@ public sealed class PolicyIngestionWorker : BackgroundService
                 ContentType = policy.ContentType,
                 FileSizeBytes = policy.Content.LongLength,
                 Sha256 = sha,
-                AnalysisStatus = AiAnalysisStatus.Queued,
+                AnalysisStatus = AiAnalysisStatus.Queued,   // entra JÁ na fila durável de análise
                 AnalysisQueuedAt = DateTimeOffset.UtcNow,
             };
             db.GovernanceDocuments.Add(doc);
@@ -260,9 +320,8 @@ public sealed class PolicyIngestionWorker : BackgroundService
 
             await using (var buffer = new MemoryStream(policy.Content, writable: false))
                 doc.StorageUri = await storage.SaveAsync(doc.TenantId, doc.Id, policy.FileName, buffer, ct);
-            await db.SaveChangesAsync(ct);
+            await db.SaveChangesAsync(ct);   // grava o StorageUri → o documento fica elegível à aquisição
 
-            await queue.EnqueueAsync(doc.Id, ct);   // o DocumentAnalysisWorker cuida da análise → ledger
             ingested++;
         }
 

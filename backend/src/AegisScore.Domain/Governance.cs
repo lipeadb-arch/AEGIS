@@ -40,6 +40,24 @@ public class GovernanceDocument : Entity, ITenantOwned
     public string? AnalysisError { get; set; }       // preenchido quando AnalysisStatus == Failed
     public string? ModelUsed { get; set; }           // ex.: "claude-opus-4-8" (rastreabilidade)
 
+    // ---- [AEGIS-AUD-050] Fila operacional DURÁVEL: o próprio documento é o item de trabalho ----
+    // O status persistido substitui o canal em memória: Queued/Pending = disponível, Processing =
+    // adquirido (sob lease), Analyzed = sucesso, Failed = falha terminal. Estes metadados dão entrega
+    // segura at-least-once entre réplicas e reinícios — a aquisição é atômica no PostgreSQL
+    // (FOR UPDATE SKIP LOCKED), o lease expira sozinho e o número de tentativas fecha em Failed.
+
+    /// <summary>Identificador do lease vigente — quem adquiriu o documento carimba aqui um Guid próprio.</summary>
+    public Guid? AnalysisLeaseId { get; set; }
+
+    /// <summary>Expiração do lease. Um Processing com lease vencido volta a ser adquirível (worker caído).</summary>
+    public DateTimeOffset? AnalysisLeaseExpiresAt { get; set; }
+
+    /// <summary>Número de aquisições já feitas. Incrementado a cada claim; ao atingir o limite, termina em Failed.</summary>
+    public int AnalysisAttempts { get; set; }
+
+    /// <summary>Antecipação da próxima tentativa (backoff de retry). Nulo = disponível imediatamente.</summary>
+    public DateTimeOffset? AnalysisNextAttemptAt { get; set; }
+
     // ---- Resultado do mapeamento NIST (filho) ----
     public ICollection<DocumentControlMapping> ControlMappings { get; set; } = new List<DocumentControlMapping>();
 }
@@ -132,4 +150,44 @@ public class IdentifiedRisk : Entity, ITenantOwned
     public Guid? RiskId { get; set; }                    // link p/ o Sistema de Gestão de Riscos
 
     public DateTimeOffset IdentifiedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// [AEGIS-AUD-050] Solicitação DURÁVEL de sincronização de políticas de um tenant. Substitui o antigo
+/// canal de gatilho em memória (sem durabilidade): o pedido é persistido ANTES de o endpoint
+/// <c>/governance/documents/sync</c> responder 202, então sobrevive a reinício da API, encerramento no
+/// meio do processamento e múltiplas réplicas. O <c>PolicyIngestionWorker</c> a adquire com lease atômico
+/// (FOR UPDATE SKIP LOCKED), processa o fetch e a confirma — entrega at-least-once, com retry e limite de
+/// tentativas. É tenant-owned (query filter + stamping fail-closed), como todo dado operacional.
+///
+/// Carrega SÓ o necessário: os campos de disponibilidade (<see cref="AvailableAt"/>), de lease e de
+/// tentativa. Um único pedido ATIVO (Pending/Processing) por tenant é invariante de banco (índice único
+/// parcial), o que dá idempotência ao enfileiramento sem acumular pedidos repetidos.
+/// </summary>
+public class PolicySyncRequest : Entity, ITenantOwned
+{
+    public Guid TenantId { get; set; }   // carimbado no SaveChangesAsync (fail-closed)
+
+    public PolicySyncStatus Status { get; set; } = PolicySyncStatus.Pending;
+
+    /// <summary>Quando o pedido foi registrado (auditoria).</summary>
+    public DateTimeOffset RequestedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    /// <summary>Momento a partir do qual o pedido pode ser adquirido (agora, ou agora+backoff no retry).</summary>
+    public DateTimeOffset AvailableAt { get; set; } = DateTimeOffset.UtcNow;
+
+    /// <summary>Identificador do lease vigente (quem adquiriu carimba um Guid próprio).</summary>
+    public Guid? LeaseId { get; set; }
+
+    /// <summary>Expiração do lease: um Processing vencido volta a ser adquirível.</summary>
+    public DateTimeOffset? LeaseExpiresAt { get; set; }
+
+    /// <summary>Número de aquisições já feitas; ao atingir o limite, termina em Failed.</summary>
+    public int Attempts { get; set; }
+
+    /// <summary>Quando concluiu (sucesso ou falha terminal).</summary>
+    public DateTimeOffset? CompletedAt { get; set; }
+
+    /// <summary>Categoria/código de erro SANITIZADO (ex.: nome do tipo de exceção) — nunca a mensagem bruta.</summary>
+    public string? ErrorCategory { get; set; }
 }

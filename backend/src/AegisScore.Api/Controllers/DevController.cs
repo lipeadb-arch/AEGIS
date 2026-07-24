@@ -365,13 +365,13 @@ public class DevController : ControllerBase
     /// <c>IControlStateWriter</c>, com o teto documental de 50% (<c>MitigatedByThirdParty</c>). É o que
     /// tira o HUD do 0.0% sem exigir credencial: roda [AllowAnonymous] em DEBUG.
     ///
-    /// O binário precisa já estar no storage (upload prévio). O tenant NÃO importa aqui: localizamos o
-    /// documento SEM o query filter e apenas o enfileiramos — o worker o reprocessa sob o
-    /// SystemTenantContext do próprio dono, exatamente como no fluxo autenticado de produção.
+    /// O binário precisa já estar no storage (upload prévio). O tenant NÃO importa para localizar: achamos o
+    /// documento SEM o query filter e o devolvemos a <c>Queued</c> (limpando lease/retry) — que já É a entrada
+    /// na fila DURÁVEL de análise (AEGIS-AUD-050). O worker o adquire do banco e o reprocessa sob o
+    /// SystemTenantContext do próprio dono, exatamente como no fluxo autenticado de produção. Sem canal.
     /// </summary>
     [HttpPost("reprocess-document")]
     public async Task<IActionResult> ReprocessDocument(
-        [FromServices] IDocumentAnalysisQueue queue,
         [FromQuery] string fileName = "Politica_Seguranca_Aegis_Tech.pdf",
         CancellationToken ct = default)
     {
@@ -413,13 +413,27 @@ public class DevController : ControllerBase
                 fileName = doc.FileName,
             });
 
-        await queue.EnqueueAsync(doc.Id, ct);
+        // Reenfileira DURAVELMENTE: volta o documento a Queued e ZERA o estado de lease/retry de uma corrida
+        // anterior, para o worker o adquirir limpo. Update por Id sob IgnoreQueryFilters (o stamping só incide
+        // em inserts, então atualizar um doc de outro tenant aqui é seguro). Persistir Queued É enfileirar.
+        var target = await db.GovernanceDocuments.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(d => d.Id == doc.Id, ct);
+        if (target is null) return NotFound();
+
+        target.AnalysisStatus = AiAnalysisStatus.Queued;
+        target.AnalysisQueuedAt = DateTimeOffset.UtcNow;
+        target.AnalysisError = null;
+        target.AnalysisLeaseId = null;
+        target.AnalysisLeaseExpiresAt = null;
+        target.AnalysisAttempts = 0;
+        target.AnalysisNextAttemptAt = null;
+        await db.SaveChangesAsync(ct);
 
         return Accepted(new
         {
-            message = "Documento reenfileirado. O worker vai reprocessá-lo pela ponte IControlStateWriter e popular " +
-                      "TenantControlStates com o teto documental (MitigatedByThirdParty = 50%). " +
-                      "Aguarde ~2s e consulte GET /api/v1/scoring/dashboard.",
+            message = "Documento devolvido a Queued na fila durável. O worker vai adquiri-lo, reprocessá-lo pela " +
+                      "ponte IControlStateWriter e popular TenantControlStates com o teto documental " +
+                      "(MitigatedByThirdParty = 50%). Aguarde ~2s e consulte GET /api/v1/scoring/dashboard.",
             documentId = doc.Id,
             tenantId = doc.TenantId,
             fileName = doc.FileName,

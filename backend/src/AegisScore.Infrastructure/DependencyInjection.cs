@@ -147,11 +147,16 @@ public static class DependencyInjection
         // PDFs (Document Hub / Govern) via PdfPig. Mais um IDocumentTextExtractor na coleção: o
         // DocumentAnalysisWorker resolve GetServices<>() e escolhe pelo CanHandle (text/* vs application/pdf).
         services.AddSingleton<IDocumentTextExtractor, PdfTextExtractor>();
-        services.AddSingleton<IDocumentAnalysisQueue, ChannelDocumentAnalysisQueue>();
-
-        // Govern: gatilho de sincronização de políticas sob demanda (canal em memória). Singleton para que
-        // o controller (produtor) e o PolicyIngestionWorker (consumidor) compartilhem a MESMA instância.
-        services.AddSingleton<IPolicySyncTrigger, ChannelPolicySyncTrigger>();
+        // [AEGIS-AUD-050] Filas operacionais DURÁVEIS no PostgreSQL — substituem os canais em memória
+        // (sem durabilidade), que perdiam trabalho em qualquer reinício e não coordenavam réplicas. O
+        // status persistido do próprio GovernanceDocument é a fila de análise; a PolicySyncRequest persistida é
+        // a fila de sync. A aquisição é atômica (FOR UPDATE SKIP LOCKED) com lease, retry e limite de
+        // tentativas — sem broker externo. Singletons: constroem o DbContext à mão por operação (SystemTenant),
+        // como os workers, então dependem só de TimeProvider (relógio testável) + IServiceScopeFactory.
+        services.Configure<DocumentAnalysisQueueOptions>(config.GetSection(DocumentAnalysisQueueOptions.SectionName));
+        services.Configure<PolicySyncQueueOptions>(config.GetSection(PolicySyncQueueOptions.SectionName));
+        services.AddSingleton<IDocumentAnalysisQueue, DurableDocumentAnalysisQueue>();
+        services.AddSingleton<IPolicySyncQueue, DurablePolicySyncQueue>();
 
         return services;
     }
