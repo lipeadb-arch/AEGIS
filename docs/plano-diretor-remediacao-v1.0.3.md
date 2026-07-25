@@ -155,10 +155,14 @@ schema funcional permaneceram inalterados. A validação em PostgreSQL descartá
 migrations, reconheceu como atual um banco com histórico `ProductVersion 8.0.6` e confirmou o boot
 da API; o banco descartável foi removido após o teste.
 
-**Riscos residuais conhecidos:** o banco local `aegis_dev`, criado por `EnsureCreated()`, permanece
-sem `__EFMigrationsHistory` — condição preexistente relacionada ao `AEGIS-AUD-052`. O pacote de
-teste `SQLitePCLRaw.lib.e_sqlite3 2.1.11` permanece coberto por advisory sem versão corrigida
-publicada e por supressão explícita já existente. Nenhum dos dois pontos foi ampliado pelo PR #4.
+**Riscos residuais conhecidos (constatação à época do PR #4):** ao final do TECH-001/PR #4, o banco
+local `aegis_dev`, criado por `EnsureCreated()`, permanecia sem `__EFMigrationsHistory` — condição
+preexistente relacionada ao `AEGIS-AUD-052`. **Essa condição foi RESOLVIDA pelo `AEGIS-AUD-052` no
+PR #6:** a preparação do banco passou a ser feita pelo `AegisScore.DbMigrator` (migrations + seed sob
+advisory lock) e o contexto principal tem hoje **19 migrations** no histórico — portanto **não deve
+ser interpretada como risco residual ainda aberto**. O pacote de teste `SQLitePCLRaw.lib.e_sqlite3
+2.1.11` permanece coberto por advisory sem versão corrigida publicada e por supressão explícita já
+existente. Nenhum dos dois pontos foi ampliado pelo PR #4.
 
 **Natureza do pacote:** o `AEGIS-TECH-001` é um **pacote técnico de precedência**, não um achado da
 auditoria. Não recebe identificador `AEGIS-AUD-*`, não entra no backlog mestre e **não altera a
@@ -167,7 +171,7 @@ contagem de 63 achados**.
 ### 7.3 Próximo pacote imediato
 
 **`AEGIS-AUD-031 — Alinhar documentação arquitetural com a stack e o estado reais`** — **EM IMPLEMENTAÇÃO**
-na branch `docs/aud-031-align-architecture` (implementação autorizada; aberto até o merge). É o último item aberto do EP-00.
+na branch `docs/aud-031-align-architecture` (implementação autorizada; aberto até o merge). É o último item aberto do EP-00. Encerrado o EP-00 com o merge do AUD-031, o **próximo pacote previsto** passa a ser o `AEGIS-AUD-008 — Proteger alterações e exclusões cross-tenant no DbContext` (EP-01) — **pendente, aguardando autorização explícita de implementação** (não autorizado nem planejado em detalhe).
 
 Concluídos os seis pacotes anteriores do EP-00: `AEGIS-AUD-053` (PR #5, `49a6747`),
 `AEGIS-AUD-052` (PR #6, `0ebad27`), `AEGIS-AUD-057` (PR #7, `9904729`), `AEGIS-AUD-046` (PR #8, `f9a3ed7`),
@@ -234,9 +238,9 @@ Cada alteração deve ser aditiva ou configurável. Chaves e ciphertext antigos 
 
 | Ordem | ID | Severidade | Pendência | Área | Estado |
 |---:|---|---|---|---|---|
-| 1 | AEGIS-AUD-007 | ALTO | Integrar autenticação corporativa federada | Identity / Authentication | ABERTA |
-| 2 | AEGIS-AUD-008 | ALTO | Proteger alterações e exclusões cross-tenant no DbContext | Multi-tenancy / Persistence | ABERTA |
-| 3 | AEGIS-AUD-009 | ALTO | Armazenar somente hash de refresh tokens | Authentication / Session Security | ABERTA |
+| 1 | AEGIS-AUD-008 | ALTO | Proteger alterações e exclusões cross-tenant no DbContext | Multi-tenancy / Persistence | ABERTA |
+| 2 | AEGIS-AUD-009 | ALTO | Armazenar somente hash de refresh tokens | Authentication / Session Security | ABERTA |
+| 3 | AEGIS-AUD-007 | ALTO | Integrar autenticação corporativa federada | Identity / Authentication | ABERTA |
 | 4 | AEGIS-AUD-010 | ALTO | Separar provisionamento global de concessão de acesso a tenant | Identity Governance | ABERTA |
 | 5 | AEGIS-AUD-011 | MÉDIO | Separar papéis globais de papéis por tenant | Authorization | ABERTA |
 | 6 | AEGIS-AUD-012 | MÉDIO | Exigir seleção explícita ou último tenant validado no login | UX / Authorization Context | ABERTA |
