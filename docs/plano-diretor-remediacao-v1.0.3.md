@@ -1,12 +1,12 @@
 # AEGIS — Plano Diretor de Remediação v1.0.3
 
 **Classificação:** Documento de governança técnica e segurança<br>
-**Data de atualização:** 2026-07-23<br>
+**Data de atualização:** 2026-07-24<br>
 **Situação do programa:** Em execução<br>
 **Branch de referência:** `main`<br>
-**Commit de referência:** `f9a3ed7`<br>
-**Última entrega concluída:** AEGIS-AUD-046 — PR #8, squash-merge `f9a3ed7`<br>
-**Pacote em andamento:** `AEGIS-AUD-050 — Não usar filas em memória como mecanismo operacional durável` — **EM IMPLEMENTAÇÃO** na branch `fix/aud-050-durable-operational-queues` (aguarda merge; não concluir antes)
+**Commit de referência:** `f170b0f`<br>
+**Última entrega concluída:** AEGIS-AUD-050 — PR #9, squash-merge `f170b0f`<br>
+**Pacote em andamento:** `AEGIS-AUD-026 — Não substituir falha da API por dados de demonstração em ambiente operacional` — **EM IMPLEMENTAÇÃO** · branch `fix/aud-026-no-demo-fallback`
 
 > Este documento é a fonte de governança do programa de remediação. O código local e `docs/pr0-baseline.md` são a fonte de verdade para o estado técnico executável.
 
@@ -27,7 +27,7 @@
 |---|---|---|
 | PR 0 — Linha de base técnica | **CONCLUÍDO** | PR #1; merge `c3a0bd3`; `docs/pr0-baseline.md` |
 | Backend build | **APROVADO COM WARNING CONHECIDO** | 0 erros; 1 warning `CS8604` |
-| Testes backend | **APROVADO** | 284/284, 0 falhas, 0 ignorados |
+| Testes backend | **APROVADO** | 323/323, 0 falhas, 0 ignorados |
 | Frontend build | **APROVADO COM WARNINGS CONHECIDOS** | exit 0; 4 warnings de budget CSS |
 | Frontend tests/lint | **NÃO IMPLEMENTADOS** | Pendência `AEGIS-AUD-033` |
 | CI/CD | **NÃO IMPLEMENTADO** | Pendência `AEGIS-AUD-056` |
@@ -38,7 +38,8 @@
 | AEGIS-AUD-052 — Migrations/seed fora do startup | **CONCLUÍDO** | PR #6; squash-merge `0ebad27` |
 | AEGIS-AUD-057 — Credencial padrão de configuração | **CONCLUÍDO** | PR #7; squash-merge `9904729` |
 | AEGIS-AUD-046 — Dados de demonstração sintéticos | **CONCLUÍDO** | PR #8; squash-merge `f9a3ed7` |
-| AEGIS-AUD-050 — Filas operacionais duráveis | **EM IMPLEMENTAÇÃO** | branch `fix/aud-050-durable-operational-queues` (aguarda merge) |
+| AEGIS-AUD-050 — Filas operacionais duráveis | **CONCLUÍDO** | PR #9; squash-merge `f170b0f` |
+| AEGIS-AUD-026 — Fallback de demonstração em falha da API | **EM IMPLEMENTAÇÃO** | branch `fix/aud-026-no-demo-fallback` |
 
 ### 2.1 O que o PR 0 concluiu
 
@@ -49,8 +50,8 @@
 
 ### 2.2 O que permanece inalterado
 
-- **Dos 63 achados `AEGIS-AUD-*`, quatro foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7, `AEGIS-AUD-046` via PR #8); os demais **59 permanecem abertos**. O total catalogado segue **63**.
-- O próximo pacote passa a ser o `AEGIS-AUD-050`; sua implementação ainda exige autorização explícita.
+- **Dos 63 achados `AEGIS-AUD-*`, cinco foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7, `AEGIS-AUD-046` via PR #8, `AEGIS-AUD-050` via PR #9); os demais **58 permanecem abertos**. O total catalogado segue **63**.
+- O `AEGIS-AUD-026` está **EM IMPLEMENTAÇÃO** na branch `fix/aud-026-no-demo-fallback` (implementação autorizada); permanece aberto até o merge.
 - **O `AEGIS-TECH-001` foi concluído como pacote técnico de precedência, não como novo achado da auditoria.** Ele não entra no backlog mestre e **não altera a contagem de 63 achados**.
 - A liberação para produção continua bloqueada.
 - O Plano Diretor não substitui a inspeção do código local antes de cada mudança.
@@ -126,12 +127,13 @@ Estados auxiliares: `BLOQUEADA`, `ADIADA`, `DESCARTADA`.
 | 5 | `AEGIS-AUD-052 — Retirar migrations e seed da inicialização concorrente da API` | **CONCLUÍDO** (PR #6; squash-merge `0ebad27`) |
 | 6 | `AEGIS-AUD-057 — Remover credenciais padrão do arquivo principal de configuração` | **CONCLUÍDO** (PR #7; squash-merge `9904729`) |
 | 7 | `AEGIS-AUD-046 — Eliminar dados reais ou identificáveis dos stubs e demos` | **CONCLUÍDO** (PR #8; squash-merge `f9a3ed7`) |
-| 8 | `AEGIS-AUD-050 — Não usar filas em memória como mecanismo operacional durável` | **EM IMPLEMENTAÇÃO** (branch `fix/aud-050-durable-operational-queues`; aguarda merge) |
+| 8 | `AEGIS-AUD-050 — Não usar filas em memória como mecanismo operacional durável` | **CONCLUÍDO** (PR #9; squash-merge `f170b0f`) |
+| 9 | `AEGIS-AUD-026 — Não substituir falha da API por dados de demonstração em ambiente operacional` | **EM IMPLEMENTAÇÃO** (branch `fix/aud-026-no-demo-fallback`) |
 
 > **A aprovação desta ordem não autoriza a implementação de nenhum pacote.** Ela define apenas a
 > sequência de execução. **Cada pacote exige aprovação explícita própria** para sair de `PLANEJADO`
-> e entrar em implementação. Em particular, **esta revisão não autoriza a implementação do
-> `AEGIS-AUD-050`**.
+> e entrar em implementação. O `AEGIS-AUD-026` recebeu essa aprovação explícita e está
+> **EM IMPLEMENTAÇÃO** na branch `fix/aud-026-no-demo-fallback`.
 
 ### 7.2 Pacote técnico concluído
 
@@ -160,17 +162,18 @@ publicada e por supressão explícita já existente. Nenhum dos dois pontos foi 
 auditoria. Não recebe identificador `AEGIS-AUD-*`, não entra no backlog mestre e **não altera a
 contagem de 63 achados**.
 
-### 7.3 Pacote em implementação
+### 7.3 Próximo pacote imediato
 
-**`AEGIS-AUD-050 — Não usar filas em memória como mecanismo operacional durável`** — **EM IMPLEMENTAÇÃO**
-(aguarda merge; não concluir antecipadamente).
+**`AEGIS-AUD-026 — Não substituir falha da API por dados de demonstração em ambiente operacional`** —
+**EM IMPLEMENTAÇÃO** na branch `fix/aud-026-no-demo-fallback` (implementação autorizada; aberto até o merge).
 
-Concluídos os quatro pacotes anteriores do EP-00: `AEGIS-AUD-053` (PR #5, `49a6747`),
-`AEGIS-AUD-052` (PR #6, `0ebad27`), `AEGIS-AUD-057` (PR #7, `9904729`) e `AEGIS-AUD-046` (PR #8, `f9a3ed7`).
+Concluídos os cinco pacotes anteriores do EP-00: `AEGIS-AUD-053` (PR #5, `49a6747`),
+`AEGIS-AUD-052` (PR #6, `0ebad27`), `AEGIS-AUD-057` (PR #7, `9904729`), `AEGIS-AUD-046` (PR #8, `f9a3ed7`)
+e `AEGIS-AUD-050` (PR #9, `f170b0f`).
 
-Branch em uso:
-
-`fix/aud-050-durable-operational-queues`
+`AEGIS-AUD-051` (separar/coordenar workers para múltiplas réplicas, EP-06) segue **ABERTO** e é complementar
+ao AUD-050: a fila agora é durável e coordenada por lease, mas a separação de processo dos workers permanece
+fora deste pacote.
 
 ### Ordem macro
 
@@ -179,7 +182,7 @@ Branch em uso:
 **Estado:** EM EXECUÇÃO<br>
 **Objetivo:** Preservar uma referência reproduzível e remover riscos imediatos antes de mudanças estruturais.<br>
 **Dependências:** Nenhuma além da baseline técnica concluída.<br>
-**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052, AEGIS-AUD-057 e AEGIS-AUD-046 concluídos. Próximo pacote: **AEGIS-AUD-050**, condicionado à aprovação explícita de implementação.
+**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052, AEGIS-AUD-057, AEGIS-AUD-046 e AEGIS-AUD-050 concluídos. Em andamento: **AEGIS-AUD-026** (branch `fix/aud-026-no-demo-fallback`, implementação autorizada).
 
 ### Pacotes do épico
 
@@ -189,8 +192,8 @@ Branch em uso:
 | 2 | AEGIS-AUD-057 | MÉDIO | Remover credenciais padrão do arquivo principal de configuração | Configuration Security | CONCLUÍDA (PR #7; `9904729`) |
 | 3 | AEGIS-AUD-053 | BLOQUEADOR | Persistir e proteger o Data Protection Key Ring | Cryptography / Connector Secrets | CONCLUÍDA (PR #5; `49a6747`) |
 | 4 | AEGIS-AUD-052 | ALTO | Retirar migrations e seed da inicialização concorrente da API | Deployment / Database | CONCLUÍDA (PR #6; `0ebad27`) |
-| 5 | AEGIS-AUD-050 | BLOQUEADOR | Não usar filas em memória como mecanismo operacional durável | Workers / Reliability / Scale-out | EM IMPLEMENTAÇÃO (branch `fix/aud-050-durable-operational-queues`) |
-| 6 | AEGIS-AUD-026 | ALTO | Não substituir falha da API por dados de demonstração em ambiente operacional | Frontend / Data Integrity | ABERTA |
+| 5 | AEGIS-AUD-050 | BLOQUEADOR | Não usar filas em memória como mecanismo operacional durável | Workers / Reliability / Scale-out | CONCLUÍDA (PR #9; `f170b0f`) |
+| 6 | AEGIS-AUD-026 | ALTO | Não substituir falha da API por dados de demonstração em ambiente operacional | Frontend / Data Integrity | EM IMPLEMENTAÇÃO |
 | 7 | AEGIS-AUD-031 | MÉDIO | Alinhar documentação arquitetural com a stack e o estado reais | Documentation / Architecture Governance | ABERTA |
 
 ### Gate de aceite
@@ -564,7 +567,7 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | AEGIS-AUD-023 | MÉDIO | Vendor Neutrality / Ubiquitous Language | Remover linguagem e conceitos Microsoft Secure Score do contrato central | EP-04 | ABERTA | — | — |
 | AEGIS-AUD-024 | MÉDIO | Observability / Data Integrity | Não ocultar corrupção de dados explicativos do dashboard | EP-03 | ABERTA | — | — |
 | AEGIS-AUD-025 | MÉDIO | AI Assurance | Tratar confiança da IA como metadado, não validação | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-026 | ALTO | Frontend / Data Integrity | Não substituir falha da API por dados de demonstração em ambiente operacional | EP-00 | ABERTA | — | — |
+| AEGIS-AUD-026 | ALTO | Frontend / Data Integrity | Não substituir falha da API por dados de demonstração em ambiente operacional | EP-00 | EM IMPLEMENTAÇÃO | — | — |
 | AEGIS-AUD-027 | ALTO | Frontend / Product Completeness | Implementar páginas equivalentes para as seis Funções NIST | EP-05 | ABERTA | — | — |
 | AEGIS-AUD-028 | MÉDIO | Frontend / Information Architecture | Separar postura NIST de painéis orientados a produto ou domínio técnico | EP-05 | ABERTA | — | — |
 | AEGIS-AUD-029 | MÉDIO | Frontend / Vendor Neutrality | Remover fornecedor específico do título e contrato do painel de identidade | EP-05 | ABERTA | — | — |
@@ -588,7 +591,7 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | AEGIS-AUD-047 | MÉDIO | Connector Configuration / Operations | Evoluir EncryptedSettings para configuração tipada e versionada | EP-04 | ABERTA | — | — |
 | AEGIS-AUD-048 | ALTO | Operations / Availability | Implementar health checks de liveness e readiness | EP-06 | ABERTA | — | — |
 | AEGIS-AUD-049 | ALTO | Observability | Adicionar métricas, tracing distribuído e correlação fim a fim | EP-06 | ABERTA | — | — |
-| AEGIS-AUD-050 | BLOQUEADOR | Workers / Reliability / Scale-out | Não usar filas em memória como mecanismo operacional durável | EP-00 | EM IMPLEMENTAÇÃO | — | — |
+| AEGIS-AUD-050 | BLOQUEADOR | Workers / Reliability / Scale-out | Não usar filas em memória como mecanismo operacional durável | EP-00 | CONCLUÍDA | #9 | `f170b0f` |
 | AEGIS-AUD-051 | ALTO | Deployment Architecture | Separar workers da API ou coordená-los para múltiplas réplicas | EP-06 | ABERTA | — | — |
 | AEGIS-AUD-052 | ALTO | Deployment / Database | Retirar migrations e seed da inicialização concorrente da API | EP-00 | CONCLUÍDA | #6 | `0ebad27` |
 | AEGIS-AUD-053 | BLOQUEADOR | Cryptography / Connector Secrets | Persistir e proteger o Data Protection Key Ring | EP-00 | CONCLUÍDA | #5 | `49a6747` |
@@ -614,6 +617,7 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | AEGIS-AUD-052 — Migrations/seed fora do startup | **CONCLUÍDO** | `fix/aud-052-externalize-database-initialization` (removida) | #6 | `0ebad27` | Backend 279/279; PostgreSQL descartável | `AegisScore.DbMigrator` sob advisory lock; índice único em `FrameworkVersion.Name`; migration aplicada em `aegis_dev` (17→18) |
 | AEGIS-AUD-057 — Credencial padrão de configuração | **CONCLUÍDO** | `fix/aud-057-remove-default-db-credentials` (removida) | #7 | `9904729` | Backend 284/284 | Connection string sai do `appsettings.json`; fail-fast quando ausente/vazia |
 | AEGIS-AUD-046 — Eliminar dados reais/identificáveis dos stubs e demos | **CONCLUÍDO** | `fix/aud-046-sanitize-demo-data` (removida) | #8 | `f9a3ed7` | Backend 284/284 (baseline preservada; árvore idêntica ao head validado) | Dados de demonstração integralmente sintéticos (`demo.example.com` / `example.com`); banco local `aegis_dev` saneado e revalidado; sem migration |
+| AEGIS-AUD-050 — Não usar filas em memória como mecanismo operacional durável | **CONCLUÍDO** | `fix/aud-050-durable-operational-queues` (removida) | #9 | `f170b0f` | Backend 323/323 (inclui 3 testes de concorrência/lease em PostgreSQL descartável real com `FOR UPDATE SKIP LOCKED`) | Filas duráveis no PostgreSQL: `GovernanceDocument` = fila de análise, `PolicySyncRequest` = fila de sync; claim atômico `FOR UPDATE SKIP LOCKED`, lease + heartbeat fail-closed, retry/limite→Failed, recuperação de Processing legado; migration `20260724002301_Aud50_DurableOperationalQueues` (aegis_dev 18→19); `--verify-only` aprovado |
 
 ### Campos obrigatórios após cada merge
 
