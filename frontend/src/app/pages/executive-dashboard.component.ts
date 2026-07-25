@@ -8,7 +8,6 @@ import { ScoringService } from '../services/scoring.service';
 import { SparklineComponent } from '../components/scoring/sparkline.component';
 import { GapBalanceComponent } from '../components/scoring/gap-balance.component';
 import { BlastRadiusSummaryComponent } from '../components/scoring/blast-radius-summary.component';
-import { sampleDashboard } from '../data/sample-dashboard';
 import { icrColor } from '../lib/scales';
 import { environment } from '../../environments/environment';
 import { IcrGaugeComponent } from '../components/icr-gauge.component';
@@ -42,22 +41,26 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           <span class="mark">Aegis <b>Score</b></span>
           <span class="sub">Auditoria de Maturidade Cibernética · Synapse OS</span>
         </div>
-        <div class="client">
-          <span class="label">Cliente</span>
-          <span class="name">{{ data().clientName }}</span>
-          @if (live() && generatedAt()) {
-            <span class="label" title="Instante da apuração no servidor">
-              apurado {{ generatedAt() | date: 'dd/MM HH:mm' }}
+        <!-- Cliente e ICR só aparecem com dados REAIS. Durante carga ou erro não há postura para
+             exibir, e um nome/ICR remanescente leria como a leitura atual de outro cliente. -->
+        @if (data(); as d) {
+          <div class="client">
+            <span class="label">Cliente</span>
+            <span class="name">{{ d.clientName }}</span>
+            @if (generatedAt()) {
+              <span class="label" title="Instante da apuração no servidor">
+                apurado {{ generatedAt() | date: 'dd/MM HH:mm' }}
+              </span>
+            }
+            <span class="icr-pill" title="Índice de Criticidade de Risco Cibernético">
+              <span class="dot" [style.background]="icrColor(d.icr.band)"></span>
+              <span class="v" [style.color]="icrColor(d.icr.band)">
+                {{ d.icr.score.toFixed(0) }}
+              </span>
+              <span class="b">ICR · {{ d.icr.band }}</span>
             </span>
-          }
-          <span class="icr-pill" title="Índice de Criticidade de Risco Cibernético">
-            <span class="dot" [style.background]="icrColor(data().icr.band)"></span>
-            <span class="v" [style.color]="icrColor(data().icr.band)">
-              {{ data().icr.score.toFixed(0) }}
-            </span>
-            <span class="b">ICR · {{ data().icr.band }}</span>
-          </span>
-        </div>
+          </div>
+        }
       </header>
 
       @if (loading()) {
@@ -65,22 +68,33 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           <span class="scan" aria-hidden="true"></span>
           <b>Consolidando a postura do cliente…</b>
         </div>
-      } @else if (!live()) {
-        <div class="notice">
-          <b>Dados de exemplo.</b>
-          @if (loadError()) {
-            A postura real não respondeu em <code>{{ apiBase }}</code> — confira o endereço
-            da API e o <code>tenantId</code> do cliente. O console traz o erro completo.
-          } @else {
-            Defina <code>apiBase</code> e <code>tenantId</code> em
-            <code>src/environments/environment.ts</code> para carregar a postura real do cliente.
-          }
-        </div>
-      }
+      } @else if (loadError()) {
+        <!-- Falha operacional da API: NUNCA cair em dados de demonstração nem reaproveitar a carga
+             anterior. Sem indicadores, estado de erro explícito (distinto do estado vazio) e uma
+             nova tentativa. Zerar ou reusar a resposta anterior apresentaria dados fictícios — ou
+             de outro tenant — como se fossem a postura real deste cliente. -->
+        <section class="empty-state is-error">
+          <span class="es-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.3">
+              <path d="M12 3.5 2.4 20.2h19.2L12 3.5Z" stroke-linejoin="round" />
+              <path d="M12 10v4M12 16.8v.2" stroke-linecap="round" />
+            </svg>
+          </span>
+          <h3>Não foi possível carregar a postura do cliente</h3>
+          <p>
+            A API não respondeu em <code>{{ apiBase }}</code>. Nenhum indicador é exibido — <b>um
+            painel de exemplo ou os números da carga anterior seriam lidos como a postura real</b>.
+            Confira o endereço da API e o <code>tenantId</code> do cliente; o console traz o erro
+            completo.
+          </p>
+          <button type="button" class="retry" (click)="reload()">Tentar novamente</button>
+        </section>
+      } @else {
+        @if (data(); as d) {
 
       <!-- Tenant provisionado e ainda sem medição: um painel de zeros leria como "nenhum risco".
            O estado vazio diz o que falta e por onde começar, em vez de fingir uma leitura. -->
-      @if (live() && !hasPosture()) {
+      @if (!hasPosture()) {
         <section class="empty-state">
           <span class="es-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.3">
@@ -88,7 +102,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
               <path d="M12 9.5v4M12 16.2v.2" stroke-linecap="round" />
             </svg>
           </span>
-          <h3>Nenhuma postura medida para {{ data().clientName }}</h3>
+          <h3>Nenhuma postura medida para {{ d.clientName }}</h3>
           <p>
             O tenant está provisionado, mas ainda não recebeu evidência. Os indicadores abaixo só
             passam a significar algo depois da primeira medição — <b>zero aqui não é ausência de
@@ -106,17 +120,17 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
       <section class="cards">
         <app-exposure-card
           label="Processos críticos expostos"
-          [value]="data().exposure.criticalProcessesExposed"
+          [value]="d.exposure.criticalProcessesExposed"
           tone="danger"
         />
         <app-exposure-card
           label="Controles inefetivos"
-          [value]="data().exposure.ineffectiveControls"
+          [value]="d.exposure.ineffectiveControls"
           tone="warn"
         />
         <app-exposure-card
           label="Planos de ação vencidos"
-          [value]="data().exposure.overdueActionPlans"
+          [value]="d.exposure.overdueActionPlans"
           tone="danger"
         />
       </section>
@@ -191,12 +205,12 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
       <div class="grid trio">
         <div class="panel">
           <div class="hd"><h3>Índice de Criticidade (ICR)</h3></div>
-          <app-icr-gauge [icr]="data().icr" />
+          <app-icr-gauge [icr]="d.icr" />
           <div class="hd" style="margin-top:18px">
             <h3 style="font-size:13px;color:var(--muted)">Riscos por nível</h3>
           </div>
-          @if (data().riskByLevel.length > 0) {
-            <app-risk-levels [data]="data().riskByLevel" />
+          @if (d.riskByLevel.length > 0) {
+            <app-risk-levels [data]="d.riskByLevel" />
           } @else {
             <p class="panel-empty">Nenhum risco classificado ainda.</p>
           }
@@ -207,8 +221,8 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
             <h3>Maiores gaps por categoria</h3>
             <span class="hint">distância até o alvo</span>
           </div>
-          @if (data().topGaps.length > 0) {
-            <app-gap-chart [data]="data().topGaps" />
+          @if (d.topGaps.length > 0) {
+            <app-gap-chart [data]="d.topGaps" />
           } @else {
             <p class="panel-empty">Sem categorias avaliadas — os gaps surgem com o primeiro assessment.</p>
           }
@@ -216,13 +230,15 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
 
         <div class="panel">
           <div class="hd"><h3>Matriz de risco</h3></div>
-          @if (data().riskHeatmap.length > 0) {
-            <app-risk-heatmap [data]="data().riskHeatmap" />
+          @if (d.riskHeatmap.length > 0) {
+            <app-risk-heatmap [data]="d.riskHeatmap" />
           } @else {
             <p class="panel-empty">Sem riscos avaliados — a matriz aparece após o primeiro assessment.</p>
           }
         </div>
       </div>
+      }
+        }
       }
     </div>
   `,
@@ -237,6 +253,18 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         padding: 22px 24px;
         margin-top: 8px;
         max-width: 760px;
+      }
+      /* Estado de ERRO — mesma família visual, porém em tom de alerta (vermelho) e com nova
+         tentativa, para NUNCA ser confundido com "resposta vazia". A falha não vira zero nem exemplo. */
+      .empty-state.is-error {
+        border-left-color: var(--red);
+        background: linear-gradient(90deg, rgba(255, 45, 111, 0.06), rgba(255, 45, 111, 0.01));
+      }
+      .empty-state.is-error .es-mark {
+        color: var(--red);
+      }
+      .empty-state.is-error b {
+        color: var(--red);
       }
       .es-mark {
         display: inline-flex;
@@ -287,6 +315,23 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
       .es-steps b {
         color: var(--text);
         font-weight: 600;
+      }
+      /* Botão de nova tentativa no estado de erro. */
+      .retry {
+        appearance: none;
+        cursor: pointer;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        letter-spacing: 0.02em;
+        color: var(--text);
+        background: rgba(255, 45, 111, 0.08);
+        border: 1px solid var(--red);
+        border-radius: 8px;
+        padding: 8px 16px;
+        transition: background 0.15s ease;
+      }
+      .retry:hover {
+        background: rgba(255, 45, 111, 0.16);
       }
 
       /* Faixa de tendência sob o gauge: a curva + a variação ponta a ponta. */
@@ -363,8 +408,9 @@ export class ExecutiveDashboardComponent implements OnInit {
   private readonly scoreSvc = inject(AegisScoreService);
   private readonly scoringSvc = inject(ScoringService);
 
-  data = signal<ExecutiveDashboard>(sampleDashboard);
-  live = signal(false);
+  // Começa NULO: o dashboard operacional nunca nasce com uma postura de exemplo. Só recebe conteúdo
+  // de uma resposta REAL da API; qualquer falha o mantém nulo e aciona o estado de erro (ver `load`).
+  data = signal<ExecutiveDashboard | null>(null);
   loadError = signal(false);
 
   // ---- Maturidade: valores AUTORITATIVOS do backend ----
@@ -379,12 +425,13 @@ export class ExecutiveDashboardComponent implements OnInit {
 
   /**
    * ALVO de maturidade — a MÉTRICA que o rollup do servidor apurou. É o número que a diretoria lê
-   * ("alvo 4,2"), e por isso vem do backend, não de uma conta local.
+   * ("alvo 4,2"), e por isso vem do backend, não de uma conta local. Sem dados carregados → 0
+   * (não é exibido: os painéis só renderizam sob resposta real).
    */
-  readonly targetMaturity = computed(() => this.data().exposure.targetMaturity);
+  readonly targetMaturity = computed(() => this.data()?.exposure.targetMaturity ?? 0);
 
   /** Maturidade geral — o `overall` do rollup, tal como o servidor o calculou. */
-  readonly overallMaturity = computed(() => this.data().exposure.overallMaturity);
+  readonly overallMaturity = computed(() => this.data()?.exposure.overallMaturity ?? 0);
 
   /**
    * ESCALA dos gráficos — GEOMETRIA, não métrica. Precisa comportar a maior barra E o maior alvo
@@ -396,6 +443,7 @@ export class ExecutiveDashboardComponent implements OnInit {
    */
   readonly chartScale = computed(() => {
     const d = this.data();
+    if (!d) return 4;
     return Math.max(
       4,
       d.exposure.targetMaturity,
@@ -406,7 +454,7 @@ export class ExecutiveDashboardComponent implements OnInit {
 
   /** Maturidade por Função NIST, na ordem do catálogo que o backend já devolve. */
   readonly maturityBars = computed<FunctionScore[]>(() =>
-    this.data().maturityByFunction.map((f) => ({
+    (this.data()?.maturityByFunction ?? []).map((f) => ({
       code: f.function,
       label: f.functionName.replace(/\s*\(.*\)$/, ''), // "GOVERN (GV)" → "GOVERN"
       value: f.current,
@@ -415,17 +463,18 @@ export class ExecutiveDashboardComponent implements OnInit {
 
   // ---- Estado da tela ----
 
-  /** Ainda aguardando a primeira resposta: evita pintar números (reais ou de exemplo) antes da hora. */
+  /** Ainda aguardando a resposta em voo: evita pintar números antes da hora. Começa `true`. */
   readonly loading = signal(true);
 
   /**
    * O tenant tem postura avaliada? Um cliente recém-provisionado responde 200 com tudo zerado, e é
    * PIOR que um erro: gauges em 0, painéis em branco e cartões de exposição zerados leem como
    * "nenhum risco", quando o correto é "nada foi medido ainda". Num painel de diretoria essa
-   * diferença decide orçamento.
+   * diferença decide orçamento. Sem dados carregados → `false`.
    */
   readonly hasPosture = computed(() => {
     const d = this.data();
+    if (!d) return false;
     return d.maturityByFunction.some((f) => f.current > 0)
       || d.topGaps.length > 0
       || d.riskByLevel.length > 0
@@ -436,7 +485,7 @@ export class ExecutiveDashboardComponent implements OnInit {
   });
 
   /** Instante da apuração — o backend já enviava `generatedAt` e a tela não o exibia. */
-  readonly generatedAt = computed(() => this.data().generatedAt);
+  readonly generatedAt = computed(() => this.data()?.generatedAt ?? null);
 
   // Exposto ao template para colorir a pílula do ICR.
   protected readonly icrColor = icrColor;
@@ -464,17 +513,41 @@ export class ExecutiveDashboardComponent implements OnInit {
   readonly blastLoaded = signal(false);
 
   ngOnInit(): void {
-    // 1) Caminho crítico: o dashboard principal. É o único que governa `loading`.
+    this.load();
+  }
+
+  /** Nova tentativa a partir do estado de erro — mesma limpeza e recarga total de `load`. */
+  reload(): void {
+    this.load();
+  }
+
+  /**
+   * Carrega (ou recarrega) a postura do tenant. LIMPA a tela ANTES de disparar: nenhum valor da carga
+   * anterior — nem de outro tenant após um switch — pode sobreviver a um novo pedido, muito menos a
+   * uma falha. Se a nova carga falhar, o que fica é o estado de erro, jamais números remanescentes ou
+   * dados de exemplo.
+   */
+  private load(): void {
+    this.loading.set(true);
+    this.loadError.set(false);
+    this.data.set(null);
+    this.trend.set([]);
+    this.gapBalance.set(null);
+    this.blastRadius.set(null);
+    this.blastLoaded.set(false);
+
+    // 1) Caminho crítico: o dashboard principal. É o único que governa `loading` e `loadError`.
     this.svc.fetchExecutive().subscribe({
       next: (d) => {
         this.data.set(d);
-        this.live.set(true);
         this.loadError.set(false);
         this.loading.set(false);
       },
       error: (err) => {
-        // Mantém os dados de exemplo, mas registra a falha e sinaliza um aviso distinto.
+        // Falha operacional: mantém os dados NULOS e sinaliza erro. Sem fallback de demonstração e
+        // sem reaproveitar a resposta anterior — o estado de erro é a única coisa que a tela mostra.
         console.error('Falha ao carregar o dashboard executivo:', err);
+        this.data.set(null);
         this.loadError.set(true);
         this.loading.set(false);
       },
