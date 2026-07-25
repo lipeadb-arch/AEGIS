@@ -31,6 +31,7 @@ backend/
     AegisScore.Application       interfaces (IA, conector, tenant) + scoring (Maturidade/Risco/ICR)
     AegisScore.Infrastructure    EF Core (PostgreSQL), seeder NIST, IA (Anthropic), registry
     AegisScore.Connectors.Microsoft  adapter de exemplo (Secure Score)
+    AegisScore.DbMigrator        prepara o banco (migrations + seed); a API não migra no boot
     AegisScore.Api               ASP.NET Core: Program, controllers, DTOs
       Data/                      catálogo NIST CSF 2.0 (106 subcats) + regras de avaliação (aegis_assessment_rules.json)
 frontend/
@@ -39,43 +40,40 @@ frontend/
 
 ## Pré-requisitos
 
-- [.NET SDK 8](https://dotnet.microsoft.com/download) · [PostgreSQL 14+](https://www.postgresql.org/) · [Node.js 18+](https://nodejs.org/)
+- [.NET SDK 10](https://dotnet.microsoft.com/download) · [PostgreSQL 14+](https://www.postgresql.org/) · [Node.js 20+](https://nodejs.org/)
 - (Opcional) Uma chave de API para o motor de IA — sem ela, os endpoints de IA ficam indisponíveis,
   mas o dashboard e o restante funcionam.
 
 ## Backend
 
-1. Suba o PostgreSQL e crie o banco/usuário (ajuste a connection string em `appsettings.json`):
+1. Suba o PostgreSQL e crie o banco/role de login (a connection string **não** fica no
+   `appsettings.json` — ver passo 2):
 
    ```sql
-   CREATE USER stars WITH PASSWORD 'stars';
-   CREATE DATABASE aegis OWNER stars;
+   CREATE ROLE aegis WITH LOGIN PASSWORD '<defina-uma-senha>';
+   CREATE DATABASE aegis OWNER aegis;
    ```
 
-2. (Opcional) Configure a IA — via `appsettings.json` (seção `Ai`) ou variável de ambiente:
+2. Configure os segredos **fora do git** (connection string, chave JWT e, opcionalmente, a chave de IA)
+   via `dotnet user-secrets` (Development) ou variáveis de ambiente. O `appsettings.json` versionado
+   deixa esses campos vazios de propósito. Passo a passo em [`DEV.md`](./DEV.md).
+
+3. Prepare o banco com o **`AegisScore.DbMigrator`** — é ele quem aplica as migrations e semeia o
+   catálogo NIST CSF 2.0. A API **não** migra nem semeia no boot: apenas verifica a prontidão do schema
+   e falha rápido se o banco não estiver preparado.
 
    ```bash
-   export Ai__ApiKey="sua-chave"      # modelo padrão: claude-sonnet-4-6 (trocável)
+   dotnet run --project backend/src/AegisScore.DbMigrator -- --environment Development
    ```
 
-3. Rode a API:
+4. Rode a API:
 
    ```bash
-   cd backend/src/AegisScore.Api
-   dotnet restore
-   dotnet run
+   dotnet run --project backend/src/AegisScore.Api
    ```
 
-   Na inicialização o schema é criado (`EnsureCreated`) e o **catálogo NIST CSF 2.0 é semeado**
-   automaticamente. Swagger em `http://localhost:5080/swagger` (ajuste a porta conforme o launch profile).
-
-> **Produção:** troque `EnsureCreated()` por **migrations** no `Program.cs`:
-> ```bash
-> dotnet tool install --global dotnet-ef
-> dotnet ef migrations add Initial -p ../AegisScore.Infrastructure -s .
-> dotnet ef database update -p ../AegisScore.Infrastructure -s .
-> ```
-> e use `db.Database.Migrate()`.
+   Swagger em `http://localhost:5100/swagger` (Development). Opções do migrator e solução de problemas
+   em [`DEV.md`](./DEV.md).
 
 ### Fluxo rápido (cURL)
 
@@ -98,14 +96,15 @@ Todas as rotas de dados são escopadas por tenant via header **`X-Tenant`** (iso
 ```bash
 cd frontend
 npm install
-# defina apiBase e tenantId em src/environments/environment.ts
+# defina apiBase em src/environments/environment.ts (o tenant vem do JWT, não é configurado aqui)
 npm start                # ng serve em http://localhost:5173
 npm run build            # build de produção em dist/
 ```
 
-Sem backend configurado, o dashboard renderiza com **dados de exemplo** (que ecoam os prints da stack
-Microsoft) e exibe um aviso. SPA em **Angular** (standalone components); os gráficos — radar de
-maturidade, gauge do ICR e barras de gap — são desenhados em **SVG/CSS nativo**, sem biblioteca de chart.
+SPA em **Angular 19** (standalone components + signals); os gráficos — radar de maturidade, gauge do
+ICR e barras de gap — são desenhados em **SVG/CSS nativo**, sem biblioteca de chart. O dashboard consome
+a API real: quando ela falha, exibe um **estado de erro explícito** (com opção de nova tentativa) — nunca
+dados de demonstração no lugar da postura real.
 
 ## Status
 

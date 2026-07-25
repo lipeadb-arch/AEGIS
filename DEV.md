@@ -17,8 +17,8 @@ ou qualquer arquivo versionado.
 |---|---|---|
 | API (.NET) | `http://localhost:5100` | `Properties/launchSettings.json` (perfil `http`) |
 | Frontend (Angular) | `http://localhost:5173` | `frontend/angular.json` → `serve.port` (liberado no CORS) |
-| PostgreSQL | `localhost:5432`, banco `aegis` | `appsettings.json` → `ConnectionStrings:AegisScore` |
-| Tenant demo (fixo) | `aa000000-0000-0000-0000-000000000001` | `DevController.DemoTenantId` = `environment.tenantId` |
+| PostgreSQL | `localhost:5432`, banco `aegis` | connection string em user-secrets/env (`ConnectionStrings:AegisScore`) |
+| Tenant demo (fixo) | `aa000000-0000-0000-0000-000000000001` | `DevController.DemoTenantId` (o tenant ativo vem do claim `tenant_id` do JWT) |
 | Usuário demo | `analista@demo.aegis` / `Aegis@12345` | `POST /api/v1/dev/seed-user` |
 
 ---
@@ -36,9 +36,9 @@ ou qualquer arquivo versionado.
 
 ## Passo 1 — PostgreSQL: criar role e banco
 
-O schema é criado automaticamente pelas migrações no boot da API (`db.Database.MigrateAsync()`
-em `Program.cs`) — **não** rode `dotnet ef database update` à mão. Mas o role de login e o banco
-precisam existir antes. Via `psql` (como superusuário `postgres`):
+O role de login e o banco precisam existir antes de preparar o schema. As migrações **não** são
+aplicadas no boot da API: quem migra e semeia é o `AegisScore.DbMigrator` (Passo 3). Não rode
+`dotnet ef database update` à mão. Via `psql` (como superusuário `postgres`):
 
 ```sql
 CREATE ROLE aegis WITH LOGIN PASSWORD 'aegis';
@@ -91,7 +91,27 @@ dotnet user-secrets list
 
 ---
 
-## Passo 3 — Subir a API
+## Passo 3 — Preparar o banco (DbMigrator) e subir a API
+
+Primeiro prepare o banco com o **`AegisScore.DbMigrator`** — é o ÚNICO processo que aplica migrations e
+semeia o catálogo/regras (a API não faz mais isso no boot). Em Development ele lê a **mesma** connection
+string do Passo 2 (compartilha o `UserSecretsId` da API):
+
+```powershell
+dotnet run --project C:\Projetos\AEGIS\backend\src\AegisScore.DbMigrator -- --environment Development
+```
+
+Opções reais (de `MigratorOptions`):
+
+- `--verify-only` — apenas verifica o estado do banco; não migra nem semeia;
+- `--skip-seed` — aplica migrations e verifica, sem semear catálogo e regras;
+- `--environment, -e <nome>` — ambiente de configuração (padrão: `DOTNET_ENVIRONMENT` ou `Production`).
+
+> Não existe `--connection`: a connection string vem só de user-secrets/env, nunca por argumento.
+> Códigos de saída: `0` ok · `1` config inválida · `2` migration · `3` seed · `4` verificação ·
+> `5` banco inacessível · `6` advisory lock não adquirido.
+
+Depois suba a API:
 
 ```powershell
 cd C:\Projetos\AEGIS\backend\src\AegisScore.Api
@@ -105,10 +125,12 @@ Use **`dotnet run`**, não `dotnet exec ...dll` nem `dotnet bin\...\AegisScore.A
 - `dotnet exec`/rodar a DLL direto **ignora** o `launchSettings.json` → sobe em **Production** →
   user-secrets não carregam → `Jwt:SigningKey` vazio → boot aborta com _"Jwt:SigningKey ausente ou fraca"_.
 
-No boot, a API aplica as migrações e semeia o catálogo NIST CSF 2.0 automaticamente. Espere ver:
+No boot a API **apenas verifica** a prontidão do schema (`SchemaReadinessGuard`) — não aplica migrations
+nem semeia. Se o banco não estiver preparado pelo DbMigrator, o boot **aborta** pedindo exatamente isso.
+Com o banco pronto, espere ver:
 
 ```
-Startup: migrações aplicadas e catálogo NIST CSF 2.0 verificado/semeado.
+Startup: banco verificado — migrations aplicadas nos dois contextos, catálogo NIST CSF 2.0 e regras de avaliação presentes e íntegros.
 ```
 
 Swagger disponível em `http://localhost:5100/swagger`.
@@ -151,9 +173,9 @@ npm install      # só na primeira vez
 npm start        # ng serve → http://localhost:5173
 ```
 
-O `environment.ts` já aponta `apiBase` para `http://localhost:5100` e `tenantId` para o
-`aa000000-…0001` (o mesmo `DemoTenantId` que o seed usa) — **não precisa mexer nele**. O
-interceptor envia esse GUID no header `X-Tenant`. Faça login com:
+O `environment.ts` já aponta `apiBase` para `http://localhost:5100` — **não precisa mexer nele**. O
+tenant ativo **não** é mais configurado no frontend: vem do claim `tenant_id` do próprio JWT, e o
+interceptor deriva dele o header `X-Tenant`. Faça login com:
 
 - **E-mail:** `analista@demo.aegis`
 - **Senha:** `Aegis@12345`
@@ -169,7 +191,7 @@ na ordem:
 | Sintoma / causa | Verificação | Correção |
 |---|---|---|
 | Banco recém-criado, `seed-user` não rodou | Não há usuário no tenant | Rode o Passo 4 |
-| `X-Tenant` diverge do tenant do usuário | `environment.tenantId` ≠ `DemoTenantId` | Mantenha `aa000000-…0001` no `environment.ts` (é o valor correto) |
+| `X-Tenant` diverge do tenant do usuário | JWT de outro tenant ativo | O `X-Tenant` é derivado do claim `tenant_id` do JWT; refaça login no tenant demo |
 | API subiu em Production (via DLL/`exec`) | Boot reclamou de `Jwt:SigningKey`, ou `/swagger` não abre | Suba com `dotnet run` (Passo 3) |
 | Hash de senha em formato incompatível | Usuário criado por outro hasher que não o `Pbkdf2PasswordHasher` | Recrie via `seed-user`; não introduza `Identity.PasswordHasher` |
 | Endpoints de seed retornam 404 | API rodando em Release ou fora de Development | Use `dotnet run` (Debug + Development) |

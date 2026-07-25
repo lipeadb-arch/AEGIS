@@ -2,6 +2,15 @@
 ### Arquitetura & Design Técnico — v0.1
 Módulo de auditoria de maturidade cibernética do Portal **Synapse OS** · parceria conceitual com a tese GRC (risklab + Perinity) · fundamentado em **NIST CSF 2.0** e **GRC**.
 
+> **Nota de estado (AUD-031).** Este documento descreve a **visão de arquitetura e design** do produto
+> (v0.1) e mistura capacidades já implementadas com roadmap. Para o **estado executável atual**, a fonte
+> de verdade é o código, o `AEGIS_STATE.md` e o `docs/plano-diretor-remediacao-v1.0.3.md`. Correções
+> factuais já aplicadas aqui: o frontend é **Angular 19** (não React); a preparação do banco é feita pelo
+> **`AegisScore.DbMigrator`** e a API apenas verifica a prontidão do schema (`SchemaReadinessGuard`), sem
+> migrar no boot; o Data Protection Key Ring é **persistente** e as filas operacionais são **duráveis no
+> PostgreSQL**. Conectores de fornecedores, relatórios, CI/CD e scale-out de workers permanecem
+> **parciais ou planejados** — ver o Plano Diretor.
+
 ---
 
 ## 1. Objetivo
@@ -242,7 +251,7 @@ Salvaguardas: toda saída de IA é **sugestão revisável**, com confiança e ra
 
 ## 10. Arquitetura técnica
 
-**Stack:** Back-end **C# .NET (ASP.NET Core, API REST)** + **Entity Framework Core**; banco **PostgreSQL**; front-end **React**. Clean Architecture, multi-tenant.
+**Stack:** Back-end **C# .NET 10 (ASP.NET Core, API REST)** + **Entity Framework Core 10** (Npgsql); banco **PostgreSQL**; front-end **Angular 19** (standalone components + signals). Clean Architecture, multi-tenant.
 
 ```
 AegisScore.sln
@@ -250,15 +259,17 @@ AegisScore.sln
    ├─ AegisScore.Domain            // entidades, enums, regras puras (sem dependências)
    ├─ AegisScore.Application        // serviços de aplicação, interfaces (IAiAssessmentService,
    │                           //   IEvidenceConnector, IConnectorRegistry), scoring
-   ├─ AegisScore.Infrastructure     // EF Core (AegisScoreDbContext), seeder, AI (Claude), cripto, tenant ctx
-   ├─ AegisScore.Connectors.Microsoft  // plugin de conectores Microsoft (Secure Score, Defender...)
+   ├─ AegisScore.Infrastructure     // EF Core (AegisScoreDbContext), seeder, AI, cripto, tenant ctx,
+   │                           //   filas duráveis (PostgreSQL), Data Protection Key Ring persistente
+   ├─ AegisScore.Connectors.Microsoft  // plugin de conectores Microsoft (stubs Secure Score/Entra/SharePoint)
+   ├─ AegisScore.DbMigrator         // prepara o banco: migrations + seed sob advisory lock (a API não migra no boot)
    └─ AegisScore.Api                // ASP.NET Core: Program.cs, controllers, DTOs, auth, DI
        └─ Data/                     // catálogo NIST CSF 2.0 (seed) + regras de avaliação GRC
 frontend/
-   └─ src/  // React: ExecutiveDashboard + componentes (radar, heatmap, cards, gaps)
+   └─ src/  // Angular 19 (standalone + signals): ExecutiveDashboard + componentes (radar, heatmap, cards, gaps) em SVG nativo
 ```
 
-**Camadas:** API → Application → Domain; Infrastructure implementa as interfaces da Application (DIP). Conectores são plugins descobertos por `IConnectorRegistry`. PostgreSQL com `jsonb` para campos flexíveis (referências, sinais, fatores). Migrations via EF Core. Background worker (`IHostedService`) faz a coleta periódica dos conectores.
+**Camadas:** API → Application → Domain; Infrastructure implementa as interfaces da Application (DIP). Conectores são plugins descobertos por `IConnectorRegistry`. PostgreSQL com `jsonb` para campos flexíveis (referências, sinais, fatores). **Migrations e seed são aplicados pelo `AegisScore.DbMigrator`** (sob advisory lock), não no boot da API — a API apenas verifica a prontidão do schema (`SchemaReadinessGuard`) e aborta se o banco não estiver preparado. As **filas operacionais são duráveis no PostgreSQL** (claim/lease/retry). Os workers de coleta/análise ainda rodam **no processo da API** (`IHostedService`); separá-los para múltiplas réplicas é trabalho aberto (`AEGIS-AUD-051`).
 
 ---
 
@@ -308,7 +319,7 @@ Visão executiva (tema dark on-brand com o Synapse), composta por:
 - **Status de planos de ação** — no prazo / vencidos.
 - **Compliance & obrigações** (LGPD) e **gauge do ICR** (0–100).
 
-O scaffold inclui `ExecutiveDashboard.tsx` com radar (recharts), heatmap, cards e gap-chart consumindo `GET /dashboard/executive`.
+O frontend Angular implementa `ExecutiveDashboardComponent` com radar, heatmap, cards e gap-chart em **SVG/CSS nativo** (sem biblioteca de chart), consumindo `GET /dashboard/executive`. Quando a API falha, o dashboard mostra um **estado de erro explícito**, nunca dados de demonstração no lugar da postura real.
 
 ---
 
@@ -335,7 +346,7 @@ Aegis Score é um módulo do portal Synapse OS:
 
 ## 15. Roadmap por fases
 
-**Fase 0 — Fundação (este scaffold).** Domínio + EF/PostgreSQL + seed NIST + serviços de pontuação + abstrações de conector e IA + API mínima + dashboard React.
+**Fase 0 — Fundação.** Domínio + EF/PostgreSQL + seed NIST + serviços de pontuação + abstrações de conector e IA + API mínima + dashboard Angular.
 
 **Fase 1 — MVP de maturidade.** Onboarding (tenant/BU/processo), questionário digital + evidência documental, sugestão de maturidade por IA com revisão humana, snapshots e dashboard executivo. Relatório Plano Diretor (IA → DOCX/PDF).
 
@@ -352,6 +363,6 @@ Aegis Score é um módulo do portal Synapse OS:
 - `ARCHITECTURE.md` (este documento) e `README.md` (como rodar).
 - `backend/src/AegisScore.Api/Data/nist_csf_2_0_catalog.json` — catálogo NIST CSF 2.0 completo (6/22/106 + 5 níveis); ao lado, `aegis_assessment_rules.json` — regras técnicas de avaliação por subcategoria (97 regras).
 - **Backend .NET**: `AegisScore.Domain` (modelo completo), `AegisScore.Application` (interfaces + serviços de pontuação Maturidade/Risco/ICR), `AegisScore.Infrastructure` (`AegisScoreDbContext`, seeder, serviço de IA Claude), `AegisScore.Connectors.Microsoft` (conector Secure Score de exemplo), `AegisScore.Api` (Program + controllers principais + DTOs).
-- **Frontend React**: `ExecutiveDashboard.tsx` + componentes + cliente de API tipado.
+- **Frontend Angular 19**: `ExecutiveDashboardComponent` (standalone) + componentes + serviços de API tipados.
 
 > Status: **fundação arquitetural + scaffold**. Não é o produto final compilado ponta-a-ponta; é a base correta e extensível para a Fase 1. Os pontos a confirmar com vocês estão sinalizados (faixas de risco, pesos do ICR, prioridade de conectores, e qual LLM usar na implementação do `IAiAssessmentService`).

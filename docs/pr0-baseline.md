@@ -1,5 +1,12 @@
 # AEGIS — PR 0: Linha de Base Técnica Local
 
+> ⚠️ **FOTOGRAFIA HISTÓRICA — PR 0 (2026-07-20).** Este documento registra o estado do repositório
+> **antes** das remediações do EP-00 e **preserva de propósito** medições que hoje já mudaram —
+> EF Core 8, 17 migrations, 219 testes, canais em memória, migrations no boot (`MigrateAsync`) e
+> credencial default no `appsettings.json`. **Não use estes números como estado atual.** O que cada
+> item se tornou está na seção **§15 (Estado posterior à baseline)**; a fonte de verdade corrente é o
+> código, o `AEGIS_STATE.md` e o `docs/plano-diretor-remediacao-v1.0.3.md`.
+
 > Documento **não funcional** e **aditivo**. Estabelece uma referência reproduzível do estado
 > técnico do repositório **antes** das remediações do Plano Diretor, para que PRs futuros consigam
 > distinguir falhas preexistentes, problemas de ambiente e regressões novas.
@@ -254,3 +261,27 @@ presente**; portanto **`npm ci` NÃO foi executado** nesta validação (foi exer
 Resultado esperado: backend compila (0 erros, 1 warning `CS8604`), testes 219/219,
 frontend build exit 0 com os 4 warnings de budget conhecidos. Qualquer desvio deve ser
 investigado como possível regressão ou mudança de ambiente.
+
+---
+
+## 15. Estado posterior à baseline (aditivo — não altera os números históricos acima)
+
+As medições das seções 1–14 são a fotografia do PR 0 (2026-07-20) e permanecem **intactas** como
+evidência histórica. Os itens abaixo registram o que pacotes posteriores do EP-00 mudaram; para o
+estado corrente completo, ver `AEGIS_STATE.md` e o Plano Diretor.
+
+| Baseline (PR 0, histórico) | Estado posterior | Pacote / PR |
+|---|---|---|
+| EF Core / Npgsql `8.0.6` / `8.0.4` (§3) | EF Core `10.0.10` / Npgsql `10.0.3` | AEGIS-TECH-001 / PR #4 (`511c955`) |
+| `AddDataProtection()` sem persistência (§13) | Key ring **persistente e protegido** no PostgreSQL | AEGIS-AUD-053 / PR #5 (`49a6747`) |
+| Migrations/seed no boot da API (`MigrateAsync`) (§8/§9/§13) | **`AegisScore.DbMigrator`** aplica migrations+seed sob advisory lock; a API só verifica (`SchemaReadinessGuard`) | AEGIS-AUD-052 / PR #6 (`0ebad27`) |
+| Credencial default no `appsettings.json` (§11, PR0-BL-06) | Connection string **fora do git** (user-secrets/env); `appsettings.json` vazio, fail-fast | AEGIS-AUD-057 / PR #7 (`9904729`) |
+| Dados de demonstração com referências reais/identificáveis | Dados de demonstração **sintéticos** (`demo.example.com`) | AEGIS-AUD-046 / PR #8 (`f9a3ed7`) |
+| Filas em canais de memória (`Channel*`) não duráveis (§8) | Filas **duráveis no PostgreSQL** (claim/lease/retry) | AEGIS-AUD-050 / PR #9 (`f170b0f`) |
+| Dashboard com dados de exemplo como fallback de erro | Dashboard sem fallback: estados de carregando/real/vazio/erro | AEGIS-AUD-026 / PR #10 (`383bf6b`) |
+
+Números atuais correspondentes (para referência, **não** substituem os históricos acima): backend
+**323/323** testes; **19 migrations** no histórico principal (+1 do key ring); frontend segue **sem**
+suíte de testes (AUD-033 aberto) e com os **4 warnings** de budget CSS; **CI/CD ainda ausente**
+(AUD-056 aberto); workers ainda no processo da API (AUD-051 aberto). O alinhamento desta documentação
+ao estado executável é o próprio **AEGIS-AUD-031** (este pacote).

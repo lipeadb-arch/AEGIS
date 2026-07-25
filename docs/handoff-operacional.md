@@ -10,6 +10,13 @@
 > Remediação. Em qualquer divergência, este arquivo é o elo mais fraco da cadeia — os outros vencem.
 > Toda nova sessão deve confirmar o estado local com comandos de leitura antes de modificar arquivos.
 
+> ⚠️ **HANDOFF HISTÓRICO / SUPERADO (congelado em 2026-07-21, era do PR #4).** Desde então o EP-00
+> avançou: **AUD-053 (PR #5), AUD-052 (PR #6), AUD-057 (PR #7), AUD-046 (PR #8), AUD-050 (PR #9) e
+> AUD-026 (PR #10)** foram **concluídos**, e a `main` está em `383bf6b`. As seções abaixo que apontam
+> "próximo pacote: AUD-053" e "63 achados, todos abertos" estão **desatualizadas — não as siga**. O
+> estado corrente e o próximo pacote (**AUD-031**) estão no `AEGIS_STATE.md` e no
+> `docs/plano-diretor-remediacao-v1.0.3.md`, que têm precedência sobre este handoff.
+
 ---
 
 ## 1. Propósito deste arquivo
@@ -208,6 +215,10 @@ repositório para ser confiável.
 ---
 
 ## 6. Sequência planejada de pacotes
+
+> ⚠️ **Superado.** Esta sequência reflete o planejamento de 2026-07-21 (com AUD-053 como próximo). Os
+> pacotes AUD-053/052/057/046/050/026 já foram **concluídos** (PRs #5–#10). A sequência normativa e o
+> próximo pacote (**AUD-031**) estão na seção 7.1 do Plano Diretor. O conteúdo abaixo é histórico.
 
 A ordem abaixo é a sequência aprovada. Não pular etapas nem fundir pacotes.
 
@@ -445,6 +456,10 @@ afirmação permanente.
 ---
 
 ## 13. Estado resumido na última atualização
+
+> ⚠️ **Superado (2026-07-21).** Bloco histórico. Estado atual: `main` em `383bf6b`;
+> AUD-053/052/057/046/050/026 concluídos (PRs #5–#10); próximo pacote **AUD-031** (este). Ver
+> `AEGIS_STATE.md` e o Plano Diretor.
 
 ```text
 PR 0: concluído via GitHub PR #1
