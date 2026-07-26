@@ -445,52 +445,134 @@ public class AegisScoreDbContext : DbContext
         b.Entity<BlastRadiusImpactNode>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
     }
 
-    /// <summary>Stamp tenant (fail-closed) + audit timestamps automatically on save.</summary>
-    public override int SaveChanges()
+    // [AEGIS-AUD-008] Todos os quatro pontos de entrada públicos de SaveChanges são interceptados
+    // sobrescrevendo APENAS os overloads que recebem `acceptAllChangesOnSuccess` — os parametrizados por
+    // (bool) e (bool, ct). Os overloads sem bool do EF Core delegam para estes, então SaveChanges(),
+    // SaveChanges(bool), SaveChangesAsync(ct) e SaveChangesAsync(bool, ct) passam TODOS pelo guard, sem
+    // dupla validação (o sem-bool não é sobrescrito; só encaminha). Fecha o bypass dos overloads (bool).
+
+    /// <summary>Guard de isolamento multi-tenant (fail-closed) + timestamps de auditoria, em toda gravação.</summary>
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
-        StampTenant();
+        EnforceTenantWriteIsolation();
         StampAudit();
-        return base.SaveChanges();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
-    public override Task<int> SaveChangesAsync(CancellationToken ct = default)
+    public override async Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
-        StampTenant();
+        await EnforceTenantWriteIsolationAsync(cancellationToken);
         StampAudit();
-        return base.SaveChangesAsync(ct);
+        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
     /// <summary>
-    /// Secure-by-design write stamping: every ITenantOwned entity being inserted receives the
-    /// ambient TenantId. Fail-CLOSED — if no tenant is resolved, or a caller tried to smuggle a
-    /// TenantId that disagrees with the context, we throw instead of persisting a cross-tenant row.
+    /// [AEGIS-AUD-008] Ponto central de proteção de ESCRITA multi-tenant. Query filters isolam LEITURAS,
+    /// mas UPDATE/DELETE de entidades rastreadas são emitidos pela chave primária e não passam pelo filtro —
+    /// por isso a proteção precisa viver aqui, no SaveChanges, e não nos controllers/services.
+    ///
+    /// Fail-CLOSED para <c>Added</c>, <c>Modified</c> e <c>Deleted</c> de qualquer <see cref="ITenantOwned"/>:
+    ///  - <c>Added</c>: carimba o tenant ambiente e rejeita um TenantId fornecido divergente;
+    ///  - <c>Modified</c>: a linha PERSISTIDA precisa pertencer ao tenant ambiente e o TenantId não pode mudar;
+    ///  - <c>Deleted</c>: a linha PERSISTIDA precisa pertencer ao tenant ambiente.
+    ///
+    /// A dona da verdade para Modified/Deleted é a linha NO BANCO (<c>GetDatabaseValues</c>), nunca
+    /// <c>entry.Entity.TenantId</c> nem os <c>OriginalValues</c> — um stub anexado à mão com Id de outro tenant
+    /// e TenantId falsificado traz OriginalValues forjados. Sem tenant resolvido, ou <c>Guid.Empty</c>, falha.
     /// </summary>
-    private void StampTenant()
+    private void EnforceTenantWriteIsolation()
     {
-        var added = ChangeTracker.Entries<ITenantOwned>()
-            .Where(e => e.State == EntityState.Added)
+        var tenantId = PrepareTenantWrites(out var modified, out var deleted);
+        if (tenantId is null) return;
+
+        foreach (var entry in modified)
+            VerifyPersistedOwnership(entry, entry.GetDatabaseValues(), tenantId.Value, isModify: true);
+        foreach (var entry in deleted)
+            VerifyPersistedOwnership(entry, entry.GetDatabaseValues(), tenantId.Value, isModify: false);
+    }
+
+    private async Task EnforceTenantWriteIsolationAsync(CancellationToken ct)
+    {
+        var tenantId = PrepareTenantWrites(out var modified, out var deleted);
+        if (tenantId is null) return;
+
+        foreach (var entry in modified)
+            VerifyPersistedOwnership(entry, await entry.GetDatabaseValuesAsync(ct), tenantId.Value, isModify: true);
+        foreach (var entry in deleted)
+            VerifyPersistedOwnership(entry, await entry.GetDatabaseValuesAsync(ct), tenantId.Value, isModify: false);
+    }
+
+    /// <summary>
+    /// Resolve o tenant ambiente (fail-closed), carimba/valida os <c>Added</c> e devolve os <c>Modified</c> e
+    /// <c>Deleted</c> pendentes de verificação contra o banco. Retorna <c>null</c> quando não há NENHUMA
+    /// escrita de entidade tenant-owned — assim entidades globais (catálogo NIST, IdentityAccount) seguem
+    /// gravando sem exigir tenant ambiente.
+    /// </summary>
+    private Guid? PrepareTenantWrites(
+        out List<EntityEntry<ITenantOwned>> modified, out List<EntityEntry<ITenantOwned>> deleted)
+    {
+        modified = new();
+        deleted = new();
+
+        var owned = ChangeTracker.Entries<ITenantOwned>()
+            .Where(e => e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
             .ToList();
-        if (added.Count == 0) return;
+        if (owned.Count == 0) return null;
 
         var tenantId = _tenant.TenantId
             ?? throw new TenantSecurityException(
                 "Gravação de entidade multi-tenant sem tenant resolvido no contexto (fail-closed).");
-
         if (tenantId == Guid.Empty)
             throw new TenantSecurityException("TenantId do contexto é inválido (Guid.Empty).");
 
-        foreach (var entry in added)
+        foreach (var entry in owned)
         {
-            var supplied = entry.Entity.TenantId;
-
-            // Never trust a client-supplied TenantId that diverges from the ambient tenant.
-            if (supplied != Guid.Empty && supplied != tenantId)
-                throw new TenantSecurityException(
-                    $"TenantId da entidade '{entry.Entity.GetType().Name}' ({supplied}) " +
-                    $"diverge do tenant do contexto ({tenantId}).");
-
-            entry.Entity.TenantId = tenantId;
+            switch (entry.State)
+            {
+                case EntityState.Added:
+                    // Nunca confiar num TenantId fornecido pelo cliente que diverge do tenant ambiente.
+                    var supplied = entry.Entity.TenantId;
+                    if (supplied != Guid.Empty && supplied != tenantId)
+                        throw new TenantSecurityException(
+                            $"TenantId fornecido em '{entry.Entity.GetType().Name}' diverge do tenant do contexto.");
+                    entry.Entity.TenantId = tenantId;
+                    break;
+                case EntityState.Modified:
+                    modified.Add(entry);
+                    break;
+                case EntityState.Deleted:
+                    deleted.Add(entry);
+                    break;
+            }
         }
+        return tenantId;
+    }
+
+    /// <summary>
+    /// Confirma, contra a linha AUTORITATIVA no banco, que um Modified/Deleted só toca dados do tenant
+    /// ambiente. <paramref name="dbValues"/> nulo = a linha não existe OU não é visível ao tenant — em ambos
+    /// os casos a escrita é recusada ANTES de qualquer mutação. Mensagens sem dados sensíveis da entidade.
+    /// </summary>
+    private static void VerifyPersistedOwnership(
+        EntityEntry<ITenantOwned> entry, PropertyValues? dbValues, Guid tenantId, bool isModify)
+    {
+        var kind = isModify ? "alterar" : "remover";
+        var name = entry.Entity.GetType().Name;
+
+        if (dbValues is null)
+            throw new TenantSecurityException(
+                $"Tentativa de {kind} uma linha inexistente ou fora do tenant do contexto ('{name}').");
+
+        var persistedTenantId = dbValues.GetValue<Guid>(nameof(ITenantOwned.TenantId));
+        if (persistedTenantId != tenantId)
+            throw new TenantSecurityException(
+                $"Tentativa de {kind} uma linha pertencente a outro tenant ('{name}').");
+
+        // Modified não pode reescrever o TenantId para longe do tenant ambiente (a linha persistida é dele).
+        if (isModify && entry.Entity.TenantId != tenantId)
+            throw new TenantSecurityException(
+                $"Tentativa de alterar o TenantId de '{name}' para outro tenant.");
     }
 
     private void StampAudit()
