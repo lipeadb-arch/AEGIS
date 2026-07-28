@@ -12,6 +12,37 @@ public record TokenPair(
     string RefreshToken,
     DateTimeOffset RefreshTokenExpiresAt);
 
+/// <summary>
+/// [AEGIS-AUD-009] Desfecho EXPLÍCITO de um refresh. Antes o serviço devolvia <c>TokenPair?</c> e o
+/// <c>null</c> confundia dois casos opostos: sessão morta (breach/expirado) e corrida benigna de rotação.
+/// Com só o hash no banco, o servidor não consegue mais reconstruir o sucessor bruto para reentregá-lo ao
+/// request perdedor da janela de idempotência — então o perdedor precisa ser sinalizado a tentar de novo,
+/// e não deslogado. Os três casos passam a ser distinguíveis pelo chamador (a controller).
+/// </summary>
+public enum RefreshOutcome
+{
+    /// <summary>Rotação concluída: <see cref="RefreshResult.Pair"/> traz o novo par (200).</summary>
+    Success,
+
+    /// <summary>Token desconhecido, expirado ou reutilização fora da janela (breach): limpa o cookie e 401.</summary>
+    InvalidOrBreach,
+
+    /// <summary>
+    /// Corrida benigna de rotação DENTRO da janela de idempotência: outra requisição já venceu e recebeu
+    /// o sucessor. NÃO é breach — não revoga a cadeia nem limpa o cookie. O cliente reenvia uma única vez,
+    /// após um atraso curto, com o cookie sucessor já atualizado pela resposta vencedora (retryable / 409).
+    /// </summary>
+    RotationConflict,
+}
+
+/// <summary>Resultado tipado de <see cref="IAuthService.RefreshAsync"/> — nunca expõe o token bruto senão no sucesso.</summary>
+public sealed record RefreshResult(RefreshOutcome Outcome, TokenPair? Pair)
+{
+    public static RefreshResult Success(TokenPair pair) => new(RefreshOutcome.Success, pair);
+    public static readonly RefreshResult InvalidOrBreach = new(RefreshOutcome.InvalidOrBreach, null);
+    public static readonly RefreshResult RotationConflict = new(RefreshOutcome.RotationConflict, null);
+}
+
 /// <summary>Um ambiente acessível pela pessoa autenticada, para o seletor do HUD.</summary>
 public record TenantMembershipDescriptor(Guid Id, string Name, string Slug, UserRole Role);
 
@@ -53,11 +84,15 @@ public interface IAuthService
 
     /// <summary>
     /// Rotaciona um refresh token válido de forma ATÔMICA, emitindo um novo par e revogando o anterior.
-    /// <c>null</c> = token inválido/expirado. Reapresentar o mesmo token dentro da janela de idempotência
-    /// devolve o sucessor já emitido (retry benigno). Fora da janela, a reutilização de um token já
-    /// revogado é breach: revoga a CADEIA (família) daquele token e retorna <c>null</c>.
+    /// O desfecho é explícito (<see cref="RefreshResult"/>):
+    ///  - <see cref="RefreshOutcome.Success"/>: novo par emitido;
+    ///  - <see cref="RefreshOutcome.InvalidOrBreach"/>: token desconhecido/expirado, ou reutilização fora da
+    ///    janela de idempotência (breach) — que revoga a CADEIA (família) daquele token;
+    ///  - <see cref="RefreshOutcome.RotationConflict"/>: reapresentação dentro da janela, quando outra
+    ///    requisição já venceu a rotação. Como só o hash do sucessor é persistido, o bruto não pode ser
+    ///    reentregue aqui — o chamador deve sinalizar retry (não é breach, não revoga, não limpa cookie).
     /// </summary>
-    Task<TokenPair?> RefreshAsync(string refreshToken, CancellationToken ct);
+    Task<RefreshResult> RefreshAsync(string refreshToken, CancellationToken ct);
 
     /// <summary>Revoga um refresh token específico (logout). Idempotente.</summary>
     Task LogoutAsync(string refreshToken, CancellationToken ct);
@@ -86,4 +121,17 @@ public interface IPasswordHasher
 {
     string Hash(string password);
     bool Verify(string password, string hash);
+}
+
+/// <summary>
+/// [AEGIS-AUD-009] Hash determinístico do refresh token, centralizado num único componente (não espalhar
+/// SHA-256 pelo serviço). SHA-256 — e NÃO PBKDF2/bcrypt: o refresh token é um segredo aleatório de 256
+/// bits, não uma senha de baixa entropia; ele precisa de lookup indexado determinístico e não tem margem
+/// para brute force que justifique um KDF caro. Sem pepper/HMAC de propósito: um segredo adicional exigiria
+/// gestão e rotação de chave (escopo do AEGIS-AUD-060), e ampliaria este pacote.
+/// </summary>
+public interface IRefreshTokenHasher
+{
+    /// <summary>SHA-256 do token bruto em hexadecimal minúsculo de 64 caracteres. Determinístico.</summary>
+    string Hash(string rawToken);
 }

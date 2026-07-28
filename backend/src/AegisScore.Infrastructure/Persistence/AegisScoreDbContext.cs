@@ -241,10 +241,14 @@ public class AegisScoreDbContext : DbContext
         });
         b.Entity<UserRefreshToken>(e =>
         {
-            e.Property(t => t.Token).HasMaxLength(512).IsRequired();
-            e.Property(t => t.ReplacedByToken).HasMaxLength(512);
-            e.HasIndex(t => new { t.TenantId, t.Token }).IsUnique();   // lookup do refresh, tenant-leading
-            e.HasIndex(t => new { t.TenantId, t.UserId });             // revogação em massa por usuário (breach)
+            // [AEGIS-AUD-009] Só o hash SHA-256 (hex, 64 chars) é persistido — nunca o token bruto. O
+            // comprimento fixo de 64 é a invariante de banco: um valor bruto (base64url ~43 chars ou mais)
+            // ainda caberia, mas o índice único + lookup por hash e o backfill da migration garantem que
+            // apenas hashes cheguem aqui.
+            e.Property(t => t.TokenHash).HasMaxLength(64).IsRequired();
+            e.Property(t => t.ReplacedByTokenHash).HasMaxLength(64);
+            e.HasIndex(t => new { t.TenantId, t.TokenHash }).IsUnique();   // lookup do refresh por hash, tenant-leading
+            e.HasIndex(t => new { t.TenantId, t.UserId });                 // revogação em massa por usuário (breach)
             e.HasOne(t => t.User).WithMany(u => u.RefreshTokens)
                 .HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
 

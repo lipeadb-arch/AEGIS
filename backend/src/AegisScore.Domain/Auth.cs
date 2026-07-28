@@ -69,26 +69,37 @@ public enum UserRole { Analyst = 0, Manager = 1, TenantAdmin = 2, PlatformAdmin 
 
 /// <summary>
 /// Refresh token persistido para Refresh Token Rotation (RTR). Cada token é de uso único:
-/// ao ser trocado, é revogado e aponta para o sucessor (<see cref="ReplacedByToken"/>), formando
+/// ao ser trocado, é revogado e aponta para o sucessor (<see cref="ReplacedByTokenHash"/>), formando
 /// uma cadeia auditável. A reutilização de um token já revogado é indício de comprometimento
 /// (breach) e derruba toda a sessão do usuário.
 /// ITenantOwned: herda o query filter e o stamping fail-closed do AegisScoreDbContext.
+///
+/// [AEGIS-AUD-009] O token bruto NUNCA é persistido: só o seu hash SHA-256 (determinístico) mora no
+/// banco, indexado para lookup. O segredo de alta entropia existe apenas em trânsito — na geração, no
+/// <c>TokenPair</c> interno e no cookie HttpOnly do cliente. Um banco comprometido entrega apenas
+/// hashes, inúteis como credencial de sessão.
 /// </summary>
 public class UserRefreshToken : Entity, ITenantOwned
 {
     public Guid TenantId { get; set; }
     public Guid UserId { get; set; }
 
-    /// <summary>Segredo de alta entropia (256 bits, base64url). Vai ao cliente via cookie HttpOnly.</summary>
-    public string Token { get; set; } = "";
+    /// <summary>
+    /// Hash SHA-256 (hex minúsculo, 64 chars) do refresh token bruto de 256 bits. É a chave de busca
+    /// determinística — nunca o segredo em si. O bruto vai ao cliente só no cookie HttpOnly.
+    /// </summary>
+    public string TokenHash { get; set; } = "";
 
     public DateTimeOffset ExpiresAt { get; set; }
 
     /// <summary>Preenchido quando o token é rotacionado ou revogado (logout / breach).</summary>
     public DateTimeOffset? RevokedAt { get; set; }
 
-    /// <summary>Token que substituiu este na rotação — trilha de auditoria da cadeia RTR.</summary>
-    public string? ReplacedByToken { get; set; }
+    /// <summary>
+    /// Hash SHA-256 do sucessor que substituiu este na rotação — trilha de auditoria da cadeia RTR.
+    /// Guarda o hash do sucessor, jamais o sucessor bruto (que iria só ao vencedor da rotação).
+    /// </summary>
+    public string? ReplacedByTokenHash { get; set; }
 
     public User? User { get; set; }
 

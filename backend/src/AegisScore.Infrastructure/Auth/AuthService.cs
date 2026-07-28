@@ -28,6 +28,7 @@ public sealed class AuthService : IAuthService
     private readonly DbContextOptions<AegisScoreDbContext> _options;
     private readonly IJwtTokenService _tokens;
     private readonly IPasswordHasher _hasher;
+    private readonly IRefreshTokenHasher _refreshHasher;
     private readonly ILogger<AuthService> _logger;
 
     // Hash válido e de mesmo custo, usado para verificar a senha mesmo quando o usuário não existe —
@@ -39,12 +40,14 @@ public sealed class AuthService : IAuthService
         DbContextOptions<AegisScoreDbContext> options,
         IJwtTokenService tokens,
         IPasswordHasher hasher,
+        IRefreshTokenHasher refreshHasher,
         ILogger<AuthService> logger)
     {
         _db = db;
         _options = options;
         _tokens = tokens;
         _hasher = hasher;
+        _refreshHasher = refreshHasher;
         _logger = logger;
     }
 
@@ -124,10 +127,12 @@ public sealed class AuthService : IAuthService
         // antigo reabriria o ambiente que o usuário acredita ter deixado. Idempotente e atômico.
         if (!string.IsNullOrWhiteSpace(currentRefreshToken))
         {
+            // Localiza pelo HASH do cookie recebido — nunca comparando uma coluna persistida com o bruto.
+            var currentHash = _refreshHasher.Hash(currentRefreshToken);
             // Entidade rastreada em vez de ExecuteUpdate, pelo mesmo motivo do IssuePairAsync: o update
             // em lote não traduz sob IgnoreQueryFilters. Idempotente — só revoga o que ainda está ativo.
             var atual = await _db.UserRefreshTokens.IgnoreQueryFilters()
-                .FirstOrDefaultAsync(t => t.Token == currentRefreshToken && t.RevokedAt == null, ct);
+                .FirstOrDefaultAsync(t => t.TokenHash == currentHash && t.RevokedAt == null, ct);
             if (atual is not null)
             {
                 atual.RevokedAt = DateTimeOffset.UtcNow;
@@ -165,32 +170,36 @@ public sealed class AuthService : IAuthService
             .FirstOrDefault();
     }
 
-    public async Task<TokenPair?> RefreshAsync(string refreshToken, CancellationToken ct)
+    public async Task<RefreshResult> RefreshAsync(string refreshToken, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(refreshToken))
-            return null;
+            return RefreshResult.InvalidOrBreach;
 
-        // Sonda ancorada no SEGREDO, não no tenant ambiente. O refresh token É a credencial (256 bits)
-        // e carrega o próprio tenant, então o "silent refresh" do bootstrap funciona sem o cliente saber
-        // em que ambiente está — requisito direto do login sem slug. IgnoreQueryFilters aqui é a mesma
-        // exceção estrita autorizada para a camada de identidade.
+        // [AEGIS-AUD-009] O bruto é hasheado UMA vez; daqui em diante só o hash toca o banco. Nunca se
+        // procura o token bruto numa coluna — a coluna guarda apenas o hash determinístico.
+        var tokenHash = _refreshHasher.Hash(refreshToken);
+
+        // Sonda ancorada no SEGREDO (agora pelo hash dele), não no tenant ambiente. O refresh token É a
+        // credencial (256 bits) e carrega o próprio tenant, então o "silent refresh" do bootstrap funciona
+        // sem o cliente saber em que ambiente está — requisito direto do login sem slug. IgnoreQueryFilters
+        // aqui é a mesma exceção estrita autorizada para a camada de identidade.
         var probe = await _db.UserRefreshTokens.IgnoreQueryFilters().AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Token == refreshToken, ct);
+            .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct);
         if (probe is null)
-            return null;   // token desconhecido
+            return RefreshResult.InvalidOrBreach;   // token desconhecido
 
         // Daqui em diante operamos DENTRO do tenant que o próprio token declara: o StampTenant segue
         // rígido, apenas deixa de ser alimentado com um contexto que não é o desta escrita.
         await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(probe.TenantId));
 
-        var stored = await db.UserRefreshTokens.FirstOrDefaultAsync(t => t.Token == refreshToken, ct);
+        var stored = await db.UserRefreshTokens.FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct);
         if (stored is null)
-            return null;
+            return RefreshResult.InvalidOrBreach;
 
         // [Crítico 2] Expiração ANTES de reuso: um token expirado replayado só retorna 401 e NUNCA
         // dispara a cascata de revogação — fecha o DoS por replay de token ancião.
         if (stored.IsExpired)
-            return null;
+            return RefreshResult.InvalidOrBreach;
 
         // Já revogado quando lido = rotacionado por outra request. Janela de idempotência ou breach.
         if (stored.IsRevoked)
@@ -203,17 +212,22 @@ public sealed class AuthService : IAuthService
 
         if (user is null || account is null || !user.IsActive)
         {
-            // Órfão/desativado: encerra a cadeia de forma atômica (não dispara breach).
+            // Órfão/desativado: encerra a cadeia de forma atômica (não dispara breach). `now` capturado
+            // (não `DateTimeOffset.UtcNow` inline) para o SetProperty traduzir em todo provider.
+            var revokedNow = DateTimeOffset.UtcNow;
             await db.UserRefreshTokens
                 .Where(t => t.Id == stored.Id && t.RevokedAt == null)
-                .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, _ => DateTimeOffset.UtcNow), ct);
-            return null;
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, _ => revokedNow), ct);
+            return RefreshResult.InvalidOrBreach;
         }
 
-        // [Crítico 1] Rotação ATÔMICA. O UPDATE ... WHERE RevokedAt IS NULL é a seção crítica: sob
-        // concorrência, apenas UMA request afeta 1 linha; as demais afetam 0 e "perdem a corrida".
-        // Elimina o fork de cadeia (dois filhos ativos do mesmo pai) que cegava a detecção de breach.
+        // [Crítico 1] Rotação ATÔMICA. O sucessor bruto é gerado aqui e só o HASH dele é persistido — no
+        // pai (ReplacedByTokenHash) e no filho (TokenHash). O bruto vai apenas ao vencedor, no TokenPair.
+        // O UPDATE ... WHERE RevokedAt IS NULL é a seção crítica: sob concorrência, apenas UMA request
+        // afeta 1 linha; as demais afetam 0 e "perdem a corrida". Elimina o fork de cadeia (dois filhos
+        // ativos do mesmo pai) que cegava a detecção de breach.
         var (newRefresh, newRefreshExp) = _tokens.CreateRefreshToken();
+        var newRefreshHash = _refreshHasher.Hash(newRefresh);
         var now = DateTimeOffset.UtcNow;
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -222,31 +236,32 @@ public sealed class AuthService : IAuthService
             .Where(t => t.Id == stored.Id && t.RevokedAt == null)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(t => t.RevokedAt, _ => now)
-                .SetProperty(t => t.ReplacedByToken, _ => newRefresh), ct);
+                .SetProperty(t => t.ReplacedByTokenHash, _ => newRefreshHash), ct);
 
         if (claimed == 0)
         {
             // Perdi a corrida entre o SELECT e o UPDATE. Desfaz e trata como já-rotacionado, lendo o
-            // estado do vencedor — cai na janela de idempotência (retry benigno) ou em breach.
+            // estado do vencedor — cai na janela de idempotência (conflito benigno) ou em breach.
             await tx.RollbackAsync(ct);
             var latest = await db.UserRefreshTokens.AsNoTracking()
                 .FirstOrDefaultAsync(t => t.Id == stored.Id, ct);
-            return latest is null ? null : await HandleAlreadyRotatedAsync(db, latest, ct);
+            return latest is null ? RefreshResult.InvalidOrBreach : await HandleAlreadyRotatedAsync(db, latest, ct);
         }
 
-        // Venci a corrida: emito o novo filho. ITenantOwned → StampTenant carimba/valida no SaveChanges.
+        // Venci a corrida: emito o novo filho, persistindo só o HASH do sucessor. ITenantOwned →
+        // StampTenant carimba/valida no SaveChanges. O bruto (newRefresh) volta apenas no TokenPair.
         db.UserRefreshTokens.Add(new UserRefreshToken
         {
             TenantId = user.TenantId,
             UserId = user.Id,
-            Token = newRefresh,
+            TokenHash = newRefreshHash,
             ExpiresAt = newRefreshExp,
         });
         var (access, accessExp) = _tokens.CreateAccessToken(user, account);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
-        return new TokenPair(access, accessExp, newRefresh, newRefreshExp);
+        return RefreshResult.Success(new TokenPair(access, accessExp, newRefresh, newRefreshExp));
     }
 
     public async Task LogoutAsync(string refreshToken, CancellationToken ct)
@@ -254,46 +269,44 @@ public sealed class AuthService : IAuthService
         if (string.IsNullOrWhiteSpace(refreshToken))
             return;
 
+        // Localiza/revoga pelo HASH do cookie — nunca comparando a coluna persistida com o token bruto.
+        var tokenHash = _refreshHasher.Hash(refreshToken);
+        var now = DateTimeOffset.UtcNow;
+
         // Revoga de forma atômica, só se ainda ativo. Idempotente. IgnoreQueryFilters porque o logout
         // pode chegar sem tenant ambiente (token de acesso já expirado) — e o segredo apresentado é a
-        // própria autorização para revogá-lo.
+        // própria autorização para revogá-lo. `now` capturado para o SetProperty traduzir em todo provider.
         await _db.UserRefreshTokens.IgnoreQueryFilters()
-            .Where(t => t.Token == refreshToken && t.RevokedAt == null)
-            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, _ => DateTimeOffset.UtcNow), ct);
+            .Where(t => t.TokenHash == tokenHash && t.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, _ => now), ct);
     }
 
     /// <summary>
     /// Trata a reapresentação de um token JÁ revogado (rotacionado):
-    ///  (a) Dentro da janela de idempotência e com sucessor ativo → retry benigno: reemite o access
-    ///      token e devolve o MESMO refresh (o sucessor) já entregue ao líder.
-    ///  (b) Fora da janela → reuso genuíno = breach: revoga a CADEIA do token (blast radius reduzido,
-    ///      não todas as sessões do usuário) e retorna null.
+    ///  (a) Dentro da janela de idempotência e com sucessor ativo → conflito benigno de rotação: outra
+    ///      requisição já venceu e recebeu o sucessor. [AEGIS-AUD-009] Como só o HASH do sucessor está
+    ///      persistido, o bruto não pode ser reentregue aqui — devolve <see cref="RefreshOutcome.RotationConflict"/>
+    ///      para o chamador pedir um retry curto. NÃO revoga a cadeia, NÃO limpa o cookie.
+    ///  (b) Fora da janela (ou sucessor ausente/inativo) → reuso genuíno = breach: revoga a CADEIA do token
+    ///      (blast radius reduzido, não todas as sessões do usuário) e retorna InvalidOrBreach.
     /// </summary>
-    private async Task<TokenPair?> HandleAlreadyRotatedAsync(
+    private async Task<RefreshResult> HandleAlreadyRotatedAsync(
         AegisScoreDbContext db, UserRefreshToken parent, CancellationToken ct)
     {
         if (parent.RevokedAt is { } revokedAt
             && DateTimeOffset.UtcNow - revokedAt <= IdempotencyWindow
-            && !string.IsNullOrEmpty(parent.ReplacedByToken))
+            && !string.IsNullOrEmpty(parent.ReplacedByTokenHash))
         {
+            // Localiza o sucessor pelo HASH gravado no pai — casa exatamente com o TokenHash do filho.
             var successor = await db.UserRefreshTokens.AsNoTracking()
-                .FirstOrDefaultAsync(t => t.Token == parent.ReplacedByToken, ct);
+                .FirstOrDefaultAsync(t => t.TokenHash == parent.ReplacedByTokenHash, ct);
 
             if (successor is not null && successor.IsActive)
             {
-                var user = await db.Users.AsNoTracking()
-                    .FirstOrDefaultAsync(u => u.Id == successor.UserId, ct);
-                var account = user is null
-                    ? null
-                    : await db.IdentityAccounts.AsNoTracking()
-                        .FirstOrDefaultAsync(a => a.Id == user.IdentityAccountId, ct);
-
-                if (user is not null && account is not null && user.IsActive)
-                {
-                    // Idempotente: mesmo par entregue ao líder (novo access + refresh = sucessor).
-                    var (access, accessExp) = _tokens.CreateAccessToken(user, account);
-                    return new TokenPair(access, accessExp, successor.Token, successor.ExpiresAt);
-                }
+                // Conflito benigno: a rotação legítima acabou de acontecer e o sucessor está vivo. Não há
+                // como devolver o sucessor bruto (não é reconstruível do hash), então sinalizamos retry.
+                // O vencedor já entregou o bruto ao SEU cliente; o retry deste reenviará o cookie sucessor.
+                return RefreshResult.RotationConflict;
             }
         }
 
@@ -304,7 +317,7 @@ public sealed class AuthService : IAuthService
             parent.TenantId, parent.UserId, parent.Id);
 
         await RevokeChainAsync(db, parent, ct);
-        return null;
+        return RefreshResult.InvalidOrBreach;
     }
 
     /// <summary>
@@ -328,7 +341,7 @@ public sealed class AuthService : IAuthService
         {
             TenantId = membership.TenantId,   // revalidado pelo StampTenant contra o contexto acima
             UserId = membership.Id,
-            Token = refresh,
+            TokenHash = _refreshHasher.Hash(refresh),   // [AEGIS-AUD-009] só o hash é persistido; o bruto vai ao cliente
             ExpiresAt = refreshExp,
         });
         // LastLoginAt por entidade RASTREADA, não por ExecuteUpdate: o update em lote não traduz junto
@@ -348,31 +361,34 @@ public sealed class AuthService : IAuthService
 
     /// <summary>
     /// [Crítico 2] Breach com blast radius reduzido: revoga apenas a CADEIA (família) do token,
-    /// caminhando para frente via <see cref="UserRefreshToken.ReplacedByToken"/>. Outras sessões
-    /// legítimas do mesmo usuário (outros dispositivos/navegadores) permanecem ativas.
+    /// caminhando para frente via <see cref="UserRefreshToken.ReplacedByTokenHash"/>. [AEGIS-AUD-009] A
+    /// linhagem é percorrida EXCLUSIVAMENTE por hashes — nunca se reconstrói nem se armazena token bruto.
+    /// Outras sessões legítimas do mesmo usuário (outros dispositivos/navegadores) permanecem ativas.
     /// </summary>
     private static async Task RevokeChainAsync(
         AegisScoreDbContext db, UserRefreshToken start, CancellationToken ct)
     {
         var chain = new List<Guid> { start.Id };
-        var nextToken = start.ReplacedByToken;
+        var nextHash = start.ReplacedByTokenHash;
         var guard = 0;
 
-        // Caminha a linhagem para frente; o guard evita laço infinito em dados legados bifurcados.
-        while (!string.IsNullOrEmpty(nextToken) && guard++ < 256)
+        // Caminha a linhagem para frente pelo hash do sucessor; o guard evita laço infinito em dados
+        // legados bifurcados.
+        while (!string.IsNullOrEmpty(nextHash) && guard++ < 256)
         {
-            var link = nextToken;
+            var link = nextHash;
             var node = await db.UserRefreshTokens.AsNoTracking()
-                .FirstOrDefaultAsync(t => t.Token == link, ct);
+                .FirstOrDefaultAsync(t => t.TokenHash == link, ct);
             if (node is null)
                 break;
 
             chain.Add(node.Id);
-            nextToken = node.ReplacedByToken;
+            nextHash = node.ReplacedByTokenHash;
         }
 
+        var now = DateTimeOffset.UtcNow;   // capturado para o SetProperty traduzir em todo provider
         await db.UserRefreshTokens
             .Where(t => chain.Contains(t.Id) && t.RevokedAt == null)
-            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, _ => DateTimeOffset.UtcNow), ct);
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, _ => now), ct);
     }
 }
