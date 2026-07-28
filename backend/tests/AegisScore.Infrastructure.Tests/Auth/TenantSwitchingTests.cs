@@ -6,6 +6,7 @@ using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace AegisScore.Infrastructure.Tests.Auth;
@@ -177,7 +178,7 @@ public sealed class TenantSwitchingTests : IDisposable
 
     private AuthService ServiceFor(AegisScoreDbContext db) =>
         new(db, _options, new StubTokenService(), new Pbkdf2PasswordHasher(), Hasher,
-            NullLogger<AuthService>.Instance);
+            Options.Create(new FederationOptions()), NullLogger<AuthService>.Instance);
 
     /// <summary>Emissor de tokens sem JWT real: estes testes exercitam as CONSULTAS, não a assinatura.</summary>
     private sealed class StubTokenService : IJwtTokenService

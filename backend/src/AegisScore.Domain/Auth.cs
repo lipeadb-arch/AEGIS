@@ -24,6 +24,18 @@ public class IdentityAccount : Entity
     /// <summary>Hash PBKDF2 no formato <c>iterações.salt.hash</c>. Nunca a senha em claro.</summary>
     public string PasswordHash { get; set; } = "";
 
+    /// <summary>
+    /// [AEGIS-AUD-007] Vínculo com a identidade corporativa (Microsoft Entra ID), por identificadores
+    /// IMUTÁVEIS: <c>tid</c> (tenant/diretório) e <c>oid</c> (objeto do usuário). Nullable — contas locais
+    /// (dev/demonstração) não têm vínculo. Uma vez ligada, a pessoa é localizada por <c>tid+oid</c>, nunca
+    /// por e-mail: trocar o e-mail no Entra não quebra o login. O índice único composto (parcial, só linhas
+    /// vinculadas) impede que a MESMA identidade externa seja ligada a duas contas.
+    /// </summary>
+    public string? ExternalTenantId { get; set; }
+
+    /// <summary>Object ID (<c>oid</c>) estável da pessoa no Entra. Ver <see cref="ExternalTenantId"/>.</summary>
+    public string? ExternalObjectId { get; set; }
+
     /// <summary>Os ambientes a que esta pessoa tem acesso (um <see cref="User"/> por tenant).</summary>
     public ICollection<User> Memberships { get; set; } = new List<User>();
 }

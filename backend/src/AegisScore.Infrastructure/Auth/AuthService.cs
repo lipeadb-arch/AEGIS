@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using AegisScore.Application.Abstractions;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -29,6 +30,7 @@ public sealed class AuthService : IAuthService
     private readonly IJwtTokenService _tokens;
     private readonly IPasswordHasher _hasher;
     private readonly IRefreshTokenHasher _refreshHasher;
+    private readonly FederationOptions _federation;
     private readonly ILogger<AuthService> _logger;
 
     // Hash válido e de mesmo custo, usado para verificar a senha mesmo quando o usuário não existe —
@@ -41,6 +43,7 @@ public sealed class AuthService : IAuthService
         IJwtTokenService tokens,
         IPasswordHasher hasher,
         IRefreshTokenHasher refreshHasher,
+        IOptions<FederationOptions> federation,
         ILogger<AuthService> logger)
     {
         _db = db;
@@ -48,11 +51,18 @@ public sealed class AuthService : IAuthService
         _tokens = tokens;
         _hasher = hasher;
         _refreshHasher = refreshHasher;
+        _federation = federation.Value;
         _logger = logger;
     }
 
     public async Task<TokenPair?> LoginAsync(string email, string password, CancellationToken ct)
     {
+        // [AEGIS-AUD-007] Em modo Federated o login por senha fica DESABILITADO (defesa em profundidade:
+        // o front já esconde o formulário pela config pública, mas o backend é a autoridade). Local e
+        // Hybrid seguem aceitando credenciais.
+        if (!_federation.PasswordLoginEnabled)
+            return null;
+
         var normalized = (email ?? "").Trim().ToLowerInvariant();
 
         // 1) A CREDENCIAL é da pessoa, não do vínculo. IdentityAccount é referência global (sem query
@@ -279,6 +289,84 @@ public sealed class AuthService : IAuthService
         await _db.UserRefreshTokens.IgnoreQueryFilters()
             .Where(t => t.TokenHash == tokenHash && t.RevokedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, _ => now), ct);
+    }
+
+    /// <summary>
+    /// [AEGIS-AUD-007] Troca a identidade corporativa JÁ VALIDADA (Entra) por uma sessão local. Toda a
+    /// verificação criptográfica (assinatura/issuer/audience/lifetime) já foi feita pelo esquema JWT Bearer
+    /// do Entra; aqui só decidimos o VÍNCULO e emitimos o par local. Nunca cria conta/membership.
+    /// </summary>
+    public async Task<TokenPair?> ExchangeFederatedAsync(FederatedIdentity identity, CancellationToken ct)
+    {
+        // Federação precisa estar ligada, e tid/oid são obrigatórios (defesa em profundidade — o esquema
+        // já exige, mas o serviço é a autoridade final).
+        if (!_federation.FederationEnabled)
+            return null;
+
+        var tid = identity.TenantId?.Trim();
+        var oid = identity.ObjectId?.Trim();
+        if (string.IsNullOrEmpty(tid) || string.IsNullOrEmpty(oid))
+            return null;
+
+        // O tid do token DEVE coincidir com o tenant Entra configurado — barra tokens de outro diretório.
+        if (!string.Equals(tid, _federation.TenantId, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        // 1) Identidade JÁ vinculada → localizar por tid+oid (imutáveis), NUNCA por e-mail. Assim, trocar
+        //    o e-mail no Entra não quebra o login, e o e-mail deixa de ser superfície de captura.
+        var account = await _db.IdentityAccounts
+            .FirstOrDefaultAsync(a => a.ExternalTenantId == tid && a.ExternalObjectId == oid, ct);
+
+        var precisaVincular = false;
+        if (account is null)
+        {
+            // 2) PRIMEIRO login: só é permitido VINCULAR a uma conta preexistente cujo e-mail normalizado
+            //    corresponda ao do token E que ainda NÃO esteja vinculada (ExternalObjectId NULL). Uma
+            //    conta já ligada a OUTRO oid não é retornada aqui (filtro oid IS NULL) — logo não pode ser
+            //    capturada por alguém com o mesmo e-mail. Sem conta correspondente → nega, sem provisionar.
+            var email = (identity.Email ?? "").Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(email))
+                return null;
+
+            account = await _db.IdentityAccounts
+                .FirstOrDefaultAsync(a => a.Email == email && a.ExternalObjectId == null, ct);
+            if (account is null)
+                return null;
+            precisaVincular = true;
+        }
+
+        // 3) Membership ATIVO é obrigatório e NUNCA é criado (provisionamento é o AUD-010). Conferido ANTES
+        //    de gravar o vínculo: um login negado (sem acesso ativo) não deixa efeito colateral no banco.
+        var membership = await FirstActiveMembershipAsync(account.Id, ct);
+        if (membership is null)
+            return null;
+
+        // 4) Fecha o vínculo no primeiro login. IdentityAccount é referência GLOBAL (não ITenantOwned):
+        //    grava sem tenant ambiente. O índice único parcial (tid,oid) torna a corrida uma invariante
+        //    de banco — dois primeiros logins concorrentes da MESMA identidade não geram duas linhas.
+        if (precisaVincular)
+        {
+            account.ExternalTenantId = tid;
+            account.ExternalObjectId = oid;
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException)
+            {
+                // Corrida perdida: outra requisição venceu o vínculo desta MESMA identidade. Falha fechada
+                // e re-resolve pelo vencedor (tid+oid) — mesma linha (e-mail é único), membership segue válido.
+                _db.Entry(account).State = EntityState.Detached;
+                var winner = await _db.IdentityAccounts.AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.ExternalTenantId == tid && a.ExternalObjectId == oid, ct);
+                if (winner is null)
+                    return null;
+                account = winner;
+            }
+        }
+
+        // Emite o par local pelo MESMO caminho do login — o JWT resultante carrega account/tenant/papel internos.
+        return await IssuePairAsync(membership, account, ct);
     }
 
     /// <summary>

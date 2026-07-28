@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
 using AegisScore.Infrastructure.Auth;
@@ -35,7 +36,12 @@ public sealed class AuthController : ControllerBase
     private const string CookiePath = "/api/v1/auth";
 
     private readonly IAuthService _auth;
-    public AuthController(IAuthService auth) => _auth = auth;
+    private readonly FederationOptions _federation;
+    public AuthController(IAuthService auth, IOptions<FederationOptions> federation)
+    {
+        _auth = auth;
+        _federation = federation.Value;
+    }
 
     /// <summary>Valida credenciais e emite o par de tokens. 401 sem revelar se o e-mail existe.</summary>
     [AllowAnonymous]
@@ -103,6 +109,48 @@ public sealed class AuthController : ControllerBase
 
         ClearRefreshCookie();
         return NoContent();
+    }
+
+    // ==========================================================================================
+    //  [AEGIS-AUD-007] Federação corporativa (Microsoft Entra ID)
+    // ==========================================================================================
+
+    /// <summary>
+    /// Configuração PÚBLICA e sanitizada da federação, para o SPA inicializar o MSAL e decidir a UI.
+    /// Só identificadores públicos (enabled, authority, client id do SPA, scope). NUNCA retorna segredo.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("federation/config")]
+    public ActionResult<FederationPublicConfig> FederationConfig() => _federation.ToPublicConfig();
+
+    /// <summary>
+    /// Troca um token do Entra JÁ VALIDADO por uma sessão local do AEGIS. Protegido EXPLICITAMENTE pelo
+    /// esquema JWT Bearer do Entra (<see cref="FederatedAuthDefaults.Scheme"/>): assinatura, issuer,
+    /// audience e lifetime são checados criptograficamente antes desta ação rodar. A identidade vem
+    /// SOMENTE das claims do principal validado — jamais de corpo JSON. Em sucesso, emite o par local e
+    /// define o cookie de refresh, exatamente como o login. Falhas usam 401 genérico (não revelam se a
+    /// conta, o membership ou o vínculo existem). O token externo nunca é gravado nem logado.
+    /// </summary>
+    [Authorize(AuthenticationSchemes = FederatedAuthDefaults.Scheme)]
+    [HttpPost("federation/exchange")]
+    [EnableRateLimiting("auth-login")]   // mesma proteção do login por senha
+    public async Task<ActionResult<AuthResponse>> FederationExchange(CancellationToken ct)
+    {
+        // Só claims do principal já validado pelo esquema do Entra. MapInboundClaims=false preserva os
+        // nomes originais (tid/oid/preferred_username). Nunca lê identidade do corpo.
+        var identity = new FederatedIdentity(
+            TenantId: User.FindFirst("tid")?.Value,
+            ObjectId: User.FindFirst("oid")?.Value,
+            Email: User.FindFirst("preferred_username")?.Value
+                ?? User.FindFirst("email")?.Value
+                ?? User.FindFirst("upn")?.Value);
+
+        var pair = await _auth.ExchangeFederatedAsync(identity, ct);
+        if (pair is null)
+            return Unauthorized(new { title = "Não foi possível autenticar a identidade corporativa.", status = 401 });
+
+        SetRefreshCookie(pair.RefreshToken, pair.RefreshTokenExpiresAt);
+        return new AuthResponse(pair.AccessToken, pair.AccessTokenExpiresAt);
     }
 
     /// <summary>

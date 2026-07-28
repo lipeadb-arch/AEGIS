@@ -1,12 +1,12 @@
 # AEGIS — Plano Diretor de Remediação v1.0.3
 
 **Classificação:** Documento de governança técnica e segurança<br>
-**Data de atualização:** 2026-07-24<br>
+**Data de atualização:** 2026-07-28<br>
 **Situação do programa:** Em execução<br>
 **Branch de referência:** `main`<br>
-**Commit de referência:** `2f8c968`<br>
-**Última entrega concluída:** AEGIS-AUD-008 — PR #12, squash-merge `2f8c968`<br>
-**Pacote em andamento:** `AEGIS-AUD-009 — Armazenar somente hash de refresh tokens` (EP-01) — **EM IMPLEMENTAÇÃO** · branch `fix/aud-009-hash-refresh-tokens`
+**Commit de referência:** `37d57ff`<br>
+**Última entrega concluída:** AEGIS-AUD-009 — PR #13, squash-merge `37d57ff`<br>
+**Pacote em andamento:** `AEGIS-AUD-007 — Integrar autenticação corporativa federada` (EP-01) — **EM IMPLEMENTAÇÃO** · branch `fix/aud-007-federated-auth`
 
 > Este documento é a fonte de governança do programa de remediação. O código local e `docs/pr0-baseline.md` são a fonte de verdade para o estado técnico executável.
 
@@ -43,7 +43,8 @@
 | AEGIS-AUD-031 — Alinhamento documental (arquitetura) | **CONCLUÍDO** | PR #11; squash-merge `d02cfee` |
 | EP-00 — Linha de base e contenção imediata | **CONCLUÍDO** | 10 pacotes entregues; gate G1 atendido |
 | AEGIS-AUD-008 — Escritas cross-tenant no DbContext | **CONCLUÍDO** | PR #12; squash-merge `2f8c968` |
-| AEGIS-AUD-009 — Armazenar somente hash de refresh tokens | **EM IMPLEMENTAÇÃO** | branch `fix/aud-009-hash-refresh-tokens` (EP-01) |
+| AEGIS-AUD-009 — Armazenar somente hash de refresh tokens | **CONCLUÍDO** | PR #13; squash-merge `37d57ff` |
+| AEGIS-AUD-007 — Integrar autenticação corporativa federada | **EM IMPLEMENTAÇÃO** | branch `fix/aud-007-federated-auth` (EP-01) |
 
 ### 2.1 O que o PR 0 concluiu
 
@@ -54,8 +55,8 @@
 
 ### 2.2 O que permanece inalterado
 
-- **Dos 63 achados `AEGIS-AUD-*`, oito foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7, `AEGIS-AUD-046` via PR #8, `AEGIS-AUD-050` via PR #9, `AEGIS-AUD-026` via PR #10, `AEGIS-AUD-031` via PR #11, `AEGIS-AUD-008` via PR #12); os demais **55 permanecem abertos**. O total catalogado segue **63**.
-- O `AEGIS-AUD-008` foi **CONCLUÍDO** (PR #12; squash-merge `2f8c968`), primeiro pacote do **EP-01 (EM EXECUÇÃO)**. O segundo pacote, `AEGIS-AUD-009` (EP-01), está **EM IMPLEMENTAÇÃO** na branch `fix/aud-009-hash-refresh-tokens` (implementação autorizada); permanece aberto até o merge — a contagem segue **8 concluídos / 55 abertos**.
+- **Dos 63 achados `AEGIS-AUD-*`, nove foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7, `AEGIS-AUD-046` via PR #8, `AEGIS-AUD-050` via PR #9, `AEGIS-AUD-026` via PR #10, `AEGIS-AUD-031` via PR #11, `AEGIS-AUD-008` via PR #12, `AEGIS-AUD-009` via PR #13); os demais **54 permanecem abertos**. O total catalogado segue **63**.
+- O `AEGIS-AUD-009` foi **CONCLUÍDO** (PR #13; squash-merge `37d57ff`), segundo pacote entregue do **EP-01 (EM EXECUÇÃO)** — refresh tokens agora persistem só o hash SHA-256. A contagem passa a **9 concluídos / 54 abertos**. O terceiro pacote do épico, `AEGIS-AUD-007` (EP-01), está **EM IMPLEMENTAÇÃO** na branch `fix/aud-007-federated-auth` (implementação autorizada); permanece aberto até o merge — a contagem segue **9 concluídos / 54 abertos**.
 - **O `AEGIS-TECH-001` foi concluído como pacote técnico de precedência, não como novo achado da auditoria.** Ele não entra no backlog mestre e **não altera a contagem de 63 achados**.
 - A liberação para produção continua bloqueada.
 - O Plano Diretor não substitui a inspeção do código local antes de cada mudança.
@@ -138,7 +139,7 @@ Estados auxiliares: `BLOQUEADA`, `ADIADA`, `DESCARTADA`.
 > **A aprovação desta ordem não autoriza a implementação de nenhum pacote.** Ela define apenas a
 > sequência de execução. **Cada pacote exige aprovação explícita própria** para sair de `PLANEJADO`
 > e entrar em implementação. O `AEGIS-AUD-031` foi concluído (PR #11; squash-merge `d02cfee`),
-> **encerrando o EP-00**; o `AEGIS-AUD-008` (EP-01) foi concluído (PR #12; squash-merge `2f8c968`), e o pacote seguinte, `AEGIS-AUD-009`, recebeu aprovação explícita própria e está **EM IMPLEMENTAÇÃO** na branch `fix/aud-009-hash-refresh-tokens`.
+> **encerrando o EP-00**; o `AEGIS-AUD-008` (EP-01) foi concluído (PR #12; squash-merge `2f8c968`) e o `AEGIS-AUD-009` (EP-01) foi concluído (PR #13; squash-merge `37d57ff`). O pacote seguinte, `AEGIS-AUD-007` (EP-01), recebeu aprovação explícita própria e está **EM IMPLEMENTAÇÃO** na branch `fix/aud-007-federated-auth`.
 
 ### 7.2 Pacote técnico concluído
 
@@ -173,10 +174,12 @@ contagem de 63 achados**.
 
 ### 7.3 Próximo pacote imediato
 
-**`AEGIS-AUD-009 — Armazenar somente hash de refresh tokens`** (EP-01) — **EM IMPLEMENTAÇÃO** na branch
-`fix/aud-009-hash-refresh-tokens` (implementação autorizada; aberto até o merge). É o segundo pacote do
-EP-01 na ordem interna (invariantes de persistência e refresh tokens antes da federação); o `AEGIS-AUD-008`
-(proteção de escrita cross-tenant no DbContext) foi concluído no PR #12 (squash-merge `2f8c968`).
+**`AEGIS-AUD-007 — Integrar autenticação corporativa federada`** (EP-01) — **EM IMPLEMENTAÇÃO** na branch
+`fix/aud-007-federated-auth` (implementação autorizada; aberto até o merge). É o terceiro pacote do EP-01 na
+ordem interna (federação após as invariantes de persistência e refresh tokens). Os dois primeiros pacotes do
+épico já foram concluídos: `AEGIS-AUD-008` (proteção de escrita cross-tenant no DbContext) no PR #12
+(squash-merge `2f8c968`) e `AEGIS-AUD-009` (armazenar somente hash de refresh tokens) no PR #13
+(squash-merge `37d57ff`).
 
 O **EP-00 está CONCLUÍDO**: seus dez pacotes foram entregues — `AEGIS-AUD-053` (PR #5, `49a6747`),
 `AEGIS-AUD-052` (PR #6, `0ebad27`), `AEGIS-AUD-057` (PR #7, `9904729`), `AEGIS-AUD-046` (PR #8, `f9a3ed7`),
@@ -195,7 +198,7 @@ fora deste pacote.
 **Estado:** CONCLUÍDO<br>
 **Objetivo:** Preservar uma referência reproduzível e remover riscos imediatos antes de mudanças estruturais.<br>
 **Dependências:** Nenhuma além da baseline técnica concluída.<br>
-**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052, AEGIS-AUD-057, AEGIS-AUD-046, AEGIS-AUD-050, AEGIS-AUD-026 e AEGIS-AUD-031 concluídos — **EP-00 CONCLUÍDO**. Épico seguinte (EP-01) **EM EXECUÇÃO**: `AEGIS-AUD-008` concluído (PR #12); `AEGIS-AUD-009` **EM IMPLEMENTAÇÃO** na branch `fix/aud-009-hash-refresh-tokens`.
+**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052, AEGIS-AUD-057, AEGIS-AUD-046, AEGIS-AUD-050, AEGIS-AUD-026 e AEGIS-AUD-031 concluídos — **EP-00 CONCLUÍDO**. Épico seguinte (EP-01) **EM EXECUÇÃO**: `AEGIS-AUD-008` (PR #12) e `AEGIS-AUD-009` (PR #13) concluídos; `AEGIS-AUD-007` **EM IMPLEMENTAÇÃO** na branch `fix/aud-007-federated-auth`.
 
 ### Pacotes do épico
 
@@ -244,8 +247,8 @@ Cada alteração deve ser aditiva ou configurável. Chaves e ciphertext antigos 
 | Ordem | ID | Severidade | Pendência | Área | Estado |
 |---:|---|---|---|---|---|
 | 1 | AEGIS-AUD-008 | ALTO | Proteger alterações e exclusões cross-tenant no DbContext | Multi-tenancy / Persistence | CONCLUÍDA (PR #12; `2f8c968`) |
-| 2 | AEGIS-AUD-009 | ALTO | Armazenar somente hash de refresh tokens | Authentication / Session Security | EM IMPLEMENTAÇÃO (branch `fix/aud-009-hash-refresh-tokens`) |
-| 3 | AEGIS-AUD-007 | ALTO | Integrar autenticação corporativa federada | Identity / Authentication | ABERTA |
+| 2 | AEGIS-AUD-009 | ALTO | Armazenar somente hash de refresh tokens | Authentication / Session Security | CONCLUÍDA (PR #13; `37d57ff`) |
+| 3 | AEGIS-AUD-007 | ALTO | Integrar autenticação corporativa federada | Identity / Authentication | EM IMPLEMENTAÇÃO (branch `fix/aud-007-federated-auth`) |
 | 4 | AEGIS-AUD-010 | ALTO | Separar provisionamento global de concessão de acesso a tenant | Identity Governance | ABERTA |
 | 5 | AEGIS-AUD-011 | MÉDIO | Separar papéis globais de papéis por tenant | Authorization | ABERTA |
 | 6 | AEGIS-AUD-012 | MÉDIO | Exigir seleção explícita ou último tenant validado no login | UX / Authorization Context | ABERTA |
@@ -561,9 +564,9 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | AEGIS-AUD-004 | ALTO | Domínio / Assessment | Definir a relação entre avaliação por campanha e postura contínua | EP-02 | ABERTA | — | — |
 | AEGIS-AUD-005 | MÉDIO | Domínio / Operação SOC | Tornar pendências e checklists entidades operacionais quando necessário | EP-02 | ABERTA | — | — |
 | AEGIS-AUD-006 | MÉDIO | Assessment / Neutralidade | Evitar fornecedor principal derivado da ordem textual | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-007 | ALTO | Identity / Authentication | Integrar autenticação corporativa federada | EP-01 | ABERTA | — | — |
+| AEGIS-AUD-007 | ALTO | Identity / Authentication | Integrar autenticação corporativa federada | EP-01 | EM IMPLEMENTAÇÃO | — | — |
 | AEGIS-AUD-008 | ALTO | Multi-tenancy / Persistence | Proteger alterações e exclusões cross-tenant no DbContext | EP-01 | CONCLUÍDA | #12 | `2f8c968` |
-| AEGIS-AUD-009 | ALTO | Authentication / Session Security | Armazenar somente hash de refresh tokens | EP-01 | EM IMPLEMENTAÇÃO | — | — |
+| AEGIS-AUD-009 | ALTO | Authentication / Session Security | Armazenar somente hash de refresh tokens | EP-01 | CONCLUÍDA | #13 | `37d57ff` |
 | AEGIS-AUD-010 | ALTO | Identity Governance | Separar provisionamento global de concessão de acesso a tenant | EP-01 | ABERTA | — | — |
 | AEGIS-AUD-011 | MÉDIO | Authorization | Separar papéis globais de papéis por tenant | EP-01 | ABERTA | — | — |
 | AEGIS-AUD-012 | MÉDIO | UX / Authorization Context | Exigir seleção explícita ou último tenant validado no login | EP-01 | ABERTA | — | — |

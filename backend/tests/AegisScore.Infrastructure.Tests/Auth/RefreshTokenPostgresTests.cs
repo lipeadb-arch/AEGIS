@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
 using Xunit;
@@ -32,6 +33,9 @@ public sealed class RefreshTokenPostgresTests
 
     private const string PreAud009 = "20260724002301_Aud50_DurableOperationalQueues";
     private const string Aud009 = "20260727204000_Aud009HashRefreshTokens";
+    // AUD-007 é aditivo (colunas de vínculo em IdentityAccount) e não toca refresh tokens; aplicá-lo
+    // alinha o schema ao modelo EF atual para que o SELECT interno de IdentityAccount (no RefreshAsync) rode.
+    private const string Aud007 = "20260728212552_Aud007FederatedIdentityBinding";
 
     private readonly ITestOutputHelper _output;
     public RefreshTokenPostgresTests(ITestOutputHelper output) => _output = output;
@@ -139,6 +143,11 @@ public sealed class RefreshTokenPostgresTests
 
         await AssertNoPlaintextAsync(opt, parentRaw, childRaw);
 
+        // 4b) Alinha o schema ao modelo EF atual (AUD-007 aditivo) — sem isto o SELECT de IdentityAccount
+        //     dentro do RefreshAsync referenciaria colunas de vínculo ainda inexistentes no schema Aud009.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            await Migrator(db).MigrateAsync(Aud007);
+
         // 5) A sessão legada CONTINUA utilizável: o filho (ativo) rotaciona por hash, sem novo login.
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
             (await ServiceFor(db, opt).RefreshAsync(childRaw, default)).Outcome
@@ -183,15 +192,29 @@ public sealed class RefreshTokenPostgresTests
     private static async Task<Guid> SeedAccountAndMembershipAsync(
         DbContextOptions<AegisScoreDbContext> opt, Guid tenant)
     {
-        Guid accountId;
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
         {
             if (!await db.Tenants.AnyAsync(t => t.Id == tenant))
+            {
                 db.Tenants.Add(new Tenant { Id = tenant, Name = "Alfa", Slug = "alfa-" + tenant.ToString("N")[..8], Status = TenantStatus.Active });
-            var account = new IdentityAccount { Email = Email, PasswordHash = new Pbkdf2PasswordHasher().Hash(Senha) };
-            db.IdentityAccounts.Add(account);
-            await db.SaveChangesAsync();
-            accountId = account.Id;
+                await db.SaveChangesAsync();
+            }
+        }
+
+        // IdentityAccount por SQL cru (só colunas-base): este teste roda contra schemas ANTERIORES ao
+        // AUD-007, que não têm as colunas de vínculo Entra presentes no modelo EF atual — um INSERT via EF
+        // referenciaria colunas ainda inexistentes.
+        var accountId = Guid.NewGuid();
+        await using (var conn = await OpenAsync(opt))
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "INSERT INTO \"IdentityAccounts\" (\"Id\",\"Email\",\"PasswordHash\",\"CreatedAt\") " +
+                              "VALUES (@id,@email,@pw,@created)";
+            cmd.Parameters.AddWithValue("id", accountId);
+            cmd.Parameters.AddWithValue("email", Email);
+            cmd.Parameters.AddWithValue("pw", new Pbkdf2PasswordHasher().Hash(Senha));
+            cmd.Parameters.AddWithValue("created", DateTimeOffset.UtcNow);
+            await cmd.ExecuteNonQueryAsync();
         }
 
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
@@ -246,7 +269,8 @@ public sealed class RefreshTokenPostgresTests
     }
 
     private static AuthService ServiceFor(AegisScoreDbContext db, DbContextOptions<AegisScoreDbContext> opt) =>
-        new(db, opt, new StubTokenService(), new Pbkdf2PasswordHasher(), Hasher, NullLogger<AuthService>.Instance);
+        new(db, opt, new StubTokenService(), new Pbkdf2PasswordHasher(), Hasher,
+            Options.Create(new FederationOptions()), NullLogger<AuthService>.Instance);
 
     private sealed class StubTokenService : IJwtTokenService
     {

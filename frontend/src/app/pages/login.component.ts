@@ -1,40 +1,59 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { AuthService } from '../services/auth.service';
+import { AuthService, FederationConfig } from '../services/auth.service';
+import { FederatedLoginService } from '../services/federated-login.service';
 
 /**
  * Tela de login mínima e funcional — fecha o ciclo de autenticação (o AuthService/interceptors são
  * o foco desta etapa). Sem @angular/forms de propósito (o projeto ainda não usa forms): lê os
  * valores por template refs no submit nativo. Ao migrar para formulários ricos, adotar
  * ReactiveFormsModule. Estilo alinhado ao tema dark-neon; refina-se depois com o resto da UI.
+ *
+ * [AEGIS-AUD-007] Passa a respeitar a config PÚBLICA de federação: o botão "Entrar com conta
+ * corporativa" só aparece quando a federação está ligada, e o formulário de senha some em modo
+ * Federated (em Local/Hybrid ele permanece). A senha continua igual; o login corporativo usa MSAL.
  */
 @Component({
   selector: 'app-login',
   standalone: true,
   template: `
     <div class="login-wrap">
-      <form class="login-card" (submit)="submit($event, emailEl.value, pwEl.value)">
+      <div class="login-card">
         <h1 class="title">AEGIS</h1>
         <p class="sub">Acesso ao painel de maturidade cibernética</p>
 
-        <label class="field">
-          <span>E-mail</span>
-          <input #emailEl type="email" name="email" autocomplete="username" required />
-        </label>
+        @if (passwordLoginEnabled()) {
+          <form (submit)="submit($event, emailEl.value, pwEl.value)">
+            <label class="field">
+              <span>E-mail</span>
+              <input #emailEl type="email" name="email" autocomplete="username" required />
+            </label>
 
-        <label class="field">
-          <span>Senha</span>
-          <input #pwEl type="password" name="password" autocomplete="current-password" required />
-        </label>
+            <label class="field">
+              <span>Senha</span>
+              <input #pwEl type="password" name="password" autocomplete="current-password" required />
+            </label>
+
+            <button type="submit" class="submit" [disabled]="loading()">
+              {{ loading() ? 'Entrando…' : 'Entrar' }}
+            </button>
+          </form>
+        }
+
+        @if (federationEnabled() && passwordLoginEnabled()) {
+          <div class="divider"><span>ou</span></div>
+        }
+
+        @if (federationEnabled()) {
+          <button type="button" class="corp" [disabled]="loading()" (click)="loginCorporate()">
+            {{ loading() ? 'Conectando…' : 'Entrar com conta corporativa' }}
+          </button>
+        }
 
         @if (error()) {
           <p class="error" role="alert">{{ error() }}</p>
         }
-
-        <button type="submit" class="submit" [disabled]="loading()">
-          {{ loading() ? 'Entrando…' : 'Entrar' }}
-        </button>
-      </form>
+      </div>
     </div>
   `,
   styles: [
@@ -114,15 +133,66 @@ import { AuthService } from '../services/auth.service';
       .submit:not(:disabled):hover {
         filter: saturate(1.15) brightness(1.05);
       }
+      form {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .divider {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--muted, #7a91be);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+      }
+      .divider::before,
+      .divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--line, #1b2438);
+      }
+      .corp {
+        padding: 12px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 600;
+        color: var(--text, #eaf1ff);
+        background: rgba(5, 7, 15, 0.6);
+        border: 1px solid var(--cyan, #26e0ff);
+        transition:
+          filter 0.15s,
+          background 0.15s;
+      }
+      .corp:disabled {
+        opacity: 0.7;
+        cursor: default;
+      }
+      .corp:not(:disabled):hover {
+        background: rgba(38, 224, 255, 0.08);
+      }
     `,
   ],
 })
-export class LoginComponent {
+export class LoginComponent implements OnInit {
   private readonly auth = inject(AuthService);
+  private readonly federated = inject(FederatedLoginService);
   private readonly router = inject(Router);
 
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
+  private readonly config = signal<FederationConfig | null>(null);
+
+  // Antes de a config chegar, mostra o formulário local (comportamento de dev/Local). Depois, respeita
+  // a config: em Federated o formulário some; o botão corporativo aparece só quando a federação está ligada.
+  readonly passwordLoginEnabled = computed(() => this.config()?.passwordLoginEnabled ?? true);
+  readonly federationEnabled = computed(() => this.config()?.enabled ?? false);
+
+  ngOnInit(): void {
+    this.auth.federationConfig().subscribe((cfg) => this.config.set(cfg));
+  }
 
   submit(event: Event, email: string, password: string): void {
     event.preventDefault();
@@ -138,5 +208,30 @@ export class LoginComponent {
         this.loading.set(false);
       },
     });
+  }
+
+  /**
+   * [AEGIS-AUD-007] Login corporativo: abre o MSAL (popup + PKCE), obtém o access token do Entra e o
+   * troca por uma sessão local. Erro sempre genérico — nunca expõe claims ou detalhes do Entra.
+   */
+  async loginCorporate(): Promise<void> {
+    const cfg = this.config();
+    if (this.loading() || !cfg?.enabled || !cfg.authority || !cfg.spaClientId || !cfg.scope) return;
+
+    this.loading.set(true);
+    this.error.set(null);
+    try {
+      const token = await this.federated.acquireApiToken(cfg.authority, cfg.spaClientId, cfg.scope);
+      this.auth.exchangeFederated(token).subscribe({
+        next: () => this.router.navigateByUrl('/dashboard'),
+        error: () => {
+          this.error.set('Não foi possível autenticar a conta corporativa.');
+          this.loading.set(false);
+        },
+      });
+    } catch {
+      this.error.set('Não foi possível autenticar a conta corporativa.');
+      this.loading.set(false);
+    }
   }
 }

@@ -60,8 +60,17 @@ if (Encoding.UTF8.GetByteCount(jwt.SigningKey) < 32)
     throw new InvalidOperationException(
         "Jwt:SigningKey ausente ou fraca (mínimo 32 bytes para HS256). " +
         "Defina um segredo forte via user-secrets em dev ou env var/Key Vault em produção.");
+
+// [AEGIS-AUD-007] Federação corporativa (Entra ID). Fail-fast ANTES de servir: em Federated/Hybrid a
+// config obrigatória é validada aqui; em Local é no-op (dev/demonstração seguem sem federação).
+var federation = builder.Configuration.GetSection(FederationOptions.SectionName).Get<FederationOptions>()
+    ?? new FederationOptions();
+federation.Validate();
+
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    // Esquema PADRÃO: o JWT LOCAL do AEGIS (HS256). É o que a FallbackPolicy e todo [Authorize] usam —
+    // a federação NÃO o substitui.
     .AddJwtBearer(options =>
     {
         options.MapInboundClaims = false;   // preserva 'sub' e 'tenant_id' como emitidos
@@ -81,6 +90,39 @@ builder.Services
             // a claim é emitida como "role" e MapInboundClaims=false a preserva com esse nome.
             RoleClaimType = "role",
         };
+    })
+    // [AEGIS-AUD-007] Esquema SEPARADO que valida tokens do Entra (assinatura via JWKS do tenant, issuer,
+    // audience, lifetime). SÓ o endpoint /auth/federation/exchange o usa. Em modo Local ele rejeita tudo,
+    // sem rede — a troca fica indisponível.
+    .AddJwtBearer(FederatedAuthDefaults.Scheme, options =>
+    {
+        options.MapInboundClaims = false;   // preserva tid/oid/preferred_username
+        if (federation.FederationEnabled)
+        {
+            options.Authority = federation.Authority;   // busca OIDC metadata + JWKS do tenant
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidIssuers = federation.ValidIssuers,
+                ValidateAudience = true,
+                ValidAudiences = federation.ValidAudiences,
+                ValidateIssuerSigningKey = true,
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.FromSeconds(30),
+            };
+        }
+        else
+        {
+            // Local: nenhuma Authority (sem rede) e nenhuma chave de assinatura → toda validação falha.
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = false,
+                ValidateAudience = false,
+                RequireSignedTokens = true,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKeys = Array.Empty<SecurityKey>(),
+            };
+        }
     });
 builder.Services.AddAuthorization(options =>
 {
