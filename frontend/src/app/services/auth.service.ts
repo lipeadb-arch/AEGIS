@@ -38,13 +38,15 @@ function readJwtClaim(token: string | null, claim: string): string | null {
 
 /**
  * [AEGIS-AUD-009] Atraso do retry único do conflito benigno de rotação. Lê o Retry-After (segundos) da
- * resposta 409 e o converte em ms, com piso e teto curtos — o suficiente para a resposta vencedora
- * atualizar o cookie sucessor, sem travar a UI. Ausente/ inválido → um atraso pequeno padrão.
+ * resposta 409 e o converte em ms, com teto curto — o suficiente para a resposta vencedora atualizar o
+ * cookie sucessor, sem travar a UI. Quando o Retry-After está ausente ou inacessível (ex.: bloqueado pelo
+ * CORS entre portas distintas em dev), usa **1000 ms**, coerente com o `Retry-After: 1` do backend — um
+ * fallback menor deixaria o retry correr antes de o vencedor gravar o cookie, reabrindo a corrida.
  */
 function retryAfterMs(err: HttpErrorResponse): number {
   const seconds = Number(err.headers?.get('Retry-After'));
   const fromHeader = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
-  return Math.min(2000, Math.max(250, fromHeader || 300));
+  return Math.min(2000, Math.max(250, fromHeader || 1000));
 }
 
 /**

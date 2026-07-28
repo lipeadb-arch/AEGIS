@@ -26,7 +26,9 @@ namespace AegisScore.Infrastructure.Migrations
         {
             // 1) Backfill determinístico dos valores existentes (ainda sob os nomes antigos, cabendo nos
             //    varchar(512)). NULL em ReplacedByToken permanece NULL. Índice único (TenantId, Token)
-            //    continua válido: SHA-256 é injetivo sobre os brutos, que já eram únicos.
+            //    continua válido: SHA-256 NÃO é injetivo (colisões existem por contagem), mas para tokens
+            //    aleatórios de 256 bits a probabilidade de colisão é computacionalmente desprezível — logo
+            //    a restrição de unicidade permanece uma invariante PRÁTICA, sem violação esperada no backfill.
             migrationBuilder.Sql(
                 """
                 UPDATE "UserRefreshTokens"
