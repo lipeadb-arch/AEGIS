@@ -1,7 +1,7 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { Observable, catchError, map, of, tap } from 'rxjs';
+import { Observable, catchError, map, of, switchMap, tap, throwError, timer } from 'rxjs';
 import { environment } from '../../environments/environment';
 
 /** Corpo devolvido por POST /auth/login e /auth/refresh. O refresh token NUNCA vem aqui — só no cookie. */
@@ -34,6 +34,17 @@ function readJwtClaim(token: string | null, claim: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * [AEGIS-AUD-009] Atraso do retry único do conflito benigno de rotação. Lê o Retry-After (segundos) da
+ * resposta 409 e o converte em ms, com piso e teto curtos — o suficiente para a resposta vencedora
+ * atualizar o cookie sucessor, sem travar a UI. Ausente/ inválido → um atraso pequeno padrão.
+ */
+function retryAfterMs(err: HttpErrorResponse): number {
+  const seconds = Number(err.headers?.get('Retry-After'));
+  const fromHeader = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+  return Math.min(2000, Math.max(250, fromHeader || 300));
 }
 
 /**
@@ -106,8 +117,25 @@ export class AuthService {
   /**
    * Troca o refresh token do cookie por um novo par (RTR). É a chamada que o refresh interceptor
    * dispara uma única vez sob 401. Retorna o novo access token já persistido em memória.
+   *
+   * [AEGIS-AUD-009] Trata o conflito benigno de rotação (HTTP 409): quando outra aba/janela venceu a
+   * rotação com o MESMO cookie, o servidor não pode reentregar o sucessor (só o hash é persistido) e
+   * responde 409 + Retry-After. Aqui esperamos esse atraso curto e tentamos UMA única vez — o cookie já
+   * terá sido atualizado pela resposta vencedora. Sem loop, sem armazenar token (o refresh continua só no
+   * cookie HttpOnly). Persistindo o conflito, o erro propaga e o interceptor faz o logout normal.
    */
   refresh(): Observable<string> {
+    return this.postRefresh().pipe(
+      catchError((err) => {
+        if (err instanceof HttpErrorResponse && err.status === 409) {
+          return timer(retryAfterMs(err)).pipe(switchMap(() => this.postRefresh()));
+        }
+        return throwError(() => err);
+      }),
+    );
+  }
+
+  private postRefresh(): Observable<string> {
     return this.http
       .post<AuthResponse>(`${this.baseUrl}/refresh`, {}, { withCredentials: true })
       .pipe(

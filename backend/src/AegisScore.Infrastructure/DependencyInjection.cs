@@ -45,6 +45,7 @@ public static class DependencyInjection
         services.Configure<JwtOptions>(config.GetSection(JwtOptions.SectionName));
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();   // stateless
         services.AddSingleton<IJwtTokenService, JwtTokenService>();       // stateless
+        services.AddSingleton<IRefreshTokenHasher, Sha256RefreshTokenHasher>();  // [AEGIS-AUD-009] stateless
         services.AddScoped<IAuthService, AuthService>();                  // usa o DbContext (scoped)
 
         // Provisionamento de IDENTIDADES (criação + concessão de acesso), sempre dentro do tenant

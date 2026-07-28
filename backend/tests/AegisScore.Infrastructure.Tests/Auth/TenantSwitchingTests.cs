@@ -122,7 +122,9 @@ public sealed class TenantSwitchingTests : IDisposable
         pair.Should().NotBeNull();
 
         await using var assert = NewContext(TenantB);
-        var token = await assert.UserRefreshTokens.SingleAsync(t => t.Token == pair!.RefreshToken);
+        // [AEGIS-AUD-009] O banco guarda só o HASH do refresh — a busca é pelo hash do bruto devolvido.
+        var refreshHash = Hasher.Hash(pair!.RefreshToken);
+        var token = await assert.UserRefreshTokens.SingleAsync(t => t.TokenHash == refreshHash);
         token.TenantId.Should().Be(TenantB, "o refresh novo pertence ao ambiente de DESTINO");
     }
 
@@ -158,19 +160,23 @@ public sealed class TenantSwitchingTests : IDisposable
                 .Should().NotBeNull();
 
         await using var assert = NewContext(null);
+        var anteriorHash = Hasher.Hash(anterior);
         var antigo = await assert.UserRefreshTokens.IgnoreQueryFilters()
-            .SingleAsync(t => t.Token == anterior);
+            .SingleAsync(t => t.TokenHash == anteriorHash);
         antigo.RevokedAt.Should().NotBeNull(
             "duas sessões vivas de tenants distintos deixariam um replay reabrir o ambiente abandonado");
     }
 
     // ---- Fixture ----------------------------------------------------------------
 
+    /// <summary>Hasher REAL (SHA-256) — determinístico, o mesmo do serviço; casa com o valor persistido.</summary>
+    private static readonly Sha256RefreshTokenHasher Hasher = new();
+
     private AegisScoreDbContext NewContext(Guid? tenantId) =>
         new(_options, new SystemTenantContext(tenantId));
 
     private AuthService ServiceFor(AegisScoreDbContext db) =>
-        new(db, _options, new StubTokenService(), new Pbkdf2PasswordHasher(),
+        new(db, _options, new StubTokenService(), new Pbkdf2PasswordHasher(), Hasher,
             NullLogger<AuthService>.Instance);
 
     /// <summary>Emissor de tokens sem JWT real: estes testes exercitam as CONSULTAS, não a assinatura.</summary>

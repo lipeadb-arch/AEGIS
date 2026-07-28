@@ -4,9 +4,9 @@
 **Data de atualização:** 2026-07-24<br>
 **Situação do programa:** Em execução<br>
 **Branch de referência:** `main`<br>
-**Commit de referência:** `d02cfee`<br>
-**Última entrega concluída:** AEGIS-AUD-031 — PR #11, squash-merge `d02cfee` (EP-00 concluído)<br>
-**Pacote em andamento:** `AEGIS-AUD-008 — Proteger alterações e exclusões cross-tenant no DbContext` (EP-01) — **EM IMPLEMENTAÇÃO** · branch `fix/aud-008-cross-tenant-writes`
+**Commit de referência:** `2f8c968`<br>
+**Última entrega concluída:** AEGIS-AUD-008 — PR #12, squash-merge `2f8c968`<br>
+**Pacote em andamento:** `AEGIS-AUD-009 — Armazenar somente hash de refresh tokens` (EP-01) — **EM IMPLEMENTAÇÃO** · branch `fix/aud-009-hash-refresh-tokens`
 
 > Este documento é a fonte de governança do programa de remediação. O código local e `docs/pr0-baseline.md` são a fonte de verdade para o estado técnico executável.
 
@@ -42,7 +42,8 @@
 | AEGIS-AUD-026 — Fallback de demonstração em falha da API | **CONCLUÍDO** | PR #10; squash-merge `383bf6b` |
 | AEGIS-AUD-031 — Alinhamento documental (arquitetura) | **CONCLUÍDO** | PR #11; squash-merge `d02cfee` |
 | EP-00 — Linha de base e contenção imediata | **CONCLUÍDO** | 10 pacotes entregues; gate G1 atendido |
-| AEGIS-AUD-008 — Escritas cross-tenant no DbContext | **EM IMPLEMENTAÇÃO** | branch `fix/aud-008-cross-tenant-writes` (EP-01) |
+| AEGIS-AUD-008 — Escritas cross-tenant no DbContext | **CONCLUÍDO** | PR #12; squash-merge `2f8c968` |
+| AEGIS-AUD-009 — Armazenar somente hash de refresh tokens | **EM IMPLEMENTAÇÃO** | branch `fix/aud-009-hash-refresh-tokens` (EP-01) |
 
 ### 2.1 O que o PR 0 concluiu
 
@@ -53,8 +54,8 @@
 
 ### 2.2 O que permanece inalterado
 
-- **Dos 63 achados `AEGIS-AUD-*`, sete foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7, `AEGIS-AUD-046` via PR #8, `AEGIS-AUD-050` via PR #9, `AEGIS-AUD-026` via PR #10, `AEGIS-AUD-031` via PR #11); os demais **56 permanecem abertos**. O total catalogado segue **63**.
-- O `AEGIS-AUD-031` foi **CONCLUÍDO** (PR #11; squash-merge `d02cfee`), **encerrando o EP-00**. O `AEGIS-AUD-008` (EP-01) está **EM IMPLEMENTAÇÃO** na branch `fix/aud-008-cross-tenant-writes` (implementação autorizada); permanece aberto até o merge.
+- **Dos 63 achados `AEGIS-AUD-*`, oito foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7, `AEGIS-AUD-046` via PR #8, `AEGIS-AUD-050` via PR #9, `AEGIS-AUD-026` via PR #10, `AEGIS-AUD-031` via PR #11, `AEGIS-AUD-008` via PR #12); os demais **55 permanecem abertos**. O total catalogado segue **63**.
+- O `AEGIS-AUD-008` foi **CONCLUÍDO** (PR #12; squash-merge `2f8c968`), primeiro pacote do **EP-01 (EM EXECUÇÃO)**. O segundo pacote, `AEGIS-AUD-009` (EP-01), está **EM IMPLEMENTAÇÃO** na branch `fix/aud-009-hash-refresh-tokens` (implementação autorizada); permanece aberto até o merge — a contagem segue **8 concluídos / 55 abertos**.
 - **O `AEGIS-TECH-001` foi concluído como pacote técnico de precedência, não como novo achado da auditoria.** Ele não entra no backlog mestre e **não altera a contagem de 63 achados**.
 - A liberação para produção continua bloqueada.
 - O Plano Diretor não substitui a inspeção do código local antes de cada mudança.
@@ -137,7 +138,7 @@ Estados auxiliares: `BLOQUEADA`, `ADIADA`, `DESCARTADA`.
 > **A aprovação desta ordem não autoriza a implementação de nenhum pacote.** Ela define apenas a
 > sequência de execução. **Cada pacote exige aprovação explícita própria** para sair de `PLANEJADO`
 > e entrar em implementação. O `AEGIS-AUD-031` foi concluído (PR #11; squash-merge `d02cfee`),
-> **encerrando o EP-00**; o `AEGIS-AUD-008` (EP-01) recebeu essa aprovação e está **EM IMPLEMENTAÇÃO** na branch `fix/aud-008-cross-tenant-writes`.
+> **encerrando o EP-00**; o `AEGIS-AUD-008` (EP-01) foi concluído (PR #12; squash-merge `2f8c968`), e o pacote seguinte, `AEGIS-AUD-009`, recebeu aprovação explícita própria e está **EM IMPLEMENTAÇÃO** na branch `fix/aud-009-hash-refresh-tokens`.
 
 ### 7.2 Pacote técnico concluído
 
@@ -172,9 +173,10 @@ contagem de 63 achados**.
 
 ### 7.3 Próximo pacote imediato
 
-**`AEGIS-AUD-008 — Proteger alterações e exclusões cross-tenant no DbContext`** (EP-01) — **EM IMPLEMENTAÇÃO**
-na branch `fix/aud-008-cross-tenant-writes` (implementação autorizada; aberto até o merge). É o primeiro
-pacote do EP-01 na ordem interna (invariantes de persistência e refresh tokens antes da federação).
+**`AEGIS-AUD-009 — Armazenar somente hash de refresh tokens`** (EP-01) — **EM IMPLEMENTAÇÃO** na branch
+`fix/aud-009-hash-refresh-tokens` (implementação autorizada; aberto até o merge). É o segundo pacote do
+EP-01 na ordem interna (invariantes de persistência e refresh tokens antes da federação); o `AEGIS-AUD-008`
+(proteção de escrita cross-tenant no DbContext) foi concluído no PR #12 (squash-merge `2f8c968`).
 
 O **EP-00 está CONCLUÍDO**: seus dez pacotes foram entregues — `AEGIS-AUD-053` (PR #5, `49a6747`),
 `AEGIS-AUD-052` (PR #6, `0ebad27`), `AEGIS-AUD-057` (PR #7, `9904729`), `AEGIS-AUD-046` (PR #8, `f9a3ed7`),
@@ -193,7 +195,7 @@ fora deste pacote.
 **Estado:** CONCLUÍDO<br>
 **Objetivo:** Preservar uma referência reproduzível e remover riscos imediatos antes de mudanças estruturais.<br>
 **Dependências:** Nenhuma além da baseline técnica concluída.<br>
-**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052, AEGIS-AUD-057, AEGIS-AUD-046, AEGIS-AUD-050, AEGIS-AUD-026 e AEGIS-AUD-031 concluídos — **EP-00 CONCLUÍDO**. Épico seguinte (EP-01) **EM EXECUÇÃO**, começando por **AEGIS-AUD-008** (branch `fix/aud-008-cross-tenant-writes`).
+**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052, AEGIS-AUD-057, AEGIS-AUD-046, AEGIS-AUD-050, AEGIS-AUD-026 e AEGIS-AUD-031 concluídos — **EP-00 CONCLUÍDO**. Épico seguinte (EP-01) **EM EXECUÇÃO**: `AEGIS-AUD-008` concluído (PR #12); `AEGIS-AUD-009` **EM IMPLEMENTAÇÃO** na branch `fix/aud-009-hash-refresh-tokens`.
 
 ### Pacotes do épico
 
@@ -241,8 +243,8 @@ Cada alteração deve ser aditiva ou configurável. Chaves e ciphertext antigos 
 
 | Ordem | ID | Severidade | Pendência | Área | Estado |
 |---:|---|---|---|---|---|
-| 1 | AEGIS-AUD-008 | ALTO | Proteger alterações e exclusões cross-tenant no DbContext | Multi-tenancy / Persistence | EM IMPLEMENTAÇÃO |
-| 2 | AEGIS-AUD-009 | ALTO | Armazenar somente hash de refresh tokens | Authentication / Session Security | ABERTA |
+| 1 | AEGIS-AUD-008 | ALTO | Proteger alterações e exclusões cross-tenant no DbContext | Multi-tenancy / Persistence | CONCLUÍDA (PR #12; `2f8c968`) |
+| 2 | AEGIS-AUD-009 | ALTO | Armazenar somente hash de refresh tokens | Authentication / Session Security | EM IMPLEMENTAÇÃO (branch `fix/aud-009-hash-refresh-tokens`) |
 | 3 | AEGIS-AUD-007 | ALTO | Integrar autenticação corporativa federada | Identity / Authentication | ABERTA |
 | 4 | AEGIS-AUD-010 | ALTO | Separar provisionamento global de concessão de acesso a tenant | Identity Governance | ABERTA |
 | 5 | AEGIS-AUD-011 | MÉDIO | Separar papéis globais de papéis por tenant | Authorization | ABERTA |
@@ -560,8 +562,8 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | AEGIS-AUD-005 | MÉDIO | Domínio / Operação SOC | Tornar pendências e checklists entidades operacionais quando necessário | EP-02 | ABERTA | — | — |
 | AEGIS-AUD-006 | MÉDIO | Assessment / Neutralidade | Evitar fornecedor principal derivado da ordem textual | EP-02 | ABERTA | — | — |
 | AEGIS-AUD-007 | ALTO | Identity / Authentication | Integrar autenticação corporativa federada | EP-01 | ABERTA | — | — |
-| AEGIS-AUD-008 | ALTO | Multi-tenancy / Persistence | Proteger alterações e exclusões cross-tenant no DbContext | EP-01 | EM IMPLEMENTAÇÃO | — | — |
-| AEGIS-AUD-009 | ALTO | Authentication / Session Security | Armazenar somente hash de refresh tokens | EP-01 | ABERTA | — | — |
+| AEGIS-AUD-008 | ALTO | Multi-tenancy / Persistence | Proteger alterações e exclusões cross-tenant no DbContext | EP-01 | CONCLUÍDA | #12 | `2f8c968` |
+| AEGIS-AUD-009 | ALTO | Authentication / Session Security | Armazenar somente hash de refresh tokens | EP-01 | EM IMPLEMENTAÇÃO | — | — |
 | AEGIS-AUD-010 | ALTO | Identity Governance | Separar provisionamento global de concessão de acesso a tenant | EP-01 | ABERTA | — | — |
 | AEGIS-AUD-011 | MÉDIO | Authorization | Separar papéis globais de papéis por tenant | EP-01 | ABERTA | — | — |
 | AEGIS-AUD-012 | MÉDIO | UX / Authorization Context | Exigir seleção explícita ou último tenant validado no login | EP-01 | ABERTA | — | — |
@@ -631,6 +633,7 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | AEGIS-AUD-050 — Não usar filas em memória como mecanismo operacional durável | **CONCLUÍDO** | `fix/aud-050-durable-operational-queues` (removida) | #9 | `f170b0f` | Backend 323/323 (inclui 3 testes de concorrência/lease em PostgreSQL descartável real com `FOR UPDATE SKIP LOCKED`) | Filas duráveis no PostgreSQL: `GovernanceDocument` = fila de análise, `PolicySyncRequest` = fila de sync; claim atômico `FOR UPDATE SKIP LOCKED`, lease + heartbeat fail-closed, retry/limite→Failed, recuperação de Processing legado; migration `20260724002301_Aud50_DurableOperationalQueues` (aegis_dev 18→19); `--verify-only` aprovado |
 | AEGIS-AUD-026 — Não substituir falha da API por dados de demonstração em ambiente operacional | **CONCLUÍDO** | `fix/aud-026-no-demo-fallback` (removida) | #10 | `383bf6b` | Frontend `ng build` exit 0; mesmos 4 warnings de budget CSS conhecidos (`executive-dashboard` fora da lista); **sem suíte automatizada de frontend** (AUD-033); smoke test funcional dos 4 estados via mock API descartável | Dashboard executivo sem fallback de `sampleDashboard`: estado inicial nulo, limpeza antes de cada carga/recarga (impede retenção entre tenants após switch), estado de erro explícito com nova tentativa e distinto de resposta vazia; `sample-dashboard.ts` removido (zero refs). Sem backend/migration/snapshot/`package.json`/lock; árvore do squash idêntica ao head validado `973713a` |
 | AEGIS-AUD-031 — Alinhar documentação arquitetural com a stack e o estado reais | **CONCLUÍDO** | `docs/aud-031-align-architecture` (removida) | #11 | `d02cfee` | Backend **323/323** e frontend `ng build` aprovado com os 4 warnings de budget CSS conhecidos (revalidados no 1º commit); `git diff --check` OK | **EP-00 concluído.** `README.md`/`DEV.md`/`ARCHITECTURE.md` alinhados ao estado executável (.NET 10, EF Core 10.0.10, Npgsql 10.0.3, Angular 19; DbMigrator + `SchemaReadinessGuard`; sem fallback de demonstração); baseline do PR 0 preservada e identificada em `docs/pr0-baseline.md`; `handoff-operacional` marcado como histórico. 2 commits (`90fa8aa`, `a47f4ba`); 7 arquivos, todos Markdown; árvore do squash idêntica ao head `a47f4ba`. Sem alteração de código/config/migrations/dependências |
+| AEGIS-AUD-008 — Proteger alterações e exclusões cross-tenant no DbContext | **CONCLUÍDO** | `fix/aud-008-cross-tenant-writes` (removida) | #12 | `2f8c968` | `dotnet build` 0 erros; **suíte 323 → 337, 337/337** (bateria SQLite relacional + 1 teste PostgreSQL descartável real aprovado, gate `AEGIS_TEST_PG`); `has-pending-model-changes` limpo | **1º pacote do EP-01.** Guard central fail-closed no `AegisScoreDbContext`: Added carimbado; Modified/Deleted validam a **linha persistida** (`GetDatabaseValues`, não `entry.Entity`/`OriginalValues`); stub com Id estrangeiro falha antes da mutação (linha estrangeira intacta); troca de TenantId rejeitada; tenant ausente/`Guid.Empty` fail-closed; globais seguem sem tenant; 4 overloads de SaveChanges protegidos sem dupla validação. Bulk DML inventariado e delimitado. Sem migration/snapshot/frontend/dependências; árvore do squash idêntica ao head `d0079ab` |
 
 ### Campos obrigatórios após cada merge
 
