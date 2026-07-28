@@ -10,6 +10,19 @@ export interface AuthResponse {
   accessTokenExpiresAt: string;
 }
 
+/**
+ * [AEGIS-AUD-007] Config PÚBLICA e sanitizada da federação (GET /auth/federation/config). Só
+ * identificadores públicos — nunca segredo. Guia a UI do login e a inicialização do MSAL.
+ */
+export interface FederationConfig {
+  enabled: boolean;
+  mode: string;
+  passwordLoginEnabled: boolean;
+  authority: string | null;
+  spaClientId: string | null;
+  scope: string | null;
+}
+
 /** Um ambiente disponível no seletor do HUD. `role` é o papel NAQUELE cliente. */
 export interface TenantOption {
   id: string;
@@ -112,6 +125,35 @@ export class AuthService {
           // pós-login por uma chamada que só alimenta um dropdown. O seletor aparece quando chegar.
           this.getAvailableTenants().subscribe();
         }),
+        map(() => void 0),
+      );
+  }
+
+  /**
+   * [AEGIS-AUD-007] Config pública da federação. NÃO trata falha como Local (fail-closed): um servidor
+   * Federated indisponível NÃO pode virar "mostre o formulário de senha". O erro propaga e a tela de
+   * login exibe um estado genérico com opção de recarregar. Em Local, o servidor responde `enabled=false`
+   * e o formulário aparece normalmente.
+   */
+  federationConfig(): Observable<FederationConfig> {
+    return this.http.get<FederationConfig>(`${this.baseUrl}/federation/config`);
+  }
+
+  /**
+   * [AEGIS-AUD-007] Troca um access token do Entra JÁ obtido pelo MSAL por uma sessão local. O token
+   * externo vai SÓ neste header, para o endpoint de troca — nunca é armazenado. O cookie de refresh
+   * (HttpOnly) é setado pelo servidor; a partir daí o fluxo local segue idêntico ao login por senha.
+   */
+  exchangeFederated(externalToken: string): Observable<void> {
+    return this.http
+      .post<AuthResponse>(
+        `${this.baseUrl}/federation/exchange`,
+        {},
+        { withCredentials: true, headers: { Authorization: `Bearer ${externalToken}` } },
+      )
+      .pipe(
+        tap((res) => this.setSession(res)),
+        tap(() => this.getAvailableTenants().subscribe()),
         map(() => void 0),
       );
   }

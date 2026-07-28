@@ -43,6 +43,9 @@ public static class DependencyInjection
 
         // Autenticação: JWT de acesso + refresh tokens com rotação (RTR). Opções da seção "Jwt".
         services.Configure<JwtOptions>(config.GetSection(JwtOptions.SectionName));
+        // [AEGIS-AUD-007] Federação Entra ID: modo (Local/Federated/Hybrid) + identificadores públicos.
+        // O fail-fast de configuração incompleta acontece no startup da API (Program.cs), antes de servir.
+        services.Configure<FederationOptions>(config.GetSection(FederationOptions.SectionName));
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();   // stateless
         services.AddSingleton<IJwtTokenService, JwtTokenService>();       // stateless
         services.AddSingleton<IRefreshTokenHasher, Sha256RefreshTokenHasher>();  // [AEGIS-AUD-009] stateless

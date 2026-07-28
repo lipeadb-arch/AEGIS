@@ -47,6 +47,13 @@ public sealed record RefreshResult(RefreshOutcome Outcome, TokenPair? Pair)
 public record TenantMembershipDescriptor(Guid Id, string Name, string Slug, UserRole Role);
 
 /// <summary>
+/// [AEGIS-AUD-007] Identidade corporativa JÁ VALIDADA criptograficamente pelo esquema JWT Bearer do Entra.
+/// A camada de aplicação recebe apenas as claims do principal validado — <c>tid</c>, <c>oid</c> e o e-mail
+/// (para o PRIMEIRO vínculo). O serviço NUNCA confia em identidade vinda de corpo JSON do cliente.
+/// </summary>
+public record FederatedIdentity(string? TenantId, string? ObjectId, string? Email);
+
+/// <summary>
 /// Serviço de autenticação: login por credenciais, listagem de ambientes, troca de ambiente e rotação
 /// de refresh token (RTR) com detecção de reutilização (breach).
 ///
@@ -96,6 +103,16 @@ public interface IAuthService
 
     /// <summary>Revoga um refresh token específico (logout). Idempotente.</summary>
     Task LogoutAsync(string refreshToken, CancellationToken ct);
+
+    /// <summary>
+    /// [AEGIS-AUD-007] Troca uma identidade corporativa JÁ VALIDADA (Entra) por uma sessão local: resolve a
+    /// <see cref="IdentityAccount"/> vinculada por <c>tid+oid</c> (ou, no PRIMEIRO login, vincula uma conta
+    /// preexistente com e-mail correspondente e ainda não vinculada) e emite o par local — access token +
+    /// refresh HttpOnly — pelo mesmo caminho do login. <c>null</c> = negado (tid/oid inválidos, tid fora do
+    /// permitido, sem conta correspondente, conta já vinculada a outro oid, ou sem membership ativo).
+    /// NUNCA cria conta, membership, tenant ou papel (provisionamento é o AUD-010).
+    /// </summary>
+    Task<TokenPair?> ExchangeFederatedAsync(FederatedIdentity identity, CancellationToken ct);
 }
 
 /// <summary>Geração dos tokens: JWT de acesso (HS256) + refresh token opaco. Sem estado.</summary>

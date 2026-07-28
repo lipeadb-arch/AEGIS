@@ -7,6 +7,7 @@ using Microsoft.OpenApi.Models;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using AegisScore.Api;
+using AegisScore.Api.Auth;
 using AegisScore.Api.Workers;
 using AegisScore.Application.Abstractions;
 using AegisScore.Connectors.Microsoft;
@@ -60,8 +61,17 @@ if (Encoding.UTF8.GetByteCount(jwt.SigningKey) < 32)
     throw new InvalidOperationException(
         "Jwt:SigningKey ausente ou fraca (mínimo 32 bytes para HS256). " +
         "Defina um segredo forte via user-secrets em dev ou env var/Key Vault em produção.");
+
+// [AEGIS-AUD-007] Federação corporativa (Entra ID). Fail-fast ANTES de servir: em Federated/Hybrid a
+// config obrigatória é validada aqui; em Local é no-op (dev/demonstração seguem sem federação).
+var federation = builder.Configuration.GetSection(FederationOptions.SectionName).Get<FederationOptions>()
+    ?? new FederationOptions();
+federation.Validate();
+
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    // Esquema PADRÃO: o JWT LOCAL do AEGIS (HS256). É o que a FallbackPolicy e todo [Authorize] usam —
+    // a federação NÃO o substitui.
     .AddJwtBearer(options =>
     {
         options.MapInboundClaims = false;   // preserva 'sub' e 'tenant_id' como emitidos
@@ -81,6 +91,42 @@ builder.Services
             // a claim é emitida como "role" e MapInboundClaims=false a preserva com esse nome.
             RoleClaimType = "role",
         };
+    })
+    // [AEGIS-AUD-007] Esquema SEPARADO que valida tokens do Entra (assinatura via JWKS do tenant, issuer,
+    // audience, lifetime). SÓ o endpoint /auth/federation/exchange o usa. Em modo Local ele rejeita tudo,
+    // sem rede — a troca fica indisponível.
+    .AddJwtBearer(FederatedAuthDefaults.Scheme, options =>
+    {
+        options.MapInboundClaims = false;   // preserva tid/oid/preferred_username
+        if (federation.FederationEnabled)
+        {
+            options.Authority = federation.Authority;   // busca OIDC metadata + JWKS do tenant
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidIssuers = federation.ValidIssuers,
+                ValidateAudience = true,
+                ValidAudiences = federation.ValidAudiences,
+                ValidateIssuerSigningKey = true,
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.FromSeconds(30),
+                // [AEGIS-AUD-007] Fixa o algoritmo ASSIMÉTRICO do Entra (RS256) — barra confusão de
+                // algoritmo (alg=none, ou HS256 forjado com a chave pública do JWKS como segredo).
+                ValidAlgorithms = new[] { SecurityAlgorithms.RsaSha256 },
+            };
+        }
+        else
+        {
+            // Local: nenhuma Authority (sem rede) e nenhuma chave de assinatura → toda validação falha.
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = false,
+                ValidateAudience = false,
+                RequireSignedTokens = true,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKeys = Array.Empty<SecurityKey>(),
+            };
+        }
     });
 builder.Services.AddAuthorization(options =>
 {
@@ -90,7 +136,16 @@ builder.Services.AddAuthorization(options =>
     options.FallbackPolicy = new AuthorizationPolicyBuilder()
         .RequireAuthenticatedUser()
         .Build();
+
+    // [AEGIS-AUD-007] Policy da troca federada: autenticada EXCLUSIVAMENTE pelo esquema EntraId, mais o
+    // requisito de token delegado do SPA (scope/azp/tid/oid) do FederatedExchangeHandler.
+    options.AddPolicy(FederatedExchangeRequirement.PolicyName, p => p
+        .AddAuthenticationSchemes(FederatedAuthDefaults.Scheme)
+        .RequireAuthenticatedUser()
+        .AddRequirements(new FederatedExchangeRequirement()));
 });
+// Handler da policy da troca federada (lê FederationOptions).
+builder.Services.AddSingleton<IAuthorizationHandler, FederatedExchangeHandler>();
 
 // Stack adapters (add Google/AWS/SIEM/EDR connector packages here).
 builder.Services.AddMicrosoftConnectors();

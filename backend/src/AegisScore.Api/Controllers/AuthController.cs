@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
+using AegisScore.Api.Auth;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
 using AegisScore.Infrastructure.Auth;
@@ -35,7 +37,12 @@ public sealed class AuthController : ControllerBase
     private const string CookiePath = "/api/v1/auth";
 
     private readonly IAuthService _auth;
-    public AuthController(IAuthService auth) => _auth = auth;
+    private readonly FederationOptions _federation;
+    public AuthController(IAuthService auth, IOptions<FederationOptions> federation)
+    {
+        _auth = auth;
+        _federation = federation.Value;
+    }
 
     /// <summary>Valida credenciais e emite o par de tokens. 401 sem revelar se o e-mail existe.</summary>
     [AllowAnonymous]
@@ -103,6 +110,46 @@ public sealed class AuthController : ControllerBase
 
         ClearRefreshCookie();
         return NoContent();
+    }
+
+    // ==========================================================================================
+    //  [AEGIS-AUD-007] Federação corporativa (Microsoft Entra ID)
+    // ==========================================================================================
+
+    /// <summary>
+    /// Configuração PÚBLICA e sanitizada da federação, para o SPA inicializar o MSAL e decidir a UI.
+    /// Só identificadores públicos (enabled, authority, client id do SPA, scope). NUNCA retorna segredo.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("federation/config")]
+    public ActionResult<FederationPublicConfig> FederationConfig() => _federation.ToPublicConfig();
+
+    /// <summary>
+    /// Troca um token do Entra JÁ VALIDADO por uma sessão local do AEGIS. Protegido pela policy
+    /// <see cref="FederatedExchangeRequirement.PolicyName"/>, que autentica EXCLUSIVAMENTE pelo esquema
+    /// <see cref="FederatedAuthDefaults.Scheme"/> (assinatura/issuer/audience/lifetime/RS256) e exige um
+    /// token DELEGADO do SPA configurado (scope <c>scp</c>, <c>azp/appid</c>, <c>tid/oid</c>) — recusando
+    /// tokens app-only. A identidade vem SOMENTE das claims do principal validado (nunca de corpo JSON) e
+    /// é lida pelo MESMO <see cref="FederatedPrincipalValidator"/> da policy, canonicalizada (tid/oid "D").
+    /// Em sucesso, emite o par local e define o cookie de refresh, como o login. Falhas usam 401 genérico.
+    /// O token externo nunca é gravado nem logado.
+    /// </summary>
+    [Authorize(Policy = FederatedExchangeRequirement.PolicyName)]
+    [HttpPost("federation/exchange")]
+    [EnableRateLimiting("auth-login")]   // mesma proteção do login por senha
+    public async Task<ActionResult<AuthResponse>> FederationExchange(CancellationToken ct)
+    {
+        // A policy já autorizou; reusamos o MESMO validador para obter a identidade canonicalizada, sem
+        // regra divergente entre policy e controller.
+        if (!FederatedPrincipalValidator.TryValidate(User, _federation, out var identity))
+            return Unauthorized(new { title = "Não foi possível autenticar a identidade corporativa.", status = 401 });
+
+        var pair = await _auth.ExchangeFederatedAsync(identity, ct);
+        if (pair is null)
+            return Unauthorized(new { title = "Não foi possível autenticar a identidade corporativa.", status = 401 });
+
+        SetRefreshCookie(pair.RefreshToken, pair.RefreshTokenExpiresAt);
+        return new AuthResponse(pair.AccessToken, pair.AccessTokenExpiresAt);
     }
 
     /// <summary>

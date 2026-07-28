@@ -224,6 +224,17 @@ public class AegisScoreDbContext : DbContext
             e.Property(a => a.Email).HasMaxLength(256).IsRequired();
             e.Property(a => a.PasswordHash).IsRequired();
             e.HasIndex(a => a.Email).IsUnique();   // login único GLOBAL (era por tenant)
+
+            // [AEGIS-AUD-007] Vínculo Entra: tid/oid nullable (contas locais não têm vínculo). Índice único
+            // PARCIAL (só linhas vinculadas, WHERE oid IS NOT NULL — mesmo idioma do dedupe de
+            // Asset.ExternalRef): impede que a MESMA identidade externa (tid,oid) caia em duas contas e
+            // torna a corrida do primeiro vínculo uma invariante de BANCO. Contas sem vínculo (oid NULL)
+            // convivem sem restrição.
+            e.Property(a => a.ExternalTenantId).HasMaxLength(64);
+            e.Property(a => a.ExternalObjectId).HasMaxLength(64);
+            e.HasIndex(a => new { a.ExternalTenantId, a.ExternalObjectId })
+                .IsUnique()
+                .HasFilter("\"ExternalObjectId\" IS NOT NULL");
         });
 
         // Auth — o MEMBERSHIP: um acesso por (tenant, pessoa). O índice único mudou de
