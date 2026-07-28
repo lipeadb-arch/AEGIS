@@ -237,6 +237,37 @@ public sealed class FederatedAuthTests : IDisposable
         Regex.IsMatch(row.TokenHash, "^[0-9a-f]{64}$").Should().BeTrue();
     }
 
+    // ---- Canonicalização de tid/oid (PR #14) --------------------------------------------------------
+
+    [Theory]
+    [InlineData("não-é-guid", OidA)]
+    [InlineData(EntraTid, "12345")]
+    public async Task Exchange_TidOuOidMalformado_Recusado_SemConsultaNemEscrita(string tid, string oid)
+    {
+        var antes = await CountAccountsAsync();
+        await using (var db = NewContext(null))
+            (await ServiceFor(db, Fed(FederationMode.Federated))
+                .ExchangeFederatedAsync(new FederatedIdentity(tid, oid, Email), default))
+                .Should().BeNull("identificador malformado falha antes de qualquer consulta ou escrita");
+
+        (await CountAccountsAsync()).Should().Be(antes);
+        (await AccountAsync(_accountId)).ExternalObjectId.Should().BeNull("nenhuma linha foi alterada");
+    }
+
+    [Fact]
+    public async Task Exchange_CanonicalizaGuids_AoPersistir()
+    {
+        // tid/oid chegam em MAIÚSCULAS; o vínculo persistido deve ser o "D" canônico (minúsculo).
+        await using (var db = NewContext(null))
+            (await ServiceFor(db, Fed(FederationMode.Federated))
+                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid.ToUpperInvariant(), OidA.ToUpperInvariant(), Email), default))
+                .Should().NotBeNull();
+
+        var acc = await AccountAsync(_accountId);
+        acc.ExternalTenantId.Should().Be(EntraTid, "persistido canônico minúsculo");
+        acc.ExternalObjectId.Should().Be(OidA);
+    }
+
     // ---- Fixture ------------------------------------------------------------------------------------
 
     private Guid SeedMembership(Guid tenantId, Guid accountId, bool active)

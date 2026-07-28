@@ -61,26 +61,63 @@ public sealed class FederationOptions
     public string[] ValidAudiences => new[] { ApiClientId!, $"api://{ApiClientId}" };
 
     /// <summary>
-    /// Fail-fast: em Federated/Hybrid a configuração necessária é OBRIGATÓRIA — falhamos ANTES de servir,
-    /// não numa request de login. Em Local não há nada a exigir (é o modo sem federação).
+    /// Prefixo esperado do scope da API — <c>api://&lt;ApiClientId&gt;/</c>. Extração CENTRALIZADA: tanto a
+    /// validação quanto a policy do endpoint derivam o nome do scope delegado daqui, sem repetir a regra.
+    /// </summary>
+    public string ScopePrefix => $"api://{ApiClientId}/";
+
+    /// <summary>
+    /// Nome do scope DELEGADO exigido (ex.: <c>access_as_user</c>), derivado do <see cref="ApiScope"/> —
+    /// a parte após <see cref="ScopePrefix"/>. <c>null</c> quando o scope não está no formato esperado da
+    /// API configurada (recurso errado, sem nome, ou só o identificador do recurso).
+    /// </summary>
+    public string? DelegatedScope
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(ApiScope) || string.IsNullOrWhiteSpace(ApiClientId))
+                return null;
+            return ApiScope.StartsWith(ScopePrefix, StringComparison.OrdinalIgnoreCase)
+                   && ApiScope.Length > ScopePrefix.Length
+                ? ApiScope[ScopePrefix.Length..]
+                : null;
+        }
+    }
+
+    /// <summary>
+    /// Fail-fast: a configuração é validada ANTES de servir, não numa request de login. Um <see cref="Mode"/>
+    /// desconhecido (config numérica inválida) é recusado em qualquer modo; em Federated/Hybrid, TenantId,
+    /// ApiClientId e SpaClientId precisam ser GUIDs válidos, <see cref="Instance"/> uma URI HTTPS absoluta e
+    /// <see cref="ApiScope"/> o formato <c>api://&lt;ApiClientId&gt;/&lt;scope&gt;</c> (não só o recurso).
+    /// Em Local não há nada a exigir (é o modo sem federação).
     /// </summary>
     public void Validate()
     {
+        if (!Enum.IsDefined(Mode))
+            throw new InvalidOperationException(
+                $"Auth:Federation:Mode inválido ('{(int)Mode}'). Use Local, Federated ou Hybrid.");
+
         if (!FederationEnabled) return;
 
-        var faltando = new List<string>();
-        if (string.IsNullOrWhiteSpace(TenantId)) faltando.Add(nameof(TenantId));
-        if (string.IsNullOrWhiteSpace(ApiClientId)) faltando.Add(nameof(ApiClientId));
-        if (string.IsNullOrWhiteSpace(ApiScope)) faltando.Add(nameof(ApiScope));
-        if (string.IsNullOrWhiteSpace(SpaClientId)) faltando.Add(nameof(SpaClientId));
-        if (string.IsNullOrWhiteSpace(Instance)) faltando.Add(nameof(Instance));
+        var problemas = new List<string>();
+        if (!Guid.TryParse(TenantId, out _)) problemas.Add($"{nameof(TenantId)} deve ser um GUID válido");
+        if (!Guid.TryParse(ApiClientId, out _)) problemas.Add($"{nameof(ApiClientId)} deve ser um GUID válido");
+        if (!Guid.TryParse(SpaClientId, out _)) problemas.Add($"{nameof(SpaClientId)} deve ser um GUID válido");
+        if (!IsHttpsAbsolute(Instance)) problemas.Add($"{nameof(Instance)} deve ser uma URI HTTPS absoluta");
+        if (string.IsNullOrWhiteSpace(DelegatedScope))
+            problemas.Add(
+                $"{nameof(ApiScope)} deve estar no formato 'api://<ApiClientId>/<scope>' " +
+                "(ex.: api://<ApiClientId>/access_as_user) — não vazio e não apenas o identificador do recurso");
 
-        if (faltando.Count > 0)
+        if (problemas.Count > 0)
             throw new InvalidOperationException(
-                $"Auth:Federation em modo {Mode} exige configuração completa. Ausente(s): " +
-                $"{string.Join(", ", faltando)}. Defina por user-secrets/variável de ambiente " +
-                "(valores são identificadores públicos, mas ficam fora do repositório).");
+                $"Auth:Federation em modo {Mode} exige configuração válida. Problema(s): " +
+                $"{string.Join("; ", problemas)}. Defina por user-secrets/variável de ambiente " +
+                "(identificadores públicos, mas fora do repositório).");
     }
+
+    private static bool IsHttpsAbsolute(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
 
     /// <summary>Projeção PÚBLICA e sanitizada para o SPA. NUNCA carrega segredo (não há segredo aqui).</summary>
     public FederationPublicConfig ToPublicConfig() => new(

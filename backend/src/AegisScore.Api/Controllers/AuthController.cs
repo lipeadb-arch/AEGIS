@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
+using AegisScore.Api.Auth;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
 using AegisScore.Infrastructure.Auth;
@@ -124,26 +125,24 @@ public sealed class AuthController : ControllerBase
     public ActionResult<FederationPublicConfig> FederationConfig() => _federation.ToPublicConfig();
 
     /// <summary>
-    /// Troca um token do Entra JÁ VALIDADO por uma sessão local do AEGIS. Protegido EXPLICITAMENTE pelo
-    /// esquema JWT Bearer do Entra (<see cref="FederatedAuthDefaults.Scheme"/>): assinatura, issuer,
-    /// audience e lifetime são checados criptograficamente antes desta ação rodar. A identidade vem
-    /// SOMENTE das claims do principal validado — jamais de corpo JSON. Em sucesso, emite o par local e
-    /// define o cookie de refresh, exatamente como o login. Falhas usam 401 genérico (não revelam se a
-    /// conta, o membership ou o vínculo existem). O token externo nunca é gravado nem logado.
+    /// Troca um token do Entra JÁ VALIDADO por uma sessão local do AEGIS. Protegido pela policy
+    /// <see cref="FederatedExchangeRequirement.PolicyName"/>, que autentica EXCLUSIVAMENTE pelo esquema
+    /// <see cref="FederatedAuthDefaults.Scheme"/> (assinatura/issuer/audience/lifetime/RS256) e exige um
+    /// token DELEGADO do SPA configurado (scope <c>scp</c>, <c>azp/appid</c>, <c>tid/oid</c>) — recusando
+    /// tokens app-only. A identidade vem SOMENTE das claims do principal validado (nunca de corpo JSON) e
+    /// é lida pelo MESMO <see cref="FederatedPrincipalValidator"/> da policy, canonicalizada (tid/oid "D").
+    /// Em sucesso, emite o par local e define o cookie de refresh, como o login. Falhas usam 401 genérico.
+    /// O token externo nunca é gravado nem logado.
     /// </summary>
-    [Authorize(AuthenticationSchemes = FederatedAuthDefaults.Scheme)]
+    [Authorize(Policy = FederatedExchangeRequirement.PolicyName)]
     [HttpPost("federation/exchange")]
     [EnableRateLimiting("auth-login")]   // mesma proteção do login por senha
     public async Task<ActionResult<AuthResponse>> FederationExchange(CancellationToken ct)
     {
-        // Só claims do principal já validado pelo esquema do Entra. MapInboundClaims=false preserva os
-        // nomes originais (tid/oid/preferred_username). Nunca lê identidade do corpo.
-        var identity = new FederatedIdentity(
-            TenantId: User.FindFirst("tid")?.Value,
-            ObjectId: User.FindFirst("oid")?.Value,
-            Email: User.FindFirst("preferred_username")?.Value
-                ?? User.FindFirst("email")?.Value
-                ?? User.FindFirst("upn")?.Value);
+        // A policy já autorizou; reusamos o MESMO validador para obter a identidade canonicalizada, sem
+        // regra divergente entre policy e controller.
+        if (!FederatedPrincipalValidator.TryValidate(User, _federation, out var identity))
+            return Unauthorized(new { title = "Não foi possível autenticar a identidade corporativa.", status = 401 });
 
         var pair = await _auth.ExchangeFederatedAsync(identity, ct);
         if (pair is null)

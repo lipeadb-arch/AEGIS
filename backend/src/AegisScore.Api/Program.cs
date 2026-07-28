@@ -7,6 +7,7 @@ using Microsoft.OpenApi.Models;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using AegisScore.Api;
+using AegisScore.Api.Auth;
 using AegisScore.Api.Workers;
 using AegisScore.Application.Abstractions;
 using AegisScore.Connectors.Microsoft;
@@ -109,6 +110,9 @@ builder.Services
                 ValidateIssuerSigningKey = true,
                 ValidateLifetime = true,
                 ClockSkew = TimeSpan.FromSeconds(30),
+                // [AEGIS-AUD-007] Fixa o algoritmo ASSIMÉTRICO do Entra (RS256) — barra confusão de
+                // algoritmo (alg=none, ou HS256 forjado com a chave pública do JWKS como segredo).
+                ValidAlgorithms = new[] { SecurityAlgorithms.RsaSha256 },
             };
         }
         else
@@ -132,7 +136,16 @@ builder.Services.AddAuthorization(options =>
     options.FallbackPolicy = new AuthorizationPolicyBuilder()
         .RequireAuthenticatedUser()
         .Build();
+
+    // [AEGIS-AUD-007] Policy da troca federada: autenticada EXCLUSIVAMENTE pelo esquema EntraId, mais o
+    // requisito de token delegado do SPA (scope/azp/tid/oid) do FederatedExchangeHandler.
+    options.AddPolicy(FederatedExchangeRequirement.PolicyName, p => p
+        .AddAuthenticationSchemes(FederatedAuthDefaults.Scheme)
+        .RequireAuthenticatedUser()
+        .AddRequirements(new FederatedExchangeRequirement()));
 });
+// Handler da policy da troca federada (lê FederationOptions).
+builder.Services.AddSingleton<IAuthorizationHandler, FederatedExchangeHandler>();
 
 // Stack adapters (add Google/AWS/SIEM/EDR connector packages here).
 builder.Services.AddMicrosoftConnectors();

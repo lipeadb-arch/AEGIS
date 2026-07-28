@@ -22,36 +22,44 @@ import { FederatedLoginService } from '../services/federated-login.service';
         <h1 class="title">AEGIS</h1>
         <p class="sub">Acesso ao painel de maturidade cibernética</p>
 
-        @if (passwordLoginEnabled()) {
-          <form (submit)="submit($event, emailEl.value, pwEl.value)">
-            <label class="field">
-              <span>E-mail</span>
-              <input #emailEl type="email" name="email" autocomplete="username" required />
-            </label>
+        @if (configLoading()) {
+          <p class="loading">Carregando…</p>
+        } @else if (configError()) {
+          <!-- Fail-closed: enquanto a config não carrega, NÃO mostramos formulário nem botão corporativo. -->
+          <p class="error" role="alert">Não foi possível carregar a configuração de autenticação.</p>
+          <button type="button" class="corp" (click)="loadConfig()">Tentar novamente</button>
+        } @else {
+          @if (passwordLoginEnabled()) {
+            <form (submit)="submit($event, emailEl.value, pwEl.value)">
+              <label class="field">
+                <span>E-mail</span>
+                <input #emailEl type="email" name="email" autocomplete="username" required />
+              </label>
 
-            <label class="field">
-              <span>Senha</span>
-              <input #pwEl type="password" name="password" autocomplete="current-password" required />
-            </label>
+              <label class="field">
+                <span>Senha</span>
+                <input #pwEl type="password" name="password" autocomplete="current-password" required />
+              </label>
 
-            <button type="submit" class="submit" [disabled]="loading()">
-              {{ loading() ? 'Entrando…' : 'Entrar' }}
+              <button type="submit" class="submit" [disabled]="loading()">
+                {{ loading() ? 'Entrando…' : 'Entrar' }}
+              </button>
+            </form>
+          }
+
+          @if (federationEnabled() && passwordLoginEnabled()) {
+            <div class="divider"><span>ou</span></div>
+          }
+
+          @if (federationEnabled()) {
+            <button type="button" class="corp" [disabled]="loading()" (click)="loginCorporate()">
+              {{ loading() ? 'Conectando…' : 'Entrar com conta corporativa' }}
             </button>
-          </form>
-        }
+          }
 
-        @if (federationEnabled() && passwordLoginEnabled()) {
-          <div class="divider"><span>ou</span></div>
-        }
-
-        @if (federationEnabled()) {
-          <button type="button" class="corp" [disabled]="loading()" (click)="loginCorporate()">
-            {{ loading() ? 'Conectando…' : 'Entrar com conta corporativa' }}
-          </button>
-        }
-
-        @if (error()) {
-          <p class="error" role="alert">{{ error() }}</p>
+          @if (error()) {
+            <p class="error" role="alert">{{ error() }}</p>
+          }
         }
       </div>
     </div>
@@ -109,6 +117,12 @@ import { FederatedLoginService } from '../services/federated-login.service';
       .field input:focus {
         border-color: var(--cyan, #26e0ff);
         box-shadow: 0 0 0 2px rgba(38, 224, 255, 0.2);
+      }
+      .loading {
+        margin: 0;
+        text-align: center;
+        font-size: 12px;
+        color: var(--muted, #7a91be);
       }
       .error {
         margin: 0;
@@ -184,14 +198,34 @@ export class LoginComponent implements OnInit {
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   private readonly config = signal<FederationConfig | null>(null);
+  readonly configLoading = signal(true);
+  readonly configError = signal(false);
 
-  // Antes de a config chegar, mostra o formulário local (comportamento de dev/Local). Depois, respeita
-  // a config: em Federated o formulário some; o botão corporativo aparece só quando a federação está ligada.
-  readonly passwordLoginEnabled = computed(() => this.config()?.passwordLoginEnabled ?? true);
-  readonly federationEnabled = computed(() => this.config()?.enabled ?? false);
+  // FAIL-CLOSED: nada de formulário nem botão até a config carregar. Só quando o servidor RESPONDE é que
+  // decidimos — em Local aparece o formulário; em Federated some; o botão corporativo só com federação ligada.
+  readonly passwordLoginEnabled = computed(() => this.config()?.passwordLoginEnabled === true);
+  readonly federationEnabled = computed(() => this.config()?.enabled === true);
 
   ngOnInit(): void {
-    this.auth.federationConfig().subscribe((cfg) => this.config.set(cfg));
+    this.loadConfig();
+  }
+
+  /** Carrega a config de autenticação. Fail-closed: erro NÃO vira Local — mostra estado genérico + retry. */
+  loadConfig(): void {
+    this.configLoading.set(true);
+    this.configError.set(false);
+    this.error.set(null);
+    this.auth.federationConfig().subscribe({
+      next: (cfg) => {
+        this.config.set(cfg);
+        this.configLoading.set(false);
+      },
+      error: () => {
+        this.config.set(null);
+        this.configError.set(true);
+        this.configLoading.set(false);
+      },
+    });
   }
 
   submit(event: Event, email: string, password: string): void {

@@ -130,17 +130,13 @@ export class AuthService {
   }
 
   /**
-   * [AEGIS-AUD-007] Config pública da federação. Em Local vem `enabled=false` e o login segue por senha.
-   * Falha de rede resolve como federação desligada (o formulário local continua disponível).
+   * [AEGIS-AUD-007] Config pública da federação. NÃO trata falha como Local (fail-closed): um servidor
+   * Federated indisponível NÃO pode virar "mostre o formulário de senha". O erro propaga e a tela de
+   * login exibe um estado genérico com opção de recarregar. Em Local, o servidor responde `enabled=false`
+   * e o formulário aparece normalmente.
    */
   federationConfig(): Observable<FederationConfig> {
-    return this.http.get<FederationConfig>(`${this.baseUrl}/federation/config`).pipe(
-      catchError(() =>
-        of<FederationConfig>({
-          enabled: false, mode: 'Local', passwordLoginEnabled: true,
-          authority: null, spaClientId: null, scope: null,
-        })),
-    );
+    return this.http.get<FederationConfig>(`${this.baseUrl}/federation/config`);
   }
 
   /**

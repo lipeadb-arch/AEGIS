@@ -298,19 +298,21 @@ public sealed class AuthService : IAuthService
     /// </summary>
     public async Task<TokenPair?> ExchangeFederatedAsync(FederatedIdentity identity, CancellationToken ct)
     {
-        // Federação precisa estar ligada, e tid/oid são obrigatórios (defesa em profundidade — o esquema
-        // já exige, mas o serviço é a autoridade final).
+        // Federação precisa estar ligada (defesa em profundidade — a policy já exige, mas o serviço é a
+        // autoridade final de persistência).
         if (!_federation.FederationEnabled)
             return null;
 
-        var tid = identity.TenantId?.Trim();
-        var oid = identity.ObjectId?.Trim();
-        if (string.IsNullOrEmpty(tid) || string.IsNullOrEmpty(oid))
+        // Canonicaliza tid/oid: um identificador malformado retorna falha GENÉRICA aqui mesmo, ANTES de
+        // qualquer consulta por e-mail ou escrita no banco. tid precisa ser o tenant configurado. Só o
+        // formato canônico "D" é comparado e persistido.
+        if (!Guid.TryParse(identity.TenantId, out var tidGuid) || !Guid.TryParse(identity.ObjectId, out var oidGuid))
+            return null;
+        if (!Guid.TryParse(_federation.TenantId, out var allowedTid) || tidGuid != allowedTid)
             return null;
 
-        // O tid do token DEVE coincidir com o tenant Entra configurado — barra tokens de outro diretório.
-        if (!string.Equals(tid, _federation.TenantId, StringComparison.OrdinalIgnoreCase))
-            return null;
+        var tid = tidGuid.ToString("D");
+        var oid = oidGuid.ToString("D");
 
         // 1) Identidade JÁ vinculada → localizar por tid+oid (imutáveis), NUNCA por e-mail. Assim, trocar
         //    o e-mail no Entra não quebra o login, e o e-mail deixa de ser superfície de captura.

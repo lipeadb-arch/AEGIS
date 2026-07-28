@@ -108,4 +108,67 @@ public sealed class FederationOptionsTests
         pub.SpaClientId.Should().BeNull();
         pub.Scope.Should().BeNull();
     }
+
+    // ---- Validação reforçada (PR #14) --------------------------------------------------------------
+
+    [Fact]
+    public void Mode_Desconhecido_Rejeitado()
+    {
+        var act = () => new FederationOptions { Mode = (FederationMode)99 }.Validate();
+        act.Should().Throw<InvalidOperationException>().WithMessage("*Mode*");
+    }
+
+    [Theory]
+    [InlineData(nameof(FederationOptions.TenantId))]
+    [InlineData(nameof(FederationOptions.ApiClientId))]
+    [InlineData(nameof(FederationOptions.SpaClientId))]
+    public void Federated_GuidMalformado_Rejeitado(string campo)
+    {
+        var opt = Complete(FederationMode.Federated);
+        switch (campo)
+        {
+            case nameof(FederationOptions.TenantId): opt.TenantId = "não-é-guid"; break;
+            case nameof(FederationOptions.ApiClientId): opt.ApiClientId = "12345"; break;
+            case nameof(FederationOptions.SpaClientId): opt.SpaClientId = "{nope}"; break;
+        }
+
+        var act = () => opt.Validate();
+        act.Should().Throw<InvalidOperationException>().WithMessage($"*{campo}*GUID*");
+    }
+
+    [Theory]
+    [InlineData("http://login.microsoftonline.com/")]  // não é HTTPS
+    [InlineData("login.microsoftonline.com")]           // não é absoluta
+    [InlineData("ftp://x/")]                            // esquema errado
+    [InlineData("")]
+    public void Federated_InstanceInvalida_Rejeitada(string instance)
+    {
+        var opt = Complete(FederationMode.Federated);
+        opt.Instance = instance;
+
+        var act = () => opt.Validate();
+        act.Should().Throw<InvalidOperationException>().WithMessage("*Instance*HTTPS*");
+    }
+
+    [Theory]
+    [InlineData("api://99999999-9999-9999-9999-999999999999/access_as_user")] // outra API (client id errado)
+    [InlineData("api://22222222-2222-2222-2222-222222222222")]                // só o recurso, sem scope
+    [InlineData("api://22222222-2222-2222-2222-222222222222/")]               // scope vazio
+    [InlineData("access_as_user")]                                            // sem prefixo do recurso
+    public void Federated_ApiScopeInvalido_Rejeitado(string scope)
+    {
+        var opt = Complete(FederationMode.Federated);
+        opt.ApiScope = scope;
+
+        var act = () => opt.Validate();
+        act.Should().Throw<InvalidOperationException>().WithMessage("*ApiScope*");
+    }
+
+    [Fact]
+    public void DelegatedScope_ExtraiNomeDelegadoDoApiScope()
+    {
+        Complete(FederationMode.Federated).DelegatedScope.Should().Be("access_as_user");
+        new FederationOptions { ApiClientId = "22222222-2222-2222-2222-222222222222", ApiScope = "api://22222222-2222-2222-2222-222222222222" }
+            .DelegatedScope.Should().BeNull("só o identificador do recurso não tem scope delegado");
+    }
 }
