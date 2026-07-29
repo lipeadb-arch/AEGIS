@@ -209,6 +209,72 @@ public sealed class UserManagementServiceTests : IDisposable
         (await db.Users.SingleAsync()).Role.Should().Be(UserRole.Analyst, "o papel vigente fica intacto");
     }
 
+    // ---- Papéis indefinidos do enum (ASP.NET Core desserializa enum de número) ---
+
+    [Fact]
+    public async Task GrantAccess_PapelIndefinido_NaoEhAtribuivel_NaoCriaMembership()
+    {
+        // "role": 999 chega como (UserRole)999. Uma checagem `!= PlatformAdmin` deixaria passar; a
+        // allowlist recusa. Membership NOVO: nada é criado, e a identidade global fica intacta.
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true, tid: "t-1", oid: "o-1");
+        await using var db = NewContext(TenantA);
+
+        var result = await ServiceFor(db, TenantA).GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Ana", (UserRole)999));
+
+        result.Status.Should().Be(AccessGrantStatus.RoleNotAssignable);
+        (await db.Users.AnyAsync()).Should().BeFalse("papel indefinido não persiste membership");
+
+        var acc = await db.IdentityAccounts.SingleAsync(a => a.Id == accountId);
+        acc.ExternalTenantId.Should().Be("t-1", "a identidade global não é tocada por uma recusa de papel");
+        acc.ExternalObjectId.Should().Be("o-1");
+    }
+
+    [Fact]
+    public async Task GrantAccess_MembershipExistente_PapelIndefinido_NaoAlteraNada()
+    {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true, tid: "t-1", oid: "o-1");
+        string? hashAntes;
+        await using (var read = NewContext(null))
+            hashAntes = (await read.IdentityAccounts.SingleAsync(a => a.Id == accountId)).PasswordHash;
+
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
+
+        // Atualização com papel indefinido: rejeita ANTES de qualquer mutação (papel/nome/estado intactos).
+        var result = await svc.GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Mallory", (UserRole)999));
+
+        result.Status.Should().Be(AccessGrantStatus.RoleNotAssignable);
+
+        var membership = await db.Users.SingleAsync();
+        membership.Role.Should().Be(UserRole.Analyst, "papel vigente intacto");
+        membership.DisplayName.Should().Be("Ana", "o nome não é alterado por uma recusa de papel");
+        membership.IsActive.Should().BeTrue("estado intacto");
+
+        var acc = await db.IdentityAccounts.SingleAsync(a => a.Id == accountId);
+        acc.PasswordHash.Should().Be(hashAntes, "credencial global intacta");
+        acc.ExternalTenantId.Should().Be("t-1", "vínculo Entra intacto");
+        acc.ExternalObjectId.Should().Be("o-1");
+    }
+
+    [Theory]
+    [InlineData(UserRole.Analyst)]
+    [InlineData(UserRole.Manager)]
+    [InlineData(UserRole.TenantAdmin)]
+    public async Task GrantAccess_PapeisTenantValidos_SaoAceitos(UserRole role)
+    {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
+        await using var db = NewContext(TenantA);
+
+        var result = await ServiceFor(db, TenantA).GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Ana", role));
+
+        result.Status.Should().Be(AccessGrantStatus.Granted);
+        (await db.Users.SingleAsync()).Role.Should().Be(role);
+    }
+
     // ---- Validação e fail-closed ------------------------------------------------
 
     [Fact]

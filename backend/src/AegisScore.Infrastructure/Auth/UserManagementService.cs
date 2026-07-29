@@ -130,16 +130,21 @@ public sealed class UserManagementService : IUserManagementService
     }
 
     /// <summary>
-    /// Barra o escalonamento de privilégio: <see cref="UserRole.PlatformAdmin"/> autoriza operações de
-    /// PLATAFORMA, então emiti-lo por uma rota de tenant transformaria um TenantAdmin em admin da plataforma
-    /// com um POST. Nem na criação, nem na atualização (a porta dos fundos).
+    /// ALLOWLIST explícita dos papéis tenant-scoped válidos — não um mero <c>role != PlatformAdmin</c>.
+    /// Barra dois vetores: (1) o escalonamento de privilégio (<see cref="UserRole.PlatformAdmin"/> autoriza
+    /// operações de PLATAFORMA, então emiti-lo por uma rota de tenant transformaria um TenantAdmin em admin
+    /// da plataforma com um POST); e (2) valores INDEFINIDOS do enum — o ASP.NET Core desserializa enum de
+    /// número, então <c>"role": 999</c> chega como <c>(UserRole)999</c>, que uma checagem por desigualdade
+    /// deixaria passar e corromperia o membership (papel inválido → claim de papel inválida depois). Só
+    /// Analyst/Manager/TenantAdmin são aceitos; nem na criação, nem na atualização (a porta dos fundos).
     /// </summary>
     private static AccessGrantResult? ValidateRole(UserRole role) =>
-        role == UserRole.PlatformAdmin
-            ? AccessGrantResult.Rejected(
+        role is UserRole.Analyst or UserRole.Manager or UserRole.TenantAdmin
+            ? null
+            : AccessGrantResult.Rejected(
                 AccessGrantStatus.RoleNotAssignable,
-                "PlatformAdmin é papel de PLATAFORMA e não é atribuível por esta superfície.")
-            : null;
+                "Papel inválido para concessão de acesso a tenant: use Analyst, Manager ou TenantAdmin. " +
+                "PlatformAdmin é papel de PLATAFORMA, e valores indefinidos do enum são recusados.");
 
     // ---- Helpers ----------------------------------------------------------------
 
