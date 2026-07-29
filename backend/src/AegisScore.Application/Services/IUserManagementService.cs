@@ -14,8 +14,9 @@ namespace AegisScore.Application.Services;
 /// outro ambiente. Também não há senha/InitialPassword: esta autoridade não toca credencial global.
 /// </summary>
 /// <param name="DisplayName">Nome exibido NESTE cliente (a mesma pessoa pode se apresentar diferente em cada um).</param>
-/// <param name="Role">Papel exercido NESTE tenant. <see cref="UserRole.PlatformAdmin"/> não é atribuível aqui.</param>
-public record GrantTenantAccessCommand(Guid IdentityAccountId, string DisplayName, UserRole Role);
+/// <param name="Role">Papel TENANT-SCOPED exercido NESTE tenant (<see cref="TenantRole"/>). O eixo global
+/// (<c>PlatformAdmin</c>) não existe neste tipo e não é atribuível por esta superfície.</param>
+public record GrantTenantAccessCommand(Guid IdentityAccountId, string DisplayName, TenantRole Role);
 
 // ---- Resultado de saída -----------------------------------------------------
 
@@ -51,7 +52,7 @@ public record UserSummary(
     Guid TenantId,
     string Email,
     string DisplayName,
-    UserRole Role,
+    TenantRole Role,
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset? LastLoginAt);
@@ -96,10 +97,11 @@ public record AccessGrantResult(
 /// <c>StampTenant</c> fail-closed; um <c>TenantAdmin</c> nunca escreve noutro tenant. Sem leitura
 /// cross-tenant de membership, sem <c>IgnoreQueryFilters</c>.
 ///
-/// <b>⚠️ Escalonamento de privilégio.</b> <see cref="UserRole.PlatformAdmin"/> NÃO é atribuível por esta
-/// superfície — nem na criação, nem na atualização (a porta dos fundos). Ele autoriza operações de
-/// PLATAFORMA (criar tenants, provisionar identidades), então emiti-lo por uma rota de tenant transformaria
-/// admin de cliente em admin da plataforma com um POST. Devolve <see cref="AccessGrantStatus.RoleNotAssignable"/>.
+/// <b>⚠️ Só o eixo TENANT.</b> [AEGIS-AUD-011] O <see cref="GrantTenantAccessCommand.Role"/> é
+/// <see cref="TenantRole"/> — a autoridade global (<c>PlatformAdmin</c>) nem sequer existe neste tipo, então
+/// esta superfície não pode concedê-la. A validação é uma allowlist (Analyst/Manager/TenantAdmin); um valor
+/// indefinido do enum devolve <see cref="AccessGrantStatus.RoleNotAssignable"/>. A concessão de membership
+/// NUNCA altera o <see cref="IdentityAccount.PlatformRole"/> (o eixo global vive na identidade).
 /// </summary>
 public interface IUserManagementService
 {

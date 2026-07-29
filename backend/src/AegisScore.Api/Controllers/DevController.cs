@@ -344,7 +344,7 @@ public class DevController : ControllerBase
             TenantId = DemoTenantId,
             IdentityAccountId = account.Id,
             DisplayName = "Analista Demo",
-            Role = UserRole.TenantAdmin,
+            Role = TenantRole.TenantAdmin,
             IsActive = true,
         });
         await db.SaveChangesAsync(ct);

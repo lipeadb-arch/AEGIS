@@ -1,4 +1,5 @@
 using System.Reflection;
+using AegisScore.Api.Auth;
 using AegisScore.Api.Controllers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -8,28 +9,43 @@ using Xunit;
 namespace AegisScore.Infrastructure.Tests.Auth;
 
 /// <summary>
-/// [AEGIS-AUD-010] O contrato de AUTORIZAÇÃO das superfícies separadas de identidade é parte da correção,
-/// não detalhe cosmético — afrouxar um atributo reabriria o vetor. Sem harness de integração HTTP, a
-/// garantia é verificada por reflexão sobre os atributos declarados:
-///  - a rota GLOBAL (<see cref="PlatformIdentitiesController"/>) exige <c>PlatformAdmin</c>, então um
-///    <c>TenantAdmin</c> não a alcança;
-///  - a concessão de acesso (<see cref="UsersController"/>) exige <c>TenantAdmin</c>;
+/// [AEGIS-AUD-010 / AUD-011] O contrato de AUTORIZAÇÃO das superfícies separadas de identidade é parte da
+/// correção, não detalhe cosmético — afrouxar um atributo reabriria o vetor. Sem harness de integração HTTP,
+/// o WIRING é verificado por reflexão (a semântica da policy em si é exercitada por
+/// <see cref="PlatformTenantRoleTests"/>, com claims/policy reais):
+///  - a rota GLOBAL (<see cref="PlatformIdentitiesController"/>) exige a POLICY de plataforma
+///    (<see cref="PlatformAuthorization.PolicyName"/>), NÃO um papel de tenant;
+///  - a concessão de acesso (<see cref="UsersController"/>) exige o papel de tenant <c>TenantAdmin</c>;
 ///  - a rota legada <c>POST /api/v1/users</c> (que deixava o TenantAdmin criar identidade global) NÃO existe.
 /// </summary>
 public sealed class IdentitySeparationAuthorizationTests
 {
-    // ---- Rota global: exclusiva de PlatformAdmin --------------------------------
+    // ---- Rota global: exige a POLICY de plataforma (não um papel de tenant) ------
 
     [Fact]
-    public void RotaGlobalDeIdentidade_ExigePlatformAdmin()
+    public void RotaGlobalDeIdentidade_ExigePolicyDePlataforma_NaoPapelDeTenant()
     {
         var authorize = typeof(PlatformIdentitiesController)
             .GetCustomAttributes<AuthorizeAttribute>(inherit: true)
             .ToList();
 
         authorize.Should().ContainSingle("a superfície global é protegida a nível de classe");
-        authorize[0].Roles.Should().Be("PlatformAdmin",
-            "criar identidade global é operação de plataforma — um TenantAdmin nunca a alcança");
+        // [AEGIS-AUD-011] Policy global (platform_role=PlatformAdmin), não [Authorize(Roles=...)].
+        authorize[0].Policy.Should().Be(PlatformAuthorization.PolicyName,
+            "criar identidade global exige a autoridade GLOBAL, não um papel de tenant");
+        authorize[0].Roles.Should().BeNull("a rota de plataforma não é mais gated por papel de tenant");
+    }
+
+    [Fact]
+    public void CriacaoDeTenant_ExigePolicyDePlataforma()
+    {
+        // A outra superfície de plataforma migrada para a policy no AUD-011.
+        var create = typeof(TenantsController).GetMethod(nameof(TenantsController.Create))!;
+        var authorize = create.GetCustomAttribute<AuthorizeAttribute>();
+
+        authorize.Should().NotBeNull();
+        authorize!.Policy.Should().Be(PlatformAuthorization.PolicyName);
+        authorize.Roles.Should().BeNull();
     }
 
     [Fact]

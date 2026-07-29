@@ -44,7 +44,7 @@ public sealed record RefreshResult(RefreshOutcome Outcome, TokenPair? Pair)
 }
 
 /// <summary>Um ambiente acessível pela pessoa autenticada, para o seletor do HUD.</summary>
-public record TenantMembershipDescriptor(Guid Id, string Name, string Slug, UserRole Role);
+public record TenantMembershipDescriptor(Guid Id, string Name, string Slug, TenantRole Role);
 
 /// <summary>
 /// [AEGIS-AUD-007] Identidade corporativa JÁ VALIDADA criptograficamente pelo esquema JWT Bearer do Entra.

@@ -23,6 +23,9 @@ public sealed class Aud010PasswordHashPostgresTests
 {
     private const string PreAud010 = "20260728212552_Aud007FederatedIdentityBinding";
     private const string Aud010 = "20260729120030_Aud010NullablePasswordHash";
+    // [AEGIS-AUD-011] Head atual do modelo EF: as operações via DbContext (que hoje citam PlatformRole)
+    // exigem um schema que tenha a coluna. O comportamento do AUD-010 (PasswordHash nullable) persiste aqui.
+    private const string Head = "20260729171438_Aud011SeparatePlatformTenantRoles";
     private const string Tid = "11111111-1111-1111-1111-111111111111";
 
     private readonly ITestOutputHelper _output;
@@ -41,25 +44,27 @@ public sealed class Aud010PasswordHashPostgresTests
 
         (await ColumnIsNullableAsync(opt)).Should().BeFalse("antes do AUD-010 a coluna é NOT NULL");
 
-        // Semeia no schema antigo: conta local (com hash) + vínculo Entra + membership + refresh session.
+        // Semeia no schema antigo (AUD-007): conta local (com hash) + vínculo Entra + membership + sessão.
+        // A IdentityAccount vai por SQL cru — o schema é anterior ao eixo global PlatformRole do modelo EF.
         var tenant = Guid.NewGuid();
-        Guid localAccountId;
+        var localAccountId = Guid.NewGuid();
         string localHash = "210000." + new string('a', 24) + "." + new string('b', 44);
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
         {
             db.Tenants.Add(new Tenant { Id = tenant, Name = "Alfa", Slug = "alfa-" + tenant.ToString("N")[..8], Status = TenantStatus.Active });
-            var acc = new IdentityAccount
-            {
-                Email = "ana@demo.example.com", PasswordHash = localHash,
-                ExternalTenantId = Tid, ExternalObjectId = "aaaaaaaa-0000-0000-0000-000000000001",
-            };
-            db.IdentityAccounts.Add(acc);
             await db.SaveChangesAsync();
-            localAccountId = acc.Id;
+        }
+        await using (var seedConn = await OpenAsync(opt))
+        {
+            await using var cmd = seedConn.CreateCommand();
+            cmd.CommandText =
+                "INSERT INTO \"IdentityAccounts\" (\"Id\",\"Email\",\"PasswordHash\",\"ExternalTenantId\",\"ExternalObjectId\",\"CreatedAt\") " +
+                $"VALUES ('{localAccountId}','ana@demo.example.com','{localHash}','{Tid}','aaaaaaaa-0000-0000-0000-000000000001', now())";
+            await cmd.ExecuteNonQueryAsync();
         }
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
         {
-            var user = new User { TenantId = tenant, IdentityAccountId = localAccountId, DisplayName = "Ana", Role = UserRole.Analyst };
+            var user = new User { TenantId = tenant, IdentityAccountId = localAccountId, DisplayName = "Ana", Role = TenantRole.Analyst };
             db.Users.Add(user);
             await db.SaveChangesAsync();
             db.UserRefreshTokens.Add(new UserRefreshToken
@@ -70,9 +75,9 @@ public sealed class Aud010PasswordHashPostgresTests
             await db.SaveChangesAsync();
         }
 
-        // Sobe o AUD-010 (aditivo): a coluna vira NULLABLE, e os dados existentes seguem intactos.
+        // Sobe até o head atual (o AUD-010, aditivo, torna a coluna NULLABLE; segue nullable no head).
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
-            await Migrator(db).MigrateAsync(Aud010);
+            await Migrator(db).MigrateAsync(Head);
 
         (await ColumnIsNullableAsync(opt)).Should().BeTrue("o AUD-010 torna PasswordHash NULLABLE");
 
@@ -128,11 +133,15 @@ public sealed class Aud010PasswordHashPostgresTests
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
             await Migrator(db).MigrateAsync(Aud010);
 
-        // Uma conta federated-only (PasswordHash NULL) torna o rollback INSEGURO.
-        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+        // Uma conta federated-only (PasswordHash NULL) torna o rollback INSEGURO. Vai por SQL cru — no
+        // schema AUD-010 a coluna PlatformRole do modelo EF ainda não existe.
+        await using (var seedConn = await OpenAsync(opt))
         {
-            db.IdentityAccounts.Add(new IdentityAccount { Email = "fed@demo.example.com", PasswordHash = null });
-            await db.SaveChangesAsync();
+            await using var cmd = seedConn.CreateCommand();
+            cmd.CommandText =
+                "INSERT INTO \"IdentityAccounts\" (\"Id\",\"Email\",\"PasswordHash\",\"CreatedAt\") " +
+                $"VALUES ('{Guid.NewGuid()}','fed@demo.example.com', NULL, now())";
+            await cmd.ExecuteNonQueryAsync();
         }
 
         // O Down ABORTA com mensagem explícita — nunca inventa hash nem apaga a conta.

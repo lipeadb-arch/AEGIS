@@ -237,6 +237,13 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(a => new { a.ExternalTenantId, a.ExternalObjectId })
                 .IsUnique()
                 .HasFilter("\"ExternalObjectId\" IS NOT NULL");
+
+            // [AEGIS-AUD-011] Autoridade GLOBAL na identidade (não no membership). Default de BANCO None (0):
+            // uma linha nova sem papel global explícito nasce sem autoridade — invariante segura e que torna
+            // o schema robusto a inserts que não citam a coluna. A constraint fecha a porta a um int fora da
+            // faixa (0=None, 1=PlatformAdmin) gravado por fora do domínio.
+            e.Property(a => a.PlatformRole).HasDefaultValue(PlatformRole.None);
+            e.ToTable(t => t.HasCheckConstraint("CK_IdentityAccounts_PlatformRole", "\"PlatformRole\" IN (0, 1)"));
         });
 
         // Auth — o MEMBERSHIP: um acesso por (tenant, pessoa). O índice único mudou de
@@ -251,6 +258,11 @@ public class AegisScoreDbContext : DbContext
             e.HasOne(u => u.Account).WithMany(a => a.Memberships)
                 .HasForeignKey(u => u.IdentityAccountId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            // [AEGIS-AUD-011] Papel TENANT-SCOPED: só 0/1/2 (Analyst/Manager/TenantAdmin). O antigo
+            // PlatformAdmin (3) não pode mais ser gravado num membership — a constraint é a invariante de
+            // banco do eixo tenant, complementar à allowlist do UserManagementService.
+            e.ToTable(t => t.HasCheckConstraint("CK_Users_Role", "\"Role\" IN (0, 1, 2)"));
         });
         b.Entity<UserRefreshToken>(e =>
         {

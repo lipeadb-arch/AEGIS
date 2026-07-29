@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using AegisScore.Api.Auth;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Services;
@@ -42,14 +43,15 @@ public class TenantsController : ControllerBase
         ?? throw new InvalidOperationException("Rota autenticada sem tenant no contexto.");
 
     /// <summary>
-    /// [Alto 3] Cria um novo tenant. Operação de PLATAFORMA — exige PlatformAdmin, papel que nenhum
-    /// usuário de tenant comum possui (provisionado fora do onboarding self-service).
+    /// [Alto 3] Cria um novo tenant. Autoridade de PLATAFORMA — [AEGIS-AUD-011] exige a POLICY global
+    /// <see cref="PlatformAuthorization.PolicyName"/> (claim <c>platform_role = PlatformAdmin</c>), não um
+    /// papel de tenant. Um <c>TenantAdmin</c> do próprio tenant continua proibido aqui.
     ///
     /// A regra (normalização do slug, unicidade sob corrida, estado inicial) vive no
     /// <see cref="ITenantManagementService"/>; aqui só traduzimos o desfecho em HTTP.
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "PlatformAdmin")]
+    [Authorize(Policy = PlatformAuthorization.PolicyName)]
     public async Task<ActionResult<IdResponse>> Create(CreateTenantRequest req, CancellationToken ct)
     {
         var result = await _onboarding.CreateTenantAsync(new CreateTenantCommand(req.Name, req.Slug), ct);

@@ -1,12 +1,12 @@
 # AEGIS — Plano Diretor de Remediação v1.0.3
 
 **Classificação:** Documento de governança técnica e segurança<br>
-**Data de atualização:** 2026-07-28<br>
+**Data de atualização:** 2026-07-29<br>
 **Situação do programa:** Em execução<br>
 **Branch de referência:** `main`<br>
-**Commit de referência:** `ff5d119`<br>
-**Última entrega concluída:** AEGIS-AUD-007 — PR #14, squash-merge `ff5d119`<br>
-**Pacote em implementação:** `AEGIS-AUD-010 — Separar provisionamento global de concessão de acesso a tenant` (EP-01) — **EM IMPLEMENTAÇÃO** na branch `fix/aud-010-separate-identity-provisioning` (PR aberto para `main`, sem merge)
+**Commit de referência:** `d947328`<br>
+**Última entrega concluída:** AEGIS-AUD-010 — PR #15, squash-merge `d947328`<br>
+**Pacote em implementação:** `AEGIS-AUD-011 — Separar papéis globais de papéis por tenant` (EP-01) — **EM IMPLEMENTAÇÃO** na branch `fix/aud-011-separate-platform-tenant-roles` (PR a abrir para `main`, sem merge)
 
 > Este documento é a fonte de governança do programa de remediação. O código local e `docs/pr0-baseline.md` são a fonte de verdade para o estado técnico executável.
 
@@ -45,7 +45,8 @@
 | AEGIS-AUD-008 — Escritas cross-tenant no DbContext | **CONCLUÍDO** | PR #12; squash-merge `2f8c968` |
 | AEGIS-AUD-009 — Armazenar somente hash de refresh tokens | **CONCLUÍDO** | PR #13; squash-merge `37d57ff` |
 | AEGIS-AUD-007 — Integrar autenticação corporativa federada | **CONCLUÍDO** | PR #14; squash-merge `ff5d119` |
-| AEGIS-AUD-010 — Separar provisionamento global de concessão de acesso a tenant | **EM IMPLEMENTAÇÃO** | Branch `fix/aud-010-separate-identity-provisioning`; PR aberto para `main`, sem merge (EP-01) |
+| AEGIS-AUD-010 — Separar provisionamento global de concessão de acesso a tenant | **CONCLUÍDO** | PR #15; squash-merge `d947328` |
+| AEGIS-AUD-011 — Separar papéis globais de papéis por tenant | **EM IMPLEMENTAÇÃO** | Branch `fix/aud-011-separate-platform-tenant-roles`; PR a abrir para `main`, sem merge (EP-01) |
 
 ### 2.1 O que o PR 0 concluiu
 
@@ -56,8 +57,8 @@
 
 ### 2.2 O que permanece inalterado
 
-- **Dos 63 achados `AEGIS-AUD-*`, dez foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7, `AEGIS-AUD-046` via PR #8, `AEGIS-AUD-050` via PR #9, `AEGIS-AUD-026` via PR #10, `AEGIS-AUD-031` via PR #11, `AEGIS-AUD-008` via PR #12, `AEGIS-AUD-009` via PR #13, `AEGIS-AUD-007` via PR #14); os demais **53 permanecem abertos**. O total catalogado segue **63**.
-- O `AEGIS-AUD-007` foi **CONCLUÍDO** (PR #14; squash-merge `ff5d119`), terceiro pacote entregue do **EP-01 (EM EXECUÇÃO)** — autenticação corporativa federada (Entra ID) com troca por sessão local. A contagem passa a **10 concluídos / 53 abertos**. O `AEGIS-AUD-010` (EP-01) está agora **EM IMPLEMENTAÇÃO** na branch `fix/aud-010-separate-identity-provisioning` (PR aberto, sem merge); a contagem permanece **10 concluídos / 53 abertos**, pois `EM IMPLEMENTAÇÃO` não é conclusão.
+- **Dos 63 achados `AEGIS-AUD-*`, onze foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7, `AEGIS-AUD-046` via PR #8, `AEGIS-AUD-050` via PR #9, `AEGIS-AUD-026` via PR #10, `AEGIS-AUD-031` via PR #11, `AEGIS-AUD-008` via PR #12, `AEGIS-AUD-009` via PR #13, `AEGIS-AUD-007` via PR #14, `AEGIS-AUD-010` via PR #15); os demais **52 permanecem abertos**. O total catalogado segue **63**.
+- O `AEGIS-AUD-010` foi **CONCLUÍDO** (PR #15; squash-merge `d947328`), quarto pacote entregue do **EP-01 (EM EXECUÇÃO)** — separa o provisionamento GLOBAL de identidade (`PlatformAdmin`) da concessão de acesso a tenant (`TenantAdmin`), com fim do auto-provisionamento pela rota tenant, `PasswordHash` nullable para contas federated-only e allowlist de papéis tenant-scoped. A contagem passa a **11 concluídos / 52 abertos**. O `AEGIS-AUD-011` (EP-01) está agora **EM IMPLEMENTAÇÃO** na branch `fix/aud-011-separate-platform-tenant-roles` (PR a abrir, sem merge) — separa o papel tenant-scoped (`TenantRole`) da autoridade global (`PlatformRole` na `IdentityAccount`, claim `platform_role`), com policy de plataforma própria; a contagem permanece **11 concluídos / 52 abertos**, pois `EM IMPLEMENTAÇÃO` não é conclusão.
 - **O `AEGIS-TECH-001` foi concluído como pacote técnico de precedência, não como novo achado da auditoria.** Ele não entra no backlog mestre e **não altera a contagem de 63 achados**.
 - A liberação para produção continua bloqueada.
 - O Plano Diretor não substitui a inspeção do código local antes de cada mudança.
@@ -140,7 +141,7 @@ Estados auxiliares: `BLOQUEADA`, `ADIADA`, `DESCARTADA`.
 > **A aprovação desta ordem não autoriza a implementação de nenhum pacote.** Ela define apenas a
 > sequência de execução. **Cada pacote exige aprovação explícita própria** para sair de `PLANEJADO`
 > e entrar em implementação. O `AEGIS-AUD-031` foi concluído (PR #11; squash-merge `d02cfee`),
-> **encerrando o EP-00**; no EP-01, `AEGIS-AUD-008` (PR #12; `2f8c968`), `AEGIS-AUD-009` (PR #13; `37d57ff`) e `AEGIS-AUD-007` (PR #14; `ff5d119`) foram concluídos. O pacote seguinte, `AEGIS-AUD-010`, está **EM IMPLEMENTAÇÃO** na branch `fix/aud-010-separate-identity-provisioning` (PR aberto para `main`, sem merge).
+> **encerrando o EP-00**; no EP-01, `AEGIS-AUD-008` (PR #12; `2f8c968`), `AEGIS-AUD-009` (PR #13; `37d57ff`), `AEGIS-AUD-007` (PR #14; `ff5d119`) e `AEGIS-AUD-010` (PR #15; `d947328`) foram concluídos. O pacote seguinte, `AEGIS-AUD-011`, está **EM IMPLEMENTAÇÃO** na branch `fix/aud-011-separate-platform-tenant-roles` (PR a abrir para `main`, sem merge).
 
 ### 7.2 Pacote técnico concluído
 
@@ -175,12 +176,14 @@ contagem de 63 achados**.
 
 ### 7.3 Próximo pacote imediato
 
-**`AEGIS-AUD-010 — Separar provisionamento global de concessão de acesso a tenant`** (EP-01) — **EM
-IMPLEMENTAÇÃO** na branch `fix/aud-010-separate-identity-provisioning` (PR aberto para `main`, sem merge).
-É o pacote do EP-01 na ordem interna (governança de identidade após a federação). Os três primeiros pacotes do épico já foram concluídos: `AEGIS-AUD-008`
-(proteção de escrita cross-tenant no DbContext) no PR #12 (squash-merge `2f8c968`), `AEGIS-AUD-009`
-(armazenar somente hash de refresh tokens) no PR #13 (squash-merge `37d57ff`) e `AEGIS-AUD-007`
-(autenticação corporativa federada) no PR #14 (squash-merge `ff5d119`).
+**`AEGIS-AUD-011 — Separar papéis globais de papéis por tenant`** (EP-01) — **EM IMPLEMENTAÇÃO** na branch
+`fix/aud-011-separate-platform-tenant-roles` (PR a abrir para `main`, sem merge). É o pacote do EP-01 na ordem
+interna. Os quatro primeiros pacotes do épico
+já foram concluídos: `AEGIS-AUD-008` (proteção de escrita cross-tenant no DbContext) no PR #12 (squash-merge
+`2f8c968`), `AEGIS-AUD-009` (armazenar somente hash de refresh tokens) no PR #13 (squash-merge `37d57ff`),
+`AEGIS-AUD-007` (autenticação corporativa federada) no PR #14 (squash-merge `ff5d119`) e `AEGIS-AUD-010`
+(separar provisionamento global de identidade da concessão de acesso a tenant) no PR #15 (squash-merge
+`d947328`).
 
 O **EP-00 está CONCLUÍDO**: seus dez pacotes foram entregues — `AEGIS-AUD-053` (PR #5, `49a6747`),
 `AEGIS-AUD-052` (PR #6, `0ebad27`), `AEGIS-AUD-057` (PR #7, `9904729`), `AEGIS-AUD-046` (PR #8, `f9a3ed7`),
@@ -199,7 +202,7 @@ fora deste pacote.
 **Estado:** CONCLUÍDO<br>
 **Objetivo:** Preservar uma referência reproduzível e remover riscos imediatos antes de mudanças estruturais.<br>
 **Dependências:** Nenhuma além da baseline técnica concluída.<br>
-**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052, AEGIS-AUD-057, AEGIS-AUD-046, AEGIS-AUD-050, AEGIS-AUD-026 e AEGIS-AUD-031 concluídos — **EP-00 CONCLUÍDO**. Épico seguinte (EP-01) **EM EXECUÇÃO**: `AEGIS-AUD-008` (PR #12), `AEGIS-AUD-009` (PR #13) e `AEGIS-AUD-007` (PR #14) concluídos; pacote seguinte **AEGIS-AUD-010** **EM IMPLEMENTAÇÃO** (branch `fix/aud-010-separate-identity-provisioning`, PR aberto, sem merge).
+**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052, AEGIS-AUD-057, AEGIS-AUD-046, AEGIS-AUD-050, AEGIS-AUD-026 e AEGIS-AUD-031 concluídos — **EP-00 CONCLUÍDO**. Épico seguinte (EP-01) **EM EXECUÇÃO**: `AEGIS-AUD-008` (PR #12), `AEGIS-AUD-009` (PR #13), `AEGIS-AUD-007` (PR #14) e `AEGIS-AUD-010` (PR #15) concluídos; pacote seguinte **AEGIS-AUD-011** **EM IMPLEMENTAÇÃO** (branch `fix/aud-011-separate-platform-tenant-roles`, PR a abrir, sem merge).
 
 ### Pacotes do épico
 
@@ -250,8 +253,8 @@ Cada alteração deve ser aditiva ou configurável. Chaves e ciphertext antigos 
 | 1 | AEGIS-AUD-008 | ALTO | Proteger alterações e exclusões cross-tenant no DbContext | Multi-tenancy / Persistence | CONCLUÍDA (PR #12; `2f8c968`) |
 | 2 | AEGIS-AUD-009 | ALTO | Armazenar somente hash de refresh tokens | Authentication / Session Security | CONCLUÍDA (PR #13; `37d57ff`) |
 | 3 | AEGIS-AUD-007 | ALTO | Integrar autenticação corporativa federada | Identity / Authentication | CONCLUÍDA (PR #14; `ff5d119`) |
-| 4 | AEGIS-AUD-010 | ALTO | Separar provisionamento global de concessão de acesso a tenant | Identity Governance | **EM IMPLEMENTAÇÃO** (branch `fix/aud-010-separate-identity-provisioning`) |
-| 5 | AEGIS-AUD-011 | MÉDIO | Separar papéis globais de papéis por tenant | Authorization | ABERTA |
+| 4 | AEGIS-AUD-010 | ALTO | Separar provisionamento global de concessão de acesso a tenant | Identity Governance | CONCLUÍDA (PR #15; `d947328`) |
+| 5 | AEGIS-AUD-011 | MÉDIO | Separar papéis globais de papéis por tenant | Authorization | **EM IMPLEMENTAÇÃO** (branch `fix/aud-011-separate-platform-tenant-roles`) |
 | 6 | AEGIS-AUD-012 | MÉDIO | Exigir seleção explícita ou último tenant validado no login | UX / Authorization Context | ABERTA |
 | 7 | AEGIS-AUD-013 | MÉDIO | Aplicar filtros de tenant por convenção e testar o modelo EF | Multi-tenancy / Architecture | ABERTA |
 | 8 | AEGIS-AUD-014 | MÉDIO | Restringir e inventariar IgnoreQueryFilters() | Multi-tenancy / Privileged Access | ABERTA |
@@ -568,8 +571,8 @@ Planos de recuperação testados; mudanças de hardening com validação em stag
 | AEGIS-AUD-007 | ALTO | Identity / Authentication | Integrar autenticação corporativa federada | EP-01 | CONCLUÍDA | #14 | `ff5d119` |
 | AEGIS-AUD-008 | ALTO | Multi-tenancy / Persistence | Proteger alterações e exclusões cross-tenant no DbContext | EP-01 | CONCLUÍDA | #12 | `2f8c968` |
 | AEGIS-AUD-009 | ALTO | Authentication / Session Security | Armazenar somente hash de refresh tokens | EP-01 | CONCLUÍDA | #13 | `37d57ff` |
-| AEGIS-AUD-010 | ALTO | Identity Governance | Separar provisionamento global de concessão de acesso a tenant | EP-01 | **EM IMPLEMENTAÇÃO** | branch `fix/aud-010-...` | — |
-| AEGIS-AUD-011 | MÉDIO | Authorization | Separar papéis globais de papéis por tenant | EP-01 | ABERTA | — | — |
+| AEGIS-AUD-010 | ALTO | Identity Governance | Separar provisionamento global de concessão de acesso a tenant | EP-01 | CONCLUÍDA | #15 | `d947328` |
+| AEGIS-AUD-011 | MÉDIO | Authorization | Separar papéis globais de papéis por tenant | EP-01 | **EM IMPLEMENTAÇÃO** | branch `fix/aud-011-...` | — |
 | AEGIS-AUD-012 | MÉDIO | UX / Authorization Context | Exigir seleção explícita ou último tenant validado no login | EP-01 | ABERTA | — | — |
 | AEGIS-AUD-013 | MÉDIO | Multi-tenancy / Architecture | Aplicar filtros de tenant por convenção e testar o modelo EF | EP-01 | ABERTA | — | — |
 | AEGIS-AUD-014 | MÉDIO | Multi-tenancy / Privileged Access | Restringir e inventariar IgnoreQueryFilters() | EP-01 | ABERTA | — | — |

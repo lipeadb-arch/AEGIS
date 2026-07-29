@@ -26,6 +26,14 @@ public sealed class JwtTokenService : IJwtTokenService
     /// </summary>
     public const string AccountClaim = "account_id";
 
+    /// <summary>
+    /// [AEGIS-AUD-011] Claim da AUTORIDADE GLOBAL de plataforma (<see cref="PlatformRole"/> da identidade).
+    /// Eixo SEPARADO da claim <c>role</c> (tenant-scoped): nunca é derivada de <see cref="User.Role"/> e não
+    /// muda na troca de tenant. Emitida apenas quando há autoridade (<see cref="PlatformRole.PlatformAdmin"/>);
+    /// uma identidade sem papel global não recebe a claim (ausência ≡ <see cref="PlatformRole.None"/>).
+    /// </summary>
+    public const string PlatformRoleClaim = "platform_role";
+
     private const int MinKeyBytes = 32;           // HS256 exige chave de pelo menos 256 bits
     private const int MaxAccessTokenMinutes = 10;  // [Médio 7] teto rígido de vida do access token
 
@@ -62,10 +70,18 @@ public sealed class JwtTokenService : IJwtTokenService
             new(AccountClaim, membership.IdentityAccountId.ToString()),
             new(JwtRegisteredClaimNames.Email, account.Email),
             new("name", membership.DisplayName),
-            // Papel DESTE tenant: quem é TenantAdmin no cliente A pode ser Analyst no B.
+            // Papel DESTE tenant (eixo tenant-scoped): quem é TenantAdmin no cliente A pode ser Analyst no B.
+            // NUNCA carrega PlatformAdmin — o tipo TenantRole não o possui.
             new("role", membership.Role.ToString()),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
+
+        // [AEGIS-AUD-011] Eixo GLOBAL, separado e inequívoco: só é emitido quando a IDENTIDADE tem
+        // autoridade de plataforma. Vem do estado global da conta (nunca de membership.Role) e é idêntico
+        // em todos os tenants — a troca de ambiente reemite `role`, mas não toca este. Ausência da claim ≡
+        // sem autoridade global (None), então não poluímos o token com `platform_role=None`.
+        if (account.PlatformRole == PlatformRole.PlatformAdmin)
+            claims.Add(new Claim(PlatformRoleClaim, account.PlatformRole.ToString()));
 
         var token = new JwtSecurityToken(
             issuer: _opt.Issuer,

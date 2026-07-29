@@ -41,7 +41,7 @@ public record PlatformIdentityDto(Guid Id, string Email, bool HasLocalCredential
 /// A chave é o <paramref name="IdentityAccountId"/> (nunca e-mail), e NÃO trafega senha: esta superfície não
 /// cria identidade nem toca credencial. O <c>TenantId</c> NÃO trafega — vem do claim <c>tenant_id</c> do JWT.
 /// </summary>
-public record AssignUserAccessRequest(Guid IdentityAccountId, string DisplayName, UserRole Role);
+public record AssignUserAccessRequest(Guid IdentityAccountId, string DisplayName, TenantRole Role);
 
 /// <summary>Membership na visão da API. Deliberadamente SEM <c>PasswordHash</c> — nem o hash sai daqui.</summary>
 public record UserDto(

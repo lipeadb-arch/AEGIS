@@ -230,7 +230,7 @@ public sealed class RefreshTokenHashingTests : IDisposable
             ctx.IdentityAccounts.Add(accB);
             await ctx.SaveChangesAsync();
             await using var dbB = NewContext(tenantB);
-            dbB.Users.Add(new User { TenantId = tenantB, IdentityAccountId = accB.Id, DisplayName = "Bob", Role = UserRole.Analyst });
+            dbB.Users.Add(new User { TenantId = tenantB, IdentityAccountId = accB.Id, DisplayName = "Bob", Role = TenantRole.Analyst });
             await dbB.SaveChangesAsync();
         }
 
@@ -281,7 +281,7 @@ public sealed class RefreshTokenHashingTests : IDisposable
         using var db = NewContext(tenantId);
         db.Users.Add(new User
         {
-            TenantId = tenantId, IdentityAccountId = _accountId, DisplayName = "Ana", Role = UserRole.Analyst,
+            TenantId = tenantId, IdentityAccountId = _accountId, DisplayName = "Ana", Role = TenantRole.Analyst,
         });
         db.SaveChanges();
     }

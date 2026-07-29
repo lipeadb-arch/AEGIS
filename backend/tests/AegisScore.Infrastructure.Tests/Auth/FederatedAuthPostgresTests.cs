@@ -89,22 +89,25 @@ public sealed class FederatedAuthPostgresTests
             await Migrator(db).MigrateAsync(Aud007);
 
         var tenant = Guid.NewGuid();
-        Guid accountId;
+        var accountId = Guid.NewGuid();
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
         {
             db.Tenants.Add(new Tenant { Id = tenant, Name = "Alfa", Slug = "alfa-" + tenant.ToString("N")[..8], Status = TenantStatus.Active });
-            var acc = new IdentityAccount
-            {
-                Email = "ana@demo.example.com", PasswordHash = "x",
-                ExternalTenantId = Tid, ExternalObjectId = "aaaaaaaa-0000-0000-0000-000000000001",
-            };
-            db.IdentityAccounts.Add(acc);
             await db.SaveChangesAsync();
-            accountId = acc.Id;
+        }
+        // [AEGIS-AUD-011] IdentityAccount por SQL cru: este teste roda no schema AUD-007, anterior ao eixo
+        // global PlatformRole do modelo EF atual — um INSERT via EF referenciaria a coluna ainda inexistente.
+        await using (var seedConn = await OpenAsync(opt))
+        {
+            await using var cmd = seedConn.CreateCommand();
+            cmd.CommandText =
+                "INSERT INTO \"IdentityAccounts\" (\"Id\",\"Email\",\"PasswordHash\",\"ExternalTenantId\",\"ExternalObjectId\",\"CreatedAt\") " +
+                $"VALUES ('{accountId}','ana@demo.example.com','x','{Tid}','aaaaaaaa-0000-0000-0000-000000000001', now())";
+            await cmd.ExecuteNonQueryAsync();
         }
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
         {
-            var user = new User { TenantId = tenant, IdentityAccountId = accountId, DisplayName = "Ana", Role = UserRole.Analyst };
+            var user = new User { TenantId = tenant, IdentityAccountId = accountId, DisplayName = "Ana", Role = TenantRole.Analyst };
             db.Users.Add(user);
             await db.SaveChangesAsync();
             db.UserRefreshTokens.Add(new UserRefreshToken
