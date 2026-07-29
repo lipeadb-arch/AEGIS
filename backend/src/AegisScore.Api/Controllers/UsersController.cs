@@ -8,16 +8,18 @@ using AegisScore.Infrastructure.Auth;
 namespace AegisScore.Api.Controllers;
 
 /// <summary>
-/// Provisionamento de identidades do tenant.
+/// Concessão de acesso a tenant (memberships) e leitura dos ambientes da pessoa autenticada.
 ///
 /// ⚠️ Controller SEPARADO do <see cref="AuthController"/> de propósito. Aquele é a única superfície
 /// ANÔNIMA da API (login/refresh/logout se autenticam por credencial própria, não por Bearer);
-/// pendurar criação de usuário lá colocaria uma rota privilegiada dentro de um controller marcado
-/// <c>[AllowAnonymous]</c> — um deslize de atributo viraria criação de conta sem autenticação.
+/// pendurar concessão de acesso lá colocaria uma rota privilegiada dentro de um controller marcado
+/// <c>[AllowAnonymous]</c> — um deslize de atributo viraria escrita sem autenticação.
 ///
-/// O tenant NUNCA vem do corpo nem da rota: é o do claim <c>tenant_id</c> do JWT, e o
-/// <c>StampTenant</c> do DbContext revalida na gravação (fail-closed). Escritas de identidade exigem
-/// <c>TenantAdmin</c> — o mesmo papel que já governa as demais escritas de configuração do tenant.
+/// [AEGIS-AUD-010] Esta superfície NÃO cria identidade global nem toca credencial: a criação da
+/// <c>IdentityAccount</c> é autoridade de PLATAFORMA (ver <see cref="PlatformIdentitiesController"/>). Aqui
+/// só se concede acesso ao tenant AMBIENTE a uma identidade que JÁ existe, exigindo <c>TenantAdmin</c>. O
+/// tenant NUNCA vem do corpo nem da rota: é o do claim <c>tenant_id</c> do JWT, e o <c>StampTenant</c> do
+/// DbContext revalida na gravação (fail-closed).
 /// </summary>
 [ApiController]
 [Route("api/v1/users")]
@@ -26,13 +28,11 @@ public sealed class UsersController : ControllerBase
 {
     private readonly IUserManagementService _users;
     private readonly IAuthService _auth;
-    private readonly ITenantContext _tenant;
 
-    public UsersController(IUserManagementService users, IAuthService auth, ITenantContext tenant)
+    public UsersController(IUserManagementService users, IAuthService auth)
     {
         _users = users;
         _auth = auth;
-        _tenant = tenant;
     }
 
     /// <summary>
@@ -55,58 +55,42 @@ public sealed class UsersController : ControllerBase
     }
 
     /// <summary>
-    /// Tenant ambiente resolvido pelo JWT. Garantido não-nulo numa rota autenticada — o
-    /// <c>TenantConsistencyMiddleware</c> barra (403) qualquer token sem claim <c>tenant_id</c> válida.
-    /// </summary>
-    private Guid CurrentTenantId => _tenant.TenantId
-        ?? throw new InvalidOperationException("Rota autenticada sem tenant no contexto.");
-
-    /// <summary>Cria uma identidade neste tenant. 409 se o e-mail já for usado AQUI.</summary>
-    [Authorize(Roles = "TenantAdmin")]
-    [HttpPost]
-    public async Task<ActionResult<UserDto>> Create(CreateUserRequest req, CancellationToken ct)
-    {
-        var result = await _users.CreateUserAsync(
-            new CreateUserCommand(req.Email, req.DisplayName, req.Password, req.Role), ct);
-
-        return Respond(result);
-    }
-
-    /// <summary>
-    /// Concede/atualiza o acesso de um e-mail a ESTE tenant (idempotente): cria a identidade se ausente
-    /// (exige senha inicial), ou aplica o papel e reativa se já existir.
+    /// [AEGIS-AUD-010] Concede/atualiza o acesso de uma identidade global a ESTE tenant (idempotente): cria
+    /// o membership se ausente, ou aplica papel/nome e reativa se já existir. A identidade deve preexistir —
+    /// um <c>IdentityAccountId</c> inexistente devolve 404 genérico, sem criar nada.
     ///
-    /// O tenant de destino é sempre o ambiente — o modelo é Um-para-Muitos, então não existe "mover"
-    /// alguém para outro tenant. Passamos <see cref="CurrentTenantId"/> ao comando como ASSERÇÃO: o
-    /// serviço recusa se divergir do contexto.
+    /// O tenant de destino é sempre o ambiente (Um-para-Muitos, sem "mover" alguém entre tenants). Nem
+    /// e-mail, nem senha, nem TenantId trafegam: a descoberta é por <c>IdentityAccountId</c> e o tenant vem
+    /// do JWT. Escrita exige <c>TenantAdmin</c>.
     /// </summary>
     [Authorize(Roles = "TenantAdmin")]
     [HttpPost("access")]
-    public async Task<ActionResult<UserDto>> AssignAccess(
+    public async Task<ActionResult<UserDto>> GrantAccess(
         AssignUserAccessRequest req, CancellationToken ct)
     {
-        var result = await _users.AssignUserToTenantAsync(
-            new AssignUserToTenantCommand(CurrentTenantId, req.Email, req.Role, req.InitialPassword), ct);
+        var result = await _users.GrantAccessAsync(
+            new GrantTenantAccessCommand(req.IdentityAccountId, req.DisplayName, req.Role), ct);
 
         return Respond(result);
     }
 
     /// <summary>Traduz o desfecho do serviço em HTTP. A cópia de validação vem do serviço (dono da política).</summary>
-    private ActionResult<UserDto> Respond(UserProvisioningResult result) => result.Status switch
+    private ActionResult<UserDto> Respond(AccessGrantResult result) => result.Status switch
     {
-        UserProvisioningStatus.Created =>
-            // Sem Location: identidade ainda não tem GET canônico, e apontar de volta para este POST
+        AccessGrantStatus.Granted =>
+            // Sem Location: membership ainda não tem GET canônico, e apontar de volta para este POST
             // seria uma URL mentirosa (mesma decisão da §20.5).
             StatusCode(StatusCodes.Status201Created, ToDto(result.User!)),
 
-        UserProvisioningStatus.AccessUpdated => Ok(ToDto(result.User!)),
+        AccessGrantStatus.AccessUpdated => Ok(ToDto(result.User!)),
 
-        UserProvisioningStatus.EmailAlreadyInUse =>
-            Conflict("Já existe uma identidade com este e-mail neste cliente."),
+        // Identidade global inexistente: resposta GENÉRICA (404), sem revelar mais nem criar nada.
+        AccessGrantStatus.IdentityNotFound =>
+            NotFound(new { title = "Identidade não encontrada.", status = 404 }),
 
         // Recusa de AUTORIZAÇÃO, não de formato: o pedido é sintaticamente válido e foi negado por
         // política de privilégio. 403 conta essa história; 400 a esconderia como erro de digitação.
-        UserProvisioningStatus.RoleNotAssignable => Forbid(),
+        AccessGrantStatus.RoleNotAssignable => Forbid(),
 
         _ => BadRequest(result.Detail ?? "Requisição inválida."),
     };

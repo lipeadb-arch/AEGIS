@@ -20,22 +20,30 @@ public record TenantOptionDto(Guid Id, string Name, string Slug, string Role);
 /// </summary>
 public record SwitchTenantRequest(Guid TargetTenantId);
 
-// ---- Users (identidades) ----
+// ---- Platform: provisionamento global de identidade (PlatformAdmin) ----
 /// <summary>
-/// Criação de identidade no tenant ambiente. O <c>TenantId</c> NÃO trafega: vem do claim
-/// <c>tenant_id</c> do JWT (Zero Trust). A senha trafega em claro dentro do TLS e é imediatamente
-/// derivada em PBKDF2 no servidor — nunca persistida nem registrada em log.
+/// [AEGIS-AUD-010] Provisionamento de uma identidade GLOBAL. Só o e-mail e, conforme o modo de
+/// autenticação, uma senha local OPCIONAL — NÃO há TenantId, membership, papel nem lista de tenants.
+/// A senha (quando enviada) trafega em claro dentro do TLS e é derivada em PBKDF2 no servidor; ausência é
+/// federated-only (a conta autentica só pelo Entra). Nunca persistida nem registrada em log.
 /// </summary>
-public record CreateUserRequest(string Email, string DisplayName, string Password, UserRole Role);
+public record ProvisionIdentityRequest(string Email, string? Password = null);
 
 /// <summary>
-/// Concessão IDEMPOTENTE de acesso ao tenant ambiente. <paramref name="InitialPassword"/> só é exigida
-/// quando a identidade ainda não existe aqui — identidades de tenants distintos são independentes e não
-/// compartilham credencial.
+/// Identidade global na visão da API. Deliberadamente SEM <c>PasswordHash</c> — nem o hash sai daqui.
+/// <paramref name="HasLocalCredential"/> distingue conta local/híbrida de federated-only sem revelar o segredo.
 /// </summary>
-public record AssignUserAccessRequest(string Email, UserRole Role, string? InitialPassword = null);
+public record PlatformIdentityDto(Guid Id, string Email, bool HasLocalCredential, DateTimeOffset CreatedAt);
 
-/// <summary>Identidade na visão da API. Deliberadamente SEM <c>PasswordHash</c> — nem o hash sai daqui.</summary>
+// ---- Users (concessão de acesso a tenant) ----
+/// <summary>
+/// [AEGIS-AUD-010] Concessão IDEMPOTENTE de acesso ao tenant ambiente a uma identidade global JÁ EXISTENTE.
+/// A chave é o <paramref name="IdentityAccountId"/> (nunca e-mail), e NÃO trafega senha: esta superfície não
+/// cria identidade nem toca credencial. O <c>TenantId</c> NÃO trafega — vem do claim <c>tenant_id</c> do JWT.
+/// </summary>
+public record AssignUserAccessRequest(Guid IdentityAccountId, string DisplayName, UserRole Role);
+
+/// <summary>Membership na visão da API. Deliberadamente SEM <c>PasswordHash</c> — nem o hash sai daqui.</summary>
 public record UserDto(
     Guid Id, Guid TenantId, string Email, string DisplayName, string Role,
     bool IsActive, DateTimeOffset CreatedAt, DateTimeOffset? LastLoginAt);

@@ -69,9 +69,14 @@ public sealed class AuthService : IAuthService
         //    filter), então esta leitura não precisa de exceção alguma — e o e-mail é único global.
         var account = await _db.IdentityAccounts.FirstOrDefaultAsync(a => a.Email == normalized, ct);
 
-        // Verifica a senha SEMPRE (mesmo sem conta) para não vazar existência do e-mail por timing.
-        var ok = _hasher.Verify(password ?? "", account?.PasswordHash ?? DummyHash);
-        if (account is null || !ok)
+        // [AEGIS-AUD-010] PasswordHash é nullable: uma conta federated-only não tem credencial local.
+        // Verifica SEMPRE contra ALGUM hash (o dummy quando não há conta OU não há hash) para não vazar
+        // por timing se o e-mail existe nem se a conta tem senha local. Uma conta sem hash NUNCA autentica
+        // pelo fluxo Local — o teste explícito `storedHash is null` barra mesmo que o Verify passe por acaso
+        // (ex.: senha == dummy). Só uma conta COM hash e senha correta segue adiante.
+        var storedHash = account?.PasswordHash;
+        var ok = _hasher.Verify(password ?? "", storedHash ?? DummyHash);
+        if (account is null || storedHash is null || !ok)
             return null;
 
         // 2) Só DEPOIS de a credencial provar quem é a pessoa, resolvemos os ambientes dela.

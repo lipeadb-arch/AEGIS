@@ -2,68 +2,50 @@ using AegisScore.Domain;
 
 namespace AegisScore.Application.Services;
 
-// ---- Comandos de entrada ----------------------------------------------------
+// ---- Comando de entrada -----------------------------------------------------
 
 /// <summary>
-/// Provisionamento de uma identidade no tenant AMBIENTE. Não há <c>TenantId</c> aqui de propósito: o
-/// vínculo é derivado do claim <c>tenant_id</c> do JWT e revalidado no carimbo de gravação. O que não
-/// trafega não pode ser forjado.
-/// </summary>
-public record CreateUserCommand(string Email, string DisplayName, string Password, UserRole Role);
-
-/// <summary>
-/// Concessão de acesso de um e-mail ao tenant AMBIENTE.
+/// [AEGIS-AUD-010] Concessão de acesso ao tenant AMBIENTE a uma identidade global JÁ EXISTENTE.
 ///
-/// ⚠️ <paramref name="TenantId"/> é ASSERÇÃO de defesa em profundidade, não parâmetro de roteamento
-/// (mesmo desenho de <see cref="IControlStateWriter.ApplyVerdictAsync"/>): precisa casar com o tenant do
-/// contexto, senão a operação é recusada. O modelo é Um-para-Muitos — <see cref="User"/> é
-/// <see cref="ITenantOwned"/> com UM <c>TenantId</c> —, então "atribuir um usuário a outro tenant" é
-/// impossível por construção: o <c>StampTenant</c> fail-closed rejeita a escrita cruzada. A operação
-/// correta é o admin DO TENANT DE DESTINO conceder o acesso dentro do próprio ambiente.
+/// A chave de descoberta é o <paramref name="IdentityAccountId"/> — a chave estrangeira da
+/// <see cref="IdentityAccount"/>, NUNCA o e-mail: casar por string era o vetor que a identidade global
+/// fechou. Não há <c>TenantId</c> aqui de propósito: o tenant vem do claim <c>tenant_id</c> do JWT e é
+/// revalidado no carimbo de gravação — o que não trafega não pode ser forjado para rotear a escrita a
+/// outro ambiente. Também não há senha/InitialPassword: esta autoridade não toca credencial global.
 /// </summary>
-/// <param name="InitialPassword">
-/// Obrigatória apenas quando a identidade ainda NÃO existe neste tenant. Identidades de tenants
-/// distintos são independentes (senha, papel e refresh tokens próprios) — não há nada a herdar do
-/// "mesmo" e-mail noutro ambiente, e tentar herdar exigiria leitura cross-tenant.
-/// </param>
-public record AssignUserToTenantCommand(
-    Guid TenantId, string Email, UserRole Role, string? InitialPassword = null);
+/// <param name="DisplayName">Nome exibido NESTE cliente (a mesma pessoa pode se apresentar diferente em cada um).</param>
+/// <param name="Role">Papel exercido NESTE tenant. <see cref="UserRole.PlatformAdmin"/> não é atribuível aqui.</param>
+public record GrantTenantAccessCommand(Guid IdentityAccountId, string DisplayName, UserRole Role);
 
-// ---- Resultados de saída ----------------------------------------------------
+// ---- Resultado de saída -----------------------------------------------------
 
 /// <summary>
-/// Desfecho do provisionamento. Como na §20, conflito e validação são resultados ESPERADOS do fluxo
-/// (→ 409/400 na borda) e viajam como VALOR: o <c>GlobalExceptionHandlingMiddleware</c> traduziria
-/// qualquer throw num 500 opaco. Só <see cref="TenantSecurityException"/> sobe.
+/// Desfecho da concessão. Como na §20/§21, conflito e validação são resultados ESPERADOS do fluxo (→ na
+/// borda) e viajam como VALOR: o <c>GlobalExceptionHandlingMiddleware</c> traduziria qualquer throw num
+/// 500 opaco. Só <see cref="TenantSecurityException"/> sobe.
 /// </summary>
-public enum UserProvisioningStatus
+public enum AccessGrantStatus
 {
-    /// <summary>Identidade criada neste tenant.</summary>
-    Created = 0,
+    /// <summary>Novo membership criado no tenant ambiente.</summary>
+    Granted = 0,
 
-    /// <summary>Identidade já existia neste tenant; papel/estado atualizados (só em Assign).</summary>
+    /// <summary>Membership já existia neste tenant; papel/nome/estado atualizados (idempotente, reativa se inativa).</summary>
     AccessUpdated = 1,
 
-    /// <summary>Já existe identidade com este e-mail NESTE tenant (índice único <c>(TenantId, Email)</c>).</summary>
-    EmailAlreadyInUse = 2,
-
-    /// <summary>E-mail ausente, malformado ou acima de 256 caracteres.</summary>
-    InvalidEmail = 3,
-
-    /// <summary>Senha fora da política (ver <see cref="IUserManagementService"/>).</summary>
-    WeakPassword = 4,
+    /// <summary>
+    /// Nenhuma identidade global com o <c>IdentityAccountId</c> informado. Resposta GENÉRICA — a identidade
+    /// NÃO é criada aqui (o provisionamento global é a autoridade separada do <see cref="IIdentityProvisioningService"/>).
+    /// </summary>
+    IdentityNotFound = 2,
 
     /// <summary>Nome de exibição ausente ou acima de 200 caracteres.</summary>
-    InvalidDisplayName = 5,
+    InvalidDisplayName = 3,
 
     /// <summary>Papel não atribuível por esta superfície — ver a nota de escalonamento na interface.</summary>
-    RoleNotAssignable = 6,
-
-    /// <summary>Assign de identidade inexistente sem <c>InitialPassword</c>: não há senha a herdar.</summary>
-    PasswordRequired = 7,
+    RoleNotAssignable = 4,
 }
 
-/// <summary>Projeção SEGURA de uma identidade. NUNCA carrega <c>PasswordHash</c>.</summary>
+/// <summary>Projeção SEGURA de um membership. NUNCA carrega <c>PasswordHash</c> (a credencial é da pessoa).</summary>
 public record UserSummary(
     Guid Id,
     Guid TenantId,
@@ -75,76 +57,65 @@ public record UserSummary(
     DateTimeOffset? LastLoginAt);
 
 /// <summary>
-/// Resultado do provisionamento. <paramref name="User"/> só vem preenchido no sucesso;
-/// <paramref name="Detail"/> explica a recusa de validação (a política vive no serviço, não na borda —
-/// duplicá-la no controller garantiria divergência).
+/// Resultado da concessão. <paramref name="User"/> só vem preenchido no sucesso; <paramref name="Detail"/>
+/// explica a recusa de validação (a política vive no serviço, não na borda — duplicá-la garantiria divergência).
 /// </summary>
-public record UserProvisioningResult(
-    UserProvisioningStatus Status, UserSummary? User = null, string? Detail = null)
+public record AccessGrantResult(
+    AccessGrantStatus Status, UserSummary? User = null, string? Detail = null)
 {
     public bool Succeeded =>
-        Status is UserProvisioningStatus.Created or UserProvisioningStatus.AccessUpdated;
+        Status is AccessGrantStatus.Granted or AccessGrantStatus.AccessUpdated;
 
-    public static UserProvisioningResult Ok(UserProvisioningStatus status, UserSummary user) =>
+    public static AccessGrantResult Ok(AccessGrantStatus status, UserSummary user) =>
         new(status, user);
 
-    public static UserProvisioningResult Rejected(UserProvisioningStatus status, string? detail = null) =>
+    public static AccessGrantResult Rejected(AccessGrantStatus status, string? detail = null) =>
         new(status, null, detail);
 }
 
 // ---- Porta ------------------------------------------------------------------
 
 /// <summary>
-/// Serviço de aplicação de IDENTIDADES. Cria usuários e concede acesso, sempre DENTRO do tenant
-/// ambiente.
+/// [AEGIS-AUD-010] Serviço de aplicação de CONCESSÃO DE ACESSO A TENANT. Cria/atualiza o <see cref="User"/>
+/// (membership) SEMPRE dentro do tenant ambiente. É a autoridade tenant-scoped, SEPARADA do provisionamento
+/// global de identidade (<see cref="IIdentityProvisioningService"/>): esta superfície NÃO cria
+/// <see cref="IdentityAccount"/>, não toca <c>PasswordHash</c> nem o vínculo Entra
+/// (<c>ExternalTenantId</c>/<c>ExternalObjectId</c>), e não descobre identidades por e-mail.
 ///
-/// <b>Modelo de vínculo — Um-para-Muitos (decisão firmada).</b> <see cref="User"/> é
-/// <see cref="ITenantOwned"/> com UM <c>TenantId</c>. Um mesmo e-mail em dois tenants são DUAS
-/// identidades independentes — senha, papel, <c>IsActive</c> e refresh tokens próprios —, e o índice
-/// único é <c>(TenantId, Email)</c>, não <c>Email</c>. É o que permite que nenhum token atravesse a
-/// fronteira: não existe sujeito capaz de "trocar de tenant".
+/// <b>Modelo de vínculo — Um-para-Muitos.</b> <see cref="User"/> é <see cref="ITenantOwned"/> com UM
+/// <c>TenantId</c>; a mesma <see cref="IdentityAccount"/> (global) pode ter um membership por tenant, e o
+/// índice único é <c>(TenantId, IdentityAccountId)</c>. É o que impede que qualquer token atravesse a
+/// fronteira: não existe sujeito capaz de "trocar de tenant" sem um membership ativo lá.
 ///
-/// <b>Nada aqui fura o isolamento.</b> Sem leitura cross-tenant, sem <c>IgnoreQueryFilters</c>, sem
-/// bypass de <c>TenantId</c>. O serviço não sabe — e não pode saber — se um e-mail existe noutro
-/// ambiente: essa consulta é justamente o que o Global Query Filter fail-closed impede.
+/// <b>A identidade global deve PREEXISTIR.</b> O fluxo canônico é: o <c>PlatformAdmin</c> provisiona a
+/// identidade (por e-mail) pela superfície global; depois o <c>TenantAdmin</c> concede o acesso usando o
+/// <c>IdentityAccountId</c> devolvido. Um <c>IdentityAccountId</c> inexistente devolve
+/// <see cref="AccessGrantStatus.IdentityNotFound"/> — nada é criado.
 ///
-/// <b>⚠️ Escalonamento de privilégio.</b> <see cref="UserRole.PlatformAdmin"/> NÃO é atribuível por
-/// esta superfície. Ele autoriza operações de PLATAFORMA (criar tenants — ver a §20), então deixar um
-/// <c>TenantAdmin</c> emiti-lo transformaria admin de cliente em admin da plataforma com um POST. É
-/// provisionado fora do onboarding self-service, como o próprio <see cref="UserRole"/> documenta.
+/// <b>Nada aqui fura o isolamento.</b> O tenant é o ambiente (claim do JWT), revalidado pelo
+/// <c>StampTenant</c> fail-closed; um <c>TenantAdmin</c> nunca escreve noutro tenant. Sem leitura
+/// cross-tenant de membership, sem <c>IgnoreQueryFilters</c>.
 ///
-/// <b>Política de senha (NIST SP 800-63B).</b> Comprimento mínimo de 12 e máximo de 128 caracteres,
-/// <b>sem regras de composição</b> — o 800-63B desaconselha exigir maiúscula/dígito/símbolo, porque
-/// empurra o usuário para padrões previsíveis ("Senha@123") sem ganho real de entropia. O hash é
-/// PBKDF2-HMAC-SHA256 com 210k iterações (<c>Pbkdf2PasswordHasher</c>); a senha em claro nunca é
-/// persistida nem registrada em log.
-///
-/// A implementação vive na Infrastructure (toca o DbContext); a porta, aqui — mesmo desenho de
-/// <see cref="ITenantManagementService"/> e <see cref="IControlStateWriter"/>.
+/// <b>⚠️ Escalonamento de privilégio.</b> <see cref="UserRole.PlatformAdmin"/> NÃO é atribuível por esta
+/// superfície — nem na criação, nem na atualização (a porta dos fundos). Ele autoriza operações de
+/// PLATAFORMA (criar tenants, provisionar identidades), então emiti-lo por uma rota de tenant transformaria
+/// admin de cliente em admin da plataforma com um POST. Devolve <see cref="AccessGrantStatus.RoleNotAssignable"/>.
 /// </summary>
 public interface IUserManagementService
 {
     /// <summary>
-    /// Cria uma identidade no tenant ambiente com o papel informado. Estritamente CRIAÇÃO: e-mail já
-    /// usado NESTE tenant devolve <see cref="UserProvisioningStatus.EmailAlreadyInUse"/> (409 na borda).
-    ///
-    /// A unicidade é invariante de BANCO (índice único <c>(TenantId, Email)</c>): a checagem prévia é
-    /// fast-path e a corrida perdida no INSERT resolve no MESMO conflito.
+    /// Concede acesso ao tenant ambiente de forma IDEMPOTENTE a uma identidade global preexistente:
+    /// <list type="bullet">
+    /// <item>identidade ausente → <see cref="AccessGrantStatus.IdentityNotFound"/> (nada é criado);</item>
+    /// <item>sem membership aqui → cria e devolve <see cref="AccessGrantStatus.Granted"/>;</item>
+    /// <item>com membership → aplica papel e nome, REATIVA se estava inativo, e devolve
+    /// <see cref="AccessGrantStatus.AccessUpdated"/>. A credencial global e o vínculo Entra são preservados:
+    /// conceder acesso não é resetar credencial nem revincular identidade.</item>
+    /// </list>
+    /// A unicidade <c>(TenantId, IdentityAccountId)</c> é invariante de BANCO: a checagem prévia é fast-path
+    /// e a corrida perdida no INSERT reconcilia no membership vencedor (idempotente).
     /// </summary>
     /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
-    Task<UserProvisioningResult> CreateUserAsync(CreateUserCommand command, CancellationToken ct = default);
-
-    /// <summary>
-    /// Concede acesso ao tenant ambiente de forma IDEMPOTENTE — o caminho de gestão de permissões:
-    /// <list type="bullet">
-    /// <item>identidade ausente → cria (exige <c>InitialPassword</c>) e devolve <c>Created</c>;</item>
-    /// <item>identidade presente → aplica o papel, REATIVA se estava inativa, e devolve
-    /// <c>AccessUpdated</c>. A senha vigente é preservada: conceder permissão não é resetar credencial.</item>
-    /// </list>
-    /// </summary>
-    /// <exception cref="TenantSecurityException">
-    /// Sem tenant no contexto, ou <c>command.TenantId</c> divergente do tenant ambiente.
-    /// </exception>
-    Task<UserProvisioningResult> AssignUserToTenantAsync(
-        AssignUserToTenantCommand command, CancellationToken ct = default);
+    Task<AccessGrantResult> GrantAccessAsync(
+        GrantTenantAccessCommand command, CancellationToken ct = default);
 }

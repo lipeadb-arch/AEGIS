@@ -1,0 +1,79 @@
+using System.Reflection;
+using AegisScore.Api.Controllers;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using FluentAssertions;
+using Xunit;
+
+namespace AegisScore.Infrastructure.Tests.Auth;
+
+/// <summary>
+/// [AEGIS-AUD-010] O contrato de AUTORIZAÇÃO das superfícies separadas de identidade é parte da correção,
+/// não detalhe cosmético — afrouxar um atributo reabriria o vetor. Sem harness de integração HTTP, a
+/// garantia é verificada por reflexão sobre os atributos declarados:
+///  - a rota GLOBAL (<see cref="PlatformIdentitiesController"/>) exige <c>PlatformAdmin</c>, então um
+///    <c>TenantAdmin</c> não a alcança;
+///  - a concessão de acesso (<see cref="UsersController"/>) exige <c>TenantAdmin</c>;
+///  - a rota legada <c>POST /api/v1/users</c> (que deixava o TenantAdmin criar identidade global) NÃO existe.
+/// </summary>
+public sealed class IdentitySeparationAuthorizationTests
+{
+    // ---- Rota global: exclusiva de PlatformAdmin --------------------------------
+
+    [Fact]
+    public void RotaGlobalDeIdentidade_ExigePlatformAdmin()
+    {
+        var authorize = typeof(PlatformIdentitiesController)
+            .GetCustomAttributes<AuthorizeAttribute>(inherit: true)
+            .ToList();
+
+        authorize.Should().ContainSingle("a superfície global é protegida a nível de classe");
+        authorize[0].Roles.Should().Be("PlatformAdmin",
+            "criar identidade global é operação de plataforma — um TenantAdmin nunca a alcança");
+    }
+
+    [Fact]
+    public void RotaGlobalDeIdentidade_TemTemplateEMetodoEsperados()
+    {
+        typeof(PlatformIdentitiesController).GetCustomAttribute<RouteAttribute>()!
+            .Template.Should().Be("api/v1/platform/identities");
+
+        var provision = typeof(PlatformIdentitiesController).GetMethod(nameof(PlatformIdentitiesController.Provision))!;
+        provision.GetCustomAttribute<HttpPostAttribute>().Should().NotBeNull("o provisionamento é um POST");
+    }
+
+    // ---- Concessão de acesso: exige TenantAdmin ---------------------------------
+
+    [Fact]
+    public void ConcessaoDeAcesso_ExigeTenantAdmin()
+    {
+        var grant = typeof(UsersController).GetMethod(nameof(UsersController.GrantAccess))!;
+        var authorize = grant.GetCustomAttribute<AuthorizeAttribute>();
+
+        authorize.Should().NotBeNull("a concessão de acesso é uma escrita privilegiada");
+        authorize!.Roles.Should().Be("TenantAdmin");
+    }
+
+    // ---- A rota legada não pode sobreviver --------------------------------------
+
+    [Fact]
+    public void UsersController_NaoTemMaisRotaDeCriacaoDeIdentidade()
+    {
+        // A antiga POST /api/v1/users (raiz) criava a IdentityAccount por um TenantAdmin. Nenhum POST deste
+        // controller pode mais mapear para a raiz: o único POST permitido é o "access" (concessão).
+        var posts = typeof(UsersController).GetMethods()
+            .Select(m => m.GetCustomAttribute<HttpPostAttribute>())
+            .Where(a => a is not null)
+            .ToList();
+
+        posts.Should().ContainSingle("o único POST é a concessão de acesso");
+        posts[0]!.Template.Should().Be("access", "não há rota legada na raiz que contorne a separação");
+    }
+
+    [Fact]
+    public void UsersController_NaoTemAcaoCreate()
+    {
+        typeof(UsersController).GetMethod("Create")
+            .Should().BeNull("a criação de identidade saiu desta superfície (virou provisionamento global)");
+    }
+}
