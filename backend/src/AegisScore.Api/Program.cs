@@ -143,6 +143,10 @@ builder.Services.AddAuthorization(options =>
         .AddAuthenticationSchemes(FederatedAuthDefaults.Scheme)
         .RequireAuthenticatedUser()
         .AddRequirements(new FederatedExchangeRequirement()));
+
+    // [AEGIS-AUD-011] Policy de administração de PLATAFORMA: exige a claim global platform_role=PlatformAdmin
+    // (nunca derivada de User.Role). Substitui [Authorize(Roles="PlatformAdmin")] nas rotas de plataforma.
+    PlatformAuthorization.AddPlatformPolicy(options);
 });
 // Handler da policy da troca federada (lê FederationOptions).
 builder.Services.AddSingleton<IAuthorizationHandler, FederatedExchangeHandler>();

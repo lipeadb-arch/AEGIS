@@ -48,7 +48,7 @@ public sealed class UserManagementServiceTests : IDisposable
         await using var db = NewContext(TenantA);
         // Um IdentityAccountId que não existe: resposta genérica, e NADA é criado (nem conta, nem membership).
         var result = await ServiceFor(db, TenantA).GrantAccessAsync(
-            new GrantTenantAccessCommand(Guid.NewGuid(), "Ana", UserRole.Analyst));
+            new GrantTenantAccessCommand(Guid.NewGuid(), "Ana", TenantRole.Analyst));
 
         result.Status.Should().Be(AccessGrantStatus.IdentityNotFound);
         (await db.IdentityAccounts.AnyAsync()).Should().BeFalse("a concessão nunca provisiona identidade global");
@@ -62,7 +62,7 @@ public sealed class UserManagementServiceTests : IDisposable
 
         await using var db = NewContext(TenantA);
         var result = await ServiceFor(db, TenantA).GrantAccessAsync(
-            new GrantTenantAccessCommand(accountId, "  Ana Silva  ", UserRole.Manager));
+            new GrantTenantAccessCommand(accountId, "  Ana Silva  ", TenantRole.Manager));
 
         result.Status.Should().Be(AccessGrantStatus.Granted);
         result.User!.Email.Should().Be("ana@demo.example.com", "o e-mail vem da identidade global resolvida");
@@ -71,7 +71,7 @@ public sealed class UserManagementServiceTests : IDisposable
         saved.IdentityAccountId.Should().Be(accountId);
         saved.TenantId.Should().Be(TenantA, "carimbado pelo SaveChanges, não pelo chamador");
         saved.DisplayName.Should().Be("Ana Silva", "aparado, sem inventar nome a partir do e-mail");
-        saved.Role.Should().Be(UserRole.Manager);
+        saved.Role.Should().Be(TenantRole.Manager);
         saved.IsActive.Should().BeTrue();
     }
 
@@ -90,7 +90,7 @@ public sealed class UserManagementServiceTests : IDisposable
 
         await using (var db = NewContext(TenantA))
             await ServiceFor(db, TenantA).GrantAccessAsync(
-                new GrantTenantAccessCommand(accountId, "Ana", UserRole.TenantAdmin));
+                new GrantTenantAccessCommand(accountId, "Ana", TenantRole.TenantAdmin));
 
         await using var assert = NewContext(null);
         var acc = await assert.IdentityAccounts.SingleAsync(a => a.Id == accountId);
@@ -112,7 +112,7 @@ public sealed class UserManagementServiceTests : IDisposable
             seedB.Users.Add(new User
             {
                 TenantId = TenantB, IdentityAccountId = accountId,
-                DisplayName = "Ana (B)", Role = UserRole.Analyst, IsActive = false,
+                DisplayName = "Ana (B)", Role = TenantRole.Analyst, IsActive = false,
             });
             await seedB.SaveChangesAsync();
         }
@@ -121,7 +121,7 @@ public sealed class UserManagementServiceTests : IDisposable
         await using (var db = NewContext(TenantA))
         {
             var result = await ServiceFor(db, TenantA).GrantAccessAsync(
-                new GrantTenantAccessCommand(accountId, "Ana (A)", UserRole.Manager));
+                new GrantTenantAccessCommand(accountId, "Ana (A)", TenantRole.Manager));
             result.Status.Should().Be(AccessGrantStatus.Granted);
         }
 
@@ -131,11 +131,11 @@ public sealed class UserManagementServiceTests : IDisposable
         acessos.Should().HaveCount(2);
 
         var emA = acessos.Single(u => u.TenantId == TenantA);
-        emA.Role.Should().Be(UserRole.Manager);
+        emA.Role.Should().Be(TenantRole.Manager);
         emA.IsActive.Should().BeTrue();
 
         var emB = acessos.Single(u => u.TenantId == TenantB);
-        emB.Role.Should().Be(UserRole.Analyst, "o acesso do outro tenant permanece intacto");
+        emB.Role.Should().Be(TenantRole.Analyst, "o acesso do outro tenant permanece intacto");
         emB.IsActive.Should().BeFalse("um TenantAdmin de A nunca escreve no tenant B");
     }
 
@@ -148,13 +148,13 @@ public sealed class UserManagementServiceTests : IDisposable
         await using var db = NewContext(TenantA);
         var svc = ServiceFor(db, TenantA);
 
-        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
+        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", TenantRole.Analyst));
         var result = await svc.GrantAccessAsync(
-            new GrantTenantAccessCommand(accountId, "Ana Silva", UserRole.TenantAdmin));
+            new GrantTenantAccessCommand(accountId, "Ana Silva", TenantRole.TenantAdmin));
 
         result.Status.Should().Be(AccessGrantStatus.AccessUpdated);
         var saved = await db.Users.SingleAsync();
-        saved.Role.Should().Be(UserRole.TenantAdmin);
+        saved.Role.Should().Be(TenantRole.TenantAdmin);
         saved.DisplayName.Should().Be("Ana Silva");
         (await db.Users.CountAsync()).Should().Be(1, "reconcede o MESMO membership, não empilha");
     }
@@ -165,14 +165,14 @@ public sealed class UserManagementServiceTests : IDisposable
         var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
         await using var db = NewContext(TenantA);
         var svc = ServiceFor(db, TenantA);
-        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
+        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", TenantRole.Analyst));
 
         var user = await db.Users.SingleAsync();
         user.IsActive = false;
         await db.SaveChangesAsync();
 
         var result = await svc.GrantAccessAsync(
-            new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
+            new GrantTenantAccessCommand(accountId, "Ana", TenantRole.Analyst));
 
         result.Status.Should().Be(AccessGrantStatus.AccessUpdated);
         (await db.Users.SingleAsync()).IsActive.Should().BeTrue();
@@ -181,32 +181,36 @@ public sealed class UserManagementServiceTests : IDisposable
     // ---- Escalonamento de privilégio barrado ------------------------------------
 
     [Fact]
-    public async Task GrantAccess_PlatformAdmin_NaoEhAtribuivel()
+    public async Task GrantAccess_ValorLegadoDePlatformAdmin_NaoEhAtribuivel()
     {
+        // [AEGIS-AUD-011] PlatformAdmin não existe mais em TenantRole (a autoridade global saiu do
+        // membership). O valor numérico legado (3) chega como (TenantRole)3 — indefinido — e é recusado.
         var accountId = await SeedIdentityAsync("root@demo.example.com", withPassword: true);
         await using var db = NewContext(TenantA);
 
         var result = await ServiceFor(db, TenantA).GrantAccessAsync(
-            new GrantTenantAccessCommand(accountId, "Root", UserRole.PlatformAdmin));
+            new GrantTenantAccessCommand(accountId, "Root", (TenantRole)3));
 
         result.Status.Should().Be(AccessGrantStatus.RoleNotAssignable);
-        (await db.Users.AnyAsync()).Should().BeFalse("nenhum PlatformAdmin nasce por esta superfície");
+        (await db.Users.AnyAsync()).Should().BeFalse("o valor legado de PlatformAdmin não vira membership");
     }
 
     [Fact]
-    public async Task GrantAccess_MembershipExistente_NaoPromoveParaPlatformAdmin()
+    public async Task GrantAccess_NuncaAlteraPlatformRoleDaIdentidade()
     {
-        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
+        // [AEGIS-AUD-011] O eixo GLOBAL vive na IdentityAccount. Conceder/atualizar um membership NUNCA
+        // pode tocar PlatformRole — nem elevar, nem rebaixar.
+        var accountId = await SeedIdentityAsync(
+            "ana@demo.example.com", withPassword: true, platformRole: PlatformRole.PlatformAdmin);
         await using var db = NewContext(TenantA);
         var svc = ServiceFor(db, TenantA);
-        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
 
-        // O caminho de ATUALIZAÇÃO não pode ser a porta dos fundos do escalonamento.
-        var result = await svc.GrantAccessAsync(
-            new GrantTenantAccessCommand(accountId, "Ana", UserRole.PlatformAdmin));
+        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", TenantRole.Analyst));
+        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", TenantRole.TenantAdmin));
 
-        result.Status.Should().Be(AccessGrantStatus.RoleNotAssignable);
-        (await db.Users.SingleAsync()).Role.Should().Be(UserRole.Analyst, "o papel vigente fica intacto");
+        (await db.IdentityAccounts.SingleAsync(a => a.Id == accountId)).PlatformRole
+            .Should().Be(PlatformRole.PlatformAdmin, "a autoridade global da pessoa é imutável por esta superfície");
+        (await db.Users.SingleAsync()).Role.Should().Be(TenantRole.TenantAdmin, "só o papel tenant muda");
     }
 
     // ---- Papéis indefinidos do enum (ASP.NET Core desserializa enum de número) ---
@@ -214,13 +218,13 @@ public sealed class UserManagementServiceTests : IDisposable
     [Fact]
     public async Task GrantAccess_PapelIndefinido_NaoEhAtribuivel_NaoCriaMembership()
     {
-        // "role": 999 chega como (UserRole)999. Uma checagem `!= PlatformAdmin` deixaria passar; a
+        // "role": 999 chega como (TenantRole)999. Uma checagem `!= PlatformAdmin` deixaria passar; a
         // allowlist recusa. Membership NOVO: nada é criado, e a identidade global fica intacta.
         var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true, tid: "t-1", oid: "o-1");
         await using var db = NewContext(TenantA);
 
         var result = await ServiceFor(db, TenantA).GrantAccessAsync(
-            new GrantTenantAccessCommand(accountId, "Ana", (UserRole)999));
+            new GrantTenantAccessCommand(accountId, "Ana", (TenantRole)999));
 
         result.Status.Should().Be(AccessGrantStatus.RoleNotAssignable);
         (await db.Users.AnyAsync()).Should().BeFalse("papel indefinido não persiste membership");
@@ -240,16 +244,16 @@ public sealed class UserManagementServiceTests : IDisposable
 
         await using var db = NewContext(TenantA);
         var svc = ServiceFor(db, TenantA);
-        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
+        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", TenantRole.Analyst));
 
         // Atualização com papel indefinido: rejeita ANTES de qualquer mutação (papel/nome/estado intactos).
         var result = await svc.GrantAccessAsync(
-            new GrantTenantAccessCommand(accountId, "Mallory", (UserRole)999));
+            new GrantTenantAccessCommand(accountId, "Mallory", (TenantRole)999));
 
         result.Status.Should().Be(AccessGrantStatus.RoleNotAssignable);
 
         var membership = await db.Users.SingleAsync();
-        membership.Role.Should().Be(UserRole.Analyst, "papel vigente intacto");
+        membership.Role.Should().Be(TenantRole.Analyst, "papel vigente intacto");
         membership.DisplayName.Should().Be("Ana", "o nome não é alterado por uma recusa de papel");
         membership.IsActive.Should().BeTrue("estado intacto");
 
@@ -260,10 +264,10 @@ public sealed class UserManagementServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData(UserRole.Analyst)]
-    [InlineData(UserRole.Manager)]
-    [InlineData(UserRole.TenantAdmin)]
-    public async Task GrantAccess_PapeisTenantValidos_SaoAceitos(UserRole role)
+    [InlineData(TenantRole.Analyst)]
+    [InlineData(TenantRole.Manager)]
+    [InlineData(TenantRole.TenantAdmin)]
+    public async Task GrantAccess_PapeisTenantValidos_SaoAceitos(TenantRole role)
     {
         var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
         await using var db = NewContext(TenantA);
@@ -284,7 +288,7 @@ public sealed class UserManagementServiceTests : IDisposable
         await using var db = NewContext(TenantA);
 
         var result = await ServiceFor(db, TenantA).GrantAccessAsync(
-            new GrantTenantAccessCommand(accountId, "   ", UserRole.Analyst));
+            new GrantTenantAccessCommand(accountId, "   ", TenantRole.Analyst));
 
         result.Status.Should().Be(AccessGrantStatus.InvalidDisplayName);
         (await db.Users.AnyAsync()).Should().BeFalse();
@@ -296,7 +300,7 @@ public sealed class UserManagementServiceTests : IDisposable
         var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
         await using var db = NewContext(null);
         var act = () => ServiceFor(db, null).GrantAccessAsync(
-            new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
+            new GrantTenantAccessCommand(accountId, "Ana", TenantRole.Analyst));
 
         await act.Should().ThrowAsync<TenantSecurityException>();
     }
@@ -309,14 +313,14 @@ public sealed class UserManagementServiceTests : IDisposable
         var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
         await using var db = NewContext(TenantA);
         await ServiceFor(db, TenantA).GrantAccessAsync(
-            new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
+            new GrantTenantAccessCommand(accountId, "Ana", TenantRole.Analyst));
 
         // Insert cru, contornando o serviço: é o índice (TenantId, IdentityAccountId) que precisa
         // barrar a corrida, não o if do C#.
         db.Users.Add(new User
         {
             TenantId = TenantA, IdentityAccountId = accountId,
-            DisplayName = "clone", Role = UserRole.Analyst,
+            DisplayName = "clone", Role = TenantRole.Analyst,
         });
 
         var act = () => db.SaveChangesAsync();
@@ -330,7 +334,8 @@ public sealed class UserManagementServiceTests : IDisposable
     /// toda concessão — nesta arquitetura a criação da identidade é autoridade SEPARADA (PlatformAdmin).
     /// </summary>
     private async Task<Guid> SeedIdentityAsync(
-        string email, bool withPassword, string? tid = null, string? oid = null)
+        string email, bool withPassword, string? tid = null, string? oid = null,
+        PlatformRole platformRole = PlatformRole.None)
     {
         await using var db = NewContext(null);
         var account = new IdentityAccount
@@ -339,6 +344,7 @@ public sealed class UserManagementServiceTests : IDisposable
             PasswordHash = withPassword ? new Pbkdf2PasswordHasher().Hash("uma frase longa e boa") : null,
             ExternalTenantId = tid,
             ExternalObjectId = oid,
+            PlatformRole = platformRole,
         };
         db.IdentityAccounts.Add(account);
         await db.SaveChangesAsync();

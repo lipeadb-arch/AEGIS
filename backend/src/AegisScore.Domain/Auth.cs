@@ -44,6 +44,17 @@ public class IdentityAccount : Entity
     /// <summary>Object ID (<c>oid</c>) estável da pessoa no Entra. Ver <see cref="ExternalTenantId"/>.</summary>
     public string? ExternalObjectId { get; set; }
 
+    /// <summary>
+    /// [AEGIS-AUD-011] Autoridade GLOBAL de plataforma da PESSOA — deliberadamente separada do papel
+    /// tenant-scoped (<see cref="User.Role"/>). Antes o privilégio de plataforma era um valor do enum
+    /// de membership (<c>PlatformAdmin</c>), então autoridade global dependia do tenant ativo e trafegava
+    /// na mesma claim <c>role</c>. Aqui a autoridade global mora na identidade (não no membership), é
+    /// invariável à troca de tenant e viaja numa claim própria (<c>platform_role</c>). Padrão
+    /// <see cref="PlatformRole.None"/>: quase toda identidade é apenas um usuário de tenant; o
+    /// <c>PlatformAdmin</c> é provisionado fora do self-service (nunca por concessão de membership).
+    /// </summary>
+    public PlatformRole PlatformRole { get; set; } = PlatformRole.None;
+
     /// <summary>Os ambientes a que esta pessoa tem acesso (um <see cref="User"/> por tenant).</summary>
     public ICollection<User> Memberships { get; set; } = new List<User>();
 }
@@ -69,8 +80,12 @@ public class User : Entity, ITenantOwned
     /// <summary>Nome exibido NESTE cliente (a mesma pessoa pode se apresentar diferente em cada um).</summary>
     public string DisplayName { get; set; } = "";
 
-    /// <summary>Papel exercido NESTE tenant. A troca de ambiente reemite o token com o papel de lá.</summary>
-    public UserRole Role { get; set; } = UserRole.Analyst;
+    /// <summary>
+    /// [AEGIS-AUD-011] Papel TENANT-SCOPED exercido NESTE tenant. A troca de ambiente reemite o token com o
+    /// papel de lá. É estritamente <see cref="TenantRole"/> — o antigo <c>PlatformAdmin</c> (autoridade
+    /// global) NÃO pode ser gravado aqui; ele vive em <see cref="IdentityAccount.PlatformRole"/>.
+    /// </summary>
+    public TenantRole Role { get; set; } = TenantRole.Analyst;
 
     /// <summary>Desativado ≠ deletado: membership inativo não autentica nem aparece no seletor (fail-closed).</summary>
     public bool IsActive { get; set; } = true;
@@ -81,11 +96,20 @@ public class User : Entity, ITenantOwned
 }
 
 /// <summary>
-/// Papel do usuário. Analyst/Manager/TenantAdmin são papéis DENTRO de um tenant. PlatformAdmin é um
-/// papel de PLATAFORMA (operações cross-tenant, ex.: criar tenants) — provisionado fora do onboarding
-/// self-service e que nenhum usuário de tenant comum deve receber.
+/// [AEGIS-AUD-011] Papel TENANT-SCOPED — o que a pessoa exerce DENTRO de um tenant. É o tipo de
+/// <see cref="User.Role"/> e o valor da claim <c>role</c> do tenant ativo. Os valores numéricos 0/1/2 são
+/// preservados do antigo <c>UserRole</c> para compatibilidade dos dados existentes. <c>PlatformAdmin</c>
+/// deliberadamente NÃO existe aqui: autoridade global não é atributo de membership (ver <see cref="PlatformRole"/>).
 /// </summary>
-public enum UserRole { Analyst = 0, Manager = 1, TenantAdmin = 2, PlatformAdmin = 3 }
+public enum TenantRole { Analyst = 0, Manager = 1, TenantAdmin = 2 }
+
+/// <summary>
+/// [AEGIS-AUD-011] Autoridade GLOBAL de plataforma — atributo da <see cref="IdentityAccount"/> (a pessoa),
+/// não de um membership. Opera cross-tenant (ex.: criar tenants, provisionar identidades) e viaja na claim
+/// própria <c>platform_role</c>, invariável à troca de tenant. Provisionado fora do self-service; nenhuma
+/// concessão de acesso a tenant a atribui.
+/// </summary>
+public enum PlatformRole { None = 0, PlatformAdmin = 1 }
 
 /// <summary>
 /// Refresh token persistido para Refresh Token Rotation (RTR). Cada token é de uso único:

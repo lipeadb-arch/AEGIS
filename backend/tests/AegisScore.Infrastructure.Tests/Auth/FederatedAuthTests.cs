@@ -219,7 +219,7 @@ public sealed class FederatedAuthTests : IDisposable
         jwt.Claims.Should().Contain(c => c.Type == "sub" && c.Value == _membershipId.ToString());
         jwt.Claims.Should().Contain(c => c.Type == "tenant_id" && c.Value == TenantA.ToString());
         jwt.Claims.Should().Contain(c => c.Type == "account_id" && c.Value == _accountId.ToString());
-        jwt.Claims.Should().Contain(c => c.Type == "role" && c.Value == nameof(UserRole.Analyst));
+        jwt.Claims.Should().Contain(c => c.Type == "role" && c.Value == nameof(TenantRole.Analyst));
     }
 
     [Fact]
@@ -276,7 +276,7 @@ public sealed class FederatedAuthTests : IDisposable
         var user = new User
         {
             TenantId = tenantId, IdentityAccountId = accountId, DisplayName = "Ana",
-            Role = UserRole.Analyst, IsActive = active,
+            Role = TenantRole.Analyst, IsActive = active,
         };
         db.Users.Add(user);
         db.SaveChanges();

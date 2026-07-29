@@ -57,12 +57,12 @@ public sealed class TenantSwitchingTests : IDisposable
         // ⚠️ Cada membership é ITenantOwned, então precisa de um contexto ligado AO SEU tenant — o
         // StampTenant fail-closed recusa gravá-los sob um contexto sem tenant (ou sob outro). É a
         // mesma razão pela qual o AuthService abre um contexto por destino em IssuePairAsync.
-        SeedMembership(TenantA, UserRole.Analyst);
-        SeedMembership(TenantB, UserRole.TenantAdmin);
-        SeedMembership(TenantSuspenso, UserRole.Analyst);
+        SeedMembership(TenantA, TenantRole.Analyst);
+        SeedMembership(TenantB, TenantRole.TenantAdmin);
+        SeedMembership(TenantSuspenso, TenantRole.Analyst);
     }
 
-    private void SeedMembership(Guid tenantId, UserRole role)
+    private void SeedMembership(Guid tenantId, TenantRole role)
     {
         using var db = NewContext(tenantId);
         db.Users.Add(new User
@@ -102,7 +102,7 @@ public sealed class TenantSwitchingTests : IDisposable
         lista.Select(t => t.Slug).Should().BeEquivalentTo(new[] { "alfa", "bravo" },
             "tenant suspenso não entra no seletor");
         lista.Select(t => t.Name).Should().BeInAscendingOrder();
-        lista.Single(t => t.Slug == "bravo").Role.Should().Be(UserRole.TenantAdmin,
+        lista.Single(t => t.Slug == "bravo").Role.Should().Be(TenantRole.TenantAdmin,
             "o papel é o DAQUELE cliente");
     }
 

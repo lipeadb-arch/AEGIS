@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using AegisScore.Api.Auth;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Services;
 
@@ -7,9 +8,9 @@ namespace AegisScore.Api.Controllers;
 
 /// <summary>
 /// [AEGIS-AUD-010] Superfície de PLATAFORMA para o provisionamento GLOBAL de identidade — a criação da
-/// <c>IdentityAccount</c> (a PESSOA, dona da credencial). Explicitamente protegida por
-/// <c>[Authorize(Roles = "PlatformAdmin")]</c>: criar uma entidade global é operação de plataforma, que
-/// nenhum <c>TenantAdmin</c> possui. É a contrapartida do <see cref="UsersController"/>, que concede acesso
+/// <c>IdentityAccount</c> (a PESSOA, dona da credencial). [AEGIS-AUD-011] Protegida pela POLICY global
+/// <see cref="PlatformAuthorization.PolicyName"/> (claim <c>platform_role = PlatformAdmin</c>), não por papel
+/// de tenant: criar uma entidade global é autoridade de PLATAFORMA, que nenhum <c>TenantAdmin</c> possui. É a contrapartida do <see cref="UsersController"/>, que concede acesso
 /// a tenant a uma identidade JÁ provisionada.
 ///
 /// Aqui NÃO se concede acesso a nenhum tenant: não há TenantId, membership, papel nem lista de tenants. Só
@@ -18,7 +19,7 @@ namespace AegisScore.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/v1/platform/identities")]
-[Authorize(Roles = "PlatformAdmin")]
+[Authorize(Policy = PlatformAuthorization.PolicyName)]   // [AEGIS-AUD-011] autoridade GLOBAL, não papel de tenant
 public sealed class PlatformIdentitiesController : ControllerBase
 {
     private readonly IIdentityProvisioningService _identities;

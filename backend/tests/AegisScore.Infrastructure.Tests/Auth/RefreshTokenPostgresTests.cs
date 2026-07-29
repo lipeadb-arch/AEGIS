@@ -33,9 +33,10 @@ public sealed class RefreshTokenPostgresTests
 
     private const string PreAud009 = "20260724002301_Aud50_DurableOperationalQueues";
     private const string Aud009 = "20260727204000_Aud009HashRefreshTokens";
-    // AUD-007 é aditivo (colunas de vínculo em IdentityAccount) e não toca refresh tokens; aplicá-lo
-    // alinha o schema ao modelo EF atual para que o SELECT interno de IdentityAccount (no RefreshAsync) rode.
-    private const string Aud007 = "20260728212552_Aud007FederatedIdentityBinding";
+    // [AEGIS-AUD-011] Aplicar as migrations aditivas posteriores (vínculo Entra, PasswordHash nullable e
+    // o eixo global PlatformRole) alinha o schema ao modelo EF ATUAL, para que o SELECT interno de
+    // IdentityAccount (no RefreshAsync) rode sem referenciar colunas ainda inexistentes. Aponta para o head.
+    private const string ModelHead = "20260729211634_Aud011SeparatePlatformTenantRoles";
 
     private readonly ITestOutputHelper _output;
     public RefreshTokenPostgresTests(ITestOutputHelper output) => _output = output;
@@ -143,10 +144,10 @@ public sealed class RefreshTokenPostgresTests
 
         await AssertNoPlaintextAsync(opt, parentRaw, childRaw);
 
-        // 4b) Alinha o schema ao modelo EF atual (AUD-007 aditivo) — sem isto o SELECT de IdentityAccount
-        //     dentro do RefreshAsync referenciaria colunas de vínculo ainda inexistentes no schema Aud009.
+        // 4b) Alinha o schema ao modelo EF atual (migrations aditivas posteriores) — sem isto o SELECT de
+        //     IdentityAccount dentro do RefreshAsync referenciaria colunas ainda inexistentes no schema Aud009.
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
-            await Migrator(db).MigrateAsync(Aud007);
+            await Migrator(db).MigrateAsync(ModelHead);
 
         // 5) A sessão legada CONTINUA utilizável: o filho (ativo) rotaciona por hash, sem novo login.
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
@@ -219,7 +220,7 @@ public sealed class RefreshTokenPostgresTests
 
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
         {
-            var user = new User { TenantId = tenant, IdentityAccountId = accountId, DisplayName = "Ana", Role = UserRole.Analyst };
+            var user = new User { TenantId = tenant, IdentityAccountId = accountId, DisplayName = "Ana", Role = TenantRole.Analyst };
             db.Users.Add(user);
             await db.SaveChangesAsync();
             return user.Id;

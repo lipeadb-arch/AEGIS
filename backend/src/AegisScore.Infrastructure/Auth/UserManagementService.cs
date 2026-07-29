@@ -130,21 +130,21 @@ public sealed class UserManagementService : IUserManagementService
     }
 
     /// <summary>
-    /// ALLOWLIST explícita dos papéis tenant-scoped válidos — não um mero <c>role != PlatformAdmin</c>.
-    /// Barra dois vetores: (1) o escalonamento de privilégio (<see cref="UserRole.PlatformAdmin"/> autoriza
-    /// operações de PLATAFORMA, então emiti-lo por uma rota de tenant transformaria um TenantAdmin em admin
-    /// da plataforma com um POST); e (2) valores INDEFINIDOS do enum — o ASP.NET Core desserializa enum de
-    /// número, então <c>"role": 999</c> chega como <c>(UserRole)999</c>, que uma checagem por desigualdade
-    /// deixaria passar e corromperia o membership (papel inválido → claim de papel inválida depois). Só
-    /// Analyst/Manager/TenantAdmin são aceitos; nem na criação, nem na atualização (a porta dos fundos).
+    /// [AEGIS-AUD-011] ALLOWLIST explícita dos papéis tenant-scoped válidos. Com a separação dos eixos, a
+    /// autoridade global (<c>PlatformAdmin</c>) já NÃO existe em <see cref="TenantRole"/> — não há o que
+    /// comparar aqui, o escalonamento é barrado pelo próprio TIPO. O que resta guardar são valores
+    /// INDEFINIDOS do enum: o ASP.NET Core desserializa enum de número, então <c>"role": 999</c> chega como
+    /// <c>(TenantRole)999</c>, que uma checagem por desigualdade deixaria passar e corromperia o membership
+    /// (papel inválido → claim de papel inválida depois). Só Analyst/Manager/TenantAdmin são aceitos, na
+    /// criação e na atualização.
     /// </summary>
-    private static AccessGrantResult? ValidateRole(UserRole role) =>
-        role is UserRole.Analyst or UserRole.Manager or UserRole.TenantAdmin
+    private static AccessGrantResult? ValidateRole(TenantRole role) =>
+        role is TenantRole.Analyst or TenantRole.Manager or TenantRole.TenantAdmin
             ? null
             : AccessGrantResult.Rejected(
                 AccessGrantStatus.RoleNotAssignable,
                 "Papel inválido para concessão de acesso a tenant: use Analyst, Manager ou TenantAdmin. " +
-                "PlatformAdmin é papel de PLATAFORMA, e valores indefinidos do enum são recusados.");
+                "Valores indefinidos do enum são recusados.");
 
     // ---- Helpers ----------------------------------------------------------------
 
