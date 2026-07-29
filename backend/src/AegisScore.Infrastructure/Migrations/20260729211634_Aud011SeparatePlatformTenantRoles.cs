@@ -21,10 +21,15 @@ namespace AegisScore.Infrastructure.Migrations
 
             // 2) Integridade + BACKFILL, ANTES de impor a constraint do eixo tenant (senão ela rejeitaria o
             //    valor legado 3). Fail-closed: um Users.Role fora de 0..3 é desconhecido e ABORTA com
-            //    mensagem clara — não inventamos mapeamento. Depois, o papel global legado
-            //    (Users.Role=3 = PlatformAdmin) SOBE para a IdentityAccount (PlatformRole=1) e o membership
-            //    legado vira TenantAdmin (2), preservando o acesso operacional sem ESPALHAR autoridade
-            //    global por vários memberships (a atribuição global passa a ser única, na pessoa).
+            //    mensagem clara — não inventamos mapeamento.
+            //
+            //    Regra do backfill (corrigida): a autoridade global só é ATIVÁVEL se, antes do AUD-011, o
+            //    privilégio legado era USÁVEL — isto é, existia um membership Role=3 ATIVO num tenant NÃO
+            //    suspenso. Um Role=3 inativo, ou de tenant Suspended, NÃO vira PlatformAdmin global (senão
+            //    um privilégio adormecido seria reativado, ainda mais se a identidade tiver outro membership
+            //    ativo). Só então (passo 2b) todos os Role=3 são normalizados para TenantAdmin (2) —
+            //    inclusive inativos/suspensos —, preservando o acesso operacional sem espalhar autoridade.
+            //    Status do tenant: Onboarding=0, Active=1, Suspended=2 (só o 2 desqualifica).
             migrationBuilder.Sql(@"
 DO $$
 BEGIN
@@ -36,7 +41,15 @@ END $$;
 UPDATE ""IdentityAccounts"" a
    SET ""PlatformRole"" = 1
  WHERE ""PlatformRole"" = 0
-   AND EXISTS (SELECT 1 FROM ""Users"" u WHERE u.""IdentityAccountId"" = a.""Id"" AND u.""Role"" = 3);
+   AND EXISTS (
+       SELECT 1
+         FROM ""Users"" u
+         JOIN ""Tenants"" t ON t.""Id"" = u.""TenantId""
+        WHERE u.""IdentityAccountId"" = a.""Id""
+          AND u.""Role"" = 3
+          AND u.""IsActive"" = TRUE
+          AND t.""Status"" <> 2
+   );
 
 UPDATE ""Users"" SET ""Role"" = 2 WHERE ""Role"" = 3;");
 

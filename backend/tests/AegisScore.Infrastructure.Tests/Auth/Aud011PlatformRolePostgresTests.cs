@@ -1,10 +1,17 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using AegisScore.Api.Auth;
+using AegisScore.Infrastructure.Auth;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Tests.Documents;   // PostgresProbe (infra AEGIS_TEST_PG já existente)
 using FluentAssertions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using Xunit;
 using Xunit.Abstractions;
@@ -21,7 +28,7 @@ namespace AegisScore.Infrastructure.Tests.Auth;
 public sealed class Aud011PlatformRolePostgresTests
 {
     private const string PreAud011 = "20260729120030_Aud010NullablePasswordHash";
-    private const string Aud011 = "20260729171438_Aud011SeparatePlatformTenantRoles";
+    private const string Aud011 = "20260729211634_Aud011SeparatePlatformTenantRoles";
 
     private readonly ITestOutputHelper _output;
     public Aud011PlatformRolePostgresTests(ITestOutputHelper output) => _output = output;
@@ -134,7 +141,143 @@ public sealed class Aud011PlatformRolePostgresTests
             .Should().Be(0, "após rebaixar, o Down remove a coluna do eixo global");
     }
 
+    // ---- Regra corrigida do backfill: só promove privilégio USÁVEL (Role=3 ATIVO em tenant não suspenso) ----
+
+    [Fact]
+    public async Task Backfill_ActiveRole3_OnboardingTenant_Promotes_OnRealPostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var (account, _) = await SeedAndMigrateLegacyRole3Async(pg.DbOptions(), tenantStatus: 0, isActive: true);
+
+        await using var conn = await OpenAsync(pg.DbOptions());
+        (await ScalarAsync(conn, $"SELECT \"PlatformRole\" FROM \"IdentityAccounts\" WHERE \"Id\"='{account}'"))
+            .Should().Be(1, "Role=3 ATIVO em tenant Onboarding (não suspenso) promove a autoridade global");
+        (await ScalarAsync(conn, "SELECT count(*) FROM \"Users\" WHERE \"Role\"=3")).Should().Be(0, "Role=3 normalizado");
+    }
+
+    [Fact]
+    public async Task Backfill_InactiveRole3_ActiveTenant_DoesNotPromote_OnRealPostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var (account, _) = await SeedAndMigrateLegacyRole3Async(pg.DbOptions(), tenantStatus: 1, isActive: false);
+
+        await using var conn = await OpenAsync(pg.DbOptions());
+        (await ScalarAsync(conn, $"SELECT \"PlatformRole\" FROM \"IdentityAccounts\" WHERE \"Id\"='{account}'"))
+            .Should().Be(0, "Role=3 INATIVO não reativa autoridade global");
+        (await ScalarAsync(conn, $"SELECT \"Role\" FROM \"Users\" WHERE \"IdentityAccountId\"='{account}'"))
+            .Should().Be(2, "mesmo sem promover, o membership legado é normalizado para TenantAdmin");
+    }
+
+    [Fact]
+    public async Task Backfill_ActiveRole3_SuspendedTenant_DoesNotPromote_OnRealPostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var (account, _) = await SeedAndMigrateLegacyRole3Async(pg.DbOptions(), tenantStatus: 2, isActive: true);
+
+        await using var conn = await OpenAsync(pg.DbOptions());
+        (await ScalarAsync(conn, $"SELECT \"PlatformRole\" FROM \"IdentityAccounts\" WHERE \"Id\"='{account}'"))
+            .Should().Be(0, "Role=3 em tenant SUSPENSO não vira autoridade global ativa");
+        (await ScalarAsync(conn, $"SELECT \"Role\" FROM \"Users\" WHERE \"IdentityAccountId\"='{account}'"))
+            .Should().Be(2, "o membership legado é normalizado para TenantAdmin de qualquer forma");
+    }
+
+    [Fact]
+    public async Task Backfill_InactiveLegacyPlusActiveAnalyst_DoesNotPromote_NoClaim_PolicyDenied_OnRealPostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var opt = pg.DbOptions();
+        const string senha = "uma frase longa e boa de verdade";
+        var pwHash = new Pbkdf2PasswordHasher().Hash(senha);
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            await Migrator(db).MigrateAsync(PreAud011);
+
+        // Uma pessoa com: (a) Role=3 INATIVO num tenant Active e (b) Analyst ATIVO noutro tenant Active.
+        var tenantLegacy = Guid.NewGuid();
+        var tenantActive = Guid.NewGuid();
+        var account = Guid.NewGuid();
+        await using (var conn = await OpenAsync(opt))
+        {
+            await ExecAsync(conn, $"INSERT INTO \"Tenants\" (\"Id\",\"Name\",\"Slug\",\"Status\",\"CreatedAt\") VALUES ('{tenantLegacy}','L','l-{tenantLegacy:N}',1, now());");
+            await ExecAsync(conn, $"INSERT INTO \"Tenants\" (\"Id\",\"Name\",\"Slug\",\"Status\",\"CreatedAt\") VALUES ('{tenantActive}','A','a-{tenantActive:N}',1, now());");
+            await ExecAsync(conn, $"INSERT INTO \"IdentityAccounts\" (\"Id\",\"Email\",\"PasswordHash\",\"CreatedAt\") VALUES ('{account}','ana@demo.example.com','{pwHash}', now());");
+            await ExecAsync(conn, $"INSERT INTO \"Users\" (\"Id\",\"TenantId\",\"IdentityAccountId\",\"DisplayName\",\"Role\",\"IsActive\",\"CreatedAt\") VALUES ('{Guid.NewGuid()}','{tenantLegacy}','{account}','Ana',3,false, now());");
+            await ExecAsync(conn, $"INSERT INTO \"Users\" (\"Id\",\"TenantId\",\"IdentityAccountId\",\"DisplayName\",\"Role\",\"IsActive\",\"CreatedAt\") VALUES ('{Guid.NewGuid()}','{tenantActive}','{account}','Ana',0,true, now());");
+        }
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            await Migrator(db).MigrateAsync(Aud011);
+
+        // (1) NÃO promove: o único Role=3 estava inativo; o membership ativo é Analyst (não Role=3).
+        await using (var conn = await OpenAsync(opt))
+            (await ScalarAsync(conn, $"SELECT \"PlatformRole\" FROM \"IdentityAccounts\" WHERE \"Id\"='{account}'"))
+                .Should().Be(0, "um privilégio legado inativo não é reativado por causa de outro membership ativo");
+
+        // (2) O JWT emitido no login NÃO carrega platform_role (login cai no membership Analyst ativo).
+        string accessToken;
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+        {
+            var pair = await Auth(db, opt).LoginAsync("ana@demo.example.com", senha, default);
+            pair.Should().NotBeNull();
+            accessToken = pair!.AccessToken;
+        }
+        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(accessToken);
+        jwt.Claims.Any(c => c.Type == "platform_role").Should().BeFalse("sem autoridade global, sem claim global");
+
+        // (3) A policy REAL de plataforma nega o principal desse token.
+        (await AuthorizePlatformAsync(jwt)).Succeeded
+            .Should().BeFalse("sem platform_role, a policy PlatformAdmin é negada");
+    }
+
     // ---- helpers ----
+
+    /// <summary>Migra a PreAud011, semeia tenant (status dado) + conta + UM membership Role=3 (isActive dado)
+    /// por SQL cru, e sobe o AUD-011. Devolve (accountId, tenantId).</summary>
+    private static async Task<(Guid account, Guid tenant)> SeedAndMigrateLegacyRole3Async(
+        DbContextOptions<AegisScoreDbContext> opt, int tenantStatus, bool isActive)
+    {
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            await Migrator(db).MigrateAsync(PreAud011);
+
+        var tenant = Guid.NewGuid();
+        var account = Guid.NewGuid();
+        await using (var conn = await OpenAsync(opt))
+        {
+            await ExecAsync(conn, $"INSERT INTO \"Tenants\" (\"Id\",\"Name\",\"Slug\",\"Status\",\"CreatedAt\") VALUES ('{tenant}','T','t-{tenant:N}',{tenantStatus}, now());");
+            await ExecAsync(conn, $"INSERT INTO \"IdentityAccounts\" (\"Id\",\"Email\",\"PasswordHash\",\"CreatedAt\") VALUES ('{account}','ana@demo.example.com','x', now());");
+            await ExecAsync(conn, $"INSERT INTO \"Users\" (\"Id\",\"TenantId\",\"IdentityAccountId\",\"DisplayName\",\"Role\",\"IsActive\",\"CreatedAt\") VALUES ('{Guid.NewGuid()}','{tenant}','{account}','Ana',3,{(isActive ? "true" : "false")}, now());");
+        }
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            await Migrator(db).MigrateAsync(Aud011);
+
+        return (account, tenant);
+    }
+
+    private static AuthService Auth(AegisScoreDbContext db, DbContextOptions<AegisScoreDbContext> opt) => new(
+        db, opt,
+        new JwtTokenService(Options.Create(new JwtOptions
+        {
+            SigningKey = "aegis-test-signing-key-com-mais-de-32-bytes", Issuer = "aegis-score", Audience = "aegis-score",
+        })),
+        new Pbkdf2PasswordHasher(), new Sha256RefreshTokenHasher(), Options.Create(new FederationOptions()),
+        NullLogger<AuthService>.Instance);
+
+    /// <summary>Avalia a policy REAL de plataforma contra o principal do JWT (roleType="role", como o Bearer).</summary>
+    private static async Task<AuthorizationResult> AuthorizePlatformAsync(JwtSecurityToken jwt)
+    {
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(jwt.Claims, "Test", nameType: "name", roleType: "role"));
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddAuthorizationCore(PlatformAuthorization.AddPlatformPolicy);
+        await using var provider = services.BuildServiceProvider();
+        var authz = provider.GetRequiredService<IAuthorizationService>();
+        return await authz.AuthorizeAsync(principal, PlatformAuthorization.PolicyName);
+    }
 
     private static IMigrator Migrator(AegisScoreDbContext db) =>
         db.GetInfrastructure().GetRequiredService<IMigrator>();

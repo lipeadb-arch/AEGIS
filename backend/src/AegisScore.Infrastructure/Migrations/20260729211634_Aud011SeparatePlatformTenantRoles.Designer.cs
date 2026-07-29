@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AegisScore.Infrastructure.Migrations
 {
     [DbContext(typeof(AegisScoreDbContext))]
-    [Migration("20260729171438_Aud011SeparatePlatformTenantRoles")]
+    [Migration("20260729211634_Aud011SeparatePlatformTenantRoles")]
     partial class Aud011SeparatePlatformTenantRoles
     {
         /// <inheritdoc />

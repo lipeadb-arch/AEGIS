@@ -36,7 +36,7 @@ public sealed class RefreshTokenPostgresTests
     // [AEGIS-AUD-011] Aplicar as migrations aditivas posteriores (vínculo Entra, PasswordHash nullable e
     // o eixo global PlatformRole) alinha o schema ao modelo EF ATUAL, para que o SELECT interno de
     // IdentityAccount (no RefreshAsync) rode sem referenciar colunas ainda inexistentes. Aponta para o head.
-    private const string ModelHead = "20260729171438_Aud011SeparatePlatformTenantRoles";
+    private const string ModelHead = "20260729211634_Aud011SeparatePlatformTenantRoles";
 
     private readonly ITestOutputHelper _output;
     public RefreshTokenPostgresTests(ITestOutputHelper output) => _output = output;

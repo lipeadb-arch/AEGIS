@@ -25,7 +25,7 @@ public sealed class Aud010PasswordHashPostgresTests
     private const string Aud010 = "20260729120030_Aud010NullablePasswordHash";
     // [AEGIS-AUD-011] Head atual do modelo EF: as operações via DbContext (que hoje citam PlatformRole)
     // exigem um schema que tenha a coluna. O comportamento do AUD-010 (PasswordHash nullable) persiste aqui.
-    private const string Head = "20260729171438_Aud011SeparatePlatformTenantRoles";
+    private const string Head = "20260729211634_Aud011SeparatePlatformTenantRoles";
     private const string Tid = "11111111-1111-1111-1111-111111111111";
 
     private readonly ITestOutputHelper _output;
