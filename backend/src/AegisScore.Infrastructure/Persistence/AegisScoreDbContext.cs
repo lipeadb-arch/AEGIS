@@ -222,7 +222,9 @@ public class AegisScoreDbContext : DbContext
         b.Entity<IdentityAccount>(e =>
         {
             e.Property(a => a.Email).HasMaxLength(256).IsRequired();
-            e.Property(a => a.PasswordHash).IsRequired();
+            // [AEGIS-AUD-010] PasswordHash é NULLABLE (deixou de ser IsRequired): uma conta federated-only,
+            // provisionada por PlatformAdmin sem senha local, existe sem credencial. O login Local nunca
+            // autentica conta sem hash (AuthService.LoginAsync) e o dummy hash preserva o guard de timing.
             e.HasIndex(a => a.Email).IsUnique();   // login único GLOBAL (era por tenant)
 
             // [AEGIS-AUD-007] Vínculo Entra: tid/oid nullable (contas locais não têm vínculo). Índice único

@@ -21,8 +21,16 @@ public class IdentityAccount : Entity
     /// <summary>Login. Único GLOBAL. Persistido normalizado (minúsculas).</summary>
     public string Email { get; set; } = "";
 
-    /// <summary>Hash PBKDF2 no formato <c>iterações.salt.hash</c>. Nunca a senha em claro.</summary>
-    public string PasswordHash { get; set; } = "";
+    /// <summary>
+    /// Hash PBKDF2 no formato <c>iterações.salt.hash</c>. Nunca a senha em claro.
+    ///
+    /// [AEGIS-AUD-010] NULLABLE: uma conta <b>federated-only</b> (provisionada por PlatformAdmin sem senha
+    /// local, para autenticar exclusivamente pelo Entra ID) existe SEM credencial local. Ausência de senha
+    /// é <c>null</c> — nunca string vazia nem hash fictício. O fluxo de login Local
+    /// (<c>AuthService.LoginAsync</c>) jamais autentica uma conta sem hash, e mantém o dummy hash para não
+    /// vazar a existência/estado da conta por timing. Contas locais/híbridas seguem com hash preenchido.
+    /// </summary>
+    public string? PasswordHash { get; set; }
 
     /// <summary>
     /// [AEGIS-AUD-007] Vínculo com a identidade corporativa (Microsoft Entra ID), por identificadores

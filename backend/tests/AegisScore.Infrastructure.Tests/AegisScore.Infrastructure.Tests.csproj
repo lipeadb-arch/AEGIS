@@ -16,12 +16,11 @@
     <!-- FluentAssertions fixado em 6.12.0: última linha sob Apache 2.0. A v8+ passou a licença
          comercial (Xceed) — pino aqui para não introduzir dívida de licença no projeto. -->
     <PackageReference Include="FluentAssertions" Version="6.12.0" />
-    <!-- Configuração/DI concretos para exercitar o composition root real nos testes de fail-open. -->
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.10" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
-    <!-- AEGIS-AUD-052: host genérico real para provar que builder.Build() NÃO inicia hosted services —
-         premissa que sustenta o posicionamento do guard de prontidão no Program.cs da API. -->
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+    <!-- [AEGIS-AUD-010] Microsoft.Extensions.{Configuration,DependencyInjection,Hosting} eram
+         PackageReferences explícitas (fail-open + host do AUD-052). A referência ao shared framework
+         Microsoft.AspNetCore.App (adicionada abaixo para os testes de atributo de autorização) já as
+         fornece; mantê-las explícitas dispara NU1510 (pacote redundante). Removidas — o framework as
+         provê na mesma linha 10.0.x. Os tipos usados nos testes de fail-open/host seguem disponíveis. -->
     <!-- SQLite in-memory: banco relacional real e efêmero para exercitar o FrameworkSeeder ponta a
          ponta (EnsureCreated + SaveChanges) sem PostgreSQL. Alinhado ao EF Core 10. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
@@ -40,11 +39,22 @@
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
   </ItemGroup>
 
+  <!-- [AEGIS-AUD-010] O contrato de AUTORIZAÇÃO das superfícies de identidade é parte da correção
+       (rota global exige PlatformAdmin; concessão exige TenantAdmin). Sem harness de integração HTTP no
+       projeto, a garantia é verificada por reflexão sobre os atributos dos controllers — o que exige
+       referenciar o projeto da API e o shared framework do ASP.NET Core para resolver AuthorizeAttribute. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\AegisScore.Infrastructure\AegisScore.Infrastructure.csproj" />
     <!-- AEGIS-AUD-052: o migrator é o único autorizado a preparar o banco, então o parsing de
          argumentos e o contrato de códigos de saída precisam de cobertura própria. -->
     <ProjectReference Include="..\..\src\AegisScore.DbMigrator\AegisScore.DbMigrator.csproj" />
+    <!-- [AEGIS-AUD-010] Referência ao projeto da API para os testes de atributo de autorização das
+         superfícies de identidade (PlatformIdentitiesController / UsersController). -->
+    <ProjectReference Include="..\..\src\AegisScore.Api\AegisScore.Api.csproj" />
   </ItemGroup>
 
   <ItemGroup>

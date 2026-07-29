@@ -51,8 +51,13 @@ public static class DependencyInjection
         services.AddSingleton<IRefreshTokenHasher, Sha256RefreshTokenHasher>();  // [AEGIS-AUD-009] stateless
         services.AddScoped<IAuthService, AuthService>();                  // usa o DbContext (scoped)
 
-        // Provisionamento de IDENTIDADES (criação + concessão de acesso), sempre dentro do tenant
-        // ambiente. Scoped: usa o DbContext (query filter + stamping fail-closed) e o hasher PBKDF2.
+        // [AEGIS-AUD-010] Autoridades SEPARADAS de identidade:
+        //  - Provisionamento GLOBAL da IdentityAccount (PlatformAdmin): cria a pessoa/credencial e nada mais.
+        //    Scoped: usa o DbContext, o hasher PBKDF2 e o modo de federação (política de senha por modo).
+        services.AddScoped<IIdentityProvisioningService, IdentityProvisioningService>();
+        //  - Concessão de acesso ao tenant AMBIENTE (TenantAdmin): cria/atualiza o membership de uma
+        //    identidade preexistente. Scoped: usa o DbContext (query filter + stamping fail-closed). NÃO
+        //    injeta o hasher — esta autoridade não toca credencial global, por construção.
         services.AddScoped<IUserManagementService, UserManagementService>();
 
         // [Médio 6/Baixo] Encriptação server-side dos segredos de conector (Data Protection). Depende

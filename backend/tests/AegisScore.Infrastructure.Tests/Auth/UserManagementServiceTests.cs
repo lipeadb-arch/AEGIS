@@ -12,13 +12,15 @@ using Xunit;
 namespace AegisScore.Infrastructure.Tests.Auth;
 
 /// <summary>
-/// Testes do <see cref="UserManagementService"/>. Harness dos demais (SQLite in-memory), então o índice
-/// único <c>(TenantId, Email)</c>, o Global Query Filter e o stamping fail-closed são exercitados de
-/// verdade — que é onde mora a garantia de isolamento deste serviço.
+/// [AEGIS-AUD-010] Testes da CONCESSÃO DE ACESSO A TENANT (<see cref="UserManagementService"/>) — a
+/// autoridade tenant-scoped, agora SEPARADA do provisionamento global de identidade
+/// (<see cref="IdentityProvisioningServiceTests"/>). Harness dos demais (SQLite in-memory), então o índice
+/// único <c>(TenantId, IdentityAccountId)</c>, o Global Query Filter e o stamping fail-closed são
+/// exercitados de verdade — que é onde mora a garantia de isolamento deste serviço. Prova central: esta
+/// superfície NÃO cria identidade, NÃO toca credencial nem vínculo Entra, e nunca escreve fora do ambiente.
 /// </summary>
 public sealed class UserManagementServiceTests : IDisposable
 {
-    private const string Senha = "uma frase longa e boa";   // 21 chars, sem regra de composição
     private static readonly Guid TenantA = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid TenantB = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
@@ -38,276 +40,282 @@ public sealed class UserManagementServiceTests : IDisposable
 
     public void Dispose() => _connection.Dispose();
 
-    // ---- Criação ---------------------------------------------------------------
+    // ---- A identidade global deve PREEXISTIR (sem auto-provisionamento) ----------
 
     [Fact]
-    public async Task CreateUserAsync_NormalizaEmail_EDerivaHashPbkdf2()
+    public async Task GrantAccess_IdentidadeInexistente_EhNaoEncontrada_SemCriarNada()
     {
         await using var db = NewContext(TenantA);
-        var result = await ServiceFor(db, TenantA).CreateUserAsync(
-            new CreateUserCommand("  Ana.Silva@Demo.Aegis  ", "  Ana Silva  ", Senha, UserRole.Analyst));
+        // Um IdentityAccountId que não existe: resposta genérica, e NADA é criado (nem conta, nem membership).
+        var result = await ServiceFor(db, TenantA).GrantAccessAsync(
+            new GrantTenantAccessCommand(Guid.NewGuid(), "Ana", UserRole.Analyst));
 
-        result.Succeeded.Should().BeTrue();
-        result.Status.Should().Be(UserProvisioningStatus.Created);
+        result.Status.Should().Be(AccessGrantStatus.IdentityNotFound);
+        (await db.IdentityAccounts.AnyAsync()).Should().BeFalse("a concessão nunca provisiona identidade global");
+        (await db.Users.IgnoreQueryFilters().AnyAsync()).Should().BeFalse("nenhum membership é criado");
+    }
+
+    [Fact]
+    public async Task GrantAccess_IdentidadePreexistente_CriaMembershipNoTenantAmbiente()
+    {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
+
+        await using var db = NewContext(TenantA);
+        var result = await ServiceFor(db, TenantA).GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "  Ana Silva  ", UserRole.Manager));
+
+        result.Status.Should().Be(AccessGrantStatus.Granted);
+        result.User!.Email.Should().Be("ana@demo.example.com", "o e-mail vem da identidade global resolvida");
 
         var saved = await db.Users.SingleAsync();
-        saved.DisplayName.Should().Be("Ana Silva");
+        saved.IdentityAccountId.Should().Be(accountId);
         saved.TenantId.Should().Be(TenantA, "carimbado pelo SaveChanges, não pelo chamador");
-        saved.IsActive.Should().BeTrue();
-
-        // A credencial mora na PESSOA, não no vínculo.
-        var account = await db.IdentityAccounts.SingleAsync();
-        saved.IdentityAccountId.Should().Be(account.Id);
-        account.Email.Should().Be("ana.silva@demo.aegis", "o login normaliza igual — senão o AuthService não acha");
-        account.PasswordHash.Should().NotContain(Senha, "a senha em claro nunca é persistida");
-        account.PasswordHash.Split('.').Should().HaveCount(3, "formato self-describing iterações.salt.hash");
-        new Pbkdf2PasswordHasher().Verify(Senha, account.PasswordHash).Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task CreateUserAsync_EmailDuplicadoNoMesmoTenant_EhConflito()
-    {
-        await using var db = NewContext(TenantA);
-        var svc = ServiceFor(db, TenantA);
-
-        await svc.CreateUserAsync(Cmd("ana@demo.aegis"));
-        var second = await svc.CreateUserAsync(Cmd("  ANA@Demo.Aegis "));   // mesma identidade após normalizar
-
-        second.Status.Should().Be(UserProvisioningStatus.EmailAlreadyInUse);
-        (await db.Users.CountAsync()).Should().Be(1);
-    }
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("sem-arroba")]
-    [InlineData("a@b")]                    // domínio sem ponto
-    [InlineData("com espaco@demo.aegis")]
-    [InlineData("@demo.aegis")]
-    public async Task CreateUserAsync_EmailMalformado_EhRejeitado(string email)
-    {
-        await using var db = NewContext(TenantA);
-        var result = await ServiceFor(db, TenantA).CreateUserAsync(Cmd(email));
-
-        result.Status.Should().Be(UserProvisioningStatus.InvalidEmail);
-        (await db.Users.AnyAsync()).Should().BeFalse();
-    }
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("curta123")]                 // 8 < 12
-    [InlineData("            ")]             // 12 chars, só espaço
-    public async Task CreateUserAsync_SenhaForaDaPolitica_EhRejeitada(string senha)
-    {
-        await using var db = NewContext(TenantA);
-        var result = await ServiceFor(db, TenantA).CreateUserAsync(
-            new CreateUserCommand("ana@demo.aegis", "Ana", senha, UserRole.Analyst));
-
-        result.Status.Should().Be(UserProvisioningStatus.WeakPassword);
-        (await db.Users.AnyAsync()).Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task CreateUserAsync_SenhaLongaSemComposicao_EhAceita()
-    {
-        // NIST SP 800-63B: comprimento manda, regra de composição não. Uma frase sem maiúscula,
-        // dígito ou símbolo DEVE passar.
-        await using var db = NewContext(TenantA);
-        var result = await ServiceFor(db, TenantA).CreateUserAsync(
-            new CreateUserCommand("ana@demo.aegis", "Ana", "cavalo bateria grampo correto", UserRole.Analyst));
-
-        result.Succeeded.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task CreateUserAsync_NomeDeExibicaoVazio_EhRejeitado()
-    {
-        await using var db = NewContext(TenantA);
-        var result = await ServiceFor(db, TenantA).CreateUserAsync(
-            new CreateUserCommand("ana@demo.aegis", "   ", Senha, UserRole.Analyst));
-
-        result.Status.Should().Be(UserProvisioningStatus.InvalidDisplayName);
-    }
-
-    // ---- Escalonamento de privilégio -------------------------------------------
-
-    [Fact]
-    public async Task CreateUserAsync_PlatformAdmin_NaoEhAtribuivel()
-    {
-        // O vetor: um TenantAdmin emitindo PlatformAdmin viraria admin da PLATAFORMA (cria tenants, §20).
-        await using var db = NewContext(TenantA);
-        var result = await ServiceFor(db, TenantA).CreateUserAsync(
-            new CreateUserCommand("root@demo.aegis", "Root", Senha, UserRole.PlatformAdmin));
-
-        result.Status.Should().Be(UserProvisioningStatus.RoleNotAssignable);
-        (await db.Users.AnyAsync()).Should().BeFalse("nenhum PlatformAdmin nasce por esta superfície");
-    }
-
-    [Fact]
-    public async Task AssignUserToTenantAsync_NaoPromoveParaPlatformAdmin()
-    {
-        await using var db = NewContext(TenantA);
-        var svc = ServiceFor(db, TenantA);
-        await svc.CreateUserAsync(Cmd("ana@demo.aegis"));
-
-        // O caminho de ATUALIZAÇÃO não pode ser a porta dos fundos do escalonamento.
-        var result = await svc.AssignUserToTenantAsync(
-            new AssignUserToTenantCommand(TenantA, "ana@demo.aegis", UserRole.PlatformAdmin));
-
-        result.Status.Should().Be(UserProvisioningStatus.RoleNotAssignable);
-        (await db.Users.SingleAsync()).Role.Should().Be(UserRole.Analyst, "o papel vigente fica intacto");
-    }
-
-    // ---- Concessão de acesso ---------------------------------------------------
-
-    [Fact]
-    public async Task AssignUserToTenantAsync_IdentidadeAusente_CriaComSenhaInicial()
-    {
-        await using var db = NewContext(TenantA);
-        var result = await ServiceFor(db, TenantA).AssignUserToTenantAsync(
-            new AssignUserToTenantCommand(TenantA, "ana.silva@demo.aegis", UserRole.Manager, Senha));
-
-        result.Status.Should().Be(UserProvisioningStatus.Created);
-        var saved = await db.Users.SingleAsync();
+        saved.DisplayName.Should().Be("Ana Silva", "aparado, sem inventar nome a partir do e-mail");
         saved.Role.Should().Be(UserRole.Manager);
-        saved.DisplayName.Should().Be("ana.silva", "provisório derivado do local do e-mail");
+        saved.IsActive.Should().BeTrue();
     }
 
-    [Fact]
-    public async Task AssignUserToTenantAsync_IdentidadeAusenteSemSenha_ExigeSenha()
-    {
-        await using var db = NewContext(TenantA);
-        var result = await ServiceFor(db, TenantA).AssignUserToTenantAsync(
-            new AssignUserToTenantCommand(TenantA, "ana@demo.aegis", UserRole.Analyst));
+    // ---- Não toca credencial global nem vínculo Entra ---------------------------
 
-        result.Status.Should().Be(UserProvisioningStatus.PasswordRequired,
-            "não há credencial a herdar de outro tenant — a leitura cross-tenant não existe");
-        (await db.Users.AnyAsync()).Should().BeFalse();
+    [Fact]
+    public async Task GrantAccess_NaoAlteraPasswordHashNemVinculoEntra()
+    {
+        var accountId = await SeedIdentityAsync(
+            "ana@demo.example.com", withPassword: true, tid: "t-1", oid: "o-1");
+        string? hashAntes;
+        await using (var read = NewContext(null))
+        {
+            hashAntes = (await read.IdentityAccounts.SingleAsync(a => a.Id == accountId)).PasswordHash;
+        }
+
+        await using (var db = NewContext(TenantA))
+            await ServiceFor(db, TenantA).GrantAccessAsync(
+                new GrantTenantAccessCommand(accountId, "Ana", UserRole.TenantAdmin));
+
+        await using var assert = NewContext(null);
+        var acc = await assert.IdentityAccounts.SingleAsync(a => a.Id == accountId);
+        acc.PasswordHash.Should().Be(hashAntes, "conceder acesso NÃO reseta a credencial global");
+        acc.ExternalTenantId.Should().Be("t-1", "o vínculo Entra é imutável por esta superfície");
+        acc.ExternalObjectId.Should().Be("o-1");
     }
 
+    // ---- Só escreve no tenant AMBIENTE ------------------------------------------
+
     [Fact]
-    public async Task AssignUserToTenantAsync_IdentidadeExistente_AtualizaPapelSemTocarASenha()
+    public async Task GrantAccess_CriaMembershipApenasNoTenantAmbiente_NaoTocaOutroTenant()
     {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
+
+        // A MESMA pessoa já tem um acesso INATIVO no Tenant B (semeado à parte).
+        await using (var seedB = NewContext(TenantB))
+        {
+            seedB.Users.Add(new User
+            {
+                TenantId = TenantB, IdentityAccountId = accountId,
+                DisplayName = "Ana (B)", Role = UserRole.Analyst, IsActive = false,
+            });
+            await seedB.SaveChangesAsync();
+        }
+
+        // Um TenantAdmin de A concede acesso: cria membership em A e NÃO toca o de B.
+        await using (var db = NewContext(TenantA))
+        {
+            var result = await ServiceFor(db, TenantA).GrantAccessAsync(
+                new GrantTenantAccessCommand(accountId, "Ana (A)", UserRole.Manager));
+            result.Status.Should().Be(AccessGrantStatus.Granted);
+        }
+
+        await using var assert = NewContext(null);
+        var acessos = await assert.Users.IgnoreQueryFilters()
+            .Where(u => u.IdentityAccountId == accountId).OrderBy(u => u.TenantId).ToListAsync();
+        acessos.Should().HaveCount(2);
+
+        var emA = acessos.Single(u => u.TenantId == TenantA);
+        emA.Role.Should().Be(UserRole.Manager);
+        emA.IsActive.Should().BeTrue();
+
+        var emB = acessos.Single(u => u.TenantId == TenantB);
+        emB.Role.Should().Be(UserRole.Analyst, "o acesso do outro tenant permanece intacto");
+        emB.IsActive.Should().BeFalse("um TenantAdmin de A nunca escreve no tenant B");
+    }
+
+    // ---- Idempotência: atualização e reativação ---------------------------------
+
+    [Fact]
+    public async Task GrantAccess_MembershipExistente_AtualizaPapelENome_Idempotente()
+    {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
         await using var db = NewContext(TenantA);
         var svc = ServiceFor(db, TenantA);
-        await svc.CreateUserAsync(Cmd("ana@demo.aegis"));
-        var hashOriginal = (await db.IdentityAccounts.SingleAsync()).PasswordHash;
 
-        var result = await svc.AssignUserToTenantAsync(
-            new AssignUserToTenantCommand(TenantA, "ana@demo.aegis", UserRole.TenantAdmin, "outra senha longa"));
+        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
+        var result = await svc.GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Ana Silva", UserRole.TenantAdmin));
 
-        result.Status.Should().Be(UserProvisioningStatus.AccessUpdated);
-        (await db.Users.SingleAsync()).Role.Should().Be(UserRole.TenantAdmin);
-        (await db.IdentityAccounts.SingleAsync()).PasswordHash
-            .Should().Be(hashOriginal, "conceder permissão NÃO é resetar credencial");
+        result.Status.Should().Be(AccessGrantStatus.AccessUpdated);
+        var saved = await db.Users.SingleAsync();
+        saved.Role.Should().Be(UserRole.TenantAdmin);
+        saved.DisplayName.Should().Be("Ana Silva");
+        (await db.Users.CountAsync()).Should().Be(1, "reconcede o MESMO membership, não empilha");
     }
 
     [Fact]
-    public async Task AssignUserToTenantAsync_IdentidadeInativa_EhReativada()
+    public async Task GrantAccess_MembershipInativo_EhReativado()
     {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
         await using var db = NewContext(TenantA);
         var svc = ServiceFor(db, TenantA);
-        await svc.CreateUserAsync(Cmd("ana@demo.aegis"));
+        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
 
         var user = await db.Users.SingleAsync();
         user.IsActive = false;
         await db.SaveChangesAsync();
 
-        var result = await svc.AssignUserToTenantAsync(
-            new AssignUserToTenantCommand(TenantA, "ana@demo.aegis", UserRole.Analyst));
+        var result = await svc.GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
 
-        result.Status.Should().Be(UserProvisioningStatus.AccessUpdated);
+        result.Status.Should().Be(AccessGrantStatus.AccessUpdated);
         (await db.Users.SingleAsync()).IsActive.Should().BeTrue();
     }
 
-    // ---- Isolamento: o coração deste serviço -----------------------------------
+    // ---- Escalonamento de privilégio barrado ------------------------------------
 
     [Fact]
-    public async Task MesmoEmailEmTenantsDistintos_EhUmaPessoaComDoisAcessos()
+    public async Task GrantAccess_PlatformAdmin_NaoEhAtribuivel()
     {
-        const string email = "ana@demo.aegis";
-
-        await using (var db = NewContext(TenantA))
-            await ServiceFor(db, TenantA).CreateUserAsync(
-                new CreateUserCommand(email, "Ana (A)", Senha, UserRole.Analyst));
-
-        await using (var db = NewContext(TenantB))
-        {
-            var result = await ServiceFor(db, TenantB).CreateUserAsync(
-                new CreateUserCommand(email, "Ana (B)", "senha completamente outra", UserRole.TenantAdmin));
-            result.Succeeded.Should().BeTrue("a mesma pessoa pode ter acesso a vários clientes");
-        }
-
-        await using var assert = NewContext(null);
-
-        // UMA pessoa, UMA credencial — a premissa que sustenta o seletor de ambientes.
-        var contas = await assert.IdentityAccounts.Where(a => a.Email == email).ToListAsync();
-        contas.Should().HaveCount(1, "o e-mail é único GLOBAL desde a normalização");
-
-        // DOIS acessos, com papéis próprios por cliente.
-        var acessos = await assert.Users.IgnoreQueryFilters()
-            .Where(u => u.IdentityAccountId == contas[0].Id).ToListAsync();
-        acessos.Should().HaveCount(2);
-        acessos.Select(u => u.TenantId).Should().BeEquivalentTo(new[] { TenantA, TenantB });
-        acessos.Select(u => u.Role).Should().BeEquivalentTo(new[] { UserRole.Analyst, UserRole.TenantAdmin });
-    }
-
-    [Fact]
-    public async Task CreateUserAsync_NaoPermiteTrocarASenhaDeContaExistente()
-    {
-        // ⚠️ O VETOR CENTRAL que a normalização fecha. Mallory administra o tenant B e tenta "criar"
-        // a pessoa que já existe no tenant A, escolhendo uma senha que ela conhece. Se a senha vingasse,
-        // Mallory faria login como a vítima e usaria o seletor para entrar no ambiente A.
-        await using (var db = NewContext(TenantA))
-            await ServiceFor(db, TenantA).CreateUserAsync(
-                new CreateUserCommand("ana@demo.aegis", "Ana", Senha, UserRole.Analyst));
-
-        await using (var db = NewContext(TenantB))
-            await ServiceFor(db, TenantB).CreateUserAsync(
-                new CreateUserCommand("ana@demo.aegis", "Ana", "senha da mallory 123", UserRole.TenantAdmin));
-
-        await using var assert = NewContext(null);
-        var conta = await assert.IdentityAccounts.SingleAsync(a => a.Email == "ana@demo.aegis");
-
-        var hasher = new Pbkdf2PasswordHasher();
-        hasher.Verify(Senha, conta.PasswordHash).Should().BeTrue("a credencial da vítima permanece");
-        hasher.Verify("senha da mallory 123", conta.PasswordHash).Should()
-            .BeFalse("um admin de outro cliente NÃO redefine a senha de ninguém");
-    }
-
-    [Fact]
-    public async Task AssignUserToTenantAsync_TenantDivergenteDoContexto_EhRecusado()
-    {
+        var accountId = await SeedIdentityAsync("root@demo.example.com", withPassword: true);
         await using var db = NewContext(TenantA);
 
-        // Um admin de A tentando conceder acesso em B: a asserção barra antes de qualquer escrita.
-        var act = () => ServiceFor(db, TenantA).AssignUserToTenantAsync(
-            new AssignUserToTenantCommand(TenantB, "ana@demo.aegis", UserRole.Analyst, Senha));
+        var result = await ServiceFor(db, TenantA).GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Root", UserRole.PlatformAdmin));
 
-        await act.Should().ThrowAsync<TenantSecurityException>();
-        (await db.Users.IgnoreQueryFilters().AnyAsync()).Should().BeFalse();
+        result.Status.Should().Be(AccessGrantStatus.RoleNotAssignable);
+        (await db.Users.AnyAsync()).Should().BeFalse("nenhum PlatformAdmin nasce por esta superfície");
     }
 
     [Fact]
-    public async Task CreateUserAsync_SemTenantNoContexto_FalhaFechado()
+    public async Task GrantAccess_MembershipExistente_NaoPromoveParaPlatformAdmin()
     {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
+
+        // O caminho de ATUALIZAÇÃO não pode ser a porta dos fundos do escalonamento.
+        var result = await svc.GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Ana", UserRole.PlatformAdmin));
+
+        result.Status.Should().Be(AccessGrantStatus.RoleNotAssignable);
+        (await db.Users.SingleAsync()).Role.Should().Be(UserRole.Analyst, "o papel vigente fica intacto");
+    }
+
+    // ---- Papéis indefinidos do enum (ASP.NET Core desserializa enum de número) ---
+
+    [Fact]
+    public async Task GrantAccess_PapelIndefinido_NaoEhAtribuivel_NaoCriaMembership()
+    {
+        // "role": 999 chega como (UserRole)999. Uma checagem `!= PlatformAdmin` deixaria passar; a
+        // allowlist recusa. Membership NOVO: nada é criado, e a identidade global fica intacta.
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true, tid: "t-1", oid: "o-1");
+        await using var db = NewContext(TenantA);
+
+        var result = await ServiceFor(db, TenantA).GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Ana", (UserRole)999));
+
+        result.Status.Should().Be(AccessGrantStatus.RoleNotAssignable);
+        (await db.Users.AnyAsync()).Should().BeFalse("papel indefinido não persiste membership");
+
+        var acc = await db.IdentityAccounts.SingleAsync(a => a.Id == accountId);
+        acc.ExternalTenantId.Should().Be("t-1", "a identidade global não é tocada por uma recusa de papel");
+        acc.ExternalObjectId.Should().Be("o-1");
+    }
+
+    [Fact]
+    public async Task GrantAccess_MembershipExistente_PapelIndefinido_NaoAlteraNada()
+    {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true, tid: "t-1", oid: "o-1");
+        string? hashAntes;
+        await using (var read = NewContext(null))
+            hashAntes = (await read.IdentityAccounts.SingleAsync(a => a.Id == accountId)).PasswordHash;
+
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+        await svc.GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
+
+        // Atualização com papel indefinido: rejeita ANTES de qualquer mutação (papel/nome/estado intactos).
+        var result = await svc.GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Mallory", (UserRole)999));
+
+        result.Status.Should().Be(AccessGrantStatus.RoleNotAssignable);
+
+        var membership = await db.Users.SingleAsync();
+        membership.Role.Should().Be(UserRole.Analyst, "papel vigente intacto");
+        membership.DisplayName.Should().Be("Ana", "o nome não é alterado por uma recusa de papel");
+        membership.IsActive.Should().BeTrue("estado intacto");
+
+        var acc = await db.IdentityAccounts.SingleAsync(a => a.Id == accountId);
+        acc.PasswordHash.Should().Be(hashAntes, "credencial global intacta");
+        acc.ExternalTenantId.Should().Be("t-1", "vínculo Entra intacto");
+        acc.ExternalObjectId.Should().Be("o-1");
+    }
+
+    [Theory]
+    [InlineData(UserRole.Analyst)]
+    [InlineData(UserRole.Manager)]
+    [InlineData(UserRole.TenantAdmin)]
+    public async Task GrantAccess_PapeisTenantValidos_SaoAceitos(UserRole role)
+    {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
+        await using var db = NewContext(TenantA);
+
+        var result = await ServiceFor(db, TenantA).GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Ana", role));
+
+        result.Status.Should().Be(AccessGrantStatus.Granted);
+        (await db.Users.SingleAsync()).Role.Should().Be(role);
+    }
+
+    // ---- Validação e fail-closed ------------------------------------------------
+
+    [Fact]
+    public async Task GrantAccess_NomeDeExibicaoVazio_EhRejeitado()
+    {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
+        await using var db = NewContext(TenantA);
+
+        var result = await ServiceFor(db, TenantA).GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "   ", UserRole.Analyst));
+
+        result.Status.Should().Be(AccessGrantStatus.InvalidDisplayName);
+        (await db.Users.AnyAsync()).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GrantAccess_SemTenantNoContexto_FalhaFechado()
+    {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
         await using var db = NewContext(null);
-        var act = () => ServiceFor(db, null).CreateUserAsync(Cmd("ana@demo.aegis"));
+        var act = () => ServiceFor(db, null).GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
 
         await act.Should().ThrowAsync<TenantSecurityException>();
     }
 
+    // ---- Invariante de banco: um membership por (tenant, pessoa) -----------------
+
     [Fact]
-    public async Task IndiceUnico_RejeitaSegundoAcessoDaMesmaPessoaAoMesmoTenant()
+    public async Task IndiceUnico_RejeitaSegundoMembershipDaMesmaPessoaAoMesmoTenant()
     {
+        var accountId = await SeedIdentityAsync("ana@demo.example.com", withPassword: true);
         await using var db = NewContext(TenantA);
-        await ServiceFor(db, TenantA).CreateUserAsync(Cmd("ana@demo.aegis"));
-        var conta = await db.IdentityAccounts.SingleAsync();
+        await ServiceFor(db, TenantA).GrantAccessAsync(
+            new GrantTenantAccessCommand(accountId, "Ana", UserRole.Analyst));
 
         // Insert cru, contornando o serviço: é o índice (TenantId, IdentityAccountId) que precisa
-        // barrar, não o if do C#.
+        // barrar a corrida, não o if do C#.
         db.Users.Add(new User
         {
-            TenantId = TenantA, IdentityAccountId = conta.Id,
+            TenantId = TenantA, IdentityAccountId = accountId,
             DisplayName = "clone", Role = UserRole.Analyst,
         });
 
@@ -315,22 +323,27 @@ public sealed class UserManagementServiceTests : IDisposable
         await act.Should().ThrowAsync<DbUpdateException>();
     }
 
-    [Fact]
-    public async Task IndiceUnico_RejeitaSegundaContaComMesmoEmailGlobal()
-    {
-        await using var db = NewContext(TenantA);
-        await ServiceFor(db, TenantA).CreateUserAsync(Cmd("ana@demo.aegis"));
-
-        db.IdentityAccounts.Add(new IdentityAccount { Email = "ana@demo.aegis", PasswordHash = "x" });
-
-        var act = () => db.SaveChangesAsync();
-        await act.Should().ThrowAsync<DbUpdateException>("o e-mail é único GLOBAL");
-    }
-
     // ---- Fixture ----------------------------------------------------------------
 
-    private static CreateUserCommand Cmd(string email) =>
-        new(email, "Ana Silva", Senha, UserRole.Analyst);
+    /// <summary>
+    /// Semeia uma <see cref="IdentityAccount"/> global (a "pessoa") e devolve o Id. É o pré-requisito de
+    /// toda concessão — nesta arquitetura a criação da identidade é autoridade SEPARADA (PlatformAdmin).
+    /// </summary>
+    private async Task<Guid> SeedIdentityAsync(
+        string email, bool withPassword, string? tid = null, string? oid = null)
+    {
+        await using var db = NewContext(null);
+        var account = new IdentityAccount
+        {
+            Email = email,
+            PasswordHash = withPassword ? new Pbkdf2PasswordHasher().Hash("uma frase longa e boa") : null,
+            ExternalTenantId = tid,
+            ExternalObjectId = oid,
+        };
+        db.IdentityAccounts.Add(account);
+        await db.SaveChangesAsync();
+        return account.Id;
+    }
 
     private AegisScoreDbContext NewContext(Guid? tenantId) =>
         new(new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(_connection).Options,
@@ -338,6 +351,5 @@ public sealed class UserManagementServiceTests : IDisposable
 
     private static IUserManagementService ServiceFor(AegisScoreDbContext db, Guid? tenantId) =>
         new UserManagementService(
-            db, new SystemTenantContext(tenantId), new Pbkdf2PasswordHasher(),
-            NullLogger<UserManagementService>.Instance);
+            db, new SystemTenantContext(tenantId), NullLogger<UserManagementService>.Instance);
 }
