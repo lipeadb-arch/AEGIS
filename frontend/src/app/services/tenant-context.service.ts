@@ -5,13 +5,16 @@ import { AuthService } from './auth.service';
 
 /**
  * [AEGIS-AUD-030] Autoridade CENTRAL da troca de tenant ativo. Concentra, num único lugar, o protocolo de
- * switch que antes vivia solto no seletor. A troca segue esta ordem lógica:
- *  1. valida no backend (revoga o refresh anterior e emite o novo par para o alvo, via AuthService);
- *  2. troca token/contexto (o `activeTenantId` do AuthService passa a apontar para o novo tenant);
- *  3. incrementa a GERAÇÃO (epoch) e emite `switched$` — o auth interceptor faz `takeUntil(switched$)`, então
- *     CANCELA de verdade toda requisição tenant-scoped em voo: uma resposta iniciada no tenant ANTERIOR não
- *     pode mais repovoar a UI depois da troca;
- *  4. limpa o estado tenant-scoped (caches, signals, stores, paginações) e recarrega os dados do novo tenant.
+ * switch que antes vivia solto no seletor. A ordem é DELIBERADA — o cancelamento vem ANTES da chamada de troca:
+ *  1. bloqueia trocas concorrentes;
+ *  2. incrementa a GERAÇÃO (epoch) e emite `switched$` ANTES de chamar a troca — o auth interceptor faz
+ *     `takeUntil(switched$)`, então CANCELA de verdade as leituras tenant-scoped já em andamento; assim
+ *     nenhuma resposta do tenant anterior atualiza a UI durante o round-trip da troca (a requisição de
+ *     switch é ISENTA do sinal, por ser da família de auth — não cancela a si mesma);
+ *  3. chama `/auth/switch-tenant` com o Bearer LOCAL + o X-Tenant do token atual;
+ *  4. em SUCESSO, o AuthService instala o novo par; então limpa/recarrega a app no novo tenant;
+ *  5. em FALHA, mantém o token/tenant anterior, libera o `switching` e recarrega o estado atual (as leituras
+ *     já foram canceladas, então a app não pode ficar travada num carregamento do tenant que não trocou).
  *
  * A geração é um identificador MONOTÔNICO: além do cancelamento no interceptor, qualquer consumidor pode
  * capturá-la ao iniciar uma leitura e descartar o resultado se ela tiver mudado (defesa em profundidade).
@@ -38,32 +41,30 @@ export class TenantContextService {
   switch(tenantId: string): void {
     if (this._switching() || tenantId === this.auth.activeTenantId()) return;
 
+    // 1) Bloqueia trocas concorrentes.
     this._switching.set(true);
+
+    // 2) ANTES de chamar a troca: invalida a geração e emite o sinal, ABORTANDO as leituras tenant-scoped já
+    //    em andamento. Nenhuma resposta do tenant atual pode atualizar a UI durante o round-trip do switch.
+    //    A requisição de switch é isenta do sinal (família de auth), então não cancela a si mesma.
+    this._generation.update((g) => g + 1);
+    this.switched$.next();
+
+    // 3) Chama a troca — o interceptor anexa o Bearer local + o X-Tenant do token atual.
     this.auth.switchTenant(tenantId).subscribe({
       next: () => {
-        // O token JÁ é do novo tenant. Invalida a geração e ABORTA toda leitura tenant-scoped em voo: uma
-        // resposta do tenant anterior não pode mais escrever em nenhum signal/store depois deste ponto.
-        this._generation.update((g) => g + 1);
-        this.switched$.next();
+        // 4) O AuthService já instalou o novo par (o token agora é do novo tenant). Limpa e recarrega no novo.
         this._switching.set(false);
-        this.reloadForNewTenant();
+        this.router.navigateByUrl('/').then(() => window.location.reload());
       },
       error: () => {
+        // 5) Falha (403 sem acesso, ou 401 após refresh esgotado): o token/tenant ANTERIOR permanece intacto.
+        //    Libera o switching e recarrega o ESTADO ATUAL — como as leituras foram canceladas no passo 2, uma
+        //    recarga in-place devolve uma visão consistente do tenant atual (e a lista volta no bootstrap, sem
+        //    o ambiente que porventura perdeu acesso), sem trocar de ambiente nem deixar a UI travada.
         this._switching.set(false);
-        // 403: o acesso deixou de existir entre carregar a lista e clicar. Recarrega a lista para que o
-        // ambiente sumir do seletor seja a explicação visível.
-        this.auth.getAvailableTenants().subscribe();
+        window.location.reload();
       },
     });
-  }
-
-  /**
-   * Limpeza determinística do estado tenant-scoped + recarga dos dados do novo tenant. As telas guardam o
-   * estado em signals locais e paginações próprias; a recarga dura garante que NENHUM valor do tenant
-   * anterior sobreviva, sem depender de cada página lembrar de se limpar. As requisições do tenant antigo já
-   * foram abortadas em `switch()`, então não há resposta atrasada capaz de repovoar a UI durante a recarga.
-   */
-  private reloadForNewTenant(): void {
-    this.router.navigateByUrl('/').then(() => window.location.reload());
   }
 }

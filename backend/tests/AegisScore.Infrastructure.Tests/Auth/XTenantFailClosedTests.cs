@@ -10,10 +10,10 @@ using Xunit;
 namespace AegisScore.Infrastructure.Tests.Auth;
 
 /// <summary>
-/// [AEGIS-AUD-018] Autoridade central fail-closed do <c>X-Tenant</c> (TenantConsistencyMiddleware). O tenant
-/// vem SEMPRE da claim assinada; um header ausente é aceito (a claim é forte), um MALFORMADO é 400, um
-/// DIVERGENTE é 403, e um token autenticado sem tenant válido é 403 — nunca se cai em Guid.Empty, no primeiro
-/// tenant ou no anterior. A família <c>/api/v1/auth</c> (login/refresh/troca federada/switch/seleção)
+/// [AEGIS-AUD-018] Autoridade central fail-closed do <c>X-Tenant</c> (TenantConsistencyMiddleware). Numa rota
+/// tenant-scoped o tenant é EXIGIDO explicitamente: o header <c>X-Tenant</c> AUSENTE/vazio é 400, MALFORMADO é
+/// 400, DIVERGENTE da claim é 403, e um token autenticado sem tenant válido é 403 — nunca se cai em Guid.Empty,
+/// no primeiro tenant ou no anterior. A família <c>/api/v1/auth</c> (login/refresh/troca federada/switch/seleção)
 /// atravessa sem a verificação, para não quebrar a autenticação nem a troca federada (sem tenant_id).
 /// </summary>
 public sealed class XTenantFailClosedTests
@@ -22,12 +22,16 @@ public sealed class XTenantFailClosedTests
     private const string OutroTenant = "22222222-2222-2222-2222-222222222222";
     private const string ApiPath = "/api/v1/scoring/dashboard";   // rota tenant-scoped qualquer
 
-    [Fact]
-    public async Task ClaimValida_SemHeader_Passa()
+    [Theory]
+    [InlineData(null)]  // header ausente
+    [InlineData("")]    // header vazio
+    public async Task HeaderAusenteOuVazio_Rejeita400_SemChamarNext(string? xTenant)
     {
-        var (status, next) = await RunAsync(Authenticated(Tenant), ApiPath, xTenant: null);
-        next.Should().BeTrue("a claim assinada é autoritativa — o X-Tenant é opcional");
-        status.Should().Be(StatusCodes.Status200OK);
+        // [AEGIS-AUD-018] Rota tenant-scoped EXIGE o tenant declarado: ausente/vazio → 400, sem alcançar o
+        // controller. O SPA sempre envia o X-Tenant (derivado do token), então isto só barra clientes que o omitem.
+        var (status, next) = await RunAsync(Authenticated(Tenant), ApiPath, xTenant);
+        next.Should().BeFalse("uma rota tenant-scoped não pode prosseguir sem o tenant explícito");
+        status.Should().Be(StatusCodes.Status400BadRequest);
     }
 
     [Fact]

@@ -6,14 +6,16 @@ namespace AegisScore.Api;
 /// <summary>
 /// [AEGIS-AUD-018] Autoridade CENTRAL fail-closed do <c>X-Tenant</c> para as rotas tenant-scoped. Roda
 /// depois que o JWT foi validado e a autorização decidida. Para toda requisição autenticada FORA da família
-/// de autenticação garante que:
-///  (a) o token carrega uma claim <c>tenant_id</c> válida (nunca <c>Guid.Empty</c>) — o tenant vem SEMPRE
-///      da claim assinada, jamais de um header spoofável; e
-///  (b) se o cliente também enviou <c>X-Tenant</c>, ele é um GUID BEM-FORMADO e igual ao tenant do token.
+/// de autenticação, o tenant é EXIGIDO explicitamente e validado:
+///  (a) a claim <c>tenant_id</c> precisa existir e ser válida (nunca <c>Guid.Empty</c>) — o tenant vem
+///      SEMPRE da claim assinada, jamais só de um header spoofável; e
+///  (b) o header <c>X-Tenant</c> é OBRIGATÓRIO, GUID bem-formado e igual ao tenant do token.
 ///
-/// Um header ausente é aceito (a claim é autoritativa); um header MALFORMADO é 400; um header DIVERGENTE é
-/// 403 (evento de segurança para o SOC). Assim o header nunca substitui, sobrepõe ou "adivinha" o tenant —
-/// e jamais se cai silenciosamente em <c>Guid.Empty</c>, no primeiro tenant ou no tenant anterior.
+/// Desfechos: claim ausente/inválida → 403; <c>X-Tenant</c> ausente/vazio → 400; malformado → 400;
+/// divergente da claim → 403 (evento de segurança para o SOC); claim e header válidos e iguais → prossegue.
+/// Assim o header nunca substitui, sobrepõe ou "adivinha" o tenant — e jamais se cai silenciosamente em
+/// <c>Guid.Empty</c>, no primeiro tenant ou no tenant anterior. O SPA já envia o <c>X-Tenant</c> em toda
+/// chamada autenticada (derivado do próprio token), então nenhuma metadata de rota é necessária.
 ///
 /// A família <c>/api/v1/auth</c> (login/refresh/logout/troca federada/seleção/switch) atravessa SEM esta
 /// verificação: ela se autentica por credencial própria (senha, cookie, token Entra ou ticket de seleção),
@@ -59,34 +61,41 @@ public sealed class TenantConsistencyMiddleware
                 return;
             }
 
-            // (b) Header X-Tenant, se presente, precisa ser um GUID bem-formado E igual ao tenant do token.
+            // (b) Header X-Tenant é OBRIGATÓRIO na rota tenant-scoped. O SPA sempre o envia (derivado do
+            //     próprio token); sua AUSÊNCIA denuncia um cliente que não declarou o tenant — fail-closed 400.
             var headerRaw = context.Request.Headers["X-Tenant"].FirstOrDefault();
-            if (!string.IsNullOrEmpty(headerRaw))
+            if (string.IsNullOrEmpty(headerRaw))
             {
-                // Malformado: fail-closed com 400 (não silenciosamente ignorado — a claim é forte, mas um
-                // header quebrado denuncia um cliente defeituoso/hostil e não pode ser aceito).
-                if (!Guid.TryParse(headerRaw, out var headerTenant))
-                {
-                    _logger.LogWarning(
-                        "SECURITY: header X-Tenant malformado rejeitado. " +
-                        "TraceId={TraceId} Method={Method} Path={Path} User={User}",
-                        context.TraceIdentifier, context.Request.Method, context.Request.Path.Value, Subject(user));
-                    await WriteProblemAsync(context, StatusCodes.Status400BadRequest, "Header X-Tenant inválido.");
-                    return;
-                }
+                _logger.LogWarning(
+                    "SECURITY: header X-Tenant ausente em rota tenant-scoped autenticada. " +
+                    "TraceId={TraceId} Method={Method} Path={Path} User={User}",
+                    context.TraceIdentifier, context.Request.Method, context.Request.Path.Value, Subject(user));
+                await WriteProblemAsync(context, StatusCodes.Status400BadRequest, "Header X-Tenant obrigatório.");
+                return;
+            }
 
-                // Divergente (inclui Guid.Empty): tentativa de acesso cross-tenant — 403 e evento de segurança.
-                if (headerTenant != tokenTenant)
-                {
-                    _logger.LogWarning(
-                        "SECURITY: acesso cross-tenant rejeitado. TokenTenant={Token} HeaderTenant={Header} " +
-                        "TraceId={TraceId} Method={Method} Path={Path} User={User}",
-                        tokenTenant, headerTenant, context.TraceIdentifier,
-                        context.Request.Method, context.Request.Path.Value, Subject(user));
-                    await WriteProblemAsync(
-                        context, StatusCodes.Status403Forbidden, "Tenant do token diverge do tenant requisitado.");
-                    return;
-                }
+            // Malformado: fail-closed com 400 (um header quebrado denuncia cliente defeituoso/hostil).
+            if (!Guid.TryParse(headerRaw, out var headerTenant))
+            {
+                _logger.LogWarning(
+                    "SECURITY: header X-Tenant malformado rejeitado. " +
+                    "TraceId={TraceId} Method={Method} Path={Path} User={User}",
+                    context.TraceIdentifier, context.Request.Method, context.Request.Path.Value, Subject(user));
+                await WriteProblemAsync(context, StatusCodes.Status400BadRequest, "Header X-Tenant inválido.");
+                return;
+            }
+
+            // Divergente (inclui Guid.Empty): tentativa de acesso cross-tenant — 403 e evento de segurança.
+            if (headerTenant != tokenTenant)
+            {
+                _logger.LogWarning(
+                    "SECURITY: acesso cross-tenant rejeitado. TokenTenant={Token} HeaderTenant={Header} " +
+                    "TraceId={TraceId} Method={Method} Path={Path} User={User}",
+                    tokenTenant, headerTenant, context.TraceIdentifier,
+                    context.Request.Method, context.Request.Path.Value, Subject(user));
+                await WriteProblemAsync(
+                    context, StatusCodes.Status403Forbidden, "Tenant do token diverge do tenant requisitado.");
+                return;
             }
         }
 
