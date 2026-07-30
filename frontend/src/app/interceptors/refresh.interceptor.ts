@@ -2,7 +2,7 @@ import { HttpErrorResponse, HttpHandlerFn, HttpInterceptorFn, HttpRequest } from
 import { inject } from '@angular/core';
 import { BehaviorSubject, Observable, catchError, filter, finalize, switchMap, take, throwError, timeout } from 'rxjs';
 import { AuthService } from '../services/auth.service';
-import { ALREADY_RETRIED, isAuthEndpoint } from './api-endpoints';
+import { ALREADY_RETRIED, isBearerlessAuthEndpoint } from './api-endpoints';
 
 /**
  * Estado do portão de refresh, compartilhado por todas as requisições:
@@ -38,9 +38,11 @@ export const refreshInterceptor: HttpInterceptorFn = (req, next) => {
     catchError((error: unknown) => {
       const is401 = error instanceof HttpErrorResponse && error.status === 401;
 
-      // Não renova em: erros != 401; chamadas de /auth (o /refresh 401 tem de falhar de vez);
-      // ou requisições já refeitas uma vez (corta o loop 401→refresh→401).
-      if (!is401 || isAuthEndpoint(req.url) || req.context.get(ALREADY_RETRIED)) {
+      // Não renova em: erros != 401; endpoints com auth PRÓPRIA (login/refresh/logout/select-tenant/
+      // federation — o /refresh 401 tem de falhar de vez); ou requisições já refeitas uma vez (corta o loop
+      // 401→refresh→401). O switch-tenant NÃO está nesse grupo: um 401 dele renova o token local e refaz a
+      // troca uma única vez (a requisição refeita é marcada com ALREADY_RETRIED).
+      if (!is401 || isBearerlessAuthEndpoint(req.url) || req.context.get(ALREADY_RETRIED)) {
         return throwError(() => error);
       }
 

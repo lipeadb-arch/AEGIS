@@ -59,7 +59,7 @@ public sealed class FederatedAuthTests : IDisposable
     public async Task Login_ModoLocal_Funciona()
     {
         await using var db = NewContext(null);
-        (await ServiceFor(db, Fed(FederationMode.Local)).LoginAsync(Email, Senha, default))
+        (await ServiceFor(db, Fed(FederationMode.Local)).LoginAsync(Email, Senha, null, default)).Pair
             .Should().NotBeNull("Local é o padrão de dev/demonstração");
     }
 
@@ -67,7 +67,7 @@ public sealed class FederatedAuthTests : IDisposable
     public async Task Login_ModoFederated_BloqueiaSenha_MesmoComCredencialValida()
     {
         await using var db = NewContext(null);
-        (await ServiceFor(db, Fed(FederationMode.Federated)).LoginAsync(Email, Senha, default))
+        (await ServiceFor(db, Fed(FederationMode.Federated)).LoginAsync(Email, Senha, null, default)).Pair
             .Should().BeNull("em Federated o login por senha fica desabilitado");
     }
 
@@ -75,7 +75,7 @@ public sealed class FederatedAuthTests : IDisposable
     public async Task Login_ModoHybrid_AindaAceitaSenha()
     {
         await using var db = NewContext(null);
-        (await ServiceFor(db, Fed(FederationMode.Hybrid)).LoginAsync(Email, Senha, default))
+        (await ServiceFor(db, Fed(FederationMode.Hybrid)).LoginAsync(Email, Senha, null, default)).Pair
             .Should().NotBeNull("Hybrid permite os dois caminhos");
     }
 
@@ -84,7 +84,7 @@ public sealed class FederatedAuthTests : IDisposable
     {
         await using var db = NewContext(null);
         (await ServiceFor(db, Fed(FederationMode.Local))
-            .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, Email), default))
+            .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, Email), null, default)).Pair
             .Should().BeNull("sem federação não há troca");
     }
 
@@ -99,7 +99,7 @@ public sealed class FederatedAuthTests : IDisposable
     {
         await using var db = NewContext(null);
         (await ServiceFor(db, Fed(FederationMode.Federated))
-            .ExchangeFederatedAsync(new FederatedIdentity(tid, oid, Email), default))
+            .ExchangeFederatedAsync(new FederatedIdentity(tid, oid, Email), null, default)).Pair
             .Should().BeNull();
     }
 
@@ -109,7 +109,7 @@ public sealed class FederatedAuthTests : IDisposable
         await using var db = NewContext(null);
         var outroTid = "99999999-9999-9999-9999-999999999999";
         (await ServiceFor(db, Fed(FederationMode.Federated))
-            .ExchangeFederatedAsync(new FederatedIdentity(outroTid, OidA, Email), default))
+            .ExchangeFederatedAsync(new FederatedIdentity(outroTid, OidA, Email), null, default)).Pair
             .Should().BeNull("o tid do token precisa casar com o tenant Entra configurado");
     }
 
@@ -120,7 +120,7 @@ public sealed class FederatedAuthTests : IDisposable
     {
         await using (var db = NewContext(null))
             (await ServiceFor(db, Fed(FederationMode.Federated))
-                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, "  Ana@Demo.Example.com "), default))
+                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, "  Ana@Demo.Example.com "), null, default)).Pair
                 .Should().NotBeNull("e-mail correspondente + membership ativo → primeiro vínculo");
 
         var acc = await AccountAsync(_accountId);
@@ -134,7 +134,7 @@ public sealed class FederatedAuthTests : IDisposable
         var antes = await CountAccountsAsync();
         await using (var db = NewContext(null))
             (await ServiceFor(db, Fed(FederationMode.Federated))
-                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, "ninguem@demo.example.com"), default))
+                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, "ninguem@demo.example.com"), null, default)).Pair
                 .Should().BeNull();
 
         (await CountAccountsAsync()).Should().Be(antes, "nenhuma conta é criada automaticamente");
@@ -157,7 +157,7 @@ public sealed class FederatedAuthTests : IDisposable
 
         await using (var db = NewContext(null))
             (await ServiceFor(db, Fed(FederationMode.Federated))
-                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidB, emailBob), default))
+                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidB, emailBob), null, default)).Pair
                 .Should().BeNull("membership inativo não recebe sessão");
 
         var bobAcc = await AccountAsync(bobId);
@@ -171,7 +171,7 @@ public sealed class FederatedAuthTests : IDisposable
     {
         await using (var db = NewContext(null))
             await ServiceFor(db, Fed(FederationMode.Federated))
-                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, Email), default);
+                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, Email), null, default);
 
         // O e-mail muda no Entra (e na conta) — o vínculo por tid+oid não pode quebrar.
         await using (var ctx = NewContext(null))
@@ -183,7 +183,7 @@ public sealed class FederatedAuthTests : IDisposable
 
         await using (var db = NewContext(null))
             (await ServiceFor(db, Fed(FederationMode.Federated))
-                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, "email-que-nao-casa@demo.example.com"), default))
+                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, "email-que-nao-casa@demo.example.com"), null, default)).Pair
                 .Should().NotBeNull("uma vez vinculada, a pessoa é localizada por tid+oid, não por e-mail");
     }
 
@@ -193,12 +193,12 @@ public sealed class FederatedAuthTests : IDisposable
         // Ana vincula com OidA.
         await using (var db = NewContext(null))
             await ServiceFor(db, Fed(FederationMode.Federated))
-                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, Email), default);
+                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, Email), null, default);
 
         // Alguém com o MESMO e-mail mas outro oid tenta entrar → não captura a conta já vinculada.
         await using (var db = NewContext(null))
             (await ServiceFor(db, Fed(FederationMode.Federated))
-                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidB, Email), default))
+                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidB, Email), null, default)).Pair
                 .Should().BeNull("conta já ligada a outro oid não é capturável pelo e-mail");
 
         (await AccountAsync(_accountId)).ExternalObjectId.Should().Be(OidA, "o vínculo original permanece");
@@ -211,8 +211,8 @@ public sealed class FederatedAuthTests : IDisposable
     {
         TokenPair? pair;
         await using (var db = NewContext(null))
-            pair = await ServiceFor(db, Fed(FederationMode.Federated), RealJwt())
-                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, Email), default);
+            pair = (await ServiceFor(db, Fed(FederationMode.Federated), RealJwt())
+                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, Email), null, default)).Pair;
 
         pair.Should().NotBeNull();
         var jwt = new JwtSecurityTokenHandler().ReadJwtToken(pair!.AccessToken);
@@ -227,8 +227,8 @@ public sealed class FederatedAuthTests : IDisposable
     {
         TokenPair? pair;
         await using (var db = NewContext(null))
-            pair = await ServiceFor(db, Fed(FederationMode.Federated))
-                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, Email), default);
+            pair = (await ServiceFor(db, Fed(FederationMode.Federated))
+                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid, OidA, Email), null, default)).Pair;
 
         await using var assert = NewContext(null);
         var row = await assert.UserRefreshTokens.IgnoreQueryFilters().AsNoTracking().SingleAsync();
@@ -247,7 +247,7 @@ public sealed class FederatedAuthTests : IDisposable
         var antes = await CountAccountsAsync();
         await using (var db = NewContext(null))
             (await ServiceFor(db, Fed(FederationMode.Federated))
-                .ExchangeFederatedAsync(new FederatedIdentity(tid, oid, Email), default))
+                .ExchangeFederatedAsync(new FederatedIdentity(tid, oid, Email), null, default)).Pair
                 .Should().BeNull("identificador malformado falha antes de qualquer consulta ou escrita");
 
         (await CountAccountsAsync()).Should().Be(antes);
@@ -260,7 +260,7 @@ public sealed class FederatedAuthTests : IDisposable
         // tid/oid chegam em MAIÚSCULAS; o vínculo persistido deve ser o "D" canônico (minúsculo).
         await using (var db = NewContext(null))
             (await ServiceFor(db, Fed(FederationMode.Federated))
-                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid.ToUpperInvariant(), OidA.ToUpperInvariant(), Email), default))
+                .ExchangeFederatedAsync(new FederatedIdentity(EntraTid.ToUpperInvariant(), OidA.ToUpperInvariant(), Email), null, default)).Pair
                 .Should().NotBeNull();
 
         var acc = await AccountAsync(_accountId);
@@ -322,5 +322,16 @@ public sealed class FederatedAuthTests : IDisposable
 
         public (string Token, DateTimeOffset ExpiresAt) CreateRefreshToken() =>
             (Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow.AddDays(7));
+
+        // [AEGIS-AUD-012] Ticket de seleção com round-trip simples (sem JWT real).
+        public (string Token, DateTimeOffset ExpiresAt) CreateTenantSelectionTicket(Guid accountId) =>
+            ($"selticket.{accountId}", DateTimeOffset.UtcNow.AddMinutes(5));
+
+        public bool TryReadTenantSelectionTicket(string ticket, out Guid accountId)
+        {
+            accountId = Guid.Empty;
+            const string prefix = "selticket.";
+            return ticket?.StartsWith(prefix) == true && Guid.TryParse(ticket[prefix.Length..], out accountId);
+        }
     }
 }

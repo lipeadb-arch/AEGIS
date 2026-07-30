@@ -34,11 +34,26 @@ public sealed class JwtTokenService : IJwtTokenService
     /// </summary>
     public const string PlatformRoleClaim = "platform_role";
 
+    /// <summary>
+    /// [AEGIS-AUD-012] Claim de PROPÓSITO. Um ticket de seleção de tenant o carrega com
+    /// <see cref="TenantSelectionPurpose"/> e NÃO carrega tenant/papel — não é uma sessão.
+    /// </summary>
+    public const string PurposeClaim = "purpose";
+    public const string TenantSelectionPurpose = "tenant-selection";
+
     private const int MinKeyBytes = 32;           // HS256 exige chave de pelo menos 256 bits
     private const int MaxAccessTokenMinutes = 10;  // [Médio 7] teto rígido de vida do access token
+    private const int SelectionTicketMinutes = 5;  // [AEGIS-AUD-012] janela curta para concluir a escolha
 
     private readonly JwtOptions _opt;
     private readonly SigningCredentials _creds;
+
+    /// <summary>
+    /// Audience PRÓPRIA do ticket de seleção — distinta da do access token. Como o esquema Bearer padrão
+    /// valida <c>ValidAudience == Audience</c>, um ticket JAMAIS autentica uma rota tenant-scoped: ele só
+    /// é aceito por <see cref="TryReadTenantSelectionTicket"/>, que valida contra esta audience.
+    /// </summary>
+    private string SelectionAudience => $"{_opt.Audience}:tenant-selection";
 
     public JwtTokenService(IOptions<JwtOptions> opt)
     {
@@ -100,5 +115,70 @@ public sealed class JwtTokenService : IJwtTokenService
         var raw = RandomNumberGenerator.GetBytes(32);   // 256 bits de entropia
         var token = Base64UrlEncoder.Encode(raw);
         return (token, DateTimeOffset.UtcNow.AddDays(_opt.RefreshTokenDays));
+    }
+
+    public (string Token, DateTimeOffset ExpiresAt) CreateTenantSelectionTicket(Guid accountId)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var expires = now.AddMinutes(SelectionTicketMinutes);
+
+        // Só a identidade e o propósito. Sem tenant_id, sem role, sem account é inválido: o ticket prova
+        // "esta pessoa autenticou", nada mais — a autorização do alvo é revalidada no SelectTenantAsync.
+        var claims = new List<Claim>
+        {
+            new(AccountClaim, accountId.ToString()),
+            new(PurposeClaim, TenantSelectionPurpose),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+        };
+
+        var token = new JwtSecurityToken(
+            issuer: _opt.Issuer,
+            audience: SelectionAudience,   // audience própria: o Bearer padrão NÃO o aceita como sessão
+            claims: claims,
+            notBefore: now.UtcDateTime,
+            expires: expires.UtcDateTime,
+            signingCredentials: _creds);
+
+        return (new JwtSecurityTokenHandler().WriteToken(token), expires);
+    }
+
+    public bool TryReadTenantSelectionTicket(string ticket, out Guid accountId)
+    {
+        accountId = Guid.Empty;
+        if (string.IsNullOrWhiteSpace(ticket))
+            return false;
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_opt.SigningKey));
+        var parameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = _opt.Issuer,
+            ValidateAudience = true,
+            ValidAudience = SelectionAudience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = key,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(30),
+            ValidAlgorithms = new[] { SecurityAlgorithms.HmacSha256 },   // barra confusão de algoritmo
+        };
+
+        try
+        {
+            var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
+            var principal = handler.ValidateToken(ticket, parameters, out _);
+
+            // O propósito é obrigatório: um access token normal (audience diferente) já teria falhado acima,
+            // mas a checagem explícita fecha qualquer token de audience coincidente sem o propósito.
+            if (principal.FindFirst(PurposeClaim)?.Value != TenantSelectionPurpose)
+                return false;
+
+            return Guid.TryParse(principal.FindFirst(AccountClaim)?.Value, out accountId)
+                && accountId != Guid.Empty;
+        }
+        catch
+        {
+            // Assinatura, lifetime, issuer ou audience inválidos: ticket recusado (fail-closed).
+            return false;
+        }
     }
 }

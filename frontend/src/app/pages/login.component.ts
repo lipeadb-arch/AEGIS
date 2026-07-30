@@ -1,6 +1,6 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { AuthService, FederationConfig } from '../services/auth.service';
+import { AuthService, FederationConfig, LoginFlowResult, TenantOption } from '../services/auth.service';
 import { FederatedLoginService } from '../services/federated-login.service';
 
 /**
@@ -22,7 +22,29 @@ import { FederatedLoginService } from '../services/federated-login.service';
         <h1 class="title">AEGIS</h1>
         <p class="sub">Acesso ao painel de maturidade cibernética</p>
 
-        @if (configLoading()) {
+        @if (selection(); as sel) {
+          <!-- [AEGIS-AUD-012] Seleção explícita de ambiente: vários acessos sem último tenant válido. -->
+          <p class="sub">Selecione o ambiente para continuar</p>
+          <ul class="tenant-list" role="listbox">
+            @for (t of sel.tenants; track t.id) {
+              <li>
+                <button
+                  type="button"
+                  role="option"
+                  class="tenant"
+                  [disabled]="loading()"
+                  (click)="chooseTenant(t.id)"
+                >
+                  <span class="t-name">{{ t.name }}</span>
+                  <span class="t-role">{{ t.role }}</span>
+                </button>
+              </li>
+            }
+          </ul>
+          @if (error()) {
+            <p class="error" role="alert">{{ error() }}</p>
+          }
+        } @else if (configLoading()) {
           <p class="loading">Carregando…</p>
         } @else if (configError()) {
           <!-- Fail-closed: enquanto a config não carrega, NÃO mostramos formulário nem botão corporativo. -->
@@ -187,6 +209,50 @@ import { FederatedLoginService } from '../services/federated-login.service';
       .corp:not(:disabled):hover {
         background: rgba(38, 224, 255, 0.08);
       }
+      /* [AEGIS-AUD-012] Seletor de ambiente no login — mesmo idioma visual do card e do tenant switcher. */
+      .tenant-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .tenant {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 10px;
+        cursor: pointer;
+        text-align: left;
+        color: var(--text, #eaf1ff);
+        background: rgba(5, 7, 15, 0.6);
+        border: 1px solid var(--line, #1b2438);
+        transition:
+          border-color 0.15s,
+          background 0.15s;
+      }
+      .tenant:not(:disabled):hover {
+        border-color: var(--cyan, #26e0ff);
+        background: rgba(38, 224, 255, 0.08);
+      }
+      .tenant:disabled {
+        opacity: 0.7;
+        cursor: default;
+      }
+      .tenant .t-name {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .tenant .t-role {
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.7;
+      }
     `,
   ],
 })
@@ -200,6 +266,13 @@ export class LoginComponent implements OnInit {
   private readonly config = signal<FederationConfig | null>(null);
   readonly configLoading = signal(true);
   readonly configError = signal(false);
+
+  /**
+   * [AEGIS-AUD-012] Seleção de ambiente pendente: quando o login (local OU corporativo) resolve em vários
+   * acessos sem último tenant válido, o servidor devolve os ambientes + um ticket curto. Enquanto isto está
+   * setado, a tela mostra o seletor no lugar do formulário. Some ao concluir ou ao recomeçar o login.
+   */
+  readonly selection = signal<{ ticket: string; tenants: TenantOption[] } | null>(null);
 
   // FAIL-CLOSED: nada de formulário nem botão até a config carregar. Só quando o servidor RESPONDE é que
   // decidimos — em Local aparece o formulário; em Federated some; o botão corporativo só com federação ligada.
@@ -236,9 +309,39 @@ export class LoginComponent implements OnInit {
     this.error.set(null);
 
     this.auth.login(email, password).subscribe({
-      next: () => this.router.navigateByUrl('/dashboard'),
+      next: (result) => this.afterLogin(result),
       error: () => {
         this.error.set('Credenciais inválidas.');
+        this.loading.set(false);
+      },
+    });
+  }
+
+  /**
+   * [AEGIS-AUD-012] Desfecho do login/troca federada: sessão pronta → dashboard; seleção exigida → mostra a
+   * lista de ambientes. O MESMO fluxo serve ao login local e ao corporativo.
+   */
+  private afterLogin(result: LoginFlowResult): void {
+    if (result.kind === 'selection') {
+      this.selection.set({ ticket: result.ticket, tenants: result.tenants });
+      this.loading.set(false);
+      return;
+    }
+    this.router.navigateByUrl('/dashboard');
+  }
+
+  /** [AEGIS-AUD-012] Conclui a seleção com o ambiente escolhido. Falha (ticket expirado/alvo inválido) recomeça o login. */
+  chooseTenant(tenantId: string): void {
+    const sel = this.selection();
+    if (!sel || this.loading()) return;
+
+    this.loading.set(true);
+    this.error.set(null);
+    this.auth.selectTenant(sel.ticket, tenantId).subscribe({
+      next: () => this.router.navigateByUrl('/dashboard'),
+      error: () => {
+        this.error.set('Não foi possível concluir a seleção. Faça login novamente.');
+        this.selection.set(null);
         this.loading.set(false);
       },
     });
@@ -257,7 +360,7 @@ export class LoginComponent implements OnInit {
     try {
       const token = await this.federated.acquireApiToken(cfg.authority, cfg.spaClientId, cfg.scope);
       this.auth.exchangeFederated(token).subscribe({
-        next: () => this.router.navigateByUrl('/dashboard'),
+        next: (result) => this.afterLogin(result),
         error: () => {
           this.error.set('Não foi possível autenticar a conta corporativa.');
           this.loading.set(false);

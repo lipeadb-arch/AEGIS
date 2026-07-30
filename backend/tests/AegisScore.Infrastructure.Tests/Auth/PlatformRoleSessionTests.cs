@@ -61,7 +61,9 @@ public sealed class PlatformRoleSessionTests : IDisposable
     public async Task Login_CarregaPlatformRoleQuandoAIdentidadeEhAdminGlobal()
     {
         await using var db = NewContext(null);
-        var pair = await Auth(db).LoginAsync("ana@demo.example.com", Senha, default);
+        // [AEGIS-AUD-012] Ana tem dois acessos: passa a DICA do último tenant (A) para o login autenticar
+        // direto (em vez de exigir seleção), e prova que o eixo global viaja na claim própria mesmo assim.
+        var pair = (await Auth(db).LoginAsync("ana@demo.example.com", Senha, TenantA, default)).Pair;
 
         pair.Should().NotBeNull();
         PlatformRoleClaim(pair!.AccessToken).Should().Be("PlatformAdmin",
@@ -83,7 +85,8 @@ public sealed class PlatformRoleSessionTests : IDisposable
         SeedMembership(TenantA, plainId, TenantRole.Analyst);
 
         await using var db = NewContext(null);
-        var pair = await Auth(db).LoginAsync("bob@demo.example.com", Senha, default);
+        // Bob tem UM único acesso → login autentica direto (seleção automática), sem precisar de dica.
+        var pair = (await Auth(db).LoginAsync("bob@demo.example.com", Senha, null, default)).Pair;
         HasPlatformClaim(pair!.AccessToken).Should().BeFalse("sem papel global, sem claim global");
     }
 
@@ -109,7 +112,8 @@ public sealed class PlatformRoleSessionTests : IDisposable
         // Login → refresh: ambos os eixos presentes.
         string refresh1;
         await using (var db = NewContext(null))
-            refresh1 = (await Auth(db).LoginAsync("ana@demo.example.com", Senha, default))!.RefreshToken;
+            // Dica do último tenant (A) para autenticar direto: Ana tem dois acessos (AUD-012).
+            refresh1 = (await Auth(db).LoginAsync("ana@demo.example.com", Senha, TenantA, default)).Pair!.RefreshToken;
 
         TokenPair pair2;
         await using (var db = NewContext(null))

@@ -4,11 +4,30 @@ import { Router } from '@angular/router';
 import { Observable, catchError, map, of, switchMap, tap, throwError, timer } from 'rxjs';
 import { environment } from '../../environments/environment';
 
-/** Corpo devolvido por POST /auth/login e /auth/refresh. O refresh token NUNCA vem aqui — só no cookie. */
+/** Corpo devolvido por POST /auth/refresh, /auth/select-tenant e /auth/switch-tenant. O refresh token NUNCA vem aqui — só no cookie. */
 export interface AuthResponse {
   accessToken: string;
   accessTokenExpiresAt: string;
 }
+
+/**
+ * [AEGIS-AUD-012] Corpo de POST /auth/login e /auth/federation/exchange, com desfecho EXPLÍCITO — o cliente
+ * nunca é jogado num tenant escolhido em silêncio. `authenticated` traz o access token; `selection_required`
+ * traz os ambientes e um ticket curto para concluir a escolha em /auth/select-tenant.
+ */
+export interface LoginResultResponse {
+  status: 'authenticated' | 'selection_required';
+  accessToken?: string;
+  accessTokenExpiresAt?: string;
+  selectionTicket?: string;
+  selectionTicketExpiresAt?: string;
+  tenants?: TenantOption[];
+}
+
+/** O que a tela de login recebe: ou a sessão já está pronta, ou uma escolha explícita de ambiente é exigida. */
+export type LoginFlowResult =
+  | { kind: 'authenticated' }
+  | { kind: 'selection'; ticket: string; tenants: TenantOption[] };
 
 /**
  * [AEGIS-AUD-007] Config PÚBLICA e sanitizada da federação (GET /auth/federation/config). Só
@@ -114,19 +133,48 @@ export class AuthService {
     return this._accessToken();
   }
 
-  /** Autentica por credenciais; o cookie de refresh é setado pelo servidor (withCredentials). */
-  login(email: string, password: string): Observable<void> {
+  /**
+   * [AEGIS-AUD-012] Autentica por credenciais. Envia a DICA do último tenant (revalidada no servidor) e
+   * devolve o desfecho: sessão pronta, ou seleção explícita de ambiente. O cookie de refresh é setado pelo
+   * servidor (withCredentials) apenas quando a sessão é emitida.
+   */
+  login(email: string, password: string): Observable<LoginFlowResult> {
     return this.http
-      .post<AuthResponse>(`${this.baseUrl}/login`, { email, password }, { withCredentials: true })
+      .post<LoginResultResponse>(
+        `${this.baseUrl}/login`,
+        { email, password, lastTenantId: this.readLastTenant() },
+        { withCredentials: true },
+      )
+      .pipe(map((res) => this.handleLoginResult(res)));
+  }
+
+  /**
+   * [AEGIS-AUD-012] Conclui a seleção inicial de ambiente com o ticket curto recebido no login. Em sucesso,
+   * o servidor emite a sessão e seta o cookie de refresh; aqui só guardamos o access token em memória.
+   */
+  selectTenant(ticket: string, tenantId: string): Observable<void> {
+    return this.http
+      .post<AuthResponse>(
+        `${this.baseUrl}/select-tenant`,
+        { selectionTicket: ticket, targetTenantId: tenantId },
+        { withCredentials: true },
+      )
       .pipe(
-        tap((res) => {
-          this.setSession(res);
-          // Ambientes carregam EM PARALELO, não em série: encadeá-los atrasaria a navegação
-          // pós-login por uma chamada que só alimenta um dropdown. O seletor aparece quando chegar.
-          this.getAvailableTenants().subscribe();
-        }),
+        tap((res) => this.setSession(res.accessToken)),
+        tap(() => this.getAvailableTenants().subscribe()),
         map(() => void 0),
       );
+  }
+
+  /** Aplica o desfecho do login/troca federada: emite a sessão, ou sinaliza a seleção pendente. */
+  private handleLoginResult(res: LoginResultResponse): LoginFlowResult {
+    if (res.status === 'selection_required' && res.selectionTicket) {
+      return { kind: 'selection', ticket: res.selectionTicket, tenants: res.tenants ?? [] };
+    }
+    this.setSession(res.accessToken!);
+    // Ambientes carregam EM PARALELO: encadeá-los atrasaria a navegação por uma chamada que só alimenta o seletor.
+    this.getAvailableTenants().subscribe();
+    return { kind: 'authenticated' };
   }
 
   /**
@@ -144,18 +192,14 @@ export class AuthService {
    * externo vai SÓ neste header, para o endpoint de troca — nunca é armazenado. O cookie de refresh
    * (HttpOnly) é setado pelo servidor; a partir daí o fluxo local segue idêntico ao login por senha.
    */
-  exchangeFederated(externalToken: string): Observable<void> {
+  exchangeFederated(externalToken: string): Observable<LoginFlowResult> {
     return this.http
-      .post<AuthResponse>(
+      .post<LoginResultResponse>(
         `${this.baseUrl}/federation/exchange`,
-        {},
+        { lastTenantId: this.readLastTenant() },
         { withCredentials: true, headers: { Authorization: `Bearer ${externalToken}` } },
       )
-      .pipe(
-        tap((res) => this.setSession(res)),
-        tap(() => this.getAvailableTenants().subscribe()),
-        map(() => void 0),
-      );
+      .pipe(map((res) => this.handleLoginResult(res)));
   }
 
   /**
@@ -183,7 +227,7 @@ export class AuthService {
     return this.http
       .post<AuthResponse>(`${this.baseUrl}/refresh`, {}, { withCredentials: true })
       .pipe(
-        tap((res) => this.setSession(res)),
+        tap((res) => this.setSession(res.accessToken)),
         map((res) => res.accessToken),
       );
   }
@@ -252,17 +296,41 @@ export class AuthService {
         { withCredentials: true },
       )
       .pipe(
-        tap((res) => this.setSession(res)),
+        tap((res) => this.setSession(res.accessToken)),
         map(() => void 0),
       );
   }
 
-  private setSession(res: AuthResponse): void {
-    this._accessToken.set(res.accessToken);
+  private setSession(accessToken: string): void {
+    this._accessToken.set(accessToken);
+    // [AEGIS-AUD-012] Lembra o ambiente ativo como DICA do próximo login (revalidada no servidor). É só o
+    // GUID do tenant — não um segredo; o access token continua ESTRITAMENTE em memória (regra anti-XSS).
+    const tenant = readJwtClaim(accessToken, 'tenant_id');
+    if (tenant) this.writeLastTenant(tenant);
   }
 
   private clearSession(): void {
     this._accessToken.set(null);
     this._tenants.set([]);
+  }
+
+  // ---- Dica do último tenant (AUD-012): persistida entre sessões, nunca confiada sem revalidação ----
+
+  private static readonly LAST_TENANT_KEY = 'aegis_last_tenant';
+
+  private readLastTenant(): string | null {
+    try {
+      return localStorage.getItem(AuthService.LAST_TENANT_KEY);
+    } catch {
+      return null; // storage indisponível (modo privado/SSR): a dica é best-effort.
+    }
+  }
+
+  private writeLastTenant(tenantId: string): void {
+    try {
+      localStorage.setItem(AuthService.LAST_TENANT_KEY, tenantId);
+    } catch {
+      /* storage indisponível: seguimos sem a dica — o login apenas pedirá seleção. */
+    }
   }
 }

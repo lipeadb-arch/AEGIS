@@ -1,6 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
-import { Router } from '@angular/router';
 import { AuthService, TenantOption } from '../services/auth.service';
+import { TenantContextService } from '../services/tenant-context.service';
 
 /**
  * Seletor de ambiente do HUD (Tenant Switcher) — a experiência de SOC terceirizado: o analista entra
@@ -154,10 +154,11 @@ import { AuthService, TenantOption } from '../services/auth.service';
 })
 export class TenantSwitcherComponent {
   readonly auth = inject(AuthService);
-  private readonly router = inject(Router);
+  private readonly tenantContext = inject(TenantContextService);
 
   readonly open = signal(false);
-  readonly switching = signal(false);
+  /** [AEGIS-AUD-030] O estado de troca agora é do serviço central — autoridade única do switch. */
+  readonly switching = this.tenantContext.switching;
 
   /** Some quando há 0 ou 1 ambiente: um seletor de uma opção só é ruído no HUD. */
   readonly visible = computed(() => this.auth.isAuthenticated() && this.auth.tenants().length > 1);
@@ -175,20 +176,8 @@ export class TenantSwitcherComponent {
     this.open.set(false);
     if (tenant.id === this.auth.activeTenantId() || this.switching()) return;
 
-    this.switching.set(true);
-    this.auth.switchTenant(tenant.id).subscribe({
-      next: () => {
-        this.switching.set(false);
-        // Recarga dura: as telas já montadas seguram dados do ambiente anterior. Um simples
-        // navigate() reusaria os componentes e exibiria números do cliente errado sob o novo nome.
-        this.router.navigateByUrl('/').then(() => window.location.reload());
-      },
-      error: () => {
-        this.switching.set(false);
-        // 403 = o acesso deixou de existir entre o carregamento da lista e o clique. Recarrega a
-        // lista para que o ambiente sumir do seletor seja a explicação visível.
-        this.auth.getAvailableTenants().subscribe();
-      },
-    });
+    // [AEGIS-AUD-030] Delega à autoridade central: ela valida no backend, cancela as leituras do tenant
+    // antigo, limpa o estado e recarrega os dados do novo — nesta ordem. O seletor não orquestra mais nada.
+    this.tenantContext.switch(tenant.id);
   }
 }

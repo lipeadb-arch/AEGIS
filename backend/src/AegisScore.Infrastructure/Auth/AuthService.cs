@@ -55,13 +55,13 @@ public sealed class AuthService : IAuthService
         _logger = logger;
     }
 
-    public async Task<TokenPair?> LoginAsync(string email, string password, CancellationToken ct)
+    public async Task<LoginResult> LoginAsync(string email, string password, Guid? lastTenantId, CancellationToken ct)
     {
         // [AEGIS-AUD-007] Em modo Federated o login por senha fica DESABILITADO (defesa em profundidade:
         // o front já esconde o formulário pela config pública, mas o backend é a autoridade). Local e
         // Hybrid seguem aceitando credenciais.
         if (!_federation.PasswordLoginEnabled)
-            return null;
+            return LoginResult.Denied;
 
         var normalized = (email ?? "").Trim().ToLowerInvariant();
 
@@ -77,65 +77,64 @@ public sealed class AuthService : IAuthService
         var storedHash = account?.PasswordHash;
         var ok = _hasher.Verify(password ?? "", storedHash ?? DummyHash);
         if (account is null || storedHash is null || !ok)
-            return null;
+            return LoginResult.Denied;
 
-        // 2) Só DEPOIS de a credencial provar quem é a pessoa, resolvemos os ambientes dela.
-        //    IgnoreQueryFilters é indispensável aqui: no login ainda não existe tenant ambiente (o
-        //    analista informou apenas e-mail e senha), então o filtro devolveria zero linhas. A leitura
-        //    é ancorada no IdentityAccountId JÁ AUTENTICADO — não em e-mail nem em nada vindo do cliente.
-        var membership = await FirstActiveMembershipAsync(account.Id, ct);
-        if (membership is null)
-            return null;   // pessoa sem nenhum acesso ativo: credencial válida não basta
+        // 2) [AEGIS-AUD-012] Só DEPOIS de a credencial provar quem é a pessoa, RESOLVEMOS o ambiente — sem
+        //    nunca escolher o primeiro registro em silêncio. IgnoreQueryFilters (dentro de ValidMembershipsAsync)
+        //    é indispensável: no login ainda não existe tenant ambiente, então o filtro devolveria zero linhas.
+        //    A leitura é ancorada no IdentityAccountId JÁ AUTENTICADO — não em e-mail nem em nada do cliente.
+        var memberships = await ValidMembershipsAsync(account.Id, ct);
+        return await ResolveSessionAsync(account, memberships, lastTenantId, ct);
+    }
 
-        return await IssuePairAsync(membership, account, ct);
+    /// <summary>
+    /// [AEGIS-AUD-012] Núcleo da SELEÇÃO de ambiente, compartilhado por login local e troca federada. A
+    /// credencial (ou a identidade Entra) já provou quem é a pessoa; aqui decidimos QUAL ambiente:
+    ///  - zero memberships válidos → recusa (credencial válida não basta);
+    ///  - exatamente um → seleção automática;
+    ///  - vários → usa o ÚLTIMO tenant só se ele revalidar AGORA; senão exige escolha explícita.
+    /// Nunca escolhe o primeiro registro do banco: a ordem de <paramref name="memberships"/> só ordena a
+    /// apresentação. O <paramref name="lastTenantId"/> é DICA do cliente, revalidada aqui contra os acessos.
+    /// </summary>
+    private async Task<LoginResult> ResolveSessionAsync(
+        IdentityAccount account, List<MembershipRow> memberships, Guid? lastTenantId, CancellationToken ct)
+    {
+        if (memberships.Count == 0)
+            return LoginResult.Denied;
+
+        if (memberships.Count == 1)
+            return LoginResult.Authenticated(await IssuePairAsync(memberships[0].User, account, ct));
+
+        // Vários acessos: o último tenant só vale se AINDA houver membership ativo nele (já garantido por
+        // ValidMembershipsAsync — ativo e tenant não suspenso). Sem dica, ou dica que não casa: escolha explícita.
+        if (lastTenantId is { } hint && hint != Guid.Empty)
+        {
+            var remembered = memberships.FirstOrDefault(m => m.User.TenantId == hint);
+            if (remembered is not null)
+                return LoginResult.Authenticated(await IssuePairAsync(remembered.User, account, ct));
+        }
+
+        // Ticket curto, purpose-bound, ancorado na identidade — só conclui a seleção em SelectTenantAsync.
+        var (ticket, ticketExp) = _tokens.CreateTenantSelectionTicket(account.Id);
+        return LoginResult.SelectionRequired(ticket, ticketExp, ToDescriptors(memberships));
     }
 
     public async Task<IReadOnlyList<TenantMembershipDescriptor>> GetAccessibleTenantsAsync(
         Guid accountId, CancellationToken ct)
     {
-        if (accountId == Guid.Empty) return Array.Empty<TenantMembershipDescriptor>();
-
-        // Escopo da exceção: memberships DESTA conta, cruzados com o tenant para nome/slug. O join é
-        // sobre Tenants (que não tem query filter — não é ITenantOwned), então só o lado User precisa
-        // atravessar o filtro. Somente ambientes ATIVOS e não suspensos entram no seletor.
-        // ⚠️ Projeta num tipo ANÔNIMO no SQL e só depois monta o record em memória. Projetar direto no
-        // `TenantMembershipDescriptor` dentro do Join fazia o EF 8 desistir da tradução
-        // ("The LINQ expression could not be translated") e cair em 500 — pego no smoke test ao vivo,
-        // não pelos testes. Query syntax + tipo anônimo é a forma que o provider traduz.
-        var rows = await (
-            from u in _db.Users.IgnoreQueryFilters()
-            join t in _db.Tenants on u.TenantId equals t.Id
-            where u.IdentityAccountId == accountId && u.IsActive && t.Status != TenantStatus.Suspended
-            orderby t.Name
-            select new { t.Id, t.Name, t.Slug, u.Role }).ToListAsync(ct);
-
-        return rows
-            .Select(r => new TenantMembershipDescriptor(r.Id, r.Name, r.Slug, r.Role))
-            .ToList();
+        var memberships = await ValidMembershipsAsync(accountId, ct);
+        return ToDescriptors(memberships);
     }
 
     public async Task<TokenPair?> SwitchTenantAsync(
         Guid accountId, Guid targetTenantId, string? currentRefreshToken, CancellationToken ct)
     {
-        if (accountId == Guid.Empty || targetTenantId == Guid.Empty)
+        // A AUTORIZAÇÃO da troca (membership ativo no alvo, tenant não suspenso) é validada ANTES de tocar a
+        // sessão atual: um switch negado não pode revogar o refresh vigente.
+        var validated = await ValidateTargetAsync(accountId, targetTenantId, ct);
+        if (validated is null)
             return null;
-
-        // A AUTORIZAÇÃO da troca: a pessoa do token precisa ter membership ATIVO no alvo. O predicado
-        // casa por IdentityAccountId — chave estrangeira, não string —, então não há como um acesso
-        // criado noutro cliente com o "mesmo e-mail" habilitar esta troca.
-        var target = await _db.Users.IgnoreQueryFilters()
-            .FirstOrDefaultAsync(
-                u => u.IdentityAccountId == accountId && u.TenantId == targetTenantId && u.IsActive, ct);
-        if (target is null)
-            return null;
-
-        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == targetTenantId, ct);
-        if (tenant is null || tenant.Status == TenantStatus.Suspended)
-            return null;
-
-        var account = await _db.IdentityAccounts.FirstOrDefaultAsync(a => a.Id == accountId, ct);
-        if (account is null)
-            return null;
+        var (target, account) = validated.Value;
 
         // A sessão do ambiente anterior NÃO sobrevive à troca: revoga o refresh corrente antes de emitir
         // o novo. Sem isto, o cliente ficaria com dois refresh vivos de tenants distintos, e um replay do
@@ -164,26 +163,91 @@ public sealed class AuthService : IAuthService
         return pair;
     }
 
-    /// <summary>
-    /// Primeiro membership ATIVO da pessoa, em ordem ESTÁVEL. A ordenação não é cosmética: sem ela, o
-    /// "primeiro ambiente" dependeria do plano de execução do Postgres e o usuário cairia em clientes
-    /// diferentes a cada login. Critério: o acesso mais antigo (o "ambiente de origem" da pessoa).
-    /// </summary>
-    private async Task<User?> FirstActiveMembershipAsync(Guid accountId, CancellationToken ct)
+    public async Task<TokenPair?> SelectTenantAsync(
+        string selectionTicket, Guid targetTenantId, CancellationToken ct)
     {
-        var candidatos = await (
+        // [AEGIS-AUD-012] A identidade vem EXCLUSIVAMENTE do ticket assinado — nunca do corpo. Ticket
+        // inválido/expirado/adulterado (ou de outra audience) falha fechado, sem tocar o banco.
+        if (!_tokens.TryReadTenantSelectionTicket(selectionTicket ?? "", out var accountId))
+            return null;
+
+        // Revalida o membership ATIVO no alvo AGORA (não confia no que o login viu): o mesmo caminho da troca.
+        var validated = await ValidateTargetAsync(accountId, targetTenantId, ct);
+        if (validated is null)
+            return null;
+        var (target, account) = validated.Value;
+
+        return await IssuePairAsync(target, account, ct);
+    }
+
+    /// <summary>
+    /// Revalida que a pessoa tem membership ATIVO no alvo e o tenant não está suspenso, devolvendo o
+    /// membership e a conta prontos para emissão. Base COMUM da troca (<see cref="SwitchTenantAsync"/>) e da
+    /// seleção inicial (<see cref="SelectTenantAsync"/>). Casa por IdentityAccountId (FK, não string), então
+    /// um acesso criado noutro cliente com o "mesmo e-mail" nunca habilita o alvo. <c>null</c> = negado.
+    /// </summary>
+    private async Task<(User Target, IdentityAccount Account)?> ValidateTargetAsync(
+        Guid accountId, Guid targetTenantId, CancellationToken ct)
+    {
+        if (accountId == Guid.Empty || targetTenantId == Guid.Empty)
+            return null;
+
+        var target = await _db.Users.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(
+                u => u.IdentityAccountId == accountId && u.TenantId == targetTenantId && u.IsActive, ct);
+        if (target is null)
+            return null;
+
+        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == targetTenantId, ct);
+        if (tenant is null || tenant.Status == TenantStatus.Suspended)
+            return null;
+
+        var account = await _db.IdentityAccounts.FirstOrDefaultAsync(a => a.Id == accountId, ct);
+        if (account is null)
+            return null;
+
+        return (target, account);
+    }
+
+    /// <summary>Um membership válido carregado com o nome/slug do tenant (para seletor e decisão de login).</summary>
+    private sealed record MembershipRow(User User, string TenantName, string TenantSlug);
+
+    /// <summary>
+    /// [AEGIS-AUD-012] TODOS os memberships VÁLIDOS da pessoa — ATIVOS e de tenant NÃO suspenso — em ordem
+    /// ESTÁVEL (acesso mais antigo primeiro). É a base tanto do seletor quanto da decisão de login. A ordem
+    /// não é cosmética: sem ela a apresentação dependeria do plano de execução do Postgres; mas ela NUNCA
+    /// serve para escolher um ambiente em silêncio (isso é decisão explícita em <see cref="ResolveSessionAsync"/>).
+    /// </summary>
+    private async Task<List<MembershipRow>> ValidMembershipsAsync(Guid accountId, CancellationToken ct)
+    {
+        if (accountId == Guid.Empty) return new();
+
+        // Escopo da exceção: memberships DESTA conta, cruzados com o tenant para nome/slug. O join é sobre
+        // Tenants (sem query filter — não é ITenantOwned), então só o lado User atravessa o filtro. Somente
+        // ambientes ATIVOS e não suspensos entram.
+        // ⚠️ Projeta num tipo ANÔNIMO no SQL e só depois monta o record em memória. Projetar direto num
+        // record dentro do Join fazia o EF desistir da tradução ("could not be translated") e cair em 500 —
+        // pego no smoke test ao vivo. Query syntax + tipo anônimo é a forma que o provider traduz.
+        var rows = await (
             from u in _db.Users.IgnoreQueryFilters()
             join t in _db.Tenants on u.TenantId equals t.Id
             where u.IdentityAccountId == accountId && u.IsActive && t.Status != TenantStatus.Suspended
-            select u).ToListAsync(ct);
+            select new { User = u, t.Name, t.Slug }).ToListAsync(ct);
 
-        // ⚠️ Ordenação em MEMÓRIA de propósito: o SQLite (provider da suíte de testes) não ordena por
-        // DateTimeOffset, então um ORDER BY no servidor deixaria o login sem cobertura possível. O
-        // custo é nulo — uma pessoa tem um punhado de acessos, não uma tabela.
-        return candidatos
-            .OrderBy(u => u.CreatedAt).ThenBy(u => u.Id)
-            .FirstOrDefault();
+        // Ordenação em MEMÓRIA de propósito: o SQLite (provider dos testes) não ordena por DateTimeOffset,
+        // então um ORDER BY no servidor deixaria o login sem cobertura. Custo nulo — são poucos acessos.
+        return rows
+            .OrderBy(r => r.User.CreatedAt).ThenBy(r => r.User.Id)
+            .Select(r => new MembershipRow(r.User, r.Name, r.Slug))
+            .ToList();
     }
+
+    /// <summary>Projeta os memberships no descritor do seletor, em ordem alfabética de nome (apresentação).</summary>
+    private static IReadOnlyList<TenantMembershipDescriptor> ToDescriptors(IEnumerable<MembershipRow> memberships) =>
+        memberships
+            .OrderBy(m => m.TenantName)
+            .Select(m => new TenantMembershipDescriptor(m.User.TenantId, m.TenantName, m.TenantSlug, m.User.Role))
+            .ToList();
 
     public async Task<RefreshResult> RefreshAsync(string refreshToken, CancellationToken ct)
     {
@@ -301,20 +365,21 @@ public sealed class AuthService : IAuthService
     /// verificação criptográfica (assinatura/issuer/audience/lifetime) já foi feita pelo esquema JWT Bearer
     /// do Entra; aqui só decidimos o VÍNCULO e emitimos o par local. Nunca cria conta/membership.
     /// </summary>
-    public async Task<TokenPair?> ExchangeFederatedAsync(FederatedIdentity identity, CancellationToken ct)
+    public async Task<LoginResult> ExchangeFederatedAsync(
+        FederatedIdentity identity, Guid? lastTenantId, CancellationToken ct)
     {
         // Federação precisa estar ligada (defesa em profundidade — a policy já exige, mas o serviço é a
         // autoridade final de persistência).
         if (!_federation.FederationEnabled)
-            return null;
+            return LoginResult.Denied;
 
         // Canonicaliza tid/oid: um identificador malformado retorna falha GENÉRICA aqui mesmo, ANTES de
         // qualquer consulta por e-mail ou escrita no banco. tid precisa ser o tenant configurado. Só o
         // formato canônico "D" é comparado e persistido.
         if (!Guid.TryParse(identity.TenantId, out var tidGuid) || !Guid.TryParse(identity.ObjectId, out var oidGuid))
-            return null;
+            return LoginResult.Denied;
         if (!Guid.TryParse(_federation.TenantId, out var allowedTid) || tidGuid != allowedTid)
-            return null;
+            return LoginResult.Denied;
 
         var tid = tidGuid.ToString("D");
         var oid = oidGuid.ToString("D");
@@ -333,20 +398,21 @@ public sealed class AuthService : IAuthService
             //    capturada por alguém com o mesmo e-mail. Sem conta correspondente → nega, sem provisionar.
             var email = (identity.Email ?? "").Trim().ToLowerInvariant();
             if (string.IsNullOrEmpty(email))
-                return null;
+                return LoginResult.Denied;
 
             account = await _db.IdentityAccounts
                 .FirstOrDefaultAsync(a => a.Email == email && a.ExternalObjectId == null, ct);
             if (account is null)
-                return null;
+                return LoginResult.Denied;
             precisaVincular = true;
         }
 
-        // 3) Membership ATIVO é obrigatório e NUNCA é criado (provisionamento é o AUD-010). Conferido ANTES
-        //    de gravar o vínculo: um login negado (sem acesso ativo) não deixa efeito colateral no banco.
-        var membership = await FirstActiveMembershipAsync(account.Id, ct);
-        if (membership is null)
-            return null;
+        // 3) [AEGIS-AUD-012] Ao menos um acesso ATIVO é obrigatório e NUNCA é criado (provisionamento é o
+        //    AUD-010). Conferido ANTES de gravar o vínculo: uma federação negada (sem acesso ativo) não deixa
+        //    efeito colateral no banco.
+        var memberships = await ValidMembershipsAsync(account.Id, ct);
+        if (memberships.Count == 0)
+            return LoginResult.Denied;
 
         // 4) Fecha o vínculo no primeiro login. IdentityAccount é referência GLOBAL (não ITenantOwned):
         //    grava sem tenant ambiente. O índice único parcial (tid,oid) torna a corrida uma invariante
@@ -367,13 +433,14 @@ public sealed class AuthService : IAuthService
                 var winner = await _db.IdentityAccounts.AsNoTracking()
                     .FirstOrDefaultAsync(a => a.ExternalTenantId == tid && a.ExternalObjectId == oid, ct);
                 if (winner is null)
-                    return null;
-                account = winner;
+                    return LoginResult.Denied;
+                account = winner;   // mesma linha (e-mail é único); os memberships já carregados seguem válidos
             }
         }
 
-        // Emite o par local pelo MESMO caminho do login — o JWT resultante carrega account/tenant/papel internos.
-        return await IssuePairAsync(membership, account, ct);
+        // [AEGIS-AUD-012] Resolve o ambiente sem escolher em silêncio — idêntico ao login local (um acesso
+        // seleciona automático; vários exigem o último tenant revalidado ou escolha explícita).
+        return await ResolveSessionAsync(account, memberships, lastTenantId, ct);
     }
 
     /// <summary>

@@ -59,7 +59,7 @@ public sealed class RefreshTokenPostgresTests
         // Uma sessão inicial (login) → o bruto que várias requisições vão apresentar ao MESMO tempo.
         string raw0;
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
-            raw0 = (await ServiceFor(db, opt).LoginAsync(Email, Senha, default))!.RefreshToken;
+            raw0 = (await ServiceFor(db, opt).LoginAsync(Email, Senha, null, default)).Pair!.RefreshToken;
 
         // 8 "requisições" concorrentes com o MESMO cookie. Cada uma com seu próprio DbContext (não é
         // thread-safe). Só uma pode vencer o UPDATE ... WHERE RevokedAt IS NULL.
@@ -280,5 +280,16 @@ public sealed class RefreshTokenPostgresTests
 
         public (string Token, DateTimeOffset ExpiresAt) CreateRefreshToken() =>
             (Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow.AddDays(7));
+
+        // [AEGIS-AUD-012] Ticket de seleção com round-trip simples (sem JWT real).
+        public (string Token, DateTimeOffset ExpiresAt) CreateTenantSelectionTicket(Guid accountId) =>
+            ($"selticket.{accountId}", DateTimeOffset.UtcNow.AddMinutes(5));
+
+        public bool TryReadTenantSelectionTicket(string ticket, out Guid accountId)
+        {
+            accountId = Guid.Empty;
+            const string prefix = "selticket.";
+            return ticket?.StartsWith(prefix) == true && Guid.TryParse(ticket[prefix.Length..], out accountId);
+        }
     }
 }
