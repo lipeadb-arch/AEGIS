@@ -75,22 +75,27 @@ public sealed class TenantSwitchingTests : IDisposable
     public void Dispose() => _connection.Dispose();
 
     [Fact]
-    public async Task LoginAsync_SemTenantAmbiente_AutenticaPelaContaGlobal()
+    public async Task LoginAsync_VariosAcessosSemUltimoTenant_ExigeSelecaoExplicita()
     {
-        // O contexto vai SEM tenant, como no login real (o analista só informou e-mail e senha).
+        // [AEGIS-AUD-012] O contexto vai SEM tenant, como no login real. Ana tem DOIS acessos válidos (o
+        // suspenso não conta) e nenhum último tenant: o login NÃO escolhe em silêncio — devolve os ambientes
+        // e um ticket para a escolha explícita. O e-mail ainda normaliza.
         await using var db = NewContext(null);
-        var pair = await ServiceFor(db).LoginAsync("  Ana@Demo.Aegis  ", Senha, default);
+        var result = await ServiceFor(db).LoginAsync("  Ana@Demo.Aegis  ", Senha, null, default);
 
-        pair.Should().NotBeNull("o e-mail normaliza e a credencial é da conta global");
-        pair!.AccessToken.Should().NotBeNullOrEmpty();
+        result.Outcome.Should().Be(LoginOutcome.SelectionRequired);
+        result.Pair.Should().BeNull("nenhuma sessão é emitida antes da escolha");
+        result.SelectionTicket.Should().NotBeNullOrEmpty();
+        result.Tenants!.Select(t => t.Slug).Should().BeEquivalentTo(new[] { "alfa", "bravo" },
+            "o tenant suspenso não entra na seleção");
     }
 
     [Fact]
     public async Task LoginAsync_SenhaErrada_Recusa()
     {
         await using var db = NewContext(null);
-        (await ServiceFor(db).LoginAsync("ana@demo.aegis", "senha errada demais", default))
-            .Should().BeNull();
+        (await ServiceFor(db).LoginAsync("ana@demo.aegis", "senha errada demais", null, default))
+            .Outcome.Should().Be(LoginOutcome.Denied);
     }
 
     [Fact]
@@ -150,10 +155,10 @@ public sealed class TenantSwitchingTests : IDisposable
     [Fact]
     public async Task SwitchTenantAsync_RevogaORefreshDoAmbienteAnterior()
     {
-        // Sessão em A...
+        // Sessão em A... (dica do último tenant A para autenticar direto — Ana tem vários acessos, AUD-012).
         string anterior;
         await using (var db = NewContext(null))
-            anterior = (await ServiceFor(db).LoginAsync("ana@demo.aegis", Senha, default))!.RefreshToken;
+            anterior = (await ServiceFor(db).LoginAsync("ana@demo.aegis", Senha, TenantA, default)).Pair!.RefreshToken;
 
         // ...e troca para B levando o refresh corrente.
         await using (var db = NewContext(TenantA))
@@ -188,5 +193,16 @@ public sealed class TenantSwitchingTests : IDisposable
 
         public (string Token, DateTimeOffset ExpiresAt) CreateRefreshToken() =>
             (Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow.AddDays(7));
+
+        // [AEGIS-AUD-012] Ticket de seleção com round-trip simples (sem JWT real) — o accountId viaja e volta.
+        public (string Token, DateTimeOffset ExpiresAt) CreateTenantSelectionTicket(Guid accountId) =>
+            ($"selticket.{accountId}", DateTimeOffset.UtcNow.AddMinutes(5));
+
+        public bool TryReadTenantSelectionTicket(string ticket, out Guid accountId)
+        {
+            accountId = Guid.Empty;
+            const string prefix = "selticket.";
+            return ticket?.StartsWith(prefix) == true && Guid.TryParse(ticket[prefix.Length..], out accountId);
+        }
     }
 }

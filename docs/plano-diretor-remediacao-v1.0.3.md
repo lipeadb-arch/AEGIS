@@ -1,713 +1,420 @@
 # AEGIS — Plano Diretor de Remediação v1.0.3
 
-**Classificação:** Documento de governança técnica e segurança<br>
+**Classificação:** instrumento privado de priorização técnica e continuidade<br>
 **Data de atualização:** 2026-07-29<br>
-**Situação do programa:** Em execução<br>
+**Horizonte desta revisão:** entrega funcional em 30 dias, até 2026-08-28<br>
 **Branch de referência:** `main`<br>
-**Commit de referência:** `d947328`<br>
-**Última entrega concluída:** AEGIS-AUD-010 — PR #15, squash-merge `d947328`<br>
-**Pacote em implementação:** `AEGIS-AUD-011 — Separar papéis globais de papéis por tenant` (EP-01) — **EM IMPLEMENTAÇÃO** na branch `fix/aud-011-separate-platform-tenant-roles` (PR a abrir para `main`, sem merge)
+**Commit de referência:** `00937e9`<br>
+**Última entrega concluída:** AEGIS-AUD-011 — PR #16, squash-merge `00937e9`<br>
+**Próximo trabalho:** Entrega 1 — fluxo de tenant confiável (`AEGIS-AUD-012`, `AEGIS-AUD-018`, `AEGIS-AUD-030`) — ABERTO / NÃO autorizado
 
-> Este documento é a fonte de governança do programa de remediação. O código local e `docs/pr0-baseline.md` são a fonte de verdade para o estado técnico executável.
-
----
-
-## 1. Histórico de revisões
-
-| Versão | Data | Alteração |
-|---|---|---|
-| 1.0 | 2026-07-20 | Consolidação inicial da auditoria, épicos, gates e backlog mestre. |
-| 1.0.1 | 2026-07-20 | Registra a conclusão do PR 0, PR #1, commit de merge `c3a0bd3`, baseline em `docs/pr0-baseline.md` e define `AEGIS-AUD-053` como próximo pacote. |
-| 1.0.2 | 2026-07-21 | Registra a reconciliação documental como PR #2, formaliza o AEGIS-TECH-001 como pacote técnico anterior ao AEGIS-AUD-053 e alinha a sequência de remediação. |
-| 1.0.3 | 2026-07-21 | Registra as conclusões da reconciliação documental (PR #2) e do AEGIS-TECH-001 (PR #4, squash-merge `511c955`), além de definir o AEGIS-AUD-053 como próximo pacote, aguardando aprovação explícita. |
-
-## 2. Estado executivo atual
-
-| Item | Estado | Evidência |
-|---|---|---|
-| PR 0 — Linha de base técnica | **CONCLUÍDO** | PR #1; merge `c3a0bd3`; `docs/pr0-baseline.md` |
-| Backend build | **APROVADO COM WARNING CONHECIDO** | 0 erros; 1 warning `CS8604` |
-| Testes backend | **APROVADO** | 323/323, 0 falhas, 0 ignorados |
-| Frontend build | **APROVADO COM WARNINGS CONHECIDOS** | exit 0; 4 warnings de budget CSS |
-| Frontend tests/lint | **NÃO IMPLEMENTADOS** | Pendência `AEGIS-AUD-033` |
-| CI/CD | **NÃO IMPLEMENTADO** | Pendência `AEGIS-AUD-056` |
-| Produção MSSP | **BLOQUEADA** | Gate G7 não aprovado |
-| Reconciliação documental | **CONCLUÍDA** | PR #2; squash-merge `daa41e8`; branch `docs/reconcile-operational-state` (removida) |
-| Alinhamento .NET 10 / EF Core 10 | **CONCLUÍDO** | AEGIS-TECH-001; PR #4; squash-merge `511c955` |
-| AEGIS-AUD-053 — Data Protection Key Ring | **CONCLUÍDO** | PR #5; squash-merge `49a6747` |
-| AEGIS-AUD-052 — Migrations/seed fora do startup | **CONCLUÍDO** | PR #6; squash-merge `0ebad27` |
-| AEGIS-AUD-057 — Credencial padrão de configuração | **CONCLUÍDO** | PR #7; squash-merge `9904729` |
-| AEGIS-AUD-046 — Dados de demonstração sintéticos | **CONCLUÍDO** | PR #8; squash-merge `f9a3ed7` |
-| AEGIS-AUD-050 — Filas operacionais duráveis | **CONCLUÍDO** | PR #9; squash-merge `f170b0f` |
-| AEGIS-AUD-026 — Fallback de demonstração em falha da API | **CONCLUÍDO** | PR #10; squash-merge `383bf6b` |
-| AEGIS-AUD-031 — Alinhamento documental (arquitetura) | **CONCLUÍDO** | PR #11; squash-merge `d02cfee` |
-| EP-00 — Linha de base e contenção imediata | **CONCLUÍDO** | 10 pacotes entregues; gate G1 atendido |
-| AEGIS-AUD-008 — Escritas cross-tenant no DbContext | **CONCLUÍDO** | PR #12; squash-merge `2f8c968` |
-| AEGIS-AUD-009 — Armazenar somente hash de refresh tokens | **CONCLUÍDO** | PR #13; squash-merge `37d57ff` |
-| AEGIS-AUD-007 — Integrar autenticação corporativa federada | **CONCLUÍDO** | PR #14; squash-merge `ff5d119` |
-| AEGIS-AUD-010 — Separar provisionamento global de concessão de acesso a tenant | **CONCLUÍDO** | PR #15; squash-merge `d947328` |
-| AEGIS-AUD-011 — Separar papéis globais de papéis por tenant | **EM IMPLEMENTAÇÃO** | Branch `fix/aud-011-separate-platform-tenant-roles`; PR a abrir para `main`, sem merge (EP-01) |
-
-### 2.1 O que o PR 0 concluiu
-
-- Estabeleceu uma baseline reproduzível do repositório.
-- Registrou stack, versões, comandos, limitações e warnings preexistentes.
-- Confirmou a árvore limpa e a sincronização da `main` no momento do merge.
-- Não corrigiu nenhum achado `AEGIS-AUD-*`.
-
-### 2.2 O que permanece inalterado
-
-- **Dos 63 achados `AEGIS-AUD-*`, onze foram concluídos** (`AEGIS-AUD-053` via PR #5, `AEGIS-AUD-052` via PR #6, `AEGIS-AUD-057` via PR #7, `AEGIS-AUD-046` via PR #8, `AEGIS-AUD-050` via PR #9, `AEGIS-AUD-026` via PR #10, `AEGIS-AUD-031` via PR #11, `AEGIS-AUD-008` via PR #12, `AEGIS-AUD-009` via PR #13, `AEGIS-AUD-007` via PR #14, `AEGIS-AUD-010` via PR #15); os demais **52 permanecem abertos**. O total catalogado segue **63**.
-- O `AEGIS-AUD-010` foi **CONCLUÍDO** (PR #15; squash-merge `d947328`), quarto pacote entregue do **EP-01 (EM EXECUÇÃO)** — separa o provisionamento GLOBAL de identidade (`PlatformAdmin`) da concessão de acesso a tenant (`TenantAdmin`), com fim do auto-provisionamento pela rota tenant, `PasswordHash` nullable para contas federated-only e allowlist de papéis tenant-scoped. A contagem passa a **11 concluídos / 52 abertos**. O `AEGIS-AUD-011` (EP-01) está agora **EM IMPLEMENTAÇÃO** na branch `fix/aud-011-separate-platform-tenant-roles` (PR a abrir, sem merge) — separa o papel tenant-scoped (`TenantRole`) da autoridade global (`PlatformRole` na `IdentityAccount`, claim `platform_role`), com policy de plataforma própria; a contagem permanece **11 concluídos / 52 abertos**, pois `EM IMPLEMENTAÇÃO` não é conclusão.
-- **O `AEGIS-TECH-001` foi concluído como pacote técnico de precedência, não como novo achado da auditoria.** Ele não entra no backlog mestre e **não altera a contagem de 63 achados**.
-- A liberação para produção continua bloqueada.
-- O Plano Diretor não substitui a inspeção do código local antes de cada mudança.
+> Este plano não exige mais concluir os 63 achados antes de apresentar o produto. O objetivo imediato é
+> entregar um **MVP funcional, demonstrável e pronto para homologação**, preservando segurança
+> multi-tenant e integridade da pontuação. Os demais achados permanecem registrados para o pós-MVP.
 
 ---
 
-## 3. Objetivo do programa
+## 1. Decisão executiva
 
-Remediar as lacunas de arquitetura, segurança, integridade, operação e produto sem reescrita ampla, preservando interfaces públicas e isolamento multi-tenant.
+O processo anterior tratava cada `AEGIS-AUD-*` como um projeto independente, com investigação extensa,
+PR isolado e repetição de toda a bateria de testes. Esse modelo é seguro, mas incompatível com o prazo de
+um mês.
 
-Resultados esperados:
+A partir desta revisão:
 
-1. NIST CSF 2.0 permanece como núcleo neutro de tecnologia.
-2. Regras determinísticas são a autoridade da avaliação.
-3. Toda nota é reproduzível e rastreável até evidências e versões.
-4. Dashboard, histórico e relatório compartilham a mesma projeção publicada.
-5. Identidade global e memberships por tenant mantêm isolamento forte.
-6. Conectores são adaptadores substituíveis.
-7. A plataforma opera com filas duráveis, observabilidade, CI/CD e continuidade.
+- o trabalho será organizado por **fluxos verticais de produto**, não por um AUD por vez;
+- até cinco PRs técnicos devem encerrar o MVP após o PR #16;
+- um PR pode resolver vários achados relacionados;
+- investigação deixa de ser uma fase separada: deve ser curta e ocorrer dentro da implementação;
+- testes serão proporcionais ao risco e não repetidos em SHAs inalterados;
+- documentação será limitada aos dois handoffs existentes, depois de cada merge;
+- achados que não bloqueiam a demonstração, a segurança do tenant ou a integridade do score ficam
+  formalmente **ADIADOS PARA PÓS-MVP**.
 
-## 4. Princípios de execução
-
-- Uma pendência ou conjunto pequeno e coeso por PR.
-- Investigação sem alterações antes de cada implementação.
-- Código local é a fonte de verdade durante o trabalho do Claude.
-- GitHub é a fonte de publicação e revisão formal.
-- Nenhum commit direto em `main`.
-- Mudanças pequenas, reversíveis e testáveis.
-- Não misturar correção com refatoração estética.
-- Não enfraquecer multi-tenancy, autorização ou criptografia.
-- Não considerar a tarefa concluída apenas porque compila.
-- Atualizar este documento após cada merge.
-
-## 5. Fluxo operacional de cada pacote
-
-```text
-Selecionar item → investigar localmente → revisar plano → implementar em branch →
-executar testes → revisar diff → commit/push autorizado → PR → revisão formal →
-merge → sincronizar main → atualizar Plano Diretor
-```
-
-Estados permitidos:
-
-`ABERTA` → `EM INVESTIGAÇÃO` → `PLANEJADA` → `EM IMPLEMENTAÇÃO` → `EM REVISÃO` → `EM VALIDAÇÃO` → `CONCLUÍDA`
-
-Estados auxiliares: `BLOQUEADA`, `ADIADA`, `DESCARTADA`.
-
-## 6. Gates e marcos
-
-| Gate | Condição | Marco |
-|---|---|---|
-| G0 | Baseline técnica versionada e reproduzível | **APROVADO** pelo PR #1 |
-| G1 | Contenção imediata e bloqueadores de fundação corrigidos | M1 — Base segura para evolução |
-| G2 | Identidade e isolamento multi-tenant validados | M2 — Tenant-safe |
-| G3 | Motor determinístico e evidências auditáveis | M3 — Avaliação confiável |
-| G4 | Projeção executiva, snapshot e relatório consistentes | M4 — Postura publicável |
-| G5A/G5B | Conectores neutros e experiência NIST completa | M5 — Produto funcional |
-| G6 | Operação, observabilidade e homologação | M6 — Pronto para homologação |
-| G7 | Hardening, supply chain, privacidade e continuidade | M7 — Pronto para produção MSSP |
+O alvo desta revisão não é uma produção MSSP completa com HA, DR, LGPD, supply chain e todos os
+fornecedores certificados. O alvo é um produto coerente e funcional que possa ser instalado, conectado a
+um tenant de homologação, receber evidências, calcular postura e apresentar os resultados.
 
 ---
 
-## 7. Sequência de remediação
+## 2. O que significa “AEGIS funcional e apresentável”
 
-### 7.1 Sequência oficial aprovada
+Até 2026-08-28, deve ser possível executar um roteiro ponta a ponta:
 
-| # | Pacote | Estado |
-|---:|---|---|
-| 1 | Reconciliação documental — PR #2 | **CONCLUÍDA** (squash-merge `daa41e8`) |
-| 2 | `AEGIS-TECH-001 — Alinhamento do backend com .NET 10 e EF Core 10` | **CONCLUÍDO** (PR #4; squash-merge `511c955`) |
-| 3 | Atualização do Plano Diretor e dos documentos operacionais | **INCORPORADA NESTA REVISÃO** |
-| 4 | `AEGIS-AUD-053 — Persistência e proteção do Data Protection Key Ring` | **CONCLUÍDO** (PR #5; squash-merge `49a6747`) |
-| 5 | `AEGIS-AUD-052 — Retirar migrations e seed da inicialização concorrente da API` | **CONCLUÍDO** (PR #6; squash-merge `0ebad27`) |
-| 6 | `AEGIS-AUD-057 — Remover credenciais padrão do arquivo principal de configuração` | **CONCLUÍDO** (PR #7; squash-merge `9904729`) |
-| 7 | `AEGIS-AUD-046 — Eliminar dados reais ou identificáveis dos stubs e demos` | **CONCLUÍDO** (PR #8; squash-merge `f9a3ed7`) |
-| 8 | `AEGIS-AUD-050 — Não usar filas em memória como mecanismo operacional durável` | **CONCLUÍDO** (PR #9; squash-merge `f170b0f`) |
-| 9 | `AEGIS-AUD-026 — Não substituir falha da API por dados de demonstração em ambiente operacional` | **CONCLUÍDO** (PR #10; squash-merge `383bf6b`) |
-| 10 | `AEGIS-AUD-031 — Alinhar documentação arquitetural com a stack e o estado reais` | **CONCLUÍDO** (PR #11; squash-merge `d02cfee`) |
+1. Preparar o PostgreSQL pelo `AegisScore.DbMigrator` e iniciar API e frontend.
+2. Criar ou usar um tenant AEGIS, autenticar uma identidade e selecionar o ambiente correto.
+3. Configurar uma integração sem persistir segredo em claro.
+4. Receber eventos de SIEM/EDR por uma entrada autenticada e neutra de fornecedor.
+5. Persistir a evidência recebida, sua origem, horário, integridade e mapeamento NIST.
+6. Atualizar os controles e o AEGIS Score por regras determinísticas.
+7. Diferenciar claramente controle **não avaliado**, **conforme** e **não conforme**.
+8. Exibir Dashboard executivo com score, cobertura, controles críticos, conectores e recência dos dados.
+9. Navegar pelas seis Funções do NIST CSF 2.0:
+   - Governar — GV;
+   - Identificar — ID;
+   - Proteger — PR;
+   - Detectar — DE;
+   - Responder — RS;
+   - Recuperar — RC.
+10. Em cada Função, apresentar conteúdo, controles, estado, evidências e checklist de pendências.
+11. Usar o Document Hub para upload, processamento, listagem, cobertura e consulta de documentos.
+12. Trocar de tenant sem manter dados, cache ou indicadores do tenant anterior.
 
-> **A aprovação desta ordem não autoriza a implementação de nenhum pacote.** Ela define apenas a
-> sequência de execução. **Cada pacote exige aprovação explícita própria** para sair de `PLANEJADO`
-> e entrar em implementação. O `AEGIS-AUD-031` foi concluído (PR #11; squash-merge `d02cfee`),
-> **encerrando o EP-00**; no EP-01, `AEGIS-AUD-008` (PR #12; `2f8c968`), `AEGIS-AUD-009` (PR #13; `37d57ff`), `AEGIS-AUD-007` (PR #14; `ff5d119`) e `AEGIS-AUD-010` (PR #15; `d947328`) foram concluídos. O pacote seguinte, `AEGIS-AUD-011`, está **EM IMPLEMENTAÇÃO** na branch `fix/aud-011-separate-platform-tenant-roles` (PR a abrir para `main`, sem merge).
+### Critério de honestidade do produto
 
-### 7.2 Pacote técnico concluído
-
-```text
-Identificador: AEGIS-TECH-001
-Título: Alinhamento do backend com .NET 10 e EF Core 10
-Branch executada: chore/tech-001-net10-efcore10 (removida)
-PR: #4
-Squash-merge: 511c9558771f96b2e98c39c78ab60d8b64deefad
-Estado: CONCLUÍDO
-```
-
-**Resultado relevante:** EF Core runtime/Design/SQLite `10.0.10`, provider Npgsql `10.0.3` e
-`dotnet-ef` local `10.0.10`. Restore sem downgrade, build com o único warning preexistente `CS8604`,
-testes `219/219` e `has-pending-model-changes` limpo. As migrations históricas, o model snapshot e o
-schema funcional permaneceram inalterados. A validação em PostgreSQL descartável aplicou as 17
-migrations, reconheceu como atual um banco com histórico `ProductVersion 8.0.6` e confirmou o boot
-da API; o banco descartável foi removido após o teste.
-
-**Riscos residuais conhecidos (constatação à época do PR #4):** ao final do TECH-001/PR #4, o banco
-local `aegis_dev`, criado por `EnsureCreated()`, permanecia sem `__EFMigrationsHistory` — condição
-preexistente relacionada ao `AEGIS-AUD-052`. **Essa condição foi RESOLVIDA pelo `AEGIS-AUD-052` no
-PR #6:** a preparação do banco passou a ser feita pelo `AegisScore.DbMigrator` (migrations + seed sob
-advisory lock) e o contexto principal tem hoje **19 migrations** no histórico — portanto **não deve
-ser interpretada como risco residual ainda aberto**. O pacote de teste `SQLitePCLRaw.lib.e_sqlite3
-2.1.11` permanece coberto por advisory sem versão corrigida publicada e por supressão explícita já
-existente. Nenhum dos dois pontos foi ampliado pelo PR #4.
-
-**Natureza do pacote:** o `AEGIS-TECH-001` é um **pacote técnico de precedência**, não um achado da
-auditoria. Não recebe identificador `AEGIS-AUD-*`, não entra no backlog mestre e **não altera a
-contagem de 63 achados**.
-
-### 7.3 Próximo pacote imediato
-
-**`AEGIS-AUD-011 — Separar papéis globais de papéis por tenant`** (EP-01) — **EM IMPLEMENTAÇÃO** na branch
-`fix/aud-011-separate-platform-tenant-roles` (PR a abrir para `main`, sem merge). É o pacote do EP-01 na ordem
-interna. Os quatro primeiros pacotes do épico
-já foram concluídos: `AEGIS-AUD-008` (proteção de escrita cross-tenant no DbContext) no PR #12 (squash-merge
-`2f8c968`), `AEGIS-AUD-009` (armazenar somente hash de refresh tokens) no PR #13 (squash-merge `37d57ff`),
-`AEGIS-AUD-007` (autenticação corporativa federada) no PR #14 (squash-merge `ff5d119`) e `AEGIS-AUD-010`
-(separar provisionamento global de identidade da concessão de acesso a tenant) no PR #15 (squash-merge
-`d947328`).
-
-O **EP-00 está CONCLUÍDO**: seus dez pacotes foram entregues — `AEGIS-AUD-053` (PR #5, `49a6747`),
-`AEGIS-AUD-052` (PR #6, `0ebad27`), `AEGIS-AUD-057` (PR #7, `9904729`), `AEGIS-AUD-046` (PR #8, `f9a3ed7`),
-`AEGIS-AUD-050` (PR #9, `f170b0f`), `AEGIS-AUD-026` (PR #10, `383bf6b`) e `AEGIS-AUD-031` (PR #11, `d02cfee`),
-além da reconciliação documental (PR #2) e do `AEGIS-TECH-001` (PR #4). O AUD-031 alinhou `README.md`,
-`DEV.md` e `ARCHITECTURE.md` ao estado executável e preservou a baseline histórica do PR 0.
-
-`AEGIS-AUD-051` (separar/coordenar workers para múltiplas réplicas, EP-06) segue **ABERTO** e é complementar
-ao AUD-050: a fila agora é durável e coordenada por lease, mas a separação de processo dos workers permanece
-fora deste pacote.
-
-### Ordem macro
-
-## EP-00 — Linha de base e contenção imediata
-
-**Estado:** CONCLUÍDO<br>
-**Objetivo:** Preservar uma referência reproduzível e remover riscos imediatos antes de mudanças estruturais.<br>
-**Dependências:** Nenhuma além da baseline técnica concluída.<br>
-**Ordem interna:** PR 0, reconciliação documental, AEGIS-TECH-001, AEGIS-AUD-053, AEGIS-AUD-052, AEGIS-AUD-057, AEGIS-AUD-046, AEGIS-AUD-050, AEGIS-AUD-026 e AEGIS-AUD-031 concluídos — **EP-00 CONCLUÍDO**. Épico seguinte (EP-01) **EM EXECUÇÃO**: `AEGIS-AUD-008` (PR #12), `AEGIS-AUD-009` (PR #13), `AEGIS-AUD-007` (PR #14) e `AEGIS-AUD-010` (PR #15) concluídos; pacote seguinte **AEGIS-AUD-011** **EM IMPLEMENTAÇÃO** (branch `fix/aud-011-separate-platform-tenant-roles`, PR a abrir, sem merge).
-
-### Pacotes do épico
-
-| Ordem | ID | Severidade | Pendência | Área | Estado |
-|---:|---|---|---|---|---|
-| 1 | AEGIS-AUD-046 | ALTO | Eliminar dados reais ou identificáveis dos stubs e demos | Privacy / Demo Data / Repository Hygiene | CONCLUÍDA (PR #8; `f9a3ed7`) |
-| 2 | AEGIS-AUD-057 | MÉDIO | Remover credenciais padrão do arquivo principal de configuração | Configuration Security | CONCLUÍDA (PR #7; `9904729`) |
-| 3 | AEGIS-AUD-053 | BLOQUEADOR | Persistir e proteger o Data Protection Key Ring | Cryptography / Connector Secrets | CONCLUÍDA (PR #5; `49a6747`) |
-| 4 | AEGIS-AUD-052 | ALTO | Retirar migrations e seed da inicialização concorrente da API | Deployment / Database | CONCLUÍDA (PR #6; `0ebad27`) |
-| 5 | AEGIS-AUD-050 | BLOQUEADOR | Não usar filas em memória como mecanismo operacional durável | Workers / Reliability / Scale-out | CONCLUÍDA (PR #9; `f170b0f`) |
-| 6 | AEGIS-AUD-026 | ALTO | Não substituir falha da API por dados de demonstração em ambiente operacional | Frontend / Data Integrity | CONCLUÍDA (PR #10; `383bf6b`) |
-| 7 | AEGIS-AUD-031 | MÉDIO | Alinhar documentação arquitetural com a stack e o estado reais | Documentation / Architecture Governance | CONCLUÍDA (PR #11; `d02cfee`) |
-
-### Gate de aceite
-
-**G1 — ATENDIDO.** Nenhum bloqueador criptográfico ou de durabilidade permanece sem plano aprovado; dados de demonstração e credenciais triviais não podem alcançar produção. Base do aceite: key ring persistente (AUD-053/PR #5), preparação de banco fora do startup pelo DbMigrator (AUD-052/PR #6), remoção de credencial padrão (AUD-057/PR #7), dados de demonstração sintéticos (AUD-046/PR #8), filas duráveis no PostgreSQL (AUD-050/PR #9), fim do fallback de demonstração no dashboard (AUD-026/PR #10) e documentação alinhada ao estado executável (AUD-031/PR #11); baseline revalidada com backend **323/323** e frontend build aprovado com os 4 warnings de budget conhecidos.
-
-### Testes mínimos do épico
-
-Build e testes da baseline; testes de persistência/isolamento do key ring; restart; múltiplas réplicas; fila durável; smoke tests documentais.
-
-### Estratégia de rollback
-
-Cada alteração deve ser aditiva ou configurável. Chaves e ciphertext antigos não podem ser descartados. Mudanças de deployment devem preservar caminho de reversão.
-
-### Definition of Done do épico
-
-- Todos os itens do épico foram implementados ou formalmente adiados com risco aceito.
-- Testes positivos, negativos, regressão e segurança foram executados.
-- Nenhum warning novo foi incorporado sem justificativa.
-- Documentação, runbooks e este Plano Diretor foram atualizados.
-- PRs foram revisados e mergeados; ambiente aplicável foi validado.
-- O gate correspondente foi aprovado explicitamente.
+- Integração real deve ser identificada como real.
+- Stub, payload sintético ou adaptador ainda não implementado deve ser identificado como demonstração.
+- A tela de Integrações não pode declarar um fornecedor “operacional” se não existir adaptador funcional.
+- Ausência de evidência não pode virar nota zero nem conformidade.
+- Falha da API não pode ser substituída silenciosamente por dados de demonstração.
 
 ---
 
-## EP-01 — Identidade, autorização e isolamento multi-tenant
+## 3. Estado técnico aproveitável
 
-**Estado:** EM EXECUÇÃO<br>
-**Objetivo:** Garantir que uma identidade corporativa possa operar múltiplos tenants sem enfraquecer o isolamento de dados e permissões.<br>
-**Dependências:** EP-00 aprovado. Baseline e gestão de segredos estáveis.<br>
-**Ordem interna:** Executar após EP-00. Começar por invariantes de persistência e refresh tokens antes de federação.
+Não é necessário reconstruir o projeto. A fundação existente deve ser reutilizada.
 
-### Pacotes do épico
+| Capacidade | Estado atual |
+|---|---|
+| .NET 10 / EF Core 10 / PostgreSQL | Concluído |
+| Migrations externas ao startup e readiness de schema | Concluído |
+| Segredos de conectores cifrados e key ring persistente | Concluído |
+| Filas de documento e sync duráveis | Concluído |
+| Escritas cross-tenant protegidas | Concluído |
+| Refresh tokens persistidos somente por hash | Concluído |
+| Login local, federação Entra e tenant switch | Implementados; falta fechar a experiência |
+| Identidade global e membership por tenant | Concluído |
+| Papéis globais e tenant-scoped | Concluído (PR #16) |
+| Catálogo NIST CSF 2.0 | Existente |
+| Document Hub | Existente e integrado ao backend; requer aceite ponta a ponta |
+| Páginas GV, ID, PR, DE, RS e RC | Estrutura existente; conteúdo/estado ainda desigual |
+| Configuração de conectores | Existente com segredos cifrados |
+| Coleta real de SIEM/EDR | Incompleta; adaptadores atuais não comprovam operação real |
+| Evidência normalizada e score | Parcial; autoridade e rastreabilidade precisam ser fechadas |
+| Dashboard executivo | Existente; projeções e semântica ainda precisam ser unificadas |
+| Testes backend | 445/445 na main (`00937e9`) |
+| Frontend | Build aprovado; suíte ampla fica fora do MVP |
 
-| Ordem | ID | Severidade | Pendência | Área | Estado |
-|---:|---|---|---|---|---|
-| 1 | AEGIS-AUD-008 | ALTO | Proteger alterações e exclusões cross-tenant no DbContext | Multi-tenancy / Persistence | CONCLUÍDA (PR #12; `2f8c968`) |
-| 2 | AEGIS-AUD-009 | ALTO | Armazenar somente hash de refresh tokens | Authentication / Session Security | CONCLUÍDA (PR #13; `37d57ff`) |
-| 3 | AEGIS-AUD-007 | ALTO | Integrar autenticação corporativa federada | Identity / Authentication | CONCLUÍDA (PR #14; `ff5d119`) |
-| 4 | AEGIS-AUD-010 | ALTO | Separar provisionamento global de concessão de acesso a tenant | Identity Governance | CONCLUÍDA (PR #15; `d947328`) |
-| 5 | AEGIS-AUD-011 | MÉDIO | Separar papéis globais de papéis por tenant | Authorization | **EM IMPLEMENTAÇÃO** (branch `fix/aud-011-separate-platform-tenant-roles`) |
-| 6 | AEGIS-AUD-012 | MÉDIO | Exigir seleção explícita ou último tenant validado no login | UX / Authorization Context | ABERTA |
-| 7 | AEGIS-AUD-013 | MÉDIO | Aplicar filtros de tenant por convenção e testar o modelo EF | Multi-tenancy / Architecture | ABERTA |
-| 8 | AEGIS-AUD-014 | MÉDIO | Restringir e inventariar IgnoreQueryFilters() | Multi-tenancy / Privileged Access | ABERTA |
-| 9 | AEGIS-AUD-015 | MÉDIO | Garantir consistência de tenant nos relacionamentos | Persistence / Data Integrity | ABERTA |
-| 10 | AEGIS-AUD-016 | MÉDIO | Formalizar o SLA de revogação de access tokens | Authentication | ABERTA |
-| 11 | AEGIS-AUD-017 | MÉDIO | Validar configuração de proxy para rate limiting | API Security | ABERTA |
-| 12 | AEGIS-AUD-018 | BAIXO | Rejeitar X-Tenant inválido | API / Tenant Consistency | ABERTA |
-| 13 | AEGIS-AUD-030 | ALTO | Invalidar e recarregar dados no tenant switch | Frontend / Multi-tenancy / Client State | ABERTA |
+### Achados já concluídos
 
-### Gate de aceite
+| ID | PR | Merge |
+|---|---:|---|
+| AEGIS-AUD-053 | #5 | `49a6747` |
+| AEGIS-AUD-052 | #6 | `0ebad27` |
+| AEGIS-AUD-057 | #7 | `9904729` |
+| AEGIS-AUD-046 | #8 | `f9a3ed7` |
+| AEGIS-AUD-050 | #9 | `f170b0f` |
+| AEGIS-AUD-026 | #10 | `383bf6b` |
+| AEGIS-AUD-031 | #11 | `d02cfee` |
+| AEGIS-AUD-008 | #12 | `2f8c968` |
+| AEGIS-AUD-009 | #13 | `37d57ff` |
+| AEGIS-AUD-007 | #14 | `ff5d119` |
+| AEGIS-AUD-010 | #15 | `d947328` |
+| AEGIS-AUD-011 | #16 | `00937e9` |
 
-G2 — Testes cross-tenant negativos aprovados; memberships, papéis, tokens e tenant switch demonstram isolamento.
-
-### Testes mínimos do épico
-
-Alteração/remoção cross-tenant; FK inconsistente; IgnoreQueryFilters; refresh token; tenant switch; requests atrasadas; revogação.
-
-### Estratégia de rollback
-
-Migrations compatíveis, dual-read quando necessário e preservação de claims/contratos públicos durante a transição.
-
-### Definition of Done do épico
-
-- Todos os itens do épico foram implementados ou formalmente adiados com risco aceito.
-- Testes positivos, negativos, regressão e segurança foram executados.
-- Nenhum warning novo foi incorporado sem justificativa.
-- Documentação, runbooks e este Plano Diretor foram atualizados.
-- PRs foram revisados e mergeados; ambiente aplicável foi validado.
-- O gate correspondente foi aprovado explicitamente.
+O AEGIS-AUD-011 foi **CONCLUÍDO** (PR #16; squash-merge `00937e9`). O próximo trabalho é a **Entrega 1** (fluxo de tenant confiável: `AEGIS-AUD-012`, `AEGIS-AUD-018`, `AEGIS-AUD-030`), ainda ABERTO/PENDENTE e não autorizado.
 
 ---
 
-## EP-02 — Motor determinístico de avaliação e evidências
+## 4. Caminho crítico de 30 dias
 
-**Estado:** PLANEJADO<br>
-**Objetivo:** Tornar o resultado oficial reproduzível, tipado e independente do LLM e de fornecedores.<br>
-**Dependências:** EP-00 aprovado. Requer decisões sobre fórmula e estados de avaliação.<br>
-**Ordem interna:** Começar por autoridade determinística, persistência de evidência e mapping único; depois consolidar fórmulas e semântica.
+### Visão geral
 
-### Pacotes do épico
+| Ordem | Entrega vertical | AUDs prioritários | Prazo-alvo | Resultado visível |
+|---:|---|---|---|---|
+| 0 | Fechar separação de papéis | AEGIS-AUD-011 | ✅ Concluída | PR #16 mergeado (`00937e9`); autoridade global e tenant separadas |
+| 1 | Fluxo de tenant confiável | AEGIS-AUD-012, AEGIS-AUD-018, AEGIS-AUD-030 | Semana 1 | Login/seleção/switch sem retenção cross-tenant |
+| 2 | Ingestão operacional de evidências | AEGIS-AUD-020, AEGIS-AUD-041, AEGIS-AUD-043 | Semanas 1–2 | SIEM/EDR envia eventos; evidência persiste e mapeia para NIST |
+| 3 | Score determinístico e explicável | AEGIS-AUD-001, AEGIS-AUD-002, AEGIS-AUD-019 | Semana 2 | Score reproduzível; IA não decide conformidade |
+| 4 | Workspace NIST, Dashboard e Hub | AEGIS-AUD-021, AEGIS-AUD-027, AEGIS-AUD-032 | Semana 3 | Seis Funções equivalentes, checklists e Dashboard informativo |
+| 5 | Release candidate demonstrável | AEGIS-AUD-048 + correções bloqueadoras | Semana 4 | Health/readiness, smoke E2E e roteiro de demonstração |
 
-| Ordem | ID | Severidade | Pendência | Área | Estado |
-|---:|---|---|---|---|---|
-| 1 | AEGIS-AUD-001 | BLOQUEADOR | Formalizar a fórmula oficial de pontuação | Domínio / Scoring | ABERTA |
-| 2 | AEGIS-AUD-002 | ALTO | Diferenciar “não avaliado” de nota zero | Scoring | ABERTA |
-| 3 | AEGIS-AUD-003 | ALTO | Eliminar dependência de texto livre nas regras de avaliação | Assessment / Rules | ABERTA |
-| 4 | AEGIS-AUD-004 | ALTO | Definir a relação entre avaliação por campanha e postura contínua | Domínio / Assessment | ABERTA |
-| 5 | AEGIS-AUD-005 | MÉDIO | Tornar pendências e checklists entidades operacionais quando necessário | Domínio / Operação SOC | ABERTA |
-| 6 | AEGIS-AUD-006 | MÉDIO | Evitar fornecedor principal derivado da ordem textual | Assessment / Neutralidade | ABERTA |
-| 7 | AEGIS-AUD-019 | BLOQUEADOR | Remover a IA da autoridade primária sobre o veredito de conformidade | IA / Assessment / Scoring | ABERTA |
-| 8 | AEGIS-AUD-020 | ALTO | Persistir evidência bruta normalizada na esteira principal de telemetria | Evidence / Telemetry / Auditability | ABERTA |
-| 9 | AEGIS-AUD-025 | MÉDIO | Tratar confiança da IA como metadado, não validação | AI Assurance | ABERTA |
-| 10 | AEGIS-AUD-043 | ALTO | Definir uma única autoridade de mapeamento sinal → NIST | Connectors / Framework Mapping | ABERTA |
-| 11 | AEGIS-AUD-044 | MÉDIO | Remover semântica Microsoft das chaves do esquema normalizado | Unified Schema / Vendor Neutrality | ABERTA |
-| 12 | AEGIS-AUD-045 | ALTO | Não usar o LLM como normalizador confiável de ferramentas desconhecidas | AI / Connectors / Supply-chain Data | ABERTA |
+Os IDs agrupam riscos já catalogados, mas o aceite é pelo **fluxo funcionando**, não por quantidade de
+AUDs encerrados.
 
-### Gate de aceite
+### Entrega 0 — concluir o PR #16 — ✅ CONCLUÍDA
 
-G3 — Mesmas evidências + mesma versão de regra produzem o mesmo resultado; indisponibilidade do LLM não impede cálculo oficial.
+**Status:** CONCLUÍDA — PR #16 squash-merge `00937e9`; `main` local/remota sincronizadas; branch removida.<br>
+**Escopo:** finalizar o AEGIS-AUD-011 já implementado.<br>
+**Fora do escopo:** reabrir arquitetura de identidade ou executar AUD-012 no mesmo PR.
 
-### Testes mínimos do épico
+Aceite:
 
-Reprodutibilidade; evidência ausente/obsoleta; não avaliado; pesos; mapping; prompt injection; saída malformada do LLM.
+- `TenantRole` e `PlatformRole` separados;
+- backfill de `PlatformAdmin` não reativa membership inativo ou tenant suspenso;
+- migration, constraints e testes PostgreSQL aprovados;
+- merge e handoff concluídos.
 
-### Estratégia de rollback
+### Entrega 1 — fluxo de tenant confiável
 
-Manter a esteira anterior em modo sombra durante a migração, sem permitir que ela continue como autoridade.
+**Status:** PRÓXIMO TRABALHO — ABERTO / NÃO autorizado (aguarda aprovação explícita).<br>
+**Branch sugerida:** `feat/mvp-tenant-flow`<br>
+**AUDs:** AEGIS-AUD-012, AEGIS-AUD-018 e AEGIS-AUD-030 em um único PR.
 
-### Definition of Done do épico
+Implementar apenas o necessário para:
 
-- Todos os itens do épico foram implementados ou formalmente adiados com risco aceito.
-- Testes positivos, negativos, regressão e segurança foram executados.
-- Nenhum warning novo foi incorporado sem justificativa.
-- Documentação, runbooks e este Plano Diretor foram atualizados.
-- PRs foram revisados e mergeados; ambiente aplicável foi validado.
-- O gate correspondente foi aprovado explicitamente.
+- selecionar explicitamente um tenant quando houver mais de um acesso;
+- usar último tenant somente após revalidar membership e status;
+- rejeitar `X-Tenant` ausente, inválido ou divergente quando a rota exigir tenant;
+- no switch, limpar estado e requisições do tenant anterior antes de carregar o novo;
+- recarregar Dashboard, Hub, páginas NIST, integrações e indicadores;
+- impedir que resposta atrasada do tenant anterior repovoe a UI;
+- manter o login local e federado existentes.
 
----
+Não criar um novo sistema de sessão nem ampliar o SLA de revogação neste pacote.
 
-## EP-03 — Projeção executiva, snapshots e relatórios
+### Entrega 2 — ingestão operacional de evidências
 
-**Estado:** PLANEJADO<br>
-**Objetivo:** Criar uma única postura publicável e auditável para dashboard, histórico e relatório.<br>
-**Dependências:** EP-02 aprovado.<br>
-**Ordem interna:** Unificar projeção antes de construir relatórios; snapshot completo precede publicação e histórico.
+**Branch sugerida:** `feat/mvp-evidence-ingestion`<br>
+**AUDs:** AEGIS-AUD-020, AEGIS-AUD-041 e AEGIS-AUD-043 em um único PR.
 
-### Pacotes do épico
+Objetivo: tornar o AEGIS capaz de **receber dados reais sem depender de um adaptador específico**.
 
-| Ordem | ID | Severidade | Pendência | Área | Estado |
-|---:|---|---|---|---|---|
-| 1 | AEGIS-AUD-021 | BLOQUEADOR | Unificar a projeção executiva de postura | Dashboard / Scoring / Architecture | ABERTA |
-| 2 | AEGIS-AUD-022 | ALTO | Retirar regras de negócio e acesso direto ao banco do DashboardController | API / Application Architecture | ABERTA |
-| 3 | AEGIS-AUD-024 | MÉDIO | Não ocultar corrupção de dados explicativos do dashboard | Observability / Data Integrity | ABERTA |
-| 4 | AEGIS-AUD-032 | ALTO | Formalizar o contrato entre maturidade executiva e tendência de postura | Frontend / Metrics Semantics | ABERTA |
-| 5 | AEGIS-AUD-034 | ALTO | Implementar o módulo de relatórios como capacidade real do produto | Reports / Product Completeness | ABERTA |
-| 6 | AEGIS-AUD-035 | BLOQUEADOR | Criar snapshot auditável da postura, não apenas totais agregados | Historical Posture / Auditability | ABERTA |
-| 7 | AEGIS-AUD-036 | ALTO | Tornar snapshots publicados imutáveis | Historical Integrity | ABERTA |
-| 8 | AEGIS-AUD-037 | ALTO | Registrar cobertura e denominador semântico da tendência | Scoring Trend / Metrics | ABERTA |
-| 9 | AEGIS-AUD-038 | MÉDIO | Tornar a captura histórica resiliente a falhas e lacunas | Workers / Reliability | ABERTA |
-| 10 | AEGIS-AUD-039 | MÉDIO | Definir timezone e corte temporal por tenant | Temporal Semantics / MSSP | ABERTA |
-| 11 | AEGIS-AUD-040 | BLOQUEADOR | Gerar dashboard e relatório a partir da mesma projeção publicada | Reports / Executive Posture | ABERTA |
+Escopo mínimo:
 
-### Gate de aceite
+- contrato normalizado e versionado para eventos de SIEM e EDR;
+- entrada autenticada por credencial própria do conector, isolada por tenant;
+- idempotência por identificador ou hash do evento;
+- persistência do payload bruto protegido, origem, tipo, instante de coleta e instante de recebimento;
+- executor único para coleta/push e atualização de `ConnectorConfig.LastSyncAt/LastStatus`;
+- uma autoridade central de mapeamento `sinal → subcategorias NIST`;
+- rejeição explícita de sinal sem mapeamento, sem pedir ao LLM para inventar um;
+- endpoint/teste de conexão e estado visível na tela de Integrações;
+- payloads de referência para pelo menos um formato SIEM e um formato EDR;
+- marcação clara dos fornecedores que ainda não possuem adaptador real.
 
-G4 — Um snapshot ID produz os mesmos números em API, dashboard e relatório; snapshot publicado é imutável e explicável.
+O caminho genérico autenticado é o requisito do MVP. Adaptadores completos para Sentinel, Splunk,
+CrowdStrike, Google SecOps e outros podem ser adicionados depois sem bloquear a entrega.
 
-### Testes mínimos do épico
+### Entrega 3 — score determinístico e explicável
 
-Reconstrução histórica; cobertura; revisão de snapshot; timezone; backfill; corrupção de JSON; equivalência dashboard/relatório.
+**Branch sugerida:** `feat/mvp-deterministic-score`<br>
+**AUDs:** AEGIS-AUD-001, AEGIS-AUD-002 e AEGIS-AUD-019 em um único PR.
 
-### Estratégia de rollback
+Escopo mínimo:
 
-Preservar snapshots publicados e introduzir revisões, nunca sobrescrita silenciosa.
+- uma fórmula oficial, simples, versionada e usada pelo backend;
+- estados distintos para `NotEvaluated`, `Compliant` e `NonCompliant`;
+- denominador calculado apenas sobre o universo semântico definido pela fórmula;
+- telemetria e regra determinística como autoridades do veredito;
+- IA limitada a resumo, explicação e recomendação;
+- todo score rastreável aos controles e evidências que o compõem;
+- motivo legível quando um controle não pontua;
+- checklist derivado de controles sem evidência ou não conformes, sem criar um subsistema de workflow.
 
-### Definition of Done do épico
+Não implementar neste MVP campanhas complexas, confiança estatística da IA ou fórmulas alternativas.
 
-- Todos os itens do épico foram implementados ou formalmente adiados com risco aceito.
-- Testes positivos, negativos, regressão e segurança foram executados.
-- Nenhum warning novo foi incorporado sem justificativa.
-- Documentação, runbooks e este Plano Diretor foram atualizados.
-- PRs foram revisados e mergeados; ambiente aplicável foi validado.
-- O gate correspondente foi aprovado explicitamente.
+### Entrega 4 — Workspace NIST, Dashboard e Document Hub
 
----
+**Branch sugerida:** `feat/mvp-nist-workspace`<br>
+**AUDs:** AEGIS-AUD-021, AEGIS-AUD-027 e AEGIS-AUD-032 em um único PR.
 
-## EP-04 — Neutralidade e extensibilidade de conectores
+Escopo mínimo:
 
-**Estado:** PLANEJADO<br>
-**Objetivo:** Permitir novos fornecedores sem alterar o núcleo NIST ou criar pipelines específicos.<br>
-**Dependências:** EP-02 aprovado; parte de EP-03 pode evoluir em paralelo.<br>
-**Ordem interna:** Executar depois que a esteira determinística e a persistência de evidências estiverem definidas.
+- uma projeção única para score atual, cobertura, contagem de controles e severidades;
+- Dashboard executivo consumindo essa projeção;
+- todas as seis Funções com padrão visual e funcional equivalente:
+  - descrição e objetivo;
+  - score/estado da Função;
+  - cobertura de evidências;
+  - lista de controles;
+  - evidência mais recente;
+  - pendências/checklist;
+  - estados loading, vazio e erro;
+- Govern mantém o Document Hub como área especializada;
+- Identify mantém inventário/risco como área especializada;
+- PR, DE, RS e RC usam o painel comum já existente;
+- Hub com upload, fila/status de processamento, documentos, cobertura e erros compreensíveis;
+- Dashboard exibe saúde/recência dos conectores e não apenas uma nota;
+- tendência só é exibida quando houver dados semanticamente comparáveis.
 
-### Pacotes do épico
+Relatórios exportáveis, snapshots imutáveis e histórico regulatório ficam para o pós-MVP.
 
-| Ordem | ID | Severidade | Pendência | Área | Estado |
-|---:|---|---|---|---|---|
-| 1 | AEGIS-AUD-023 | MÉDIO | Remover linguagem e conceitos Microsoft Secure Score do contrato central | Vendor Neutrality / Ubiquitous Language | ABERTA |
-| 2 | AEGIS-AUD-041 | ALTO | Implementar um executor genérico para IEvidenceConnector | Connectors / Telemetry Ingestion | ABERTA |
-| 3 | AEGIS-AUD-042 | MÉDIO | Não exigir alteração de enums centrais para cada novo fornecedor ou capacidade | Extensibility / Domain Contracts | ABERTA |
-| 4 | AEGIS-AUD-047 | MÉDIO | Evoluir EncryptedSettings para configuração tipada e versionada | Connector Configuration / Operations | ABERTA |
+### Entrega 5 — release candidate demonstrável
 
-### Gate de aceite
+**Branch sugerida:** `chore/mvp-release-candidate`<br>
+**AUD principal:** AEGIS-AUD-048.
 
-G5A — Um conector de prova não Microsoft é registrado, coleta e alimenta a mesma esteira sem mudanças no scoring.
+Escopo:
 
-### Testes mínimos do épico
+- health check de liveness sem dependências externas;
+- readiness de PostgreSQL, migrations e dependências indispensáveis;
+- configuração de Development/demonstração sem segredo versionado;
+- smoke test do roteiro completo com dados sintéticos;
+- validação de um tenant e troca entre dois tenants;
+- validação de ingestão SIEM e EDR pelo contrato genérico;
+- validação das seis Funções, Dashboard, Integrações e Hub;
+- correção apenas dos bloqueadores encontrados no smoke;
+- roteiro curto de instalação e demonstração usando documentação existente.
 
-Registry; capability; schema; config versionada; retries; idempotência; provider ausente; secret handling.
-
-### Estratégia de rollback
-
-Adapters são removíveis sem alterar contratos do núcleo; feature flags para novos providers.
-
-### Definition of Done do épico
-
-- Todos os itens do épico foram implementados ou formalmente adiados com risco aceito.
-- Testes positivos, negativos, regressão e segurança foram executados.
-- Nenhum warning novo foi incorporado sem justificativa.
-- Documentação, runbooks e este Plano Diretor foram atualizados.
-- PRs foram revisados e mergeados; ambiente aplicável foi validado.
-- O gate correspondente foi aprovado explicitamente.
-
----
-
-## EP-05 — Experiência de produto e frontend NIST
-
-**Estado:** PLANEJADO<br>
-**Objetivo:** Representar de forma simétrica as seis Funções NIST e impedir mistura ou retenção de dados entre tenants.<br>
-**Dependências:** EP-01 e EP-03 aprovados.<br>
-**Ordem interna:** Executar após contratos de projeção e scoring estabilizados.
-
-### Pacotes do épico
-
-| Ordem | ID | Severidade | Pendência | Área | Estado |
-|---:|---|---|---|---|---|
-| 1 | AEGIS-AUD-027 | ALTO | Implementar páginas equivalentes para as seis Funções NIST | Frontend / Product Completeness | ABERTA |
-| 2 | AEGIS-AUD-028 | MÉDIO | Separar postura NIST de painéis orientados a produto ou domínio técnico | Frontend / Information Architecture | ABERTA |
-| 3 | AEGIS-AUD-029 | MÉDIO | Remover fornecedor específico do título e contrato do painel de identidade | Frontend / Vendor Neutrality | ABERTA |
-| 4 | AEGIS-AUD-033 | MÉDIO | Adicionar suíte de testes automatizados do frontend | Frontend / Quality | ABERTA |
-
-### Gate de aceite
-
-G5B — Seis páginas equivalentes, testes de tenant switch e nenhuma métrica fictícia ou ambígua.
-
-### Testes mínimos do épico
-
-Rotas; DTOs; tenant switch; requests atrasadas; estados vazios; falha de API; E2E de login e postura.
-
-### Estratégia de rollback
-
-Rotas antigas podem coexistir temporariamente, sem duplicar regra de negócio no cliente.
-
-### Definition of Done do épico
-
-- Todos os itens do épico foram implementados ou formalmente adiados com risco aceito.
-- Testes positivos, negativos, regressão e segurança foram executados.
-- Nenhum warning novo foi incorporado sem justificativa.
-- Documentação, runbooks e este Plano Diretor foram atualizados.
-- PRs foram revisados e mergeados; ambiente aplicável foi validado.
-- O gate correspondente foi aprovado explicitamente.
+Essa entrega não inclui observabilidade distribuída, HA, disaster recovery ou hardening completo.
 
 ---
 
-## EP-06 — Observabilidade, resiliência e engenharia operacional
+## 5. Política reduzida de testes
 
-**Estado:** PLANEJADO<br>
-**Objetivo:** Tornar o serviço operável, diagnosticável e escalável como plataforma MSSP.<br>
-**Dependências:** EP-00 aprovado; contratos principais estabilizados.<br>
-**Ordem interna:** Pode iniciar parcialmente após EP-00, mas os gates finais dependem dos fluxos definitivos.
+Testes existentes não devem ser apagados. A redução ocorre na repetição das baterias e na criação de
+testes novos.
 
-### Pacotes do épico
+### Durante a implementação
 
-| Ordem | ID | Severidade | Pendência | Área | Estado |
-|---:|---|---|---|---|---|
-| 1 | AEGIS-AUD-048 | ALTO | Implementar health checks de liveness e readiness | Operations / Availability | ABERTA |
-| 2 | AEGIS-AUD-049 | ALTO | Adicionar métricas, tracing distribuído e correlação fim a fim | Observability | ABERTA |
-| 3 | AEGIS-AUD-051 | ALTO | Separar workers da API ou coordená-los para múltiplas réplicas | Deployment Architecture | ABERTA |
-| 4 | AEGIS-AUD-054 | MÉDIO | Não persistir mensagem bruta de exceção como erro de documento | Error Handling / Sensitive Data | ABERTA |
-| 5 | AEGIS-AUD-055 | ALTO | Formalizar SLOs, alertas e métricas operacionais por tenant | MSSP Operations | ABERTA |
-| 6 | AEGIS-AUD-056 | ALTO | Implementar CI/CD e controles de supply chain | CI/CD / Supply Chain | ABERTA |
-| 7 | AEGIS-AUD-058 | MÉDIO | Tornar CORS configurável e validado por ambiente | API Security / Deployment | ABERTA |
+- executar somente build e testes diretamente relacionados ao código alterado;
+- não rodar a suíte completa após cada edição ou commit;
+- não repetir teste em SHA inalterado;
+- não criar testes para comentários, DTOs triviais ou getters sem lógica;
+- limitar novos testes, em regra, a 3–8 cenários de maior risco por entrega.
 
-### Gate de aceite
+### Antes do merge
 
-G6 — Homologação com health/readiness, tracing, métricas por tenant, SLOs, workers coordenados e checks obrigatórios.
+| Tipo de mudança | Gate mínimo |
+|---|---|
+| Somente frontend | `ng build` + smoke dos fluxos alterados |
+| Backend sem schema/segurança | build + testes direcionados + suíte completa uma vez |
+| Migration, tenant, autenticação ou score | testes direcionados + PostgreSQL real focado + suíte completa uma vez |
+| Documentação/handoff | `git diff --check`; sem build repetido |
 
-### Testes mínimos do épico
+### Release candidate
 
-Scale-out; retry; shutdown; métricas; tracing; falha de dependência; CORS; pipeline; logs sanitizados.
+Executar uma única bateria consolidada:
 
-### Estratégia de rollback
+- backend completo;
+- testes PostgreSQL indispensáveis;
+- frontend build;
+- smoke E2E do roteiro de demonstração;
+- verificação de isolamento entre dois tenants;
+- verificação de que nenhum segredo ou dado real entrou no repositório.
 
-Instrumentação deve ser desabilitável; workers devem ter deploy e rollback independentes.
+Ficam adiados:
 
-### Definition of Done do épico
-
-- Todos os itens do épico foram implementados ou formalmente adiados com risco aceito.
-- Testes positivos, negativos, regressão e segurança foram executados.
-- Nenhum warning novo foi incorporado sem justificativa.
-- Documentação, runbooks e este Plano Diretor foram atualizados.
-- PRs foram revisados e mergeados; ambiente aplicável foi validado.
-- O gate correspondente foi aprovado explicitamente.
-
----
-
-## EP-07 — Hardening, privacidade, supply chain e continuidade
-
-**Estado:** PLANEJADO<br>
-**Objetivo:** Atender ao gate de produção MSSP com controles de segurança operacional, privacidade e recuperação.<br>
-**Dependências:** G1 a G6 aprovados.<br>
-**Ordem interna:** Concluir após os épicos técnicos; partes de supply chain e segredo podem começar antes.
-
-### Pacotes do épico
-
-| Ordem | ID | Severidade | Pendência | Área | Estado |
-|---:|---|---|---|---|---|
-| 1 | AEGIS-AUD-059 | ALTO | Implementar hardening de produção | Production Hardening | ABERTA |
-| 2 | AEGIS-AUD-060 | ALTO | Formalizar estratégia de gestão de segredos | Secrets Management | ABERTA |
-| 3 | AEGIS-AUD-061 | ALTO | Implementar programa de Supply Chain | Software Supply Chain | ABERTA |
-| 4 | AEGIS-AUD-062 | MÉDIO | Formalizar requisitos de LGPD e retenção | Privacy / Governance | ABERTA |
-| 5 | AEGIS-AUD-063 | ALTO | Definir estratégia de continuidade | Business Continuity / Disaster Recovery | ABERTA |
-
-### Gate de aceite
-
-G7 — Production Readiness aprovado; RPO/RTO, restore, hardening, LGPD e supply chain validados.
-
-### Testes mínimos do épico
-
-DR; restore; rotação de segredo; SAST/SCA/SBOM; assinatura; headers/TLS; retenção e descarte.
-
-### Estratégia de rollback
-
-Planos de recuperação testados; mudanças de hardening com validação em staging e possibilidade de reversão controlada.
-
-### Definition of Done do épico
-
-- Todos os itens do épico foram implementados ou formalmente adiados com risco aceito.
-- Testes positivos, negativos, regressão e segurança foram executados.
-- Nenhum warning novo foi incorporado sem justificativa.
-- Documentação, runbooks e este Plano Diretor foram atualizados.
-- PRs foram revisados e mergeados; ambiente aplicável foi validado.
-- O gate correspondente foi aprovado explicitamente.
+- suíte frontend ampla do AEGIS-AUD-033;
+- matriz extensa de browsers;
+- carga, caos, múltiplas réplicas e testes de DR;
+- testes duplicados que provam a mesma invariante em várias camadas.
 
 ---
 
-## 16. Investigações residuais
+## 6. Backlog pós-MVP
 
-| ID | Estado | Tema | Próxima ação |
-|---|---|---|---|
-| AEGIS-INV-001 | CONVERTIDA | Modelo do dashboard | Convertida em AEGIS-AUD-021. |
-| AEGIS-INV-002 | CONVERTIDA | Modelo do relatório | Convertida em AEGIS-AUD-034 e AEGIS-AUD-040. |
-| AEGIS-INV-003 | CONVERTIDA | Quem grava TenantControlState.CurrentScore | Convertida em AEGIS-AUD-019. |
-| AEGIS-INV-004 | ABERTA | Prompts e saídas da IA | Validar redaction, schema, retenção, logs, isolamento e custo. |
-| AEGIS-INV-005 | CONVERTIDA | Frontend das seis Funções | Convertida em AEGIS-AUD-027 e AEGIS-AUD-028. |
-| AEGIS-INV-006 | PARCIAL | Google/AWS e novos conectores | Continuar durante EP-04. |
-| AEGIS-INV-007 | ABERTA | Migrations da refatoração de identidade | Executar antes das mudanças do EP-01. |
-| AEGIS-INV-008 | PARCIAL | Frontend de autenticação e tenant switch | Risco residual registrado em AEGIS-AUD-030. |
-| AEGIS-INV-009 | CONVERTIDA | Workers e contexto de tenant | Convertida em AEGIS-AUD-050 e AEGIS-AUD-051. |
-| AEGIS-INV-010 | CONVERTIDA | CI/CD, segredos e produção | Convertida em AEGIS-AUD-056 e itens do EP-07. |
-| AEGIS-INV-011 | ABERTA | Isolamento de MaturitySnapshot | Inventariar leituras, escritas, FKs e autorização. |
-| AEGIS-INV-012 | ABERTA | Ciclo operacional do MicrosoftSecureScoreConnector | Confirmar executor e persistência real. |
-| AEGIS-INV-013 | ABERTA | Uso efetivo de SignalMapping | Confirmar autoridade e consumidores. |
+Os achados abaixo não foram descartados. Eles deixam de bloquear a entrega de 30 dias.
 
-## 17. Backlog mestre
+### Avaliação, IA e refinamentos de domínio
 
-| ID | Severidade | Área | Pendência | Épico | Estado | PR | Commit |
-|---|---|---|---|---|---|---|---|
-| AEGIS-AUD-001 | BLOQUEADOR | Domínio / Scoring | Formalizar a fórmula oficial de pontuação | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-002 | ALTO | Scoring | Diferenciar “não avaliado” de nota zero | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-003 | ALTO | Assessment / Rules | Eliminar dependência de texto livre nas regras de avaliação | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-004 | ALTO | Domínio / Assessment | Definir a relação entre avaliação por campanha e postura contínua | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-005 | MÉDIO | Domínio / Operação SOC | Tornar pendências e checklists entidades operacionais quando necessário | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-006 | MÉDIO | Assessment / Neutralidade | Evitar fornecedor principal derivado da ordem textual | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-007 | ALTO | Identity / Authentication | Integrar autenticação corporativa federada | EP-01 | CONCLUÍDA | #14 | `ff5d119` |
-| AEGIS-AUD-008 | ALTO | Multi-tenancy / Persistence | Proteger alterações e exclusões cross-tenant no DbContext | EP-01 | CONCLUÍDA | #12 | `2f8c968` |
-| AEGIS-AUD-009 | ALTO | Authentication / Session Security | Armazenar somente hash de refresh tokens | EP-01 | CONCLUÍDA | #13 | `37d57ff` |
-| AEGIS-AUD-010 | ALTO | Identity Governance | Separar provisionamento global de concessão de acesso a tenant | EP-01 | CONCLUÍDA | #15 | `d947328` |
-| AEGIS-AUD-011 | MÉDIO | Authorization | Separar papéis globais de papéis por tenant | EP-01 | **EM IMPLEMENTAÇÃO** | branch `fix/aud-011-...` | — |
-| AEGIS-AUD-012 | MÉDIO | UX / Authorization Context | Exigir seleção explícita ou último tenant validado no login | EP-01 | ABERTA | — | — |
-| AEGIS-AUD-013 | MÉDIO | Multi-tenancy / Architecture | Aplicar filtros de tenant por convenção e testar o modelo EF | EP-01 | ABERTA | — | — |
-| AEGIS-AUD-014 | MÉDIO | Multi-tenancy / Privileged Access | Restringir e inventariar IgnoreQueryFilters() | EP-01 | ABERTA | — | — |
-| AEGIS-AUD-015 | MÉDIO | Persistence / Data Integrity | Garantir consistência de tenant nos relacionamentos | EP-01 | ABERTA | — | — |
-| AEGIS-AUD-016 | MÉDIO | Authentication | Formalizar o SLA de revogação de access tokens | EP-01 | ABERTA | — | — |
-| AEGIS-AUD-017 | MÉDIO | API Security | Validar configuração de proxy para rate limiting | EP-01 | ABERTA | — | — |
-| AEGIS-AUD-018 | BAIXO | API / Tenant Consistency | Rejeitar X-Tenant inválido | EP-01 | ABERTA | — | — |
-| AEGIS-AUD-019 | BLOQUEADOR | IA / Assessment / Scoring | Remover a IA da autoridade primária sobre o veredito de conformidade | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-020 | ALTO | Evidence / Telemetry / Auditability | Persistir evidência bruta normalizada na esteira principal de telemetria | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-021 | BLOQUEADOR | Dashboard / Scoring / Architecture | Unificar a projeção executiva de postura | EP-03 | ABERTA | — | — |
-| AEGIS-AUD-022 | ALTO | API / Application Architecture | Retirar regras de negócio e acesso direto ao banco do DashboardController | EP-03 | ABERTA | — | — |
-| AEGIS-AUD-023 | MÉDIO | Vendor Neutrality / Ubiquitous Language | Remover linguagem e conceitos Microsoft Secure Score do contrato central | EP-04 | ABERTA | — | — |
-| AEGIS-AUD-024 | MÉDIO | Observability / Data Integrity | Não ocultar corrupção de dados explicativos do dashboard | EP-03 | ABERTA | — | — |
-| AEGIS-AUD-025 | MÉDIO | AI Assurance | Tratar confiança da IA como metadado, não validação | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-026 | ALTO | Frontend / Data Integrity | Não substituir falha da API por dados de demonstração em ambiente operacional | EP-00 | CONCLUÍDA | #10 | `383bf6b` |
-| AEGIS-AUD-027 | ALTO | Frontend / Product Completeness | Implementar páginas equivalentes para as seis Funções NIST | EP-05 | ABERTA | — | — |
-| AEGIS-AUD-028 | MÉDIO | Frontend / Information Architecture | Separar postura NIST de painéis orientados a produto ou domínio técnico | EP-05 | ABERTA | — | — |
-| AEGIS-AUD-029 | MÉDIO | Frontend / Vendor Neutrality | Remover fornecedor específico do título e contrato do painel de identidade | EP-05 | ABERTA | — | — |
-| AEGIS-AUD-030 | ALTO | Frontend / Multi-tenancy / Client State | Invalidar e recarregar dados no tenant switch | EP-01 | ABERTA | — | — |
-| AEGIS-AUD-031 | MÉDIO | Documentation / Architecture Governance | Alinhar documentação arquitetural com a stack e o estado reais | EP-00 | CONCLUÍDA | #11 | `d02cfee` |
-| AEGIS-AUD-032 | ALTO | Frontend / Metrics Semantics | Formalizar o contrato entre maturidade executiva e tendência de postura | EP-03 | ABERTA | — | — |
-| AEGIS-AUD-033 | MÉDIO | Frontend / Quality | Adicionar suíte de testes automatizados do frontend | EP-05 | ABERTA | — | — |
-| AEGIS-AUD-034 | ALTO | Reports / Product Completeness | Implementar o módulo de relatórios como capacidade real do produto | EP-03 | ABERTA | — | — |
-| AEGIS-AUD-035 | BLOQUEADOR | Historical Posture / Auditability | Criar snapshot auditável da postura, não apenas totais agregados | EP-03 | ABERTA | — | — |
-| AEGIS-AUD-036 | ALTO | Historical Integrity | Tornar snapshots publicados imutáveis | EP-03 | ABERTA | — | — |
-| AEGIS-AUD-037 | ALTO | Scoring Trend / Metrics | Registrar cobertura e denominador semântico da tendência | EP-03 | ABERTA | — | — |
-| AEGIS-AUD-038 | MÉDIO | Workers / Reliability | Tornar a captura histórica resiliente a falhas e lacunas | EP-03 | ABERTA | — | — |
-| AEGIS-AUD-039 | MÉDIO | Temporal Semantics / MSSP | Definir timezone e corte temporal por tenant | EP-03 | ABERTA | — | — |
-| AEGIS-AUD-040 | BLOQUEADOR | Reports / Executive Posture | Gerar dashboard e relatório a partir da mesma projeção publicada | EP-03 | ABERTA | — | — |
-| AEGIS-AUD-041 | ALTO | Connectors / Telemetry Ingestion | Implementar um executor genérico para IEvidenceConnector | EP-04 | ABERTA | — | — |
-| AEGIS-AUD-042 | MÉDIO | Extensibility / Domain Contracts | Não exigir alteração de enums centrais para cada novo fornecedor ou capacidade | EP-04 | ABERTA | — | — |
-| AEGIS-AUD-043 | ALTO | Connectors / Framework Mapping | Definir uma única autoridade de mapeamento sinal → NIST | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-044 | MÉDIO | Unified Schema / Vendor Neutrality | Remover semântica Microsoft das chaves do esquema normalizado | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-045 | ALTO | AI / Connectors / Supply-chain Data | Não usar o LLM como normalizador confiável de ferramentas desconhecidas | EP-02 | ABERTA | — | — |
-| AEGIS-AUD-046 | ALTO | Privacy / Demo Data / Repository Hygiene | Eliminar dados reais ou identificáveis dos stubs e demos | EP-00 | CONCLUÍDA | #8 | `f9a3ed7` |
-| AEGIS-AUD-047 | MÉDIO | Connector Configuration / Operations | Evoluir EncryptedSettings para configuração tipada e versionada | EP-04 | ABERTA | — | — |
-| AEGIS-AUD-048 | ALTO | Operations / Availability | Implementar health checks de liveness e readiness | EP-06 | ABERTA | — | — |
-| AEGIS-AUD-049 | ALTO | Observability | Adicionar métricas, tracing distribuído e correlação fim a fim | EP-06 | ABERTA | — | — |
-| AEGIS-AUD-050 | BLOQUEADOR | Workers / Reliability / Scale-out | Não usar filas em memória como mecanismo operacional durável | EP-00 | CONCLUÍDA | #9 | `f170b0f` |
-| AEGIS-AUD-051 | ALTO | Deployment Architecture | Separar workers da API ou coordená-los para múltiplas réplicas | EP-06 | ABERTA | — | — |
-| AEGIS-AUD-052 | ALTO | Deployment / Database | Retirar migrations e seed da inicialização concorrente da API | EP-00 | CONCLUÍDA | #6 | `0ebad27` |
-| AEGIS-AUD-053 | BLOQUEADOR | Cryptography / Connector Secrets | Persistir e proteger o Data Protection Key Ring | EP-00 | CONCLUÍDA | #5 | `49a6747` |
-| AEGIS-AUD-054 | MÉDIO | Error Handling / Sensitive Data | Não persistir mensagem bruta de exceção como erro de documento | EP-06 | ABERTA | — | — |
-| AEGIS-AUD-055 | ALTO | MSSP Operations | Formalizar SLOs, alertas e métricas operacionais por tenant | EP-06 | ABERTA | — | — |
-| AEGIS-AUD-056 | ALTO | CI/CD / Supply Chain | Implementar CI/CD e controles de supply chain | EP-06 | ABERTA | — | — |
-| AEGIS-AUD-057 | MÉDIO | Configuration Security | Remover credenciais padrão do arquivo principal de configuração | EP-00 | CONCLUÍDA | #7 | `9904729` |
-| AEGIS-AUD-058 | MÉDIO | API Security / Deployment | Tornar CORS configurável e validado por ambiente | EP-06 | ABERTA | — | — |
-| AEGIS-AUD-059 | ALTO | Production Hardening | Implementar hardening de produção | EP-07 | ABERTA | — | — |
-| AEGIS-AUD-060 | ALTO | Secrets Management | Formalizar estratégia de gestão de segredos | EP-07 | ABERTA | — | — |
-| AEGIS-AUD-061 | ALTO | Software Supply Chain | Implementar programa de Supply Chain | EP-07 | ABERTA | — | — |
-| AEGIS-AUD-062 | MÉDIO | Privacy / Governance | Formalizar requisitos de LGPD e retenção | EP-07 | ABERTA | — | — |
-| AEGIS-AUD-063 | ALTO | Business Continuity / Disaster Recovery | Definir estratégia de continuidade | EP-07 | ABERTA | — | — |
+`AEGIS-AUD-003`, `AEGIS-AUD-004`, `AEGIS-AUD-005`, `AEGIS-AUD-006`,
+`AEGIS-AUD-025`, `AEGIS-AUD-044`, `AEGIS-AUD-045`.
 
-## 18. Registro de execução
+### Arquitetura e hardening de identidade
 
-| Entrega | Estado | Branch | PR | Merge/Commit | Testes | Observações |
-|---|---|---|---|---|---|---|
-| PR 0 — Baseline técnica | CONCLUÍDO | `chore/pr0-baseline` (removida) | #1 | `c3a0bd3` | Backend 219/219; frontend build aprovado | `docs/pr0-baseline.md` |
-| PR #2 — Reconciliação documental | **CONCLUÍDA** | `docs/reconcile-operational-state` (removida) | #2 | `daa41e80d3149a5c0ca5e3b5b70ba92cd0ddc8c9` | Não executados — escopo exclusivamente documental | Squash-merge de 4 commits (`7ea19dc`, `27ee185`, `e6f175c`, `e001866`); versionou o handoff operacional e o Plano Diretor |
-| AEGIS-TECH-001 — .NET 10 / EF Core 10 | **CONCLUÍDO** | `chore/tech-001-net10-efcore10` (removida) | #4 | `511c9558771f96b2e98c39c78ab60d8b64deefad` | Restore; build 0 erros/1 warning preexistente; 219/219; PostgreSQL descartável; modelo sem mudanças pendentes | EF Core 10.0.10 e Npgsql 10.0.3; sem migration ou alteração de schema |
-| AEGIS-AUD-053 — Data Protection Key Ring | **CONCLUÍDO** | `fix/aud-053-data-protection-keyring` (removida) | #5 | `49a6747` | Backend 249/249; PostgreSQL descartável | Key ring no PostgreSQL (contexto dedicado), envelope X.509 em Production; migration aplicada em `aegis_dev` |
-| AEGIS-AUD-052 — Migrations/seed fora do startup | **CONCLUÍDO** | `fix/aud-052-externalize-database-initialization` (removida) | #6 | `0ebad27` | Backend 279/279; PostgreSQL descartável | `AegisScore.DbMigrator` sob advisory lock; índice único em `FrameworkVersion.Name`; migration aplicada em `aegis_dev` (17→18) |
-| AEGIS-AUD-057 — Credencial padrão de configuração | **CONCLUÍDO** | `fix/aud-057-remove-default-db-credentials` (removida) | #7 | `9904729` | Backend 284/284 | Connection string sai do `appsettings.json`; fail-fast quando ausente/vazia |
-| AEGIS-AUD-046 — Eliminar dados reais/identificáveis dos stubs e demos | **CONCLUÍDO** | `fix/aud-046-sanitize-demo-data` (removida) | #8 | `f9a3ed7` | Backend 284/284 (baseline preservada; árvore idêntica ao head validado) | Dados de demonstração integralmente sintéticos (`demo.example.com` / `example.com`); banco local `aegis_dev` saneado e revalidado; sem migration |
-| AEGIS-AUD-050 — Não usar filas em memória como mecanismo operacional durável | **CONCLUÍDO** | `fix/aud-050-durable-operational-queues` (removida) | #9 | `f170b0f` | Backend 323/323 (inclui 3 testes de concorrência/lease em PostgreSQL descartável real com `FOR UPDATE SKIP LOCKED`) | Filas duráveis no PostgreSQL: `GovernanceDocument` = fila de análise, `PolicySyncRequest` = fila de sync; claim atômico `FOR UPDATE SKIP LOCKED`, lease + heartbeat fail-closed, retry/limite→Failed, recuperação de Processing legado; migration `20260724002301_Aud50_DurableOperationalQueues` (aegis_dev 18→19); `--verify-only` aprovado |
-| AEGIS-AUD-026 — Não substituir falha da API por dados de demonstração em ambiente operacional | **CONCLUÍDO** | `fix/aud-026-no-demo-fallback` (removida) | #10 | `383bf6b` | Frontend `ng build` exit 0; mesmos 4 warnings de budget CSS conhecidos (`executive-dashboard` fora da lista); **sem suíte automatizada de frontend** (AUD-033); smoke test funcional dos 4 estados via mock API descartável | Dashboard executivo sem fallback de `sampleDashboard`: estado inicial nulo, limpeza antes de cada carga/recarga (impede retenção entre tenants após switch), estado de erro explícito com nova tentativa e distinto de resposta vazia; `sample-dashboard.ts` removido (zero refs). Sem backend/migration/snapshot/`package.json`/lock; árvore do squash idêntica ao head validado `973713a` |
-| AEGIS-AUD-031 — Alinhar documentação arquitetural com a stack e o estado reais | **CONCLUÍDO** | `docs/aud-031-align-architecture` (removida) | #11 | `d02cfee` | Backend **323/323** e frontend `ng build` aprovado com os 4 warnings de budget CSS conhecidos (revalidados no 1º commit); `git diff --check` OK | **EP-00 concluído.** `README.md`/`DEV.md`/`ARCHITECTURE.md` alinhados ao estado executável (.NET 10, EF Core 10.0.10, Npgsql 10.0.3, Angular 19; DbMigrator + `SchemaReadinessGuard`; sem fallback de demonstração); baseline do PR 0 preservada e identificada em `docs/pr0-baseline.md`; `handoff-operacional` marcado como histórico. 2 commits (`90fa8aa`, `a47f4ba`); 7 arquivos, todos Markdown; árvore do squash idêntica ao head `a47f4ba`. Sem alteração de código/config/migrations/dependências |
-| AEGIS-AUD-008 — Proteger alterações e exclusões cross-tenant no DbContext | **CONCLUÍDO** | `fix/aud-008-cross-tenant-writes` (removida) | #12 | `2f8c968` | `dotnet build` 0 erros; **suíte 323 → 337, 337/337** (bateria SQLite relacional + 1 teste PostgreSQL descartável real aprovado, gate `AEGIS_TEST_PG`); `has-pending-model-changes` limpo | **1º pacote do EP-01.** Guard central fail-closed no `AegisScoreDbContext`: Added carimbado; Modified/Deleted validam a **linha persistida** (`GetDatabaseValues`, não `entry.Entity`/`OriginalValues`); stub com Id estrangeiro falha antes da mutação (linha estrangeira intacta); troca de TenantId rejeitada; tenant ausente/`Guid.Empty` fail-closed; globais seguem sem tenant; 4 overloads de SaveChanges protegidos sem dupla validação. Bulk DML inventariado e delimitado. Sem migration/snapshot/frontend/dependências; árvore do squash idêntica ao head `d0079ab` |
+`AEGIS-AUD-013`, `AEGIS-AUD-014`, `AEGIS-AUD-015`, `AEGIS-AUD-016`,
+`AEGIS-AUD-017`.
 
-### Campos obrigatórios após cada merge
+### Dashboard, relatórios e histórico avançado
 
-```text
-ID:
-Status:
-PR:
-Commit de merge:
-Data:
-Responsável:
-Critérios validados:
-Testes executados:
-Risco residual:
-Pendências desbloqueadas:
-Rollback validado:
-```
+`AEGIS-AUD-022`, `AEGIS-AUD-024`, `AEGIS-AUD-034`, `AEGIS-AUD-035`,
+`AEGIS-AUD-036`, `AEGIS-AUD-037`, `AEGIS-AUD-038`, `AEGIS-AUD-039`,
+`AEGIS-AUD-040`.
 
-## 19. Definition of Done global
+### Neutralidade, UX e extensibilidade adicionais
 
-Uma pendência só pode ser marcada como `CONCLUÍDA` quando:
+`AEGIS-AUD-023`, `AEGIS-AUD-028`, `AEGIS-AUD-029`, `AEGIS-AUD-042`,
+`AEGIS-AUD-047`.
 
-1. O problema foi revalidado no código atual.
-2. O escopo e os contratos foram aprovados.
-3. A implementação possui testes adequados.
-4. Build e testes da baseline continuam aprovados.
-5. Não há nova regressão de tenant, segurança ou compatibilidade.
-6. O diff foi revisado.
-7. O PR foi mergeado.
-8. A validação no ambiente aplicável foi concluída.
-9. O rollback foi documentado e, quando relevante, testado.
-10. Este Plano Diretor foi atualizado.
+### Qualidade e operação em escala
 
-## 20. Critérios de parada
+`AEGIS-AUD-033`, `AEGIS-AUD-049`, `AEGIS-AUD-051`, `AEGIS-AUD-054`,
+`AEGIS-AUD-055`, `AEGIS-AUD-056`, `AEGIS-AUD-058`.
 
-Interromper implementação ou implantação quando houver:
+### Produção, privacidade e continuidade
 
-- possível perda de dados ou de key ring;
-- risco de exposição cross-tenant;
-- migration irreversível sem backup;
-- divergência crítica entre código local e `main`;
-- segredo real em código, log ou fixture;
-- falha de teste não explicada;
-- alteração fora do escopo;
-- ausência de rollback para mudança crítica;
-- incompatibilidade com ciphertext, snapshot ou contrato publicado.
+`AEGIS-AUD-059`, `AEGIS-AUD-060`, `AEGIS-AUD-061`, `AEGIS-AUD-062`,
+`AEGIS-AUD-063`.
 
-## 21. Decisão de produção
+Essa classificação cobre todos os achados não concluídos que ficaram fora do caminho crítico. Um item
+pós-MVP só volta ao plano de 30 dias se surgir como bloqueador comprovado de segurança, integridade dos
+dados ou funcionamento do roteiro de demonstração.
 
-**Arquitetura:** aprovada com ressalvas.<br>
-**Continuidade do desenvolvimento:** recomendada.<br>
-**Produção MSSP:** não recomendada enquanto G7 não estiver aprovado.
+---
 
-Não é recomendada uma reescrita ampla. A remediação deve permanecer incremental, orientada por evidência e gates.
+## 7. Regras de execução para ganhar velocidade
 
-## 22. Uso deste documento com agentes de programação
+1. No máximo cinco PRs após o PR #16.
+2. Um PR entrega um fluxo vertical utilizável; não um AUD isolado.
+3. Leitura inicial deve se limitar aos arquivos diretamente envolvidos.
+4. Não produzir relatório de investigação separado antes de implementar.
+5. Não pedir autorização intermediária para decisões reversíveis dentro do escopo aprovado.
+6. Parar somente diante de:
+   - risco de perda de dados;
+   - segredo real;
+   - exposição cross-tenant;
+   - migration sem caminho seguro;
+   - divergência material de escopo.
+7. Não abrir PR exclusivamente documental.
+8. Atualizar `AEGIS_STATE.md` e este plano somente após o merge, de forma curta.
+9. Não reescrever histórico válido nem repetir testes já associados ao mesmo SHA.
+10. Se um refinamento não muda o roteiro de demonstração, movê-lo para o pós-MVP.
 
-Ao iniciar uma nova sessão do Claude:
+---
 
-1. Usar esta versão `v1.0.3`, versionada em `docs/plano-diretor-remediacao-v1.0.3.md` — não anexar
-   cópias externas nem versões anteriores.
-2. Informar que o código local é a fonte de verdade.
-3. Pedir leitura de `docs/pr0-baseline.md` e de `docs/handoff-operacional.md`.
-4. Selecionar apenas um pacote ou conjunto coeso, respeitando a sequência oficial da seção 7.1.
-5. Iniciar com investigação sem alterações.
-6. Revisar o plano antes de autorizar implementação. **A ordem aprovada na seção 7.1 não é
-   autorização de implementação:** cada pacote exige aprovação explícita própria.
-7. Não permitir commit/push sem autorização explícita.
+## 8. Gate de aceite do MVP
+
+O MVP está concluído quando todos os itens abaixo forem demonstrados no mesmo ambiente:
+
+- [ ] banco preparado e API pronta;
+- [ ] login funcional;
+- [ ] seleção e troca de tenant sem vazamento de estado;
+- [ ] conector configurado com segredo protegido;
+- [ ] ingestão autenticada de exemplo SIEM;
+- [ ] ingestão autenticada de exemplo EDR;
+- [ ] evidências persistidas e visíveis;
+- [ ] mapeamento NIST determinístico;
+- [ ] score reproduzível e explicável;
+- [ ] não avaliado diferente de zero;
+- [ ] Dashboard com score, cobertura, riscos, recência e saúde dos conectores;
+- [ ] GV, ID, PR, DE, RS e RC com conteúdo, controles e checklist;
+- [ ] Document Hub com upload, processamento, cobertura e erro visível;
+- [ ] frontend sem fallback silencioso para demo;
+- [ ] smoke test completo aprovado;
+- [ ] nenhum segredo ou dado identificável versionado.
+
+### Dependências externas que não são defeito de código
+
+- App Registration e consentimento do Microsoft Entra ID para login federado real;
+- credenciais de um SIEM/EDR real, se for desejado validar um adaptador específico;
+- conectividade do notebook corporativo com PostgreSQL, APIs externas e os endpoints configurados.
+
+Sem essas credenciais, o aceite de código usa o contrato genérico autenticado e payloads sintéticos. O
+repositório nunca deve receber credenciais reais.
+
+---
+
+## 9. Limite da entrega
+
+Ao final dos 30 dias, o AEGIS pode ser declarado:
+
+**“MVP funcional e pronto para demonstração/homologação controlada.”**
+
+Ainda não deve ser declarado:
+
+**“Plataforma MSSP pronta para produção irrestrita.”**
+
+Produção completa continuará dependendo do backlog pós-MVP, especialmente observabilidade, CI/CD,
+hardening, privacidade, retenção, múltiplas réplicas e continuidade.
+
+---
+
+## 10. Uso com Claude e Codex
+
+Ao iniciar uma sessão:
+
+1. Ler `AEGIS_STATE.md` e este plano.
+2. Confirmar branch, SHA e alterações locais.
+3. Trabalhar na próxima **entrega vertical** da seção 4.
+4. Investigar somente o necessário para implementar.
+5. Priorizar código funcionando, integração e UX.
+6. Aplicar a política reduzida de testes da seção 5.
+7. Parar antes do merge para revisão.
+8. Após o merge, atualizar somente os dois handoffs existentes.
+
+Nenhum agente deve voltar automaticamente ao modelo antigo de executar os 63 achados em sequência.
 
 ---
 

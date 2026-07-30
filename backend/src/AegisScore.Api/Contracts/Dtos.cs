@@ -3,9 +3,42 @@ using AegisScore.Domain;
 namespace AegisScore.Api.Contracts;
 
 // ---- Auth ----
-public record LoginRequest(string Email, string Password);
+/// <summary>
+/// [AEGIS-AUD-012] <paramref name="LastTenantId"/> é a DICA do último ambiente usado, lembrada pelo cliente.
+/// É OPCIONAL e nunca confiada sem revalidação: o backend só a reutiliza se ainda houver membership ativo nela.
+/// </summary>
+public record LoginRequest(string Email, string Password, Guid? LastTenantId = null);
+
 /// <summary>O refresh token NÃO trafega aqui — vai apenas no cookie HttpOnly. Só o access token é exposto.</summary>
 public record AuthResponse(string AccessToken, DateTimeOffset AccessTokenExpiresAt);
+
+/// <summary>
+/// [AEGIS-AUD-012] Resposta do login/troca federada com desfecho EXPLÍCITO — o cliente nunca é jogado num
+/// tenant escolhido em silêncio. <paramref name="Status"/> discrimina:
+///  - <c>"authenticated"</c>: sessão emitida (<paramref name="AccessToken"/> presente; cookie de refresh setado);
+///  - <c>"selection_required"</c>: vários acessos sem último tenant válido — o cliente escolhe um dos
+///    <paramref name="Tenants"/> e conclui em <c>POST /auth/select-tenant</c> com o <paramref name="SelectionTicket"/>.
+/// Os campos de cada desfecho só vêm preenchidos no desfecho correspondente.
+/// </summary>
+public record LoginResultResponse(
+    string Status,
+    string? AccessToken = null,
+    DateTimeOffset? AccessTokenExpiresAt = null,
+    string? SelectionTicket = null,
+    DateTimeOffset? SelectionTicketExpiresAt = null,
+    IReadOnlyList<TenantOptionDto>? Tenants = null);
+
+/// <summary>
+/// [AEGIS-AUD-012] Corpo da conclusão da seleção inicial de ambiente. A identidade vem SÓ do
+/// <paramref name="SelectionTicket"/> assinado (nunca do corpo); só o ALVO trafega, revalidado no serviço.
+/// </summary>
+public record SelectTenantRequest(string SelectionTicket, Guid TargetTenantId);
+
+/// <summary>
+/// [AEGIS-AUD-012] Corpo OPCIONAL da troca federada: só a dica do último ambiente. A identidade corporativa
+/// vem das claims do token Entra validado, nunca daqui.
+/// </summary>
+public record FederationExchangeRequest(Guid? LastTenantId = null);
 
 // ---- Tenant Switcher (SSO simulado) ----
 /// <summary>

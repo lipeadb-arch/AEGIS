@@ -44,15 +44,34 @@ public sealed class AuthController : ControllerBase
         _federation = federation.Value;
     }
 
-    /// <summary>Valida credenciais e emite o par de tokens. 401 sem revelar se o e-mail existe.</summary>
+    /// <summary>
+    /// [AEGIS-AUD-012] Valida credenciais e RESOLVE o ambiente. Desfecho explícito (nunca escolhe um tenant
+    /// em silêncio): 401 genérico se negado; sessão emitida quando há um único acesso ou o último tenant
+    /// revalida; ou <c>selection_required</c> (ambientes + ticket) quando há vários acessos sem último válido.
+    /// </summary>
     [AllowAnonymous]
     [HttpPost("login")]
     [EnableRateLimiting("auth-login")]   // [Alto 4] freia brute force / credential stuffing
-    public async Task<ActionResult<AuthResponse>> Login(LoginRequest req, CancellationToken ct)
+    public async Task<ActionResult<LoginResultResponse>> Login(LoginRequest req, CancellationToken ct)
     {
-        var pair = await _auth.LoginAsync(req.Email, req.Password, ct);
+        var result = await _auth.LoginAsync(req.Email, req.Password, req.LastTenantId, ct);
+        return RespondToLogin(result, "Credenciais inválidas.");
+    }
+
+    /// <summary>
+    /// [AEGIS-AUD-012] Conclui a seleção INICIAL de ambiente após um login <c>selection_required</c>. Anônima
+    /// como login/refresh: autentica-se pelo ticket de seleção (não pelo Bearer), e o serviço revalida o
+    /// membership ativo no alvo. Em sucesso, emite a sessão e seta o cookie de refresh. Falha → 401 genérico
+    /// (ticket inválido/expirado e alvo inacessível são indistinguíveis de propósito — refaz o login).
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("select-tenant")]
+    [EnableRateLimiting("auth-login")]
+    public async Task<ActionResult<AuthResponse>> SelectTenant(SelectTenantRequest req, CancellationToken ct)
+    {
+        var pair = await _auth.SelectTenantAsync(req.SelectionTicket, req.TargetTenantId, ct);
         if (pair is null)
-            return Unauthorized(new { title = "Credenciais inválidas.", status = 401 });
+            return Unauthorized(new { title = "Não foi possível concluir a seleção de ambiente.", status = 401 });
 
         SetRefreshCookie(pair.RefreshToken, pair.RefreshTokenExpiresAt);
         return new AuthResponse(pair.AccessToken, pair.AccessTokenExpiresAt);
@@ -137,19 +156,44 @@ public sealed class AuthController : ControllerBase
     [Authorize(Policy = FederatedExchangeRequirement.PolicyName)]
     [HttpPost("federation/exchange")]
     [EnableRateLimiting("auth-login")]   // mesma proteção do login por senha
-    public async Task<ActionResult<AuthResponse>> FederationExchange(CancellationToken ct)
+    public async Task<ActionResult<LoginResultResponse>> FederationExchange(
+        FederationExchangeRequest? req, CancellationToken ct)
     {
         // A policy já autorizou; reusamos o MESMO validador para obter a identidade canonicalizada, sem
         // regra divergente entre policy e controller.
         if (!FederatedPrincipalValidator.TryValidate(User, _federation, out var identity))
             return Unauthorized(new { title = "Não foi possível autenticar a identidade corporativa.", status = 401 });
 
-        var pair = await _auth.ExchangeFederatedAsync(identity, ct);
-        if (pair is null)
-            return Unauthorized(new { title = "Não foi possível autenticar a identidade corporativa.", status = 401 });
+        // [AEGIS-AUD-012] Mesmo desfecho explícito do login local: um único acesso (ou o último tenant
+        // revalidado) emite a sessão; vários sem último válido exigem seleção.
+        var result = await _auth.ExchangeFederatedAsync(identity, req?.LastTenantId, ct);
+        return RespondToLogin(result, "Não foi possível autenticar a identidade corporativa.");
+    }
 
+    /// <summary>
+    /// [AEGIS-AUD-012] Traduz o desfecho do login/troca federada em HTTP, sem jamais escolher um tenant em
+    /// silêncio. Compartilhado pelo login local e pela troca federada para uma semântica única.
+    /// </summary>
+    private ActionResult<LoginResultResponse> RespondToLogin(LoginResult result, string deniedTitle) =>
+        result.Outcome switch
+        {
+            LoginOutcome.Authenticated => IssueSession(result.Pair!),
+            LoginOutcome.SelectionRequired => Ok(new LoginResultResponse(
+                "selection_required",
+                SelectionTicket: result.SelectionTicket,
+                SelectionTicketExpiresAt: result.SelectionTicketExpiresAt,
+                Tenants: result.Tenants!
+                    .Select(t => new TenantOptionDto(t.Id, t.Name, t.Slug, t.Role.ToString()))
+                    .ToList())),
+            // Denied (credenciais inválidas OU sem acesso ativo): 401 genérico, sem revelar qual.
+            _ => Unauthorized(new { title = deniedTitle, status = 401 }),
+        };
+
+    /// <summary>Seta o cookie de refresh e devolve o access token no envelope de login autenticado.</summary>
+    private ActionResult<LoginResultResponse> IssueSession(TokenPair pair)
+    {
         SetRefreshCookie(pair.RefreshToken, pair.RefreshTokenExpiresAt);
-        return new AuthResponse(pair.AccessToken, pair.AccessTokenExpiresAt);
+        return Ok(new LoginResultResponse("authenticated", pair.AccessToken, pair.AccessTokenExpiresAt));
     }
 
     /// <summary>

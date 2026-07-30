@@ -56,7 +56,7 @@ public sealed class RefreshTokenHashingTests : IDisposable
     {
         string raw;
         await using (var db = NewContext(null))
-            raw = (await ServiceFor(db).LoginAsync(Email, Senha, default))!.RefreshToken;
+            raw = (await ServiceFor(db).LoginAsync(Email, Senha, null, default)).Pair!.RefreshToken;
 
         raw.Should().NotBeNullOrEmpty("o token bruto vai ao cliente (cookie HttpOnly)");
 
@@ -237,7 +237,7 @@ public sealed class RefreshTokenHashingTests : IDisposable
         var rawA = await LoginAsync();
         string rawB;
         await using (var db = NewContext(null))
-            rawB = (await ServiceFor(db).LoginAsync(emailB, Senha, default))!.RefreshToken;
+            rawB = (await ServiceFor(db).LoginAsync(emailB, Senha, null, default)).Pair!.RefreshToken;
 
         // Rotaciona a sessão de A; a de B não pode ser tocada.
         await using (var db = NewContext(null))
@@ -289,7 +289,7 @@ public sealed class RefreshTokenHashingTests : IDisposable
     private async Task<string> LoginAsync()
     {
         await using var db = NewContext(null);
-        return (await ServiceFor(db).LoginAsync(Email, Senha, default))!.RefreshToken;
+        return (await ServiceFor(db).LoginAsync(Email, Senha, null, default)).Pair!.RefreshToken;
     }
 
     private async Task<UserRefreshToken> SingleTokenRowAsync()
@@ -348,5 +348,16 @@ public sealed class RefreshTokenHashingTests : IDisposable
 
         public (string Token, DateTimeOffset ExpiresAt) CreateRefreshToken() =>
             (Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow.AddDays(7));
+
+        // [AEGIS-AUD-012] Ticket de seleção com round-trip simples (sem JWT real).
+        public (string Token, DateTimeOffset ExpiresAt) CreateTenantSelectionTicket(Guid accountId) =>
+            ($"selticket.{accountId}", DateTimeOffset.UtcNow.AddMinutes(5));
+
+        public bool TryReadTenantSelectionTicket(string ticket, out Guid accountId)
+        {
+            accountId = Guid.Empty;
+            const string prefix = "selticket.";
+            return ticket?.StartsWith(prefix) == true && Guid.TryParse(ticket[prefix.Length..], out accountId);
+        }
     }
 }

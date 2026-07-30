@@ -69,12 +69,12 @@ public sealed class IdentitySeparationFlowTests : IDisposable
 
         // 2) O fluxo LOCAL não autentica uma conta sem hash — mesmo em Hybrid (login por senha habilitado).
         await using (var db = NewContext(null))
-            (await AuthFor(db).LoginAsync(Email, "qualquer senha longa aqui", default))
+            (await AuthFor(db).LoginAsync(Email, "qualquer senha longa aqui", null, default)).Pair
                 .Should().BeNull("conta sem PasswordHash nunca autentica pelo fluxo Local");
 
         // 3) A troca federada é NEGADA sem membership — o login Entra NÃO provisiona acesso.
         await using (var db = NewContext(null))
-            (await AuthFor(db).ExchangeFederatedAsync(new FederatedIdentity(EntraTid, Oid, Email), default))
+            (await AuthFor(db).ExchangeFederatedAsync(new FederatedIdentity(EntraTid, Oid, Email), null, default)).Pair
                 .Should().BeNull("sem membership ativo não há sessão, e nada é criado no login Entra");
 
         // A tentativa negada não deixou efeito colateral (nenhum vínculo tid/oid gravado).
@@ -93,7 +93,7 @@ public sealed class IdentitySeparationFlowTests : IDisposable
         // 5) Agora o primeiro login Entra VINCULA tid/oid e emite a sessão local.
         await using (var db = NewContext(null))
         {
-            var pair = await AuthFor(db).ExchangeFederatedAsync(new FederatedIdentity(EntraTid, Oid, Email), default);
+            var pair = (await AuthFor(db).ExchangeFederatedAsync(new FederatedIdentity(EntraTid, Oid, Email), null, default)).Pair;
             pair.Should().NotBeNull("com membership ativo, a conta federated-only autentica pelo Entra");
         }
 
@@ -107,7 +107,7 @@ public sealed class IdentitySeparationFlowTests : IDisposable
 
         // E o fluxo Local segue recusando: a conta continua federated-only.
         await using (var db = NewContext(null))
-            (await AuthFor(db).LoginAsync(Email, "qualquer senha longa aqui", default))
+            (await AuthFor(db).LoginAsync(Email, "qualquer senha longa aqui", null, default)).Pair
                 .Should().BeNull("continua sem credencial local após federar");
     }
 

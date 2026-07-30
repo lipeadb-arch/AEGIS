@@ -221,7 +221,7 @@ public sealed class Aud011PlatformRolePostgresTests
         string accessToken;
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
         {
-            var pair = await Auth(db, opt).LoginAsync("ana@demo.example.com", senha, default);
+            var pair = (await Auth(db, opt).LoginAsync("ana@demo.example.com", senha, null, default)).Pair;
             pair.Should().NotBeNull();
             accessToken = pair!.AccessToken;
         }

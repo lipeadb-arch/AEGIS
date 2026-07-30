@@ -47,6 +47,46 @@ public sealed record RefreshResult(RefreshOutcome Outcome, TokenPair? Pair)
 public record TenantMembershipDescriptor(Guid Id, string Name, string Slug, TenantRole Role);
 
 /// <summary>
+/// [AEGIS-AUD-012] Desfecho EXPLÍCITO da autenticação (login local ou troca federada). Antes o serviço
+/// devolvia <c>TokenPair?</c> e escolhia SILENCIOSAMENTE o primeiro membership do banco quando a pessoa
+/// tinha vários acessos — um usuário podia entrar no cliente errado sem perceber. Agora a seleção do
+/// tenant é uma decisão de primeira classe, distinguível pelo chamador.
+/// </summary>
+public enum LoginOutcome
+{
+    /// <summary>Credenciais inválidas OU nenhum acesso ativo. O controller responde 401 genérico (não revela qual).</summary>
+    Denied,
+
+    /// <summary>Sessão emitida (<see cref="LoginResult.Pair"/>): exatamente um acesso, ou o último tenant revalidado.</summary>
+    Authenticated,
+
+    /// <summary>
+    /// Vários acessos e nenhum último tenant válido: exige ESCOLHA explícita. O serviço entrega os ambientes
+    /// (<see cref="LoginResult.Tenants"/>) e um ticket curto e purpose-bound (<see cref="LoginResult.SelectionTicket"/>)
+    /// que só serve para concluir a seleção em <see cref="IAuthService.SelectTenantAsync"/> — NÃO é uma sessão.
+    /// </summary>
+    SelectionRequired,
+}
+
+/// <summary>Resultado tipado do login/troca federada. Só expõe o par (ou o ticket) no desfecho correspondente.</summary>
+public sealed record LoginResult(
+    LoginOutcome Outcome,
+    TokenPair? Pair = null,
+    string? SelectionTicket = null,
+    DateTimeOffset? SelectionTicketExpiresAt = null,
+    IReadOnlyList<TenantMembershipDescriptor>? Tenants = null)
+{
+    public static readonly LoginResult Denied = new(LoginOutcome.Denied);
+
+    public static LoginResult Authenticated(TokenPair pair) => new(LoginOutcome.Authenticated, pair);
+
+    public static LoginResult SelectionRequired(
+        string ticket, DateTimeOffset ticketExpiresAt, IReadOnlyList<TenantMembershipDescriptor> tenants) =>
+        new(LoginOutcome.SelectionRequired,
+            SelectionTicket: ticket, SelectionTicketExpiresAt: ticketExpiresAt, Tenants: tenants);
+}
+
+/// <summary>
 /// [AEGIS-AUD-007] Identidade corporativa JÁ VALIDADA criptograficamente pelo esquema JWT Bearer do Entra.
 /// A camada de aplicação recebe apenas as claims do principal validado — <c>tid</c>, <c>oid</c> e o e-mail
 /// (para o PRIMEIRO vínculo). O serviço NUNCA confia em identidade vinda de corpo JSON do cliente.
@@ -67,11 +107,24 @@ public record FederatedIdentity(string? TenantId, string? ObjectId, string? Emai
 public interface IAuthService
 {
     /// <summary>
-    /// Valida credenciais contra a <see cref="IdentityAccount"/> (e-mail único global) e emite o par de
-    /// tokens para o PRIMEIRO membership ativo da pessoa. <c>null</c> = credenciais inválidas, conta sem
-    /// nenhum acesso ativo, ou tenant suspenso.
+    /// [AEGIS-AUD-012] Valida credenciais contra a <see cref="IdentityAccount"/> (e-mail único global) e
+    /// RESOLVE o ambiente da pessoa sem jamais escolher em silêncio:
+    ///  - <see cref="LoginOutcome.Denied"/>: credenciais inválidas ou nenhum acesso ativo;
+    ///  - <see cref="LoginOutcome.Authenticated"/>: exatamente um acesso, OU vários com um
+    ///    <paramref name="lastTenantId"/> que REVALIDA agora (membership ativo, tenant não suspenso);
+    ///  - <see cref="LoginOutcome.SelectionRequired"/>: vários acessos e nenhum último tenant válido —
+    ///    exige escolha explícita via <see cref="SelectTenantAsync"/>.
+    /// O <paramref name="lastTenantId"/> é uma DICA do cliente; nunca é confiada sem revalidação no backend.
     /// </summary>
-    Task<TokenPair?> LoginAsync(string email, string password, CancellationToken ct);
+    Task<LoginResult> LoginAsync(string email, string password, Guid? lastTenantId, CancellationToken ct);
+
+    /// <summary>
+    /// [AEGIS-AUD-012] Conclui a seleção INICIAL de ambiente após um <see cref="LoginOutcome.SelectionRequired"/>.
+    /// Autoriza-se pelo <paramref name="selectionTicket"/> curto e purpose-bound emitido no login (que carrega
+    /// só a identidade, sem tenant nem papel), revalida o membership ATIVO no alvo e emite o par carimbado.
+    /// <c>null</c> = ticket inválido/expirado, sem acesso ativo ao alvo, ou tenant suspenso.
+    /// </summary>
+    Task<TokenPair?> SelectTenantAsync(string selectionTicket, Guid targetTenantId, CancellationToken ct);
 
     /// <summary>
     /// Ambientes acessíveis pela pessoa (memberships ATIVOS), para o seletor do HUD. Ancorado no
@@ -111,8 +164,13 @@ public interface IAuthService
     /// refresh HttpOnly — pelo mesmo caminho do login. <c>null</c> = negado (tid/oid inválidos, tid fora do
     /// permitido, sem conta correspondente, conta já vinculada a outro oid, ou sem membership ativo).
     /// NUNCA cria conta, membership, tenant ou papel (provisionamento é o AUD-010).
+    ///
+    /// [AEGIS-AUD-012] Assim como o login local, resolve o ambiente sem escolher em silêncio: devolve um
+    /// <see cref="LoginResult"/> (autenticado quando há um único acesso ou o <paramref name="lastTenantId"/>
+    /// revalida; caso contrário, seleção explícita). O vínculo Entra do primeiro login só é gravado quando há
+    /// ao menos um acesso ativo — uma federação negada não deixa efeito colateral no banco.
     /// </summary>
-    Task<TokenPair?> ExchangeFederatedAsync(FederatedIdentity identity, CancellationToken ct);
+    Task<LoginResult> ExchangeFederatedAsync(FederatedIdentity identity, Guid? lastTenantId, CancellationToken ct);
 }
 
 /// <summary>Geração dos tokens: JWT de acesso (HS256) + refresh token opaco. Sem estado.</summary>
@@ -131,6 +189,19 @@ public interface IJwtTokenService
 
     /// <summary>Refresh token opaco de alta entropia (256 bits) + sua expiração.</summary>
     (string Token, DateTimeOffset ExpiresAt) CreateRefreshToken();
+
+    /// <summary>
+    /// [AEGIS-AUD-012] Ticket CURTO e purpose-bound para concluir a seleção inicial de tenant. Carrega só a
+    /// identidade (<c>account_id</c>) e um propósito próprio, NUNCA tenant/papel, e usa uma audience distinta —
+    /// então o esquema Bearer padrão o rejeita: não é uma sessão, só autoriza <see cref="IAuthService.SelectTenantAsync"/>.
+    /// </summary>
+    (string Token, DateTimeOffset ExpiresAt) CreateTenantSelectionTicket(Guid accountId);
+
+    /// <summary>
+    /// [AEGIS-AUD-012] Valida um ticket de seleção (assinatura/issuer/audience própria/lifetime + propósito) e
+    /// extrai o <paramref name="accountId"/>. Fail-closed: qualquer inconsistência devolve <c>false</c>.
+    /// </summary>
+    bool TryReadTenantSelectionTicket(string ticket, out Guid accountId);
 }
 
 /// <summary>Hashing de senha (algoritmo encapsulado). Verificação em tempo ~constante.</summary>

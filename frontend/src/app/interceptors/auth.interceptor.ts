@@ -1,6 +1,8 @@
 import { HttpInterceptorFn } from '@angular/common/http';
 import { inject } from '@angular/core';
+import { takeUntil } from 'rxjs';
 import { AuthService } from '../services/auth.service';
+import { TenantContextService } from '../services/tenant-context.service';
 import { environment } from '../../environments/environment';
 import { isAuthEndpoint } from './api-endpoints';
 
@@ -11,7 +13,10 @@ import { isAuthEndpoint } from './api-endpoints';
  *    valer para toda a API sem nenhum estado paralelo a sincronizar;
  *  - anexa Authorization: Bearer <token> quando há token em memória e a rota não é de auth
  *    (login/refresh/logout usam cookie, não Bearer);
- *  - liga withCredentials para o cookie HttpOnly de refresh acompanhar as chamadas de /auth.
+ *  - liga withCredentials para o cookie HttpOnly de refresh acompanhar as chamadas de /auth;
+ *  - [AEGIS-AUD-030] CANCELA a requisição se o tenant ativo trocar antes de ela completar: uma resposta
+ *    iniciada no tenant anterior nunca chega ao componente para repovoar a UI (cancelamento real via
+ *    `takeUntil(switched$)`). A família de auth é isenta — ela precisa completar (é ela que troca o tenant).
  *
  * É o interceptor INTERNO da cadeia: quando o refresh interceptor refaz a requisição, ela repassa
  * por aqui e recebe o Bearer já renovado, sem duplicação de lógica.
@@ -23,6 +28,7 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   }
 
   const auth = inject(AuthService);
+  const tenantContext = inject(TenantContextService);
   const headers: Record<string, string> = {};
 
   // X-Tenant derivado da claim `tenant_id` do PRÓPRIO access token — não mais de environment.tenantId
@@ -34,10 +40,14 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
     headers['X-Tenant'] = activeTenant;
   }
 
+  const isAuth = isAuthEndpoint(req.url);
   const token = auth.token;
-  if (token && !isAuthEndpoint(req.url)) {
+  if (token && !isAuth) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  return next(req.clone({ setHeaders: headers, withCredentials: true }));
+  const forwarded = next(req.clone({ setHeaders: headers, withCredentials: true }));
+
+  // Leituras tenant-scoped são abortadas na troca de ambiente; a família de auth precisa completar.
+  return isAuth ? forwarded : forwarded.pipe(takeUntil(tenantContext.switched$));
 };
