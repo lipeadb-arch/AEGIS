@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1",
+  "events": [
+    {
+      "eventId": "siem-evt-0001",
+      "signalKey": "siem.alert.highSeverity",
+      "eventType": "correlated-alert",
+      "source": "demo-siem",
+      "severity": 4,
+      "numericValue": 3,
+      "unit": "count",
+      "collectedAt": "2026-07-30T12:00:00Z",
+      "data": {
+        "rule": "Multiple failed logons then success",
+        "srcIp": "192.0.2.10",
+        "dstIp": "198.51.100.20",
+        "user": "ana@example.com",
+        "host": "workstation-07.demo.example.com"
+      }
+    }
+  ]
+}

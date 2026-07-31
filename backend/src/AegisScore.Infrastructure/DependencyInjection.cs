@@ -64,6 +64,17 @@ public static class DependencyInjection
         // de IDataProtectionProvider, registrado por AddDataProtection() no composition root (Program).
         services.AddSingleton<IConnectorSecretProtector, ConnectorSecretProtector>();
 
+        // [AEGIS-AUD-041] Proteção do payload BRUTO da evidência em repouso — MESMO key ring, purpose PRÓPRIO
+        // e distinto. Singleton, como o ConnectorSecretProtector (depende só do IDataProtectionProvider).
+        services.AddSingleton<IEvidenceRawPayloadProtector, EvidenceRawPayloadProtector>();
+
+        // [AEGIS-AUD-020/043] Ingestão genérica de evidências: autenticador do endpoint externo (boundary
+        // cross-tenant controlado), autoridade determinística de mapping NIST e EXECUTOR ÚNICO push/pull.
+        // Scoped: usam o DbContext (o executor abre um contexto por tenant para persistir, como o AuthService).
+        services.AddScoped<IConnectorIngestionAuthenticator, ConnectorIngestionAuthenticator>();
+        services.AddScoped<INistSignalMapper, NistSignalMapper>();
+        services.AddScoped<IEvidenceIngestionExecutor, EvidenceIngestionExecutor>();
+
         // Onboarding — provisionamento de clientes e configuração de conectores. Scoped: usa o DbContext
         // (query filter + stamping fail-closed) e o protetor de segredos. Concentra a cifragem estática
         // das credenciais, que assim deixa de morar na camada HTTP.

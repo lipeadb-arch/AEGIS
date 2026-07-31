@@ -1,8 +1,10 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { environment } from '../../environments/environment';
 import { ConnectorService } from '../services/connector.service';
 import {
   ConnectorConfig,
+  isGenericPush,
   PROVIDERS,
   ProviderSpec,
   providerByKey,
@@ -63,22 +65,38 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
                 <div class="conn-main">
                   <strong>{{ c.displayName }}</strong>
                   <span class="meta">{{ c.provider }} · {{ c.capability }} · {{ c.authType }}</span>
+                  @if (push(c)) {
+                    <span class="meta ok-note">Push genérico disponível</span>
+                  }
                 </div>
                 <div class="conn-state">
                   <span class="badge" [class]="'tone-' + tone(c.lastStatus)">{{ label(c.lastStatus) }}</span>
-                  @if (!c.hasCredentials) {
+                  @if (push(c)) {
+                    @if (!c.hasIngestionKey) {
+                      <span class="badge warn">Sem chave</span>
+                    }
+                  } @else if (!c.hasCredentials) {
                     <span class="badge warn">Sem credencial</span>
                   }
-                  <span class="meta">a cada {{ c.syncIntervalMinutes }} min</span>
+                  <span class="meta">último: {{ lastSync(c) }}</span>
                 </div>
                 <div class="conn-actions">
                   <button type="button" class="ghost sm" (click)="test(c)" [disabled]="busyId() === c.id">
                     {{ busyId() === c.id ? '…' : 'Testar' }}
                   </button>
-                  <button type="button" class="ghost sm" (click)="sync(c)" [disabled]="busyId() === c.id">
-                    Coletar
-                  </button>
+                  <!-- [AEGIS-AUD-020] Push não tem coleta pull: nada de "Coletar" para conector genérico. -->
+                  @if (!push(c)) {
+                    <button type="button" class="ghost sm" (click)="sync(c)" [disabled]="busyId() === c.id">
+                      Coletar
+                    </button>
+                  }
                 </div>
+                @if (push(c)) {
+                  <p class="conn-endpoint" title="Endpoint de ingestão (envie eventos com POST + header X-Ingestion-Key)">
+                    <span class="ep-label">Ingestão</span>
+                    <code>POST {{ ingestionEndpoint(c.id) }}</code>
+                  </p>
+                }
                 @if (actionMsg()[c.id]; as msg) {
                   <p class="conn-msg" [class.err]="msg.startsWith('⚠')">{{ msg }}</p>
                 }
@@ -130,6 +148,17 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
             <p class="muted small">
               Autenticação: <code>{{ s.authType }}</code> · Capacidade: <code>{{ s.capability }}</code>
             </p>
+
+            @if (s.push) {
+              <p class="note ok-note">
+                Este conector <strong>recebe eventos por push autenticado</strong>. Configure uma chave de
+                ingestão (mín. 24 caracteres); após salvar, o endpoint aparece na lista. Salvar de novo
+                <strong>rotaciona</strong> a chave.
+              </p>
+            }
+            @if (s.adapterNote) {
+              <p class="note warn-note">⚠ {{ s.adapterNote }}</p>
+            }
 
             <div class="grid" formGroupName="credentials">
               @for (f of s.fields; track f.key) {
@@ -252,6 +281,37 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
         margin: 0.35rem 0 0;
         font-size: 0.78rem;
         opacity: 0.85;
+      }
+      .ok-note {
+        color: var(--hud-cyan, #26e0ff);
+      }
+      .note {
+        margin: 0.6rem 0 0;
+        font-size: 0.8rem;
+        line-height: 1.4;
+      }
+      .warn-note {
+        color: #f5a524;
+      }
+      .conn-endpoint {
+        grid-column: 2 / -1;
+        margin: 0.4rem 0 0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-width: 0;
+      }
+      .conn-endpoint code {
+        overflow-x: auto;
+        white-space: nowrap;
+        opacity: 0.9;
+      }
+      .ep-label {
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        opacity: 0.6;
+        flex: none;
       }
       .tone {
         align-self: stretch;
@@ -412,6 +472,19 @@ export class IntegrationsComponent {
   protected readonly providers = PROVIDERS;
   protected readonly label = statusLabel;
   protected readonly tone = statusTone;
+  protected readonly push = isGenericPush;
+
+  /** Endpoint de ingestão do conector (só o connectorId; a chave viaja no header X-Ingestion-Key, nunca na URL). */
+  protected ingestionEndpoint(connectorId: string): string {
+    return `${environment.apiBase}/api/v1/ingestion/connectors/${connectorId}/events`;
+  }
+
+  /** Último recebimento/coleta em formato curto, ou "—" quando nunca houve. */
+  protected lastSync(c: ConnectorConfig): string {
+    if (!c.lastSyncAt) return '—';
+    const d = new Date(c.lastSyncAt);
+    return isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR');
+  }
 
   // ---- Estado da lista ----
   protected readonly connectors = signal<ConnectorConfig[]>([]);

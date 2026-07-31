@@ -176,6 +176,36 @@ public class AegisScoreDbContext : DbContext
         b.Entity<Risk>().HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
         b.Entity<EvidenceSignal>().HasIndex(x => new { x.TenantId, x.SignalKey, x.CollectedAt });
 
+        // [AEGIS-AUD-020/041] Ingestão genérica: campos aditivos + IDEMPOTÊNCIA como invariante de banco.
+        b.Entity<EvidenceSignal>(e =>
+        {
+            e.Property(x => x.SchemaVersion).HasMaxLength(32);
+            e.Property(x => x.Source).HasMaxLength(200);
+            e.Property(x => x.EventType).HasMaxLength(200);
+            e.Property(x => x.ExternalEventId).HasMaxLength(200);
+            e.Property(x => x.DeduplicationKey).HasMaxLength(64);   // SHA-256 hex
+            // O banco REJEITA fisicamente um segundo evento com a MESMA chave idempotente no par
+            // (tenant, conector) — duas requisições concorrentes com o mesmo evento produzem UMA evidência.
+            // Índice PARCIAL (mesmo idioma de GovernanceDocument.Sha256): a coleta pull grava
+            // DeduplicationKey NULL (snapshots periódicos não são deduplicados) e essas linhas convivem.
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.DeduplicationKey })
+                .IsUnique()
+                .HasDatabaseName("UX_EvidenceSignal_Idempotency")   // nome estável: o executor reconhece SÓ esta violação
+                .HasFilter("\"DeduplicationKey\" IS NOT NULL");
+        });
+
+        // [AEGIS-AUD-043] SignalMapping é a ÚNICA autoridade de (Capability, SignalKey) → subcategorias NIST
+        // no framework ativo. A unicidade por (FrameworkVersionId, Capability, SignalKey) torna o seed
+        // incremental uma invariante de banco e impede duas regras conflitantes para o mesmo sinal.
+        b.Entity<SignalMapping>(e =>
+        {
+            e.Property(x => x.SignalKey).HasMaxLength(200).IsRequired();
+            e.HasIndex(x => new { x.FrameworkVersionId, x.Capability, x.SignalKey }).IsUnique();
+        });
+
+        // [AEGIS-AUD-020] Hash SHA-256 (hex) da chave de ingestão — comprimento fixo é a invariante de banco.
+        b.Entity<ConnectorConfig>().Property(x => x.IngestionKeyHash).HasMaxLength(64);
+
         // Conector: UM registro por (tenant, provedor, capacidade) — a chave NATURAL da configuração.
         // O índice único torna o upsert do TenantManagementService.ConfigureConnectorAsync uma invariante
         // de BANCO, e não uma promessa do read-then-write: duas configurações simultâneas do mesmo

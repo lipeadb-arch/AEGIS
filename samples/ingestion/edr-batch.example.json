@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1",
+  "events": [
+    {
+      "eventId": "edr-evt-0001",
+      "signalKey": "edr.threat.blocked",
+      "eventType": "detection",
+      "source": "demo-edr",
+      "severity": 3,
+      "numericValue": 1,
+      "unit": "count",
+      "collectedAt": "2026-07-30T12:05:00Z",
+      "data": {
+        "detection": "Suspicious PowerShell (blocked)",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "host": "laptop-14.demo.example.com",
+        "ip": "203.0.113.30",
+        "action": "quarantined"
+      }
+    }
+  ]
+}

@@ -162,6 +162,10 @@ public static class Program
                     var rulesPath = ResolveDataPath(configuration, "Seed:RulesPath", "aegis_assessment_rules.json");
                     await FrameworkSeeder.SeedAssessmentRulesAsync(db, rulesPath);
                     log.LogInformation("Regras de avaliação verificadas/semeadas.");
+
+                    // [AEGIS-AUD-043] Autoridade determinística de mapeamento sinal → subcategorias NIST.
+                    await FrameworkSeeder.SeedSignalMappingsAsync(db);
+                    log.LogInformation("Mapeamentos de sinal (SignalMapping) verificados/semeados.");
                 }
                 catch (Exception ex)
                 {
