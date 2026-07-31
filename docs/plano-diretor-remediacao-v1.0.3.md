@@ -1,12 +1,12 @@
 # AEGIS — Plano Diretor de Remediação v1.0.3
 
 **Classificação:** instrumento privado de priorização técnica e continuidade<br>
-**Data de atualização:** 2026-07-29<br>
+**Data de atualização:** 2026-07-30<br>
 **Horizonte desta revisão:** entrega funcional em 30 dias, até 2026-08-28<br>
 **Branch de referência:** `main`<br>
-**Commit de referência:** `00937e9`<br>
-**Última entrega concluída:** AEGIS-AUD-011 — PR #16, squash-merge `00937e9`<br>
-**Próximo trabalho:** Entrega 1 — fluxo de tenant confiável (`AEGIS-AUD-012`, `AEGIS-AUD-018`, `AEGIS-AUD-030`) — ABERTO / NÃO autorizado
+**Commit de referência:** `2fbc0d9`<br>
+**Última entrega concluída:** Entrega 1 — fluxo de tenant confiável (`AEGIS-AUD-012`, `AEGIS-AUD-018`, `AEGIS-AUD-030`) — PR #17, squash-merge `2fbc0d9`<br>
+**Próximo trabalho:** Entrega 2 — ingestão operacional de evidências (`AEGIS-AUD-020`, `AEGIS-AUD-041`, `AEGIS-AUD-043`) — ABERTA / NÃO autorizada
 
 > Este plano não exige mais concluir os 63 achados antes de apresentar o produto. O objetivo imediato é
 > entregar um **MVP funcional, demonstrável e pronto para homologação**, preservando segurança
@@ -92,7 +92,7 @@ Não é necessário reconstruir o projeto. A fundação existente deve ser reuti
 | Coleta real de SIEM/EDR | Incompleta; adaptadores atuais não comprovam operação real |
 | Evidência normalizada e score | Parcial; autoridade e rastreabilidade precisam ser fechadas |
 | Dashboard executivo | Existente; projeções e semântica ainda precisam ser unificadas |
-| Testes backend | 445/445 na main (`00937e9`) |
+| Testes backend | 462/462 na main (`2fbc0d9`) |
 | Frontend | Build aprovado; suíte ampla fica fora do MVP |
 
 ### Achados já concluídos
@@ -111,8 +111,11 @@ Não é necessário reconstruir o projeto. A fundação existente deve ser reuti
 | AEGIS-AUD-007 | #14 | `ff5d119` |
 | AEGIS-AUD-010 | #15 | `d947328` |
 | AEGIS-AUD-011 | #16 | `00937e9` |
+| AEGIS-AUD-012 | #17 | `2fbc0d9` (squash) |
+| AEGIS-AUD-018 | #17 | `2fbc0d9` (squash) |
+| AEGIS-AUD-030 | #17 | `2fbc0d9` (squash) |
 
-O AEGIS-AUD-011 foi **CONCLUÍDO** (PR #16; squash-merge `00937e9`). O próximo trabalho é a **Entrega 1** (fluxo de tenant confiável: `AEGIS-AUD-012`, `AEGIS-AUD-018`, `AEGIS-AUD-030`), ainda ABERTO/PENDENTE e não autorizado.
+A **Entrega 1** (fluxo de tenant confiável: `AEGIS-AUD-012`, `AEGIS-AUD-018`, `AEGIS-AUD-030`) foi **CONCLUÍDA** (PR #17; squash-merge `2fbc0d9`). O próximo trabalho é a **Entrega 2** (ingestão operacional de evidências: `AEGIS-AUD-020`, `AEGIS-AUD-041`, `AEGIS-AUD-043`), ainda ABERTA e não autorizada.
 
 ---
 
@@ -123,7 +126,7 @@ O AEGIS-AUD-011 foi **CONCLUÍDO** (PR #16; squash-merge `00937e9`). O próximo 
 | Ordem | Entrega vertical | AUDs prioritários | Prazo-alvo | Resultado visível |
 |---:|---|---|---|---|
 | 0 | Fechar separação de papéis | AEGIS-AUD-011 | ✅ Concluída | PR #16 mergeado (`00937e9`); autoridade global e tenant separadas |
-| 1 | Fluxo de tenant confiável | AEGIS-AUD-012, AEGIS-AUD-018, AEGIS-AUD-030 | Semana 1 | Login/seleção/switch sem retenção cross-tenant |
+| 1 | Fluxo de tenant confiável | AEGIS-AUD-012, AEGIS-AUD-018, AEGIS-AUD-030 | ✅ Concluída | PR #17 mergeado (`2fbc0d9`); login/seleção/switch sem retenção cross-tenant |
 | 2 | Ingestão operacional de evidências | AEGIS-AUD-020, AEGIS-AUD-041, AEGIS-AUD-043 | Semanas 1–2 | SIEM/EDR envia eventos; evidência persiste e mapeia para NIST |
 | 3 | Score determinístico e explicável | AEGIS-AUD-001, AEGIS-AUD-002, AEGIS-AUD-019 | Semana 2 | Score reproduzível; IA não decide conformidade |
 | 4 | Workspace NIST, Dashboard e Hub | AEGIS-AUD-021, AEGIS-AUD-027, AEGIS-AUD-032 | Semana 3 | Seis Funções equivalentes, checklists e Dashboard informativo |
@@ -147,8 +150,7 @@ Aceite:
 
 ### Entrega 1 — fluxo de tenant confiável
 
-**Status:** PRÓXIMO TRABALHO — ABERTO / NÃO autorizado (aguarda aprovação explícita).<br>
-**Branch sugerida:** `feat/mvp-tenant-flow`<br>
+**Status:** ✅ CONCLUÍDA — PR #17 (squash-merge `2fbc0d9`); `main` local/remota sincronizadas; branch `feat/mvp-tenant-flow` removida.<br>
 **AUDs:** AEGIS-AUD-012, AEGIS-AUD-018 e AEGIS-AUD-030 em um único PR.
 
 Implementar apenas o necessário para:
@@ -163,8 +165,11 @@ Implementar apenas o necessário para:
 
 Não criar um novo sistema de sessão nem ampliar o SLA de revogação neste pacote.
 
+**Aceite (evidência):** login/troca federada com desfecho explícito — recusa (0 acessos) · seleção automática (1) · seleção explícita ou último tenant **revalidado** (vários), via **ticket curto purpose-bound** em `POST /auth/select-tenant`; `X-Tenant` **fail-closed** (ausente/vazio/malformado → 400; divergente ou token sem tenant → 403; família `/auth` isenta); no switch, o **cancelamento das leituras do tenant anterior precede a troca**, que envia o **Bearer local + o `X-Tenant` atual** e recarrega o novo tenant **sem resposta atrasada**. Backend **462/462**; `ng build` aprovado (4 warnings CSS conhecidos); **sem migration, schema ou credenciais**. Login local/federado, refresh e `TenantRole`×`PlatformRole` preservados.
+
 ### Entrega 2 — ingestão operacional de evidências
 
+**Status:** PRÓXIMO TRABALHO — ABERTA / NÃO autorizada (aguarda aprovação explícita).<br>
 **Branch sugerida:** `feat/mvp-evidence-ingestion`<br>
 **AUDs:** AEGIS-AUD-020, AEGIS-AUD-041 e AEGIS-AUD-043 em um único PR.
 

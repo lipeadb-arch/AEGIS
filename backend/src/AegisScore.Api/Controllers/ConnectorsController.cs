@@ -10,18 +10,13 @@ namespace AegisScore.Api.Controllers;
 /// <summary>
 /// Operate connectors: health check and on-demand collection (Facade in action).
 ///
-/// [Alto 3 / Médio 6] O tenant NUNCA vem da rota — mesmo tratamento já aplicado ao
-/// <see cref="TenantsController"/>. A rota antiga era <c>tenants/{tenantId}/connectors/{connectorId}</c>.
+/// [Alto 3 / Médio 6] O tenant NUNCA vem da rota — o conector é resolvido pelo
+/// <see cref="ITenantManagementService"/> DENTRO do tenant do JWT; id de outro cliente e id inexistente
+/// devolvem o MESMO 404, sem confirmar existência.
 ///
-/// ⚠️ Precisão sobre o risco: o endpoint NÃO era anônimo — a <c>FallbackPolicy</c> de Program.cs já
-/// exige usuário autenticado em tudo que não seja <c>[AllowAnonymous]</c>, e o Global Query Filter
-/// fechava o vazamento cross-tenant. O que se corrige aqui é (a) a dependência de um default GLOBAL:
-/// sem <c>[Authorize]</c> local, mexer na FallbackPolicy abriria esta rota em silêncio; e (b) um
-/// <c>tenantId</c> de rota que PARECIA governar autorização sem governar nada — forma clássica de IDOR
-/// latente, que convida a próxima pessoa a confiar no parâmetro.
-///
-/// Agora o conector é resolvido pelo <see cref="ITenantManagementService"/> DENTRO do tenant do JWT —
-/// id de outro cliente e id inexistente devolvem o MESMO 404, sem confirmar existência.
+/// [AEGIS-AUD-020] A orquestração da COLETA (mapping, proteção, dedupe, persistência, LastSyncAt/LastStatus)
+/// deixou de viver aqui: passou para a autoridade ÚNICA <see cref="IEvidenceIngestionExecutor"/>, compartilhada
+/// com a ingestão push. Este controller apenas valida o contrato/tenant e delega.
 /// </summary>
 [ApiController]
 [Route("api/v1/connectors")]
@@ -30,16 +25,19 @@ public class ConnectorsController : ControllerBase
 {
     private readonly ITenantManagementService _connectors;
     private readonly IConnectorRegistry _registry;
+    private readonly IEvidenceIngestionExecutor _executor;
 
-    public ConnectorsController(ITenantManagementService connectors, IConnectorRegistry registry)
+    public ConnectorsController(
+        ITenantManagementService connectors, IConnectorRegistry registry, IEvidenceIngestionExecutor executor)
     {
         _connectors = connectors;
         _registry = registry;
+        _executor = executor;
     }
 
     /// <summary>
-    /// Lista os conectores DESTE tenant (implícito no JWT) para a tela de integrações. Somente leitura
-    /// e sem segredo: só o booleano <c>hasCredentials</c> atravessa a fronteira.
+    /// Lista os conectores DESTE tenant (implícito no JWT) para a tela de integrações. Somente leitura e sem
+    /// segredo: só os booleanos <c>hasCredentials</c>/<c>hasIngestionKey</c> atravessam a fronteira.
     /// </summary>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ConnectorConfigDto>>> List(CancellationToken ct)
@@ -49,7 +47,7 @@ public class ConnectorsController : ControllerBase
             .Select(c => new ConnectorConfigDto(
                 c.ConnectorId, c.Provider.ToString(), c.Capability.ToString(), c.DisplayName,
                 c.AuthType.ToString(), c.Enabled, c.SyncIntervalMinutes, c.LastSyncAt,
-                c.LastStatus.ToString(), c.HasCredentials))
+                c.LastStatus.ToString(), c.HasCredentials, c.HasIngestionKey))
             .ToList());
     }
 
@@ -59,6 +57,18 @@ public class ConnectorsController : ControllerBase
         var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
         if (cfg is null) return NotFound();
 
+        // [AEGIS-AUD-020] Conector genérico de PUSH: não há fornecedor externo a contatar. O teste apenas
+        // confirma a PRONTIDÃO LOCAL — habilitado + chave de ingestão configurada —, sem inventar uma chamada.
+        if (IsGenericPush(cfg))
+        {
+            var ready = cfg.Enabled && !string.IsNullOrWhiteSpace(cfg.IngestionKeyHash);
+            return new ConnectorHealthDto(
+                (ready ? ConnectorStatus.Healthy : ConnectorStatus.Degraded).ToString(),
+                ready
+                    ? "Pronto para receber push (chave de ingestão configurada)."
+                    : "Configure uma chave de ingestão e habilite o conector para receber eventos.");
+        }
+
         var connector = _registry.Resolve(cfg.Provider, cfg.Capability);
         if (connector is null)
             return Problem($"No adapter registered for {cfg.Provider}/{cfg.Capability}.", statusCode: 501);
@@ -67,38 +77,26 @@ public class ConnectorsController : ControllerBase
         return new ConnectorHealthDto(health.Status.ToString(), health.Message);
     }
 
+    /// <summary>
+    /// Coleta PULL sob demanda: delega ao executor único (coleta via adaptador → mapping determinístico →
+    /// proteção → persistência → carimbo). 404 fora do tenant; 501 quando não há adaptador pull; falha
+    /// operacional vira LastStatus=Failed no próprio executor e sobe como 500.
+    /// </summary>
     [HttpPost("{connectorId:guid}/sync")]
     public async Task<ActionResult<SyncResultDto>> Sync(Guid connectorId, CancellationToken ct)
     {
         var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
         if (cfg is null) return NotFound();
 
-        var connector = _registry.Resolve(cfg.Provider, cfg.Capability);
-        if (connector is null)
+        var result = await _executor.CollectPullAsync(cfg, ct);
+        if (result is null)
             return Problem($"No adapter registered for {cfg.Provider}/{cfg.Capability}.", statusCode: 501);
 
-        var collected = new List<EvidenceSignal>();
-        try
-        {
-            await foreach (var signal in connector.CollectAsync(cfg, ct))
-                collected.Add(signal);
-        }
-        catch (Exception)
-        {
-            // A coleta falhou no meio: registra o DESFECHO (LastStatus = Failed) para que a saúde do
-            // conector conte a verdade, e relança — o GlobalExceptionHandlingMiddleware é quem loga e
-            // responde, sem vazar internals. Sem isto, LastStatus ficaria eternamente "Healthy".
-            await _connectors.RecordSyncResultAsync(
-                connectorId, Array.Empty<EvidenceSignal>(), ConnectorStatus.Failed, CancellationToken.None);
-            throw;
-        }
-
-        // Sinais + carimbo de sync numa única transação, dentro do tenant ambiente.
-        await _connectors.RecordSyncResultAsync(connectorId, collected, ConnectorStatus.Healthy, ct);
-
-        var dtos = collected
-            .Select(s => new SignalDto(s.SignalKey, s.NumericValue, s.Unit, s.Severity, s.MappedSubcategoryCodes, s.CollectedAt))
-            .ToList();
-        return new SyncResultDto(dtos.Count, dtos);
+        // O front usa apenas a contagem; a lista de sinais fica vazia (os sinais são internos, sob outro contexto).
+        return new SyncResultDto(result.Persisted, Array.Empty<SignalDto>());
     }
+
+    private static bool IsGenericPush(ConnectorConfig c) =>
+        c.Provider == ConnectorProvider.Generic
+        && (c.Capability == ConnectorCapability.Siem || c.Capability == ConnectorCapability.Edr);
 }

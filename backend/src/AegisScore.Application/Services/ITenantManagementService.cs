@@ -73,7 +73,19 @@ public record ConnectorSummary(
     int SyncIntervalMinutes,
     DateTimeOffset? LastSyncAt,
     ConnectorStatus LastStatus,
-    bool HasCredentials);
+    bool HasCredentials,
+    // [AEGIS-AUD-020] Há chave de ingestão configurada? (só o booleano — a chave nunca sai). Distingue um
+    // conector genérico de push pronto para receber de um ainda sem credencial própria.
+    bool HasIngestionKey);
+
+/// <summary>
+/// [AEGIS-AUD-020] A chave de ingestão fornecida não atende à política mínima de entropia/comprimento. É um
+/// resultado ESPERADO da borda (400), não uma falha excepcional — o controller a traduz numa mensagem clara.
+/// </summary>
+public sealed class WeakIngestionKeyException : Exception
+{
+    public WeakIngestionKeyException(string message) : base(message) { }
+}
 
 /// <summary>
 /// Projeção SEGURA de um conector configurado. Deliberadamente SEM <c>EncryptedSettings</c>: o segredo
@@ -93,7 +105,8 @@ public record ConnectorConfigurationResult(
     int SyncIntervalMinutes,
     DateTimeOffset? LastSyncAt,
     ConnectorStatus LastStatus,
-    bool HasCredentials);
+    bool HasCredentials,
+    bool HasIngestionKey);
 
 // ---- Porta ------------------------------------------------------------------
 

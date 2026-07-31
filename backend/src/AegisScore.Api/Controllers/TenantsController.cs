@@ -118,17 +118,27 @@ public class TenantsController : ControllerBase
     {
         // O TenantId NÃO é passado: o serviço o deriva do contexto (claim do JWT) e o DbContext o
         // revalida no carimbo de gravação.
-        var result = await _onboarding.ConfigureConnectorAsync(
-            new ConfigureConnectorCommand(
-                req.Provider, req.Capability, req.DisplayName, req.AuthType,
-                req.Settings, req.SyncIntervalMinutes),
-            ct);
+        ConnectorConfigurationResult result;
+        try
+        {
+            result = await _onboarding.ConfigureConnectorAsync(
+                new ConfigureConnectorCommand(
+                    req.Provider, req.Capability, req.DisplayName, req.AuthType,
+                    req.Settings, req.SyncIntervalMinutes),
+                ct);
+        }
+        catch (WeakIngestionKeyException ex)
+        {
+            // [AEGIS-AUD-020] Chave de ingestão fraca é erro de BORDA (400), não falha excepcional. A
+            // mensagem descreve a política sem ecoar a chave.
+            return BadRequest(ex.Message);
+        }
 
         var dto = new ConnectorConfigDto(
             result.ConnectorId, result.Provider.ToString(), result.Capability.ToString(),
             result.DisplayName, result.AuthType.ToString(), result.Enabled,
             result.SyncIntervalMinutes, result.LastSyncAt, result.LastStatus.ToString(),
-            result.HasCredentials);
+            result.HasCredentials, result.HasIngestionKey);
 
         // 201 na criação, 200 na reconfiguração — o cliente distingue os dois desfechos do upsert.
         // Sem Location: o conector ainda não tem GET canônico (ConnectorsController só opera test/sync),

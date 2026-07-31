@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AegisScore.Domain;
 
 namespace AegisScore.Api.Contracts;
@@ -115,7 +116,39 @@ public record IdResponse(Guid Id);
 public record ConnectorConfigDto(
     Guid Id, string Provider, string Capability, string DisplayName, string AuthType,
     bool Enabled, int SyncIntervalMinutes, DateTimeOffset? LastSyncAt, string LastStatus,
-    bool HasCredentials);
+    bool HasCredentials,
+    // [AEGIS-AUD-020] Há chave de ingestão configurada? (só o booleano — a chave nunca sai). Distingue um
+    // conector genérico de push pronto para receber de um ainda sem credencial própria.
+    bool HasIngestionKey = false);
+
+// ---- [AEGIS-AUD-020/041/043] Ingestão genérica de evidências (push SIEM/EDR) ----
+/// <summary>
+/// Um evento de um lote de ingestão, no vocabulário do EMISSOR (dado NÃO confiável). O cliente NÃO envia
+/// TenantId, subcategoria NIST, veredito, score, papel nem ConnectorConfigId — esses campos não existem aqui
+/// (o servidor resolve o tenant pelo conector autenticado e o mapping pela autoridade central). <paramref name="Data"/>
+/// é o payload bruto (objeto JSON) que será PROTEGIDO em repouso e nunca devolvido.
+/// </summary>
+public record IngestionEventDto(
+    string? EventId,
+    string? SignalKey,
+    string? EventType,
+    string? Source,
+    int? Severity,
+    double? NumericValue,
+    string? Unit,
+    DateTimeOffset CollectedAt,
+    JsonElement? Data);
+
+/// <summary>Lote de eventos. <paramref name="SchemaVersion"/> versiona o contrato; TenantId NÃO trafega.</summary>
+public record IngestionBatchDto(string? SchemaVersion, IReadOnlyList<IngestionEventDto>? Events);
+
+/// <summary>
+/// Resposta curta da ingestão: aceitos, deduplicados, erros de contrato e horário de recebimento. Em falha
+/// de contrato/mapping, <paramref name="Errors"/> descreve o problema (o payload/segredo nunca aparece aqui).
+/// </summary>
+public record IngestionResultDto(
+    int Accepted, int Deduplicated, int ContractErrors, DateTimeOffset ReceivedAt,
+    IReadOnlyList<string>? Errors = null);
 
 public record ConnectorHealthDto(string Status, string? Message);
 public record SignalDto(string SignalKey, double? NumericValue, string? Unit, int? Severity, IReadOnlyList<string> MappedSubcategoryCodes, DateTimeOffset CollectedAt);

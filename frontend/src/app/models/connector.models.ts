@@ -4,7 +4,10 @@
  * carregam os dois lados.
  */
 
-/** Espelha `ConnectorProvider`. O valor numérico é o que o POST envia. */
+/**
+ * Chave do SELECT da tela. Espelha `ConnectorProvider` (o `value` numérico é o que o POST envia), mas os
+ * conectores GENÉRICOS de push aparecem como duas opções distintas (SIEM/EDR) sobre o mesmo provider 99.
+ */
 export type ProviderKey =
   | 'Microsoft'
   | 'Google'
@@ -12,7 +15,8 @@ export type ProviderKey =
   | 'MicrosoftSentinel'
   | 'CrowdStrike'
   | 'Splunk'
-  | 'Generic';
+  | 'GenericSiem'
+  | 'GenericEdr';
 
 /** Espelha `ConnectorAuthType`. */
 export type AuthTypeKey = 'OAuthClientCredentials' | 'ApiKey' | 'ServiceAccount';
@@ -54,9 +58,48 @@ export interface ProviderSpec {
   capability: CapabilityKey;
   capabilityValue: number;
   fields: CredentialField[];
+  /** [AEGIS-AUD-020] Conector genérico de PUSH autenticado (recebe eventos; não faz coleta pull). */
+  push?: boolean;
+  /**
+   * Marcação HONESTA do estado do adaptador específico. Ausente = push genérico operacional. Presente =
+   * o fornecedor ainda NÃO tem adaptador real (ou é demonstração/stub) — a tela não finge conexão real.
+   */
+  adapterNote?: string;
 }
 
+/** Campo único da chave de ingestão (genéricos de push): mascarado, mín. 24 chars, escrita-apenas. */
+const INGESTION_KEY_FIELD: CredentialField = {
+  key: 'ingestionKey',
+  label: 'Chave de ingestão (mín. 24 caracteres)',
+  secret: true,
+  placeholder: 'segredo de alta entropia gerado por você',
+};
+
 export const PROVIDERS: ProviderSpec[] = [
+  // ---- Genéricos de PUSH (operacionais no MVP): recebem eventos por endpoint autenticado ----
+  {
+    key: 'GenericSiem',
+    value: 99,
+    label: 'Generic SIEM — push autenticado',
+    authType: 'ApiKey',
+    authTypeValue: 1,
+    capability: 'Siem',
+    capabilityValue: 5,
+    push: true,
+    fields: [INGESTION_KEY_FIELD],
+  },
+  {
+    key: 'GenericEdr',
+    value: 99,
+    label: 'Generic EDR — push autenticado',
+    authType: 'ApiKey',
+    authTypeValue: 1,
+    capability: 'Edr',
+    capabilityValue: 6,
+    push: true,
+    fields: [INGESTION_KEY_FIELD],
+  },
+  // ---- Adaptadores específicos: honestamente marcados (ainda não implementados / demonstração) ----
   {
     key: 'MicrosoftSentinel',
     value: 3,
@@ -65,6 +108,7 @@ export const PROVIDERS: ProviderSpec[] = [
     authTypeValue: 0,
     capability: 'Siem',
     capabilityValue: 5,
+    adapterNote: 'Adaptador específico ainda não implementado. Envie eventos pelo Generic SIEM (push).',
     fields: [
       { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
@@ -80,6 +124,7 @@ export const PROVIDERS: ProviderSpec[] = [
     authTypeValue: 0,
     capability: 'SecureScore',
     capabilityValue: 0,
+    adapterNote: 'Demonstração/stub: emite valores representativos (não é conexão real com o Microsoft Graph).',
     fields: [
       { key: 'tenantId', label: 'Directory (tenant) ID', secret: false },
       { key: 'clientId', label: 'Application (client) ID', secret: false },
@@ -94,6 +139,7 @@ export const PROVIDERS: ProviderSpec[] = [
     authTypeValue: 2,
     capability: 'Siem',
     capabilityValue: 5,
+    adapterNote: 'Adaptador específico ainda não implementado. Envie eventos pelo Generic SIEM (push).',
     fields: [
       { key: 'customerId', label: 'Customer ID', secret: false },
       { key: 'region', label: 'Região', secret: false, placeholder: 'us / europe / asia-southeast1' },
@@ -108,6 +154,7 @@ export const PROVIDERS: ProviderSpec[] = [
     authTypeValue: 1,
     capability: 'Edr',
     capabilityValue: 6,
+    adapterNote: 'Adaptador específico ainda não implementado. Envie eventos pelo Generic EDR (push).',
     fields: [
       { key: 'clientId', label: 'Client ID', secret: false },
       { key: 'clientSecret', label: 'Client secret', secret: true },
@@ -122,6 +169,7 @@ export const PROVIDERS: ProviderSpec[] = [
     authTypeValue: 1,
     capability: 'ConfigAnalyzer',
     capabilityValue: 4,
+    adapterNote: 'Adaptador específico ainda não implementado.',
     fields: [
       { key: 'accessKeyId', label: 'Access Key ID', secret: false },
       { key: 'secretAccessKey', label: 'Secret Access Key', secret: true },
@@ -136,6 +184,7 @@ export const PROVIDERS: ProviderSpec[] = [
     authTypeValue: 1,
     capability: 'Siem',
     capabilityValue: 5,
+    adapterNote: 'Adaptador específico ainda não implementado. Envie eventos pelo Generic SIEM (push).',
     fields: [
       { key: 'baseUrl', label: 'Base URL', secret: false, placeholder: 'https://splunk.demo.example.com:8089' },
       { key: 'token', label: 'Authentication token', secret: true },
@@ -147,7 +196,7 @@ export function providerByKey(key: string | null | undefined): ProviderSpec | un
   return PROVIDERS.find((p) => p.key === key);
 }
 
-/** Espelha `ConnectorConfigDto`. NUNCA carrega o segredo — só o booleano `hasCredentials`. */
+/** Espelha `ConnectorConfigDto`. NUNCA carrega o segredo — só os booleanos `hasCredentials`/`hasIngestionKey`. */
 export interface ConnectorConfig {
   id: string;
   provider: string;
@@ -159,6 +208,13 @@ export interface ConnectorConfig {
   lastSyncAt: string | null;
   lastStatus: string;
   hasCredentials: boolean;
+  /** [AEGIS-AUD-020] Há chave de ingestão configurada? A chave em si NUNCA volta para a tela. */
+  hasIngestionKey: boolean;
+}
+
+/** É um conector GENÉRICO de push (Generic/Siem ou Generic/Edr)? Deriva dos rótulos do DTO. */
+export function isGenericPush(c: ConnectorConfig): boolean {
+  return c.provider === 'Generic' && (c.capability === 'Siem' || c.capability === 'Edr');
 }
 
 /** Corpo de `POST /api/v1/tenants/connectors`. O TenantId NÃO trafega: vem do JWT. */

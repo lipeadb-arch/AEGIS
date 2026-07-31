@@ -1,9 +1,11 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Services;
 using AegisScore.Domain;
+using AegisScore.Infrastructure.Connectors;
 using AegisScore.Infrastructure.Persistence;
 
 namespace AegisScore.Infrastructure.Tenancy;
@@ -192,10 +194,80 @@ public sealed class TenantManagementService : ITenantManagementService
             // ciframento de string vazia: `Protect("")` devolve um blob NÃO vazio, o que faria o TestAsync
             // dos conectores (que checa `IsNullOrWhiteSpace(EncryptedSettings)`) reportar "credenciais
             // presentes" para um conector que nunca recebeu nenhuma.
-            if (!string.IsNullOrWhiteSpace(command.Settings))
+            if (string.IsNullOrWhiteSpace(command.Settings))
+            {
+                if (isInsert) target.EncryptedSettings = "";
+                return;
+            }
+
+            // [AEGIS-AUD-020] A CHAVE DE INGESTÃO é EXCLUSIVA dos conectores genéricos de PUSH (Generic/Siem,
+            // Generic/Edr). Só nesses casos ela é extraída dos settings, validada e persistida (como HASH) —
+            // para qualquer outro provedor os settings são segredos "clássicos" e vão INTEIROS para a cifragem,
+            // sem tratar um eventual campo `ingestionKey` como credencial de ingestão.
+            var isGenericPush = command.Provider == ConnectorProvider.Generic
+                && (command.Capability == ConnectorCapability.Siem || command.Capability == ConnectorCapability.Edr);
+
+            if (!isGenericPush)
+            {
                 target.EncryptedSettings = _secrets.Protect(command.Settings);
+                return;
+            }
+
+            // Extrai a chave ANTES de proteger o RESTO: a chave de entrada não precisa ser recuperável — só
+            // seu HASH permanece. Uma chave nova ROTACIONA a anterior; settings SEM chave PRESERVA o hash
+            // vigente (renomear ou mudar o intervalo não apaga a credencial de ingestão).
+            var (remaining, ingestionKey) = ExtractIngestionKey(command.Settings);
+            if (ingestionKey is not null)
+            {
+                if (!IngestionKey.MeetsPolicy(ingestionKey))
+                    throw new WeakIngestionKeyException(
+                        $"A chave de ingestão deve ter ao menos {IngestionKey.MinLength} caracteres.");
+                target.IngestionKeyHash = IngestionKey.Hash(ingestionKey);
+            }
+
+            // O que sobra (se algo) são segredos "clássicos". Vazio (só a chave de ingestão trafegou) → não
+            // fabrica um blob: "" na criação, preservado na reconfiguração.
+            if (!string.IsNullOrWhiteSpace(remaining))
+                target.EncryptedSettings = _secrets.Protect(remaining);
             else if (isInsert)
                 target.EncryptedSettings = "";
+        }
+    }
+
+    /// <summary>
+    /// [AEGIS-AUD-020] Separa a chave de ingestão (<c>ingestionKey</c>) do restante dos settings. Devolve o
+    /// RESTANTE re-serializado (ou <c>null</c> quando nada sobra) e a chave em claro (ou <c>null</c>). Um blob
+    /// que não seja um objeto JSON é tratado como opaco (sem chave) — nunca falha por formato do conteúdo.
+    /// </summary>
+    private static (string? Remaining, string? IngestionKey) ExtractIngestionKey(string settings)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(settings);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return (settings, null);
+
+            string? key = null;
+            var rest = new Dictionary<string, JsonElement>();
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (string.Equals(prop.Name, "ingestionKey", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.String)
+                        key = prop.Value.GetString();
+                }
+                else
+                {
+                    rest[prop.Name] = prop.Value.Clone();   // Clone: sobrevive ao dispose do JsonDocument
+                }
+            }
+
+            var remaining = rest.Count == 0 ? null : JsonSerializer.Serialize(rest);
+            return (remaining, string.IsNullOrWhiteSpace(key) ? null : key);
+        }
+        catch (JsonException)
+        {
+            return (settings, null);
         }
     }
 
@@ -210,15 +282,17 @@ public sealed class TenantManagementService : ITenantManagementService
             {
                 c.Id, c.Provider, c.Capability, c.DisplayName, c.AuthType,
                 c.Enabled, c.SyncIntervalMinutes, c.LastSyncAt, c.LastStatus,
-                // Só o BOOLEANO atravessa a fronteira — nunca o blob, nem cifrado.
+                // Só o BOOLEANO atravessa a fronteira — nunca o blob/hash, nem cifrado.
                 HasCredentials = c.EncryptedSettings != "",
+                HasIngestionKey = c.IngestionKeyHash != null,
             })
             .ToListAsync(ct);
 
         return rows
             .Select(r => new ConnectorSummary(
                 r.Id, r.Provider, r.Capability, r.DisplayName, r.AuthType,
-                r.Enabled, r.SyncIntervalMinutes, r.LastSyncAt, r.LastStatus, r.HasCredentials))
+                r.Enabled, r.SyncIntervalMinutes, r.LastSyncAt, r.LastStatus, r.HasCredentials,
+                r.HasIngestionKey))
             .ToList();
     }
 
@@ -259,5 +333,6 @@ public sealed class TenantManagementService : ITenantManagementService
         c.Enabled, c.SyncIntervalMinutes, c.LastSyncAt, c.LastStatus,
         // Estado REAL após a escrita: numa reconfiguração sem segredo, o vigente foi preservado — dizer
         // "sem credencial" porque o cliente não reenviou seria mentira.
-        HasCredentials: !string.IsNullOrWhiteSpace(c.EncryptedSettings));
+        HasCredentials: !string.IsNullOrWhiteSpace(c.EncryptedSettings),
+        HasIngestionKey: !string.IsNullOrWhiteSpace(c.IngestionKeyHash));
 }

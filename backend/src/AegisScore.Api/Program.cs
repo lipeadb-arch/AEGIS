@@ -197,6 +197,13 @@ builder.Services.AddRateLimiter(o =>
         ClientIp(ctx),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 
+    // [AEGIS-AUD-020] Ingestão externa de eventos (SIEM/EDR push): proporcional a um emissor legítimo, que
+    // envia lotes com frequência de egress fixo. Particionado por IP (limita o nº de partições) — blinda o
+    // endpoint anônimo contra flood, sem sufocar a coleta real.
+    o.AddPolicy("ingestion", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        ClientIp(ctx),
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+
     static string ClientIp(HttpContext ctx) => ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 });
 

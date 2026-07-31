@@ -181,6 +181,77 @@ public static class FrameworkSeeder
     }
 
     /// <summary>
+    /// [AEGIS-AUD-043] Semeia os mapeamentos (Capability, SignalKey) → subcategorias NIST no FRAMEWORK ATIVO.
+    /// <see cref="SignalMapping"/> é a ÚNICA autoridade determinística de mapeamento; sem estes registros, o
+    /// executor de ingestão rejeita (422) todo sinal. INCREMENTAL e idempotente: só insere o que ainda falta
+    /// por <c>(FrameworkVersionId, Capability, SignalKey)</c> — a unicidade é invariante de banco. Fail-closed
+    /// na integridade referencial: um mapping que cite um código inexistente no catálogo ABORTA o seed.
+    /// </summary>
+    public static async Task SeedSignalMappingsAsync(AegisScoreDbContext db, CancellationToken ct = default)
+    {
+        var fv = await db.FrameworkVersions.FirstOrDefaultAsync(f => f.IsActive, ct);
+        if (fv is null) return;   // catálogo ainda não semeado nesta base — nada a fazer
+
+        var validCodes = (await (
+            from s in db.Subcategories
+            join c in db.Categories on s.CategoryId equals c.Id
+            join fn in db.Functions on c.FunctionId equals fn.Id
+            where fn.FrameworkVersionId == fv.Id
+            select s.Code).ToListAsync(ct)).ToHashSet(StringComparer.Ordinal);
+
+        var desired = DefaultSignalMappings(fv.Id);
+
+        var unknown = desired
+            .SelectMany(m => m.SubcategoryCodes.Select(code => (m.SignalKey, Code: code)))
+            .Where(x => !validCodes.Contains(x.Code))
+            .ToList();
+        if (unknown.Count > 0)
+            throw new InvalidOperationException(
+                "Signal mappings reference unknown NIST codes: " +
+                string.Join(", ", unknown.Select(x => $"{x.SignalKey}->{x.Code}")) +
+                ". The mappings are out of sync with the NIST catalog.");
+
+        var existing = (await db.SignalMappings
+                .Where(m => m.FrameworkVersionId == fv.Id)
+                .Select(m => new { m.Capability, m.SignalKey })
+                .ToListAsync(ct))
+            .Select(x => (x.Capability, x.SignalKey))
+            .ToHashSet();
+
+        var toAdd = desired.Where(m => !existing.Contains((m.Capability, m.SignalKey))).ToList();
+        if (toAdd.Count == 0) return;
+
+        db.SignalMappings.AddRange(toAdd);
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Mapeamentos de referência (todos com códigos que existem no catálogo NIST CSF 2.0): os cinco sinais do
+    /// MicrosoftSecureScoreConnector + um sinal SIEM e um EDR de referência para a ingestão genérica.
+    /// </summary>
+    private static List<SignalMapping> DefaultSignalMappings(Guid fvId) => new()
+    {
+        Map(fvId, ConnectorCapability.SecureScore, "secureScore.overall",  "PR.AA-01", "PR.DS-01", "PR.PS-01"),
+        Map(fvId, ConnectorCapability.SecureScore, "secureScore.identity", "PR.AA-01", "PR.AA-03", "PR.AA-05"),
+        Map(fvId, ConnectorCapability.SecureScore, "secureScore.data",     "PR.DS-01", "PR.DS-02", "PR.DS-10"),
+        Map(fvId, ConnectorCapability.SecureScore, "secureScore.device",   "PR.PS-01", "PR.PS-05", "DE.CM-01"),
+        Map(fvId, ConnectorCapability.SecureScore, "secureScore.apps",     "PR.PS-06", "DE.CM-09"),
+        // SIEM: um alerta correlacionado de alta severidade endereça análise de evento adverso + monitoração.
+        Map(fvId, ConnectorCapability.Siem,        "siem.alert.highSeverity", "DE.AE-02", "DE.CM-01"),
+        // EDR: uma ameaça bloqueada no endpoint endereça monitoração contínua + mitigação de incidente.
+        Map(fvId, ConnectorCapability.Edr,         "edr.threat.blocked", "DE.CM-01", "RS.MI-01"),
+    };
+
+    private static SignalMapping Map(Guid fvId, ConnectorCapability capability, string signalKey, params string[] codes) => new()
+    {
+        FrameworkVersionId = fvId,
+        Capability = capability,
+        SignalKey = signalKey,
+        SubcategoryCodes = codes.ToList(),
+        Weight = 1.0,
+    };
+
+    /// <summary>
     /// Preenche <c>MaxScorePoints</c> ausente/zero em subcategorias já persistidas (idempotente: não
     /// faz nada quando todas já têm peso). Cobre bases semeadas antes de a coluna existir.
     /// </summary>
