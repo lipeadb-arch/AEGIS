@@ -6,7 +6,7 @@
 **Branch de referência:** `main`<br>
 **Commit de referência:** `c24c547`<br>
 **Última entrega concluída:** Entrega 2 — ingestão operacional de evidências (`AEGIS-AUD-020`, `AEGIS-AUD-041`, `AEGIS-AUD-043`) — PR #18, squash-merge `c24c547`<br>
-**Próximo trabalho:** Entrega 3 — score determinístico e explicável (`AEGIS-AUD-001`, `AEGIS-AUD-002`, `AEGIS-AUD-019`) — **EM IMPLEMENTAÇÃO** (branch `feat/mvp-deterministic-score`; PR aberto contra `main`, **não mergeado**)
+**Próximo trabalho:** Entrega 3 — score determinístico e explicável (`AEGIS-AUD-001`, `AEGIS-AUD-002`, `AEGIS-AUD-019`) — **EM IMPLEMENTAÇÃO** (branch `feat/mvp-deterministic-score`; PR #19 aberto contra `main`, **não mergeado**)
 
 > Este plano não exige mais concluir os 63 achados antes de apresentar o produto. O objetivo imediato é
 > entregar um **MVP funcional, demonstrável e pronto para homologação**, preservando segurança
@@ -131,7 +131,7 @@ As **Entregas 1 e 2** estão **CONCLUÍDAS** — Entrega 1 (fluxo de tenant conf
 | 0 | Fechar separação de papéis | AEGIS-AUD-011 | ✅ Concluída | PR #16 mergeado (`00937e9`); autoridade global e tenant separadas |
 | 1 | Fluxo de tenant confiável | AEGIS-AUD-012, AEGIS-AUD-018, AEGIS-AUD-030 | ✅ Concluída | PR #17 mergeado (`2fbc0d9`); login/seleção/switch sem retenção cross-tenant |
 | 2 | Ingestão operacional de evidências | AEGIS-AUD-020, AEGIS-AUD-041, AEGIS-AUD-043 | ✅ Concluída | PR #18 mergeado (`c24c547`); ingestão genérica autenticada SIEM/EDR, evidência persistida e mapeada para NIST |
-| 3 | Score determinístico e explicável | AEGIS-AUD-001, AEGIS-AUD-002, AEGIS-AUD-019 | 🚧 Em implementação | PR aberto (`feat/mvp-deterministic-score`, não mergeado); score reproduzível `aegis-score-v1`, IA consultiva |
+| 3 | Score determinístico e explicável | AEGIS-AUD-001, AEGIS-AUD-002, AEGIS-AUD-019 | 🚧 Em implementação | PR #19 aberto (`feat/mvp-deterministic-score`, não mergeado); score reproduzível `aegis-score-v1`, IA consultiva |
 | 4 | Workspace NIST, Dashboard e Hub | AEGIS-AUD-021, AEGIS-AUD-027, AEGIS-AUD-032 | Semana 3 | Seis Funções equivalentes, checklists e Dashboard informativo |
 | 5 | Release candidate demonstrável | AEGIS-AUD-048 + correções bloqueadoras | Semana 4 | Health/readiness, smoke E2E e roteiro de demonstração |
 
@@ -197,7 +197,7 @@ CrowdStrike, Google SecOps e outros podem ser adicionados depois sem bloquear a 
 
 ### Entrega 3 — score determinístico e explicável
 
-**Status:** 🚧 EM IMPLEMENTAÇÃO — branch `feat/mvp-deterministic-score`, **PR aberto contra `main` (NÃO mergeado)**. ⚠️ Os três AUDs **não** devem ser marcados como concluídos antes do merge.<br>
+**Status:** 🚧 EM IMPLEMENTAÇÃO — branch `feat/mvp-deterministic-score`, **PR #19 aberto contra `main` (NÃO mergeado)**. ⚠️ Os três AUDs **não** devem ser marcados como concluídos antes do merge.<br>
 **AUDs:** AEGIS-AUD-001, AEGIS-AUD-002 e AEGIS-AUD-019 em um único PR.
 
 Escopo mínimo:

@@ -227,9 +227,9 @@ public sealed class EvidenceIngestionTests : IDisposable
     }
 
     [Theory]
-    [InlineData(90, ControlStatus.Compliant, 10)]              // ≥80 → Compliant
-    [InlineData(60, ControlStatus.MitigatedByThirdParty, 5)]   // 50..80 → Mitigado (peso 10 → 5)
-    [InlineData(30, ControlStatus.NonCompliant, 0)]            // <50 → NonCompliant (0% real)
+    [InlineData(90, ControlStatus.Compliant, 10)]     // ≥80 → Compliant
+    [InlineData(60, ControlStatus.NonCompliant, 0)]   // <80 → NonCompliant (cobertura parcial NÃO é mitigação)
+    [InlineData(30, ControlStatus.NonCompliant, 0)]   // <80 → NonCompliant
     public async Task Push_HintDePercentual_AplicaThresholds(double percent, ControlStatus expected, int expectedScore)
     {
         var connector = await Auth().AuthenticateAsync(_siemA, IngestionTestData.SiemKeyA, default);
