@@ -1,14 +1,16 @@
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
+using AegisScore.Infrastructure.Scoring;
 
 namespace AegisScore.Api.Workers;
 
 /// <summary>
 /// Inteligência temporal do Aegis Score: à meia-noite (UTC) grava UMA foto agregada por tenant em
-/// <see cref="TenantScoreSnapshot"/> — o numerador (SUM CurrentScore) e o denominador
-/// (SUM MaxScorePoints), consolidados a partir do <see cref="TenantControlState"/>. É essa série
-/// diária que alimenta o gráfico de tendência de postura (modelo Microsoft Secure Score).
+/// <see cref="TenantScoreSnapshot"/> — o numerador (SUM CurrentScore) e o denominador (peso AVALIADO),
+/// consolidados pela MESMA autoridade do Score Atual (<see cref="AegisScoreAggregator"/>), de modo que a
+/// foto e a leitura em tempo real NUNCA divirjam. É essa série diária que alimenta o gráfico de tendência
+/// de postura (modelo Microsoft Secure Score); a leitura representa 0/0 como NotEvaluated (percentual nulo).
 ///
 /// Motor NATIVO (BackgroundService + PeriodicTimer), sem agendador externo (YAGNI). Sendo um
 /// Singleton, NUNCA injeta o AegisScoreDbContext (Scoped) direto: abre um escopo por ciclo via
@@ -106,10 +108,11 @@ public sealed class AegisScoreSnapshotWorker : BackgroundService
     {
         await using var db = new AegisScoreDbContext(options, new SystemTenantContext(tenantId));
 
-        // Group By de soma sobre o catálogo: SUM(CurrentScore) / SUM(MaxScorePoints). O cast p/ int?
-        // cobre o SUM de zero linhas (NULL no SQL) sem estourar em conjunto vazio.
-        var achieved = await db.TenantControlStates.SumAsync(x => (int?)x.CurrentScore, ct) ?? 0;
-        var max = await db.TenantControlStates.SumAsync(x => (int?)x.Subcategory!.MaxScorePoints, ct) ?? 0;
+        // Agregação pela autoridade ÚNICA (a mesma do CurrentScoreQuery): numerador + peso AVALIADO,
+        // restritos ao framework ATIVO e pela fórmula aegis-score-v1. Sem soma/arredondamento local.
+        var score = await AegisScoreAggregator.AggregateAsync(db, ct);
+        var achieved = score.AchievedScore;
+        var max = score.EvaluatedMaxScore;
 
         // Upsert idempotente da foto de hoje. O read-then-write cobre o caso normal (1 execução/dia)
         // sem exceção; o catch de DbUpdateException é a rede contra corrida no índice único composto.

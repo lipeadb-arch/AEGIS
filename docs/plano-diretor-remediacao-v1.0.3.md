@@ -1,12 +1,12 @@
 # AEGIS — Plano Diretor de Remediação v1.0.3
 
 **Classificação:** instrumento privado de priorização técnica e continuidade<br>
-**Data de atualização:** 2026-07-30<br>
+**Data de atualização:** 2026-08-01<br>
 **Horizonte desta revisão:** entrega funcional em 30 dias, até 2026-08-28<br>
 **Branch de referência:** `main`<br>
-**Commit de referência:** `2fbc0d9`<br>
-**Última entrega concluída:** Entrega 1 — fluxo de tenant confiável (`AEGIS-AUD-012`, `AEGIS-AUD-018`, `AEGIS-AUD-030`) — PR #17, squash-merge `2fbc0d9`<br>
-**Próximo trabalho:** Entrega 2 — ingestão operacional de evidências (`AEGIS-AUD-020`, `AEGIS-AUD-041`, `AEGIS-AUD-043`) — ABERTA / NÃO autorizada
+**Commit de referência:** `c24c547`<br>
+**Última entrega concluída:** Entrega 2 — ingestão operacional de evidências (`AEGIS-AUD-020`, `AEGIS-AUD-041`, `AEGIS-AUD-043`) — PR #18, squash-merge `c24c547`<br>
+**Próximo trabalho:** Entrega 3 — score determinístico e explicável (`AEGIS-AUD-001`, `AEGIS-AUD-002`, `AEGIS-AUD-019`) — **EM IMPLEMENTAÇÃO** (branch `feat/mvp-deterministic-score`; PR aberto contra `main`, **não mergeado**)
 
 > Este plano não exige mais concluir os 63 achados antes de apresentar o produto. O objetivo imediato é
 > entregar um **MVP funcional, demonstrável e pronto para homologação**, preservando segurança
@@ -92,7 +92,7 @@ Não é necessário reconstruir o projeto. A fundação existente deve ser reuti
 | Coleta real de SIEM/EDR | Incompleta; adaptadores atuais não comprovam operação real |
 | Evidência normalizada e score | Parcial; autoridade e rastreabilidade precisam ser fechadas |
 | Dashboard executivo | Existente; projeções e semântica ainda precisam ser unificadas |
-| Testes backend | 462/462 na main (`2fbc0d9`) |
+| Testes backend | 472/472 na main (`c24c547`) |
 | Frontend | Build aprovado; suíte ampla fica fora do MVP |
 
 ### Achados já concluídos
@@ -114,8 +114,11 @@ Não é necessário reconstruir o projeto. A fundação existente deve ser reuti
 | AEGIS-AUD-012 | #17 | `2fbc0d9` (squash) |
 | AEGIS-AUD-018 | #17 | `2fbc0d9` (squash) |
 | AEGIS-AUD-030 | #17 | `2fbc0d9` (squash) |
+| AEGIS-AUD-020 | #18 | `c24c547` (squash) |
+| AEGIS-AUD-041 | #18 | `c24c547` (squash) |
+| AEGIS-AUD-043 | #18 | `c24c547` (squash) |
 
-A **Entrega 1** (fluxo de tenant confiável: `AEGIS-AUD-012`, `AEGIS-AUD-018`, `AEGIS-AUD-030`) foi **CONCLUÍDA** (PR #17; squash-merge `2fbc0d9`). O próximo trabalho é a **Entrega 2** (ingestão operacional de evidências: `AEGIS-AUD-020`, `AEGIS-AUD-041`, `AEGIS-AUD-043`), ainda ABERTA e não autorizada.
+As **Entregas 1 e 2** estão **CONCLUÍDAS** — Entrega 1 (fluxo de tenant confiável: `AEGIS-AUD-012`, `AEGIS-AUD-018`, `AEGIS-AUD-030`) em PR #17 (squash-merge `2fbc0d9`) e Entrega 2 (ingestão operacional de evidências: `AEGIS-AUD-020`, `AEGIS-AUD-041`, `AEGIS-AUD-043`) em PR #18 (squash-merge `c24c547`). O próximo trabalho é a **Entrega 3** (score determinístico e explicável: `AEGIS-AUD-001`, `AEGIS-AUD-002`, `AEGIS-AUD-019`), ainda ABERTA e não autorizada.
 
 ---
 
@@ -127,8 +130,8 @@ A **Entrega 1** (fluxo de tenant confiável: `AEGIS-AUD-012`, `AEGIS-AUD-018`, `
 |---:|---|---|---|---|
 | 0 | Fechar separação de papéis | AEGIS-AUD-011 | ✅ Concluída | PR #16 mergeado (`00937e9`); autoridade global e tenant separadas |
 | 1 | Fluxo de tenant confiável | AEGIS-AUD-012, AEGIS-AUD-018, AEGIS-AUD-030 | ✅ Concluída | PR #17 mergeado (`2fbc0d9`); login/seleção/switch sem retenção cross-tenant |
-| 2 | Ingestão operacional de evidências | AEGIS-AUD-020, AEGIS-AUD-041, AEGIS-AUD-043 | Semanas 1–2 | SIEM/EDR envia eventos; evidência persiste e mapeia para NIST |
-| 3 | Score determinístico e explicável | AEGIS-AUD-001, AEGIS-AUD-002, AEGIS-AUD-019 | Semana 2 | Score reproduzível; IA não decide conformidade |
+| 2 | Ingestão operacional de evidências | AEGIS-AUD-020, AEGIS-AUD-041, AEGIS-AUD-043 | ✅ Concluída | PR #18 mergeado (`c24c547`); ingestão genérica autenticada SIEM/EDR, evidência persistida e mapeada para NIST |
+| 3 | Score determinístico e explicável | AEGIS-AUD-001, AEGIS-AUD-002, AEGIS-AUD-019 | 🚧 Em implementação | PR aberto (`feat/mvp-deterministic-score`, não mergeado); score reproduzível `aegis-score-v1`, IA consultiva |
 | 4 | Workspace NIST, Dashboard e Hub | AEGIS-AUD-021, AEGIS-AUD-027, AEGIS-AUD-032 | Semana 3 | Seis Funções equivalentes, checklists e Dashboard informativo |
 | 5 | Release candidate demonstrável | AEGIS-AUD-048 + correções bloqueadoras | Semana 4 | Health/readiness, smoke E2E e roteiro de demonstração |
 
@@ -169,8 +172,7 @@ Não criar um novo sistema de sessão nem ampliar o SLA de revogação neste pac
 
 ### Entrega 2 — ingestão operacional de evidências
 
-**Status:** PRÓXIMO TRABALHO — ABERTA / NÃO autorizada (aguarda aprovação explícita).<br>
-**Branch sugerida:** `feat/mvp-evidence-ingestion`<br>
+**Status:** ✅ CONCLUÍDA — PR #18 (squash-merge `c24c547`); `main` local/remota sincronizadas; branch `feat/mvp-evidence-ingestion` removida.<br>
 **AUDs:** AEGIS-AUD-020, AEGIS-AUD-041 e AEGIS-AUD-043 em um único PR.
 
 Objetivo: tornar o AEGIS capaz de **receber dados reais sem depender de um adaptador específico**.
@@ -191,9 +193,11 @@ Escopo mínimo:
 O caminho genérico autenticado é o requisito do MVP. Adaptadores completos para Sentinel, Splunk,
 CrowdStrike, Google SecOps e outros podem ser adicionados depois sem bloquear a entrega.
 
+**Aceite (evidência):** endpoint **`POST /api/v1/ingestion/connectors/{connectorId}/events`** autenticado por **`X-Ingestion-Key`** (persistida só como **hash SHA-256**, comparação em tempo constante); **tenant derivado exclusivamente do `ConnectorConfig` autenticado** (contrato v1 sem `TenantId`/score/veredito do cliente); respostas **400/401/422/200** + **rate limiting**; **idempotência como invariante de banco** (índice único parcial; concorrência real em PostgreSQL — 8 requisições → 1 persistência); **RawPayload protegido** (Data Protection, purpose próprio); **`SignalMapping` como única autoridade** de mapeamento, **sem LLM** no caminho; **executor único push/pull** para Generic SIEM e Generic EDR, com **adaptadores de fabricantes honestamente marcados como não implementados**; amostras `samples/ingestion` só com dados reservados/sintéticos. Migration **`20260730184530_Aud020GenericEvidenceIngestion`** (**24 migrations**); **sete `SignalMappings`**. Backend **472/472**; `AegisScore.DbMigrator --verify-only`/`has-pending-model-changes` aprovados; **smoke real PostgreSQL** aprovado (SIEM, EDR, deduplicação, chave inválida, sinal desconhecido, proteção do payload, ausência de LLM). **Sem credenciais, segredos ou dados reais.** Adaptadores reais de fabricantes permanecem fora desta entrega.
+
 ### Entrega 3 — score determinístico e explicável
 
-**Branch sugerida:** `feat/mvp-deterministic-score`<br>
+**Status:** 🚧 EM IMPLEMENTAÇÃO — branch `feat/mvp-deterministic-score`, **PR aberto contra `main` (NÃO mergeado)**. ⚠️ Os três AUDs **não** devem ser marcados como concluídos antes do merge.<br>
 **AUDs:** AEGIS-AUD-001, AEGIS-AUD-002 e AEGIS-AUD-019 em um único PR.
 
 Escopo mínimo:
@@ -208,6 +212,8 @@ Escopo mínimo:
 - checklist derivado de controles sem evidência ou não conformes, sem criar um subsistema de workflow.
 
 Não implementar neste MVP campanhas complexas, confiança estatística da IA ou fórmulas alternativas.
+
+**Estado (EM IMPLEMENTAÇÃO — não mergeado; resultados reais):** fórmula oficial **`aegis-score-v1`** como autoridade ÚNICA de pontos, arredondamento e estado; **score ANULÁVEL** (0/0 = `NotEvaluated`, nunca 0%) e **cobertura** (peso avaliado / peso elegível do catálogo ativo) como eixos distintos; **agregação compartilhada** (`AegisScoreAggregator`) entre **Score Atual e snapshot diário**, restrita ao **framework ATIVO** — estado de versão antiga não entra no score nem infla a cobertura (avaliado ≤ elegível). Veredito determinístico por **telemetria + `SignalMapping.ScoringHint`** (`DeterministicControlEvaluator`/`EvidenceSignalEvaluator`); **IA limitada a resumo/explicação/recomendação — não decide conformidade**. Projeção da evidência no ledger com **recompute GLOBAL "from-newest" entre conectores** (SIEM+EDR no mesmo controle; evento antigo não sobrescreve o mais novo; empate exato de instante → pior veredito conservador, depois chave/Id estáveis; isolamento por tenant, sem `IgnoreQueryFilters`) e **falha de projeção NÃO mascarada** (carimba `LastStatus=Failed` e propaga; o retry deduplicado reprojeta sem duplicar `EvidenceSignal`). Dashboard catalog-first com `NotEvaluated`; frontend exibe "Não avaliado" e cobertura (percentual anulável). **Validação:** backend **505/505** (baseline 472 → 505); **`dotnet build` 0 erros / 0 warnings**; **`ng build` aprovado** com os **4 warnings de budget CSS conhecidos**; **`has-pending-model-changes` limpo — SEM migration nova** (a coluna `ScoringHint` já existia; a Entrega 3 apenas passou o **seed idempotente** a preenchê-la); `AegisScore.DbMigrator` (migrate+seed+verify e `--verify-only`) aprovado, **24 migrations**, **sete `SignalMappings` com ScoringHint conhecido**; **smoke real PostgreSQL** aprovado (ingestão SIEM/EDR, mapping+hint, ledger determinístico, score/cobertura, deduplicação, ordenação global entre conectores e retry/reprojeção; base descartável, `aegis_dev` preservado com os sete mappings). **Sem credenciais, segredos ou dados reais.**
 
 ### Entrega 4 — Workspace NIST, Dashboard e Document Hub
 

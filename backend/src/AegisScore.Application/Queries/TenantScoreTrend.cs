@@ -1,3 +1,5 @@
+using AegisScore.Application.Scoring;
+
 namespace AegisScore.Application.Queries;
 
 /// <summary>
@@ -7,13 +9,13 @@ namespace AegisScore.Application.Queries;
 public record TenantTrendDto(DateOnly SnapshotDate, int AchievedScore, int MaxScore)
 {
     /// <summary>
-    /// Percentual de postura no dia, calculado em runtime — AchievedScore / MaxScore × 100 — e
-    /// arredondado a 1 casa decimal (convenção de formatação do projeto). Blindado contra divisão
-    /// por zero: sem denominador, o percentual é 0 em vez de NaN/Infinity.
+    /// [AEGIS-AUD-001/002] Percentual de postura no dia pela MESMA autoridade da fórmula
+    /// (<see cref="AegisScoreFormulaV1"/>). ANULÁVEL de propósito: uma foto 0/0 (nenhum controle avaliado
+    /// naquele dia) é semanticamente NotEvaluated — <c>null</c>, não 0%.
     /// </summary>
-    public double Percentage => MaxScore == 0
-        ? 0
-        : Math.Round((double)AchievedScore / MaxScore * 100, 1);
+    public double? Percentage => MaxScore <= 0
+        ? null
+        : AegisScoreFormulaV1.RoundPercentage((double)AchievedScore / MaxScore * 100);
 }
 
 /// <summary>

@@ -10,8 +10,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Scoring;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
+using AegisScore.Infrastructure.Scoring;
 
 namespace AegisScore.Infrastructure.Connectors;
 
@@ -55,19 +57,22 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
     private readonly IEvidenceRawPayloadProtector _payload;
     private readonly IConnectorRegistry _registry;
     private readonly ILogger<EvidenceIngestionExecutor> _log;
+    private readonly ILogger<ControlStateWriter> _writerLog;
 
     public EvidenceIngestionExecutor(
         DbContextOptions<AegisScoreDbContext> options,
         INistSignalMapper mapper,
         IEvidenceRawPayloadProtector payload,
         IConnectorRegistry registry,
-        ILogger<EvidenceIngestionExecutor> log)
+        ILogger<EvidenceIngestionExecutor> log,
+        ILogger<ControlStateWriter> writerLog)
     {
         _options = options;
         _mapper = mapper;
         _payload = payload;
         _registry = registry;
         _log = log;
+        _writerLog = writerLog;
     }
 
     public async Task<PushIngestionResult> IngestPushAsync(
@@ -99,6 +104,7 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
 
         var accepted = 0;
         var deduplicated = 0;
+        var affectedCodes = new HashSet<string>(StringComparer.Ordinal);
         try
         {
             // Pré-checagem: chaves JÁ existentes no par (tenant, conector). Cobre o reenvio (caso comum) sem
@@ -114,6 +120,14 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             var seen = new HashSet<string>(StringComparer.Ordinal);
             for (var i = 0; i < events.Count; i++)
             {
+                var ev = events[i];
+                var resolution = mapped[ev.SignalKey!.Trim()];
+
+                // Eventos DEDUPLICADOS também afetam seus controles: um retry da MESMA requisição (evidência
+                // já no banco) pode estar reparando uma projeção que falhou antes. Registrar affectedCodes
+                // AQUI — e não só no ramo aceito — é o que permite o recompute rodar de novo sem re-persistir.
+                foreach (var code in resolution.SubcategoryCodes) affectedCodes.Add(code);
+
                 var dedupKey = dedupKeys[i];
                 if (existing.Contains(dedupKey) || !seen.Add(dedupKey))
                 {
@@ -121,9 +135,8 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
                     continue;
                 }
 
-                var ev = events[i];
                 var signal = BuildSignal(
-                    connector.ConnectorId, ev, batch.SchemaVersion, mapped[ev.SignalKey!.Trim()], dedupKey, receivedAt);
+                    connector.ConnectorId, ev, batch.SchemaVersion, resolution.SubcategoryCodes, dedupKey, receivedAt);
 
                 db.Signals.Add(signal);
                 try
@@ -151,6 +164,24 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             // mascarar o erro como sucesso. Qualquer DbUpdateException que NÃO seja a violação idempotente
             // cai aqui (é relançada dentro do loop) e é tratada como falha real.
             _log.LogError(ex, "Falha ao persistir lote de ingestão do conector {ConnectorId}.", connector.ConnectorId);
+            await TryStampFailedAsync(connector.ConnectorId, connector.TenantId, ct);
+            throw;
+        }
+
+        // [AEGIS-AUD-019] Projeta a evidência no ledger DEPOIS de persistida. A evidência já está salva e
+        // deduplicada; se a projeção falhar, NÃO a mascaramos como sucesso integral — carimbamos o conector
+        // como Failed e PROPAGAMOS a falha operacional (500). O retry da MESMA requisição reencontra os
+        // eventos já no banco (deduplicados, mas ainda contribuindo para affectedCodes) e REFAZ a projeção
+        // sem duplicar EvidenceSignal; após a projeção bem-sucedida, o estado fica consistente.
+        try
+        {
+            await ProjectScoreAsync(connector.TenantId, affectedCodes, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogError(ex,
+                "Projeção de score da ingestão do conector {ConnectorId} falhou; evidências persistidas, conector marcado como Failed (o retry deduplicado reprojeta).",
+                connector.ConnectorId);
             await TryStampFailedAsync(connector.ConnectorId, connector.TenantId, ct);
             throw;
         }
@@ -186,9 +217,10 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
 
         var persisted = 0;
         var skipped = 0;
+        var affectedCodes = new HashSet<string>(StringComparer.Ordinal);
         foreach (var s in collected)
         {
-            if (!mapped.TryGetValue(s.SignalKey?.Trim() ?? "", out var codes))
+            if (!mapped.TryGetValue(s.SignalKey?.Trim() ?? "", out var resolution))
             {
                 skipped++;   // sinal sem mapping conhecido: NÃO persiste (a autoridade central manda)
                 continue;
@@ -205,7 +237,7 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
                 NumericValue = s.NumericValue,
                 Unit = s.Unit,
                 Severity = s.Severity,
-                MappedSubcategoryCodes = codes.ToList(),
+                MappedSubcategoryCodes = resolution.SubcategoryCodes.ToList(),
                 CollectedAt = s.CollectedAt,
                 ReceivedAt = now,
                 ProtectedRawPayload = protectedRaw,
@@ -213,13 +245,135 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
                 // DeduplicationKey NULL: snapshots pull são série temporal, não eventos idempotentes.
             });
             persisted++;
+            foreach (var code in resolution.SubcategoryCodes) affectedCodes.Add(code);
         }
 
         var status = skipped > 0 ? ConnectorStatus.Degraded : ConnectorStatus.Healthy;
         // Um único SaveChanges: os sinais adicionados + o carimbo de sync são o MESMO fato.
         await StampConnectorAsync(db, config.Id, now, status, ct);
 
+        // [AEGIS-AUD-019] Projeta a evidência coletada no ledger (recompute GLOBAL from-newest). Semântica
+        // coerente com o push: falha na projeção NÃO é mascarada — carimba Failed e propaga como 500. Uma
+        // nova coleta (mesmo sync) refaz o recompute sobre a evidência mais nova.
+        try
+        {
+            await ProjectScoreAsync(config.TenantId, affectedCodes, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogError(ex,
+                "Projeção de score da coleta do conector {ConnectorId} falhou; evidências persistidas, conector marcado como Failed.",
+                config.Id);
+            await TryStampFailedAsync(config.Id, config.TenantId, ct);
+            throw;
+        }
+
         return new PullIngestionResult(persisted, 0, skipped, status);
+    }
+
+    // ---- Projeção determinística no ledger (AEGIS-AUD-019) ----------------------------------------
+
+    /// <summary>
+    /// Projeta a evidência ingerida nos controles AFETADOS, pela autoridade determinística
+    /// <see cref="EvidenceSignalEvaluator"/> (via <see cref="SignalMapping.ScoringHint"/>) e pelo escritor
+    /// ÚNICO do ledger (<see cref="ControlStateWriter"/>). Estratégia RECOMPUTE-FROM-NEWEST GLOBAL: para cada
+    /// controle, considera TODOS os <c>EvidenceSignals</c> do TENANT que mapeiam para ele — de QUALQUER conector,
+    /// não só o que disparou este lote (DE.CM-01, por exemplo, recebe sinais de SIEM e de EDR). A capability vem
+    /// do <c>ConnectorConfig</c> de cada sinal e resolve o <see cref="SignalMapping"/> correspondente; escolhe a
+    /// evidência determinística GLOBALMENTE mais recente, com desempate estável e INDEPENDENTE da ordem do banco
+    /// (ver <see cref="ScoredEvidence.IsMoreAuthoritativeThan"/>). Assim, evento antigo — mesmo de outro conector —
+    /// nunca sobrescreve evidência mais nova, a ordem do lote não muda o resultado, e um retry deduplicado repara
+    /// a projeção. Sem hint conhecido, nenhum veredito é inventado (o controle segue NotEvaluated).
+    ///
+    /// Opera sob o tenant do conector (SystemTenantContext): o Global Query Filter (fail-closed) restringe sinais
+    /// E conectores a esse tenant — SEM IgnoreQueryFilters. Uma falha do escritor sobe para o chamador (que carimba
+    /// Failed e propaga); como o escritor é idempotente, o retry reprojeta sem efeito colateral. O LLM não participa.
+    /// </summary>
+    private async Task ProjectScoreAsync(
+        Guid tenantId, IReadOnlyCollection<string> affectedCodes, CancellationToken ct)
+    {
+        if (affectedCodes.Count == 0) return;
+
+        await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
+
+        // TODOS os sinais do tenant (query filter fail-closed em Signals E Connectors), cada um com a capability
+        // do SEU conector — a evidência de um controle é global, não por conector. Sem IgnoreQueryFilters.
+        var signals = await (
+            from s in db.Signals
+            join c in db.Connectors on s.ConnectorConfigId equals c.Id
+            select new PersistedSignal(
+                s.Id, s.SignalKey, s.NumericValue, s.Severity, s.Unit, s.CollectedAt, c.Capability))
+            .ToListAsync(ct);
+        if (signals.Count == 0) return;
+
+        // Re-mapa por CAPABILITY (a resolução depende dela): uma resolução do mapper por capability distinta.
+        var byCapability = new Dictionary<ConnectorCapability, IReadOnlyDictionary<string, SignalMappingResolution>>();
+        foreach (var cap in signals.Select(s => s.Capability).Distinct())
+        {
+            var keys = signals.Where(s => s.Capability == cap)
+                .Select(s => (s.SignalKey ?? "").Trim()).Distinct().ToList();
+            byCapability[cap] = await _mapper.ResolveAsync(cap, keys, ct);
+        }
+
+        var writer = new ControlStateWriter(db, new SystemTenantContext(tenantId), _writerLog);
+
+        foreach (var code in affectedCodes)
+        {
+            ScoredEvidence? best = null;
+            foreach (var s in signals)
+            {
+                var key = (s.SignalKey ?? "").Trim();
+                if (!byCapability[s.Capability].TryGetValue(key, out var r) || !r.SubcategoryCodes.Contains(code))
+                    continue;
+                var verdict = EvidenceSignalEvaluator.Evaluate(r.ScoringHint, s.NumericValue, s.Severity, s.Unit);
+                if (verdict is null) continue;
+
+                var candidate = new ScoredEvidence(verdict, s.CollectedAt, key, s.Id);
+                if (best is null || candidate.IsMoreAuthoritativeThan(best))
+                    best = candidate;
+            }
+            if (best is null) continue;   // nenhum sinal com hint conhecido → controle segue NotEvaluated
+
+            // Falha do escritor NÃO é mascarada: sobe para o chamador, que carimba Failed e propaga. O escritor
+            // é idempotente (upsert determinístico), então o retry reprojeta o mesmo veredito sem efeito colateral.
+            await writer.ApplyVerdictAsync(
+                tenantId, code, best.Verdict.Status, best.Verdict.Reason, VerdictSource.Telemetry, ct: ct);
+        }
+    }
+
+    /// <summary>Projeção leve de um sinal persistido (com a capability do seu conector), para o recompute global.</summary>
+    private sealed record PersistedSignal(
+        Guid Id, string SignalKey, double? NumericValue, int? Severity, string? Unit,
+        DateTimeOffset CollectedAt, ConnectorCapability Capability);
+
+    /// <summary>
+    /// Evidência já avaliada, candidata a autoridade de um controle. Precedência DETERMINÍSTICA e independente
+    /// da ordem do banco: (1) <c>CollectedAt</c> mais recente vence; (2) empate EXATO de instante → PIOR veredito
+    /// de forma conservadora (NonCompliant &gt; Mitigated &gt; Compliant, para nunca inflar o score num empate);
+    /// (3) ainda empatado → chave e depois Id estáveis. Nenhum critério depende da ordem de leitura das linhas.
+    /// </summary>
+    private sealed record ScoredEvidence(EvidenceVerdict Verdict, DateTimeOffset CollectedAt, string SignalKey, Guid Id)
+    {
+        public bool IsMoreAuthoritativeThan(ScoredEvidence other)
+        {
+            if (CollectedAt != other.CollectedAt) return CollectedAt > other.CollectedAt;
+
+            var rank = ConservativeRank(Verdict.Status);
+            var otherRank = ConservativeRank(other.Verdict.Status);
+            if (rank != otherRank) return rank < otherRank;   // menor rank = pior veredito = vence o empate exato
+
+            var byKey = string.CompareOrdinal(SignalKey, other.SignalKey);
+            return byKey != 0 ? byKey > 0 : Id.CompareTo(other.Id) > 0;
+        }
+
+        /// <summary>Rank de conservadorismo: 0 = pior (mais penaliza o score) → vence o empate EXATO de CollectedAt.</summary>
+        private static int ConservativeRank(ControlStatus status) => status switch
+        {
+            ControlStatus.NonCompliant          => 0,
+            ControlStatus.MitigatedByThirdParty => 1,
+            ControlStatus.Compliant             => 2,
+            _                                   => 3,
+        };
     }
 
     // ---- Contrato ---------------------------------------------------------------------------------

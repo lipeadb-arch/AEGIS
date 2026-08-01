@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Scoring;
 using AegisScore.Application.Services;
 using AegisScore.Application.Telemetry.Models;
 using AegisScore.Domain;
@@ -21,9 +22,6 @@ namespace AegisScore.Infrastructure.Scoring;
 /// </summary>
 public sealed class ControlStateWriter : IControlStateWriter
 {
-    /// <summary>Crédito parcial para risco coberto por controle compensatório (transferido, não eliminado).</summary>
-    private const double MitigatedCreditFactor = 0.5;
-
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
     private readonly ILogger<ControlStateWriter> _log;
@@ -149,11 +147,10 @@ public sealed class ControlStateWriter : IControlStateWriter
     private static bool DocumentaryMayOverwrite(TenantControlState state, int awarded) =>
         state.LastVerdictSource != VerdictSource.Telemetry && awarded > state.CurrentScore;
 
-    /// <summary>Traduz o status do controle em pontos do Aegis Score, limitado por MaxScorePoints.</summary>
-    private static int ScoreFor(ControlStatus status, int maxScorePoints) => status switch
-    {
-        ControlStatus.Compliant             => maxScorePoints,
-        ControlStatus.MitigatedByThirdParty => (int)Math.Round(maxScorePoints * MitigatedCreditFactor),
-        _                                   => 0,   // NonCompliant → não pontua
-    };
+    /// <summary>
+    /// Traduz o status do controle em pontos pela autoridade ÚNICA da fórmula v1
+    /// (<see cref="AegisScoreFormulaV1.PointsFor"/>) — a regra status→pontos deixou de morar aqui.
+    /// </summary>
+    private static int ScoreFor(ControlStatus status, int maxScorePoints) =>
+        AegisScoreFormulaV1.PointsFor(status, maxScorePoints);
 }

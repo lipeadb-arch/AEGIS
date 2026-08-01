@@ -1,6 +1,6 @@
 import { Component, ElementRef, OnInit, effect, inject, signal, viewChild } from '@angular/core';
 import { AegisScoreService } from '../services/aegis-score.service';
-import { TenantTrendDto } from '../models/aegis-score.models';
+import { CurrentScoreDto, TenantTrendDto } from '../models/aegis-score.models';
 import { environment } from '../../environments/environment';
 
 /**
@@ -24,10 +24,10 @@ export class AegisDashboardComponent implements OnInit {
   readonly pendingControls = signal<number | null>(null);
 
   /**
-   * KPI hero — Score Atual (%). Vem do endpoint /current (tempo real sobre o TenantControlState), NÃO
-   * da série diária: reflete avaliações recém-processadas (ex.: Govern) sem esperar a foto da meia-noite.
+   * KPI hero — Score Atual (fórmula aegis-score-v1). Vem do endpoint /current (tempo real). Guarda o DTO
+   * inteiro para distinguir "Não avaliado" (percentual null) de 0% e para exibir a cobertura em separado.
    */
-  readonly currentScore = signal(0);
+  readonly currentScore = signal<CurrentScoreDto | null>(null);
 
   /** Exposto ao template para orientar o diagnóstico quando a carga falha. */
   protected readonly apiBase = environment.apiBase;
@@ -41,7 +41,8 @@ export class AegisDashboardComponent implements OnInit {
     // ResizeObserver mantém o gráfico nítido no resize e é desconectado a cada re-run e no destroy.
     effect((onCleanup) => {
       const canvas = this.canvasRef()?.nativeElement;
-      const data = this.trend();
+      // Pontos sem percentual (foto 0/0 = NotEvaluated) não entram no gráfico.
+      const data = this.trend().filter((d) => d.percentage !== null);
       if (!canvas || data.length === 0) return;
 
       this.drawTrend(canvas, data);
@@ -74,7 +75,7 @@ export class AegisDashboardComponent implements OnInit {
     // Score Atual (KPI hero): tempo real, independente da série diária — destrava o 0.0% do HUD assim
     // que o Govern processa avaliações e grava os TenantControlState.
     this.svc.fetchCurrentScore().subscribe({
-      next: (score) => this.currentScore.set(score.percentage),
+      next: (score) => this.currentScore.set(score),
       error: (err) => console.error('Falha ao carregar o Score Atual do Aegis Score:', err),
     });
   }
@@ -139,7 +140,7 @@ export class AegisDashboardComponent implements OnInit {
     grad.addColorStop(1, 'rgba(0,229,160,0.02)');
     ctx.beginPath();
     data.forEach((pt, i) => {
-      const x = xFor(i), y = yFor(pt.percentage);
+      const x = xFor(i), y = yFor(pt.percentage ?? 0);
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     });
     ctx.lineTo(xFor(data.length - 1), padT + plotH);
@@ -151,7 +152,7 @@ export class AegisDashboardComponent implements OnInit {
     // Linha neon com glow.
     ctx.beginPath();
     data.forEach((pt, i) => {
-      const x = xFor(i), y = yFor(pt.percentage);
+      const x = xFor(i), y = yFor(pt.percentage ?? 0);
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     });
     ctx.strokeStyle = emerald;
@@ -164,7 +165,7 @@ export class AegisDashboardComponent implements OnInit {
 
     // Nós discretos nos pontos de dados.
     for (let i = 0; i < data.length; i++) {
-      const x = xFor(i), y = yFor(data[i].percentage);
+      const x = xFor(i), y = yFor(data[i].percentage ?? 0);
       ctx.beginPath();
       ctx.arc(x, y, 2.6, 0, Math.PI * 2);
       ctx.fillStyle = emerald;

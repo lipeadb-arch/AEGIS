@@ -95,9 +95,17 @@ public interface IEvidenceIngestionExecutor
 /// </summary>
 public interface INistSignalMapper
 {
-    Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> ResolveAsync(
+    Task<IReadOnlyDictionary<string, SignalMappingResolution>> ResolveAsync(
         ConnectorCapability capability, IReadOnlyCollection<string> signalKeys, CancellationToken ct);
 }
+
+/// <summary>
+/// [AEGIS-AUD-019] Resolução determinística de UM sinal: as subcategorias NIST mapeadas (autoridade =
+/// <see cref="SignalMapping"/>) e o <see cref="SignalMapping.ScoringHint"/> — a regra determinística que
+/// projeta a evidência no ledger. O hint pode ser <c>null</c> (mapping sem regra de scoring): a evidência
+/// é persistida, mas NENHUM veredito é inventado (o controle segue NotEvaluated se não tiver outra avaliação).
+/// </summary>
+public sealed record SignalMappingResolution(IReadOnlyList<string> SubcategoryCodes, string? ScoringHint);
 
 /// <summary>
 /// [AEGIS-AUD-041] Proteção do payload BRUTO da evidência em repouso (Data Protection), com purpose PRÓPRIO

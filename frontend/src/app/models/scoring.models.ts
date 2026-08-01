@@ -4,8 +4,11 @@ import { BlindSpotRow, GapBalance } from './dashboard.models';
 // Espelha AegisScore.Application.Queries.TenantControlStateDto — o contrato de /api/v1/scoring/dashboard.
 // Enums viram string na fronteira (nunca o valor numérico do enum C#, que muda ao reordenar o domínio).
 
-/** Status de conformidade de um controle NIST. */
-export type ControlStatus = 'Compliant' | 'MitigatedByThirdParty' | 'NonCompliant';
+/**
+ * Status de conformidade de um controle NIST na fronteira. [AEGIS-AUD-002] `NotEvaluated` = subcategoria
+ * do catálogo SEM estado avaliado (não é 0% nem NonCompliant): fica fora do denominador do score.
+ */
+export type ControlStatus = 'Compliant' | 'MitigatedByThirdParty' | 'NonCompliant' | 'NotEvaluated';
 
 /** Procedência do veredito vigente: Telemetry (autoritativa, até 100%) ou Documentary (teto 50%). */
 export type VerdictSource = 'Telemetry' | 'Documentary';
@@ -71,6 +74,7 @@ export interface TenantControlStateDto {
   scorePoints: number; // numerador (pontos obtidos)
   maxScorePoints: number; // denominador (peso da subcategoria no catálogo)
   controlStatus: ControlStatus;
+  reason: string | null; // [AUD-002] motivo legível de por que não pontua (null em Compliant)
   aiEvidence: string | null;
   lastEvaluatedAt: string; // ISO 8601
   lastVerdictSource: VerdictSource;
@@ -301,11 +305,17 @@ export function buildGapBalance(dtos: TenantControlStateDto[], topN = 3): GapBal
  * Projeta a série do Aegis Score (`/scoring/trend`) no formato que o `SparklineComponent` consome.
  * O componente foi escrito para a série POR CONTROLE (`ComplianceHistoryPoint`); a do tenant tem os
  * mesmos dois eixos com outros nomes, então a adaptação é um `map` — não um segundo componente.
+ *
+ * [AEGIS-AUD-001/002] `percentage` é ANULÁVEL: uma foto 0/0 (nada avaliado no dia) é NotEvaluated, não 0%.
+ * Esses dias são DESCARTADOS da série — plotá-los como 0% forjaria uma queda de postura que não existiu
+ * (mesma decisão do gráfico de tendência do HUD).
  */
 export function trendToSparkline(
-  trend: { snapshotDate: string; percentage: number }[],
+  trend: { snapshotDate: string; percentage: number | null }[],
 ): ComplianceHistoryPoint[] {
-  return trend.map((t) => ({ date: t.snapshotDate, compliancePercent: Math.round(t.percentage) }));
+  return trend
+    .filter((t): t is { snapshotDate: string; percentage: number } => t.percentage !== null)
+    .map((t) => ({ date: t.snapshotDate, compliancePercent: Math.round(t.percentage) }));
 }
 
 /** Prefixo do código NIST de um pilar: 'PR' → "PR." (casa "PR.AA-01" mas não "PRX"). */
@@ -443,11 +453,13 @@ export function severityForStatus(status: ControlStatus): SeverityLevel {
       return 'Medium';
     case 'Compliant':
       return 'Low';
+    case 'NotEvaluated':
+      return 'Informational';
   }
 }
 
 /** NonCompliant primeiro (risco salta aos olhos), depois parcial, depois conforme; empate por código. */
-const STATUS_RANK: Record<ControlStatus, number> = { NonCompliant: 0, MitigatedByThirdParty: 1, Compliant: 2 };
+const STATUS_RANK: Record<ControlStatus, number> = { NonCompliant: 0, MitigatedByThirdParty: 1, Compliant: 2, NotEvaluated: 3 };
 
 /**
  * Agrega os controles de um pilar num PillarView: percentual de conformidade (modelo Aegis Score =
@@ -455,12 +467,16 @@ const STATUS_RANK: Record<ControlStatus, number> = { NonCompliant: 0, MitigatedB
  * livre de Angular; o Smart Component só a chama dentro de um `computed`.
  */
 export function buildPillarView(meta: PillarMeta, dtos: TenantControlStateDto[]): PillarView {
-  const controls = dtos
+  // [AEGIS-AUD-002] Controles NotEvaluated ficam FORA do numerador e do denominador do score do pilar
+  // (não são 0%): são lacuna de cobertura, não de conformidade. Exibir os NotEvaluated na matriz por
+  // controle é redesenho do Dashboard/NIST — pertence à Entrega 4.
+  const evaluated = dtos.filter((d) => d.controlStatus !== 'NotEvaluated');
+  const controls = evaluated
     .map(toControlView)
     .sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.code.localeCompare(b.code));
 
-  const sumScore = dtos.reduce((s, d) => s + d.scorePoints, 0);
-  const sumMax = dtos.reduce((s, d) => s + d.maxScorePoints, 0);
+  const sumScore = evaluated.reduce((s, d) => s + d.scorePoints, 0);
+  const sumMax = evaluated.reduce((s, d) => s + d.maxScorePoints, 0);
 
   return {
     meta,

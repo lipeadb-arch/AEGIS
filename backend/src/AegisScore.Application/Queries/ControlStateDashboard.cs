@@ -21,15 +21,23 @@ public record MissingRequirementDto(string Type, string SourceIdentifier, string
 /// o frontend jamais recebe a entidade de domínio (<c>TenantControlState</c>) crua, o que nos deixa
 /// evoluir o modelo sem quebrar o Angular — e impede que campos internos vazem por acidente.
 ///
+/// [AEGIS-AUD-002] Quatro estados DISTINTOS na fronteira (<see cref="ControlStatus"/>):
+/// <list type="bullet">
+/// <item><c>Compliant</c> / <c>MitigatedByThirdParty</c> / <c>NonCompliant</c> — AVALIADOS (têm estado);</item>
+/// <item><c>NotEvaluated</c> — subcategoria do catálogo SEM <c>TenantControlState</c>: pontos 0 acompanhados
+/// inequivocamente do status, datas/fonte nulas, e FORA do denominador do score (entra na cobertura). NÃO é
+/// 0% e NÃO é NonCompliant.</item>
+/// </list>
+///
 /// Enums viram <c>string</c> na fronteira ("Compliant", "Telemetry"): um cliente TypeScript não deve
 /// depender do valor numérico de um enum C#, que muda ao reordenar o domínio.
 /// </summary>
-/// <param name="SubcategoryCode">Código NIST ("PR.AA-01") — o identificador que o HUD exibe. Vem do
-/// mesmo JOIN que traz o peso, portanto não custa nada e evita uma segunda chamada ao catálogo.</param>
-/// <param name="ScorePoints">Pontos obtidos (numerador do Aegis Score).</param>
+/// <param name="SubcategoryCode">Código NIST ("PR.AA-01") — o identificador que o HUD exibe.</param>
+/// <param name="ScorePoints">Pontos obtidos (numerador). Sempre 0 quando <c>ControlStatus == "NotEvaluated"</c>.</param>
 /// <param name="MaxScorePoints">Peso da subcategoria no catálogo (denominador) — nunca do estado do tenant.</param>
-/// <param name="LastVerdictSource">Procedência do veredito vigente: "Telemetry" (autoritativa) ou
-/// "Documentary" (crédito parcial). É o que permite ao HUD rotular "50% (Documentado)".</param>
+/// <param name="ControlStatus">"Compliant" | "MitigatedByThirdParty" | "NonCompliant" | "NotEvaluated".</param>
+/// <param name="LastEvaluatedAt">Instante da última avaliação — NULO em NotEvaluated.</param>
+/// <param name="LastVerdictSource">Procedência do veredito ("Telemetry"/"Documentary") — NULA em NotEvaluated.</param>
 public record TenantControlStateDto(
     Guid SubcategoryId,
     string SubcategoryCode,
@@ -37,14 +45,21 @@ public record TenantControlStateDto(
     int MaxScorePoints,
     string ControlStatus,
     string? AiEvidence,
-    DateTimeOffset LastEvaluatedAt,
-    string LastVerdictSource,
+    DateTimeOffset? LastEvaluatedAt,
+    string? LastVerdictSource,
     IReadOnlyList<ComplianceCheck> Checks)
 {
     // ---- Enriquecimento para o HUD e para a injeção de contexto da IA -------------------------------
     // Membros ADITIVOS (init) e não parâmetros posicionais, de propósito: o record já tem 9 posições e o
     // idioma de "campo opcional que o motor preenche" no projeto é o init prop (ver ComplianceVerdict.Checks).
     // Todos com default seguro — um controle avaliado antes do enriquecimento existir continua serializando.
+
+    /// <summary>
+    /// [AEGIS-AUD-002] Motivo legível de por que o controle não pontua (ou pontua parcialmente): "Sem
+    /// evidência avaliada" (NotEvaluated), a lacuna concreta (NonCompliant) ou o crédito de terceiro
+    /// (Mitigated). Nulo em Compliant (pontua integralmente — não há motivo de não-pontuação).
+    /// </summary>
+    public string? Reason { get; init; }
 
     /// <summary>
     /// Gravidade do achado (<c>SeverityLevel</c> como string na fronteira): a do motor de IA quando existe,
@@ -97,6 +112,9 @@ public record TenantControlStateDto(
 /// </summary>
 public interface IControlStateDashboardQuery
 {
-    /// <summary>Estado de cada controle avaliado do tenant ambiente, ordenado pelo código NIST.</summary>
+    /// <summary>
+    /// Estado de CADA subcategoria do catálogo ativo para o tenant, ordenado pelo código NIST — os
+    /// avaliados com o estado real e os SEM estado como NotEvaluated (AUD-002).
+    /// </summary>
     Task<IReadOnlyList<TenantControlStateDto>> GetDashboardAsync(CancellationToken ct = default);
 }

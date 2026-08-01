@@ -1,15 +1,16 @@
-using Microsoft.EntityFrameworkCore;
 using AegisScore.Application.Queries;
 using AegisScore.Infrastructure.Persistence;
+using AegisScore.Infrastructure.Scoring;
 
 namespace AegisScore.Infrastructure.Queries;
 
 /// <summary>
-/// Consolida o Score Atual do tenant em tempo real sobre o AegisScoreDbContext. Replica EXATAMENTE a
-/// fórmula do <c>AegisScoreSnapshotWorker</c> — SUM(CurrentScore) / SUM(Subcategory.MaxScorePoints)
-/// sobre os <c>TenantControlState</c> avaliados — para o KPI instantâneo e a foto diária jamais
-/// divergirem no mesmo dia. O Global Query Filter (fail-closed) já restringe ao tenant ambiente
-/// resolvido do JWT: a consulta não recebe nem filtra TenantId explicitamente.
+/// [AEGIS-AUD-001/002] Consolida o Score Atual do tenant em tempo real sobre o AegisScoreDbContext, pela
+/// autoridade de agregação ÚNICA <see cref="AegisScoreAggregator"/> (a MESMA que a foto diária do
+/// <c>AegisScoreSnapshotWorker</c>). O numerador e o peso AVALIADO consideram só os estados do framework
+/// ATIVO; o peso/contagem ELEGÍVEIS vêm do catálogo ativo — o denominador de COBERTURA, que separa "sem
+/// score" de "0%". O Global Query Filter (fail-closed) restringe os estados ao tenant do JWT; o catálogo é
+/// reference data global (sem filtro), igual para todos os tenants.
 /// </summary>
 public sealed class CurrentScoreQuery : ICurrentScoreQuery
 {
@@ -19,13 +20,10 @@ public sealed class CurrentScoreQuery : ICurrentScoreQuery
 
     public async Task<CurrentScoreDto> GetCurrentAsync(CancellationToken ct = default)
     {
-        // Agregações no banco (o cast p/ int? cobre o SUM de zero linhas — NULL no SQL — num tenant
-        // ainda sem avaliações, sem estourar). Idêntico ao worker, garantindo o mesmo número no HUD.
-        var states = _db.TenantControlStates;
-        var achieved = await states.SumAsync(x => (int?)x.CurrentScore, ct) ?? 0;
-        var max = await states.SumAsync(x => (int?)x.Subcategory!.MaxScorePoints, ct) ?? 0;
-        var evaluated = await states.CountAsync(ct);
-
-        return new CurrentScoreDto(achieved, max, evaluated);
+        // Agregação compartilhada com a foto diária: estados restritos ao framework ATIVO (numerador +
+        // denominador do score) e universo elegível do catálogo ativo (denominador de cobertura).
+        var r = await AegisScoreAggregator.AggregateAsync(_db, ct);
+        return new CurrentScoreDto(
+            r.AchievedScore, r.EvaluatedMaxScore, r.EvaluatedControls, r.EligibleMaxScore, r.EligibleControls);
     }
 }
