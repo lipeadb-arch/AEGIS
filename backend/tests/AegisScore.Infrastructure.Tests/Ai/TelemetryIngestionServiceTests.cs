@@ -77,12 +77,12 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
                 TenantA, SubCode, ControlStatus.MitigatedByThirdParty, "documental: política vigente",
                 VerdictSource.Documentary);
 
-        // 2) Chega a telemetria: a ferramenta PROVA a implementação efetiva → Compliant (100%).
+        // 2) Chega a telemetria: a REGRA DETERMINÍSTICA prova a implementação → Compliant (100%). A IA não decide.
         await using (var db = NewContext(TenantA))
         {
-            var ingestion = IngestionFor(db, TenantA, new FakeLlmClient(ControlStatus.Compliant, "MFA aplicado no host"));
+            var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
             var verdict = await ingestion.IngestAsync(new TelemetrySignal(
-                "Microsoft Defender", "MFA enforced", "High", SubCode, "{\"mfa\":true,\"result\":\"success\"}"));
+                "Microsoft Defender", "Threat blocked", "High", SubCode, "{\"action\":\"blocked\",\"result\":\"success\"}"));
 
             verdict.Status.Should().Be(ControlStatus.Compliant);
             verdict.AwardedScore.Should().Be(MaxPoints, "a telemetria é autoritativa e concede 100%");
@@ -95,7 +95,44 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
         state.Status.Should().Be(ControlStatus.Compliant);
         state.CurrentScore.Should().Be(MaxPoints, "telemetria sobrescreve o teto documental de 50% e vai a 100%");
         state.LastVerdictSource.Should().Be(VerdictSource.Telemetry, "a procedência técnica assume o estado");
-        state.AiEvidence.Should().Contain("MFA aplicado no host");
+    }
+
+    // ---- [AEGIS-AUD-019] A IA NÃO decide conformidade -------------------------------
+
+    [Fact]
+    public async Task IngestCategory_IaTentaStatusConflitante_NaoAlteraOVeredictoDeterministico()
+    {
+        await using var db = NewContext(TenantA);
+        // A IA "insiste" em Compliant, mas a REGRA determinística julga o payload NonCompliant (MFA 50%).
+        var ingestion = IngestionFor(db, TenantA, new FakeLlmClient(ControlStatus.Compliant, "tudo certo (fake)"));
+
+        var verdict = await ingestion.IngestCategoryAsync(IdentitySignal(
+            privilegedMfa: 50, standardMfa: 90, staleAccounts: 0, conditionalAccess: true));
+
+        verdict.Status.Should().Be(ControlStatus.NonCompliant, "o status vem da regra determinística, não do LLM");
+        verdict.AwardedScore.Should().Be(0);
+
+        await using var assert = NewContext(TenantA);
+        var state = await assert.TenantControlStates.SingleAsync();
+        state.Status.Should().Be(ControlStatus.NonCompliant);
+        state.AiEvidence.Should().NotContain("fake", "a justificativa persistida é a determinística, nunca a do LLM");
+    }
+
+    [Fact]
+    public async Task IngestCategory_IaIndisponivel_NaoImpedeVeredictoDeterministicoEScore()
+    {
+        await using var db = NewContext(TenantA);
+        // O provedor de IA lança — o veredito determinístico deve ser calculado e persistido mesmo assim.
+        var ingestion = IngestionFor(db, TenantA, new ThrowingLlmClient());
+
+        var verdict = await ingestion.IngestCategoryAsync(IdentitySignal(
+            privilegedMfa: 100, standardMfa: 100, staleAccounts: 0, conditionalAccess: true));
+
+        verdict.Status.Should().Be(ControlStatus.Compliant, "a indisponibilidade da IA não impede o veredito determinístico");
+        verdict.AwardedScore.Should().Be(MaxPoints);
+
+        await using var assert = NewContext(TenantA);
+        (await assert.TenantControlStates.SingleAsync()).CurrentScore.Should().Be(MaxPoints);
     }
 
     [Fact]
@@ -706,5 +743,12 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
 
         public Task<string> ExecutePromptAsync(string systemPrompt, string userPrompt, CancellationToken ct = default) =>
             Task.FromResult(_json);
+    }
+
+    /// <summary>ILLMClient que SEMPRE falha — prova que a indisponibilidade da IA não impede o score determinístico.</summary>
+    private sealed class ThrowingLlmClient : ILLMClient
+    {
+        public Task<string> ExecutePromptAsync(string systemPrompt, string userPrompt, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Provedor de IA indisponível (teste).");
     }
 }

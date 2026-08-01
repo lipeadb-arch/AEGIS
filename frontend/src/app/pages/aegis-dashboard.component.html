@@ -24,7 +24,28 @@
   <section class="cards">
     <article class="card ok hero">
       <div class="k">Score Atual</div>
-      <div class="v">{{ currentScore().toFixed(1) }}<small>%</small></div>
+      <div class="v">
+        @if (currentScore(); as s) {
+          @if (s.percentage === null) {
+            Não avaliado
+          } @else {
+            {{ s.percentage.toFixed(1) }}<small>%</small>
+          }
+        } @else {
+          <span class="v-loading" aria-label="Carregando score">···</span>
+        }
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="k">Cobertura de Avaliação</div>
+      <div class="v">
+        @if (currentScore(); as s) {
+          {{ s.coveragePercentage.toFixed(1) }}<small>%</small>
+        } @else {
+          <span class="v-loading" aria-label="Carregando cobertura">···</span>
+        }
+      </div>
     </article>
 
     <article class="card warn">

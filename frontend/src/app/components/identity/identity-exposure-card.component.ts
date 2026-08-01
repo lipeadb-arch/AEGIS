@@ -239,6 +239,8 @@ export class IdentityExposureCardComponent {
         return 'Não conforme';
       case 'MitigatedByThirdParty':
         return 'Mitigado · 50%';
+      case 'NotEvaluated':
+        return 'Não avaliado';
     }
   }
 
@@ -250,6 +252,8 @@ export class IdentityExposureCardComponent {
         return '✕';
       case 'MitigatedByThirdParty':
         return '◐';
+      case 'NotEvaluated':
+        return '○';
     }
   }
 

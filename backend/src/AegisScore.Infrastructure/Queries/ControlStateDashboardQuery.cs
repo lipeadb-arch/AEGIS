@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using AegisScore.Application.Abstractions;
 using AegisScore.Application.Assessment;
 using AegisScore.Application.Queries;
 using AegisScore.Application.Telemetry.Models;
@@ -11,64 +12,72 @@ using AegisScore.Infrastructure.Scoring;
 namespace AegisScore.Infrastructure.Queries;
 
 /// <summary>
-/// Lê a matriz de conformidade do tenant sobre o AegisScoreDbContext.
+/// [AEGIS-AUD-002] Lê a matriz de conformidade do tenant sobre o AegisScoreDbContext, PARTINDO DO CATÁLOGO
+/// ATIVO e associando os estados do tenant — de modo a devolver TAMBÉM as subcategorias sem estado como
+/// <c>NotEvaluated</c> (distintas de <c>NonCompliant</c>), fora do denominador do score e dentro da lacuna
+/// de cobertura. Nenhuma linha artificial com zero é gravada: NotEvaluated existe só no read model.
 ///
-/// Zero Trust: NÃO há <c>.Where(x => x.TenantId == ...)</c>. O Global Query Filter (fail-closed) já
-/// restringe TenantControlStates ao tenant ambiente resolvido do JWT — delegar o recorte ao filtro É o
-/// próprio isolamento. Um <c>Where</c> explícito seria pior: daria a falsa impressão de que a segurança
-/// depende desta linha e não do DbContext, e mascararia um filtro removido por acidente.
-///
-/// Performance: <c>AsNoTracking</c> (leitura pura, sem change tracker) e projeção direta no banco — o
-/// SELECT carrega apenas as 7 colunas do DTO, nunca a entidade inteira nem o grafo da subcategoria.
+/// Zero Trust / fail-closed: o tenant é resolvido do <see cref="ITenantContext"/> (claim <c>tenant_id</c>);
+/// sem tenant, retorna VAZIO — o catálogo é global e não pode vazar sozinho. Os estados são recortados pelo
+/// Global Query Filter (não há <c>.Where(TenantId)</c> explícito).
 /// </summary>
 public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
 {
     private readonly AegisScoreDbContext _db;
+    private readonly ITenantContext _tenant;
     private readonly ScoringOptions _options;
     private readonly TimeProvider _clock;
 
     public ControlStateDashboardQuery(
-        AegisScoreDbContext db, IOptions<ScoringOptions> options, TimeProvider clock)
+        AegisScoreDbContext db, ITenantContext tenant, IOptions<ScoringOptions> options, TimeProvider clock)
     {
         _db = db;
+        _tenant = tenant;
         _options = options.Value;
         _clock = clock;
     }
 
     public async Task<IReadOnlyList<TenantControlStateDto>> GetDashboardAsync(CancellationToken ct = default)
     {
-        // Projeta as colunas no banco (inclui os blobs crus); a desserialização roda em memória — o EF não
-        // traduz JSON→objeto no SQL, e o payload por tenant é pequeno. Os enums vêm CRUS (não .ToString()):
-        // o status ainda decide a severidade-proxy, então precisamos dele tipado antes de achatar o DTO.
-        var rows = await _db.TenantControlStates
+        // Fail-closed: sem tenant ambiente, nada é projetado — o catálogo é global e não pode vazar sozinho.
+        if (_tenant.TenantId is null)
+            return Array.Empty<TenantControlStateDto>();
+
+        // A projeção PARTE do catálogo ativo (reference data global), ordenado pelo código NIST.
+        var catalog = await (from s in _db.Subcategories.AsNoTracking()
+                             join c in _db.Categories on s.CategoryId equals c.Id
+                             join f in _db.Functions on c.FunctionId equals f.Id
+                             join fv in _db.FrameworkVersions on f.FrameworkVersionId equals fv.Id
+                             where fv.IsActive
+                             orderby s.Code
+                             select new CatalogEntry(s.Id, s.Code, s.MaxScorePoints)).ToListAsync(ct);
+
+        // Estados AVALIADOS do tenant (Global Query Filter fail-closed). Enums CRUS: o status decide a
+        // severidade-proxy e o motivo antes de achatar o DTO.
+        var states = await _db.TenantControlStates
             .AsNoTracking()
-            .OrderBy(x => x.Subcategory!.Code)
             .Select(x => new Row(
                 x.SubcategoryId,
                 x.Subcategory!.Code,
                 x.CurrentScore,
-                x.Subcategory!.MaxScorePoints,   // denominador do catálogo, via JOIN — jamais desnormalizado
+                x.Subcategory!.MaxScorePoints,
                 x.Status,
                 x.AiEvidence,
                 x.LastEvaluatedAt,
                 x.LastVerdictSource,
                 x.ChecksJson,
                 x.IntelligenceJson,
-                x.MissingRequirements))   // jsonb TIPADO — o ValueConverter já entrega a lista pronta
+                x.MissingRequirements))
             .ToListAsync(ct);
+        var stateBySub = states.ToDictionary(r => r.SubcategoryId);
 
-        // Contexto para a auditoria de FRESCOR (ver EnrichWithStaleness): as exigências de evidência do
-        // catálogo (reference data global) e a cobertura documental ACEITA deste tenant. Duas consultas
-        // fixas, fora do laço — nunca N+1.
-        var codes = rows.Select(r => r.SubcategoryCode).ToList();
+        // Contexto de FRESCOR (ver EnrichWithStaleness) apenas para os avaliados — NotEvaluated não tem
+        // sinal a envelhecer. Duas consultas fixas, fora do laço — nunca N+1.
+        var codes = states.Select(r => r.SubcategoryCode).ToList();
         var rules = await _db.AssessmentRules.AsNoTracking()
             .Where(r => codes.Contains(r.SubcategoryCode))
             .ToDictionaryAsync(r => r.SubcategoryCode, r => r.EvidenceRequirements, ct);
 
-        // "Verificado" = processado E ACEITO pelo RAG, não apenas enviado. O DocumentAnalysisWorker só
-        // grava Coberto quando a confiança passa do limiar; Parcial significa que o RAG NÃO se convenceu.
-        // A fonte precisa incluir Document: cobertura vinda só de Interview é auto-declaração, e tratá-la
-        // como prova documental deixaria o auditado atestar a si mesmo.
         var verifiedCoverage = await _db.SubcategoryCoverages.AsNoTracking()
             .Where(c => c.Status == CoverageStatus.Coberto
                      && (c.EvidenceSource == CoverageEvidenceSource.Document
@@ -78,8 +87,27 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
         var verified = verifiedCoverage.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var now = _clock.GetUtcNow();
-        return rows.Select(r => EnrichWithStaleness(ToDto(r), r, rules, verified, now)).ToList();
+        var result = new List<TenantControlStateDto>(catalog.Count);
+        foreach (var entry in catalog)
+        {
+            result.Add(stateBySub.TryGetValue(entry.Id, out var r)
+                ? EnrichWithStaleness(ToDto(r), r, rules, verified, now)   // avaliado
+                : NotEvaluated(entry));                                     // sem estado → NotEvaluated
+        }
+        return result;
     }
+
+    /// <summary>Subcategoria do catálogo SEM estado — NotEvaluated no read model, nunca uma linha zero no banco.</summary>
+    private static TenantControlStateDto NotEvaluated(CatalogEntry entry) =>
+        new(entry.Id, entry.Code, 0, entry.MaxScorePoints,
+            NotEvaluatedStatus, null, null, null, Array.Empty<ComplianceCheck>())
+        {
+            Severity = nameof(SeverityLevel.Informational),
+            Reason = "Sem evidência avaliada para este controle.",
+        };
+
+    /// <summary>Status de fronteira (não existe no enum de domínio) para uma subcategoria sem TenantControlState.</summary>
+    private const string NotEvaluatedStatus = "NotEvaluated";
 
     /// <summary>
     /// Acrescenta ao DTO as lacunas que só a LEITURA enxerga: o sinal que envelheceu e a cobertura
@@ -88,11 +116,6 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
     ///
     /// ADITIVO por decisão: as lacunas persistidas pelo motor nunca são apagadas — ele viu o payload cru,
     /// esta camada só vê datas. Uma lacuna derivada só entra quando não há já uma da mesma natureza.
-    ///
-    /// ⚠️ A idade vem de <c>TenantControlState.LastEvaluatedAt</c> com fonte Telemetry, e NÃO de
-    /// <c>EvidenceSignal.CollectedAt</c>: a esteira de telemetria (/telemetry/*) não grava EvidenceSignal
-    /// — hoje só o MicrosoftSecureScoreConnector o faz. Cronometrar pelo EvidenceSignal marcaria como
-    /// obsoleto TODO controle avaliado pela esteira principal, que é a maioria deles.
     /// </summary>
     private TenantControlStateDto EnrichWithStaleness(
         TenantControlStateDto dto, Row r,
@@ -114,10 +137,11 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
             .Where(d => !known.Contains(d.Type.ToString()))
             .Select(d => new MissingRequirementDto(d.Type.ToString(), d.SourceIdentifier, d.Description))
             .ToList();
+        if (additions.Count == 0)
+            return dto;
 
-        return additions.Count == 0
-            ? dto
-            : dto with { MissingRequirements = dto.MissingRequirements.Concat(additions).ToList() };
+        var mergedMissing = dto.MissingRequirements.Concat(additions).ToList();
+        return dto with { MissingRequirements = mergedMissing, Reason = ReasonFor(r.Status, mergedMissing) };
     }
 
     /// <summary>
@@ -128,11 +152,17 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
     {
         var intel = SafeDeserialize<ControlIntelligence>(r.IntelligenceJson);
 
+        var missing = r.MissingRequirements
+            .Select(m => new MissingRequirementDto(m.Type.ToString(), m.SourceIdentifier, m.Description))
+            .ToList();
+
         return new TenantControlStateDto(
             r.SubcategoryId, r.SubcategoryCode, r.ScorePoints, r.MaxScorePoints,
             r.Status.ToString(), r.AiEvidence, r.LastEvaluatedAt, r.LastVerdictSource.ToString(),
             SafeDeserialize<IReadOnlyList<ComplianceCheck>>(r.ChecksJson) ?? Array.Empty<ComplianceCheck>())
         {
+            Reason = ReasonFor(r.Status, missing),
+
             // A severidade do motor manda; sem ela, o proxy derivado do status (o card nunca fica sem badge).
             Severity = (intel?.Severity ?? SeverityLevels.FromStatus(r.Status)).ToString(),
             TelemetryEvidence = intel?.TelemetryEvidence,
@@ -147,14 +177,20 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
             // seria forjar histórico de conformidade. Ver ComplianceHistoryPoint.
             HistoricalCompliance = Array.Empty<ComplianceHistoryPoint>(),
 
-            // Enum → nome na fronteira (ver MissingRequirementDto): o Angular decide o ícone por
-            // "Telemetry"/"Documentation", nunca pela posição do enum no domínio.
-            MissingRequirements = r.MissingRequirements
-                .Select(m => new MissingRequirementDto(
-                    m.Type.ToString(), m.SourceIdentifier, m.Description))
-                .ToList(),
+            MissingRequirements = missing,
         };
     }
+
+    /// <summary>[AEGIS-AUD-002] Motivo legível de por que o controle não pontua (ou pontua parcialmente).</summary>
+    private static string? ReasonFor(ControlStatus status, IReadOnlyList<MissingRequirementDto> missing) => status switch
+    {
+        ControlStatus.Compliant => null,   // pontua integralmente — não há motivo de não-pontuação
+        ControlStatus.MitigatedByThirdParty =>
+            "Risco coberto por controle compensatório/terceiro (crédito parcial de 50%).",
+        _ => missing.Count > 0
+            ? missing[0].Description                                    // a lacuna concreta (falta log/documento)
+            : "Não conformidade comprovada pela evidência avaliada.",  // reprovação de mérito
+    };
 
     /// <summary>
     /// Desserializa um blob persistido; tolera nulo/JSON inválido (devolve null, nunca lança). Um blob
@@ -166,6 +202,9 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
         try { return JsonSerializer.Deserialize<T>(json); }
         catch (JsonException) { return null; }
     }
+
+    /// <summary>Entrada do catálogo ativo (reference data global) para a projeção catalog-first.</summary>
+    private sealed record CatalogEntry(Guid Id, string Code, int MaxScorePoints);
 
     /// <summary>Projeção intermediária: as colunas cruas do banco, antes da desserialização dos blobs.</summary>
     private sealed record Row(

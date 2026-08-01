@@ -11,11 +11,12 @@ using AegisScore.Infrastructure.Persistence;
 namespace AegisScore.Infrastructure.Connectors;
 
 /// <summary>
-/// [AEGIS-AUD-043] Autoridade determinística de mapeamento (Capability, SignalKey) → subcategorias NIST, no
-/// framework ATIVO. Lê APENAS reference data (<see cref="SignalMapping"/>/catálogo, sem query filter), então
-/// funciona mesmo no endpoint de push (anônimo, sem tenant ambiente). O cliente/adaptador não é autoridade
-/// e o LLM não participa. Só devolve códigos que EXISTEM no framework ativo — um sinal sem mapping (ou cujo
-/// mapping não tem nenhum código válido) fica AUSENTE do dicionário, e o chamador o rejeita (push) ou pula (pull).
+/// [AEGIS-AUD-043/019] Autoridade determinística de mapeamento (Capability, SignalKey) → subcategorias NIST
+/// (+ <see cref="SignalMapping.ScoringHint"/>) no framework ATIVO. Lê APENAS reference data
+/// (<see cref="SignalMapping"/>/catálogo, sem query filter), então funciona mesmo no endpoint de push
+/// (anônimo, sem tenant ambiente). O cliente/adaptador não é autoridade e o LLM não participa. Só devolve
+/// códigos que EXISTEM no framework ativo — um sinal sem mapping (ou cujo mapping não tem nenhum código
+/// válido) fica AUSENTE do dicionário, e o chamador o rejeita (push) ou pula (pull).
 /// </summary>
 public sealed class NistSignalMapper : INistSignalMapper
 {
@@ -23,10 +24,10 @@ public sealed class NistSignalMapper : INistSignalMapper
 
     public NistSignalMapper(AegisScoreDbContext db) => _db = db;
 
-    public async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> ResolveAsync(
+    public async Task<IReadOnlyDictionary<string, SignalMappingResolution>> ResolveAsync(
         ConnectorCapability capability, IReadOnlyCollection<string> signalKeys, CancellationToken ct)
     {
-        var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        var result = new Dictionary<string, SignalMappingResolution>(StringComparer.Ordinal);
         var keys = signalKeys.Where(k => !string.IsNullOrWhiteSpace(k)).Select(k => k.Trim()).Distinct().ToList();
         if (keys.Count == 0) return result;
 
@@ -51,7 +52,7 @@ public sealed class NistSignalMapper : INistSignalMapper
         {
             var codes = m.SubcategoryCodes.Where(validCodes.Contains).Distinct().ToList();
             if (codes.Count > 0)
-                result[m.SignalKey] = codes;
+                result[m.SignalKey] = new SignalMappingResolution(codes, m.ScoringHint);
         }
         return result;
     }

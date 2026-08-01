@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using AegisScore.Application.Scoring;
 using AegisScore.Domain;
 
 namespace AegisScore.Infrastructure.Persistence;
@@ -211,18 +212,29 @@ public static class FrameworkSeeder
                 string.Join(", ", unknown.Select(x => $"{x.SignalKey}->{x.Code}")) +
                 ". The mappings are out of sync with the NIST catalog.");
 
-        var existing = (await db.SignalMappings
-                .Where(m => m.FrameworkVersionId == fv.Id)
-                .Select(m => new { m.Capability, m.SignalKey })
-                .ToListAsync(ct))
-            .Select(x => (x.Capability, x.SignalKey))
-            .ToHashSet();
+        var existingMappings = await db.SignalMappings
+            .Where(m => m.FrameworkVersionId == fv.Id)
+            .ToListAsync(ct);
+        var existingByKey = existingMappings.ToDictionary(m => (m.Capability, m.SignalKey));
 
-        var toAdd = desired.Where(m => !existing.Contains((m.Capability, m.SignalKey))).ToList();
-        if (toAdd.Count == 0) return;
+        // [AEGIS-AUD-019] Backfill IDEMPOTENTE do ScoringHint nos mappings JÁ existentes — não só nos novos:
+        // a regra determinística de scoring v1 é atribuída/atualizada aqui, sem depender de recriar o registro.
+        var changed = false;
+        foreach (var d in desired)
+        {
+            if (existingByKey.TryGetValue((d.Capability, d.SignalKey), out var e) && e.ScoringHint != d.ScoringHint)
+            {
+                e.ScoringHint = d.ScoringHint;
+                changed = true;
+            }
+        }
 
-        db.SignalMappings.AddRange(toAdd);
-        await db.SaveChangesAsync(ct);
+        var toAdd = desired.Where(m => !existingByKey.ContainsKey((m.Capability, m.SignalKey))).ToList();
+        if (toAdd.Count > 0)
+            db.SignalMappings.AddRange(toAdd);
+
+        if (changed || toAdd.Count > 0)
+            await db.SaveChangesAsync(ct);
     }
 
     /// <summary>
@@ -231,24 +243,27 @@ public static class FrameworkSeeder
     /// </summary>
     private static List<SignalMapping> DefaultSignalMappings(Guid fvId) => new()
     {
-        Map(fvId, ConnectorCapability.SecureScore, "secureScore.overall",  "PR.AA-01", "PR.DS-01", "PR.PS-01"),
-        Map(fvId, ConnectorCapability.SecureScore, "secureScore.identity", "PR.AA-01", "PR.AA-03", "PR.AA-05"),
-        Map(fvId, ConnectorCapability.SecureScore, "secureScore.data",     "PR.DS-01", "PR.DS-02", "PR.DS-10"),
-        Map(fvId, ConnectorCapability.SecureScore, "secureScore.device",   "PR.PS-01", "PR.PS-05", "DE.CM-01"),
-        Map(fvId, ConnectorCapability.SecureScore, "secureScore.apps",     "PR.PS-06", "DE.CM-09"),
-        // SIEM: um alerta correlacionado de alta severidade endereça análise de evento adverso + monitoração.
-        Map(fvId, ConnectorCapability.Siem,        "siem.alert.highSeverity", "DE.AE-02", "DE.CM-01"),
-        // EDR: uma ameaça bloqueada no endpoint endereça monitoração contínua + mitigação de incidente.
-        Map(fvId, ConnectorCapability.Edr,         "edr.threat.blocked", "DE.CM-01", "RS.MI-01"),
+        // Secure Score: percentual em que MAIOR é melhor (thresholds explícitos na fórmula v1).
+        Map(fvId, ConnectorCapability.SecureScore, "secureScore.overall",  EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.AA-01", "PR.DS-01", "PR.PS-01"),
+        Map(fvId, ConnectorCapability.SecureScore, "secureScore.identity", EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.AA-01", "PR.AA-03", "PR.AA-05"),
+        Map(fvId, ConnectorCapability.SecureScore, "secureScore.data",     EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.DS-01", "PR.DS-02", "PR.DS-10"),
+        Map(fvId, ConnectorCapability.SecureScore, "secureScore.device",   EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.PS-01", "PR.PS-05", "DE.CM-01"),
+        Map(fvId, ConnectorCapability.SecureScore, "secureScore.apps",     EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.PS-06", "DE.CM-09"),
+        // SIEM: um alerta correlacionado de alta severidade COMPROVA análise de evento adverso + monitoração.
+        Map(fvId, ConnectorCapability.Siem,        "siem.alert.highSeverity", EvidenceSignalEvaluator.EventControlProven, "DE.AE-02", "DE.CM-01"),
+        // EDR: uma ameaça bloqueada no endpoint COMPROVA monitoração contínua + mitigação de incidente.
+        Map(fvId, ConnectorCapability.Edr,         "edr.threat.blocked", EvidenceSignalEvaluator.EventControlProven, "DE.CM-01", "RS.MI-01"),
     };
 
-    private static SignalMapping Map(Guid fvId, ConnectorCapability capability, string signalKey, params string[] codes) => new()
+    private static SignalMapping Map(
+        Guid fvId, ConnectorCapability capability, string signalKey, string scoringHint, params string[] codes) => new()
     {
         FrameworkVersionId = fvId,
         Capability = capability,
         SignalKey = signalKey,
         SubcategoryCodes = codes.ToList(),
         Weight = 1.0,
+        ScoringHint = scoringHint,
     };
 
     /// <summary>

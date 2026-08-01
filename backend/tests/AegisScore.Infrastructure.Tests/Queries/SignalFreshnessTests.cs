@@ -194,6 +194,7 @@ public sealed class SignalFreshnessTests : IDisposable
         await using var db = NewContext(TenantA);
         var query = new ControlStateDashboardQuery(
             db,
+            new SystemTenantContext(TenantA),
             Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = freshnessHours }),
             new FakeTimeProvider(Now));
 

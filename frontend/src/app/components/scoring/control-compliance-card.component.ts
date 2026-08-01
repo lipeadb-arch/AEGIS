@@ -714,6 +714,8 @@ export class ControlComplianceCardComponent {
         return 'Não conforme';
       case 'MitigatedByThirdParty':
         return 'Parcial · 50%';
+      case 'NotEvaluated':
+        return 'Não avaliado';
     }
   }
 

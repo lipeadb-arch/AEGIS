@@ -64,8 +64,8 @@ const CONTROL_META: Record<string, { name: string; platform: IdentityPlatform }>
   'GV.RR-01': { name: 'Governança de Identidade · Menor Privilégio', platform: 'Entra' },
 };
 
-/** NonCompliant primeiro (salta aos olhos), depois compensado, depois conforme; empate por código. */
-const STATUS_RANK: Record<ControlStatus, number> = { NonCompliant: 0, MitigatedByThirdParty: 1, Compliant: 2 };
+/** NonCompliant primeiro (salta aos olhos), depois compensado, conforme e, por fim, não avaliado; empate por código. */
+const STATUS_RANK: Record<ControlStatus, number> = { NonCompliant: 0, MitigatedByThirdParty: 1, Compliant: 2, NotEvaluated: 3 };
 
 /** Projeta um veredito de controle numa linha de achado da tabela tática. */
 export function toIdentityFinding(v: IdentityVerdict): IdentityFinding {

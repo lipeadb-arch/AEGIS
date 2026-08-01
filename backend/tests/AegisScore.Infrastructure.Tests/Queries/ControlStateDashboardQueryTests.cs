@@ -14,7 +14,8 @@ namespace AegisScore.Infrastructure.Tests.Queries;
 /// <summary>
 /// Testes da <see cref="ControlStateDashboardQuery"/> sobre SQLite in-memory. Compilar não prova que uma
 /// query EF roda: a tradução LINQ → SQL falha em RUNTIME. Estes testes executam a projeção de verdade —
-/// incluindo o JOIN com o catálogo e a conversão dos enums em string — e travam o isolamento fail-closed.
+/// incluindo o JOIN com o catálogo, a projeção CATALOG-FIRST (NotEvaluated para subcategorias sem estado —
+/// AUD-002) e a conversão dos enums em string — e travam o isolamento fail-closed.
 /// </summary>
 public sealed class ControlStateDashboardQueryTests : IDisposable
 {
@@ -38,21 +39,31 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
     public void Dispose() => _connection.Dispose();
 
     [Fact]
-    public async Task GetDashboardAsync_ProjetaOEstadoComCodigoEPesoDoCatalogo()
+    public async Task GetDashboardAsync_ProjetaOEstadoAvaliado_EODoCatalogoSemEstadoComoNotEvaluated()
     {
         await SeedStateAsync(TenantA, _prAaId, ControlStatus.Compliant, 20, VerdictSource.Telemetry, "telemetria: MFA ativo");
 
         await using var db = NewContext(TenantA);
-        var rows = await QueryFor(db).GetDashboardAsync();
+        var rows = await QueryFor(db, TenantA).GetDashboardAsync();
 
-        var row = rows.Should().ContainSingle().Subject;
+        // AUD-002: a projeção parte do catálogo — PR.AA-01 avaliado + GV.OC-01 SEM estado (NotEvaluated).
+        rows.Should().HaveCount(2);
+
+        var row = rows.Single(r => r.SubcategoryCode == "PR.AA-01");
         row.SubcategoryId.Should().Be(_prAaId);
-        row.SubcategoryCode.Should().Be("PR.AA-01", "o código vem do JOIN com o catálogo");
         row.ScorePoints.Should().Be(20);
         row.MaxScorePoints.Should().Be(20, "o denominador vem do catálogo, nunca do estado do tenant");
         row.ControlStatus.Should().Be("Compliant", "enums cruzam a fronteira como string");
         row.LastVerdictSource.Should().Be("Telemetry");
         row.AiEvidence.Should().Be("telemetria: MFA ativo");
+        row.Reason.Should().BeNull("Compliant pontua integralmente — não há motivo de não-pontuação");
+
+        var notEval = rows.Single(r => r.SubcategoryCode == "GV.OC-01");
+        notEval.ControlStatus.Should().Be("NotEvaluated", "subcategoria sem TenantControlState não é NonCompliant");
+        notEval.ScorePoints.Should().Be(0);
+        notEval.LastEvaluatedAt.Should().BeNull();
+        notEval.LastVerdictSource.Should().BeNull();
+        notEval.Reason.Should().NotBeNullOrEmpty("NotEvaluated carrega um motivo legível");
     }
 
     [Fact]
@@ -62,7 +73,7 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
         await SeedStateAsync(TenantA, _gvOcId, ControlStatus.MitigatedByThirdParty, 2, VerdictSource.Documentary, "b");
 
         await using var db = NewContext(TenantA);
-        var rows = await QueryFor(db).GetDashboardAsync();
+        var rows = await QueryFor(db, TenantA).GetDashboardAsync();
 
         rows.Select(r => r.SubcategoryCode).Should().ContainInOrder("GV.OC-01", "PR.AA-01");
         rows.Single(r => r.SubcategoryCode == "GV.OC-01").LastVerdictSource.Should().Be("Documentary");
@@ -75,10 +86,15 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
         await SeedStateAsync(TenantB, _gvOcId, ControlStatus.NonCompliant, 0, VerdictSource.Telemetry, "de B");
 
         await using var dbA = NewContext(TenantA);
-        var rowsA = await QueryFor(dbA).GetDashboardAsync();
+        var rowsA = await QueryFor(dbA, TenantA).GetDashboardAsync();
 
-        // Sem nenhum .Where(TenantId) na query: o Global Query Filter é quem isola.
-        rowsA.Should().ContainSingle().Which.SubcategoryCode.Should().Be("PR.AA-01");
+        // Sem nenhum .Where(TenantId) na query: o Global Query Filter isola. O tenant A vê PR.AA-01 avaliado
+        // e GV.OC-01 como NotEvaluated — jamais o estado "de B".
+        rowsA.Should().HaveCount(2);
+        rowsA.Single(r => r.SubcategoryCode == "PR.AA-01").AiEvidence.Should().Be("de A");
+        var gv = rowsA.Single(r => r.SubcategoryCode == "GV.OC-01");
+        gv.ControlStatus.Should().Be("NotEvaluated", "o tenant A não vê o estado do tenant B");
+        gv.AiEvidence.Should().BeNull();
     }
 
     [Fact]
@@ -86,9 +102,9 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
     {
         await SeedStateAsync(TenantA, _prAaId, ControlStatus.Compliant, 20, VerdictSource.Telemetry, "de A");
 
-        // Fail-CLOSED: sem tenant ambiente o filtro não vaza nada — o oposto de expor a base inteira.
+        // Fail-CLOSED: sem tenant ambiente NADA é projetado — nem o catálogo global (que existe para todos).
         await using var db = NewContext(null);
-        var rows = await QueryFor(db).GetDashboardAsync();
+        var rows = await QueryFor(db, null).GetDashboardAsync();
 
         rows.Should().BeEmpty();
     }
@@ -101,11 +117,12 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
         await SeedStateAsync(TenantA, _prAaId, ControlStatus.NonCompliant, 0, VerdictSource.Telemetry, "reprovado", checksJson);
 
         await using var db = NewContext(TenantA);
-        var row = (await QueryFor(db).GetDashboardAsync()).Should().ContainSingle().Subject;
+        var row = (await QueryFor(db, TenantA).GetDashboardAsync()).Single(r => r.SubcategoryCode == "PR.AA-01");
 
         row.Checks.Should().ContainSingle();
         row.Checks[0].Name.Should().Be("Endpoint Encrypted");
         row.Checks[0].Passed.Should().BeFalse("o checklist técnico atravessa persistência → leitura íntegro");
+        row.Reason.Should().NotBeNullOrEmpty("NonCompliant carrega o motivo da reprovação");
     }
 
     // ---- infraestrutura do teste ----------------------------------------------------
@@ -160,8 +177,10 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
     /// <summary>
     /// A consulta com a auditoria de frescor DESLIGADA (0 horas) — estes casos exercitam a projeção do
     /// dashboard, não o TTL. O relógio real serve porque, sem janela, nenhuma data é comparada.
-    /// O TTL tem cobertura própria em <c>SignalFreshnessTests</c>.
+    /// O TTL tem cobertura própria em <c>SignalFreshnessTests</c>. O tenant vem do SystemTenantContext,
+    /// igual ao do DbContext (fail-closed).
     /// </summary>
-    private static ControlStateDashboardQuery QueryFor(AegisScoreDbContext db) =>
-        new(db, Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = 0 }), TimeProvider.System);
+    private static ControlStateDashboardQuery QueryFor(AegisScoreDbContext db, Guid? tenantId) =>
+        new(db, new SystemTenantContext(tenantId),
+            Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = 0 }), TimeProvider.System);
 }
