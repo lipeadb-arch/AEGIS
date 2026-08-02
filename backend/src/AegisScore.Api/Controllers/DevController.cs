@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Scoring;
@@ -25,6 +26,9 @@ public class DevController : ControllerBase
 
     /// <summary>Id FIXO do ativo-raiz do raio de explosão (o AD DC) — o frontend o referencia em environment.ts.</summary>
     public static readonly Guid DemoRootAssetId = Guid.Parse("bb000000-0000-0000-0000-000000000001");
+
+    /// <summary>[AEGIS-AUD-048] Id FIXO do SEGUNDO tenant demo — exercita seleção, troca e isolamento entre dois ambientes.</summary>
+    public static readonly Guid DemoTenantBId = Guid.Parse("aa000000-0000-0000-0000-000000000002");
 
     private readonly DbContextOptions<AegisScoreDbContext> _dbOptions;
     private readonly RiskScoringService _risk;
@@ -312,49 +316,141 @@ public class DevController : ControllerBase
     /// (Re)cria um usuário demo no tenant de demonstração para exercitar o login/refresh da Etapa 2.
     /// Idempotente. Roda sob o SystemTenantContext (DemoTenantId), então o stamping fail-closed é
     /// satisfeito sem depender do header X-Tenant.
+    ///
+    /// [AEGIS-AUD-048] A senha de demonstração é fornecida SOMENTE em runtime (variável de ambiente
+    /// <c>Demo__Password</c> ou user-secret <c>Demo:Password</c>). NÃO há valor padrão versionado; a senha
+    /// nunca é logada nem devolvida pela API. Restrito a DEBUG (<c>#if DEBUG</c>) + ambiente Development.
     /// </summary>
     [HttpPost("seed-user")]
-    public async Task<IActionResult> SeedUser([FromServices] IPasswordHasher hasher, CancellationToken ct)
+    public async Task<IActionResult> SeedUser(
+        [FromServices] IPasswordHasher hasher,
+        [FromServices] IConfiguration config,
+        CancellationToken ct)
     {
         if (!_env.IsDevelopment())
             return NotFound();
 
-        const string email = "analista@demo.aegis";
-        const string password = "Aegis@12345";
+        const string email = "analista@demo.example.com";
+
+        // Senha de runtime: sem ela (ou fraca), recusa com orientação — nunca inventa um padrão.
+        var password = config["Demo:Password"];
+        if (string.IsNullOrWhiteSpace(password) || password.Trim().Length < 8)
+            return Problem(
+                title: "Senha de demonstração ausente ou fraca.",
+                detail: "Defina 'Demo:Password' (>= 8 caracteres) via variável de ambiente Demo__Password " +
+                        "ou user-secrets antes de semear o usuário demo. Nenhum valor padrão é versionado.",
+                statusCode: StatusCodes.Status400BadRequest);
 
         await using var db = new AegisScoreDbContext(_dbOptions, new SystemTenantContext(DemoTenantId));
 
         // A pessoa (global) e o acesso ao tenant demo são entidades distintas desde a normalização
-        // da identidade: a credencial vive na IdentityAccount, o papel no membership.
+        // da identidade: a credencial vive na IdentityAccount, o papel no membership. Idempotente:
+        // re-semear com a senha de runtime atual REDEFINE o hash, para o login demo permanecer
+        // previsível entre execuções sem depender de um valor anterior.
         var account = await db.IdentityAccounts.FirstOrDefaultAsync(a => a.Email == email, ct);
         if (account is null)
         {
             account = new IdentityAccount { Email = email, PasswordHash = hasher.Hash(password) };
             db.IdentityAccounts.Add(account);
-            await db.SaveChangesAsync(ct);
         }
+        else
+        {
+            account.PasswordHash = hasher.Hash(password);
+        }
+        await db.SaveChangesAsync(ct);
 
         var existing = await db.Users.IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.TenantId == DemoTenantId && u.IdentityAccountId == account.Id, ct);
-        if (existing is not null)
-            return Ok(new { message = "Usuário demo já existe.", email, tenantId = DemoTenantId });
-
-        db.Users.Add(new User
+        if (existing is null)
         {
-            TenantId = DemoTenantId,
-            IdentityAccountId = account.Id,
-            DisplayName = "Analista Demo",
-            Role = TenantRole.TenantAdmin,
-            IsActive = true,
+            db.Users.Add(new User
+            {
+                TenantId = DemoTenantId,
+                IdentityAccountId = account.Id,
+                DisplayName = "Analista Demo",
+                Role = TenantRole.TenantAdmin,
+                IsActive = true,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        // A resposta NUNCA inclui a senha — o operador a definiu, então já a conhece.
+        return Ok(new
+        {
+            message = "Usuário demo pronto. Faça login com o e-mail abaixo usando a senha definida em Demo:Password.",
+            email,
+            tenantId = DemoTenantId,
         });
-        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// [AEGIS-AUD-048] (Re)cria um SEGUNDO tenant demo e concede ao MESMO analista acesso a ele, para
+    /// exercitar seleção de ambiente, troca entre dois tenants e isolamento no smoke/demonstração.
+    /// Idempotente. Exige que o usuário demo já exista (rode <c>seed-user</c> antes) — não recria a senha.
+    /// Dados 100% sintéticos; roda sob o SystemTenantContext do próprio tenant B (stamping fail-closed).
+    /// </summary>
+    [HttpPost("seed-second-tenant")]
+    public async Task<IActionResult> SeedSecondTenant(CancellationToken ct)
+    {
+        if (!_env.IsDevelopment())
+            return NotFound();
+
+        const string email = "analista@demo.example.com";
+
+        await using var db = new AegisScoreDbContext(_dbOptions, new SystemTenantContext(DemoTenantBId));
+
+        var account = await db.IdentityAccounts.FirstOrDefaultAsync(a => a.Email == email, ct);
+        if (account is null)
+            return Problem(
+                title: "Usuário demo ausente.",
+                detail: "Rode POST /api/v1/dev/seed-user antes de criar o segundo tenant demo.",
+                statusCode: StatusCodes.Status400BadRequest);
+
+        // Tenant B enxuto e DISTINTO do tenant A (nome/slug próprios; sem evidência → postura "não avaliada",
+        // o que já contrasta com o tenant A após a ingestão e evidencia o isolamento).
+        var tenantB = await db.Tenants.FirstOrDefaultAsync(t => t.Id == DemoTenantBId, ct);
+        if (tenantB is null)
+        {
+            tenantB = new Tenant
+            {
+                Id = DemoTenantBId,
+                Name = "Aegis Secundário (Demo)",
+                Slug = "demo-2",
+                Status = TenantStatus.Active,
+            };
+            db.Tenants.Add(tenantB);
+            db.BusinessUnits.Add(new BusinessUnit
+            {
+                TenantId = DemoTenantBId,
+                Name = "Operações",
+                Code = "OPS",
+                ManagerName = "Equipe Demo B",
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        // Concede ao MESMO analista acesso ao tenant B (idempotente). Com acesso a dois ambientes, o login
+        // passa a exigir seleção explícita — exatamente o fluxo que o smoke valida.
+        var membership = await db.Users.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.TenantId == DemoTenantBId && u.IdentityAccountId == account.Id, ct);
+        if (membership is null)
+        {
+            db.Users.Add(new User
+            {
+                TenantId = DemoTenantBId,
+                IdentityAccountId = account.Id,
+                DisplayName = "Analista Demo",
+                Role = TenantRole.TenantAdmin,
+                IsActive = true,
+            });
+            await db.SaveChangesAsync(ct);
+        }
 
         return Ok(new
         {
-            message = "Usuário demo criado. Faça login com o header X-Tenant apontando para este tenantId.",
-            email,
-            password,
-            tenantId = DemoTenantId,
+            message = "Segundo tenant demo pronto. O usuário demo agora acessa dois ambientes — o login pedirá seleção.",
+            tenantId = DemoTenantBId,
+            slug = tenantB.Slug,
         });
     }
 

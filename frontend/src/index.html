@@ -3,6 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <title>Aegis Score — Maturidade Cibernética</title>
+    <!-- [AEGIS-AUD-048] base href obrigatorio p/ o roteador: sem ele, um refresh/deep-link numa rota
+         aninhada (ex.: /settings/integrations) resolve os assets contra /settings/ e serve tela em branco. -->
+    <base href="/" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
   </head>
   <body>
