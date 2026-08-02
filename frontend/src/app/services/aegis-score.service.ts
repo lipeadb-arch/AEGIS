@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { TenantTrendDto, CurrentScoreDto } from '../models/aegis-score.models';
+import { WorkspacePosture } from '../models/workspace.models';
 import { environment } from '../../environments/environment';
 
 @Injectable({ providedIn: 'root' })
@@ -37,6 +38,17 @@ export class AegisScoreService {
    */
   fetchCurrentScore(): Observable<CurrentScoreDto> {
     return this.http.get<CurrentScoreDto>(`${environment.apiBase}/api/v1/scoring/current`, {
+      headers: { Accept: 'application/json' },
+    });
+  }
+
+  /**
+   * GET /api/v1/scoring/workspace — projeção ÚNICA do workspace: postura geral e por Função NIST (pela
+   * fórmula aegis-score-v1, score anulável + cobertura) + saúde/recência dos conectores. É a MESMA fonte
+   * que alimenta o Dashboard e as seis Funções. Escopado pelo X-Tenant; Bearer via authInterceptor.
+   */
+  fetchWorkspace(): Observable<WorkspacePosture> {
+    return this.http.get<WorkspacePosture>(`${environment.apiBase}/api/v1/scoring/workspace`, {
       headers: { Accept: 'application/json' },
     });
   }

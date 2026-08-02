@@ -116,7 +116,7 @@ export interface AdvisoryDto {
  * Funções NIST que expõem o painel de conformidade por controle. Govern (GV) reusa o MESMO painel embutido
  * na sua Central de Documentos; Identify tem a tela própria de inventário de ativos.
  */
-export type PillarKey = 'PR' | 'DE' | 'RS' | 'RC' | 'GV';
+export type PillarKey = 'PR' | 'DE' | 'RS' | 'RC' | 'GV' | 'ID';
 
 /** Metadados estáticos de um pilar — a config que torna os 4 painéis UM só componente (DRY). */
 export interface PillarMeta {
@@ -175,6 +175,16 @@ export const PILLARS: Record<PillarKey, PillarMeta> = {
     label: 'Govern',
     blurb: 'Cadeia de Suprimentos · Papéis e Responsabilidades · Políticas',
     description: NIST_FUNCTION_DESCRIPTIONS.GV,
+    showsResponseMetrics: false,
+  },
+  // [AEGIS-AUD-021] Identify ganhou a seção comum de postura/controles NIST no Inventário de Ativos (a
+  // landing da Função), reusando o mesmo painel das demais — sem MTTD/MTTR (não há linha do tempo aqui).
+  ID: {
+    key: 'ID',
+    code: 'ID',
+    label: 'Identify',
+    blurb: 'Gestão de Ativos · Avaliação de Riscos',
+    description: NIST_FUNCTION_DESCRIPTIONS.ID,
     showsResponseMetrics: false,
   },
 };

@@ -128,6 +128,7 @@ public static class DependencyInjection
         services.AddScoped<ITenantScoreTrendQuery, TenantScoreTrendQuery>();
         services.AddScoped<IGetPendingControlsQuery, PendingControlsQuery>();
         services.AddScoped<IControlStateDashboardQuery, ControlStateDashboardQuery>();
+        services.AddScoped<IWorkspacePostureQuery, WorkspacePostureQuery>();
         // Janela de frescor do sinal (TTL) usada pela auditoria de obsolescência do dashboard. TimeProvider
         // é o relógio injetável do .NET — mantém a regra de TTL testável sem congelar o sistema todo.
         services.Configure<ScoringOptions>(config.GetSection(ScoringOptions.SectionName));

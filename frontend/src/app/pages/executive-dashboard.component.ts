@@ -2,6 +2,8 @@ import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { BlastRadiusSummary, ExecutiveDashboard, GapBalance } from '../models/dashboard.models';
 import { ComplianceHistoryPoint, buildGapBalance, trendToSparkline } from '../models/scoring.models';
+import { WorkspacePosture, connectorBreakdown } from '../models/workspace.models';
+import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
 import { DashboardService } from '../services/dashboard.service';
 import { AegisScoreService } from '../services/aegis-score.service';
 import { ScoringService } from '../services/scoring.service';
@@ -33,6 +35,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
     GapChartComponent,
     RiskLevelsComponent,
     ExposureCardComponent,
+    PostureSummaryComponent,
   ],
   template: `
     <div class="app">
@@ -62,6 +65,39 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           </div>
         }
       </header>
+
+      <!-- AEGIS Score (aegis-score-v1): a postura DETERMINÍSTICA da projeção única (/scoring/workspace),
+           independente da maturidade CMMI/ICR abaixo — que é OUTRA métrica. Tem estado próprio de carga. -->
+      <section class="aegis-band">
+        @if (workspace(); as w) {
+          <div class="band-grid">
+            <app-posture-summary [posture]="w.overall" label="AEGIS Score" />
+            <div class="band-cards">
+              <div class="bcard" [class.hot]="w.overall.nonCompliantControls > 0">
+                <span class="bk">Não conformes</span>
+                <span class="bv">{{ w.overall.nonCompliantControls }}</span>
+                <span class="bsub">{{ w.overall.notEvaluatedControls }} não avaliados</span>
+              </div>
+              <div class="bcard" [class.hot]="w.connectors.failed > 0">
+                <span class="bk">Conectores (habilitados)</span>
+                <span class="bv">{{ w.connectors.healthy }}/{{ w.connectors.enabled }} saudáveis</span>
+                <span class="bsub">{{ connectorBreakdown(w.connectors) }}</span>
+              </div>
+              <div class="bcard">
+                <span class="bk">Última sincronização</span>
+                <span class="bv">{{ w.connectors.lastSyncAt ? (w.connectors.lastSyncAt | date: 'dd/MM HH:mm') : '—' }}</span>
+                <span class="bsub">
+                  {{ w.overall.latestEvidenceAt ? ('evidência ' + (w.overall.latestEvidenceAt | date: 'dd/MM')) : 'sem evidência' }}
+                </span>
+              </div>
+            </div>
+          </div>
+        } @else if (!workspaceLoaded()) {
+          <p class="band-pulse">Consolidando o AEGIS Score…</p>
+        } @else {
+          <p class="band-pulse">AEGIS Score indisponível — a API não respondeu. O console traz o erro.</p>
+        }
+      </section>
 
       @if (loading()) {
         <div class="notice">
@@ -122,11 +158,6 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           label="Processos críticos expostos"
           [value]="d.exposure.criticalProcessesExposed"
           tone="danger"
-        />
-        <app-exposure-card
-          label="Controles inefetivos"
-          [value]="d.exposure.ineffectiveControls"
-          tone="warn"
         />
         <app-exposure-card
           label="Planos de ação vencidos"
@@ -244,6 +275,69 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
   `,
   styles: [
     `
+      /* Banda do AEGIS Score (projeção única) — acima da maturidade, com seu próprio estado de carga. */
+      .aegis-band {
+        margin: 0 0 20px;
+      }
+      .aegis-band .band-pulse {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--muted);
+        margin: 0;
+        padding: 14px 2px;
+      }
+      .aegis-band .band-grid {
+        display: grid;
+        grid-template-columns: minmax(260px, 340px) 1fr;
+        gap: 14px;
+        align-items: stretch;
+      }
+      .aegis-band .band-cards {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+      .aegis-band .bcard {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        justify-content: center;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(122, 145, 190, 0.03);
+      }
+      .aegis-band .bcard.hot {
+        border-color: rgba(255, 45, 111, 0.4);
+        background: rgba(255, 45, 111, 0.05);
+      }
+      .aegis-band .bk {
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .aegis-band .bv {
+        font-family: var(--display);
+        font-weight: 700;
+        font-size: 19px;
+        color: var(--text);
+      }
+      .aegis-band .bcard.hot .bv {
+        color: var(--red);
+      }
+      .aegis-band .bsub {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--muted);
+      }
+      @media (max-width: 860px) {
+        .aegis-band .band-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
       /* Estado vazio do painel executivo — mesma linguagem HUD do resto do Synapse OS. */
       .empty-state {
         border: 1px solid var(--line);
@@ -413,6 +507,10 @@ export class ExecutiveDashboardComponent implements OnInit {
   data = signal<ExecutiveDashboard | null>(null);
   loadError = signal(false);
 
+  // ---- AEGIS Score (aegis-score-v1) da projeção única — independente da maturidade acima ----
+  workspace = signal<WorkspacePosture | null>(null);
+  workspaceLoaded = signal(false);
+
   // ---- Maturidade: valores AUTORITATIVOS do backend ----
   // O ExposureCardsDto já traz `overallMaturity`/`targetMaturity` prontos, calculados pelo
   // MaturityScoringService. Eram campos ÓRFÃOS — o backend os enviava e o frontend os ignorava.
@@ -480,13 +578,14 @@ export class ExecutiveDashboardComponent implements OnInit {
       || d.riskByLevel.length > 0
       || d.riskHeatmap.length > 0
       || d.exposure.criticalProcessesExposed > 0
-      || d.exposure.ineffectiveControls > 0
       || d.exposure.overdueActionPlans > 0;
   });
 
   /** Instante da apuração — o backend já enviava `generatedAt` e a tela não o exibia. */
   readonly generatedAt = computed(() => this.data()?.generatedAt ?? null);
 
+  // Resumo curto e honesto da saúde dos conectores (degradado/falha/nunca sincronizado/desabilitado).
+  protected readonly connectorBreakdown = connectorBreakdown;
   // Exposto ao template para colorir a pílula do ICR.
   protected readonly icrColor = icrColor;
   // Exposto ao template para orientar o diagnóstico quando a carga falha.
@@ -535,6 +634,8 @@ export class ExecutiveDashboardComponent implements OnInit {
     this.gapBalance.set(null);
     this.blastRadius.set(null);
     this.blastLoaded.set(false);
+    this.workspace.set(null);
+    this.workspaceLoaded.set(false);
 
     // 1) Caminho crítico: o dashboard principal. É o único que governa `loading` e `loadError`.
     this.svc.fetchExecutive().subscribe({
@@ -575,6 +676,20 @@ export class ExecutiveDashboardComponent implements OnInit {
       error: (err) => {
         console.warn('Raio de explosão indisponível:', err);
         this.blastLoaded.set(true);
+      },
+    });
+
+    // 5) AEGIS Score (projeção única do workspace) — a postura determinística. Estado próprio de carga:
+    //    a banda mostra "Não avaliado" (nunca 0%) num tenant sem evidência e um erro sanitizado se a API falhar.
+    this.scoreSvc.fetchWorkspace().subscribe({
+      next: (w) => {
+        this.workspace.set(w);
+        this.workspaceLoaded.set(true);
+      },
+      error: (err) => {
+        console.warn('AEGIS Score (workspace) indisponível:', err);
+        this.workspace.set(null);
+        this.workspaceLoaded.set(true);
       },
     });
   }

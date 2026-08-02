@@ -2,7 +2,7 @@ import { Component, OnInit, computed, inject, input, signal } from '@angular/cor
 import { environment } from '../../environments/environment';
 import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
 import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
-import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
+import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
 import {
   PILLARS,
   PillarKey,
@@ -11,7 +11,9 @@ import {
   buildPillarView,
   formatDuration,
 } from '../models/scoring.models';
+import { FunctionPosture, functionOf } from '../models/workspace.models';
 import { ScoringService } from '../services/scoring.service';
+import { AegisScoreService } from '../services/aegis-score.service';
 
 /**
  * PillarDashboardComponent — SMART. Orquestrador ÚNICO dos 4 painéis de pilar (Protect/Detect/Respond/
@@ -25,7 +27,7 @@ import { ScoringService } from '../services/scoring.service';
 @Component({
   selector: 'app-pillar-dashboard',
   standalone: true,
-  imports: [ScoreGaugeComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
+  imports: [PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
   template: `
     <section class="pillar">
       <p class="eyebrow">NIST CSF 2.0 · {{ meta().code }}</p>
@@ -62,23 +64,26 @@ import { ScoringService } from '../services/scoring.service';
         }
 
         <div class="grid">
-          <!-- Resumo: gauge de conformidade + contagens por status -->
+          <!-- Resumo de postura: MESMA autoridade (aegis-score-v1, via /scoring/workspace) do Dashboard e
+               das demais Funções — score anulável (Não avaliado ≠ 0%) + cobertura. Nunca recalculado aqui. -->
           <div class="panel summary">
-            <app-score-gauge [percent]="view().compliancePct" />
-            <div class="counts">
-              <div class="count">
-                <span class="n">{{ view().total }}</span><span class="l">Controles</span>
-              </div>
-              <div class="count ok">
-                <span class="n">{{ view().compliant }}</span><span class="l">Conformes</span>
-              </div>
-              <div class="count partial">
-                <span class="n">{{ view().partial }}</span><span class="l">Parciais</span>
-              </div>
-              <div class="count fail" [class.hot]="view().nonCompliant > 0">
-                <span class="n">{{ view().nonCompliant }}</span><span class="l">Não conformes</span>
-              </div>
-            </div>
+            @switch (postureState()) {
+              @case ('loaded') {
+                <app-posture-summary [posture]="posture()!" [label]="meta().label" [code]="meta().code" />
+              }
+              @case ('loading') {
+                <span class="pulse">Carregando o resumo de postura…</span>
+              }
+              @case ('notFound') {
+                <span class="pulse">Sem catálogo ativo para esta Função.</span>
+              }
+              @case ('error') {
+                <div class="posture-err">
+                  <span>Não foi possível carregar o resumo de postura.</span>
+                  <button type="button" class="retry-sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
+                </div>
+              }
+            }
           </div>
 
           <!-- Painel único em DUAS abas: por veredito (Controles) e por cobertura de prova (Pontos
@@ -370,6 +375,31 @@ import { ScoringService } from '../services/scoring.service';
         padding: 1px 5px;
         border-radius: 4px;
       }
+      /* Erro + retry do cabeçalho de postura (falha isolada da projeção, sem derrubar a matriz). */
+      .posture-err {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .retry-sm {
+        align-self: flex-start;
+        cursor: pointer;
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        color: var(--cyan);
+        background: rgba(38, 224, 255, 0.06);
+        border: 1px solid rgba(38, 224, 255, 0.35);
+        border-radius: 8px;
+        padding: 5px 12px;
+      }
+      .retry-sm:hover {
+        background: rgba(38, 224, 255, 0.12);
+      }
+
       @keyframes pulse {
         0%,
         100% {
@@ -395,6 +425,7 @@ import { ScoringService } from '../services/scoring.service';
 })
 export class PillarDashboardComponent implements OnInit {
   private readonly svc = inject(ScoringService);
+  private readonly scoreSvc = inject(AegisScoreService);
 
   /** Função NIST deste painel — injetada pelo wrapper da rota (Protect/Detect/Respond/Recover). */
   readonly pillar = input.required<PillarKey>();
@@ -403,6 +434,11 @@ export class PillarDashboardComponent implements OnInit {
   private readonly controls = signal<TenantControlStateDto[]>([]);
   readonly loading = signal(true);
   readonly error = signal(false);
+
+  /** Postura desta Função pela projeção única do workspace (score/cobertura/contagens — autoridade backend). */
+  readonly posture = signal<FunctionPosture | null>(null);
+  /** Estado do cabeçalho de postura: distingue carregando · carregado · Função ausente · erro (com retry). */
+  readonly postureState = signal<'loading' | 'loaded' | 'notFound' | 'error'>('loading');
 
   /** Derivações reativas: metadados do pilar e a view agregada que alimenta os Dumb Components. */
   readonly meta = computed(() => PILLARS[this.pillar()]);
@@ -427,7 +463,7 @@ export class PillarDashboardComponent implements OnInit {
   protected readonly apiBase = environment.apiBase;
 
   ngOnInit(): void {
-    // Uma chamada; o serviço já filtra pelo prefixo do pilar. Estado de erro elegante, sem crash.
+    // Matriz de controles do pilar (o serviço já filtra pelo prefixo). Estado de erro elegante, sem crash.
     this.svc.getPillarControls(this.pillar()).subscribe({
       next: (list) => {
         this.controls.set(list);
@@ -436,6 +472,24 @@ export class PillarDashboardComponent implements OnInit {
       error: () => {
         this.error.set(true);
         this.loading.set(false);
+      },
+    });
+
+    this.loadWorkspacePosture();
+  }
+
+  /** Carrega o cabeçalho de postura pela projeção única, com estados explícitos (chamado no init e no retry). */
+  loadWorkspacePosture(): void {
+    this.postureState.set('loading');
+    this.scoreSvc.fetchWorkspace().subscribe({
+      next: (w) => {
+        const f = functionOf(w, this.meta().code) ?? null;
+        this.posture.set(f);
+        this.postureState.set(f ? 'loaded' : 'notFound');
+      },
+      error: () => {
+        this.posture.set(null);
+        this.postureState.set('error');
       },
     });
   }

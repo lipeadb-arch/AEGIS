@@ -188,7 +188,6 @@ public record ExecutiveDashboardDto(
 
 public record ExposureCardsDto(
     int CriticalProcessesExposed,
-    int IneffectiveControls,
     int OverdueActionPlans,
     double OverallMaturity,
     double TargetMaturity);

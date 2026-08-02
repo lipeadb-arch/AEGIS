@@ -13,11 +13,13 @@ import {
 } from '../models/governance.models';
 import { environment } from '../../environments/environment';
 import { AgentStateService } from '../services/agent-state.service';
-import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
+import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
 import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
 import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
 import { ScoringService } from '../services/scoring.service';
+import { AegisScoreService } from '../services/aegis-score.service';
 import { PILLARS, TenantControlStateDto, buildPillarView } from '../models/scoring.models';
+import { FunctionPosture, functionOf } from '../models/workspace.models';
 
 type SyncState = 'idle' | 'loading' | 'done' | 'error';
 
@@ -33,7 +35,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
 @Component({
   selector: 'app-document-hub',
   standalone: true,
-  imports: [DatePipe, ScoreGaugeComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
+  imports: [DatePipe, PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
   template: `
     <div class="app">
       <header class="topbar">
@@ -72,17 +74,21 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
         } @else {
           <div class="gs-grid">
             <div class="gs-left">
-              <app-score-gauge [percent]="govView().compliancePct" caption="GV CONFORME" />
-              <div class="gs-counts">
-                <span class="c">{{ govView().total }} controles avaliados</span>
-                <span class="c ok">{{ govView().compliant }} conformes</span>
-                @if (govView().partial > 0) {
-                  <span class="c partial">{{ govView().partial }} parciais</span>
+              <!-- Cabeçalho de postura COMPARTILHADO (mesma projeção única do Dashboard e das demais Funções):
+                   score anulável (Não avaliado ≠ 0%) + cobertura. Nunca recalculado aqui. -->
+              @switch (govPostureState()) {
+                @case ('loaded') {
+                  <app-posture-summary [posture]="govPosture()!" label="Governança" code="GV" />
                 }
-                <span class="c fail" [class.hot]="govView().nonCompliant > 0">
-                  {{ govView().nonCompliant }} não conformes
-                </span>
-              </div>
+                @case ('loading') { <span class="pulse">Carregando o resumo de postura…</span> }
+                @case ('notFound') { <span class="pulse">Sem catálogo ativo para a Função Govern.</span> }
+                @case ('error') {
+                  <div class="posture-err">
+                    <span>Não foi possível carregar o resumo de postura.</span>
+                    <button type="button" class="retry-sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
+                  </div>
+                }
+              }
             </div>
             <app-control-compliance-card [controls]="govView().controls" />
           </div>
@@ -312,6 +318,9 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       .gs-counts .c.fail.hot { color: var(--red); }
       .gs-counts .c.fail.hot::before { box-shadow: 0 0 8px 0 var(--red); opacity: 1; }
       .score-err { font-family: var(--mono); font-size: 12px; color: var(--red); margin: 0; }
+      .posture-err { display: flex; flex-direction: column; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+      .retry-sm { align-self: flex-start; cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--cyan); background: rgba(38,224,255,0.06); border: 1px solid rgba(38,224,255,0.35); border-radius: 8px; padding: 5px 12px; }
+      .retry-sm:hover { background: rgba(38,224,255,0.12); }
       .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: 0.08em; animation: hub-pulse 1.4s ease-in-out infinite; }
       @keyframes hub-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
 
@@ -403,13 +412,17 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
 export class DocumentHubComponent implements OnInit {
   private readonly svc = inject(GovernanceService);
   private readonly scoring = inject(ScoringService);
+  private readonly scoreSvc = inject(AegisScoreService);
   protected readonly agent = inject(AgentStateService);
 
   constructor() {
     // O Auditor vive no App (global). Quando uma entrevista altera a cobertura, o AgentStateService
     // sinaliza e recarregamos o strip de cobertura documental desta tela.
     effect(() => {
-      if (this.agent.coverageVersion() > 0) this.loadCoverage();
+      if (this.agent.coverageVersion() > 0) {
+        this.loadCoverage();
+        this.loadWorkspacePosture();
+      }
     });
   }
 
@@ -417,8 +430,11 @@ export class DocumentHubComponent implements OnInit {
   private readonly govControls = signal<TenantControlStateDto[]>([]);
   scoringLoading = signal(true);
   scoringError = signal(false);
-  /** Reusa o mesmo agregador dos painéis de pilar (DRY): pct, contagens e ordenação por risco. */
+  /** Reusa o mesmo agregador dos painéis de pilar (DRY): a lista de controles ordenada por risco. */
   readonly govView = computed(() => buildPillarView(PILLARS.GV, this.govControls()));
+  /** Postura GV pela projeção ÚNICA (mesmo cabeçalho compartilhado das seis Funções). */
+  readonly govPosture = signal<FunctionPosture | null>(null);
+  readonly govPostureState = signal<'loading' | 'loaded' | 'notFound' | 'error'>('loading');
 
   // ---- Integração corporativa (sync sob demanda) ----
   syncState = signal<SyncState>('idle');
@@ -454,8 +470,28 @@ export class DocumentHubComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadGovernPosture();
+    this.loadWorkspacePosture();
     this.loadCoverage();
     this.loadDocuments();
+  }
+
+  /**
+   * Carga CENTRALIZADA do cabeçalho de postura GV pela projeção única, com estados explícitos. Chamada no
+   * init, no retry e após TODA ação do Hub que possa mudar a avaliação (sync/upload/reanálise/remoção/cobertura).
+   */
+  loadWorkspacePosture(): void {
+    this.govPostureState.set('loading');
+    this.scoreSvc.fetchWorkspace().subscribe({
+      next: (w) => {
+        const f = functionOf(w, 'GV') ?? null;
+        this.govPosture.set(f);
+        this.govPostureState.set(f ? 'loaded' : 'notFound');
+      },
+      error: () => {
+        this.govPosture.set(null);
+        this.govPostureState.set('error');
+      },
+    });
   }
 
   /** Postura por telemetria: os controles GV (GV.SC/GV.RR), filtrados no ScoringService pelo prefixo "GV". */
@@ -488,6 +524,8 @@ export class DocumentHubComponent implements OnInit {
         setTimeout(() => {
           this.loadDocuments();
           this.loadGovernPosture();
+          this.loadWorkspacePosture();
+          this.loadCoverage();
         }, 2500);
       },
       error: (err) => {
@@ -567,6 +605,7 @@ export class DocumentHubComponent implements OnInit {
         this.uploading.set(false);
         this.resetUploadForm();
         this.loadDocuments();
+        this.loadWorkspacePosture();
       },
       error: (err) => {
         console.error('Falha no upload do documento:', err);
@@ -586,6 +625,7 @@ export class DocumentHubComponent implements OnInit {
       next: () => {
         this.busyId.set(null);
         this.loadDocuments();
+        this.loadWorkspacePosture();
       },
       error: (err) => {
         console.error('Falha ao re-enfileirar a leitura da IA:', err);
@@ -601,6 +641,7 @@ export class DocumentHubComponent implements OnInit {
       next: () => {
         this.busyId.set(null);
         this.loadDocuments();
+        this.loadWorkspacePosture();
       },
       error: (err) => {
         console.error('Falha ao excluir o documento:', err);

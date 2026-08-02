@@ -49,8 +49,8 @@ export function friendlyControlLabel(code: string): string {
 }
 
 /**
- * Código das 6 Funções NIST CSF 2.0. É o vocabulário do dicionário de descrições abaixo — superconjunto
- * do PillarKey de scoring.models (que exclui ID, pois Identify tem tela própria de inventário).
+ * Código das 6 Funções NIST CSF 2.0. É o vocabulário do dicionário de descrições abaixo — hoje alinhado ao
+ * PillarKey de scoring.models (Identify inclusa: o Inventário de Ativos ganhou a seção comum de postura/controles).
  */
 export type NistFunctionCode = 'GV' | 'ID' | 'PR' | 'DE' | 'RS' | 'RC';
 
