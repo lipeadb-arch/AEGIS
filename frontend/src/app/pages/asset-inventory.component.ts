@@ -12,6 +12,9 @@ import {
 import { NIST_FUNCTION_DESCRIPTIONS } from '../models/nist-glossary';
 import { riskColor } from '../lib/scales';
 import { environment } from '../../environments/environment';
+import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
+import { AegisScoreService } from '../services/aegis-score.service';
+import { FunctionPosture, functionOf } from '../models/workspace.models';
 
 /**
  * IDENTIFY (ID.AM) — inventário tático de ativos.
@@ -22,7 +25,7 @@ import { environment } from '../../environments/environment';
 @Component({
   selector: 'app-asset-inventory',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, PostureSummaryComponent],
   template: `
     <div class="app">
       <header class="topbar">
@@ -38,6 +41,13 @@ import { environment } from '../../environments/environment';
 
       <!-- Subtítulo tático da Função Identify (mesmo padrão dos painéis de pilar / Govern) -->
       <p class="id-description">{{ idDescription }}</p>
+
+      <!-- Cabeçalho de postura COMPARTILHADO (mesma projeção única do Dashboard e das demais Funções). -->
+      @if (idPosture(); as p) {
+        <section class="id-posture">
+          <app-posture-summary [posture]="p" label="Identify" code="ID" />
+        </section>
+      }
 
       <!-- ---- Barra de filtros combinados ---- -->
       <section class="panel filters">
@@ -292,9 +302,12 @@ import { environment } from '../../environments/environment';
 })
 export class AssetInventoryComponent implements OnInit {
   private readonly svc = inject(AssetService);
+  private readonly scoreSvc = inject(AegisScoreService);
 
   // ---- Dados ----
   rows = signal<AssetDto[]>([]);
+  /** Postura da Função Identify (ID) pela projeção única — cabeçalho compartilhado das seis Funções. */
+  idPosture = signal<FunctionPosture | null>(null);
   total = signal(0);
   totalPages = signal(0);
   page = signal(1);
@@ -334,6 +347,11 @@ export class AssetInventoryComponent implements OnInit {
 
   ngOnInit(): void {
     this.load();
+    // Cabeçalho de postura ID pela projeção única (best-effort — não interfere no inventário).
+    this.scoreSvc.fetchWorkspace().subscribe({
+      next: (w) => this.idPosture.set(functionOf(w, 'ID') ?? null),
+      error: () => this.idPosture.set(null),
+    });
   }
 
   private load(): void {

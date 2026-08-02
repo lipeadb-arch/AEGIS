@@ -26,17 +26,20 @@ public class ScoringController : ControllerBase
     private readonly ITenantScoreTrendQuery _trend;
     private readonly IGetPendingControlsQuery _pending;
     private readonly ICurrentScoreQuery _current;
+    private readonly IWorkspacePostureQuery _workspace;
 
     public ScoringController(
         IControlStateDashboardQuery dashboard,
         ITenantScoreTrendQuery trend,
         IGetPendingControlsQuery pending,
-        ICurrentScoreQuery current)
+        ICurrentScoreQuery current,
+        IWorkspacePostureQuery workspace)
     {
         _dashboard = dashboard;
         _trend = trend;
         _pending = pending;
         _current = current;
+        _workspace = workspace;
     }
 
     /// <summary>
@@ -80,4 +83,14 @@ public class ScoringController : ControllerBase
     [HttpGet("dashboard")]
     public async Task<ActionResult<IReadOnlyList<TenantControlStateDto>>> GetDashboard(CancellationToken ct = default)
         => Ok(await _dashboard.GetDashboardAsync(ct));
+
+    /// <summary>
+    /// [AEGIS-AUD-021/027/032] Projeção ÚNICA do workspace: postura geral e por Função NIST (score anulável +
+    /// cobertura pela autoridade aegis-score-v1) + saúde/recência dos conectores. É a MESMA fonte que alimenta
+    /// o Dashboard executivo e as seis Funções — nenhuma tela recalcula os mesmos conceitos. Tenant IMPLÍCITO
+    /// (Global Query Filter fail-closed); sem tenant, a projeção é vazia.
+    /// </summary>
+    [HttpGet("workspace")]
+    public async Task<ActionResult<WorkspacePostureDto>> GetWorkspace(CancellationToken ct = default)
+        => Ok(await _workspace.GetAsync(ct));
 }

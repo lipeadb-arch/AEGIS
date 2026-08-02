@@ -13,11 +13,13 @@ import {
 } from '../models/governance.models';
 import { environment } from '../../environments/environment';
 import { AgentStateService } from '../services/agent-state.service';
-import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
+import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
 import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
 import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
 import { ScoringService } from '../services/scoring.service';
+import { AegisScoreService } from '../services/aegis-score.service';
 import { PILLARS, TenantControlStateDto, buildPillarView } from '../models/scoring.models';
+import { FunctionPosture, functionOf } from '../models/workspace.models';
 
 type SyncState = 'idle' | 'loading' | 'done' | 'error';
 
@@ -33,7 +35,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
 @Component({
   selector: 'app-document-hub',
   standalone: true,
-  imports: [DatePipe, ScoreGaugeComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
+  imports: [DatePipe, PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
   template: `
     <div class="app">
       <header class="topbar">
@@ -72,17 +74,13 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
         } @else {
           <div class="gs-grid">
             <div class="gs-left">
-              <app-score-gauge [percent]="govView().compliancePct" caption="GV CONFORME" />
-              <div class="gs-counts">
-                <span class="c">{{ govView().total }} controles avaliados</span>
-                <span class="c ok">{{ govView().compliant }} conformes</span>
-                @if (govView().partial > 0) {
-                  <span class="c partial">{{ govView().partial }} parciais</span>
-                }
-                <span class="c fail" [class.hot]="govView().nonCompliant > 0">
-                  {{ govView().nonCompliant }} não conformes
-                </span>
-              </div>
+              <!-- Cabeçalho de postura COMPARTILHADO (mesma projeção única do Dashboard e das demais Funções):
+                   score anulável (Não avaliado ≠ 0%) + cobertura. Nunca recalculado aqui. -->
+              @if (govPosture(); as p) {
+                <app-posture-summary [posture]="p" label="Governança" code="GV" />
+              } @else {
+                <span class="pulse">Resumo de postura indisponível.</span>
+              }
             </div>
             <app-control-compliance-card [controls]="govView().controls" />
           </div>
@@ -403,6 +401,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
 export class DocumentHubComponent implements OnInit {
   private readonly svc = inject(GovernanceService);
   private readonly scoring = inject(ScoringService);
+  private readonly scoreSvc = inject(AegisScoreService);
   protected readonly agent = inject(AgentStateService);
 
   constructor() {
@@ -417,8 +416,10 @@ export class DocumentHubComponent implements OnInit {
   private readonly govControls = signal<TenantControlStateDto[]>([]);
   scoringLoading = signal(true);
   scoringError = signal(false);
-  /** Reusa o mesmo agregador dos painéis de pilar (DRY): pct, contagens e ordenação por risco. */
+  /** Reusa o mesmo agregador dos painéis de pilar (DRY): a lista de controles ordenada por risco. */
   readonly govView = computed(() => buildPillarView(PILLARS.GV, this.govControls()));
+  /** Postura GV pela projeção ÚNICA (mesmo cabeçalho compartilhado das seis Funções). */
+  readonly govPosture = signal<FunctionPosture | null>(null);
 
   // ---- Integração corporativa (sync sob demanda) ----
   syncState = signal<SyncState>('idle');
@@ -454,6 +455,11 @@ export class DocumentHubComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadGovernPosture();
+    // Cabeçalho de postura GV pela projeção única (best-effort — não derruba a lista de controles/documentos).
+    this.scoreSvc.fetchWorkspace().subscribe({
+      next: (w) => this.govPosture.set(functionOf(w, 'GV') ?? null),
+      error: () => this.govPosture.set(null),
+    });
     this.loadCoverage();
     this.loadDocuments();
   }
