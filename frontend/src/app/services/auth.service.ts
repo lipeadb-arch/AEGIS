@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { Observable, catchError, map, of, switchMap, tap, throwError, timer } from 'rxjs';
+import { Observable, catchError, finalize, map, of, switchMap, tap, throwError, timeout, timer } from 'rxjs';
 import { environment } from '../../environments/environment';
 
 /** Corpo devolvido por POST /auth/refresh, /auth/select-tenant e /auth/switch-tenant. O refresh token NUNCA vem aqui — só no cookie. */
@@ -250,14 +250,36 @@ export class AuthService {
     );
   }
 
-  /** Logout iniciado pelo usuário: revoga o refresh no servidor (best-effort) e limpa o cliente. */
+  // ---- Encerramento de sessão ----
+  private readonly _loggingOut = signal(false);
+
+  /** Verdadeiro enquanto o logout está em andamento — desabilita a ação e barra cliques repetidos. */
+  readonly loggingOut = this._loggingOut.asReadonly();
+
+  /**
+   * Logout iniciado pelo usuário. Revoga o refresh no servidor e SÓ ENTÃO encerra o cliente: aguardar a
+   * resposta garante que o cookie HttpOnly já foi invalidado antes de sairmos — assim um F5 logo em
+   * seguida não reidrata a sessão. Em falha de rede (ou timeout curto) encerra localmente mesmo assim
+   * (fail-safe: o access token em memória é descartado e deixa de ser utilizável). Barra cliques repetidos
+   * com um guard em memória. O endpoint é anônimo, responde 204 e está na lista bearerless — não passa
+   * pelo caminho de auto-refresh, então não há loop com o refresh interceptor.
+   */
   logout(): void {
-    this.http.post(`${this.baseUrl}/logout`, {}, { withCredentials: true }).subscribe({
-      next: () => {},
-      error: () => {},
-    });
-    this.clearSession();
-    this.router.navigate(['/login']);
+    if (this._loggingOut()) return;
+    this._loggingOut.set(true);
+    this.http
+      .post(`${this.baseUrl}/logout`, {}, { withCredentials: true })
+      .pipe(
+        timeout(8000),
+        // Encerra o cliente em QUALQUER desfecho (204, erro de rede ou timeout), sempre DEPOIS de a
+        // revogação retornar — nunca antes. O access token em memória é descartado aqui.
+        finalize(() => {
+          this.clearSession();
+          this._loggingOut.set(false);
+          this.router.navigate(['/login']);
+        }),
+      )
+      .subscribe({ next: () => {}, error: () => {} });
   }
 
   /** Logout forçado pelo refresh interceptor quando a renovação falha (refresh inválido/breach). */
