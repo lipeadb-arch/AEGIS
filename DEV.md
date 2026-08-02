@@ -18,8 +18,9 @@ ou qualquer arquivo versionado.
 | API (.NET) | `http://localhost:5100` | `Properties/launchSettings.json` (perfil `http`) |
 | Frontend (Angular) | `http://localhost:5173` | `frontend/angular.json` → `serve.port` (liberado no CORS) |
 | PostgreSQL | `localhost:5432`, banco `aegis` | connection string em user-secrets/env (`ConnectionStrings:AegisScore`) |
-| Tenant demo (fixo) | `aa000000-0000-0000-0000-000000000001` | `DevController.DemoTenantId` (o tenant ativo vem do claim `tenant_id` do JWT) |
-| Usuário demo | `analista@demo.aegis` / `Aegis@12345` | `POST /api/v1/dev/seed-user` |
+| Tenant demo A (fixo) | `aa000000-0000-0000-0000-000000000001` | `DevController.DemoTenantId` (o tenant ativo vem do claim `tenant_id` do JWT) |
+| Tenant demo B (fixo) | `aa000000-0000-0000-0000-000000000002` | `DevController.DemoTenantBId` (2º ambiente p/ seleção/troca/isolamento) |
+| Usuário demo | `analista@demo.example.com` / senha **de runtime** (`Demo:Password`) | `POST /api/v1/dev/seed-user` |
 
 ---
 
@@ -67,7 +68,14 @@ dotnet user-secrets set "Jwt:SigningKey" $key
 
 # Connection string (ajuste usuário/senha/porta se mudou no Passo 1):
 dotnet user-secrets set "ConnectionStrings:AegisScore" "Host=localhost;Port=5432;Database=aegis;Username=aegis;Password=aegis"
+
+# [AEGIS-AUD-048] Senha do usuário demo — fornecida SÓ em runtime (nunca versionada). Sem ela, o
+# seed-user recusa. Escolha uma senha forte própria (>= 8 chars); ela NÃO é devolvida pela API nem logada.
+dotnet user-secrets set "Demo:Password" "<escolha-uma-senha-demo-forte>"
 ```
+
+> A `Demo:Password` também pode vir por variável de ambiente `Demo__Password` (útil no smoke e em CI),
+> em vez de user-secrets. Restrita a `DEBUG` + ambiente `Development`; não existe porta de acesso demo em produção.
 
 _Equivalente em bash (Linux/macOS, requer `openssl`):_
 
@@ -146,11 +154,14 @@ e só responde em Development. O `dotnet run` padrão é Debug, então estão di
 Com a API no ar, num outro terminal:
 
 ```powershell
-# Dados do dashboard (tenant demo, unidades, ativos, riscos...). Idempotente.
+# Dados do dashboard (tenant demo A, unidades, ativos, riscos...). Idempotente.
 Invoke-RestMethod -Method Post -Uri http://localhost:5100/api/v1/dev/seed-demo
 
-# Usuário logável no tenant demo. Idempotente.
+# Usuário logável (usa Demo:Password do Passo 2). Idempotente. A senha NÃO é devolvida.
 Invoke-RestMethod -Method Post -Uri http://localhost:5100/api/v1/dev/seed-user
+
+# 2º tenant demo + acesso do mesmo usuário (exercita seleção/troca/isolamento). Idempotente.
+Invoke-RestMethod -Method Post -Uri http://localhost:5100/api/v1/dev/seed-second-tenant
 ```
 
 _Equivalente com curl:_
@@ -158,10 +169,12 @@ _Equivalente com curl:_
 ```bash
 curl -X POST http://localhost:5100/api/v1/dev/seed-demo
 curl -X POST http://localhost:5100/api/v1/dev/seed-user
+curl -X POST http://localhost:5100/api/v1/dev/seed-second-tenant
 ```
 
-O `seed-user` cria `analista@demo.aegis` / `Aegis@12345` no `DemoTenantId`. Ele **não** precisa do
-header `X-Tenant` — grava sob o `SystemTenantContext` do tenant demo.
+O `seed-user` cria `analista@demo.example.com` no `DemoTenantId`, com a senha definida em `Demo:Password`
+(runtime). Não precisa do header `X-Tenant` — grava sob o `SystemTenantContext` do tenant demo. Com acesso
+aos **dois** ambientes, o login passa a exigir **seleção explícita** de tenant.
 
 ---
 
@@ -177,8 +190,82 @@ O `environment.ts` já aponta `apiBase` para `http://localhost:5100` — **não 
 tenant ativo **não** é mais configurado no frontend: vem do claim `tenant_id` do próprio JWT, e o
 interceptor deriva dele o header `X-Tenant`. Faça login com:
 
-- **E-mail:** `analista@demo.aegis`
-- **Senha:** `Aegis@12345`
+- **E-mail:** `analista@demo.example.com`
+- **Senha:** a que você definiu em `Demo:Password` (Passo 2)
+
+Como o usuário demo tem acesso aos **dois** tenants, o login apresenta a tela de **seleção de ambiente** —
+escolha "Grupo Aegis (Demo)". O seletor de tenant no topo troca para "Aegis Secundário (Demo)" sem vazar
+estado do ambiente anterior.
+
+---
+
+## Passo 6 — Health checks (liveness/readiness)
+
+[AEGIS-AUD-048] Dois endpoints **anônimos** e de resposta sanitizada (só o status; nunca connection
+string, stack trace ou detalhe interno):
+
+- **Liveness** — `GET /health/live`: confirma só que o **processo** está vivo. Não toca banco, IA nem
+  fornecedor externo. É o que um orquestrador usa para decidir reiniciar um processo travado.
+- **Readiness** — `GET /health/ready`: confirma que a app está **apta a servir** — PostgreSQL acessível
+  + migrations dos dois contextos + catálogo/regras íntegros (mesmo `SchemaReadinessGuard` do boot).
+  A ausência de Azure OpenAI / Entra / conectores **não** reprova.
+
+```powershell
+Invoke-RestMethod http://localhost:5100/health/live    # { status = Healthy }
+Invoke-RestMethod http://localhost:5100/health/ready   # { status = Healthy, checks = [...] }
+```
+
+`Healthy` → HTTP 200; indisponível → HTTP 503 com o mesmo corpo mínimo.
+
+---
+
+## Passo 7 — Smoke test do MVP
+
+[AEGIS-AUD-048] `scripts/smoke-mvp.ps1` valida o roteiro inteiro contra as APIs reais, com dados
+**exclusivamente sintéticos**, num **banco descartável isolado** (`aegis_smoke_<hex>`) — nunca toca
+`aegis_dev`. Prepara o banco pelo `DbMigrator`, sobe a API, exercita liveness/readiness, cria o ambiente
+demo (senha só em runtime), login, seleção, troca entre dois tenants, isolamento, conectores genéricos,
+ingestão SIEM/EDR, score determinístico, Dashboard, as seis Funções, Integrações e Hub. No fim, encerra
+a API e remove **só** o banco que criou (validando o nome antes). Sai `!= 0` com mensagem clara se um gate
+falha; segredos vêm só de runtime e nunca são impressos.
+
+O papel PostgreSQL usado precisa poder `CREATE DATABASE` (o `stars`/`postgres` locais têm). Forneça a
+senha por variável de ambiente (nunca versionada):
+
+```powershell
+$env:AEGIS_SMOKE_PGPASSWORD = '<senha-do-postgres>'
+.\scripts\smoke-mvp.ps1 -PgUser stars
+$env:AEGIS_SMOKE_PGPASSWORD = $null
+```
+
+Parâmetros úteis: `-ApiPort` (padrão 5199, não colide com o dev na 5100), `-PgUser`, `-PgPassword`,
+`-PsqlPath`, `-ReadyTimeoutSec`. Roda em Windows PowerShell 5.1+ (script ASCII-only).
+
+---
+
+## Roteiro de demonstração (~5 min)
+
+1. Prepare o banco (Passo 3) e suba **API** (5100) e **frontend** (5173). Garanta `Demo:Password` (Passo 2).
+2. Seed: `seed-demo`, `seed-user`, `seed-second-tenant` (Passo 4).
+3. **Login** em `http://localhost:5173` com o usuário demo → **selecione** "Grupo Aegis (Demo)".
+4. **Dashboard**: AEGIS Score + cobertura (note "não avaliado" ≠ 0%), maturidade/ICR, saúde honesta dos
+   conectores.
+5. **Integrações**: configure um **Generic SIEM** e um **Generic EDR** (defina uma chave de ingestão).
+6. **Ingestão** (outro terminal): use `samples/ingestion/*.example.json` com o header `X-Ingestion-Key`
+   (ver `samples/ingestion/README.md`). O score do tenant se atualiza deterministicamente.
+7. Percorra as **seis Funções** (GV/ID/PR/DE/RS/RC), o **Hub** (Govern) e o **Inventário** (Identify).
+8. **Troque** para "Aegis Secundário (Demo)" pelo seletor de tenant → tudo zera (isolamento; sem fallback demo).
+
+---
+
+## Limitações conhecidas do MVP
+
+- **Federação Entra ID real** exige App Registration/consentimento externos (fora do repo). O modo padrão
+  é login local; a demonstração usa dados sintéticos.
+- **Adaptadores de fabricante** (Sentinel, CrowdStrike, Splunk, Google SecOps, AWS) estão honestamente
+  marcados como **não implementados** — o caminho suportado é o **contrato genérico autenticado** (push).
+- Sem observabilidade distribuída, HA, DR, hardening completo ou suíte ampla de frontend (pós-MVP).
+- O `DevController` (seeds) só existe em **DEBUG + Development**; não há porta de acesso demo em produção.
 
 ---
 

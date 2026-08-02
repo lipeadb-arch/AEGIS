@@ -1,13 +1,16 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using AegisScore.Api;
 using AegisScore.Api.Auth;
+using AegisScore.Api.Health;
 using AegisScore.Api.Workers;
 using AegisScore.Application.Abstractions;
 using AegisScore.Connectors.Microsoft;
@@ -207,6 +210,16 @@ builder.Services.AddRateLimiter(o =>
     static string ClientIp(HttpContext ctx) => ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 });
 
+// [AEGIS-AUD-048] Health checks REAIS, separando dois conceitos distintos:
+//  - "self" (liveness): confirma só que o PROCESSO está vivo. Não toca banco, IA, SIEM/EDR ou fornecedor
+//    externo — é o que um orquestrador usa para decidir reiniciar um processo travado.
+//  - "readiness": confirma que a aplicação está APTA a servir (PostgreSQL + migrations + catálogo íntegro),
+//    reusando o SchemaReadinessGuard. Só leitura; a ausência de Azure OpenAI/Entra/conectores NÃO reprova.
+// Os endpoints (/health/live e /health/ready) são mapeados abaixo, anônimos e com resposta sanitizada.
+builder.Services.AddHealthChecks()
+    .AddCheck("self", () => HealthCheckResult.Healthy(), tags: new[] { "live" })
+    .AddCheck<AegisReadinessHealthCheck>("readiness", tags: new[] { "ready" });
+
 var app = builder.Build();
 
 // [AEGIS-AUD-052] Prontidão do banco: CONSTATAR, nunca mutar.
@@ -270,6 +283,22 @@ app.UseAuthentication();
 app.UseAuthorization();
 // Defesa em profundidade: barra (403) tokens sem tenant válido ou cujo tenant diverge do X-Tenant.
 app.UseMiddleware<TenantConsistencyMiddleware>();
+
+// [AEGIS-AUD-048] Endpoints de health check. ANÔNIMOS (a FallbackPolicy exige autenticação por padrão) —
+// a sonda de um orquestrador não carrega credencial. Resposta MÍNIMA e sanitizada (só o status geral e o
+// de cada check), sem vazar detalhe interno. Liveness e readiness são superfícies DISTINTAS via tags.
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = r => r.Tags.Contains("live"),
+    ResponseWriter = HealthResponseWriter.WriteMinimalAsync,
+}).AllowAnonymous();
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = r => r.Tags.Contains("ready"),
+    ResponseWriter = HealthResponseWriter.WriteMinimalAsync,
+}).AllowAnonymous();
+
 app.MapControllers();
 
 app.Run();
