@@ -54,7 +54,7 @@ public sealed class WorkspacePostureQueryTests : IDisposable
         w.Overall.Percentage.Should().BeNull();
         w.Overall.EligibleControls.Should().Be(0, "sem tenant, nada é projetado — nem o catálogo");
         w.Functions.Should().BeEmpty();
-        w.Connectors.Total.Should().Be(0);
+        w.Connectors.Configured.Should().Be(0);
     }
 
     [Fact]
@@ -148,23 +148,46 @@ public sealed class WorkspacePostureQueryTests : IDisposable
 
         w.Overall.EvaluatedControls.Should().Be(0, "o tenant B não vê os estados de A");
         w.Overall.Percentage.Should().BeNull();
-        w.Connectors.Total.Should().Be(0, "o tenant B não vê os conectores de A");
+        w.Connectors.Configured.Should().Be(0, "o tenant B não vê os conectores de A");
     }
 
     [Fact]
-    public async Task ConectorNuncaSincronizado_NaoEhContadoComoSaudavel()
+    public async Task Conectores_SaudeOperacional_Honesta_EntreHabilitados()
     {
-        await SeedConnectorAsync(TenantA, ConnectorCapability.Siem, ConnectorStatus.Unknown, lastSyncAt: null);   // nunca sincronizou
-        await SeedConnectorAsync(TenantA, ConnectorCapability.Edr, ConnectorStatus.Healthy, DateTimeOffset.UtcNow);
+        // (1) HABILITADO com LastStatus=Healthy MAS nunca sincronizou → NeverSynced, jamais saudável.
+        await SeedConnectorAsync(TenantA, ConnectorCapability.Siem, ConnectorStatus.Healthy, lastSyncAt: null, enabled: true);
+        // Habilitado e sincronizado com Healthy → saudável.
+        await SeedConnectorAsync(TenantA, ConnectorCapability.Edr, ConnectorStatus.Healthy, DateTimeOffset.UtcNow, enabled: true);
+        // (2) DESABILITADO com status Failed → NÃO degrada a saúde operacional (fora do denominador).
+        await SeedConnectorAsync(TenantA, ConnectorCapability.Cmdb, ConnectorStatus.Failed, DateTimeOffset.UtcNow, enabled: false);
 
         await using var db = NewContext(TenantA);
-        var w = await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync();
+        var c = (await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync()).Connectors;
 
-        w.Connectors.Total.Should().Be(2);
-        w.Connectors.Healthy.Should().Be(1, "só o que sincronizou com status Healthy conta");
-        w.Connectors.NeverSynced.Should().Be(1, "o nunca sincronizado é NeverSynced, jamais saudável");
-        w.Connectors.Items.Should().Contain(i => !i.EverSynced && i.Status == nameof(ConnectorStatus.Unknown));
-        w.Connectors.LastSyncAt.Should().NotBeNull("ao menos um conector sincronizou");
+        // (3) contagens configurado/habilitado/desabilitado.
+        c.Configured.Should().Be(3);
+        c.Enabled.Should().Be(2);
+        c.Disabled.Should().Be(1);
+        c.Healthy.Should().Be(1, "só o habilitado que sincronizou com Healthy");
+        c.NeverSynced.Should().Be(1, "o Healthy-sem-sync é NeverSynced, nunca saudável");
+        c.Failed.Should().Be(0, "o conector com falha está DESABILITADO — fora do denominador operacional");
+        (c.Healthy + c.Degraded + c.Failed + c.NeverSynced).Should().Be(c.Enabled, "as 4 categorias particionam os habilitados");
+        c.LastSyncAt.Should().NotBeNull("ao menos um habilitado sincronizou");
+        c.Items.Should().Contain(i => !i.Enabled && i.Status == nameof(ConnectorStatus.Failed));
+    }
+
+    [Fact]
+    public async Task Conectores_ListaVazia_ResumoVazio_SemExcecao()
+    {
+        await using var db = NewContext(TenantA);
+        var c = (await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync()).Connectors;
+
+        c.Configured.Should().Be(0);
+        c.Enabled.Should().Be(0);
+        c.Disabled.Should().Be(0);
+        c.Healthy.Should().Be(0);
+        c.LastSyncAt.Should().BeNull("(4) resumo vazio sem exceção");
+        c.Items.Should().BeEmpty();
     }
 
     [Fact]
@@ -201,13 +224,13 @@ public sealed class WorkspacePostureQueryTests : IDisposable
     }
 
     private async Task SeedConnectorAsync(
-        Guid tenantId, ConnectorCapability capability, ConnectorStatus status, DateTimeOffset? lastSyncAt)
+        Guid tenantId, ConnectorCapability capability, ConnectorStatus status, DateTimeOffset? lastSyncAt, bool enabled = true)
     {
         await using var db = NewContext(tenantId);
         db.Connectors.Add(new ConnectorConfig
         {
             TenantId = tenantId, Provider = ConnectorProvider.Generic, Capability = capability,
-            DisplayName = $"Generic {capability} {Guid.NewGuid():N}", AuthType = ConnectorAuthType.ApiKey, Enabled = true,
+            DisplayName = $"Generic {capability} {Guid.NewGuid():N}", AuthType = ConnectorAuthType.ApiKey, Enabled = enabled,
             LastStatus = status, LastSyncAt = lastSyncAt,
         });
         await db.SaveChangesAsync();

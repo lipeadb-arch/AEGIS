@@ -58,11 +58,16 @@ public sealed record FunctionPostureDto(
 public sealed record SeverityCountDto(string Severity, int Count);
 
 /// <summary>
-/// Saúde e recência dos conectores do tenant. Um conector NUNCA sincronizado (<see cref="ConnectorHealthItemDto.EverSynced"/>
-/// = false) jamais é contado como saudável — ausência de sync não é saúde.
+/// Saúde e recência dos conectores do tenant. Saúde é OPERACIONAL: <see cref="Healthy"/>, <see cref="Degraded"/>,
+/// <see cref="Failed"/> e <see cref="NeverSynced"/> contam SOMENTE conectores HABILITADOS e particionam
+/// <see cref="Enabled"/>. Um conector nunca sincronizado (<c>EverSynced=false</c>) é <see cref="NeverSynced"/> —
+/// jamais saudável, ainda que o <c>LastStatus</c> esteja incoerentemente como Healthy. Conector DESABILITADO
+/// fica de fora do denominador operacional (não é falha) — aparece só em <see cref="Disabled"/>.
 /// </summary>
 public sealed record ConnectorHealthSummaryDto(
-    int Total,
+    int Configured,
+    int Enabled,
+    int Disabled,
     int Healthy,
     int Degraded,
     int Failed,
@@ -77,7 +82,8 @@ public sealed record ConnectorHealthItemDto(
     string Capability,
     string Status,
     DateTimeOffset? LastSyncAt,
-    bool EverSynced);
+    bool EverSynced,
+    bool Enabled);
 
 /// <summary>
 /// Consulta de leitura da projeção única do workspace. O tenant é IMPLÍCITO (fail-closed via ITenantContext

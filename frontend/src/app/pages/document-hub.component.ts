@@ -76,10 +76,18 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
             <div class="gs-left">
               <!-- Cabeçalho de postura COMPARTILHADO (mesma projeção única do Dashboard e das demais Funções):
                    score anulável (Não avaliado ≠ 0%) + cobertura. Nunca recalculado aqui. -->
-              @if (govPosture(); as p) {
-                <app-posture-summary [posture]="p" label="Governança" code="GV" />
-              } @else {
-                <span class="pulse">Resumo de postura indisponível.</span>
+              @switch (govPostureState()) {
+                @case ('loaded') {
+                  <app-posture-summary [posture]="govPosture()!" label="Governança" code="GV" />
+                }
+                @case ('loading') { <span class="pulse">Carregando o resumo de postura…</span> }
+                @case ('notFound') { <span class="pulse">Sem catálogo ativo para a Função Govern.</span> }
+                @case ('error') {
+                  <div class="posture-err">
+                    <span>Não foi possível carregar o resumo de postura.</span>
+                    <button type="button" class="retry-sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
+                  </div>
+                }
               }
             </div>
             <app-control-compliance-card [controls]="govView().controls" />
@@ -310,6 +318,9 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       .gs-counts .c.fail.hot { color: var(--red); }
       .gs-counts .c.fail.hot::before { box-shadow: 0 0 8px 0 var(--red); opacity: 1; }
       .score-err { font-family: var(--mono); font-size: 12px; color: var(--red); margin: 0; }
+      .posture-err { display: flex; flex-direction: column; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+      .retry-sm { align-self: flex-start; cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--cyan); background: rgba(38,224,255,0.06); border: 1px solid rgba(38,224,255,0.35); border-radius: 8px; padding: 5px 12px; }
+      .retry-sm:hover { background: rgba(38,224,255,0.12); }
       .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: 0.08em; animation: hub-pulse 1.4s ease-in-out infinite; }
       @keyframes hub-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
 
@@ -408,7 +419,10 @@ export class DocumentHubComponent implements OnInit {
     // O Auditor vive no App (global). Quando uma entrevista altera a cobertura, o AgentStateService
     // sinaliza e recarregamos o strip de cobertura documental desta tela.
     effect(() => {
-      if (this.agent.coverageVersion() > 0) this.loadCoverage();
+      if (this.agent.coverageVersion() > 0) {
+        this.loadCoverage();
+        this.loadWorkspacePosture();
+      }
     });
   }
 
@@ -420,6 +434,7 @@ export class DocumentHubComponent implements OnInit {
   readonly govView = computed(() => buildPillarView(PILLARS.GV, this.govControls()));
   /** Postura GV pela projeção ÚNICA (mesmo cabeçalho compartilhado das seis Funções). */
   readonly govPosture = signal<FunctionPosture | null>(null);
+  readonly govPostureState = signal<'loading' | 'loaded' | 'notFound' | 'error'>('loading');
 
   // ---- Integração corporativa (sync sob demanda) ----
   syncState = signal<SyncState>('idle');
@@ -455,13 +470,28 @@ export class DocumentHubComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadGovernPosture();
-    // Cabeçalho de postura GV pela projeção única (best-effort — não derruba a lista de controles/documentos).
-    this.scoreSvc.fetchWorkspace().subscribe({
-      next: (w) => this.govPosture.set(functionOf(w, 'GV') ?? null),
-      error: () => this.govPosture.set(null),
-    });
+    this.loadWorkspacePosture();
     this.loadCoverage();
     this.loadDocuments();
+  }
+
+  /**
+   * Carga CENTRALIZADA do cabeçalho de postura GV pela projeção única, com estados explícitos. Chamada no
+   * init, no retry e após TODA ação do Hub que possa mudar a avaliação (sync/upload/reanálise/remoção/cobertura).
+   */
+  loadWorkspacePosture(): void {
+    this.govPostureState.set('loading');
+    this.scoreSvc.fetchWorkspace().subscribe({
+      next: (w) => {
+        const f = functionOf(w, 'GV') ?? null;
+        this.govPosture.set(f);
+        this.govPostureState.set(f ? 'loaded' : 'notFound');
+      },
+      error: () => {
+        this.govPosture.set(null);
+        this.govPostureState.set('error');
+      },
+    });
   }
 
   /** Postura por telemetria: os controles GV (GV.SC/GV.RR), filtrados no ScoringService pelo prefixo "GV". */
@@ -494,6 +524,8 @@ export class DocumentHubComponent implements OnInit {
         setTimeout(() => {
           this.loadDocuments();
           this.loadGovernPosture();
+          this.loadWorkspacePosture();
+          this.loadCoverage();
         }, 2500);
       },
       error: (err) => {
@@ -573,6 +605,7 @@ export class DocumentHubComponent implements OnInit {
         this.uploading.set(false);
         this.resetUploadForm();
         this.loadDocuments();
+        this.loadWorkspacePosture();
       },
       error: (err) => {
         console.error('Falha no upload do documento:', err);
@@ -592,6 +625,7 @@ export class DocumentHubComponent implements OnInit {
       next: () => {
         this.busyId.set(null);
         this.loadDocuments();
+        this.loadWorkspacePosture();
       },
       error: (err) => {
         console.error('Falha ao re-enfileirar a leitura da IA:', err);
@@ -607,6 +641,7 @@ export class DocumentHubComponent implements OnInit {
       next: () => {
         this.busyId.set(null);
         this.loadDocuments();
+        this.loadWorkspacePosture();
       },
       error: (err) => {
         console.error('Falha ao excluir o documento:', err);

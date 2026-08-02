@@ -121,17 +121,25 @@ public sealed class WorkspacePostureQuery : IWorkspacePostureQuery
             .OrderBy(c => c.DisplayName)
             .Select(c => new ConnectorHealthItemDto(
                 c.Id, c.DisplayName, c.Provider.ToString(), c.Capability.ToString(),
-                c.LastStatus.ToString(), c.LastSyncAt, c.LastSyncAt != null))
+                c.LastStatus.ToString(), c.LastSyncAt, c.LastSyncAt != null, c.Enabled))
             .ToListAsync(ct);
 
-        // Um conector NUNCA sincronizado (LastSyncAt null, status default Unknown) NÃO entra em "Healthy".
-        var healthy = items.Count(i => i.Status == nameof(ConnectorStatus.Healthy));
-        var degraded = items.Count(i => i.Status == nameof(ConnectorStatus.Degraded));
-        var failed = items.Count(i => i.Status == nameof(ConnectorStatus.Failed));
-        var neverSynced = items.Count(i => !i.EverSynced);
-        var lastSync = items.Max(i => i.LastSyncAt);   // nullable Max: null se nenhum sincronizou
+        // Saúde OPERACIONAL só sobre os HABILITADOS. O desabilitado não entra no denominador (não é falha).
+        var enabled = items.Where(i => i.Enabled).ToList();
+        // Nunca sincronizado é NeverSynced — jamais Healthy, mesmo com LastStatus incoerente. Entre os que
+        // sincronizaram: Failed, Healthy, e todo o resto (Degraded/Unknown) como Degraded — as quatro
+        // categorias PARTICIONAM os habilitados (Healthy+Degraded+Failed+NeverSynced == Enabled).
+        var neverSynced = enabled.Count(i => !i.EverSynced);
+        var healthy = enabled.Count(i => i.EverSynced && i.Status == nameof(ConnectorStatus.Healthy));
+        var failed = enabled.Count(i => i.EverSynced && i.Status == nameof(ConnectorStatus.Failed));
+        var degraded = enabled.Count(i => i.EverSynced
+            && i.Status != nameof(ConnectorStatus.Healthy) && i.Status != nameof(ConnectorStatus.Failed));
+        var lastSync = enabled.Max(i => i.LastSyncAt);   // nullable Max: null se nenhum habilitado sincronizou
 
-        return new ConnectorHealthSummaryDto(items.Count, healthy, degraded, failed, neverSynced, lastSync, items);
+        return new ConnectorHealthSummaryDto(
+            Configured: items.Count, Enabled: enabled.Count, Disabled: items.Count - enabled.Count,
+            Healthy: healthy, Degraded: degraded, Failed: failed, NeverSynced: neverSynced,
+            LastSyncAt: lastSync, Items: items);
     }
 
     /// <summary>Projeção vazia (sem tenant): NotEvaluated, sem Funções nem conectores — nunca 0% por ausência.</summary>
@@ -140,7 +148,7 @@ public sealed class WorkspacePostureQuery : IWorkspacePostureQuery
             AegisScoreFormulaV1.Version, nameof(ScoreEvaluationState.NotEvaluated), null, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, Array.Empty<SeverityCountDto>(), null),
         Array.Empty<FunctionPostureDto>(),
-        new ConnectorHealthSummaryDto(0, 0, 0, 0, 0, null, Array.Empty<ConnectorHealthItemDto>()));
+        new ConnectorHealthSummaryDto(0, 0, 0, 0, 0, 0, 0, null, Array.Empty<ConnectorHealthItemDto>()));
 
     private sealed record CatalogRow(string FunctionCode, string FunctionName, int FunctionOrder, Guid SubcategoryId, int MaxScorePoints);
     private sealed record StateRow(Guid SubcategoryId, int CurrentScore, ControlStatus Status, DateTimeOffset LastEvaluatedAt);

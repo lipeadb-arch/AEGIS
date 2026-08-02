@@ -89,9 +89,6 @@ public class DashboardController : ControllerBase
                                  select ap).AsNoTracking().ToListAsync(ct);
 
         var overdueCount = actionPlans.Count(ap => ap.IsOverdue);
-        // Apenas subcategorias efetivamente pontuadas (CurrentScore != null) e fracas (<= 2);
-        // null é "ainda não avaliado", não "controle inefetivo".
-        var ineffectiveControls = scoreRows.Count(x => x.CurrentScore.HasValue && x.CurrentScore.Value <= 2);
         // Processos DISTINTOS com ao menos um risco Alto/Crítico (não a contagem de riscos).
         var criticalExposed = latest
             .Where(x => x.Ev.RiskLevel is RiskLevel.Alto or RiskLevel.Critico)
@@ -102,7 +99,6 @@ public class DashboardController : ControllerBase
 
         var exposure = new ExposureCardsDto(
             criticalExposed,
-            ineffectiveControls,
             overdueCount,
             rollup.Overall.CurrentScore,
             rollup.Overall.TargetScore);

@@ -13,8 +13,17 @@ import { NIST_FUNCTION_DESCRIPTIONS } from '../models/nist-glossary';
 import { riskColor } from '../lib/scales';
 import { environment } from '../../environments/environment';
 import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
+import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
+import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
 import { AegisScoreService } from '../services/aegis-score.service';
+import { ScoringService } from '../services/scoring.service';
 import { FunctionPosture, functionOf } from '../models/workspace.models';
+import {
+  PILLARS,
+  TenantControlStateDto,
+  buildPillarGapAnalysis,
+  buildPillarView,
+} from '../models/scoring.models';
 
 /**
  * IDENTIFY (ID.AM) — inventário tático de ativos.
@@ -25,7 +34,7 @@ import { FunctionPosture, functionOf } from '../models/workspace.models';
 @Component({
   selector: 'app-asset-inventory',
   standalone: true,
-  imports: [DatePipe, PostureSummaryComponent],
+  imports: [DatePipe, PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
   template: `
     <div class="app">
       <header class="topbar">
@@ -42,12 +51,61 @@ import { FunctionPosture, functionOf } from '../models/workspace.models';
       <!-- Subtítulo tático da Função Identify (mesmo padrão dos painéis de pilar / Govern) -->
       <p class="id-description">{{ idDescription }}</p>
 
-      <!-- Cabeçalho de postura COMPARTILHADO (mesma projeção única do Dashboard e das demais Funções). -->
-      @if (idPosture(); as p) {
-        <section class="id-posture">
-          <app-posture-summary [posture]="p" label="Identify" code="ID" />
-        </section>
-      }
+      <!-- Seção COMUM de postura + controles da Função Identify (mesmo contrato/painel das demais Funções);
+           o inventário de ativos abaixo permanece como área especializada. -->
+      <section class="panel id-workspace">
+        <div class="idw-head">
+          <h3>Postura Identify <span class="code">ID</span></h3>
+          <span class="hint">controles ID.* avaliados — score, cobertura, evidência e pendências</span>
+        </div>
+
+        <div class="idw-grid">
+          <div class="idw-summary">
+            @switch (idPostureState()) {
+              @case ('loaded') { <app-posture-summary [posture]="idPosture()!" label="Identify" code="ID" /> }
+              @case ('loading') { <span class="idw-pulse">Carregando o resumo de postura…</span> }
+              @case ('notFound') { <span class="idw-pulse">Sem catálogo ativo para a Função Identify.</span> }
+              @case ('error') {
+                <div class="idw-err">
+                  <span>Não foi possível carregar o resumo de postura.</span>
+                  <button type="button" class="retry-sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
+                </div>
+              }
+            }
+          </div>
+
+          <div class="idw-controls">
+            @switch (idControlsState()) {
+              @case ('loading') { <span class="idw-pulse">Carregando os controles ID…</span> }
+              @case ('error') {
+                <div class="idw-err">
+                  <span>Não foi possível carregar os controles ID.</span>
+                  <button type="button" class="retry-sm" (click)="loadIdControls()">Tentar novamente</button>
+                </div>
+              }
+              @case ('loaded') {
+                <div class="idw-tabs" role="tablist">
+                  <button type="button" role="tab" class="tab" [class.on]="idTab() === 'controls'"
+                    [attr.aria-selected]="idTab() === 'controls'" (click)="idTab.set('controls')">Controles</button>
+                  <button type="button" role="tab" class="tab blind" [class.on]="idTab() === 'blind'"
+                    [attr.aria-selected]="idTab() === 'blind'" (click)="idTab.set('blind')">
+                    Pontos Cegos @if (idBlindCount() > 0) { <i>{{ idBlindCount() }}</i> }
+                  </button>
+                </div>
+                @if (idTab() === 'controls') {
+                  @if (idView().controls.length > 0) {
+                    <app-control-compliance-card [controls]="idView().controls" />
+                  } @else {
+                    <p class="idw-empty">Nenhum controle ID avaliado ainda — sem evidência para exibir (não é 0%).</p>
+                  }
+                } @else {
+                  <app-aegis-pillar-checklist pillar="ID" />
+                }
+              }
+            }
+          </div>
+        </div>
+      </section>
 
       <!-- ---- Barra de filtros combinados ---- -->
       <section class="panel filters">
@@ -208,6 +266,25 @@ import { FunctionPosture, functionOf } from '../models/workspace.models';
         max-width: 820px;
       }
 
+      /* Seção comum Identify (postura + controles) — compacta, acima do inventário. */
+      .id-workspace { padding: 16px 18px; margin-bottom: 18px; }
+      .idw-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+      .idw-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+      .idw-head .code { font-family: var(--mono); font-size: 12px; color: var(--cyan); margin-left: 6px; }
+      .idw-head .hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+      .idw-grid { display: grid; grid-template-columns: minmax(260px, 320px) 1fr; gap: 16px; align-items: start; }
+      .idw-pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+      .idw-empty { font-family: var(--mono); font-size: 12px; color: var(--muted); padding: 16px 2px; margin: 0; }
+      .idw-err { display: flex; flex-direction: column; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+      .retry-sm { align-self: flex-start; cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--cyan); background: rgba(38,224,255,0.06); border: 1px solid rgba(38,224,255,0.35); border-radius: 8px; padding: 5px 12px; }
+      .retry-sm:hover { background: rgba(38,224,255,0.12); }
+      .idw-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line-2, var(--line)); margin-bottom: 12px; }
+      .idw-tabs .tab { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 4px 12px 9px; cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+      .idw-tabs .tab.on { color: var(--cyan); border-bottom-color: var(--cyan); }
+      .idw-tabs .tab.blind.on { color: var(--red); border-bottom-color: var(--red); }
+      .idw-tabs .tab i { font-style: normal; font-family: var(--display); font-size: 11px; border: 1px solid rgba(255,45,111,0.45); border-radius: 999px; padding: 1px 7px; color: var(--red); }
+      @media (max-width: 900px) { .idw-grid { grid-template-columns: 1fr; } }
+
       .filters { padding: 16px 18px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 14px; }
       .chips { display: flex; flex-wrap: wrap; gap: 8px; }
       .chip {
@@ -303,11 +380,21 @@ import { FunctionPosture, functionOf } from '../models/workspace.models';
 export class AssetInventoryComponent implements OnInit {
   private readonly svc = inject(AssetService);
   private readonly scoreSvc = inject(AegisScoreService);
+  private readonly scoring = inject(ScoringService);
 
   // ---- Dados ----
   rows = signal<AssetDto[]>([]);
-  /** Postura da Função Identify (ID) pela projeção única — cabeçalho compartilhado das seis Funções. */
+
+  // ---- Seção comum Identify (postura + controles), pela projeção única + matriz de controles ----
+  /** Postura da Função Identify (ID) — cabeçalho compartilhado das seis Funções. */
   idPosture = signal<FunctionPosture | null>(null);
+  idPostureState = signal<'loading' | 'loaded' | 'notFound' | 'error'>('loading');
+  /** Controles ID.* (matriz de conformidade filtrada pelo prefixo). */
+  private readonly idControls = signal<TenantControlStateDto[]>([]);
+  idControlsState = signal<'loading' | 'loaded' | 'error'>('loading');
+  idTab = signal<'controls' | 'blind'>('controls');
+  readonly idView = computed(() => buildPillarView(PILLARS.ID, this.idControls()));
+  readonly idBlindCount = computed(() => buildPillarGapAnalysis(PILLARS.ID, this.idControls()).blindSpots.length);
   total = signal(0);
   totalPages = signal(0);
   page = signal(1);
@@ -347,10 +434,35 @@ export class AssetInventoryComponent implements OnInit {
 
   ngOnInit(): void {
     this.load();
-    // Cabeçalho de postura ID pela projeção única (best-effort — não interfere no inventário).
+    this.loadWorkspacePosture();
+    this.loadIdControls();
+  }
+
+  /** Cabeçalho de postura ID pela projeção única, com estados explícitos (init + retry). */
+  loadWorkspacePosture(): void {
+    this.idPostureState.set('loading');
     this.scoreSvc.fetchWorkspace().subscribe({
-      next: (w) => this.idPosture.set(functionOf(w, 'ID') ?? null),
-      error: () => this.idPosture.set(null),
+      next: (w) => {
+        const f = functionOf(w, 'ID') ?? null;
+        this.idPosture.set(f);
+        this.idPostureState.set(f ? 'loaded' : 'notFound');
+      },
+      error: () => {
+        this.idPosture.set(null);
+        this.idPostureState.set('error');
+      },
+    });
+  }
+
+  /** Controles ID.* (matriz de conformidade), com estados explícitos (init + retry). */
+  loadIdControls(): void {
+    this.idControlsState.set('loading');
+    this.scoring.getPillarControls('ID').subscribe({
+      next: (list) => {
+        this.idControls.set(list);
+        this.idControlsState.set('loaded');
+      },
+      error: () => this.idControlsState.set('error'),
     });
   }
 

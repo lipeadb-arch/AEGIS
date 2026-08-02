@@ -67,12 +67,22 @@ import { AegisScoreService } from '../services/aegis-score.service';
           <!-- Resumo de postura: MESMA autoridade (aegis-score-v1, via /scoring/workspace) do Dashboard e
                das demais Funções — score anulável (Não avaliado ≠ 0%) + cobertura. Nunca recalculado aqui. -->
           <div class="panel summary">
-            @if (posture(); as p) {
-              <app-posture-summary [posture]="p" [label]="meta().label" [code]="meta().code" />
-            } @else if (postureLoaded()) {
-              <p class="pulse">Resumo de postura indisponível para esta Função.</p>
-            } @else {
-              <p class="pulse">Carregando o resumo de postura…</p>
+            @switch (postureState()) {
+              @case ('loaded') {
+                <app-posture-summary [posture]="posture()!" [label]="meta().label" [code]="meta().code" />
+              }
+              @case ('loading') {
+                <span class="pulse">Carregando o resumo de postura…</span>
+              }
+              @case ('notFound') {
+                <span class="pulse">Sem catálogo ativo para esta Função.</span>
+              }
+              @case ('error') {
+                <div class="posture-err">
+                  <span>Não foi possível carregar o resumo de postura.</span>
+                  <button type="button" class="retry-sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
+                </div>
+              }
             }
           </div>
 
@@ -365,6 +375,31 @@ import { AegisScoreService } from '../services/aegis-score.service';
         padding: 1px 5px;
         border-radius: 4px;
       }
+      /* Erro + retry do cabeçalho de postura (falha isolada da projeção, sem derrubar a matriz). */
+      .posture-err {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .retry-sm {
+        align-self: flex-start;
+        cursor: pointer;
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        color: var(--cyan);
+        background: rgba(38, 224, 255, 0.06);
+        border: 1px solid rgba(38, 224, 255, 0.35);
+        border-radius: 8px;
+        padding: 5px 12px;
+      }
+      .retry-sm:hover {
+        background: rgba(38, 224, 255, 0.12);
+      }
+
       @keyframes pulse {
         0%,
         100% {
@@ -402,7 +437,8 @@ export class PillarDashboardComponent implements OnInit {
 
   /** Postura desta Função pela projeção única do workspace (score/cobertura/contagens — autoridade backend). */
   readonly posture = signal<FunctionPosture | null>(null);
-  readonly postureLoaded = signal(false);
+  /** Estado do cabeçalho de postura: distingue carregando · carregado · Função ausente · erro (com retry). */
+  readonly postureState = signal<'loading' | 'loaded' | 'notFound' | 'error'>('loading');
 
   /** Derivações reativas: metadados do pilar e a view agregada que alimenta os Dumb Components. */
   readonly meta = computed(() => PILLARS[this.pillar()]);
@@ -439,13 +475,22 @@ export class PillarDashboardComponent implements OnInit {
       },
     });
 
-    // Resumo de postura da Função pela projeção ÚNICA (best-effort: um erro aqui não derruba a lista).
+    this.loadWorkspacePosture();
+  }
+
+  /** Carrega o cabeçalho de postura pela projeção única, com estados explícitos (chamado no init e no retry). */
+  loadWorkspacePosture(): void {
+    this.postureState.set('loading');
     this.scoreSvc.fetchWorkspace().subscribe({
       next: (w) => {
-        this.posture.set(functionOf(w, this.meta().code) ?? null);
-        this.postureLoaded.set(true);
+        const f = functionOf(w, this.meta().code) ?? null;
+        this.posture.set(f);
+        this.postureState.set(f ? 'loaded' : 'notFound');
       },
-      error: () => this.postureLoaded.set(true),
+      error: () => {
+        this.posture.set(null);
+        this.postureState.set('error');
+      },
     });
   }
 }

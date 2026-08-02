@@ -2,7 +2,6 @@
 
 export interface ExposureCards {
   criticalProcessesExposed: number;
-  ineffectiveControls: number;
   overdueActionPlans: number;
   overallMaturity: number;
   targetMaturity: number;

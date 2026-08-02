@@ -2,7 +2,7 @@ import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { BlastRadiusSummary, ExecutiveDashboard, GapBalance } from '../models/dashboard.models';
 import { ComplianceHistoryPoint, buildGapBalance, trendToSparkline } from '../models/scoring.models';
-import { WorkspacePosture } from '../models/workspace.models';
+import { WorkspacePosture, connectorBreakdown } from '../models/workspace.models';
 import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
 import { DashboardService } from '../services/dashboard.service';
 import { AegisScoreService } from '../services/aegis-score.service';
@@ -78,16 +78,10 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
                 <span class="bv">{{ w.overall.nonCompliantControls }}</span>
                 <span class="bsub">{{ w.overall.notEvaluatedControls }} não avaliados</span>
               </div>
-              <div class="bcard">
-                <span class="bk">Conectores</span>
-                <span class="bv">{{ w.connectors.healthy }}/{{ w.connectors.total }} saudáveis</span>
-                <span class="bsub">
-                  @if (w.connectors.neverSynced > 0) {
-                    {{ w.connectors.neverSynced }} nunca sincronizados
-                  } @else if (w.connectors.failed > 0) {
-                    {{ w.connectors.failed }} com falha
-                  } @else { operacionais }
-                </span>
+              <div class="bcard" [class.hot]="w.connectors.failed > 0">
+                <span class="bk">Conectores (habilitados)</span>
+                <span class="bv">{{ w.connectors.healthy }}/{{ w.connectors.enabled }} saudáveis</span>
+                <span class="bsub">{{ connectorBreakdown(w.connectors) }}</span>
               </div>
               <div class="bcard">
                 <span class="bk">Última sincronização</span>
@@ -164,11 +158,6 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           label="Processos críticos expostos"
           [value]="d.exposure.criticalProcessesExposed"
           tone="danger"
-        />
-        <app-exposure-card
-          label="Controles inefetivos"
-          [value]="d.exposure.ineffectiveControls"
-          tone="warn"
         />
         <app-exposure-card
           label="Planos de ação vencidos"
@@ -589,13 +578,14 @@ export class ExecutiveDashboardComponent implements OnInit {
       || d.riskByLevel.length > 0
       || d.riskHeatmap.length > 0
       || d.exposure.criticalProcessesExposed > 0
-      || d.exposure.ineffectiveControls > 0
       || d.exposure.overdueActionPlans > 0;
   });
 
   /** Instante da apuração — o backend já enviava `generatedAt` e a tela não o exibia. */
   readonly generatedAt = computed(() => this.data()?.generatedAt ?? null);
 
+  // Resumo curto e honesto da saúde dos conectores (degradado/falha/nunca sincronizado/desabilitado).
+  protected readonly connectorBreakdown = connectorBreakdown;
   // Exposto ao template para colorir a pílula do ICR.
   protected readonly icrColor = icrColor;
   // Exposto ao template para orientar o diagnóstico quando a carga falha.

@@ -51,16 +51,35 @@ export interface ConnectorHealthItem {
   status: string; // "Healthy" | "Degraded" | "Failed" | "Unknown"
   lastSyncAt: string | null;
   everSynced: boolean;
+  enabled: boolean;
 }
 
+/**
+ * Saúde OPERACIONAL dos conectores: `healthy`/`degraded`/`failed`/`neverSynced` contam SOMENTE os
+ * habilitados (particionam `enabled`). O desabilitado fica fora do denominador operacional (`disabled`),
+ * e nunca-sincronizado jamais é saudável. O Dashboard mostra `healthy/enabled`, não `healthy/configured`.
+ */
 export interface ConnectorHealthSummary {
-  total: number;
+  configured: number;
+  enabled: number;
+  disabled: number;
   healthy: number;
   degraded: number;
   failed: number;
   neverSynced: number;
   lastSyncAt: string | null;
   items: ConnectorHealthItem[];
+}
+
+/** Resumo curto e honesto do que NÃO está saudável (só as partes não-zero), ou "todos operacionais". */
+export function connectorBreakdown(c: ConnectorHealthSummary): string {
+  const parts: string[] = [];
+  if (c.degraded > 0) parts.push(`${c.degraded} degradado${c.degraded > 1 ? 's' : ''}`);
+  if (c.failed > 0) parts.push(`${c.failed} com falha`);
+  if (c.neverSynced > 0) parts.push(`${c.neverSynced} nunca sincronizado${c.neverSynced > 1 ? 's' : ''}`);
+  if (c.disabled > 0) parts.push(`${c.disabled} desabilitado${c.disabled > 1 ? 's' : ''}`);
+  if (parts.length === 0) return c.enabled > 0 ? 'todos operacionais' : 'nenhum conector habilitado';
+  return parts.join(' · ');
 }
 
 export interface WorkspacePosture {
