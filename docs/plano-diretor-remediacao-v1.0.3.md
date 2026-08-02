@@ -4,9 +4,9 @@
 **Data de atualização:** 2026-08-02<br>
 **Horizonte desta revisão:** entrega funcional em 30 dias, até 2026-08-28<br>
 **Branch de referência:** `main`<br>
-**Commit de referência:** `9db7ba4`<br>
-**Última entrega concluída:** Entrega 4 — Workspace NIST, Dashboard e Document Hub (`AEGIS-AUD-021`, `AEGIS-AUD-027`, `AEGIS-AUD-032`) — PR #20, squash-merge `9db7ba4`<br>
-**Próximo trabalho:** Entrega 5 — release candidate demonstrável (`AEGIS-AUD-048`) — **EM IMPLEMENTAÇÃO** (branch `chore/mvp-release-candidate`; PR aberto contra `main`, **não mergeado**)
+**Commit de referência:** `5a2f7a8`<br>
+**Última entrega concluída:** Entrega 5 — release candidate demonstrável (`AEGIS-AUD-048`) — PR #21, squash-merge `5a2f7a8`<br>
+**Próximo trabalho:** caminho crítico do MVP acelerado **CONCLUÍDO** (Entregas 0–5). Portabilidade validada no **notebook corporativo** (2026-08-02: smoke 35/35 + `ng build` + validação visual, dados 100% sintéticos, nenhuma integração real iniciada). Segue o backlog pós-MVP (observabilidade, HA/DR, hardening, adaptadores de fabricante, suíte ampla de frontend) — **nenhum novo AUD autorizado**; próximo passo operacional é ligar as integrações externas reais, com autorização explícita do Felipe. **Correção de portabilidade EM IMPLEMENTAÇÃO:** a validação corporativa revelou a ausência de uma ação de **logout visível** — branch `fix/mvp-visible-logout` (botão "Sair" sempre visível no HUD + `AuthService.logout()` que aguarda a revogação do cookie; só frontend, sem backend), PR técnico aberto contra `main`, **sem alterar o status de nenhum AUD concluído**
 
 > Este plano não exige mais concluir os 63 achados antes de apresentar o produto. O objetivo imediato é
 > entregar um **MVP funcional, demonstrável e pronto para homologação**, preservando segurança
@@ -123,8 +123,9 @@ Não é necessário reconstruir o projeto. A fundação existente deve ser reuti
 | AEGIS-AUD-021 | #20 | `9db7ba4` (squash) |
 | AEGIS-AUD-027 | #20 | `9db7ba4` (squash) |
 | AEGIS-AUD-032 | #20 | `9db7ba4` (squash) |
+| AEGIS-AUD-048 | #21 | `5a2f7a8` (squash) |
 
-As **Entregas 1, 2, 3 e 4** estão **CONCLUÍDAS** — Entrega 1 (fluxo de tenant confiável: `AEGIS-AUD-012`, `AEGIS-AUD-018`, `AEGIS-AUD-030`) em PR #17 (squash-merge `2fbc0d9`), Entrega 2 (ingestão operacional de evidências: `AEGIS-AUD-020`, `AEGIS-AUD-041`, `AEGIS-AUD-043`) em PR #18 (squash-merge `c24c547`), Entrega 3 (score determinístico e explicável: `AEGIS-AUD-001`, `AEGIS-AUD-002`, `AEGIS-AUD-019`) em PR #19 (squash-merge `c8ecb3f`) e Entrega 4 (Workspace NIST, Dashboard e Document Hub: `AEGIS-AUD-021`, `AEGIS-AUD-027`, `AEGIS-AUD-032`) em PR #20 (squash-merge `9db7ba4`). O próximo trabalho é a **Entrega 5** (release candidate demonstrável: `AEGIS-AUD-048`), ainda ABERTA e não autorizada.
+As **Entregas 1, 2, 3, 4 e 5** estão **CONCLUÍDAS** — Entrega 1 (fluxo de tenant confiável: `AEGIS-AUD-012`, `AEGIS-AUD-018`, `AEGIS-AUD-030`) em PR #17 (squash-merge `2fbc0d9`), Entrega 2 (ingestão operacional de evidências: `AEGIS-AUD-020`, `AEGIS-AUD-041`, `AEGIS-AUD-043`) em PR #18 (squash-merge `c24c547`), Entrega 3 (score determinístico e explicável: `AEGIS-AUD-001`, `AEGIS-AUD-002`, `AEGIS-AUD-019`) em PR #19 (squash-merge `c8ecb3f`) Entrega 4 (Workspace NIST, Dashboard e Document Hub: `AEGIS-AUD-021`, `AEGIS-AUD-027`, `AEGIS-AUD-032`) em PR #20 (squash-merge `9db7ba4`) e Entrega 5 (release candidate demonstrável: `AEGIS-AUD-048`) em PR #21 (squash-merge `5a2f7a8`). O **caminho crítico do MVP acelerado está CONCLUÍDO**; o que segue é o backlog pós-MVP (seção 6), sem novo AUD autorizado.
 
 ---
 
@@ -139,7 +140,7 @@ As **Entregas 1, 2, 3 e 4** estão **CONCLUÍDAS** — Entrega 1 (fluxo de tenan
 | 2 | Ingestão operacional de evidências | AEGIS-AUD-020, AEGIS-AUD-041, AEGIS-AUD-043 | ✅ Concluída | PR #18 mergeado (`c24c547`); ingestão genérica autenticada SIEM/EDR, evidência persistida e mapeada para NIST |
 | 3 | Score determinístico e explicável | AEGIS-AUD-001, AEGIS-AUD-002, AEGIS-AUD-019 | ✅ Concluída | PR #19 mergeado (`c8ecb3f`); score reproduzível `aegis-score-v1`, IA consultiva, cobertura ≠ score |
 | 4 | Workspace NIST, Dashboard e Hub | AEGIS-AUD-021, AEGIS-AUD-027, AEGIS-AUD-032 | ✅ Concluída | PR #20 mergeado (`9db7ba4`); projeção única `/scoring/workspace`, seis Funções equivalentes, Dashboard AEGIS Score, saúde honesta dos conectores |
-| 5 | Release candidate demonstrável | AEGIS-AUD-048 + correções bloqueadoras | 🚧 Em implementação | PR aberto (`chore/mvp-release-candidate`, não mergeado); `/health/live`+`/health/ready`, senha demo só em runtime, smoke `scripts/smoke-mvp.ps1` (35/35), roteiro em `DEV.md` |
+| 5 | Release candidate demonstrável | AEGIS-AUD-048 + correções bloqueadoras | ✅ Concluída | PR #21 mergeado (`5a2f7a8`); `/health/live`+`/health/ready`, senha demo só em runtime, smoke `scripts/smoke-mvp.ps1` (35/35), correção do `<base href>`, roteiro em `DEV.md` |
 
 Os IDs agrupam riscos já catalogados, mas o aceite é pelo **fluxo funcionando**, não por quantidade de
 AUDs encerrados.
@@ -251,8 +252,7 @@ Relatórios exportáveis, snapshots imutáveis e histórico regulatório ficam p
 
 ### Entrega 5 — release candidate demonstrável
 
-**Status:** 🚧 EM IMPLEMENTAÇÃO — branch `chore/mvp-release-candidate`, **PR aberto contra `main` (NÃO mergeado)**. ⚠️ `AEGIS-AUD-048` **não** deve ser marcado como concluído antes do merge.<br>
-**Branch:** `chore/mvp-release-candidate`<br>
+**Status:** ✅ CONCLUÍDA — PR #21 (squash-merge `5a2f7a8`); `main` local/remota sincronizadas; branch `chore/mvp-release-candidate` removida (local e remota).<br>
 **AUD principal:** AEGIS-AUD-048.
 
 Escopo:
@@ -269,7 +269,7 @@ Escopo:
 
 Essa entrega não inclui observabilidade distribuída, HA, disaster recovery ou hardening completo.
 
-**Estado (EM IMPLEMENTAÇÃO — não mergeado; resultados reais):** **health checks** `GET /health/live` (liveness — não toca banco/IA/fornecedor) e `GET /health/ready` (readiness — PostgreSQL + migrations + catálogo/regras pelo `SchemaReadinessGuard`, só leitura; ausência de Azure OpenAI/Entra/conectores NÃO reprova), **anônimos** e com **resposta sanitizada** (só status; sem connection string/stack/detalhe). **Segredo `Aegis@12345` eliminado**: `seed-user` exige `Demo:Password` **em runtime** (env `Demo__Password`/user-secret; sem padrão versionado, nunca logada, não devolvida), e-mail demo `analista@demo.example.com`, restrito a DEBUG+Development; novo `seed-second-tenant` para o 2º ambiente. **Smoke** `scripts/smoke-mvp.ps1` (PowerShell 5.1+, banco descartável isolado, nunca toca `aegis_dev`, segredos só em runtime) — **35/35 gates**: DbMigrator, liveness/readiness, seeds sem segredo, login→seleção→troca entre dois tenants, `X-Tenant` fail-closed (403), conectores Generic SIEM/EDR, ingestão SIEM/EDR + dedup + chave inválida (401), score determinístico, seis Funções, Dashboard, Integrações, Hub, isolamento do 2º tenant. **Bloqueador corrigido:** `index.html` sem `<base href="/">` (tela branca em refresh/deep-link de rota aninhada). **Validação visual** das telas essenciais sem tela quebrada nem erro de console. Backend **540/540** (+3 health checks); `dotnet build` 0/0; `has-pending-model-changes` limpo — **sem migration** (24 migrations); `ng build` aprovado. Roteiro curto em `DEV.md`. **Sem credenciais, segredos ou dados reais.**
+**Aceite (evidência):** PR #21 (squash-merge `5a2f7a8`, árvore idêntica ao head validado `c646565`; branch removida). **health checks** `GET /health/live` (liveness — não toca banco/IA/fornecedor) e `GET /health/ready` (readiness — PostgreSQL + migrations + catálogo/regras pelo `SchemaReadinessGuard`, só leitura; ausência de Azure OpenAI/Entra/conectores NÃO reprova), **anônimos** e com **resposta sanitizada** (só status; sem connection string/stack/detalhe). **Segredo `Aegis@12345` eliminado**: `seed-user` exige `Demo:Password` **em runtime** (env `Demo__Password`/user-secret; sem padrão versionado, nunca logada, não devolvida), e-mail demo `analista@demo.example.com`, restrito a DEBUG+Development; novo `seed-second-tenant` para o 2º ambiente. **Smoke** `scripts/smoke-mvp.ps1` (PowerShell 5.1+, banco descartável isolado, nunca toca `aegis_dev`, segredos só em runtime) — **35/35 gates**: DbMigrator, liveness/readiness, seeds sem segredo, login→seleção→troca entre dois tenants, `X-Tenant` fail-closed (403), conectores Generic SIEM/EDR, ingestão SIEM/EDR + dedup + chave inválida (401), score determinístico, seis Funções, Dashboard, Integrações, Hub, isolamento do 2º tenant. **Bloqueador corrigido:** `index.html` sem `<base href="/">` (tela branca em refresh/deep-link de rota aninhada). **Validação visual** das telas essenciais sem tela quebrada nem erro de console. Backend **540/540** (+3 health checks); `dotnet build` 0/0; `has-pending-model-changes` limpo — **sem migration** (24 migrations); `ng build` aprovado. Roteiro curto em `DEV.md`. **Sem credenciais, segredos ou dados reais.**
 
 ---
 

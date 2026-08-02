@@ -138,6 +138,21 @@ import { AuthService } from './services/auth.service';
            acesso a um cliente — um dropdown de uma opção só é ruído. -->
       <header class="hud-topbar">
         <app-tenant-switcher />
+        <!-- Encerrar sessão: SEMPRE visível para o usuário autenticado. O topbar só renderiza sob
+             showShell() (que exige isAuthenticated), e este botão NÃO depende da contagem de tenants —
+             ao contrário do switcher acima, que some com um único ambiente. Desabilita enquanto o logout
+             corre, barrando cliques repetidos. -->
+        <button
+          type="button"
+          class="hud-logout"
+          [disabled]="auth.loggingOut()"
+          [attr.aria-busy]="auth.loggingOut()"
+          (click)="auth.logout()"
+          title="Encerrar sessão"
+        >
+          <span class="ic" aria-hidden="true">⏻</span>
+          <span class="lb">{{ auth.loggingOut() ? 'Saindo…' : 'Sair' }}</span>
+        </button>
       </header>
       <router-outlet />
     </div>
@@ -479,6 +494,41 @@ import { AuthService } from './services/auth.service';
       }
       .hud-topbar:empty {
         display: none;
+      }
+
+      /* Ação de encerrar sessão — sempre presente à direita do HUD (independe do switcher). */
+      .hud-logout {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.4rem 0.7rem;
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+        background: rgba(122, 145, 190, 0.06);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: 0.15s;
+      }
+      .hud-logout:hover:not(:disabled) {
+        color: var(--text);
+        background: rgba(38, 224, 255, 0.08);
+        border-color: color-mix(in srgb, var(--cyan) 40%, var(--line));
+      }
+      .hud-logout:disabled {
+        opacity: 0.55;
+        cursor: progress;
+      }
+      .hud-logout:focus-visible {
+        outline: 2px solid var(--cyan);
+        outline-offset: 2px;
+      }
+      .hud-logout .ic {
+        font-size: 13px;
+        line-height: 1;
+        color: var(--cyan);
       }
 
       /* ---- Responsivo: o sidebar vira faixa superior ---- */
