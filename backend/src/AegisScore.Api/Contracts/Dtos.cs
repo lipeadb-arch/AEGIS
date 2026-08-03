@@ -436,3 +436,67 @@ public record BlastRadiusResponseDto(
 /// é resolvido do claim <c>tenant_id</c> do JWT (Zero Trust).
 /// </summary>
 public record CreateAdvisoryRequest(string SubcategoryCode);
+
+// ---- AEGIS KNIGHT: assessment de postura de identidade e exposição ----
+// Enums viajam como STRING (nome), nunca como ordinal — mesmo idioma dos demais DTOs de leitura. O score é
+// o score KNIGHT (fórmula própria), ANULÁVEL e DISTINTO do AEGIS Score geral.
+
+/// <summary>Um indicador avaliado de uma execução KNIGHT (espelha KnightIndicatorView; enums como nome).</summary>
+public record KnightIndicatorDto(
+    string IndicatorId,
+    string Title,
+    string Category,
+    string Severity,
+    string Status,
+    string Evidence,
+    int AffectedObjectCount,
+    IReadOnlyList<string> NistCodes,
+    IReadOnlyList<string> MitreTechniques,
+    string Recommendation,
+    DateTimeOffset CollectedAt);
+
+/// <summary>Contagens por veredito da execução (denormalizadas para leitura direta na UI).</summary>
+public record KnightCountsDto(
+    int Passed, int Exposed, int Mitigated, int NotEvaluated, int Error, int NotApplicable);
+
+/// <summary>Um risco prioritário do resumo consultivo, citando os indicadores que o embasam.</summary>
+public record KnightPriorityRiskDto(string Title, string Rationale, IReadOnlyList<string> IndicatorIds);
+
+/// <summary>Uma ação recomendada (ordenada), citando os indicadores que a motivam.</summary>
+public record KnightRecommendedActionDto(int Order, string Action, IReadOnlyList<string> IndicatorIds);
+
+/// <summary>Uma correlação entre achados, citando os indicadores correlacionados.</summary>
+public record KnightCorrelationDto(string Description, IReadOnlyList<string> IndicatorIds);
+
+/// <summary>
+/// Resumo consultivo estruturado (interpretação/priorização assistida por IA, ou fallback determinístico).
+/// NUNCA contém status, severidade, score, cobertura ou mapeamento — a IA não decide nada disso.
+/// </summary>
+public record KnightAdvisoryDto(
+    string ExecutiveSummary,
+    IReadOnlyList<KnightPriorityRiskDto> PriorityRisks,
+    IReadOnlyList<KnightRecommendedActionDto> RecommendedActions,
+    IReadOnlyList<KnightCorrelationDto> Correlations,
+    IReadOnlyList<string> CollectionGaps);
+
+/// <summary>
+/// Um assessment KNIGHT completo na visão da API. <paramref name="IsDemo"/> deriva de <paramref name="Mode"/>
+/// para a UI distinguir claramente DEMONSTRAÇÃO de coleta real. <paramref name="AdvisoryFromAi"/> indica se o
+/// resumo veio de IA ou do fallback determinístico.
+/// </summary>
+public record KnightAssessmentDto(
+    Guid Id,
+    string Mode,
+    bool IsDemo,
+    string Source,
+    string Status,
+    string CatalogVersion,
+    string ScoreFormulaVersion,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? CompletedAt,
+    double? Score,
+    double Coverage,
+    KnightCountsDto Counts,
+    IReadOnlyList<KnightIndicatorDto> Indicators,
+    KnightAdvisoryDto? Advisory,
+    bool AdvisoryFromAi);

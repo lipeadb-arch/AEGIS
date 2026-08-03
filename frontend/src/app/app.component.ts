@@ -104,9 +104,9 @@ import { AuthService } from './services/auth.service';
           <span class="dot" aria-hidden="true"></span><span class="lb">Recover</span><span class="code">RC</span>
         </a>
 
-        <p class="nav-group">Telemetria Ativa</p>
+        <p class="nav-group">AEGIS KNIGHT</p>
         <a class="nav-item" routerLink="/identity" routerLinkActive="active">
-          <span class="dot" aria-hidden="true"></span><span class="lb">Identidade · Entra</span><span class="code">IAM</span>
+          <span class="dot" aria-hidden="true"></span><span class="lb">AEGIS KNIGHT</span><span class="code">AK</span>
         </a>
 
         <!-- Referência externa: separada das Funções NIST porque NÃO é uma tela do produto — é a fonte
