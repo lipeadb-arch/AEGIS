@@ -92,6 +92,11 @@ public class AegisScoreDbContext : DbContext
     public DbSet<BlastRadiusAssessment> BlastRadiusAssessments => Set<BlastRadiusAssessment>();
     public DbSet<BlastRadiusImpactNode> BlastRadiusImpactNodes => Set<BlastRadiusImpactNode>();
 
+    // AEGIS KNIGHT — assessment de postura de identidade/exposição (estrutura DEDICADA, desacoplada do
+    // Assessment de processos e do ledger do AEGIS Score geral).
+    public DbSet<KnightAssessmentRun> KnightAssessmentRuns => Set<KnightAssessmentRun>();
+    public DbSet<KnightIndicatorResult> KnightIndicatorResults => Set<KnightIndicatorResult>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
@@ -127,6 +132,11 @@ public class AegisScoreDbContext : DbContext
         b.Entity<SubcategoryEvaluation>().Property(x => x.EvidenceRefs)
             .HasConversion(guidList, guidListCmp).HasColumnType("jsonb");
         b.Entity<GrcInterviewSession>().Property(x => x.TargetSubcategoryCodes)
+            .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
+        // AEGIS KNIGHT — listas de mapeamento por indicador → jsonb (mesmo idioma das listas do catálogo NIST).
+        b.Entity<KnightIndicatorResult>().Property(x => x.NistCodes)
+            .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
+        b.Entity<KnightIndicatorResult>().Property(x => x.MitreTechniques)
             .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
 
         // Computed properties — never persisted.
@@ -464,6 +474,41 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(n => new { n.TenantId, n.AssessmentId });
         });
 
+        // ============================================================
+        //  AEGIS KNIGHT — execução + resultados de indicadores
+        // ============================================================
+
+        // Execução do assessment: tenant-owned. Índice tenant-leading por StartedAt para a consulta "latest"
+        // (seek por tenant + range ordenado por data). Filhos (indicadores) cascateiam com a execução.
+        b.Entity<KnightAssessmentRun>(e =>
+        {
+            e.Property(x => x.Source).HasMaxLength(200);
+            e.Property(x => x.CatalogVersion).HasMaxLength(50);
+            e.Property(x => x.ScoreFormulaVersion).HasMaxLength(50);
+            e.HasIndex(x => new { x.TenantId, x.StartedAt });
+
+            // INTEGRIDADE MULTI-TENANT NO BANCO: chave alternativa composta (Id, TenantId) que a FK do filho
+            // referencia. Assim o próprio banco REJEITA um resultado cujo TenantId não seja o da execução —
+            // o query filter esconde a inconsistência, mas só a FK composta impede a corrupção relacional.
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            e.HasMany(x => x.Indicators).WithOne(i => i.Run)
+                .HasForeignKey(i => new { i.RunId, i.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Resultado por indicador: tenant-owned. O indicador NÃO existe sem a execução → Cascade (acima).
+        b.Entity<KnightIndicatorResult>(e =>
+        {
+            e.Property(x => x.IndicatorId).HasMaxLength(40).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Recommendation).HasMaxLength(1000);
+            // Uma execução não pode conter duas linhas para o MESMO IndicatorId — invariante de banco. O
+            // índice é tenant-leading e cobre o carregamento por (tenant, execução), substituindo o antigo
+            // índice não-único (TenantId, RunId).
+            e.HasIndex(x => new { x.TenantId, x.RunId, x.IndicatorId }).IsUnique();
+        });
+
         // Multi-tenant isolation: every operational entity is scoped to the ambient tenant.
         // Fail-CLOSED: when no tenant is resolved (missing/invalid X-Tenant) the filter yields
         // no rows, instead of leaking every tenant's data. Seed/maintenance code that must span
@@ -502,6 +547,9 @@ public class AegisScoreDbContext : DbContext
         b.Entity<AssetThreatExposure>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<BlastRadiusAssessment>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<BlastRadiusImpactNode>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // AEGIS KNIGHT — execução e resultados são ITenantOwned (fail-closed, como o restante do modelo).
+        b.Entity<KnightAssessmentRun>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<KnightIndicatorResult>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
     }
 
     // [AEGIS-AUD-008] Todos os quatro pontos de entrada públicos de SaveChanges são interceptados

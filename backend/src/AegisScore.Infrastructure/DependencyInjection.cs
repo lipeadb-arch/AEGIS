@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Advisories;
+using AegisScore.Application.Knight;
 using AegisScore.Application.Queries;
 using AegisScore.Application.RiskAssessment;
 using AegisScore.Application.Scoring;
@@ -14,6 +15,7 @@ using AegisScore.Infrastructure.Ai;
 using AegisScore.Infrastructure.Auth;
 using AegisScore.Infrastructure.Connectors;
 using AegisScore.Infrastructure.Documents;
+using AegisScore.Infrastructure.Knight;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Queries;
 using AegisScore.Infrastructure.RiskAssessment;
@@ -117,6 +119,14 @@ public static class DependencyInjection
         services.AddSingleton<IAuditorPersonaProvider>(sp => new AuditorPersonaProvider(
             personalityPath, sp.GetRequiredService<ILogger<AuditorPersonaProvider>>()));
         services.AddScoped<IAegisAiEvaluatorService, AegisAiEvaluatorService>();
+
+        // AEGIS KNIGHT — assessment de postura de identidade/exposição. Provedor de DEMONSTRAÇÃO (sintético,
+        // sem rede → Singleton, sem dependências), camada consultiva de IA (reusa o ILLMClient acima; nunca
+        // decide veredito, com fallback determinístico) e o serviço de aplicação dedicado que orquestra a
+        // execução persistida (Scoped: usa o DbContext, com Global Query Filter + stamping fail-closed).
+        services.AddSingleton<IKnightPostureProvider, DemoKnightPostureProvider>();
+        services.AddScoped<IKnightAdvisoryGenerator, KnightAdvisoryGenerator>();
+        services.AddScoped<IAegisKnightAssessmentService, AegisKnightAssessmentService>();
 
         // Superfície de ingestão passiva de telemetria (webhook EDR/SIEM) — o CHAMADOR do EvaluateAsync.
         // Orquestração fina: normaliza o sinal, resolve o tenant e delega ao motor (fonte Telemetry).
