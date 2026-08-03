@@ -486,8 +486,14 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.CatalogVersion).HasMaxLength(50);
             e.Property(x => x.ScoreFormulaVersion).HasMaxLength(50);
             e.HasIndex(x => new { x.TenantId, x.StartedAt });
+
+            // INTEGRIDADE MULTI-TENANT NO BANCO: chave alternativa composta (Id, TenantId) que a FK do filho
+            // referencia. Assim o próprio banco REJEITA um resultado cujo TenantId não seja o da execução —
+            // o query filter esconde a inconsistência, mas só a FK composta impede a corrupção relacional.
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
             e.HasMany(x => x.Indicators).WithOne(i => i.Run)
-                .HasForeignKey(i => i.RunId)
+                .HasForeignKey(i => new { i.RunId, i.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
@@ -497,7 +503,10 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.IndicatorId).HasMaxLength(40).IsRequired();
             e.Property(x => x.Title).HasMaxLength(300).IsRequired();
             e.Property(x => x.Recommendation).HasMaxLength(1000);
-            e.HasIndex(x => new { x.TenantId, x.RunId });
+            // Uma execução não pode conter duas linhas para o MESMO IndicatorId — invariante de banco. O
+            // índice é tenant-leading e cobre o carregamento por (tenant, execução), substituindo o antigo
+            // índice não-único (TenantId, RunId).
+            e.HasIndex(x => new { x.TenantId, x.RunId, x.IndicatorId }).IsUnique();
         });
 
         // Multi-tenant isolation: every operational entity is scoped to the ambient tenant.

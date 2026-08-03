@@ -62,12 +62,14 @@ public sealed class KnightAdvisoryGenerator : IKnightAdvisoryGenerator
                 ? new KnightAdvisoryResult(KnightAdvisoryFallback.Build(input), FromAi: false)
                 : new KnightAdvisoryResult(advisory, FromAi: true);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            throw;   // cancelamento é fluxo normal, não falha de provedor
+            throw;   // cancelamento REAL do chamador — propaga
         }
         catch (Exception ex)
         {
+            // Inclui TaskCanceledException/OperationCanceledException INTERNA do transporte (timeout/circuit
+            // breaker) quando o token do chamador NÃO está cancelado: é indisponibilidade da IA, não cancelamento.
             _log?.LogWarning(ex, "IA consultiva do KNIGHT indisponível; usando fallback determinístico.");
             return new KnightAdvisoryResult(KnightAdvisoryFallback.Build(input), FromAi: false);
         }
@@ -130,19 +132,27 @@ public sealed class KnightAdvisoryGenerator : IKnightAdvisoryGenerator
         var known = input.Indicators.Select(i => i.IndicatorId).ToHashSet(StringComparer.Ordinal);
 
         var summary = Clamp(dto.executiveSummary, MaxSummaryLen);
+
+        // NENHUMA conclusão exibida pode ficar sem evidência em indicador determinístico: depois de remover os
+        // IDs inventados (FilterIds), riscos/ações/correlações que ficaram SEM nenhum IndicatorId conhecido são
+        // DESCARTADOS por completo — não apenas esvaziados. Uma conclusão com IDs válidos + inventados é
+        // preservada, mantendo só os válidos.
         var risks = (dto.priorityRisks ?? new())
             .Take(MaxRisks)
             .Select(r => new KnightPriorityRisk(
                 Clamp(r.title, MaxItemLen), Clamp(r.rationale, MaxItemLen), FilterIds(r.indicatorIds, known)))
+            .Where(r => r.IndicatorIds.Count > 0)
             .ToList();
         var actions = (dto.recommendedActions ?? new())
             .Take(MaxActions)
-            .Select((a, idx) => new KnightRecommendedAction(
-                idx + 1, Clamp(a.action, MaxItemLen), FilterIds(a.indicatorIds, known)))
+            .Select(a => (action: Clamp(a.action, MaxItemLen), ids: FilterIds(a.indicatorIds, known)))
+            .Where(a => a.ids.Count > 0)
+            .Select((a, idx) => new KnightRecommendedAction(idx + 1, a.action, a.ids))   // renumera após o descarte
             .ToList();
         var correlations = (dto.correlations ?? new())
             .Take(MaxCorrelations)
             .Select(c => new KnightCorrelation(Clamp(c.description, MaxItemLen), FilterIds(c.indicatorIds, known)))
+            .Where(c => c.IndicatorIds.Count > 0)
             .ToList();
         var gaps = (dto.collectionGaps ?? new())
             .Where(g => !string.IsNullOrWhiteSpace(g))
@@ -150,8 +160,9 @@ public sealed class KnightAdvisoryGenerator : IKnightAdvisoryGenerator
             .Select(g => Clamp(g, MaxItemLen))
             .ToList();
 
-        // Um resumo mínimo é o piso de qualidade: sem ele, o conteúdo da IA não é aproveitável → fallback.
-        if (string.IsNullOrWhiteSpace(summary) && risks.Count == 0 && actions.Count == 0)
+        // Precisa sobrar ao menos UMA conclusão fundamentada em indicador conhecido; caso contrário a resposta
+        // da IA não deixou conteúdo consultivo utilizável → fallback determinístico (FromAi=false no chamador).
+        if (risks.Count == 0 && actions.Count == 0 && correlations.Count == 0)
             return null;
 
         return new KnightAdvisory(summary, risks, actions, correlations, gaps);

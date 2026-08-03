@@ -1391,9 +1391,10 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("RunId");
+                    b.HasIndex("RunId", "TenantId");
 
-                    b.HasIndex("TenantId", "RunId");
+                    b.HasIndex("TenantId", "RunId", "IndicatorId")
+                        .IsUnique();
 
                     b.ToTable("KnightIndicatorResults");
                 });
@@ -2500,7 +2501,8 @@ namespace AegisScore.Infrastructure.Migrations
                 {
                     b.HasOne("AegisScore.Domain.KnightAssessmentRun", "Run")
                         .WithMany("Indicators")
-                        .HasForeignKey("RunId")
+                        .HasForeignKey("RunId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 

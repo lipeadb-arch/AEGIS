@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AegisScore.Infrastructure.Migrations
 {
     [DbContext(typeof(AegisScoreDbContext))]
-    [Migration("20260803131110_Knight_Foundation")]
+    [Migration("20260803140802_Knight_Foundation")]
     partial class Knight_Foundation
     {
         /// <inheritdoc />
@@ -1394,9 +1394,10 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("RunId");
+                    b.HasIndex("RunId", "TenantId");
 
-                    b.HasIndex("TenantId", "RunId");
+                    b.HasIndex("TenantId", "RunId", "IndicatorId")
+                        .IsUnique();
 
                     b.ToTable("KnightIndicatorResults");
                 });
@@ -2503,7 +2504,8 @@ namespace AegisScore.Infrastructure.Migrations
                 {
                     b.HasOne("AegisScore.Domain.KnightAssessmentRun", "Run")
                         .WithMany("Indicators")
-                        .HasForeignKey("RunId")
+                        .HasForeignKey("RunId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 

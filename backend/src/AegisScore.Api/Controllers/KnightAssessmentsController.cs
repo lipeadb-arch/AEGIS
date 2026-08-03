@@ -49,18 +49,30 @@ public class KnightAssessmentsController : ControllerBase
         return Ok(ToDto(assessment));
     }
 
-    /// <summary>Último assessment do tenant (200 com o corpo, ou 204 quando ainda não há nenhum).</summary>
+    /// <summary>
+    /// Último assessment do tenant. Contrato explícito: tenant ausente → 401; tenant válido sem nenhum
+    /// assessment → 204; caso contrário 200 com o corpo.
+    /// </summary>
     [HttpGet("latest")]
     public async Task<ActionResult<KnightAssessmentDto>> GetLatest(CancellationToken ct)
     {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+
         var assessment = await _service.GetLatestAsync(ct);
         return assessment is null ? NoContent() : Ok(ToDto(assessment));
     }
 
-    /// <summary>Assessment por Id, restrito ao tenant do contexto (404 quando inexistente ou de outro tenant).</summary>
+    /// <summary>
+    /// Assessment por Id. Contrato explícito: tenant ausente → 401; inexistente ou de outro tenant (com
+    /// tenant válido) → 404; caso contrário 200.
+    /// </summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<KnightAssessmentDto>> GetById(Guid id, CancellationToken ct)
     {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+
         var assessment = await _service.GetByIdAsync(id, ct);
         return assessment is null ? NotFound() : Ok(ToDto(assessment));
     }

@@ -40,6 +40,7 @@ namespace AegisScore.Infrastructure.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_KnightAssessmentRuns", x => x.Id);
+                    table.UniqueConstraint("AK_KnightAssessmentRuns_Id_TenantId", x => new { x.Id, x.TenantId });
                 });
 
             migrationBuilder.CreateTable(
@@ -67,10 +68,10 @@ namespace AegisScore.Infrastructure.Migrations
                 {
                     table.PrimaryKey("PK_KnightIndicatorResults", x => x.Id);
                     table.ForeignKey(
-                        name: "FK_KnightIndicatorResults_KnightAssessmentRuns_RunId",
-                        column: x => x.RunId,
+                        name: "FK_KnightIndicatorResults_KnightAssessmentRuns_RunId_TenantId",
+                        columns: x => new { x.RunId, x.TenantId },
                         principalTable: "KnightAssessmentRuns",
-                        principalColumn: "Id",
+                        principalColumns: new[] { "Id", "TenantId" },
                         onDelete: ReferentialAction.Cascade);
                 });
 
@@ -80,14 +81,15 @@ namespace AegisScore.Infrastructure.Migrations
                 columns: new[] { "TenantId", "StartedAt" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_KnightIndicatorResults_RunId",
+                name: "IX_KnightIndicatorResults_RunId_TenantId",
                 table: "KnightIndicatorResults",
-                column: "RunId");
+                columns: new[] { "RunId", "TenantId" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_KnightIndicatorResults_TenantId_RunId",
+                name: "IX_KnightIndicatorResults_TenantId_RunId_IndicatorId",
                 table: "KnightIndicatorResults",
-                columns: new[] { "TenantId", "RunId" });
+                columns: new[] { "TenantId", "RunId", "IndicatorId" },
+                unique: true);
         }
 
         /// <inheritdoc />

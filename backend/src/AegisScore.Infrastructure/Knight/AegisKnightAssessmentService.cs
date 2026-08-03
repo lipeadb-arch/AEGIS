@@ -56,12 +56,12 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
     {
         // Fail-fast: sem tenant resolvido no contexto, nada é coletado nem persistido (defesa em profundidade;
         // o SaveChanges do DbContext também barra).
-        _ = _tenant.TenantId
+        var tenantId = _tenant.TenantId
             ?? throw new TenantSecurityException(
                 "Execução do assessment KNIGHT sem tenant resolvido no contexto (fail-closed).");
 
         // 1) Coleta o snapshot (Demo = sintético, sem rede; nunca consultou Graph/AD/Okta).
-        var snapshot = await _provider.CollectAsync(_tenant.TenantId!.Value, ct);
+        var snapshot = await _provider.CollectAsync(tenantId, ct);
 
         // 2) Avaliação DETERMINÍSTICA dos indicadores (pura).
         var evaluated = KnightIndicatorEvaluator.Evaluate(snapshot);
@@ -106,16 +106,21 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             });
         }
 
-        // 5) IA CONSULTIVA (uma chamada) — nunca altera os vereditos; a falha NÃO reprova a execução.
+        // 5) Persiste o veredito DETERMINÍSTICO ANTES de envolver a IA (cascade run → indicadores). Se o
+        //    processo cair, for cancelado ou o transporte da IA falhar depois daqui, a execução + os
+        //    resultados já são DURÁVEIS (Status=Running). A IA NÃO participa desta transação de durabilidade.
+        _db.KnightAssessmentRuns.Add(run);
+        await _db.SaveChangesAsync(ct);
+
+        // 6) IA CONSULTIVA (uma chamada, FORA da transação acima) — nunca altera os vereditos. A
+        //    indisponibilidade da IA não reprova nem invalida o assessment (fallback determinístico).
         var advisoryResult = await GenerateAdvisorySafeAsync(BuildAdvisoryInput(snapshot.Mode, score, evaluated), ct);
         run.AdvisoryJson = JsonSerializer.Serialize(advisoryResult.Advisory, AdvisoryJson);
         run.AdvisoryFromAi = advisoryResult.FromAi;
 
-        // 6) Conclui e persiste (cascade run → indicadores num único SaveChanges).
+        // 7) Conclui e grava novamente (a execução já persistida passa a Completed).
         run.Status = KnightRunStatus.Completed;
         run.CompletedAt = DateTimeOffset.UtcNow;
-
-        _db.KnightAssessmentRuns.Add(run);
         await _db.SaveChangesAsync(ct);
 
         return ToAssessment(run);
@@ -151,13 +156,15 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         {
             return await _advisory.GenerateAsync(input, ct);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            throw;
+            throw;   // cancelamento REAL do chamador — propaga
         }
         catch (Exception ex)
         {
-            // Defesa extra: mesmo que a impl do gerador lance, o assessment não se perde — fallback determinístico.
+            // Defesa extra: mesmo que a impl do gerador lance (inclui OCE/TaskCanceledException interna do
+            // transporte com o token do chamador NÃO cancelado = indisponibilidade), o assessment não se
+            // perde — fallback determinístico.
             _log?.LogWarning(ex, "Gerador de narrativa consultiva do KNIGHT falhou; aplicando fallback determinístico.");
             return new KnightAdvisoryResult(KnightAdvisoryFallback.Build(input), FromAi: false);
         }

@@ -174,6 +174,55 @@ public sealed class KnightAssessmentTests : IDisposable
         (await assert.KnightIndicatorResults.CountAsync()).Should().Be(5);
     }
 
+    // ---- 8) Saneamento das citações da IA: nenhuma conclusão sem evidência em indicador conhecido -----
+
+    [Fact]
+    public async Task Advisory_OnlyInventedIndicatorId_NotAcceptedAsAi_FallsBack()
+    {
+        const string json =
+            """{"executiveSummary":"s","priorityRisks":[{"title":"R","rationale":"x","indicatorIds":["AK-FAKE-999"]}],"recommendedActions":[],"correlations":[],"collectionGaps":[]}""";
+
+        var result = await new KnightAdvisoryGenerator(new FakeLlmClient(json))
+            .GenerateAsync(AdvisoryInputWithKnown("AK-ENTRA-001"));
+
+        result.FromAi.Should().BeFalse("uma conclusão citando só indicador inexistente não é aproveitável → fallback");
+        // O fallback determinístico cita apenas indicadores conhecidos; o inventado nunca aparece.
+        result.Advisory.PriorityRisks.SelectMany(r => r.IndicatorIds).Should().NotContain("AK-FAKE-999");
+    }
+
+    [Fact]
+    public async Task Advisory_ValidPlusInventedId_KeepsOnlyValid_AndIsFromAi()
+    {
+        const string json =
+            """{"executiveSummary":"s","priorityRisks":[{"title":"R","rationale":"x","indicatorIds":["AK-ENTRA-001","AK-FAKE-999"]}],"recommendedActions":[],"correlations":[],"collectionGaps":[]}""";
+
+        var result = await new KnightAdvisoryGenerator(new FakeLlmClient(json))
+            .GenerateAsync(AdvisoryInputWithKnown("AK-ENTRA-001"));
+
+        result.FromAi.Should().BeTrue("uma conclusão com ID conhecido é preservada");
+        result.Advisory.PriorityRisks.Single().IndicatorIds.Should().Equal("AK-ENTRA-001");
+    }
+
+    // ---- 9) Cancelamento INTERNO da IA (token do chamador NÃO cancelado) → fallback, sem perder nada -----
+
+    [Fact]
+    public async Task RunDemo_InternalAiCancellation_WithoutCallerCancel_FallsBackAndCompletes()
+    {
+        KnightAssessment assessment;
+        await using (var db = NewContext(TenantA))
+            assessment = await ServiceFor(db, TenantA, new CancelingLlmClient())
+                .RunDemoAssessmentAsync(CancellationToken.None);
+
+        assessment.Status.Should().Be(KnightRunStatus.Completed, "cancelamento interno da IA não reprova o assessment");
+        assessment.AdvisoryFromAi.Should().BeFalse("cancelamento interno da IA vira indisponibilidade → fallback");
+        assessment.Score.Should().Be(23d, "o score determinístico é preservado");
+        assessment.Indicators.Should().HaveCount(5);
+
+        await using var assert = NewContext(TenantA);
+        (await assert.KnightAssessmentRuns.CountAsync()).Should().Be(1, "a execução foi persistida antes da IA");
+        (await assert.KnightIndicatorResults.CountAsync()).Should().Be(5);
+    }
+
     // ---- Infraestrutura do teste ---------------------------------------------------------------------
 
     private const string ValidAiJson =
@@ -211,6 +260,13 @@ public sealed class KnightAssessmentTests : IDisposable
             MfaExemptServiceAccounts: exempt, CompensatingControls: controls);
     }
 
+    /// <summary>Entrada mínima de advisory com um conjunto de indicadores CONHECIDOS (para o saneamento de citações).</summary>
+    private static KnightAdvisoryInput AdvisoryInputWithKnown(params string[] indicatorIds) =>
+        new(KnightAssessmentMode.Demo, 50, 100,
+            indicatorIds.Select(id => new KnightAdvisoryIndicator(
+                id, "titulo", KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.High,
+                KnightIndicatorStatus.Exposed, "evidencia", 1, new[] { "PR.AA-01" }, Array.Empty<string>())).ToList());
+
     /// <summary>ILLMClient determinístico: devolve um texto fixo (JSON do advisory), sem heurística nem rede.</summary>
     private sealed class FakeLlmClient : ILLMClient
     {
@@ -225,5 +281,15 @@ public sealed class KnightAssessmentTests : IDisposable
     {
         public Task<string> ExecutePromptAsync(string systemPrompt, string userPrompt, CancellationToken ct = default) =>
             throw new InvalidOperationException("IA indisponível (teste).");
+    }
+
+    /// <summary>
+    /// ILLMClient que lança TaskCanceledException (OperationCanceledException) do TRANSPORTE, sem o token do
+    /// chamador estar cancelado — deve virar indisponibilidade (fallback), não cancelamento propagado.
+    /// </summary>
+    private sealed class CancelingLlmClient : ILLMClient
+    {
+        public Task<string> ExecutePromptAsync(string systemPrompt, string userPrompt, CancellationToken ct = default) =>
+            throw new TaskCanceledException("cancelamento interno do transporte (teste).");
     }
 }
