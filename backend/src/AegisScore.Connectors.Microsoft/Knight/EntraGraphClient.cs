@@ -85,10 +85,29 @@ public sealed class EntraGraphClient : IEntraGraphClient
             throw new EntraGraphException(Classify(resp.StatusCode), $"token endpoint retornou {(int)resp.StatusCode}");
 
         var body = await resp.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(body);
-        if (doc.RootElement.TryGetProperty("access_token", out var t) && t.GetString() is { Length: > 0 } token)
-            return token;
-        throw new EntraGraphException(EntraGraphErrorKind.AuthFailure, "resposta do token sem access_token");
+
+        // Parsing DEFENSIVO: JSON inválido ou access_token com tipo/valor inesperado vira AuthFailure SANITIZADA
+        // — nenhuma JsonException/InvalidOperationException escapa para a API, e a mensagem não carrega corpo,
+        // token, segredo ou URL. (Um servidor de token comprometido/errado não derruba a coleta com stack cru.)
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            throw new EntraGraphException(EntraGraphErrorKind.AuthFailure, "resposta do token não é JSON válido");
+        }
+
+        using (doc)
+        {
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("access_token", out var t)
+                && t.ValueKind == JsonValueKind.String
+                && t.GetString() is { Length: > 0 } token)
+                return token;
+        }
+        throw new EntraGraphException(EntraGraphErrorKind.AuthFailure, "resposta do token sem access_token válido");
     }
 
     public async IAsyncEnumerable<JsonElement> GetPagedAsync(

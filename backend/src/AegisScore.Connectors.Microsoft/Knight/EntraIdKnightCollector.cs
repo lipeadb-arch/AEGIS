@@ -193,12 +193,19 @@ public sealed class EntraIdKnightCollector : IKnightCollector
             {
                 var id = Str(m, "id");
                 if (string.IsNullOrEmpty(id)) continue;
-                members[id] = new MemberInfo(UserType: Str(m, "userType"), LastSignIn: LastSignIn(m));
+                members[id] = new MemberInfo(ClassifyMember(m), Str(m, "userType"), LastSignIn(m));
             }
         }
 
         acc.Collected = true;
-        acc.Ids = members.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Só USUÁRIOS estão sujeitos a MFA/atividade interativa; service principals ficam FORA do cruzamento.
+        // Se um membro não é identificável como usuário nem como service principal (grupo/tipo desconhecido), a
+        // cobertura é INCOMPLETA — não aprovamos assumindo que "não é usuário".
+        acc.PrivilegedUsers = members
+            .Where(kv => kv.Value.Kind == MemberKind.User)
+            .Select(kv => new PrivilegedUser(kv.Key, kv.Value.LastSignIn))
+            .ToList();
+        acc.AllMembersClassifiable = members.Values.All(v => v.Kind is MemberKind.User or MemberKind.ServicePrincipal);
 
         var total = members.Count;
         var external = members.Values.Count(v => string.Equals(v.UserType, "Guest", StringComparison.OrdinalIgnoreCase));
@@ -212,17 +219,23 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         obs.Add(KnightObservation.MissingData(KnightSignalKey.PrivilegedAccountsWithMailbox,
             "A propriedade de diretório (mail) não comprova mailbox Exchange ativa; não avaliado nesta coleta."));
 
-        // Obsolescência exige sinal de atividade; se nenhum membro tem signInActivity, não afirmamos (Missing).
-        var withActivity = members.Values.Where(v => v.LastSignIn is not null).ToList();
-        if (withActivity.Count == 0 && total > 0)
+        // Obsolescência (AK-ENTRA-011) sobre os USUÁRIOS privilegiados aplicáveis, com COBERTURA COMPLETA: se
+        // algum membro não é classificável, ou se algum usuário privilegiado não tem atividade disponível, NÃO
+        // calculamos zero sobre o subconjunto conhecido — o sinal fica Missing (nunca aprova por omissão).
+        if (!acc.AllMembersClassifiable)
         {
             obs.Add(KnightObservation.MissingData(KnightSignalKey.StalePrivilegedAccounts,
-                "Atividade de sign-in indisponível (requer AuditLog.Read.All e licença compatível)."));
+                "Há membro de papel privilegiado não identificável como usuário — cobertura de atividade incompleta."));
+        }
+        else if (acc.PrivilegedUsers.Any(u => u.LastSignIn is null))
+        {
+            obs.Add(KnightObservation.MissingData(KnightSignalKey.StalePrivilegedAccounts,
+                "Atividade de sign-in ausente para parte das contas privilegiadas — não avaliado (requer AuditLog.Read.All e licença compatível)."));
         }
         else
         {
             var cutoff = DateTimeOffset.UtcNow.AddDays(-KnightCatalog.StalePrivilegedWindowDays);
-            var stale = withActivity.Count(v => v.LastSignIn < cutoff);
+            var stale = acc.PrivilegedUsers.Count(u => u.LastSignIn < cutoff);
             obs.Add(KnightObservation.OfCount(KnightSignalKey.StalePrivilegedAccounts, stale));
         }
     }
@@ -234,20 +247,19 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         var mfaCapable = 0;
         var malformed = false;
         var noMfaIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // usuários vistos no relatório
 
         var url = "reports/authenticationMethods/userRegistrationDetails?$select=id,isMfaCapable,isMfaRegistered";
         await foreach (var u in _graph.GetPagedAsync(token, cfg, url, ct))
         {
             total++;
+            var id = Str(u, "id");
+            if (!string.IsNullOrEmpty(id)) seenIds.Add(id);
             // Ausente/malformado NÃO vira "false" (não-capaz) em silêncio — marca o dado como malformado.
             var capable = Bool(u, "isMfaCapable") ?? Bool(u, "isMfaRegistered");
             if (capable is null) { malformed = true; continue; }
             if (capable.Value) mfaCapable++;
-            else
-            {
-                var id = Str(u, "id");
-                if (!string.IsNullOrEmpty(id)) noMfaIds.Add(id);
-            }
+            else if (!string.IsNullOrEmpty(id)) noMfaIds.Add(id);
         }
 
         // Fail-CLOSED: denominador zero NUNCA é 100%. Coleção vazia → Missing (o relatório userRegistrationDetails
@@ -275,16 +287,27 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         var pct = Math.Round(100.0 * mfaCapable / total, 1);
         obs.Add(KnightObservation.OfRatio(KnightSignalKey.MfaRegistrationCoveragePercent, pct));
 
-        // Contas privilegiadas SEM MFA: interseção com o inventário privilegiado. Sem esse inventário não afirmamos.
-        if (acc.Collected)
-        {
-            var privWithout = acc.Ids.Count(id => noMfaIds.Contains(id));
-            obs.Add(KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsWithoutMfa, privWithout));
-        }
-        else
+        // Contas privilegiadas SEM MFA: cruzamento COMPLETO ou nada. A ausência de um privilegiado no relatório
+        // NÃO implica MFA configurada — exige que TODOS os usuários privilegiados aplicáveis constem no relatório.
+        if (!acc.Collected)
         {
             obs.Add(KnightObservation.MissingData(KnightSignalKey.PrivilegedAccountsWithoutMfa,
                 "Inventário de papéis privilegiados indisponível para o cruzamento com MFA."));
+        }
+        else if (!acc.AllMembersClassifiable)
+        {
+            obs.Add(KnightObservation.MissingData(KnightSignalKey.PrivilegedAccountsWithoutMfa,
+                "Há membro de papel privilegiado não identificável como usuário — cruzamento com MFA incompleto."));
+        }
+        else if (acc.PrivilegedUsers.Any(u => !seenIds.Contains(u.Id)))
+        {
+            obs.Add(KnightObservation.MissingData(KnightSignalKey.PrivilegedAccountsWithoutMfa,
+                "Há conta(s) privilegiada(s) ausente(s) do relatório de registro de MFA — cobertura incompleta (ausência não implica MFA configurada)."));
+        }
+        else
+        {
+            var privWithout = acc.PrivilegedUsers.Count(u => noMfaIds.Contains(u.Id));
+            obs.Add(KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsWithoutMfa, privWithout));
         }
     }
 
@@ -321,28 +344,29 @@ public sealed class EntraIdKnightCollector : IKnightCollector
             var appliesAllApps = ArrayStrings(apps, "includeApplications")
                 .Any(a => a.Equals("All", StringComparison.OrdinalIgnoreCase));
 
-            var includeRoles = ArrayStrings(users, "includeRoles");
             var appliesAllUsers = ArrayStrings(users, "includeUsers")
                 .Any(u => u.Equals("All", StringComparison.OrdinalIgnoreCase));
 
-            // Exclusões AMPLAS de papéis/grupos abrem brechas — uma política com elas não prova cobertura total.
-            var hasBroadExclusions = ArrayStrings(users, "excludeRoles").Count > 0
-                || ArrayStrings(users, "excludeGroups").Count > 0;
+            // QUALQUER exclusão (usuários, grupos ou papéis) abre brecha — uma política com exclusões não prova
+            // cobertura global nesta versão. (A análise fina por roleTemplateId fica para uma evolução futura.)
+            var hasExclusions = ArrayStrings(users, "excludeUsers").Count > 0
+                || ArrayStrings(users, "excludeGroups").Count > 0
+                || ArrayStrings(users, "excludeRoles").Count > 0;
 
             var targetsLegacy = ArrayStrings(cond, "clientAppTypes").Any(c =>
                 c.Equals("exchangeActiveSync", StringComparison.OrdinalIgnoreCase) || c.Equals("other", StringComparison.OrdinalIgnoreCase));
 
-            // Bloqueio de autenticação legada: precisa BLOQUEAR, mirar clientes legados e valer para todos os
-            // apps e todos os usuários — uma política estreita não prova bloqueio global.
-            if (targetsLegacy && controls.Contains("block") && appliesAllApps && appliesAllUsers)
+            // Bloqueio de autenticação legada COMPROVADO só quando: bloqueia, mira clientes legados, vale para
+            // TODOS os apps e TODOS os usuários e NÃO tem nenhuma exclusão. Report-only/escopo parcial não conta.
+            if (targetsLegacy && controls.Contains("block") && appliesAllApps && appliesAllUsers && !hasExclusions)
                 legacyBlocked = true;
 
-            // MFA administrativa: precisa EXIGIR MFA, mirar administradores (papéis de diretório OU todos os
-            // usuários), valer para todos os apps e NÃO ter exclusões amplas de papéis/grupos. Um includeRoles
-            // com um único papel, ou com exclusões, NÃO prova MFA para todos os administradores.
+            // MFA administrativa COMPROVADA (conservador) só quando: exige MFA, vale para TODOS os usuários e
+            // TODOS os apps e NÃO tem nenhuma exclusão. Uma política direcionada só a includeRoles (mesmo um único
+            // papel), ou com qualquer exclusão, NÃO comprova cobertura completa nesta versão — Security Defaults
+            // habilitado ainda pode satisfazer AK-ENTRA-008 pela regra do catálogo.
             var requiresMfa = controls.Contains("mfa");
-            var targetsAdmins = includeRoles.Count > 0 || appliesAllUsers;
-            if (requiresMfa && targetsAdmins && appliesAllApps && !hasBroadExclusions)
+            if (requiresMfa && appliesAllUsers && appliesAllApps && !hasExclusions)
                 adminMfa = true;
         }
         obs.Add(KnightObservation.OfFlag(KnightSignalKey.LegacyAuthenticationBlocked, legacyBlocked));
@@ -446,12 +470,39 @@ public sealed class EntraIdKnightCollector : IKnightCollector
 
     // ---- Parsing seguro do JSON do Graph -----------------------------------------------------------
 
-    private sealed record MemberInfo(string? UserType, DateTimeOffset? LastSignIn);
+    /// <summary>Natureza de um membro de papel privilegiado — só <see cref="User"/> está sujeito a MFA/atividade.</summary>
+    private enum MemberKind { User, ServicePrincipal, Other }
+
+    private sealed record MemberInfo(MemberKind Kind, string? UserType, DateTimeOffset? LastSignIn);
+
+    private sealed record PrivilegedUser(string Id, DateTimeOffset? LastSignIn);
 
     private sealed class PrivilegedAccumulator
     {
         public bool Collected;
-        public HashSet<string> Ids = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Usuários privilegiados (sujeitos a MFA). Service principals ficam de fora do cruzamento.</summary>
+        public IReadOnlyList<PrivilegedUser> PrivilegedUsers = Array.Empty<PrivilegedUser>();
+
+        /// <summary>Falso se algum membro de papel não pôde ser classificado como usuário nem service principal.</summary>
+        public bool AllMembersClassifiable = true;
+    }
+
+    /// <summary>
+    /// Classifica um membro de papel de diretório. Preferimos o <c>@odata.type</c> (usuário/service principal);
+    /// na ausência dele, <c>userType</c> (Member/Guest) é sinal EXCLUSIVO de usuário. Tipos não reconhecidos
+    /// (grupo/desconhecido) viram <see cref="MemberKind.Other"/> → tratados como cobertura incompleta.
+    /// </summary>
+    private static MemberKind ClassifyMember(JsonElement m)
+    {
+        var odata = Str(m, "@odata.type");
+        if (odata is not null)
+        {
+            if (odata.Equals("#microsoft.graph.user", StringComparison.OrdinalIgnoreCase)) return MemberKind.User;
+            if (odata.Equals("#microsoft.graph.servicePrincipal", StringComparison.OrdinalIgnoreCase)) return MemberKind.ServicePrincipal;
+            return MemberKind.Other;
+        }
+        return Str(m, "userType") is not null ? MemberKind.User : MemberKind.Other;
     }
 
     private static string? Str(JsonElement e, string prop) =>

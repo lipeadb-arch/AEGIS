@@ -323,6 +323,160 @@ public sealed class KnightEntraCollectorTests
         Cfg.ToString().Should().Contain("***");
     }
 
+    // ---- 13) Conditional Access: só cobertura GLOBAL comprovada aprova ------------------------------
+
+    public static IEnumerable<object[]> CaCases() => new[]
+    {
+        // MFA administrativa: um único includeRole não prova cobertura completa.
+        new object[] { """{"value":[{"state":"enabled","conditions":{"users":{"includeRoles":["role-x"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", false },
+        // MFA para All users / All apps, sem exclusões → comprovada.
+        new object[] { """{"value":[{"state":"enabled","conditions":{"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", true },
+        // Bloqueio legado com excludeUsers → não comprovado.
+        new object[] { """{"value":[{"state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync"],"users":{"includeUsers":["All"],"excludeUsers":["u-1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", false },
+        // Bloqueio legado com excludeGroups → não comprovado.
+        new object[] { """{"value":[{"state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync"],"users":{"includeUsers":["All"],"excludeGroups":["g-1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", false },
+        // Bloqueio legado para All users / All apps, sem exclusões → comprovado.
+        new object[] { """{"value":[{"state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync"],"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", true },
+    };
+
+    [Theory]
+    [MemberData(nameof(CaCases))]
+    public async Task ConditionalAccess_OnlyGlobalCoverageProves(string policiesJson, string which, bool expected)
+    {
+        var handler = new StubHandler(req =>
+        {
+            var url = req.RequestUri!.AbsoluteUri;
+            if (url.Contains("conditionalAccess/policies")) return (HttpStatusCode.OK, policiesJson);
+            return Happy(req);
+        });
+        var collector = new EntraIdKnightCollector(new EntraGraphClient(new HttpClient(handler)));
+
+        var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
+
+        var key = which == "AdminMfa" ? KnightSignalKey.AdminMfaPolicyEnforced : KnightSignalKey.LegacyAuthenticationBlocked;
+        result.Facts.Get(key).Flag.Should().Be(expected);
+    }
+
+    // ---- 14) Cobertura de MFA/atividade de privilegiados deve ser COMPLETA -------------------------
+
+    [Fact]
+    public async Task Collector_PrivilegedUserAbsentFromMfaReport_NotEvaluated()
+    {
+        // admin-1 é privilegiado, mas NÃO aparece no relatório de registro de MFA → cobertura incompleta.
+        var handler = new StubHandler(req =>
+        {
+            var url = req.RequestUri!.AbsoluteUri;
+            if (url.Contains("/directoryRoles/") && url.Contains("/members"))
+                return (HttpStatusCode.OK, """{"value":[{"id":"admin-1","userType":"Member","signInActivity":{"lastSignInDateTime":"__RECENT__"}}]}""".Replace("__RECENT__", Recent));
+            if (url.Contains("userRegistrationDetails"))
+                return (HttpStatusCode.OK, """{"value":[{"id":"someone-else","isMfaCapable":true}]}""");
+            return Happy(req);
+        });
+        var collector = new EntraIdKnightCollector(new EntraGraphClient(new HttpClient(handler)));
+
+        var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
+
+        result.Facts.Get(KnightSignalKey.PrivilegedAccountsWithoutMfa).Outcome.Should().Be(KnightObservationOutcome.Missing);
+        KnightIndicatorEvaluator.Evaluate(result.Facts, KnightSourceType.MicrosoftEntraId)
+            .Single(i => i.Definition.Id == "AK-ENTRA-001").Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+    }
+
+    [Fact]
+    public async Task Collector_AllPrivilegedPresentInReport_ComputesWithoutMfa()
+    {
+        var handler = new StubHandler(req =>
+        {
+            var url = req.RequestUri!.AbsoluteUri;
+            if (url.Contains("/directoryRoles/") && url.Contains("/members"))
+                return (HttpStatusCode.OK, """{"value":[{"id":"admin-1","userType":"Member","signInActivity":{"lastSignInDateTime":"__RECENT__"}}]}""".Replace("__RECENT__", Recent));
+            if (url.Contains("userRegistrationDetails"))
+                return (HttpStatusCode.OK, """{"value":[{"id":"admin-1","isMfaCapable":false}]}""");
+            return Happy(req);
+        });
+        var collector = new EntraIdKnightCollector(new EntraGraphClient(new HttpClient(handler)));
+
+        var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
+
+        result.Facts.Get(KnightSignalKey.PrivilegedAccountsWithoutMfa).Count.Should().Be(1);
+        KnightIndicatorEvaluator.Evaluate(result.Facts, KnightSourceType.MicrosoftEntraId)
+            .Single(i => i.Definition.Id == "AK-ENTRA-001").Status.Should().Be(KnightIndicatorStatus.Exposed);
+    }
+
+    [Fact]
+    public async Task Collector_PartialPrivilegedActivity_StaleNotEvaluated()
+    {
+        // admin-1 tem atividade recente; admin-2 não tem atividade → não calcula obsolescência sobre o subconjunto.
+        var handler = new StubHandler(req =>
+        {
+            var url = req.RequestUri!.AbsoluteUri;
+            if (url.Contains("/directoryRoles/") && url.Contains("/members"))
+                return (HttpStatusCode.OK, """{"value":[{"id":"admin-1","userType":"Member","signInActivity":{"lastSignInDateTime":"__RECENT__"}},{"id":"admin-2","userType":"Member"}]}""".Replace("__RECENT__", Recent));
+            if (url.Contains("userRegistrationDetails"))
+                return (HttpStatusCode.OK, """{"value":[{"id":"admin-1","isMfaCapable":true},{"id":"admin-2","isMfaCapable":true}]}""");
+            return Happy(req);
+        });
+        var collector = new EntraIdKnightCollector(new EntraGraphClient(new HttpClient(handler)));
+
+        var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
+
+        result.Facts.Get(KnightSignalKey.StalePrivilegedAccounts).Outcome.Should().Be(KnightObservationOutcome.Missing);
+        KnightIndicatorEvaluator.Evaluate(result.Facts, KnightSourceType.MicrosoftEntraId)
+            .Single(i => i.Definition.Id == "AK-ENTRA-011").Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+    }
+
+    // ---- 15) Token JSON malformado vira AuthenticationFailure sanitizada (sem throw bruto) ----------
+
+    [Fact]
+    public async Task Collector_InvalidTokenJson_AuthenticationFailure_NoRawThrow()
+    {
+        var handler = new StubHandler(req =>
+        {
+            var url = req.RequestUri!.AbsoluteUri;
+            if (req.Method == HttpMethod.Post && url.Contains("/oauth2/v2.0/token")) return (HttpStatusCode.OK, "{ not valid json ");
+            return Happy(req);
+        });
+        var collector = new EntraIdKnightCollector(new EntraGraphClient(new HttpClient(handler)));
+
+        var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));   // não deve lançar
+
+        result.State.Should().Be(KnightSourceState.AuthenticationFailure);
+    }
+
+    [Fact]
+    public async Task Collector_AccessTokenWrongType_AuthenticationFailure()
+    {
+        var handler = new StubHandler(req =>
+        {
+            var url = req.RequestUri!.AbsoluteUri;
+            if (req.Method == HttpMethod.Post && url.Contains("/oauth2/v2.0/token")) return (HttpStatusCode.OK, """{"access_token":12345,"token_type":"Bearer"}""");
+            return Happy(req);
+        });
+        var collector = new EntraIdKnightCollector(new EntraGraphClient(new HttpClient(handler)));
+
+        var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
+
+        result.State.Should().Be(KnightSourceState.AuthenticationFailure);
+    }
+
+    [Fact]
+    public async Task Collector_MalformedToken_ResultHasNoSecretOrPayload()
+    {
+        var handler = new StubHandler(req =>
+        {
+            var url = req.RequestUri!.AbsoluteUri;
+            if (req.Method == HttpMethod.Post && url.Contains("/oauth2/v2.0/token")) return (HttpStatusCode.OK, """{"access_token":{"leak":"PAYLOAD-MARKER"}}""");
+            return Happy(req);
+        });
+        var collector = new EntraIdKnightCollector(new EntraGraphClient(new HttpClient(handler)));
+
+        var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
+        var serialized = JsonSerializer.Serialize(result);
+
+        result.State.Should().Be(KnightSourceState.AuthenticationFailure);
+        serialized.Should().NotContain("SUPER-SECRET-VALUE", "o segredo do cliente nunca aparece no resultado");
+        serialized.Should().NotContain("PAYLOAD-MARKER", "o payload da resposta do token não vaza no resultado");
+    }
+
     // ---- HTTP simulado -----------------------------------------------------------------------------
 
     private static HttpMessageHandler HappyHandler() => new StubHandler(Happy);
