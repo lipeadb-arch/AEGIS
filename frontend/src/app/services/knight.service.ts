@@ -1,22 +1,28 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, map, throwError, timeout } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { KnightAssessment } from '../models/knight.models';
+import { KnightAssessment, KnightSources, KnightSourceType } from '../models/knight.models';
+
+/** Slug de rota para cada fonte real/demo (espelha o parser do controller). */
+const SOURCE_SLUG: Record<KnightSourceType, string> = {
+  Demo: 'demo',
+  MicrosoftEntraId: 'entra',
+  GoogleWorkspace: 'google',
+};
 
 /**
  * Cliente do AEGIS KNIGHT (/api/v1/knight/assessments). O X-Tenant e o Bearer são injetados pelo
- * authInterceptor — não os repetimos. Todas as chamadas têm TIMEOUT explícito para nunca deixar a tela em
- * carregamento infinito; o erro é normalizado num Error limpo para o componente renderizar estado + retry.
+ * authInterceptor. Todas as chamadas têm TIMEOUT explícito (sem carregamento infinito); o erro é normalizado
+ * num Error limpo para o componente renderizar estado + retry. Uma coleta real NÃO configurada (409) vira um
+ * erro identificável — o componente jamais apresenta o Demo no lugar de uma coleta real que falhou.
  */
 @Injectable({ providedIn: 'root' })
 export class KnightService {
   private readonly http = inject(HttpClient);
   private readonly base = `${environment.apiBase}/api/v1/knight/assessments`;
 
-  /** A execução demo roda de forma síncrona (coleta + avaliação + IA consultiva) — janela mais folgada. */
-  private readonly RUN_TIMEOUT_MS = 30_000;
-  /** Leituras são rápidas. */
+  private readonly RUN_TIMEOUT_MS = 60_000; // coleta real pode paginar o Graph
   private readonly READ_TIMEOUT_MS = 15_000;
 
   /** Dispara um assessment de DEMONSTRAÇÃO e devolve o resultado completo já persistido. */
@@ -24,6 +30,27 @@ export class KnightService {
     return this.http.post<KnightAssessment>(`${this.base}/demo`, {}).pipe(
       timeout(this.RUN_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível executar o assessment de demonstração.')),
+    );
+  }
+
+  /** Dispara um assessment da FONTE indicada (ex.: coleta real do Entra ID). */
+  runSource(source: KnightSourceType): Observable<KnightAssessment> {
+    return this.http.post<KnightAssessment>(`${this.base}/run/${SOURCE_SLUG[source]}`, {}).pipe(
+      timeout(this.RUN_TIMEOUT_MS),
+      catchError((err: unknown) => {
+        if (err instanceof HttpErrorResponse && err.status === 409) {
+          return throwError(() => new Error(`A fonte ${source} não está configurada para este tenant.`));
+        }
+        return this.normalize(`Não foi possível executar a coleta da fonte ${source}.`)(err);
+      }),
+    );
+  }
+
+  /** Disponibilidade das fontes para o tenant (Demo sempre; reais conforme configuração). */
+  getSources(): Observable<KnightSources> {
+    return this.http.get<KnightSources>(`${this.base}/sources`).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível carregar as fontes disponíveis.')),
     );
   }
 

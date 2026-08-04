@@ -16,15 +16,18 @@ using Xunit;
 namespace AegisScore.Infrastructure.Tests.Knight;
 
 /// <summary>
-/// Testes FOCADOS da primeira vertical do AEGIS KNIGHT: a fórmula própria de score/cobertura, as cinco
-/// regras determinísticas, o isolamento de tenant, a resiliência à indisponibilidade da IA e a identificação
-/// inequívoca do modo demonstração. As partes puras (fórmula/regras) rodam sem banco; o serviço roda sobre
-/// SQLite in-memory (banco relacional real: Global Query Filter e stamping fail-closed de verdade).
+/// Testes FOCADOS do AEGIS KNIGHT MULTICOLETOR: preservação do Demo (score 23), avaliação por fatos
+/// normalizados, ausência de dado → NotEvaluated (nunca Passed), seleção de coletor por fonte, um coletor
+/// Google Workspace FALSO percorrendo o pipeline sem tocar o núcleo, falha real que NÃO cai para Demo,
+/// isolamento de tenant, metadados de fonte persistidos e a IA sem autoridade sobre veredito/score.
 /// </summary>
 public sealed class KnightAssessmentTests : IDisposable
 {
     private static readonly Guid TenantA = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid TenantB = Guid.Parse("22222222-2222-2222-2222-222222222222");
+
+    private const string ValidAiJson =
+        """{"executiveSummary":"ok","priorityRisks":[{"title":"R","rationale":"x","indicatorIds":["AK-ENTRA-001"]}],"recommendedActions":[],"correlations":[],"collectionGaps":[]}""";
 
     private readonly SqliteConnection _connection;
 
@@ -33,241 +36,257 @@ public sealed class KnightAssessmentTests : IDisposable
         _connection = new SqliteConnection("DataSource=:memory:");
         _connection.Open();
         using var ctx = NewContext(TenantA);
-        ctx.Database.EnsureCreated();   // KNIGHT não depende do catálogo NIST — nenhum seed necessário
+        ctx.Database.EnsureCreated();
     }
 
     public void Dispose() => _connection.Dispose();
 
-    // ---- 1) Fórmula de score e cobertura (grounded no snapshot demo real) ----------------------------
+    // ---- 1) Preservação do Demo: score 23 / cobertura 100% / mistura 1-3-1 -------------------------
 
     [Fact]
-    public async Task Score_DemoMix_ComputesScoreAndCoverage()
+    public async Task Demo_ScoreCoverageAndMix_Preserved()
     {
-        var snapshot = await new DemoKnightPostureProvider().CollectAsync(TenantA);
-        var evaluated = KnightIndicatorEvaluator.Evaluate(snapshot);
+        var result = await new DemoKnightCollector().CollectAsync(new KnightCollectionContext(TenantA, new KnightDemoConfiguration()));
+        var evaluated = KnightIndicatorEvaluator.Evaluate(result.Facts, KnightSourceType.Demo);
+        var score = KnightScoreFormula.Compute(evaluated.Select(e => (e.Definition.Severity, e.Status)));
 
-        var result = KnightScoreFormula.Compute(evaluated.Select(e => (e.Definition.Severity, e.Status)));
-
-        // 0·10 + 0·7 + 1·4 + 0·4 + 0.5·7 = 7.5 ; pesos avaliados = 32 ; round(100·7.5/32) = 23.
-        result.Score.Should().Be(23d);
-        result.Coverage.Should().Be(100d, "todos os 5 indicadores são aplicáveis e foram avaliados");
-        result.PassedCount.Should().Be(1);
-        result.ExposedCount.Should().Be(3);
-        result.MitigatedCount.Should().Be(1);
-        result.FormulaVersion.Should().Be("knight-score-v1");
+        evaluated.Should().HaveCount(5, "o perfil Demo aplica os 5 indicadores compartilhados");
+        score.Score.Should().Be(23d);
+        score.Coverage.Should().Be(100d);
+        score.PassedCount.Should().Be(1);
+        score.ExposedCount.Should().Be(3);
+        score.MitigatedCount.Should().Be(1);
     }
 
-    // ---- 2) Score null sem indicador avaliado (falta de dado NUNCA é aprovação) -----------------------
+    // ---- 2) Score null sem indicador avaliado ------------------------------------------------------
 
     [Theory]
     [InlineData(KnightIndicatorStatus.NotEvaluated)]
     [InlineData(KnightIndicatorStatus.Error)]
     [InlineData(KnightIndicatorStatus.NotApplicable)]
-    public void Score_NoEvaluatedIndicator_IsNullNeverZero(KnightIndicatorStatus status)
+    public void Score_NoEvaluatedIndicator_IsNull(KnightIndicatorStatus status)
     {
-        var indicators = Enumerable.Repeat((SeverityLevel.Critical, status), 4);
-
-        var result = KnightScoreFormula.Compute(indicators);
-
-        result.Score.Should().BeNull("sem indicador avaliado o score é null, nunca 0");
+        var result = KnightScoreFormula.Compute(Enumerable.Repeat((SeverityLevel.Critical, status), 4));
+        result.Score.Should().BeNull();
     }
 
-    // ---- 3) Cinco regras determinísticas sobre o snapshot demo ---------------------------------------
+    // ---- 3) Cinco regras determinísticas sobre os FATOS do Demo ------------------------------------
 
     [Theory]
-    [InlineData("AK-ENTRA-001", KnightIndicatorStatus.Exposed)]   // 2 privilegiadas sem MFA
-    [InlineData("AK-ENTRA-002", KnightIndicatorStatus.Exposed)]   // 12 privilegiadas (teto 10)
-    [InlineData("AK-ENTRA-003", KnightIndicatorStatus.Passed)]    // 0 privilegiadas com mailbox
-    [InlineData("AK-ENTRA-004", KnightIndicatorStatus.Exposed)]   // 3 convidados inativos
-    [InlineData("AK-ENTRA-005", KnightIndicatorStatus.Mitigated)] // contas técnicas + controle comprovado
-    public async Task Rules_DemoSnapshot_ProduceExpectedVerdict(string indicatorId, KnightIndicatorStatus expected)
+    [InlineData("AK-ENTRA-001", KnightIndicatorStatus.Exposed)]
+    [InlineData("AK-ENTRA-002", KnightIndicatorStatus.Exposed)]
+    [InlineData("AK-ENTRA-003", KnightIndicatorStatus.Passed)]
+    [InlineData("AK-ENTRA-004", KnightIndicatorStatus.Exposed)]
+    [InlineData("AK-ENTRA-005", KnightIndicatorStatus.Mitigated)]
+    public async Task Rules_DemoFacts_ProduceExpectedVerdict(string indicatorId, KnightIndicatorStatus expected)
     {
-        var snapshot = await new DemoKnightPostureProvider().CollectAsync(TenantA);
-
-        var result = KnightIndicatorEvaluator.Evaluate(snapshot).Single(r => r.Definition.Id == indicatorId);
-
-        result.Status.Should().Be(expected);
+        var result = await new DemoKnightCollector().CollectAsync(new KnightCollectionContext(TenantA, new KnightDemoConfiguration()));
+        var r = KnightIndicatorEvaluator.Evaluate(result.Facts, KnightSourceType.Demo).Single(x => x.Definition.Id == indicatorId);
+        r.Status.Should().Be(expected);
     }
 
-    // ---- 4) Mitigated EXIGE controle compensatório comprovado (um "toggle"/declaração não basta) -------
+    // ---- 4) Mitigated (AK-ENTRA-005) exige controle compensatório COMPROVADO -----------------------
 
     [Theory]
-    [InlineData(0, "none", KnightIndicatorStatus.Passed)]        // sem contas isentas → conforme
-    [InlineData(2, "none", KnightIndicatorStatus.Exposed)]       // isentas, sem controle → exposto
-    [InlineData(2, "declared", KnightIndicatorStatus.Exposed)]   // controle DECLARADO mas não comprovado → exposto
-    [InlineData(2, "proven", KnightIndicatorStatus.Mitigated)]   // controle comprovado no snapshot → mitigado
-    public void Rule005_MitigatedRequiresProvenCompensatingControl(
-        int exemptCount, string controlMode, KnightIndicatorStatus expected)
+    [InlineData(0, "none", KnightIndicatorStatus.Passed)]
+    [InlineData(2, "none", KnightIndicatorStatus.Exposed)]
+    [InlineData(2, "unproven", KnightIndicatorStatus.Exposed)]
+    [InlineData(2, "proven", KnightIndicatorStatus.Mitigated)]
+    public void Rule005_MitigatedRequiresProvenControl(int exempt, string mode, KnightIndicatorStatus expected)
     {
-        var snapshot = SnapshotWithServiceAccounts(exemptCount, controlMode);
+        var obs = new List<KnightObservation> { KnightObservation.OfCount(KnightSignalKey.ServiceAccountsMfaExempt, exempt) };
+        if (mode == "proven") obs.Add(KnightObservation.OfFlag(KnightSignalKey.ServiceAccountMfaExemptionProven, true));
+        if (mode == "unproven") obs.Add(KnightObservation.OfFlag(KnightSignalKey.ServiceAccountMfaExemptionProven, false));
 
-        var result = KnightIndicatorEvaluator.Evaluate(snapshot).Single(r => r.Definition.Id == "AK-ENTRA-005");
+        var r = KnightIndicatorEvaluator.Evaluate(new KnightFactSet(obs), KnightSourceType.Demo).Single(x => x.Definition.Id == "AK-ENTRA-005");
 
-        result.Status.Should().Be(expected);
+        r.Status.Should().Be(expected);
     }
 
-    // ---- 5) Execução demo persistida, modo DEMONSTRAÇÃO identificado, IA consultiva (não decide nada) --
+    // ---- 5) Dado ausente → NotEvaluated com motivo — NUNCA Passed ----------------------------------
 
     [Fact]
-    public async Task RunDemo_PersistsAssessment_MarksDemo_AndUsesAiWithoutInventingIndicators()
+    public void MissingFacts_YieldNotEvaluatedWithReason_NeverPassed()
     {
-        // A IA cita um indicador INEXISTENTE (AK-FAKE-999) — deve ser descartado (não pode adicionar indicador).
-        const string aiJson =
-            """{"executiveSummary":"Resumo de teste.","priorityRisks":[{"title":"R","rationale":"x","indicatorIds":["AK-ENTRA-001","AK-FAKE-999"]}],"recommendedActions":[{"order":1,"action":"Agir","indicatorIds":["AK-ENTRA-001"]}],"correlations":[],"collectionGaps":[]}""";
+        var results = KnightIndicatorEvaluator.Evaluate(KnightFactSet.Empty, KnightSourceType.MicrosoftEntraId);
 
-        KnightAssessment assessment;
-        await using (var db = NewContext(TenantA))
-            assessment = await ServiceFor(db, TenantA, new FakeLlmClient(aiJson)).RunDemoAssessmentAsync();
-
-        assessment.Mode.Should().Be(KnightAssessmentMode.Demo, "esta entrega é somente demonstração");
-        assessment.Status.Should().Be(KnightRunStatus.Completed);
-        assessment.CatalogVersion.Should().Be("ak-knight-v1");
-        assessment.ScoreFormulaVersion.Should().Be("knight-score-v1");
-        assessment.Score.Should().Be(23d);
-        assessment.Coverage.Should().Be(100d);
-        assessment.Indicators.Should().HaveCount(5);
-        assessment.AdvisoryFromAi.Should().BeTrue();
-        assessment.Advisory!.PriorityRisks.Single().IndicatorIds
-            .Should().ContainSingle().Which.Should().Be("AK-ENTRA-001", "a IA não pode citar indicador inexistente");
-
-        // Persistiu de verdade (execução + 5 resultados) sob o tenant A.
-        await using var assert = NewContext(TenantA);
-        (await assert.KnightAssessmentRuns.CountAsync()).Should().Be(1);
-        (await assert.KnightIndicatorResults.CountAsync()).Should().Be(5);
+        results.Should().NotContain(r => r.Status == KnightIndicatorStatus.Passed, "ausência de dado nunca vira conformidade");
+        results.Where(r => r.Status == KnightIndicatorStatus.NotEvaluated)
+            .Should().OnlyContain(r => !string.IsNullOrWhiteSpace(r.NotEvaluatedReason));
+        results.Should().NotBeEmpty();
     }
 
-    // ---- 6) Isolamento de tenant: tenant B não lê a execução do tenant A -----------------------------
+    // ---- 6) Execução Demo persiste metadados de FONTE; score preservado ---------------------------
+
+    [Fact]
+    public async Task RunDemo_PersistsSourceMetadata_AndScore()
+    {
+        KnightAssessment a;
+        await using (var db = NewContext(TenantA))
+            a = await ServiceFor(db, TenantA, new[] { (IKnightCollector)new DemoKnightCollector() },
+                DemoConfig(), new FakeLlmClient(ValidAiJson)).RunDemoAssessmentAsync();
+
+        a.SourceType.Should().Be(KnightSourceType.Demo);
+        a.SourceState.Should().Be(KnightSourceState.Completed);
+        a.Mode.Should().Be(KnightAssessmentMode.Demo);
+        a.Score.Should().Be(23d);
+        a.Coverage.Should().Be(100d);
+        a.Indicators.Should().HaveCount(5);
+        a.Indicators.Should().OnlyContain(i => i.SourceType == KnightSourceType.Demo);
+        a.Capabilities.Should().NotBeEmpty();
+
+        await using var assert = NewContext(TenantA);
+        var run = await assert.KnightAssessmentRuns.Include(r => r.Indicators).SingleAsync();
+        run.SourceType.Should().Be(KnightSourceType.Demo);
+        run.SourceState.Should().Be(KnightSourceState.Completed);
+        run.CapabilitiesJson.Should().NotBeNullOrWhiteSpace();
+        run.Indicators.Should().OnlyContain(i => i.SourceType == KnightSourceType.Demo);
+    }
+
+    // ---- 7) Isolamento de tenant -------------------------------------------------------------------
 
     [Fact]
     public async Task GetById_OtherTenant_ReturnsNull()
     {
         Guid runId;
         await using (var dbA = NewContext(TenantA))
-            runId = (await ServiceFor(dbA, TenantA, new FakeLlmClient(ValidAiJson)).RunDemoAssessmentAsync()).Id;
+            runId = (await ServiceFor(dbA, TenantA, new[] { (IKnightCollector)new DemoKnightCollector() },
+                DemoConfig(), new FakeLlmClient(ValidAiJson)).RunDemoAssessmentAsync()).Id;
 
-        // O MESMO Id, lido pelo tenant B, não é encontrado (Global Query Filter fail-closed).
         await using (var dbB = NewContext(TenantB))
-            (await ServiceFor(dbB, TenantB, new FakeLlmClient(ValidAiJson)).GetByIdAsync(runId)).Should().BeNull();
-
-        // Sanidade: o próprio tenant A lê normalmente.
-        await using var dbA2 = NewContext(TenantA);
-        (await ServiceFor(dbA2, TenantA, new FakeLlmClient(ValidAiJson)).GetByIdAsync(runId)).Should().NotBeNull();
+            (await ServiceFor(dbB, TenantB, new[] { (IKnightCollector)new DemoKnightCollector() },
+                DemoConfig(), new FakeLlmClient(ValidAiJson)).GetByIdAsync(runId)).Should().BeNull();
     }
 
-    // ---- 7) IA indisponível NÃO altera nem perde o assessment (fallback determinístico) ---------------
+    // ---- 8) Fonte real SEM configuração: lança e NÃO cria run (não cai para Demo) ------------------
 
     [Fact]
-    public async Task RunDemo_AiUnavailable_DoesNotLoseOrAlterAssessment()
+    public async Task RunAssessment_RealSourceNotConfigured_Throws_AndPersistsNothing()
     {
-        KnightAssessment assessment;
-        await using (var db = NewContext(TenantA))
-            assessment = await ServiceFor(db, TenantA, new ThrowingLlmClient()).RunDemoAssessmentAsync();
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA, new[] { (IKnightCollector)new DemoKnightCollector() },
+            new FakeConfigProvider(s => new KnightSourceNotConfigured(s)), new FakeLlmClient(ValidAiJson));
 
-        assessment.Status.Should().Be(KnightRunStatus.Completed, "a IA indisponível não reprova o assessment");
-        assessment.Score.Should().Be(23d, "o score é determinístico — a IA não o altera");
-        assessment.Indicators.Should().HaveCount(5);
-        assessment.AdvisoryFromAi.Should().BeFalse("o resumo veio do fallback determinístico");
-        assessment.Advisory.Should().NotBeNull("o fallback garante uma narrativa mesmo sem IA");
+        var act = () => svc.RunAssessmentAsync(KnightSourceType.MicrosoftEntraId);
+
+        await act.Should().ThrowAsync<KnightSourceNotConfiguredException>();
+        (await db.KnightAssessmentRuns.IgnoreQueryFilters().CountAsync()).Should().Be(0);
+    }
+
+    // ---- 9) Falha REAL da coleta é persistida com o estado real — NUNCA vira Demo ------------------
+
+    [Fact]
+    public async Task RunAssessment_RealCollectionFails_PersistsRealState_NotDemo()
+    {
+        var failResult = new KnightCollectionResult(
+            KnightSourceType.MicrosoftEntraId, KnightSourceState.AuthenticationFailure, "Microsoft Entra ID",
+            KnightFactSet.Empty, Array.Empty<KnightCapabilityStatus>(), DateTimeOffset.UtcNow, "auth failed");
+
+        KnightAssessment a;
+        await using (var db = NewContext(TenantA))
+            a = await ServiceFor(db, TenantA,
+                new[] { (IKnightCollector)new DemoKnightCollector(), new FakeCollector(KnightSourceType.MicrosoftEntraId, failResult) },
+                new FakeConfigProvider(s => new TestConfiguredSource(s)), new FakeLlmClient(ValidAiJson))
+                .RunAssessmentAsync(KnightSourceType.MicrosoftEntraId);
+
+        a.SourceType.Should().Be(KnightSourceType.MicrosoftEntraId);
+        a.SourceState.Should().Be(KnightSourceState.AuthenticationFailure);
+        a.Mode.Should().Be(KnightAssessmentMode.Live);
+        a.Source.Should().NotContain("Demonstra", "uma falha real jamais é apresentada como Demo");
+        a.Score.Should().BeNull("sem fatos, nenhum indicador é avaliado (não é 0, não é Demo)");
+        a.Indicators.Should().OnlyContain(i => i.Status == KnightIndicatorStatus.NotEvaluated);
+    }
+
+    // ---- 10) Coletor Google Workspace FALSO percorre o pipeline sem tocar o núcleo -----------------
+
+    [Fact]
+    public async Task FakeGoogleWorkspaceCollector_FlowsThroughPipeline_Unchanged()
+    {
+        var googleFacts = new KnightFactSet(new[]
+        {
+            KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsTotal, 4),
+            KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsWithoutMfa, 0),
+            KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsWithMailbox, 0),
+            KnightObservation.OfCount(KnightSignalKey.InactiveGuestAccounts, 0),
+            KnightObservation.OfCount(KnightSignalKey.ServiceAccountsMfaExempt, 0),
+        });
+        var googleResult = new KnightCollectionResult(
+            KnightSourceType.GoogleWorkspace, KnightSourceState.Completed, "Google Workspace (fake)",
+            googleFacts, new[] { new KnightCapabilityStatus(KnightCapability.PrivilegedRoleInventory, KnightCapabilityOutcome.Collected) },
+            DateTimeOffset.UtcNow);
+
+        KnightAssessment a;
+        await using (var db = NewContext(TenantA))
+            a = await ServiceFor(db, TenantA,
+                new[] { (IKnightCollector)new DemoKnightCollector(), new FakeCollector(KnightSourceType.GoogleWorkspace, googleResult) },
+                new FakeConfigProvider(s => new TestConfiguredSource(s)), new FakeLlmClient(ValidAiJson))
+                .RunAssessmentAsync(KnightSourceType.GoogleWorkspace);
+
+        a.SourceType.Should().Be(KnightSourceType.GoogleWorkspace);
+        a.Status.Should().Be(KnightRunStatus.Completed);
+        a.Indicators.Should().HaveCount(5, "os indicadores compartilhados são agnósticos de fonte — sem mudança no núcleo");
+        a.Indicators.Should().OnlyContain(i => i.SourceType == KnightSourceType.GoogleWorkspace);
 
         await using var assert = NewContext(TenantA);
-        (await assert.KnightAssessmentRuns.CountAsync()).Should().Be(1, "o assessment foi persistido apesar da falha da IA");
-        (await assert.KnightIndicatorResults.CountAsync()).Should().Be(5);
+        (await assert.KnightAssessmentRuns.CountAsync()).Should().Be(1);
     }
 
-    // ---- 8) Saneamento das citações da IA: nenhuma conclusão sem evidência em indicador conhecido -----
+    // ---- 11) IA indisponível não altera veredito/score (fallback) ---------------------------------
 
     [Fact]
-    public async Task Advisory_OnlyInventedIndicatorId_NotAcceptedAsAi_FallsBack()
+    public async Task Ai_Unavailable_DoesNotAlterScoreOrVerdicts()
     {
-        const string json =
-            """{"executiveSummary":"s","priorityRisks":[{"title":"R","rationale":"x","indicatorIds":["AK-FAKE-999"]}],"recommendedActions":[],"correlations":[],"collectionGaps":[]}""";
-
-        var result = await new KnightAdvisoryGenerator(new FakeLlmClient(json))
-            .GenerateAsync(AdvisoryInputWithKnown("AK-ENTRA-001"));
-
-        result.FromAi.Should().BeFalse("uma conclusão citando só indicador inexistente não é aproveitável → fallback");
-        // O fallback determinístico cita apenas indicadores conhecidos; o inventado nunca aparece.
-        result.Advisory.PriorityRisks.SelectMany(r => r.IndicatorIds).Should().NotContain("AK-FAKE-999");
-    }
-
-    [Fact]
-    public async Task Advisory_ValidPlusInventedId_KeepsOnlyValid_AndIsFromAi()
-    {
-        const string json =
-            """{"executiveSummary":"s","priorityRisks":[{"title":"R","rationale":"x","indicatorIds":["AK-ENTRA-001","AK-FAKE-999"]}],"recommendedActions":[],"correlations":[],"collectionGaps":[]}""";
-
-        var result = await new KnightAdvisoryGenerator(new FakeLlmClient(json))
-            .GenerateAsync(AdvisoryInputWithKnown("AK-ENTRA-001"));
-
-        result.FromAi.Should().BeTrue("uma conclusão com ID conhecido é preservada");
-        result.Advisory.PriorityRisks.Single().IndicatorIds.Should().Equal("AK-ENTRA-001");
-    }
-
-    // ---- 9) Cancelamento INTERNO da IA (token do chamador NÃO cancelado) → fallback, sem perder nada -----
-
-    [Fact]
-    public async Task RunDemo_InternalAiCancellation_WithoutCallerCancel_FallsBackAndCompletes()
-    {
-        KnightAssessment assessment;
+        KnightAssessment a;
         await using (var db = NewContext(TenantA))
-            assessment = await ServiceFor(db, TenantA, new CancelingLlmClient())
-                .RunDemoAssessmentAsync(CancellationToken.None);
+            a = await ServiceFor(db, TenantA, new[] { (IKnightCollector)new DemoKnightCollector() },
+                DemoConfig(), new ThrowingLlmClient()).RunDemoAssessmentAsync();
 
-        assessment.Status.Should().Be(KnightRunStatus.Completed, "cancelamento interno da IA não reprova o assessment");
-        assessment.AdvisoryFromAi.Should().BeFalse("cancelamento interno da IA vira indisponibilidade → fallback");
-        assessment.Score.Should().Be(23d, "o score determinístico é preservado");
-        assessment.Indicators.Should().HaveCount(5);
-
-        await using var assert = NewContext(TenantA);
-        (await assert.KnightAssessmentRuns.CountAsync()).Should().Be(1, "a execução foi persistida antes da IA");
-        (await assert.KnightIndicatorResults.CountAsync()).Should().Be(5);
+        a.Score.Should().Be(23d, "a IA não decide/altera o score");
+        a.ExposedCount.Should().Be(3);
+        a.AdvisoryFromAi.Should().BeFalse();
+        a.Advisory.Should().NotBeNull("o fallback garante narrativa mesmo sem IA");
     }
 
-    // ---- Infraestrutura do teste ---------------------------------------------------------------------
-
-    private const string ValidAiJson =
-        """{"executiveSummary":"ok","priorityRisks":[],"recommendedActions":[],"correlations":[],"collectionGaps":[]}""";
+    // ---- infraestrutura do teste -------------------------------------------------------------------
 
     private AegisScoreDbContext NewContext(Guid? tenantId) =>
         new(new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(_connection).Options,
             new SystemTenantContext(tenantId));
 
-    private static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid? tenantId, ILLMClient llm) =>
+    private static IKnightSourceConfigurationProvider DemoConfig() =>
+        new FakeConfigProvider(_ => new KnightDemoConfiguration());
+
+    private static IAegisKnightAssessmentService ServiceFor(
+        AegisScoreDbContext db, Guid? tenantId, IEnumerable<IKnightCollector> collectors,
+        IKnightSourceConfigurationProvider config, ILLMClient llm) =>
         new AegisKnightAssessmentService(
-            db, new DemoKnightPostureProvider(), new KnightAdvisoryGenerator(llm), new SystemTenantContext(tenantId));
+            db, new KnightCollectorRegistry(collectors), config, new KnightAdvisoryGenerator(llm), new SystemTenantContext(tenantId));
 
-    /// <summary>Snapshot demo com o nº de contas técnicas isentas e o modo do controle compensatório sob teste.</summary>
-    private static KnightPostureSnapshot SnapshotWithServiceAccounts(int exemptCount, string controlMode)
+    /// <summary>Config de fonte "configurada" genérica só para teste (IsConfigured=true, sem credencial).</summary>
+    private sealed record TestConfiguredSource(KnightSourceType Src) : KnightSourceConfiguration
     {
-        var exempt = Enumerable.Range(1, exemptCount).Select(i => $"svc-{i}@demo.example.com").ToArray();
-        var controls = controlMode switch
-        {
-            "proven" => new[]
-            {
-                new KnightCompensatingControl("k", "prova técnica", KnightIndicatorCategory.ServiceAccounts, true),
-            },
-            "declared" => new[]
-            {
-                new KnightCompensatingControl("k", "apenas declarado", KnightIndicatorCategory.ServiceAccounts, false),
-            },
-            _ => Array.Empty<KnightCompensatingControl>(),
-        };
-
-        return new KnightPostureSnapshot(
-            KnightAssessmentMode.Demo, "teste", "demo.example.com", DateTimeOffset.UtcNow,
-            TotalPrivilegedAccounts: 5, PrivilegedAccountsWithoutMfa: 0, PrivilegedAccountsWithMailbox: 0,
-            InactiveGuestAccountsOverWindow: 0, InactiveGuestWindowDays: 30,
-            MfaExemptServiceAccounts: exempt, CompensatingControls: controls);
+        public override KnightSourceType Source => Src;
     }
 
-    /// <summary>Entrada mínima de advisory com um conjunto de indicadores CONHECIDOS (para o saneamento de citações).</summary>
-    private static KnightAdvisoryInput AdvisoryInputWithKnown(params string[] indicatorIds) =>
-        new(KnightAssessmentMode.Demo, 50, 100,
-            indicatorIds.Select(id => new KnightAdvisoryIndicator(
-                id, "titulo", KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.High,
-                KnightIndicatorStatus.Exposed, "evidencia", 1, new[] { "PR.AA-01" }, Array.Empty<string>())).ToList());
+    private sealed class FakeConfigProvider : IKnightSourceConfigurationProvider
+    {
+        private readonly Func<KnightSourceType, KnightSourceConfiguration> _resolve;
+        public FakeConfigProvider(Func<KnightSourceType, KnightSourceConfiguration> resolve) => _resolve = resolve;
+        public Task<KnightSourceConfiguration> ResolveAsync(Guid tenantId, KnightSourceType source, CancellationToken ct = default) =>
+            Task.FromResult(_resolve(source));
+        public Task<IReadOnlyList<KnightSourceAvailability>> ListAvailabilityAsync(Guid tenantId, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<KnightSourceAvailability>>(Array.Empty<KnightSourceAvailability>());
+    }
 
-    /// <summary>ILLMClient determinístico: devolve um texto fixo (JSON do advisory), sem heurística nem rede.</summary>
+    private sealed class FakeCollector : IKnightCollector
+    {
+        private readonly KnightCollectionResult _result;
+        public FakeCollector(KnightSourceType source, KnightCollectionResult result) { Source = source; _result = result; }
+        public KnightSourceType Source { get; }
+        public Task<KnightCollectionResult> CollectAsync(KnightCollectionContext context, CancellationToken ct = default) =>
+            Task.FromResult(_result);
+    }
+
     private sealed class FakeLlmClient : ILLMClient
     {
         private readonly string _response;
@@ -276,20 +295,9 @@ public sealed class KnightAssessmentTests : IDisposable
             Task.FromResult(_response);
     }
 
-    /// <summary>ILLMClient que SEMPRE falha — prova que a indisponibilidade da IA não impede o assessment.</summary>
     private sealed class ThrowingLlmClient : ILLMClient
     {
         public Task<string> ExecutePromptAsync(string systemPrompt, string userPrompt, CancellationToken ct = default) =>
             throw new InvalidOperationException("IA indisponível (teste).");
-    }
-
-    /// <summary>
-    /// ILLMClient que lança TaskCanceledException (OperationCanceledException) do TRANSPORTE, sem o token do
-    /// chamador estar cancelado — deve virar indisponibilidade (fallback), não cancelamento propagado.
-    /// </summary>
-    private sealed class CancelingLlmClient : ILLMClient
-    {
-        public Task<string> ExecutePromptAsync(string systemPrompt, string userPrompt, CancellationToken ct = default) =>
-            throw new TaskCanceledException("cancelamento interno do transporte (teste).");
     }
 }

@@ -20,14 +20,17 @@ public sealed record KnightAdvisoryIndicator(
     IReadOnlyList<string> MitreTechniques);
 
 /// <summary>
-/// Entrada da ÚNICA chamada de IA por assessment: os resultados determinísticos agregados, o score e a
-/// cobertura. Sem credenciais, tokens ou PII desnecessária — só o necessário para a IA priorizar e explicar.
+/// Entrada da ÚNICA chamada de IA por assessment: a FONTE, os resultados determinísticos agregados, o score,
+/// a cobertura e as LIMITAÇÕES de coleta (capacidades sem permissão/indisponíveis). Sem credenciais, tokens
+/// ou PII desnecessária — só o necessário para a IA priorizar, explicar e destacar lacunas de cobertura.
 /// </summary>
 public sealed record KnightAdvisoryInput(
+    KnightSourceType Source,
     KnightAssessmentMode Mode,
     double? Score,
     double Coverage,
-    IReadOnlyList<KnightAdvisoryIndicator> Indicators);
+    IReadOnlyList<KnightAdvisoryIndicator> Indicators,
+    IReadOnlyList<string> Limitations);
 
 /// <summary>Um risco prioritário identificado pela camada consultiva, citando os indicadores que o embasam.</summary>
 public sealed record KnightPriorityRisk(string Title, string Rationale, IReadOnlyList<string> IndicatorIds);
@@ -128,12 +131,14 @@ public static class KnightAdvisoryFallback
         // Correlações: indicadores expostos que compartilham ao menos um código NIST são tratados em conjunto.
         var correlations = BuildCorrelations(indicators.Where(i => i.Status == KnightIndicatorStatus.Exposed).ToList());
 
-        // Lacunas de coleta: indicadores não avaliados/erro + a limitação honesta do modo demonstração.
+        // Lacunas de coleta: indicadores não avaliados/erro (com o motivo) + limitações de capacidade da fonte.
         var gaps = new List<string>();
         foreach (var i in indicators.Where(i =>
                      i.Status is KnightIndicatorStatus.NotEvaluated or KnightIndicatorStatus.Error))
-            gaps.Add($"{i.IndicatorId}: sem sinal suficiente para avaliar (não conta como aprovação).");
-        if (input.Mode == KnightAssessmentMode.Demo)
+            gaps.Add($"{i.IndicatorId}: {i.Evidence}");
+        foreach (var lim in input.Limitations)
+            gaps.Add(lim);
+        if (input.Source == KnightSourceType.Demo)
             gaps.Add("Modo demonstração: superfície sintética (example.com); integração real (Microsoft Graph/AD/Okta) ainda não conectada.");
 
         return new KnightAdvisory(summary, priorityRisks, actions, correlations, gaps);

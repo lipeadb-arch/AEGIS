@@ -1,7 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http.Resilience;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Knight;
 using AegisScore.Application.Services;
 using AegisScore.Application.Telemetry.Providers;
+using AegisScore.Connectors.Microsoft.Knight;
 
 namespace AegisScore.Connectors.Microsoft;
 
@@ -25,6 +28,12 @@ public static class DependencyInjection
         // Identify/Protect/Govern → telemetria de identidade do Entra ID (postura de IAM). STUB por ora
         // (dados de alto risco); troca-se por Microsoft Graph + OAuth client credentials mantendo a porta.
         services.AddSingleton<IEntraIdTelemetryProvider, EntraIdTelemetryProviderStub>();
+
+        // AEGIS KNIGHT → coletor REAL do Microsoft Entra ID (somente leitura). HttpClient tipado com
+        // resiliência padrão (retry/backoff, Retry-After no 429, circuit breaker) — reusa a fachada oficial,
+        // sem infra própria. O coletor recebe a configuração DECIFRADA pelo contexto; não toca segredos.
+        services.AddHttpClient<IEntraGraphClient, EntraGraphClient>().AddStandardResilienceHandler();
+        services.AddScoped<IKnightCollector, EntraIdKnightCollector>();
         return services;
     }
 }

@@ -120,11 +120,14 @@ public static class DependencyInjection
             personalityPath, sp.GetRequiredService<ILogger<AuditorPersonaProvider>>()));
         services.AddScoped<IAegisAiEvaluatorService, AegisAiEvaluatorService>();
 
-        // AEGIS KNIGHT — assessment de postura de identidade/exposição. Provedor de DEMONSTRAÇÃO (sintético,
-        // sem rede → Singleton, sem dependências), camada consultiva de IA (reusa o ILLMClient acima; nunca
-        // decide veredito, com fallback determinístico) e o serviço de aplicação dedicado que orquestra a
-        // execução persistida (Scoped: usa o DbContext, com Global Query Filter + stamping fail-closed).
-        services.AddSingleton<IKnightPostureProvider, DemoKnightPostureProvider>();
+        // AEGIS KNIGHT — assessment MULTICOLETOR de postura de identidade/exposição. Coletor de DEMONSTRAÇÃO
+        // (sintético, sem rede) + registro/factory de coletores (montado a partir de TODOS os IKnightCollector,
+        // incluindo o Entra real do pacote Microsoft) + provedor de configuração por tenant (lê ConnectorConfig
+        // e DECIFRA os segredos pela proteção existente) + camada consultiva de IA (fallback determinístico) +
+        // serviço de aplicação dedicado. Scoped: usam o DbContext (Global Query Filter + stamping fail-closed).
+        services.AddScoped<IKnightCollector, DemoKnightCollector>();
+        services.AddScoped<IKnightCollectorRegistry, KnightCollectorRegistry>();
+        services.AddScoped<IKnightSourceConfigurationProvider, KnightSourceConfigurationProvider>();
         services.AddScoped<IKnightAdvisoryGenerator, KnightAdvisoryGenerator>();
         services.AddScoped<IAegisKnightAssessmentService, AegisKnightAssessmentService>();
 

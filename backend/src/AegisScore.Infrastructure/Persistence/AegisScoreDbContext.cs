@@ -485,6 +485,9 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.Source).HasMaxLength(200);
             e.Property(x => x.CatalogVersion).HasMaxLength(50);
             e.Property(x => x.ScoreFormulaVersion).HasMaxLength(50);
+            // Multicoletor (aditivo): defaults tornam a migration segura sobre linhas existentes (Demo/Completed).
+            e.Property(x => x.SourceType).HasDefaultValue(KnightSourceType.Demo);
+            e.Property(x => x.SourceState).HasDefaultValue(KnightSourceState.Completed);
             e.HasIndex(x => new { x.TenantId, x.StartedAt });
 
             // INTEGRIDADE MULTI-TENANT NO BANCO: chave alternativa composta (Id, TenantId) que a FK do filho
@@ -503,6 +506,8 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.IndicatorId).HasMaxLength(40).IsRequired();
             e.Property(x => x.Title).HasMaxLength(300).IsRequired();
             e.Property(x => x.Recommendation).HasMaxLength(1000);
+            e.Property(x => x.NotEvaluatedReason).HasMaxLength(500);
+            e.Property(x => x.SourceType).HasDefaultValue(KnightSourceType.Demo);
             // Uma execução não pode conter duas linhas para o MESMO IndicatorId — invariante de banco. O
             // índice é tenant-leading e cobre o carregamento por (tenant, execução), substituindo o antigo
             // índice não-único (TenantId, RunId).

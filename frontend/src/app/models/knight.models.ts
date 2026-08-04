@@ -28,6 +28,45 @@ export type KnightCategory =
 /** Estado de conexão exibido no badge: separação inequívoca entre Demo, Não configurado e Conectado. */
 export type KnightConnectionState = 'Demo' | 'NotConfigured' | 'Connected';
 
+/** Fonte concreta de coleta (multicoletor). */
+export type KnightSourceType = 'Demo' | 'MicrosoftEntraId' | 'GoogleWorkspace';
+
+/** Estado da coleta/fonte de uma execução (ou de disponibilidade). */
+export type KnightSourceState =
+  | 'NotConfigured'
+  | 'Configured'
+  | 'Collecting'
+  | 'Completed'
+  | 'PartialCollection'
+  | 'InsufficientPermission'
+  | 'AuthenticationFailure'
+  | 'Throttled'
+  | 'Unavailable'
+  | 'Error';
+
+/** Desfecho por capacidade da fonte (o que foi coletado e o que faltou). */
+export type KnightCapabilityOutcome = 'Collected' | 'InsufficientPermission' | 'Unavailable' | 'NotAttempted';
+
+export interface KnightCapability {
+  capability: string;
+  outcome: KnightCapabilityOutcome;
+  detail: string | null;
+}
+
+/** Disponibilidade de uma fonte para o tenant (espelha KnightSourceDto). */
+export interface KnightSource {
+  source: KnightSourceType;
+  label: string;
+  configured: boolean;
+  enabled: boolean;
+}
+
+/** Estado das fontes: Demo sempre disponível; reais conforme configuração (espelha KnightSourcesDto). */
+export interface KnightSources {
+  demoAvailable: boolean;
+  realSources: KnightSource[];
+}
+
 export interface KnightIndicator {
   indicatorId: string; // "AK-ENTRA-001"
   title: string;
@@ -40,6 +79,8 @@ export interface KnightIndicator {
   mitreTechniques: string[];
   recommendation: string;
   collectedAt: string; // ISO 8601
+  sourceType: KnightSourceType;
+  notEvaluatedReason: string | null;
 }
 
 export interface KnightCounts {
@@ -81,7 +122,9 @@ export interface KnightAssessment {
   id: string;
   mode: KnightMode;
   isDemo: boolean;
-  source: string;
+  sourceType: KnightSourceType;
+  sourceState: KnightSourceState;
+  source: string; // rótulo legível da fonte
   status: KnightRunStatus;
   catalogVersion: string; // "ak-knight-v1"
   scoreFormulaVersion: string; // "knight-score-v1"
@@ -91,6 +134,7 @@ export interface KnightAssessment {
   coverage: number; // 0..100
   counts: KnightCounts;
   indicators: KnightIndicator[];
+  capabilities: KnightCapability[];
   advisory: KnightAdvisory | null;
   advisoryFromAi: boolean; // true = IA; false = fallback determinístico
 }
@@ -168,4 +212,52 @@ export function sortIndicatorsByRisk(indicators: KnightIndicator[]): KnightIndic
 /** Score para exibição: "—" quando null (sem avaliação), nunca "0". */
 export function scoreDisplay(score: number | null): string {
   return score === null ? '—' : String(Math.round(score));
+}
+
+const SOURCE_TYPE_LABEL: Record<KnightSourceType, string> = {
+  Demo: 'Demonstração',
+  MicrosoftEntraId: 'Microsoft Entra ID',
+  GoogleWorkspace: 'Google Workspace',
+};
+
+export function sourceTypeLabel(source: KnightSourceType): string {
+  return SOURCE_TYPE_LABEL[source];
+}
+
+const SOURCE_STATE_LABEL: Record<KnightSourceState, string> = {
+  NotConfigured: 'Não configurado',
+  Configured: 'Configurado',
+  Collecting: 'Coletando',
+  Completed: 'Coleta concluída',
+  PartialCollection: 'Coleta parcial',
+  InsufficientPermission: 'Permissão insuficiente',
+  AuthenticationFailure: 'Falha de autenticação',
+  Throttled: 'Throttling',
+  Unavailable: 'Indisponível',
+  Error: 'Erro',
+};
+
+export function sourceStateLabel(state: KnightSourceState): string {
+  return SOURCE_STATE_LABEL[state];
+}
+
+/** Um estado de coleta que NÃO é a conclusão íntegra — a UI o destaca (permissão/parcial/falha). */
+export function isProblemState(state: KnightSourceState): boolean {
+  return state !== 'Completed';
+}
+
+const CAPABILITY_OUTCOME_LABEL: Record<KnightCapabilityOutcome, string> = {
+  Collected: 'Coletado',
+  InsufficientPermission: 'Permissão insuficiente',
+  Unavailable: 'Indisponível',
+  NotAttempted: 'Não tentado',
+};
+
+export function capabilityOutcomeLabel(outcome: KnightCapabilityOutcome): string {
+  return CAPABILITY_OUTCOME_LABEL[outcome];
+}
+
+/** Capacidades com problema (não coletadas) — o que a UI mostra como limitação de cobertura. */
+export function problemCapabilities(caps: KnightCapability[]): KnightCapability[] {
+  return caps.filter((c) => c.outcome !== 'Collected');
 }

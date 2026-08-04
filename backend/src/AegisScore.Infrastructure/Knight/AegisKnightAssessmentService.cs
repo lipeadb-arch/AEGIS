@@ -14,66 +14,80 @@ using AegisScore.Infrastructure.Persistence;
 namespace AegisScore.Infrastructure.Knight;
 
 /// <summary>
-/// Serviço de aplicação do AEGIS KNIGHT. Orquestra a execução persistida do assessment de identidade e
-/// exposição: coleta o snapshot pelo provedor, avalia os indicadores de forma DETERMINÍSTICA
-/// (<see cref="KnightIndicatorEvaluator"/>), calcula score e cobertura pela fórmula PRÓPRIA do KNIGHT
-/// (<see cref="KnightScoreFormula"/> — nunca a global aegis-score-v1), persiste, tenta gerar a narrativa
-/// consultiva pela IA (com fallback determinístico) e conclui MESMO SE a IA estiver indisponível.
+/// Serviço de aplicação do AEGIS KNIGHT — MULTICOLETOR. Resolve a configuração da fonte, coleta pelo coletor
+/// da fonte (Demo sintético, Entra real…), avalia os fatos normalizados de forma DETERMINÍSTICA
+/// (<see cref="KnightIndicatorEvaluator"/>), calcula score/cobertura pela fórmula PRÓPRIA do KNIGHT
+/// (<see cref="KnightScoreFormula"/> — nunca a global aegis-score-v1), persiste (com fonte/estado/capacidades)
+/// e gera a narrativa consultiva pela IA (com fallback), concluindo mesmo se a IA estiver indisponível.
 ///
-/// A IA jamais decide status, severidade, score, cobertura ou mapeamento — só interpreta/prioriza. Persiste
-/// no <see cref="AegisScoreDbContext"/> com Global Query Filter + stamping de tenant fail-closed. Não grava
-/// segredo, token nem payload bruto sensível.
+/// Uma falha REAL da coleta (permissão/indisponibilidade) é persistida com o estado real — NUNCA há
+/// substituição silenciosa por dados sintéticos (Demo). A IA jamais decide status/severidade/score/cobertura.
+/// Persiste no <see cref="AegisScoreDbContext"/> com Global Query Filter + stamping de tenant fail-closed.
 /// </summary>
 public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
 {
-    private static readonly JsonSerializerOptions AdvisoryJson = new()
+    private static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
     };
 
     private readonly AegisScoreDbContext _db;
-    private readonly IKnightPostureProvider _provider;
+    private readonly IKnightCollectorRegistry _registry;
+    private readonly IKnightSourceConfigurationProvider _config;
     private readonly IKnightAdvisoryGenerator _advisory;
     private readonly ITenantContext _tenant;
     private readonly ILogger<AegisKnightAssessmentService>? _log;
 
     public AegisKnightAssessmentService(
         AegisScoreDbContext db,
-        IKnightPostureProvider provider,
+        IKnightCollectorRegistry registry,
+        IKnightSourceConfigurationProvider config,
         IKnightAdvisoryGenerator advisory,
         ITenantContext tenant,
         ILogger<AegisKnightAssessmentService>? log = null)
     {
         _db = db;
-        _provider = provider;
+        _registry = registry;
+        _config = config;
         _advisory = advisory;
         _tenant = tenant;
         _log = log;
     }
 
-    public async Task<KnightAssessment> RunDemoAssessmentAsync(CancellationToken ct = default)
+    public Task<KnightAssessment> RunDemoAssessmentAsync(CancellationToken ct = default) =>
+        RunAssessmentAsync(KnightSourceType.Demo, ct);
+
+    public async Task<KnightAssessment> RunAssessmentAsync(KnightSourceType source, CancellationToken ct = default)
     {
-        // Fail-fast: sem tenant resolvido no contexto, nada é coletado nem persistido (defesa em profundidade;
-        // o SaveChanges do DbContext também barra).
         var tenantId = _tenant.TenantId
-            ?? throw new TenantSecurityException(
-                "Execução do assessment KNIGHT sem tenant resolvido no contexto (fail-closed).");
+            ?? throw new TenantSecurityException("Execução do assessment KNIGHT sem tenant resolvido no contexto (fail-closed).");
 
-        // 1) Coleta o snapshot (Demo = sintético, sem rede; nunca consultou Graph/AD/Okta).
-        var snapshot = await _provider.CollectAsync(tenantId, ct);
+        // 1) Resolve a CONFIGURAÇÃO da fonte. Fonte real sem configuração NÃO executa e NÃO cai para Demo.
+        var configuration = await _config.ResolveAsync(tenantId, source, ct);
+        if (source != KnightSourceType.Demo && !configuration.IsConfigured)
+            throw new KnightSourceNotConfiguredException(source);
 
-        // 2) Avaliação DETERMINÍSTICA dos indicadores (pura).
-        var evaluated = KnightIndicatorEvaluator.Evaluate(snapshot);
+        var collector = _registry.Resolve(source);
 
-        // 3) Score e cobertura pela fórmula PRÓPRIA do KNIGHT.
+        // 2) COLETA pela fonte → fatos normalizados + estado + capacidades. O coletor NUNCA devolve dados
+        //    sintéticos numa falha real: devolve o estado real (AuthenticationFailure/Partial/…).
+        var result = await collector.CollectAsync(new KnightCollectionContext(tenantId, configuration), ct);
+
+        // 3) Avaliação DETERMINÍSTICA dos indicadores aplicáveis à fonte sobre os fatos. Dado ausente → NotEvaluated.
+        var evaluated = KnightIndicatorEvaluator.Evaluate(result.Facts, source);
+
+        // 4) Score e cobertura pela fórmula PRÓPRIA do KNIGHT.
         var score = KnightScoreFormula.Compute(evaluated.Select(e => (e.Definition.Severity, e.Status)));
 
-        // 4) Monta a execução + resultados (o TenantId é carimbado no SaveChanges, fail-closed).
+        // 5) Monta a execução + resultados (TenantId carimbado no SaveChanges, fail-closed).
         var run = new KnightAssessmentRun
         {
-            Mode = _provider.Mode,
-            Source = snapshot.Source,
+            Mode = source == KnightSourceType.Demo ? KnightAssessmentMode.Demo : KnightAssessmentMode.Live,
+            SourceType = source,
+            SourceState = result.State,
+            Source = result.SourceLabel,
             Status = KnightRunStatus.Running,
             CatalogVersion = KnightCatalog.Version,
             ScoreFormulaVersion = score.FormulaVersion,
@@ -86,6 +100,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             NotEvaluatedCount = score.NotEvaluatedCount,
             ErrorCount = score.ErrorCount,
             NotApplicableCount = score.NotApplicableCount,
+            CapabilitiesJson = JsonSerializer.Serialize(result.Capabilities, Json),
         };
 
         foreach (var e in evaluated)
@@ -102,23 +117,22 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
                 NistCodes = e.Definition.NistCodes.ToList(),
                 MitreTechniques = e.Definition.MitreTechniques.ToList(),
                 Recommendation = e.Definition.Recommendation,
-                CollectedAt = snapshot.CollectedAt,
+                SourceType = source,
+                NotEvaluatedReason = e.NotEvaluatedReason,
+                CollectedAt = result.CollectedAt,
             });
         }
 
-        // 5) Persiste o veredito DETERMINÍSTICO ANTES de envolver a IA (cascade run → indicadores). Se o
-        //    processo cair, for cancelado ou o transporte da IA falhar depois daqui, a execução + os
-        //    resultados já são DURÁVEIS (Status=Running). A IA NÃO participa desta transação de durabilidade.
+        // 6) Persiste o veredito DETERMINÍSTICO ANTES da IA (durável já em Running).
         _db.KnightAssessmentRuns.Add(run);
         await _db.SaveChangesAsync(ct);
 
-        // 6) IA CONSULTIVA (uma chamada, FORA da transação acima) — nunca altera os vereditos. A
-        //    indisponibilidade da IA não reprova nem invalida o assessment (fallback determinístico).
-        var advisoryResult = await GenerateAdvisorySafeAsync(BuildAdvisoryInput(snapshot.Mode, score, evaluated), ct);
-        run.AdvisoryJson = JsonSerializer.Serialize(advisoryResult.Advisory, AdvisoryJson);
+        // 7) IA CONSULTIVA (uma chamada, fora da transação) — nunca altera vereditos; falha → fallback.
+        var advisoryResult = await GenerateAdvisorySafeAsync(BuildAdvisoryInput(run, score, evaluated, result), ct);
+        run.AdvisoryJson = JsonSerializer.Serialize(advisoryResult.Advisory, Json);
         run.AdvisoryFromAi = advisoryResult.FromAi;
 
-        // 7) Conclui e grava novamente (a execução já persistida passa a Completed).
+        // 8) Conclui e grava novamente.
         run.Status = KnightRunStatus.Completed;
         run.CompletedAt = DateTimeOffset.UtcNow;
         await _db.SaveChangesAsync(ct);
@@ -129,23 +143,29 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
     public async Task<KnightAssessment?> GetLatestAsync(CancellationToken ct = default)
     {
         var run = await _db.KnightAssessmentRuns
-            .AsNoTracking()
-            .Include(r => r.Indicators)
-            .OrderByDescending(r => r.StartedAt)
-            .ThenByDescending(r => r.Id)
+            .AsNoTracking().Include(r => r.Indicators)
+            .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.Id)
             .FirstOrDefaultAsync(ct);
         return run is null ? null : ToAssessment(run);
     }
 
     public async Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
-        // O Global Query Filter (fail-closed) restringe ao tenant do contexto: um Id de outro tenant não é
-        // encontrado (retorna null → 404 no controller), nunca vaza.
         var run = await _db.KnightAssessmentRuns
-            .AsNoTracking()
-            .Include(r => r.Indicators)
+            .AsNoTracking().Include(r => r.Indicators)
             .FirstOrDefaultAsync(r => r.Id == id, ct);
         return run is null ? null : ToAssessment(run);
+    }
+
+    public async Task<KnightSourcesStatus> GetSourcesStatusAsync(CancellationToken ct = default)
+    {
+        var tenantId = _tenant.TenantId
+            ?? throw new TenantSecurityException("Consulta de fontes KNIGHT sem tenant resolvido no contexto (fail-closed).");
+        var availability = await _config.ListAvailabilityAsync(tenantId, ct);
+        var real = availability
+            .Select(a => new KnightSourceInfo(a.Source, a.Label, a.Configured, a.Enabled))
+            .ToList();
+        return new KnightSourcesStatus(DemoAvailable: true, real);
     }
 
     // ---- Helpers ----------------------------------------------------------------------------------
@@ -158,34 +178,35 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            throw;   // cancelamento REAL do chamador — propaga
+            throw;
         }
         catch (Exception ex)
         {
-            // Defesa extra: mesmo que a impl do gerador lance (inclui OCE/TaskCanceledException interna do
-            // transporte com o token do chamador NÃO cancelado = indisponibilidade), o assessment não se
-            // perde — fallback determinístico.
             _log?.LogWarning(ex, "Gerador de narrativa consultiva do KNIGHT falhou; aplicando fallback determinístico.");
             return new KnightAdvisoryResult(KnightAdvisoryFallback.Build(input), FromAi: false);
         }
     }
 
     private static KnightAdvisoryInput BuildAdvisoryInput(
-        KnightAssessmentMode mode, KnightScoreResult score, IReadOnlyList<KnightEvaluatedIndicator> evaluated) =>
-        new(
-            mode,
+        KnightAssessmentRun run, KnightScoreResult score,
+        IReadOnlyList<KnightEvaluatedIndicator> evaluated, KnightCollectionResult result)
+    {
+        var limitations = result.Capabilities
+            .Where(c => c.Outcome != KnightCapabilityOutcome.Collected)
+            .Select(c => $"{CapabilityLabel(c.Capability)}: {c.Detail ?? c.Outcome.ToString()}")
+            .ToList();
+
+        return new KnightAdvisoryInput(
+            run.SourceType,
+            run.Mode,
             score.Score,
             score.Coverage,
             evaluated.Select(e => new KnightAdvisoryIndicator(
-                e.Definition.Id,
-                e.Definition.Title,
-                e.Definition.Category,
-                e.Definition.Severity,
-                e.Status,
-                e.Evidence,
-                e.AffectedObjectCount,
-                e.Definition.NistCodes,
-                e.Definition.MitreTechniques)).ToList());
+                e.Definition.Id, e.Definition.Title, e.Definition.Category, e.Definition.Severity,
+                e.Status, e.Evidence, e.AffectedObjectCount,
+                e.Definition.NistCodes, e.Definition.MitreTechniques)).ToList(),
+            limitations);
+    }
 
     private KnightAssessment ToAssessment(KnightAssessmentRun run)
     {
@@ -193,15 +214,29 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             .OrderBy(i => i.IndicatorId, StringComparer.Ordinal)
             .Select(i => new KnightIndicatorView(
                 i.IndicatorId, i.Title, i.Category, i.Severity, i.Status, i.Evidence, i.AffectedObjectCount,
-                i.NistCodes, i.MitreTechniques, i.Recommendation, i.CollectedAt))
+                i.NistCodes, i.MitreTechniques, i.Recommendation, i.CollectedAt, i.SourceType, i.NotEvaluatedReason))
             .ToList();
 
         return new KnightAssessment(
-            run.Id, run.Mode, run.Source, run.Status, run.CatalogVersion, run.ScoreFormulaVersion,
-            run.StartedAt, run.CompletedAt, run.Score, run.Coverage,
+            run.Id, run.Mode, run.SourceType, run.SourceState, run.Source, run.Status,
+            run.CatalogVersion, run.ScoreFormulaVersion, run.StartedAt, run.CompletedAt, run.Score, run.Coverage,
             run.PassedCount, run.ExposedCount, run.MitigatedCount,
             run.NotEvaluatedCount, run.ErrorCount, run.NotApplicableCount,
-            indicators, DeserializeAdvisory(run.AdvisoryJson), run.AdvisoryFromAi);
+            indicators, DeserializeCapabilities(run.CapabilitiesJson),
+            DeserializeAdvisory(run.AdvisoryJson), run.AdvisoryFromAi);
+    }
+
+    private IReadOnlyList<KnightCapabilityStatus> DeserializeCapabilities(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return Array.Empty<KnightCapabilityStatus>();
+        try
+        {
+            return JsonSerializer.Deserialize<List<KnightCapabilityStatus>>(json, Json) ?? new();
+        }
+        catch (JsonException)
+        {
+            return Array.Empty<KnightCapabilityStatus>();
+        }
     }
 
     private KnightAdvisory? DeserializeAdvisory(string? json)
@@ -209,7 +244,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         if (string.IsNullOrWhiteSpace(json)) return null;
         try
         {
-            return JsonSerializer.Deserialize<KnightAdvisory>(json, AdvisoryJson);
+            return JsonSerializer.Deserialize<KnightAdvisory>(json, Json);
         }
         catch (JsonException ex)
         {
@@ -217,4 +252,17 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             return null;
         }
     }
+
+    private static string CapabilityLabel(KnightCapability capability) => capability switch
+    {
+        KnightCapability.PrivilegedRoleInventory => "Inventário de papéis privilegiados",
+        KnightCapability.MfaRegistration => "Registro de MFA",
+        KnightCapability.GuestAccounts => "Contas de convidado",
+        KnightCapability.ConditionalAccessPolicies => "Políticas de acesso condicional",
+        KnightCapability.ApplicationInventory => "Inventário de aplicações",
+        KnightCapability.ServiceAccountExemptions => "Isenções de contas de serviço",
+        KnightCapability.SecurityBaseline => "Baseline de segurança",
+        KnightCapability.BreakGlassDesignation => "Designação de contas de emergência",
+        _ => capability.ToString(),
+    };
 }

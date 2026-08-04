@@ -9,5 +9,10 @@
   </ItemGroup>
   <ItemGroup>
      <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
+     <!-- Coletor real do Microsoft Entra ID (KNIGHT): HttpClient tipado + resiliência (retry/backoff,
+          Retry-After no 429, circuit breaker) da mesma fachada oficial usada pelos clients de IA. -->
+     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.10" />
+     <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.8.0" />
+     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
    </ItemGroup>
 </Project>
