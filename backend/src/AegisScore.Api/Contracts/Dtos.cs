@@ -453,7 +453,18 @@ public record KnightIndicatorDto(
     IReadOnlyList<string> NistCodes,
     IReadOnlyList<string> MitreTechniques,
     string Recommendation,
-    DateTimeOffset CollectedAt);
+    DateTimeOffset CollectedAt,
+    string SourceType,
+    string? NotEvaluatedReason);
+
+/// <summary>Estado por capacidade da fonte (o que foi coletado e o que faltou) — cobertura/limitações na UI.</summary>
+public record KnightCapabilityDto(string Capability, string Outcome, string? Detail);
+
+/// <summary>Disponibilidade de uma fonte KNIGHT para o tenant.</summary>
+public record KnightSourceDto(string Source, string Label, bool Configured, bool Enabled);
+
+/// <summary>Estado das fontes: Demo sempre disponível; fontes reais conforme configuração por tenant.</summary>
+public record KnightSourcesDto(bool DemoAvailable, IReadOnlyList<KnightSourceDto> RealSources);
 
 /// <summary>Contagens por veredito da execução (denormalizadas para leitura direta na UI).</summary>
 public record KnightCountsDto(
@@ -488,6 +499,8 @@ public record KnightAssessmentDto(
     Guid Id,
     string Mode,
     bool IsDemo,
+    string SourceType,
+    string SourceState,
     string Source,
     string Status,
     string CatalogVersion,
@@ -498,5 +511,6 @@ public record KnightAssessmentDto(
     double Coverage,
     KnightCountsDto Counts,
     IReadOnlyList<KnightIndicatorDto> Indicators,
+    IReadOnlyList<KnightCapabilityDto> Capabilities,
     KnightAdvisoryDto? Advisory,
     bool AdvisoryFromAi);

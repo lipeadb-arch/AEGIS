@@ -114,7 +114,10 @@ public enum ConnectorCapability
     ConfigAnalyzer = 4, Siem = 5, Edr = 6, Cmdb = 7, VulnerabilityScanner = 8,
     // Govern: fonte de DOCUMENTOS de política/governança (SharePoint, Google Workspace…), consumida
     // pelo Provider Pattern (IDocumentIntegrationProvider) — distinta das capacidades de telemetria acima.
-    PolicyDocuments = 9
+    PolicyDocuments = 9,
+    // AEGIS KNIGHT: postura de identidade/exposição por leitura administrativa (Microsoft Graph, e adiante
+    // Google Workspace Admin/Directory). Configuração por tenant (client credentials cifradas), somente leitura.
+    IdentityPosture = 10
 }
 
 public enum ConnectorAuthType { OAuthClientCredentials = 0, ApiKey = 1, ServiceAccount = 2 }

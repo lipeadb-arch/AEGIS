@@ -8,14 +8,12 @@ using AegisScore.Domain;
 namespace AegisScore.Api.Controllers;
 
 /// <summary>
-/// AEGIS KNIGHT — assessment de postura de identidade e exposição. Superfície DEDICADA (rota
-/// <c>/api/v1/knight/assessments</c>), distinta da telemetria de identidade legada e do AEGIS Score geral.
-///
-/// Nesta primeira vertical, a execução é SOMENTE DEMONSTRAÇÃO (dados 100% sintéticos, example.com): o Aegis
-/// NÃO está conectado ao Entra ID / AD / Okta. Os vereditos são determinísticos; a IA é apenas consultiva e
-/// sua indisponibilidade não reprova nem invalida o assessment. Tenant IMPLÍCITO: resolvido do claim
-/// <c>tenant_id</c> do JWT pelo <see cref="ITenantContext"/> e aplicado pelo Global Query Filter (fail-closed)
-/// — nunca via URL/corpo, de modo que um tenant jamais leia o assessment de outro.
+/// AEGIS KNIGHT — assessment MULTICOLETOR de postura de identidade e exposição. Superfície DEDICADA, distinta
+/// da telemetria de identidade legada e do AEGIS Score geral. Fontes: Demo (sintético), Microsoft Entra ID
+/// (coleta real somente-leitura) e Google Workspace (capacidade arquitetural — coletor real na próxima
+/// entrega). Tenant IMPLÍCITO: resolvido do claim <c>tenant_id</c> do JWT e aplicado pelo Global Query Filter
+/// (fail-closed) — um tenant jamais lê o assessment de outro. A execução real só ocorre com configuração
+/// aplicável; uma falha real NUNCA cai para Demo.
 /// </summary>
 [ApiController]
 [Authorize]
@@ -31,58 +29,95 @@ public class KnightAssessmentsController : ControllerBase
         _tenant = tenant;
     }
 
-    /// <summary>
-    /// Executa um assessment de DEMONSTRAÇÃO ponta a ponta e devolve o resultado completo. Coleta o snapshot
-    /// sintético, avalia deterministicamente, calcula o score/cobertura KNIGHT, persiste, tenta gerar a
-    /// narrativa consultiva e conclui MESMO SE a IA estiver indisponível.
-    /// </summary>
-    /// <response code="200">Assessment demo executado e persistido.</response>
-    /// <response code="401">Tenant não resolvido no contexto (claim tenant_id ausente).</response>
+    /// <summary>Executa um assessment de DEMONSTRAÇÃO (fonte Demo, sintética) e devolve o resultado completo.</summary>
     [HttpPost("demo")]
     public async Task<ActionResult<KnightAssessmentDto>> RunDemo(CancellationToken ct)
     {
-        // Fail-closed: sem tenant resolvido do JWT, nada é executado nem persistido.
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
-
-        var assessment = await _service.RunDemoAssessmentAsync(ct);
-        return Ok(ToDto(assessment));
+        return Ok(ToDto(await _service.RunDemoAssessmentAsync(ct)));
     }
 
     /// <summary>
-    /// Último assessment do tenant. Contrato explícito: tenant ausente → 401; tenant válido sem nenhum
-    /// assessment → 204; caso contrário 200 com o corpo.
+    /// Executa um assessment da FONTE indicada (ex.: <c>entra</c>). Para fontes reais exige configuração
+    /// aplicável: sem ela retorna 409 (e NUNCA cai para Demo). Fonte desconhecida → 400.
     /// </summary>
+    /// <response code="200">Assessment executado (pode ter coleta parcial — ver sourceState).</response>
+    /// <response code="400">Fonte desconhecida.</response>
+    /// <response code="401">Tenant não resolvido no contexto.</response>
+    /// <response code="409">Fonte real sem configuração aplicável neste tenant.</response>
+    [HttpPost("run/{source}")]
+    public async Task<ActionResult<KnightAssessmentDto>> Run(string source, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        if (!TryParseSource(source, out var sourceType))
+            return BadRequest($"Fonte desconhecida: '{source}'.");
+
+        try
+        {
+            return Ok(ToDto(await _service.RunAssessmentAsync(sourceType, ct)));
+        }
+        catch (KnightSourceNotConfiguredException)
+        {
+            return Conflict($"A fonte {sourceType} não está configurada para este tenant.");
+        }
+    }
+
+    /// <summary>Disponibilidade das fontes para o tenant (Demo sempre; reais conforme configuração).</summary>
+    [HttpGet("sources")]
+    public async Task<ActionResult<KnightSourcesDto>> GetSources(CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        var status = await _service.GetSourcesStatusAsync(ct);
+        return Ok(new KnightSourcesDto(
+            status.DemoAvailable,
+            status.RealSources.Select(s => new KnightSourceDto(s.Source.ToString(), s.Label, s.Configured, s.Enabled)).ToList()));
+    }
+
+    /// <summary>Último assessment do tenant (200 com corpo, 204 sem nenhum, 401 sem tenant).</summary>
     [HttpGet("latest")]
     public async Task<ActionResult<KnightAssessmentDto>> GetLatest(CancellationToken ct)
     {
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
-
         var assessment = await _service.GetLatestAsync(ct);
         return assessment is null ? NoContent() : Ok(ToDto(assessment));
     }
 
-    /// <summary>
-    /// Assessment por Id. Contrato explícito: tenant ausente → 401; inexistente ou de outro tenant (com
-    /// tenant válido) → 404; caso contrário 200.
-    /// </summary>
+    /// <summary>Assessment por Id (401 sem tenant; 404 inexistente/de outro tenant com tenant válido).</summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<KnightAssessmentDto>> GetById(Guid id, CancellationToken ct)
     {
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
-
         var assessment = await _service.GetByIdAsync(id, ct);
         return assessment is null ? NotFound() : Ok(ToDto(assessment));
     }
 
-    // ---- Mapeamento read model → DTO (enums como nome) --------------------------------------------
+    // ---- Mapeamento ----------------------------------------------------------------------------------
+
+    private static bool TryParseSource(string source, out KnightSourceType sourceType)
+    {
+        switch ((source ?? "").Trim().ToLowerInvariant())
+        {
+            case "demo": sourceType = KnightSourceType.Demo; return true;
+            case "entra":
+            case "entraid":
+            case "microsoftentraid": sourceType = KnightSourceType.MicrosoftEntraId; return true;
+            case "google":
+            case "googleworkspace": sourceType = KnightSourceType.GoogleWorkspace; return true;
+            default: sourceType = default; return false;
+        }
+    }
 
     private static KnightAssessmentDto ToDto(KnightAssessment a) => new(
         a.Id,
         a.Mode.ToString(),
-        a.Mode == KnightAssessmentMode.Demo,
+        a.SourceType == KnightSourceType.Demo,
+        a.SourceType.ToString(),
+        a.SourceState.ToString(),
         a.Source,
         a.Status.ToString(),
         a.CatalogVersion,
@@ -95,6 +130,7 @@ public class KnightAssessmentsController : ControllerBase
             a.PassedCount, a.ExposedCount, a.MitigatedCount,
             a.NotEvaluatedCount, a.ErrorCount, a.NotApplicableCount),
         a.Indicators.Select(ToDto).ToList(),
+        a.Capabilities.Select(c => new KnightCapabilityDto(c.Capability.ToString(), c.Outcome.ToString(), c.Detail)).ToList(),
         a.Advisory is null ? null : ToDto(a.Advisory),
         a.AdvisoryFromAi);
 
@@ -109,7 +145,9 @@ public class KnightAssessmentsController : ControllerBase
         i.NistCodes,
         i.MitreTechniques,
         i.Recommendation,
-        i.CollectedAt);
+        i.CollectedAt,
+        i.SourceType.ToString(),
+        i.NotEvaluatedReason);
 
     private static KnightAdvisoryDto ToDto(KnightAdvisory ad) => new(
         ad.ExecutiveSummary,

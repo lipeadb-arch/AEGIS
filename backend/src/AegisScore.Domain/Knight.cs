@@ -22,6 +22,63 @@ public enum KnightAssessmentMode
     Live = 1,
 }
 
+/// <summary>
+/// Fonte de coleta do AEGIS KNIGHT. O núcleo é MULTICOLETOR: não presume Microsoft Graph, tenant do Entra,
+/// Conditional Access nem formato de papéis/grupos do Entra. Cada valor mapeia um coletor que normaliza os
+/// dados em fatos/observações tipados; a arquitetura acomoda novas fontes (Google Workspace, AD, Okta…) sem
+/// refatorar o núcleo. <see cref="GoogleWorkspace"/> existe como capacidade arquitetural — o coletor real
+/// somente-leitura é a próxima entrega técnica.
+/// </summary>
+public enum KnightSourceType
+{
+    /// <summary>Dados 100% sintéticos (example.com), sem rede. Nunca consultou fonte real.</summary>
+    Demo = 0,
+
+    /// <summary>Microsoft Entra ID via Microsoft Graph (somente leitura).</summary>
+    MicrosoftEntraId = 1,
+
+    /// <summary>Google Workspace (somente leitura) — capacidade arquitetural; coletor real na próxima entrega.</summary>
+    GoogleWorkspace = 2,
+}
+
+/// <summary>
+/// Estado da fonte/coleta de um assessment KNIGHT — distingue "não configurado" de "sem permissão", "parcial",
+/// "throttling" etc. Guia a UI e reflete o desfecho da coleta. Dados NÃO obtidos viram NotEvaluated/Error e
+/// reduzem a cobertura — NUNCA Passed.
+/// </summary>
+public enum KnightSourceState
+{
+    /// <summary>Não há configuração aplicável para a fonte neste tenant.</summary>
+    NotConfigured = 0,
+
+    /// <summary>Há configuração, ainda não coletada.</summary>
+    Configured = 1,
+
+    /// <summary>Coleta em andamento.</summary>
+    Collecting = 2,
+
+    /// <summary>Coleta concluída integralmente.</summary>
+    Completed = 3,
+
+    /// <summary>Coleta parcial: parte das capacidades falhou/faltou (permissão/indisponibilidade), reduzindo a cobertura.</summary>
+    PartialCollection = 4,
+
+    /// <summary>Permissões insuficientes para a coleta pretendida.</summary>
+    InsufficientPermission = 5,
+
+    /// <summary>Falha de autenticação da aplicação junto à fonte.</summary>
+    AuthenticationFailure = 6,
+
+    /// <summary>Throttling/limite de taxa da fonte.</summary>
+    Throttled = 7,
+
+    /// <summary>Fonte indisponível (rede/servidor).</summary>
+    Unavailable = 8,
+
+    /// <summary>Erro inesperado durante a coleta.</summary>
+    Error = 9,
+}
+
 /// <summary>Estágio de uma execução do assessment KNIGHT.</summary>
 public enum KnightRunStatus
 {
@@ -92,8 +149,14 @@ public class KnightAssessmentRun : Entity, ITenantOwned
     /// <summary>Carimbado no SaveChanges (fail-closed) — nunca confiar em valor vindo do cliente.</summary>
     public Guid TenantId { get; set; }
 
-    /// <summary>Demo (sintético) ou Live (real). Nesta entrega, sempre Demo.</summary>
+    /// <summary>Demo (sintético) ou Live (real). Derivado da fonte: Demo → Demo; fontes reais → Live.</summary>
     public KnightAssessmentMode Mode { get; set; } = KnightAssessmentMode.Demo;
+
+    /// <summary>Fonte CONCRETA da coleta (Demo/MicrosoftEntraId/GoogleWorkspace) — o eixo do multicoletor.</summary>
+    public KnightSourceType SourceType { get; set; } = KnightSourceType.Demo;
+
+    /// <summary>Estado da coleta desta execução (Completed/PartialCollection/InsufficientPermission…).</summary>
+    public KnightSourceState SourceState { get; set; } = KnightSourceState.Completed;
 
     /// <summary>Rótulo legível da fonte da coleta (ex.: "Provedor de Demonstração KNIGHT"). Nunca uma marca de terceiro.</summary>
     public string Source { get; set; } = "";
@@ -125,6 +188,12 @@ public class KnightAssessmentRun : Entity, ITenantOwned
     public int NotEvaluatedCount { get; set; }
     public int ErrorCount { get; set; }
     public int NotApplicableCount { get; set; }
+
+    /// <summary>
+    /// Estado por CAPACIDADE da fonte (JSON): o que foi coletado e o que faltou (permissão/indisponibilidade),
+    /// alimentando a cobertura e as "limitações de coleta" da UI e da IA. Nulo nas execuções Demo antigas.
+    /// </summary>
+    public string? CapabilitiesJson { get; set; }
 
     /// <summary>
     /// Resumo consultivo estruturado (JSON) produzido pela camada de IA — ou o fallback determinístico.
@@ -180,6 +249,12 @@ public class KnightIndicatorResult : Entity, ITenantOwned
 
     /// <summary>Recomendação curta e determinística (texto do catálogo). A IA não a substitui.</summary>
     public string Recommendation { get; set; } = "";
+
+    /// <summary>Fonte que produziu este resultado (Demo/MicrosoftEntraId/GoogleWorkspace).</summary>
+    public KnightSourceType SourceType { get; set; } = KnightSourceType.Demo;
+
+    /// <summary>Motivo do <c>NotEvaluated</c> (dado/permissão ausente), quando aplicável — nunca vira aprovação.</summary>
+    public string? NotEvaluatedReason { get; set; }
 
     /// <summary>Instante da coleta do snapshot que originou este resultado.</summary>
     public DateTimeOffset CollectedAt { get; set; } = DateTimeOffset.UtcNow;

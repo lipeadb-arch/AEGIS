@@ -8,6 +8,16 @@
     <ProjectReference Include="..\AegisScore.Application\AegisScore.Application.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Só o teto de paginação do EntraGraphClient é internal-visível ao teste: permite exercitar o limite
+         sem 200 páginas reais, sem expor à DI um construtor ambíguo (o tenant nunca configura esse teto). -->
+    <InternalsVisibleTo Include="AegisScore.Infrastructure.Tests" />
+  </ItemGroup>
+  <ItemGroup>
      <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
+     <!-- Coletor real do Microsoft Entra ID (KNIGHT): HttpClient tipado + resiliência (retry/backoff,
+          Retry-After no 429, circuit breaker) da mesma fachada oficial usada pelos clients de IA. -->
+     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.10" />
+     <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.8.0" />
+     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
    </ItemGroup>
 </Project>
