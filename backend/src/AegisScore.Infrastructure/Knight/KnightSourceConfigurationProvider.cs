@@ -55,9 +55,7 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
                 var settings = TryDecrypt(cfg);
                 return settings is null
                     ? new KnightSourceNotConfigured(source)   // segredo ilegível/incompleto = não configurado (fail-closed)
-                    : new KnightEntraIdConfiguration(
-                        settings.AzureTenantId!, settings.ClientId!, settings.ClientSecret!,
-                        settings.GraphBaseUrl, settings.LoginBaseUrl);
+                    : new KnightEntraIdConfiguration(settings.TenantIdValue!, settings.ClientId!, settings.ClientSecret!);
 
             default:
                 // Google Workspace (e futuras fontes): capacidade arquitetural, sem configuração real ainda.
@@ -89,7 +87,7 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
             var json = _protector.Unprotect(cfg.EncryptedSettings);
             var s = JsonSerializer.Deserialize<EntraSettings>(json, JsonOpts);
             if (s is null
-                || string.IsNullOrWhiteSpace(s.AzureTenantId)
+                || string.IsNullOrWhiteSpace(s.TenantIdValue)
                 || string.IsNullOrWhiteSpace(s.ClientId)
                 || string.IsNullOrWhiteSpace(s.ClientSecret))
                 return null;
@@ -102,11 +100,18 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
         }
     }
 
-    /// <summary>Forma esperada do JSON de configuração (em claro no <c>settings</c> de criação; cifrado em repouso).</summary>
+    /// <summary>
+    /// Forma esperada do JSON de configuração (em claro no <c>settings</c> de criação; cifrado em repouso).
+    /// A interface envia <c>tenantId</c>; <c>azureTenantId</c> é aceito por compatibilidade interna. NÃO há
+    /// base URL de Graph/login no JSON — o destino é constante oficial no cliente HTTP (não vem do tenant).
+    /// </summary>
     private sealed record EntraSettings(
-        string? AzureTenantId,
-        string? ClientId,
-        string? ClientSecret,
-        string? GraphBaseUrl = null,
-        string? LoginBaseUrl = null);
+        string? TenantId = null,
+        string? AzureTenantId = null,
+        string? ClientId = null,
+        string? ClientSecret = null)
+    {
+        /// <summary>Tenant do Entra: prioriza <c>tenantId</c> (o que a interface envia); cai para <c>azureTenantId</c>.</summary>
+        public string? TenantIdValue => !string.IsNullOrWhiteSpace(TenantId) ? TenantId : AzureTenantId;
+    }
 }

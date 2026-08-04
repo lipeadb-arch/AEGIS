@@ -10,6 +10,7 @@
  */
 export type ProviderKey =
   | 'Microsoft'
+  | 'MicrosoftEntraKnight'
   | 'Google'
   | 'Aws'
   | 'MicrosoftSentinel'
@@ -32,7 +33,8 @@ export type CapabilityKey =
   | 'Edr'
   | 'Cmdb'
   | 'VulnerabilityScanner'
-  | 'PolicyDocuments';
+  | 'PolicyDocuments'
+  | 'IdentityPosture';
 
 /** Um campo de credencial exigido por um provedor. `secret: true` ⇒ input mascarado. */
 export interface CredentialField {
@@ -65,6 +67,16 @@ export interface ProviderSpec {
    * o fornecedor ainda NÃO tem adaptador real (ou é demonstração/stub) — a tela não finge conexão real.
    */
   adapterNote?: string;
+  /**
+   * AEGIS KNIGHT (IdentityPosture): coletor REAL somente-leitura que NÃO usa o pipeline genérico
+   * IConnectorRegistry/IEvidenceIngestionExecutor. A tela não mostra "Testar"/"Coletar" (retornariam 501):
+   * mostra "Abrir AEGIS KNIGHT" (rota /identity), onde a coleta real é disparada.
+   */
+  knight?: boolean;
+  /** Nota informativa (não é aviso de stub) — usada pelo coletor real do KNIGHT. */
+  infoNote?: string;
+  /** Permissões de aplicativo (somente leitura) exigidas — exibidas no formulário do KNIGHT. */
+  appPermissions?: string[];
 }
 
 /** Campo único da chave de ingestão (genéricos de push): mascarado, mín. 24 chars, escrita-apenas. */
@@ -114,6 +126,25 @@ export const PROVIDERS: ProviderSpec[] = [
       { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientSecret', label: 'Client secret', secret: true },
       { key: 'workspaceId', label: 'Log Analytics Workspace ID', secret: false },
+    ],
+  },
+  // ---- AEGIS KNIGHT: coletor REAL somente-leitura do Microsoft Entra ID (IdentityPosture) ----
+  {
+    key: 'MicrosoftEntraKnight',
+    value: 0, // ConnectorProvider.Microsoft
+    label: 'Microsoft Entra ID · AEGIS KNIGHT',
+    authType: 'OAuthClientCredentials',
+    authTypeValue: 0,
+    capability: 'IdentityPosture',
+    capabilityValue: 10, // ConnectorCapability.IdentityPosture
+    knight: true,
+    infoNote:
+      'Coletor REAL somente-leitura do Microsoft Entra ID (client credentials). Após salvar, dispare a coleta em Abrir AEGIS KNIGHT → “Coletar do Entra ID”. O destino é o Microsoft Graph oficial — não há URL configurável.',
+    appPermissions: ['Directory.Read.All', 'AuditLog.Read.All', 'User.Read.All', 'Policy.Read.All', 'Application.Read.All'],
+    fields: [
+      { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
+      { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
+      { key: 'clientSecret', label: 'Client secret', secret: true },
     ],
   },
   {
@@ -215,6 +246,14 @@ export interface ConnectorConfig {
 /** É um conector GENÉRICO de push (Generic/Siem ou Generic/Edr)? Deriva dos rótulos do DTO. */
 export function isGenericPush(c: ConnectorConfig): boolean {
   return c.provider === 'Generic' && (c.capability === 'Siem' || c.capability === 'Edr');
+}
+
+/**
+ * É o conector do AEGIS KNIGHT (postura de identidade)? Deriva da capacidade IdentityPosture. Não usa o
+ * pipeline genérico de evidências — a tela mostra "Abrir AEGIS KNIGHT" em vez de "Testar"/"Coletar".
+ */
+export function isKnightConnector(c: ConnectorConfig): boolean {
+  return c.capability === 'IdentityPosture';
 }
 
 /** Corpo de `POST /api/v1/tenants/connectors`. O TenantId NÃO trafega: vem do JWT. */

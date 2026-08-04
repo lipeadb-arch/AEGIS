@@ -20,7 +20,7 @@ public enum EntraGraphErrorKind
     Unavailable,
 }
 
-/// <summary>Falha SANITIZADA de acesso ao Graph (nunca carrega token/segredo/PII na mensagem).</summary>
+/// <summary>Falha SANITIZADA de acesso ao Graph (nunca carrega token/segredo/URL/PII/payload na mensagem).</summary>
 public sealed class EntraGraphException : Exception
 {
     public EntraGraphErrorKind Kind { get; }
@@ -42,25 +42,40 @@ public interface IEntraGraphClient
 /// <inheritdoc cref="IEntraGraphClient"/>
 public sealed class EntraGraphClient : IEntraGraphClient
 {
-    private const string DefaultLogin = "https://login.microsoftonline.com";
-    private const string DefaultGraph = "https://graph.microsoft.com";
-    private const int MaxPages = 200;   // teto defensivo de paginação
+    // Origens OFICIAIS (constantes). O tenant NUNCA fornece base URL nem destino de requisição — impede
+    // exfiltrar o bearer token para uma origem arbitrária via @odata.nextLink forjado. Nuvens soberanas
+    // ficam FORA desta entrega; um suporte futuro exigiria uma ALLOWLIST explícita de ambientes, nunca URL livre.
+    private const string LoginBaseUrl = "https://login.microsoftonline.com";
+    private const string GraphBaseUrl = "https://graph.microsoft.com";
+    private const string GraphHost = "graph.microsoft.com";
+    private const int DefaultMaxPages = 200;   // teto defensivo de paginação
 
     private readonly HttpClient _http;
+    private readonly int _maxPages;
 
-    public EntraGraphClient(HttpClient http) => _http = http;
+    public EntraGraphClient(HttpClient http) : this(http, DefaultMaxPages) { }
+
+    /// <summary>
+    /// Construtor com teto de paginação injetável — SOMENTE para teste (exercita o limite sem 200 páginas reais).
+    /// É <c>internal</c> de propósito: o teto NUNCA vem do <c>ConnectorConfig</c>/tenant, e a DI só enxerga o
+    /// construtor público de um argumento.
+    /// </summary>
+    internal EntraGraphClient(HttpClient http, int maxPages)
+    {
+        _http = http;
+        _maxPages = maxPages > 0 ? maxPages : DefaultMaxPages;
+    }
 
     public async Task<string> AcquireTokenAsync(KnightEntraIdConfiguration config, CancellationToken ct)
     {
-        var login = (config.LoginBaseUrl ?? DefaultLogin).TrimEnd('/');
-        var graph = (config.GraphBaseUrl ?? DefaultGraph).TrimEnd('/');
-        var url = $"{login}/{Uri.EscapeDataString(config.AzureTenantId)}/oauth2/v2.0/token";
+        // URL do endpoint de token montada só a partir de CONSTANTE oficial + tenantId escapado — sem entrada livre.
+        var url = $"{LoginBaseUrl}/{Uri.EscapeDataString(config.AzureTenantId)}/oauth2/v2.0/token";
 
         var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["client_id"] = config.ClientId,
             ["client_secret"] = config.ClientSecret,
-            ["scope"] = $"{graph}/.default",
+            ["scope"] = $"{GraphBaseUrl}/.default",
             ["grant_type"] = "client_credentials",
         });
 
@@ -79,15 +94,21 @@ public sealed class EntraGraphClient : IEntraGraphClient
     public async IAsyncEnumerable<JsonElement> GetPagedAsync(
         string token, KnightEntraIdConfiguration config, string relativeUrl, [EnumeratorCancellation] CancellationToken ct)
     {
-        var graph = (config.GraphBaseUrl ?? DefaultGraph).TrimEnd('/');
-        var next = relativeUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? relativeUrl
-            : $"{graph}/v1.0/{relativeUrl.TrimStart('/')}";
+        var next = BuildGraphUrl(relativeUrl);
 
         var pages = 0;
-        while (!string.IsNullOrEmpty(next) && pages++ < MaxPages)
+        while (!string.IsNullOrEmpty(next))
         {
-            var body = await SendGetAsync(token, next, ct);
+            // Teto de paginação atingido com páginas AINDA pendentes: NÃO truncamos em silêncio (isso viraria
+            // conformidade/contagem com dados incompletos). A capacidade correspondente fica indisponível.
+            if (pages >= _maxPages)
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "limite de paginação atingido com páginas restantes");
+
+            // Valida o destino ANTES de criar/enviar a requisição — inclusive o @odata.nextLink devolvido pela
+            // página anterior. Um nextLink de origem diferente é REPROVADO aqui: o bearer nunca chega a ele.
+            ValidateGraphUrl(next!);
+            var body = await SendGetAsync(token, next!, ct);
+            pages++;
 
             // Extrai clones ANTES de dispor o documento — clones sobrevivem ao dispose (evita element inválido).
             var pageItems = new List<JsonElement>();
@@ -110,13 +131,36 @@ public sealed class EntraGraphClient : IEntraGraphClient
 
     public async Task<JsonElement> GetJsonAsync(string token, KnightEntraIdConfiguration config, string relativeUrl, CancellationToken ct)
     {
-        var graph = (config.GraphBaseUrl ?? DefaultGraph).TrimEnd('/');
-        var url = relativeUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? relativeUrl
-            : $"{graph}/v1.0/{relativeUrl.TrimStart('/')}";
+        var url = BuildGraphUrl(relativeUrl);
+        ValidateGraphUrl(url);
         var body = await SendGetAsync(token, url, ct);
         using var doc = JsonDocument.Parse(body);
         return doc.RootElement.Clone();
+    }
+
+    // ---- Construção e validação de destino ---------------------------------------------------------
+
+    /// <summary>Constrói a URL absoluta a partir de um caminho relativo (o coletor nunca passa URL absoluta).</summary>
+    private static string BuildGraphUrl(string relativeUrl) =>
+        relativeUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? relativeUrl                                        // caso raro: validado por ValidateGraphUrl adiante
+            : $"{GraphBaseUrl}/v1.0/{relativeUrl.TrimStart('/')}";
+
+    /// <summary>
+    /// Aceita SOMENTE HTTPS na MESMA origem oficial do Microsoft Graph. Rejeita mudança de esquema, host,
+    /// porta, userinfo ou origem — antes de qualquer envio, para o bearer nunca sair para um destino reprovado.
+    /// A exceção é SANITIZADA (não inclui a URL, o token nem o payload).
+    /// </summary>
+    private static void ValidateGraphUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.Ordinal)
+            || !string.Equals(uri.Host, GraphHost, StringComparison.OrdinalIgnoreCase)
+            || !uri.IsDefaultPort
+            || !string.IsNullOrEmpty(uri.UserInfo))
+        {
+            throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "destino de requisicao reprovado pela allowlist do Microsoft Graph");
+        }
     }
 
     private async Task<string> SendGetAsync(string token, string url, CancellationToken ct)

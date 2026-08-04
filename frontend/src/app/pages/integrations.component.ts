@@ -1,10 +1,12 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Router } from '@angular/router';
 import { environment } from '../../environments/environment';
 import { ConnectorService } from '../services/connector.service';
 import {
   ConnectorConfig,
   isGenericPush,
+  isKnightConnector,
   PROVIDERS,
   ProviderSpec,
   providerByKey,
@@ -81,14 +83,20 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
                   <span class="meta">último: {{ lastSync(c) }}</span>
                 </div>
                 <div class="conn-actions">
-                  <button type="button" class="ghost sm" (click)="test(c)" [disabled]="busyId() === c.id">
-                    {{ busyId() === c.id ? '…' : 'Testar' }}
-                  </button>
-                  <!-- [AEGIS-AUD-020] Push não tem coleta pull: nada de "Coletar" para conector genérico. -->
-                  @if (!push(c)) {
-                    <button type="button" class="ghost sm" (click)="sync(c)" [disabled]="busyId() === c.id">
-                      Coletar
+                  <!-- IdentityPosture não usa o pipeline genérico: Testar/Coletar retornariam 501. A ação real
+                       do KNIGHT (coleta do Entra) vive em /identity. -->
+                  @if (knight(c)) {
+                    <button type="button" class="ghost sm" (click)="openKnight()">Abrir AEGIS KNIGHT</button>
+                  } @else {
+                    <button type="button" class="ghost sm" (click)="test(c)" [disabled]="busyId() === c.id">
+                      {{ busyId() === c.id ? '…' : 'Testar' }}
                     </button>
+                    <!-- [AEGIS-AUD-020] Push não tem coleta pull: nada de "Coletar" para conector genérico. -->
+                    @if (!push(c)) {
+                      <button type="button" class="ghost sm" (click)="sync(c)" [disabled]="busyId() === c.id">
+                        Coletar
+                      </button>
+                    }
                   }
                 </div>
                 @if (push(c)) {
@@ -158,6 +166,19 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
             }
             @if (s.adapterNote) {
               <p class="note warn-note">⚠ {{ s.adapterNote }}</p>
+            }
+            @if (s.knight) {
+              <p class="note ok-note">{{ s.infoNote }}</p>
+              @if (s.appPermissions?.length) {
+                <div class="perms">
+                  <span class="perms-label">Permissões de aplicativo (somente leitura) necessárias:</span>
+                  <ul>
+                    @for (perm of s.appPermissions; track perm) {
+                      <li><code>{{ perm }}</code></li>
+                    }
+                  </ul>
+                </div>
+              }
             }
 
             <div class="grid" formGroupName="credentials">
@@ -292,6 +313,29 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
       }
       .warn-note {
         color: #f5a524;
+      }
+      .perms {
+        margin: 0.5rem 0 0;
+        font-size: 0.78rem;
+      }
+      .perms-label {
+        display: block;
+        opacity: 0.7;
+        margin-bottom: 0.25rem;
+      }
+      .perms ul {
+        margin: 0;
+        padding-left: 1.1rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.15rem 1rem;
+      }
+      .perms li {
+        list-style: none;
+      }
+      .perms li::before {
+        content: '· ';
+        opacity: 0.5;
       }
       .conn-endpoint {
         grid-column: 2 / -1;
@@ -468,11 +512,18 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
 export class IntegrationsComponent {
   private readonly api = inject(ConnectorService);
   private readonly fb = inject(FormBuilder);
+  private readonly router = inject(Router);
 
   protected readonly providers = PROVIDERS;
   protected readonly label = statusLabel;
   protected readonly tone = statusTone;
   protected readonly push = isGenericPush;
+  protected readonly knight = isKnightConnector;
+
+  /** Abre a tela do AEGIS KNIGHT (postura de identidade); a coleta real do Entra é disparada de lá. */
+  protected openKnight(): void {
+    this.router.navigate(['/identity']);
+  }
 
   /** Endpoint de ingestão do conector (só o connectorId; a chave viaja no header X-Ingestion-Key, nunca na URL). */
   protected ingestionEndpoint(connectorId: string): string {

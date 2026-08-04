@@ -240,14 +240,21 @@ public static class KnightCatalog
             "AK-ENTRA-007", "1", "Autenticação legada não bloqueada por política",
             KnightIndicatorCategory.IdentityGovernance, SeverityLevel.High, EntraOnly,
             new[] { "PR.AA-02", "PR.PS-01" }, new[] { "T1110 · Brute Force" },
-            "Bloquear protocolos de autenticação legada por política de acesso condicional.",
-            "Existência de política que bloqueia clientes de autenticação legada.",
+            "Bloquear protocolos de autenticação legada por política de acesso condicional ou security defaults.",
+            "Existência de política que bloqueia clientes de autenticação legada — OU security defaults habilitados.",
+            // Security Defaults habilitados bloqueiam a autenticação legada; participam do veredito. Sem evidência
+            // suficiente (nenhum dos sinais coletado) → NotEvaluated; presente e negativo → Exposed; nunca Passed sem prova.
             f =>
             {
-                if (!TryFlag(f, KnightSignalKey.LegacyAuthenticationBlocked, out var blocked, out var ne)) return ne;
-                return blocked
-                    ? Passed("Autenticação legada bloqueada por política.")
-                    : Exposed("Autenticação legada NÃO está bloqueada por política — canal sem MFA aberto.", 0);
+                var defaults = f.Get(KnightSignalKey.SecurityDefaultsEnabled);
+                var blocked = f.Get(KnightSignalKey.LegacyAuthenticationBlocked);
+                if (defaults.IsCollected && defaults.Flag == true)
+                    return Passed("Autenticação legada bloqueada pelos security defaults.");
+                if (blocked.IsCollected && blocked.Flag == true)
+                    return Passed("Autenticação legada bloqueada por política de acesso condicional.");
+                if (blocked.IsCollected || defaults.IsCollected)
+                    return Exposed("Autenticação legada NÃO comprovadamente bloqueada (sem política dedicada nem security defaults) — canal sem MFA aberto.", 0);
+                return NotEvaluated(blocked.MissingReason ?? "sinal de bloqueio de autenticação legada não coletado");
             }),
 
         new KnightIndicatorDefinition(
@@ -255,13 +262,20 @@ public static class KnightCatalog
             KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.High, EntraOnly,
             new[] { "PR.AA-01", "PR.AA-03" }, Array.Empty<string>(),
             "Criar política de acesso condicional exigindo MFA (idealmente resistente a phishing) para papéis administrativos.",
-            "Existência de política exigindo MFA para acesso a papéis administrativos.",
+            "Existência de política exigindo MFA para acesso administrativo — OU security defaults habilitados.",
+            // Security Defaults habilitados impõem MFA administrativa; participam do veredito. Uma política parcial
+            // (papel único, exclusões amplas, escopo estreito) já NÃO marca AdminMfaPolicyEnforced no coletor.
             f =>
             {
-                if (!TryFlag(f, KnightSignalKey.AdminMfaPolicyEnforced, out var enforced, out var ne)) return ne;
-                return enforced
-                    ? Passed("MFA exigida para acesso administrativo por política.")
-                    : Exposed("Sem política exigindo MFA para acesso administrativo.", 0);
+                var defaults = f.Get(KnightSignalKey.SecurityDefaultsEnabled);
+                var adminMfa = f.Get(KnightSignalKey.AdminMfaPolicyEnforced);
+                if (defaults.IsCollected && defaults.Flag == true)
+                    return Passed("MFA administrativa imposta pelos security defaults.");
+                if (adminMfa.IsCollected && adminMfa.Flag == true)
+                    return Passed("MFA exigida para acesso administrativo por política de acesso condicional.");
+                if (adminMfa.IsCollected || defaults.IsCollected)
+                    return Exposed("Sem política de MFA administrativa comprovada e sem security defaults.", 0);
+                return NotEvaluated(adminMfa.MissingReason ?? "sinal de MFA administrativa não coletado");
             }),
 
         new KnightIndicatorDefinition(
@@ -279,17 +293,19 @@ public static class KnightCatalog
             }),
 
         new KnightIndicatorDefinition(
-            "AK-ENTRA-010", "1", "Aplicações com permissões de alto privilégio sobre o diretório",
+            "AK-ENTRA-010", "1", "Aplicações com permissões de alto privilégio CONCEDIDAS sobre o diretório",
             KnightIndicatorCategory.IdentityGovernance, SeverityLevel.High, EntraOnly,
             new[] { "PR.AA-05", "GV.RR-02" }, new[] { "T1098 · Account Manipulation" },
             "Revisar e reduzir permissões de aplicativo de alto privilégio; aplicar consentimento granular e menor privilégio a aplicações.",
-            "Número de aplicações com permissões de aplicativo de alto privilégio sobre o diretório.",
+            // Mede permissões de aplicativo EFETIVAMENTE CONCEDIDAS (appRoleAssignments no service principal do
+            // Graph) — não requiredResourceAccess, que é apenas o que a aplicação DECLARA/solicita.
+            "Número de aplicações com permissões de aplicativo de alto privilégio EFETIVAMENTE CONCEDIDAS (appRoleAssignments) sobre o diretório.",
             f =>
             {
                 if (!TryCount(f, KnightSignalKey.HighPrivilegeApplications, out var n, out var ne)) return ne;
                 return n > 0
-                    ? Exposed($"{n} aplicação(ões) com permissões de aplicativo de alto privilégio sobre o diretório.", (int)n)
-                    : Passed("Nenhuma aplicação com permissões de aplicativo de alto privilégio.");
+                    ? Exposed($"{n} aplicação(ões) com permissões de aplicativo de alto privilégio CONCEDIDAS sobre o diretório.", (int)n)
+                    : Passed("Nenhuma aplicação com permissões de aplicativo de alto privilégio concedidas.");
             }),
 
         new KnightIndicatorDefinition(
@@ -321,17 +337,19 @@ public static class KnightCatalog
             }),
 
         new KnightIndicatorDefinition(
-            "AK-ENTRA-013", "1", "Aplicações com consentimento administrativo amplo",
+            "AK-ENTRA-013", "1", "Aplicações com consentimento DELEGADO amplo (tenant-wide)",
             KnightIndicatorCategory.IdentityGovernance, SeverityLevel.Medium, EntraOnly,
             new[] { "GV.SC-04", "PR.AA-05" }, Array.Empty<string>(),
-            "Revisar consentimentos administrativos amplos; restringir o consentimento do usuário e reavaliar aplicações de terceiros.",
-            "Número de aplicações com consentimento administrativo amplo (tenant-wide).",
+            "Revisar consentimentos delegados concedidos a todos os usuários; restringir o consentimento do usuário e reavaliar aplicações de terceiros.",
+            // Consentimento DELEGADO concedido para TODOS os usuários (oauth2PermissionGrants, consentType=AllPrincipals).
+            // Consentimento "Principal" (para um único usuário) NÃO entra no total tenant-wide.
+            "Número de aplicações com consentimento DELEGADO concedido a todos os usuários (consentType=AllPrincipals).",
             f =>
             {
                 if (!TryCount(f, KnightSignalKey.AdminConsentedApplications, out var n, out var ne)) return ne;
                 return n > 0
-                    ? Exposed($"{n} aplicação(ões) com consentimento administrativo amplo (revisar necessidade).", (int)n)
-                    : Passed("Nenhuma aplicação com consentimento administrativo amplo.");
+                    ? Exposed($"{n} aplicação(ões) com consentimento delegado tenant-wide (concedido a todos os usuários).", (int)n)
+                    : Passed("Nenhuma aplicação com consentimento delegado tenant-wide.");
             }),
 
         new KnightIndicatorDefinition(

@@ -30,13 +30,13 @@ public enum KnightSignalKey
     AdminMfaPolicyEnforced = 102,
     /// <summary>Credenciais (segredos/certificados) de aplicações vencidas ou vencendo na janela.</summary>
     ApplicationCredentialsExpiring = 103,
-    /// <summary>Aplicações com permissões de aplicativo de ALTO privilégio sobre o diretório.</summary>
+    /// <summary>Aplicações com permissões de aplicativo de ALTO privilégio EFETIVAMENTE CONCEDIDAS (appRoleAssignments) sobre o diretório.</summary>
     HighPrivilegeApplications = 104,
     /// <summary>Contas privilegiadas sem sinal de atividade recente (obsoletas).</summary>
     StalePrivilegedAccounts = 105,
     /// <summary>Membros EXTERNOS (convidados) em papéis privilegiados.</summary>
     ExternalMembersInPrivilegedRoles = 106,
-    /// <summary>Aplicações com consentimento administrativo amplo (tenant-wide).</summary>
+    /// <summary>Aplicações com consentimento DELEGADO concedido a todos os usuários (oauth2PermissionGrants, consentType=AllPrincipals).</summary>
     AdminConsentedApplications = 107,
     /// <summary>Verdadeiro quando os "security defaults" da plataforma estão habilitados.</summary>
     SecurityDefaultsEnabled = 108,

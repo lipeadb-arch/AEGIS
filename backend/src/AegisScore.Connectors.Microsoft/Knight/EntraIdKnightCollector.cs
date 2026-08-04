@@ -21,15 +21,23 @@ namespace AegisScore.Connectors.Microsoft.Knight;
 /// real (AuthenticationFailure/Throttled/Unavailable). Erros são SANITIZADOS (sem token, segredo ou PII).
 ///
 /// Permissões de aplicativo (Application) SOMENTE LEITURA usadas:
-///   • Directory.Read.All  → papéis privilegiados e membros (contas privilegiadas, externos, mailbox);
-///   • AuditLog.Read.All   → detalhes de registro de MFA e atividade de sign-in (cobertura de MFA, obsoletas);
-///   • User.Read.All       → convidados e sua atividade;
-///   • Policy.Read.All     → acesso condicional e security defaults (legada bloqueada, MFA admin, baseline);
-///   • Application.Read.All → aplicações (credenciais vencendo, permissões de alto privilégio).
+///   • Directory.Read.All   → papéis privilegiados e membros; concessões (appRoleAssignedTo) e consentimentos
+///                            delegados (oauth2PermissionGrants);
+///   • AuditLog.Read.All    → detalhes de registro de MFA e atividade de sign-in (cobertura de MFA, obsoletas);
+///   • User.Read.All        → convidados e sua atividade;
+///   • Policy.Read.All      → acesso condicional e security defaults (legada bloqueada, MFA admin, baseline);
+///   • Application.Read.All → aplicações (credenciais vencendo) e service principals (permissões concedidas).
+///
+/// Sobre "concedido × solicitado": AK-ENTRA-010 mede permissões de aplicativo EFETIVAMENTE CONCEDIDAS
+/// (appRoleAssignments no service principal do Graph) — não <c>requiredResourceAccess</c>, que é apenas o que a
+/// aplicação DECLARA/solicita. AK-ENTRA-013 conta consentimentos DELEGADOS tenant-wide (consentType=AllPrincipals).
 /// </summary>
 public sealed class EntraIdKnightCollector : IKnightCollector
 {
     private const string Label = "Microsoft Entra ID";
+
+    /// <summary>appId público e estável do service principal do Microsoft Graph (recurso das concessões). Não é segredo.</summary>
+    private const string MicrosoftGraphAppId = "00000003-0000-0000-c000-000000000000";
 
     // AppRoles (permissões de aplicativo) do Microsoft Graph consideradas de ALTO privilégio sobre o diretório.
     // GUIDs públicos e estáveis do service principal do Graph — não são segredo.
@@ -106,8 +114,17 @@ public sealed class EntraIdKnightCollector : IKnightCollector
             () => CollectSecurityDefaultsAsync(token, cfg, obs, ct), obs, caps);
 
         await RunCapabilityAsync(KnightCapability.ApplicationInventory,
-            new[] { KnightSignalKey.ApplicationCredentialsExpiring, KnightSignalKey.HighPrivilegeApplications },
-            () => CollectApplicationsAsync(token, cfg, obs, ct), obs, caps);
+            new[] { KnightSignalKey.ApplicationCredentialsExpiring },
+            () => CollectApplicationCredentialsAsync(token, cfg, obs, ct), obs, caps);
+
+        // SEPARADA do inventário de credenciais: uma falha ao ler concessões não invalida os fatos de credenciais.
+        await RunCapabilityAsync(KnightCapability.ApplicationPermissions,
+            new[] { KnightSignalKey.HighPrivilegeApplications },
+            () => CollectApplicationPermissionsAsync(token, cfg, obs, ct), obs, caps);
+
+        await RunCapabilityAsync(KnightCapability.ApplicationConsents,
+            new[] { KnightSignalKey.AdminConsentedApplications },
+            () => CollectDelegatedConsentsAsync(token, cfg, obs, ct), obs, caps);
 
         var facts = new KnightFactSet(obs);
         var runState = DeriveState(caps);
@@ -131,11 +148,13 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         }
         catch (EntraGraphException ex)
         {
+            // Preserva a NATUREZA da falha (throttling ≠ permissão ≠ auth ≠ indisponível) — a agregação em
+            // DeriveState depende disso para não colapsar tudo em "Unavailable".
             var (outcome, reason) = ex.Kind switch
             {
                 EntraGraphErrorKind.InsufficientPermission => (KnightCapabilityOutcome.InsufficientPermission, "Permissão insuficiente para esta coleta."),
-                EntraGraphErrorKind.Throttled => (KnightCapabilityOutcome.Unavailable, "Throttling/limite de taxa do Microsoft Graph."),
-                EntraGraphErrorKind.AuthFailure => (KnightCapabilityOutcome.Unavailable, "Falha de autenticação nesta coleta."),
+                EntraGraphErrorKind.Throttled => (KnightCapabilityOutcome.Throttled, "Throttling/limite de taxa do Microsoft Graph."),
+                EntraGraphErrorKind.AuthFailure => (KnightCapabilityOutcome.AuthenticationFailure, "Falha de autenticação nesta coleta."),
                 _ => (KnightCapabilityOutcome.Unavailable, "Microsoft Graph indisponível para esta coleta."),
             };
             caps.Add(new KnightCapabilityStatus(capability, outcome, reason));
@@ -144,7 +163,7 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         catch (Exception ex)
         {
             _log?.LogWarning(ex, "Falha inesperada ao coletar a capacidade {Capability} do Entra.", capability);
-            caps.Add(new KnightCapabilityStatus(capability, KnightCapabilityOutcome.Unavailable, "Erro inesperado nesta coleta."));
+            caps.Add(new KnightCapabilityStatus(capability, KnightCapabilityOutcome.Error, "Erro inesperado nesta coleta."));
             MarkMissing(obs, keys, "Erro inesperado nesta coleta.");
         }
     }
@@ -169,15 +188,12 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         {
             var roleId = Str(role, "id");
             if (string.IsNullOrEmpty(roleId)) continue;
-            var url = $"directoryRoles/{roleId}/members?$select=id,userType,mail,signInActivity";
+            var url = $"directoryRoles/{roleId}/members?$select=id,userType,signInActivity";
             await foreach (var m in _graph.GetPagedAsync(token, cfg, url, ct))
             {
                 var id = Str(m, "id");
                 if (string.IsNullOrEmpty(id)) continue;
-                members[id] = new MemberInfo(
-                    UserType: Str(m, "userType"),
-                    HasMailbox: !string.IsNullOrWhiteSpace(Str(m, "mail")),
-                    LastSignIn: LastSignIn(m));
+                members[id] = new MemberInfo(UserType: Str(m, "userType"), LastSignIn: LastSignIn(m));
             }
         }
 
@@ -185,12 +201,16 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         acc.Ids = members.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var total = members.Count;
-        var withMailbox = members.Values.Count(v => v.HasMailbox);
         var external = members.Values.Count(v => string.Equals(v.UserType, "Guest", StringComparison.OrdinalIgnoreCase));
 
         obs.Add(KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsTotal, total));
-        obs.Add(KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsWithMailbox, withMailbox));
         obs.Add(KnightObservation.OfCount(KnightSignalKey.ExternalMembersInPrivilegedRoles, external));
+
+        // Caixa de correio (AK-ENTRA-003): a propriedade de diretório `mail` (um endereço de e-mail) NÃO
+        // comprova mailbox Exchange ATIVA. Nesta entrega não temos evidência confiável de mailbox sem ampliar
+        // demais as permissões — logo, na fonte real, o sinal fica Missing (→ NotEvaluated), nunca "Conforme".
+        obs.Add(KnightObservation.MissingData(KnightSignalKey.PrivilegedAccountsWithMailbox,
+            "A propriedade de diretório (mail) não comprova mailbox Exchange ativa; não avaliado nesta coleta."));
 
         // Obsolescência exige sinal de atividade; se nenhum membro tem signInActivity, não afirmamos (Missing).
         var withActivity = members.Values.Where(v => v.LastSignIn is not null).ToList();
@@ -212,14 +232,17 @@ public sealed class EntraIdKnightCollector : IKnightCollector
     {
         var total = 0;
         var mfaCapable = 0;
+        var malformed = false;
         var noMfaIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var url = "reports/authenticationMethods/userRegistrationDetails?$select=id,isMfaCapable,isMfaRegistered";
         await foreach (var u in _graph.GetPagedAsync(token, cfg, url, ct))
         {
             total++;
-            var capable = Bool(u, "isMfaCapable") ?? Bool(u, "isMfaRegistered") ?? false;
-            if (capable) mfaCapable++;
+            // Ausente/malformado NÃO vira "false" (não-capaz) em silêncio — marca o dado como malformado.
+            var capable = Bool(u, "isMfaCapable") ?? Bool(u, "isMfaRegistered");
+            if (capable is null) { malformed = true; continue; }
+            if (capable.Value) mfaCapable++;
             else
             {
                 var id = Str(u, "id");
@@ -227,7 +250,29 @@ public sealed class EntraIdKnightCollector : IKnightCollector
             }
         }
 
-        var pct = total == 0 ? 100.0 : Math.Round(100.0 * mfaCapable / total, 1);
+        // Fail-CLOSED: denominador zero NUNCA é 100%. Coleção vazia → Missing (o relatório userRegistrationDetails
+        // não devolveu usuários; não há como afirmar cobertura). O denominador honesto é o CONJUNTO devolvido pelo
+        // relatório — não uma afirmação sobre todos os usuários do tenant.
+        if (total == 0)
+        {
+            obs.Add(KnightObservation.MissingData(KnightSignalKey.MfaRegistrationCoveragePercent,
+                "Relatório userRegistrationDetails vazio — cobertura de MFA não pode ser afirmada (denominador zero)."));
+            obs.Add(KnightObservation.MissingData(KnightSignalKey.PrivilegedAccountsWithoutMfa,
+                "Sem dados de registro de MFA para o cruzamento com contas privilegiadas."));
+            return;
+        }
+
+        // Dado impossível/malformado → Missing (não calcula percentual sobre dados suspeitos).
+        if (malformed)
+        {
+            obs.Add(KnightObservation.MissingData(KnightSignalKey.MfaRegistrationCoveragePercent,
+                "Registro de MFA com dados malformados (isMfaCapable ausente/inválido) — cobertura não avaliada."));
+            obs.Add(KnightObservation.MissingData(KnightSignalKey.PrivilegedAccountsWithoutMfa,
+                "Registro de MFA malformado impede o cruzamento com contas privilegiadas."));
+            return;
+        }
+
+        var pct = Math.Round(100.0 * mfaCapable / total, 1);
         obs.Add(KnightObservation.OfRatio(KnightSignalKey.MfaRegistrationCoveragePercent, pct));
 
         // Contas privilegiadas SEM MFA: interseção com o inventário privilegiado. Sem esse inventário não afirmamos.
@@ -264,18 +309,41 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         var adminMfa = false;
         await foreach (var p in _graph.GetPagedAsync(token, cfg, "identity/conditionalAccess/policies", ct))
         {
+            // Só políticas HABILITADAS e impositivas contam. Report-only ("enabledForReportingButNotEnforced")
+            // e "disabled" NÃO provam proteção.
             if (!string.Equals(Str(p, "state"), "enabled", StringComparison.OrdinalIgnoreCase)) continue;
+
             var controls = BuiltInControls(p);
+            var cond = Obj(p, "conditions");
+            var users = Obj(cond, "users");
+            var apps = Obj(cond, "applications");
 
-            var clientApps = p.TryGetProperty("conditions", out var condA)
-                ? ArrayStrings(condA, "clientAppTypes") : Array.Empty<string>();
-            var targetsLegacy = clientApps.Any(c =>
+            var appliesAllApps = ArrayStrings(apps, "includeApplications")
+                .Any(a => a.Equals("All", StringComparison.OrdinalIgnoreCase));
+
+            var includeRoles = ArrayStrings(users, "includeRoles");
+            var appliesAllUsers = ArrayStrings(users, "includeUsers")
+                .Any(u => u.Equals("All", StringComparison.OrdinalIgnoreCase));
+
+            // Exclusões AMPLAS de papéis/grupos abrem brechas — uma política com elas não prova cobertura total.
+            var hasBroadExclusions = ArrayStrings(users, "excludeRoles").Count > 0
+                || ArrayStrings(users, "excludeGroups").Count > 0;
+
+            var targetsLegacy = ArrayStrings(cond, "clientAppTypes").Any(c =>
                 c.Equals("exchangeActiveSync", StringComparison.OrdinalIgnoreCase) || c.Equals("other", StringComparison.OrdinalIgnoreCase));
-            if (targetsLegacy && controls.Contains("block")) legacyBlocked = true;
 
-            var includeRoles = p.TryGetProperty("conditions", out var cond) && cond.TryGetProperty("users", out var users)
-                ? ArrayStrings(users, "includeRoles") : Array.Empty<string>();
-            if (includeRoles.Count > 0 && controls.Contains("mfa")) adminMfa = true;
+            // Bloqueio de autenticação legada: precisa BLOQUEAR, mirar clientes legados e valer para todos os
+            // apps e todos os usuários — uma política estreita não prova bloqueio global.
+            if (targetsLegacy && controls.Contains("block") && appliesAllApps && appliesAllUsers)
+                legacyBlocked = true;
+
+            // MFA administrativa: precisa EXIGIR MFA, mirar administradores (papéis de diretório OU todos os
+            // usuários), valer para todos os apps e NÃO ter exclusões amplas de papéis/grupos. Um includeRoles
+            // com um único papel, ou com exclusões, NÃO prova MFA para todos os administradores.
+            var requiresMfa = controls.Contains("mfa");
+            var targetsAdmins = includeRoles.Count > 0 || appliesAllUsers;
+            if (requiresMfa && targetsAdmins && appliesAllApps && !hasBroadExclusions)
+                adminMfa = true;
         }
         obs.Add(KnightObservation.OfFlag(KnightSignalKey.LegacyAuthenticationBlocked, legacyBlocked));
         obs.Add(KnightObservation.OfFlag(KnightSignalKey.AdminMfaPolicyEnforced, adminMfa));
@@ -289,22 +357,61 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         obs.Add(KnightObservation.OfFlag(KnightSignalKey.SecurityDefaultsEnabled, enabled));
     }
 
-    private async Task CollectApplicationsAsync(
+    private async Task CollectApplicationCredentialsAsync(
         string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs, CancellationToken ct)
     {
         var window = DateTimeOffset.UtcNow.AddDays(KnightCatalog.AppCredentialExpiryWindowDays);
         var expiring = 0;
-        var highPriv = 0;
-        var url = "applications?$select=id,displayName,passwordCredentials,keyCredentials,requiredResourceAccess&$top=999";
+        var url = "applications?$select=id,displayName,passwordCredentials,keyCredentials&$top=999";
         await foreach (var app in _graph.GetPagedAsync(token, cfg, url, ct))
         {
             if (HasExpiringCredential(app, "passwordCredentials", window) || HasExpiringCredential(app, "keyCredentials", window))
                 expiring++;
-            if (HasHighPrivilegeGraphPermission(app))
-                highPriv++;
         }
         obs.Add(KnightObservation.OfCount(KnightSignalKey.ApplicationCredentialsExpiring, expiring));
-        obs.Add(KnightObservation.OfCount(KnightSignalKey.HighPrivilegeApplications, highPriv));
+    }
+
+    private async Task CollectApplicationPermissionsAsync(
+        string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs, CancellationToken ct)
+    {
+        // Permissões de APLICATIVO efetivamente CONCEDIDAS: as atribuições de app role NO service principal do
+        // Microsoft Graph (o recurso). É a concessão real — não `requiredResourceAccess` (mera solicitação).
+        var sp = await _graph.GetJsonAsync(token, cfg, $"servicePrincipals(appId='{MicrosoftGraphAppId}')?$select=id", ct);
+        var graphSpId = Str(sp, "id");
+        if (string.IsNullOrEmpty(graphSpId))
+        {
+            obs.Add(KnightObservation.MissingData(KnightSignalKey.HighPrivilegeApplications,
+                "Service principal do Microsoft Graph não localizado para ler as concessões de permissão."));
+            return;
+        }
+
+        var apps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var url = $"servicePrincipals/{graphSpId}/appRoleAssignedTo?$select=principalId,principalType,appRoleId&$top=999";
+        await foreach (var a in _graph.GetPagedAsync(token, cfg, url, ct))
+        {
+            // Considera SOMENTE principals de APLICAÇÃO (service principals) — ignora usuários/grupos.
+            if (!string.Equals(Str(a, "principalType"), "ServicePrincipal", StringComparison.OrdinalIgnoreCase)) continue;
+            var appRoleId = Str(a, "appRoleId");
+            var principalId = Str(a, "principalId");
+            if (appRoleId is not null && principalId is not null && HighPrivilegeGraphAppRoleIds.Contains(appRoleId))
+                apps.Add(principalId);   // distinto por aplicação concedida
+        }
+        obs.Add(KnightObservation.OfCount(KnightSignalKey.HighPrivilegeApplications, apps.Count));
+    }
+
+    private async Task CollectDelegatedConsentsAsync(
+        string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs, CancellationToken ct)
+    {
+        // Consentimento DELEGADO tenant-wide: oauth2PermissionGrants com consentType=AllPrincipals. Consent
+        // "Principal" (para UM usuário) NÃO entra no total tenant-wide. Contamos clientIds ÚNICOS.
+        var clients = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await foreach (var g in _graph.GetPagedAsync(token, cfg, "oauth2PermissionGrants?$select=clientId,consentType&$top=999", ct))
+        {
+            if (!string.Equals(Str(g, "consentType"), "AllPrincipals", StringComparison.OrdinalIgnoreCase)) continue;
+            var clientId = Str(g, "clientId");
+            if (!string.IsNullOrEmpty(clientId)) clients.Add(clientId);
+        }
+        obs.Add(KnightObservation.OfCount(KnightSignalKey.AdminConsentedApplications, clients.Count));
     }
 
     // ---- Estado geral ------------------------------------------------------------------------------
@@ -313,15 +420,16 @@ public sealed class EntraIdKnightCollector : IKnightCollector
     {
         if (caps.Count == 0) return KnightSourceState.Unavailable;
         var collected = caps.Count(c => c.Outcome == KnightCapabilityOutcome.Collected);
-        var failed = caps.Count - collected;
-        if (failed == 0) return KnightSourceState.Completed;
-        if (collected == 0)
-        {
-            if (caps.All(c => c.Outcome == KnightCapabilityOutcome.InsufficientPermission))
-                return KnightSourceState.InsufficientPermission;
-            return KnightSourceState.Unavailable;
-        }
-        return KnightSourceState.PartialCollection;
+        if (collected == caps.Count) return KnightSourceState.Completed;
+        if (collected > 0) return KnightSourceState.PartialCollection;   // mistura de sucesso e falha
+
+        // Nenhuma capacidade coletada — todas falharam. Preserva o estado REAL quando a falha é homogênea
+        // (nunca colapsa auth/throttling/erro num "Unavailable" genérico).
+        if (caps.All(c => c.Outcome == KnightCapabilityOutcome.InsufficientPermission)) return KnightSourceState.InsufficientPermission;
+        if (caps.All(c => c.Outcome == KnightCapabilityOutcome.Throttled)) return KnightSourceState.Throttled;
+        if (caps.All(c => c.Outcome == KnightCapabilityOutcome.AuthenticationFailure)) return KnightSourceState.AuthenticationFailure;
+        if (caps.All(c => c.Outcome == KnightCapabilityOutcome.Error)) return KnightSourceState.Error;
+        return KnightSourceState.Unavailable;   // falhas mistas, sem nenhum sucesso
     }
 
     private static string DescribeState(KnightSourceState state) => state switch
@@ -329,14 +437,16 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         KnightSourceState.Completed => "Coleta do Microsoft Entra ID concluída.",
         KnightSourceState.PartialCollection => "Coleta parcial do Microsoft Entra ID — parte das capacidades faltou (permissão/indisponibilidade).",
         KnightSourceState.InsufficientPermission => "Permissões insuficientes para a coleta do Microsoft Entra ID.",
+        KnightSourceState.AuthenticationFailure => "Falha de autenticação junto ao Microsoft Graph durante a coleta.",
         KnightSourceState.Throttled => "Throttling do Microsoft Graph durante a coleta.",
         KnightSourceState.Unavailable => "Microsoft Graph indisponível durante a coleta.",
+        KnightSourceState.Error => "Erro inesperado durante a coleta do Microsoft Entra ID.",
         _ => "Coleta do Microsoft Entra ID.",
     };
 
     // ---- Parsing seguro do JSON do Graph -----------------------------------------------------------
 
-    private sealed record MemberInfo(string? UserType, bool HasMailbox, DateTimeOffset? LastSignIn);
+    private sealed record MemberInfo(string? UserType, DateTimeOffset? LastSignIn);
 
     private sealed class PrivilegedAccumulator
     {
@@ -352,6 +462,10 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty(prop, out var v)
             ? v.ValueKind switch { JsonValueKind.True => true, JsonValueKind.False => false, _ => (bool?)null }
             : null;
+
+    /// <summary>Propriedade-objeto segura: devolve <c>default</c> (Undefined) se ausente ou não-objeto.</summary>
+    private static JsonElement Obj(JsonElement e, string prop) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(prop, out var v) ? v : default;
 
     private static DateTimeOffset? Date(JsonElement e, string prop)
     {
@@ -388,25 +502,6 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         {
             var end = Date(c, "endDateTime");
             if (end is not null && end <= window) return true;   // vencida ou vencendo na janela
-        }
-        return false;
-    }
-
-    private static bool HasHighPrivilegeGraphPermission(JsonElement app)
-    {
-        if (!app.TryGetProperty("requiredResourceAccess", out var rra) || rra.ValueKind != JsonValueKind.Array) return false;
-        foreach (var resource in rra.EnumerateArray())
-        {
-            if (!resource.TryGetProperty("resourceAccess", out var access) || access.ValueKind != JsonValueKind.Array) continue;
-            foreach (var a in access.EnumerateArray())
-            {
-                // "Role" = permissão de APLICATIVO (app-only); ignora "Scope" (delegada).
-                var type = Str(a, "type");
-                var id = Str(a, "id");
-                if (string.Equals(type, "Role", StringComparison.OrdinalIgnoreCase)
-                    && id is not null && HighPrivilegeGraphAppRoleIds.Contains(id))
-                    return true;
-            }
         }
         return false;
     }

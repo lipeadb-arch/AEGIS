@@ -24,7 +24,7 @@ public enum KnightCapability
     /// <summary>Políticas de acesso condicional / baseline.</summary>
     ConditionalAccessPolicies = 3,
 
-    /// <summary>Inventário de aplicações (credenciais e permissões).</summary>
+    /// <summary>Inventário de aplicações: credenciais (segredos/certificados) vencendo.</summary>
     ApplicationInventory = 4,
 
     /// <summary>Isenções de MFA de contas de serviço e seus controles compensatórios.</summary>
@@ -35,15 +35,30 @@ public enum KnightCapability
 
     /// <summary>Designação de contas de emergência/break-glass.</summary>
     BreakGlassDesignation = 7,
+
+    /// <summary>
+    /// Permissões de APLICATIVO efetivamente CONCEDIDAS (service principals + appRoleAssignments). Separada
+    /// do inventário de credenciais para que a falha de uma consulta não invalide fatos da outra.
+    /// </summary>
+    ApplicationPermissions = 8,
+
+    /// <summary>Consentimentos DELEGADOS tenant-wide (oauth2PermissionGrants, consentType=AllPrincipals).</summary>
+    ApplicationConsents = 9,
 }
 
-/// <summary>Desfecho da coleta de UMA capacidade.</summary>
+/// <summary>
+/// Desfecho da coleta de UMA capacidade. Os desfechos de FALHA são distintos (não colapsam em "Unavailable"):
+/// a agregação em <see cref="KnightSourceState"/> depende disso para preservar Throttled/AuthenticationFailure/Error.
+/// </summary>
 public enum KnightCapabilityOutcome
 {
     Collected = 0,
     InsufficientPermission = 1,
     Unavailable = 2,
     NotAttempted = 3,
+    Throttled = 4,
+    AuthenticationFailure = 5,
+    Error = 6,
 }
 
 /// <summary>Estado por capacidade — o que a fonte conseguiu (ou não) coletar, com detalhe sanitizado.</summary>
@@ -72,16 +87,20 @@ public sealed record KnightDemoConfiguration : KnightSourceConfiguration
 
 /// <summary>
 /// Configuração do coletor real do Microsoft Entra ID — client credentials por tenant (segredo DECIFRADO em
-/// memória, nunca persistido/logado aqui). Base de login/Graph são injetáveis para teste (HTTP simulado).
+/// memória, nunca persistido/logado aqui). As bases de login/Graph são CONSTANTES oficiais no cliente HTTP —
+/// o tenant NUNCA fornece URL de destino (evita exfiltrar o bearer token para uma origem arbitrária).
 /// </summary>
 public sealed record KnightEntraIdConfiguration(
     string AzureTenantId,
     string ClientId,
-    string ClientSecret,
-    string? GraphBaseUrl = null,
-    string? LoginBaseUrl = null) : KnightSourceConfiguration
+    string ClientSecret) : KnightSourceConfiguration
 {
     public override KnightSourceType Source => KnightSourceType.MicrosoftEntraId;
+
+    // Um record gera ToString()/PrintMembers() que imprimem TODAS as propriedades — inclusive o ClientSecret.
+    // Sobrescrevemos para o segredo NUNCA aparecer num dump/log acidental do objeto. (Gap: ToString de record.)
+    public override string ToString() =>
+        $"KnightEntraIdConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = *** }}";
 }
 
 // ---- Coletor -------------------------------------------------------------------------------------------

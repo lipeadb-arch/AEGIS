@@ -44,8 +44,15 @@ export type KnightSourceState =
   | 'Unavailable'
   | 'Error';
 
-/** Desfecho por capacidade da fonte (o que foi coletado e o que faltou). */
-export type KnightCapabilityOutcome = 'Collected' | 'InsufficientPermission' | 'Unavailable' | 'NotAttempted';
+/** Desfecho por capacidade da fonte (o que foi coletado e o que faltou). Falhas distintas não colapsam. */
+export type KnightCapabilityOutcome =
+  | 'Collected'
+  | 'InsufficientPermission'
+  | 'Unavailable'
+  | 'NotAttempted'
+  | 'Throttled'
+  | 'AuthenticationFailure'
+  | 'Error';
 
 export interface KnightCapability {
   capability: string;
@@ -251,6 +258,9 @@ const CAPABILITY_OUTCOME_LABEL: Record<KnightCapabilityOutcome, string> = {
   InsufficientPermission: 'Permissão insuficiente',
   Unavailable: 'Indisponível',
   NotAttempted: 'Não tentado',
+  Throttled: 'Throttling',
+  AuthenticationFailure: 'Falha de autenticação',
+  Error: 'Erro',
 };
 
 export function capabilityOutcomeLabel(outcome: KnightCapabilityOutcome): string {
