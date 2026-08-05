@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AegisScore.Application\AegisScore.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Só o teto de paginação do GoogleWorkspaceApiClient é internal-visível ao teste (exercita o limite sem
+         páginas reais em excesso), sem expor à DI um construtor ambíguo (o tenant nunca configura esse teto). -->
+    <InternalsVisibleTo Include="AegisScore.Infrastructure.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.8.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <!-- Biblioteca OFICIAL de autenticação Google: assina o JWT da service account e o troca por access token
+         (domain-wide delegation) contra os endpoints oficiais do Google — sem implementar criptografia própria. -->
+    <PackageReference Include="Google.Apis.Auth" Version="1.68.0" />
+  </ItemGroup>
+</Project>

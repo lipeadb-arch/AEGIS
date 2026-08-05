@@ -265,6 +265,10 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         KnightCapability.ServiceAccountExemptions => "Isenções de contas de serviço",
         KnightCapability.SecurityBaseline => "Baseline de segurança",
         KnightCapability.BreakGlassDesignation => "Designação de contas de emergência",
+        KnightCapability.DirectoryUsers => "Diretório de usuários (2SV/superadmins)",
+        KnightCapability.DirectoryGroups => "Grupos e membros externos",
+        KnightCapability.DriveSharingAudit => "Auditoria de compartilhamento no Drive",
+        KnightCapability.OAuthTokenAudit => "Auditoria de autorizações OAuth",
         _ => capability.ToString(),
     };
 }

@@ -224,7 +224,9 @@ public sealed class KnightAssessmentTests : IDisposable
 
         a.SourceType.Should().Be(KnightSourceType.GoogleWorkspace);
         a.Status.Should().Be(KnightRunStatus.Completed);
-        a.Indicators.Should().HaveCount(5, "os indicadores compartilhados são agnósticos de fonte — sem mudança no núcleo");
+        // 5 indicadores compartilhados (avaliados por este fake) + 6 GoogleOnly (AK-GWS-001..006, sem fatos aqui
+        // → NotEvaluated). O núcleo não muda: os aplicáveis à fonte são avaliados sem tratamento especial.
+        a.Indicators.Should().HaveCount(11, "5 compartilhados + 6 GoogleOnly aplicáveis ao Google Workspace");
         a.Indicators.Should().OnlyContain(i => i.SourceType == KnightSourceType.GoogleWorkspace);
 
         await using var assert = NewContext(TenantA);
