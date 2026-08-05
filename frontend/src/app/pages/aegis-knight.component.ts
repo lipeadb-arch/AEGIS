@@ -57,6 +57,11 @@ import { KnightService } from '../services/knight.service';
               {{ running() ? 'Coletando…' : 'Coletar do Entra ID' }}
             </button>
           }
+          @if (googleConfigured()) {
+            <button type="button" class="btn real" (click)="runSource('GoogleWorkspace')" [disabled]="busy()">
+              {{ running() ? 'Coletando…' : 'Coletar do Google Workspace' }}
+            </button>
+          }
         </div>
       </header>
 
@@ -222,7 +227,11 @@ import { KnightService } from '../services/knight.service';
             </span>
             @if (entraConfigured()) {
               <span>Fonte real configurada: <b>Microsoft Entra ID</b>.</span>
-            } @else {
+            }
+            @if (googleConfigured()) {
+              <span>Fonte real configurada: <b>Google Workspace</b>.</span>
+            }
+            @if (!entraConfigured() && !googleConfigured()) {
               <span>Nenhuma fonte real configurada — apenas a demonstração está disponível.</span>
             }
             <div class="empty-actions">
@@ -232,6 +241,11 @@ import { KnightService } from '../services/knight.service';
               @if (entraConfigured()) {
                 <button type="button" class="btn real" (click)="runSource('MicrosoftEntraId')" [disabled]="busy()">
                   {{ running() ? 'Coletando…' : 'Coletar do Entra ID' }}
+                </button>
+              }
+              @if (googleConfigured()) {
+                <button type="button" class="btn real" (click)="runSource('GoogleWorkspace')" [disabled]="busy()">
+                  {{ running() ? 'Coletando…' : 'Coletar do Google Workspace' }}
                 </button>
               }
             </div>
@@ -376,6 +390,9 @@ export class AegisKnightComponent implements OnInit {
   readonly busy = computed(() => this.running() || this.loading());
   readonly entraConfigured = computed(
     () => this.sources()?.realSources.some((s) => s.source === 'MicrosoftEntraId' && s.configured) ?? false,
+  );
+  readonly googleConfigured = computed(
+    () => this.sources()?.realSources.some((s) => s.source === 'GoogleWorkspace' && s.configured) ?? false,
   );
 
   ngOnInit(): void {

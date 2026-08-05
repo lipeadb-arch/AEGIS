@@ -44,6 +44,19 @@ public enum KnightCapability
 
     /// <summary>Consentimentos DELEGADOS tenant-wide (oauth2PermissionGrants, consentType=AllPrincipals).</summary>
     ApplicationConsents = 9,
+
+    // ---- Google Workspace (Admin SDK Directory + Reports, somente leitura) ----
+    /// <summary>Diretório de usuários: 2SV, superadministradores e atividade (Admin SDK Directory).</summary>
+    DirectoryUsers = 10,
+
+    /// <summary>Grupos e seus membros externos (Admin SDK Directory).</summary>
+    DirectoryGroups = 11,
+
+    /// <summary>Auditoria de compartilhamento externo no Drive (Reports API).</summary>
+    DriveSharingAudit = 12,
+
+    /// <summary>Auditoria de autorizações OAuth de terceiros (Reports API).</summary>
+    OAuthTokenAudit = 13,
 }
 
 /// <summary>
@@ -101,6 +114,24 @@ public sealed record KnightEntraIdConfiguration(
     // Sobrescrevemos para o segredo NUNCA aparecer num dump/log acidental do objeto. (Gap: ToString de record.)
     public override string ToString() =>
         $"KnightEntraIdConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = *** }}";
+}
+
+/// <summary>
+/// Configuração do coletor real do Google Workspace — service account com DOMAIN-WIDE DELEGATION (o JSON da
+/// service account contém a CHAVE PRIVADA; recebido DECIFRADO em memória, NUNCA persistido/logado aqui). Os
+/// endpoints do Google são CONSTANTES oficiais no cliente HTTP / na biblioteca oficial de autenticação — o
+/// tenant NÃO fornece URL de destino.
+/// </summary>
+public sealed record KnightGoogleWorkspaceConfiguration(
+    string CustomerId,
+    string DelegatedAdminEmail,
+    string ServiceAccountJson) : KnightSourceConfiguration
+{
+    public override KnightSourceType Source => KnightSourceType.GoogleWorkspace;
+
+    // O ServiceAccountJson carrega a CHAVE PRIVADA da service account — jamais deve aparecer num dump/log.
+    public override string ToString() =>
+        $"KnightGoogleWorkspaceConfiguration {{ CustomerId = {CustomerId}, DelegatedAdminEmail = {DelegatedAdminEmail}, ServiceAccountJson = *** }}";
 }
 
 // ---- Coletor -------------------------------------------------------------------------------------------

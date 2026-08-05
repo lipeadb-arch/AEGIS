@@ -55,6 +55,8 @@
     <!-- [AEGIS-AUD-010] Referência ao projeto da API para os testes de atributo de autorização das
          superfícies de identidade (PlatformIdentitiesController / UsersController). -->
     <ProjectReference Include="..\..\src\AegisScore.Api\AegisScore.Api.csproj" />
+    <!-- Coletor real do Google Workspace (KNIGHT): testes focados por HTTP simulado + resolução de config. -->
+    <ProjectReference Include="..\..\src\AegisScore.Connectors.Google\AegisScore.Connectors.Google.csproj" />
   </ItemGroup>
 
   <ItemGroup>

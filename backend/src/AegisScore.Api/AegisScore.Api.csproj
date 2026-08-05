@@ -18,6 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="..\AegisScore.Infrastructure\AegisScore.Infrastructure.csproj" />
     <ProjectReference Include="..\AegisScore.Connectors.Microsoft\AegisScore.Connectors.Microsoft.csproj" />
+    <ProjectReference Include="..\AegisScore.Connectors.Google\AegisScore.Connectors.Google.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- Catálogos GRC de posse do projeto da API (Data/). Copiados para o output:

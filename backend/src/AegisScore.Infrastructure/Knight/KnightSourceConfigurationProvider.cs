@@ -57,8 +57,17 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
                     ? new KnightSourceNotConfigured(source)   // segredo ilegível/incompleto = não configurado (fail-closed)
                     : new KnightEntraIdConfiguration(settings.TenantIdValue!, settings.ClientId!, settings.ClientSecret!);
 
+            case KnightSourceType.GoogleWorkspace:
+                var gcfg = await FindGoogleConnectorAsync(ct);
+                if (gcfg is null || !gcfg.Enabled)
+                    return new KnightSourceNotConfigured(source);
+                var gsettings = TryDecryptGoogle(gcfg);
+                return gsettings is null
+                    ? new KnightSourceNotConfigured(source)   // segredo ilegível/incompleto = não configurado (fail-closed)
+                    : new KnightGoogleWorkspaceConfiguration(gsettings.CustomerId!, gsettings.DelegatedAdminEmail!, gsettings.ServiceAccountJson!);
+
             default:
-                // Google Workspace (e futuras fontes): capacidade arquitetural, sem configuração real ainda.
+                // Fontes futuras: capacidade arquitetural, sem configuração real ainda.
                 return new KnightSourceNotConfigured(source);
         }
     }
@@ -67,10 +76,12 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
     {
         var entra = await FindEntraConnectorAsync(ct);
         var entraConfigured = entra is not null && TryDecrypt(entra) is not null;
+        var google = await FindGoogleConnectorAsync(ct);
+        var googleConfigured = google is not null && TryDecryptGoogle(google) is not null;
         return new[]
         {
             new KnightSourceAvailability(KnightSourceType.MicrosoftEntraId, "Microsoft Entra ID", entraConfigured, entra?.Enabled ?? false),
-            new KnightSourceAvailability(KnightSourceType.GoogleWorkspace, "Google Workspace", Configured: false, Enabled: false),
+            new KnightSourceAvailability(KnightSourceType.GoogleWorkspace, "Google Workspace", googleConfigured, google?.Enabled ?? false),
         };
     }
 
@@ -78,6 +89,11 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
         _db.Connectors.AsNoTracking()
             .FirstOrDefaultAsync(
                 c => c.Provider == ConnectorProvider.Microsoft && c.Capability == ConnectorCapability.IdentityPosture, ct);
+
+    private Task<ConnectorConfig?> FindGoogleConnectorAsync(CancellationToken ct) =>
+        _db.Connectors.AsNoTracking()
+            .FirstOrDefaultAsync(
+                c => c.Provider == ConnectorProvider.Google && c.Capability == ConnectorCapability.IdentityPosture, ct);
 
     private EntraSettings? TryDecrypt(ConnectorConfig cfg)
     {
@@ -114,4 +130,35 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
         /// <summary>Tenant do Entra: prioriza <c>tenantId</c> (o que a interface envia); cai para <c>azureTenantId</c>.</summary>
         public string? TenantIdValue => !string.IsNullOrWhiteSpace(TenantId) ? TenantId : AzureTenantId;
     }
+
+    private GoogleSettings? TryDecryptGoogle(ConnectorConfig cfg)
+    {
+        if (string.IsNullOrWhiteSpace(cfg.EncryptedSettings)) return null;
+        try
+        {
+            var json = _protector.Unprotect(cfg.EncryptedSettings);
+            var s = JsonSerializer.Deserialize<GoogleSettings>(json, JsonOpts);
+            if (s is null
+                || string.IsNullOrWhiteSpace(s.CustomerId)
+                || string.IsNullOrWhiteSpace(s.DelegatedAdminEmail)
+                || string.IsNullOrWhiteSpace(s.ServiceAccountJson))
+                return null;
+            return s;
+        }
+        catch (Exception ex)
+        {
+            _log?.LogWarning(ex, "Configuração do conector Google do KNIGHT ilegível; tratada como não configurada.");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Forma esperada do JSON de configuração do Google (em claro no <c>settings</c> de criação; cifrado em
+    /// repouso). O <c>serviceAccountJson</c> contém a chave privada — NÃO há URL de destino no JSON (o host é
+    /// constante oficial no cliente).
+    /// </summary>
+    private sealed record GoogleSettings(
+        string? CustomerId = null,
+        string? DelegatedAdminEmail = null,
+        string? ServiceAccountJson = null);
 }

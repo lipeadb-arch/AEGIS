@@ -11,6 +11,7 @@
 export type ProviderKey =
   | 'Microsoft'
   | 'MicrosoftEntraKnight'
+  | 'GoogleWorkspaceKnight'
   | 'Google'
   | 'Aws'
   | 'MicrosoftSentinel'
@@ -145,6 +146,30 @@ export const PROVIDERS: ProviderSpec[] = [
       { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientSecret', label: 'Client secret', secret: true },
+    ],
+  },
+  {
+    key: 'GoogleWorkspaceKnight',
+    value: 1, // ConnectorProvider.Google
+    label: 'Google Workspace · AEGIS KNIGHT',
+    authType: 'ServiceAccount',
+    authTypeValue: 2,
+    capability: 'IdentityPosture',
+    capabilityValue: 10, // ConnectorCapability.IdentityPosture
+    knight: true,
+    infoNote:
+      'Coletor REAL somente-leitura do Google Workspace (service account com domain-wide delegation). Após salvar, dispare a coleta em Abrir AEGIS KNIGHT → “Coletar do Google Workspace”. Coleta apenas metadados administrativos/auditoria — nunca conteúdo de Gmail, Drive ou Chat.',
+    appPermissions: [
+      'admin.directory.user.readonly',
+      'admin.directory.group.readonly',
+      'admin.directory.group.member.readonly',
+      'admin.directory.domain.readonly',
+      'admin.reports.audit.readonly',
+    ],
+    fields: [
+      { key: 'customerId', label: 'Customer ID', secret: false, placeholder: 'C0xxxxxxx' },
+      { key: 'delegatedAdminEmail', label: 'E-mail do administrador delegado', secret: false, placeholder: 'admin@sua-org.example.com' },
+      { key: 'serviceAccountJson', label: 'Service Account JSON (com domain-wide delegation)', secret: true },
     ],
   },
   {

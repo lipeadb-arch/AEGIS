@@ -51,7 +51,9 @@ public sealed record KnightEvaluatedIndicator(
 public static class KnightCatalog
 {
     /// <summary>Versão do catálogo — carimbada na execução para rastreabilidade do veredito.</summary>
-    public const string Version = "ak-knight-v1";
+    // v2: acrescenta os indicadores GoogleOnly `AK-GWS-001..006` (coletor real Google Workspace). Os
+    // indicadores compartilhados e os do Entra permanecem inalterados.
+    public const string Version = "ak-knight-v2";
 
     // ---- Limiares centralizados (única fonte da verdade dos números da regra) ----
 
@@ -70,6 +72,12 @@ public static class KnightCatalog
     /// <summary>Janela (dias) sem atividade que marca uma conta privilegiada como obsoleta (usada pelo coletor).</summary>
     public const int StalePrivilegedWindowDays = 60;
 
+    /// <summary>Cobertura mínima aceitável de 2SV (verificação em duas etapas) do Google Workspace (%).</summary>
+    public const double MinTwoStepVerificationCoveragePercent = 90;
+
+    /// <summary>Janela (dias) de auditoria recente do Google Workspace (compartilhamento externo, OAuth).</summary>
+    public const int GoogleAuditWindowDays = 7;
+
     // Indicadores de identidade AGNÓSTICOS de fonte: valem para Demo, Entra e Google Workspace (cada coletor
     // produz os mesmos fatos normalizados). É o que permite um novo coletor entrar no pipeline SEM tocar o núcleo.
     private static readonly IReadOnlySet<KnightSourceType> SharedSources =
@@ -77,6 +85,10 @@ public static class KnightCatalog
 
     private static readonly IReadOnlySet<KnightSourceType> EntraOnly =
         new HashSet<KnightSourceType> { KnightSourceType.MicrosoftEntraId };
+
+    // Indicadores exclusivos do Google Workspace (fatos que só o coletor do Google produz).
+    private static readonly IReadOnlySet<KnightSourceType> GoogleOnly =
+        new HashSet<KnightSourceType> { KnightSourceType.GoogleWorkspace };
 
     // ---- Fábricas de desfecho ------------------------------------------------------------------------
 
@@ -385,6 +397,94 @@ public static class KnightCatalog
                 return n > 0
                     ? Passed($"{n} conta(s) de emergência designada(s).")
                     : Exposed("Nenhuma conta de emergência (break-glass) designada.", 0);
+            }),
+
+        // ==== Específicos do Google Workspace (coleta real Admin SDK + Reports) ====
+
+        new KnightIndicatorDefinition(
+            "AK-GWS-001", "1", "Superadministradores sem verificação em duas etapas (2SV)",
+            KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.Critical, GoogleOnly,
+            new[] { "PR.AA-01", "PR.AA-03" }, new[] { "T1078 · Valid Accounts", "T1078.004 · Cloud Accounts" },
+            "Exigir 2SV (idealmente chaves de segurança) em todos os superadministradores e reduzir o número de superadmins ao mínimo.",
+            "Número de superadministradores sem 2SV inscrito.",
+            f =>
+            {
+                if (!TryCount(f, KnightSignalKey.SuperAdminsWithout2Sv, out var without, out var ne)) return ne;
+                var total = f.Get(KnightSignalKey.SuperAdminsTotal);
+                var totalTxt = total.IsCollected ? Fmt(total.Count) : "?";
+                return without > 0
+                    ? Exposed($"{without} de {totalTxt} superadministrador(es) sem 2SV inscrito.", (int)without)
+                    : Passed($"Todos os {totalTxt} superadministrador(es) com 2SV inscrito.");
+            }),
+
+        new KnightIndicatorDefinition(
+            "AK-GWS-002", "1", "Baixa cobertura de 2SV entre os usuários do diretório",
+            KnightIndicatorCategory.IdentityGovernance, SeverityLevel.High, GoogleOnly,
+            new[] { "PR.AA-01", "PR.AA-02" }, Array.Empty<string>(),
+            "Impor 2SV a todos os usuários ativos e monitorar a cobertura; preferir métodos resistentes a phishing.",
+            $"Percentual de usuários ativos com 2SV inscrito comparado ao mínimo de {MinTwoStepVerificationCoveragePercent}%.",
+            f =>
+            {
+                if (!TryRatio(f, KnightSignalKey.TwoStepVerificationCoveragePercent, out var pct, out var ne)) return ne;
+                return pct < MinTwoStepVerificationCoveragePercent
+                    ? Exposed($"Cobertura de 2SV em {pct.ToString("0.#", CultureInfo.InvariantCulture)}% (mínimo {MinTwoStepVerificationCoveragePercent}%).", 0)
+                    : Passed($"Cobertura de 2SV em {pct.ToString("0.#", CultureInfo.InvariantCulture)}%.");
+            }),
+
+        new KnightIndicatorDefinition(
+            "AK-GWS-003", "1", "Superadministradores sem atividade recente",
+            KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.Medium, GoogleOnly,
+            new[] { "PR.AA-01", "GV.RR-02" }, new[] { "T1078 · Valid Accounts" },
+            "Revisar e remover/reduzir superadministradores sem uso recente; adotar acesso privilegiado just-in-time.",
+            $"Número de superadministradores sem login nos últimos {StalePrivilegedWindowDays} dias.",
+            f =>
+            {
+                if (!TryCount(f, KnightSignalKey.StaleSuperAdmins, out var n, out var ne)) return ne;
+                return n > 0
+                    ? Exposed($"{n} superadministrador(es) sem atividade nos últimos {StalePrivilegedWindowDays} dias.", (int)n)
+                    : Passed("Nenhum superadministrador obsoleto.");
+            }),
+
+        new KnightIndicatorDefinition(
+            "AK-GWS-004", "1", "Membros externos em grupos do Workspace",
+            KnightIndicatorCategory.GuestAccess, SeverityLevel.Medium, GoogleOnly,
+            new[] { "PR.AA-05", "GV.SC-04" }, new[] { "T1078.004 · Cloud Accounts" },
+            "Revisar membros externos em grupos; restringir a associação externa e aprovar/expirar o acesso de terceiros.",
+            "Número de membros externos (fora dos domínios da organização) em grupos do Workspace.",
+            f =>
+            {
+                if (!TryCount(f, KnightSignalKey.ExternalGroupMembers, out var n, out var ne)) return ne;
+                return n > 0
+                    ? Exposed($"{n} membro(s) externo(s) em grupos do Workspace.", (int)n)
+                    : Passed("Nenhum membro externo em grupos do Workspace.");
+            }),
+
+        new KnightIndicatorDefinition(
+            "AK-GWS-005", "1", "Compartilhamento externo recente de arquivos no Drive",
+            KnightIndicatorCategory.GuestAccess, SeverityLevel.High, GoogleOnly,
+            new[] { "GV.SC-04", "PR.AA-05" }, new[] { "T1567 · Exfiltration Over Web Service" },
+            "Restringir o compartilhamento externo no Drive por política e revisar os eventos de exposição a links públicos/externos.",
+            $"Número de eventos de mudança de visibilidade para acesso externo/público no Drive nos últimos {GoogleAuditWindowDays} dias.",
+            f =>
+            {
+                if (!TryCount(f, KnightSignalKey.ExternalDriveSharingEvents, out var n, out var ne)) return ne;
+                return n > 0
+                    ? Exposed($"{n} evento(s) de compartilhamento externo/público no Drive nos últimos {GoogleAuditWindowDays} dias.", (int)n)
+                    : Passed($"Nenhum evento de compartilhamento externo no Drive nos últimos {GoogleAuditWindowDays} dias.");
+            }),
+
+        new KnightIndicatorDefinition(
+            "AK-GWS-006", "1", "Autorizações OAuth de terceiros recentes",
+            KnightIndicatorCategory.IdentityGovernance, SeverityLevel.Medium, GoogleOnly,
+            new[] { "GV.SC-04", "PR.AA-05" }, new[] { "T1550.001 · Application Access Token" },
+            "Revisar aplicativos OAuth de terceiros autorizados; restringir o consentimento do usuário e apps não confiáveis.",
+            $"Número de clientes OAuth distintos autorizados nos últimos {GoogleAuditWindowDays} dias.",
+            f =>
+            {
+                if (!TryCount(f, KnightSignalKey.RecentOAuthGrants, out var n, out var ne)) return ne;
+                return n > 0
+                    ? Exposed($"{n} cliente(s) OAuth distinto(s) autorizado(s) nos últimos {GoogleAuditWindowDays} dias — revisar necessidade e escopos.", (int)n)
+                    : Passed($"Nenhuma autorização OAuth de terceiros nos últimos {GoogleAuditWindowDays} dias.");
             }),
     };
 

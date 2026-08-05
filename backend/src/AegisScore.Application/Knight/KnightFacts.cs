@@ -42,6 +42,22 @@ public enum KnightSignalKey
     SecurityDefaultsEnabled = 108,
     /// <summary>Contas de emergência/break-glass designadas (requer marcação — normalmente não inferível por API).</summary>
     DesignatedBreakGlassAccounts = 109,
+
+    // ---- Específicos do Google Workspace (Admin SDK Directory + Reports) ----
+    /// <summary>Cobertura (%) de 2SV inscrito entre os usuários ATIVOS do diretório.</summary>
+    TwoStepVerificationCoveragePercent = 200,
+    /// <summary>Total de superadministradores.</summary>
+    SuperAdminsTotal = 201,
+    /// <summary>Superadministradores SEM 2SV inscrito.</summary>
+    SuperAdminsWithout2Sv = 202,
+    /// <summary>Superadministradores sem login recente (obsoletos).</summary>
+    StaleSuperAdmins = 203,
+    /// <summary>Membros EXTERNOS (fora dos domínios da organização) em grupos do Workspace.</summary>
+    ExternalGroupMembers = 204,
+    /// <summary>Eventos recentes de compartilhamento externo/público de arquivos no Drive (auditoria).</summary>
+    ExternalDriveSharingEvents = 205,
+    /// <summary>Autorizações OAuth de terceiros DISTINTAS recentes (auditoria de tokens).</summary>
+    RecentOAuthGrants = 206,
 }
 
 /// <summary>Desfecho de UMA observação: coletada, ausente (dado/permissão) ou não aplicável à fonte.</summary>

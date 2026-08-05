@@ -171,7 +171,7 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
               <p class="note ok-note">{{ s.infoNote }}</p>
               @if (s.appPermissions?.length) {
                 <div class="perms">
-                  <span class="perms-label">Permissões de aplicativo (somente leitura) necessárias:</span>
+                  <span class="perms-label">Permissões/escopos (somente leitura) necessários:</span>
                   <ul>
                     @for (perm of s.appPermissions; track perm) {
                       <li><code>{{ perm }}</code></li>

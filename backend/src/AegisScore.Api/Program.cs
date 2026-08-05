@@ -14,6 +14,7 @@ using AegisScore.Api.Health;
 using AegisScore.Api.Workers;
 using AegisScore.Application.Abstractions;
 using AegisScore.Connectors.Microsoft;
+using AegisScore.Connectors.Google;
 using AegisScore.Infrastructure;
 using AegisScore.Infrastructure.Auth;
 using AegisScore.Infrastructure.DataProtection;
@@ -154,8 +155,9 @@ builder.Services.AddAuthorization(options =>
 // Handler da policy da troca federada (lê FederationOptions).
 builder.Services.AddSingleton<IAuthorizationHandler, FederatedExchangeHandler>();
 
-// Stack adapters (add Google/AWS/SIEM/EDR connector packages here).
+// Stack adapters (add AWS/SIEM/EDR connector packages here).
 builder.Services.AddMicrosoftConnectors();
+builder.Services.AddGoogleConnectors();
 
 // Document Hub: worker que lê os documentos enfileirados e mapeia os controles NIST.
 builder.Services.AddHostedService<DocumentAnalysisWorker>();
