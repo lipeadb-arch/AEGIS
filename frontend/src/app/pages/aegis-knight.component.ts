@@ -1,5 +1,6 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { environment } from '../../environments/environment';
 import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
 import {
@@ -32,7 +33,7 @@ import { KnightService } from '../services/knight.service';
 @Component({
   selector: 'app-aegis-knight',
   standalone: true,
-  imports: [ScoreGaugeComponent, DatePipe],
+  imports: [ScoreGaugeComponent, DatePipe, RouterLink],
   template: `
     <section class="knight">
       <p class="eyebrow">AEGIS KNIGHT · Postura de Identidade e Exposição · Multicoletor</p>
@@ -49,6 +50,7 @@ import { KnightService } from '../services/knight.service';
           </p>
         </div>
         <div class="actions">
+          <a class="btn ghost" routerLink="/history">Histórico auditável</a>
           <button type="button" class="btn run" (click)="runDemo()" [disabled]="busy()">
             {{ running() ? 'Executando…' : 'Executar assessment demo' }}
           </button>
@@ -271,6 +273,7 @@ import { KnightService } from '../services/knight.service';
       .btn.run { color: #05070f; background: var(--neon-h); box-shadow: 0 0 14px -3px rgba(38, 224, 255, 0.6); }
       .btn.real { color: var(--cyan); background: rgba(38, 224, 255, 0.08); border-color: rgba(38, 224, 255, 0.45); }
       .btn.ghost { color: var(--text); background: rgba(122, 145, 190, 0.08); border-color: var(--line); }
+      a.btn { text-decoration: none; display: inline-flex; align-items: center; }
       .panel { border: 1px solid var(--line); border-radius: 14px; background: rgba(122, 145, 190, 0.03); padding: 18px; }
 
       .source-line { font-family: var(--mono); font-size: 11.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Advisories;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Posture;
 using AegisScore.Application.Queries;
 using AegisScore.Application.RiskAssessment;
 using AegisScore.Application.Scoring;
@@ -17,6 +18,7 @@ using AegisScore.Infrastructure.Connectors;
 using AegisScore.Infrastructure.Documents;
 using AegisScore.Infrastructure.Knight;
 using AegisScore.Infrastructure.Persistence;
+using AegisScore.Infrastructure.Posture;
 using AegisScore.Infrastructure.Queries;
 using AegisScore.Infrastructure.RiskAssessment;
 using AegisScore.Infrastructure.Scoring;
@@ -130,6 +132,12 @@ public static class DependencyInjection
         services.AddScoped<IKnightSourceConfigurationProvider, KnightSourceConfigurationProvider>();
         services.AddScoped<IKnightAdvisoryGenerator, KnightAdvisoryGenerator>();
         services.AddScoped<IAegisKnightAssessmentService, AegisKnightAssessmentService>();
+
+        // [AEGIS-AUD-035/036/037] Fotografia AUDITÁVEL de postura — publicação controlada (o servidor constrói
+        // pela autoridade do domínio: aegis-score-v1 sobre o ledger e o último assessment knight-score-v1),
+        // leitura por tenant e comparação compatível. Scoped: usa o DbContext (Global Query Filter + stamping
+        // fail-closed). A fotografia é APPEND-ONLY — o serviço não expõe update/delete.
+        services.AddScoped<IPostureSnapshotService, PostureSnapshotService>();
 
         // Superfície de ingestão passiva de telemetria (webhook EDR/SIEM) — o CHAMADOR do EvaluateAsync.
         // Orquestração fina: normaliza o sinal, resolve o tenant e delega ao motor (fonte Telemetry).

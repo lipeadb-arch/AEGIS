@@ -1,4 +1,5 @@
 import { Component, ElementRef, OnInit, effect, inject, signal, viewChild } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { AegisScoreService } from '../services/aegis-score.service';
 import { CurrentScoreDto, TenantTrendDto } from '../models/aegis-score.models';
 import { environment } from '../../environments/environment';
@@ -10,7 +11,21 @@ import { environment } from '../../environments/environment';
 @Component({
   selector: 'app-aegis-dashboard',
   standalone: true,
+  imports: [RouterLink],
   templateUrl: './aegis-dashboard.component.html',
+  styles: [
+    `
+      .hist-link {
+        display: block;
+        margin-top: 6px;
+        font-family: var(--mono, monospace);
+        font-size: 11px;
+        color: var(--neon-h, #26e0ff);
+        text-decoration: none;
+      }
+      .hist-link:hover { text-decoration: underline; }
+    `,
+  ],
 })
 export class AegisDashboardComponent implements OnInit {
   private readonly svc = inject(AegisScoreService);

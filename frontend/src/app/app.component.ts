@@ -82,6 +82,11 @@ import { AuthService } from './services/auth.service';
           <span class="lb">Aegis Score HUD</span>
         </a>
 
+        <a class="nav-item" routerLink="/history" routerLinkActive="active">
+          <span class="ic" aria-hidden="true">◷</span>
+          <span class="lb">Histórico de Postura</span>
+        </a>
+
         <p class="nav-group">Funções · NIST CSF 2.0</p>
 
         <!-- Todas as 6 Funções NIST CSF 2.0 têm tela. -->
