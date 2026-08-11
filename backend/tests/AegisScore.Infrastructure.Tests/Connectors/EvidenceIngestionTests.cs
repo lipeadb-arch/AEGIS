@@ -525,6 +525,69 @@ public sealed class EvidenceIngestionPostgresTests
     }
 }
 
+/// <summary>
+/// [AEGIS-AUD-019] Corrida de INSERÇÃO no upsert do ledger em PostgreSQL real (gate <c>AEGIS_TEST_PG</c>):
+/// DOIS <see cref="ControlStateWriter"/> em contextos INDEPENDENTES gravam a MESMA célula
+/// <c>(TenantId, SubcategoryId)</c> ao mesmo tempo. O <c>ControlStateWriter</c> recupera a corrida de inserção
+/// (destaca a entidade que perdeu, recarrega a vencedora e reaplica o veredito como UPDATE): nenhuma chamada
+/// lança, existe EXATAMENTE UMA linha, o estado final é válido e não há mistura entre tenants.
+/// </summary>
+public sealed class ControlStateWriterPostgresTests
+{
+    [Fact]
+    public async Task ConcurrentUpsert_MesmaCelula_UmaLinha_SemExcecao_OnRealPostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;   // AEGIS_TEST_PG não definido — pulado
+        var opt = pg.DbOptions();
+
+        var tenant = Guid.NewGuid();
+        await using (var seed = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+        {
+            await seed.Database.EnsureCreatedAsync();
+            IngestionTestData.SeedFrameworkAndMappings(seed);   // DE.AE-02, DE.CM-01, RS.MI-01 (peso 10)
+            seed.Tenants.Add(new Tenant { Id = tenant, Name = "T", Slug = "t-" + tenant.ToString("N"), Status = TenantStatus.Active });
+            await seed.SaveChangesAsync();
+        }
+
+        const string code = "DE.CM-01";
+
+        // Gate: as duas escritas são liberadas ao MESMO instante para provocar a corrida de inserção — ambas
+        // leem a célula ausente antes de qualquer commit. Cada writer tem seu PRÓPRIO DbContext e tenant.
+        var gate = new TaskCompletionSource();
+        async Task WriteAsync()
+        {
+            await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+            var writer = new ControlStateWriter(db, new SystemTenantContext(tenant), NullLogger<ControlStateWriter>.Instance);
+            await gate.Task;
+            await writer.ApplyVerdictAsync(tenant, code, ControlStatus.Compliant, "concorrente", VerdictSource.Telemetry);
+        }
+
+        var t1 = Task.Run(WriteAsync);
+        var t2 = Task.Run(WriteAsync);
+        gate.SetResult();   // dispara as duas ao mesmo tempo
+
+        // Nenhuma chamada lança — a corrida de inserção é RECUPERADA, não vira erro operacional.
+        var act = async () => await Task.WhenAll(t1, t2);
+        await act.Should().NotThrowAsync();
+
+        // Exatamente UMA linha para (tenant, subcategoria); estado final válido; sem mistura entre tenants.
+        await using var assert = new AegisScoreDbContext(opt, new SystemTenantContext(null));
+        var rows = await assert.TenantControlStates.IgnoreQueryFilters()
+            .Include(x => x.Subcategory)
+            .Where(x => x.Subcategory!.Code == code)
+            .ToListAsync();
+        rows.Should().HaveCount(1, "a corrida de inserção resolve em UMA única célula, sem duplicar");
+        rows[0].TenantId.Should().Be(tenant, "a linha pertence ao tenant que escreveu");
+        rows[0].Status.Should().Be(ControlStatus.Compliant);
+        rows[0].CurrentScore.Should().Be(10, "peso 10 do catálogo de teste, 100% Compliant");
+        rows[0].LastVerdictSource.Should().Be(VerdictSource.Telemetry);
+
+        (await assert.TenantControlStates.IgnoreQueryFilters().Select(x => x.TenantId).Distinct().ToListAsync())
+            .Should().OnlyContain(t => t == tenant, "nenhuma mistura entre tenants");
+    }
+}
+
 // ---- Suporte de teste (compartilhado pelas duas baterias) -----------------------------------------
 
 internal static class IngestionTestData
