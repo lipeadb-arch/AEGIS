@@ -97,6 +97,12 @@ public class AegisScoreDbContext : DbContext
     public DbSet<KnightAssessmentRun> KnightAssessmentRuns => Set<KnightAssessmentRun>();
     public DbSet<KnightIndicatorResult> KnightIndicatorResults => Set<KnightIndicatorResult>();
 
+    // [AEGIS-AUD-035/036/037] Fotografia AUDITÁVEL e IMUTÁVEL de postura (histórico compartilhado AEGIS
+    // Score/NIST e KNIGHT). Append-only: sem update/delete (reforçado por gatilho no PostgreSQL — ver migration).
+    public DbSet<PostureSnapshot> PostureSnapshots => Set<PostureSnapshot>();
+    public DbSet<PostureSnapshotControl> PostureSnapshotControls => Set<PostureSnapshotControl>();
+    public DbSet<PostureSnapshotIndicator> PostureSnapshotIndicators => Set<PostureSnapshotIndicator>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
@@ -121,6 +127,15 @@ public class AegisScoreDbContext : DbContext
         var missingRequirementsCmp = new ValueComparer<List<MissingRequirement>>(
             (x, y) => (x ?? new()).SequenceEqual(y ?? new()),
             v => v == null ? 0 : v.Aggregate(0, (h, m) => HashCode.Combine(h, m.GetHashCode())),
+            v => v == null ? new() : v.ToList());
+
+        // [AEGIS-AUD-035] Referências de evidência de um controle CONGELADO na fotografia → jsonb. PostureEvidenceRef
+        // é record (igualdade estrutural): SequenceEqual/GetHashCode bastam ao change tracker. Sem enum → converter
+        // padrão (não o enum-aware). Cópia rasa: o record é imutável, clonar a lista basta para o snapshot do tracker.
+        var evidenceRefs = JsonbConverter<List<PostureEvidenceRef>>();
+        var evidenceRefsCmp = new ValueComparer<List<PostureEvidenceRef>>(
+            (x, y) => (x ?? new()).SequenceEqual(y ?? new()),
+            v => v == null ? 0 : v.Aggregate(0, (h, e) => HashCode.Combine(h, e.GetHashCode())),
             v => v == null ? new() : v.ToList());
 
         b.Entity<NistSubcategory>().Property(x => x.InformativeReferences)
@@ -514,6 +529,64 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.RunId, x.IndicatorId }).IsUnique();
         });
 
+        // ============================================================
+        //  Fotografia AUDITÁVEL de postura — histórico imutável compartilhado
+        // ============================================================
+
+        // [AEGIS-AUD-035/036/037] A fotografia é tenant-owned e APPEND-ONLY. Índices tenant-leading por instante
+        // (lista cronológica) e por (tenant, tipo, instante) — a UI filtra por instrumento. A imutabilidade é
+        // garantida no serviço (sem update/delete) e REFORÇADA por um gatilho no PostgreSQL (ver a migration);
+        // a chave alternativa composta (Id, TenantId) é o alvo da FK dos filhos, para o banco recusar filho de
+        // tenant divergente (o mesmo idioma do KnightAssessmentRun).
+        b.Entity<PostureSnapshot>(e =>
+        {
+            e.Property(x => x.SchemaVersion).HasMaxLength(50).IsRequired();
+            e.Property(x => x.FormulaVersion).HasMaxLength(50).IsRequired();
+            e.Property(x => x.CatalogVersion).HasMaxLength(200).IsRequired();
+            e.Property(x => x.SemanticFamily).HasMaxLength(300).IsRequired();
+            e.Property(x => x.SourceLabel).HasMaxLength(200);
+            e.Property(x => x.ContentHash).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.CapturedAt });
+            e.HasIndex(x => new { x.TenantId, x.Type, x.CapturedAt });
+
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            e.HasMany(x => x.Controls).WithOne(c => c.Snapshot)
+                .HasForeignKey(c => new { c.SnapshotId, c.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.Indicators).WithOne(i => i.Snapshot)
+                .HasForeignKey(i => new { i.SnapshotId, i.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Controle NIST congelado: tenant-owned. Referências de evidência sanitizadas → jsonb (idioma das listas
+        // do catálogo). NOT NULL com default de lista VAZIA — "sem referência" é [], nunca NULL.
+        b.Entity<PostureSnapshotControl>(e =>
+        {
+            e.Property(x => x.SubcategoryCode).HasMaxLength(15).IsRequired();
+            e.Property(x => x.FunctionCode).HasMaxLength(5).IsRequired();
+            e.Property(x => x.EvidenceRefs)
+                .HasConversion(evidenceRefs, evidenceRefsCmp)
+                .HasColumnType("jsonb")
+                .HasDefaultValue(new List<PostureEvidenceRef>())
+                .IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.SnapshotId });
+        });
+
+        // Indicador KNIGHT congelado: tenant-owned. Listas de mapeamento → jsonb (mesmo idioma do KnightIndicatorResult).
+        b.Entity<PostureSnapshotIndicator>(e =>
+        {
+            e.Property(x => x.IndicatorId).HasMaxLength(40).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Evidence).HasMaxLength(2000);
+            e.Property(x => x.NistCodes)
+                .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
+            e.Property(x => x.MitreTechniques)
+                .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
+            e.HasIndex(x => new { x.TenantId, x.SnapshotId });
+        });
+
         // Multi-tenant isolation: every operational entity is scoped to the ambient tenant.
         // Fail-CLOSED: when no tenant is resolved (missing/invalid X-Tenant) the filter yields
         // no rows, instead of leaking every tenant's data. Seed/maintenance code that must span
@@ -555,6 +628,11 @@ public class AegisScoreDbContext : DbContext
         // AEGIS KNIGHT — execução e resultados são ITenantOwned (fail-closed, como o restante do modelo).
         b.Entity<KnightAssessmentRun>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<KnightIndicatorResult>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // Fotografia auditável de postura — pai e filhos são ITenantOwned (fail-closed): um tenant jamais lê,
+        // consulta ou compara a fotografia de outro.
+        b.Entity<PostureSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<PostureSnapshotControl>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<PostureSnapshotIndicator>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
     }
 
     // [AEGIS-AUD-008] Todos os quatro pontos de entrada públicos de SaveChanges são interceptados

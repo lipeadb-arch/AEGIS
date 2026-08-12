@@ -514,3 +514,11 @@ public record KnightAssessmentDto(
     IReadOnlyList<KnightCapabilityDto> Capabilities,
     KnightAdvisoryDto? Advisory,
     bool AdvisoryFromAi);
+
+/// <summary>
+/// [AEGIS-AUD-035] Requisição de PUBLICAÇÃO de uma fotografia auditável de postura. O cliente só escolhe o
+/// instrumento (<paramref name="Type"/>: "AegisScoreNist" ou "Knight") e, para KNIGHT, opcionalmente a fonte
+/// (<paramref name="Source"/>: "entra"/"google"/"demo"). NUNCA fornece score/cobertura/contagens/vereditos — o
+/// servidor constrói a fotografia exclusivamente pelas autoridades atuais do domínio.
+/// </summary>
+public record PublishPostureSnapshotRequest(string Type, string? Source);
