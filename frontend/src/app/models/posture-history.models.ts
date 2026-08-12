@@ -194,6 +194,41 @@ export function scoreDisplay(score: number | null): string {
   return score === null ? '—' : String(Math.round(score));
 }
 
+// ---- Exportação PDF/CSV (AEGIS-AUD-034) ----------------------------------------------------------
+
+export type PostureExportFormat = 'pdf' | 'csv';
+
+/** Sanitiza um nome de arquivo: remove separadores de caminho, controles e caracteres inválidos; nunca vazio. */
+export function sanitizeExportFilename(name: string): string {
+  const cleaned = name
+    .replace(/[\\/]/g, '_') // separadores de caminho
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, '') // caracteres de controle
+    .replace(/[<>:"|?*]/g, '_') // inválidos em nomes de arquivo
+    .trim();
+  return cleaned.length ? cleaned : 'aegis-postura';
+}
+
+/** Extrai o filename de um cabeçalho Content-Disposition (RFC 5987 `filename*` tem precedência); `null` se ausente. */
+export function parseContentDispositionFilename(header: string | null): string | null {
+  if (!header) return null;
+  const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
+  if (star?.[1]) {
+    try {
+      return sanitizeExportFilename(decodeURIComponent(star[1]));
+    } catch {
+      /* codificação inválida — cai para o filename simples */
+    }
+  }
+  const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(header);
+  return plain?.[1] ? sanitizeExportFilename(plain[1]) : null;
+}
+
+/** Nome de arquivo de fallback quando o servidor não envia Content-Disposition legível. */
+export function fallbackExportFilename(id: string, format: PostureExportFormat): string {
+  return `aegis-postura-${id.slice(0, 8)}.${format}`;
+}
+
 /** Delta com sinal explícito (ex.: "+3,2" / "-1,0"); "—" quando não há número. */
 export function signedDelta(value: number | null): string {
   if (value === null) return '—';

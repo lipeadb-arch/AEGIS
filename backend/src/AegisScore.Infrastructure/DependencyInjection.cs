@@ -7,6 +7,7 @@ using AegisScore.Application.Abstractions;
 using AegisScore.Application.Advisories;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Posture;
+using AegisScore.Application.Posture.Export;
 using AegisScore.Application.Queries;
 using AegisScore.Application.RiskAssessment;
 using AegisScore.Application.Scoring;
@@ -19,6 +20,7 @@ using AegisScore.Infrastructure.Documents;
 using AegisScore.Infrastructure.Knight;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Posture;
+using AegisScore.Infrastructure.Posture.Export;
 using AegisScore.Infrastructure.Queries;
 using AegisScore.Infrastructure.RiskAssessment;
 using AegisScore.Infrastructure.Scoring;
@@ -138,6 +140,10 @@ public static class DependencyInjection
         // leitura por tenant e comparação compatível. Scoped: usa o DbContext (Global Query Filter + stamping
         // fail-closed). A fotografia é APPEND-ONLY — o serviço não expõe update/delete.
         services.AddScoped<IPostureSnapshotService, PostureSnapshotService>();
+
+        // [AEGIS-AUD-034] Exportação executiva da fotografia (PDF/CSV) — abstração pequena e focada. Carrega a
+        // fotografia pelo Global Query Filter fail-closed, reverifica o ContentHash e renderiza. Somente leitura.
+        services.AddScoped<IPostureSnapshotExporter, PostureSnapshotExporter>();
 
         // Superfície de ingestão passiva de telemetria (webhook EDR/SIEM) — o CHAMADOR do EvaluateAsync.
         // Orquestração fina: normaliza o sinal, resolve o tenant e delega ao motor (fonte Telemetry).
