@@ -28,6 +28,11 @@
     <!-- Extração de texto de PDF (Document Hub / Govern) via PdfPig — 100% gerenciado, sem binário
          nativo. NB: o ID do pacote é "PdfPig"; "UglyToad.PdfPig" é só o namespace do código. -->
     <PackageReference Include="PdfPig" Version="0.1.15" />
+    <!-- [AEGIS-AUD-034] Geração do RELATÓRIO EXECUTIVO em PDF a partir da fotografia imutável de postura.
+         Edição CORE do PDFsharp/MigraDoc (empira, licença MIT): 100% gerenciada, sem GDI+/WPF/Office/navegador,
+         adequada a aplicação web e multiplataforma. A dependência vive SÓ neste projeto (o único que gera PDF);
+         a resolução de fonte usa um IFontResolver próprio (lê fontes já instaladas — sem GDI). -->
+    <PackageReference Include="PDFsharp-MigraDoc" Version="6.2.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\AegisScore.Application\AegisScore.Application.csproj" />

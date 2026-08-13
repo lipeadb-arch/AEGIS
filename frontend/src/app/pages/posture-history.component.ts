@@ -5,6 +5,7 @@ import { AuthService } from '../services/auth.service';
 import { PostureHistoryService } from '../services/posture-history.service';
 import {
   PostureComparisonResult,
+  PostureExportFormat,
   PostureSnapshotDetail,
   PostureSnapshotSummary,
   PostureSnapshotType,
@@ -23,7 +24,8 @@ import {
  * PostureHistoryComponent — histórico auditável COMPARTILHADO (AEGIS Score/NIST e AEGIS KNIGHT). Lista
  * cronológica de fotografias IMUTÁVEIS, publicação controlada por papel (Manager/TenantAdmin), detalhe e
  * comparação entre duas fotografias COMPATÍVEIS (senão, estado explícito de incompatibilidade — nunca um delta
- * enganoso). Não há score combinado entre instrumentos; "não avaliado" é sempre distinto de 0. Sem PDF/CSV.
+ * enganoso). Não há score combinado entre instrumentos; "não avaliado" é sempre distinto de 0. No detalhe, exporta
+ * a fotografia em PDF executivo ou CSV (AEGIS-AUD-034), sempre derivados da MESMA fotografia imutável.
  */
 @Component({
   selector: 'app-posture-history',
@@ -215,6 +217,23 @@ import {
                     <div class="mrow"><span class="k">Hash</span><span class="v mono hashfull">{{ d.summary.contentHash }}</span></div>
                   </div>
 
+                  <!-- Exportação executiva (AEGIS-AUD-034): PDF e CSV derivados desta MESMA fotografia. -->
+                  <div class="dl">
+                    <span class="dl-lbl">Exportar esta fotografia:</span>
+                    <button type="button" class="btn real sm" (click)="download('pdf', d.summary.id)" [disabled]="downloading() !== null">
+                      {{ downloading() === 'pdf' ? 'Baixando PDF…' : 'Baixar PDF' }}
+                    </button>
+                    <button type="button" class="btn ghost sm" (click)="download('csv', d.summary.id)" [disabled]="downloading() !== null">
+                      {{ downloading() === 'csv' ? 'Baixando CSV…' : 'Baixar CSV' }}
+                    </button>
+                    @if (downloadError()) {
+                      <span class="dl-err">
+                        {{ downloadError() }}
+                        <button type="button" class="btn ghost xs" (click)="retryDownload()" [disabled]="downloading() !== null">Tentar novamente</button>
+                      </span>
+                    }
+                  </div>
+
                   @if (d.controls.length) {
                     <div class="tbl-wrap">
                       <table class="tbl">
@@ -342,6 +361,10 @@ import {
       .mrow { display: flex; justify-content: space-between; gap: 10px; font-family: var(--mono); font-size: 11px; border-bottom: 1px solid rgba(122, 145, 190, 0.1); padding-bottom: 3px; }
       .mrow .k { color: var(--muted); } .mrow .v { color: var(--text); } .mrow .v.mono { color: var(--cyan); }
       .mrow .v.hashfull { word-break: break-all; font-size: 9.5px; }
+      .dl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 10px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; }
+      .dl-lbl { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+      .btn.xs { padding: 3px 9px; font-size: 10px; }
+      .dl-err { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; color: #ffb3c9; }
       .tbl-wrap { overflow-x: auto; margin-top: 10px; }
       .tbl { width: 100%; border-collapse: collapse; font-size: 11.5px; }
       .tbl th { text-align: left; font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -391,6 +414,11 @@ export class PostureHistoryComponent implements OnInit {
   readonly detail = signal<PostureSnapshotDetail | null>(null);
   readonly detailLoading = signal(false);
   readonly detailError = signal<string | null>(null);
+
+  // Exportação PDF/CSV: qual formato está baixando (bloqueia cliques duplicados) e o último erro.
+  readonly downloading = signal<PostureExportFormat | null>(null);
+  readonly downloadError = signal<string | null>(null);
+  private lastDownload: { id: string; format: PostureExportFormat } | null = null;
 
   protected readonly apiBase = environment.apiBase;
 
@@ -503,6 +531,7 @@ export class PostureHistoryComponent implements OnInit {
     this.detailId.set(s.id);
     this.detail.set(null);
     this.detailError.set(null);
+    this.downloadError.set(null);
     this.detailLoading.set(true);
     this.svc.get(s.id).subscribe({
       next: (d) => {
@@ -520,6 +549,49 @@ export class PostureHistoryComponent implements OnInit {
     this.detailId.set(null);
     this.detail.set(null);
     this.detailError.set(null);
+    this.downloadError.set(null);
+  }
+
+  /**
+   * Baixa PDF ou CSV da fotografia aberta. Impede cliques duplicados (só um download por vez), mostra estado de
+   * progresso, exibe erro claro com opção de nova tentativa e dispara o download por Blob via object URL — sempre
+   * revogado depois. O arquivo nunca é carregado como string.
+   */
+  download(format: PostureExportFormat, id: string): void {
+    if (this.downloading() !== null) return; // um download por vez
+    this.lastDownload = { id, format };
+    this.downloading.set(format);
+    this.downloadError.set(null);
+    this.svc.exportSnapshot(id, format).subscribe({
+      next: (file) => {
+        this.triggerBlobDownload(file.blob, file.filename);
+        this.downloading.set(null);
+      },
+      error: (e: Error) => {
+        this.downloadError.set(e.message);
+        this.downloading.set(null);
+      },
+    });
+  }
+
+  retryDownload(): void {
+    if (this.lastDownload && this.downloading() === null)
+      this.download(this.lastDownload.format, this.lastDownload.id);
+  }
+
+  private triggerBlobDownload(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      // Sempre revoga; adia um instante para o navegador capturar o download antes de liberar o object URL.
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }
   }
 
   shortHash(hash: string): string {

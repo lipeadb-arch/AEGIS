@@ -177,7 +177,8 @@ builder.Services.AddCors(o => o.AddPolicy(SpaCors, p => p
     // [AEGIS-AUD-009] AllowAnyHeader libera os headers de REQUISIÇÃO; para o SPA conseguir LER um header
     // de RESPOSTA cross-origin ele precisa ser explicitamente exposto. Sem isto o Angular não enxerga o
     // Retry-After do 409 de conflito benigno de rotação (front e API em portas distintas em dev).
-    .WithExposedHeaders("Retry-After")
+    // [AEGIS-AUD-034] Content-Disposition é exposto para o download PDF/CSV usar o filename do servidor.
+    .WithExposedHeaders("Retry-After", "Content-Disposition")
     .AllowCredentials()));   // necessário para o SPA enviar/receber o cookie HttpOnly de refresh
 
 // [AEGIS-AUD-053] Data Protection: provê IDataProtectionProvider para cifrar segredos de conector.

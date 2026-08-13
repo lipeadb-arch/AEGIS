@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Posture;
+using AegisScore.Application.Posture.Export;
 using AegisScore.Domain;
 
 namespace AegisScore.Api.Controllers;
@@ -21,11 +22,14 @@ namespace AegisScore.Api.Controllers;
 public class PostureSnapshotsController : ControllerBase
 {
     private readonly IPostureSnapshotService _service;
+    private readonly IPostureSnapshotExporter _exporter;
     private readonly ITenantContext _tenant;
 
-    public PostureSnapshotsController(IPostureSnapshotService service, ITenantContext tenant)
+    public PostureSnapshotsController(
+        IPostureSnapshotService service, IPostureSnapshotExporter exporter, ITenantContext tenant)
     {
         _service = service;
+        _exporter = exporter;
         _tenant = tenant;
     }
 
@@ -99,6 +103,38 @@ public class PostureSnapshotsController : ControllerBase
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
         var detail = await _service.GetAsync(id, ct);
         return detail is null ? NotFound() : Ok(detail);
+    }
+
+    /// <summary>
+    /// [AEGIS-AUD-034] Baixa o relatório executivo da fotografia derivado EXCLUSIVAMENTE dela: <c>?format=pdf</c>
+    /// (PDF executivo pt-BR) ou <c>?format=csv</c> (dados completos, UTF-8 com BOM, protegido contra CSV Injection).
+    /// Autoriza os MESMOS usuários que já leem a fotografia (inclusive Analyst) — só o class-level <c>[Authorize]</c>.
+    /// Tenant SEMPRE implícito no contexto (nunca por URL/query/corpo); a fotografia é lida pelo query filter
+    /// fail-closed, então a de outro tenant simplesmente não é encontrada. Antes de gerar, o ContentHash é
+    /// reverificado. Não grava nada e não altera a fotografia.
+    /// </summary>
+    /// <response code="200">Download do arquivo (Content-Type e nome seguros).</response>
+    /// <response code="400">Formato desconhecido (só pdf/csv).</response>
+    /// <response code="401">Tenant não resolvido no contexto.</response>
+    /// <response code="404">Fotografia inexistente ou de outro tenant.</response>
+    /// <response code="409">Integridade da fotografia não confere (hash divergente) — exportação bloqueada.</response>
+    [HttpGet("{id:guid}/export")]
+    public async Task<IActionResult> Export(Guid id, [FromQuery] string? format, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        if (!PostureExportFormats.TryParse(format, out var fmt))
+            return BadRequest($"Formato de exportação desconhecido: '{format}'. Use 'pdf' ou 'csv'.");
+
+        try
+        {
+            var result = await _exporter.ExportAsync(id, fmt, ct);
+            return result is null ? NotFound() : File(result.Content, result.ContentType, result.FileName);
+        }
+        catch (PostureSnapshotIntegrityException ex)
+        {
+            return Conflict(ex.Message);
+        }
     }
 
     /// <summary>
