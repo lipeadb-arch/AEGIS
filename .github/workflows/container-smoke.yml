@@ -1,0 +1,171 @@
+# [Homologação] Valida a imagem ÚNICA de homologação em Linux real (o que não pôde rodar localmente por
+# ausência de Docker): PDF/acentos no Linux, build da imagem do Dockerfile atual e um smoke do container
+# (não-root + grupo 1000 + secret file, migrator -> bootstrap -> API, health e SPA). NÃO é uma suíte geral.
+name: container-smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'render.yaml'
+      - 'global.json'
+      - 'backend/**'
+      - 'frontend/**'
+      - '.github/workflows/container-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  container-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DOCKER_BUILDKIT: '1'
+      IMAGE: aegis-homolog:ci
+      NET: aegis-ci-net
+      PG: aegis-ci-pg
+      APP: aegis-ci-app
+      SECRET_PATH: /etc/secrets/aegis-dataprotection.pfx
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # 1) PDF no Linux: instala DejaVu e roda SÓ os testes de exportação (geração + acentos).
+      - name: Install DejaVu fonts
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+
+      - name: PDF export tests on Linux (only PostureSnapshotExportTests)
+        run: >
+          dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
+          -c Release --filter "FullyQualifiedName~PostureSnapshotExportTests"
+
+      # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
+      - name: Build homologation image
+        run: docker build -t "$IMAGE" .
+
+      # 3) Smoke do container: rede + Postgres descartáveis, PKCS#12 sintético (grupo 1000, 0640),
+      #    montado em /etc/secrets, app com valores 100% sintéticos. TLS interno desabilitado só aqui.
+      - name: Container smoke (non-root, secret file, migrator -> bootstrap -> API, health, SPA)
+        run: |
+          set -uo pipefail
+
+          # --- valores SINTÉTICOS (nunca impressos) ---
+          PGPASS="$(openssl rand -hex 16)"
+          PFXPASS="$(openssl rand -hex 16)"
+          JWTKEY="$(openssl rand -base64 48)"
+          ADMINPASS="ci homologacao $(openssl rand -hex 8)"
+          ADMIN_EMAIL="admin@ci.example.com"
+
+          # --- rede + Postgres descartável ---
+          docker network create "$NET" || { echo "falha ao criar rede"; exit 1; }
+          docker run -d --name "$PG" --network "$NET" \
+            -e POSTGRES_PASSWORD="$PGPASS" -e POSTGRES_DB=aegis_ci postgres:18 \
+            || { echo "falha ao subir postgres"; exit 1; }
+
+          echo "== aguardando Postgres"
+          pg_ok=0
+          for i in $(seq 1 60); do
+            if docker exec "$PG" pg_isready -U postgres -d aegis_ci >/dev/null 2>&1; then pg_ok=1; echo "pg pronto em ${i}s"; break; fi
+            sleep 1
+          done
+          [ "$pg_ok" = "1" ] || { echo "postgres nao ficou pronto"; exit 1; }
+
+          # --- PKCS#12 sintético: dono root, grupo 1000, 0640 (equivalente ao secret file do Render) ---
+          mkdir -p secrets
+          openssl req -x509 -newkey rsa:2048 -keyout secrets/key.pem -out secrets/cert.pem \
+            -days 2 -nodes -subj "/CN=aegis-ci" >/dev/null 2>&1 || { echo "falha ao gerar cert"; exit 1; }
+          openssl pkcs12 -export -out secrets/aegis-dp.pfx -inkey secrets/key.pem -in secrets/cert.pem \
+            -passout pass:"$PFXPASS" || { echo "falha ao empacotar pkcs12"; exit 1; }
+          sudo chown root:1000 secrets/aegis-dp.pfx
+          sudo chmod 0640 secrets/aegis-dp.pfx
+          echo "== permissoes do secret file (esperado root 1000 -rw-r-----):"
+          ls -l secrets/aegis-dp.pfx
+
+          # --- sobe a imagem com valores sintéticos; TLS interno DESABILITADO só nesta conexao descartavel ---
+          docker run -d --name "$APP" --network "$NET" -p 8080:8080 \
+            -e "ConnectionStrings__AegisScore=Host=$PG;Port=5432;Database=aegis_ci;Username=postgres;Password=$PGPASS;SSL Mode=Disable" \
+            -e "Jwt__SigningKey=$JWTKEY" \
+            -e "DataProtection__Certificate__Path=$SECRET_PATH" \
+            -e "DataProtection__Certificate__Password=$PFXPASS" \
+            -e "Bootstrap__Enabled=true" \
+            -e "Bootstrap__AdminEmail=$ADMIN_EMAIL" \
+            -e "Bootstrap__AdminPassword=$ADMINPASS" \
+            -e "Bootstrap__TenantName=Cliente CI" \
+            -e "PORT=8080" \
+            -v "$PWD/secrets/aegis-dp.pfx:$SECRET_PATH:ro" \
+            "$IMAGE" || { echo "falha ao subir a app"; exit 1; }
+
+          # --- aguarda readiness (migrator roda ANTES da API) ---
+          HDR='X-Forwarded-Proto: https'   # simula o proxy TLS da hospedagem (evita o redirect HTTPS)
+          ready=0
+          for i in $(seq 1 90); do
+            if [ "$(docker inspect -f '{{.State.Running}}' "$APP" 2>/dev/null)" != "true" ]; then echo "container encerrou cedo"; break; fi
+            code="$(curl -s -o /dev/null -w '%{http_code}' -H "$HDR" http://localhost:8080/health/ready 2>/dev/null || true)"
+            if [ "$code" = "200" ]; then ready=1; echo "ready em ~$((i*2))s"; break; fi
+            sleep 2
+          done
+
+          # --- gates ---
+          fail=0
+          gate() { if [ "$2" = "1" ]; then echo "[PASS] $1"; else echo "[FAIL] $1 ${3:-}"; fail=1; fi; }
+
+          gate "/health/ready responde 200" "$ready"
+
+          uidv="$(docker exec "$APP" id -u 2>/dev/null || echo -1)"
+          gate "container NAO roda como root" "$([ "$uidv" != "0" ] && [ "$uidv" != "-1" ] && echo 1 || echo 0)" "uid=$uidv"
+
+          gids="$(docker exec "$APP" id -G 2>/dev/null || echo '')"
+          gate "processo tem grupo suplementar 1000" "$(echo " $gids " | grep -q ' 1000 ' && echo 1 || echo 0)" "groups=$gids"
+
+          if docker exec "$APP" sh -c "test -r $SECRET_PATH" 2>/dev/null; then rd=1; else rd=0; fi
+          gate "app (nao-root) LE o PKCS#12 montado" "$rd"
+
+          logs="$(docker logs "$APP" 2>&1)"
+          echo "$logs" | grep -q "Banco pronto para a API" && m=1 || m=0
+          gate "migrator concluiu (verificacao aprovada) antes da API" "$m"
+          echo "$logs" | grep -q "Bootstrap conclu" && b=1 || b=0
+          gate "bootstrap criou o primeiro acesso" "$b"
+
+          cnt="$(docker exec "$PG" psql -U postgres -d aegis_ci -tAc 'SELECT count(*) FROM "IdentityAccounts" WHERE "PlatformRole"=1' 2>/dev/null | tr -d '[:space:]')"
+          gate "1 PlatformAdmin persistido no banco" "$([ "$cnt" = "1" ] && echo 1 || echo 0)" "count=$cnt"
+
+          codeL="$(curl -s -o /dev/null -w '%{http_code}' -H "$HDR" http://localhost:8080/health/live 2>/dev/null || true)"
+          gate "/health/live responde 200" "$([ "$codeL" = "200" ] && echo 1 || echo 0)" "code=$codeL"
+
+          root="$(curl -s -H "$HDR" http://localhost:8080/ 2>/dev/null || true)"
+          echo "$root" | grep -qE 'app-root|<base href' && rs=1 || rs=0
+          gate "/ entrega o shell do Angular" "$rs"
+
+          codeH="$(curl -s -o /dev/null -w '%{http_code}' -H "$HDR" http://localhost:8080/history 2>/dev/null || true)"
+          hist="$(curl -s -H "$HDR" http://localhost:8080/history 2>/dev/null || true)"
+          { [ "$codeH" = "200" ] && echo "$hist" | grep -qE 'app-root|<base href'; } && hs=1 || hs=0
+          gate "/history entrega o SPA (fallback, nao 404)" "$hs" "code=$codeH"
+
+          run="$(docker inspect -f '{{.State.Running}}' "$APP" 2>/dev/null || echo false)"
+          gate "container permanece saudavel durante o smoke" "$([ "$run" = "true" ] && echo 1 || echo 0)" "running=$run"
+
+          echo "-----"
+          if [ "$fail" != "0" ]; then echo "SMOKE DO CONTAINER FALHOU"; exit 1; fi
+          echo "SMOKE DO CONTAINER OK"
+
+      # Coleta logs úteis e remove containers/rede/arquivos temporários — sempre.
+      - name: Logs and cleanup
+        if: always()
+        run: |
+          echo "== logs da app (tail) =="; docker logs "$APP" 2>&1 | tail -120 || true
+          echo "== logs do postgres (tail) =="; docker logs "$PG" 2>&1 | tail -30 || true
+          docker rm -f "$APP" "$PG" >/dev/null 2>&1 || true
+          docker network rm "$NET" >/dev/null 2>&1 || true
+          rm -rf secrets || true
