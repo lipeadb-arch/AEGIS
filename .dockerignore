@@ -1,0 +1,43 @@
+# Contexto de build enxuto: exclui artefatos pesados e irrelevantes. O Dockerfile só COPIA
+# global.json, backend/ e frontend/ — o resto nunca entra na imagem.
+
+# .NET
+**/bin/
+**/obj/
+
+# Node / Angular
+**/node_modules/
+frontend/dist/
+frontend/.angular/
+
+# wwwroot é PRODUZIDO no build (Angular → wwwroot da API); nunca vem do host.
+backend/src/AegisScore.Api/wwwroot/
+
+# Git e metadados
+.git/
+.gitattributes
+.gitignore
+
+# IDE / ferramentas
+.vs/
+.idea/
+.vscode/
+.claude/
+*.user
+**/*.user
+
+# Documentação e artefatos de contexto (não fazem parte da imagem)
+*.md
+docs/
+samples/
+scripts/
+
+# Segredos locais que jamais devem entrar na imagem
+**/*.pfx
+**/*.p12
+.env
+**/appsettings.*.local.json
+
+# SO
+.DS_Store
+Thumbs.db

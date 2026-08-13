@@ -27,4 +27,11 @@ public static class MigratorExitCode
 
     /// <summary>Advisory lock não adquirido dentro do timeout — outra execução está em andamento.</summary>
     public const int LockNotAcquired = 6;
+
+    /// <summary>
+    /// [Homologação] Bootstrap do primeiro administrador ativado por configuração, mas falhou: configuração
+    /// inválida, ou estado do banco parcial/conflitante (fail-closed — nunca promove silenciosamente uma
+    /// conta existente). Migrations e seed podem já ter sido aplicados; a API NÃO deve subir.
+    /// </summary>
+    public const int BootstrapFailure = 7;
 }

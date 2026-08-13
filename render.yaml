@@ -1,0 +1,83 @@
+# =============================================================================
+# AEGIS Score — Blueprint de homologação para Render (https://render.com)
+#
+# UM único Web Service Docker: a API .NET 10 serve o SPA Angular no MESMO domínio.
+# O PostgreSQL é EXTERNO (ex.: Neon, com TLS) — NÃO é provisionado aqui.
+#
+# Este arquivo NÃO contém segredo. Toda variável sensível é declarada com `sync: false`
+# (o valor é definido no painel do Render, nunca versionado). Ajuste `plan`/`region`.
+#
+# ⚠️ Este Blueprint descreve a implantação; NÃO provisiona Neon nem executa deploy.
+# =============================================================================
+services:
+  - type: web
+    name: aegis-score
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter            # ajuste conforme necessidade (starter/standard/...)
+    region: oregon           # ajuste para a região desejada
+    autoDeploy: false        # deploy manual durante a homologação
+    # Readiness: PostgreSQL + migrations + catálogo íntegro (só leitura). O Render só
+    # roteia tráfego quando /health/ready devolve 200. (Liveness fica em /health/live.)
+    healthCheckPath: /health/ready
+
+    # Arquivo secreto montado em /etc/secrets/<nome> — suba o PKCS#12 do Data Protection
+    # com este nome exato no painel (Environment → Secret Files).
+    # (Bloco ilustrativo; o Render pede o CONTEÚDO do arquivo no painel, não versionado.)
+
+    envVars:
+      # ---- Ambiente ----
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: DOTNET_ENVIRONMENT           # o DbMigrator lê este; a API lê o ASPNETCORE_ENVIRONMENT
+        value: Production
+      # PORT é injetada automaticamente pelo Render; o Program.cs a respeita (não declarar aqui).
+
+      # ---- Banco (PostgreSQL EXTERNO — ex.: Neon, TLS OBRIGATÓRIO) ----
+      # Use a connection string fornecida pelo provedor, em formato Npgsql (chave=valor), e prefira
+      # VERIFICAR a identidade do servidor (cadeia + hostname) — nunca desabilite a validação:
+      #   SSL Mode=VerifyFull
+      # Ex.: Host=<host>.neon.tech;Database=<db>;Username=<user>;Password=<pwd>;SSL Mode=VerifyFull
+      # O Neon usa CA pública, coberta pelo trust store do container. Se o provedor exigir uma CA raiz
+      # própria, aponte "Root Certificate=<caminho-do-.crt>" — não relaxe a verificação.
+      # ⚠️ NÃO use "Trust Server Certificate=true": cifra o tráfego mas aceita QUALQUER certificado (MITM).
+      # Ref.: https://www.npgsql.org/doc/security.html#encryption-ssltls
+      - key: ConnectionStrings__AegisScore
+        sync: false
+
+      # ---- JWT (assinatura HS256; >= 32 bytes) ----
+      - key: Jwt__SigningKey
+        sync: false
+
+      # ---- Data Protection (envelope do key ring — OBRIGATÓRIO em Production) ----
+      # Caminho do PKCS#12 montado como Secret File; a senha vem separada (nunca versionada).
+      - key: DataProtection__Certificate__Path
+        value: /etc/secrets/aegis-dataprotection.pfx
+      - key: DataProtection__Certificate__Password
+        sync: false
+
+      # ---- Bootstrap do PRIMEIRO administrador (opcional; ative só no 1º deploy) ----
+      # Com Enabled=true, o DbMigrator cria a 1ª IdentityAccount (PlatformAdmin) + tenant +
+      # membership (TenantAdmin). É idempotente e fail-closed. Após o 1º deploy, volte a "false".
+      - key: Bootstrap__Enabled
+        value: "false"
+      - key: Bootstrap__AdminEmail
+        sync: false
+      - key: Bootstrap__AdminPassword
+        sync: false
+      - key: Bootstrap__TenantName
+        sync: false
+      - key: Bootstrap__TenantSlug         # opcional; se omitido, é derivado do TenantName
+        sync: false
+
+    # ---- (Opcional) Persistência de uploads do Document Hub ----
+    # Sem disco, os documentos vão para /app/document-store (efêmero, recriado a cada deploy).
+    # Para PERSISTIR, descomente o disco abaixo e aponte DocumentStorage__RootPath para o mountPath.
+    # disk:
+    #   name: aegis-document-store
+    #   mountPath: /var/aegis-data
+    #   sizeGB: 1
+    # (e adicione em envVars:)
+    #   - key: DocumentStorage__RootPath
+    #     value: /var/aegis-data/document-store
