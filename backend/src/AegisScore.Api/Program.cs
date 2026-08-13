@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
@@ -21,6 +22,12 @@ using AegisScore.Infrastructure.DataProtection;
 using AegisScore.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// [Homologação em container] Respeita a porta fornecida pela hospedagem (Render/Heroku expõem $PORT).
+// Sem PORT (desenvolvimento local), o binding padrão de launchSettings/ASPNETCORE_URLS segue valendo.
+var listenPort = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrWhiteSpace(listenPort))
+    builder.WebHost.UseUrls($"http://0.0.0.0:{listenPort}");
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -169,9 +176,30 @@ builder.Services.AddHostedService<PolicyIngestionWorker>();
 // Aegis Score: worker que grava a foto agregada diária por tenant (série do gráfico de tendência).
 builder.Services.AddHostedService<AegisScoreSnapshotWorker>();
 
+// [Homologação em container] Atrás do proxy HTTPS da hospedagem: honra X-Forwarded-Proto/For para que
+// Request.Scheme reflita https (cookie Secure do refresh e HttpsRedirection corretos) e o IP do cliente
+// seja o real (rate limiting por IP). O proxy da hospedagem tem IP dinâmico e desconhecido de antemão;
+// sem limpar estas listas o middleware descartaria os cabeçalhos. A borda pública é o proxy, não a app.
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.KnownIPNetworks.Clear();
+    o.KnownProxies.Clear();
+});
+
 const string SpaCors = "aegis-spa";
+// [Homologação em container] Allowlist CONFIGURÁVEL (Cors:AllowedOrigins). O caminho principal de produção
+// é SAME-ORIGIN — o SPA é servido pela própria API —, então a lista pode ficar vazia em produção (CORS não
+// se aplica a same-origin). As origens de localhost do ng serve entram SOMENTE em Development. NUNCA se usa
+// AllowAnyOrigin com credenciais (proibido pelo navegador e inseguro).
+var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+if (builder.Environment.IsDevelopment())
+    corsOrigins = corsOrigins
+        .Concat(new[] { "http://localhost:5173", "http://localhost:5273", "http://localhost:3000" })
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 builder.Services.AddCors(o => o.AddPolicy(SpaCors, p => p
-    .WithOrigins("http://localhost:5173", "http://localhost:5273", "http://localhost:3000")
+    .WithOrigins(corsOrigins)
     .AllowAnyHeader()
     .AllowAnyMethod()
     // [AEGIS-AUD-009] AllowAnyHeader libera os headers de REQUISIÇÃO; para o SPA conseguir LER um header
@@ -265,14 +293,24 @@ using (var scope = app.Services.CreateScope())
 // vazar detalhes internos (stack trace, mensagem) ao cliente.
 app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 
+// [Homologação em container] Aplica os cabeçalhos encaminhados ANTES de HSTS/HttpsRedirection e da
+// autenticação: assim todo o pipeline enxerga o esquema (https) e o IP reais vindos do proxy da hospedagem.
+app.UseForwardedHeaders();
+
 // [Baixo] HSTS + redirect HTTPS apenas FORA de Development. Em dev o loop roda em http://localhost
 // (cookie Secure é isento no localhost) e habilitá-los ali quebraria o SPA. Em produção ambos são
-// obrigatórios — o cookie Secure do refresh depende de HTTPS fim a fim.
+// obrigatórios — o cookie Secure do refresh depende de HTTPS fim a fim. Atrás do proxy, o
+// ForwardedHeaders já marcou Request.IsHttps=true, então não há loop de redirecionamento.
 if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
     app.UseHttpsRedirection();
 }
+
+// [Homologação em container] Serve os arquivos estáticos do Angular (wwwroot) no MESMO domínio da API.
+// Roda antes da autenticação: os assets do shell (JS/CSS) são públicos e fazem short-circuit aqui, sem
+// passar pela FallbackPolicy. Em desenvolvimento (SPA no ng serve) o wwwroot pode não existir — no-op.
+app.UseStaticFiles();
 
 if (app.Environment.IsDevelopment())
 {
@@ -303,5 +341,11 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 }).AllowAnonymous();
 
 app.MapControllers();
+
+// [Homologação em container] Fallback do roteamento do Angular: qualquer rota que NÃO case com /api/*,
+// /health/* ou um arquivo estático existente entrega o index.html. É o que faz o refresh e o deep-link de
+// rotas aninhadas (ex.: /history) devolverem o SPA em vez de 404. AllowAnonymous porque a FallbackPolicy
+// exige autenticação por padrão e o shell do SPA é público (a autenticação ocorre dentro do app).
+app.MapFallbackToFile("index.html").AllowAnonymous();
 
 app.Run();

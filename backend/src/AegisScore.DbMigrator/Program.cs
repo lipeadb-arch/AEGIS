@@ -198,6 +198,27 @@ public static class Program
         }
 
         log.LogInformation("Verificação final aprovada. Banco pronto para a API.");
+
+        // [Homologação] Bootstrap OPCIONAL do primeiro administrador (ativado por configuração). Só no
+        // caminho de mutação — verify-only jamais escreve. Uma falha aqui derruba o sucesso do migrator e,
+        // pela sequência do entrypoint (migrator && API), impede a API de subir sobre um bootstrap incompleto.
+        if (!options.VerifyOnly)
+        {
+            var bootstrap = BootstrapOptions.Load(configuration);
+            if (bootstrap.Enabled)
+            {
+                var dbOptions = scope.ServiceProvider.GetRequiredService<DbContextOptions<AegisScoreDbContext>>();
+                var bootstrapResult = await AdminBootstrapper.RunAsync(dbOptions, bootstrap, log);
+                if (bootstrapResult != MigratorExitCode.Success)
+                    return bootstrapResult;
+            }
+            else
+            {
+                log.LogInformation(
+                    "Bootstrap do primeiro administrador desabilitado (Bootstrap:Enabled ausente/false).");
+            }
+        }
+
         return MigratorExitCode.Success;
     }
 
