@@ -82,6 +82,37 @@ public record UserDto(
     Guid Id, Guid TenantId, string Email, string DisplayName, string Role,
     bool IsActive, DateTimeOffset CreatedAt, DateTimeOffset? LastLoginAt);
 
+/// <summary>
+/// Um acesso na LISTAGEM tenant-scoped (<c>GET /api/v1/users</c>). Sem <c>TenantId</c> (implícito no
+/// contexto) e sem hash. <paramref name="HasLocalCredential"/> é só um booleano — a UI o usa para explicar
+/// por que alguém entra pelo provedor corporativo, sem revelar nada do segredo.
+/// </summary>
+public record TenantUserDto(
+    Guid Id, string Email, string DisplayName, string Role, bool IsActive,
+    bool HasLocalCredential, DateTimeOffset CreatedAt, DateTimeOffset? LastLoginAt);
+
+/// <summary>
+/// Onboarding de usuário no tenant ambiente (<c>POST /api/v1/platform/tenant-users</c>): e-mail, nome,
+/// papel tenant-scoped e senha inicial OPCIONAL. ⚠️ A senha só é aplicada quando a identidade é CRIADA — se
+/// a pessoa já existe, ela é IGNORADA (conceder acesso nunca redefine uma credencial existente).
+/// </summary>
+public record OnboardTenantUserRequest(
+    string Email, string DisplayName, TenantRole Role, string? InitialPassword = null);
+
+/// <summary>
+/// Resposta do onboarding. <paramref name="IdentityExisted"/> deixa EXPLÍCITO se a pessoa já existia (e
+/// portanto a senha não foi alterada); <paramref name="Outcome"/> discrimina o desfecho para a UI.
+/// </summary>
+public record OnboardTenantUserResponse(TenantUserDto User, string Outcome, bool IdentityExisted);
+
+/// <summary>
+/// Edição tenant-scoped de um membership: nome e/ou papel. Campos ausentes (<c>null</c>) NÃO são alterados.
+/// </summary>
+public record UpdateMembershipRequest(string? DisplayName = null, TenantRole? Role = null);
+
+/// <summary>Troca da PRÓPRIA senha. Ancorada na sessão (claim <c>account_id</c>) — nunca num id do corpo.</summary>
+public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+
 // ---- Framework ----
 public record FrameworkDto(Guid Id, string Name, string? Source, IReadOnlyList<FunctionDto> Functions);
 public record FunctionDto(string Code, string Name, string Definition, IReadOnlyList<CategoryDto> Categories);

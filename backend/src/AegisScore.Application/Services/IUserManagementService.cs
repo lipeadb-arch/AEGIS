@@ -46,7 +46,11 @@ public enum AccessGrantStatus
     RoleNotAssignable = 4,
 }
 
-/// <summary>Projeção SEGURA de um membership. NUNCA carrega <c>PasswordHash</c> (a credencial é da pessoa).</summary>
+/// <summary>
+/// Projeção SEGURA de um membership. NUNCA carrega <c>PasswordHash</c> (a credencial é da pessoa);
+/// <paramref name="HasLocalCredential"/> é só o booleano derivado, para a UI distinguir conta local de
+/// federated-only sem revelar o segredo.
+/// </summary>
 public record UserSummary(
     Guid Id,
     Guid TenantId,
@@ -55,7 +59,8 @@ public record UserSummary(
     TenantRole Role,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? LastLoginAt);
+    DateTimeOffset? LastLoginAt,
+    bool HasLocalCredential = false);
 
 /// <summary>
 /// Resultado da concessão. <paramref name="User"/> só vem preenchido no sucesso; <paramref name="Detail"/>
@@ -73,6 +78,78 @@ public record AccessGrantResult(
     public static AccessGrantResult Rejected(AccessGrantStatus status, string? detail = null) =>
         new(status, null, detail);
 }
+
+// ---- Listagem tenant-scoped -------------------------------------------------
+
+/// <summary>
+/// Um acesso (membership) na LISTAGEM tenant-scoped. Projeção SEGURA: nunca carrega <c>PasswordHash</c>.
+/// <paramref name="HasLocalCredential"/> é só um booleano (a pessoa entra por senha local ou pelo provedor
+/// corporativo?) — útil para a UI explicar por que alguém não troca a própria senha, sem revelar o segredo.
+/// </summary>
+public record TenantUserListItem(
+    Guid Id,
+    string Email,
+    string DisplayName,
+    TenantRole Role,
+    bool IsActive,
+    bool HasLocalCredential,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? LastLoginAt);
+
+// ---- Administração de membership (editar / desativar / reativar) ------------
+
+/// <summary>
+/// Desfecho da administração de um membership. Como na concessão, conflito e validação são resultados
+/// ESPERADOS do fluxo (viajam como VALOR, não exceção). Só <see cref="TenantSecurityException"/> sobe.
+/// </summary>
+public enum MembershipAdminStatus
+{
+    /// <summary>Nome/papel/estado aplicados (idempotente).</summary>
+    Updated = 0,
+
+    /// <summary>Membership inexistente OU de OUTRO tenant — os dois são indistinguíveis por design (404).</summary>
+    NotFound = 1,
+
+    /// <summary>Nome de exibição ausente ou acima do teto (400).</summary>
+    InvalidDisplayName = 2,
+
+    /// <summary>Papel não atribuível por esta superfície (403) — ver a allowlist em <see cref="TenantAccessPolicy"/>.</summary>
+    RoleNotAssignable = 3,
+
+    /// <summary>A pessoa tentou DESATIVAR o próprio acesso — barrado para não se trancar para fora (409).</summary>
+    SelfDeactivationForbidden = 4,
+
+    /// <summary>A pessoa tentou REBAIXAR o próprio papel de administrador — barrado (409).</summary>
+    SelfDemotionForbidden = 5,
+
+    /// <summary>A operação deixaria o tenant SEM nenhum administrador ativo — barrado (409).</summary>
+    LastAdminProtected = 6,
+}
+
+/// <summary>Resultado da administração de membership. <paramref name="User"/> só vem no sucesso.</summary>
+public record MembershipAdminResult(MembershipAdminStatus Status, UserSummary? User = null, string? Detail = null)
+{
+    public bool Succeeded => Status is MembershipAdminStatus.Updated;
+
+    public static MembershipAdminResult Ok(UserSummary user) => new(MembershipAdminStatus.Updated, user);
+
+    public static MembershipAdminResult Rejected(MembershipAdminStatus status, string? detail = null) =>
+        new(status, null, detail);
+}
+
+/// <summary>
+/// Edição tenant-scoped de um membership: nome de exibição e/ou papel. Campos <c>null</c> = "não mexer".
+/// <paramref name="ActorAccountId"/> é a PESSOA autenticada (claim <c>account_id</c>), usada só para as
+/// guardas de auto-rebaixamento — nunca para descobrir o alvo, que é sempre o <paramref name="MembershipId"/>.
+/// </summary>
+public record UpdateMembershipCommand(
+    Guid MembershipId, Guid ActorAccountId, string? DisplayName, TenantRole? Role);
+
+/// <summary>
+/// Desativação (<c>Active=false</c>) ou reativação (<c>Active=true</c>) tenant-scoped de um membership.
+/// <paramref name="ActorAccountId"/> alimenta a guarda de auto-desativação.
+/// </summary>
+public record SetMembershipStatusCommand(Guid MembershipId, Guid ActorAccountId, bool Active);
 
 // ---- Porta ------------------------------------------------------------------
 
@@ -120,4 +197,38 @@ public interface IUserManagementService
     /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
     Task<AccessGrantResult> GrantAccessAsync(
         GrantTenantAccessCommand command, CancellationToken ct = default);
+
+    /// <summary>
+    /// Lista os acessos (memberships) do tenant AMBIENTE, com dados SEGUROS (sem hash). Respeita o Global
+    /// Query Filter — jamais devolve membership de outro tenant. Ordem estável (mais antigo primeiro).
+    /// </summary>
+    /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
+    Task<IReadOnlyList<TenantUserListItem>> ListUsersAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Aplica nome e/ou papel a um membership do tenant ambiente. Alvo por <see cref="UpdateMembershipCommand.MembershipId"/>
+    /// (query filter → outro tenant é o MESMO 404 de inexistente). Invariantes:
+    /// <list type="bullet">
+    /// <item>a pessoa NÃO pode rebaixar o PRÓPRIO papel de administrador (<see cref="MembershipAdminStatus.SelfDemotionForbidden"/>);</item>
+    /// <item>rebaixar o ÚLTIMO administrador ativo é barrado (<see cref="MembershipAdminStatus.LastAdminProtected"/>),
+    /// correto sob concorrência real (trava de linha no PostgreSQL);</item>
+    /// <item>reduzir privilégio REVOGA os refresh tokens ativos daquele membership (as sessões não sobrevivem à queda de papel).</item>
+    /// </list>
+    /// </summary>
+    /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
+    Task<MembershipAdminResult> UpdateMembershipAsync(
+        UpdateMembershipCommand command, CancellationToken ct = default);
+
+    /// <summary>
+    /// Desativa (reversível — nunca exclusão física) ou reativa um membership do tenant ambiente. Invariantes:
+    /// <list type="bullet">
+    /// <item>a pessoa NÃO pode desativar o PRÓPRIO acesso (<see cref="MembershipAdminStatus.SelfDeactivationForbidden"/>);</item>
+    /// <item>desativar o ÚLTIMO administrador ativo é barrado (<see cref="MembershipAdminStatus.LastAdminProtected"/>),
+    /// correto sob concorrência real;</item>
+    /// <item>desativar REVOGA os refresh tokens ativos do membership; reativar NÃO restaura sessões antigas.</item>
+    /// </list>
+    /// </summary>
+    /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
+    Task<MembershipAdminResult> SetMembershipStatusAsync(
+        SetMembershipStatusCommand command, CancellationToken ct = default);
 }

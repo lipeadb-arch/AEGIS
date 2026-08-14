@@ -5,6 +5,7 @@ using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Services;
 using AegisScore.Domain;
+using AegisScore.Infrastructure.Auth;
 using AegisScore.Infrastructure.Persistence;
 
 namespace AegisScore.Api.Controllers;
@@ -54,7 +55,15 @@ public class TenantsController : ControllerBase
     [Authorize(Policy = PlatformAuthorization.PolicyName)]
     public async Task<ActionResult<IdResponse>> Create(CreateTenantRequest req, CancellationToken ct)
     {
-        var result = await _onboarding.CreateTenantAsync(new CreateTenantCommand(req.Name, req.Slug), ct);
+        // O criador (claim account_id) recebe um membership TenantAdmin no ambiente novo — atômico, no
+        // serviço. A pessoa vem SEMPRE do token, nunca do corpo. O nome de exibição usa a claim `name`
+        // (fallback ao e-mail, resolvido no serviço).
+        if (!Guid.TryParse(User.FindFirst(JwtTokenService.AccountClaim)?.Value, out var creatorAccountId))
+            return Unauthorized(new { title = "Token sem conta de identidade.", status = 401 });
+        var creatorDisplayName = User.FindFirst("name")?.Value;
+
+        var result = await _onboarding.CreateTenantAsync(
+            new CreateTenantCommand(req.Name, req.Slug, creatorAccountId, creatorDisplayName), ct);
 
         return result.Status switch
         {

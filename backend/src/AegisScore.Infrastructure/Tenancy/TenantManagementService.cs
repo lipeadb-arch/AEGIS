@@ -37,17 +37,20 @@ public sealed class TenantManagementService : ITenantManagementService
         "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly AegisScoreDbContext _db;
+    private readonly DbContextOptions<AegisScoreDbContext> _dbOptions;
     private readonly ITenantContext _tenant;
     private readonly IConnectorSecretProtector _secrets;
     private readonly ILogger<TenantManagementService> _log;
 
     public TenantManagementService(
         AegisScoreDbContext db,
+        DbContextOptions<AegisScoreDbContext> dbOptions,
         ITenantContext tenant,
         IConnectorSecretProtector secrets,
         ILogger<TenantManagementService> log)
     {
         _db = db;
+        _dbOptions = dbOptions;
         _tenant = tenant;
         _secrets = secrets;
         _log = log;
@@ -64,38 +67,61 @@ public sealed class TenantManagementService : ITenantManagementService
         if (name.Length == 0)
             return TenantProvisioningResult.InvalidSlug(slug);   // nome vazio: mesmo desfecho 400 da borda
 
+        if (command.CreatorAccountId == Guid.Empty)
+            // Sem criador resolvido não há a quem conceder o acesso administrativo — fail-closed.
+            throw new TenantSecurityException("Criação de tenant sem identidade criadora resolvida (fail-closed).");
+
+        // O tenant NASCE com um administrador. O membership do criador é ITenantOwned e precisa ser carimbado
+        // com o tenant NOVO — não com o tenant AMBIENTE do operador, que o StampTenant do _db usaria (o
+        // PlatformAdmin chega com o tenant DELE no contexto). Por isso a gravação usa um contexto DEDICADO
+        // ligado ao id recém-gerado (mesmo padrão do AuthService.IssuePairAsync e dos workers). Tenant em si
+        // é global (não carimbado); o membership é carimbado com newTenantId pelo SystemTenantContext abaixo.
+        var newTenantId = Guid.NewGuid();
+        await using var db = new AegisScoreDbContext(_dbOptions, new SystemTenantContext(newTenantId));
+
         // Fast-path do conflito. `Tenant` NÃO é ITenantOwned: não tem query filter, então esta consulta
         // enxerga a base inteira — é justamente o que a checagem de unicidade global exige.
-        if (await _db.Tenants.AsNoTracking().AnyAsync(x => x.Slug == slug, ct))
+        if (await db.Tenants.AsNoTracking().AnyAsync(x => x.Slug == slug, ct))
             return TenantProvisioningResult.SlugConflict(slug);
 
-        // Propriedades padrão explícitas: cliente recém-criado nasce em ONBOARDING, não Active — quem o
-        // promove é o fim do fluxo de onboarding. (`AuthService` só barra login em Suspended, então o
-        // estado inicial não trava o acesso; ele apenas conta a verdade sobre a maturidade do cadastro.)
-        //
-        // ⚠️ Só o agregado raiz é criado aqui. Um PlatformAdmin chega com o tenant DELE no contexto
-        // (o TenantConsistencyMiddleware exige a claim), logo qualquer entidade ITenantOwned semeada
-        // nesta chamada seria carimbada com o tenant do OPERADOR, não com o recém-criado. Semente de
-        // dados do novo cliente exige um SystemTenantContext(novoId) — fora do escopo deste método.
+        // A identidade criadora precisa existir (FK do membership). Também alimenta o fallback do nome de
+        // exibição quando a claim `name` não veio. IdentityAccount é global (sem query filter).
+        var creator = await db.IdentityAccounts.FirstOrDefaultAsync(a => a.Id == command.CreatorAccountId, ct);
+        if (creator is null)
+            throw new TenantSecurityException("Identidade criadora inexistente (fail-closed).");
+
+        // Cliente recém-criado nasce em ONBOARDING, não Active — quem o promove é o fim do onboarding.
+        // (`AuthService` só barra login em Suspended, então o estado inicial não trava o acesso.)
         var tenant = new Tenant
         {
+            Id = newTenantId,
             Name = name,
             Slug = slug,
             Status = TenantStatus.Onboarding,
         };
+        var adminMembership = new User
+        {
+            // TenantId carimbado com newTenantId no SaveChanges (SystemTenantContext acima), nunca à mão.
+            IdentityAccountId = creator.Id,
+            DisplayName = ResolveCreatorDisplayName(command.CreatorDisplayName, creator.Email),
+            Role = TenantRole.TenantAdmin,
+            IsActive = true,
+        };
 
-        _db.Tenants.Add(tenant);
+        db.Tenants.Add(tenant);
+        db.Users.Add(adminMembership);
         try
         {
-            await _db.SaveChangesAsync(ct);
+            // ATÔMICO: ou nascem o tenant E o acesso administrativo do criador, ou nenhum dos dois.
+            await db.SaveChangesAsync(ct);
         }
         catch (DbUpdateException ex)
         {
-            // Corrida perdida: outro provisionamento gravou o mesmo slug entre o AnyAsync e este INSERT.
-            // O índice único de Tenant.Slug rejeitou a duplicata — resolve no MESMO conflito da checagem
-            // prévia (idioma do dedupe de GovernanceDocument). Detach para não reenviar o INSERT num
-            // SaveChanges posterior do mesmo escopo.
-            _db.Entry(tenant).State = EntityState.Detached;
+            // Corrida perdida: outro provisionamento gravou o mesmo slug entre o AnyAsync e este INSERT. O
+            // índice único de Tenant.Slug rejeitou a duplicata — resolve no MESMO conflito da checagem prévia.
+            // Nada foi persistido (uma transação só).
+            db.Entry(tenant).State = EntityState.Detached;
+            db.Entry(adminMembership).State = EntityState.Detached;
             _log.LogWarning(ex,
                 "Provisionamento concorrente do slug '{Slug}' rejeitado pelo índice único — tratado como conflito.",
                 slug);
@@ -103,10 +129,24 @@ public sealed class TenantManagementService : ITenantManagementService
         }
 
         _log.LogInformation(
-            "Onboarding: cliente '{Name}' provisionado como {Slug} ({TenantId}) em {Status}.",
-            tenant.Name, tenant.Slug, tenant.Id, tenant.Status);
+            "Onboarding: cliente '{Name}' provisionado como {Slug} ({TenantId}) em {Status}; criador {AccountId} " +
+            "recebeu acesso TenantAdmin.",
+            tenant.Name, tenant.Slug, tenant.Id, tenant.Status, creator.Id);
 
         return TenantProvisioningResult.Created(tenant.Id, tenant.Slug);
+    }
+
+    /// <summary>
+    /// Nome de exibição do criador no novo tenant: a claim <c>name</c> quando válida; senão o e-mail da
+    /// identidade (aparado ao teto da coluna). Nunca vazio — o membership sempre nasce com um rótulo.
+    /// </summary>
+    private static string ResolveCreatorDisplayName(string? claimName, string email)
+    {
+        if (TenantAccessPolicy.IsValidDisplayName(claimName))
+            return TenantAccessPolicy.NormalizeDisplayName(claimName);
+        return email.Length <= TenantAccessPolicy.MaxDisplayNameLength
+            ? email
+            : email[..TenantAccessPolicy.MaxDisplayNameLength];
     }
 
     public async Task<ConnectorConfigurationResult> ConfigureConnectorAsync(

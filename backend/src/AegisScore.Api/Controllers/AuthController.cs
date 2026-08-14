@@ -225,6 +225,50 @@ public sealed class AuthController : ControllerBase
         return new AuthResponse(pair.AccessToken, pair.AccessTokenExpiresAt);
     }
 
+    /// <summary>
+    /// [Configurações · Minha conta] Troca a PRÓPRIA senha. Exige sessão válida — a pessoa vem da claim
+    /// <c>account_id</c> do JWT, NUNCA do corpo. Só para contas Local/Hybrid COM credencial local; uma conta
+    /// federated-only recebe 409 (a credencial é administrada pelo provedor corporativo). A nova senha segue a
+    /// política NIST. Em sucesso: 204 e o cookie de refresh desta sessão é limpo — o serviço já revogou TODAS
+    /// as sessões da identidade em todos os tenants, então o cliente deve reautenticar. A senha/hash nunca é
+    /// registrada nem devolvida.
+    /// </summary>
+    [Authorize]
+    [HttpPost("password")]
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequest req, CancellationToken ct)
+    {
+        if (!Guid.TryParse(User.FindFirst(JwtTokenService.AccountClaim)?.Value, out var accountId))
+            return Unauthorized(new { title = "Token sem conta de identidade.", status = 401 });
+
+        var result = await _auth.ChangeOwnPasswordAsync(
+            accountId, req.CurrentPassword, req.NewPassword, ct);
+
+        switch (result.Status)
+        {
+            case PasswordChangeStatus.Changed:
+                // O serviço já revogou todas as sessões; limpa também o cookie de refresh DESTA sessão.
+                ClearRefreshCookie();
+                return NoContent();
+
+            case PasswordChangeStatus.NoLocalCredential:
+                return Conflict(new
+                {
+                    title = result.Detail ?? "Esta conta é administrada pelo provedor corporativo.",
+                    status = 409,
+                });
+
+            case PasswordChangeStatus.NotFound:
+                return Unauthorized(new { title = "Sessão inválida.", status = 401 });
+
+            default:   // InvalidCurrentPassword, WeakPassword
+                return BadRequest(new
+                {
+                    title = result.Detail ?? "Não foi possível trocar a senha.",
+                    status = 400,
+                });
+        }
+    }
+
     private void SetRefreshCookie(string token, DateTimeOffset expires) =>
         Response.Cookies.Append(RefreshCookie, token, new CookieOptions
         {

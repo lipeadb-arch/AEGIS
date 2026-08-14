@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -20,20 +19,6 @@ namespace AegisScore.Infrastructure.Auth;
 /// </summary>
 public sealed class IdentityProvisioningService : IIdentityProvisioningService
 {
-    /// <summary>Piso de comprimento da senha (NIST SP 800-63B), idêntico ao console de administração.</summary>
-    private const int MinPasswordLength = 12;
-
-    /// <summary>Teto de comprimento — barra entrada patológica antes do PBKDF2. Nada é truncado.</summary>
-    private const int MaxPasswordLength = 128;
-
-    /// <summary>Espelha o <c>HasMaxLength</c> da coluna — validar aqui evita um erro de banco opaco.</summary>
-    private const int MaxEmailLength = 256;
-
-    /// <summary>Formato conservador, sobre o e-mail JÁ normalizado. Mesma regra do <see cref="UserManagementService"/> anterior.</summary>
-    private static readonly Regex EmailPattern = new(
-        @"^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
     private readonly AegisScoreDbContext _db;
     private readonly IPasswordHasher _hasher;
     private readonly FederationOptions _federation;
@@ -102,77 +87,36 @@ public sealed class IdentityProvisioningService : IIdentityProvisioningService
     // ---- Política de senha por modo ---------------------------------------------
 
     /// <summary>
-    /// Decide o hash a persistir a partir da senha e do modo. Retorna a recusa (não-null) ou <c>null</c> com
-    /// o <paramref name="hash"/> resolvido (que é <c>null</c> para federated-only). Nunca produz string vazia.
+    /// Decide o hash a persistir a partir da senha e do modo, delegando à autoridade ÚNICA
+    /// <see cref="PasswordPolicy"/>. Retorna a recusa (não-null) ou <c>null</c> com o <paramref name="hash"/>
+    /// resolvido (que é <c>null</c> para federated-only). Nunca produz string vazia.
     /// </summary>
-    private IdentityProvisioningResult? ResolvePasswordHash(string? password, out string? hash)
-    {
-        hash = null;
-        var hasPassword = !string.IsNullOrEmpty(password);
-
-        // Federated: a conta autentica só pelo Entra. Uma senha aqui seria credencial inutilizada — recusa.
-        if (!_federation.PasswordLoginEnabled)
+    private IdentityProvisioningResult? ResolvePasswordHash(string? password, out string? hash) =>
+        PasswordPolicy.ResolveForNewIdentity(_federation, password, _hasher, out hash, out var detail) switch
         {
-            if (hasPassword)
-                return IdentityProvisioningResult.Rejected(
-                    IdentityProvisioningStatus.PasswordNotAllowed,
-                    "Em modo Federated a conta autentica apenas pelo Entra ID: não envie senha local.");
-            return null;   // federated-only: sem hash, e está correto
-        }
-
-        // Local exige senha; Hybrid a aceita opcional.
-        if (!hasPassword)
-        {
-            if (_federation.Mode == FederationMode.Local)
-                return IdentityProvisioningResult.Rejected(
-                    IdentityProvisioningStatus.PasswordRequired,
-                    "Em modo Local a identidade precisa de uma senha local.");
-            return null;   // Hybrid sem senha: federated-only permitido
-        }
-
-        // Senha presente (Local ou Hybrid): valida a política e deriva o hash PBKDF2.
-        if (ValidatePassword(password!) is { } rejection)
-            return rejection;
-
-        hash = _hasher.Hash(password!);
-        return null;
-    }
+            PasswordPolicy.ModeOutcome.Ok => null,
+            PasswordPolicy.ModeOutcome.PasswordRequired =>
+                IdentityProvisioningResult.Rejected(IdentityProvisioningStatus.PasswordRequired, detail),
+            PasswordPolicy.ModeOutcome.PasswordNotAllowed =>
+                IdentityProvisioningResult.Rejected(IdentityProvisioningStatus.PasswordNotAllowed, detail),
+            _ => IdentityProvisioningResult.Rejected(IdentityProvisioningStatus.WeakPassword, detail),
+        };
 
     // ---- Validação --------------------------------------------------------------
 
     private static IdentityProvisioningResult? ValidateEmail(string? raw)
     {
-        var email = NormalizeEmail(raw);
-        if (email.Length is 0 or > MaxEmailLength || !EmailPattern.IsMatch(email))
+        if (!EmailPolicy.IsValid(EmailPolicy.Normalize(raw)))
             return IdentityProvisioningResult.Rejected(
                 IdentityProvisioningStatus.InvalidEmail,
-                $"E-mail obrigatório, em formato válido e com até {MaxEmailLength} caracteres.");
-        return null;
-    }
-
-    /// <summary>
-    /// Política do 800-63B: comprimento, e só. Sem regra de composição. A senha NÃO é trimada — espaço é
-    /// caractere legítimo e aparar quebraria o login seguinte, que compara o valor cru.
-    /// </summary>
-    private static IdentityProvisioningResult? ValidatePassword(string password)
-    {
-        if (password.Length < MinPasswordLength || password.Length > MaxPasswordLength)
-            return IdentityProvisioningResult.Rejected(
-                IdentityProvisioningStatus.WeakPassword,
-                $"Senha deve ter entre {MinPasswordLength} e {MaxPasswordLength} caracteres. " +
-                "Prefira uma frase longa — não exigimos maiúsculas, dígitos ou símbolos (NIST SP 800-63B).");
-
-        if (string.IsNullOrWhiteSpace(password))
-            return IdentityProvisioningResult.Rejected(
-                IdentityProvisioningStatus.WeakPassword, "Senha não pode ser composta apenas de espaços.");
-
+                $"E-mail obrigatório, em formato válido e com até {EmailPolicy.MaxLength} caracteres.");
         return null;
     }
 
     // ---- Helpers ----------------------------------------------------------------
 
-    /// <summary>Mesma normalização do <see cref="AuthService.LoginAsync"/> — senão o login não acha o que foi gravado.</summary>
-    private static string NormalizeEmail(string? raw) => (raw ?? "").Trim().ToLowerInvariant();
+    /// <summary>Normalização compartilhada (<see cref="EmailPolicy"/>) — a mesma forma que o login busca.</summary>
+    private static string NormalizeEmail(string? raw) => EmailPolicy.Normalize(raw);
 
     /// <summary>Projeção de saída SEM o hash (ver <see cref="IdentitySummary"/>). Só expõe SE há credencial local.</summary>
     private static IdentitySummary Project(IdentityAccount a) =>

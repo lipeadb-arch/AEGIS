@@ -35,6 +35,14 @@ public sealed class JwtTokenService : IJwtTokenService
     public const string PlatformRoleClaim = "platform_role";
 
     /// <summary>
+    /// Claim booleana (<c>"true"</c>/<c>"false"</c>): a IDENTIDADE tem credencial LOCAL (senha)? Projeta com
+    /// segurança <c>IdentityAccount.PasswordHash is not null</c> — NUNCA o hash — para o SPA decidir se oferece
+    /// a troca da própria senha (uma conta federated-only não tem senha local a trocar). Emitida em TODO
+    /// access token; reavaliada a cada login/refresh, então acompanha a definição/remoção de senha em ~10 min.
+    /// </summary>
+    public const string HasLocalCredentialClaim = "has_local_credential";
+
+    /// <summary>
     /// [AEGIS-AUD-012] Claim de PROPÓSITO. Um ticket de seleção de tenant o carrega com
     /// <see cref="TenantSelectionPurpose"/> e NÃO carrega tenant/papel — não é uma sessão.
     /// </summary>
@@ -88,6 +96,9 @@ public sealed class JwtTokenService : IJwtTokenService
             // Papel DESTE tenant (eixo tenant-scoped): quem é TenantAdmin no cliente A pode ser Analyst no B.
             // NUNCA carrega PlatformAdmin — o tipo TenantRole não o possui.
             new("role", membership.Role.ToString()),
+            // Credencial local presente? Booleano seguro (nunca o hash) — o SPA usa para oferecer, ou não,
+            // a troca da própria senha. Emitida sempre; ausência de hash ⇒ "false" (conta federated-only).
+            new(HasLocalCredentialClaim, (account.PasswordHash is not null) ? "true" : "false"),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
 

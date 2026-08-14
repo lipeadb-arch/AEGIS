@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
@@ -19,8 +20,6 @@ namespace AegisScore.Infrastructure.Auth;
 /// </summary>
 public sealed class UserManagementService : IUserManagementService
 {
-    private const int MaxDisplayNameLength = 200;
-
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
     private readonly ILogger<UserManagementService> _log;
@@ -117,29 +116,232 @@ public sealed class UserManagementService : IUserManagementService
         return AccessGrantResult.Ok(AccessGrantStatus.AccessUpdated, Project(membership, account));
     }
 
-    // ---- Validação --------------------------------------------------------------
+    // ---- Listagem tenant-scoped -------------------------------------------------
 
-    private static AccessGrantResult? ValidateDisplayName(string? raw)
+    public async Task<IReadOnlyList<TenantUserListItem>> ListUsersAsync(CancellationToken ct = default)
     {
-        var name = (raw ?? "").Trim();
-        if (name.Length is 0 or > MaxDisplayNameLength)
-            return AccessGrantResult.Rejected(
-                AccessGrantStatus.InvalidDisplayName,
-                $"Nome de exibição obrigatório, com até {MaxDisplayNameLength} caracteres.");
-        return null;
+        RequireAmbientTenant();   // fail-closed ANTES de qualquer leitura — sem tenant não há listagem
+
+        // O Global Query Filter de User já restringe ao tenant ambiente; o join com IdentityAccount (global)
+        // traz o e-mail e o "tem credencial local?". Projeta em tipo ANÔNIMO no SQL e monta o record em
+        // memória — projetar direto num record dentro do Join é o que o EF falha em traduzir (idioma do
+        // TenantManagementService/AuthService).
+        var rows = await (
+            from u in _db.Users
+            join a in _db.IdentityAccounts on u.IdentityAccountId equals a.Id
+            select new
+            {
+                u.Id, a.Email, u.DisplayName, u.Role, u.IsActive,
+                HasLocalCredential = a.PasswordHash != null,
+                u.CreatedAt, u.LastLoginAt,
+            }).ToListAsync(ct);
+
+        // Ordenação em MEMÓRIA: o SQLite (provider dos testes) não ordena por DateTimeOffset — um ORDER BY no
+        // servidor deixaria a listagem sem cobertura. Custo desprezível (poucos acessos por tenant).
+        return rows
+            .OrderBy(r => r.CreatedAt).ThenBy(r => r.Id)
+            .Select(r => new TenantUserListItem(
+                r.Id, r.Email, r.DisplayName, r.Role, r.IsActive,
+                r.HasLocalCredential, r.CreatedAt, r.LastLoginAt))
+            .ToList();
+    }
+
+    // ---- Administração de membership (editar / desativar / reativar) ------------
+
+    public async Task<MembershipAdminResult> UpdateMembershipAsync(
+        UpdateMembershipCommand command, CancellationToken ct = default)
+    {
+        var tenantId = RequireAmbientTenant();
+
+        // Valida entradas ANTES de tocar o alvo (mensagem certa, sem efeito parcial).
+        if (command.Role is { } wantedRole && !TenantAccessPolicy.IsAssignableTenantRole(wantedRole))
+            return MembershipAdminResult.Rejected(
+                MembershipAdminStatus.RoleNotAssignable,
+                "Papel inválido: use Analista, Gestor ou Administrador do tenant.");
+        if (command.DisplayName is { } wantedName && !TenantAccessPolicy.IsValidDisplayName(wantedName))
+            return MembershipAdminResult.Rejected(
+                MembershipAdminStatus.InvalidDisplayName,
+                $"Nome de exibição obrigatório, com até {TenantAccessPolicy.MaxDisplayNameLength} caracteres.");
+
+        var (target, account) = await LoadMembershipAsync(command.MembershipId, ct);
+        if (target is null || account is null)
+            return MembershipAdminResult.Rejected(MembershipAdminStatus.NotFound);
+
+        var isSelf = account.Id == command.ActorAccountId;
+        var demotesAdmin = command.Role is { } r
+            && target.Role == TenantRole.TenantAdmin && r != TenantRole.TenantAdmin;
+        var reducesPrivilege = command.Role is { } r2 && r2 < target.Role;   // menor ordinal = menos privilégio
+
+        // Auto-rebaixamento administrativo: a pessoa não pode tirar o próprio papel de administrador.
+        if (isSelf && demotesAdmin)
+            return MembershipAdminResult.Rejected(
+                MembershipAdminStatus.SelfDemotionForbidden,
+                "Você não pode rebaixar o próprio papel de administrador. Peça a outro administrador.");
+
+        async Task<MembershipAdminResult> ApplyAsync()
+        {
+            if (command.DisplayName is { } newName)
+                target.DisplayName = TenantAccessPolicy.NormalizeDisplayName(newName);
+            if (command.Role is { } newRole)
+                target.Role = newRole;
+            await _db.SaveChangesAsync(ct);
+
+            // Reduzir privilégio derruba as sessões daquele membership (o papel antigo não sobrevive no token).
+            if (reducesPrivilege)
+                await RevokeMembershipSessionsAsync(target.Id, ct);
+
+            _log.LogInformation(
+                "Acesso {UserId} editado no tenant {TenantId}: papel {Role}, ativo={IsActive}.",
+                target.Id, tenantId, target.Role, target.IsActive);
+            return MembershipAdminResult.Ok(Project(target, account));
+        }
+
+        // Guarda do último administrador só quando esta edição rebaixa um admin ATIVO.
+        return target.IsActive && demotesAdmin
+            ? await GuardLastActiveAdminAsync(tenantId, target.Id, ApplyAsync, ct)
+            : await ApplyAsync();
+    }
+
+    public async Task<MembershipAdminResult> SetMembershipStatusAsync(
+        SetMembershipStatusCommand command, CancellationToken ct = default)
+    {
+        var tenantId = RequireAmbientTenant();
+
+        var (target, account) = await LoadMembershipAsync(command.MembershipId, ct);
+        if (target is null || account is null)
+            return MembershipAdminResult.Rejected(MembershipAdminStatus.NotFound);
+
+        var isSelf = account.Id == command.ActorAccountId;
+
+        // ---- Reativação: só adiciona acesso, sem guardas. NÃO restaura sessões (nunca des-revogamos). ----
+        if (command.Active)
+        {
+            if (!target.IsActive)
+            {
+                target.IsActive = true;
+                await _db.SaveChangesAsync(ct);
+                _log.LogInformation("Acesso {UserId} REATIVADO no tenant {TenantId}.", target.Id, tenantId);
+            }
+            return MembershipAdminResult.Ok(Project(target, account));
+        }
+
+        // ---- Desativação ----
+        // Auto-desativação: a pessoa não pode se trancar para fora.
+        if (isSelf)
+            return MembershipAdminResult.Rejected(
+                MembershipAdminStatus.SelfDeactivationForbidden,
+                "Você não pode desativar o próprio acesso. Peça a outro administrador.");
+
+        if (!target.IsActive)
+            return MembershipAdminResult.Ok(Project(target, account));   // já inativo: idempotente
+
+        async Task<MembershipAdminResult> ApplyAsync()
+        {
+            target.IsActive = false;
+            await _db.SaveChangesAsync(ct);
+            // Desativar REVOGA os refresh tokens ativos do membership (as sessões não sobrevivem à desativação).
+            await RevokeMembershipSessionsAsync(target.Id, ct);
+            _log.LogInformation("Acesso {UserId} DESATIVADO no tenant {TenantId}.", target.Id, tenantId);
+            return MembershipAdminResult.Ok(Project(target, account));
+        }
+
+        // Guarda do último administrador quando o alvo é um admin ATIVO (target.IsActive já é true aqui).
+        return target.Role == TenantRole.TenantAdmin
+            ? await GuardLastActiveAdminAsync(tenantId, target.Id, ApplyAsync, ct)
+            : await ApplyAsync();
     }
 
     /// <summary>
-    /// [AEGIS-AUD-011] ALLOWLIST explícita dos papéis tenant-scoped válidos. Com a separação dos eixos, a
-    /// autoridade global (<c>PlatformAdmin</c>) já NÃO existe em <see cref="TenantRole"/> — não há o que
-    /// comparar aqui, o escalonamento é barrado pelo próprio TIPO. O que resta guardar são valores
-    /// INDEFINIDOS do enum: o ASP.NET Core desserializa enum de número, então <c>"role": 999</c> chega como
-    /// <c>(TenantRole)999</c>, que uma checagem por desigualdade deixaria passar e corromperia o membership
-    /// (papel inválido → claim de papel inválida depois). Só Analyst/Manager/TenantAdmin são aceitos, na
-    /// criação e na atualização.
+    /// Executa <paramref name="apply"/> só se, após remover/rebaixar o alvo, AINDA restar ao menos um
+    /// <see cref="TenantRole.TenantAdmin"/> ATIVO no tenant. A correção SOB CONCORRÊNCIA vem de uma trava de
+    /// linha no PostgreSQL: dentro da transação, <c>FOR UPDATE</c> sobre TODAS as linhas de admin ativo
+    /// serializa duas remoções concorrentes dos últimos administradores — fechando o write-skew que, sob
+    /// READ COMMITTED, deixaria as duas passarem e zeraria os administradores. No SQLite (testes de máquina
+    /// de estados) a cláusula é omitida: as escritas já são serializadas, e a garantia real é validada em
+    /// PostgreSQL descartável.
+    /// </summary>
+    private async Task<MembershipAdminResult> GuardLastActiveAdminAsync(
+        Guid tenantId, Guid targetId, Func<Task<MembershipAdminResult>> apply, CancellationToken ct)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+        await LockActiveAdminsAsync(tenantId, ct);
+
+        var otherActiveAdmins = await _db.Users
+            .CountAsync(u => u.Id != targetId && u.Role == TenantRole.TenantAdmin && u.IsActive, ct);
+        if (otherActiveAdmins == 0)
+        {
+            await tx.RollbackAsync(ct);
+            return MembershipAdminResult.Rejected(
+                MembershipAdminStatus.LastAdminProtected,
+                "Este é o último administrador ativo do ambiente. Promova outra pessoa a Administrador antes de " +
+                "removê-lo ou rebaixá-lo.");
+        }
+
+        var result = await apply();
+        await tx.CommitAsync(ct);
+        return result;
+    }
+
+    /// <summary>
+    /// Tranca as linhas de administrador ATIVO do tenant até o fim da transação (só no PostgreSQL). Executado
+    /// como comando cru para acompanhar o padrão do <c>DurableClaim</c> — <c>FOR UPDATE</c> não existe no SQLite,
+    /// e o provedor é detectado pelo NOME da conexão, sem acoplar o pacote do Npgsql aqui.
+    /// </summary>
+    private async Task LockActiveAdminsAsync(Guid tenantId, CancellationToken ct)
+    {
+        var conn = _db.Database.GetDbConnection();
+        if (!conn.GetType().Name.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
+            return;   // SQLite: escritas serializadas; FOR UPDATE indisponível
+
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT \"Id\" FROM \"Users\" WHERE \"TenantId\" = {0} AND \"Role\" = 2 AND \"IsActive\" = TRUE FOR UPDATE",
+            new object[] { tenantId }, ct);
+    }
+
+    /// <summary>
+    /// Revoga (RevokedAt = agora) os refresh tokens ATIVOS de um membership do tenant ambiente. Via
+    /// <c>ExecuteUpdate</c> — atômico, fora do change tracker e participante da transação ativa (se houver).
+    /// O teto de 10 min do access token JÁ emitido é preservado (não o encurtamos).
+    /// </summary>
+    private async Task RevokeMembershipSessionsAsync(Guid membershipId, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        await _db.UserRefreshTokens
+            .Where(t => t.UserId == membershipId && t.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, _ => now), ct);
+    }
+
+    /// <summary>
+    /// Carrega o membership do tenant ambiente (Global Query Filter → outro tenant é o MESMO <c>null</c> de
+    /// inexistente) junto da identidade global dona (para e-mail/projeção). <c>(null, null)</c> = não encontrado.
+    /// </summary>
+    private async Task<(User? Target, IdentityAccount? Account)> LoadMembershipAsync(
+        Guid membershipId, CancellationToken ct)
+    {
+        var target = await _db.Users.FirstOrDefaultAsync(u => u.Id == membershipId, ct);
+        if (target is null)
+            return (null, null);
+        var account = await _db.IdentityAccounts.FirstOrDefaultAsync(a => a.Id == target.IdentityAccountId, ct);
+        return (target, account);
+    }
+
+    // ---- Validação --------------------------------------------------------------
+
+    private static AccessGrantResult? ValidateDisplayName(string? raw) =>
+        TenantAccessPolicy.IsValidDisplayName(raw)
+            ? null
+            : AccessGrantResult.Rejected(
+                AccessGrantStatus.InvalidDisplayName,
+                $"Nome de exibição obrigatório, com até {TenantAccessPolicy.MaxDisplayNameLength} caracteres.");
+
+    /// <summary>
+    /// [AEGIS-AUD-011] ALLOWLIST explícita dos papéis tenant-scoped válidos (autoridade em
+    /// <see cref="TenantAccessPolicy"/>). O escalonamento a <c>PlatformAdmin</c> é barrado pelo próprio TIPO
+    /// (não existe em <see cref="TenantRole"/>); o que resta guardar são valores INDEFINIDOS do enum, que o
+    /// ASP.NET Core desserializa de número (<c>"role": 999</c> → <c>(TenantRole)999</c>).
     /// </summary>
     private static AccessGrantResult? ValidateRole(TenantRole role) =>
-        role is TenantRole.Analyst or TenantRole.Manager or TenantRole.TenantAdmin
+        TenantAccessPolicy.IsAssignableTenantRole(role)
             ? null
             : AccessGrantResult.Rejected(
                 AccessGrantStatus.RoleNotAssignable,
@@ -158,5 +360,6 @@ public sealed class UserManagementService : IUserManagementService
     /// e-mail vive na conta global e o resto no membership.
     /// </summary>
     private static UserSummary Project(User u, IdentityAccount account) => new(
-        u.Id, u.TenantId, account.Email, u.DisplayName, u.Role, u.IsActive, u.CreatedAt, u.LastLoginAt);
+        u.Id, u.TenantId, account.Email, u.DisplayName, u.Role, u.IsActive, u.CreatedAt, u.LastLoginAt,
+        HasLocalCredential: account.PasswordHash is not null);
 }
