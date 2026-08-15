@@ -469,18 +469,21 @@ public sealed class AuthService : IAuthService
         if (PasswordPolicy.ValidateStrength(newPassword ?? "") is { } weak)
             return PasswordChangeResult.Rejected(PasswordChangeStatus.WeakPassword, weak);
 
-        account.PasswordHash = _hasher.Hash(newPassword!);   // IdentityAccount é global: SaveChanges não exige tenant
-        await _db.SaveChangesAsync(ct);
+        // ATÔMICO: a nova senha (IdentityAccount) e a revogação de TODAS as sessões da identidade — em TODOS
+        // os tenants — num ÚNICO commit. Se a revogação falhar, a transação é revertida e a senha ANTIGA
+        // permanece válida (nenhum estado parcial: senha nova sem sessões revogadas seria uma janela de risco).
+        // A revogação cross-tenant é ESTRITAMENTE ancorada no account_id — a exceção autorizada de
+        // IgnoreQueryFilters sobre identidade (ver a doc de IAuthService). O access token já emitido conserva
+        // seu teto de 10 min (não o encurtamos).
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
-        // Revoga TODAS as sessões da identidade em TODOS os tenants, ESTRITAMENTE ancorado no account_id.
-        // Esta é a exceção autorizada de IgnoreQueryFilters sobre identidade (ver a doc de IAuthService): a
-        // troca de senha invalida sessões cross-tenant da MESMA pessoa. Carrega os memberships da conta e
-        // revoga por UserId — ExecuteUpdate atômico, fora do change tracker. O access token já emitido
-        // conserva seu teto de 10 min.
         var membershipIds = await _db.Users.IgnoreQueryFilters()
             .Where(u => u.IdentityAccountId == accountId)
             .Select(u => u.Id)
             .ToListAsync(ct);
+
+        account.PasswordHash = _hasher.Hash(newPassword!);   // IdentityAccount é global: SaveChanges não exige tenant
+        await _db.SaveChangesAsync(ct);
 
         if (membershipIds.Count > 0)
         {
@@ -489,6 +492,8 @@ public sealed class AuthService : IAuthService
                 .Where(t => t.RevokedAt == null && membershipIds.Contains(t.UserId))
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, _ => now), ct);
         }
+
+        await tx.CommitAsync(ct);
 
         _logger.LogInformation(
             "Troca de senha concluída para a conta {AccountId}: sessões revogadas em {Count} ambiente(s).",

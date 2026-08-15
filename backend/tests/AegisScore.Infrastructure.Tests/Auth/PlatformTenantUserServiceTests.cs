@@ -42,7 +42,7 @@ public sealed class PlatformTenantUserServiceTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         var result = await ServiceFor(db, TenantA, FederationMode.Local).OnboardAsync(
-            new OnboardTenantUserCommand("gestor@demo.example.com", "  Gestor  ", TenantRole.Manager, "uma frase longa e boa"));
+            OnboardCmd("gestor@demo.example.com", "  Gestor  ", TenantRole.Manager, "uma frase longa e boa"));
 
         result.Status.Should().Be(TenantUserOnboardingStatus.IdentityCreatedAndGranted);
         result.IdentityExisted.Should().BeFalse();
@@ -61,7 +61,7 @@ public sealed class PlatformTenantUserServiceTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         var result = await ServiceFor(db, TenantA, FederationMode.Local).OnboardAsync(
-            new OnboardTenantUserCommand("x@demo.example.com", "X", (TenantRole)999, "uma frase longa e boa"));
+            OnboardCmd("x@demo.example.com", "X", (TenantRole)999, "uma frase longa e boa"));
 
         result.Status.Should().Be(TenantUserOnboardingStatus.RoleNotAssignable);
         (await db.IdentityAccounts.AnyAsync()).Should().BeFalse("recusa ANTES de escrever — sem identidade órfã");
@@ -73,7 +73,7 @@ public sealed class PlatformTenantUserServiceTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         var result = await ServiceFor(db, TenantA, FederationMode.Local).OnboardAsync(
-            new OnboardTenantUserCommand("x@demo.example.com", "X", TenantRole.Analyst, InitialPassword: null));
+            OnboardCmd("x@demo.example.com", "X", TenantRole.Analyst, initialPassword: null));
 
         result.Status.Should().Be(TenantUserOnboardingStatus.PasswordRequired);
         (await db.IdentityAccounts.AnyAsync()).Should().BeFalse();
@@ -84,7 +84,7 @@ public sealed class PlatformTenantUserServiceTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         var result = await ServiceFor(db, TenantA, FederationMode.Federated).OnboardAsync(
-            new OnboardTenantUserCommand("x@demo.example.com", "X", TenantRole.Analyst, "uma frase longa e boa"));
+            OnboardCmd("x@demo.example.com", "X", TenantRole.Analyst, "uma frase longa e boa"));
 
         result.Status.Should().Be(TenantUserOnboardingStatus.PasswordNotAllowed);
         (await db.IdentityAccounts.AnyAsync()).Should().BeFalse();
@@ -95,7 +95,7 @@ public sealed class PlatformTenantUserServiceTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         var result = await ServiceFor(db, TenantA, FederationMode.Federated).OnboardAsync(
-            new OnboardTenantUserCommand("x@demo.example.com", "X", TenantRole.Analyst, InitialPassword: null));
+            OnboardCmd("x@demo.example.com", "X", TenantRole.Analyst, initialPassword: null));
 
         result.Status.Should().Be(TenantUserOnboardingStatus.IdentityCreatedAndGranted);
         result.User!.HasLocalCredential.Should().BeFalse("federated-only: sem senha local");
@@ -107,7 +107,7 @@ public sealed class PlatformTenantUserServiceTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         var result = await ServiceFor(db, TenantA, FederationMode.Local).OnboardAsync(
-            new OnboardTenantUserCommand("x@demo.example.com", "X", TenantRole.Analyst, "curta"));
+            OnboardCmd("x@demo.example.com", "X", TenantRole.Analyst, "curta"));
 
         result.Status.Should().Be(TenantUserOnboardingStatus.WeakPassword);
         (await db.IdentityAccounts.AnyAsync()).Should().BeFalse();
@@ -139,7 +139,7 @@ public sealed class PlatformTenantUserServiceTests : IDisposable
         await using var db = NewContext(TenantA);
         var result = await ServiceFor(db, TenantA, FederationMode.Hybrid).OnboardAsync(
             // Envia uma senha DIFERENTE de propósito: ela NÃO pode redefinir a credencial existente.
-            new OnboardTenantUserCommand("Chefe@Demo.Example.com", "Chefe no A", TenantRole.Analyst, "outra senha longa e boa"));
+            OnboardCmd("Chefe@Demo.Example.com", "Chefe no A", TenantRole.Analyst, "outra senha longa e boa"));
 
         result.Status.Should().Be(TenantUserOnboardingStatus.ExistingIdentityGranted);
         result.IdentityExisted.Should().BeTrue("a UI precisa comunicar que a pessoa já existia");
@@ -183,7 +183,7 @@ public sealed class PlatformTenantUserServiceTests : IDisposable
 
         await using var db = NewContext(TenantA);
         var result = await ServiceFor(db, TenantA, FederationMode.Local).OnboardAsync(
-            new OnboardTenantUserCommand("ana@demo.example.com", "Ana Silva", TenantRole.Manager, InitialPassword: null));
+            OnboardCmd("ana@demo.example.com", "Ana Silva", TenantRole.Manager, initialPassword: null));
 
         result.Status.Should().Be(TenantUserOnboardingStatus.ExistingIdentityAccessUpdated);
         var membership = await db.Users.SingleAsync();
@@ -193,6 +193,14 @@ public sealed class PlatformTenantUserServiceTests : IDisposable
     }
 
     // ---- Fixture ----------------------------------------------------------------
+
+    /// <summary>Ator-padrão (operador externo ≠ alvo) para os onboardings destes testes; as guardas por
+    /// ator (auto-rebaixamento / último admin no caminho de identidade existente) têm testes dedicados.</summary>
+    private static readonly Guid Operator = Guid.Parse("99999999-9999-9999-9999-999999999999");
+
+    private static OnboardTenantUserCommand OnboardCmd(
+        string email, string displayName, TenantRole role, string? initialPassword, Guid? actor = null) =>
+        new(email, displayName, role, initialPassword, actor ?? Operator);
 
     private AegisScoreDbContext NewContext(Guid? tenantId) =>
         new(new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(_connection).Options,

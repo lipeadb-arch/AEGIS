@@ -15,14 +15,16 @@ namespace AegisScore.Infrastructure.Tests.Auth;
 /// O que o SQLite não prova: a proteção do ÚLTIMO administrador SOB CONCORRÊNCIA REAL. Duas requisições
 /// simultâneas removem/rebaixam os DOIS últimos administradores de um tenant — sem a trava de linha
 /// (<c>FOR UPDATE</c>), o write-skew de READ COMMITTED deixaria as duas passarem e zeraria os administradores.
-/// Com a trava, exatamente UMA vence e a outra recebe <see cref="MembershipAdminStatus.LastAdminProtected"/>,
-/// e o tenant NUNCA fica sem administrador ativo. Gated por <c>AEGIS_TEST_PG</c>; cada teste cria/destrói um
-/// database próprio (nunca toca o <c>aegis_dev</c>). Repetido algumas vezes — a garantia é do lock, não do timing.
+/// Cobre os TRÊS caminhos que editam papel/status: desativação, edição administrativa e a CONCESSÃO pública
+/// (<c>/users/access</c> / upsert) — todos passam pela MESMA autoridade guardada. Gated por <c>AEGIS_TEST_PG</c>;
+/// cada teste cria/destrói um database próprio (nunca toca o <c>aegis_dev</c>). Repetido — a garantia é do lock.
 /// </summary>
 public sealed class LastAdminConcurrencyPostgresTests
 {
     private readonly ITestOutputHelper _output;
     public LastAdminConcurrencyPostgresTests(ITestOutputHelper output) => _output = output;
+
+    private readonly record struct Admin(Guid MembershipId, Guid AccountId);
 
     [Fact]
     public async Task ConcurrentDeactivation_OfLastTwoAdmins_NeverLeavesTenantWithoutAdmin_OnRealPostgres()
@@ -34,13 +36,13 @@ public sealed class LastAdminConcurrencyPostgresTests
 
         for (var i = 0; i < 5; i++)
         {
-            var (tenant, mA, mB) = await SeedFreshTenantWithTwoAdminsAsync(opt);
+            var (tenant, a, b) = await SeedFreshTenantWithTwoAdminsAsync(opt);
 
             var results = await Task.WhenAll(
-                RunAsync(opt, tenant, svc => svc.SetMembershipStatusAsync(
-                    new SetMembershipStatusCommand(mA, Guid.NewGuid(), Active: false))),
-                RunAsync(opt, tenant, svc => svc.SetMembershipStatusAsync(
-                    new SetMembershipStatusCommand(mB, Guid.NewGuid(), Active: false))));
+                RunAdminAsync(opt, tenant, svc => svc.SetMembershipStatusAsync(
+                    new SetMembershipStatusCommand(a.MembershipId, Guid.NewGuid(), Active: false))),
+                RunAdminAsync(opt, tenant, svc => svc.SetMembershipStatusAsync(
+                    new SetMembershipStatusCommand(b.MembershipId, Guid.NewGuid(), Active: false))));
 
             AssertExactlyOneSurvived(results);
             await AssertOneActiveAdminAsync(opt, tenant);
@@ -57,15 +59,43 @@ public sealed class LastAdminConcurrencyPostgresTests
 
         for (var i = 0; i < 5; i++)
         {
-            var (tenant, mA, mB) = await SeedFreshTenantWithTwoAdminsAsync(opt);
+            var (tenant, a, b) = await SeedFreshTenantWithTwoAdminsAsync(opt);
 
             var results = await Task.WhenAll(
-                RunAsync(opt, tenant, svc => svc.UpdateMembershipAsync(
-                    new UpdateMembershipCommand(mA, Guid.NewGuid(), null, TenantRole.Analyst))),
-                RunAsync(opt, tenant, svc => svc.UpdateMembershipAsync(
-                    new UpdateMembershipCommand(mB, Guid.NewGuid(), null, TenantRole.Analyst))));
+                RunAdminAsync(opt, tenant, svc => svc.UpdateMembershipAsync(
+                    new UpdateMembershipCommand(a.MembershipId, Guid.NewGuid(), null, TenantRole.Analyst))),
+                RunAdminAsync(opt, tenant, svc => svc.UpdateMembershipAsync(
+                    new UpdateMembershipCommand(b.MembershipId, Guid.NewGuid(), null, TenantRole.Analyst))));
 
             AssertExactlyOneSurvived(results);
+            await AssertOneActiveAdminAsync(opt, tenant);
+        }
+    }
+
+    /// <summary>
+    /// O caminho PÚBLICO de concessão/upsert (<c>GrantAccessAsync</c>) precisa ter a MESMA proteção sob
+    /// concorrência: duas concessões simultâneas rebaixando os dois últimos admins não podem zerar o tenant.
+    /// </summary>
+    [Fact]
+    public async Task ConcurrentGrantDemotion_OfLastTwoAdmins_NeverLeavesTenantWithoutAdmin_OnRealPostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var opt = pg.DbOptions();
+        await EnsureSchemaAsync(opt);
+
+        for (var i = 0; i < 5; i++)
+        {
+            var (tenant, a, b) = await SeedFreshTenantWithTwoAdminsAsync(opt);
+
+            var results = await Task.WhenAll(
+                RunGrantAsync(opt, tenant, a.AccountId, TenantRole.Analyst),
+                RunGrantAsync(opt, tenant, b.AccountId, TenantRole.Analyst));
+
+            results.Count(r => r == AccessGrantStatus.LastAdminProtected)
+                .Should().Be(1, "exatamente uma concessão concorrente é barrada");
+            results.Count(r => r == AccessGrantStatus.AccessUpdated)
+                .Should().Be(1, "e exatamente a outra rebaixa");
             await AssertOneActiveAdminAsync(opt, tenant);
         }
     }
@@ -87,8 +117,8 @@ public sealed class LastAdminConcurrencyPostgresTests
             .Should().Be(1, "o tenant NUNCA fica sem administrador ativo (write-skew fechado pelo FOR UPDATE)");
     }
 
-    /// <summary>Uma "requisição": DbContext + serviço PRÓPRIOS (conexão própria) para concorrência real.</summary>
-    private static Task<MembershipAdminResult> RunAsync(
+    /// <summary>Uma "requisição" administrativa: DbContext + serviço PRÓPRIOS (conexão própria).</summary>
+    private static Task<MembershipAdminResult> RunAdminAsync(
         DbContextOptions<AegisScoreDbContext> opt, Guid tenant,
         Func<IUserManagementService, Task<MembershipAdminResult>> op) =>
         Task.Run(async () =>
@@ -99,7 +129,20 @@ public sealed class LastAdminConcurrencyPostgresTests
             return await op(svc);
         });
 
-    private static async Task<(Guid tenant, Guid mA, Guid mB)> SeedFreshTenantWithTwoAdminsAsync(
+    /// <summary>Uma "requisição" de CONCESSÃO pública (upsert): rebaixa por account id, ator externo.</summary>
+    private static Task<AccessGrantStatus> RunGrantAsync(
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, Guid accountId, TenantRole role) =>
+        Task.Run(async () =>
+        {
+            await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+            var svc = new UserManagementService(
+                db, new SystemTenantContext(tenant), NullLogger<UserManagementService>.Instance);
+            var result = await svc.GrantAccessAsync(
+                new GrantTenantAccessCommand(accountId, "Rebaixado", role, ActorAccountId: Guid.NewGuid()));
+            return result.Status;
+        });
+
+    private static async Task<(Guid tenant, Admin a, Admin b)> SeedFreshTenantWithTwoAdminsAsync(
         DbContextOptions<AegisScoreDbContext> opt)
     {
         var tenant = Guid.NewGuid();
@@ -114,7 +157,7 @@ public sealed class LastAdminConcurrencyPostgresTests
         var mB = new User { TenantId = tenant, Account = b, DisplayName = "B", Role = TenantRole.TenantAdmin, IsActive = true };
         db.Users.AddRange(mA, mB);
         await db.SaveChangesAsync();
-        return (tenant, mA.Id, mB.Id);
+        return (tenant, new Admin(mA.Id, a.Id), new Admin(mB.Id, b.Id));
     }
 
     private static async Task EnsureSchemaAsync(DbContextOptions<AegisScoreDbContext> opt)

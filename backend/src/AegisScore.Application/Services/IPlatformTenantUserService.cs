@@ -18,7 +18,13 @@ namespace AegisScore.Application.Services;
 /// aplicada quando a identidade é CRIADA. Se a pessoa JÁ existe, a senha informada é IGNORADA — conceder
 /// acesso jamais redefine silenciosamente uma credencial existente.
 /// </param>
-public record OnboardTenantUserCommand(string Email, string DisplayName, TenantRole Role, string? InitialPassword);
+/// <param name="ActorAccountId">
+/// A PESSOA autenticada que executa o onboarding (claim <c>account_id</c>), NUNCA vinda do corpo. Repassada à
+/// concessão para uma identidade EXISTENTE, para que as MESMAS guardas administrativas (auto-rebaixamento,
+/// último admin, concorrência) valham também aqui — o onboarding de identidade existente não pode ser um bypass.
+/// </param>
+public record OnboardTenantUserCommand(
+    string Email, string DisplayName, TenantRole Role, string? InitialPassword, Guid ActorAccountId);
 
 // ---- Resultado de saída -----------------------------------------------------
 
@@ -55,6 +61,12 @@ public enum TenantUserOnboardingStatus
 
     /// <summary>Senha presente porém fora da política de comprimento (400).</summary>
     WeakPassword = 8,
+
+    /// <summary>A concessão a identidade existente rebaixaria o PRÓPRIO ator administrador (409).</summary>
+    SelfDemotionForbidden = 9,
+
+    /// <summary>A concessão a identidade existente rebaixaria o ÚLTIMO administrador ativo (409).</summary>
+    LastAdminProtected = 10,
 }
 
 /// <summary>

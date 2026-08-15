@@ -16,7 +16,14 @@ namespace AegisScore.Application.Services;
 /// <param name="DisplayName">Nome exibido NESTE cliente (a mesma pessoa pode se apresentar diferente em cada um).</param>
 /// <param name="Role">Papel TENANT-SCOPED exercido NESTE tenant (<see cref="TenantRole"/>). O eixo global
 /// (<c>PlatformAdmin</c>) não existe neste tipo e não é atribuível por esta superfície.</param>
-public record GrantTenantAccessCommand(Guid IdentityAccountId, string DisplayName, TenantRole Role);
+/// <param name="ActorAccountId">
+/// A PESSOA autenticada que executa a concessão (claim <c>account_id</c>), NUNCA vinda do corpo. Só alimenta
+/// as guardas de auto-rebaixamento — a concessão de acesso a uma IDENTIDADE existente edita/reativa um
+/// membership e, portanto, precisa das MESMAS invariantes das operações administrativas (não pode virar um
+/// bypass para o admin rebaixar a si mesmo, rebaixar o último admin ou contornar a concorrência).
+/// </param>
+public record GrantTenantAccessCommand(
+    Guid IdentityAccountId, string DisplayName, TenantRole Role, Guid ActorAccountId);
 
 // ---- Resultado de saída -----------------------------------------------------
 
@@ -44,6 +51,12 @@ public enum AccessGrantStatus
 
     /// <summary>Papel não atribuível por esta superfície — ver a nota de escalonamento na interface.</summary>
     RoleNotAssignable = 4,
+
+    /// <summary>A pessoa tentou rebaixar o PRÓPRIO papel de administrador ao (re)conceder acesso (409).</summary>
+    SelfDemotionForbidden = 5,
+
+    /// <summary>A concessão rebaixaria o ÚLTIMO administrador ativo do tenant (409).</summary>
+    LastAdminProtected = 6,
 }
 
 /// <summary>

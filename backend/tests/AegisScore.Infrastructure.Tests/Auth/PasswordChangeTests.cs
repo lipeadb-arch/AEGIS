@@ -1,8 +1,11 @@
+using System.Reflection;
+using AegisScore.Api.Controllers;
 using AegisScore.Application.Abstractions;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Auth;
 using AegisScore.Infrastructure.Persistence;
 using FluentAssertions;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -110,6 +113,20 @@ public sealed class PasswordChangeTests : IDisposable
         result.Status.Should().Be(PasswordChangeStatus.NoLocalCredential);
         (await db.IdentityAccounts.SingleAsync(a => a.Id == accountId)).PasswordHash
             .Should().BeNull("não inventa uma credencial local para uma conta do provedor");
+    }
+
+    // ---- Rate limiting do endpoint autenticado de troca de senha -----------------
+
+    [Fact]
+    public void ChangePasswordEndpoint_TemRateLimiting()
+    {
+        // A troca verifica a senha ATUAL — é alvo de brute force mesmo autenticada. O endpoint precisa de
+        // uma policy de limitação (wiring verificado por reflexão; a policy é definida no Program.cs).
+        var method = typeof(AuthController).GetMethod(nameof(AuthController.ChangePassword))!;
+        var attr = method.GetCustomAttribute<EnableRateLimitingAttribute>();
+
+        attr.Should().NotBeNull("tentativas de troca de senha não podem ser ilimitadas");
+        attr!.PolicyName.Should().Be("auth-password");
     }
 
     // ---- Fixture ----------------------------------------------------------------

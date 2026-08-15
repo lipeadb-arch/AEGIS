@@ -86,7 +86,7 @@ public sealed class IdentitySeparationFlowTests : IDisposable
         await using (var db = NewContext(TenantA))
         {
             var grant = await GrantService(db, TenantA)
-                .GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", TenantRole.Analyst));
+                .GrantAccessAsync(new GrantTenantAccessCommand(accountId, "Ana", TenantRole.Analyst, Guid.NewGuid()));
             grant.Status.Should().Be(AccessGrantStatus.Granted);
         }
 

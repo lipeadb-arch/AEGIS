@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using AegisScore.Api.Auth;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Services;
+using AegisScore.Infrastructure.Auth;
 
 namespace AegisScore.Api.Controllers;
 
@@ -39,8 +40,13 @@ public sealed class PlatformTenantUsersController : ControllerBase
     public async Task<ActionResult<OnboardTenantUserResponse>> Onboard(
         OnboardTenantUserRequest req, CancellationToken ct)
     {
+        // O ator vem da claim account_id (nunca do corpo): repassado à concessão de identidade EXISTENTE para
+        // que as guardas administrativas (auto-rebaixamento, último admin, concorrência) valham também aqui.
+        if (!Guid.TryParse(User.FindFirst(JwtTokenService.AccountClaim)?.Value, out var actorAccountId))
+            return Unauthorized(new { title = "Token sem conta de identidade.", status = 401 });
+
         var result = await _onboarding.OnboardAsync(
-            new OnboardTenantUserCommand(req.Email, req.DisplayName, req.Role, req.InitialPassword), ct);
+            new OnboardTenantUserCommand(req.Email, req.DisplayName, req.Role, req.InitialPassword, actorAccountId), ct);
 
         return result.Status switch
         {
@@ -57,6 +63,11 @@ public sealed class PlatformTenantUsersController : ControllerBase
             TenantUserOnboardingStatus.RoleNotAssignable => StatusCode(
                 StatusCodes.Status403Forbidden,
                 new { title = result.Detail ?? "Papel não atribuível.", status = 403 }),
+
+            // Conflitos de INVARIANTE quando o onboarding recai numa concessão a identidade existente
+            // (auto-rebaixamento / último administrador): 409 — as MESMAS guardas das rotas de edição.
+            TenantUserOnboardingStatus.SelfDemotionForbidden or TenantUserOnboardingStatus.LastAdminProtected =>
+                Conflict(new { title = result.Detail ?? "Operação não permitida.", status = 409 }),
 
             // Erros de contrato/política de senha: 400 com a mensagem do serviço (nunca ecoa a senha).
             _ => BadRequest(new { title = result.Detail ?? "Requisição inválida.", status = 400 }),

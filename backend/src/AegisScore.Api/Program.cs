@@ -231,6 +231,12 @@ builder.Services.AddRateLimiter(o =>
         ClientIp(ctx),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 
+    // Troca da PRÓPRIA senha (autenticada): verifica a senha ATUAL, então é alvo de brute force apesar de
+    // exigir sessão. Janela apertada por IP, no mesmo idioma do login — nunca ilimitada.
+    o.AddPolicy("auth-password", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        ClientIp(ctx),
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+
     // [AEGIS-AUD-020] Ingestão externa de eventos (SIEM/EDR push): proporcional a um emissor legítimo, que
     // envia lotes com frequência de egress fixo. Particionado por IP (limita o nº de partições) — blinda o
     // endpoint anônimo contra flood, sem sufocar a coleta real.

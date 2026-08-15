@@ -65,7 +65,7 @@ public sealed class UserManagementService : IUserManagementService
         var granted = new User
         {
             Account = account,
-            DisplayName = command.DisplayName.Trim(),
+            DisplayName = TenantAccessPolicy.NormalizeDisplayName(command.DisplayName),
             Role = command.Role,
             IsActive = true,
             // TenantId é carimbado no SaveChanges (fail-closed) — nunca atribuído aqui.
@@ -96,25 +96,39 @@ public sealed class UserManagementService : IUserManagementService
     }
 
     /// <summary>
-    /// Aplica papel, nome e reativação a um membership existente — o caminho idempotente. A credencial
-    /// global e o vínculo Entra NÃO são tocados de propósito: conceder acesso não é resetar senha nem
-    /// revincular identidade.
+    /// Aplica papel, nome e reativação a um membership existente — o caminho idempotente da concessão. Passa
+    /// pela MESMA autoridade guardada das operações administrativas (<see cref="ApplyGuardedMembershipChangeAsync"/>):
+    /// conceder acesso a uma identidade existente NÃO pode virar um bypass do auto-rebaixamento, da proteção
+    /// do último administrador ou da concorrência. A credencial global, o <c>PlatformRole</c> e o vínculo
+    /// Entra NÃO são tocados de propósito.
     /// </summary>
     private async Task<AccessGrantResult> ApplyUpdateAsync(
         User membership, IdentityAccount account, GrantTenantAccessCommand command, Guid tenantId, CancellationToken ct)
     {
-        var reactivated = !membership.IsActive;
-        membership.Role = command.Role;
-        membership.DisplayName = command.DisplayName.Trim();
-        membership.IsActive = true;
-        await _db.SaveChangesAsync(ct);
+        var rejection = await ApplyGuardedMembershipChangeAsync(
+            membership, command.ActorAccountId, command.DisplayName, command.Role, reactivate: true, tenantId, ct);
+        if (rejection is { } r)
+            return MapGrantGuardRejection(r);
 
         _log.LogInformation(
-            "Acesso {UserId} atualizado no tenant {TenantId}: papel {Role}{Reactivated}.",
-            membership.Id, tenantId, membership.Role, reactivated ? ", REATIVADO" : "");
+            "Acesso {UserId} atualizado no tenant {TenantId}: papel {Role}.",
+            membership.Id, tenantId, membership.Role);
 
         return AccessGrantResult.Ok(AccessGrantStatus.AccessUpdated, Project(membership, account));
     }
+
+    /// <summary>Traduz uma recusa de guarda (compartilhada) para o desfecho da CONCESSÃO. Só ocorre no
+    /// caminho de membership existente; papel/nome já foram pré-validados por <see cref="GrantAccessAsync"/>.</summary>
+    private static AccessGrantResult MapGrantGuardRejection(MembershipAdminStatus status) => status switch
+    {
+        MembershipAdminStatus.SelfDemotionForbidden => AccessGrantResult.Rejected(
+            AccessGrantStatus.SelfDemotionForbidden,
+            "Você não pode rebaixar o próprio papel de administrador ao conceder acesso. Peça a outro administrador."),
+        MembershipAdminStatus.LastAdminProtected => AccessGrantResult.Rejected(
+            AccessGrantStatus.LastAdminProtected,
+            "Esta concessão rebaixaria o último administrador ativo do ambiente. Promova outra pessoa antes."),
+        _ => AccessGrantResult.Rejected(AccessGrantStatus.RoleNotAssignable),   // inalcançável (pré-validado)
+    };
 
     // ---- Listagem tenant-scoped -------------------------------------------------
 
@@ -167,38 +181,70 @@ public sealed class UserManagementService : IUserManagementService
         if (target is null || account is null)
             return MembershipAdminResult.Rejected(MembershipAdminStatus.NotFound);
 
-        var isSelf = account.Id == command.ActorAccountId;
-        var demotesAdmin = command.Role is { } r
-            && target.Role == TenantRole.TenantAdmin && r != TenantRole.TenantAdmin;
-        var reducesPrivilege = command.Role is { } r2 && r2 < target.Role;   // menor ordinal = menos privilégio
+        // MESMA autoridade guardada da concessão: auto-rebaixamento, último admin (sob concorrência) e
+        // revogação de sessões ao reduzir privilégio. Edição não reativa (reactivate: false).
+        var rejection = await ApplyGuardedMembershipChangeAsync(
+            target, command.ActorAccountId, command.DisplayName, command.Role, reactivate: false, tenantId, ct);
+        if (rejection is { } r)
+            return MembershipAdminResult.Rejected(r, MessageForGuardRejection(r));
+
+        _log.LogInformation(
+            "Acesso {UserId} editado no tenant {TenantId}: papel {Role}.", target.Id, tenantId, target.Role);
+        return MembershipAdminResult.Ok(Project(target, account));
+    }
+
+    /// <summary>Mensagem orientada à operação para as recusas de guarda compartilhadas.</summary>
+    private static string MessageForGuardRejection(MembershipAdminStatus status) => status switch
+    {
+        MembershipAdminStatus.SelfDemotionForbidden =>
+            "Você não pode rebaixar o próprio papel de administrador. Peça a outro administrador.",
+        MembershipAdminStatus.LastAdminProtected =>
+            "Este é o último administrador ativo do ambiente. Promova outra pessoa a Administrador antes de rebaixá-lo.",
+        _ => "Operação não permitida.",
+    };
+
+    /// <summary>
+    /// AUTORIDADE ÚNICA da mutação de um membership EXISTENTE (nome/papel/reativação) com TODAS as
+    /// invariantes: auto-rebaixamento recusado, proteção do último administrador ativo (correta sob
+    /// concorrência real, via <c>FOR UPDATE</c>) e revogação dos refresh tokens quando o privilégio é
+    /// reduzido. Compartilhada por <see cref="ApplyUpdateAsync"/> (concessão/reativação) e
+    /// <see cref="UpdateMembershipAsync"/> (edição), para que os DOIS caminhos apliquem EXATAMENTE as mesmas
+    /// guardas — sem invariantes divergentes. Retorna <c>null</c> em sucesso, ou o status de recusa. A
+    /// credencial global, o <c>PlatformRole</c> e o vínculo Entra NÃO são tocados por construção.
+    /// </summary>
+    private async Task<MembershipAdminStatus?> ApplyGuardedMembershipChangeAsync(
+        User membership, Guid actorAccountId, string? newDisplayName, TenantRole? newRole, bool reactivate,
+        Guid tenantId, CancellationToken ct)
+    {
+        var isSelf = membership.IdentityAccountId == actorAccountId;
+        var targetRole = newRole ?? membership.Role;
+        var demotesAdmin = membership.Role == TenantRole.TenantAdmin && targetRole != TenantRole.TenantAdmin;
+        var reducesPrivilege = targetRole < membership.Role;   // menor ordinal = menos privilégio
 
         // Auto-rebaixamento administrativo: a pessoa não pode tirar o próprio papel de administrador.
         if (isSelf && demotesAdmin)
-            return MembershipAdminResult.Rejected(
-                MembershipAdminStatus.SelfDemotionForbidden,
-                "Você não pode rebaixar o próprio papel de administrador. Peça a outro administrador.");
+            return MembershipAdminStatus.SelfDemotionForbidden;
 
-        async Task<MembershipAdminResult> ApplyAsync()
+        async Task<MembershipAdminStatus?> ApplyAsync()
         {
-            if (command.DisplayName is { } newName)
-                target.DisplayName = TenantAccessPolicy.NormalizeDisplayName(newName);
-            if (command.Role is { } newRole)
-                target.Role = newRole;
+            if (newDisplayName is { } dn)
+                membership.DisplayName = TenantAccessPolicy.NormalizeDisplayName(dn);
+            if (newRole is { } r)
+                membership.Role = r;
+            if (reactivate)
+                membership.IsActive = true;
             await _db.SaveChangesAsync(ct);
 
             // Reduzir privilégio derruba as sessões daquele membership (o papel antigo não sobrevive no token).
             if (reducesPrivilege)
-                await RevokeMembershipSessionsAsync(target.Id, ct);
-
-            _log.LogInformation(
-                "Acesso {UserId} editado no tenant {TenantId}: papel {Role}, ativo={IsActive}.",
-                target.Id, tenantId, target.Role, target.IsActive);
-            return MembershipAdminResult.Ok(Project(target, account));
+                await RevokeMembershipSessionsAsync(membership.Id, ct);
+            return null;   // sucesso
         }
 
-        // Guarda do último administrador só quando esta edição rebaixa um admin ATIVO.
-        return target.IsActive && demotesAdmin
-            ? await GuardLastActiveAdminAsync(tenantId, target.Id, ApplyAsync, ct)
+        // Guarda do último administrador só quando esta mudança rebaixa um admin ATIVO.
+        return membership.IsActive && demotesAdmin
+            ? await GuardLastActiveAdminAsync(
+                tenantId, membership.Id, ApplyAsync, () => (MembershipAdminStatus?)MembershipAdminStatus.LastAdminProtected, ct)
             : await ApplyAsync();
     }
 
@@ -247,7 +293,13 @@ public sealed class UserManagementService : IUserManagementService
 
         // Guarda do último administrador quando o alvo é um admin ATIVO (target.IsActive já é true aqui).
         return target.Role == TenantRole.TenantAdmin
-            ? await GuardLastActiveAdminAsync(tenantId, target.Id, ApplyAsync, ct)
+            ? await GuardLastActiveAdminAsync(
+                tenantId, target.Id, ApplyAsync,
+                () => MembershipAdminResult.Rejected(
+                    MembershipAdminStatus.LastAdminProtected,
+                    "Este é o último administrador ativo do ambiente. Promova outra pessoa a Administrador antes " +
+                    "de removê-lo."),
+                ct)
             : await ApplyAsync();
     }
 
@@ -260,8 +312,8 @@ public sealed class UserManagementService : IUserManagementService
     /// de estados) a cláusula é omitida: as escritas já são serializadas, e a garantia real é validada em
     /// PostgreSQL descartável.
     /// </summary>
-    private async Task<MembershipAdminResult> GuardLastActiveAdminAsync(
-        Guid tenantId, Guid targetId, Func<Task<MembershipAdminResult>> apply, CancellationToken ct)
+    private async Task<T> GuardLastActiveAdminAsync<T>(
+        Guid tenantId, Guid targetId, Func<Task<T>> apply, Func<T> onLastAdmin, CancellationToken ct)
     {
         await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
         await LockActiveAdminsAsync(tenantId, ct);
@@ -271,10 +323,7 @@ public sealed class UserManagementService : IUserManagementService
         if (otherActiveAdmins == 0)
         {
             await tx.RollbackAsync(ct);
-            return MembershipAdminResult.Rejected(
-                MembershipAdminStatus.LastAdminProtected,
-                "Este é o último administrador ativo do ambiente. Promova outra pessoa a Administrador antes de " +
-                "removê-lo ou rebaixá-lo.");
+            return onLastAdmin();
         }
 
         var result = await apply();

@@ -235,6 +235,7 @@ public sealed class AuthController : ControllerBase
     /// </summary>
     [Authorize]
     [HttpPost("password")]
+    [EnableRateLimiting("auth-password")]   // brute force da senha ATUAL, mesmo autenticado — janela apertada por IP
     public async Task<IActionResult> ChangePassword(ChangePasswordRequest req, CancellationToken ct)
     {
         if (!Guid.TryParse(User.FindFirst(JwtTokenService.AccountClaim)?.Value, out var accountId))

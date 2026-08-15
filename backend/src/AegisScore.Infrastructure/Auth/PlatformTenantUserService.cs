@@ -150,8 +150,11 @@ public sealed class PlatformTenantUserService : IPlatformTenantUserService
     private async Task<TenantUserOnboardingResult> GrantToExistingAsync(
         IdentityAccount identity, OnboardTenantUserCommand command, CancellationToken ct)
     {
+        // Reusa a autoridade tenant-scoped, repassando o ATOR: a concessão a uma identidade existente edita/
+        // reativa um membership e aplica as MESMAS guardas (auto-rebaixamento, último admin, concorrência),
+        // sem tocar credencial, papel global ou vínculo Entra (a senha informada é ignorada de propósito).
         var grant = await _users.GrantAccessAsync(
-            new GrantTenantAccessCommand(identity.Id, command.DisplayName, command.Role), ct);
+            new GrantTenantAccessCommand(identity.Id, command.DisplayName, command.Role, command.ActorAccountId), ct);
 
         return grant.Status switch
         {
@@ -163,6 +166,11 @@ public sealed class PlatformTenantUserService : IPlatformTenantUserService
                 TenantUserOnboardingStatus.RoleNotAssignable, grant.Detail),
             AccessGrantStatus.InvalidDisplayName => TenantUserOnboardingResult.Rejected(
                 TenantUserOnboardingStatus.InvalidDisplayName, grant.Detail),
+            // Guardas administrativas: propaga como recusa de onboarding (a UI mostra o motivo do 409/403).
+            AccessGrantStatus.SelfDemotionForbidden => TenantUserOnboardingResult.Rejected(
+                TenantUserOnboardingStatus.SelfDemotionForbidden, grant.Detail),
+            AccessGrantStatus.LastAdminProtected => TenantUserOnboardingResult.Rejected(
+                TenantUserOnboardingStatus.LastAdminProtected, grant.Detail),
             // IdentityNotFound: corrida improvável (o modelo não faz exclusão física de identidade).
             _ => TenantUserOnboardingResult.Rejected(
                 TenantUserOnboardingStatus.InvalidEmail, "Não foi possível localizar a identidade. Tente novamente."),

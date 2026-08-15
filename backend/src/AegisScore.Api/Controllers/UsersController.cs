@@ -68,8 +68,13 @@ public sealed class UsersController : ControllerBase
     public async Task<ActionResult<UserDto>> GrantAccess(
         AssignUserAccessRequest req, CancellationToken ct)
     {
+        // O ator vem da claim account_id (nunca do corpo): conceder acesso a uma identidade EXISTENTE edita/
+        // reativa um membership e precisa das mesmas guardas administrativas (não pode virar um bypass).
+        if (!TryGetAccountId(out var accountId))
+            return Unauthorized(new { title = "Token sem conta de identidade.", status = 401 });
+
         var result = await _users.GrantAccessAsync(
-            new GrantTenantAccessCommand(req.IdentityAccountId, req.DisplayName, req.Role), ct);
+            new GrantTenantAccessCommand(req.IdentityAccountId, req.DisplayName, req.Role, accountId), ct);
 
         return Respond(result);
     }
@@ -151,6 +156,11 @@ public sealed class UsersController : ControllerBase
         // Recusa de AUTORIZAÇÃO, não de formato: o pedido é sintaticamente válido e foi negado por
         // política de privilégio. 403 conta essa história; 400 a esconderia como erro de digitação.
         AccessGrantStatus.RoleNotAssignable => Forbid(),
+
+        // Conflitos de INVARIANTE quando a concessão editaria um membership existente (auto-rebaixamento /
+        // último administrador): 409 com mensagem orientada à operação — as MESMAS guardas das rotas de edição.
+        AccessGrantStatus.SelfDemotionForbidden or AccessGrantStatus.LastAdminProtected =>
+            Conflict(new { title = result.Detail ?? "Operação não permitida.", status = 409 }),
 
         _ => BadRequest(result.Detail ?? "Requisição inválida."),
     };
