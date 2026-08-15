@@ -443,6 +443,65 @@ public sealed class AuthService : IAuthService
         return await ResolveSessionAsync(account, memberships, lastTenantId, ct);
     }
 
+    public async Task<PasswordChangeResult> ChangeOwnPasswordAsync(
+        Guid accountId, string currentPassword, string newPassword, CancellationToken ct)
+    {
+        if (accountId == Guid.Empty)
+            return PasswordChangeResult.Rejected(PasswordChangeStatus.NotFound);
+
+        // A identidade é GLOBAL (sem query filter): leitura por Id, ancorada na conta AUTENTICADA.
+        var account = await _db.IdentityAccounts.FirstOrDefaultAsync(a => a.Id == accountId, ct);
+        if (account is null)
+            return PasswordChangeResult.Rejected(PasswordChangeStatus.NotFound);
+
+        // Conta federated-only (sem hash): não há senha local a trocar — a credencial é do provedor corporativo.
+        if (account.PasswordHash is null)
+            return PasswordChangeResult.Rejected(
+                PasswordChangeStatus.NoLocalCredential,
+                "Esta conta autentica pelo provedor corporativo — não há senha local para trocar.");
+
+        // A senha atual precisa conferir. NÃO é aparada (espaço é caractere legítimo). Verificação ~constante.
+        if (!_hasher.Verify(currentPassword ?? "", account.PasswordHash))
+            return PasswordChangeResult.Rejected(
+                PasswordChangeStatus.InvalidCurrentPassword, "Senha atual incorreta.");
+
+        // A NOVA senha segue a MESMA política NIST (comprimento) — autoridade única PasswordPolicy.
+        if (PasswordPolicy.ValidateStrength(newPassword ?? "") is { } weak)
+            return PasswordChangeResult.Rejected(PasswordChangeStatus.WeakPassword, weak);
+
+        // ATÔMICO: a nova senha (IdentityAccount) e a revogação de TODAS as sessões da identidade — em TODOS
+        // os tenants — num ÚNICO commit. Se a revogação falhar, a transação é revertida e a senha ANTIGA
+        // permanece válida (nenhum estado parcial: senha nova sem sessões revogadas seria uma janela de risco).
+        // A revogação cross-tenant é ESTRITAMENTE ancorada no account_id — a exceção autorizada de
+        // IgnoreQueryFilters sobre identidade (ver a doc de IAuthService). O access token já emitido conserva
+        // seu teto de 10 min (não o encurtamos).
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+        var membershipIds = await _db.Users.IgnoreQueryFilters()
+            .Where(u => u.IdentityAccountId == accountId)
+            .Select(u => u.Id)
+            .ToListAsync(ct);
+
+        account.PasswordHash = _hasher.Hash(newPassword!);   // IdentityAccount é global: SaveChanges não exige tenant
+        await _db.SaveChangesAsync(ct);
+
+        if (membershipIds.Count > 0)
+        {
+            var now = DateTimeOffset.UtcNow;   // capturado p/ o SetProperty traduzir em todo provider
+            await _db.UserRefreshTokens.IgnoreQueryFilters()
+                .Where(t => t.RevokedAt == null && membershipIds.Contains(t.UserId))
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, _ => now), ct);
+        }
+
+        await tx.CommitAsync(ct);
+
+        _logger.LogInformation(
+            "Troca de senha concluída para a conta {AccountId}: sessões revogadas em {Count} ambiente(s).",
+            accountId, membershipIds.Count);
+
+        return PasswordChangeResult.Changed;
+    }
+
     /// <summary>
     /// Trata a reapresentação de um token JÁ revogado (rotacionado):
     ///  (a) Dentro da janela de idempotência e com sucessor ativo → conflito benigno de rotação: outra

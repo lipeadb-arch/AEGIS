@@ -1,6 +1,7 @@
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Services;
 using AegisScore.Domain;
+using AegisScore.Infrastructure.Auth;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Tenancy;
 using FluentAssertions;
@@ -21,6 +22,9 @@ public sealed class TenantManagementServiceTests : IDisposable
     private static readonly Guid TenantA = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid TenantB = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
+    /// <summary>Identidade global que "cria" os tenants nos testes — recebe o membership TenantAdmin.</summary>
+    private static readonly Guid CreatorId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+
     private readonly SqliteConnection _connection;
 
     public TenantManagementServiceTests()
@@ -35,6 +39,13 @@ public sealed class TenantManagementServiceTests : IDisposable
         ctx.Tenants.AddRange(
             new Tenant { Id = TenantA, Name = "Cliente A", Slug = "fixture-a", Status = TenantStatus.Active },
             new Tenant { Id = TenantB, Name = "Cliente B", Slug = "fixture-b", Status = TenantStatus.Active });
+        // A identidade criadora precisa preexistir: CreateTenantAsync concede a ela um membership TenantAdmin
+        // no ambiente novo (FK real Users → IdentityAccounts).
+        ctx.IdentityAccounts.Add(new IdentityAccount
+        {
+            Id = CreatorId, Email = "fundadora@demo.example.com",
+            PasswordHash = new Pbkdf2PasswordHasher().Hash("uma frase longa e boa"),
+        });
         ctx.SaveChanges();
     }
 
@@ -50,7 +61,7 @@ public sealed class TenantManagementServiceTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         var result = await ServiceFor(db, TenantA).CreateTenantAsync(
-            new CreateTenantCommand("  Acme Corporation  ", "  ACME-Corp  "));
+            new CreateTenantCommand("  Acme Corporation  ", "  ACME-Corp  ", CreatorId));
 
         result.Succeeded.Should().BeTrue();
         result.Slug.Should().Be("acme-corp", "o slug é normalizado antes de tocar o índice único");
@@ -59,6 +70,13 @@ public sealed class TenantManagementServiceTests : IDisposable
         saved.Slug.Should().Be("acme-corp");
         saved.Name.Should().Be("Acme Corporation", "o nome é trimado");
         saved.Status.Should().Be(TenantStatus.Onboarding, "cliente novo não nasce Active");
+
+        // O criador nasce como TenantAdmin ATIVO no ambiente novo (concessão atômica).
+        await using var assert = NewContext(null);
+        var membership = await assert.Users.IgnoreQueryFilters()
+            .SingleAsync(u => u.TenantId == result.TenantId && u.IdentityAccountId == CreatorId);
+        membership.Role.Should().Be(TenantRole.TenantAdmin);
+        membership.IsActive.Should().BeTrue();
     }
 
     [Fact]
@@ -67,10 +85,10 @@ public sealed class TenantManagementServiceTests : IDisposable
         await using var db = NewContext(TenantA);
         var svc = ServiceFor(db, TenantA);
 
-        (await svc.CreateTenantAsync(new CreateTenantCommand("Acme", "acme"))).Succeeded.Should().BeTrue();
+        (await svc.CreateTenantAsync(new CreateTenantCommand("Acme", "acme", CreatorId))).Succeeded.Should().BeTrue();
 
         // Sem normalização, "ACME" passaria pelo índice único e criaria um cliente-fantasma.
-        var second = await svc.CreateTenantAsync(new CreateTenantCommand("Acme de novo", "  ACME "));
+        var second = await svc.CreateTenantAsync(new CreateTenantCommand("Acme de novo", "  ACME ", CreatorId));
 
         second.Status.Should().Be(TenantProvisioningStatus.SlugAlreadyInUse);
         (await db.Tenants.CountAsync(t => t.Slug == "acme")).Should().Be(1);
@@ -86,7 +104,7 @@ public sealed class TenantManagementServiceTests : IDisposable
     public async Task CreateTenantAsync_SlugMalformado_EhRejeitado(string slug)
     {
         await using var db = NewContext(TenantA);
-        var result = await ServiceFor(db, TenantA).CreateTenantAsync(new CreateTenantCommand("Acme", slug));
+        var result = await ServiceFor(db, TenantA).CreateTenantAsync(new CreateTenantCommand("Acme", slug, CreatorId));
 
         result.Status.Should().Be(TenantProvisioningStatus.InvalidSlug);
         (await db.Tenants.CountAsync()).Should().Be(SeededTenants, "nada foi provisionado");
@@ -96,7 +114,7 @@ public sealed class TenantManagementServiceTests : IDisposable
     public async Task CreateTenantAsync_NomeVazio_EhRejeitado()
     {
         await using var db = NewContext(TenantA);
-        var result = await ServiceFor(db, TenantA).CreateTenantAsync(new CreateTenantCommand("   ", "acme"));
+        var result = await ServiceFor(db, TenantA).CreateTenantAsync(new CreateTenantCommand("   ", "acme", CreatorId));
 
         result.Succeeded.Should().BeFalse();
         (await db.Tenants.CountAsync()).Should().Be(SeededTenants, "nada foi provisionado");
@@ -332,14 +350,18 @@ public sealed class TenantManagementServiceTests : IDisposable
         new(ConnectorProvider.Microsoft, ConnectorCapability.SecureScore, displayName,
             ConnectorAuthType.OAuthClientCredentials, settings, syncIntervalMinutes);
 
-    private AegisScoreDbContext NewContext(Guid? tenantId) =>
-        new(new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(_connection).Options,
-            new SystemTenantContext(tenantId));
+    /// <summary>Opções sobre a MESMA conexão in-memory — o db2 que o CreateTenantAsync abre (para carimbar
+    /// o membership no tenant novo) precisa enxergar as mesmas linhas.</summary>
+    private DbContextOptions<AegisScoreDbContext> Options =>
+        new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(_connection).Options;
 
-    private static ITenantManagementService ServiceFor(
+    private AegisScoreDbContext NewContext(Guid? tenantId) =>
+        new(Options, new SystemTenantContext(tenantId));
+
+    private ITenantManagementService ServiceFor(
         AegisScoreDbContext db, Guid? tenantId, IConnectorSecretProtector? protector = null) =>
         new TenantManagementService(
-            db, new SystemTenantContext(tenantId), protector ?? new FakeProtector(),
+            db, Options, new SystemTenantContext(tenantId), protector ?? new FakeProtector(),
             NullLogger<TenantManagementService>.Instance);
 
     /// <summary>

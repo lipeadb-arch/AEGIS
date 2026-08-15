@@ -73,17 +73,21 @@ public sealed class IdentitySeparationAuthorizationTests
     // ---- A rota legada não pode sobreviver --------------------------------------
 
     [Fact]
-    public void UsersController_NaoTemMaisRotaDeCriacaoDeIdentidade()
+    public void UsersController_NaoTemMaisRotaDeCriacaoDeIdentidadeNaRaiz()
     {
-        // A antiga POST /api/v1/users (raiz) criava a IdentityAccount por um TenantAdmin. Nenhum POST deste
-        // controller pode mais mapear para a raiz: o único POST permitido é o "access" (concessão).
-        var posts = typeof(UsersController).GetMethods()
+        // A antiga POST /api/v1/users (RAIZ) criava a IdentityAccount por um TenantAdmin. O invariante de
+        // segurança é: nenhum POST deste controller pode mapear para a RAIZ (template vazio/nulo). As ações
+        // administrativas legítimas (concessão + desativar/reativar) têm templates PRÓPRIOS, nunca a raiz.
+        var postTemplates = typeof(UsersController).GetMethods()
             .Select(m => m.GetCustomAttribute<HttpPostAttribute>())
             .Where(a => a is not null)
+            .Select(a => a!.Template)
             .ToList();
 
-        posts.Should().ContainSingle("o único POST é a concessão de acesso");
-        posts[0]!.Template.Should().Be("access", "não há rota legada na raiz que contorne a separação");
+        postTemplates.Should().NotBeEmpty();
+        postTemplates.Should().OnlyContain(t => !string.IsNullOrEmpty(t),
+            "nenhum POST mapeia para a raiz — a criação de identidade por um TenantAdmin não pode voltar");
+        postTemplates.Should().Contain("access", "a concessão de acesso a identidade preexistente permanece");
     }
 
     [Fact]
@@ -91,5 +95,46 @@ public sealed class IdentitySeparationAuthorizationTests
     {
         typeof(UsersController).GetMethod("Create")
             .Should().BeNull("a criação de identidade saiu desta superfície (virou provisionamento global)");
+    }
+
+    // ---- Onboarding: exige SIMULTANEAMENTE PlatformAdmin (global) e TenantAdmin ---
+
+    [Fact]
+    public void OnboardingDeUsuario_ExigeSimultaneamentePlatformAdminETenantAdmin()
+    {
+        // A ÚNICA superfície que cria identidade global E concede acesso exige AS DUAS autoridades: a policy
+        // global de plataforma E o papel tenant-scoped TenantAdmin. Dois [Authorize] de classe = E lógico —
+        // um TenantAdmin SEM autoridade global é recusado (403), e não pode materializar identidade global.
+        var authorize = typeof(PlatformTenantUsersController)
+            .GetCustomAttributes<AuthorizeAttribute>(inherit: true).ToList();
+
+        authorize.Should().HaveCount(2, "as duas autoridades se combinam com E lógico");
+        authorize.Should().Contain(a => a.Policy == PlatformAuthorization.PolicyName,
+            "criar identidade global exige a autoridade GLOBAL de plataforma");
+        authorize.Should().Contain(a => a.Roles == "TenantAdmin",
+            "conceder acesso exige o papel de administrador do tenant ambiente");
+    }
+
+    [Fact]
+    public void OnboardingDeUsuario_TemTemplateEMetodoEsperados()
+    {
+        typeof(PlatformTenantUsersController).GetCustomAttribute<RouteAttribute>()!
+            .Template.Should().Be("api/v1/platform/tenant-users");
+        typeof(PlatformTenantUsersController).GetMethod(nameof(PlatformTenantUsersController.Onboard))!
+            .GetCustomAttribute<HttpPostAttribute>().Should().NotBeNull("o onboarding é um POST");
+    }
+
+    // ---- Administração de acessos (listar/editar/desativar/reativar): TenantAdmin -
+
+    [Theory]
+    [InlineData(nameof(UsersController.List))]
+    [InlineData(nameof(UsersController.Update))]
+    [InlineData(nameof(UsersController.Deactivate))]
+    [InlineData(nameof(UsersController.Reactivate))]
+    public void AdministracaoDeAcessos_ExigeTenantAdmin(string action)
+    {
+        var authorize = typeof(UsersController).GetMethod(action)!.GetCustomAttribute<AuthorizeAttribute>();
+        authorize.Should().NotBeNull($"{action} é administração de acessos do tenant");
+        authorize!.Roles.Should().Be("TenantAdmin", $"{action} exige o papel de administrador do tenant");
     }
 }

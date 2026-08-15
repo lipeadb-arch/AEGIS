@@ -93,6 +93,34 @@ public sealed record LoginResult(
 /// </summary>
 public record FederatedIdentity(string? TenantId, string? ObjectId, string? Email);
 
+/// <summary>Desfecho da troca da PRÓPRIA senha.</summary>
+public enum PasswordChangeStatus
+{
+    /// <summary>Senha trocada; todas as sessões da identidade revogadas.</summary>
+    Changed = 0,
+
+    /// <summary>Senha atual não confere (400).</summary>
+    InvalidCurrentPassword = 1,
+
+    /// <summary>Conta federated-only (sem senha local): a credencial é do provedor corporativo (409).</summary>
+    NoLocalCredential = 2,
+
+    /// <summary>Nova senha fora da política de comprimento (400).</summary>
+    WeakPassword = 3,
+
+    /// <summary>Conta não encontrada — não deveria ocorrer numa sessão válida (404).</summary>
+    NotFound = 4,
+}
+
+/// <summary>Resultado tipado da troca de senha. NUNCA carrega senha nem hash.</summary>
+public sealed record PasswordChangeResult(PasswordChangeStatus Status, string? Detail = null)
+{
+    public bool Succeeded => Status is PasswordChangeStatus.Changed;
+    public static readonly PasswordChangeResult Changed = new(PasswordChangeStatus.Changed);
+    public static PasswordChangeResult Rejected(PasswordChangeStatus status, string? detail = null) =>
+        new(status, detail);
+}
+
 /// <summary>
 /// Serviço de autenticação: login por credenciais, listagem de ambientes, troca de ambiente e rotação
 /// de refresh token (RTR) com detecção de reutilização (breach).
@@ -171,6 +199,18 @@ public interface IAuthService
     /// ao menos um acesso ativo — uma federação negada não deixa efeito colateral no banco.
     /// </summary>
     Task<LoginResult> ExchangeFederatedAsync(FederatedIdentity identity, Guid? lastTenantId, CancellationToken ct);
+
+    /// <summary>
+    /// Troca a PRÓPRIA senha da identidade autenticada. Estritamente ancorada no <paramref name="accountId"/>
+    /// (claim <c>account_id</c>), NUNCA num e-mail ou id do corpo. Exige a senha atual; a nova segue a MESMA
+    /// política NIST. Após a troca, REVOGA todas as sessões (refresh tokens) da identidade em TODOS os
+    /// tenants — é a exceção autorizada de <c>IgnoreQueryFilters</c> sobre identidade, aqui, na camada de
+    /// autenticação. O access token JÁ emitido conserva seu teto de 10 min (não o encurtamos). Uma conta
+    /// federated-only (sem hash) devolve <see cref="PasswordChangeStatus.NoLocalCredential"/>. Nunca registra
+    /// nem devolve senha/hash.
+    /// </summary>
+    Task<PasswordChangeResult> ChangeOwnPasswordAsync(
+        Guid accountId, string currentPassword, string newPassword, CancellationToken ct);
 }
 
 /// <summary>Geração dos tokens: JWT de acesso (HS256) + refresh token opaco. Sem estado.</summary>

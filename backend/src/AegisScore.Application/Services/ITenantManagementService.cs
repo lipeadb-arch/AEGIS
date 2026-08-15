@@ -10,7 +10,16 @@ namespace AegisScore.Application.Services;
 /// chamador: é o slug NORMALIZADO que o índice único de <c>Tenant.Slug</c> compara, então normalizar
 /// na borda deixaria "Acme" e "acme" conviverem como dois clientes distintos.
 /// </summary>
-public record CreateTenantCommand(string Name, string Slug);
+/// <param name="CreatorAccountId">
+/// Identidade autenticada que cria o ambiente. Recebe um membership <c>TenantAdmin</c> no tenant
+/// recém-criado, ATOMICAMENTE — sem depender de o novo tenant já estar no token. Vem da claim
+/// <c>account_id</c>, NUNCA do corpo.
+/// </param>
+/// <param name="CreatorDisplayName">
+/// Nome de exibição do criador no novo tenant (da claim <c>name</c>; fallback ao e-mail da identidade).
+/// </param>
+public record CreateTenantCommand(
+    string Name, string Slug, Guid CreatorAccountId, string? CreatorDisplayName = null);
 
 /// <summary>
 /// Configuração (criação OU atualização) de um conector do tenant ambiente.
@@ -128,7 +137,14 @@ public interface ITenantManagementService
 {
     /// <summary>
     /// Provisiona um cliente com os padrões corretos: <c>Status = Onboarding</c> (só vira
-    /// <c>Active</c> quando o onboarding fecha) e slug normalizado.
+    /// <c>Active</c> quando o onboarding fecha) e slug normalizado, E concede ao criador
+    /// (<see cref="CreateTenantCommand.CreatorAccountId"/>) um membership <c>TenantAdmin</c> no ambiente
+    /// recém-criado — as DUAS escritas numa ÚNICA transação (sem tenant órfão sem administrador).
+    ///
+    /// O membership do criador é <see cref="ITenantOwned"/> e precisa ser carimbado com o tenant NOVO, não
+    /// com o tenant ambiente do operador — por isso a gravação usa um contexto ligado ao tenant recém-criado
+    /// (mesmo padrão dos workers). A separação global × tenant-scoped é preservada: o <c>PlatformRole</c> da
+    /// identidade NÃO é tocado.
     ///
     /// A unicidade do slug é invariante de BANCO (índice único em <c>Tenant.Slug</c>): a checagem prévia
     /// é só fast-path, e a corrida perdida entre o SELECT e o INSERT resolve no MESMO

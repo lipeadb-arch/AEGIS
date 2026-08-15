@@ -65,6 +65,9 @@ public static class DependencyInjection
         //    identidade preexistente. Scoped: usa o DbContext (query filter + stamping fail-closed). NÃO
         //    injeta o hasher — esta autoridade não toca credencial global, por construção.
         services.AddScoped<IUserManagementService, UserManagementService>();
+        //  - Onboarding de usuário no tenant (PlatformAdmin + TenantAdmin): cria a identidade global quando
+        //    nova E concede o acesso, atomicamente — orquestra as duas autoridades acima sem afrouxá-las.
+        services.AddScoped<IPlatformTenantUserService, PlatformTenantUserService>();
 
         // [Médio 6/Baixo] Encriptação server-side dos segredos de conector (Data Protection). Depende
         // de IDataProtectionProvider, registrado por AddDataProtection() no composition root (Program).
