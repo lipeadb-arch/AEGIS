@@ -33,14 +33,12 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
   imports: [ReactiveFormsModule],
   template: `
     <section class="page">
+      <!-- Sem <h1> redundante: a aba "Integrações" do shell de Configurações já rotula esta seção. -->
       <header class="page-head">
-        <div>
-          <h1>Integrações</h1>
-          <p class="sub">
-            Conecte o Aegis aos ambientes do cliente. As credenciais são cifradas no servidor e nunca
-            retornam para esta tela.
-          </p>
-        </div>
+        <p class="sub">
+          Conecte o Aegis aos ambientes do cliente. As credenciais são cifradas no servidor e nunca
+          retornam para esta tela.
+        </p>
         <button type="button" class="ghost" (click)="reload()" [disabled]="loading()">
           {{ loading() ? 'Carregando…' : 'Atualizar' }}
         </button>
@@ -226,8 +224,9 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
   `,
   styles: [
     `
+      /* Sem padding externo: o shell de Configurações já provê o espaçamento da página (evita margem dupla). */
       .page {
-        padding: 1.25rem 1.5rem 3rem;
+        padding: 0 0 1rem;
         display: flex;
         flex-direction: column;
         gap: 1.25rem;

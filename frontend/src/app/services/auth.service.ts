@@ -128,6 +128,34 @@ export class AuthService {
   /** Papel da pessoa NO ambiente ativo, lido do token (não da lista, que pode estar velha). */
   readonly activeRole = computed(() => readJwtClaim(this._accessToken(), 'role'));
 
+  // ---- Projeções SEGURAS das claims (para a aba Geral e as guardas de UI) ----
+  // Lidas do próprio access token em memória — o JWT NUNCA é persistido em storage (regra anti-XSS). A
+  // visibilidade derivada daqui NÃO substitui a autorização do backend, que permanece a autoridade efetiva.
+
+  /** E-mail global da pessoa autenticada (claim `email`). */
+  readonly email = computed(() => readJwtClaim(this._accessToken(), 'email'));
+
+  /** Nome de exibição no ambiente ativo (claim `name`). */
+  readonly displayName = computed(() => readJwtClaim(this._accessToken(), 'name'));
+
+  /** Id da PESSOA global (claim `account_id`) — estável através de ambientes. */
+  readonly accountId = computed(() => readJwtClaim(this._accessToken(), 'account_id'));
+
+  /**
+   * Id do MEMBERSHIP ativo (claim `sub`) — a própria linha da pessoa NESTE tenant. Só UX: permite à lista de
+   * usuários desabilitar auto-desativação/auto-rebaixamento na própria linha. O backend permanece a autoridade.
+   */
+  readonly activeMembershipId = computed(() => readJwtClaim(this._accessToken(), 'sub'));
+
+  /** Autoridade GLOBAL de plataforma? (claim `platform_role=PlatformAdmin`, emitida só quando há). */
+  readonly isPlatformAdmin = computed(() => readJwtClaim(this._accessToken(), 'platform_role') === 'PlatformAdmin');
+
+  /** É administrador DESTE tenant? (claim `role`). Gate de visibilidade das abas administrativas. */
+  readonly isTenantAdmin = computed(() => this.activeRole() === 'TenantAdmin');
+
+  /** A conta tem credencial LOCAL (senha)? (claim booleana `has_local_credential`). Decide a seção "Minha conta". */
+  readonly hasLocalCredential = computed(() => readJwtClaim(this._accessToken(), 'has_local_credential') === 'true');
+
   /** Leitura síncrona para o auth interceptor (não pode esperar um Observable). */
   get token(): string | null {
     return this._accessToken();
@@ -286,6 +314,39 @@ export class AuthService {
   forceLogout(): void {
     this.clearSession();
     this.router.navigate(['/login']);
+  }
+
+  /**
+   * [Configurações · Minha conta] Troca a PRÓPRIA senha. O endpoint é `[Authorize]` (recebe Bearer + X-Tenant
+   * pelo interceptor) e pertence à família de auth (isento do cancelamento no switch). Em sucesso (204), o
+   * servidor já revogou TODAS as sessões da identidade em todos os tenants e limpou o cookie de refresh —
+   * então o chamador deve encerrar a sessão local e pedir novo login. Erros (senha atual incorreta, nova
+   * fraca, conta sem senha local) chegam como `HttpErrorResponse` para a UI traduzir. A senha nunca é
+   * guardada nem logada.
+   */
+  changePassword(currentPassword: string, newPassword: string): Observable<void> {
+    return this.http
+      .post(`${this.baseUrl}/password`, { currentPassword, newPassword }, { withCredentials: true })
+      .pipe(
+        map(() => void 0),
+        catchError((err: HttpErrorResponse) => throwError(() => new Error(this.describePasswordError(err)))),
+      );
+  }
+
+  /** Mensagem sanitizada da troca de senha: prefere o `title` do servidor; trata 429 e falha de rede. */
+  private describePasswordError(err: HttpErrorResponse): string {
+    const title = typeof err.error === 'object' && err.error?.title ? String(err.error.title) : null;
+    if (title) return title;
+    switch (err.status) {
+      case 0:
+        return 'API inacessível. Verifique se o servidor está no ar.';
+      case 401:
+        return 'Sessão expirada. Entre novamente.';
+      case 429:
+        return 'Muitas tentativas. Aguarde um minuto e tente novamente.';
+      default:
+        return 'Não foi possível trocar a senha. Tente novamente.';
+    }
   }
 
   /**

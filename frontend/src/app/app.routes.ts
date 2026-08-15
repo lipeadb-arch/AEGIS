@@ -11,7 +11,11 @@ import { RespondDashboardComponent } from './pages/respond-dashboard.component';
 import { RecoverDashboardComponent } from './pages/recover-dashboard.component';
 import { LoginComponent } from './pages/login.component';
 import { IntegrationsComponent } from './pages/integrations.component';
+import { SettingsComponent } from './pages/settings/settings.component';
+import { SettingsGeneralComponent } from './pages/settings/settings-general.component';
+import { SettingsUsersComponent } from './pages/settings/settings-users.component';
 import { authGuard } from './guards/auth.guard';
+import { tenantAdminGuard } from './guards/tenant-admin.guard';
 
 export const routes: Routes = [
   { path: 'login', component: LoginComponent, title: 'Aegis · Entrar' },
@@ -30,10 +34,28 @@ export const routes: Routes = [
   { path: 'respond', component: RespondDashboardComponent, canActivate: [authGuard], title: 'Aegis · Respond (RS)' },
   { path: 'recover', component: RecoverDashboardComponent, canActivate: [authGuard], title: 'Aegis · Recover (RC)' },
   {
-    path: 'settings/integrations',
-    component: IntegrationsComponent,
+    // Shell de Configurações com abas (Geral, Usuários e acessos, Integrações). As rotas administrativas
+    // são guardadas por tenantAdminGuard (visibilidade NÃO substitui o backend). /settings → /settings/general.
+    path: 'settings',
+    component: SettingsComponent,
     canActivate: [authGuard],
-    title: 'Aegis · Integrações',
+    title: 'Aegis · Configurações',
+    children: [
+      { path: '', redirectTo: 'general', pathMatch: 'full' },
+      { path: 'general', component: SettingsGeneralComponent, title: 'Aegis · Configurações · Geral' },
+      {
+        path: 'users',
+        component: SettingsUsersComponent,
+        canActivate: [tenantAdminGuard],
+        title: 'Aegis · Usuários e acessos',
+      },
+      {
+        path: 'integrations',
+        component: IntegrationsComponent,
+        canActivate: [tenantAdminGuard],
+        title: 'Aegis · Integrações',
+      },
+    ],
   },
   { path: '**', redirectTo: 'dashboard' },
 ];

@@ -118,10 +118,10 @@ import { AuthService } from './services/auth.service';
              normativa. Sem routerLink/routerLinkActive de propósito (é um href externo, não uma rota);
              rel="noopener noreferrer" é obrigatório com target="_blank" (anti tab-nabbing). -->
         <p class="nav-group">Configuração</p>
-        <a class="nav-item" routerLink="/settings/integrations" routerLinkActive="active">
+        <a class="nav-item" routerLink="/settings" routerLinkActive="active">
           <span class="dot" aria-hidden="true"></span>
-          <span class="lb">Integrações</span>
-          <span class="code">API</span>
+          <span class="lb">Configurações</span>
+          <span class="code">CFG</span>
         </a>
 
         <p class="nav-group">Referência</p>
