@@ -244,6 +244,36 @@ public sealed class MembershipAdministrationTests : IDisposable
             .Should().BeNull("trocar só o nome não é redução de privilégio — a sessão permanece");
     }
 
+    // ---- Contrato: mutações devolvem HasLocalCredential correto -------------------
+
+    [Fact]
+    public async Task Mutations_ReturnHasLocalCredential_LocalVsFederatedOnly()
+    {
+        var local = await SeedIdentityAsync("local@demo.example.com", withPassword: true);
+        var fed = await SeedIdentityAsync("fed@demo.example.com", withPassword: false);
+        var mLocal = await SeedMembershipAsync(TenantA, local, TenantRole.Manager, active: true);
+        var mFed = await SeedMembershipAsync(TenantA, fed, TenantRole.Analyst, active: true);
+        // Um admin extra garante que as guardas de último admin não interfiram nas mutações abaixo.
+        await SeedMembershipAsync(TenantA, await SeedIdentityAsync("admin@demo.example.com", true),
+            TenantRole.TenantAdmin, active: true);
+
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+        var actor = Guid.NewGuid();
+
+        // Edição preserva/reporta a credencial local (o campo que o DTO da mutação precisa carregar).
+        (await svc.UpdateMembershipAsync(new UpdateMembershipCommand(mLocal, actor, "Novo Nome", null)))
+            .User!.HasLocalCredential.Should().BeTrue();
+        (await svc.UpdateMembershipAsync(new UpdateMembershipCommand(mFed, actor, "Outro Nome", null)))
+            .User!.HasLocalCredential.Should().BeFalse("conta federated-only não tem credencial local");
+
+        // Desativar e reativar também reportam corretamente (a UI não pode rotular como 'provedor' após isso).
+        (await svc.SetMembershipStatusAsync(new SetMembershipStatusCommand(mLocal, actor, Active: false)))
+            .User!.HasLocalCredential.Should().BeTrue();
+        (await svc.SetMembershipStatusAsync(new SetMembershipStatusCommand(mLocal, actor, Active: true)))
+            .User!.HasLocalCredential.Should().BeTrue();
+    }
+
     // ---- Fixture ----------------------------------------------------------------
 
     private async Task<Guid> SeedIdentityAsync(string email, bool withPassword)

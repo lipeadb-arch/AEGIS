@@ -22,8 +22,9 @@ import {
   standalone: true,
   imports: [ReactiveFormsModule, DatePipe],
   template: `
-    <!-- ============ Onboarding (só PlatformAdmin + TenantAdmin) ============ -->
+    <!-- ====== Onboarding (só PlatformAdmin + TenantAdmin; fail-closed no modo de autenticação) ====== -->
     @if (canCreate()) {
+      @if (configReady()) {
       <div class="panel">
         <h2>Adicionar usuário</h2>
         <form class="form" [formGroup]="onboardForm" (ngSubmit)="onboard()">
@@ -69,6 +70,22 @@ import {
           </div>
         </form>
       </div>
+      } @else if (authMode() === 'error') {
+        <div class="panel">
+          <h2>Adicionar usuário</h2>
+          <p class="msg err" role="alert">
+            Não foi possível carregar a configuração de autenticação. O cadastro fica indisponível até confirmá-la.
+          </p>
+          <div class="actions">
+            <button type="button" class="btn" (click)="reloadConfig()">Tentar novamente</button>
+          </div>
+        </div>
+      } @else {
+        <div class="panel">
+          <h2>Adicionar usuário</h2>
+          <p class="note">Carregando configuração de autenticação…</p>
+        </div>
+      }
     } @else {
       <p class="note standalone">
         Você administra os usuários já vinculados a este ambiente. Criar novas identidades exige um
@@ -451,8 +468,14 @@ export class SettingsUsersComponent implements OnInit {
   protected readonly onboarding = signal(false);
   protected readonly onboardError = signal<string | null>(null);
   protected readonly onboardOk = signal<string | null>(null);
-  private readonly _authMode = signal<string>('Local');
+  // FAIL-CLOSED: começa em 'loading', nunca 'Local'. Só decidimos senha/onboarding após o servidor CONFIRMAR
+  // o modo real; enquanto isso (ou em 'error') o cadastro fica indisponível. A senha nunca é persistida.
+  private readonly _authMode = signal<'loading' | 'error' | 'Local' | 'Federated' | 'Hybrid'>('loading');
   protected readonly authMode = this._authMode.asReadonly();
+
+  /** Config de autenticação já confirmada pelo servidor? Só então o onboarding decide senha/modo. */
+  protected readonly configReady = computed(() =>
+    this.authMode() === 'Local' || this.authMode() === 'Federated' || this.authMode() === 'Hybrid');
 
   protected readonly onboardForm = this.fb.nonNullable.group({
     email: ['', [Validators.required, Validators.email]],
@@ -480,8 +503,27 @@ export class SettingsUsersComponent implements OnInit {
   });
 
   ngOnInit(): void {
-    this.auth.federationConfig().subscribe({ next: (c) => this._authMode.set(c.mode || 'Local'), error: () => {} });
+    // A LISTAGEM é independente do modo — carrega sempre (a administração de existentes não pode ficar refém
+    // da config de autenticação). Só o ONBOARDING depende do modo confirmado.
     this.reload();
+    this.loadConfig();
+  }
+
+  /** Carrega o modo de autenticação FAIL-CLOSED: sucesso → Local/Federated/Hybrid; falha → 'error' (não 'Local'). */
+  loadConfig(): void {
+    this._authMode.set('loading');
+    this.auth.federationConfig().subscribe({
+      next: (c) => {
+        const m = c.mode;
+        this._authMode.set(m === 'Federated' || m === 'Hybrid' || m === 'Local' ? m : 'error');
+      },
+      error: () => this._authMode.set('error'),
+    });
+  }
+
+  /** Retry da config (botão "Tentar novamente" quando o modo não pôde ser confirmado). */
+  reloadConfig(): void {
+    this.loadConfig();
   }
 
   isSelf(u: TenantUser): boolean {
@@ -506,7 +548,8 @@ export class SettingsUsersComponent implements OnInit {
 
   // ---- Onboarding ----
   onboard(): void {
-    if (this.onboarding() || this.onboardForm.invalid) return;
+    // Fail-closed: sem o modo CONFIRMADO pelo servidor, não decidimos senha nem enviamos o cadastro.
+    if (!this.configReady() || this.onboarding() || this.onboardForm.invalid) return;
     this.onboarding.set(true);
     this.onboardError.set(null);
     this.onboardOk.set(null);

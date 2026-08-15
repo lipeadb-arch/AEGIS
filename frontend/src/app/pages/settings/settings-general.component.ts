@@ -74,7 +74,7 @@ function slugify(name: string): string {
             </label>
             <label class="field">
               <span>Identificador (slug)</span>
-              <input type="text" formControlName="slug" autocomplete="off" placeholder="ex.: acme-corp" />
+              <input type="text" formControlName="slug" autocomplete="off" placeholder="ex.: acme-corp" (input)="onSlugInput()" />
               @if (invalid(tenantForm, 'slug')) {
                 <small class="err">2–64 caracteres: minúsculas, dígitos e hífens internos.</small>
               }
@@ -312,13 +312,16 @@ export class SettingsGeneralComponent implements OnInit {
     });
   }
 
-  /** Sugere o slug a partir do nome enquanto o usuário não o editar manualmente. */
+  /** Sugere o slug a partir do nome ENQUANTO o usuário não tiver editado o slug manualmente. */
   onNameInput(): void {
-    const slugCtrl = this.tenantForm.controls.slug;
-    if (this.slugEdited && slugCtrl.value) return;
-    slugCtrl.setValue(slugify(this.tenantForm.controls.name.value));
-    // Se o usuário depois editar o slug, respeitamos a edição.
-    slugCtrl.markAsPristine();
+    if (this.slugEdited) return;   // respeita uma edição manual do slug
+    // setValue é programático e NÃO dispara o (input) do campo slug — não marca como edição manual.
+    this.tenantForm.controls.slug.setValue(slugify(this.tenantForm.controls.name.value));
+  }
+
+  /** O usuário assumiu o controle do slug: paramos de sugeri-lo a partir do nome. */
+  onSlugInput(): void {
+    this.slugEdited = true;
   }
 
   invalid(form: unknown, control: string): boolean {
@@ -328,7 +331,6 @@ export class SettingsGeneralComponent implements OnInit {
 
   createTenant(): void {
     if (this.creating() || this.tenantForm.invalid) return;
-    this.slugEdited = true;
     this.creating.set(true);
     this.createError.set(null);
     const { name, slug } = this.tenantForm.getRawValue();
@@ -337,6 +339,8 @@ export class SettingsGeneralComponent implements OnInit {
         this.creating.set(false);
         this.createdTenant.set({ id: res.id, name: name.trim() });
         this.tenantForm.reset();
+        // Reset do estado da sugestão: o PRÓXIMO ambiente volta a receber o slug sugerido pelo nome inteiro.
+        this.slugEdited = false;
         // Atualiza a lista de ambientes do seletor (o novo já vem com acesso admin).
         this.auth.getAvailableTenants().subscribe();
       },

@@ -99,7 +99,7 @@ public sealed class UsersController : ControllerBase
     /// </summary>
     [Authorize(Roles = "TenantAdmin")]
     [HttpPut("{membershipId:guid}")]
-    public async Task<ActionResult<UserDto>> Update(
+    public async Task<ActionResult<TenantUserDto>> Update(
         Guid membershipId, UpdateMembershipRequest req, CancellationToken ct)
     {
         if (!TryGetAccountId(out var accountId))
@@ -116,7 +116,7 @@ public sealed class UsersController : ControllerBase
     /// </summary>
     [Authorize(Roles = "TenantAdmin")]
     [HttpPost("{membershipId:guid}/deactivate")]
-    public async Task<ActionResult<UserDto>> Deactivate(Guid membershipId, CancellationToken ct)
+    public async Task<ActionResult<TenantUserDto>> Deactivate(Guid membershipId, CancellationToken ct)
     {
         if (!TryGetAccountId(out var accountId))
             return Unauthorized(new { title = "Token sem conta de identidade.", status = 401 });
@@ -129,7 +129,7 @@ public sealed class UsersController : ControllerBase
     /// <summary>Reativa um acesso do tenant ambiente. Idempotente; NÃO restaura sessões antigas (elas seguem revogadas).</summary>
     [Authorize(Roles = "TenantAdmin")]
     [HttpPost("{membershipId:guid}/reactivate")]
-    public async Task<ActionResult<UserDto>> Reactivate(Guid membershipId, CancellationToken ct)
+    public async Task<ActionResult<TenantUserDto>> Reactivate(Guid membershipId, CancellationToken ct)
     {
         if (!TryGetAccountId(out var accountId))
             return Unauthorized(new { title = "Token sem conta de identidade.", status = 401 });
@@ -170,9 +170,9 @@ public sealed class UsersController : ControllerBase
     /// 200 (editado) · 404 (inexistente/cross-tenant) · 400 (nome) · 403 (papel) · 409 (auto-lockout / último admin).
     /// Mensagens já sanitizadas vêm do serviço (dono da política).
     /// </summary>
-    private ActionResult<UserDto> RespondAdmin(MembershipAdminResult result) => result.Status switch
+    private ActionResult<TenantUserDto> RespondAdmin(MembershipAdminResult result) => result.Status switch
     {
-        MembershipAdminStatus.Updated => Ok(ToDto(result.User!)),
+        MembershipAdminStatus.Updated => Ok(ToTenantUserDto(result.User!)),
 
         MembershipAdminStatus.NotFound =>
             NotFound(new { title = "Usuário não encontrado neste ambiente.", status = 404 }),
@@ -197,9 +197,19 @@ public sealed class UsersController : ControllerBase
     private bool TryGetAccountId(out Guid accountId) =>
         Guid.TryParse(User.FindFirst(JwtTokenService.AccountClaim)?.Value, out accountId) && accountId != Guid.Empty;
 
+    // Concessão legada (/users/access): mantém o contrato UserDto para não quebrar consumidores.
     private static UserDto ToDto(UserSummary u) => new(
         u.Id, u.TenantId, u.Email, u.DisplayName, u.Role.ToString(),
         u.IsActive, u.CreatedAt, u.LastLoginAt);
+
+    /// <summary>
+    /// Projeção das MUTAÇÕES administrativas para o MESMO contrato da listagem (<see cref="TenantUserDto"/>):
+    /// carrega <c>HasLocalCredential</c> (do <see cref="UserSummary"/>, sem hash) e NÃO expõe TenantId
+    /// (implícito no contexto). Público e estático para permitir teste direto do contrato.
+    /// </summary>
+    public static TenantUserDto ToTenantUserDto(UserSummary u) => new(
+        u.Id, u.Email, u.DisplayName, u.Role.ToString(), u.IsActive,
+        u.HasLocalCredential, u.CreatedAt, u.LastLoginAt);
 
     private static TenantUserDto ToListDto(TenantUserListItem u) => new(
         u.Id, u.Email, u.DisplayName, u.Role.ToString(), u.IsActive,
