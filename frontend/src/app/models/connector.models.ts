@@ -297,17 +297,17 @@ export interface ConnectorHealth {
   message: string | null;
 }
 
-/** Rótulo PT-BR do status operacional, no idioma do glossário NIST (models/nist-glossary.ts). */
+/** Rótulo PT-BR do status operacional do conector (texto exibido ao usuário). */
 export function statusLabel(status: string): string {
   switch (status) {
     case 'Healthy':
-      return 'Saudável';
+      return 'Operacional';
     case 'Degraded':
       return 'Degradado';
     case 'Failed':
-      return 'Falhou';
+      return 'Com falha';
     default:
-      return 'Nunca testado';
+      return 'Não verificado';
   }
 }
 

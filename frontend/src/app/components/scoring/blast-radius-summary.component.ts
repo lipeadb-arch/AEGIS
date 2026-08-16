@@ -19,7 +19,7 @@ import { BlastRadiusSummary } from '../../models/dashboard.models';
         <span class="br-score">{{ s.score.toFixed(0) }}</span>
         <span class="br-meta">
           <span class="br-level">{{ levelLabel(s.riskLevel) }}</span>
-          <span class="br-cap">magnitude do raio</span>
+          <span class="br-cap">nível de impacto</span>
         </span>
       </div>
 
@@ -35,12 +35,12 @@ import { BlastRadiusSummary } from '../../models/dashboard.models';
         </span>
         <span class="br-fact">
           <b>{{ s.impactedAssetCount }}</b>
-          <em>ativos no raio</em>
+          <em>ativos potencialmente afetados</em>
         </span>
       </div>
     } @else {
       <p class="br-empty">
-        Nenhum raio de explosão calculado ainda. Rode uma análise de impacto em Identify para
+        Nenhum raio de impacto calculado ainda. Rode uma análise de impacto em Identify para
         estimar o efeito cascata de um ativo comprometido.
       </p>
     }

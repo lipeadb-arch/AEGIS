@@ -249,7 +249,7 @@ export const MANUAL_AUDIT_TOKEN = 'MANUAL_AUDIT_REQUIRED';
  * board é ruído — e a segunda cópia da regra é como ele chega lá.
  */
 export function sourceLabelOf(sourceIdentifier: string): string {
-  return sourceIdentifier === MANUAL_AUDIT_TOKEN ? 'Auditoria Manual' : sourceIdentifier;
+  return sourceIdentifier === MANUAL_AUDIT_TOKEN ? 'Validação manual' : sourceIdentifier;
 }
 
 /**

@@ -18,16 +18,16 @@ import { GapBalance } from '../../models/dashboard.models';
   template: `
     @if (balance(); as b) {
       @if (b.total === 0) {
-        <p class="gb-empty">Nenhum ponto cego — todo controle avaliado tem evidência por trás.</p>
+        <p class="gb-empty">Nenhuma lacuna de evidência — todo controle avaliado tem evidência por trás.</p>
       } @else {
         <div class="gb-legend">
           <span class="gb-key tool">
-            <i></i> Ferramenta <b>{{ b.telemetryPct }}%</b>
-            <em>capex · {{ b.telemetryCount }} lacuna(s)</em>
+            <i></i> Tecnologia <b>{{ b.telemetryPct }}%</b>
+            <em>{{ b.telemetryCount }} lacuna(s)</em>
           </span>
           <span class="gb-key proc">
             <i></i> Processo <b>{{ b.documentationPct }}%</b>
-            <em>opex · {{ b.documentationCount }} lacuna(s)</em>
+            <em>{{ b.documentationCount }} lacuna(s)</em>
           </span>
         </div>
 
@@ -35,7 +35,7 @@ import { GapBalance } from '../../models/dashboard.models';
           class="gb-bar"
           role="img"
           [attr.aria-label]="
-            'Balanço de lacunas: ' + b.telemetryPct + '% de ferramenta e ' +
+            'Balanço de lacunas: ' + b.telemetryPct + '% de tecnologia e ' +
             b.documentationPct + '% de processo.'
           "
         >
@@ -43,7 +43,7 @@ import { GapBalance } from '../../models/dashboard.models';
           <span class="gb-seg proc" [style.width.%]="b.documentationPct"></span>
         </div>
 
-        <span class="gb-k">Pontos cegos prioritários</span>
+        <span class="gb-k">Lacunas de evidência prioritárias</span>
         <ul class="gb-top">
           @for (s of b.topBlindSpots; track s.code) {
             <li class="gb-row" [class.tool]="s.nature !== 'Documentation'" [class.proc]="s.nature === 'Documentation'">

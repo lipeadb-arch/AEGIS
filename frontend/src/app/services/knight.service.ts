@@ -29,7 +29,7 @@ export class KnightService {
   runDemo(): Observable<KnightAssessment> {
     return this.http.post<KnightAssessment>(`${this.base}/demo`, {}).pipe(
       timeout(this.RUN_TIMEOUT_MS),
-      catchError(this.normalize('Não foi possível executar o assessment de demonstração.')),
+      catchError(this.normalize('Não foi possível executar a avaliação de demonstração.')),
     );
   }
 
@@ -59,7 +59,7 @@ export class KnightService {
     return this.http.get<KnightAssessment>(`${this.base}/latest`, { observe: 'response' }).pipe(
       timeout(this.READ_TIMEOUT_MS),
       map((resp) => (resp.status === 204 ? null : resp.body)),
-      catchError(this.normalize('Não foi possível carregar o último assessment.')),
+      catchError(this.normalize('Não foi possível carregar a última avaliação.')),
     );
   }
 
@@ -67,7 +67,7 @@ export class KnightService {
   getById(id: string): Observable<KnightAssessment> {
     return this.http.get<KnightAssessment>(`${this.base}/${id}`).pipe(
       timeout(this.READ_TIMEOUT_MS),
-      catchError(this.normalize('Não foi possível carregar o assessment.')),
+      catchError(this.normalize('Não foi possível carregar a avaliação.')),
     );
   }
 

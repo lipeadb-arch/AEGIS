@@ -45,14 +45,14 @@ import { KnightService } from '../services/knight.service';
             <span class="badge" [class]="badgeState()">{{ badgeLabel() }}</span>
           </h1>
           <p class="blurb">
-            Assessment determinístico de exposição de identidade. Vereditos por regras; interpretação
+            Avaliação determinística de exposição de identidade. Vereditos por regras; interpretação
             assistida por IA.
           </p>
         </div>
         <div class="actions">
           <a class="btn ghost" routerLink="/history">Histórico auditável</a>
           <button type="button" class="btn run" (click)="runDemo()" [disabled]="busy()">
-            {{ running() ? 'Executando…' : 'Executar assessment demo' }}
+            {{ running() ? 'Executando…' : 'Executar avaliação demo' }}
           </button>
           @if (entraConfigured()) {
             <button type="button" class="btn real" (click)="runSource('MicrosoftEntraId')" [disabled]="busy()">
@@ -68,7 +68,7 @@ import { KnightService } from '../services/knight.service';
       </header>
 
       @if (loading()) {
-        <div class="panel state"><span class="pulse">Carregando fontes e último assessment…</span></div>
+        <div class="panel state"><span class="pulse">Carregando fontes e última avaliação…</span></div>
       } @else if (error() && !assessment()) {
         <div class="panel state err">
           <b>{{ error() }}</b>
@@ -217,12 +217,12 @@ import { KnightService } from '../services/knight.service';
                 </ul></div>
               }
             } @else {
-              <p class="summary-txt muted">Sem interpretação disponível para este assessment.</p>
+              <p class="summary-txt muted">Sem interpretação disponível para esta avaliação.</p>
             }
           </div>
         } @else {
           <div class="panel state empty">
-            <b>Nenhum assessment executado ainda.</b>
+            <b>Nenhuma avaliação executada ainda.</b>
             <span>
               Este módulo é MULTICOLETOR. Em <code>example.com</code> use a DEMONSTRAÇÃO; conecte o
               Microsoft Entra ID (somente leitura) para executar uma coleta real.
@@ -238,7 +238,7 @@ import { KnightService } from '../services/knight.service';
             }
             <div class="empty-actions">
               <button type="button" class="btn run" (click)="runDemo()" [disabled]="busy()">
-                {{ running() ? 'Executando…' : 'Executar assessment demo' }}
+                {{ running() ? 'Executando…' : 'Executar avaliação demo' }}
               </button>
               @if (entraConfigured()) {
                 <button type="button" class="btn real" (click)="runSource('MicrosoftEntraId')" [disabled]="busy()">

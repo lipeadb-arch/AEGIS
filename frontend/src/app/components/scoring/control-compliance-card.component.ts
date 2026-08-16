@@ -1,6 +1,6 @@
 import { DatePipe } from '@angular/common';
 import { Component, inject, input, signal } from '@angular/core';
-import { AdvisoryDto, ControlStatus, ControlView } from '../../models/scoring.models';
+import { AdvisoryDto, ControlView } from '../../models/scoring.models';
 import { categoryName } from '../../models/nist-glossary';
 import { AdvisoryService } from '../../services/advisory.service';
 import { MissingRequirementsComponent } from './missing-requirements.component';
@@ -53,7 +53,7 @@ type AdvisoryUiState =
               }
             </span>
             <app-severity [level]="c.severity" />
-            <span class="status">{{ statusLabel(c.status) }}</span>
+            <span class="status">{{ statusLabel(c) }}</span>
             <span class="pts">{{ c.scorePoints }}<i>/{{ c.maxScorePoints }}</i></span>
             <span class="chev" [class.open]="isOpen(c.code)" aria-hidden="true">›</span>
           </button>
@@ -82,7 +82,7 @@ type AdvisoryUiState =
                    tarefa de TI, por isso a barra usa a MESMA régua de cor do resto do produto. -->
               @if (c.aiConfidence !== null) {
                 <div class="conf">
-                  <span class="k"><i class="ai" aria-hidden="true">✦</i> AI Confidence Score</span>
+                  <span class="k"><i class="ai" aria-hidden="true">✦</i> Confiança da análise</span>
                   <div class="conf-row">
                     <span class="conf-track">
                       <i
@@ -706,14 +706,19 @@ export class ControlComplianceCardComponent {
     this.advisories.set(next);
   }
 
-  statusLabel(status: ControlStatus): string {
-    switch (status) {
+  /**
+   * Rótulo do resultado do controle, SENSÍVEL À ORIGEM no caso de crédito parcial:
+   * MitigatedByThirdParty vindo de documento é "Evidência parcial"; vindo de telemetria (controle
+   * compensatório/terceiro comprovado) é "Compensado". A fórmula (50%) não muda — só o rótulo.
+   */
+  statusLabel(c: ControlView): string {
+    switch (c.status) {
       case 'Compliant':
         return 'Conforme';
       case 'NonCompliant':
         return 'Não conforme';
       case 'MitigatedByThirdParty':
-        return 'Parcial · 50%';
+        return c.source === 'Documentary' ? 'Evidência parcial' : 'Compensado';
       case 'NotEvaluated':
         return 'Não avaliado';
     }

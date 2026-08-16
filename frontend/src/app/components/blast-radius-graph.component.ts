@@ -17,8 +17,8 @@ import { BlastRadiusResponse } from '../services/auditor.service';
       <header class="blast-head">
         <span class="mark" aria-hidden="true">◎</span>
         <div class="titles">
-          <h5>Raio de Explosão</h5>
-          <span class="root">Epicentro <b class="mono">{{ rootShort() }}</b></span>
+          <h5>Raio de Impacto</h5>
+          <span class="root">Ativo de origem <b class="mono">{{ rootShort() }}</b></span>
         </div>
         <span class="risk-pill">{{ data().riskLevel }}</span>
       </header>

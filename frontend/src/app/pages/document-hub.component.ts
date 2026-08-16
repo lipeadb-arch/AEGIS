@@ -1,5 +1,8 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, effect, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { EMPTY, timer } from 'rxjs';
+import { catchError, exhaustMap, filter } from 'rxjs/operators';
 import { GovernanceService } from '../services/governance.service';
 import {
   ANALYSIS_STATUSES,
@@ -9,7 +12,9 @@ import {
   GovernanceDocument,
   GovernanceDocumentType,
   analysisStatusLabel,
+  documentSourceLabel,
   documentTypeLabel,
+  isActiveAnalysisStatus,
 } from '../models/governance.models';
 import { environment } from '../../environments/environment';
 import { AgentStateService } from '../services/agent-state.service';
@@ -177,7 +182,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
           </label>
 
           <button type="button" class="btn primary" (click)="submitUpload()" [disabled]="!canUpload()">
-            {{ uploading() ? 'Enviando…' : 'Enviar para leitura da IA' }}
+            {{ uploading() ? 'Enviando…' : 'Enviar para análise' }}
           </button>
         </div>
 
@@ -200,7 +205,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
           </label>
 
           <label class="ctl">
-            <span>Status IA</span>
+            <span>Status da análise</span>
             <select [value]="statusFilter() ?? ''" (change)="setStatus($any($event.target).value)">
               <option value="">Todos</option>
               @for (s of analysisStatuses; track s.value) {
@@ -231,8 +236,8 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
               <th>Documento</th>
               <th>Tipo</th>
               <th>Origem</th>
-              <th>Status IA</th>
-              <th class="num">Mapeamentos</th>
+              <th>Status da análise</th>
+              <th class="num">Controles NIST associados</th>
               <th>Analisado em</th>
               <th class="num">Ações</th>
             </tr>
@@ -247,9 +252,16 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
                   }
                 </td>
                 <td><span class="tag">{{ typeLabel(d.type) }}</span></td>
-                <td><span class="src">{{ d.source }}</span></td>
+                <td><span class="src">{{ sourceLabel(d.source) }}</span></td>
                 <td>
                   <span class="ai-status ai-{{ d.analysisStatus.toLowerCase() }}">
+                    @if (showsSpinner(d.analysisStatus)) {
+                      <span
+                        class="ai-spin"
+                        role="status"
+                        [attr.aria-label]="statusLabel(d.analysisStatus)"
+                      ></span>
+                    }
                     {{ statusLabel(d.analysisStatus) }}
                   </span>
                   @if (d.analysisStatus === 'Failed' && d.analysisError) {
@@ -385,7 +397,14 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       .dim { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
       .map-count { font-family: var(--display); font-weight: 700; font-size: 13px; color: var(--text); }
 
-      .ai-status { font-family: var(--mono); font-size: 11px; padding: 4px 10px; border-radius: 999px; border: 1px solid currentColor; }
+      .ai-status { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; padding: 4px 10px; border-radius: 999px; border: 1px solid currentColor; }
+      /* Spinner discreto ao lado do status ATIVO (Na fila / Analisando). Herda a cor do status (currentColor). */
+      .ai-spin {
+        width: 9px; height: 9px; flex: none; border-radius: 50%;
+        border: 1.5px solid currentColor; border-top-color: transparent;
+        animation: ai-spin 0.7s linear infinite;
+      }
+      @keyframes ai-spin { to { transform: rotate(360deg); } }
       .ai-pending { color: var(--muted); }
       .ai-queued { color: var(--cyan-2); }
       .ai-processing { color: var(--amber); }
@@ -405,7 +424,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       @media (max-width: 720px) {
         .up-field input[type='text'], .up-field select { min-width: 160px; }
       }
-      @media (prefers-reduced-motion: reduce) { .pulse, .spin { animation: none; } }
+      @media (prefers-reduced-motion: reduce) { .pulse, .spin, .ai-spin { animation: none; } }
     `,
   ],
 })
@@ -424,6 +443,19 @@ export class DocumentHubComponent implements OnInit {
         this.loadWorkspacePosture();
       }
     });
+
+    // POLLING controlado (sem SignalR/SSE): a cada ~2s, SE houver documento ativo (Aguardando/Na fila/
+    // Analisando), refaz a leitura da lista COMPLETA. `exhaustMap` impede requisições sobrepostas;
+    // `catchError` tolera falha transitória sem limpar a tabela nem virar loop agressivo; o `filter` faz o
+    // tick ser no-op quando tudo chega a estado terminal — o polling para sozinho. Encerra com o componente
+    // via `takeUntilDestroyed` (chamado no contexto de injeção do construtor).
+    timer(this.POLL_MS, this.POLL_MS)
+      .pipe(
+        filter(() => this.hasActiveDocs()),
+        exhaustMap(() => this.svc.listDocuments().pipe(catchError(() => EMPTY))),
+        takeUntilDestroyed(),
+      )
+      .subscribe((list) => this.applyPolledList(list));
   }
 
   // ---- Postura de Governança (telemetria GV.SC / GV.RR) ----
@@ -441,7 +473,22 @@ export class DocumentHubComponent implements OnInit {
   syncMessage = signal<string | null>(null);
 
   // ---- Hub de documentos ----
-  docs = signal<GovernanceDocument[]>([]);
+  /** Intervalo do polling controlado (ms) enquanto houver documento em análise. */
+  private readonly POLL_MS = 2000;
+  /**
+   * Lista COMPLETA (sem filtro) — a autoridade do acompanhamento. Um filtro de status não pode esconder
+   * um documento recém-enfileirado, então o polling e a detecção de transição operam sempre sobre o
+   * conjunto todo; o filtro é aplicado só na VISÃO (client-side).
+   */
+  private readonly allDocs = signal<GovernanceDocument[]>([]);
+  /** Visão exibida: a lista completa filtrada no cliente por tipo e status (o filtro nunca some com o polling). */
+  readonly docs = computed(() => {
+    const type = this.typeFilter();
+    const status = this.statusFilter();
+    return this.allDocs().filter(
+      (d) => (!type || d.type === type) && (!status || d.analysisStatus === status),
+    );
+  });
   coverage = signal<GovernCoverage | null>(null);
   loading = signal(false);
   loadError = signal(false);
@@ -466,6 +513,7 @@ export class DocumentHubComponent implements OnInit {
   protected readonly analysisStatuses = ANALYSIS_STATUSES;
   protected readonly typeLabel = documentTypeLabel;
   protected readonly statusLabel = analysisStatusLabel;
+  protected readonly sourceLabel = documentSourceLabel;
   protected readonly apiBase = environment.apiBase;
 
   ngOnInit(): void {
@@ -520,12 +568,11 @@ export class DocumentHubComponent implements OnInit {
       next: (res) => {
         this.syncState.set('done');
         this.syncMessage.set(res.message || 'Sincronização agendada — os documentos aparecerão em instantes.');
-        // Ingestão assíncrona (worker): recarrega a lista e a postura pouco depois, para captar os novos.
+        // Ingestão assíncrona (worker): recarrega a lista e os agregados pouco depois, para captar os novos.
+        // A partir daí, se algum documento chegar ativo, o polling assume o acompanhamento até o término.
         setTimeout(() => {
           this.loadDocuments();
-          this.loadGovernPosture();
-          this.loadWorkspacePosture();
-          this.loadCoverage();
+          this.refreshAggregates();
         }, 2500);
       },
       error: (err) => {
@@ -536,26 +583,56 @@ export class DocumentHubComponent implements OnInit {
     });
   }
 
+  /** Carrega a lista COMPLETA (sem filtro no servidor): o filtro é aplicado na visão, e o acompanhamento
+   *  precisa enxergar todo documento — inclusive um recém-enfileirado que um filtro de status esconderia. */
   private loadDocuments(): void {
     this.loading.set(true);
-    this.svc
-      .listDocuments({
-        type: this.typeFilter() ?? undefined,
-        analysisStatus: this.statusFilter() ?? undefined,
-      })
-      .subscribe({
-        next: (docs) => {
-          this.docs.set(docs);
-          this.loading.set(false);
-          this.loadError.set(false);
-        },
-        error: (err) => {
-          console.error('Falha ao carregar os documentos de governança:', err);
-          this.docs.set([]);
-          this.loading.set(false);
-          this.loadError.set(true);
-        },
-      });
+    this.svc.listDocuments().subscribe({
+      next: (docs) => {
+        this.allDocs.set(docs);
+        this.loading.set(false);
+        this.loadError.set(false);
+      },
+      error: (err) => {
+        console.error('Falha ao carregar os documentos de governança:', err);
+        this.allDocs.set([]);
+        this.loading.set(false);
+        this.loadError.set(true);
+      },
+    });
+  }
+
+  /** Há documento em estado ativo (não terminal)? Enquanto sim, o polling continua. */
+  private hasActiveDocs(): boolean {
+    return this.allDocs().some((d) => isActiveAnalysisStatus(d.analysisStatus));
+  }
+
+  /**
+   * Aplica uma leitura do polling. Detecta se algo que ESTAVA ativo chegou a estado terminal (Analisado/
+   * Falha) — só então atualiza os agregados UMA vez. Uma leitura que apenas mantém tudo ativo não dispara
+   * recomputo: o polling se paga sozinho.
+   */
+  private applyPolledList(list: GovernanceDocument[]): void {
+    const wasActive = new Set(
+      this.allDocs().filter((d) => isActiveAnalysisStatus(d.analysisStatus)).map((d) => d.id),
+    );
+    const byId = new Map(list.map((d) => [d.id, d]));
+    const reachedTerminal = [...wasActive].some((id) => {
+      const d = byId.get(id);
+      return !d || !isActiveAnalysisStatus(d.analysisStatus); // sumiu ou virou terminal
+    });
+
+    this.allDocs.set(list);
+    this.loadError.set(false);
+    if (reachedTerminal) this.refreshAggregates();
+  }
+
+  /** Agregados dependentes da análise: cobertura + postura Govern (telemetria) + resumo do workspace.
+   *  Chamado na CONCLUSÃO detectada pelo polling e na EXCLUSÃO — nunca por refresh completo da página. */
+  private refreshAggregates(): void {
+    this.loadCoverage();
+    this.loadGovernPosture();
+    this.loadWorkspacePosture();
   }
 
   /** Cobertura é best-effort: um erro aqui não derruba a tela de documentos. */
@@ -566,20 +643,24 @@ export class DocumentHubComponent implements OnInit {
     });
   }
 
+  // Os filtros agem só na VISÃO (client-side sobre a lista completa) — não refazem a busca e, sobretudo,
+  // não escondem do acompanhamento um documento recém-enfileirado.
   setType(value: string): void {
     this.typeFilter.set((value || null) as GovernanceDocumentType | null);
-    this.loadDocuments();
   }
 
   setStatus(value: string): void {
     this.statusFilter.set((value || null) as AiAnalysisStatus | null);
-    this.loadDocuments();
   }
 
   clearFilters(): void {
     this.typeFilter.set(null);
     this.statusFilter.set(null);
-    this.loadDocuments();
+  }
+
+  /** Spinner discreto só em estados ATIVOS visíveis: Na fila e Analisando (terminais nunca giram). */
+  protected showsSpinner(status: AiAnalysisStatus): boolean {
+    return status === 'Queued' || status === 'Processing';
   }
 
   onFileSelected(event: Event): void {
@@ -604,8 +685,9 @@ export class DocumentHubComponent implements OnInit {
       next: () => {
         this.uploading.set(false);
         this.resetUploadForm();
+        // Mostra o documento IMEDIATAMENTE (entra como "Na fila"); o polling assume daqui e atualiza os
+        // agregados quando a análise concluir. Sem refresh completo da página.
         this.loadDocuments();
-        this.loadWorkspacePosture();
       },
       error: (err) => {
         console.error('Falha no upload do documento:', err);
@@ -624,24 +706,25 @@ export class DocumentHubComponent implements OnInit {
     this.svc.reanalyzeDocument(id).subscribe({
       next: () => {
         this.busyId.set(null);
+        // Volta a "Na fila" imediatamente; o polling acompanha até o término e então atualiza os agregados.
         this.loadDocuments();
-        this.loadWorkspacePosture();
       },
       error: (err) => {
-        console.error('Falha ao re-enfileirar a leitura da IA:', err);
+        console.error('Falha ao reenviar o documento para análise:', err);
         this.busyId.set(null);
       },
     });
   }
 
   remove(doc: GovernanceDocument): void {
-    if (!confirm(`Excluir "${doc.title}" e seus mapeamentos? Esta ação não pode ser desfeita.`)) return;
+    if (!confirm(`Excluir "${doc.title}" e seus controles NIST associados? Esta ação não pode ser desfeita.`)) return;
     this.busyId.set(doc.id);
     this.svc.deleteDocument(doc.id).subscribe({
       next: () => {
         this.busyId.set(null);
+        // A exclusão dispara a reconciliação no backend (retração): atualiza lista E agregados de uma vez.
         this.loadDocuments();
-        this.loadWorkspacePosture();
+        this.refreshAggregates();
       },
       error: (err) => {
         console.error('Falha ao excluir o documento:', err);
