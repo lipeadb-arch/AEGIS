@@ -105,6 +105,10 @@ public sealed class ControlStateWriter : IControlStateWriter
             state!.Status = status;
             state.CurrentScore = awarded;
             state.AiEvidence = evidence;
+            // Uma escrita por esta via (telemetria/autoritativa) NÃO tem origem documental: zera qualquer
+            // vínculo documental herdado, para o rastro de reconciliação nunca apontar documento fantasma.
+            // A projeção documental vive em ReconcileDocumentaryAsync, que carimba a origem correta.
+            state.OriginDocumentId = null;
             state.ChecksJson = checks is { Count: > 0 } ? JsonSerializer.Serialize(checks) : null;
             // O enriquecimento acompanha o veredito que o produziu: quem não o emite ZERA o campo em vez de
             // herdar o do veredito anterior — inteligência órfã descreveria um estado que não existe mais.
@@ -149,6 +153,101 @@ public sealed class ControlStateWriter : IControlStateWriter
         // Inalcançável: a 2ª passada é sempre UPDATE (a linha vencedora existe) e não perde corrida de inserção.
         throw new InvalidOperationException(
             "Reaplicação do veredito do ledger falhou após recuperar a corrida de inserção.");
+    }
+
+    public async Task ReconcileDocumentaryAsync(
+        Guid tenantId, string subcategoryCode, DocumentaryEvidence? documentary, CancellationToken ct = default)
+    {
+        // 1) Mesma defesa em profundidade da escrita normal: o tenantId explícito casa com o ambiente.
+        var ambient = _tenant.TenantId
+            ?? throw new TenantSecurityException(
+                "Reconciliação documental sem tenant resolvido no contexto (fail-closed).");
+        if (tenantId != ambient)
+            throw new TenantSecurityException(
+                $"TenantId ({tenantId}) diverge do tenant do contexto ({ambient}).");
+
+        // 2) Catálogo global: sem subcategoria no catálogo não há o que reconciliar (código legado/alucinado).
+        var sub = await _db.Subcategories.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Code == subcategoryCode, ct);
+        if (sub is null)
+        {
+            _log.LogDebug(
+                "Reconciliação: subcategoria '{Code}' fora do catálogo NIST — no-op.", subcategoryCode);
+            return;
+        }
+
+        // Recuperação PONTUAL da corrida de inserção (mesmo idioma de ApplyVerdictAsync): dois contextos
+        // podem inserir a MESMA célula ausente ao mesmo tempo; ao perder, recarrega e reaplica como UPDATE.
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var state = await _db.TenantControlStates
+                .FirstOrDefaultAsync(t => t.SubcategoryId == sub.Id, ct);
+
+            // 3) TELEMETRIA é preservada INTEGRALMENTE: nem recebe crédito documental, nem é retraída.
+            if (state is not null && state.LastVerdictSource == VerdictSource.Telemetry)
+            {
+                _log.LogDebug(
+                    "Reconciliação de {Code}: estado vigente é de telemetria — preservado no tenant {Tenant}.",
+                    sub.Code, tenantId);
+                return;
+            }
+
+            if (documentary is not null)
+            {
+                // 4a) Há evidência documental elegível → grava/atualiza crédito parcial (50%) e a origem.
+                //     Diferente de ApplyVerdictAsync (upgrade-only), a reconciliação refresca sempre: o
+                //     documento vencedor é o fato vigente, mesmo que a pontuação empate com o estado atual.
+                var awarded = AegisScoreFormulaV1.PointsFor(
+                    ControlStatus.MitigatedByThirdParty, sub.MaxScorePoints);
+
+                var inserting = state is null;
+                if (inserting)
+                {
+                    state = new TenantControlState { SubcategoryId = sub.Id };   // TenantId carimbado no SaveChanges
+                    _db.TenantControlStates.Add(state);
+                }
+
+                state!.Status = ControlStatus.MitigatedByThirdParty;
+                state.CurrentScore = awarded;
+                state.AiEvidence = documentary.Evidence;
+                state.OriginDocumentId = documentary.OriginDocumentId;
+                state.LastVerdictSource = VerdictSource.Documentary;
+                // Crédito documental parcial não carrega checklist técnico nem enriquecimento; a lacuna
+                // própria segue aberta (MitigatedByThirdParty), mas sem pendência tipada herdada de um
+                // veredito anterior (que descreveria um estado extinto).
+                state.ChecksJson = null;
+                state.IntelligenceJson = null;
+                state.MissingRequirements = new List<MissingRequirement>();
+                state.LastEvaluatedAt = DateTimeOffset.UtcNow;
+
+                try
+                {
+                    await _db.SaveChangesAsync(ct);
+                }
+                catch (DbUpdateException ex) when (inserting && attempt == 0 && IsInsertRaceOnTenantControlState(ex))
+                {
+                    _db.Entry(state).State = EntityState.Detached;
+                    continue;   // recarrega a linha vencedora e reaplica como UPDATE
+                }
+
+                _log.LogInformation(
+                    "Reconciliação de {Code}: crédito documental parcial ({Awarded}/{Max}) do documento {Doc} " +
+                    "no tenant {Tenant}.", sub.Code, awarded, sub.MaxScorePoints,
+                    documentary.OriginDocumentId, tenantId);
+                return;
+            }
+
+            // 4b) NÃO há evidência documental elegível: RETRAI o estado documental (→ não avaliado).
+            if (state is not null)
+            {
+                _db.TenantControlStates.Remove(state);
+                await _db.SaveChangesAsync(ct);
+                _log.LogInformation(
+                    "Reconciliação de {Code}: sem evidência documental elegível — estado documental retraído " +
+                    "(volta a Não avaliado) no tenant {Tenant}.", sub.Code, tenantId);
+            }
+            return;
+        }
     }
 
     /// <summary>

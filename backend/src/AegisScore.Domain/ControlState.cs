@@ -87,6 +87,15 @@ public class TenantControlState : Entity, ITenantOwned
     /// </summary>
     public VerdictSource LastVerdictSource { get; set; } = VerdictSource.Documentary;
 
+    /// <summary>
+    /// Documento que sustenta o estado DOCUMENTAL vigente (a "origem documental vigente"). Persistido só
+    /// para permitir reconciliação determinística: ao excluir/reanalisar um documento, sabe-se de imediato
+    /// se o estado vigente dependia dele. NULO quando a fonte é <see cref="VerdictSource.Telemetry"/> (a
+    /// telemetria não tem origem documental) ou quando não há estado documental. O escritor único do ledger
+    /// o carimba/limpa: telemetria SEMPRE zera; documental grava o documento vencedor da reconciliação.
+    /// </summary>
+    public Guid? OriginDocumentId { get; set; }
+
     public DateTimeOffset LastEvaluatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     /// <summary>Justificativa/evidência produzida pela IA (nulo até o motor avaliar).</summary>

@@ -171,13 +171,23 @@ public record DocumentControlEvaluationRequest(
     string? FileName);
 
 /// <summary>
-/// Veredito documental de UM controle. A <paramref name="Confidence"/> é o que decide entre
-/// <c>CoverageStatus.Coberto</c> e <c>Parcial</c> — por isso o prompt exige que ela caia quando o texto
-/// declara intenção sem evidenciar execução.
+/// Veredito documental de UM controle, com os quatro eixos SEPARADOS que a integridade probatória exige:
+/// se o trecho SUSTENTA o controle (<paramref name="Supported"/>), o TRECHO LITERAL que o prova
+/// (<paramref name="EvidenceQuote"/>), a CONFIANÇA e o RACIONAL. A separação é deliberada: o racional é
+/// paráfrase/análise e nunca vale como prova; só o <paramref name="EvidenceQuote"/> — validado EM CÓDIGO
+/// como literalmente presente no texto extraído — pode gerar mapping, cobertura ou crédito no score.
+///
+/// ⚠️ A resposta do modelo é apenas uma PROPOSTA. A autoridade final é a validação em código: um
+/// <paramref name="Supported"/>=true com trecho inventado (ausente do texto) é DESCARTADO fail-closed.
 /// </summary>
+/// <param name="Supported">O trecho PROVA explicitamente o controle? Título, palavra genérica, menção
+/// temática ou intenção futura NÃO sustentam — nesses casos é false.</param>
+/// <param name="EvidenceQuote">Trecho LITERAL (verbatim) do documento que prova o controle. Vazio quando
+/// <paramref name="Supported"/>=false. Jamais paráfrase — é validado por presença literal no texto.</param>
 /// <param name="Confidence">0..1 — quão bem o trecho PROVA o controle (não quão bonito é o texto).</param>
-/// <param name="Rationale">Justificativa técnica citando o que o documento diz (ou deixa de dizer).</param>
-public record DocumentControlVerdict(double Confidence, string Rationale);
+/// <param name="Rationale">Justificativa técnica citando o que o documento diz (ou deixa de dizer). É
+/// análise, NÃO prova.</param>
+public record DocumentControlVerdict(bool Supported, string EvidenceQuote, double Confidence, string Rationale);
 
 public record MaturitySuggestionRequest(
     string SubcategoryCode,

@@ -47,4 +47,33 @@ public interface IControlStateWriter
         VerdictSource source, IReadOnlyList<ComplianceCheck>? checks = null,
         ControlIntelligence? intelligence = null,
         IReadOnlyList<MissingRequirement>? missingRequirements = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// RECONCILIA o estado DOCUMENTAL de uma subcategoria a partir da evidência documental vigente — a
+    /// operação que exclusão e reanálise usam para RETRAIR ou RECALCULAR sem deixar o ledger órfão. É
+    /// distinta de <see cref="ApplyVerdictAsync"/> (que é upgrade-only, para projeção ao vivo): aqui o
+    /// chamador já computou qual documento sustenta o controle (ou que NENHUM sustenta), e o escritor
+    /// materializa esse fato de forma idempotente.
+    ///
+    /// Precedência FAIL-CLOSED:
+    /// <list type="bullet">
+    /// <item>estado vigente de <see cref="VerdictSource.Telemetry"/> → PRESERVADO integralmente (no-op no
+    /// ledger): a telemetria é a verdade sobre a implementação e nenhum documento a retrai ou rebaixa;</item>
+    /// <item><paramref name="documentary"/> não-nulo → grava/atualiza <c>MitigatedByThirdParty</c> (crédito
+    /// parcial de 50%) com a origem documental vigente — refresca mesmo em empate, pois é reconciliação
+    /// determinística do documento vencedor, não uma projeção condicional;</item>
+    /// <item><paramref name="documentary"/> nulo e estado vigente Documentary → RETRAI (remove a célula),
+    /// devolvendo a subcategoria a "não avaliado".</item>
+    /// </list>
+    /// Código fora do catálogo é no-op silencioso (nada a reconciliar).
+    /// </summary>
+    Task ReconcileDocumentaryAsync(
+        Guid tenantId, string subcategoryCode, DocumentaryEvidence? documentary, CancellationToken ct = default);
 }
+
+/// <summary>
+/// Evidência documental VIGENTE de um controle, já escolhida pela reconciliação (o documento vencedor):
+/// a origem, a confiança e a evidência auditável (trecho literal + racional já compostos). Nulo, na
+/// chamada de reconciliação, significa "não há evidência documental elegível" — sinal de retração.
+/// </summary>
+public sealed record DocumentaryEvidence(Guid OriginDocumentId, double Confidence, string Evidence);

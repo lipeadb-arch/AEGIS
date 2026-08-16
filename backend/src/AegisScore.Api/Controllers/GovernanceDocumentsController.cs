@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Services;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
@@ -21,15 +22,18 @@ public class GovernanceDocumentsController : ControllerBase
     private readonly IDocumentStorage _storage;
     private readonly IPolicySyncQueue _policySync;
     private readonly ITenantContext _tenant;
+    private readonly IDocumentEvidenceReconciler _reconciler;
 
     public GovernanceDocumentsController(
         AegisScoreDbContext db, IDocumentStorage storage,
-        IPolicySyncQueue policySync, ITenantContext tenant)
+        IPolicySyncQueue policySync, ITenantContext tenant,
+        IDocumentEvidenceReconciler reconciler)
     {
         _db = db;
         _storage = storage;
         _policySync = policySync;
         _tenant = tenant;
+        _reconciler = reconciler;
     }
 
     /// <summary>
@@ -202,10 +206,24 @@ public class GovernanceDocumentsController : ControllerBase
             .FirstOrDefaultAsync(d => d.Id == id, ct);
         if (doc is null) return NotFound();
 
+        // CAPTURA os códigos afetados ANTES de excluir — a reconciliação retrai/recalcula a partir deles.
+        // O tenant vem do contexto (o query filter já garantiu que o doc é deste tenant ao encontrá-lo).
+        var tenantId = _tenant.TenantId
+            ?? throw new TenantSecurityException(
+                "Exclusão de documento sem tenant resolvido no contexto (fail-closed).");
+        var affectedCodes = doc.ControlMappings.Select(m => m.SubcategoryCode).Distinct().ToList();
+
         if (doc.StorageUri is not null) await _storage.DeleteAsync(doc.StorageUri, ct);
         _db.DocumentControlMappings.RemoveRange(doc.ControlMappings);
         _db.GovernanceDocuments.Remove(doc);
         await _db.SaveChangesAsync(ct);
+
+        // Reconciliação ÚNICA (a mesma da reanálise): sem outra evidência documental elegível, o estado
+        // documental é RETRAÍDO (volta a Não avaliado) e a cobertura órfã desaparece; telemetria e
+        // entrevista são preservadas. Roda DEPOIS do commit da exclusão — vê o ledger sem este documento.
+        if (affectedCodes.Count > 0)
+            await _reconciler.ReconcileAsync(tenantId, affectedCodes, ct);
+
         return NoContent();
     }
 
