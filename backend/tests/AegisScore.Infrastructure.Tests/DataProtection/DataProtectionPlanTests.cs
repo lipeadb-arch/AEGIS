@@ -244,10 +244,165 @@ public sealed class DataProtectionPlanTests
         act.Should().NotThrow();
     }
 
+    // ---- Secret File TEXTUAL Base64 (Render) ---------------------------------
+    // O Render entrega Secret Files como TEXTO, então o PKCS#12 é transportado como Base64 (.b64). Base64
+    // é só transporte; a senha continua protegendo o PKCS#12. O suporte binário permanece intacto.
+
+    private const string PfxSenha = "pfx-test-pass";   // senha SINTÉTICA de teste — nunca um segredo real
+
+    [Fact]
+    public void Pfx_Binario_ComSenha_ContinuaCarregando()
+    {
+        using var cert = SelfSigned();
+        var path = WriteTemp(cert.Export(X509ContentType.Pkcs12, PfxSenha), ".pfx");
+        try
+        {
+            var plan = DataProtectionPlan.Resolve(
+                Options(certificate: new DataProtectionCertificateOptions { Path = path, Password = PfxSenha }),
+                "Production", isProduction: true);
+
+            plan.Certificate.Should().NotBeNull();
+            plan.Certificate!.HasPrivateKey.Should().BeTrue("o caminho do PKCS#12 binário permanece funcionando");
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Base64_Valido_CarregaComChavePrivada()
+    {
+        using var cert = SelfSigned();
+        var path = WriteTempB64(cert.Export(X509ContentType.Pkcs12, PfxSenha));
+        try
+        {
+            var plan = DataProtectionPlan.Resolve(
+                Options(certificate: new DataProtectionCertificateOptions { Path = path, Password = PfxSenha }),
+                "Production", isProduction: true);
+
+            plan.Certificate.Should().NotBeNull();
+            plan.Certificate!.HasPrivateKey.Should().BeTrue("o Base64 do PKCS#12 carrega em memória com a chave privada");
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Base64_ComQuebraFinal_Carrega()
+    {
+        using var cert = SelfSigned();
+        var path = WriteTempB64(cert.Export(X509ContentType.Pkcs12, PfxSenha), trailer: "\r\n\n  \t");
+        try
+        {
+            var plan = DataProtectionPlan.Resolve(
+                Options(certificate: new DataProtectionCertificateOptions { Path = path, Password = PfxSenha }),
+                "Development", isProduction: false);
+
+            plan.Certificate!.HasPrivateKey.Should().BeTrue("quebras de linha/espacos finais do Secret File sao normais");
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Base64_Invalido_FalhaRapido()
+    {
+        var path = WriteTempRaw("conteudo invalido ### que nao e base64");
+        try
+        {
+            var act = () => DataProtectionPlan.Resolve(
+                Options(certificate: new DataProtectionCertificateOptions { Path = path }),
+                "Development", isProduction: false);
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*Base64*");
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Base64_SenhaErrada_FalhaRapido()
+    {
+        using var cert = SelfSigned();
+        var path = WriteTempB64(cert.Export(X509ContentType.Pkcs12, PfxSenha));
+        try
+        {
+            var act = () => DataProtectionPlan.Resolve(
+                Options(certificate: new DataProtectionCertificateOptions { Path = path, Password = "senha-errada" }),
+                "Development", isProduction: false);
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*senha*");
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Base64_SemChavePrivada_FalhaRapido()
+    {
+        using var full = SelfSigned();
+        using var publicOnly = X509CertificateLoader.LoadCertificate(full.Export(X509ContentType.Cert));
+        var path = WriteTempB64(publicOnly.Export(X509ContentType.Pkcs12));   // PKCS#12 sem chave privada
+        try
+        {
+            var act = () => DataProtectionPlan.Resolve(
+                Options(certificate: new DataProtectionCertificateOptions { Path = path }),
+                "Development", isProduction: false);
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*chave privada*");
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Base64_Ausente_FalhaRapido()
+    {
+        var act = () => DataProtectionPlan.Resolve(
+            Options(certificate: new DataProtectionCertificateOptions
+            {
+                Path = Path.Combine(Path.GetTempPath(), $"nao-existe-{Guid.NewGuid():N}.pfx.b64"),
+            }),
+            "Development", isProduction: false);
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*não encontrado*");
+    }
+
+    [Fact]
+    public void Base64_Vazio_FalhaRapido()
+    {
+        var path = WriteTempRaw("   \r\n  ");   // só whitespace → vazio após trim
+        try
+        {
+            var act = () => DataProtectionPlan.Resolve(
+                Options(certificate: new DataProtectionCertificateOptions { Path = path }),
+                "Development", isProduction: false);
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*vazio*");
+        }
+        finally { File.Delete(path); }
+    }
+
     private static string ExportToTempPfx(X509Certificate2 certificate)
     {
         var path = Path.Combine(Path.GetTempPath(), $"aegis-test-{Guid.NewGuid():N}.pfx");
         File.WriteAllBytes(path, certificate.Export(X509ContentType.Pkcs12));
+        return path;
+    }
+
+    private static string WriteTemp(byte[] bytes, string extension)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"aegis-test-{Guid.NewGuid():N}{extension}");
+        File.WriteAllBytes(path, bytes);
+        return path;
+    }
+
+    /// <summary>Escreve o Base64 do PKCS#12 num arquivo <c>.b64</c> (o transporte textual do Render).</summary>
+    private static string WriteTempB64(byte[] pfxBytes, string? trailer = null)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"aegis-test-{Guid.NewGuid():N}.pfx.b64");
+        File.WriteAllText(path, Convert.ToBase64String(pfxBytes) + (trailer ?? ""));
+        return path;
+    }
+
+    /// <summary>Escreve conteúdo TEXTUAL cru num arquivo <c>.b64</c> (para os casos inválido/vazio).</summary>
+    private static string WriteTempRaw(string content)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"aegis-test-{Guid.NewGuid():N}.pfx.b64");
+        File.WriteAllText(path, content);
         return path;
     }
 }

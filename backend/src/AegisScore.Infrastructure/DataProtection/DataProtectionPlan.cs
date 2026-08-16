@@ -112,11 +112,88 @@ public sealed record DataProtectionPlan(
                 "chave protege o key ring.");
 
         var certificate = hasPath
-            ? LoadFromFile(options.Path!, options.Password)
+            ? LoadFromPath(options.Path!, options.Password)
             : LoadFromStore(options.Thumbprint!, options.StoreName, options.StoreLocation);
 
         ValidateCertificate(certificate);
         return certificate;
+    }
+
+    /// <summary>
+    /// [Homologação] Despacha pela extensão do caminho: um Secret File TEXTUAL contendo o Base64 do PKCS#12
+    /// (<c>.b64</c>) — necessário no Render, cujos Secret Files só aceitam conteúdo textual — é decodificado e
+    /// carregado EM MEMÓRIA; qualquer outro caminho é um PKCS#12 BINÁRIO (uso local e testes). O suporte
+    /// binário permanece intacto.
+    /// </summary>
+    private static X509Certificate2 LoadFromPath(string path, string? password) =>
+        path.EndsWith(".b64", StringComparison.OrdinalIgnoreCase)
+            ? LoadFromBase64File(path, password)
+            : LoadFromFile(path, password);
+
+    /// <summary>
+    /// [Homologação] Carrega o PKCS#12 a partir de um Secret File TEXTUAL que contém o Base64 do <c>.pfx</c>.
+    /// É o transporte exigido pelo Render (Secret Files são texto — não é possível colar bytes binários). O
+    /// Base64 é APENAS transporte: a senha (<c>DataProtection:Certificate:Password</c>) continua protegendo o
+    /// PKCS#12. Fail-closed em cada etapa; decodificação e carga são EM MEMÓRIA (nenhum <c>.pfx</c> temporário
+    /// em disco), e nem o Base64, nem a senha, nem os bytes do certificado aparecem em log ou exceção de borda.
+    /// </summary>
+    private static X509Certificate2 LoadFromBase64File(string path, string? password)
+    {
+        if (!File.Exists(path))
+            throw new InvalidOperationException(
+                $"Certificado do Data Protection (Base64) não encontrado em '{path}'. Confirme se o Secret " +
+                "File textual foi montado no host antes do início da aplicação.");
+
+        string content;
+        try
+        {
+            content = File.ReadAllText(path);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Falha ao ler o Secret File de certificado em '{path}'.", ex);
+        }
+
+        // Whitespace/quebras de linha finais são normais num Secret File; Convert.FromBase64String já ignora
+        // whitespace, mas aparamos para tornar a intenção explícita e recusar conteúdo vazio.
+        var base64 = content.Trim();
+        if (base64.Length == 0)
+            throw new InvalidOperationException(
+                $"O Secret File de certificado em '{path}' está vazio. O conteúdo deve ser o Base64 do " +
+                "arquivo PKCS#12 (.pfx).");
+
+        byte[] pfxBytes;
+        try
+        {
+            pfxBytes = Convert.FromBase64String(base64);
+        }
+        catch (FormatException)
+        {
+            // Sanitizada: NÃO inclui o conteúdo Base64 nem qualquer byte do certificado.
+            throw new InvalidOperationException(
+                $"O Secret File em '{path}' não é Base64 válido. O conteúdo deve ser exatamente o Base64 do " +
+                "arquivo PKCS#12 do Data Protection (sem cifragem adicional).");
+        }
+
+        try
+        {
+            // Decodificação e carga EM MEMÓRIA — nenhum PFX temporário é escrito em disco.
+            return X509CertificateLoader.LoadPkcs12(pfxBytes, password);
+        }
+        catch (Exception ex)
+        {
+            // A exceção original pode citar detalhes do PKCS#12; encapsulamos sem repassá-la à borda. A
+            // mensagem NÃO inclui a senha, o Base64 nem os bytes do certificado.
+            throw new InvalidOperationException(
+                $"Falha ao carregar o PKCS#12 decodificado do Secret File '{path}'. Verifique se o Base64 " +
+                "corresponde a um PKCS#12 válido e se a senha (DataProtection:Certificate:Password) está correta.", ex);
+        }
+        finally
+        {
+            // Zera os bytes do PFX da memória assim que a carga termina (sucesso ou falha).
+            Array.Clear(pfxBytes, 0, pfxBytes.Length);
+        }
     }
 
     private static X509Certificate2 LoadFromFile(string path, string? password)

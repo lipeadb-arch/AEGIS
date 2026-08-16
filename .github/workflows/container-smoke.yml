@@ -33,7 +33,7 @@ jobs:
       NET: aegis-ci-net
       PG: aegis-ci-pg
       APP: aegis-ci-app
-      SECRET_PATH: /etc/secrets/aegis-dataprotection.pfx
+      SECRET_PATH: /etc/secrets/aegis-dataprotection.pfx.b64
     steps:
       - uses: actions/checkout@v4
 
@@ -82,16 +82,19 @@ jobs:
           done
           [ "$pg_ok" = "1" ] || { echo "postgres nao ficou pronto"; exit 1; }
 
-          # --- PKCS#12 sintético: dono root, grupo 1000, 0640 (equivalente ao secret file do Render) ---
+          # --- PKCS#12 sintético -> BASE64 textual (o Render so aceita Secret Files como TEXTO) ---
           mkdir -p secrets
           openssl req -x509 -newkey rsa:2048 -keyout secrets/key.pem -out secrets/cert.pem \
             -days 2 -nodes -subj "/CN=aegis-ci" >/dev/null 2>&1 || { echo "falha ao gerar cert"; exit 1; }
           openssl pkcs12 -export -out secrets/aegis-dp.pfx -inkey secrets/key.pem -in secrets/cert.pem \
             -passout pass:"$PFXPASS" || { echo "falha ao empacotar pkcs12"; exit 1; }
-          sudo chown root:1000 secrets/aegis-dp.pfx
-          sudo chmod 0640 secrets/aegis-dp.pfx
-          echo "== permissoes do secret file (esperado root 1000 -rw-r-----):"
-          ls -l secrets/aegis-dp.pfx
+          # Base64 do PKCS#12 (com as quebras de linha do wrap, como um Secret File real) — prova o caminho .b64.
+          base64 secrets/aegis-dp.pfx > secrets/aegis-dp.pfx.b64 || { echo "falha ao codificar base64"; exit 1; }
+          # Secret File TEXTUAL com dono root, grupo 1000, 0640 (equivalente ao secret file do Render).
+          sudo chown root:1000 secrets/aegis-dp.pfx.b64
+          sudo chmod 0640 secrets/aegis-dp.pfx.b64
+          echo "== permissoes do secret file .b64 (esperado root 1000 -rw-r-----):"
+          ls -l secrets/aegis-dp.pfx.b64
 
           # --- sobe a imagem com valores sintéticos; TLS interno DESABILITADO só nesta conexao descartavel ---
           docker run -d --name "$APP" --network "$NET" -p 8080:8080 \
@@ -104,7 +107,7 @@ jobs:
             -e "Bootstrap__AdminPassword=$ADMINPASS" \
             -e "Bootstrap__TenantName=Cliente CI" \
             -e "PORT=8080" \
-            -v "$PWD/secrets/aegis-dp.pfx:$SECRET_PATH:ro" \
+            -v "$PWD/secrets/aegis-dp.pfx.b64:$SECRET_PATH:ro" \
             "$IMAGE" || { echo "falha ao subir a app"; exit 1; }
 
           # --- aguarda readiness (migrator roda ANTES da API) ---
@@ -130,7 +133,7 @@ jobs:
           gate "processo tem grupo suplementar 1000" "$(echo " $gids " | grep -q ' 1000 ' && echo 1 || echo 0)" "groups=$gids"
 
           if docker exec "$APP" sh -c "test -r $SECRET_PATH" 2>/dev/null; then rd=1; else rd=0; fi
-          gate "app (nao-root) LE o PKCS#12 montado" "$rd"
+          gate "app (nao-root) LE o Secret File .b64 montado" "$rd"
 
           logs="$(docker logs "$APP" 2>&1)"
           echo "$logs" | grep -q "Banco pronto para a API" && m=1 || m=0
