@@ -22,9 +22,9 @@ services:
     # roteia tráfego quando /health/ready devolve 200. (Liveness fica em /health/live.)
     healthCheckPath: /health/ready
 
-    # Arquivo secreto montado em /etc/secrets/<nome> — suba o PKCS#12 do Data Protection
-    # com este nome exato no painel (Environment → Secret Files).
-    # (Bloco ilustrativo; o Render pede o CONTEÚDO do arquivo no painel, não versionado.)
+    # Secret File montado em /etc/secrets/<nome>. ⚠️ O Render aceita Secret Files apenas como TEXTO —
+    # então o arquivo `aegis-dataprotection.pfx.b64` deve conter o BASE64 do PKCS#12 (não os bytes
+    # binários do .pfx). A app decodifica em memória. (O Render pede o CONTEÚDO no painel; nada versionado.)
 
     envVars:
       # ---- Ambiente ----
@@ -51,9 +51,12 @@ services:
         sync: false
 
       # ---- Data Protection (envelope do key ring — OBRIGATÓRIO em Production) ----
-      # Caminho do PKCS#12 montado como Secret File; a senha vem separada (nunca versionada).
+      # O Secret File `aegis-dataprotection.pfx.b64` contém o BASE64 do PKCS#12 (o Render só aceita Secret
+      # Files textuais — não é possível colar bytes binários). A extensão `.b64` ativa a decodificação e a
+      # carga EM MEMÓRIA; a senha vem SEPARADA, nunca versionada, e continua protegendo o PKCS#12.
+      # (Para uso local/binário, aponte para um `.pfx` real — o suporte binário permanece intacto.)
       - key: DataProtection__Certificate__Path
-        value: /etc/secrets/aegis-dataprotection.pfx
+        value: /etc/secrets/aegis-dataprotection.pfx.b64
       - key: DataProtection__Certificate__Password
         sync: false
 
