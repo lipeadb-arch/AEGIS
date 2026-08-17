@@ -215,7 +215,8 @@ public record ExecutiveDashboardDto(
     IReadOnlyList<GapPointDto> TopGaps,
     IReadOnlyList<HeatCellDto> RiskHeatmap,
     IReadOnlyList<RiskLevelCountDto> RiskByLevel,
-    IcrDto Icr);
+    // ICR ANULÁVEL: null quando NENHUM IcrScore foi medido para o tenant — nunca um proxy sintético.
+    IcrDto? Icr);
 
 public record ExposureCardsDto(
     int CriticalProcessesExposed,

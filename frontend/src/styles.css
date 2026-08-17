@@ -107,6 +107,9 @@ body::after {
 .icr-pill .dot { width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 12px 1px currentColor; }
 .icr-pill .v { font-family: var(--display); font-weight: 700; font-size: 16px; }
 .icr-pill .b { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.06em; }
+/* Sem NENHUM ICR medido: pílula neutra — sem cor de banda, sem brilho. "Não avaliado" ≠ um número. */
+.icr-pill.is-empty .dot { background: var(--muted); box-shadow: none; opacity: 0.6; }
+.icr-pill.is-empty .v { color: var(--muted); }
 
 /* ---- eyebrow / section label ---- */
 .eyebrow {

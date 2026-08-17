@@ -42,7 +42,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
       <header class="topbar">
         <div class="brand">
           <span class="mark">Aegis <b>Score</b></span>
-          <span class="sub">Auditoria de Maturidade Cibernética · Synapse OS</span>
+          <span class="sub">Auditoria de Maturidade Cibernética</span>
         </div>
         <!-- Cliente e ICR só aparecem com dados REAIS. Durante carga ou erro não há postura para
              exibir, e um nome/ICR remanescente leria como a leitura atual de outro cliente. -->
@@ -55,13 +55,27 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
                 apurado {{ generatedAt() | date: 'dd/MM HH:mm' }}
               </span>
             }
-            <span class="icr-pill" title="Índice de Criticidade de Risco Cibernético">
-              <span class="dot" [style.background]="icrColor(d.icr.band)"></span>
-              <span class="v" [style.color]="icrColor(d.icr.band)">
-                {{ d.icr.score.toFixed(0) }}
+            <!-- ICR só é número quando REALMENTE medido. Sem nenhum IcrScore, um estado neutro e
+                 explícito ("—" / "ICR · Não avaliado") — nunca um valor, cor de banda ou "Moderado"
+                 fabricados. O cliente e o instante de apuração acima seguem visíveis nos dois casos. -->
+            @if (d.icr; as icr) {
+              <span class="icr-pill" title="Índice de Criticidade de Risco Cibernético">
+                <span class="dot" [style.background]="icrColor(icr.band)"></span>
+                <span class="v" [style.color]="icrColor(icr.band)">
+                  {{ icr.score.toFixed(0) }}
+                </span>
+                <span class="b">ICR · {{ icr.band }}</span>
               </span>
-              <span class="b">ICR · {{ d.icr.band }}</span>
-            </span>
+            } @else {
+              <span
+                class="icr-pill is-empty"
+                title="Índice de Criticidade — nenhuma medição de ICR para este cliente"
+              >
+                <span class="dot"></span>
+                <span class="v">—</span>
+                <span class="b">ICR · Não avaliado</span>
+              </span>
+            }
           </div>
         }
       </header>
@@ -236,7 +250,11 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
       <div class="grid trio">
         <div class="panel">
           <div class="hd"><h3>Índice de Criticidade (ICR)</h3></div>
-          <app-icr-gauge [icr]="d.icr" />
+          @if (d.icr; as icr) {
+            <app-icr-gauge [icr]="icr" />
+          } @else {
+            <p class="panel-empty">ICR não avaliado — nenhuma medição de criticidade para este cliente ainda.</p>
+          }
           <div class="hd" style="margin-top:18px">
             <h3 style="font-size:13px;color:var(--muted)">Riscos por nível</h3>
           </div>
@@ -338,7 +356,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         }
       }
 
-      /* Estado vazio do painel executivo — mesma linguagem HUD do resto do Synapse OS. */
+      /* Estado vazio do painel executivo — mesma linguagem HUD do resto do AEGIS. */
       .empty-state {
         border: 1px solid var(--line);
         border-left: 3px solid var(--cyan);

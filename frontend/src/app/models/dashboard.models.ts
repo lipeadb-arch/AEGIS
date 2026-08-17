@@ -46,7 +46,8 @@ export interface ExecutiveDashboard {
   topGaps: GapPoint[];
   riskHeatmap: HeatCell[];
   riskByLevel: RiskLevelCount[];
-  icr: Icr;
+  // ICR anulável: `null` quando nenhum ICR foi medido para o tenant (espelha `IcrDto? Icr`).
+  icr: Icr | null;
 }
 
 /**

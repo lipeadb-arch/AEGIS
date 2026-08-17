@@ -103,34 +103,20 @@ public class DashboardController : ControllerBase
             rollup.Overall.CurrentScore,
             rollup.Overall.TargetScore);
 
-        // ---- ICR (average of stored scores, else an org-level proxy from current posture) ----
-        double icrScore;
-        var stored = await _db.IcrScores.AsNoTracking().ToListAsync(ct);
-        if (stored.Count > 0)
+        // ---- ICR: média EXCLUSIVA dos ICRs realmente persistidos (nunca fabricado) ----
+        // Sem nenhum IcrScore medido para o tenant, o ICR é NULO (não avaliado). O antigo fallback
+        // sintetizava um proxy de constantes (TechnicalSeverity=0.5, AssetCriticality=0.5,
+        // RecentExploitation=0.3, RegulatoryExposure=0.4…) que, com os pesos default e sem maturidade,
+        // caía exatamente em "45 · Moderado" — um número apresentado como postura apurada sem uma única
+        // medição por trás. Ausência de medição não é zero nem banda: é ausência de leitura, e o contrato
+        // diz isso com null (o cliente e o instante de apuração continuam presentes no cabeçalho).
+        var storedScores = await _db.IcrScores.AsNoTracking().Select(s => s.Score).ToListAsync(ct);
+        IcrDto? icr = null;
+        if (storedScores.Count > 0)
         {
-            icrScore = Math.Round(stored.Average(s => s.Score), 1);
+            var icrScore = Math.Round(storedScores.Average(), 1);
+            icr = new IcrDto(icrScore, _icr.BandOf(icrScore).ToString());
         }
-        else
-        {
-            var weights = await _db.IcrWeightProfiles.AsNoTracking().FirstOrDefaultAsync(w => w.TenantId == null, ct)
-                          ?? new IcrWeightProfile();
-
-            var processValues = await _db.Processes.AsNoTracking().Select(p => p.ProcessValue).ToListAsync(ct);
-            var avgProcessValue = processValues.Count == 0 ? 1.0 : processValues.Average();
-
-            var input = new IcrInput(
-                TechnicalSeverity: 0.5,
-                AssetCriticality: 0.5,
-                BusinessImpact: avgProcessValue / 4.0,
-                RecentExploitation: 0.3,
-                RegulatoryExposure: 0.4,
-                ControlEffectiveness: rollup.Overall.CurrentScore / 5.0,
-                OverdueActionPlan: actionPlans.Count == 0 ? 0 : (double)overdueCount / actionPlans.Count);
-
-            icrScore = _icr.Compute(input, weights).Score;
-        }
-
-        var icr = new IcrDto(icrScore, _icr.BandOf(icrScore).ToString());
 
         return new ExecutiveDashboardDto(clientName, DateTimeOffset.UtcNow, exposure, radar, topGaps, heatmap, byLevel, icr);
     }
