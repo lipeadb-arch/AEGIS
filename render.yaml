@@ -74,6 +74,28 @@ services:
       - key: Bootstrap__TenantSlug         # opcional; se omitido, é derivado do TenantName
         sync: false
 
+      # ---- IA (Gemini Developer API — Free Tier DEMONSTRATIVO; provedor ÚNICO do MVP) ----
+      # Configuração GENÉRICA Ai__* (nenhum nome de provedor espalhado pela app). A CHAVE nunca é versionada
+      # (sync:false). A FRONTEIRA DE DADOS é dupla: Ai__Mode + a allowlist de slugs — só um tenant sandbox
+      # SINTÉTICO autorizado tem dados enviados ao provedor gratuito. Sem chave/allowlist, a IA opera em modo
+      # SIMULADO determinístico (o serviço sobe sem chave). ⚠️ Free Tier: entradas/respostas podem ser usadas
+      # pelo Google e passar por revisão humana — JAMAIS envie documento, log, credencial, PII ou dado
+      # corporativo REAL. Configuração da chave e do tenant sandbox: DEPOIS do merge (fora deste PR).
+      - key: Ai__Provider
+        value: Gemini
+      - key: Ai__Model                     # modelo estável pinado (GA, Free Tier) — não usar alias -latest
+        value: gemini-3.5-flash
+      - key: Ai__BaseUrl
+        value: https://generativelanguage.googleapis.com/v1beta/models
+      # Ai__Mode: Simulated (padrão SEGURO) | GeminiFreeDemo (liga o provedor p/ a allowlist) | Disabled
+      - key: Ai__Mode
+        value: Simulated
+      - key: Ai__ApiKey                    # chave da Gemini Developer API — definir no painel (nunca versionar)
+        sync: false
+      # Slug do tenant sandbox autorizado (dados sintéticos). Definir no painel SÓ quando o sandbox existir.
+      - key: Ai__FreeTier__AllowedTenantSlugs__0
+        sync: false
+
     # ---- (Opcional) Persistência de uploads do Document Hub ----
     # Sem disco, os documentos vão para /app/document-store (efêmero, recriado a cada deploy).
     # Para PERSISTIR, descomente o disco abaixo e aponte DocumentStorage__RootPath para o mountPath.

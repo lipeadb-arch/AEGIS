@@ -8,11 +8,11 @@ namespace AegisScore.Infrastructure.Ai;
 /// Política de resiliência dos HttpClients dos motores de IA (Gemini e Claude), sob a fachada oficial
 /// <c>Microsoft.Extensions.Http.Resilience</c> (Polly v8).
 ///
-/// Vive num handler do pipeline HTTP, e NÃO dentro dos clients, por uma razão concreta: tanto o
-/// <see cref="GeminiLlmClient"/> quanto o <see cref="ClaudeAssessmentService"/> traduzem qualquer
-/// resposta não-2xx em falha de aplicação (<c>AiUnavailableException</c> / <c>EnsureSuccessStatusCode</c>)
-/// no instante em que a veem. Um retry acima deles nunca enxergaria o 429 — só a exceção já mastigada.
-/// No handler, a repetição acontece ANTES: o client recebe apenas o desfecho final da tentativa.
+/// Vive num handler do pipeline HTTP, e NÃO dentro do client, por uma razão concreta: o
+/// <see cref="GeminiLlmClient"/> traduz qualquer resposta não-2xx em falha de aplicação
+/// (<c>AiUnavailableException</c>/<c>AiQuotaExhaustedException</c>) no instante em que a vê. Um retry acima
+/// dele nunca enxergaria o 429 — só a exceção já mastigada. No handler, a repetição acontece ANTES: o
+/// client recebe apenas o desfecho final da tentativa.
 /// </summary>
 internal static class AiResilienceExtensions
 {

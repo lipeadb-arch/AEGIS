@@ -8,16 +8,20 @@ import {
   ANALYSIS_STATUSES,
   AiAnalysisStatus,
   DOCUMENT_TYPES,
+  DocumentDisplayState,
   GovernCoverage,
   GovernanceDocument,
   GovernanceDocumentType,
-  analysisStatusLabel,
+  documentDisplayState,
+  documentDisplayStateLabel,
   documentSourceLabel,
   documentTypeLabel,
+  hasProbativeEvidence,
   isActiveAnalysisStatus,
 } from '../models/governance.models';
 import { environment } from '../../environments/environment';
 import { AgentStateService } from '../services/agent-state.service';
+import { AiModeBannerComponent } from '../components/ai-mode-banner.component';
 import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
 import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
 import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
@@ -40,7 +44,13 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
 @Component({
   selector: 'app-document-hub',
   standalone: true,
-  imports: [DatePipe, PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
+  imports: [
+    DatePipe,
+    PostureSummaryComponent,
+    ControlComplianceCardComponent,
+    AegisPillarChecklistComponent,
+    AiModeBannerComponent,
+  ],
   template: `
     <div class="app">
       <header class="topbar">
@@ -62,6 +72,9 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
 
       <!-- Subtítulo tático da Função Govern (mesmo texto dos painéis de pilar) -->
       <p class="gov-description">{{ govMeta.description }}</p>
+
+      <!-- Estado da IA + aviso do Free Tier (só dados sintéticos) — o Hub é onde documentos são enviados. -->
+      <app-ai-mode-banner />
 
       <!-- ============ 1) POSTURA DE GOVERNANÇA (telemetria GV.SC / GV.RR) ============ -->
       <section class="panel gov-score">
@@ -254,21 +267,36 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
                 <td><span class="tag">{{ typeLabel(d.type) }}</span></td>
                 <td><span class="src">{{ sourceLabel(d.source) }}</span></td>
                 <td>
-                  <span class="ai-status ai-{{ d.analysisStatus.toLowerCase() }}">
+                  <span class="ai-status st-{{ displayStateClass(d) }}">
                     @if (showsSpinner(d.analysisStatus)) {
                       <span
                         class="ai-spin"
                         role="status"
-                        [attr.aria-label]="statusLabel(d.analysisStatus)"
+                        [attr.aria-label]="displayLabel(d)"
                       ></span>
                     }
-                    {{ statusLabel(d.analysisStatus) }}
+                    {{ displayLabel(d) }}
                   </span>
                   @if (d.analysisStatus === 'Failed' && d.analysisError) {
                     <div class="ai-err" [title]="d.analysisError">{{ d.analysisError }}</div>
                   }
                 </td>
-                <td class="num"><span class="map-count">{{ d.mappings.length }}</span></td>
+                <td class="num">
+                  <button
+                    type="button"
+                    class="map-toggle"
+                    [class.on]="expandedId() === d.id"
+                    [disabled]="d.analysisStatus !== 'Analyzed'"
+                    (click)="toggleExpand(d.id)"
+                    [attr.aria-expanded]="expandedId() === d.id"
+                    title="Ver parecer e citações"
+                  >
+                    <span class="map-count">{{ d.mappings.length }}</span>
+                    @if (d.analysisStatus === 'Analyzed') {
+                      <span class="caret">{{ expandedId() === d.id ? '▾' : '▸' }}</span>
+                    }
+                  </button>
+                </td>
                 <td class="dim">{{ d.analyzedAt ? (d.analyzedAt | date: 'dd/MM/yy HH:mm') : '—' }}</td>
                 <td class="num">
                   <div class="row-actions">
@@ -281,6 +309,47 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
                   </div>
                 </td>
               </tr>
+
+              <!-- Parecer expandível: resumo + citações literais (controle, confiança, trecho, justificativa) -->
+              @if (expandedId() === d.id) {
+                <tr class="detail-row">
+                  <td colspan="7">
+                    <div class="parecer">
+                      <div class="parecer-head">
+                        <span class="ev-badge {{ hasEvidence(d) ? 'ok' : 'none' }}">{{ displayLabel(d) }}</span>
+                        @if (d.analysisSummary) {
+                          <p class="summary">{{ d.analysisSummary }}</p>
+                        }
+                      </div>
+
+                      @if (hasEvidence(d)) {
+                        <ul class="cites">
+                          @for (m of d.mappings; track m.subcategoryCode) {
+                            @if (m.evidenceQuote) {
+                              <li class="cite">
+                                <div class="cite-head">
+                                  <span class="ctrl">{{ m.subcategoryCode }}</span>
+                                  <span class="conf">confiança {{ pct(m.confidence) }}%</span>
+                                </div>
+                                <blockquote class="quote">“{{ m.evidenceQuote }}”</blockquote>
+                                @if (m.evidence) {
+                                  <p class="rationale">{{ m.evidence }}</p>
+                                }
+                              </li>
+                            }
+                          }
+                        </ul>
+                      } @else {
+                        <p class="no-evidence">
+                          Documento analisado, mas sem trecho com valor probatório literal —
+                          <b>não altera a postura de segurança</b>. Um documento só concede cobertura quando
+                          cita explicitamente a execução do controle (responsável, periodicidade ou registro).
+                        </p>
+                      }
+                    </div>
+                  </td>
+                </tr>
+              }
             } @empty {
               <tr class="empty">
                 <td colspan="7">
@@ -322,13 +391,6 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       .gov-score .hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
       .gs-grid { display: grid; grid-template-columns: 300px 1fr; gap: 18px; align-items: start; }
       .gs-left { display: flex; flex-direction: column; gap: 12px; }
-      .gs-counts { display: flex; flex-direction: column; gap: 8px; }
-      .gs-counts .c { font-family: var(--mono); font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 8px; }
-      .gs-counts .c::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.7; }
-      .gs-counts .c.ok { color: var(--cyan); }
-      .gs-counts .c.partial { color: var(--amber); }
-      .gs-counts .c.fail.hot { color: var(--red); }
-      .gs-counts .c.fail.hot::before { box-shadow: 0 0 8px 0 var(--red); opacity: 1; }
       .score-err { font-family: var(--mono); font-size: 12px; color: var(--red); margin: 0; }
       .posture-err { display: flex; flex-direction: column; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
       .retry-sm { align-self: flex-start; cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--cyan); background: rgba(38,224,255,0.06); border: 1px solid rgba(38,224,255,0.35); border-radius: 8px; padding: 5px 12px; }
@@ -405,12 +467,32 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
         animation: ai-spin 0.7s linear infinite;
       }
       @keyframes ai-spin { to { transform: rotate(360deg); } }
-      .ai-pending { color: var(--muted); }
-      .ai-queued { color: var(--cyan-2); }
-      .ai-processing { color: var(--amber); }
-      .ai-analyzed { color: var(--cyan); }
-      .ai-failed { color: var(--red); }
+      /* Estado REFINADO da leitura (separa Analisado com/sem evidência) + parecer expandível. */
+      .st-pending, .st-analyzedwithoutevidence { color: var(--muted); }
+      .st-queued { color: var(--cyan-2); }
+      .st-processing { color: var(--amber); }
+      .st-analyzedwithevidence { color: var(--cyan); }
+      .st-failed { color: var(--red); }
       .ai-err { font-family: var(--mono); font-size: 10.5px; color: var(--red); margin-top: 4px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .map-toggle { display: inline-flex; align-items: center; gap: 6px; background: none; border: 1px solid transparent; border-radius: 8px; padding: 4px 8px; cursor: pointer; }
+      .map-toggle:not(:disabled):hover, .map-toggle.on { border-color: rgba(38,224,255,.4); }
+      .caret { font-size: 10px; color: var(--cyan); }
+      tr.detail-row td { background: rgba(38,224,255,.02); padding: 0 14px 16px; }
+      .parecer { display: flex; flex-direction: column; gap: 12px; }
+      .parecer-head { display: flex; gap: 12px; }
+      .ev-badge { font-family: var(--mono); font-size: 10.5px; padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor; }
+      .ev-badge.ok { color: var(--cyan); }
+      .ev-badge.none { color: var(--amber); }
+      .cites { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+      .cite { border-left: 2px solid rgba(38, 224, 255, 0.4); padding-left: 12px; }
+      .cite-head { display: flex; align-items: center; gap: 12px; margin-bottom: 5px; }
+      .cite-head .ctrl { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--cyan-2); }
+      .cite-head .conf { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+      .summary, .quote, .rationale, .no-evidence { margin: 0; line-height: 1.5; }
+      .summary, .quote { font-size: 12.5px; color: var(--text); }
+      .quote { font-style: italic; margin-bottom: 5px; }
+      .rationale, .no-evidence { font-size: 11.5px; color: var(--muted); }
+      .no-evidence b { color: var(--amber); }
 
       .row-actions { display: inline-flex; gap: 6px; }
       .act { font-family: var(--mono); font-size: 11px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; cursor: pointer; transition: 0.15s; }
@@ -493,6 +575,7 @@ export class DocumentHubComponent implements OnInit {
   loading = signal(false);
   loadError = signal(false);
   busyId = signal<string | null>(null); // linha em ação (reanalyze/delete)
+  expandedId = signal<string | null>(null); // linha com o parecer expandido (uma por vez)
 
   // ---- Filtros ----
   typeFilter = signal<GovernanceDocumentType | null>(null);
@@ -512,7 +595,6 @@ export class DocumentHubComponent implements OnInit {
   protected readonly documentTypes = DOCUMENT_TYPES;
   protected readonly analysisStatuses = ANALYSIS_STATUSES;
   protected readonly typeLabel = documentTypeLabel;
-  protected readonly statusLabel = analysisStatusLabel;
   protected readonly sourceLabel = documentSourceLabel;
   protected readonly apiBase = environment.apiBase;
 
@@ -661,6 +743,36 @@ export class DocumentHubComponent implements OnInit {
   /** Spinner discreto só em estados ATIVOS visíveis: Na fila e Analisando (terminais nunca giram). */
   protected showsSpinner(status: AiAnalysisStatus): boolean {
     return status === 'Queued' || status === 'Processing';
+  }
+
+  /** Estado refinado de exibição (separa "Analisado com evidência" de "sem evidência"). */
+  protected displayState(d: GovernanceDocument): DocumentDisplayState {
+    return documentDisplayState(d);
+  }
+
+  /** Rótulo PT do estado refinado (para a pill de status e o badge do parecer). */
+  protected displayLabel(d: GovernanceDocument): string {
+    return documentDisplayStateLabel(documentDisplayState(d));
+  }
+
+  /** Classe CSS derivada do estado refinado (st-analyzedwithevidence, st-failed…). */
+  protected displayStateClass(d: GovernanceDocument): string {
+    return documentDisplayState(d).toLowerCase();
+  }
+
+  /** True se o documento tem ao menos um trecho probatório literal. */
+  protected hasEvidence(d: GovernanceDocument): boolean {
+    return hasProbativeEvidence(d);
+  }
+
+  /** Percentual inteiro da confiança (0..1 → 0..100), para o parecer. */
+  protected pct(confidence: number): number {
+    return Math.round((confidence ?? 0) * 100);
+  }
+
+  /** Alterna a linha de parecer expandida (uma por vez). */
+  toggleExpand(id: string): void {
+    this.expandedId.update((cur) => (cur === id ? null : id));
   }
 
   onFileSelected(event: Event): void {

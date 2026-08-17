@@ -38,6 +38,9 @@ export type MessageRole = 'System' | 'Assistant' | 'User';
 export interface DocumentMapping {
   subcategoryCode: string;
   confidence: number;
+  /** Trecho LITERAL validado (citação verbatim que sustenta o mapeamento). Nulo = herança não probatória. */
+  evidenceQuote: string | null;
+  /** Racional da análise (separado do trecho literal). */
   evidence: string | null;
   analystConfirmed: boolean;
 }
@@ -192,6 +195,52 @@ export const ACTIVE_ANALYSIS_STATUSES: ReadonlyArray<AiAnalysisStatus> = ['Pendi
 /** True se o status é ativo (a análise ainda vai mudar) — controla polling e spinner. */
 export function isActiveAnalysisStatus(status: AiAnalysisStatus): boolean {
   return ACTIVE_ANALYSIS_STATUSES.includes(status);
+}
+
+/** True se o documento tem ao menos um mapeamento com TRECHO PROBATÓRIO literal (evidenceQuote). */
+export function hasProbativeEvidence(doc: GovernanceDocument): boolean {
+  return doc.mappings.some((m) => !!m.evidenceQuote && m.evidenceQuote.trim().length > 0);
+}
+
+/**
+ * Estado de exibição REFINADO do documento: separa "Analisado com evidência" de "Analisado sem evidência"
+ * (documento sem valor probatório) — os demais estados espelham o status de leitura da IA.
+ */
+export type DocumentDisplayState =
+  | 'Pending'
+  | 'Queued'
+  | 'Processing'
+  | 'AnalyzedWithEvidence'
+  | 'AnalyzedWithoutEvidence'
+  | 'Failed';
+
+export function documentDisplayState(doc: GovernanceDocument): DocumentDisplayState {
+  switch (doc.analysisStatus) {
+    case 'Analyzed':
+      return hasProbativeEvidence(doc) ? 'AnalyzedWithEvidence' : 'AnalyzedWithoutEvidence';
+    case 'Failed':
+      return 'Failed';
+    case 'Processing':
+      return 'Processing';
+    case 'Queued':
+      return 'Queued';
+    default:
+      return 'Pending';
+  }
+}
+
+const DISPLAY_STATE_LABELS = new Map<DocumentDisplayState, string>([
+  ['Pending', 'Aguardando processamento'],
+  ['Queued', 'Na fila'],
+  ['Processing', 'Analisando'],
+  ['AnalyzedWithEvidence', 'Analisado com evidência'],
+  ['AnalyzedWithoutEvidence', 'Analisado sem evidência'],
+  ['Failed', 'Falha na análise'],
+]);
+
+/** Rótulo PT do estado refinado de exibição (fallback: o próprio valor). */
+export function documentDisplayStateLabel(state: DocumentDisplayState): string {
+  return DISPLAY_STATE_LABELS.get(state) ?? state;
 }
 
 const DOCUMENT_TYPE_LABELS = new Map<string, string>(DOCUMENT_TYPES.map((t) => [t.value, t.label]));

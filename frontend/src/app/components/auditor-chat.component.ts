@@ -3,6 +3,7 @@ import { Component, ElementRef, computed, effect, inject, signal, viewChild } fr
 import { environment } from '../../environments/environment';
 import { AgentStateService } from '../services/agent-state.service';
 import { AuditorChatReply, AuditorInterviewSeed, AuditorService, BlastRadiusResponse } from '../services/auditor.service';
+import { AiModeBannerComponent } from './ai-mode-banner.component';
 import { BlastRadiusGraphComponent } from './blast-radius-graph.component';
 import { GrcQuestionCardComponent } from './grc-question-card.component';
 
@@ -50,9 +51,10 @@ interface BlastRadiusChatMessage {
 @Component({
   selector: 'app-auditor-chat',
   standalone: true,
-  imports: [DatePipe, GrcQuestionCardComponent, BlastRadiusGraphComponent],
+  imports: [DatePipe, GrcQuestionCardComponent, BlastRadiusGraphComponent, AiModeBannerComponent],
   template: `
     <div class="copilot">
+      <app-ai-mode-banner />
       <div class="stream" #scroller>
         @if (chatHistory().length === 0 && !isAnalyzing()) {
           <div class="intro">

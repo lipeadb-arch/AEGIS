@@ -101,10 +101,25 @@ public sealed class GeminiLlmClientTests
 
     // ---- helpers ------------------------------------------------------------------
 
+    // ---- Cenário 4: cota gratuita esgotada (429) ---------------------------------
+
+    [Fact]
+    public async Task ExecutePromptAsync_QuandoQuota429_LancaAiQuotaExhausted()
+    {
+        // 429 RESOURCE_EXHAUSTED é a cota gratuita esgotada: caso DISTINTO, com mensagem própria para a UI
+        // ("cota esgotada"), e ainda subtipo de AiUnavailableException (→ 503 no middleware, fallback seguro).
+        var handler = new StubHttpMessageHandler(HttpStatusCode.TooManyRequests, "{\"error\":\"RESOURCE_EXHAUSTED\"}");
+        var client = CreateClient(handler);
+
+        var acao = () => client.ExecutePromptAsync("system", "user");
+
+        await acao.Should().ThrowAsync<AiQuotaExhaustedException>();
+    }
+
     private static GeminiLlmClient CreateClient(StubHttpMessageHandler handler, string apiKey = "test-key")
     {
         var http = new HttpClient(handler);
-        var options = Options.Create(new AegisAiOptions { ApiKey = apiKey });
+        var options = Options.Create(new AiOptions { ApiKey = apiKey });
         return new GeminiLlmClient(http, options);
     }
 

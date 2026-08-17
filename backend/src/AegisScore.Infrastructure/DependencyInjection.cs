@@ -89,27 +89,33 @@ public static class DependencyInjection
         // das credenciais, que assim deixa de morar na camada HTTP.
         services.AddScoped<ITenantManagementService, TenantManagementService>();
 
-        // AI engine (swappable). Bound from the "Ai" config section.
-        services.Configure<AiOptions>(config.GetSection("Ai"));
+        // ---- Motor de IA: provedor ÚNICO (Gemini Free demonstrativo) e configuração ÚNICA (seção "Ai") ----
+        // Portabilidade: o domínio, os controllers e os workers dependem SÓ das interfaces neutras do AEGIS
+        // (IAiAssessmentService de alto nível + ILLMClient de transporte). Trocar de provedor é implementar
+        // outro adaptador de ILLMClient, registrá-lo aqui, ajustar a config e rodar os testes de contrato —
+        // nada mais muda. Nenhum tipo Gemini aparece fora da Infrastructure.
+        services.Configure<AiOptions>(config.GetSection(AiOptions.SectionName));
 
-        // Fail-open para DEV/demo: sem Ai:ApiKey usa o Stub (respostas canned, sem tokens e sem
-        // rede); com a chave presente (ex.: via 'dotnet user-secrets') usa o motor real (Claude).
-        if (string.IsNullOrWhiteSpace(config["Ai:ApiKey"]))
-            services.AddSingleton<IAiAssessmentService, StubAssessmentService>();
-        else
-            services.AddHttpClient<IAiAssessmentService, ClaudeAssessmentService>().AddAiResilience();
+        // Motores CONCRETOS (sempre registrados). O gate do Free Tier decide REAL × SIMULADO em RUNTIME;
+        // sem chave ou fora da allowlist os motores reais nunca são invocados — o serviço SEMPRE inicia
+        // sem chave, em modo simulado (a demo nunca quebra por ausência de chave/rede).
+        services.AddSingleton<StubLlmClient>();
+        services.AddSingleton<StubAssessmentService>();
+        services.AddScoped<AegisAssessmentService>();     // IAiAssessmentService neutro sobre ILLMClient
+        // Adaptador Gemini ISOLADO na Infrastructure (HttpClient tipado + resiliência Polly já existente).
+        services.AddHttpClient<GeminiLlmClient>().AddAiResilience();
 
-        // Aegis Score — avaliador de conformidade por IA: telemetria bruta → veredito NIST CSF 2.0 →
-        // upsert do TenantControlState. ILLMClient é o seam de transporte (mockável nos testes).
-        services.Configure<AegisAiOptions>(config.GetSection(AegisAiOptions.SectionName));
-
-        // Fail-open (espelha o padrão do IAiAssessmentService acima): sem AegisAi:ApiKey usa o stub
-        // determinístico (sem rede nem tokens — a demo nunca quebra por ausência de chave); com a chave
-        // presente (via 'dotnet user-secrets') engata o motor real Gemini 1.5 Flash (HttpClient tipado).
-        if (string.IsNullOrWhiteSpace(config[$"{AegisAiOptions.SectionName}:ApiKey"]))
-            services.AddSingleton<ILLMClient, StubLlmClient>();
-        else
-            services.AddHttpClient<ILLMClient, GeminiLlmClient>().AddAiResilience();
+        // Gate do Free Tier (configuração pura), resolver de tenant→slug (scoped; overridável no worker) e os
+        // ROTEADORES que são a ÚNICA ligação das interfaces neutras na DI — a fronteira de dados do modo
+        // gratuito passa por eles: allowlist → Gemini; fora dela → stub; sem provedor → stub.
+        services.AddSingleton<IAiFreeTierGate, AiFreeTierGate>();
+        services.AddScoped<IAiTenantResolver, AiTenantResolver>();
+        services.AddScoped<ILLMClient>(sp => new TenantScopedLlmRouter(
+            sp.GetRequiredService<GeminiLlmClient>(), sp.GetRequiredService<StubLlmClient>(),
+            sp.GetRequiredService<IAiFreeTierGate>(), sp.GetRequiredService<IAiTenantResolver>()));
+        services.AddScoped<IAiAssessmentService>(sp => new TenantScopedAssessmentRouter(
+            sp.GetRequiredService<AegisAssessmentService>(), sp.GetRequiredService<StubAssessmentService>(),
+            sp.GetRequiredService<IAiFreeTierGate>(), sp.GetRequiredService<IAiTenantResolver>()));
         // Escritor ÚNICO do ledger de conformidade (upsert idempotente + regra de scoring). Compartilhado
         // pelo motor de telemetria e pela ponte do Govern — nenhuma das duas fontes reimplementa scoring.
         services.AddScoped<IControlStateWriter, ControlStateWriter>();
@@ -122,13 +128,18 @@ public static class DependencyInjection
         // Camada de PERSONALIDADE do Auditor (tom, tradução de siglas, proatividade) — o terceiro bloco do
         // System Prompt, ao lado do RAG e do contrato de saída. Singleton: o JSON é lido UMA vez no startup.
         // Caminho relativo ao diretório do binário (o Data/ do Api é copiado para o output).
-        var personalityPath = config[$"{AegisAiOptions.SectionName}:PersonalityPath"]
+        var personalityPath = config[$"{AiOptions.SectionName}:PersonalityPath"]
             ?? Path.Combine("Data", "AuditorPersonality.json");
         if (!Path.IsPathRooted(personalityPath))
             personalityPath = Path.Combine(AppContext.BaseDirectory, personalityPath);
         services.AddSingleton<IAuditorPersonaProvider>(sp => new AuditorPersonaProvider(
             personalityPath, sp.GetRequiredService<ILogger<AuditorPersonaProvider>>()));
         services.AddScoped<IAegisAiEvaluatorService, AegisAiEvaluatorService>();
+
+        // Auditor Virtual — construtor do CONTEXTO tenant-scoped (somente leitura) que fundamenta o chat:
+        // score/cobertura, lacunas, controles, evidência documental curta, conectores e recomendações. Scoped:
+        // usa o DbContext + as projeções de leitura sob o Global Query Filter fail-closed do tenant.
+        services.AddScoped<IAuditorContextBuilder, AuditorContextBuilder>();
 
         // AEGIS KNIGHT — assessment MULTICOLETOR de postura de identidade/exposição. Coletor de DEMONSTRAÇÃO
         // (sintético, sem rede) + registro/factory de coletores (montado a partir de TODOS os IKnightCollector,

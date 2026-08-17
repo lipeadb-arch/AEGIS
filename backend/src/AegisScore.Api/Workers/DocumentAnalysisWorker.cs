@@ -4,6 +4,7 @@ using AegisScore.Application.Abstractions;
 using AegisScore.Application.Documents;
 using AegisScore.Application.Services;
 using AegisScore.Domain;
+using AegisScore.Infrastructure.Ai;
 using AegisScore.Infrastructure.Documents;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Scoring;
@@ -21,12 +22,6 @@ namespace AegisScore.Api.Workers;
 /// </summary>
 public sealed class DocumentAnalysisWorker : BackgroundService
 {
-    /// <summary>
-    /// Orçamento de caracteres da TRIAGEM (passada 1). Ela só precisa reconhecer os temas do documento,
-    /// não julgar mérito — o julgamento vem depois, com trecho dirigido e a regra do 800-53 junto.
-    /// </summary>
-    private const int TriageCharBudget = 24_000;
-
     /// <summary>
     /// Orçamento do TRECHO por controle (passada 2). Enxuto de propósito: o parágrafo que prova um
     /// controle raramente passa disso, e texto irrelevante além de custar tokens dilui a atenção do
@@ -117,7 +112,12 @@ public sealed class DocumentAnalysisWorker : BackgroundService
         using var scope = _scopes.CreateScope();
         var sp = scope.ServiceProvider;
         var options = sp.GetRequiredService<DbContextOptions<AegisScoreDbContext>>();
+        // Gate do Free Tier: o worker NÃO tem tenant HTTP ambiente, então FIXA o tenant DONO do lease no
+        // resolver ANTES de resolver a IA — os roteadores (assessment + transporte) decidem Gemini × stub
+        // pelo slug desse tenant. Sem isto, um tenant da allowlist cairia sempre no stub aqui.
+        sp.GetRequiredService<IAiTenantResolver>().OverrideTenant(lease.TenantId);
         var ai = sp.GetRequiredService<IAiAssessmentService>();
+        var freeTier = sp.GetRequiredService<IOptions<AiOptions>>().Value.FreeTier;
         var storage = sp.GetRequiredService<IDocumentStorage>();
         var extractors = sp.GetServices<IDocumentTextExtractor>().ToList();
 
@@ -167,13 +167,17 @@ public sealed class DocumentAnalysisWorker : BackgroundService
             // candidato só vira evidência se a passada 2 o SUSTENTAR com trecho literal. O texto vai
             // TRUNCADO: uma política de 80 páginas não cabe no contexto e a triagem só reconhece temas.
             var analysis = await ai.AnalyzeDocumentAsync(
-                new DocumentAnalysisRequest(lease.TenantId, Truncate(text, TriageCharBudget), doc.FileName), workCt);
+                new DocumentAnalysisRequest(lease.TenantId, Truncate(text, freeTier.MaxDocumentChars), doc.FileName), workCt);
 
             // PASSADA 2 — JULGAMENTO DIRIGIDO + VALIDAÇÃO LITERAL. Só o que volta SUSTENTADO e com trecho
             // presente no texto vira mapping probatório; o resto é descartado fail-closed (zero mapping,
             // zero cobertura, zero score) — mas o documento ainda termina Analisado.
+            // Teto de chamadas por análise (Free Tier): a triagem já consumiu 1 chamada; os julgamentos
+            // dirigidos ficam limitados ao restante do orçamento, preservando a cota gratuita. Os candidatos
+            // vêm ordenados pela triagem, então o corte mantém os mais relevantes.
+            var maxControlCalls = Math.Max(0, freeTier.MaxCallsPerAnalysis - 1);
             var validated = new List<RefinedControlResult>();
-            foreach (var claim in analysis.Claims)
+            foreach (var claim in analysis.Claims.Take(maxControlCalls))
             {
                 // Indisponibilidade do refinamento NÃO cai para a triagem como prova: RefineWithRuleAsync
                 // deixa a exceção propagar e a fila durável reprocessa (retry/falha controlada).
