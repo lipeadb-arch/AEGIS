@@ -32,15 +32,16 @@ public sealed class AiStatusController : ControllerBase
         var externalAllowed = _gate.IsExternalAllowedForSlug(slug);
         var mode = _gate.Mode;
 
-        // Estado EFETIVO para este tenant (o que a UI rotula):
-        //  - DemoActive: motor demonstrativo real ativo (allowlist);
+        // Estado EFETIVO para este tenant (o que a UI rotula). É um retrato de CONFIGURAÇÃO, NÃO um health
+        // check em tempo real — não prova que o Gemini respondeu agora (não afirma "ativa/saudável"):
+        //  - DemoConfigured: provedor demonstrativo CONFIGURADO para este tenant (chave + allowlist);
         //  - ExternalBlockedForTenant: provedor configurado, mas este tenant não está na allowlist → só stub;
         //  - Simulated: sem chave ou modo simulado → stub;
         //  - Unavailable: IA desligada por configuração.
         var state = mode switch
         {
             AiMode.Disabled => "Unavailable",
-            AiMode.GeminiFreeDemo when configured && externalAllowed => "DemoActive",
+            AiMode.GeminiFreeDemo when configured && externalAllowed => "DemoConfigured",
             AiMode.GeminiFreeDemo when configured => "ExternalBlockedForTenant",
             _ => "Simulated",
         };
@@ -55,8 +56,9 @@ public sealed class AiStatusController : ControllerBase
 }
 
 /// <summary>
-/// Estado da IA para a UI. Nenhum campo carrega segredo. <c>EffectiveState</c> é o rótulo do tenant:
-/// "DemoActive" | "ExternalBlockedForTenant" | "Simulated" | "Unavailable".
+/// Estado da IA para a UI — retrato de CONFIGURAÇÃO, não health check em tempo real. Nenhum campo carrega
+/// segredo. <c>EffectiveState</c> é o rótulo do tenant:
+/// "DemoConfigured" | "ExternalBlockedForTenant" | "Simulated" | "Unavailable".
 /// </summary>
 public sealed record AiStatusDto(
     string Mode,

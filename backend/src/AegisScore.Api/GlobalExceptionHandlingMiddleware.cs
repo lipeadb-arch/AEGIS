@@ -39,6 +39,17 @@ public sealed class GlobalExceptionHandlingMiddleware
 
             await WriteGenericServerErrorAsync(context);
         }
+        catch (AiQuotaExhaustedException ex)
+        {
+            // Cota gratuita esgotada (429 do provedor): 503 transitório, mas DISTINTO da indisponibilidade
+            // genérica — corpo sanitizado com código próprio (`ai_quota_exhausted`) para a UI orientar o
+            // usuário a reanalisar após a renovação da cota. Precede o catch de AiUnavailableException (base).
+            _logger.LogWarning(ex,
+                "IA: cota gratuita esgotada. TraceId={TraceId} Method={Method} Path={Path}",
+                context.TraceIdentifier, context.Request.Method, context.Request.Path.Value);
+
+            await WriteAiUnavailableAsync(context, "Cota gratuita da IA temporariamente esgotada.", "ai_quota_exhausted");
+        }
         catch (AiUnavailableException ex)
         {
             // Dependência externa (motor de IA) indisponível — condição OPERACIONAL, não um bug.
@@ -47,7 +58,7 @@ public sealed class GlobalExceptionHandlingMiddleware
                 "IA indisponível. TraceId={TraceId} Method={Method} Path={Path}",
                 context.TraceIdentifier, context.Request.Method, context.Request.Path.Value);
 
-            await WriteServiceUnavailableAsync(context);
+            await WriteAiUnavailableAsync(context, "Serviço de IA temporariamente indisponível.", "ai_unavailable");
         }
         catch (Exception ex)
         {
@@ -80,8 +91,13 @@ public sealed class GlobalExceptionHandlingMiddleware
         });
     }
 
-    /// <summary>Writes a 503 with a correlation id — used when the AI engine dependency is down.</summary>
-    private static async Task WriteServiceUnavailableAsync(HttpContext context)
+    /// <summary>
+    /// Writes a sanitized 503 for AI failures: só <c>status</c>/<c>title</c>/<c>code</c>/<c>traceId</c> —
+    /// NUNCA a mensagem interna, o modelo, a chave, o prompt, o documento ou a resposta bruta do provedor.
+    /// O <paramref name="code"/> distingue cota (<c>ai_quota_exhausted</c>) de indisponibilidade genérica
+    /// (<c>ai_unavailable</c>) para a UI reagir sem depender do texto.
+    /// </summary>
+    private static async Task WriteAiUnavailableAsync(HttpContext context, string title, string code)
     {
         if (context.Response.HasStarted)
             return;
@@ -92,8 +108,9 @@ public sealed class GlobalExceptionHandlingMiddleware
 
         await context.Response.WriteAsJsonAsync(new
         {
-            title = "Serviço de IA temporariamente indisponível.",
+            title,
             status = 503,
+            code,
             traceId = context.TraceIdentifier,
         });
     }

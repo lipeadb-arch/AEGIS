@@ -3,9 +3,13 @@ import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, of } from 'rxjs';
 import { environment } from '../../environments/environment';
 
-/** Estado EFETIVO da IA para o tenant autenticado (espelha AiStatusDto do backend). */
+/**
+ * Estado EFETIVO da IA para o tenant autenticado (espelha AiStatusDto do backend). É um retrato de
+ * CONFIGURAÇÃO, não um health check em tempo real: `DemoConfigured` = provedor demonstrativo configurado
+ * para este tenant, NÃO prova que o Gemini respondeu agora.
+ */
 export type AiEffectiveState =
-  | 'DemoActive'
+  | 'DemoConfigured'
   | 'ExternalBlockedForTenant'
   | 'Simulated'
   | 'Unavailable';

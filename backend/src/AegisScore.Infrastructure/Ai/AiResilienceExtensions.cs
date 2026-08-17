@@ -17,9 +17,12 @@ namespace AegisScore.Infrastructure.Ai;
 internal static class AiResilienceExtensions
 {
     /// <summary>
-    /// Anexa retry exponencial + circuit breaker ao client. Os limiares são deliberadamente
-    /// conservadores: o Aegis degrada com elegância (triagem cega no worker documental, 503 no avaliador
-    /// de telemetria), então insistir demais custa latência e cota sem melhorar a decisão de auditoria.
+    /// Anexa retry exponencial + circuit breaker ao client. Os limiares são deliberadamente conservadores.
+    /// Ao esgotar as tentativas a IA fica indisponível e cada consumidor degrada de forma SEGURA, NUNCA com
+    /// resposta simulada: o worker documental faz retry e, no limite existente, marca o documento como Falha
+    /// (sem criar mapping/postura pelo stub); o avaliador de telemetria preserva o veredito determinístico e
+    /// só perde o enriquecimento; o Auditor devolve 503/cota. Insistir demais custa latência e cota sem
+    /// melhorar a decisão de auditoria.
     /// </summary>
     public static IHttpClientBuilder AddAiResilience(this IHttpClientBuilder builder)
     {

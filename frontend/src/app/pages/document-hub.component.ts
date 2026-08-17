@@ -12,6 +12,7 @@ import {
   GovernCoverage,
   GovernanceDocument,
   GovernanceDocumentType,
+  analysisErrorLabel,
   documentDisplayState,
   documentDisplayStateLabel,
   documentSourceLabel,
@@ -277,8 +278,8 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
                     }
                     {{ displayLabel(d) }}
                   </span>
-                  @if (d.analysisStatus === 'Failed' && d.analysisError) {
-                    <div class="ai-err" [title]="d.analysisError">{{ d.analysisError }}</div>
+                  @if (d.analysisStatus === 'Failed') {
+                    <div class="ai-err" [title]="errorLabel(d.analysisError)">{{ errorLabel(d.analysisError) }}</div>
                   }
                 </td>
                 <td class="num">
@@ -768,6 +769,11 @@ export class DocumentHubComponent implements OnInit {
   /** Percentual inteiro da confiança (0..1 → 0..100), para o parecer. */
   protected pct(confidence: number): number {
     return Math.round((confidence ?? 0) * 100);
+  }
+
+  /** Mensagem amigável da falha (traduz a categoria; nunca exibe o nome da exceção .NET). */
+  protected errorLabel(category: string | null): string {
+    return analysisErrorLabel(category);
   }
 
   /** Alterna a linha de parecer expandida (uma por vez). */

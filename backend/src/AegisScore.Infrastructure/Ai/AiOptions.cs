@@ -57,9 +57,6 @@ public sealed class AiOptions
     /// <summary>Teto de tokens de SAÍDA por chamada (maxOutputTokens do generateContent). Protege a cota.</summary>
     public int MaxOutputTokens { get; set; } = 4096;
 
-    /// <summary>Temperatura de amostragem. Baixa por padrão: auditoria pede consistência, não criatividade.</summary>
-    public double Temperature { get; set; } = 0.2;
-
     /// <summary>Caminho do <c>AuditorPersonality.json</c> (persona do Copiloto). Migrado de <c>AegisAi</c>.</summary>
     public string? PersonalityPath { get; set; }
 

@@ -36,15 +36,16 @@ public sealed class GeminiLlmClient : ILLMClient
                 "Motor de IA não configurado: defina Ai:ApiKey via 'dotnet user-secrets' ou variável de ambiente.");
 
         // Schema generateContent do Gemini: system_instruction (snake_case) + contents[].parts[].text +
-        // generationConfig (limite de tokens de saída + temperatura). Nomes propositalmente em
-        // lower/snake_case — são o contrato literal da API, não estilo C#.
+        // generationConfig (só o teto de tokens de saída). Nomes propositalmente em lower/snake_case — são
+        // o contrato literal da API, não estilo C#. Os parâmetros de amostragem (temperature/topP/topK) são
+        // OMITIDOS de propósito: a doc oficial do Gemini 3.x recomenda os valores padrão do modelo, e não
+        // se envia thinking_budget (preserva o nível de raciocínio padrão, sem aumentar consumo de cota).
         var body = new
         {
             system_instruction = new { parts = new[] { new { text = systemPrompt } } },
             contents = new[] { new { role = "user", parts = new[] { new { text = userPrompt } } } },
             generationConfig = new
             {
-                temperature = _opt.Temperature,
                 maxOutputTokens = _opt.MaxOutputTokens,
             },
         };

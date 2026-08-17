@@ -50,8 +50,8 @@ import { AiStatus, AiStatusService } from '../services/ai-status.service';
         background: currentColor;
         box-shadow: 0 0 8px 0 currentColor;
       }
-      /* Demonstrativo real ativo — cyan/brand. */
-      .st-demoactive .chip { color: var(--cyan); }
+      /* Demonstrativo CONFIGURADO (não é health check em tempo real) — cyan/brand. */
+      .st-democonfigured .chip { color: var(--cyan); }
       /* Simulado — mutado. */
       .st-simulated .chip { color: var(--muted); }
       .st-simulated .dot { box-shadow: none; }
@@ -84,8 +84,8 @@ export class AiModeBannerComponent implements OnInit {
 
   protected label(s: AiStatus): string {
     switch (s.effectiveState) {
-      case 'DemoActive':
-        return 'IA demonstrativa · Gemini Free';
+      case 'DemoConfigured':
+        return 'IA demonstrativa configurada · Gemini Free';
       case 'ExternalBlockedForTenant':
         return 'IA externa bloqueada para este tenant';
       case 'Unavailable':

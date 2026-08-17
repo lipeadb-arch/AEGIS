@@ -287,3 +287,22 @@ export function coverageStatusLabel(value: string): string {
 export function evidenceSourceLabel(value: string): string {
   return EVIDENCE_SOURCE_LABELS.get(value) ?? value;
 }
+
+/** Categoria de erro da análise (nome sanitizado do tipo de exceção) → mensagem amigável em PT. */
+const ANALYSIS_ERROR_LABELS = new Map<string, string>([
+  [
+    'AiQuotaExhaustedException',
+    'Cota gratuita da IA temporariamente esgotada. Reanalise após a renovação da cota.',
+  ],
+  ['AiUnavailableException', 'Serviço de IA temporariamente indisponível. Reanalise mais tarde.'],
+]);
+
+/**
+ * Traduz a CATEGORIA de erro da análise (nome sanitizado do tipo de exceção .NET, ex.:
+ * `AiQuotaExhaustedException`) para uma mensagem amigável — NUNCA exibe o nome da exceção ao usuário.
+ * Categoria desconhecida ou ausente cai numa mensagem genérica.
+ */
+export function analysisErrorLabel(category: string | null): string {
+  const generic = 'Falha ao analisar o documento. Reanalise mais tarde.';
+  return category ? (ANALYSIS_ERROR_LABELS.get(category) ?? generic) : generic;
+}

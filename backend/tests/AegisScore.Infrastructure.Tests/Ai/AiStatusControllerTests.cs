@@ -17,13 +17,14 @@ namespace AegisScore.Infrastructure.Tests.Ai;
 public sealed class AiStatusControllerTests
 {
     [Fact]
-    public async Task Status_TenantAllowlisted_DemoActive_SemVazarChave()
+    public async Task Status_TenantAllowlisted_DemoConfigured_SemVazarChave()
     {
         var ctrl = Controller(mode: AiMode.GeminiFreeDemo, apiKey: "chave-super-secreta", slug: "sandbox", allow: "sandbox");
 
         var dto = await Read(ctrl);
 
-        dto.EffectiveState.Should().Be("DemoActive");
+        // "Configurada", não "ativa": o status é retrato de configuração, não health check em tempo real.
+        dto.EffectiveState.Should().Be("DemoConfigured");
         dto.ProviderConfigured.Should().BeTrue();
         dto.ExternalAllowedForTenant.Should().BeTrue();
         dto.FreeTier.Should().BeTrue();
