@@ -68,7 +68,6 @@ import { AuthService } from './services/auth.service';
             AEGIS
           </text>
         </svg>
-        <span class="brand-sub">Synapse OS</span>
       </a>
 
       <nav class="side-nav">
@@ -249,8 +248,8 @@ import { AuthService } from './services/auth.service';
         scrollbar-width: thin;
         scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
       }
-      /* Barra vertical no idioma Synapse/Dark: fina, trilho invisível, polegar discreto que só "acende"
-         no hover — some no repouso e não compete com o conteúdo do HUD. */
+      /* Barra vertical no tema escuro do HUD AEGIS: fina, trilho invisível, polegar discreto que só
+         "acende" no hover — some no repouso e não compete com o conteúdo do HUD. */
       .sidebar::-webkit-scrollbar {
         width: 6px;
       }
@@ -291,14 +290,6 @@ import { AuthService } from './services/auth.service';
         width: 96px;
         height: auto;
         filter: drop-shadow(0 8px 20px rgba(38, 224, 255, 0.25));
-      }
-      .brand-sub {
-        margin-top: 6px;
-        font-family: var(--mono);
-        font-size: 9.5px;
-        letter-spacing: 0.28em;
-        text-transform: uppercase;
-        color: var(--muted);
       }
 
       /* ---- Navegação ---- */
@@ -565,9 +556,6 @@ import { AuthService } from './services/auth.service';
         }
         .brand .shield {
           width: 40px;
-        }
-        .brand-sub {
-          display: none;
         }
         .side-nav {
           flex-direction: row;
