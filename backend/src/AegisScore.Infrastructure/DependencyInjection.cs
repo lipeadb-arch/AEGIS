@@ -113,6 +113,9 @@ public static class DependencyInjection
         // Escritor ÚNICO do ledger de conformidade (upsert idempotente + regra de scoring). Compartilhado
         // pelo motor de telemetria e pela ponte do Govern — nenhuma das duas fontes reimplementa scoring.
         services.AddScoped<IControlStateWriter, ControlStateWriter>();
+        // Rotina ÚNICA de reconciliação documental (retração/recálculo de ledger+cobertura), usada pela
+        // exclusão de documento (controller) e pela reanálise (worker constrói a sua própria instância).
+        services.AddScoped<IDocumentEvidenceReconciler, DocumentEvidenceReconciler>();
         // RAG por chave: injeta as "Regras do Jogo" (AegisAssessmentRule do 800-53 5.2.0) no prompt do
         // avaliador. Scoped: usa o DbContext. Consumido pelo AegisAiEvaluatorService.
         services.AddScoped<IAssessmentRuleContextBuilder, AssessmentRuleContextBuilder>();

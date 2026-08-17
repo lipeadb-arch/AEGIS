@@ -62,7 +62,7 @@ export class PostureHistoryService {
           if (err.status === 403)
             return throwError(() => new Error('Seu papel não permite publicar fotografias (requer Manager ou TenantAdmin).'));
           if (err.status === 409)
-            return throwError(() => new Error('Não há postura a fotografar. Execute um assessment antes de publicar.'));
+            return throwError(() => new Error('Não há postura a registrar. Execute uma avaliação antes de publicar.'));
         }
         return this.normalize('Não foi possível publicar a fotografia.')(err);
       }),

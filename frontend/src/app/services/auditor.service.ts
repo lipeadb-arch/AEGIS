@@ -91,7 +91,7 @@ export class AuditorService {
       .pipe(
         catchError((err) => {
           console.error('Raio de Explosão: falha no /risk-assessment.', err);
-          return throwError(() => new Error('Não foi possível calcular o raio de explosão desse ativo.'));
+          return throwError(() => new Error('Não foi possível calcular o raio de impacto desse ativo.'));
         }),
       );
   }

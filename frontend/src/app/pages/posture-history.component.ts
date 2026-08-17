@@ -33,14 +33,14 @@ import {
   imports: [DatePipe],
   template: `
     <section class="hist">
-      <p class="eyebrow">AEGIS · Histórico Auditável de Postura · Fotografias imutáveis</p>
+      <p class="eyebrow">AEGIS · Histórico Auditável de Postura · Registros de postura imutáveis</p>
 
       <header class="head">
         <div class="titles">
           <h1>Histórico de Postura</h1>
           <p class="blurb">
-            Fotografias publicadas e imutáveis do AEGIS Score/NIST e do AEGIS KNIGHT. Compare duas fotografias
-            compatíveis; instrumentos distintos nunca se somam.
+            Registros de postura publicados e imutáveis do AEGIS Score/NIST e do AEGIS KNIGHT. Compare dois
+            registros compatíveis; instrumentos distintos nunca se somam.
           </p>
         </div>
         @if (canPublish()) {
@@ -70,7 +70,7 @@ import {
       </div>
 
       @if (loading()) {
-        <div class="panel state"><span class="pulse">Carregando fotografias…</span></div>
+        <div class="panel state"><span class="pulse">Carregando registros de postura…</span></div>
       } @else if (error()) {
         <div class="panel state err">
           <b>{{ error() }}</b>
@@ -79,16 +79,16 @@ import {
         </div>
       } @else if (snapshots().length === 0) {
         <div class="panel state empty">
-          <b>Nenhuma fotografia publicada ainda.</b>
+          <b>Nenhum registro de postura publicado ainda.</b>
           <span>
-            Publique uma fotografia da postura atual para começar o histórico auditável.
+            Publique um registro da postura atual para começar o histórico auditável.
             @if (!canPublish()) { Seu papel permite consultar, mas não publicar. }
           </span>
         </div>
       } @else {
         <!-- Barra de comparação -->
         <div class="cmp-bar" [class.ready]="selected().length === 2">
-          <span class="lbl">Comparar duas fotografias:</span>
+          <span class="lbl">Comparar dois registros de postura:</span>
           <span class="chips">
             @for (id of selected(); track id) {
               <span class="chip">{{ shortId(id) }} <button type="button" (click)="toggleSelect(id)">✕</button></span>
@@ -111,8 +111,8 @@ import {
         @if (comparison(); as cmp) {
           @if (!cmp.compatible) {
             <div class="panel incompat">
-              <h3>Fotografias incompatíveis</h3>
-              <p>Estas fotografias não podem ser comparadas — nenhum delta é calculado para não enganar:</p>
+              <h3>Registros de postura incompatíveis</h3>
+              <p>Estes registros de postura não podem ser comparados — nenhum delta é calculado para não enganar:</p>
               <ul>
                 @for (r of cmp.incompatibilityReasons; track r) { <li>{{ incompatibilityLabel(r) }}</li> }
               </ul>
@@ -219,7 +219,7 @@ import {
 
                   <!-- Exportação executiva (AEGIS-AUD-034): PDF e CSV derivados desta MESMA fotografia. -->
                   <div class="dl">
-                    <span class="dl-lbl">Exportar esta fotografia:</span>
+                    <span class="dl-lbl">Exportar este registro de postura:</span>
                     <button type="button" class="btn real sm" (click)="download('pdf', d.summary.id)" [disabled]="downloading() !== null">
                       {{ downloading() === 'pdf' ? 'Baixando PDF…' : 'Baixar PDF' }}
                     </button>

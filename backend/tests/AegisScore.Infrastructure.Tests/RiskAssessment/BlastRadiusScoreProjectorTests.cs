@@ -94,5 +94,9 @@ public sealed class BlastRadiusScoreProjectorTests
             Calls.Add(new LedgerCall(tenantId, subcategoryCode, status, source));
             return Task.FromResult(new ComplianceVerdict(status, evidence, 0, 15));
         }
+
+        public Task ReconcileDocumentaryAsync(
+            Guid tenantId, string subcategoryCode, DocumentaryEvidence? documentary, CancellationToken ct = default)
+            => Task.CompletedTask;   // o projetor de raio de impacto não usa reconciliação documental
     }
 }

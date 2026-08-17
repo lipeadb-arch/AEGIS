@@ -21,9 +21,6 @@ namespace AegisScore.Api.Workers;
 /// </summary>
 public sealed class DocumentAnalysisWorker : BackgroundService
 {
-    /// <summary>Limiar de confiança da IA que separa cobertura Coberta de Parcial no ledger de cobertura.</summary>
-    private const double DocumentCoverageThreshold = 0.7;
-
     /// <summary>
     /// Orçamento de caracteres da TRIAGEM (passada 1). Ela só precisa reconhecer os temas do documento,
     /// não julgar mérito — o julgamento vem depois, com trecho dirigido e a regra do 800-53 junto.
@@ -36,15 +33,6 @@ public sealed class DocumentAnalysisWorker : BackgroundService
     /// modelo, empurrando-o a ancorar em passagens que não são evidência do controle sob julgamento.
     /// </summary>
     private const int ExcerptCharBudget = 6_000;
-
-    /// <summary>
-    /// Teto de crédito da evidência PURAMENTE DOCUMENTAL no Aegis Score. Um documento atesta processo e
-    /// intenção — nunca prova que o controle está tecnicamente implementado. Por isso vale 50% dos pontos
-    /// (<see cref="ControlStatus.MitigatedByThirdParty"/>) e JAMAIS <see cref="ControlStatus.Compliant"/>,
-    /// que fica reservado à validação por telemetria. É o que separa conformidade real de teatro de
-    /// segurança: nenhum PDF pode, sozinho, produzir um painel de "100% seguro".
-    /// </summary>
-    private const ControlStatus DocumentEvidenceStatus = ControlStatus.MitigatedByThirdParty;
 
     private readonly IServiceScopeFactory _scopes;
     private readonly IDocumentAnalysisQueue _queue;
@@ -165,42 +153,82 @@ public sealed class DocumentAnalysisWorker : BackgroundService
                 ?? throw new NotSupportedException($"Sem extrator de texto para '{doc.ContentType ?? doc.FileName}'.");
             var text = await extractor.ExtractAsync(stream, doc.ContentType, workCt);
 
-            // Idempotência do reprocessamento (entrega at-least-once): zera os mapeamentos anteriores DESTE
-            // documento antes de regravar — senão uma segunda passada os duplicaria. A cobertura e o ledger
-            // já são upserts idempotentes por (tenant, subcategoria).
+            // Idempotência do reprocessamento (entrega at-least-once): CAPTURA os códigos anteriores DESTE
+            // documento e zera os mapeamentos antes de regravar. Os códigos antigos entram na reconciliação
+            // (união com os novos) — um controle que deixe de ser sustentado precisa ser RETRAÍDO, não só
+            // sobrescrito.
             var priorMappings = await db.DocumentControlMappings
                 .Where(m => m.GovernanceDocumentId == doc.Id).ToListAsync(workCt);
+            var oldCodes = priorMappings.Select(m => m.SubcategoryCode).ToList();
             if (priorMappings.Count > 0) db.DocumentControlMappings.RemoveRange(priorMappings);
 
-            // PASSADA 1 — TRIAGEM: quais controles este documento endereça? O documento não declara um
-            // alvo (GovernanceDocument não tem esse campo), então é o modelo que aponta os candidatos.
-            // O texto vai TRUNCADO: uma política de 80 páginas não cabe no contexto e a triagem só
-            // precisa reconhecer os temas, não julgar o mérito.
+            // PASSADA 1 — TRIAGEM: quais controles este documento PODE endereçar (CANDIDATOS). O documento
+            // não declara um alvo, então é o modelo que aponta os candidatos. A triagem NÃO é prova: um
+            // candidato só vira evidência se a passada 2 o SUSTENTAR com trecho literal. O texto vai
+            // TRUNCADO: uma política de 80 páginas não cabe no contexto e a triagem só reconhece temas.
             var analysis = await ai.AnalyzeDocumentAsync(
                 new DocumentAnalysisRequest(lease.TenantId, Truncate(text, TriageCharBudget), doc.FileName), workCt);
 
+            // PASSADA 2 — JULGAMENTO DIRIGIDO + VALIDAÇÃO LITERAL. Só o que volta SUSTENTADO e com trecho
+            // presente no texto vira mapping probatório; o resto é descartado fail-closed (zero mapping,
+            // zero cobertura, zero score) — mas o documento ainda termina Analisado.
+            var validated = new List<RefinedControlResult>();
             foreach (var claim in analysis.Claims)
             {
-                // PASSADA 2 — RAG DIRIGIDO: agora que o alvo é conhecido, carrega a regra do 800-53 e
-                // reavalia com payload enxuto (trecho relevante + controle + critérios de evidência).
+                // Indisponibilidade do refinamento NÃO cai para a triagem como prova: RefineWithRuleAsync
+                // deixa a exceção propagar e a fila durável reprocessa (retry/falha controlada).
                 var refined = await RefineWithRuleAsync(db, ai, claim, text, doc.FileName, workCt);
 
+                if (!refined.Supported)
+                {
+                    _log.LogInformation(
+                        "Documento {DocId}: {Code} descartado — o refinamento não sustentou o controle.",
+                        doc.Id, claim.SubcategoryCode);
+                    continue;
+                }
+
+                // AUTORIDADE FINAL: o trecho tem de existir LITERALMENTE no texto extraído. Um trecho
+                // inventado — por modelo real OU pelo stub — é descartado: jamais gera mapping/cobertura/score.
+                if (!EvidenceQuoteValidator.IsLiterallyPresent(text, refined.EvidenceQuote))
+                {
+                    _log.LogWarning(
+                        "Documento {DocId}: {Code} descartado — trecho probatório ausente do texto (não literal).",
+                        doc.Id, claim.SubcategoryCode);
+                    continue;
+                }
+
+                validated.Add(refined);
                 db.DocumentControlMappings.Add(new DocumentControlMapping
                 {
                     GovernanceDocumentId = doc.Id,
-                    SubcategoryCode = claim.SubcategoryCode,
+                    SubcategoryCode = refined.SubcategoryCode,
                     Confidence = refined.Confidence,
-                    Evidence = refined.Evidence,
+                    EvidenceQuote = refined.EvidenceQuote,   // trecho literal validado (separado do racional)
+                    Evidence = refined.Rationale,            // racional da análise
                 });
-                await UpsertCoverageFromDocumentAsync(db, claim.SubcategoryCode, doc.Id, refined.Confidence, workCt);
             }
 
-            doc.AnalysisSummary = analysis.Summary;
-            await db.SaveChangesAsync(workCt);   // dados de negócio: mapeamentos, cobertura, resumo
+            // Resumo HONESTO: reflete a evidência PROBATÓRIA, não os candidatos da triagem — a interface
+            // nunca deve alegar mais do que o documento prova.
+            doc.AnalysisSummary = validated.Count > 0
+                ? $"{validated.Count} controle(s) NIST com evidência probatória literal no documento."
+                : "Nenhum controle NIST com evidência probatória literal — documento sem valor probatório.";
 
-            // Ponte Govern → Aegis Score. Roda DEPOIS do commit da trilha documental e é idempotente
-            // (upsert por subcategoria): reprocessar reescreve a mesma célula, nunca duplica.
-            await ProjectToScoreAsync(writer, lease.TenantId, analysis.Claims, doc.FileName, workCt);
+            // ATOMICIDADE: a substituição dos mapeamentos + a reconciliação de ledger/cobertura acontecem
+            // numa ÚNICA transação. Se a reconciliação falhar no meio, o ROLLBACK integral desfaz também a
+            // troca de mapeamentos — o documento volta ao estado anterior e a fila durável reprocessa com a
+            // lista ORIGINAL de códigos intacta (nada de estado parcialmente atualizado). O trabalho de IA
+            // já terminou aqui; a transação cobre só as escritas de banco, então é curta.
+            var reconciler = new DocumentEvidenceReconciler(
+                db, tenantCtx, writer, sp.GetRequiredService<ILogger<DocumentEvidenceReconciler>>());
+            var affectedCodes = oldCodes.Concat(validated.Select(v => v.SubcategoryCode)).ToList();
+
+            await using (var tx = await db.Database.BeginTransactionAsync(workCt))
+            {
+                await db.SaveChangesAsync(workCt);   // mapeamentos probatórios + metadados do documento
+                await reconciler.ReconcileAsync(lease.TenantId, affectedCodes, workCt);
+                await tx.CommitAsync(workCt);
+            }
 
             // Confirmação ATÔMICA guardada pelo lease: Processing → Analyzed. Usa CancellationToken.None — o
             // trabalho ACABOU e a confirmação não pode ser interrompida por shutdown. Se o lease já não é o
@@ -252,52 +280,28 @@ public sealed class DocumentAnalysisWorker : BackgroundService
     }
 
     /// <summary>
-    /// Projeta cada controle mapeado pelo documento no ledger de conformidade (TenantControlState),
-    /// através da porta <see cref="IControlStateWriter"/> — a mesma usada pelo motor de telemetria.
-    /// Um código alucinado pelo LLM (fora do catálogo NIST) é registrado e ignorado: nunca aborta os
-    /// demais claims nem o documento, que já está persistido como Analyzed.
+    /// Resultado REFINADO e SEPARADO por eixo de um controle candidato: se o texto SUSTENTA o controle,
+    /// o TRECHO LITERAL que o prova, o RACIONAL (análise, não prova) e a CONFIANÇA. É o único insumo que
+    /// vira mapping/cobertura/score — e mesmo assim só depois da validação literal do trecho.
     /// </summary>
-    private async Task ProjectToScoreAsync(
-        IControlStateWriter writer, Guid tenantId, IReadOnlyList<DocumentClaim> claims,
-        string? fileName, CancellationToken ct)
-    {
-        foreach (var claim in claims)
-        {
-            // A confiança da IA NÃO eleva o status — evidência documental tem teto de 50%. Ela é
-            // preservada na trilha de auditoria, que registra origem, racional e a natureza parcial
-            // do crédito concedido.
-            var evidence =
-                $"Evidência documental ({claim.Confidence:P0} de confiança) extraída de " +
-                $"'{fileName ?? "documento"}': {claim.Claim} " +
-                $"— crédito parcial (50%); conformidade plena aguarda validação por telemetria.";
-
-            try
-            {
-                // Documentary: o writer só aplica se este veredito PONTUAR MAIS que o estado vigente.
-                // Um controle já validado por telemetria (Compliant) nunca é rebaixado por um PDF.
-                await writer.ApplyVerdictAsync(
-                    tenantId, claim.SubcategoryCode, DocumentEvidenceStatus, evidence, VerdictSource.Documentary, ct: ct);
-            }
-            catch (InvalidOperationException ex)
-            {
-                _log.LogWarning(ex,
-                    "Claim ignorado: a subcategoria '{Code}' não existe no catálogo NIST (documento {File}).",
-                    claim.SubcategoryCode, fileName);
-            }
-        }
-    }
+    private sealed record RefinedControlResult(
+        string SubcategoryCode, bool Supported, string EvidenceQuote, string Rationale, double Confidence);
 
     /// <summary>
     /// PASSADA 2 do RAG documental: carrega a <c>AegisAssessmentRule</c> do controle apontado na triagem,
     /// seleciona do documento apenas o trecho que o endereça (<see cref="DocumentChunker"/>) e pede ao
-    /// motor um veredito com a régua do 800-53 na mão. É o que transforma "o texto fala de MFA" em
-    /// "o texto PROVA (ou não) o outcome de PR.AA-01".
+    /// motor um veredito PROBATÓRIO com a régua do 800-53 na mão — se o trecho SUSTENTA o controle, e qual
+    /// é o TRECHO LITERAL que o prova.
     ///
-    /// RESILIENTE por decisão: se a regra não existir no catálogo, ou se o motor estiver indisponível, o
-    /// resultado da triagem é mantido em vez de derrubar o documento. Um refinamento é MELHORIA de
-    /// precisão — perdê-lo degrada a nota da evidência, não a capacidade de registrar que ela existe.
+    /// FAIL-CLOSED por decisão:
+    /// <list type="bullet">
+    /// <item>código fora do catálogo (alucinação da triagem) → não sustentado (não há outcome a provar);</item>
+    /// <item>indisponibilidade do refinamento (LLM fora) → a exceção PROPAGA. A triagem JAMAIS é usada como
+    /// prova; a fila durável reprocessa (retry/falha controlada). É o oposto do comportamento anterior, que
+    /// silenciava a indisponibilidade e gravava a triagem crua como se fosse evidência.</item>
+    /// </list>
     /// </summary>
-    private async Task<(double Confidence, string Evidence)> RefineWithRuleAsync(
+    private async Task<RefinedControlResult> RefineWithRuleAsync(
         AegisScoreDbContext db, IAiAssessmentService ai, DocumentClaim claim,
         string fullText, string? fileName, CancellationToken ct)
     {
@@ -309,61 +313,42 @@ public sealed class DocumentAnalysisWorker : BackgroundService
             .Select(s => s.Description)
             .FirstOrDefaultAsync(ct);
 
-        if (rule is null || outcome is null)
+        // Sem outcome não há controle NIST a provar: código alucinado pela triagem. Não sustentado — nunca
+        // usa a triagem como prova (fail-closed).
+        if (outcome is null)
         {
             _log.LogDebug(
-                "Sem regra/catálogo para {Code}: mantendo a confiança da triagem ({Confidence:P0}).",
-                claim.SubcategoryCode, claim.Confidence);
-            return (claim.Confidence, claim.Claim);
+                "Refinamento de {Code}: subcategoria fora do catálogo — não sustentado.", claim.SubcategoryCode);
+            return new RefinedControlResult(claim.SubcategoryCode, Supported: false, "", "Código fora do catálogo NIST.", 0);
         }
 
-        // Duas faixas de peso para a seleção do trecho.
-        //
-        // ⚠️ A faixa PRIMÁRIA são as `evaluation_metrics`, NÃO o outcome do catálogo — e a razão é o
-        // IDIOMA. O catálogo NIST é em inglês ("The recovery portion of the incident response plan…")
-        // enquanto as políticas do cliente são em português: casar léxico cross-língua não funciona, e
-        // num teste ao vivo o outcome não pontuou NADA, deixando a escolha do trecho inteiramente nas
-        // mãos do vocabulário genérico. As métricas do `aegis_assessment_rules.json` são PT-BR e
-        // específicas do controle ("recuperação", "restauração", "RTO"), então são elas que definem o
-        // assunto. O outcome fica na faixa de apoio — ajuda em documentos em inglês, não atrapalha.
+        // Seleção de trecho em duas faixas (a regra pode não existir para todo controle; sem ela, ainda se
+        // julga contra o outcome). A faixa primária são as métricas PT-BR do controle (o catálogo é inglês).
         var primaryTerms = new List<string> { claim.SubcategoryCode };
-        primaryTerms.AddRange(rule.EvaluationMetrics);
+        if (rule is not null) primaryTerms.AddRange(rule.EvaluationMetrics);
 
         var supportingTerms = new List<string> { outcome };
-        supportingTerms.AddRange(rule.EvidenceRequirements);
+        if (rule is not null) supportingTerms.AddRange(rule.EvidenceRequirements);
 
         var excerpt = DocumentChunker.SelectRelevantExcerpt(
             fullText, primaryTerms, supportingTerms, ExcerptCharBudget);
 
-        try
-        {
-            var verdict = await ai.EvaluateDocumentControlAsync(
-                new DocumentControlEvaluationRequest(
-                    claim.SubcategoryCode, outcome, rule.EvidenceRequirements,
-                    rule.CalculationLogic ?? "", excerpt, fileName),
-                ct);
+        // Indisponibilidade do motor PROPAGA (não é capturada aqui): o chamador deixa a fila durável
+        // reprocessar. Nunca se degrada para "triagem como prova".
+        var verdict = await ai.EvaluateDocumentControlAsync(
+            new DocumentControlEvaluationRequest(
+                claim.SubcategoryCode, outcome,
+                (IReadOnlyList<string>?)rule?.EvidenceRequirements ?? Array.Empty<string>(),
+                rule?.CalculationLogic ?? "", excerpt, fileName),
+            ct);
 
-            _log.LogInformation(
-                "RAG documental {Code}: triagem {Triage:P0} → dirigido {Refined:P0} ({Chars} chars de trecho).",
-                claim.SubcategoryCode, claim.Confidence, verdict.Confidence, excerpt.Length);
+        _log.LogInformation(
+            "RAG documental {Code}: sustentado={Supported}, confiança {Refined:P0} ({Chars} chars de trecho).",
+            claim.SubcategoryCode, verdict.Supported, verdict.Confidence, excerpt.Length);
 
-            return (verdict.Confidence, verdict.Rationale);
-        }
-        // ⚠️ O `when` exclui o cancelamento REAL do serviço. TaskCanceledException deriva de
-        // OperationCanceledException e chega tanto por timeout do HttpClient (transitório, degrada) quanto
-        // por shutdown (deve propagar). Sem essa distinção, parar o serviço seria silenciosamente tratado
-        // como "LLM indisponível", o documento seguiria sendo gravado e o desligamento não seria gracioso.
-        catch (Exception ex) when (
-            !ct.IsCancellationRequested
-            && ex is AiUnavailableException or HttpRequestException or TaskCanceledException)
-        {
-            // Indisponibilidade do LLM não pode custar o documento inteiro: a triagem já foi paga e é
-            // uma evidência válida, só menos calibrada.
-            _log.LogWarning(ex,
-                "Refinamento de {Code} indisponível; mantendo a confiança da triagem ({Confidence:P0}).",
-                claim.SubcategoryCode, claim.Confidence);
-            return (claim.Confidence, claim.Claim);
-        }
+        return new RefinedControlResult(
+            claim.SubcategoryCode, verdict.Supported, verdict.EvidenceQuote ?? "",
+            verdict.Rationale ?? "", verdict.Confidence);
     }
 
     /// <summary>Corta o texto no orçamento, sem quebrar no meio de uma palavra quando dá para evitar.</summary>
@@ -373,35 +358,5 @@ public sealed class DocumentAnalysisWorker : BackgroundService
         var cut = text[..budget];
         var lastSpace = cut.LastIndexOf(' ');
         return lastSpace > budget / 2 ? cut[..lastSpace] : cut;
-    }
-
-    /// <summary>Documento cobre a subcategoria: confiança alta = Coberto, senão Parcial. Nunca rebaixa.</summary>
-    private static async Task UpsertCoverageFromDocumentAsync(
-        AegisScoreDbContext db, string code, Guid docId, double confidence, CancellationToken ct)
-    {
-        var cov = await db.SubcategoryCoverages.FirstOrDefaultAsync(c => c.SubcategoryCode == code, ct);
-        var status = confidence >= DocumentCoverageThreshold ? CoverageStatus.Coberto : CoverageStatus.Parcial;
-
-        if (cov is null)
-        {
-            db.SubcategoryCoverages.Add(new SubcategoryCoverage
-            {
-                SubcategoryCode = code,
-                Status = status,
-                EvidenceSource = CoverageEvidenceSource.Document,
-                OriginDocumentId = docId,
-                Confidence = confidence,
-                LastEvaluatedAt = DateTimeOffset.UtcNow,
-            });
-            return;
-        }
-
-        if (status == CoverageStatus.Coberto) cov.Status = CoverageStatus.Coberto;
-        else if (cov.Status == CoverageStatus.NaoCoberto) cov.Status = CoverageStatus.Parcial;
-        cov.EvidenceSource = cov.EvidenceSource == CoverageEvidenceSource.Interview
-            ? CoverageEvidenceSource.Both : CoverageEvidenceSource.Document;
-        cov.OriginDocumentId = docId;
-        cov.Confidence = confidence;
-        cov.LastEvaluatedAt = DateTimeOffset.UtcNow;
     }
 }

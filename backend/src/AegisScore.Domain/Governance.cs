@@ -73,7 +73,17 @@ public class DocumentControlMapping : Entity, ITenantOwned
 
     public string SubcategoryCode { get; set; } = "";   // "GV.PO-01"
     public double Confidence { get; set; }              // 0..1, vindo da IA
-    public string? Evidence { get; set; }               // trecho/claim que embasou o mapeamento
+
+    /// <summary>
+    /// TRECHO PROBATÓRIO LITERAL extraído do texto do documento — a citação verbatim que sustenta o
+    /// mapeamento, separada do racional. É o eixo que decide se o mapeamento é PROBATÓRIO: só um mapping
+    /// com <c>EvidenceQuote</c> não-nulo (validado em código como literalmente presente no texto extraído)
+    /// afeta cobertura e score. Um mapping com quote nulo é herança legada/não probatória — a reconciliação
+    /// e o reparo o ignoram. NUNCA é paráfrase nem similaridade semântica: é o texto exato do documento.
+    /// </summary>
+    public string? EvidenceQuote { get; set; }
+
+    public string? Evidence { get; set; }               // racional da análise (separado do trecho literal)
     public bool AnalystConfirmed { get; set; }          // human-in-the-loop: analista validou
 }
 

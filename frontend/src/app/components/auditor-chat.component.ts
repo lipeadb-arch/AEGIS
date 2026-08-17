@@ -289,7 +289,7 @@ export class AuditorChatComponent {
         },
         error: () => {
           this.isAnalyzing.set(false);
-          this.error.set('Não foi possível calcular o raio de explosão. Verifique o ID do ativo.');
+          this.error.set('Não foi possível calcular o raio de impacto. Verifique o ID do ativo.');
         },
       });
       return;
@@ -312,7 +312,7 @@ export class AuditorChatComponent {
    * ativo-raiz demo (environment). Retorna null quando não é um pedido de raio de explosão.
    */
   private blastRadiusIntent(text: string): string | null {
-    if (!/raio de explos|blast\s*radius|topologia|o que cai se|explos[ãa]o/i.test(text)) return null;
+    if (!/raio de (explos|impacto)|blast\s*radius|topologia|o que cai se|explos[ãa]o/i.test(text)) return null;
     const uuid = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
     return uuid ?? environment.blastRadiusDemoAssetId;
   }

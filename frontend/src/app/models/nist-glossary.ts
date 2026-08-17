@@ -62,9 +62,9 @@ export type NistFunctionCode = 'GV' | 'ID' | 'PR' | 'DE' | 'RS' | 'RC';
  */
 export const NIST_FUNCTION_DESCRIPTIONS: Record<NistFunctionCode, string> = {
   GV: 'Estabelece a estratégia de gestão de riscos cibernéticos, políticas e responsabilidades. O Aegis conecta a segurança à governança da organização, avaliando ativamente desde privilégios de acesso até a cadeia de suprimentos.',
-  ID: 'A base para entender os riscos aos ativos, dados, pessoas e capacidades do negócio. O Aegis rastreia o inventário contínuo e calcula o Raio de Explosão, medindo o impacto real caso peças fundamentais sejam comprometidas.',
+  ID: 'A base para entender os riscos aos ativos, dados, pessoas e capacidades do negócio. O Aegis rastreia o inventário contínuo e calcula o Raio de Impacto, medindo o impacto real caso peças fundamentais sejam comprometidas.',
   PR: 'Implementação de barreiras para garantir a entrega de serviços críticos e limitar o impacto de eventos cibernéticos. O Aegis mede a força das defesas construídas em identidades, redes e dados para manter invasores isolados.',
-  DE: 'Desenvolvimento e implementação de atividades para identificar a ocorrência de um evento de segurança cibernética. O Aegis valida o radar da operação, eliminando pontos cegos e medindo a capacidade de enxergar ameaças reais a tempo.',
+  DE: 'Desenvolvimento e implementação de atividades para identificar a ocorrência de um evento de segurança cibernética. O Aegis valida o radar da operação, eliminando lacunas de evidência e medindo a capacidade de enxergar ameaças reais a tempo.',
   RS: 'Tomada de medidas apropriadas para conter e mitigar os danos de um incidente detectado. O Aegis quantifica a velocidade e a precisão da resposta (MTTA/MTTR) para garantir o controle absoluto sob pressão.',
   RC: 'Planejamento de atividades de resiliência e restauração de serviços afetados. O Aegis garante a capacidade da organização de se reerguer rapidamente após crises, validando a integridade de backups e as metas operacionais (RTO/RPO).',
 };

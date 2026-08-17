@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Services;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
@@ -21,15 +22,20 @@ public class GovernanceDocumentsController : ControllerBase
     private readonly IDocumentStorage _storage;
     private readonly IPolicySyncQueue _policySync;
     private readonly ITenantContext _tenant;
+    private readonly IDocumentEvidenceReconciler _reconciler;
+    private readonly ILogger<GovernanceDocumentsController> _log;
 
     public GovernanceDocumentsController(
         AegisScoreDbContext db, IDocumentStorage storage,
-        IPolicySyncQueue policySync, ITenantContext tenant)
+        IPolicySyncQueue policySync, ITenantContext tenant,
+        IDocumentEvidenceReconciler reconciler, ILogger<GovernanceDocumentsController> log)
     {
         _db = db;
         _storage = storage;
         _policySync = policySync;
         _tenant = tenant;
+        _reconciler = reconciler;
+        _log = log;
     }
 
     /// <summary>
@@ -189,9 +195,19 @@ public class GovernanceDocumentsController : ControllerBase
             .FirstOrDefaultAsync(m => m.GovernanceDocumentId == id && m.SubcategoryCode == code, ct);
         if (mapping is null) return NotFound();
 
+        var tenantId = _tenant.TenantId
+            ?? throw new TenantSecurityException(
+                "Confirmação de mapeamento sem tenant resolvido no contexto (fail-closed).");
+
+        // Ajustar a CONFIANÇA pode cruzar o limiar do score e mudar o mapping VENCEDOR do controle — logo,
+        // a alteração e a RECONCILIAÇÃO (ledger + cobertura) correm numa ÚNICA transação: ou tudo aplica,
+        // ou nada (o mapping não fica alterado sem os derivados recalculados).
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         mapping.AnalystConfirmed = req.Confirmed;
         if (req.Confidence is { } c) mapping.Confidence = c;
         await _db.SaveChangesAsync(ct);
+        await _reconciler.ReconcileAsync(tenantId, new[] { mapping.SubcategoryCode }, ct);
+        await tx.CommitAsync(ct);
         return NoContent();
     }
 
@@ -202,10 +218,52 @@ public class GovernanceDocumentsController : ControllerBase
             .FirstOrDefaultAsync(d => d.Id == id, ct);
         if (doc is null) return NotFound();
 
-        if (doc.StorageUri is not null) await _storage.DeleteAsync(doc.StorageUri, ct);
-        _db.DocumentControlMappings.RemoveRange(doc.ControlMappings);
-        _db.GovernanceDocuments.Remove(doc);
-        await _db.SaveChangesAsync(ct);
+        // CAPTURA os códigos afetados ANTES de excluir — a reconciliação retrai/recalcula a partir deles.
+        // O tenant vem do contexto (o query filter já garantiu que o doc é deste tenant ao encontrá-lo).
+        var tenantId = _tenant.TenantId
+            ?? throw new TenantSecurityException(
+                "Exclusão de documento sem tenant resolvido no contexto (fail-closed).");
+        var affectedCodes = doc.ControlMappings.Select(m => m.SubcategoryCode).Distinct().ToList();
+        var storageUri = doc.StorageUri;
+
+        // ATOMICIDADE: mapeamentos + reconciliação + remoção do documento numa ÚNICA transação. A
+        // reconciliação roda ANTES de remover a linha do documento — assim nenhum TenantControlState fica
+        // apontando (FK Restrict em OriginDocumentId) para o documento a excluir, e um rollback preserva
+        // tudo. O binário só é apagado DEPOIS do commit: nunca se apaga o arquivo de um documento que ainda
+        // está no banco.
+        await using (var tx = await _db.Database.BeginTransactionAsync(ct))
+        {
+            _db.DocumentControlMappings.RemoveRange(doc.ControlMappings);
+            await _db.SaveChangesAsync(ct);   // mapeamentos removidos; o documento ainda existe
+
+            // Sem outra evidência documental elegível, o estado documental é RETRAÍDO (→ Não avaliado) e a
+            // cobertura órfã desaparece; telemetria e entrevista são preservadas. Roda com os mapeamentos
+            // deste doc já removidos, então enxerga o ledger SEM este documento.
+            if (affectedCodes.Count > 0)
+                await _reconciler.ReconcileAsync(tenantId, affectedCodes, ct);
+
+            _db.GovernanceDocuments.Remove(doc);
+            await _db.SaveChangesAsync(ct);   // nenhum estado referencia mais o documento → remoção segura
+            await tx.CommitAsync(ct);
+        }
+
+        // Limpeza do binário SÓ APÓS o commit. Uma falha aqui deixa no máximo um arquivo órfão (inofensivo),
+        // registrada de forma SANITIZADA (categoria, nunca a mensagem bruta); jamais restauramos o documento
+        // nem devolvemos erro que induza o cliente a repetir a exclusão — o estado de negócio já está íntegro.
+        if (storageUri is not null)
+        {
+            try
+            {
+                await _storage.DeleteAsync(storageUri, ct);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex,
+                    "Documento {DocId} excluído do banco, mas a remoção do binário falhou ({Category}); " +
+                    "arquivo órfão será ignorado.", id, ex.GetType().Name);
+            }
+        }
+
         return NoContent();
     }
 

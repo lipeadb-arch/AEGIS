@@ -87,12 +87,12 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
                     <button type="button" class="ghost sm" (click)="openKnight()">Abrir AEGIS KNIGHT</button>
                   } @else {
                     <button type="button" class="ghost sm" (click)="test(c)" [disabled]="busyId() === c.id">
-                      {{ busyId() === c.id ? '…' : 'Testar' }}
+                      {{ busyId() === c.id ? '…' : 'Testar conexão' }}
                     </button>
-                    <!-- [AEGIS-AUD-020] Push não tem coleta pull: nada de "Coletar" para conector genérico. -->
+                    <!-- [AEGIS-AUD-020] Push não tem coleta pull: nada de "Sincronizar" para conector genérico. -->
                     @if (!push(c)) {
                       <button type="button" class="ghost sm" (click)="sync(c)" [disabled]="busyId() === c.id">
-                        Coletar
+                        Sincronizar agora
                       </button>
                     }
                   }

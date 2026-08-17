@@ -80,7 +80,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
               </div>
               <div class="bcard" [class.hot]="w.connectors.failed > 0">
                 <span class="bk">Conectores (habilitados)</span>
-                <span class="bv">{{ w.connectors.healthy }}/{{ w.connectors.enabled }} saudáveis</span>
+                <span class="bv">{{ w.connectors.healthy }}/{{ w.connectors.enabled }} operacionais</span>
                 <span class="bsub">{{ connectorBreakdown(w.connectors) }}</span>
               </div>
               <div class="bcard">
@@ -147,7 +147,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           <ul class="es-steps">
             <li><b>Ligue um conector</b> de telemetria para as Funções técnicas (PR · DE · RS · RC).</li>
             <li><b>Suba as políticas</b> no Document Hub para cobrir a Função Govern (GV).</li>
-            <li><b>Rode um assessment</b> para popular a maturidade CMMI por Função.</li>
+            <li><b>Rode uma avaliação</b> para popular a maturidade CMMI por Função.</li>
           </ul>
         </section>
       } @else {
@@ -210,8 +210,8 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
       <div class="grid main">
         <div class="panel">
           <div class="hd">
-            <h3>Onde está o esforço</h3>
-            <span class="hint">ferramenta (capex) × processo (opex)</span>
+            <h3>Origem das lacunas</h3>
+            <span class="hint">tecnologia × processo</span>
           </div>
           @if (gapBalance()) {
             <app-gap-balance [balance]="gapBalance()" />
@@ -222,8 +222,8 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
 
         <div class="panel">
           <div class="hd">
-            <h3>Custo do fracasso</h3>
-            <span class="hint">raio de explosão · pior cenário</span>
+            <h3>Impacto potencial</h3>
+            <span class="hint">raio de impacto · pior cenário</span>
           </div>
           @if (blastLoaded()) {
             <app-blast-radius-summary [summary]="blastRadius()" />
@@ -249,13 +249,13 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
 
         <div class="panel">
           <div class="hd">
-            <h3>Maiores gaps por categoria</h3>
+            <h3>Maiores lacunas por categoria</h3>
             <span class="hint">distância até o alvo</span>
           </div>
           @if (d.topGaps.length > 0) {
             <app-gap-chart [data]="d.topGaps" />
           } @else {
-            <p class="panel-empty">Sem categorias avaliadas — os gaps surgem com o primeiro assessment.</p>
+            <p class="panel-empty">Sem categorias avaliadas — as lacunas surgem com a primeira avaliação.</p>
           }
         </div>
 
@@ -264,7 +264,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           @if (d.riskHeatmap.length > 0) {
             <app-risk-heatmap [data]="d.riskHeatmap" />
           } @else {
-            <p class="panel-empty">Sem riscos avaliados — a matriz aparece após o primeiro assessment.</p>
+            <p class="panel-empty">Sem riscos avaliados — a matriz aparece após a primeira avaliação.</p>
           }
         </div>
       </div>

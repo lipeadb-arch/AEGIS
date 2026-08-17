@@ -51,7 +51,7 @@ export interface PostureView {
       <div class="chips">
         <span class="chip ok">{{ posture().compliantControls }} conformes</span>
         @if (posture().mitigatedControls > 0) {
-          <span class="chip mid">{{ posture().mitigatedControls }} mitigados</span>
+          <span class="chip mid">{{ posture().mitigatedControls }} parciais/compensados</span>
         }
         <span class="chip bad" [class.hot]="posture().nonCompliantControls > 0">
           {{ posture().nonCompliantControls }} não conformes

@@ -395,6 +395,14 @@ public class AegisScoreDbContext : DbContext
                 .HasForeignKey(x => x.SubcategoryId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            // A ORIGEM documental vigente nunca pode apontar silenciosamente para um documento inexistente:
+            // FK (sem navegação) para GovernanceDocument + índice de apoio. Restrict (não cascateia): a
+            // exclusão de documento RECONCILIA (retrai/repointa o estado) ANTES de remover a linha do
+            // documento, então a FK nunca bloqueia uma exclusão legítima e um estado órfão é impossível.
+            e.HasOne<GovernanceDocument>().WithMany()
+                .HasForeignKey(x => x.OriginDocumentId)
+                .OnDelete(DeleteBehavior.Restrict);
+
             // Lacunas de evidência tipadas → jsonb, mesmo idioma das listas do catálogo NIST (converter +
             // comparer), e NÃO o idioma string-blob de ChecksJson/IntelligenceJson: esta lista é
             // percorrida e agregada por Type, não repassada opaca à UI. Converter enum-aware para que o

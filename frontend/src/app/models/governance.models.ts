@@ -177,14 +177,22 @@ export const DOCUMENT_TYPES: ReadonlyArray<{ value: GovernanceDocumentType; labe
   { value: 'Outro', label: 'Outro' },
 ];
 
-/** Status de leitura da IA para o filtro + a pill de status (valor da API → rótulo PT). */
+/** Status da análise para o filtro + a pill de status (valor da API → rótulo PT). */
 export const ANALYSIS_STATUSES: ReadonlyArray<{ value: AiAnalysisStatus; label: string }> = [
-  { value: 'Pending', label: 'Pendente' },
+  { value: 'Pending', label: 'Aguardando processamento' },
   { value: 'Queued', label: 'Na fila' },
-  { value: 'Processing', label: 'Processando' },
+  { value: 'Processing', label: 'Analisando' },
   { value: 'Analyzed', label: 'Analisado' },
-  { value: 'Failed', label: 'Falhou' },
+  { value: 'Failed', label: 'Falha na análise' },
 ];
+
+/** Estados NÃO terminais da análise — enquanto houver algum, a UI faz polling. */
+export const ACTIVE_ANALYSIS_STATUSES: ReadonlyArray<AiAnalysisStatus> = ['Pending', 'Queued', 'Processing'];
+
+/** True se o status é ativo (a análise ainda vai mudar) — controla polling e spinner. */
+export function isActiveAnalysisStatus(status: AiAnalysisStatus): boolean {
+  return ACTIVE_ANALYSIS_STATUSES.includes(status);
+}
 
 const DOCUMENT_TYPE_LABELS = new Map<string, string>(DOCUMENT_TYPES.map((t) => [t.value, t.label]));
 const ANALYSIS_STATUS_LABELS = new Map<string, string>(ANALYSIS_STATUSES.map((s) => [s.value, s.label]));
@@ -205,9 +213,20 @@ export function documentTypeLabel(value: string): string {
   return DOCUMENT_TYPE_LABELS.get(value) ?? value;
 }
 
-/** Rótulo PT de um status de leitura da IA (fallback: o próprio valor). */
+/** Rótulo PT de um status da análise (fallback: o próprio valor). */
 export function analysisStatusLabel(value: string): string {
   return ANALYSIS_STATUS_LABELS.get(value) ?? value;
+}
+
+/** Rótulo PT da origem do documento (valor da API → texto legível). */
+const DOCUMENT_SOURCE_LABELS = new Map<string, string>([
+  ['UploadManual', 'Upload manual'],
+  ['Integracao', 'Integração'],
+]);
+
+/** Rótulo PT de uma origem de documento (fallback: o próprio valor). */
+export function documentSourceLabel(value: string): string {
+  return DOCUMENT_SOURCE_LABELS.get(value) ?? value;
 }
 
 /** Rótulo PT de um status de cobertura (fallback: o próprio valor). */
