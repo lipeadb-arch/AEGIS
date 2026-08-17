@@ -2358,6 +2358,8 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("OriginDocumentId");
+
                     b.HasIndex("SubcategoryId");
 
                     b.HasIndex("TenantId", "SubcategoryId")
@@ -2876,6 +2878,11 @@ namespace AegisScore.Infrastructure.Migrations
 
             modelBuilder.Entity("AegisScore.Domain.TenantControlState", b =>
                 {
+                    b.HasOne("AegisScore.Domain.GovernanceDocument", null)
+                        .WithMany()
+                        .HasForeignKey("OriginDocumentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("AegisScore.Domain.NistSubcategory", "Subcategory")
                         .WithMany()
                         .HasForeignKey("SubcategoryId")

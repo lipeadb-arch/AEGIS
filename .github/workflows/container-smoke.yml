@@ -172,3 +172,40 @@ jobs:
           docker rm -f "$APP" "$PG" >/dev/null 2>&1 || true
           docker network rm "$NET" >/dev/null 2>&1 || true
           rm -rf secrets || true
+
+  # Transição REAL da migration DocumentEvidenceLifecycle sobre banco legado com dados, contra um
+  # PostgreSQL 18 descartável (o container-smoke prova migração em banco VAZIO; este prova o REPARO).
+  # Roda SOMENTE DocumentEvidenceRepairMigrationTests — não é a suíte PostgreSQL geral.
+  document-evidence-repair-pg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # AEGIS_TEST_PG aponta para o banco de MANUTENÇÃO (postgres); o PostgresProbe cria/derruba um
+      # database descartável a cada teste. Só este teste roda (filtro por classe).
+      - name: Repair migration transition test (PostgreSQL 18)
+        env:
+          AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
+        run: >
+          dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests"

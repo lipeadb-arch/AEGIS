@@ -213,15 +213,22 @@ public sealed class DocumentAnalysisWorker : BackgroundService
             doc.AnalysisSummary = validated.Count > 0
                 ? $"{validated.Count} controle(s) NIST com evidência probatória literal no documento."
                 : "Nenhum controle NIST com evidência probatória literal — documento sem valor probatório.";
-            await db.SaveChangesAsync(workCt);   // mapeamentos probatórios + metadados do documento
 
-            // RECONCILIAÇÃO ÚNICA (Govern → Aegis Score + cobertura): consome SOMENTE resultados refinados
-            // e validados. A união (antigos ∪ novos) retrai o que deixou de ser sustentado e recalcula o
-            // que permanece, preservando telemetria e evidência de entrevista.
+            // ATOMICIDADE: a substituição dos mapeamentos + a reconciliação de ledger/cobertura acontecem
+            // numa ÚNICA transação. Se a reconciliação falhar no meio, o ROLLBACK integral desfaz também a
+            // troca de mapeamentos — o documento volta ao estado anterior e a fila durável reprocessa com a
+            // lista ORIGINAL de códigos intacta (nada de estado parcialmente atualizado). O trabalho de IA
+            // já terminou aqui; a transação cobre só as escritas de banco, então é curta.
             var reconciler = new DocumentEvidenceReconciler(
                 db, tenantCtx, writer, sp.GetRequiredService<ILogger<DocumentEvidenceReconciler>>());
             var affectedCodes = oldCodes.Concat(validated.Select(v => v.SubcategoryCode)).ToList();
-            await reconciler.ReconcileAsync(lease.TenantId, affectedCodes, workCt);
+
+            await using (var tx = await db.Database.BeginTransactionAsync(workCt))
+            {
+                await db.SaveChangesAsync(workCt);   // mapeamentos probatórios + metadados do documento
+                await reconciler.ReconcileAsync(lease.TenantId, affectedCodes, workCt);
+                await tx.CommitAsync(workCt);
+            }
 
             // Confirmação ATÔMICA guardada pelo lease: Processing → Analyzed. Usa CancellationToken.None — o
             // trabalho ACABOU e a confirmação não pode ser interrompida por shutdown. Se o lease já não é o

@@ -176,77 +176,66 @@ public sealed class ControlStateWriter : IControlStateWriter
             return;
         }
 
-        // Recuperação PONTUAL da corrida de inserção (mesmo idioma de ApplyVerdictAsync): dois contextos
-        // podem inserir a MESMA célula ausente ao mesmo tempo; ao perder, recarrega e reaplica como UPDATE.
-        for (var attempt = 0; attempt < 2; attempt++)
+        // PASSAGEM ÚNICA (sem laço de recuperação de corrida): a reconciliação SEMPRE roda dentro da
+        // transação do chamador (worker/exclusão/confirmação). Uma corrida de inserção da mesma célula por
+        // duas operações concorrentes vira violação de unicidade → a transação do perdedor faz ROLLBACK e a
+        // operação é retentada (fila durável no worker; nova tentativa do cliente na exclusão). Reusar um
+        // statement falho dentro da transação (o antigo laço) NÃO funciona no PostgreSQL, que aborta a
+        // transação inteira — por isso a corrida é resolvida por rollback+retry, não por retry interno.
+        var state = await _db.TenantControlStates
+            .FirstOrDefaultAsync(t => t.SubcategoryId == sub.Id, ct);
+
+        // 3) TELEMETRIA é preservada INTEGRALMENTE: nem recebe crédito documental, nem é retraída.
+        if (state is not null && state.LastVerdictSource == VerdictSource.Telemetry)
         {
-            var state = await _db.TenantControlStates
-                .FirstOrDefaultAsync(t => t.SubcategoryId == sub.Id, ct);
-
-            // 3) TELEMETRIA é preservada INTEGRALMENTE: nem recebe crédito documental, nem é retraída.
-            if (state is not null && state.LastVerdictSource == VerdictSource.Telemetry)
-            {
-                _log.LogDebug(
-                    "Reconciliação de {Code}: estado vigente é de telemetria — preservado no tenant {Tenant}.",
-                    sub.Code, tenantId);
-                return;
-            }
-
-            if (documentary is not null)
-            {
-                // 4a) Há evidência documental elegível → grava/atualiza crédito parcial (50%) e a origem.
-                //     Diferente de ApplyVerdictAsync (upgrade-only), a reconciliação refresca sempre: o
-                //     documento vencedor é o fato vigente, mesmo que a pontuação empate com o estado atual.
-                var awarded = AegisScoreFormulaV1.PointsFor(
-                    ControlStatus.MitigatedByThirdParty, sub.MaxScorePoints);
-
-                var inserting = state is null;
-                if (inserting)
-                {
-                    state = new TenantControlState { SubcategoryId = sub.Id };   // TenantId carimbado no SaveChanges
-                    _db.TenantControlStates.Add(state);
-                }
-
-                state!.Status = ControlStatus.MitigatedByThirdParty;
-                state.CurrentScore = awarded;
-                state.AiEvidence = documentary.Evidence;
-                state.OriginDocumentId = documentary.OriginDocumentId;
-                state.LastVerdictSource = VerdictSource.Documentary;
-                // Crédito documental parcial não carrega checklist técnico nem enriquecimento; a lacuna
-                // própria segue aberta (MitigatedByThirdParty), mas sem pendência tipada herdada de um
-                // veredito anterior (que descreveria um estado extinto).
-                state.ChecksJson = null;
-                state.IntelligenceJson = null;
-                state.MissingRequirements = new List<MissingRequirement>();
-                state.LastEvaluatedAt = DateTimeOffset.UtcNow;
-
-                try
-                {
-                    await _db.SaveChangesAsync(ct);
-                }
-                catch (DbUpdateException ex) when (inserting && attempt == 0 && IsInsertRaceOnTenantControlState(ex))
-                {
-                    _db.Entry(state).State = EntityState.Detached;
-                    continue;   // recarrega a linha vencedora e reaplica como UPDATE
-                }
-
-                _log.LogInformation(
-                    "Reconciliação de {Code}: crédito documental parcial ({Awarded}/{Max}) do documento {Doc} " +
-                    "no tenant {Tenant}.", sub.Code, awarded, sub.MaxScorePoints,
-                    documentary.OriginDocumentId, tenantId);
-                return;
-            }
-
-            // 4b) NÃO há evidência documental elegível: RETRAI o estado documental (→ não avaliado).
-            if (state is not null)
-            {
-                _db.TenantControlStates.Remove(state);
-                await _db.SaveChangesAsync(ct);
-                _log.LogInformation(
-                    "Reconciliação de {Code}: sem evidência documental elegível — estado documental retraído " +
-                    "(volta a Não avaliado) no tenant {Tenant}.", sub.Code, tenantId);
-            }
+            _log.LogDebug(
+                "Reconciliação de {Code}: estado vigente é de telemetria — preservado no tenant {Tenant}.",
+                sub.Code, tenantId);
             return;
+        }
+
+        if (documentary is not null)
+        {
+            // 4a) Há evidência documental ELEGÍVEL (o chamador já aplicou o limiar de confiança) → grava/
+            //     atualiza crédito parcial (50%) e a origem. Diferente de ApplyVerdictAsync (upgrade-only),
+            //     a reconciliação refresca sempre: o documento vencedor é o fato vigente, mesmo em empate.
+            var awarded = AegisScoreFormulaV1.PointsFor(
+                ControlStatus.MitigatedByThirdParty, sub.MaxScorePoints);
+
+            if (state is null)
+            {
+                state = new TenantControlState { SubcategoryId = sub.Id };   // TenantId carimbado no SaveChanges
+                _db.TenantControlStates.Add(state);
+            }
+
+            state.Status = ControlStatus.MitigatedByThirdParty;
+            state.CurrentScore = awarded;
+            state.AiEvidence = documentary.Evidence;
+            state.OriginDocumentId = documentary.OriginDocumentId;
+            state.LastVerdictSource = VerdictSource.Documentary;
+            // Crédito documental parcial não carrega checklist técnico nem enriquecimento; a lacuna própria
+            // segue aberta (MitigatedByThirdParty), mas sem pendência tipada herdada de um veredito anterior.
+            state.ChecksJson = null;
+            state.IntelligenceJson = null;
+            state.MissingRequirements = new List<MissingRequirement>();
+            state.LastEvaluatedAt = DateTimeOffset.UtcNow;
+
+            await _db.SaveChangesAsync(ct);
+            _log.LogInformation(
+                "Reconciliação de {Code}: crédito documental parcial ({Awarded}/{Max}) do documento {Doc} " +
+                "no tenant {Tenant}.", sub.Code, awarded, sub.MaxScorePoints,
+                documentary.OriginDocumentId, tenantId);
+            return;
+        }
+
+        // 4b) NÃO há evidência documental elegível: RETRAI o estado documental (→ não avaliado).
+        if (state is not null)
+        {
+            _db.TenantControlStates.Remove(state);
+            await _db.SaveChangesAsync(ct);
+            _log.LogInformation(
+                "Reconciliação de {Code}: sem evidência documental elegível — estado documental retraído " +
+                "(volta a Não avaliado) no tenant {Tenant}.", sub.Code, tenantId);
         }
     }
 

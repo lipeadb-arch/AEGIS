@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Documents;
 using AegisScore.Application.Services;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -20,9 +21,6 @@ namespace AegisScore.Infrastructure.Documents;
 /// </summary>
 public sealed class DocumentEvidenceReconciler : IDocumentEvidenceReconciler
 {
-    /// <summary>Limiar de confiança que separa cobertura Coberto de Parcial (mesmo valor do pipeline de análise).</summary>
-    private const double DocumentCoverageThreshold = 0.7;
-
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
     private readonly IControlStateWriter _writer;
@@ -66,21 +64,32 @@ public sealed class DocumentEvidenceReconciler : IDocumentEvidenceReconciler
                     m.GovernanceDocumentId, m.Confidence, m.EvidenceQuote!, m.Evidence, d.FileName, d.Title))
                 .ToListAsync(ct);
 
-            // Documento VENCEDOR determinístico: maior confiança, desempate estável por Id do documento.
-            var best = probative
+            // DUAS seleções distintas do mesmo conjunto probatório (o limiar separa cobertura de score):
+            //  - COBERTURA: o melhor trecho literal, de QUALQUER confiança (abaixo do limiar → Parcial);
+            //  - SCORE: só o melhor trecho ELEGÍVEL (confiança >= limiar) pode alterar o ledger/Aegis Score.
+            // Desempate estável por Id do documento em ambos.
+            var bestForCoverage = probative
                 .OrderByDescending(p => p.Confidence)
                 .ThenBy(p => p.OriginDocumentId)
                 .FirstOrDefault();
 
-            // 1) Ledger — aplica o crédito documental vigente, ou retrai se nada sustenta. O escritor
-            //    preserva integralmente um estado de telemetria.
-            var documentary = best is null
+            var bestForScore = probative
+                .Where(p => p.Confidence >= DocumentEvidencePolicy.MinConfidenceForScore)
+                .OrderByDescending(p => p.Confidence)
+                .ThenBy(p => p.OriginDocumentId)
+                .FirstOrDefault();
+
+            // 1) Ledger — aplica o crédito documental SOMENTE com evidência elegível (>= limiar), ou retrai
+            //    se nada elegível sustenta. Confiança abaixo do limiar NÃO cria nem preserva crédito no
+            //    score. O escritor preserva integralmente um estado de telemetria.
+            var documentary = bestForScore is null
                 ? null
-                : new DocumentaryEvidence(best.OriginDocumentId, best.Confidence, BuildEvidenceText(best));
+                : new DocumentaryEvidence(bestForScore.OriginDocumentId, bestForScore.Confidence, BuildEvidenceText(bestForScore));
             await _writer.ReconcileDocumentaryAsync(tenantId, code, documentary, ct);
 
-            // 2) Cobertura — recomputada a partir da mesma evidência probatória, sem apagar entrevista.
-            await ReconcileCoverageAsync(code, best, ct);
+            // 2) Cobertura — reflete o melhor trecho literal (rastreabilidade), Parcial abaixo do limiar,
+            //    sem apagar a evidência de entrevista.
+            await ReconcileCoverageAsync(code, bestForCoverage, ct);
         }
     }
 
@@ -117,7 +126,7 @@ public sealed class DocumentEvidenceReconciler : IDocumentEvidenceReconciler
 
         if (hasDoc)
         {
-            var docStatus = best!.Confidence >= DocumentCoverageThreshold
+            var docStatus = best!.Confidence >= DocumentEvidencePolicy.MinConfidenceForScore
                 ? CoverageStatus.Coberto
                 : CoverageStatus.Parcial;
 
