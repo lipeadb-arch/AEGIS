@@ -87,9 +87,12 @@ services:
         value: gemini-3.5-flash
       - key: Ai__BaseUrl
         value: https://generativelanguage.googleapis.com/v1beta/models
-      # Ai__Mode: Simulated (padrão SEGURO) | GeminiFreeDemo (liga o provedor p/ a allowlist) | Disabled
+      # Ai__Mode (Simulated | GeminiFreeDemo | Disabled): administrado NO PAINEL do Render (sync:false), não
+      # pelo Blueprint. Na criação inicial use o padrão SEGURO "Simulated"; mude manualmente para
+      # "GeminiFreeDemo" SOMENTE quando a chave e a allowlist sintética estiverem configuradas. Sem valor
+      # versionado, uma sincronização futura do Blueprint NÃO sobrescreve o valor operacional do painel.
       - key: Ai__Mode
-        value: Simulated
+        sync: false
       - key: Ai__ApiKey                    # chave da Gemini Developer API — definir no painel (nunca versionar)
         sync: false
       # Slug do tenant sandbox autorizado (dados sintéticos). Definir no painel SÓ quando o sandbox existir.
