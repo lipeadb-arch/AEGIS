@@ -68,6 +68,15 @@ public sealed class GeminiLlmClient : ILLMClient
             // OPERACIONAL, não um bug do servidor. Vira AiUnavailableException → 503 no middleware.
             throw new AiUnavailableException("Falha de transporte ao contatar o motor de IA.", ex);
         }
+        catch (Polly.Timeout.TimeoutRejectedException ex)
+        {
+            // Timeout POR TENTATIVA do Polly (única autoridade de timeout, 120s): a chamada excedeu o teto —
+            // era ele que vazava cru como categoria `TimeoutRejectedException` no worker. Traduz para
+            // indisponibilidade CONHECIDA (→ 503 no middleware; o worker persiste AiUnavailableException, que
+            // o frontend já traduz). NÃO é cancelamento do chamador e NÃO cai para stub. Mensagem interna
+            // sanitizada — nunca registra prompt, documento, resposta ou chave.
+            throw new AiUnavailableException("Timeout ao aguardar resposta do motor de IA.", ex);
+        }
         catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
         {
             // Timeout do HttpClient (não o cancelamento do chamador) — igualmente transitório.

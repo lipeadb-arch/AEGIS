@@ -6,6 +6,7 @@ using AegisScore.Infrastructure.Ai;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace AegisScore.Infrastructure.Tests.Ai;
@@ -104,6 +105,27 @@ public sealed class AiResilienceTests
         handler.Attempts.Should().Be(4, "1 tentativa original + 3 retries configurados");
     }
 
+    // ---- Timeout injetável (única autoridade) — handler lento + teto curto ----------
+
+    [Fact]
+    public async Task TimeoutInjetavelCurto_ComHandlerLento_ProduzAiUnavailable()
+    {
+        // Autoridade ÚNICA e INJETÁVEL do timeout do pipeline: teto de teste de 50ms + handler que demora 5s
+        // → o Polly dispara o timeout, o GeminiLlmClient traduz para AiUnavailableException — em milissegundos
+        // (o teste NÃO espera 120s). O HttpClient tem o timeout nativo desabilitado (Polly é a única autoridade).
+        var services = new ServiceCollection();
+        services.AddSingleton(Options.Create(new AiOptions { ApiKey = "chave-de-teste" }));
+        services.AddHttpClient<GeminiLlmClient>(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
+            .AddAiResilience(TimeSpan.FromMilliseconds(50))
+            .ConfigurePrimaryHttpMessageHandler(() => new SlowHandler(TimeSpan.FromSeconds(5)));
+        using var provider = services.BuildServiceProvider();
+
+        var client = provider.GetRequiredService<GeminiLlmClient>();
+        var acao = () => client.ExecutePromptAsync("system", "user");
+
+        await acao.Should().ThrowAsync<AiUnavailableException>();
+    }
+
     // ---- harness -------------------------------------------------------------------
 
     /// <summary>
@@ -150,6 +172,22 @@ public sealed class AiResilienceTests
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
             });
+        }
+    }
+
+    /// <summary>Handler LENTO: espera o delay (cancelável pelo timeout do Polly) antes de responder 200.</summary>
+    private sealed class SlowHandler : HttpMessageHandler
+    {
+        private readonly TimeSpan _delay;
+        public SlowHandler(TimeSpan delay) => _delay = delay;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            await Task.Delay(_delay, ct);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(ValidGeminiBody, Encoding.UTF8, "application/json"),
+            };
         }
     }
 }
