@@ -255,7 +255,14 @@ public record IcrDto(double Score, string Band);
 
 // ---- Govern: Document Hub ----
 public record ConnectDocumentRequest(string Title, GovernanceDocumentType Type, string SourceReference);
-public record DocumentMappingDto(string SubcategoryCode, double Confidence, string? Evidence, bool AnalystConfirmed);
+/// <summary>
+/// Mapeamento documento→controle exposto ao Hub. <paramref name="EvidenceQuote"/> é o TRECHO LITERAL
+/// validado (a citação verbatim que sustenta o mapeamento — nulo em heranças não probatórias);
+/// <paramref name="Evidence"/> é o RACIONAL da análise (separado do trecho). Só um mapping com trecho
+/// literal tem valor probatório.
+/// </summary>
+public record DocumentMappingDto(
+    string SubcategoryCode, double Confidence, string? EvidenceQuote, string? Evidence, bool AnalystConfirmed);
 public record GovernanceDocumentDto(
     Guid Id, string Title, string Type, string Source, string? SourceReference,
     string? FileName, string? ContentType, long? FileSizeBytes, string? Sha256,

@@ -75,7 +75,12 @@ export class AuditorService {
       .pipe(
         catchError((err) => {
           console.error('Copiloto GRC: falha no /auditor/chat.', err);
-          return throwError(() => new Error('O Copiloto está indisponível no momento. Tente novamente.'));
+          // 503 traz um `title` JÁ sanitizado do backend (indisponibilidade × cota esgotada). Usamos-o
+          // quando houver; sem título utilizável, a mensagem genérica atual. Nunca inventamos resposta.
+          const title = typeof err?.error?.title === 'string' ? err.error.title.trim() : '';
+          const message =
+            err?.status === 503 && title ? title : 'O Copiloto está indisponível no momento. Tente novamente.';
+          return throwError(() => new Error(message));
         }),
       );
   }

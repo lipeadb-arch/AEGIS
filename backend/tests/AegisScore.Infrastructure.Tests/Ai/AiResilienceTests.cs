@@ -107,23 +107,26 @@ public sealed class AiResilienceTests
     // ---- harness -------------------------------------------------------------------
 
     /// <summary>
-    /// Resolve o <see cref="ILLMClient"/> do container REAL, com a chave presente (para engatar o Gemini)
-    /// e o handler de teste no lugar do transporte. O pipeline de resiliência vem do registro de produção.
+    /// Resolve o <see cref="GeminiLlmClient"/> do container REAL, com a chave presente (para o guard passar)
+    /// e o handler de teste no lugar do transporte. O pipeline de resiliência vem do registro de produção —
+    /// reaproveita-se o MESMO named client "GeminiLlmClient" (que já tem AddAiResilience), trocando só o
+    /// primary handler pelo roteiro de teste. Testa-se o transporte real, isolado do roteador do gate.
     /// </summary>
     private static ILLMClient ResolveLlmClient(HttpMessageHandler handler)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:AegisScore"] = "Host=localhost;Database=aegis_test;Username=t;Password=t",
-            ["AegisAi:ApiKey"] = "chave-de-teste",
+            ["Ai:Mode"] = "GeminiFreeDemo",
+            ["Ai:ApiKey"] = "chave-de-teste",
         }).Build();
 
         var services = new ServiceCollection();
         services.AddAegisScoreInfrastructure(config);
-        services.AddHttpClient<ILLMClient, GeminiLlmClient>()
+        services.AddHttpClient<GeminiLlmClient>()
             .ConfigurePrimaryHttpMessageHandler(() => handler);
 
-        return services.BuildServiceProvider().GetRequiredService<ILLMClient>();
+        return services.BuildServiceProvider().GetRequiredService<GeminiLlmClient>();
     }
 
     /// <summary>Devolve as respostas na ordem dada e conta quantas tentativas chegaram até aqui.</summary>

@@ -272,6 +272,7 @@ public class GovernanceDocumentsController : ControllerBase
         d.FileName, d.ContentType, d.FileSizeBytes, d.Sha256, d.DocumentDate,
         d.Status.ToString(), d.AnalysisStatus.ToString(), d.AnalysisSummary, d.AnalysisError, d.AnalyzedAt,
         d.ControlMappings.OrderByDescending(m => m.Confidence)
-            .Select(m => new DocumentMappingDto(m.SubcategoryCode, m.Confidence, m.Evidence, m.AnalystConfirmed))
+            .Select(m => new DocumentMappingDto(
+                m.SubcategoryCode, m.Confidence, m.EvidenceQuote, m.Evidence, m.AnalystConfirmed))
             .ToList());
 }

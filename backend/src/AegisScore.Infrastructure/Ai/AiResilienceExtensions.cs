@@ -8,18 +8,21 @@ namespace AegisScore.Infrastructure.Ai;
 /// Política de resiliência dos HttpClients dos motores de IA (Gemini e Claude), sob a fachada oficial
 /// <c>Microsoft.Extensions.Http.Resilience</c> (Polly v8).
 ///
-/// Vive num handler do pipeline HTTP, e NÃO dentro dos clients, por uma razão concreta: tanto o
-/// <see cref="GeminiLlmClient"/> quanto o <see cref="ClaudeAssessmentService"/> traduzem qualquer
-/// resposta não-2xx em falha de aplicação (<c>AiUnavailableException</c> / <c>EnsureSuccessStatusCode</c>)
-/// no instante em que a veem. Um retry acima deles nunca enxergaria o 429 — só a exceção já mastigada.
-/// No handler, a repetição acontece ANTES: o client recebe apenas o desfecho final da tentativa.
+/// Vive num handler do pipeline HTTP, e NÃO dentro do client, por uma razão concreta: o
+/// <see cref="GeminiLlmClient"/> traduz qualquer resposta não-2xx em falha de aplicação
+/// (<c>AiUnavailableException</c>/<c>AiQuotaExhaustedException</c>) no instante em que a vê. Um retry acima
+/// dele nunca enxergaria o 429 — só a exceção já mastigada. No handler, a repetição acontece ANTES: o
+/// client recebe apenas o desfecho final da tentativa.
 /// </summary>
 internal static class AiResilienceExtensions
 {
     /// <summary>
-    /// Anexa retry exponencial + circuit breaker ao client. Os limiares são deliberadamente
-    /// conservadores: o Aegis degrada com elegância (triagem cega no worker documental, 503 no avaliador
-    /// de telemetria), então insistir demais custa latência e cota sem melhorar a decisão de auditoria.
+    /// Anexa retry exponencial + circuit breaker ao client. Os limiares são deliberadamente conservadores.
+    /// Ao esgotar as tentativas a IA fica indisponível e cada consumidor degrada de forma SEGURA, NUNCA com
+    /// resposta simulada: o worker documental faz retry e, no limite existente, marca o documento como Falha
+    /// (sem criar mapping/postura pelo stub); o avaliador de telemetria preserva o veredito determinístico e
+    /// só perde o enriquecimento; o Auditor devolve 503/cota. Insistir demais custa latência e cota sem
+    /// melhorar a decisão de auditoria.
     /// </summary>
     public static IHttpClientBuilder AddAiResilience(this IHttpClientBuilder builder)
     {

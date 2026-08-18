@@ -38,6 +38,9 @@ export type MessageRole = 'System' | 'Assistant' | 'User';
 export interface DocumentMapping {
   subcategoryCode: string;
   confidence: number;
+  /** Trecho LITERAL validado (citação verbatim que sustenta o mapeamento). Nulo = herança não probatória. */
+  evidenceQuote: string | null;
+  /** Racional da análise (separado do trecho literal). */
   evidence: string | null;
   analystConfirmed: boolean;
 }
@@ -194,6 +197,52 @@ export function isActiveAnalysisStatus(status: AiAnalysisStatus): boolean {
   return ACTIVE_ANALYSIS_STATUSES.includes(status);
 }
 
+/** True se o documento tem ao menos um mapeamento com TRECHO PROBATÓRIO literal (evidenceQuote). */
+export function hasProbativeEvidence(doc: GovernanceDocument): boolean {
+  return doc.mappings.some((m) => !!m.evidenceQuote && m.evidenceQuote.trim().length > 0);
+}
+
+/**
+ * Estado de exibição REFINADO do documento: separa "Analisado com evidência" de "Analisado sem evidência"
+ * (documento sem valor probatório) — os demais estados espelham o status de leitura da IA.
+ */
+export type DocumentDisplayState =
+  | 'Pending'
+  | 'Queued'
+  | 'Processing'
+  | 'AnalyzedWithEvidence'
+  | 'AnalyzedWithoutEvidence'
+  | 'Failed';
+
+export function documentDisplayState(doc: GovernanceDocument): DocumentDisplayState {
+  switch (doc.analysisStatus) {
+    case 'Analyzed':
+      return hasProbativeEvidence(doc) ? 'AnalyzedWithEvidence' : 'AnalyzedWithoutEvidence';
+    case 'Failed':
+      return 'Failed';
+    case 'Processing':
+      return 'Processing';
+    case 'Queued':
+      return 'Queued';
+    default:
+      return 'Pending';
+  }
+}
+
+const DISPLAY_STATE_LABELS = new Map<DocumentDisplayState, string>([
+  ['Pending', 'Aguardando processamento'],
+  ['Queued', 'Na fila'],
+  ['Processing', 'Analisando'],
+  ['AnalyzedWithEvidence', 'Analisado com evidência'],
+  ['AnalyzedWithoutEvidence', 'Analisado sem evidência'],
+  ['Failed', 'Falha na análise'],
+]);
+
+/** Rótulo PT do estado refinado de exibição (fallback: o próprio valor). */
+export function documentDisplayStateLabel(state: DocumentDisplayState): string {
+  return DISPLAY_STATE_LABELS.get(state) ?? state;
+}
+
 const DOCUMENT_TYPE_LABELS = new Map<string, string>(DOCUMENT_TYPES.map((t) => [t.value, t.label]));
 const ANALYSIS_STATUS_LABELS = new Map<string, string>(ANALYSIS_STATUSES.map((s) => [s.value, s.label]));
 const COVERAGE_STATUS_LABELS = new Map<string, string>([
@@ -237,4 +286,23 @@ export function coverageStatusLabel(value: string): string {
 /** Rótulo PT de uma fonte de evidência (fallback: o próprio valor). */
 export function evidenceSourceLabel(value: string): string {
   return EVIDENCE_SOURCE_LABELS.get(value) ?? value;
+}
+
+/** Categoria de erro da análise (nome sanitizado do tipo de exceção) → mensagem amigável em PT. */
+const ANALYSIS_ERROR_LABELS = new Map<string, string>([
+  [
+    'AiQuotaExhaustedException',
+    'Cota gratuita da IA temporariamente esgotada. Reanalise após a renovação da cota.',
+  ],
+  ['AiUnavailableException', 'Serviço de IA temporariamente indisponível. Reanalise mais tarde.'],
+]);
+
+/**
+ * Traduz a CATEGORIA de erro da análise (nome sanitizado do tipo de exceção .NET, ex.:
+ * `AiQuotaExhaustedException`) para uma mensagem amigável — NUNCA exibe o nome da exceção ao usuário.
+ * Categoria desconhecida ou ausente cai numa mensagem genérica.
+ */
+export function analysisErrorLabel(category: string | null): string {
+  const generic = 'Falha ao analisar o documento. Reanalise mais tarde.';
+  return category ? (ANALYSIS_ERROR_LABELS.get(category) ?? generic) : generic;
 }

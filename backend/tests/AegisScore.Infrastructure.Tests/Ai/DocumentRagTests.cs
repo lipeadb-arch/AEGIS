@@ -1,11 +1,8 @@
-using System.Net;
-using System.Text;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Documents;
 using AegisScore.Application.Services;
 using AegisScore.Infrastructure.Ai;
 using FluentAssertions;
-using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace AegisScore.Infrastructure.Tests.Ai;
@@ -14,7 +11,8 @@ namespace AegisScore.Infrastructure.Tests.Ai;
 /// RAG documental de duas passadas: seleção de trecho dirigida ao controle (chunking) e injeção da
 /// PERSONA no System Prompt do motor documental. O que estes testes protegem é o que não aparece no
 /// resultado: um prompt que perdeu a persona continua devolvendo JSON válido, e um chunker que devolve
-/// o documento inteiro continua "funcionando" — só custa 10× mais tokens e julga pior.
+/// o documento inteiro continua "funcionando" — só custa 10× mais tokens e julga pior. O transporte é
+/// isolado por um <see cref="CapturingLlmClient"/> fake (sem rede) — o motor de alto nível delega ao ILLMClient.
 /// </summary>
 public class DocumentRagTests
 {
@@ -23,53 +21,53 @@ public class DocumentRagTests
     [Fact]
     public async Task PersonaEhInjetadaNoSystemPromptDaTriagem()
     {
-        var handler = new CapturingHandler("""{"content":[{"type":"text","text":"{\"summary\":\"ok\",\"claims\":[]}"}]}""");
-        var service = ServiceWith(handler, PersonaFixture);
+        var llm = new CapturingLlmClient("""{"summary":"ok","claims":[]}""");
+        var service = ServiceWith(llm, PersonaFixture);
 
         await service.AnalyzeDocumentAsync(new DocumentAnalysisRequest(Guid.NewGuid(), "texto", "politica.pdf"), default);
 
-        handler.LastSystemPrompt.Should().Contain("Consultor Estratégico");
-        handler.LastSystemPrompt.Should().Contain("RS.MA → Resposta a Incidentes");
-        handler.LastSystemPrompt.Should().Contain("NEVER changes the status",
+        llm.LastSystemPrompt.Should().Contain("Consultor Estratégico");
+        llm.LastSystemPrompt.Should().Contain("RS.MA → Resposta a Incidentes");
+        llm.LastSystemPrompt.Should().Contain("NEVER changes the status",
             "a salvaguarda tem de viajar junto: persona governa tom, jamais veredito");
     }
 
     [Fact]
     public async Task PersonaEhInjetadaNoSystemPromptDoJulgamentoDirigido()
     {
-        var handler = new CapturingHandler("""{"content":[{"type":"text","text":"{\"confidence\":0.8,\"rationale\":\"ok\"}"}]}""");
-        var service = ServiceWith(handler, PersonaFixture);
+        var llm = new CapturingLlmClient("""{"confidence":0.8,"rationale":"ok"}""");
+        var service = ServiceWith(llm, PersonaFixture);
 
         await service.EvaluateDocumentControlAsync(SampleRequest("trecho"), default);
 
-        handler.LastSystemPrompt.Should().Contain("Consultor Estratégico");
-        handler.LastSystemPrompt.Should().Contain("ACTION DIRECTIVES");
+        llm.LastSystemPrompt.Should().Contain("Consultor Estratégico");
+        llm.LastSystemPrompt.Should().Contain("ACTION DIRECTIVES");
     }
 
     [Fact]
     public async Task PersonaNEUTRA_NaoContaminaOPrompt()
     {
         // Sem persona o prompt tem de ficar EXATAMENTE como era — nada de cabeçalho vazio gastando token.
-        var handler = new CapturingHandler("""{"content":[{"type":"text","text":"{\"confidence\":0.5,\"rationale\":\"x\"}"}]}""");
-        var service = ServiceWith(handler, StaticAuditorPersonaProvider.Neutral);
+        var llm = new CapturingLlmClient("""{"confidence":0.5,"rationale":"x"}""");
+        var service = ServiceWith(llm, StaticAuditorPersonaProvider.Neutral);
 
         await service.EvaluateDocumentControlAsync(SampleRequest("trecho"), default);
 
-        handler.LastSystemPrompt.Should().NotContain("AUDITOR PERSONA");
+        llm.LastSystemPrompt.Should().NotContain("AUDITOR PERSONA");
     }
 
     [Fact]
     public async Task JulgamentoDirigido_LevaControleCriteriosETrecho_MasNaoODocumentoInteiro()
     {
-        var handler = new CapturingHandler("""{"content":[{"type":"text","text":"{\"confidence\":0.9,\"rationale\":\"ok\"}"}]}""");
-        var service = ServiceWith(handler, StaticAuditorPersonaProvider.Neutral);
+        var llm = new CapturingLlmClient("""{"confidence":0.9,"rationale":"ok"}""");
+        var service = ServiceWith(llm, StaticAuditorPersonaProvider.Neutral);
 
         await service.EvaluateDocumentControlAsync(SampleRequest("O acesso privilegiado é revisado."), default);
 
-        handler.LastUserPrompt.Should().Contain("PR.AA-01");
-        handler.LastUserPrompt.Should().Contain("Entra ID: authenticationMethods");   // critério da regra
-        handler.LastUserPrompt.Should().Contain("O acesso privilegiado é revisado.");
-        handler.LastUserPrompt.Should().Contain("untrusted data",
+        llm.LastUserPrompt.Should().Contain("PR.AA-01");
+        llm.LastUserPrompt.Should().Contain("Entra ID: authenticationMethods");   // critério da regra
+        llm.LastUserPrompt.Should().Contain("O acesso privilegiado é revisado.");
+        llm.LastUserPrompt.Should().Contain("untrusted data",
             "o trecho do cliente é DADO, nunca instrução — a fronteira anti-injeção é obrigatória");
     }
 
@@ -77,8 +75,8 @@ public class DocumentRagTests
     public async Task ConfiancaForaDaFaixa_EhLimitada_NaoPropagaLixo()
     {
         // Um modelo que devolve 3.7 quebraria o limiar de cobertura silenciosamente.
-        var handler = new CapturingHandler("""{"content":[{"type":"text","text":"{\"confidence\":3.7,\"rationale\":\"x\"}"}]}""");
-        var service = ServiceWith(handler, StaticAuditorPersonaProvider.Neutral);
+        var llm = new CapturingLlmClient("""{"confidence":3.7,"rationale":"x"}""");
+        var service = ServiceWith(llm, StaticAuditorPersonaProvider.Neutral);
 
         var verdict = await service.EvaluateDocumentControlAsync(SampleRequest("trecho"), default);
 
@@ -245,29 +243,23 @@ public class DocumentRagTests
         excerpt,
         "politica.pdf");
 
-    private static ClaudeAssessmentService ServiceWith(CapturingHandler handler, IAuditorPersonaProvider persona) =>
-        new(new HttpClient(handler), Options.Create(new AiOptions { ApiKey = "test-key" }), persona);
+    private static AegisAssessmentService ServiceWith(ILLMClient llm, IAuditorPersonaProvider persona) =>
+        new(llm, persona);
 
-    /// <summary>Handler que devolve um corpo fixo e GUARDA o que foi enviado — o objeto do teste.</summary>
-    private sealed class CapturingHandler : HttpMessageHandler
+    /// <summary>ILLMClient fake: devolve um texto fixo e GUARDA os prompts enviados — o objeto do teste.</summary>
+    private sealed class CapturingLlmClient : ILLMClient
     {
-        private readonly string _body;
+        private readonly string _reply;
         public string LastSystemPrompt { get; private set; } = "";
         public string LastUserPrompt { get; private set; } = "";
 
-        public CapturingHandler(string body) => _body = body;
+        public CapturingLlmClient(string reply) => _reply = reply;
 
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        public Task<string> ExecutePromptAsync(string systemPrompt, string userPrompt, CancellationToken ct = default)
         {
-            var sent = await request.Content!.ReadAsStringAsync(ct);
-            using var doc = System.Text.Json.JsonDocument.Parse(sent);
-            LastSystemPrompt = doc.RootElement.GetProperty("system").GetString() ?? "";
-            LastUserPrompt = doc.RootElement.GetProperty("messages")[0].GetProperty("content").GetString() ?? "";
-
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(_body, Encoding.UTF8, "application/json"),
-            };
+            LastSystemPrompt = systemPrompt;
+            LastUserPrompt = userPrompt;
+            return Task.FromResult(_reply);
         }
     }
 }

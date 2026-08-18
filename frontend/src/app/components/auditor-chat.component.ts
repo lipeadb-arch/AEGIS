@@ -3,6 +3,7 @@ import { Component, ElementRef, computed, effect, inject, signal, viewChild } fr
 import { environment } from '../../environments/environment';
 import { AgentStateService } from '../services/agent-state.service';
 import { AuditorChatReply, AuditorInterviewSeed, AuditorService, BlastRadiusResponse } from '../services/auditor.service';
+import { AiModeBannerComponent } from './ai-mode-banner.component';
 import { BlastRadiusGraphComponent } from './blast-radius-graph.component';
 import { GrcQuestionCardComponent } from './grc-question-card.component';
 
@@ -50,9 +51,10 @@ interface BlastRadiusChatMessage {
 @Component({
   selector: 'app-auditor-chat',
   standalone: true,
-  imports: [DatePipe, GrcQuestionCardComponent, BlastRadiusGraphComponent],
+  imports: [DatePipe, GrcQuestionCardComponent, BlastRadiusGraphComponent, AiModeBannerComponent],
   template: `
     <div class="copilot">
+      <app-ai-mode-banner />
       <div class="stream" #scroller>
         @if (chatHistory().length === 0 && !isAnalyzing()) {
           <div class="intro">
@@ -300,9 +302,11 @@ export class AuditorChatComponent {
         this.chatHistory.update((h) => [...h, this.toAssistantMessage(res)]);
         this.isAnalyzing.set(false);
       },
-      error: () => {
+      error: (err) => {
+        // Mensagem JÁ sanitizada pelo serviço (title do 503: indisponibilidade × cota); senão, genérica.
+        // Nunca injetamos uma resposta simulada no fluxo após uma falha real.
         this.isAnalyzing.set(false);
-        this.error.set('O Copiloto está indisponível no momento. Tente novamente.');
+        this.error.set(err?.message || 'O Copiloto está indisponível no momento. Tente novamente.');
       },
     });
   }

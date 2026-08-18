@@ -1,6 +1,8 @@
+using System.Collections.Generic;
 using AegisScore.Application.Abstractions;
 using AegisScore.Infrastructure;
 using AegisScore.Infrastructure.Ai;
+using AegisScore.Infrastructure.Persistence;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,49 +11,66 @@ using Xunit;
 namespace AegisScore.Infrastructure.Tests;
 
 /// <summary>
-/// Testes do switch fail-open de <see cref="DependencyInjection.AddAegisScoreInfrastructure"/> para o
-/// ILLMClient: exercita o composition root REAL (ServiceCollection + IConfiguration in-memory), sem
-/// rede nem banco. A resolução decide o motor apenas pela presença de AegisAi:ApiKey.
+/// Composition root REAL (ServiceCollection + IConfiguration in-memory), sem rede nem banco. Sob o provedor
+/// ÚNICO, as interfaces neutras (ILLMClient, IAiAssessmentService) sempre resolvem os ROTEADORES tenant-scoped
+/// — a decisão Gemini × stub é do gate em runtime, não do registro. O gate reflete a configuração <c>Ai</c>.
 /// </summary>
 public sealed class AegisAiDependencyInjectionTests
 {
     [Fact]
-    public void SemApiKey_ResolveStubLlmClient()
+    public void ContainerLigaSempreOsRoteadoresNeutros()
     {
-        using var provider = BuildProvider(apiKey: null);
+        using var provider = BuildProvider(mode: "Simulated", apiKey: null);
+        using var scope = provider.CreateScope();
+        var sp = scope.ServiceProvider;
 
-        var client = provider.GetRequiredService<ILLMClient>();
-
-        client.Should().BeOfType<StubLlmClient>(
-            "sem chave o container deve cair no stub determinístico — a demo nunca quebra por rede");
+        sp.GetRequiredService<ILLMClient>().Should().BeOfType<TenantScopedLlmRouter>(
+            "o transporte neutro passa SEMPRE pelo roteador — a fronteira de dados do Free Tier");
+        sp.GetRequiredService<IAiAssessmentService>().Should().BeOfType<TenantScopedAssessmentRouter>(
+            "o motor de alto nível também é mediado pelo gate");
     }
 
     [Fact]
-    public void ComApiKey_ResolveGeminiLlmClient()
+    public void Gate_SimuladoSemChave_NaoConfigurado()
     {
-        using var provider = BuildProvider(apiKey: "chave-de-producao");
+        using var provider = BuildProvider(mode: "Simulated", apiKey: null);
 
-        var client = provider.GetRequiredService<ILLMClient>();
+        var gate = provider.GetRequiredService<IAiFreeTierGate>();
 
-        client.Should().BeOfType<GeminiLlmClient>(
-            "com a chave presente o container deve engatar o motor real Gemini via HttpClient tipado");
+        gate.ProviderConfigured.Should().BeFalse("sem chave/modo demonstrativo o provedor externo não sobe");
+        gate.IsExternalAllowedForSlug("qualquer").Should().BeFalse();
     }
 
-    private static ServiceProvider BuildProvider(string? apiKey)
+    [Fact]
+    public void Gate_GeminiFreeDemoComChave_ConfiguradoELiberaSomenteAllowlist()
+    {
+        using var provider = BuildProvider(mode: "GeminiFreeDemo", apiKey: "chave", allowedSlug: "sandbox");
+
+        var gate = provider.GetRequiredService<IAiFreeTierGate>();
+
+        gate.ProviderConfigured.Should().BeTrue();
+        gate.IsExternalAllowedForSlug("sandbox").Should().BeTrue("o slug configurado da allowlist libera");
+        gate.IsExternalAllowedForSlug("tenant-corporativo").Should().BeFalse("fora da allowlist nunca libera");
+    }
+
+    private static ServiceProvider BuildProvider(string mode, string? apiKey, string? allowedSlug = null)
     {
         var settings = new Dictionary<string, string?>
         {
             // Connection string dummy: AddDbContext apenas REGISTRA (não abre conexão) — evita null no UseNpgsql.
             ["ConnectionStrings:AegisScore"] = "Host=localhost;Database=aegis_test;Username=test;Password=test",
+            ["Ai:Mode"] = mode,
         };
-        // Ausência da chave é modelada omitindo a entrada (config[...] devolve null naturalmente).
-        if (apiKey is not null)
-            settings["AegisAi:ApiKey"] = apiKey;
+        if (apiKey is not null) settings["Ai:ApiKey"] = apiKey;
+        if (allowedSlug is not null) settings["Ai:FreeTier:AllowedTenantSlugs:0"] = allowedSlug;
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
 
         var services = new ServiceCollection();
         services.AddAegisScoreInfrastructure(config);
+        // O host (Program.cs/DbMigrator) é quem registra o ITenantContext — o mesmo padrão de que dependem
+        // ControlStateWriter, WorkspacePostureQuery e o resolver do gate. O container mínimo do teste o provê.
+        services.AddScoped<ITenantContext>(_ => new SystemTenantContext(null));
         return services.BuildServiceProvider();
     }
 }

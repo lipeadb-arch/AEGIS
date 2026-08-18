@@ -244,7 +244,20 @@ builder.Services.AddRateLimiter(o =>
         ClientIp(ctx),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 
+    // Auditor Virtual (chat fundamentado): limite de perguntas por usuário/minuto — controle do Free Tier
+    // (Ai:FreeTier:MaxQuestionsPerMinute), protege a cota do provedor gratuito. Particionado pela identidade
+    // autenticada (claim), caindo para o IP quando anônimo.
+    var auditorPerMinute = Math.Max(1, builder.Configuration.GetValue<int?>("Ai:FreeTier:MaxQuestionsPerMinute") ?? 10);
+    o.AddPolicy("ai-auditor", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        AuthenticatedPartition(ctx),
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = auditorPerMinute, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+
     static string ClientIp(HttpContext ctx) => ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    static string AuthenticatedPartition(HttpContext ctx) =>
+        ctx.User?.FindFirst("account_id")?.Value
+        ?? ctx.User?.FindFirst("sub")?.Value
+        ?? (ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown");
 });
 
 // [AEGIS-AUD-048] Health checks REAIS, separando dois conceitos distintos:

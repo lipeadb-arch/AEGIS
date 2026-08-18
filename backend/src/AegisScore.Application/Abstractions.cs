@@ -73,10 +73,54 @@ public enum AuditorScope { Global = 0, Govern, Identify, Protect, Detect, Respon
 public record AuditorMessage(string Role, string Content);
 
 /// <summary>
-/// Um turno do Copiloto GRC: o escopo ativo, o histórico e a nova mensagem do usuário. O tenant NÃO
-/// trafega aqui — é resolvido do claim do JWT na borda, nunca do corpo (Zero Trust).
+/// Um turno do Copiloto GRC: o escopo ativo, o histórico, a nova mensagem do usuário e o CONTEXTO
+/// tenant-scoped somente leitura com que a IA fundamenta a resposta. O tenant NÃO trafega aqui — é
+/// resolvido do claim do JWT na borda, nunca do corpo (Zero Trust); o <paramref name="Context"/> é montado
+/// no servidor a partir do tenant autenticado. É opcional para preservar as construções existentes (stub/testes).
 /// </summary>
-public record AuditorChatRequest(AuditorScope Scope, IReadOnlyList<AuditorMessage> History, string UserMessage);
+public record AuditorChatRequest(
+    AuditorScope Scope,
+    IReadOnlyList<AuditorMessage> History,
+    string UserMessage,
+    AuditorTenantContext? Context = null);
+
+/// <summary>
+/// Contexto tenant-scoped, SOMENTE LEITURA e LIMITADO, com que o Auditor Virtual fundamenta as respostas.
+/// É um DTO do AEGIS (nunca do SDK do provedor). Contém apenas AGREGADOS e trechos curtos JÁ VALIDADOS —
+/// jamais documento completo, log bruto, credencial ou identificador pessoal. No Free Tier, só tenants da
+/// allowlist (dados sintéticos) têm este contexto enviado ao provedor externo.
+/// </summary>
+public sealed record AuditorTenantContext(
+    string ScoreState,                  // "Evaluated" | "NotEvaluated"
+    double? ScorePercentage,            // null quando NotEvaluated (nunca 0% por ausência)
+    double CoveragePercentage,
+    int CompliantControls,
+    int NonCompliantControls,
+    int MitigatedControls,
+    int NotEvaluatedControls,
+    DateTimeOffset? LatestEvidenceAt,
+    IReadOnlyList<AuditorFunctionPosture> Functions,
+    IReadOnlyList<AuditorControlGap> TopGaps,
+    IReadOnlyList<AuditorDocumentEvidence> RecentEvidence,
+    AuditorConnectorContext Connectors,
+    IReadOnlyList<string> PendingRecommendations);
+
+/// <summary>Resumo de postura de UMA Função NIST para o contexto do Auditor.</summary>
+public sealed record AuditorFunctionPosture(
+    string Code, string Name, string EvaluationState, double? Percentage, double CoveragePercentage,
+    int NonCompliantControls, int NotEvaluatedControls);
+
+/// <summary>Uma lacuna de controle (não conforme / não avaliado) para o Auditor priorizar.</summary>
+public sealed record AuditorControlGap(string SubcategoryCode, string Status, string? Reason);
+
+/// <summary>Evidência documental RELEVANTE e curta (trecho literal já validado — nunca o documento inteiro).</summary>
+public sealed record AuditorDocumentEvidence(
+    string DocumentTitle, string SubcategoryCode, double Confidence, string EvidenceQuote);
+
+/// <summary>Saúde/recência agregada dos conectores do tenant (sem segredo, sem endpoint).</summary>
+public sealed record AuditorConnectorContext(
+    int Configured, int Enabled, int Healthy, int Degraded, int Failed, int NeverSynced,
+    DateTimeOffset? LastSyncAt);
 
 /// <summary>
 /// Intenção roteada pela IA (Agentic Routing): <c>Copilot</c> = dúvida/consulta geral respondida na hora;

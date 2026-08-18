@@ -40,7 +40,7 @@ public sealed class DevRagFireTestController : ControllerBase
 {
     private readonly DbContextOptions<AegisScoreDbContext> _dbOptions;
     private readonly ILLMClient _llm;
-    private readonly IOptions<AegisAiOptions> _aiOptions;
+    private readonly IOptions<AiOptions> _aiOptions;
     private readonly IAuditorPersonaProvider _persona;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<DevRagFireTestController> _log;
@@ -49,7 +49,7 @@ public sealed class DevRagFireTestController : ControllerBase
     public DevRagFireTestController(
         DbContextOptions<AegisScoreDbContext> dbOptions,
         ILLMClient llm,
-        IOptions<AegisAiOptions> aiOptions,
+        IOptions<AiOptions> aiOptions,
         IAuditorPersonaProvider persona,
         ILoggerFactory loggerFactory,
         ILogger<DevRagFireTestController> log,

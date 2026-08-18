@@ -99,12 +99,51 @@ public sealed class GeminiLlmClientTests
         handler.CapturedRequest.Should().BeNull("a guard-clause deve barrar antes de qualquer chamada HTTP");
     }
 
+    // ---- Cenário 4: cota gratuita esgotada (429) ---------------------------------
+
+    [Fact]
+    public async Task ExecutePromptAsync_QuandoQuota429_LancaAiQuotaExhausted()
+    {
+        // 429 RESOURCE_EXHAUSTED é a cota gratuita esgotada: caso DISTINTO, com mensagem própria para a UI
+        // ("cota esgotada"), e ainda subtipo de AiUnavailableException (→ 503 no middleware). NÃO há resposta
+        // simulada: a telemetria preserva o veredito determinístico e o Auditor/documento informam a cota.
+        var handler = new StubHttpMessageHandler(HttpStatusCode.TooManyRequests, "{\"error\":\"RESOURCE_EXHAUSTED\"}");
+        var client = CreateClient(handler);
+
+        var acao = () => client.ExecutePromptAsync("system", "user");
+
+        await acao.Should().ThrowAsync<AiQuotaExhaustedException>();
+    }
+
+    // ---- Cenário 5: generationConfig compatível com Gemini 3.x --------------------
+
+    [Fact]
+    public async Task ExecutePromptAsync_GenerationConfig_SoMaxOutputTokens_SemParametrosDeAmostragem()
+    {
+        // Gemini 3.x recomenda os valores padrão de amostragem: enviamos SÓ maxOutputTokens (teto de cota),
+        // sem temperature/topP/topK e sem thinking_budget (preserva o raciocínio padrão, sem inflar a cota).
+        var handler = new StubHttpMessageHandler(HttpStatusCode.OK, GeminiResponse("ok"));
+        var client = CreateClient(handler);
+
+        await client.ExecutePromptAsync("system", "user");
+
+        var body = handler.CapturedBody;
+        body.Should().NotBeNull();
+        body!.Should().Contain("maxOutputTokens", "o teto de tokens de saída é preservado");
+        body.Should().NotContain("temperature");
+        body.Should().NotContain("topP");
+        body.Should().NotContain("top_p");
+        body.Should().NotContain("topK");
+        body.Should().NotContain("top_k");
+        body.Should().NotContain("thinking", "não se envia thinking_budget");
+    }
+
     // ---- helpers ------------------------------------------------------------------
 
     private static GeminiLlmClient CreateClient(StubHttpMessageHandler handler, string apiKey = "test-key")
     {
         var http = new HttpClient(handler);
-        var options = Options.Create(new AegisAiOptions { ApiKey = apiKey });
+        var options = Options.Create(new AiOptions { ApiKey = apiKey });
         return new GeminiLlmClient(http, options);
     }
 
@@ -130,11 +169,14 @@ public sealed class GeminiLlmClientTests
         }
 
         public HttpRequestMessage? CapturedRequest { get; private set; }
+        public string? CapturedBody { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             CapturedRequest = request;
+            // Captura o corpo AQUI (antes de o client dispor a request) para inspeção do generationConfig.
+            CapturedBody = request.Content?.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
             return Task.FromResult(new HttpResponseMessage(_status)
             {
                 Content = new StringContent(_json, Encoding.UTF8, "application/json")
