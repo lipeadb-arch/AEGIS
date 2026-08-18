@@ -23,18 +23,21 @@ public class GovernanceDocumentsController : ControllerBase
     private readonly IPolicySyncQueue _policySync;
     private readonly ITenantContext _tenant;
     private readonly IDocumentEvidenceReconciler _reconciler;
+    private readonly IReadOnlyList<IDocumentTextExtractor> _extractors;
     private readonly ILogger<GovernanceDocumentsController> _log;
 
     public GovernanceDocumentsController(
         AegisScoreDbContext db, IDocumentStorage storage,
         IPolicySyncQueue policySync, ITenantContext tenant,
-        IDocumentEvidenceReconciler reconciler, ILogger<GovernanceDocumentsController> log)
+        IDocumentEvidenceReconciler reconciler, IEnumerable<IDocumentTextExtractor> extractors,
+        ILogger<GovernanceDocumentsController> log)
     {
         _db = db;
         _storage = storage;
         _policySync = policySync;
         _tenant = tenant;
         _reconciler = reconciler;
+        _extractors = extractors.ToList();
         _log = log;
     }
 
@@ -49,6 +52,13 @@ public class GovernanceDocumentsController : ControllerBase
         IFormFile file, [FromForm] string title, [FromForm] GovernanceDocumentType type, CancellationToken ct)
     {
         if (file is null || file.Length == 0) return BadRequest("Arquivo vazio.");
+
+        // Formato aceito = há extrator para ele (PDF/TXT/DOCX). Recusa CLARA ANTES de enfileirar — evita o
+        // NotSupportedException tardio no worker (caso do upload .docx sem extrator). A coleção de extratores
+        // é a autoridade dos formatos suportados.
+        if (!_extractors.Any(e => e.CanHandle(file.ContentType, file.FileName)))
+            return UnprocessableEntity(
+                "Formato não suportado. Envie PDF, TXT ou DOCX (.doc, .docm e outros formatos não são suportados).");
 
         await using var buffer = new MemoryStream();
         await file.CopyToAsync(buffer, ct);

@@ -26,11 +26,13 @@ public sealed class AegisAssessmentService : IAiAssessmentService
 
     private readonly ILLMClient _llm;
     private readonly IAuditorPersonaProvider _persona;
+    private readonly IAiFreeTierGate? _gate;
 
-    public AegisAssessmentService(ILLMClient llm, IAuditorPersonaProvider persona)
+    public AegisAssessmentService(ILLMClient llm, IAuditorPersonaProvider persona, IAiFreeTierGate? gate = null)
     {
         _llm = llm;
         _persona = persona;
+        _gate = gate;
     }
 
     /// <summary>
@@ -44,12 +46,51 @@ public sealed class AegisAssessmentService : IAiAssessmentService
         return string.IsNullOrWhiteSpace(block) ? system : $"{system}\n\n{block}";
     }
 
+    /// <summary>
+    /// True SÓ no modo demonstrativo (<see cref="AiMode.GeminiFreeDemo"/>) — o único em que o contexto de
+    /// laboratório sintético autorizado é injetado nos prompts DOCUMENTAIS. Sinalização EXPLÍCITA derivada do
+    /// modo (nunca de slug hardcoded), e nunca ativa em produção. O acesso ao serviço real já foi filtrado
+    /// pelo <see cref="TenantScopedAssessmentRouter"/> + allowlist antes de chegar aqui.
+    /// </summary>
+    private bool DemoLab => _gate?.Mode == AiMode.GeminiFreeDemo;
+
+    /// <summary>
+    /// System Prompt dos prompts DOCUMENTAIS (triagem + julgamento dirigido): persona + (só no modo
+    /// demonstrativo) o contexto do laboratório sintético autorizado. Fora do GeminiFreeDemo, é só a persona.
+    /// Não é aplicado ao chat/advisory/entrevista — apenas à análise documental.
+    /// </summary>
+    private string DocSystem(string baseSystem)
+    {
+        var s = WithPersona(baseSystem);
+        return DemoLab ? $"{s}\n\n{DemoLabBlock}" : s;
+    }
+
+    /// <summary>
+    /// Contexto do TENANT DEMONSTRATIVO: o tenant é um laboratório FICTÍCIO autorizado e seus documentos
+    /// descrevem a realidade fictícia desse laboratório. NÃO enfraquece a exigência de prova — apenas impede
+    /// a recusa apenas por o texto se declarar sintético/fictício/demonstrativo. A citação continua literal,
+    /// o validador em código continua a autoridade final, e documento não probatório segue com zero crédito.
+    /// </summary>
+    private const string DemoLabBlock =
+        """
+        AUTHORIZED SYNTHETIC LABORATORY CONTEXT:
+        This tenant is an AUTHORIZED, FICTIONAL laboratory used only for demonstration with synthetic data.
+        Its documents describe the FICTIONAL reality of that lab — treat clearly synthetic/demonstrative
+        content as the lab's actual state. Do NOT reject evidence MERELY because it is labeled "synthetic",
+        "fictional", "laboratory" or "demo".
+        You STILL require CONCRETE proof in the excerpt: an executed action, a date or frequency, a scope, a
+        responsible party, and/or a record of the result. Future intent, a title, a thematic word or a vague
+        claim remain WITHOUT probative value. "evidenceQuote" MUST still be a literal, contiguous substring
+        that exists verbatim in the excerpt. In "rationale", make explicit that the evidence pertains to the
+        DEMONSTRATION environment — never present it as real-world data.
+        """;
+
     public async Task<DocumentAnalysis> AnalyzeDocumentAsync(DocumentAnalysisRequest request, CancellationToken ct)
     {
         // PRIMEIRA passada — TRIAGEM. O documento não declara qual controle visa cobrir, então é o
         // modelo que aponta os candidatos; só com o alvo em mãos dá para carregar a regra do 800-53 e
         // fazer o julgamento dirigido (EvaluateDocumentControlAsync).
-        var system = WithPersona(
+        var system = DocSystem(
             "You are a NIST CSF 2.0 GRC analyst. Read the policy/procedure and extract verifiable " +
             "claims, mapping each to a NIST CSF 2.0 subcategory code (e.g. GV.OC-01). " +
             "Be conservative: a document that STATES an intention is not the same as one that EVIDENCES " +
@@ -68,7 +109,7 @@ public sealed class AegisAssessmentService : IAiAssessmentService
         DocumentControlEvaluationRequest request, CancellationToken ct)
     {
         // SEGUNDA passada — RAG dirigido: a régua do 800-53 do controle-alvo + o trecho que o endereça.
-        var system = WithPersona(
+        var system = DocSystem(
             """
             You are a Senior GRC auditor judging whether ONE piece of documentary evidence proves ONE
             NIST CSF 2.0 control. The user message gives you the control outcome, the assessment rule

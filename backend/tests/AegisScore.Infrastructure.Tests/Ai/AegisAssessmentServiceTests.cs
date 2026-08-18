@@ -3,6 +3,7 @@ using AegisScore.Application.Abstractions;
 using AegisScore.Application.Services;
 using AegisScore.Infrastructure.Ai;
 using FluentAssertions;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace AegisScore.Infrastructure.Tests.Ai;
@@ -97,7 +98,56 @@ public sealed class AegisAssessmentServiceTests
         llm.LastUserPrompt.Should().Contain("GV.SC-01", "a lacuna do tenant precisa chegar ao modelo como fato");
     }
 
+    // ---- Modo demonstrativo: contexto de laboratório sintético (SÓ GeminiFreeDemo) ----
+
+    [Fact]
+    public async Task EvaluateDocumentControl_NoModoDemo_InjetaContextoDeLaboratorio_MantendoCitacaoLiteral()
+    {
+        var llm = new CapturingLlmClient(VerdictJson);
+        var sut = new AegisAssessmentService(llm, StaticAuditorPersonaProvider.Neutral, GateFor(AiMode.GeminiFreeDemo));
+
+        await sut.EvaluateDocumentControlAsync(SampleControlRequest(), CancellationToken.None);
+
+        llm.LastSystemPrompt.Should().Contain("AUTHORIZED SYNTHETIC LABORATORY",
+            "no modo demonstrativo o julgamento sabe que o tenant é um laboratório fictício autorizado");
+        llm.LastSystemPrompt.Should().Contain("VERBATIM",
+            "a exigência de trecho LITERAL permanece mesmo no modo demonstrativo");
+    }
+
+    [Fact]
+    public async Task EvaluateDocumentControl_ForaDoModoDemo_NaoInjetaContextoDeLaboratorio()
+    {
+        var llm = new CapturingLlmClient(VerdictJson);
+        var sut = new AegisAssessmentService(llm, StaticAuditorPersonaProvider.Neutral, GateFor(AiMode.Simulated));
+
+        await sut.EvaluateDocumentControlAsync(SampleControlRequest(), CancellationToken.None);
+
+        llm.LastSystemPrompt.Should().NotContain("SYNTHETIC LABORATORY",
+            "fora do GeminiFreeDemo a tolerância demonstrativa NUNCA é injetada — produção intacta");
+        llm.LastSystemPrompt.Should().Contain("VERBATIM");
+    }
+
+    [Fact]
+    public async Task AnalyzeDocument_SemGate_NaoInjetaContextoDeLaboratorio()
+    {
+        // Sem gate (default null) = não demonstrativo — cobre o caso normal/simulado/futuro não demonstrativo.
+        var llm = new CapturingLlmClient("""{"summary":"ok","claims":[]}""");
+        await CreateService(llm).AnalyzeDocumentAsync(
+            new DocumentAnalysisRequest(System.Guid.NewGuid(), "texto", "p.docx"), CancellationToken.None);
+
+        llm.LastSystemPrompt.Should().NotContain("SYNTHETIC LABORATORY");
+    }
+
     // ---- helpers ------------------------------------------------------------------
+
+    private const string VerdictJson = """{"supported":false,"evidenceQuote":"","confidence":0.0,"rationale":"x"}""";
+
+    private static AiFreeTierGate GateFor(AiMode mode) =>
+        new(Options.Create(new AiOptions { Mode = mode, ApiKey = "k" }));
+
+    private static DocumentControlEvaluationRequest SampleControlRequest() => new(
+        "PR.AA-05", "Identities and credentials are managed.", new[] { "Entra ID: MFA privilegiada" },
+        "", "Revisão trimestral de acessos privilegiados no laboratório sintético.", "politica.docx");
 
     private static AegisAssessmentService CreateService(ILLMClient llm) =>
         new(llm, StaticAuditorPersonaProvider.Neutral);

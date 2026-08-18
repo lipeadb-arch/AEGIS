@@ -172,12 +172,17 @@ public sealed class DocumentAnalysisWorker : BackgroundService
             // PASSADA 2 — JULGAMENTO DIRIGIDO + VALIDAÇÃO LITERAL. Só o que volta SUSTENTADO e com trecho
             // presente no texto vira mapping probatório; o resto é descartado fail-closed (zero mapping,
             // zero cobertura, zero score) — mas o documento ainda termina Analisado.
+            // DEDUPLICAÇÃO dos candidatos ANTES do teto de chamadas: a triagem pode repetir o MESMO código
+            // (visto no Render: PR.AA-05 julgado 2×, queimando cota à toa). Normaliza (Trim + caixa), descarta
+            // vazios, agrupa por código NIST mantendo a MAIOR confiança e uma ordem DETERMINÍSTICA (confiança
+            // desc, depois código) — cada código gera UM único julgamento dirigido. Código fora do catálogo
+            // segue descartado com segurança na 2ª passada (RefineWithRuleAsync → não sustentado).
             // Teto de chamadas por análise (Free Tier): a triagem já consumiu 1 chamada; os julgamentos
-            // dirigidos ficam limitados ao restante do orçamento, preservando a cota gratuita. Os candidatos
-            // vêm ordenados pela triagem, então o corte mantém os mais relevantes.
+            // dirigidos ficam limitados ao restante do orçamento, preservando a cota gratuita.
             var maxControlCalls = Math.Max(0, freeTier.MaxCallsPerAnalysis - 1);
+            var candidates = DedupeCandidates(analysis.Claims, maxControlCalls);
             var validated = new List<RefinedControlResult>();
-            foreach (var claim in analysis.Claims.Take(maxControlCalls))
+            foreach (var claim in candidates)
             {
                 // Indisponibilidade do refinamento NÃO cai para a triagem como prova: RefineWithRuleAsync
                 // deixa a exceção propagar e a fila durável reprocessa (retry/falha controlada).
@@ -354,6 +359,22 @@ public sealed class DocumentAnalysisWorker : BackgroundService
             claim.SubcategoryCode, verdict.Supported, verdict.EvidenceQuote ?? "",
             verdict.Rationale ?? "", verdict.Confidence);
     }
+
+    /// <summary>
+    /// Normaliza e DEDUPLICA os candidatos da triagem antes do teto de chamadas: Trim + caixa, descarta
+    /// vazios, mantém UM por código NIST (a MAIOR confiança), ordena de forma determinística (confiança desc,
+    /// depois código asc) e corta no orçamento. Assim dois <c>PR.AA-05</c> viram um único julgamento dirigido.
+    /// <c>internal static</c> para ser testável isoladamente.
+    /// </summary>
+    internal static List<DocumentClaim> DedupeCandidates(IEnumerable<DocumentClaim> claims, int maxControlCalls) =>
+        claims
+            .Select(c => c with { SubcategoryCode = (c.SubcategoryCode ?? "").Trim().ToUpperInvariant() })
+            .Where(c => c.SubcategoryCode.Length > 0)
+            .GroupBy(c => c.SubcategoryCode, StringComparer.Ordinal)
+            .Select(g => g.OrderByDescending(c => c.Confidence).First())
+            .OrderByDescending(c => c.Confidence).ThenBy(c => c.SubcategoryCode, StringComparer.Ordinal)
+            .Take(maxControlCalls)
+            .ToList();
 
     /// <summary>Corta o texto no orçamento, sem quebrar no meio de uma palavra quando dá para evitar.</summary>
     private static string Truncate(string text, int budget)

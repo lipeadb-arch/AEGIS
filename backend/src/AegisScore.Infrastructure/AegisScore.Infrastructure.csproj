@@ -28,6 +28,12 @@
     <!-- Extração de texto de PDF (Document Hub / Govern) via PdfPig — 100% gerenciado, sem binário
          nativo. NB: o ID do pacote é "PdfPig"; "UglyToad.PdfPig" é só o namespace do código. -->
     <PackageReference Include="PdfPig" Version="0.1.15" />
+    <!-- Extração de texto de DOCX (políticas corporativas) via Open XML SDK — 100% gerenciado, sem GDI/
+         Office/binário nativo, portável no container Linux do Render. Só LÊ o XML (parágrafos/tabelas):
+         nunca executa macro, link externo ou conteúdo incorporado. A dependência transitiva
+         System.IO.Packaging é fixada em 10.0.x (a 8.0.0 arrastada por padrão tem advisory NU1903). -->
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.1.0" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.0" />
     <!-- [AEGIS-AUD-034] Geração do RELATÓRIO EXECUTIVO em PDF a partir da fotografia imutável de postura.
          Edição CORE do PDFsharp/MigraDoc (empira, licença MIT): 100% gerenciada, sem GDI+/WPF/Office/navegador,
          adequada a aplicação web e multiplataforma. A dependência vive SÓ neste projeto (o único que gera PDF);

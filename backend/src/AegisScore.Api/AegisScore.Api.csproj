@@ -21,6 +21,10 @@
     <ProjectReference Include="..\AegisScore.Connectors.Google\AegisScore.Connectors.Google.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Testes focados acessam o helper interno DocumentAnalysisWorker.DedupeCandidates sem torná-lo público. -->
+    <InternalsVisibleTo Include="AegisScore.Infrastructure.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Catálogos GRC de posse do projeto da API (Data/). Copiados para o output:
          o catálogo alimenta o FrameworkSeeder (ContentRootPath/Data/, ver Program.cs) e
          as regras serão carregadas pelo motor de avaliação no startup da próxima fase. -->
