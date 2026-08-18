@@ -215,6 +215,9 @@ public static class DependencyInjection
         // PDFs (Document Hub / Govern) via PdfPig. Mais um IDocumentTextExtractor na coleção: o
         // DocumentAnalysisWorker resolve GetServices<>() e escolhe pelo CanHandle (text/* vs application/pdf).
         services.AddSingleton<IDocumentTextExtractor, PdfTextExtractor>();
+        // DOCX (políticas corporativas) via Open XML SDK — só leitura de parágrafos/tabelas, sem macro. Mesmo
+        // padrão: a coleção de extratores é a autoridade dos formatos aceitos (upload e worker consultam CanHandle).
+        services.AddSingleton<IDocumentTextExtractor, DocxTextExtractor>();
         // [AEGIS-AUD-050] Filas operacionais DURÁVEIS no PostgreSQL — substituem os canais em memória
         // (sem durabilidade), que perdiam trabalho em qualquer reinício e não coordenavam réplicas. O
         // status persistido do próprio GovernanceDocument é a fila de análise; a PolicySyncRequest persistida é

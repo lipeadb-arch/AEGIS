@@ -173,7 +173,11 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
         <div class="up-row">
           <label class="up-field">
             <span>Arquivo</span>
-            <input type="file" (change)="onFileSelected($event)" />
+            <input
+              type="file"
+              accept=".pdf,.txt,.md,.csv,.json,.docx,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              (change)="onFileSelected($event)"
+            />
           </label>
 
           <label class="up-field">
@@ -781,9 +785,39 @@ export class DocumentHubComponent implements OnInit {
     this.expandedId.update((cur) => (cur === id ? null : id));
   }
 
+  /** Extensões aceitas — espelham os extratores do backend (PDF, texto e DOCX). O backend é a autoridade. */
+  private readonly supportedExtensions = ['pdf', 'txt', 'md', 'csv', 'json', 'docx'];
+
+  private isSupported(file: File): boolean {
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+    return this.supportedExtensions.includes(ext);
+  }
+
+  /** Mensagem amigável da falha de upload (422 = formato, com o texto do backend; 409 = duplicado; senão genérica). */
+  private uploadErrorMessage(err: { status?: number; error?: unknown }): string {
+    if (err?.status === 409) return 'Documento idêntico já ingerido (mesmo hash) neste cliente.';
+    if (err?.status === 422) {
+      return typeof err.error === 'string' && err.error.trim()
+        ? err.error
+        : 'Formato não suportado. Envie PDF, TXT ou DOCX.';
+    }
+    return 'Não foi possível enviar o documento. Verifique a API e tente novamente.';
+  }
+
   onFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0] ?? null;
+
+    // Recusa CLARA de formato antes do upload (o backend também recusa com 422). Evita a experiência de
+    // enviar um .doc/.docm e só descobrir a falha depois, na fila.
+    if (file && !this.isSupported(file)) {
+      this.uploadError.set('Formato não suportado. Envie PDF, TXT ou DOCX.');
+      this.uploadFile.set(null);
+      input.value = '';
+      return;
+    }
+
+    this.uploadError.set(null);
     this.uploadFile.set(file);
     // Sugere o título a partir do nome do arquivo, se ainda estiver vazio.
     if (file && !this.uploadTitle().trim()) {
@@ -810,11 +844,7 @@ export class DocumentHubComponent implements OnInit {
       error: (err) => {
         console.error('Falha no upload do documento:', err);
         this.uploading.set(false);
-        this.uploadError.set(
-          err?.status === 409
-            ? 'Documento idêntico já ingerido (mesmo hash) neste cliente.'
-            : 'Não foi possível enviar o documento. Verifique a API e tente novamente.',
-        );
+        this.uploadError.set(this.uploadErrorMessage(err));
       },
     });
   }
