@@ -138,7 +138,50 @@ public sealed class GeminiLlmClientTests
         body.Should().NotContain("thinking", "não se envia thinking_budget");
     }
 
+    // ---- Cenário 6: timeout por tentativa (Polly) traduzido -----------------------
+
+    [Fact]
+    public async Task ExecutePromptAsync_QuandoTimeoutRejected_TraduzParaAiUnavailable()
+    {
+        // O timeout por tentativa do Polly surge como TimeoutRejectedException (era a categoria crua
+        // `TimeoutRejectedException` persistida no worker). O client a traduz para AiUnavailableException
+        // (categoria CONHECIDA que o frontend já traduz), NÃO para a subclasse de cota.
+        var http = new HttpClient(new ThrowingHandler(new Polly.Timeout.TimeoutRejectedException("por tentativa")));
+        var client = new GeminiLlmClient(http, Options.Create(new AiOptions { ApiKey = "test-key" }));
+
+        var acao = () => client.ExecutePromptAsync("system", "user");
+
+        var ex = (await acao.Should().ThrowAsync<AiUnavailableException>()).Which;
+        ex.GetType().Should().Be(typeof(AiUnavailableException), "timeout NÃO é cota (AiQuotaExhaustedException)");
+        ex.Message.Should().Contain("Timeout ao aguardar resposta do motor de IA");
+    }
+
+    // ---- Cenário 7: cancelamento do chamador continua cancelamento -----------------
+
+    [Fact]
+    public async Task ExecutePromptAsync_QuandoChamadorCancela_PropagaCancelamento_NaoIndisponibilidade()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var http = new HttpClient(new ThrowingHandler(new TaskCanceledException("cancelado pelo chamador")));
+        var client = new GeminiLlmClient(http, Options.Create(new AiOptions { ApiKey = "test-key" }));
+
+        var acao = () => client.ExecutePromptAsync("system", "user", cts.Token);
+
+        // Cancelamento do chamador é cancelamento — NUNCA vira AiUnavailableException (guarda !ct.IsCancellationRequested).
+        await acao.Should().ThrowAsync<OperationCanceledException>();
+    }
+
     // ---- helpers ------------------------------------------------------------------
+
+    /// <summary>Handler que sempre LANÇA a exceção informada — para exercitar os catches do client.</summary>
+    private sealed class ThrowingHandler : HttpMessageHandler
+    {
+        private readonly System.Exception _ex;
+        public ThrowingHandler(System.Exception ex) => _ex = ex;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => throw _ex;
+    }
 
     private static GeminiLlmClient CreateClient(StubHttpMessageHandler handler, string apiKey = "test-key")
     {

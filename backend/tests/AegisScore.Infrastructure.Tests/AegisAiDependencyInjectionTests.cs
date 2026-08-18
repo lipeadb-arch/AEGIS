@@ -53,6 +53,17 @@ public sealed class AegisAiDependencyInjectionTests
         gate.IsExternalAllowedForSlug("tenant-corporativo").Should().BeFalse("fora da allowlist nunca libera");
     }
 
+    [Fact]
+    public void HttpClientDoGemini_TemTimeoutNativoDesabilitado_PollyEhAutoridadeUnica()
+    {
+        using var provider = BuildProvider(mode: "GeminiFreeDemo", apiKey: "chave");
+
+        var client = provider.GetRequiredService<System.Net.Http.IHttpClientFactory>().CreateClient(nameof(GeminiLlmClient));
+
+        client.Timeout.Should().Be(System.Threading.Timeout.InfiniteTimeSpan,
+            "o timeout nativo (100s) do HttpClient é desabilitado para o Polly (120s) ser a única autoridade");
+    }
+
     private static ServiceProvider BuildProvider(string mode, string? apiKey, string? allowedSlug = null)
     {
         var settings = new Dictionary<string, string?>

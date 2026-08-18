@@ -102,8 +102,11 @@ public static class DependencyInjection
         services.AddSingleton<StubLlmClient>();
         services.AddSingleton<StubAssessmentService>();
         services.AddScoped<AegisAssessmentService>();     // IAiAssessmentService neutro sobre ILLMClient
-        // Adaptador Gemini ISOLADO na Infrastructure (HttpClient tipado + resiliência Polly já existente).
-        services.AddHttpClient<GeminiLlmClient>().AddAiResilience();
+        // Adaptador Gemini ISOLADO na Infrastructure (HttpClient tipado + resiliência Polly já existente). O
+        // HttpClient nativo cancela aos 100s por padrão — abortaria ANTES do timeout de 120s do Polly. Aqui o
+        // timeout nativo é DESABILITADO para o Polly reger o limite sozinho (única autoridade de timeout).
+        services.AddHttpClient<GeminiLlmClient>(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
+            .AddAiResilience();
 
         // Gate do Free Tier (configuração pura), resolver de tenant→slug (scoped; overridável no worker) e os
         // ROTEADORES que são a ÚNICA ligação das interfaces neutras na DI — a fronteira de dados do modo

@@ -37,4 +37,8 @@
   <ItemGroup>
     <ProjectReference Include="..\AegisScore.Application\AegisScore.Application.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Testes focados acessam a extensão interna AddAiResilience (timeout injetável) sem torná-la pública. -->
+    <InternalsVisibleTo Include="AegisScore.Infrastructure.Tests" />
+  </ItemGroup>
 </Project>

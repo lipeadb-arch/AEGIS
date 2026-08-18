@@ -24,8 +24,12 @@ internal static class AiResilienceExtensions
     /// só perde o enriquecimento; o Auditor devolve 503/cota. Insistir demais custa latência e cota sem
     /// melhorar a decisão de auditoria.
     /// </summary>
-    public static IHttpClientBuilder AddAiResilience(this IHttpClientBuilder builder)
+    public static IHttpClientBuilder AddAiResilience(this IHttpClientBuilder builder, TimeSpan? perAttemptTimeout = null)
     {
+        // ÚNICA autoridade de timeout do pipeline: 120s por tentativa em produção. O HttpClient tem o timeout
+        // nativo (100s) DESABILITADO no registro (ver DependencyInjection), então o Polly é o único limite.
+        // O parâmetro é sobrescrevível SÓ para testes (timeout curto em ms) — nunca em produção.
+        var perAttempt = perAttemptTimeout ?? TimeSpan.FromSeconds(120);
         builder.AddResilienceHandler("aegis-ai", (pipeline, context) =>
         {
             // 1) RETRY com backoff exponencial + jitter.
@@ -60,10 +64,11 @@ internal static class AiResilienceExtensions
                     || args.Outcome.Result is { } r && IsTransient(r.StatusCode)),
             });
 
-            // 3) TIMEOUT por tentativa. Um LLM que pendura a conexão é pior que um que recusa: sem teto,
-            //    o worker fica preso e o shutdown gracioso não acontece. Fica DEPOIS do retry no pipeline,
-            //    portanto vale para cada tentativa individual, não para o conjunto.
-            pipeline.AddTimeout(TimeSpan.FromSeconds(60));
+            // 3) TIMEOUT por tentativa (ÚNICA autoridade do limite). Um LLM que pendura a conexão é pior que
+            //    um que recusa: sem teto, o worker fica preso e o shutdown gracioso não acontece. 120s cobre a
+            //    análise documental real do Gemini (60s truncava → TimeoutRejectedException nas 5 tentativas).
+            //    Fica DEPOIS do retry no pipeline, portanto vale para cada tentativa individual, não o conjunto.
+            pipeline.AddTimeout(perAttempt);
         });
 
         return builder;

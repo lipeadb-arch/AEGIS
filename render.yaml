@@ -99,6 +99,13 @@ services:
       - key: Ai__FreeTier__AllowedTenantSlugs__0
         sync: false
 
+      # ---- Fila de análise documental (específico da HOMOLOGAÇÃO) ----
+      # Limite de tentativas específico desta homologação: impede um ciclo longo de 5 tentativas quando o
+      # Gemini dá timeout/indisponível, poupando latência e cota gratuita. O default genérico do código = 5.
+      # Não altera lease, heartbeat, backoff nem schema.
+      - key: DocumentAnalysisQueue__MaxAttempts
+        value: "2"
+
     # ---- (Opcional) Persistência de uploads do Document Hub ----
     # Sem disco, os documentos vão para /app/document-store (efêmero, recriado a cada deploy).
     # Para PERSISTIR, descomente o disco abaixo e aponte DocumentStorage__RootPath para o mountPath.
