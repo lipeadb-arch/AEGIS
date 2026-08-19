@@ -32,6 +32,12 @@ export const ASSIGNABLE_ROLES: TenantRoleName[] = ['Analyst', 'Manager', 'Tenant
 /** Um acesso na listagem (GET /api/v1/users). Sem tenantId (implícito) e sem hash. */
 export interface TenantUser {
   id: string;
+  /**
+   * Id da PESSOA global (a `IdentityAccount`), distinto do membership `id` (tenant-scoped). É a chave da rota
+   * GLOBAL de redefinição administrativa de senha. Expô-lo NÃO concede autoridade — a rota continua protegida
+   * pela policy de plataforma no backend.
+   */
+  identityAccountId: string;
   email: string;
   displayName: string;
   role: TenantRoleName;
@@ -39,6 +45,33 @@ export interface TenantUser {
   hasLocalCredential: boolean;
   createdAt: string;
   lastLoginAt: string | null;
+}
+
+/** Piso/teto de comprimento da senha — MESMA régua do backend (`PasswordPolicy`, NIST SP 800-63B). */
+export const PASSWORD_MIN_LENGTH = 12;
+export const PASSWORD_MAX_LENGTH = 128;
+
+/** Corpo da redefinição administrativa (POST /platform/identities/{accountId}/password). Só a nova senha. */
+export interface AdminResetPasswordRequest {
+  newPassword: string;
+}
+
+/**
+ * Predicado PURO da visibilidade do botão "Redefinir senha" (redefinição administrativa). Extraído aqui para
+ * ser a autoridade única da regra — o template só o consome, e o build o verifica por tipos. A UI é apenas
+ * conveniência: o backend permanece a autoridade efetiva (policy de plataforma + validações).
+ *
+ * Mostrar a ação SOMENTE quando as três condições valem juntas:
+ *  - quem vê é `PlatformAdmin` (autoridade global);
+ *  - o alvo tem credencial LOCAL (uma conta federated-only não tem senha a redefinir);
+ *  - o alvo NÃO é a própria conta (para a própria senha existe a troca normal, que exige a senha atual).
+ */
+export function canResetLocalPassword(input: {
+  viewerIsPlatformAdmin: boolean;
+  targetHasLocalCredential: boolean;
+  targetIsSelf: boolean;
+}): boolean {
+  return input.viewerIsPlatformAdmin && input.targetHasLocalCredential && !input.targetIsSelf;
 }
 
 /** Corpo do onboarding (POST /api/v1/platform/tenant-users). `role` como NÚMERO. */

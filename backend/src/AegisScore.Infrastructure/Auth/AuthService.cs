@@ -469,20 +469,84 @@ public sealed class AuthService : IAuthService
         if (PasswordPolicy.ValidateStrength(newPassword ?? "") is { } weak)
             return PasswordChangeResult.Rejected(PasswordChangeStatus.WeakPassword, weak);
 
-        // ATÔMICO: a nova senha (IdentityAccount) e a revogação de TODAS as sessões da identidade — em TODOS
-        // os tenants — num ÚNICO commit. Se a revogação falhar, a transação é revertida e a senha ANTIGA
-        // permanece válida (nenhum estado parcial: senha nova sem sessões revogadas seria uma janela de risco).
-        // A revogação cross-tenant é ESTRITAMENTE ancorada no account_id — a exceção autorizada de
-        // IgnoreQueryFilters sobre identidade (ver a doc de IAuthService). O access token já emitido conserva
+        // Núcleo sensível COMPARTILHADO: substitui o hash e revoga todas as sessões da identidade em TODOS os
+        // tenants, atomicamente (ver ReplaceHashAndRevokeAllSessionsAsync). O access token já emitido conserva
         // seu teto de 10 min (não o encurtamos).
+        var affected = await ReplaceHashAndRevokeAllSessionsAsync(account, newPassword!, ct);
+
+        _logger.LogInformation(
+            "Troca de senha concluída para a conta {AccountId}: sessões revogadas em {Count} ambiente(s).",
+            accountId, affected);
+
+        return PasswordChangeResult.Changed;
+    }
+
+    public async Task<AdminPasswordResetResult> AdminResetPasswordAsync(
+        Guid actorAccountId, Guid targetAccountId, string newPassword, CancellationToken ct)
+    {
+        if (targetAccountId == Guid.Empty)
+            return AdminPasswordResetResult.Rejected(AdminPasswordResetStatus.NotFound);
+
+        // AUTO-redefinição barrada ANTES de qualquer leitura de credencial: esta rota não exige a senha atual,
+        // então usá-la sobre si mesmo seria um bypass da troca normal. Compara account_id×account_id (o ator
+        // vem da claim, o alvo da rota) — nunca por e-mail. Um ator autenticado tem conta, então isto não vaza
+        // existência: já sabemos que a própria conta existe.
+        if (actorAccountId != Guid.Empty && actorAccountId == targetAccountId)
+            return AdminPasswordResetResult.Rejected(
+                AdminPasswordResetStatus.SelfResetForbidden,
+                "Para a sua própria senha use a troca normal, que exige a senha atual. A redefinição " +
+                "administrativa serve para restabelecer o acesso de OUTRA identidade.");
+
+        // A identidade é GLOBAL (sem query filter): leitura por Id. Ausente → 404 genérico, sem revelar nada.
+        var account = await _db.IdentityAccounts.FirstOrDefaultAsync(a => a.Id == targetAccountId, ct);
+        if (account is null)
+            return AdminPasswordResetResult.Rejected(AdminPasswordResetStatus.NotFound);
+
+        // Conta federated-only (sem hash): a credencial é do provedor corporativo. NÃO se cria uma senha local
+        // aqui — seria fabricar um fator onde só deveria existir o Entra. Continua exatamente como estava.
+        if (account.PasswordHash is null)
+            return AdminPasswordResetResult.Rejected(
+                AdminPasswordResetStatus.NoLocalCredential,
+                "Esta identidade autentica pelo provedor corporativo — não há senha local para redefinir.");
+
+        // A NOVA senha segue a MESMA política NIST — autoridade única PasswordPolicy (idêntica à troca própria).
+        if (PasswordPolicy.ValidateStrength(newPassword ?? "") is { } weak)
+            return AdminPasswordResetResult.Rejected(AdminPasswordResetStatus.WeakPassword, weak);
+
+        // MESMO núcleo sensível da troca da própria senha (sem duplicar atomicidade/revogação).
+        var affected = await ReplaceHashAndRevokeAllSessionsAsync(account, newPassword!, ct);
+
+        // Auditoria: SOMENTE os ids e a contagem — NUNCA e-mail, senha ou hash.
+        _logger.LogInformation(
+            "Redefinição administrativa de senha: ator {ActorAccountId} redefiniu a identidade {TargetAccountId}; " +
+            "sessões revogadas em {Count} ambiente(s).",
+            actorAccountId, targetAccountId, affected);
+
+        return AdminPasswordResetResult.Reset(affected);
+    }
+
+    /// <summary>
+    /// Núcleo ATÔMICO e SENSÍVEL, compartilhado pela troca da própria senha e pela redefinição administrativa:
+    /// substitui o <see cref="IdentityAccount.PasswordHash"/> e revoga TODAS as sessões (refresh tokens) da
+    /// identidade em TODOS os tenants, num ÚNICO commit. Devolve a quantidade de ambientes afetados. Se a
+    /// revogação falhar, a transação é revertida e o hash NOVO não é persistido — nunca um estado parcial
+    /// (senha nova sem sessões revogadas seria uma janela de risco). A revogação cross-tenant é ESTRITAMENTE
+    /// ancorada no <c>account_id</c> — a exceção autorizada de <c>IgnoreQueryFilters</c> sobre identidade (ver
+    /// a doc de <c>IAuthService</c>). Pressupõe que o chamador JÁ validou política e autorização; aqui só se
+    /// aplica a mutação. <paramref name="account"/> deve ser a entidade RASTREADA (a atribuição de hash sai no
+    /// SaveChanges). Nunca registra nem devolve senha/hash.
+    /// </summary>
+    private async Task<int> ReplaceHashAndRevokeAllSessionsAsync(
+        IdentityAccount account, string newPassword, CancellationToken ct)
+    {
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
         var membershipIds = await _db.Users.IgnoreQueryFilters()
-            .Where(u => u.IdentityAccountId == accountId)
+            .Where(u => u.IdentityAccountId == account.Id)
             .Select(u => u.Id)
             .ToListAsync(ct);
 
-        account.PasswordHash = _hasher.Hash(newPassword!);   // IdentityAccount é global: SaveChanges não exige tenant
+        account.PasswordHash = _hasher.Hash(newPassword);   // IdentityAccount é global: SaveChanges não exige tenant
         await _db.SaveChangesAsync(ct);
 
         if (membershipIds.Count > 0)
@@ -494,12 +558,7 @@ public sealed class AuthService : IAuthService
         }
 
         await tx.CommitAsync(ct);
-
-        _logger.LogInformation(
-            "Troca de senha concluída para a conta {AccountId}: sessões revogadas em {Count} ambiente(s).",
-            accountId, membershipIds.Count);
-
-        return PasswordChangeResult.Changed;
+        return membershipIds.Count;
     }
 
     /// <summary>

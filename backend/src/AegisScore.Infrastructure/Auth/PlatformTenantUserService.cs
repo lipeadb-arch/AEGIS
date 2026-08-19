@@ -194,6 +194,6 @@ public sealed class PlatformTenantUserService : IPlatformTenantUserService
     }
 
     private static UserSummary Project(User u, IdentityAccount account) => new(
-        u.Id, u.TenantId, account.Email, u.DisplayName, u.Role, u.IsActive, u.CreatedAt, u.LastLoginAt,
-        HasLocalCredential: account.PasswordHash is not null);
+        u.Id, u.TenantId, u.IdentityAccountId, account.Email, u.DisplayName, u.Role, u.IsActive,
+        u.CreatedAt, u.LastLoginAt, HasLocalCredential: account.PasswordHash is not null);
 }

@@ -5,10 +5,13 @@ import { AuthService } from '../../services/auth.service';
 import { UsersService } from '../../services/users.service';
 import {
   ASSIGNABLE_ROLES,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
   ROLE_LABELS,
   TENANT_ROLE_VALUE,
   TenantRoleName,
   TenantUser,
+  canResetLocalPassword,
   roleLabel,
 } from '../../models/users.models';
 
@@ -54,8 +57,10 @@ import {
           </div>
           <p class="note">
             Se o e-mail já existir globalmente, apenas o acesso a este ambiente é concedido — a credencial,
-            o papel global e o vínculo corporativo são preservados. Uma senha informada nunca redefine uma
-            conta existente.
+            o papel global e o vínculo corporativo são preservados. Uma senha informada aqui
+            <strong>não é aplicada</strong> a uma identidade existente. Para restabelecer o acesso de quem não
+            consegue autenticar, use <strong>Redefinir senha</strong> na lista abaixo — não exclua nem recrie o
+            usuário.
           </p>
           @if (onboardError()) {
             <p class="msg err" role="alert">{{ onboardError() }}</p>
@@ -167,6 +172,16 @@ import {
               } @else {
                 <button type="button" class="btn sm" (click)="reactivate(u)" [disabled]="busyId() === u.id">Reativar</button>
               }
+              <!-- Redefinição administrativa: só PlatformAdmin, alvo com credencial local, e nunca a própria conta. -->
+              @if (canReset(u)) {
+                <button type="button" class="btn sm" (click)="startReset(u)" [disabled]="busyId() === u.id">
+                  Redefinir senha
+                </button>
+              } @else if (showsFederatedHint(u)) {
+                <span class="prov-hint" title="A senha é gerida pelo login corporativo (Entra ID)">
+                  Senha administrada pelo provedor corporativo
+                </span>
+              }
             </div>
 
             <!-- Edição inline -->
@@ -203,6 +218,46 @@ import {
                   <button type="button" class="btn sm" (click)="confirmingId.set(null)">Cancelar</button>
                 </div>
               </div>
+            }
+
+            <!-- Redefinição administrativa de senha (inline) -->
+            @if (resettingId() === u.id) {
+              <form class="reset" [formGroup]="resetForm" (ngSubmit)="submitReset(u)" role="group"
+                    aria-label="Redefinir senha">
+                <p class="note reset-note">
+                  Isto altera a <strong>identidade global</strong> de {{ u.displayName }} e encerra as sessões
+                  dela em <strong>todos os ambientes</strong>. É diferente de <em>desativar o acesso</em>: a
+                  pessoa continua com acesso, mas precisará entrar com a nova senha. A senha atual não é exigida.
+                </p>
+                <div class="reset-fields">
+                  <label class="field">
+                    <span>Nova senha ({{ minLen }} a {{ maxLen }} caracteres)</span>
+                    <input type="password" formControlName="newPassword" autocomplete="new-password" />
+                    @if (resetInvalid('newPassword')) {
+                      <small class="err">A senha deve ter entre {{ minLen }} e {{ maxLen }} caracteres.</small>
+                    }
+                  </label>
+                  <label class="field">
+                    <span>Confirmar nova senha</span>
+                    <input type="password" formControlName="confirm" autocomplete="new-password" />
+                    @if (resetForm.hasError('mismatch') && resetForm.get('confirm')?.touched) {
+                      <small class="err">A confirmação não confere.</small>
+                    }
+                  </label>
+                </div>
+                <div class="actions">
+                  <button type="submit" class="btn sm primary" [disabled]="busyId() === u.id || resetForm.invalid">
+                    {{ busyId() === u.id ? 'Redefinindo…' : 'Redefinir senha' }}
+                  </button>
+                  <button type="button" class="btn sm" (click)="cancelReset()" [disabled]="busyId() === u.id">
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            }
+
+            @if (resetOkId() === u.id && resetOk()) {
+              <p class="msg ok row-msg" role="status">{{ resetOk() }}</p>
             }
 
             @if (rowError() && rowErrorId() === u.id) {
@@ -385,6 +440,33 @@ import {
         font-size: 0.83rem;
         color: var(--text);
       }
+      .reset {
+        grid-column: 1 / -1;
+        border-top: 1px dashed var(--line);
+        padding-top: 0.7rem;
+        margin-top: 0.4rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+      }
+      .reset-note {
+        line-height: 1.5;
+      }
+      .reset-fields {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 0.75rem;
+      }
+      .err {
+        color: var(--red, #ff6b8b);
+        font-size: 0.72rem;
+      }
+      .prov-hint {
+        align-self: center;
+        font-size: 0.72rem;
+        color: var(--muted);
+        font-style: italic;
+      }
       .actions {
         display: flex;
         gap: 0.5rem;
@@ -465,6 +547,13 @@ export class SettingsUsersComponent implements OnInit {
   protected readonly rowError = signal<string | null>(null);
   protected readonly rowErrorId = signal<string | null>(null);
 
+  // ---- Redefinição administrativa de senha (PlatformAdmin) ----
+  protected readonly minLen = PASSWORD_MIN_LENGTH;
+  protected readonly maxLen = PASSWORD_MAX_LENGTH;
+  protected readonly resettingId = signal<string | null>(null);
+  protected readonly resetOk = signal<string | null>(null);
+  protected readonly resetOkId = signal<string | null>(null);
+
   protected readonly onboarding = signal(false);
   protected readonly onboardError = signal<string | null>(null);
   protected readonly onboardOk = signal<string | null>(null);
@@ -488,6 +577,18 @@ export class SettingsUsersComponent implements OnInit {
     displayName: ['', [Validators.required, Validators.maxLength(200)]],
     role: ['Analyst' as TenantRoleName, [Validators.required]],
   });
+
+  // Nova senha + confirmação. Validador de grupo garante que as duas conferem (mesma régua do "Minha conta").
+  protected readonly resetForm = this.fb.nonNullable.group(
+    {
+      newPassword: [
+        '',
+        [Validators.required, Validators.minLength(PASSWORD_MIN_LENGTH), Validators.maxLength(PASSWORD_MAX_LENGTH)],
+      ],
+      confirm: ['', [Validators.required]],
+    },
+    { validators: (g) => (g.get('newPassword')?.value === g.get('confirm')?.value ? null : { mismatch: true }) },
+  );
 
   protected readonly filtered = computed(() => {
     const term = this.search().trim().toLowerCase();
@@ -587,6 +688,7 @@ export class SettingsUsersComponent implements OnInit {
   startEdit(u: TenantUser): void {
     this.clearRowMsg();
     this.confirmingId.set(null);
+    this.closeReset();
     this.editingId.set(u.id);
     this.editForm.reset({ displayName: u.displayName, role: u.role });
     // Auto-rebaixamento é barrado no backend; na UI, travamos o papel na própria linha (via API reativa,
@@ -645,6 +747,74 @@ export class SettingsUsersComponent implements OnInit {
     });
   }
 
+  // ---- Redefinição administrativa de senha ----
+
+  /** Regra ÚNICA (predicado puro) da visibilidade do botão: PlatformAdmin + credencial local + não é a própria conta. */
+  canReset(u: TenantUser): boolean {
+    return canResetLocalPassword({
+      viewerIsPlatformAdmin: this.auth.isPlatformAdmin(),
+      targetHasLocalCredential: u.hasLocalCredential,
+      targetIsSelf: this.isSelf(u),
+    });
+  }
+
+  /** Para um PlatformAdmin, uma conta federada (de outra pessoa) mostra o motivo de não haver redefinição local. */
+  showsFederatedHint(u: TenantUser): boolean {
+    return this.auth.isPlatformAdmin() && !u.hasLocalCredential && !this.isSelf(u);
+  }
+
+  /** Um controle do form de redefinição está inválido E já foi tocado? (para exibir a dica de erro). */
+  resetInvalid(control: 'newPassword' | 'confirm'): boolean {
+    const c = this.resetForm.get(control);
+    return !!c && c.invalid && (c.dirty || c.touched);
+  }
+
+  startReset(u: TenantUser): void {
+    this.clearRowMsg();
+    this.resetOk.set(null);
+    this.resetOkId.set(null);
+    this.editingId.set(null);
+    this.confirmingId.set(null);
+    // Sempre começa vazio — a senha nunca é pré-preenchida nem persistida.
+    this.resetForm.reset({ newPassword: '', confirm: '' });
+    this.resettingId.set(u.id);
+  }
+
+  cancelReset(): void {
+    this.closeReset();
+  }
+
+  submitReset(u: TenantUser): void {
+    if (this.resetForm.invalid || this.busyId() === u.id) return;
+    this.busyId.set(u.id);
+    this.clearRowMsg();
+    const newPassword = this.resetForm.getRawValue().newPassword;
+    // O alvo é a IDENTIDADE GLOBAL (identityAccountId), não o membership.
+    this.api.resetPassword(u.identityAccountId, newPassword).subscribe({
+      next: () => {
+        // Sucesso: NUNCA deixa a senha no DOM. Fecha o form e confirma SEM exibir a senha.
+        this.closeReset();
+        this.busyId.set(null);
+        this.resetOkId.set(u.id);
+        this.resetOk.set(
+          `Senha de ${u.displayName} redefinida. As sessões dele em todos os ambientes foram encerradas; ` +
+            `informe a nova senha por um canal seguro.`,
+        );
+      },
+      error: (e: Error) => {
+        // Erro: limpa a senha do DOM (mantém o form aberto para nova tentativa) e mostra a mensagem.
+        this.resetForm.reset({ newPassword: '', confirm: '' });
+        this.rowFail(u.id, e);
+      },
+    });
+  }
+
+  /** Fecha o painel de redefinição e apaga a senha do DOM (form reativo zerado). */
+  private closeReset(): void {
+    this.resettingId.set(null);
+    this.resetForm.reset({ newPassword: '', confirm: '' });
+  }
+
   // ---- Helpers ----
   private replaceRow(updated: TenantUser): void {
     this._users.update((list) => list.map((x) => (x.id === updated.id ? updated : x)));
@@ -659,5 +829,7 @@ export class SettingsUsersComponent implements OnInit {
   private clearRowMsg(): void {
     this.rowError.set(null);
     this.rowErrorId.set(null);
+    this.resetOk.set(null);
+    this.resetOkId.set(null);
   }
 }

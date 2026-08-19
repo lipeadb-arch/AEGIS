@@ -122,6 +122,50 @@ public sealed record PasswordChangeResult(PasswordChangeStatus Status, string? D
 }
 
 /// <summary>
+/// Desfecho da redefinição ADMINISTRATIVA de senha — um <c>PlatformAdmin</c> redefine a credencial local de
+/// OUTRA identidade que não consegue mais autenticar. Distinta da troca da PRÓPRIA senha: não há senha atual
+/// (o alvo, por definição, a perdeu), então a autoridade vem exclusivamente da policy de plataforma.
+/// </summary>
+public enum AdminPasswordResetStatus
+{
+    /// <summary>Senha redefinida; todas as sessões da identidade-alvo revogadas em TODOS os tenants.</summary>
+    Reset = 0,
+
+    /// <summary>Identidade-alvo inexistente — resposta GENÉRICA (404), sem revelar se o e-mail existe.</summary>
+    NotFound = 1,
+
+    /// <summary>
+    /// Conta federated-only (sem hash local): a credencial é do provedor corporativo. NÃO se cria uma
+    /// credencial local por esta rota — seria fabricar um segundo fator onde só deveria existir o Entra (409).
+    /// </summary>
+    NoLocalCredential = 2,
+
+    /// <summary>Nova senha fora da política de comprimento — nada é alterado (400).</summary>
+    WeakPassword = 3,
+
+    /// <summary>
+    /// O ator tentou redefinir a PRÓPRIA senha por esta rota administrativa (409). A redefinição administrativa
+    /// não exige a senha atual; permiti-la sobre si mesmo transformaria a rota num bypass da troca normal (que
+    /// EXIGE a senha atual). O administrador deve usar a troca comum em <c>POST /api/v1/auth/password</c>.
+    /// </summary>
+    SelfResetForbidden = 4,
+}
+
+/// <summary>
+/// Resultado tipado da redefinição administrativa. NUNCA carrega senha nem hash. Em sucesso, expõe SOMENTE a
+/// quantidade de ambientes cujas sessões foram revogadas — o dado auditável, sem nada sensível.
+/// </summary>
+public sealed record AdminPasswordResetResult(
+    AdminPasswordResetStatus Status, int AffectedEnvironments = 0, string? Detail = null)
+{
+    public bool Succeeded => Status is AdminPasswordResetStatus.Reset;
+    public static AdminPasswordResetResult Reset(int affectedEnvironments) =>
+        new(AdminPasswordResetStatus.Reset, affectedEnvironments);
+    public static AdminPasswordResetResult Rejected(AdminPasswordResetStatus status, string? detail = null) =>
+        new(status, 0, detail);
+}
+
+/// <summary>
 /// Serviço de autenticação: login por credenciais, listagem de ambientes, troca de ambiente e rotação
 /// de refresh token (RTR) com detecção de reutilização (breach).
 ///
@@ -211,6 +255,26 @@ public interface IAuthService
     /// </summary>
     Task<PasswordChangeResult> ChangeOwnPasswordAsync(
         Guid accountId, string currentPassword, string newPassword, CancellationToken ct);
+
+    /// <summary>
+    /// Redefinição ADMINISTRATIVA de senha local: um <c>PlatformAdmin</c> restabelece a credencial de OUTRA
+    /// identidade que não consegue mais autenticar (recuperação legítima, sem e-mail/SMTP). O alvo é a
+    /// <see cref="IdentityAccount"/> (<paramref name="targetAccountId"/>), NUNCA um membership — o modelo de
+    /// identidade global é preservado. Diferente da troca da própria senha, NÃO exige a senha atual; por isso
+    /// a autoridade vem só da policy de plataforma na borda, e esta operação recusa a AUTO-redefinição
+    /// (<paramref name="actorAccountId"/> == alvo → <see cref="AdminPasswordResetStatus.SelfResetForbidden"/>),
+    /// para não virar um bypass da troca normal.
+    ///
+    /// A nova senha segue a MESMA <c>PasswordPolicy</c> (NIST). Em sucesso, substitui o hash e revoga
+    /// ATOMICAMENTE todos os refresh tokens da identidade em TODOS os tenants — reutilizando o MESMO núcleo
+    /// sensível da troca da própria senha (sem duplicar a régua de atomicidade/revogação). Uma conta
+    /// federated-only (sem hash) devolve <see cref="AdminPasswordResetStatus.NoLocalCredential"/> e NÃO ganha
+    /// credencial local. Se a revogação falhar, a transação reverte e o hash NOVO não é persistido (nunca um
+    /// estado parcial). Nunca registra, devolve nem inclui em exceção a senha ou o hash — a auditoria carrega
+    /// apenas <paramref name="actorAccountId"/>, <paramref name="targetAccountId"/> e a contagem de ambientes.
+    /// </summary>
+    Task<AdminPasswordResetResult> AdminResetPasswordAsync(
+        Guid actorAccountId, Guid targetAccountId, string newPassword, CancellationToken ct);
 }
 
 /// <summary>Geração dos tokens: JWT de acesso (HS256) + refresh token opaco. Sem estado.</summary>

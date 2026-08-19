@@ -69,6 +69,14 @@ public record ProvisionIdentityRequest(string Email, string? Password = null);
 /// </summary>
 public record PlatformIdentityDto(Guid Id, string Email, bool HasLocalCredential, DateTimeOffset CreatedAt);
 
+/// <summary>
+/// Corpo da redefinição ADMINISTRATIVA de senha (<c>POST /api/v1/platform/identities/{accountId}/password</c>).
+/// Só a nova senha trafega — NÃO há senha atual (o alvo, por definição, não consegue autenticar): a autoridade
+/// vem da policy de plataforma. A senha viaja em claro dentro do TLS, é derivada em PBKDF2 no servidor e nunca
+/// é persistida em claro, devolvida nem registrada. O alvo é o <c>accountId</c> da rota (uma identidade global).
+/// </summary>
+public record AdminResetPasswordRequest(string NewPassword);
+
 // ---- Users (concessão de acesso a tenant) ----
 /// <summary>
 /// [AEGIS-AUD-010] Concessão IDEMPOTENTE de acesso ao tenant ambiente a uma identidade global JÁ EXISTENTE.
@@ -86,9 +94,14 @@ public record UserDto(
 /// Um acesso na LISTAGEM tenant-scoped (<c>GET /api/v1/users</c>). Sem <c>TenantId</c> (implícito no
 /// contexto) e sem hash. <paramref name="HasLocalCredential"/> é só um booleano — a UI o usa para explicar
 /// por que alguém entra pelo provedor corporativo, sem revelar nada do segredo.
+///
+/// <paramref name="IdentityAccountId"/> é a chave da PESSOA global (não do membership <paramref name="Id"/>):
+/// a UI a usa para chamar a rota GLOBAL de redefinição administrativa de senha. Expô-la aqui NÃO concede
+/// autoridade — aquela rota permanece protegida pela policy de plataforma — e o isolamento tenant-scoped da
+/// listagem é preservado (o filtro global de <c>User</c> segue restringindo ao ambiente).
 /// </summary>
 public record TenantUserDto(
-    Guid Id, string Email, string DisplayName, string Role, bool IsActive,
+    Guid Id, Guid IdentityAccountId, string Email, string DisplayName, string Role, bool IsActive,
     bool HasLocalCredential, DateTimeOffset CreatedAt, DateTimeOffset? LastLoginAt);
 
 /// <summary>

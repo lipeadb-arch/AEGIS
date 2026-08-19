@@ -145,7 +145,7 @@ public sealed class UserManagementService : IUserManagementService
             join a in _db.IdentityAccounts on u.IdentityAccountId equals a.Id
             select new
             {
-                u.Id, a.Email, u.DisplayName, u.Role, u.IsActive,
+                u.Id, u.IdentityAccountId, a.Email, u.DisplayName, u.Role, u.IsActive,
                 HasLocalCredential = a.PasswordHash != null,
                 u.CreatedAt, u.LastLoginAt,
             }).ToListAsync(ct);
@@ -155,7 +155,7 @@ public sealed class UserManagementService : IUserManagementService
         return rows
             .OrderBy(r => r.CreatedAt).ThenBy(r => r.Id)
             .Select(r => new TenantUserListItem(
-                r.Id, r.Email, r.DisplayName, r.Role, r.IsActive,
+                r.Id, r.IdentityAccountId, r.Email, r.DisplayName, r.Role, r.IsActive,
                 r.HasLocalCredential, r.CreatedAt, r.LastLoginAt))
             .ToList();
     }
@@ -409,6 +409,6 @@ public sealed class UserManagementService : IUserManagementService
     /// e-mail vive na conta global e o resto no membership.
     /// </summary>
     private static UserSummary Project(User u, IdentityAccount account) => new(
-        u.Id, u.TenantId, account.Email, u.DisplayName, u.Role, u.IsActive, u.CreatedAt, u.LastLoginAt,
-        HasLocalCredential: account.PasswordHash is not null);
+        u.Id, u.TenantId, u.IdentityAccountId, account.Email, u.DisplayName, u.Role, u.IsActive,
+        u.CreatedAt, u.LastLoginAt, HasLocalCredential: account.PasswordHash is not null);
 }
