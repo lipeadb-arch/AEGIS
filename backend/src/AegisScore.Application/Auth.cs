@@ -128,7 +128,10 @@ public sealed record PasswordChangeResult(PasswordChangeStatus Status, string? D
 /// </summary>
 public enum AdminPasswordResetStatus
 {
-    /// <summary>Senha redefinida; todas as sessões da identidade-alvo revogadas em TODOS os tenants.</summary>
+    /// <summary>
+    /// Senha redefinida; todos os refresh tokens da identidade-alvo revogados em TODOS os tenants (bloqueia a
+    /// RENOVAÇÃO das sessões). Um access token já emitido segue válido até seu teto de 10 min.
+    /// </summary>
     Reset = 0,
 
     /// <summary>Identidade-alvo inexistente — resposta GENÉRICA (404), sem revelar se o e-mail existe.</summary>
@@ -153,7 +156,7 @@ public enum AdminPasswordResetStatus
 
 /// <summary>
 /// Resultado tipado da redefinição administrativa. NUNCA carrega senha nem hash. Em sucesso, expõe SOMENTE a
-/// quantidade de ambientes cujas sessões foram revogadas — o dado auditável, sem nada sensível.
+/// quantidade de ambientes cujos refresh tokens foram revogados — o dado auditável, sem nada sensível.
 /// </summary>
 public sealed record AdminPasswordResetResult(
     AdminPasswordResetStatus Status, int AffectedEnvironments = 0, string? Detail = null)
@@ -267,7 +270,9 @@ public interface IAuthService
     ///
     /// A nova senha segue a MESMA <c>PasswordPolicy</c> (NIST). Em sucesso, substitui o hash e revoga
     /// ATOMICAMENTE todos os refresh tokens da identidade em TODOS os tenants — reutilizando o MESMO núcleo
-    /// sensível da troca da própria senha (sem duplicar a régua de atomicidade/revogação). Uma conta
+    /// sensível da troca da própria senha (sem duplicar a régua de atomicidade/revogação). Isso bloqueia a
+    /// RENOVAÇÃO das sessões; um access token já emitido segue válido até seu teto de 10 min, e só depois
+    /// disso a reautenticação passa a exigir a nova senha. Uma conta
     /// federated-only (sem hash) devolve <see cref="AdminPasswordResetStatus.NoLocalCredential"/> e NÃO ganha
     /// credencial local. Se a revogação falhar, a transação reverte e o hash NOVO não é persistido (nunca um
     /// estado parcial). Nunca registra, devolve nem inclui em exceção a senha ou o hash — a auditoria carrega

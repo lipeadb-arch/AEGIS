@@ -67,9 +67,11 @@ public sealed class PlatformIdentitiesController : ControllerBase
     /// permitir que um papel de tenant redefinisse a credencial GLOBAL seria takeover cross-tenant. O alvo é a
     /// <see cref="IdentityAccount"/> (nunca um membership) — o princípio da identidade global é preservado.
     ///
-    /// Desfechos: 204 (redefinida — hash substituído e sessões revogadas em todos os tenants) · 404 (identidade
-    /// inexistente, genérico) · 409 (conta federated-only, sem credencial local a redefinir; OU auto-redefinição —
-    /// o próprio administrador deve usar a troca normal, que exige a senha atual) · 400 (senha fora da política).
+    /// Desfechos: 204 (redefinida — hash substituído e todos os refresh tokens revogados em todos os tenants,
+    /// bloqueando a renovação das sessões; um access token já emitido segue válido até seu teto de 10 min) · 404
+    /// (identidade inexistente, genérico) · 409 (conta federated-only, sem credencial local a redefinir; OU
+    /// auto-redefinição — o próprio administrador deve usar a troca normal, que exige a senha atual) · 400 (senha
+    /// fora da política).
     /// O ator vem da claim <c>account_id</c> do JWT, NUNCA do corpo. A senha/hash nunca é registrada nem devolvida.
     /// </summary>
     [HttpPost("{accountId:guid}/password")]

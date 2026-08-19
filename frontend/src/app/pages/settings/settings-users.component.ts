@@ -225,9 +225,11 @@ import {
               <form class="reset" [formGroup]="resetForm" (ngSubmit)="submitReset(u)" role="group"
                     aria-label="Redefinir senha">
                 <p class="note reset-note">
-                  Isto altera a <strong>identidade global</strong> de {{ u.displayName }} e encerra as sessões
-                  dela em <strong>todos os ambientes</strong>. É diferente de <em>desativar o acesso</em>: a
-                  pessoa continua com acesso, mas precisará entrar com a nova senha. A senha atual não é exigida.
+                  A nova senha será aplicada à <strong>identidade global</strong> de {{ u.displayName }}. A
+                  renovação das sessões será bloqueada em <strong>todos os ambientes</strong>; acessos já
+                  emitidos podem permanecer válidos por até <strong>10 minutos</strong>, e depois será
+                  necessário autenticar novamente com a nova senha. É diferente de <em>desativar o acesso</em>:
+                  a pessoa continua com acesso. A senha atual não é exigida.
                 </p>
                 <div class="reset-fields">
                   <label class="field">
@@ -797,8 +799,8 @@ export class SettingsUsersComponent implements OnInit {
         this.busyId.set(null);
         this.resetOkId.set(u.id);
         this.resetOk.set(
-          `Senha de ${u.displayName} redefinida. As sessões dele em todos os ambientes foram encerradas; ` +
-            `informe a nova senha por um canal seguro.`,
+          `Senha de ${u.displayName} redefinida. A renovação das sessões foi bloqueada em todos os ambientes; ` +
+            `acessos já emitidos expiram em até 10 minutos. Informe a nova senha por um canal seguro.`,
         );
       },
       error: (e: Error) => {

@@ -61,9 +61,11 @@ export class UsersService {
   /**
    * Redefinição ADMINISTRATIVA de senha (PlatformAdmin). O alvo é a IDENTIDADE GLOBAL (`identityAccountId`),
    * NUNCA o membership — por isso a rota é a global de plataforma, não `/users`. Em sucesso (204) o backend já
-   * substituiu o hash e revogou as sessões da pessoa em TODOS os ambientes. A senha nunca é guardada nem logada;
-   * aqui ela só passa no corpo da requisição. 403 ⇒ falta autoridade de plataforma; 409 ⇒ conta federada ou a
-   * própria conta; 404 ⇒ identidade inexistente; 400 ⇒ senha fora da política.
+   * substituiu o hash e revogou os refresh tokens da pessoa em TODOS os ambientes (bloqueia a renovação das
+   * sessões); um access token já emitido segue válido até ~10 min, e só depois disso a reautenticação exige a
+   * nova senha. A senha nunca é guardada nem logada; aqui ela só passa no corpo da requisição. 403 ⇒ falta
+   * autoridade de plataforma; 409 ⇒ conta federada ou a própria conta; 404 ⇒ identidade inexistente; 400 ⇒
+   * senha fora da política.
    */
   resetPassword(identityAccountId: string, newPassword: string): Observable<void> {
     const body: AdminResetPasswordRequest = { newPassword };

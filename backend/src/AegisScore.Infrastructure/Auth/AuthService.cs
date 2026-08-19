@@ -469,13 +469,13 @@ public sealed class AuthService : IAuthService
         if (PasswordPolicy.ValidateStrength(newPassword ?? "") is { } weak)
             return PasswordChangeResult.Rejected(PasswordChangeStatus.WeakPassword, weak);
 
-        // Núcleo sensível COMPARTILHADO: substitui o hash e revoga todas as sessões da identidade em TODOS os
-        // tenants, atomicamente (ver ReplaceHashAndRevokeAllSessionsAsync). O access token já emitido conserva
-        // seu teto de 10 min (não o encurtamos).
+        // Núcleo sensível COMPARTILHADO: substitui o hash e revoga todos os refresh tokens da identidade em
+        // TODOS os tenants, atomicamente (ver ReplaceHashAndRevokeAllSessionsAsync). Isto bloqueia a RENOVAÇÃO
+        // das sessões; um access token já emitido segue válido até seu teto de 10 min (não o encurtamos).
         var affected = await ReplaceHashAndRevokeAllSessionsAsync(account, newPassword!, ct);
 
         _logger.LogInformation(
-            "Troca de senha concluída para a conta {AccountId}: sessões revogadas em {Count} ambiente(s).",
+            "Troca de senha concluída para a conta {AccountId}: refresh tokens revogados em {Count} ambiente(s).",
             accountId, affected);
 
         return PasswordChangeResult.Changed;
@@ -519,7 +519,7 @@ public sealed class AuthService : IAuthService
         // Auditoria: SOMENTE os ids e a contagem — NUNCA e-mail, senha ou hash.
         _logger.LogInformation(
             "Redefinição administrativa de senha: ator {ActorAccountId} redefiniu a identidade {TargetAccountId}; " +
-            "sessões revogadas em {Count} ambiente(s).",
+            "refresh tokens revogados em {Count} ambiente(s).",
             actorAccountId, targetAccountId, affected);
 
         return AdminPasswordResetResult.Reset(affected);
@@ -527,10 +527,11 @@ public sealed class AuthService : IAuthService
 
     /// <summary>
     /// Núcleo ATÔMICO e SENSÍVEL, compartilhado pela troca da própria senha e pela redefinição administrativa:
-    /// substitui o <see cref="IdentityAccount.PasswordHash"/> e revoga TODAS as sessões (refresh tokens) da
-    /// identidade em TODOS os tenants, num ÚNICO commit. Devolve a quantidade de ambientes afetados. Se a
+    /// substitui o <see cref="IdentityAccount.PasswordHash"/> e revoga TODOS os refresh tokens da identidade em
+    /// TODOS os tenants, num ÚNICO commit — o que bloqueia a RENOVAÇÃO das sessões (um access token já emitido
+    /// segue válido até seu teto de 10 min; não o encurtamos). Devolve a quantidade de ambientes afetados. Se a
     /// revogação falhar, a transação é revertida e o hash NOVO não é persistido — nunca um estado parcial
-    /// (senha nova sem sessões revogadas seria uma janela de risco). A revogação cross-tenant é ESTRITAMENTE
+    /// (senha nova sem os refresh tokens revogados seria uma janela de risco). A revogação cross-tenant é ESTRITAMENTE
     /// ancorada no <c>account_id</c> — a exceção autorizada de <c>IgnoreQueryFilters</c> sobre identidade (ver
     /// a doc de <c>IAuthService</c>). Pressupõe que o chamador JÁ validou política e autorização; aqui só se
     /// aplica a mutação. <paramref name="account"/> deve ser a entidade RASTREADA (a atribuição de hash sai no
