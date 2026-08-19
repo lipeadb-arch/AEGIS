@@ -79,7 +79,7 @@ public sealed class PlatformTenantUsersController : ControllerBase
         var u = result.User!;
         return new OnboardTenantUserResponse(
             new TenantUserDto(
-                u.Id, u.Email, u.DisplayName, u.Role.ToString(), u.IsActive,
+                u.Id, u.IdentityAccountId, u.Email, u.DisplayName, u.Role.ToString(), u.IsActive,
                 u.HasLocalCredential, u.CreatedAt, u.LastLoginAt),
             outcome,
             result.IdentityExisted);

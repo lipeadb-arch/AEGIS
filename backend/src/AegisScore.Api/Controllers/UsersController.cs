@@ -208,10 +208,10 @@ public sealed class UsersController : ControllerBase
     /// (implícito no contexto). Público e estático para permitir teste direto do contrato.
     /// </summary>
     public static TenantUserDto ToTenantUserDto(UserSummary u) => new(
-        u.Id, u.Email, u.DisplayName, u.Role.ToString(), u.IsActive,
+        u.Id, u.IdentityAccountId, u.Email, u.DisplayName, u.Role.ToString(), u.IsActive,
         u.HasLocalCredential, u.CreatedAt, u.LastLoginAt);
 
     private static TenantUserDto ToListDto(TenantUserListItem u) => new(
-        u.Id, u.Email, u.DisplayName, u.Role.ToString(), u.IsActive,
+        u.Id, u.IdentityAccountId, u.Email, u.DisplayName, u.Role.ToString(), u.IsActive,
         u.HasLocalCredential, u.CreatedAt, u.LastLoginAt);
 }

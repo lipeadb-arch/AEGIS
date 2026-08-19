@@ -58,6 +58,27 @@ public sealed class IdentitySeparationAuthorizationTests
         provision.GetCustomAttribute<HttpPostAttribute>().Should().NotBeNull("o provisionamento é um POST");
     }
 
+    [Fact]
+    public void RedefinicaoAdminDeSenha_ExigePolicyDePlataforma_NaoPapelDeTenant()
+    {
+        // A redefinição administrativa de senha vive na MESMA superfície global, herdando a policy de classe
+        // (platform_role=PlatformAdmin). O invariante de segurança: o método NÃO pode afrouxar isso — nada de
+        // [AllowAnonymous], e nada de um [Authorize(Roles=...)] de tenant, que reabriria o takeover cross-tenant
+        // (um TenantAdmin redefinindo a credencial GLOBAL de outra pessoa). A policy de classe já é exercitada
+        // por RotaGlobalDeIdentidade_ExigePolicyDePlataforma_NaoPapelDeTenant.
+        var reset = typeof(PlatformIdentitiesController).GetMethod(nameof(PlatformIdentitiesController.ResetPassword))!;
+
+        reset.GetCustomAttribute<HttpPostAttribute>()!
+            .Template.Should().Be("{accountId:guid}/password", "o alvo é a identidade global, na rota");
+        reset.GetCustomAttribute<AllowAnonymousAttribute>()
+            .Should().BeNull("mutar credencial jamais pode ser anônimo");
+        // NotContain (não OnlyContain): não há [Authorize] de MÉTODO — a proteção vem da classe. O invariante
+        // é que NENHUM atributo de método reintroduza um gate por papel de tenant (coleção vazia satisfaz).
+        reset.GetCustomAttributes<AuthorizeAttribute>()
+            .Should().NotContain(a => a.Roles != null,
+                "a rota não pode ser gated por papel de tenant — seria takeover cross-tenant");
+    }
+
     // ---- Concessão de acesso: exige TenantAdmin ---------------------------------
 
     [Fact]

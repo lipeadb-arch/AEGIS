@@ -237,6 +237,14 @@ builder.Services.AddRateLimiter(o =>
         ClientIp(ctx),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 
+    // Redefinição ADMINISTRATIVA de senha (PlatformAdmin sobre OUTRA identidade): mutação de credencial —
+    // nunca ilimitada, mesmo exigindo autoridade de plataforma. Particionada pela identidade autenticada
+    // (claim account_id, com fallback ao IP), como o ai-auditor: limita o volume por administrador sem
+    // acoplar a um IP compartilhado. Janela apertada, no mesmo idioma da troca da própria senha.
+    o.AddPolicy("platform-password-reset", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        AuthenticatedPartition(ctx),
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+
     // [AEGIS-AUD-020] Ingestão externa de eventos (SIEM/EDR push): proporcional a um emissor legítimo, que
     // envia lotes com frequência de egress fixo. Particionado por IP (limita o nº de partições) — blinda o
     // endpoint anônimo contra flood, sem sufocar a coleta real.

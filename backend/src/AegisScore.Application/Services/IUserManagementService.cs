@@ -67,6 +67,7 @@ public enum AccessGrantStatus
 public record UserSummary(
     Guid Id,
     Guid TenantId,
+    Guid IdentityAccountId,
     string Email,
     string DisplayName,
     TenantRole Role,
@@ -98,9 +99,12 @@ public record AccessGrantResult(
 /// Um acesso (membership) na LISTAGEM tenant-scoped. Projeção SEGURA: nunca carrega <c>PasswordHash</c>.
 /// <paramref name="HasLocalCredential"/> é só um booleano (a pessoa entra por senha local ou pelo provedor
 /// corporativo?) — útil para a UI explicar por que alguém não troca a própria senha, sem revelar o segredo.
+/// <paramref name="IdentityAccountId"/> é a chave da PESSOA global (distinta do membership <paramref name="Id"/>),
+/// necessária para a UI acionar a redefinição administrativa de senha na rota global — sem conceder autoridade.
 /// </summary>
 public record TenantUserListItem(
     Guid Id,
+    Guid IdentityAccountId,
     string Email,
     string DisplayName,
     TenantRole Role,
