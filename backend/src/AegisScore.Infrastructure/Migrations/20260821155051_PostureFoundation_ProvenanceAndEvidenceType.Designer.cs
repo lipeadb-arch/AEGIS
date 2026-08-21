@@ -3,6 +3,7 @@ using System;
 using AegisScore.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AegisScore.Infrastructure.Migrations
 {
     [DbContext(typeof(AegisScoreDbContext))]
-    partial class AegisScoreDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260821155051_PostureFoundation_ProvenanceAndEvidenceType")]
+    partial class PostureFoundation_ProvenanceAndEvidenceType
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -877,11 +880,6 @@ namespace AegisScore.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("IsActive")
-                        .IsUnique()
-                        .HasDatabaseName("UX_FrameworkVersion_SingleActive")
-                        .HasFilter("\"IsActive\"");
 
                     b.HasIndex("Name")
                         .IsUnique();

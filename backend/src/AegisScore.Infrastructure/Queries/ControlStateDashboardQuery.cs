@@ -74,9 +74,14 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
         // Contexto de FRESCOR (ver EnrichWithStaleness) apenas para os avaliados — NotEvaluated não tem
         // sinal a envelhecer. Duas consultas fixas, fora do laço — nunca N+1.
         var codes = states.Select(r => r.SubcategoryCode).ToList();
-        var rules = await _db.AssessmentRules.AsNoTracking()
+        // Carrega o tipo PERSISTIDO de evidência junto das exigências — a compilação de lacunas classifica
+        // pelo tipo (autoridade única), não por re-inferência da string (AEGIS-MVP-POSTURE-01).
+        var ruleRows = await _db.AssessmentRules.AsNoTracking()
             .Where(r => codes.Contains(r.SubcategoryCode))
-            .ToDictionaryAsync(r => r.SubcategoryCode, r => r.EvidenceRequirements, ct);
+            .Select(r => new { r.SubcategoryCode, r.EvidenceRequirements, r.EvidenceType })
+            .ToListAsync(ct);
+        var rules = ruleRows.ToDictionary(
+            r => r.SubcategoryCode, r => (r.EvidenceRequirements, r.EvidenceType));
 
         var verifiedCoverage = await _db.SubcategoryCoverages.AsNoTracking()
             .Where(c => c.Status == CoverageStatus.Coberto
@@ -119,16 +124,18 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
     /// </summary>
     private TenantControlStateDto EnrichWithStaleness(
         TenantControlStateDto dto, Row r,
-        IReadOnlyDictionary<string, List<string>> rules, IReadOnlySet<string> verified, DateTimeOffset now)
+        IReadOnlyDictionary<string, (List<string> Requirements, RuleEvidenceType EvidenceType)> rules,
+        IReadOnlySet<string> verified, DateTimeOffset now)
     {
-        if (!rules.TryGetValue(r.SubcategoryCode, out var requirements))
+        if (!rules.TryGetValue(r.SubcategoryCode, out var rule))
             return dto;   // sem regra no catálogo não há como afirmar a natureza da prova
 
         var availability = new EvidenceAvailability(
             LastTelemetryAt: r.LastVerdictSource == VerdictSource.Telemetry ? r.LastEvaluatedAt : null,
             HasVerifiedDocumentaryCoverage: verified.Contains(r.SubcategoryCode));
 
-        var derived = RuleEvaluator.Compile(requirements, availability, now, _options.FreshnessWindow);
+        var derived = RuleEvaluator.Compile(
+            rule.EvidenceType, rule.Requirements, availability, now, _options.FreshnessWindow);
         if (derived.Count == 0)
             return dto;
 

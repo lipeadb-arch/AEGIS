@@ -1,57 +1,115 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using AegisScore.Application.Assessment;
 using AegisScore.Application.Scoring;
 using AegisScore.Domain;
+using Fp = AegisScore.Infrastructure.Persistence.ReferenceDataFingerprint;
 
 namespace AegisScore.Infrastructure.Persistence;
 
 /// <summary>
-/// Seeds the NIST CSF 2.0 catalog (6 functions / 22 categories / 106 subcategories + 5 maturity
-/// levels). Idempotent: runs once, skips if present.
-/// Source: Catalog loaded via Seed:CatalogPath override (default: AegisScore.Api/Data/nist_csf_2_0_catalog.json)
+/// [AEGIS-MVP-POSTURE-01] Semeia os conjuntos de dados de referência, com SEPARAÇÃO DE RESPONSABILIDADES
+/// e PROVENIÊNCIA auditável:
+///   • conteúdo OFICIAL do NIST CSF 2.0 (6 funções / 22 categorias / 106 subcategorias) —
+///     <c>nist_csf_2_0_catalog.json</c>;
+///   • metodologia AUTORAL do AEGIS (escala de maturidade 5 níveis + pesos por subcategoria +
+///     subcategorias não automatizadas) — <c>aegis_methodology.json</c>;
+///   • regras/rubricas de avaliação (autorais do AEGIS) — <c>aegis_assessment_rules.json</c>.
+/// O catálogo oficial NÃO declara maturidade nem pesos como se fossem NIST. Cada conjunto ganha uma REVISÃO
+/// de <see cref="ReferenceDatasetProvenance"/> com hash de conteúdo (calculado pela autoridade única
+/// <see cref="ReferenceDataFingerprint"/>) — o histórico é preservado (um hash antigo nunca some).
+///
+/// ATUALIZAÇÃO DETERMINÍSTICA (substitui o antigo "insert once"): idêntico → no-op; metodologia/regras
+/// alteradas → reconciliação in-place + nova revisão; conteúdo oficial alterado SEM mudar a topologia
+/// (códigos E hierarquia) → atualiza campos oficiais + nova revisão; mudança ESTRUTURAL → falha CLARA. Tudo
+/// FAIL-CLOSED e validado ANTES de persistir; resíduos são tratados explicitamente, nunca apagados em silêncio.
 /// </summary>
 public static class FrameworkSeeder
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
 
-    public static async Task SeedAsync(AegisScoreDbContext db, string catalogPath, CancellationToken ct = default)
+    /// <summary>Nome canônico do catálogo (fonte única, compartilhada com o guard de prontidão).</summary>
+    public const string CatalogName = SchemaReadinessGuard.CatalogName;
+
+    // ==================================================================================================
+    //  Catálogo NIST + Metodologia AEGIS + Proveniência (catálogo/metodologia)
+    // ==================================================================================================
+
+    public static async Task SeedAsync(
+        AegisScoreDbContext db, string catalogPath, string methodologyPath, CancellationToken ct = default)
     {
-        // Backfill idempotente: garante peso > 0 em catálogos semeados ANTES de MaxScorePoints existir
-        // (o denominador do Aegis Score nunca pode zerar). Roda antes do guard de existência do catálogo.
-        await BackfillMissingWeightsAsync(db, ct);
-        await SeedCatalogAsync(db, catalogPath, ct);
+        var catalog = Load<CatalogDto>(catalogPath, "catálogo NIST");
+        var methodology = Load<MethodologyDto>(methodologyPath, "metodologia AEGIS");
+
+        ValidateCatalogAndMethodology(catalog, methodology);
+
+        var fileFunctions = ToFingerprint(catalog);
+        var fileCatalogHash = Fp.CatalogHash(fileFunctions);
+        var fileTopology = Fp.TopologySignature(fileFunctions);
+        var methodologyHash = MethodologyHashOf(methodology);
+        var now = DateTimeOffset.UtcNow;
+
+        var existing = await db.FrameworkVersions
+            .Include(f => f.Functions).ThenInclude(fn => fn.Categories).ThenInclude(c => c.Subcategories)
+            .Include(f => f.MaturityLevels)
+            .Include(f => f.Provenance)
+            .FirstOrDefaultAsync(f => f.Name == CatalogName, ct);
+
+        if (existing is null)
+        {
+            await FreshSeedAsync(db, catalog, methodology, fileCatalogHash, methodologyHash, now, ct);
+            return;
+        }
+
+        var dbFunctions = ToFingerprint(existing);
+        var dbHash = Fp.CatalogHash(dbFunctions);
+        var changed = false;
+
+        if (!string.Equals(dbHash, fileCatalogHash, StringComparison.Ordinal))
+        {
+            if (!string.Equals(Fp.TopologySignature(dbFunctions), fileTopology, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"Mudança ESTRUTURAL do catálogo '{CatalogName}': a topologia (conjunto de códigos E a " +
+                    "hierarquia função→categoria→subcategoria) do artefato difere da persistida. Este pacote " +
+                    "NÃO reescreve a topologia no lugar (preserva estados de tenant e a rastreabilidade dos " +
+                    "snapshots) — exige transição de versão de framework deliberada. Seed abortado.");
+
+            changed |= UpdateOfficialFieldsInPlace(existing, catalog);
+        }
+
+        changed |= ReconcileWeights(existing, methodology);
+        changed |= ReconcileMaturity(existing, methodology);
+        if (changed)
+            await db.SaveChangesAsync(ct);
+
+        // Proveniência DEPOIS da reconciliação persistida — upsert com histórico, ordenado (ver método).
+        await UpsertProvenanceRevisionAsync(db, existing, ReferenceDatasetKind.NistCatalog,
+            catalog.Provenance, fileCatalogHash, DatasetClassification.Official, now, ct);
+        await UpsertProvenanceRevisionAsync(db, existing, ReferenceDatasetKind.AegisMethodology,
+            methodology.Provenance, methodologyHash, DatasetClassification.Derived, now, ct);
     }
 
-    /// <summary>Semeia o catálogo NIST CSF 2.0. Idempotente: sai cedo se o framework já existe.</summary>
-    public static async Task SeedCatalogAsync(AegisScoreDbContext db, string catalogPath, CancellationToken ct = default)
+    private static async Task FreshSeedAsync(
+        AegisScoreDbContext db, CatalogDto catalog, MethodologyDto methodology,
+        string catalogHash, string methodologyHash, DateTimeOffset now, CancellationToken ct)
     {
-        if (await db.FrameworkVersions.AnyAsync(f => f.Name == "NIST CSF 2.0", ct))
-            return;
-
-        if (!File.Exists(catalogPath))
-            throw new FileNotFoundException($"NIST catalog not found at '{catalogPath}'.", catalogPath);
-
-        var raw = await File.ReadAllTextAsync(catalogPath, ct);
-        var catalog = JsonSerializer.Deserialize<CatalogDto>(raw, Json)
-            ?? throw new InvalidOperationException("Could not parse the NIST catalog JSON.");
-
         var fv = new FrameworkVersion
         {
             Name = catalog.Framework,
             Source = catalog.Source,
-            IsActive = true
+            IsActive = true,
         };
 
-        foreach (var lvl in catalog.MaturityScale)
+        foreach (var lvl in methodology.MaturityScale)
         {
             fv.MaturityLevels.Add(new MaturityLevel
             {
                 FrameworkVersionId = fv.Id,
-                Level = int.TryParse(lvl.Level, out var n) ? n : lvl.Score,
+                Level = ResolveLevel(lvl),
                 Name = lvl.Name,
                 Description = lvl.Description ?? "",
-                Score = lvl.Score
+                Score = lvl.Score,
             });
         }
 
@@ -64,7 +122,7 @@ public static class FrameworkSeeder
                 Code = fn.Code,
                 Name = fn.Name,
                 Definition = fn.Definition ?? "",
-                Order = order++
+                Order = order++,
             };
 
             foreach (var cat in fn.Categories)
@@ -74,7 +132,7 @@ public static class FrameworkSeeder
                     FunctionId = func.Id,
                     Code = cat.Code,
                     Name = cat.Name,
-                    Definition = cat.Definition ?? ""
+                    Definition = cat.Definition ?? "",
                 };
 
                 foreach (var sub in cat.Subcategories)
@@ -86,8 +144,7 @@ public static class FrameworkSeeder
                         Description = sub.Description ?? "",
                         ImplementationExamples = sub.ImplementationExamples,
                         InformativeReferences = sub.InformativeReferences ?? new(),
-                        // Nunca-zero: usa o peso do catálogo; se ausente ou <= 0, deriva da categoria.
-                        MaxScorePoints = sub.MaxScorePoints is > 0 ? sub.MaxScorePoints.Value : DefaultWeight(sub.Code)
+                        MaxScorePoints = methodology.SubcategoryWeights![sub.Code],   // validado: presente e > 0
                     });
                 }
 
@@ -97,6 +154,11 @@ public static class FrameworkSeeder
             fv.Functions.Add(func);
         }
 
+        fv.Provenance.Add(BuildProvenanceRevision(fv.Id, ReferenceDatasetKind.NistCatalog,
+            catalog.Provenance, catalogHash, DatasetClassification.Official, revision: 1, now));
+        fv.Provenance.Add(BuildProvenanceRevision(fv.Id, ReferenceDatasetKind.AegisMethodology,
+            methodology.Provenance, methodologyHash, DatasetClassification.Derived, revision: 1, now));
+
         db.FrameworkVersions.Add(fv);
 
         if (!await db.IcrWeightProfiles.AnyAsync(ct))
@@ -105,93 +167,92 @@ public static class FrameworkSeeder
         await db.SaveChangesAsync(ct);
     }
 
+    // ==================================================================================================
+    //  Regras de avaliação (evidência TIPADA + proveniência das regras + resíduos)
+    // ==================================================================================================
+
     /// <summary>
-    /// Semeia as regras técnicas de avaliação (<c>aegis_assessment_rules.json</c>) e as vincula ao
-    /// catálogo por código de subcategoria. INDEPENDENTE do seed do catálogo (guard próprio), para rodar
-    /// mesmo quando o framework já existe. Fail-closed na integridade referencial: uma regra cujo código
-    /// não casa com nenhuma subcategoria do catálogo aborta o seed ANTES de persistir — nunca entra FK
-    /// órfã no banco.
-    ///
-    /// ⚠️ INCREMENTAL, não "tudo ou nada". O guard anterior era <c>if (AnyAsync) return</c>: bastava UMA
-    /// regra no banco para o arquivo inteiro ser ignorado para sempre, de modo que enriquecer o catálogo
-    /// exigia TRUNCATE manual da tabela — operação que ninguém faz em produção e que apagaria qualquer
-    /// ajuste feito no banco. Agora só as regras AUSENTES são inseridas: adicionar um controle ao JSON
-    /// passa a bastar, e as regras já persistidas nunca são sobrescritas (a edição no banco é soberana).
+    /// Semeia/reconcilia as regras e as vincula ao catálogo por código. A natureza da evidência é TIPADA de
+    /// forma determinística pela ÚNICA autoridade (<see cref="RuleEvaluator.DeriveEvidenceType"/>). FAIL-CLOSED:
+    /// artefato inválido, regra órfã/duplicada ou RESÍDUO (regra no banco fora do artefato) abortam ANTES de
+    /// persistir. O conjunto ganha uma revisão de proveniência com hash.
     /// </summary>
-    public static async Task SeedAssessmentRulesAsync(AegisScoreDbContext db, string rulesPath, CancellationToken ct = default)
+    public static async Task SeedAssessmentRulesAsync(
+        AegisScoreDbContext db, string rulesPath, string methodologyPath, CancellationToken ct = default)
     {
-        if (!File.Exists(rulesPath))
-            throw new FileNotFoundException($"Assessment rules not found at '{rulesPath}'.", rulesPath);
+        var rules = Load<List<RuleDto>>(rulesPath, "regras de avaliação");
+        var methodology = Load<MethodologyDto>(methodologyPath, "metodologia AEGIS");
+        var now = DateTimeOffset.UtcNow;
 
-        var raw = await File.ReadAllTextAsync(rulesPath, ct);
-        var rules = JsonSerializer.Deserialize<List<RuleDto>>(raw, Json)
-            ?? throw new InvalidOperationException("Could not parse the assessment rules JSON.");
+        var fv = await db.FrameworkVersions
+            .Include(f => f.Provenance)
+            .FirstOrDefaultAsync(f => f.Name == CatalogName, ct);
+        if (fv is null)
+            throw new InvalidOperationException(
+                $"Catálogo '{CatalogName}' ausente ao semear regras — o seed do catálogo deve preceder as regras.");
 
-        if (rules.Count == 0)
-            throw new InvalidOperationException("Assessment rules JSON parsed to zero rules — check the file/format.");
-
-        // Mapa código→Id das subcategorias (reference data global: cruza tenants, sem query filter).
         var subIdByCode = await db.Subcategories
             .Select(s => new { s.Code, s.Id })
             .ToDictionaryAsync(s => s.Code, s => s.Id, ct);
 
-        // Regras JÁ persistidas: o que existe no banco não é tocado. O índice único em SubcategoryCode
-        // impede duplicata de qualquer forma; a checagem prévia evita o round-trip perdido.
-        var existing = (await db.AssessmentRules.Select(r => r.SubcategoryCode).ToListAsync(ct))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        ValidateRules(rules, subIdByCode.Keys);
+        ValidateProvenanceMetadata(methodology.RulesProvenance, "regras", DatasetClassification.Derived);
 
-        var toAdd = new List<AegisAssessmentRule>(rules.Count);
-        var unmatched = new List<string>();
+        var existing = await db.AssessmentRules.ToListAsync(ct);
+        var existingByCode = existing.ToDictionary(r => r.SubcategoryCode, StringComparer.OrdinalIgnoreCase);
+        var artifactCodes = rules.Select(r => r.SubcategoryId).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        var residual = existing.Where(r => !artifactCodes.Contains(r.SubcategoryCode)).Select(r => r.SubcategoryCode).ToList();
+        if (residual.Count > 0)
+            throw new InvalidOperationException(
+                $"{residual.Count} regra(s) no banco não pertencem mais ao artefato de regras: " +
+                $"{string.Join(", ", residual)}. Remoção de regra exige transição deliberada — seed abortado " +
+                "para não apagar reference data em silêncio.");
+
+        var changed = false;
         foreach (var r in rules)
         {
-            // subcategory_id vazio = binding do JSON falhou (snake_case não mapeado) — falha ruidosa.
-            if (string.IsNullOrWhiteSpace(r.SubcategoryId))
-                throw new InvalidOperationException(
-                    "Assessment rule with empty subcategory_id — JSON binding likely failed (check snake_case).");
+            var evidence = r.EvidenceRequirements ?? new();
+            var evidenceType = RuleEvaluator.DeriveEvidenceType(evidence);
 
-            if (!subIdByCode.TryGetValue(r.SubcategoryId, out var subId))
+            if (existingByCode.TryGetValue(r.SubcategoryId, out var current))
             {
-                unmatched.Add(r.SubcategoryId);
-                continue;
+                changed |= Assign(current.EvaluationMetrics, v => current.EvaluationMetrics = v, r.EvaluationMetrics ?? new());
+                changed |= Assign(current.CalculationLogic, v => current.CalculationLogic = v, r.CalculationLogic ?? "");
+                changed |= Assign(current.EvidenceRequirements, v => current.EvidenceRequirements = v, evidence);
+                if (current.EvidenceType != evidenceType) { current.EvidenceType = evidenceType; changed = true; }
             }
-
-            if (existing.Contains(r.SubcategoryId))
-                continue;   // já semeada — preserva o que está no banco
-
-            toAdd.Add(new AegisAssessmentRule
+            else
             {
-                SubcategoryId = subId,
-                SubcategoryCode = r.SubcategoryId,
-                EvaluationMetrics = r.EvaluationMetrics ?? new(),
-                CalculationLogic = r.CalculationLogic ?? "",
-                EvidenceRequirements = r.EvidenceRequirements ?? new()
-            });
+                db.AssessmentRules.Add(new AegisAssessmentRule
+                {
+                    SubcategoryId = subIdByCode[r.SubcategoryId],
+                    SubcategoryCode = r.SubcategoryId,
+                    EvaluationMetrics = r.EvaluationMetrics ?? new(),
+                    CalculationLogic = r.CalculationLogic ?? "",
+                    EvidenceRequirements = evidence,
+                    EvidenceType = evidenceType,
+                });
+                changed = true;
+            }
         }
+        if (changed)
+            await db.SaveChangesAsync(ct);
 
-        if (unmatched.Count > 0)
-            throw new InvalidOperationException(
-                $"{unmatched.Count} assessment rule(s) reference unknown subcategory codes: " +
-                $"{string.Join(", ", unmatched)}. The rules file is out of sync with the NIST catalog.");
-
-        if (toAdd.Count == 0)
-            return;
-
-        db.AssessmentRules.AddRange(toAdd);
-        await db.SaveChangesAsync(ct);
+        var rulesHash = Fp.RulesHash(rules.Select(r => new Fp.RuleNode(
+            r.SubcategoryId, r.CalculationLogic ?? "", r.EvaluationMetrics ?? new(), r.EvidenceRequirements ?? new())).ToList());
+        await UpsertProvenanceRevisionAsync(db, fv, ReferenceDatasetKind.AegisAssessmentRules,
+            methodology.RulesProvenance, rulesHash, DatasetClassification.Derived, now, ct);
     }
 
-    /// <summary>
-    /// [AEGIS-AUD-043] Semeia os mapeamentos (Capability, SignalKey) → subcategorias NIST no FRAMEWORK ATIVO.
-    /// <see cref="SignalMapping"/> é a ÚNICA autoridade determinística de mapeamento; sem estes registros, o
-    /// executor de ingestão rejeita (422) todo sinal. INCREMENTAL e idempotente: só insere o que ainda falta
-    /// por <c>(FrameworkVersionId, Capability, SignalKey)</c> — a unicidade é invariante de banco. Fail-closed
-    /// na integridade referencial: um mapping que cite um código inexistente no catálogo ABORTA o seed.
-    /// </summary>
+    // ==================================================================================================
+    //  Signal mappings (idempotente/incremental; hint conhecido é invariante)
+    // ==================================================================================================
+
     public static async Task SeedSignalMappingsAsync(AegisScoreDbContext db, CancellationToken ct = default)
     {
-        var fv = await db.FrameworkVersions.FirstOrDefaultAsync(f => f.IsActive, ct);
-        if (fv is null) return;   // catálogo ainda não semeado nesta base — nada a fazer
+        var fv = await ActiveFrameworkAsync(db, ct);
+        if (fv is null) return;
 
         var validCodes = (await (
             from s in db.Subcategories
@@ -201,6 +262,12 @@ public static class FrameworkSeeder
             select s.Code).ToListAsync(ct)).ToHashSet(StringComparer.Ordinal);
 
         var desired = DefaultSignalMappings(fv.Id);
+
+        var unknownHints = desired.Select(m => m.ScoringHint)
+            .Where(h => !EvidenceSignalEvaluator.IsKnownHint(h)).Distinct().ToList();
+        if (unknownHints.Count > 0)
+            throw new InvalidOperationException(
+                $"Signal mappings com hint(s) de scoring desconhecido(s): {string.Join(", ", unknownHints)}.");
 
         var unknown = desired
             .SelectMany(m => m.SubcategoryCodes.Select(code => (m.SignalKey, Code: code)))
@@ -217,8 +284,6 @@ public static class FrameworkSeeder
             .ToListAsync(ct);
         var existingByKey = existingMappings.ToDictionary(m => (m.Capability, m.SignalKey));
 
-        // [AEGIS-AUD-019] Backfill IDEMPOTENTE do ScoringHint nos mappings JÁ existentes — não só nos novos:
-        // a regra determinística de scoring v1 é atribuída/atualizada aqui, sem depender de recriar o registro.
         var changed = false;
         foreach (var d in desired)
         {
@@ -237,21 +302,14 @@ public static class FrameworkSeeder
             await db.SaveChangesAsync(ct);
     }
 
-    /// <summary>
-    /// Mapeamentos de referência (todos com códigos que existem no catálogo NIST CSF 2.0): os cinco sinais do
-    /// MicrosoftSecureScoreConnector + um sinal SIEM e um EDR de referência para a ingestão genérica.
-    /// </summary>
     private static List<SignalMapping> DefaultSignalMappings(Guid fvId) => new()
     {
-        // Secure Score: percentual em que MAIOR é melhor (thresholds explícitos na fórmula v1).
         Map(fvId, ConnectorCapability.SecureScore, "secureScore.overall",  EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.AA-01", "PR.DS-01", "PR.PS-01"),
         Map(fvId, ConnectorCapability.SecureScore, "secureScore.identity", EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.AA-01", "PR.AA-03", "PR.AA-05"),
         Map(fvId, ConnectorCapability.SecureScore, "secureScore.data",     EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.DS-01", "PR.DS-02", "PR.DS-10"),
         Map(fvId, ConnectorCapability.SecureScore, "secureScore.device",   EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.PS-01", "PR.PS-05", "DE.CM-01"),
         Map(fvId, ConnectorCapability.SecureScore, "secureScore.apps",     EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.PS-06", "DE.CM-09"),
-        // SIEM: um alerta correlacionado de alta severidade COMPROVA análise de evento adverso + monitoração.
         Map(fvId, ConnectorCapability.Siem,        "siem.alert.highSeverity", EvidenceSignalEvaluator.EventControlProven, "DE.AE-02", "DE.CM-01"),
-        // EDR: uma ameaça bloqueada no endpoint COMPROVA monitoração contínua + mitigação de incidente.
         Map(fvId, ConnectorCapability.Edr,         "edr.threat.blocked", EvidenceSignalEvaluator.EventControlProven, "DE.CM-01", "RS.MI-01"),
     };
 
@@ -267,49 +325,415 @@ public static class FrameworkSeeder
     };
 
     /// <summary>
-    /// Preenche <c>MaxScorePoints</c> ausente/zero em subcategorias já persistidas (idempotente: não
-    /// faz nada quando todas já têm peso). Cobre bases semeadas antes de a coluna existir.
+    /// A ÚNICA versão de framework ATIVA. Fail-closed: mais de uma ativa (o guard de prontidão a recusa,
+    /// mas o migrator roda antes dele) aborta aqui em vez de escolher uma ambígua com FirstOrDefault.
     /// </summary>
-    private static async Task BackfillMissingWeightsAsync(AegisScoreDbContext db, CancellationToken ct)
+    private static async Task<FrameworkVersion?> ActiveFrameworkAsync(AegisScoreDbContext db, CancellationToken ct)
     {
-        var stale = await db.Subcategories.Where(s => s.MaxScorePoints <= 0).ToListAsync(ct);
-        if (stale.Count == 0) return;
+        var active = await db.FrameworkVersions.Where(f => f.IsActive).Take(2).ToListAsync(ct);
+        if (active.Count > 1)
+            throw new InvalidOperationException(
+                "Mais de uma FrameworkVersion ATIVA no banco — exatamente uma é aplicável. Seed abortado.");
+        return active.SingleOrDefault();
+    }
 
-        foreach (var s in stale)
-            s.MaxScorePoints = DefaultWeight(s.Code);
+    // ==================================================================================================
+    //  Validação FAIL-CLOSED dos artefatos (antes de persistir)
+    // ==================================================================================================
 
+    private static void ValidateCatalogAndMethodology(CatalogDto catalog, MethodologyDto methodology)
+    {
+        if (!string.Equals(catalog.Framework, CatalogName, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"Catálogo com framework '{catalog.Framework}' — este pacote só aceita '{CatalogName}'.");
+
+        var functions = catalog.Functions ?? new();
+        var categories = functions.SelectMany(f => f.Categories ?? new()).ToList();
+        var subcategories = categories.SelectMany(c => c.Subcategories ?? new()).ToList();
+
+        if (functions.Count != SchemaReadinessGuard.ExpectedFunctions ||
+            categories.Count != SchemaReadinessGuard.ExpectedCategories ||
+            subcategories.Count != SchemaReadinessGuard.ExpectedSubcategories)
+            throw new InvalidOperationException(
+                $"Topologia do catálogo inválida: {functions.Count} funções / {categories.Count} categorias / " +
+                $"{subcategories.Count} subcategorias (esperado {SchemaReadinessGuard.ExpectedFunctions}/" +
+                $"{SchemaReadinessGuard.ExpectedCategories}/{SchemaReadinessGuard.ExpectedSubcategories}).");
+
+        // Códigos não vazios e ÚNICOS em cada nível (função, categoria e subcategoria).
+        RejectEmptyOrDuplicate(functions.Select(f => f.Code), "função");
+        RejectEmptyOrDuplicate(categories.Select(c => c.Code), "categoria");
+        RejectEmptyOrDuplicate(subcategories.Select(s => s.Code), "subcategoria");
+
+        var subCodes = subcategories.Select(s => s.Code).ToList();
+        var subCodeSet = subCodes.ToHashSet(StringComparer.Ordinal);
+
+        // Pesos: EXATAMENTE o conjunto dos 106 códigos, todos positivos. Sem fallback que mascare metodologia
+        // incompleta — o artefato versionado tem de ser completo e fail-closed.
+        var weights = methodology.SubcategoryWeights ?? new();
+        var missing = subCodes.Where(c => !weights.ContainsKey(c)).ToList();
+        var extra = weights.Keys.Where(c => !subCodeSet.Contains(c)).ToList();
+        if (missing.Count > 0)
+            throw new InvalidOperationException($"Metodologia sem peso para {missing.Count} subcategoria(s): {string.Join(", ", missing.Take(10))}.");
+        if (extra.Count > 0)
+            throw new InvalidOperationException($"Metodologia com peso para código(s) fora do catálogo: {string.Join(", ", extra.Take(10))}.");
+        var nonPositive = weights.Where(kv => kv.Value <= 0).Select(kv => kv.Key).ToList();
+        if (nonPositive.Count > 0)
+            throw new InvalidOperationException($"Metodologia com peso não positivo em: {string.Join(", ", nonPositive.Take(10))}.");
+
+        // Maturidade: níveis resolvíveis, positivos e sem duplicata.
+        var levels = (methodology.MaturityScale ?? new()).Select(ResolveLevel).ToList();
+        if (levels.Count == 0)
+            throw new InvalidOperationException("Metodologia sem escala de maturidade.");
+        if (levels.Any(l => l <= 0))
+            throw new InvalidOperationException("Metodologia com nível de maturidade inválido (<= 0).");
+        if (levels.Distinct().Count() != levels.Count)
+            throw new InvalidOperationException("Metodologia com nível de maturidade duplicado.");
+
+        // Não automatizadas: DECLARADAS == constante canônica das 7 == subcategorias do catálogo.
+        var declared = (methodology.NonAutomatedSubcategories?.Codes ?? new()).ToHashSet(StringComparer.Ordinal);
+        var canonical = SchemaReadinessGuard.NonAutomatedSubcategoryCodes.ToHashSet(StringComparer.Ordinal);
+        if (!declared.SetEquals(canonical))
+            throw new InvalidOperationException(
+                "Subcategorias não automatizadas declaradas na metodologia divergem do conjunto canônico " +
+                $"({string.Join(", ", SchemaReadinessGuard.NonAutomatedSubcategoryCodes)}).");
+        var unknownNonAuto = declared.Where(c => !subCodeSet.Contains(c)).ToList();
+        if (unknownNonAuto.Count > 0)
+            throw new InvalidOperationException($"Subcategoria não automatizada fora do catálogo: {string.Join(", ", unknownNonAuto)}.");
+
+        // Proveniência: metadados obrigatórios + classificação EXATA (sem fallback silencioso).
+        ValidateProvenanceMetadata(catalog.Provenance, "catálogo", DatasetClassification.Official);
+        ValidateProvenanceMetadata(methodology.Provenance, "metodologia", DatasetClassification.Derived);
+        ValidateProvenanceMetadata(methodology.RulesProvenance, "regras", DatasetClassification.Derived);
+
+        // Coerência: a versão da metodologia declarada no topo e na proveniência (que é PERSISTIDA e entra no
+        // hash rederivável) precisam coincidir — senão o hash não seria rederivável do banco.
+        var provVersion = methodology.Provenance?.MethodologyVersion;
+        if (string.IsNullOrWhiteSpace(provVersion))
+            throw new InvalidOperationException("Proveniência da metodologia sem methodologyVersion.");
+        if (!string.Equals(methodology.MethodologyVersion, provVersion, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"methodologyVersion divergente: topo '{methodology.MethodologyVersion}' × proveniência '{provVersion}'.");
+    }
+
+    private static void ValidateRules(List<RuleDto> rules, IEnumerable<string> catalogCodes)
+    {
+        if (rules.Count == 0)
+            throw new InvalidOperationException("Assessment rules JSON parsed to zero rules — check the file/format.");
+
+        var codeSet = catalogCodes.ToHashSet(StringComparer.Ordinal);
+
+        if (rules.Any(r => string.IsNullOrWhiteSpace(r.SubcategoryId)))
+            throw new InvalidOperationException(
+                "Assessment rule with empty subcategory_id — JSON binding likely failed (check snake_case).");
+
+        var dup = rules.GroupBy(r => r.SubcategoryId, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+        if (dup.Count > 0)
+            throw new InvalidOperationException($"Regra(s) duplicada(s) por subcategoria: {string.Join(", ", dup)}.");
+
+        var orphan = rules.Select(r => r.SubcategoryId).Where(c => !codeSet.Contains(c)).ToList();
+        if (orphan.Count > 0)
+            throw new InvalidOperationException(
+                $"{orphan.Count} regra(s) referenciam subcategorias inexistentes: {string.Join(", ", orphan)}. " +
+                "As regras estão fora de sincronia com o catálogo NIST.");
+
+        var ruleCodes = rules.Select(r => r.SubcategoryId).ToHashSet(StringComparer.Ordinal);
+        var missingRule = codeSet.Where(c => !ruleCodes.Contains(c)).ToHashSet(StringComparer.Ordinal);
+        var declaredNonAuto = SchemaReadinessGuard.NonAutomatedSubcategoryCodes.ToHashSet(StringComparer.Ordinal);
+        if (!missingRule.SetEquals(declaredNonAuto))
+            throw new InvalidOperationException(
+                "As subcategorias sem regra divergem das 7 não automatizadas declaradas. Sem regra: " +
+                $"[{string.Join(", ", missingRule.OrderBy(x => x))}]; declaradas: " +
+                $"[{string.Join(", ", declaredNonAuto.OrderBy(x => x))}].");
+        if (rules.Count != SchemaReadinessGuard.ExpectedRules)
+            throw new InvalidOperationException(
+                $"Esperado {SchemaReadinessGuard.ExpectedRules} regras, artefato traz {rules.Count}.");
+    }
+
+    private static void RejectEmptyOrDuplicate(IEnumerable<string> codes, string level)
+    {
+        var list = codes.ToList();
+        if (list.Any(string.IsNullOrWhiteSpace))
+            throw new InvalidOperationException($"Catálogo contém código de {level} vazio.");
+        var dup = list.GroupBy(c => c, StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+        if (dup.Count > 0)
+            throw new InvalidOperationException($"Códigos de {level} duplicados no catálogo: {string.Join(", ", dup)}.");
+    }
+
+    private static void ValidateProvenanceMetadata(ProvenanceDto? dto, string label, DatasetClassification expected)
+    {
+        if (dto is null)
+            throw new InvalidOperationException($"Proveniência ausente para {label}.");
+        if (string.IsNullOrWhiteSpace(dto.Identifier))
+            throw new InvalidOperationException($"Proveniência de {label} sem identifier.");
+        if (string.IsNullOrWhiteSpace(dto.SchemaVersion))
+            throw new InvalidOperationException($"Proveniência de {label} sem schemaVersion.");
+        if (string.IsNullOrWhiteSpace(dto.Origin))
+            throw new InvalidOperationException($"Proveniência de {label} sem origin.");
+        if (string.IsNullOrWhiteSpace(dto.Classification))
+            throw new InvalidOperationException($"Proveniência de {label} sem classification.");
+        // Classificação EXATA (sem fallback silencioso): valor desconhecido ou incompatível falha claramente.
+        if (ParseClassificationStrict(dto.Classification) != expected)
+            throw new InvalidOperationException(
+                $"Proveniência de {label} com classification '{dto.Classification}' — esperado '{expected}'.");
+    }
+
+    // ==================================================================================================
+    //  Proveniência — build/upsert com HISTÓRICO (revisões) e ORDEM segura (UPDATE antes de INSERT)
+    // ==================================================================================================
+
+    private static ReferenceDatasetProvenance BuildProvenanceRevision(
+        Guid fvId, ReferenceDatasetKind kind, ProvenanceDto? dto, string contentHash,
+        DatasetClassification classification, int revision, DateTimeOffset now) => new()
+    {
+        FrameworkVersionId = fvId,
+        Kind = kind,
+        Revision = revision,
+        IsCurrent = true,
+        RecordedAt = now,
+        Identifier = dto?.Identifier ?? kind.ToString(),
+        Classification = classification,
+        SchemaVersion = dto?.SchemaVersion ?? "",
+        Origin = dto?.Origin ?? "",
+        OfficialReference = dto?.OfficialReference,
+        Release = dto?.Release,
+        OfficialUrl = dto?.OfficialUrl,
+        ObtainedOn = dto?.ObtainedOn,
+        AppliesToCatalog = dto?.AppliesToCatalog,
+        ContentHash = contentHash,
+        MethodologyVersion = dto?.MethodologyVersion,
+        Notes = dto?.Notes,
+    };
+
+    /// <summary>
+    /// Upsert com HISTÓRICO. Conteúdo idêntico ao vigente → só refresca metadados descritivos. Hash diferente →
+    /// grava uma NOVA revisão preservando a anterior. A ordem é EXPLÍCITA e segura para o índice PARCIAL único
+    /// (IsCurrent): a revisão vigente é rebaixada e PERSISTIDA (UPDATE) ANTES de inserir a nova (INSERT), de
+    /// modo que nunca existam duas <c>IsCurrent=true</c> ao mesmo tempo — independe da ordem que o EF daria
+    /// num único SaveChanges. Se o INSERT falhasse, a re-execução vê "sem vigente" e grava a nova revisão.
+    /// </summary>
+    private static async Task UpsertProvenanceRevisionAsync(
+        AegisScoreDbContext db, FrameworkVersion fv, ReferenceDatasetKind kind, ProvenanceDto? dto,
+        string contentHash, DatasetClassification classification, DateTimeOffset now, CancellationToken ct)
+    {
+        var forKind = fv.Provenance.Where(p => p.Kind == kind).ToList();
+        var current = forKind.FirstOrDefault(p => p.IsCurrent);
+
+        if (current is null)
+        {
+            var rev = forKind.Count == 0 ? 1 : forKind.Max(p => p.Revision) + 1;
+            var fresh = BuildProvenanceRevision(fv.Id, kind, dto, contentHash, classification, rev, now);
+            db.ReferenceDatasetProvenances.Add(fresh);
+            fv.Provenance.Add(fresh);
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+
+        if (string.Equals(current.ContentHash, contentHash, StringComparison.Ordinal))
+        {
+            if (RefreshMetadata(current, dto, classification))
+                await db.SaveChangesAsync(ct);
+            return;
+        }
+
+        // Conteúdo mudou → rebaixa a vigente e PERSISTE antes de inserir a nova (índice parcial seguro).
+        current.IsCurrent = false;
+        current.SupersededAt = now;
+        await db.SaveChangesAsync(ct);
+
+        var next = forKind.Max(p => p.Revision) + 1;
+        var revision = BuildProvenanceRevision(fv.Id, kind, dto, contentHash, classification, next, now);
+        db.ReferenceDatasetProvenances.Add(revision);
+        fv.Provenance.Add(revision);
         await db.SaveChangesAsync(ct);
     }
 
-    /// <summary>
-    /// Fallback de peso (garantidamente &gt; 0) para quando o catálogo não traz <c>maxScorePoints</c>.
-    /// Deriva da categoria (prefixo do código, ex.: "PR.AA-01" → "PR.AA") mantendo a mesma gradação
-    /// de criticidade do JSON: identidade/dados no topo, governança/comunicação na base.
-    /// </summary>
-    private static int DefaultWeight(string subcategoryCode)
+    private static bool RefreshMetadata(ReferenceDatasetProvenance current, ProvenanceDto? dto, DatasetClassification classification)
     {
-        var dash = subcategoryCode.IndexOf('-');
-        var category = dash > 0 ? subcategoryCode[..dash] : subcategoryCode;
-        return category switch
-        {
-            "PR.AA" or "PR.DS"                                  => 20,  // identidade/acesso e dados (cripto)
-            "PR.PS" or "PR.IR" or "DE.CM" or "ID.RA" or "GV.SC" => 15,  // plataforma, resiliência, risco, cadeia
-            "GV.OC" or "GV.RM" or "GV.RR" or "GV.PO" or "GV.OV"
-                or "RS.CO" or "RC.CO"                           => 5,   // governança, política, comunicação
-            _                                                  => 10,  // médio: demais categorias e códigos novos
-        };
+        var desired = BuildProvenanceRevision(current.FrameworkVersionId, current.Kind, dto, current.ContentHash,
+            classification, current.Revision, current.RecordedAt);
+        var changed = false;
+        if (current.Identifier != desired.Identifier) { current.Identifier = desired.Identifier; changed = true; }
+        if (current.Classification != desired.Classification) { current.Classification = desired.Classification; changed = true; }
+        if (current.SchemaVersion != desired.SchemaVersion) { current.SchemaVersion = desired.SchemaVersion; changed = true; }
+        if (current.Origin != desired.Origin) { current.Origin = desired.Origin; changed = true; }
+        if (current.OfficialReference != desired.OfficialReference) { current.OfficialReference = desired.OfficialReference; changed = true; }
+        if (current.Release != desired.Release) { current.Release = desired.Release; changed = true; }
+        if (current.OfficialUrl != desired.OfficialUrl) { current.OfficialUrl = desired.OfficialUrl; changed = true; }
+        if (current.ObtainedOn != desired.ObtainedOn) { current.ObtainedOn = desired.ObtainedOn; changed = true; }
+        if (current.AppliesToCatalog != desired.AppliesToCatalog) { current.AppliesToCatalog = desired.AppliesToCatalog; changed = true; }
+        if (current.MethodologyVersion != desired.MethodologyVersion) { current.MethodologyVersion = desired.MethodologyVersion; changed = true; }
+        if (current.Notes != desired.Notes) { current.Notes = desired.Notes; changed = true; }
+        return changed;
     }
 
-    // ---- JSON shape below. Source: Catalog loaded via Seed:CatalogPath override (default: AegisScore.Api/Data/nist_csf_2_0_catalog.json) ----
-    private record CatalogDto(string Framework, string? Source, List<LevelDto> MaturityScale, List<FunctionDto> Functions);
-    private record LevelDto(string Level, string Name, string? Label, string? Description, int Score);
-    private record FunctionDto(string Code, string Name, string? Definition, List<CategoryDto> Categories);
-    private record CategoryDto(string Code, string Name, string? Definition, List<SubcategoryDto> Subcategories);
-    private record SubcategoryDto(string Code, string Description, string? ImplementationExamples, List<string>? InformativeReferences, int? MaxScorePoints);
+    private static DatasetClassification ParseClassificationStrict(string value) =>
+        value.Trim().ToLowerInvariant() switch
+        {
+            "official" => DatasetClassification.Official,
+            "derived" => DatasetClassification.Derived,
+            _ => throw new InvalidOperationException($"Classificação de proveniência desconhecida: '{value}'."),
+        };
 
-    // ---- Regras de avaliação. O JSON é snake_case: os [JsonPropertyName] tornam o bind à prova de
-    //      convenção (PropertyNameCaseInsensitive não converte underscores). ----
-    private record RuleDto(
+    // ==================================================================================================
+    //  Reconcile / atualização in-place (idempotente; resíduos explícitos)
+    // ==================================================================================================
+
+    private static bool ReconcileWeights(FrameworkVersion fv, MethodologyDto methodology)
+    {
+        var changed = false;
+        foreach (var sub in fv.Functions.SelectMany(f => f.Categories).SelectMany(c => c.Subcategories))
+        {
+            var desired = methodology.SubcategoryWeights![sub.Code];   // validado: presente e positivo
+            if (sub.MaxScorePoints != desired) { sub.MaxScorePoints = desired; changed = true; }
+        }
+        return changed;
+    }
+
+    private static bool ReconcileMaturity(FrameworkVersion fv, MethodologyDto methodology)
+    {
+        var changed = false;
+        var desiredByLevel = methodology.MaturityScale.ToDictionary(ResolveLevel);
+
+        var residual = fv.MaturityLevels.Where(m => !desiredByLevel.ContainsKey(m.Level)).Select(m => m.Level).ToList();
+        if (residual.Count > 0)
+            throw new InvalidOperationException(
+                $"Nível(is) de maturidade no banco fora do artefato: {string.Join(", ", residual)}. " +
+                "Alteração da escala exige transição deliberada — seed abortado.");
+
+        var byLevel = fv.MaturityLevels.ToDictionary(m => m.Level);
+        foreach (var (level, lvl) in desiredByLevel)
+        {
+            if (byLevel.TryGetValue(level, out var e))
+            {
+                if (e.Name != lvl.Name) { e.Name = lvl.Name; changed = true; }
+                if (e.Description != (lvl.Description ?? "")) { e.Description = lvl.Description ?? ""; changed = true; }
+                if (e.Score != lvl.Score) { e.Score = lvl.Score; changed = true; }
+            }
+            else
+            {
+                fv.MaturityLevels.Add(new MaturityLevel
+                {
+                    FrameworkVersionId = fv.Id, Level = level, Name = lvl.Name,
+                    Description = lvl.Description ?? "", Score = lvl.Score,
+                });
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    /// <summary>Atualiza os campos OFICIAIS (texto) no lugar, casados por código (topologia idêntica garantida).</summary>
+    private static bool UpdateOfficialFieldsInPlace(FrameworkVersion fv, CatalogDto catalog)
+    {
+        var changed = false;
+        var funcs = fv.Functions.ToDictionary(f => f.Code, StringComparer.Ordinal);
+        var cats = fv.Functions.SelectMany(f => f.Categories).ToDictionary(c => c.Code, StringComparer.Ordinal);
+        var subs = fv.Functions.SelectMany(f => f.Categories).SelectMany(c => c.Subcategories)
+            .ToDictionary(s => s.Code, StringComparer.Ordinal);
+
+        foreach (var fn in catalog.Functions)
+        {
+            var e = funcs[fn.Code];
+            if (e.Name != fn.Name) { e.Name = fn.Name; changed = true; }
+            if (e.Definition != (fn.Definition ?? "")) { e.Definition = fn.Definition ?? ""; changed = true; }
+            foreach (var cat in fn.Categories)
+            {
+                var ce = cats[cat.Code];
+                if (ce.Name != cat.Name) { ce.Name = cat.Name; changed = true; }
+                if (ce.Definition != (cat.Definition ?? "")) { ce.Definition = cat.Definition ?? ""; changed = true; }
+                foreach (var sub in cat.Subcategories)
+                {
+                    var se = subs[sub.Code];
+                    if (se.Description != (sub.Description ?? "")) { se.Description = sub.Description ?? ""; changed = true; }
+                    if (se.ImplementationExamples != sub.ImplementationExamples) { se.ImplementationExamples = sub.ImplementationExamples; changed = true; }
+                    var refs = sub.InformativeReferences ?? new();
+                    if (!se.InformativeReferences.SequenceEqual(refs)) { se.InformativeReferences = refs; changed = true; }
+                }
+            }
+        }
+        return changed;
+    }
+
+    private static int ResolveLevel(LevelDto lvl) => int.TryParse(lvl.Level, out var n) ? n : lvl.Score;
+
+    // ==================================================================================================
+    //  Mapeamento artefato → nós do fingerprint (autoridade única de hash)
+    // ==================================================================================================
+
+    private static List<Fp.FunctionNode> ToFingerprint(CatalogDto catalog) =>
+        catalog.Functions.Select(f => new Fp.FunctionNode(
+            f.Code, f.Name, f.Definition ?? "",
+            (f.Categories ?? new()).Select(c => new Fp.CategoryNode(
+                c.Code, c.Name, c.Definition ?? "",
+                (c.Subcategories ?? new()).Select(s => new Fp.SubcategoryNode(
+                    s.Code, s.Description ?? "", s.ImplementationExamples,
+                    s.InformativeReferences ?? new())).ToList<Fp.SubcategoryNode>())).ToList<Fp.CategoryNode>())).ToList();
+
+    private static List<Fp.FunctionNode> ToFingerprint(FrameworkVersion fv) =>
+        fv.Functions.Select(f => new Fp.FunctionNode(
+            f.Code, f.Name, f.Definition,
+            f.Categories.Select(c => new Fp.CategoryNode(
+                c.Code, c.Name, c.Definition,
+                c.Subcategories.Select(s => new Fp.SubcategoryNode(
+                    s.Code, s.Description, s.ImplementationExamples,
+                    s.InformativeReferences ?? new())).ToList<Fp.SubcategoryNode>())).ToList<Fp.CategoryNode>())).ToList();
+
+    private static string MethodologyHashOf(MethodologyDto m) => Fp.MethodologyHash(
+        m.Provenance?.MethodologyVersion,
+        m.MaturityScale.Select(l => new Fp.MaturityNode(ResolveLevel(l), l.Name, l.Description, l.Score)).ToList(),
+        m.SubcategoryWeights ?? new(),
+        m.NonAutomatedSubcategories?.Codes ?? new());
+
+    // ==================================================================================================
+    //  Utilitários
+    // ==================================================================================================
+
+    private static T Load<T>(string path, string label)
+    {
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"{label} não encontrado em '{path}'.", path);
+        var raw = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<T>(raw, Json)
+            ?? throw new InvalidOperationException($"Não foi possível interpretar o JSON de {label}.");
+    }
+
+    private static bool Assign(string current, Action<string> set, string desired)
+    {
+        if (current == desired) return false;
+        set(desired); return true;
+    }
+
+    private static bool Assign(List<string> current, Action<List<string>> set, List<string> desired)
+    {
+        if (current.SequenceEqual(desired)) return false;
+        set(desired); return true;
+    }
+
+    // ---- Shapes dos JSONs -----------------------------------------------------------------------------
+    private sealed record CatalogDto(
+        ProvenanceDto? Provenance, string Framework, string? Source, List<FunctionDto> Functions);
+    private sealed record FunctionDto(string Code, string Name, string? Definition, List<CategoryDto> Categories);
+    private sealed record CategoryDto(string Code, string Name, string? Definition, List<SubcategoryDto> Subcategories);
+    private sealed record SubcategoryDto(
+        string Code, string Description, string? ImplementationExamples, List<string>? InformativeReferences);
+
+    private sealed record MethodologyDto(
+        ProvenanceDto? Provenance,
+        string MethodologyVersion,
+        List<LevelDto> MaturityScale,
+        Dictionary<string, int>? SubcategoryWeights,
+        NonAutomatedDto? NonAutomatedSubcategories,
+        ProvenanceDto? RulesProvenance);
+    private sealed record LevelDto(string Level, string Name, string? Label, string? Description, int Score);
+    private sealed record NonAutomatedDto(string? Reason, List<string>? Codes);
+
+    private sealed record ProvenanceDto(
+        string? Identifier, string? SchemaVersion, string? Classification, string? Origin,
+        string? OfficialReference, string? Release, string? OfficialUrl, string? ObtainedOn,
+        string? AppliesToCatalog, string? MethodologyVersion, string? Notes);
+
+    private sealed record RuleDto(
         [property: JsonPropertyName("subcategory_id")] string SubcategoryId,
         [property: JsonPropertyName("evaluation_metrics")] List<string> EvaluationMetrics,
         [property: JsonPropertyName("calculation_logic")] string CalculationLogic,

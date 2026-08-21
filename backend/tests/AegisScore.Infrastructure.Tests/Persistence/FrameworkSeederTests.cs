@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using AegisScore.Application.Abstractions;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -9,214 +11,380 @@ using Xunit;
 namespace AegisScore.Infrastructure.Tests.Persistence;
 
 /// <summary>
-/// Testes do <see cref="FrameworkSeeder"/> sobre SQLite in-memory — um banco relacional REAL e efêmero,
-/// exercitando EnsureCreated + SaveChanges de verdade (sem PostgreSQL, sem mocks de EF). Cobre o contrato
-/// que sustenta o painel: idempotência, carga do grafo completo e o preenchimento nunca-zero dos pesos.
+/// [AEGIS-MVP-POSTURE-01] Testes do <see cref="FrameworkSeeder"/> sobre SQLite in-memory (banco relacional
+/// REAL e efêmero) exercitando os ARTEFATOS DE PRODUÇÃO (catálogo 6/22/106, metodologia e 99 regras) — os
+/// cenários de mudança/recusa mutam cópias temporárias. Cobre: separação catálogo/metodologia, evidência
+/// tipada, proveniência com histórico, atualização determinística (idêntico/metodologia/regras/oficial não
+/// estrutural) e recusa fail-closed (estrutural, pesos incompletos/extras, regra órfã/duplicada).
 /// </summary>
 public sealed class FrameworkSeederTests : IDisposable
 {
-    // Contagens esperadas para o fixture mínimo abaixo (2 funções / 2 categorias / 3 subcategorias).
-    private const int ExpectedFunctions = 2;
-    private const int ExpectedCategories = 2;
-    private const int ExpectedSubcategories = 3;
-    private const int ExpectedMaturityLevels = 2;
-
     private readonly SqliteConnection _connection;
-    private readonly string _catalogPath;
+    private readonly List<string> _temps = new();
+
+    private static readonly string DataDir = Path.Combine(AppContext.BaseDirectory, "Data");
+    private static string CatalogPath => Path.Combine(DataDir, "nist_csf_2_0_catalog.json");
+    private static string MethodologyPath => Path.Combine(DataDir, "aegis_methodology.json");
+    private static string RulesPath => Path.Combine(DataDir, "aegis_assessment_rules.json");
 
     public FrameworkSeederTests()
     {
-        // O banco in-memory do SQLite vive ENQUANTO a conexão estiver aberta. Mantemos uma conexão por
-        // teste (o xUnit instancia a classe por [Fact], então cada teste recebe um banco limpo e isolado).
         _connection = new SqliteConnection("DataSource=:memory:");
         _connection.Open();
-        using (var ctx = NewContext())
-            ctx.Database.EnsureCreated();
-
-        _catalogPath = WriteCatalogFixture();
+        using var ctx = NewContext();
+        ctx.Database.EnsureCreated();
     }
 
     public void Dispose()
     {
         _connection.Dispose();
-        if (File.Exists(_catalogPath))
-            File.Delete(_catalogPath);
+        foreach (var t in _temps)
+            if (File.Exists(t)) File.Delete(t);
     }
 
-    // ---- Requisito 1: idempotência ------------------------------------------------
+    // ---- Seed inicial: pacote completo, pesos da metodologia, proveniência ------------------------------
 
     [Fact]
-    public async Task SeedAsync_ExecutadoDuasVezes_NaoDuplicaOCatalogo()
+    public async Task SeedInicial_CarregaPacoteCompleto_ComPesosDaMetodologia_ProvenienciaEEvidenciaTipada()
     {
-        await using (var ctx = NewContext())
-            await FrameworkSeeder.SeedAsync(ctx, _catalogPath);
-        await using (var ctx = NewContext())
-            await FrameworkSeeder.SeedAsync(ctx, _catalogPath);   // 2ª passada: o guard deve tornar no-op
+        await SeedAllAsync();
 
-        await using var assert = NewContext();
-        (await assert.FrameworkVersions.CountAsync()).Should().Be(1);
-        (await assert.Functions.CountAsync()).Should().Be(ExpectedFunctions);
-        (await assert.Categories.CountAsync()).Should().Be(ExpectedCategories);
-        (await assert.Subcategories.CountAsync()).Should().Be(ExpectedSubcategories);
-        (await assert.MaturityLevels.CountAsync()).Should().Be(ExpectedMaturityLevels);
-    }
+        await using var db = NewContext();
+        (await db.FrameworkVersions.CountAsync()).Should().Be(1);
+        (await db.Functions.CountAsync()).Should().Be(6);
+        (await db.Categories.CountAsync()).Should().Be(22);
+        (await db.Subcategories.CountAsync()).Should().Be(106);
+        (await db.MaturityLevels.CountAsync()).Should().Be(5);
+        (await db.AssessmentRules.CountAsync()).Should().Be(99);
 
-    // ---- Requisito 2: carga do grafo completo ------------------------------------
-
-    [Fact]
-    public async Task SeedAsync_CarregaGrafoCompleto_DoFrameworkAteAsSubcategorias()
-    {
-        await using (var ctx = NewContext())
-            await FrameworkSeeder.SeedAsync(ctx, _catalogPath);
-
-        await using var assert = NewContext();
-        var fv = await assert.FrameworkVersions
-            .Include(f => f.MaturityLevels)
-            .Include(f => f.Functions).ThenInclude(fn => fn.Categories).ThenInclude(c => c.Subcategories)
-            .SingleAsync();
-
-        fv.Name.Should().Be("NIST CSF 2.0");
-        fv.Source.Should().Be("unit-test-fixture");
-        fv.IsActive.Should().BeTrue();
-        fv.MaturityLevels.Should().HaveCount(ExpectedMaturityLevels);
-
-        fv.Functions.Should().HaveCount(ExpectedFunctions);
-        var protect = fv.Functions.Single(f => f.Code == "PR");
-        protect.Categories.Should().ContainSingle(c => c.Code == "PR.AA");
-
-        var aa = protect.Categories.Single(c => c.Code == "PR.AA");
-        aa.Subcategories.Select(s => s.Code).Should().BeEquivalentTo("PR.AA-01", "PR.AA-02");
-    }
-
-    // ---- Requisito 3: backfill de scoring (MaxScorePoints) -----------------------
-
-    [Fact]
-    public async Task SeedAsync_PreencheMaxScorePoints_RespeitandoCatalogoEDerivandoOsAusentes()
-    {
-        await using (var ctx = NewContext())
-            await FrameworkSeeder.SeedAsync(ctx, _catalogPath);
-
-        await using var assert = NewContext();
-        var subs = await assert.Subcategories.ToListAsync();
-
-        // Regra de ouro do Aegis Score: nenhum peso pode ser <= 0 (o denominador do score nunca zera).
+        // Pesos vêm da METODOLOGIA, não do catálogo (que já não os traz).
+        var methodologyWeights = ReadMethodologyWeights();
+        var subs = await db.Subcategories.ToListAsync();
         subs.Should().OnlyContain(s => s.MaxScorePoints > 0);
+        foreach (var s in subs)
+            s.MaxScorePoints.Should().Be(methodologyWeights[s.Code], $"peso de {s.Code} vem da metodologia");
 
-        subs.Single(s => s.Code == "PR.AA-01").MaxScorePoints.Should().Be(17, "peso explícito do catálogo é respeitado");
-        subs.Single(s => s.Code == "PR.AA-02").MaxScorePoints.Should().Be(20, "ausente → tier de identidade/acesso (PR.AA)");
-        subs.Single(s => s.Code == "GV.OC-01").MaxScorePoints.Should().Be(5, "ausente → tier de governança (GV.OC)");
+        // Evidência TIPADA e persistida — distribuição real: 58 telemetria / 41 documental / 0 híbrida.
+        (await db.AssessmentRules.CountAsync(r => r.EvidenceType == RuleEvidenceType.Telemetry)).Should().Be(58);
+        (await db.AssessmentRules.CountAsync(r => r.EvidenceType == RuleEvidenceType.Documentation)).Should().Be(41);
+        (await db.AssessmentRules.CountAsync(r => r.EvidenceType == RuleEvidenceType.Both)).Should().Be(0);
+
+        // Proveniência: 3 conjuntos, revisão 1 vigente, classificação correta, hash SHA-256.
+        var prov = await db.ReferenceDatasetProvenances.ToListAsync();
+        prov.Should().HaveCount(3);
+        prov.Should().OnlyContain(p => p.IsCurrent && p.Revision == 1);
+        prov.Single(p => p.Kind == ReferenceDatasetKind.NistCatalog).Classification.Should().Be(DatasetClassification.Official);
+        prov.Single(p => p.Kind == ReferenceDatasetKind.AegisMethodology).Classification.Should().Be(DatasetClassification.Derived);
+        prov.Single(p => p.Kind == ReferenceDatasetKind.AegisAssessmentRules).Classification.Should().Be(DatasetClassification.Derived);
+        prov.Should().OnlyContain(p => p.ContentHash.Length == 64);
+        prov.Single(p => p.Kind == ReferenceDatasetKind.AegisMethodology).MethodologyVersion.Should().NotBeNullOrWhiteSpace();
+        // Metadados antes ignorados agora persistidos (não descartados em silêncio).
+        prov.Single(p => p.Kind == ReferenceDatasetKind.NistCatalog).OfficialReference.Should().NotBeNullOrWhiteSpace();
+        prov.Single(p => p.Kind == ReferenceDatasetKind.NistCatalog).Notes.Should().NotBeNullOrWhiteSpace();
     }
 
     [Fact]
-    public async Task SeedAsync_ComSubcategoriasDePesoZeroJaPersistidas_BackfillCorrigeSemReSemear()
+    public async Task SeteAusenciasDeclaradas_SaoExatamenteAsSubcategoriasSemRegra()
     {
-        // Arrange: base legada — "NIST CSF 2.0" já semeado ANTES da coluna MaxScorePoints existir (peso 0).
-        await using (var seed = NewContext())
+        await SeedAllAsync();
+
+        await using var db = NewContext();
+        var ruleCodes = (await db.AssessmentRules.Select(r => r.SubcategoryCode).ToListAsync()).ToHashSet();
+        var withoutRule = (await db.Subcategories.Select(s => s.Code).ToListAsync())
+            .Where(c => !ruleCodes.Contains(c)).OrderBy(x => x).ToList();
+
+        withoutRule.Should().BeEquivalentTo(SchemaReadinessGuard.NonAutomatedSubcategoryCodes);
+    }
+
+    // ---- Segunda execução idêntica: no-op --------------------------------------------------------------
+
+    [Fact]
+    public async Task SegundaExecucaoIdentica_NaoDuplica_NaoCriaNovaRevisao()
+    {
+        await SeedAllAsync();
+        await SeedAllAsync();   // 2ª passada idêntica
+
+        await using var db = NewContext();
+        (await db.FrameworkVersions.CountAsync()).Should().Be(1);
+        (await db.Subcategories.CountAsync()).Should().Be(106);
+        (await db.AssessmentRules.CountAsync()).Should().Be(99);
+        // Conteúdo idêntico → nenhuma revisão nova (proveniência continua com 3 linhas, todas revisão 1).
+        (await db.ReferenceDatasetProvenances.CountAsync()).Should().Be(3);
+        (await db.ReferenceDatasetProvenances.CountAsync(p => p.Revision == 1 && p.IsCurrent)).Should().Be(3);
+    }
+
+    // ---- Atualização determinística de metodologia: reconcilia + histórico -----------------------------
+
+    [Fact]
+    public async Task AtualizacaoDeMetodologia_ReconciliaPeso_ENovaRevisao_PreservandoHashAntigo()
+    {
+        await SeedAllAsync();
+
+        // Muta um peso na metodologia (mantém as 106 chaves, positivo).
+        var weights = ReadMethodologyWeights();
+        var target = weights.Keys.First();
+        var novoPeso = weights[target] + 7;
+        var methodologyTemp = MutateJson(MethodologyPath, root =>
+            root["subcategoryWeights"]![target] = novoPeso);
+
+        await using (var ctx = NewContext())
+            await FrameworkSeeder.SeedAsync(ctx, CatalogPath, methodologyTemp);
+
+        await using var db = NewContext();
+        (await db.Subcategories.SingleAsync(s => s.Code == target)).MaxScorePoints.Should().Be(novoPeso);
+
+        // Histórico: metodologia agora tem 2 revisões — a antiga PRESERVADA (não vigente, com hash distinto).
+        var meth = await db.ReferenceDatasetProvenances
+            .Where(p => p.Kind == ReferenceDatasetKind.AegisMethodology).OrderBy(p => p.Revision).ToListAsync();
+        meth.Should().HaveCount(2);
+        meth[0].Revision.Should().Be(1);
+        meth[0].IsCurrent.Should().BeFalse();
+        meth[0].SupersededAt.Should().NotBeNull();
+        meth[1].Revision.Should().Be(2);
+        meth[1].IsCurrent.Should().BeTrue();
+        meth[0].ContentHash.Should().NotBe(meth[1].ContentHash, "o hash antigo permanece rastreável");
+    }
+
+    // ---- Atualização de regras: reconcilia + nova revisão ---------------------------------------------
+
+    [Fact]
+    public async Task AtualizacaoDeRegras_ReconciliaConteudo_ENovaRevisao()
+    {
+        await SeedAllAsync();
+
+        var rulesTemp = MutateJson(RulesPath, root =>
+            root!.AsArray()[0]!["calculation_logic"] = "RUBRICA CONSULTIVA ATUALIZADA (teste).");
+        var firstCode = JsonNode.Parse(File.ReadAllText(RulesPath))!.AsArray()[0]!["subcategory_id"]!.GetValue<string>();
+
+        await using (var ctx = NewContext())
+            await FrameworkSeeder.SeedAssessmentRulesAsync(ctx, rulesTemp, MethodologyPath);
+
+        await using var db = NewContext();
+        (await db.AssessmentRules.SingleAsync(r => r.SubcategoryCode == firstCode))
+            .CalculationLogic.Should().Be("RUBRICA CONSULTIVA ATUALIZADA (teste).");
+        var rules = await db.ReferenceDatasetProvenances
+            .Where(p => p.Kind == ReferenceDatasetKind.AegisAssessmentRules).ToListAsync();
+        rules.Should().HaveCount(2);
+        rules.Count(p => p.IsCurrent).Should().Be(1);
+    }
+
+    // ---- Atualização OFICIAL não estrutural: atualiza campos + nova revisão do catálogo ----------------
+
+    [Fact]
+    public async Task AtualizacaoOficialNaoEstrutural_AtualizaTexto_ENovaRevisaoDoCatalogo()
+    {
+        await SeedAllAsync();
+
+        // Muda a DESCRIÇÃO de uma subcategoria (mesma topologia de códigos).
+        var (funcIdx, catIdx, subCode) = FirstSubcategoryLocation();
+        var catalogTemp = MutateJson(CatalogPath, root =>
+            root!["functions"]![funcIdx]!["categories"]![catIdx]!["subcategories"]![0]!["description"] = "DESCRIÇÃO OFICIAL ATUALIZADA (teste).");
+
+        await using (var ctx = NewContext())
+            await FrameworkSeeder.SeedAsync(ctx, catalogTemp, MethodologyPath);
+
+        await using var db = NewContext();
+        (await db.FrameworkVersions.CountAsync()).Should().Be(1, "atualização não estrutural NÃO cria nova versão");
+        (await db.Subcategories.SingleAsync(s => s.Code == subCode)).Description.Should().Be("DESCRIÇÃO OFICIAL ATUALIZADA (teste).");
+        var cat = await db.ReferenceDatasetProvenances
+            .Where(p => p.Kind == ReferenceDatasetKind.NistCatalog).ToListAsync();
+        cat.Should().HaveCount(2, "texto oficial mudou → nova revisão do catálogo (histórico preservado)");
+        cat.Count(p => p.IsCurrent).Should().Be(1);
+    }
+
+    // ---- Recusa de alteração ESTRUTURAL ---------------------------------------------------------------
+
+    [Fact]
+    public async Task AlteracaoEstrutural_DoConjuntoDeCodigos_EhRecusada()
+    {
+        await SeedAllAsync();
+
+        // Renomeia um código de subcategoria PERSISTIDO — a topologia do banco passa a divergir do artefato.
+        await using (var mut = NewContext())
         {
-            var fv = new FrameworkVersion { Name = "NIST CSF 2.0", Source = "legacy", IsActive = true };
-
-            var pr = new NistFunction { Code = "PR", Name = "PROTECT" };
-            var praa = new NistCategory { Code = "PR.AA", Name = "Identity" };
-            praa.Subcategories.Add(new NistSubcategory { Code = "PR.AA-01", Description = "x", MaxScorePoints = 0 });
-            pr.Categories.Add(praa);
-
-            var gv = new NistFunction { Code = "GV", Name = "GOVERN" };
-            var gvoc = new NistCategory { Code = "GV.OC", Name = "Org Context" };
-            gvoc.Subcategories.Add(new NistSubcategory { Code = "GV.OC-01", Description = "y", MaxScorePoints = 0 });
-            gv.Categories.Add(gvoc);
-
-            fv.Functions.Add(pr);
-            fv.Functions.Add(gv);
-            seed.FrameworkVersions.Add(fv);
-            await seed.SaveChangesAsync();
+            var sub = await mut.Subcategories.OrderBy(s => s.Code).FirstAsync();
+            sub.Code = "ZZ.ZZ-99";
+            await mut.SaveChangesAsync();
         }
 
-        // Act: o backfill roda SEMPRE (antes do guard); o guard então barra um novo seed (NIST já existe).
-        await using (var ctx = NewContext())
-            await FrameworkSeeder.SeedAsync(ctx, _catalogPath);
-
-        // Assert: pesos legados corrigidos via DefaultWeight, e nenhuma duplicação de catálogo.
-        await using var assert = NewContext();
-        (await assert.FrameworkVersions.CountAsync()).Should().Be(1, "o guard de idempotência barra o re-seed");
-        (await assert.Subcategories.SingleAsync(s => s.Code == "PR.AA-01")).MaxScorePoints.Should().Be(20);
-        (await assert.Subcategories.SingleAsync(s => s.Code == "GV.OC-01")).MaxScorePoints.Should().Be(5);
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAsync(ctx, CatalogPath, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*ESTRUTURAL*");
     }
 
-    // ---- infraestrutura do teste --------------------------------------------------
+    // ---- Recusa fail-closed: metodologia incompleta / extra --------------------------------------------
 
-    /// <summary>
-    /// Novo DbContext sobre a MESMA conexão (o EF trata conexões externas como não-próprias e não as
-    /// fecha no dispose). Contextos distintos para semear e assertar garantem que a asserção lê o BANCO,
-    /// não o cache do ChangeTracker.
-    /// </summary>
-    private AegisScoreDbContext NewContext()
+    [Fact]
+    public async Task MetodologiaComPesoFaltando_EhRecusadaAntesDePersistir()
     {
-        var options = new DbContextOptionsBuilder<AegisScoreDbContext>()
-            .UseSqlite(_connection)
-            .Options;
-        // Catálogo é dado de referência (não ITenantOwned) — nenhum tenant ambiente é necessário,
-        // exatamente como no seeding de startup. TenantId nulo espelha esse contexto.
-        return new AegisScoreDbContext(options, new NullTenantContext());
+        var target = ReadMethodologyWeights().Keys.First();
+        var methodologyTemp = MutateJson(MethodologyPath, root =>
+            ((JsonObject)root!["subcategoryWeights"]!).Remove(target));
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAsync(ctx, CatalogPath, methodologyTemp);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*sem peso*");
+        (await ctx.FrameworkVersions.CountAsync()).Should().Be(0, "recusa ANTES de persistir");
     }
 
-    private static string WriteCatalogFixture()
+    [Fact]
+    public async Task MetodologiaComPesoExtra_ForaDoCatalogo_EhRecusada()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"nist_catalog_test_{Guid.NewGuid():N}.json");
-        File.WriteAllText(path, CatalogJson);
-        return path;
+        var methodologyTemp = MutateJson(MethodologyPath, root =>
+            root!["subcategoryWeights"]!["ZZ.ZZ-99"] = 10);
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAsync(ctx, CatalogPath, methodologyTemp);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*fora do catálogo*");
+    }
+
+    // ---- Recusa fail-closed: regra órfã / duplicada ---------------------------------------------------
+
+    [Fact]
+    public async Task RegraOrfa_EhRecusada()
+    {
+        await SeedAllAsync();
+        var rulesTemp = MutateJson(RulesPath, root =>
+            root!.AsArray()[0]!["subcategory_id"] = "ZZ.ZZ-99");
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAssessmentRulesAsync(ctx, rulesTemp, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*inexistentes*");
+    }
+
+    [Fact]
+    public async Task RegraDuplicada_EhRecusada()
+    {
+        await SeedAllAsync();
+        var rulesTemp = MutateJson(RulesPath, root =>
+        {
+            var arr = root!.AsArray();
+            var dup = JsonNode.Parse(arr[1]!.ToJsonString())!;
+            dup["subcategory_id"] = arr[0]!["subcategory_id"]!.GetValue<string>();
+            arr.Add(dup);
+        });
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAssessmentRulesAsync(ctx, rulesTemp, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*duplicada*");
+    }
+
+    [Fact]
+    public async Task ResiduoDeRegra_NoBancoForaDoArtefato_EhRecusado()
+    {
+        await SeedAllAsync();
+
+        // Injeta uma regra que NÃO está no artefato (código válido, mas sem rubrica declarada: uma das 7).
+        await using (var mut = NewContext())
+        {
+            var subId = await mut.Subcategories.Where(s => s.Code == "GV.OC-01").Select(s => s.Id).FirstAsync();
+            mut.AssessmentRules.Add(new AegisAssessmentRule { SubcategoryId = subId, SubcategoryCode = "GV.OC-01" });
+            await mut.SaveChangesAsync();
+        }
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAssessmentRulesAsync(ctx, RulesPath, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*não pertencem mais*");
+    }
+
+    // ---- Recusa: mudança de HIERARQUIA (topologia) sem mudar código -----------------------------------
+
+    [Fact]
+    public async Task AlteracaoDeHierarquia_SubcategoriaMovidaDeCategoria_SemMudarCodigo_EhRecusadaComoEstrutural()
+    {
+        await SeedAllAsync();
+
+        // Move uma subcategoria para OUTRA categoria (mesmo conjunto de códigos, hierarquia diferente).
+        await using (var mut = NewContext())
+        {
+            var sub = await mut.Subcategories.OrderBy(s => s.Code).FirstAsync();
+            var otherCategoryId = await mut.Categories.Where(c => c.Id != sub.CategoryId).Select(c => c.Id).FirstAsync();
+            sub.CategoryId = otherCategoryId;
+            await mut.SaveChangesAsync();
+        }
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAsync(ctx, CatalogPath, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*ESTRUTURAL*");
+    }
+
+    // ---- Recusa: códigos de função/categoria duplicados no artefato ------------------------------------
+
+    [Fact]
+    public async Task CatalogoComCodigoDeFuncaoDuplicado_EhRecusado()
+    {
+        var catalogTemp = MutateJson(CatalogPath, root =>
+            root!["functions"]![1]!["code"] = root!["functions"]![0]!["code"]!.GetValue<string>());
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAsync(ctx, catalogTemp, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*função*");
+    }
+
+    [Fact]
+    public async Task CatalogoComCodigoDeCategoriaDuplicado_EhRecusado()
+    {
+        var catalogTemp = MutateJson(CatalogPath, root =>
+            root!["functions"]![0]!["categories"]![1]!["code"] =
+                root!["functions"]![0]!["categories"]![0]!["code"]!.GetValue<string>());
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAsync(ctx, catalogTemp, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*categoria*");
+    }
+
+    [Fact]
+    public async Task ClassificacaoDeProveniencia_Desconhecida_EhRecusada()
+    {
+        var catalogTemp = MutateJson(CatalogPath, root =>
+            root!["provenance"]!["classification"] = "inventada");
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAsync(ctx, catalogTemp, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*desconhecida*");
+    }
+
+    // ---- infraestrutura do teste ----------------------------------------------------------------------
+
+    private async Task SeedAllAsync()
+    {
+        await using var ctx = NewContext();
+        await FrameworkSeeder.SeedAsync(ctx, CatalogPath, MethodologyPath);
+        await FrameworkSeeder.SeedAssessmentRulesAsync(ctx, RulesPath, MethodologyPath);
+        await FrameworkSeeder.SeedSignalMappingsAsync(ctx);
+    }
+
+    private AegisScoreDbContext NewContext() =>
+        new(new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(_connection).Options,
+            new NullTenantContext());
+
+    private static Dictionary<string, int> ReadMethodologyWeights()
+    {
+        var root = JsonNode.Parse(File.ReadAllText(MethodologyPath))!;
+        return root["subcategoryWeights"]!.AsObject()
+            .ToDictionary(kv => kv.Key, kv => kv.Value!.GetValue<int>());
+    }
+
+    private static (int funcIdx, int catIdx, string subCode) FirstSubcategoryLocation()
+    {
+        var root = JsonNode.Parse(File.ReadAllText(CatalogPath))!;
+        var sub = root["functions"]![0]!["categories"]![0]!["subcategories"]![0]!;
+        return (0, 0, sub["code"]!.GetValue<string>());
+    }
+
+    /// <summary>Lê o artefato, aplica a mutação e grava um arquivo TEMPORÁRIO (o de produção nunca é tocado).</summary>
+    private string MutateJson(string sourcePath, Action<JsonNode> mutate)
+    {
+        var root = JsonNode.Parse(File.ReadAllText(sourcePath))!;
+        mutate(root);
+        var temp = Path.Combine(Path.GetTempPath(), $"aegis_seed_test_{Guid.NewGuid():N}.json");
+        File.WriteAllText(temp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        _temps.Add(temp);
+        return temp;
     }
 
     private sealed class NullTenantContext : ITenantContext
     {
         public Guid? TenantId => null;
     }
-
-    /// <summary>
-    /// Fixture mínimo e determinístico: 2 funções, 2 categorias, 3 subcategorias. Cobre os três casos de
-    /// peso — explícito no catálogo (PR.AA-01=17), ausente em tier alto (PR.AA-02 → 20) e em tier baixo
-    /// (GV.OC-01 → 5). Isolado do catálogo real de 106 itens para o teste não depender do arquivo de produção.
-    /// </summary>
-    private const string CatalogJson = """
-        {
-          "framework": "NIST CSF 2.0",
-          "source": "unit-test-fixture",
-          "maturityScale": [
-            { "level": "1", "name": "Performed", "score": 1 },
-            { "level": "2", "name": "Documented", "score": 2 }
-          ],
-          "functions": [
-            {
-              "code": "PR",
-              "name": "PROTECT (PR)",
-              "definition": "Safeguards to manage the organization's cybersecurity risks.",
-              "categories": [
-                {
-                  "code": "PR.AA",
-                  "name": "Identity Management, Authentication, and Access Control (PR.AA)",
-                  "definition": "Access is limited to authorized users, services and hardware.",
-                  "subcategories": [
-                    { "code": "PR.AA-01", "description": "Identities and credentials are managed.", "maxScorePoints": 17 },
-                    { "code": "PR.AA-02", "description": "Identities are proofed and bound to credentials." }
-                  ]
-                }
-              ]
-            },
-            {
-              "code": "GV",
-              "name": "GOVERN (GV)",
-              "definition": "The organization's cybersecurity risk strategy and policy are established.",
-              "categories": [
-                {
-                  "code": "GV.OC",
-                  "name": "Organizational Context (GV.OC)",
-                  "definition": "The circumstances surrounding risk management decisions are understood.",
-                  "subcategories": [
-                    { "code": "GV.OC-01", "description": "The organizational mission is understood." }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-        """;
 }

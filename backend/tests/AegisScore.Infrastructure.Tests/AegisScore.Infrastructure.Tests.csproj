@@ -66,6 +66,18 @@
     <Content Include="..\..\src\AegisScore.Api\Data\AuditorPersonality.json" Link="Data\AuditorPersonality.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- [AEGIS-MVP-POSTURE-01] Os artefatos de referência REAIS, linkados para o output do teste: os testes
+         do seeder/guard exercitam os arquivos de PRODUÇÃO (6/22/106, 99 regras, metodologia), pegando no CI
+         qualquer quebra do artefato versionado. As mutações de cenário são feitas em arquivos temporários. -->
+    <Content Include="..\..\src\AegisScore.Api\Data\nist_csf_2_0_catalog.json" Link="Data\nist_csf_2_0_catalog.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\src\AegisScore.Api\Data\aegis_methodology.json" Link="Data\aegis_methodology.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\src\AegisScore.Api\Data\aegis_assessment_rules.json" Link="Data\aegis_assessment_rules.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

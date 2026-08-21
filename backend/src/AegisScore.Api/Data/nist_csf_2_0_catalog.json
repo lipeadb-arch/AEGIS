@@ -1,43 +1,17 @@
 {
+  "provenance": {
+    "identifier": "nist-csf-2.0-catalog",
+    "schemaVersion": "1.0",
+    "classification": "official",
+    "origin": "NIST Cybersecurity Framework (CSF) 2.0",
+    "officialReference": "NIST CSWP 29",
+    "release": "2024-02-26",
+    "officialUrl": null,
+    "obtainedOn": null,
+    "notes": "Conteudo oficial do NIST CSF 2.0 (funcoes, categorias, subcategorias, exemplos de implementacao e referencias informativas). A escala de maturidade e os pesos de pontuacao NAO pertencem a este conjunto oficial: sao metodologia autoral do AEGIS, em aegis_methodology.json. URL oficial e data de obtencao nao estao registradas no artefato local (desconhecidas) e nao foram inventadas."
+  },
   "framework": "NIST CSF 2.0",
   "source": "NIST CSWP 29 (2024-02-26)",
-  "maturityScale": [
-    {
-      "level": "1",
-      "name": "Performed",
-      "label": "Level 1: Performed",
-      "description": "The organization may perform security practices in an ad hoc manner.",
-      "score": 1
-    },
-    {
-      "level": "2",
-      "name": "Documented",
-      "label": "Level 2: Documented",
-      "description": "The organization has established and documented practices related to security requirements. This documentation enables the organization to perform them in a repeatable manner and achieve expected outcomes.",
-      "score": 2
-    },
-    {
-      "level": "3",
-      "name": "Managed",
-      "label": "Level 3: Managed",
-      "description": "The organization reviews adherence to policies and provides adequate resources to implement and maintain security requirements.",
-      "score": 3
-    },
-    {
-      "level": "4",
-      "name": "Quantitatively Managed",
-      "label": "Level 4: Quantitatively Managed",
-      "description": "The organization reviews and measures practices for effectiveness. Corrective actions are taken when necessary, and higher-level management is informed of issues or status on a recurring basis.",
-      "score": 4
-    },
-    {
-      "level": "5",
-      "name": "Optimizing",
-      "label": "Level 5: Optimizing",
-      "description": "The organization has standardized and optimized process implementation throughout. It also communicates and shares improvement information across the organization.",
-      "score": 5
-    }
-  ],
   "functions": [
     {
       "code": "GV",
@@ -63,8 +37,7 @@
                 "SP 800-221A: GV.CT-5",
                 "SP 800-221A: GV.CT-3",
                 "SP 800-53 Rev 5.1.1: PM-11"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.OC-02",
@@ -90,8 +63,7 @@
                 "SP 800-53 Rev 5.1.1: SR-05",
                 "SP 800-53 Rev 5.1.1: SR-06",
                 "SP 800-53 Rev 5.1.1: SR-08"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.OC-03",
@@ -146,8 +118,7 @@
                 "SP 800-53 Rev 5.1.1: SR-01",
                 "SP 800-53 Rev 5.1.1: PM-28",
                 "SP 800-53 Rev 5.1.1: PT"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.OC-04",
@@ -173,8 +144,7 @@
                 "SP 800-53 Rev 5.1.1: CP-02(08)",
                 "SP 800-53 Rev 5.1.1: PM-30(01)",
                 "SP 800-53 Rev 5.1.1: RA-09"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.OC-05",
@@ -198,8 +168,7 @@
                 "SP 800-53 Rev 5.1.1: RA-07",
                 "SP 800-53 Rev 5.1.1: SA-09",
                 "SP 800-53 Rev 5.1.1: SR-05"
-              ],
-              "maxScorePoints": 5
+              ]
             }
           ]
         },
@@ -226,8 +195,7 @@
                 "SP 800-53 Rev 5.1.1: PM-09",
                 "SP 800-53 Rev 5.1.1: RA-07",
                 "SP 800-53 Rev 5.1.1: SR-02"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.RM-02",
@@ -246,8 +214,7 @@
                 "SP 800-221A: GV.BE-1",
                 "SP 800-221A: GV.BE-3",
                 "SP 800-53 Rev 5.1.1: PM-09"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.RM-03",
@@ -269,8 +236,7 @@
                 "SP 800-53 Rev 5.1.1: PM-30",
                 "SP 800-53 Rev 5.1.1: RA-07",
                 "SP 800-53 Rev 5.1.1: SR-02"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.RM-04",
@@ -288,8 +254,7 @@
                 "SP 800-53 Rev 5.1.1: PM-28",
                 "SP 800-53 Rev 5.1.1: PM-30",
                 "SP 800-53 Rev 5.1.1: SR-02"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.RM-05",
@@ -306,8 +271,7 @@
                 "SP 800-221A: GV.PO-1",
                 "SP 800-53 Rev 5.1.1: PM-09",
                 "SP 800-53 Rev 5.1.1: PM-30"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.RM-06",
@@ -326,8 +290,7 @@
                 "SP 800-53 Rev 5.1.1: PM-28",
                 "SP 800-53 Rev 5.1.1: PM-30",
                 "SP 800-53 Rev 5.1.1: RA-03"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.RM-07",
@@ -342,8 +305,7 @@
                 "SP 800-53 Rev 5.1.1: PM-28",
                 "SP 800-53 Rev 5.1.1: PM-30",
                 "SP 800-53 Rev 5.1.1: RA-03"
-              ],
-              "maxScorePoints": 5
+              ]
             }
           ]
         },
@@ -372,8 +334,7 @@
                 "SP 800-53 Rev 5.1.1: PM-23",
                 "SP 800-53 Rev 5.1.1: PM-24",
                 "SP 800-53 Rev 5.1.1: PM-29"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.RR-02",
@@ -414,8 +375,7 @@
                 "SP 800-53 Rev 5.1.1: PM-23",
                 "SP 800-53 Rev 5.1.1: PM-24",
                 "SP 800-53 Rev 5.1.1: PM-29"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.RR-03",
@@ -429,8 +389,7 @@
                 "CSF v1.1: ID.RM-1",
                 "SP 800-221A: GV.RR-2",
                 "SP 800-53 Rev 5.1.1: PM-03"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.RR-04",
@@ -455,8 +414,7 @@
                 "SP 800-53 Rev 5.1.1: PS-01",
                 "SP 800-53 Rev 5.1.1: PS-07",
                 "SP 800-53 Rev 5.1.1: PS-09"
-              ],
-              "maxScorePoints": 5
+              ]
             }
           ]
         },
@@ -529,8 +487,7 @@
                 "SP 800-53 Rev 5.1.1: SC-01",
                 "SP 800-53 Rev 5.1.1: SI-01",
                 "SP 800-53 Rev 5.1.1: SR-01"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.PO-02",
@@ -589,8 +546,7 @@
                 "SP 800-53 Rev 5.1.1: SC-01",
                 "SP 800-53 Rev 5.1.1: SI-01",
                 "SP 800-53 Rev 5.1.1: SR-01"
-              ],
-              "maxScorePoints": 5
+              ]
             }
           ]
         },
@@ -635,8 +591,7 @@
                 "SP 800-53 Rev 5.1.1: PM-31",
                 "SP 800-53 Rev 5.1.1: RA-07",
                 "SP 800-53 Rev 5.1.1: SR-06"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.OV-02",
@@ -655,8 +610,7 @@
                 "SP 800-53 Rev 5.1.1: PM-31",
                 "SP 800-53 Rev 5.1.1: RA-07",
                 "SP 800-53 Rev 5.1.1: SR-06"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "GV.OV-03",
@@ -673,8 +627,7 @@
                 "SP 800-53 Rev 5.1.1: PM-06",
                 "SP 800-53 Rev 5.1.1: RA-07",
                 "SP 800-53 Rev 5.1.1: SR-06"
-              ],
-              "maxScorePoints": 5
+              ]
             }
           ]
         },
@@ -700,8 +653,7 @@
                 "SP 800-53 Rev 5.1.1: PM-30",
                 "SP 800-53 Rev 5.1.1: SR-02",
                 "SP 800-53 Rev 5.1.1: SR-03"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "GV.SC-02",
@@ -730,8 +682,7 @@
                 "SP 800-53 Rev 5.1.1: SR-02",
                 "SP 800-53 Rev 5.1.1: SR-03",
                 "SP 800-53 Rev 5.1.1: SR-05"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "GV.SC-03",
@@ -778,8 +729,7 @@
                 "SP 800-53 Rev 5.1.1: SR-03",
                 "SP 800-53 Rev 5.1.1: RA-03",
                 "SP 800-53 Rev 5.1.1: RA-07"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "GV.SC-04",
@@ -797,8 +747,7 @@
                 "SP 800-53 Rev 5.1.1: RA-09",
                 "SP 800-53 Rev 5.1.1: SA-09",
                 "SP 800-53 Rev 5.1.1: SR-06"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "GV.SC-05",
@@ -837,8 +786,7 @@
                 "SP 800-53 Rev 5.1.1: SR-05",
                 "SP 800-53 Rev 5.1.1: SR-06",
                 "SP 800-53 Rev 5.1.1: SR-10"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "GV.SC-06",
@@ -865,8 +813,7 @@
                 "SP 800-53 Rev 5.1.1: SA-09",
                 "SP 800-53 Rev 5.1.1: SR-05",
                 "SP 800-53 Rev 5.1.1: SR-06"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "GV.SC-07",
@@ -907,8 +854,7 @@
                 "SP 800-53 Rev 5.1.1: SA-09",
                 "SP 800-53 Rev 5.1.1: SR-03",
                 "SP 800-53 Rev 5.1.1: SR-06"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "GV.SC-08",
@@ -934,8 +880,7 @@
                 "SP 800-53 Rev 5.1.1: SR-08",
                 "SP 800-53 Rev 5.1.1: CP-01",
                 "SP 800-53 Rev 5.1.1: IR-01"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "GV.SC-09",
@@ -962,8 +907,7 @@
                 "SP 800-53 Rev 5.1.1: SR-03",
                 "SP 800-53 Rev 5.1.1: SR-05",
                 "SP 800-53 Rev 5.1.1: SR-06"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "GV.SC-10",
@@ -996,8 +940,7 @@
                 "SP 800-53 Rev 5.1.1: SR-03",
                 "SP 800-53 Rev 5.1.1: SR-05",
                 "SP 800-53 Rev 5.1.1: SR-06"
-              ],
-              "maxScorePoints": 15
+              ]
             }
           ]
         }
@@ -1029,8 +972,7 @@
                 "SP 800-221A: MA.RI-1",
                 "SP 800-53 Rev 5.1.1: CM-08",
                 "SP 800-53 Rev 5.1.1: PM-05"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "ID.AM-02",
@@ -1052,8 +994,7 @@
                 "SP 800-53 Rev 5.1.1: PM-05",
                 "SP 800-53 Rev 5.1.1: SA-05",
                 "SP 800-53 Rev 5.1.1: SA-09"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "ID.AM-03",
@@ -1077,8 +1018,7 @@
                 "SP 800-53 Rev 5.1.1: PL-02",
                 "SP 800-53 Rev 5.1.1: PL-08",
                 "SP 800-53 Rev 5.1.1: PM-07"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "ID.AM-04",
@@ -1097,8 +1037,7 @@
                 "SP 800-53 Rev 5.1.1: AC-20",
                 "SP 800-53 Rev 5.1.1: SA-09",
                 "SP 800-53 Rev 5.1.1: SR-02"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "ID.AM-05",
@@ -1117,8 +1056,7 @@
                 "SP 800-53 Rev 5.1.1: RA-03",
                 "SP 800-53 Rev 5.1.1: RA-09",
                 "SP 800-53 Rev 5.1.1: RA-02"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "ID.AM-07",
@@ -1139,8 +1077,7 @@
                 "SP 800-53 Rev 5.1.1: CM-12",
                 "SP 800-53 Rev 5.1.1: CM-13",
                 "SP 800-53 Rev 5.1.1: SI-12"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "ID.AM-08",
@@ -1204,8 +1141,7 @@
                 "SP 800-53 Rev 5.1.1: SI-18",
                 "SP 800-53 Rev 5.1.1: SR-05",
                 "SP 800-53 Rev 5.1.1: SR-12"
-              ],
-              "maxScorePoints": 10
+              ]
             }
           ]
         },
@@ -1249,8 +1185,7 @@
                 "SP 800-53 Rev 5.1.1: SA-15(08)",
                 "SP 800-53 Rev 5.1.1: SI-04",
                 "SP 800-53 Rev 5.1.1: SI-05"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "ID.RA-02",
@@ -1267,8 +1202,7 @@
                 "SP 800-53 Rev 5.1.1: SI-05",
                 "SP 800-53 Rev 5.1.1: PM-15",
                 "SP 800-53 Rev 5.1.1: PM-16"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "ID.RA-03",
@@ -1288,8 +1222,7 @@
                 "SP 800-53 Rev 5.1.1: PM-16",
                 "SP 800-53 Rev 5.1.1: RA-03",
                 "SP 800-53 Rev 5.1.1: SI-05"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "ID.RA-04",
@@ -1312,8 +1245,7 @@
                 "SP 800-53 Rev 5.1.1: RA-03",
                 "SP 800-53 Rev 5.1.1: RA-08",
                 "SP 800-53 Rev 5.1.1: RA-09"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "ID.RA-05",
@@ -1338,8 +1270,7 @@
                 "SP 800-53 Rev 5.1.1: RA-02",
                 "SP 800-53 Rev 5.1.1: RA-03",
                 "SP 800-53 Rev 5.1.1: RA-07"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "ID.RA-06",
@@ -1370,8 +1301,7 @@
                 "SP 800-53 Rev 5.1.1: PM-18",
                 "SP 800-53 Rev 5.1.1: PM-30",
                 "SP 800-53 Rev 5.1.1: RA-07"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "ID.RA-07",
@@ -1401,8 +1331,7 @@
                 "SP 800-53 Rev 5.1.1: CA-07",
                 "SP 800-53 Rev 5.1.1: CM-03",
                 "SP 800-53 Rev 5.1.1: CM-04"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "ID.RA-08",
@@ -1419,8 +1348,7 @@
                 "CSF v1.1: RS.AN-5",
                 "SP 800-221A: MA.RI-3",
                 "SP 800-53 Rev 5.1.1: RA-05"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "ID.RA-09",
@@ -1445,8 +1373,7 @@
                 "SP 800-53 Rev 5.1.1: SR-06",
                 "SP 800-53 Rev 5.1.1: SR-10",
                 "SP 800-53 Rev 5.1.1: SR-11"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "ID.RA-10",
@@ -1465,8 +1392,7 @@
                 "SP 800-221A: MA.RM-2",
                 "SP 800-221A: MA.RM-3",
                 "SP 800-53 Rev 5.1.1: SR-06"
-              ],
-              "maxScorePoints": 15
+              ]
             }
           ]
         },
@@ -1533,8 +1459,7 @@
                 "SP 800-53 Rev 5.1.1: SI-02",
                 "SP 800-53 Rev 5.1.1: SI-04",
                 "SP 800-53 Rev 5.1.1: SR-05"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "ID.IM-02",
@@ -1606,8 +1531,7 @@
                 "SP 800-53 Rev 5.1.1: SI-02",
                 "SP 800-53 Rev 5.1.1: SI-04",
                 "SP 800-53 Rev 5.1.1: SR-05"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "ID.IM-03",
@@ -1694,8 +1618,7 @@
                 "SP 800-53 Rev 5.1.1: SI-02",
                 "SP 800-53 Rev 5.1.1: SI-04",
                 "SP 800-53 Rev 5.1.1: SR-05"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "ID.IM-04",
@@ -1731,8 +1654,7 @@
                 "SP 800-53 Rev 5.1.1: IR-08",
                 "SP 800-53 Rev 5.1.1: PL-02",
                 "SP 800-53 Rev 5.1.1: SR-02"
-              ],
-              "maxScorePoints": 10
+              ]
             }
           ]
         }
@@ -1797,8 +1719,7 @@
                 "SP 800-53 Rev 5.1.1: IA-09",
                 "SP 800-53 Rev 5.1.1: IA-10",
                 "SP 800-53 Rev 5.1.1: IA-11"
-              ],
-              "maxScorePoints": 20
+              ]
             },
             {
               "code": "PR.AA-02",
@@ -1815,8 +1736,7 @@
                 "CRI Profile v2.0: PR.AA-02.01",
                 "CSF v1.1: PR.AC-6",
                 "SP 800-53 Rev 5.1.1: IA-12"
-              ],
-              "maxScorePoints": 20
+              ]
             },
             {
               "code": "PR.AA-03",
@@ -1849,8 +1769,7 @@
                 "SP 800-53 Rev 5.1.1: IA-09",
                 "SP 800-53 Rev 5.1.1: IA-10",
                 "SP 800-53 Rev 5.1.1: IA-11"
-              ],
-              "maxScorePoints": 20
+              ]
             },
             {
               "code": "PR.AA-04",
@@ -1863,8 +1782,7 @@
                 "CRI Profile v2.0: PR.AA-04",
                 "CRI Profile v2.0: PR.AA-04.01",
                 "SP 800-53 Rev 5.1.1: IA-13"
-              ],
-              "maxScorePoints": 20
+              ]
             },
             {
               "code": "PR.AA-05",
@@ -1927,8 +1845,7 @@
                 "SP 800-53 Rev 5.1.1: AC-19",
                 "SP 800-53 Rev 5.1.1: AC-24",
                 "SP 800-53 Rev 5.1.1: IA-13"
-              ],
-              "maxScorePoints": 20
+              ]
             },
             {
               "code": "PR.AA-06",
@@ -1961,8 +1878,7 @@
                 "SP 800-53 Rev 5.1.1: PE-18",
                 "SP 800-53 Rev 5.1.1: PE-19",
                 "SP 800-53 Rev 5.1.1: PE-20"
-              ],
-              "maxScorePoints": 20
+              ]
             }
           ]
         },
@@ -1998,8 +1914,7 @@
                 "SP 800-221A: GV.RR-2",
                 "SP 800-53 Rev 5.1.1: AT-02",
                 "SP 800-53 Rev 5.1.1: AT-03"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "PR.AT-02",
@@ -2031,8 +1946,7 @@
                 "SP 800-221A: GV.CT-4",
                 "SP 800-221A: GV.RR-2",
                 "SP 800-53 Rev 5.1.1: AT-03"
-              ],
-              "maxScorePoints": 10
+              ]
             }
           ]
         },
@@ -2084,8 +1998,7 @@
                 "SP 800-53 Rev 5.1.1: SI-03",
                 "SP 800-53 Rev 5.1.1: SI-04",
                 "SP 800-53 Rev 5.1.1: SI-07"
-              ],
-              "maxScorePoints": 20
+              ]
             },
             {
               "code": "PR.DS-02",
@@ -2125,8 +2038,7 @@
                 "SP 800-53 Rev 5.1.1: SI-03",
                 "SP 800-53 Rev 5.1.1: SI-04",
                 "SP 800-53 Rev 5.1.1: SI-07"
-              ],
-              "maxScorePoints": 20
+              ]
             },
             {
               "code": "PR.DS-10",
@@ -2161,8 +2073,7 @@
                 "SP 800-53 Rev 5.1.1: SI-07",
                 "SP 800-53 Rev 5.1.1: SI-10",
                 "SP 800-53 Rev 5.1.1: SI-16"
-              ],
-              "maxScorePoints": 20
+              ]
             },
             {
               "code": "PR.DS-11",
@@ -2184,8 +2095,7 @@
                 "SP 800-218: PS.3.1",
                 "SP 800-53 Rev 5.1.1: CP-06",
                 "SP 800-53 Rev 5.1.1: CP-09"
-              ],
-              "maxScorePoints": 20
+              ]
             }
           ]
         },
@@ -2246,8 +2156,7 @@
                 "SP 800-53 Rev 5.1.1: CM-09",
                 "SP 800-53 Rev 5.1.1: CM-10",
                 "SP 800-53 Rev 5.1.1: CM-11"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "PR.PS-02",
@@ -2281,8 +2190,7 @@
                 "SP 800-53 Rev 5.1.1: SA-10(01)",
                 "SP 800-53 Rev 5.1.1: SI-02",
                 "SP 800-53 Rev 5.1.1: SI-07"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "PR.PS-03",
@@ -2306,8 +2214,7 @@
                 "SP 800-53 Rev 5.1.1: SC-39(01)",
                 "SP 800-53 Rev 5.1.1: SC-49",
                 "SP 800-53 Rev 5.1.1: SC-51"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "PR.PS-04",
@@ -2339,8 +2246,7 @@
                 "SP 800-53 Rev 5.1.1: AU-07",
                 "SP 800-53 Rev 5.1.1: AU-11",
                 "SP 800-53 Rev 5.1.1: AU-12"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "PR.PS-05",
@@ -2359,8 +2265,7 @@
                 "SP 800-53 Rev 5.1.1: CM-07(04)",
                 "SP 800-53 Rev 5.1.1: CM-07(05)",
                 "SP 800-53 Rev 5.1.1: SC-34"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "PR.PS-06",
@@ -2391,8 +2296,7 @@
                 "SP 800-53 Rev 5.1.1: SA-11",
                 "SP 800-53 Rev 5.1.1: SA-15",
                 "SP 800-53 Rev 5.1.1: SA-17"
-              ],
-              "maxScorePoints": 15
+              ]
             }
           ]
         },
@@ -2438,8 +2342,7 @@
                 "SP 800-53 Rev 5.1.1: SC-04",
                 "SP 800-53 Rev 5.1.1: SC-05",
                 "SP 800-53 Rev 5.1.1: SC-07"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "PR.IR-02",
@@ -2463,8 +2366,7 @@
                 "SP 800-53 Rev 5.1.1: PE-15",
                 "SP 800-53 Rev 5.1.1: PE-18",
                 "SP 800-53 Rev 5.1.1: PE-23"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "PR.IR-03",
@@ -2483,8 +2385,7 @@
                 "SP 800-53 Rev 5.1.1: SC-36",
                 "SP 800-53 Rev 5.1.1: SC-39",
                 "SP 800-53 Rev 5.1.1: SI-13"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "PR.IR-04",
@@ -2501,8 +2402,7 @@
                 "SP 800-53 Rev 5.1.1: CP-08",
                 "SP 800-53 Rev 5.1.1: PM-03",
                 "SP 800-53 Rev 5.1.1: PM-09"
-              ],
-              "maxScorePoints": 15
+              ]
             }
           ]
         }
@@ -2551,8 +2451,7 @@
                 "SP 800-53 Rev 5.1.1: SC-05",
                 "SP 800-53 Rev 5.1.1: SC-07",
                 "SP 800-53 Rev 5.1.1: SI-04"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "DE.CM-02",
@@ -2575,8 +2474,7 @@
                 "SP 800-53 Rev 5.1.1: PE-03",
                 "SP 800-53 Rev 5.1.1: PE-06",
                 "SP 800-53 Rev 5.1.1: PE-20"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "DE.CM-03",
@@ -2601,8 +2499,7 @@
                 "SP 800-53 Rev 5.1.1: CA-07",
                 "SP 800-53 Rev 5.1.1: CM-10",
                 "SP 800-53 Rev 5.1.1: CM-11"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "DE.CM-06",
@@ -2626,8 +2523,7 @@
                 "SP 800-53 Rev 5.1.1: SA-04",
                 "SP 800-53 Rev 5.1.1: SA-09",
                 "SP 800-53 Rev 5.1.1: SI-04"
-              ],
-              "maxScorePoints": 15
+              ]
             },
             {
               "code": "DE.CM-09",
@@ -2669,8 +2565,7 @@
                 "SP 800-53 Rev 5.1.1: SC-35",
                 "SP 800-53 Rev 5.1.1: SI-04",
                 "SP 800-53 Rev 5.1.1: SI-07"
-              ],
-              "maxScorePoints": 15
+              ]
             }
           ]
         },
@@ -2698,8 +2593,7 @@
                 "SP 800-53 Rev 5.1.1: CA-07",
                 "SP 800-53 Rev 5.1.1: IR-04",
                 "SP 800-53 Rev 5.1.1: SI-04"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "DE.AE-03",
@@ -2720,8 +2614,7 @@
                 "SP 800-53 Rev 5.1.1: IR-05",
                 "SP 800-53 Rev 5.1.1: IR-08",
                 "SP 800-53 Rev 5.1.1: SI-04"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "DE.AE-04",
@@ -2739,8 +2632,7 @@
                 "SP 800-53 Rev 5.1.1: PM-18",
                 "SP 800-53 Rev 5.1.1: PM-28",
                 "SP 800-53 Rev 5.1.1: PM-30"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "DE.AE-06",
@@ -2761,8 +2653,7 @@
                 "SP 800-53 Rev 5.1.1: PM-16",
                 "SP 800-53 Rev 5.1.1: RA-03",
                 "SP 800-53 Rev 5.1.1: RA-10"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "DE.AE-07",
@@ -2779,8 +2670,7 @@
                 "SP 800-53 Rev 5.1.1: PM-16",
                 "SP 800-53 Rev 5.1.1: RA-03",
                 "SP 800-53 Rev 5.1.1: RA-10"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "DE.AE-08",
@@ -2797,8 +2687,7 @@
                 "CSF v1.1: DE.AE-5",
                 "SP 800-53 Rev 5.1.1: IR-04",
                 "SP 800-53 Rev 5.1.1: IR-08"
-              ],
-              "maxScorePoints": 10
+              ]
             }
           ]
         }
@@ -2834,8 +2723,7 @@
                 "SP 800-53 Rev 5.1.1: IR-08",
                 "SP 800-53 Rev 5.1.1: SR-03",
                 "SP 800-53 Rev 5.1.1: SR-08"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RS.MA-02",
@@ -2850,8 +2738,7 @@
                 "SP 800-53 Rev 5.1.1: IR-04",
                 "SP 800-53 Rev 5.1.1: IR-05",
                 "SP 800-53 Rev 5.1.1: IR-06"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RS.MA-03",
@@ -2867,8 +2754,7 @@
                 "SP 800-53 Rev 5.1.1: IR-04",
                 "SP 800-53 Rev 5.1.1: IR-05",
                 "SP 800-53 Rev 5.1.1: IR-06"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RS.MA-04",
@@ -2884,8 +2770,7 @@
                 "SP 800-53 Rev 5.1.1: IR-05",
                 "SP 800-53 Rev 5.1.1: IR-06",
                 "SP 800-53 Rev 5.1.1: IR-07"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RS.MA-05",
@@ -2898,8 +2783,7 @@
                 "CRI Profile v2.0: RS.MA-05.01",
                 "SP 800-53 Rev 5.1.1: IR-04",
                 "SP 800-53 Rev 5.1.1: IR-08"
-              ],
-              "maxScorePoints": 10
+              ]
             }
           ]
         },
@@ -2920,8 +2804,7 @@
                 "CSF v1.1: RS.AN-3",
                 "SP 800-53 Rev 5.1.1: AU-07",
                 "SP 800-53 Rev 5.1.1: IR-04"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RS.AN-06",
@@ -2934,8 +2817,7 @@
                 "SP 800-53 Rev 5.1.1: AU-07",
                 "SP 800-53 Rev 5.1.1: IR-04",
                 "SP 800-53 Rev 5.1.1: IR-06"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RS.AN-07",
@@ -2947,8 +2829,7 @@
                 "SP 800-53 Rev 5.1.1: AU-07",
                 "SP 800-53 Rev 5.1.1: IR-04",
                 "SP 800-53 Rev 5.1.1: IR-06"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RS.AN-08",
@@ -2961,8 +2842,7 @@
                 "SP 800-53 Rev 5.1.1: IR-08",
                 "SP 800-53 Rev 5.1.1: RA-03",
                 "SP 800-53 Rev 5.1.1: RA-07"
-              ],
-              "maxScorePoints": 10
+              ]
             }
           ]
         },
@@ -2992,8 +2872,7 @@
                 "SP 800-53 Rev 5.1.1: IR-07",
                 "SP 800-53 Rev 5.1.1: SR-03",
                 "SP 800-53 Rev 5.1.1: SR-08"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "RS.CO-03",
@@ -3015,8 +2894,7 @@
                 "SP 800-53 Rev 5.1.1: IR-07",
                 "SP 800-53 Rev 5.1.1: SR-03",
                 "SP 800-53 Rev 5.1.1: SR-08"
-              ],
-              "maxScorePoints": 5
+              ]
             }
           ]
         },
@@ -3039,8 +2917,7 @@
                 "CRI Profile v2.0: RS.MI-01.01",
                 "CSF v1.1: RS.MI-1",
                 "SP 800-53 Rev 5.1.1: IR-04"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RS.MI-02",
@@ -3055,8 +2932,7 @@
                 "CRI Profile v2.0: RS.MI-02.01",
                 "CSF v1.1: RS.MI-2",
                 "SP 800-53 Rev 5.1.1: IR-04"
-              ],
-              "maxScorePoints": 10
+              ]
             }
           ]
         }
@@ -3085,8 +2961,7 @@
                 "SP 800-53 Rev 5.1.1: CP-10",
                 "SP 800-53 Rev 5.1.1: IR-04",
                 "SP 800-53 Rev 5.1.1: IR-08"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RC.RP-02",
@@ -3101,8 +2976,7 @@
                 "SP 800-53 Rev 5.1.1: CP-10",
                 "SP 800-53 Rev 5.1.1: IR-04",
                 "SP 800-53 Rev 5.1.1: IR-08"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RC.RP-03",
@@ -3116,8 +2990,7 @@
                 "SP 800-53 Rev 5.1.1: CP-02",
                 "SP 800-53 Rev 5.1.1: CP-04",
                 "SP 800-53 Rev 5.1.1: CP-09"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RC.RP-04",
@@ -3131,8 +3004,7 @@
                 "SP 800-53 Rev 5.1.1: PM-11",
                 "SP 800-53 Rev 5.1.1: IR-01",
                 "SP 800-53 Rev 5.1.1: IR-08"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RC.RP-05",
@@ -3143,8 +3015,7 @@
                 "CRI Profile v2.0: RC.RP-05.01",
                 "CRI Profile v2.0: RC.RP-05.02",
                 "SP 800-53 Rev 5.1.1: CP-10"
-              ],
-              "maxScorePoints": 10
+              ]
             },
             {
               "code": "RC.RP-06",
@@ -3155,8 +3026,7 @@
                 "CRI Profile v2.0: RC.RP-06.01",
                 "SP 800-53 Rev 5.1.1: IR-04",
                 "SP 800-53 Rev 5.1.1: IR-08"
-              ],
-              "maxScorePoints": 10
+              ]
             }
           ]
         },
@@ -3178,8 +3048,7 @@
                 "SP 800-53 Rev 5.1.1: IR-04",
                 "SP 800-53 Rev 5.1.1: IR-06",
                 "SP 800-53 Rev 5.1.1: SR-08"
-              ],
-              "maxScorePoints": 5
+              ]
             },
             {
               "code": "RC.CO-04",
@@ -3195,8 +3064,7 @@
                 "SP 800-221A: GV.CO-1",
                 "SP 800-53 Rev 5.1.1: CP-02",
                 "SP 800-53 Rev 5.1.1: IR-04"
-              ],
-              "maxScorePoints": 5
+              ]
             }
           ]
         }

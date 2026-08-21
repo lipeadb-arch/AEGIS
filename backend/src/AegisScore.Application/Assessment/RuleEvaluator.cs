@@ -19,12 +19,13 @@ public enum EvidenceNature
 /// (StubLlmClient, avaliador de telemetria, futuro resolver tenant-aware) chama AQUI — a regra de
 /// classificação não pode ter duas implementações capazes de divergir.
 ///
-/// ⚠️ Deriva do schema REAL de <c>aegis_assessment_rules.json</c> (<c>subcategory_id</c>,
-/// <c>evaluation_metrics</c>, <c>calculation_logic</c>, <c>evidence_requirements</c>). Não há campo
-/// tipado de natureza no catálogo; a natureza é inferida do vocabulário estável de
-/// <c>evidence_requirements</c>, que é bimodal por construção:
-///   • <c>MANUAL_AUDIT_REQUIRED</c> — 39 das 97 regras. Prova documental/manual.
+/// ⚠️ A natureza da evidência hoje é um campo TIPADO e PERSISTIDO (<c>AegisAssessmentRule.EvidenceType</c>);
+/// esta classificação por texto é a ÚNICA autoridade que a DERIVA no seed (e confere no guard), a partir do
+/// vocabulário bimodal de <c>evidence_requirements</c>. Distribuição real das 99 regras:
+///   • <c>MANUAL_AUDIT_REQUIRED</c> — 41 regras. Prova documental/manual.
 ///   • <c>"&lt;Ferramenta&gt;: &lt;o que coletar&gt;"</c> — 58 regras. Prova por telemetria.
+///   • híbrida (as duas) — 0 regras hoje.
+/// A produção lê o tipo PERSISTIDO; a inferência por string fica no seed/guard e nos shims de teste.
 /// </summary>
 /// <summary>
 /// O que o tenant REALMENTE tem para provar um controle, no instante da avaliação.
@@ -88,13 +89,57 @@ public static class RuleEvaluator
     /// onde a telemetria sendo avaliada acabou de chegar por construção — cobrar TTL ali reprovaria o
     /// próprio payload que está sob análise. O TTL pertence à LEITURA (ver a sobrecarga abaixo).
     /// </remarks>
+    /// <summary>
+    /// [AEGIS-MVP-POSTURE-01] Classificação TIPADA da natureza da evidência de uma regra a partir do
+    /// vocabulário bimodal de <c>evidence_requirements</c> — a ÚNICA autoridade de classificação
+    /// (telemetria × documental × híbrida). O seed a chama para PERSISTIR <see cref="RuleEvidenceType"/> na
+    /// regra; a partir daí a produção lê o tipo persistido em vez de reparsear a string a cada leitura.
+    /// </summary>
+    public static RuleEvidenceType DeriveEvidenceType(IReadOnlyList<string> evidenceRequirements)
+    {
+        if (evidenceRequirements is null || evidenceRequirements.Count == 0)
+            return RuleEvidenceType.Telemetry;
+
+        var hasManual = evidenceRequirements.Any(e => NatureOf(e) == EvidenceNature.Documentation);
+        var hasTool = evidenceRequirements.Any(e => NatureOf(e) == EvidenceNature.Telemetry);
+        return (hasManual, hasTool) switch
+        {
+            (true, true) => RuleEvidenceType.Both,
+            (true, false) => RuleEvidenceType.Documentation,
+            _ => RuleEvidenceType.Telemetry,
+        };
+    }
+
+    // ---- Sobrecargas COMPATÍVEIS (transição/teste) — derivam o tipo da string pela ÚNICA autoridade -----
+    // A produção deve chamar as sobrecargas TIPADAS (que recebem RuleEvidenceType). Estas existem apenas para
+    // testes e para caminhos legados que ainda não têm o tipo persistido à mão, e delegam ao mesmo motor.
+
     public static IReadOnlyList<MissingRequirement> Compile(
+        IReadOnlyList<string> evidenceRequirements,
+        bool hasTelemetrySignal,
+        bool hasProcessedDocument) =>
+        Compile(DeriveEvidenceType(evidenceRequirements), evidenceRequirements, hasTelemetrySignal, hasProcessedDocument);
+
+    public static IReadOnlyList<MissingRequirement> Compile(
+        IReadOnlyList<string> evidenceRequirements,
+        EvidenceAvailability availability,
+        DateTimeOffset now,
+        TimeSpan freshnessWindow) =>
+        Compile(DeriveEvidenceType(evidenceRequirements), evidenceRequirements, availability, now, freshnessWindow);
+
+    /// <summary>
+    /// Compila as lacunas usando o tipo de evidência PERSISTIDO como autoridade de classificação (sem
+    /// re-inferir da string). Sem janela de frescor: trata o sinal como recém-chegado (caso da ingestão).
+    /// </summary>
+    public static IReadOnlyList<MissingRequirement> Compile(
+        RuleEvidenceType evidenceType,
         IReadOnlyList<string> evidenceRequirements,
         bool hasTelemetrySignal,
         bool hasProcessedDocument)
     {
         var now = DateTimeOffset.UtcNow;
         return Compile(
+            evidenceType,
             evidenceRequirements,
             new EvidenceAvailability(hasTelemetrySignal ? now : null, hasProcessedDocument),
             now,
@@ -102,31 +147,44 @@ public static class RuleEvaluator
     }
 
     /// <summary>
-    /// Compila as lacunas aplicando também a JANELA DE FRESCOR: um sinal mais velho que
-    /// <paramref name="freshnessWindow"/> é tratado como ausente — o conector parou de reportar e o
-    /// controle voltou a ser um ponto cego, ainda que exista histórico no banco.
+    /// Compila as lacunas com o tipo PERSISTIDO como autoridade e aplicando a JANELA DE FRESCOR: um sinal
+    /// mais velho que <paramref name="freshnessWindow"/> é tratado como ausente — o conector parou de
+    /// reportar e o controle voltou a ser um ponto cego, ainda que exista histórico no banco.
     /// </summary>
+    /// <param name="evidenceType">Natureza TIPADA da evidência (autoridade única de classificação).</param>
     /// <param name="now">Relógio injetado (testabilidade — nunca <c>DateTimeOffset.UtcNow</c> aqui dentro).</param>
     /// <param name="freshnessWindow">
     /// Idade máxima aceita do sinal. <see cref="Timeout.InfiniteTimeSpan"/> desliga a checagem.
     /// </param>
     public static IReadOnlyList<MissingRequirement> Compile(
+        RuleEvidenceType evidenceType,
         IReadOnlyList<string> evidenceRequirements,
         EvidenceAvailability availability,
         DateTimeOffset now,
         TimeSpan freshnessWindow)
     {
-        if (evidenceRequirements is null || evidenceRequirements.Count == 0)
+        evidenceRequirements ??= Array.Empty<string>();
+        if (evidenceRequirements.Count == 0)
             return Array.Empty<MissingRequirement>();
 
+        // Split das linhas por natureza é APENAS para descrição/identificador de fonte — a CLASSIFICAÇÃO
+        // (qual lacuna emitir) vem do tipo persistido, não desta partição.
         var telemetrySources = evidenceRequirements
             .Where(r => NatureOf(r) == EvidenceNature.Telemetry).ToList();
         var documentarySources = evidenceRequirements
             .Where(r => NatureOf(r) == EvidenceNature.Documentation).ToList();
 
+        var expectsTelemetry = evidenceType is RuleEvidenceType.Telemetry or RuleEvidenceType.Both;
+        var expectsDocumentation = evidenceType is RuleEvidenceType.Documentation or RuleEvidenceType.Both;
+
         var staleness = StalenessOf(availability.LastTelemetryAt, now, freshnessWindow);
-        var telemetryGap = telemetrySources.Count > 0 && staleness is not TelemetryFreshness.Fresh;
-        var documentaryGap = documentarySources.Count > 0 && !availability.HasVerifiedDocumentaryCoverage;
+        var telemetryGap = expectsTelemetry && staleness is not TelemetryFreshness.Fresh;
+        var documentaryGap = expectsDocumentation && !availability.HasVerifiedDocumentaryCoverage;
+
+        // Identificador de fonte para a descrição — defensivo quando o tipo persistido espera uma natureza
+        // cujas linhas não estão presentes (ex.: regra editada no banco): usa um rótulo genérico honesto.
+        var telemetryLabel = telemetrySources.Count > 0 ? SourceIdentifierOf(telemetrySources[0]) : "telemetria";
+        var documentaryLabel = documentarySources.Count > 0 ? SourceIdentifierOf(documentarySources[0]) : ManualAuditToken;
 
         // Ambas as naturezas em falta → UMA lacuna de dupla evidência (ver ComplianceRequirementType.Both):
         // fechar metade não é progresso, e marcá-la como dois itens sugeriria que é.
@@ -135,8 +193,8 @@ public static class RuleEvaluator
             {
                 new MissingRequirement(
                     ComplianceRequirementType.Both,
-                    SourceIdentifierOf(telemetrySources[0]),
-                    $"Faltam as duas provas: telemetria de {SourceIdentifierOf(telemetrySources[0])} " +
+                    telemetryLabel,
+                    $"Faltam as duas provas: telemetria de {telemetryLabel} " +
                     $"e a evidência documental/auditoria manual exigida pelo controle."),
             };
 
@@ -145,8 +203,10 @@ public static class RuleEvaluator
             {
                 new MissingRequirement(
                     ComplianceRequirementType.Telemetry,
-                    SourceIdentifierOf(telemetrySources[0]),
-                    DescribeTelemetryGap(telemetrySources, staleness, availability.LastTelemetryAt, now)),
+                    telemetryLabel,
+                    telemetrySources.Count > 0
+                        ? DescribeTelemetryGap(telemetrySources, staleness, availability.LastTelemetryAt, now)
+                        : "Sem sinal técnico registrado para este controle — conector não integrado ou sem cobertura."),
             };
 
         if (documentaryGap)
@@ -154,7 +214,7 @@ public static class RuleEvaluator
             {
                 new MissingRequirement(
                     ComplianceRequirementType.Documentation,
-                    SourceIdentifierOf(documentarySources[0]),
+                    documentaryLabel,
                     "Controle exige auditoria manual ou prova documental: nenhum documento processado no " +
                     "Document Hub cobre esta subcategoria."),
             };

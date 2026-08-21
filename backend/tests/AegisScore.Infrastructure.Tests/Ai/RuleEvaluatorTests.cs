@@ -81,4 +81,28 @@ public class RuleEvaluatorTests
 
         gaps.Should().ContainSingle().Which.Type.Should().Be(ComplianceRequirementType.Documentation);
     }
+
+    // ---- [POSTURE-01] Tipo PERSISTIDO é a autoridade ÚNICA de classificação -------------------------
+
+    [Theory]
+    [InlineData(new[] { "Entra ID: sign-in logs" }, RuleEvidenceType.Telemetry)]
+    [InlineData(new[] { "MANUAL_AUDIT_REQUIRED" }, RuleEvidenceType.Documentation)]
+    [InlineData(new[] { "Entra ID: sign-in logs", "MANUAL_AUDIT_REQUIRED" }, RuleEvidenceType.Both)]
+    public void DeriveEvidenceType_ClassificaOVocabularioBimodal(string[] requirements, RuleEvidenceType expected)
+    {
+        RuleEvaluator.DeriveEvidenceType(requirements).Should().Be(expected);
+    }
+
+    [Fact]
+    public void CompileTipado_UsaOtipoPersistido_NaoAReinferenciaDaString()
+    {
+        // As strings são de TELEMETRIA, mas o tipo PERSISTIDO diz Documentation: a lacuna emitida segue o
+        // tipo (autoridade única), não a re-inferência do texto — prova de que não há duas autoridades.
+        var gaps = RuleEvaluator.Compile(
+            RuleEvidenceType.Documentation,
+            new[] { EntraSource, SentinelSource },
+            hasTelemetrySignal: false, hasProcessedDocument: false);
+
+        gaps.Should().ContainSingle().Which.Type.Should().Be(ComplianceRequirementType.Documentation);
+    }
 }

@@ -73,6 +73,38 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
     }
 
     /// <summary>
+    /// [AEGIS-MVP-POSTURE-01] Compõe uma identificação AUDITÁVEL e reproduzível do bundle de referência
+    /// (catálogo NIST + metodologia AEGIS + regras): um SHA-256 COMPLETO sobre os TRÊS hashes completos da
+    /// proveniência vigente e a versão da metodologia — não oito caracteres de cada. Determinística (mesmo
+    /// conteúdo → mesma string) e sensível a qualquer componente (qualquer hash muda → bundle diferente), para
+    /// o comparador retornar <c>DifferentCatalogVersion</c> em vez de um delta enganoso. Cabe em 200 chars.
+    /// </summary>
+    private async Task<string> BuildAegisBundleVersionAsync(Guid frameworkVersionId, string frameworkName, CancellationToken ct)
+    {
+        var prov = await _db.ReferenceDatasetProvenances.AsNoTracking()
+            .Where(p => p.FrameworkVersionId == frameworkVersionId && p.IsCurrent)
+            .Select(p => new { p.Kind, p.ContentHash, p.MethodologyVersion })
+            .ToListAsync(ct);
+
+        string Hash(ReferenceDatasetKind kind) =>
+            prov.FirstOrDefault(p => p.Kind == kind)?.ContentHash ?? "unknown";
+
+        var methodologyVersion = prov.FirstOrDefault(p => p.Kind == ReferenceDatasetKind.AegisMethodology)
+            ?.MethodologyVersion ?? "meth-desconhecida";
+
+        // Forma canônica sobre os hashes COMPLETOS + versões; o bundle é o SHA-256 disso.
+        var canonical = string.Join("|",
+            frameworkName, methodologyVersion,
+            "cat:" + Hash(ReferenceDatasetKind.NistCatalog),
+            "meth:" + Hash(ReferenceDatasetKind.AegisMethodology),
+            "rules:" + Hash(ReferenceDatasetKind.AegisAssessmentRules));
+        var bundleHash = ReferenceDataFingerprint.Sha256Hex(canonical);
+
+        var bundle = $"{frameworkName}|{methodologyVersion}|bundle:{bundleHash}";
+        return bundle.Length <= 200 ? bundle : bundle[..200];
+    }
+
+    /// <summary>
     /// Constrói a fotografia AEGIS Score/NIST. Parte do catálogo ATIVO COMPLETO (todas as subcategorias elegíveis)
     /// em LEFT JOIN com o ledger do tenant: cada controle elegível vira uma linha, avaliado ou não. Score/cobertura
     /// vêm da MESMA autoridade do Score Atual (aegis-score-v1). A proveniência é a evidência que fundamenta o veredito.
@@ -81,8 +113,16 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
     {
         var score = await AegisScoreAggregator.AggregateAsync(_db, ct);
 
-        var frameworkName = await _db.FrameworkVersions.AsNoTracking()
-            .Where(f => f.IsActive).Select(f => f.Name).FirstOrDefaultAsync(ct) ?? "framework-desconhecido";
+        var framework = await _db.FrameworkVersions.AsNoTracking()
+            .Where(f => f.IsActive).Select(f => new { f.Id, f.Name }).FirstOrDefaultAsync(ct);
+        var frameworkName = framework?.Name ?? "framework-desconhecido";
+
+        // [AEGIS-MVP-POSTURE-01] Identificação REPRODUZÍVEL do bundle (catálogo + metodologia + regras) que
+        // produziu a foto — distingue revisões que o nome do framework sozinho não distinguiria. É o que o
+        // comparador usa para separar bundles diferentes (não confundir com o CatalogVersion do KNIGHT).
+        var bundleVersion = framework is null
+            ? frameworkName
+            : await BuildAegisBundleVersionAsync(framework.Id, frameworkName, ct);
 
         // Universo ELEGÍVEL: todas as subcategorias do framework ATIVO (reference data global) — o denominador da
         // cobertura por item. Keyed por Id (único por versão), não por Code (que se repete entre versões).
@@ -116,7 +156,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             Type = PostureSnapshotType.AegisScoreNist,
             SchemaVersion = PostureSnapshotSchema.Version,
             FormulaVersion = score.FormulaVersion,
-            CatalogVersion = frameworkName,
+            CatalogVersion = bundleVersion,
             SemanticFamily = $"aegis-nist:{frameworkName}",
             SourceType = null,
             SourceLabel = null,

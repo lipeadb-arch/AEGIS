@@ -244,6 +244,7 @@ public sealed class SignalFreshnessTests : IDisposable
                 EvaluationMetrics = new() { "Cobertura de MFA privilegiado (IA-2(1))" },
                 CalculationLogic = "score = com_mfa / privilegiadas",
                 EvidenceRequirements = new() { "Entra ID: authenticationMethods e sign-in logs" },
+                EvidenceType = RuleEvidenceType.Telemetry,
             },
             new AegisAssessmentRule
             {
@@ -252,6 +253,7 @@ public sealed class SignalFreshnessTests : IDisposable
                 EvaluationMetrics = new() { "Política aprovada e vigente (PM-1)" },
                 CalculationLogic = "score = aprovada AND revisada_12m",
                 EvidenceRequirements = new() { RuleEvaluator.ManualAuditToken },
+                EvidenceType = RuleEvidenceType.Documentation,
             });
         ctx.SaveChanges();
     }

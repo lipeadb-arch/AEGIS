@@ -156,11 +156,12 @@ public static class Program
                 try
                 {
                     var catalogPath = ResolveDataPath(configuration, "Seed:CatalogPath", "nist_csf_2_0_catalog.json");
-                    await FrameworkSeeder.SeedAsync(db, catalogPath);
-                    log.LogInformation("Catálogo NIST CSF 2.0 verificado/semeado.");
+                    var methodologyPath = ResolveDataPath(configuration, "Seed:MethodologyPath", "aegis_methodology.json");
+                    await FrameworkSeeder.SeedAsync(db, catalogPath, methodologyPath);
+                    log.LogInformation("Catálogo NIST CSF 2.0 + metodologia AEGIS verificados/semeados.");
 
                     var rulesPath = ResolveDataPath(configuration, "Seed:RulesPath", "aegis_assessment_rules.json");
-                    await FrameworkSeeder.SeedAssessmentRulesAsync(db, rulesPath);
+                    await FrameworkSeeder.SeedAssessmentRulesAsync(db, rulesPath, methodologyPath);
                     log.LogInformation("Regras de avaliação verificadas/semeadas.");
 
                     // [AEGIS-AUD-043] Autoridade determinística de mapeamento sinal → subcategorias NIST.

@@ -173,10 +173,14 @@ jobs:
           docker network rm "$NET" >/dev/null 2>&1 || true
           rm -rf secrets || true
 
-  # Transição REAL da migration DocumentEvidenceLifecycle sobre banco legado com dados, contra um
-  # PostgreSQL 18 descartável (o container-smoke prova migração em banco VAZIO; este prova o REPARO).
-  # Roda SOMENTE DocumentEvidenceRepairMigrationTests — não é a suíte PostgreSQL geral.
-  document-evidence-repair-pg:
+  # Migrations + seed contra um PostgreSQL 18 DESCARTÁVEL (o container-smoke prova migração em banco VAZIO;
+  # estes provam transições/reparo/índices sobre dados). Roda SOMENTE as classes de migration em PostgreSQL:
+  #   • DocumentEvidenceRepairMigrationTests — reparo da DocumentEvidenceLifecycle sobre banco legado;
+  #   • PostureFoundationPostgresTests — POSTURE-01: migration aditiva sobre regra legada, migrate+seed+
+  #     prontidão+idempotência, atualização de metodologia com histórico de proveniência e o índice parcial
+  #     único de framework ativa (rejeição da 2ª ativa) no PostgreSQL real.
+  # NÃO é a suíte PostgreSQL geral.
+  migrations-pg:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -202,10 +206,10 @@ jobs:
           dotnet-version: '10.0.x'
 
       # AEGIS_TEST_PG aponta para o banco de MANUTENÇÃO (postgres); o PostgresProbe cria/derruba um
-      # database descartável a cada teste. Só este teste roda (filtro por classe).
-      - name: Repair migration transition test (PostgreSQL 18)
+      # database descartável a cada teste. Só as classes de migration em PostgreSQL rodam (filtro por classe).
+      - name: Migration/seed tests (PostgreSQL 18)
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests"
