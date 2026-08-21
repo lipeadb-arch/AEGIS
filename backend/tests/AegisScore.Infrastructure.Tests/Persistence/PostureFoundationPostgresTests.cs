@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -21,7 +22,8 @@ namespace AegisScore.Infrastructure.Tests.Persistence;
 public sealed class PostureFoundationPostgresTests
 {
     private const string PreviousMigration = "20260816192614_DocumentEvidenceLifecycle";
-    private const string TargetMigration = "20260821155051_PostureFoundation_ProvenanceAndEvidenceType";
+    private const string ProvenanceMigration = "20260821155051_PostureFoundation_ProvenanceAndEvidenceType";
+    private const string SingleActiveIndexMigration = "20260821173000_PostureFoundation_SingleActiveFrameworkIndex";
 
     private static readonly string DataDir = Path.Combine(AppContext.BaseDirectory, "Data");
     private static string CatalogPath => Path.Combine(DataDir, "nist_csf_2_0_catalog.json");
@@ -39,7 +41,13 @@ public sealed class PostureFoundationPostgresTests
         var opts = pg.DbOptions();
 
         await using (var db = new AegisScoreDbContext(opts, new SystemTenantContext(null)))
+        {
             await db.Database.MigrateAsync();
+            // As DUAS migrations deste pacote ficaram registradas no histórico do EF sobre o PostgreSQL real.
+            var applied = await db.Database.GetAppliedMigrationsAsync();
+            applied.Should().Contain(ProvenanceMigration);
+            applied.Should().Contain(SingleActiveIndexMigration);
+        }
 
         // Seed do pacote real (catálogo + metodologia + regras + mapeamentos).
         await using (var db = new AegisScoreDbContext(opts, new SystemTenantContext(null)))
@@ -120,7 +128,9 @@ public sealed class PostureFoundationPostgresTests
             rule.EvidenceType.Should().Be(RuleEvidenceType.Telemetry, "default 0 seguro para linha legada (o seed reconcilia depois)");
 
             (await db.ReferenceDatasetProvenances.AnyAsync()).Should().BeFalse("tabela criada e vazia até o seed rodar");
-            (await db.Database.GetAppliedMigrationsAsync()).Should().Contain(TargetMigration);
+            var applied = await db.Database.GetAppliedMigrationsAsync();
+            applied.Should().Contain(ProvenanceMigration);
+            applied.Should().Contain(SingleActiveIndexMigration);
         }
     }
 
@@ -174,6 +184,35 @@ public sealed class PostureFoundationPostgresTests
         {
             if (File.Exists(methodologyTemp)) File.Delete(methodologyTemp);
         }
+    }
+
+    [Fact]
+    public async Task IndiceDeFrameworkAtivaUnica_NoPostgresReal_RejeitaSegundaAtiva()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var opts = pg.DbOptions();
+
+        await using (var db = new AegisScoreDbContext(opts, new SystemTenantContext(null)))
+            await db.Database.MigrateAsync();
+
+        // Seed do catálogo → exatamente UMA framework ATIVA (NIST CSF 2.0).
+        await using (var db = new AegisScoreDbContext(opts, new SystemTenantContext(null)))
+            await FrameworkSeeder.SeedAsync(db, CatalogPath, MethodologyPath);
+
+        // O índice PARCIAL único UX_FrameworkVersion_SingleActive REJEITA uma segunda framework ativa —
+        // invariante de BANCO comprovada no PostgreSQL real (não só no guard/aplicação).
+        await using (var db = new AegisScoreDbContext(opts, new SystemTenantContext(null)))
+        {
+            db.FrameworkVersions.Add(new FrameworkVersion { Name = "Outro Framework 1.0", IsActive = true });
+            var act = () => db.SaveChangesAsync();
+            var ex = (await act.Should().ThrowAsync<DbUpdateException>()).Which;
+            (ex.InnerException as PostgresException)?.SqlState.Should().Be(
+                PostgresErrorCodes.UniqueViolation, "23505 = unique_violation no índice de framework ativa única");
+        }
+
+        await using (var db = new AegisScoreDbContext(opts, new SystemTenantContext(null)))
+            (await db.FrameworkVersions.CountAsync(f => f.IsActive)).Should().Be(1, "a segunda ativa foi recusada pelo banco");
     }
 
     /// <summary>Lê a metodologia, soma 5 ao primeiro peso e grava um arquivo temporário.</summary>
