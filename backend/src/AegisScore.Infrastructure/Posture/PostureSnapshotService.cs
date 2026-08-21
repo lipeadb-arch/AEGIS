@@ -73,10 +73,11 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
     }
 
     /// <summary>
-    /// [AEGIS-MVP-POSTURE-01] Compõe uma identificação reproduzível do bundle de referência (catálogo NIST +
-    /// metodologia AEGIS + regras) a partir da proveniência VIGENTE — hashes curtos + versão da metodologia.
-    /// Determinística (mesmo conteúdo → mesma string) e sensível a revisão (hash muda → string muda), para o
-    /// comparador tratar bundles diferentes como incompatíveis em vez de gerar delta enganoso.
+    /// [AEGIS-MVP-POSTURE-01] Compõe uma identificação AUDITÁVEL e reproduzível do bundle de referência
+    /// (catálogo NIST + metodologia AEGIS + regras): um SHA-256 COMPLETO sobre os TRÊS hashes completos da
+    /// proveniência vigente e a versão da metodologia — não oito caracteres de cada. Determinística (mesmo
+    /// conteúdo → mesma string) e sensível a qualquer componente (qualquer hash muda → bundle diferente), para
+    /// o comparador retornar <c>DifferentCatalogVersion</c> em vez de um delta enganoso. Cabe em 200 chars.
     /// </summary>
     private async Task<string> BuildAegisBundleVersionAsync(Guid frameworkVersionId, string frameworkName, CancellationToken ct)
     {
@@ -85,19 +86,21 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             .Select(p => new { p.Kind, p.ContentHash, p.MethodologyVersion })
             .ToListAsync(ct);
 
-        string ShortHash(ReferenceDatasetKind kind)
-        {
-            var h = prov.FirstOrDefault(p => p.Kind == kind)?.ContentHash;
-            return string.IsNullOrEmpty(h) ? "unknown" : (h.Length <= 8 ? h : h[..8]);
-        }
+        string Hash(ReferenceDatasetKind kind) =>
+            prov.FirstOrDefault(p => p.Kind == kind)?.ContentHash ?? "unknown";
 
         var methodologyVersion = prov.FirstOrDefault(p => p.Kind == ReferenceDatasetKind.AegisMethodology)
             ?.MethodologyVersion ?? "meth-desconhecida";
 
-        var bundle =
-            $"{frameworkName} (cat:{ShortHash(ReferenceDatasetKind.NistCatalog)} " +
-            $"meth:{methodologyVersion}/{ShortHash(ReferenceDatasetKind.AegisMethodology)} " +
-            $"rules:{ShortHash(ReferenceDatasetKind.AegisAssessmentRules)})";
+        // Forma canônica sobre os hashes COMPLETOS + versões; o bundle é o SHA-256 disso.
+        var canonical = string.Join("|",
+            frameworkName, methodologyVersion,
+            "cat:" + Hash(ReferenceDatasetKind.NistCatalog),
+            "meth:" + Hash(ReferenceDatasetKind.AegisMethodology),
+            "rules:" + Hash(ReferenceDatasetKind.AegisAssessmentRules));
+        var bundleHash = ReferenceDataFingerprint.Sha256Hex(canonical);
+
+        var bundle = $"{frameworkName}|{methodologyVersion}|bundle:{bundleHash}";
         return bundle.Length <= 200 ? bundle : bundle[..200];
     }
 

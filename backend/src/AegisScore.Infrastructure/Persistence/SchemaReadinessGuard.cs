@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using AegisScore.Application.Assessment;
 using AegisScore.Application.Scoring;
 using AegisScore.Domain;
 
@@ -166,10 +167,12 @@ public static class SchemaReadinessGuard
 
     /// <summary>
     /// [AEGIS-MVP-POSTURE-01] Validação COMPLETA do pacote CSF 2.0 ATIVO — impede que a aplicação aceite
-    /// como pronta uma base inconsistente. Somente leitura. Verifica: exatamente UMA versão ativa aplicável;
-    /// 6/22/106 na versão ativa; 106 pesos positivos; 99 rubricas; as 7 ausências declaradas; tipos de
-    /// evidência válidos; hints conhecidos; proveniência vigente COMPLETA (catálogo/metodologia/regras) com
-    /// hash SHA-256 válido e versão da metodologia identificada.
+    /// como pronta uma base inconsistente. Somente leitura. Verifica: EXATAMENTE uma FrameworkVersion ATIVA
+    /// (qualquer nome) e que ela é a esperada; 6/22/106; 106 pesos positivos; 99 rubricas; as 7 ausências
+    /// declaradas; tipo de evidência válido E COERENTE com os requisitos; hints conhecidos; proveniência
+    /// vigente COMPLETA com classificação EXATA (oficial×derivado), versão da metodologia identificada e —
+    /// o mais importante — os TRÊS hashes REDERIVADOS do banco batendo com a proveniência (alterar no banco
+    /// uma descrição, peso, nível, requisito ou rubrica torna a base não pronta).
     /// </summary>
     public static async Task<SchemaReadinessResult> CheckActivePackageAsync(
         AegisScoreDbContext db, CancellationToken ct = default)
@@ -178,41 +181,53 @@ public static class SchemaReadinessGuard
 
         var problems = new List<string>();
 
-        var active = await db.FrameworkVersions
-            .Where(f => f.Name == CatalogName && f.IsActive).ToListAsync(ct);
+        // EXATAMENTE uma versão ATIVA, de QUALQUER nome — uma segunda ativa com outro nome também é recusada.
+        var active = await db.FrameworkVersions.Where(f => f.IsActive).Take(2).ToListAsync(ct);
         if (active.Count == 0)
             return SchemaReadinessResult.NotReady(new[]
             {
-                $"Nenhuma versão ATIVA do catálogo '{CatalogName}'. Execute o AegisScore.DbMigrator.",
+                "Nenhuma FrameworkVersion ATIVA. Execute o AegisScore.DbMigrator.",
             });
         if (active.Count > 1)
-            problems.Add($"{active.Count} versões ATIVAS do catálogo '{CatalogName}' — exatamente uma é aplicável.");
-        var fv = active[0];
+            problems.Add("Mais de uma FrameworkVersion ATIVA — exatamente uma é aplicável.");
+        var fv = active.FirstOrDefault(f => f.Name == CatalogName);
+        if (fv is null)
+        {
+            problems.Add($"A versão ATIVA não é o catálogo esperado '{CatalogName}'.");
+            return SchemaReadinessResult.NotReady(problems);
+        }
 
-        var functions = await db.Functions.CountAsync(f => f.FrameworkVersionId == fv.Id, ct);
-        var categories = await (from c in db.Categories
-                                join fn in db.Functions on c.FunctionId equals fn.Id
-                                where fn.FrameworkVersionId == fv.Id
-                                select c.Id).CountAsync(ct);
-        var subs = await (from s in db.Subcategories
-                          join c in db.Categories on s.CategoryId equals c.Id
-                          join fn in db.Functions on c.FunctionId equals fn.Id
-                          where fn.FrameworkVersionId == fv.Id
-                          select new { s.Code, s.MaxScorePoints }).ToListAsync(ct);
+        // Grafo do catálogo ativo (campos oficiais) para rederivar o hash e contar a topologia.
+        var funcEntities = await db.Functions.AsNoTracking()
+            .Where(f => f.FrameworkVersionId == fv.Id)
+            .Include(f => f.Categories).ThenInclude(c => c.Subcategories)
+            .ToListAsync(ct);
+        var functionNodes = funcEntities.Select(f => new ReferenceDataFingerprint.FunctionNode(
+            f.Code, f.Name, f.Definition,
+            f.Categories.Select(c => new ReferenceDataFingerprint.CategoryNode(
+                c.Code, c.Name, c.Definition,
+                c.Subcategories.Select(s => new ReferenceDataFingerprint.SubcategoryNode(
+                    s.Code, s.Description, s.ImplementationExamples,
+                    s.InformativeReferences ?? new())).ToList<ReferenceDataFingerprint.SubcategoryNode>()))
+                .ToList<ReferenceDataFingerprint.CategoryNode>())).ToList();
 
-        if (functions != ExpectedFunctions)
-            problems.Add($"Funções: {functions} (esperado {ExpectedFunctions}).");
-        if (categories != ExpectedCategories)
-            problems.Add($"Categorias: {categories} (esperado {ExpectedCategories}).");
-        if (subs.Count != ExpectedSubcategories)
-            problems.Add($"Subcategorias: {subs.Count} (esperado {ExpectedSubcategories}).");
+        var categoriesCount = funcEntities.Sum(f => f.Categories.Count);
+        var subEntities = funcEntities.SelectMany(f => f.Categories).SelectMany(c => c.Subcategories).ToList();
 
-        var nonPositive = subs.Where(s => s.MaxScorePoints <= 0).Select(s => s.Code).ToList();
+        if (funcEntities.Count != ExpectedFunctions)
+            problems.Add($"Funções: {funcEntities.Count} (esperado {ExpectedFunctions}).");
+        if (categoriesCount != ExpectedCategories)
+            problems.Add($"Categorias: {categoriesCount} (esperado {ExpectedCategories}).");
+        if (subEntities.Count != ExpectedSubcategories)
+            problems.Add($"Subcategorias: {subEntities.Count} (esperado {ExpectedSubcategories}).");
+
+        var nonPositive = subEntities.Where(s => s.MaxScorePoints <= 0).Select(s => s.Code).ToList();
         if (nonPositive.Count > 0)
             problems.Add($"{nonPositive.Count} subcategoria(s) com peso não positivo: {string.Join(", ", nonPositive.Take(10))}.");
 
-        var rules = await db.AssessmentRules
-            .Select(r => new { r.SubcategoryCode, r.EvidenceType }).ToListAsync(ct);
+        var rules = await db.AssessmentRules.AsNoTracking()
+            .Select(r => new { r.SubcategoryCode, r.EvidenceType, r.EvidenceRequirements, r.CalculationLogic, r.EvaluationMetrics })
+            .ToListAsync(ct);
         if (rules.Count != ExpectedRules)
             problems.Add($"Rubricas: {rules.Count} (esperado {ExpectedRules}).");
 
@@ -221,8 +236,16 @@ public static class SchemaReadinessGuard
         if (badTypes.Count > 0)
             problems.Add($"{badTypes.Count} regra(s) com tipo de evidência inválido: {string.Join(", ", badTypes.Take(10))}.");
 
+        // COERÊNCIA: o tipo persistido tem de bater com o derivado dos requisitos (adulterar um documental
+        // para Telemetry, por exemplo, deve reprovar) — a derivação por string é usada aqui só para conferir.
+        var incoherent = rules
+            .Where(r => RuleEvaluator.DeriveEvidenceType(r.EvidenceRequirements) != r.EvidenceType)
+            .Select(r => r.SubcategoryCode).ToList();
+        if (incoherent.Count > 0)
+            problems.Add($"{incoherent.Count} regra(s) com EvidenceType incoerente com EvidenceRequirements: {string.Join(", ", incoherent.Take(10))}.");
+
         var ruleCodes = rules.Select(r => r.SubcategoryCode).ToHashSet(StringComparer.Ordinal);
-        var withoutRule = subs.Select(s => s.Code).Where(c => !ruleCodes.Contains(c)).OrderBy(x => x, StringComparer.Ordinal).ToList();
+        var withoutRule = subEntities.Select(s => s.Code).Where(c => !ruleCodes.Contains(c)).OrderBy(x => x, StringComparer.Ordinal).ToList();
         var expectedAbsent = NonAutomatedSubcategoryCodes.OrderBy(x => x, StringComparer.Ordinal).ToList();
         if (!withoutRule.SequenceEqual(expectedAbsent))
             problems.Add(
@@ -235,13 +258,16 @@ public static class SchemaReadinessGuard
         if (unknownHints.Count > 0)
             problems.Add($"Hint(s) de scoring desconhecido(s): {string.Join(", ", unknownHints.Take(10))}.");
 
-        // Proveniência vigente COMPLETA para os três conjuntos, com hash válido e versão de metodologia.
+        // Proveniência vigente COMPLETA: metadados, classificação EXATA, hash válido, versão de metodologia.
         var provenance = await db.ReferenceDatasetProvenances
             .Where(p => p.FrameworkVersionId == fv.Id && p.IsCurrent).ToListAsync(ct);
-        foreach (var kind in new[]
+        var expectedClass = new Dictionary<ReferenceDatasetKind, DatasetClassification>
         {
-            ReferenceDatasetKind.NistCatalog, ReferenceDatasetKind.AegisMethodology, ReferenceDatasetKind.AegisAssessmentRules,
-        })
+            [ReferenceDatasetKind.NistCatalog] = DatasetClassification.Official,
+            [ReferenceDatasetKind.AegisMethodology] = DatasetClassification.Derived,
+            [ReferenceDatasetKind.AegisAssessmentRules] = DatasetClassification.Derived,
+        };
+        foreach (var (kind, expected) in expectedClass)
         {
             var row = provenance.FirstOrDefault(p => p.Kind == kind);
             if (row is null)
@@ -252,21 +278,50 @@ public static class SchemaReadinessGuard
             if (string.IsNullOrWhiteSpace(row.Identifier) || string.IsNullOrWhiteSpace(row.SchemaVersion) ||
                 string.IsNullOrWhiteSpace(row.Origin))
                 problems.Add($"Proveniência de {kind} com metadados obrigatórios vazios.");
-            if (!IsSha256Hex(row.ContentHash))
+            if (row.Classification != expected)
+                problems.Add($"Proveniência de {kind} com classificação {row.Classification} (esperado {expected}).");
+            if (!ReferenceDataFingerprint.IsSha256Hex(row.ContentHash))
                 problems.Add($"Proveniência de {kind} com hash inválido.");
         }
 
-        var methodology = provenance.FirstOrDefault(p => p.Kind == ReferenceDatasetKind.AegisMethodology);
-        if (methodology is not null && string.IsNullOrWhiteSpace(methodology.MethodologyVersion))
+        var methodologyProv = provenance.FirstOrDefault(p => p.Kind == ReferenceDatasetKind.AegisMethodology);
+        if (methodologyProv is not null && string.IsNullOrWhiteSpace(methodologyProv.MethodologyVersion))
             problems.Add("Versão da metodologia AEGIS não identificada na proveniência.");
+
+        // HASHES REDERIVADOS do banco × proveniência vigente — a prova real de integridade do conteúdo.
+        var catalogProv = provenance.FirstOrDefault(p => p.Kind == ReferenceDatasetKind.NistCatalog);
+        if (catalogProv is not null)
+        {
+            var rederived = ReferenceDataFingerprint.CatalogHash(functionNodes);
+            if (!string.Equals(rederived, catalogProv.ContentHash, StringComparison.Ordinal))
+                problems.Add("Hash do catálogo rederivado do banco NÃO bate com a proveniência (conteúdo oficial alterado).");
+        }
+        if (methodologyProv is not null)
+        {
+            var maturity = await db.MaturityLevels.AsNoTracking()
+                .Where(m => m.FrameworkVersionId == fv.Id)
+                .Select(m => new ReferenceDataFingerprint.MaturityNode(m.Level, m.Name, m.Description, m.Score))
+                .ToListAsync(ct);
+            var weights = subEntities.ToDictionary(s => s.Code, s => s.MaxScorePoints, StringComparer.Ordinal);
+            var rederived = ReferenceDataFingerprint.MethodologyHash(
+                methodologyProv.MethodologyVersion, maturity, weights, withoutRule);
+            if (!string.Equals(rederived, methodologyProv.ContentHash, StringComparison.Ordinal))
+                problems.Add("Hash da metodologia rederivado do banco NÃO bate com a proveniência (peso/nível/versão alterado).");
+        }
+        var rulesProv = provenance.FirstOrDefault(p => p.Kind == ReferenceDatasetKind.AegisAssessmentRules);
+        if (rulesProv is not null)
+        {
+            var ruleNodes = rules.Select(r => new ReferenceDataFingerprint.RuleNode(
+                r.SubcategoryCode, r.CalculationLogic, r.EvaluationMetrics, r.EvidenceRequirements)).ToList();
+            var rederived = ReferenceDataFingerprint.RulesHash(ruleNodes);
+            if (!string.Equals(rederived, rulesProv.ContentHash, StringComparison.Ordinal))
+                problems.Add("Hash das regras rederivado do banco NÃO bate com a proveniência (rubrica/requisito alterado).");
+        }
 
         return problems.Count == 0
             ? SchemaReadinessResult.Ready()
             : SchemaReadinessResult.NotReady(problems);
     }
-
-    private static bool IsSha256Hex(string? hash) =>
-        !string.IsNullOrEmpty(hash) && hash.Length == 64 && hash.All(Uri.IsHexDigit);
 
     /// <summary>
     /// Verifica e ABORTA o arranque se o banco não estiver pronto. Mensagem única, com todas as

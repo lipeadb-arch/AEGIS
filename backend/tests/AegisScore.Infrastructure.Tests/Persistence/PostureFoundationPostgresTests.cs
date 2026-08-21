@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Tests.Documents;
@@ -121,5 +122,69 @@ public sealed class PostureFoundationPostgresTests
             (await db.ReferenceDatasetProvenances.AnyAsync()).Should().BeFalse("tabela criada e vazia até o seed rodar");
             (await db.Database.GetAppliedMigrationsAsync()).Should().Contain(TargetMigration);
         }
+    }
+
+    [Fact]
+    public async Task AtualizacaoDeMetodologia_NoPostgresReal_NovaRevisao_IndiceParcialSemConflitoDeOrdem_NovoHash()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var opts = pg.DbOptions();
+
+        await using (var db = new AegisScoreDbContext(opts, new SystemTenantContext(null)))
+            await db.Database.MigrateAsync();
+
+        await using (var db = new AegisScoreDbContext(opts, new SystemTenantContext(null)))
+        {
+            await FrameworkSeeder.SeedAsync(db, CatalogPath, MethodologyPath);
+            await FrameworkSeeder.SeedAssessmentRulesAsync(db, RulesPath, MethodologyPath);
+            await FrameworkSeeder.SeedSignalMappingsAsync(db);
+        }
+
+        string hashV1;
+        await using (var db = new AegisScoreDbContext(opts, new SystemTenantContext(null)))
+            hashV1 = (await db.ReferenceDatasetProvenances
+                .SingleAsync(p => p.Kind == ReferenceDatasetKind.AegisMethodology && p.IsCurrent)).ContentHash;
+
+        // Atualiza a metodologia (peso) num arquivo TEMPORÁRIO e re-semeia: a revisão vigente é REBAIXADA
+        // (UPDATE) e persistida ANTES de inserir a nova (INSERT) — o índice parcial único IsCurrent nunca
+        // vê duas vigentes, independentemente da ordem que o EF daria num único SaveChanges.
+        var methodologyTemp = MutateFirstWeight(MethodologyPath);
+        try
+        {
+            await using (var db = new AegisScoreDbContext(opts, new SystemTenantContext(null)))
+                await FrameworkSeeder.SeedAsync(db, CatalogPath, methodologyTemp);
+
+            await using (var db = new AegisScoreDbContext(opts, new SystemTenantContext(null)))
+            {
+                var meth = await db.ReferenceDatasetProvenances
+                    .Where(p => p.Kind == ReferenceDatasetKind.AegisMethodology)
+                    .OrderBy(p => p.Revision).ToListAsync();
+                meth.Should().HaveCount(2);
+                meth[0].Revision.Should().Be(1);
+                meth[0].IsCurrent.Should().BeFalse("revisão antiga rebaixada");
+                meth[0].SupersededAt.Should().NotBeNull();
+                meth[1].Revision.Should().Be(2);
+                meth[1].IsCurrent.Should().BeTrue();
+                meth.Count(p => p.IsCurrent).Should().Be(1, "índice parcial único: exatamente uma vigente");
+                meth[1].ContentHash.Should().NotBe(hashV1, "novo hash → novo bundle");
+            }
+        }
+        finally
+        {
+            if (File.Exists(methodologyTemp)) File.Delete(methodologyTemp);
+        }
+    }
+
+    /// <summary>Lê a metodologia, soma 5 ao primeiro peso e grava um arquivo temporário.</summary>
+    private static string MutateFirstWeight(string methodologyPath)
+    {
+        var root = JsonNode.Parse(File.ReadAllText(methodologyPath))!;
+        var weights = root["subcategoryWeights"]!.AsObject();
+        var firstKey = weights.First().Key;
+        weights[firstKey] = weights[firstKey]!.GetValue<int>() + 5;
+        var temp = Path.Combine(Path.GetTempPath(), $"aegis_meth_pg_{Guid.NewGuid():N}.json");
+        File.WriteAllText(temp, root.ToJsonString());
+        return temp;
     }
 }

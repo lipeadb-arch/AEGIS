@@ -19,12 +19,13 @@ public enum EvidenceNature
 /// (StubLlmClient, avaliador de telemetria, futuro resolver tenant-aware) chama AQUI — a regra de
 /// classificação não pode ter duas implementações capazes de divergir.
 ///
-/// ⚠️ Deriva do schema REAL de <c>aegis_assessment_rules.json</c> (<c>subcategory_id</c>,
-/// <c>evaluation_metrics</c>, <c>calculation_logic</c>, <c>evidence_requirements</c>). Não há campo
-/// tipado de natureza no catálogo; a natureza é inferida do vocabulário estável de
-/// <c>evidence_requirements</c>, que é bimodal por construção:
-///   • <c>MANUAL_AUDIT_REQUIRED</c> — 39 das 97 regras. Prova documental/manual.
+/// ⚠️ A natureza da evidência hoje é um campo TIPADO e PERSISTIDO (<c>AegisAssessmentRule.EvidenceType</c>);
+/// esta classificação por texto é a ÚNICA autoridade que a DERIVA no seed (e confere no guard), a partir do
+/// vocabulário bimodal de <c>evidence_requirements</c>. Distribuição real das 99 regras:
+///   • <c>MANUAL_AUDIT_REQUIRED</c> — 41 regras. Prova documental/manual.
 ///   • <c>"&lt;Ferramenta&gt;: &lt;o que coletar&gt;"</c> — 58 regras. Prova por telemetria.
+///   • híbrida (as duas) — 0 regras hoje.
+/// A produção lê o tipo PERSISTIDO; a inferência por string fica no seed/guard e nos shims de teste.
 /// </summary>
 /// <summary>
 /// O que o tenant REALMENTE tem para provar um controle, no instante da avaliação.

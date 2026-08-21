@@ -315,6 +315,101 @@ public sealed class SchemaReadinessGuardTests : IDisposable
         result.Describe().Should().Contain("Proveniência");
     }
 
+    [Fact]
+    public async Task PacoteComSegundaFrameworkAtivaDeOutroNome_EhReprovado()
+    {
+        await using var db = NewContext();
+        await SeedRealPackageAsync(db);
+
+        // O índice parcial IMPEDE duas ativas em bancos novos — esta linha o remove para simular um banco
+        // legado/manipulado (defesa em profundidade, mesmo idioma do teste de catálogo duplicado).
+        await db.Database.ExecuteSqlRawAsync("DROP INDEX IF EXISTS \"UX_FrameworkVersion_SingleActive\";");
+        db.FrameworkVersions.Add(new FrameworkVersion { Name = "Outro Framework 1.0", IsActive = true });
+        await db.SaveChangesAsync();
+
+        var result = await SchemaReadinessGuard.CheckActivePackageAsync(db);
+
+        result.IsReady.Should().BeFalse();
+        result.Describe().Should().Contain("ATIVA");
+    }
+
+    [Fact]
+    public async Task PacoteComDescricaoOficialAdulteradaNoBanco_ReprovaPorHash()
+    {
+        await using var db = NewContext();
+        await SeedRealPackageAsync(db);
+        var sub = await db.Subcategories.FirstAsync();
+        sub.Description = "descrição adulterada no banco";
+        await db.SaveChangesAsync();
+
+        var result = await SchemaReadinessGuard.CheckActivePackageAsync(db);
+
+        result.IsReady.Should().BeFalse();
+        result.Describe().Should().Contain("Hash do catálogo");
+    }
+
+    [Fact]
+    public async Task PacoteComPesoAdulteradoNoBanco_ReprovaPorHashDaMetodologia()
+    {
+        await using var db = NewContext();
+        await SeedRealPackageAsync(db);
+        var sub = await db.Subcategories.FirstAsync();
+        sub.MaxScorePoints += 3;
+        await db.SaveChangesAsync();
+
+        var result = await SchemaReadinessGuard.CheckActivePackageAsync(db);
+
+        result.IsReady.Should().BeFalse();
+        result.Describe().Should().Contain("Hash da metodologia");
+    }
+
+    [Fact]
+    public async Task PacoteComRubricaAdulteradaNoBanco_ReprovaPorHashDasRegras()
+    {
+        await using var db = NewContext();
+        await SeedRealPackageAsync(db);
+        var rule = await db.AssessmentRules.FirstAsync();
+        rule.CalculationLogic = "rubrica adulterada no banco";
+        await db.SaveChangesAsync();
+
+        var result = await SchemaReadinessGuard.CheckActivePackageAsync(db);
+
+        result.IsReady.Should().BeFalse();
+        result.Describe().Should().Contain("Hash das regras");
+    }
+
+    [Fact]
+    public async Task PacoteComEvidenceTypeIncoerente_EhReprovado()
+    {
+        await using var db = NewContext();
+        await SeedRealPackageAsync(db);
+        // Adultera uma regra DOCUMENTAL para Telemetry — o tipo persistido deixa de bater com os requisitos.
+        var doc = await db.AssessmentRules.FirstAsync(r => r.EvidenceType == RuleEvidenceType.Documentation);
+        doc.EvidenceType = RuleEvidenceType.Telemetry;
+        await db.SaveChangesAsync();
+
+        var result = await SchemaReadinessGuard.CheckActivePackageAsync(db);
+
+        result.IsReady.Should().BeFalse();
+        result.Describe().Should().Contain("incoerente");
+    }
+
+    [Fact]
+    public async Task PacoteComClassificacaoAdulterada_EhReprovado()
+    {
+        await using var db = NewContext();
+        await SeedRealPackageAsync(db);
+        var meth = await db.ReferenceDatasetProvenances
+            .FirstAsync(p => p.Kind == ReferenceDatasetKind.AegisMethodology && p.IsCurrent);
+        meth.Classification = DatasetClassification.Official;   // metodologia é Derived
+        await db.SaveChangesAsync();
+
+        var result = await SchemaReadinessGuard.CheckActivePackageAsync(db);
+
+        result.IsReady.Should().BeFalse();
+        result.Describe().Should().Contain("classificação");
+    }
+
     private static readonly string DataDir = Path.Combine(AppContext.BaseDirectory, "Data");
 
     private static async Task SeedRealPackageAsync(AegisScoreDbContext db)

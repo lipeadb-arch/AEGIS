@@ -171,6 +171,13 @@ public class AegisScoreDbContext : DbContext
         // repetidos, o ToDictionaryAsync(s => s.Code) do seed de regras passa a lançar, e o boot falha
         // para sempre, em toda réplica. Aqui o banco recusa fisicamente o segundo catálogo.
         b.Entity<FrameworkVersion>().HasIndex(x => x.Name).IsUnique();
+        // [AEGIS-MVP-POSTURE-01] No MÁXIMO uma FrameworkVersion ATIVA — invariante de banco que torna todo
+        // FirstOrDefault(IsActive) inequívoco (score, snapshot, signal mapper, seed operam sobre a MESMA
+        // versão). Índice PARCIAL: só as ativas concorrem pela unicidade; as inativas convivem.
+        b.Entity<FrameworkVersion>().HasIndex(x => x.IsActive)
+            .IsUnique()
+            .HasDatabaseName("UX_FrameworkVersion_SingleActive")
+            .HasFilter("\"IsActive\"");
         // Catálogo NIST — tamanho fixo dos códigos (cabe nos dados do seeder: "GV", "GV.OC",
         // "GV.OC-01") + unicidade no escopo do pai. O catálogo é versionado por FrameworkVersion,
         // então um índice único global só em Code colidiria entre versões do framework.

@@ -195,8 +195,8 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
         NistSubcategory sub, string? ruleContext, string rawTelemetryPayload, DeterministicVerdict verdict)
     {
         var rulesBlock = string.IsNullOrWhiteSpace(ruleContext)
-            ? "ASSESSMENT RULE: (none extracted for this subcategory.)"
-            : "ASSESSMENT RULE (NIST SP 800-53 Rev 5.2.0 — context only):\n" + ruleContext;
+            ? "ASSESSMENT RULE: (none for this subcategory.)"
+            : "ASSESSMENT RULE (AEGIS rubric, derived from NIST SP 800-53 Rev 5 — context only):\n" + ruleContext;
 
         return $"""
         NIST CSF 2.0 SUBCATEGORY: {sub.Code}

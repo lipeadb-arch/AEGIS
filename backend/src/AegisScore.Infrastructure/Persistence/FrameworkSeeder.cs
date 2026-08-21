@@ -1,11 +1,10 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Application.Assessment;
 using AegisScore.Application.Scoring;
 using AegisScore.Domain;
+using Fp = AegisScore.Infrastructure.Persistence.ReferenceDataFingerprint;
 
 namespace AegisScore.Infrastructure.Persistence;
 
@@ -16,21 +15,15 @@ namespace AegisScore.Infrastructure.Persistence;
 ///     <c>nist_csf_2_0_catalog.json</c>;
 ///   • metodologia AUTORAL do AEGIS (escala de maturidade 5 níveis + pesos por subcategoria +
 ///     subcategorias não automatizadas) — <c>aegis_methodology.json</c>;
-///   • regras/rubricas de avaliação (derivadas) — <c>aegis_assessment_rules.json</c>.
-/// O catálogo oficial NÃO declara maturidade nem pesos como se fossem NIST; a maturidade e os pesos vêm da
-/// metodologia. Cada conjunto ganha uma REVISÃO de <see cref="ReferenceDatasetProvenance"/> com hash do
-/// conteúdo — o histórico é preservado (um hash antigo nunca some).
+///   • regras/rubricas de avaliação (autorais do AEGIS) — <c>aegis_assessment_rules.json</c>.
+/// O catálogo oficial NÃO declara maturidade nem pesos como se fossem NIST. Cada conjunto ganha uma REVISÃO
+/// de <see cref="ReferenceDatasetProvenance"/> com hash de conteúdo (calculado pela autoridade única
+/// <see cref="ReferenceDataFingerprint"/>) — o histórico é preservado (um hash antigo nunca some).
 ///
-/// ATUALIZAÇÃO DETERMINÍSTICA (substitui o antigo "insert once"):
-///   • conteúdo idêntico → nenhuma alteração;
-///   • metodologia ou regras alteradas → reconciliação determinística in-place + nova revisão de proveniência;
-///   • conteúdo oficial alterado SEM mudar a topologia de códigos → atualiza os campos oficiais no lugar e
-///     registra nova revisão/hash do catálogo (mesma FrameworkVersion — o índice único em Name é invariante);
-///   • mudança ESTRUTURAL (funções/categorias/subcategorias adicionadas ou removidas) → falha CLARA,
-///     exigindo transição de versão deliberada (fora deste pacote — preserva estados de tenant e a
-///     rastreabilidade dos snapshots).
-/// Tudo FAIL-CLOSED e validado ANTES de persistir; resíduos (regra/nível que não pertencem mais ao artefato)
-/// são detectados e tratados explicitamente, nunca apagados em silêncio.
+/// ATUALIZAÇÃO DETERMINÍSTICA (substitui o antigo "insert once"): idêntico → no-op; metodologia/regras
+/// alteradas → reconciliação in-place + nova revisão; conteúdo oficial alterado SEM mudar a topologia
+/// (códigos E hierarquia) → atualiza campos oficiais + nova revisão; mudança ESTRUTURAL → falha CLARA. Tudo
+/// FAIL-CLOSED e validado ANTES de persistir; resíduos são tratados explicitamente, nunca apagados em silêncio.
 /// </summary>
 public static class FrameworkSeeder
 {
@@ -51,10 +44,10 @@ public static class FrameworkSeeder
 
         ValidateCatalogAndMethodology(catalog, methodology);
 
-        var fileFunctions = NormalizeFromDto(catalog);
-        var fileCatalogHash = ComputeCatalogHash(fileFunctions);
-        var fileTopology = TopologySignature(fileFunctions);
-        var methodologyHash = ComputeMethodologyHash(methodology);
+        var fileFunctions = ToFingerprint(catalog);
+        var fileCatalogHash = Fp.CatalogHash(fileFunctions);
+        var fileTopology = Fp.TopologySignature(fileFunctions);
+        var methodologyHash = MethodologyHashOf(methodology);
         var now = DateTimeOffset.UtcNow;
 
         var existing = await db.FrameworkVersions
@@ -69,41 +62,32 @@ public static class FrameworkSeeder
             return;
         }
 
-        var dbFunctions = NormalizeFromEntities(existing);
-        var dbHash = ComputeCatalogHash(dbFunctions);
+        var dbFunctions = ToFingerprint(existing);
+        var dbHash = Fp.CatalogHash(dbFunctions);
         var changed = false;
 
         if (!string.Equals(dbHash, fileCatalogHash, StringComparison.Ordinal))
         {
-            // Conteúdo oficial DIVERGE. Só é seguro atualizar no lugar se a TOPOLOGIA (conjunto de códigos) for
-            // idêntica — caso contrário é mudança estrutural, que exige transição de versão deliberada.
-            if (!string.Equals(TopologySignature(dbFunctions), fileTopology, StringComparison.Ordinal))
+            if (!string.Equals(Fp.TopologySignature(dbFunctions), fileTopology, StringComparison.Ordinal))
                 throw new InvalidOperationException(
-                    $"Mudança ESTRUTURAL do catálogo '{CatalogName}': o conjunto de códigos (funções/" +
-                    "categorias/subcategorias) do artefato difere do persistido. Este pacote NÃO reescreve a " +
-                    "topologia no lugar (preserva estados de tenant e a rastreabilidade dos snapshots) — uma " +
-                    "mudança estrutural exige transição de versão de framework deliberada. Seed abortado.");
+                    $"Mudança ESTRUTURAL do catálogo '{CatalogName}': a topologia (conjunto de códigos E a " +
+                    "hierarquia função→categoria→subcategoria) do artefato difere da persistida. Este pacote " +
+                    "NÃO reescreve a topologia no lugar (preserva estados de tenant e a rastreabilidade dos " +
+                    "snapshots) — exige transição de versão de framework deliberada. Seed abortado.");
 
-            // Mesma topologia, texto oficial diferente → atualiza campos oficiais + nova revisão de catálogo.
             changed |= UpdateOfficialFieldsInPlace(existing, catalog);
-            changed |= UpsertProvenanceRevision(db, existing, ReferenceDatasetKind.NistCatalog,
-                catalog.Provenance, fileCatalogHash, DatasetClassification.Official, now);
-        }
-        else
-        {
-            // Conteúdo oficial idêntico → apenas garante/atualiza a proveniência do catálogo.
-            changed |= UpsertProvenanceRevision(db, existing, ReferenceDatasetKind.NistCatalog,
-                catalog.Provenance, fileCatalogHash, DatasetClassification.Official, now);
         }
 
-        // Metodologia (maturidade + pesos): reconciliação idempotente + proveniência.
         changed |= ReconcileWeights(existing, methodology);
         changed |= ReconcileMaturity(existing, methodology);
-        changed |= UpsertProvenanceRevision(db, existing, ReferenceDatasetKind.AegisMethodology,
-            methodology.Provenance, methodologyHash, DatasetClassification.Derived, now);
-
         if (changed)
             await db.SaveChangesAsync(ct);
+
+        // Proveniência DEPOIS da reconciliação persistida — upsert com histórico, ordenado (ver método).
+        await UpsertProvenanceRevisionAsync(db, existing, ReferenceDatasetKind.NistCatalog,
+            catalog.Provenance, fileCatalogHash, DatasetClassification.Official, now, ct);
+        await UpsertProvenanceRevisionAsync(db, existing, ReferenceDatasetKind.AegisMethodology,
+            methodology.Provenance, methodologyHash, DatasetClassification.Derived, now, ct);
     }
 
     private static async Task FreshSeedAsync(
@@ -189,10 +173,9 @@ public static class FrameworkSeeder
 
     /// <summary>
     /// Semeia/reconcilia as regras e as vincula ao catálogo por código. A natureza da evidência é TIPADA de
-    /// forma determinística pela ÚNICA autoridade (<see cref="RuleEvaluator.DeriveEvidenceType"/>): só
-    /// <c>MANUAL_AUDIT_REQUIRED</c> → Documentation; só ferramentas → Telemetry; ambos → Both. FAIL-CLOSED:
-    /// artefato inválido, regra órfã/duplicada ou RESÍDUO (regra no banco que não está mais no artefato)
-    /// abortam ANTES de persistir. O conjunto de regras ganha uma revisão de proveniência com hash.
+    /// forma determinística pela ÚNICA autoridade (<see cref="RuleEvaluator.DeriveEvidenceType"/>). FAIL-CLOSED:
+    /// artefato inválido, regra órfã/duplicada ou RESÍDUO (regra no banco fora do artefato) abortam ANTES de
+    /// persistir. O conjunto ganha uma revisão de proveniência com hash.
     /// </summary>
     public static async Task SeedAssessmentRulesAsync(
         AegisScoreDbContext db, string rulesPath, string methodologyPath, CancellationToken ct = default)
@@ -212,13 +195,13 @@ public static class FrameworkSeeder
             .Select(s => new { s.Code, s.Id })
             .ToDictionaryAsync(s => s.Code, s => s.Id, ct);
 
-        ValidateRules(rules, subIdByCode.Keys, methodology);
+        ValidateRules(rules, subIdByCode.Keys);
+        ValidateProvenanceMetadata(methodology.RulesProvenance, "regras", DatasetClassification.Derived);
 
         var existing = await db.AssessmentRules.ToListAsync(ct);
         var existingByCode = existing.ToDictionary(r => r.SubcategoryCode, StringComparer.OrdinalIgnoreCase);
         var artifactCodes = rules.Select(r => r.SubcategoryId).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // RESÍDUO: regra persistida que não está mais no artefato — trata explicitamente (não apaga em silêncio).
         var residual = existing.Where(r => !artifactCodes.Contains(r.SubcategoryCode)).Select(r => r.SubcategoryCode).ToList();
         if (residual.Count > 0)
             throw new InvalidOperationException(
@@ -253,22 +236,22 @@ public static class FrameworkSeeder
                 changed = true;
             }
         }
-
-        var rulesHash = ComputeRulesHash(rules);
-        changed |= UpsertProvenanceRevision(db, fv, ReferenceDatasetKind.AegisAssessmentRules,
-            methodology.RulesProvenance, rulesHash, DatasetClassification.Derived, now);
-
         if (changed)
             await db.SaveChangesAsync(ct);
+
+        var rulesHash = Fp.RulesHash(rules.Select(r => new Fp.RuleNode(
+            r.SubcategoryId, r.CalculationLogic ?? "", r.EvaluationMetrics ?? new(), r.EvidenceRequirements ?? new())).ToList());
+        await UpsertProvenanceRevisionAsync(db, fv, ReferenceDatasetKind.AegisAssessmentRules,
+            methodology.RulesProvenance, rulesHash, DatasetClassification.Derived, now, ct);
     }
 
     // ==================================================================================================
-    //  Signal mappings (inalterado — já idempotente/incremental)
+    //  Signal mappings (idempotente/incremental; hint conhecido é invariante)
     // ==================================================================================================
 
     public static async Task SeedSignalMappingsAsync(AegisScoreDbContext db, CancellationToken ct = default)
     {
-        var fv = await db.FrameworkVersions.FirstOrDefaultAsync(f => f.IsActive, ct);
+        var fv = await ActiveFrameworkAsync(db, ct);
         if (fv is null) return;
 
         var validCodes = (await (
@@ -280,7 +263,6 @@ public static class FrameworkSeeder
 
         var desired = DefaultSignalMappings(fv.Id);
 
-        // Fail-closed: nenhum hint desconhecido pode ser persistido (a fórmula v1 não saberia avaliá-lo).
         var unknownHints = desired.Select(m => m.ScoringHint)
             .Where(h => !EvidenceSignalEvaluator.IsKnownHint(h)).Distinct().ToList();
         if (unknownHints.Count > 0)
@@ -342,6 +324,19 @@ public static class FrameworkSeeder
         ScoringHint = scoringHint,
     };
 
+    /// <summary>
+    /// A ÚNICA versão de framework ATIVA. Fail-closed: mais de uma ativa (o guard de prontidão a recusa,
+    /// mas o migrator roda antes dele) aborta aqui em vez de escolher uma ambígua com FirstOrDefault.
+    /// </summary>
+    private static async Task<FrameworkVersion?> ActiveFrameworkAsync(AegisScoreDbContext db, CancellationToken ct)
+    {
+        var active = await db.FrameworkVersions.Where(f => f.IsActive).Take(2).ToListAsync(ct);
+        if (active.Count > 1)
+            throw new InvalidOperationException(
+                "Mais de uma FrameworkVersion ATIVA no banco — exatamente uma é aplicável. Seed abortado.");
+        return active.SingleOrDefault();
+    }
+
     // ==================================================================================================
     //  Validação FAIL-CLOSED dos artefatos (antes de persistir)
     // ==================================================================================================
@@ -364,21 +359,17 @@ public static class FrameworkSeeder
                 $"{subcategories.Count} subcategorias (esperado {SchemaReadinessGuard.ExpectedFunctions}/" +
                 $"{SchemaReadinessGuard.ExpectedCategories}/{SchemaReadinessGuard.ExpectedSubcategories}).");
 
-        var allCodes = functions.Select(f => f.Code)
-            .Concat(categories.Select(c => c.Code))
-            .Concat(subcategories.Select(s => s.Code)).ToList();
-        if (allCodes.Any(string.IsNullOrWhiteSpace))
-            throw new InvalidOperationException("Catálogo contém código vazio.");
+        // Códigos não vazios e ÚNICOS em cada nível (função, categoria e subcategoria).
+        RejectEmptyOrDuplicate(functions.Select(f => f.Code), "função");
+        RejectEmptyOrDuplicate(categories.Select(c => c.Code), "categoria");
+        RejectEmptyOrDuplicate(subcategories.Select(s => s.Code), "subcategoria");
 
         var subCodes = subcategories.Select(s => s.Code).ToList();
-        var dupSub = subCodes.GroupBy(c => c, StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
-        if (dupSub.Count > 0)
-            throw new InvalidOperationException($"Códigos de subcategoria duplicados no catálogo: {string.Join(", ", dupSub)}.");
+        var subCodeSet = subCodes.ToHashSet(StringComparer.Ordinal);
 
         // Pesos: EXATAMENTE o conjunto dos 106 códigos, todos positivos. Sem fallback que mascare metodologia
         // incompleta — o artefato versionado tem de ser completo e fail-closed.
         var weights = methodology.SubcategoryWeights ?? new();
-        var subCodeSet = subCodes.ToHashSet(StringComparer.Ordinal);
         var missing = subCodes.Where(c => !weights.ContainsKey(c)).ToList();
         var extra = weights.Keys.Where(c => !subCodeSet.Contains(c)).ToList();
         if (missing.Count > 0)
@@ -398,7 +389,7 @@ public static class FrameworkSeeder
         if (levels.Distinct().Count() != levels.Count)
             throw new InvalidOperationException("Metodologia com nível de maturidade duplicado.");
 
-        // Não automatizadas: DECLARADAS na metodologia == constante canônica das 7 == subcategorias do catálogo.
+        // Não automatizadas: DECLARADAS == constante canônica das 7 == subcategorias do catálogo.
         var declared = (methodology.NonAutomatedSubcategories?.Codes ?? new()).ToHashSet(StringComparer.Ordinal);
         var canonical = SchemaReadinessGuard.NonAutomatedSubcategoryCodes.ToHashSet(StringComparer.Ordinal);
         if (!declared.SetEquals(canonical))
@@ -409,20 +400,29 @@ public static class FrameworkSeeder
         if (unknownNonAuto.Count > 0)
             throw new InvalidOperationException($"Subcategoria não automatizada fora do catálogo: {string.Join(", ", unknownNonAuto)}.");
 
-        ValidateProvenanceMetadata(catalog.Provenance, "catálogo");
-        ValidateProvenanceMetadata(methodology.Provenance, "metodologia");
-        ValidateProvenanceMetadata(methodology.RulesProvenance, "regras");
+        // Proveniência: metadados obrigatórios + classificação EXATA (sem fallback silencioso).
+        ValidateProvenanceMetadata(catalog.Provenance, "catálogo", DatasetClassification.Official);
+        ValidateProvenanceMetadata(methodology.Provenance, "metodologia", DatasetClassification.Derived);
+        ValidateProvenanceMetadata(methodology.RulesProvenance, "regras", DatasetClassification.Derived);
+
+        // Coerência: a versão da metodologia declarada no topo e na proveniência (que é PERSISTIDA e entra no
+        // hash rederivável) precisam coincidir — senão o hash não seria rederivável do banco.
+        var provVersion = methodology.Provenance?.MethodologyVersion;
+        if (string.IsNullOrWhiteSpace(provVersion))
+            throw new InvalidOperationException("Proveniência da metodologia sem methodologyVersion.");
+        if (!string.Equals(methodology.MethodologyVersion, provVersion, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"methodologyVersion divergente: topo '{methodology.MethodologyVersion}' × proveniência '{provVersion}'.");
     }
 
-    private static void ValidateRules(List<RuleDto> rules, IEnumerable<string> catalogCodes, MethodologyDto methodology)
+    private static void ValidateRules(List<RuleDto> rules, IEnumerable<string> catalogCodes)
     {
         if (rules.Count == 0)
             throw new InvalidOperationException("Assessment rules JSON parsed to zero rules — check the file/format.");
 
         var codeSet = catalogCodes.ToHashSet(StringComparer.Ordinal);
 
-        var empty = rules.Any(r => string.IsNullOrWhiteSpace(r.SubcategoryId));
-        if (empty)
+        if (rules.Any(r => string.IsNullOrWhiteSpace(r.SubcategoryId)))
             throw new InvalidOperationException(
                 "Assessment rule with empty subcategory_id — JSON binding likely failed (check snake_case).");
 
@@ -437,7 +437,6 @@ public static class FrameworkSeeder
                 $"{orphan.Count} regra(s) referenciam subcategorias inexistentes: {string.Join(", ", orphan)}. " +
                 "As regras estão fora de sincronia com o catálogo NIST.");
 
-        // 99 regras + 7 não automatizadas declaradas = 106, e o par é EXATO (nem sobreposição, nem lacuna extra).
         var ruleCodes = rules.Select(r => r.SubcategoryId).ToHashSet(StringComparer.Ordinal);
         var missingRule = codeSet.Where(c => !ruleCodes.Contains(c)).ToHashSet(StringComparer.Ordinal);
         var declaredNonAuto = SchemaReadinessGuard.NonAutomatedSubcategoryCodes.ToHashSet(StringComparer.Ordinal);
@@ -451,7 +450,17 @@ public static class FrameworkSeeder
                 $"Esperado {SchemaReadinessGuard.ExpectedRules} regras, artefato traz {rules.Count}.");
     }
 
-    private static void ValidateProvenanceMetadata(ProvenanceDto? dto, string label)
+    private static void RejectEmptyOrDuplicate(IEnumerable<string> codes, string level)
+    {
+        var list = codes.ToList();
+        if (list.Any(string.IsNullOrWhiteSpace))
+            throw new InvalidOperationException($"Catálogo contém código de {level} vazio.");
+        var dup = list.GroupBy(c => c, StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+        if (dup.Count > 0)
+            throw new InvalidOperationException($"Códigos de {level} duplicados no catálogo: {string.Join(", ", dup)}.");
+    }
+
+    private static void ValidateProvenanceMetadata(ProvenanceDto? dto, string label, DatasetClassification expected)
     {
         if (dto is null)
             throw new InvalidOperationException($"Proveniência ausente para {label}.");
@@ -463,15 +472,19 @@ public static class FrameworkSeeder
             throw new InvalidOperationException($"Proveniência de {label} sem origin.");
         if (string.IsNullOrWhiteSpace(dto.Classification))
             throw new InvalidOperationException($"Proveniência de {label} sem classification.");
+        // Classificação EXATA (sem fallback silencioso): valor desconhecido ou incompatível falha claramente.
+        if (ParseClassificationStrict(dto.Classification) != expected)
+            throw new InvalidOperationException(
+                $"Proveniência de {label} com classification '{dto.Classification}' — esperado '{expected}'.");
     }
 
     // ==================================================================================================
-    //  Proveniência — build/upsert com HISTÓRICO (revisões)
+    //  Proveniência — build/upsert com HISTÓRICO (revisões) e ORDEM segura (UPDATE antes de INSERT)
     // ==================================================================================================
 
     private static ReferenceDatasetProvenance BuildProvenanceRevision(
         Guid fvId, ReferenceDatasetKind kind, ProvenanceDto? dto, string contentHash,
-        DatasetClassification fallbackClassification, int revision, DateTimeOffset now) => new()
+        DatasetClassification classification, int revision, DateTimeOffset now) => new()
     {
         FrameworkVersionId = fvId,
         Kind = kind,
@@ -479,7 +492,7 @@ public static class FrameworkSeeder
         IsCurrent = true,
         RecordedAt = now,
         Identifier = dto?.Identifier ?? kind.ToString(),
-        Classification = ParseClassification(dto?.Classification, fallbackClassification),
+        Classification = classification,
         SchemaVersion = dto?.SchemaVersion ?? "",
         Origin = dto?.Origin ?? "",
         OfficialReference = dto?.OfficialReference,
@@ -493,12 +506,15 @@ public static class FrameworkSeeder
     };
 
     /// <summary>
-    /// Upsert com HISTÓRICO: conteúdo idêntico ao vigente → só atualiza metadados descritivos no lugar; hash
-    /// diferente → marca a revisão vigente como superada e grava uma NOVA revisão (o hash antigo permanece).
+    /// Upsert com HISTÓRICO. Conteúdo idêntico ao vigente → só refresca metadados descritivos. Hash diferente →
+    /// grava uma NOVA revisão preservando a anterior. A ordem é EXPLÍCITA e segura para o índice PARCIAL único
+    /// (IsCurrent): a revisão vigente é rebaixada e PERSISTIDA (UPDATE) ANTES de inserir a nova (INSERT), de
+    /// modo que nunca existam duas <c>IsCurrent=true</c> ao mesmo tempo — independe da ordem que o EF daria
+    /// num único SaveChanges. Se o INSERT falhasse, a re-execução vê "sem vigente" e grava a nova revisão.
     /// </summary>
-    private static bool UpsertProvenanceRevision(
+    private static async Task UpsertProvenanceRevisionAsync(
         AegisScoreDbContext db, FrameworkVersion fv, ReferenceDatasetKind kind, ProvenanceDto? dto,
-        string contentHash, DatasetClassification fallbackClassification, DateTimeOffset now)
+        string contentHash, DatasetClassification classification, DateTimeOffset now, CancellationToken ct)
     {
         var forKind = fv.Provenance.Where(p => p.Kind == kind).ToList();
         var current = forKind.FirstOrDefault(p => p.IsCurrent);
@@ -506,29 +522,36 @@ public static class FrameworkSeeder
         if (current is null)
         {
             var rev = forKind.Count == 0 ? 1 : forKind.Max(p => p.Revision) + 1;
-            var fresh = BuildProvenanceRevision(fv.Id, kind, dto, contentHash, fallbackClassification, rev, now);
+            var fresh = BuildProvenanceRevision(fv.Id, kind, dto, contentHash, classification, rev, now);
             db.ReferenceDatasetProvenances.Add(fresh);
             fv.Provenance.Add(fresh);
-            return true;
+            await db.SaveChangesAsync(ct);
+            return;
         }
 
         if (string.Equals(current.ContentHash, contentHash, StringComparison.Ordinal))
-            return RefreshMetadata(current, dto, fallbackClassification);   // mesmo conteúdo, metadados no lugar
+        {
+            if (RefreshMetadata(current, dto, classification))
+                await db.SaveChangesAsync(ct);
+            return;
+        }
 
-        // Conteúdo mudou → nova revisão; preserva a anterior (histórico).
+        // Conteúdo mudou → rebaixa a vigente e PERSISTE antes de inserir a nova (índice parcial seguro).
         current.IsCurrent = false;
         current.SupersededAt = now;
+        await db.SaveChangesAsync(ct);
+
         var next = forKind.Max(p => p.Revision) + 1;
-        var revision = BuildProvenanceRevision(fv.Id, kind, dto, contentHash, fallbackClassification, next, now);
+        var revision = BuildProvenanceRevision(fv.Id, kind, dto, contentHash, classification, next, now);
         db.ReferenceDatasetProvenances.Add(revision);
         fv.Provenance.Add(revision);
-        return true;
+        await db.SaveChangesAsync(ct);
     }
 
-    private static bool RefreshMetadata(ReferenceDatasetProvenance current, ProvenanceDto? dto, DatasetClassification fallback)
+    private static bool RefreshMetadata(ReferenceDatasetProvenance current, ProvenanceDto? dto, DatasetClassification classification)
     {
         var desired = BuildProvenanceRevision(current.FrameworkVersionId, current.Kind, dto, current.ContentHash,
-            fallback, current.Revision, current.RecordedAt);
+            classification, current.Revision, current.RecordedAt);
         var changed = false;
         if (current.Identifier != desired.Identifier) { current.Identifier = desired.Identifier; changed = true; }
         if (current.Classification != desired.Classification) { current.Classification = desired.Classification; changed = true; }
@@ -544,12 +567,12 @@ public static class FrameworkSeeder
         return changed;
     }
 
-    private static DatasetClassification ParseClassification(string? value, DatasetClassification fallback) =>
-        value?.Trim().ToLowerInvariant() switch
+    private static DatasetClassification ParseClassificationStrict(string value) =>
+        value.Trim().ToLowerInvariant() switch
         {
             "official" => DatasetClassification.Official,
             "derived" => DatasetClassification.Derived,
-            _ => fallback,
+            _ => throw new InvalidOperationException($"Classificação de proveniência desconhecida: '{value}'."),
         };
 
     // ==================================================================================================
@@ -561,8 +584,7 @@ public static class FrameworkSeeder
         var changed = false;
         foreach (var sub in fv.Functions.SelectMany(f => f.Categories).SelectMany(c => c.Subcategories))
         {
-            // Validado: todo código do catálogo tem peso positivo na metodologia.
-            var desired = methodology.SubcategoryWeights![sub.Code];
+            var desired = methodology.SubcategoryWeights![sub.Code];   // validado: presente e positivo
             if (sub.MaxScorePoints != desired) { sub.MaxScorePoints = desired; changed = true; }
         }
         return changed;
@@ -573,7 +595,6 @@ public static class FrameworkSeeder
         var changed = false;
         var desiredByLevel = methodology.MaturityScale.ToDictionary(ResolveLevel);
 
-        // Resíduo: nível persistido que não está mais na metodologia — trata explicitamente (não apaga).
         var residual = fv.MaturityLevels.Where(m => !desiredByLevel.ContainsKey(m.Level)).Select(m => m.Level).ToList();
         if (residual.Count > 0)
             throw new InvalidOperationException(
@@ -637,106 +658,32 @@ public static class FrameworkSeeder
     private static int ResolveLevel(LevelDto lvl) => int.TryParse(lvl.Level, out var n) ? n : lvl.Score;
 
     // ==================================================================================================
-    //  Hashing determinístico (forma canônica length-prefixed — delimitadores nunca colidem)
+    //  Mapeamento artefato → nós do fingerprint (autoridade única de hash)
     // ==================================================================================================
 
-    private sealed record NormFunction(string Code, string Name, string Definition, List<NormCategory> Categories);
-    private sealed record NormCategory(string Code, string Name, string Definition, List<NormSubcategory> Subcategories);
-    private sealed record NormSubcategory(string Code, string Description, string? ImplementationExamples, List<string> Refs);
-
-    private static List<NormFunction> NormalizeFromDto(CatalogDto catalog) =>
-        catalog.Functions.Select(f => new NormFunction(
+    private static List<Fp.FunctionNode> ToFingerprint(CatalogDto catalog) =>
+        catalog.Functions.Select(f => new Fp.FunctionNode(
             f.Code, f.Name, f.Definition ?? "",
-            (f.Categories ?? new()).Select(c => new NormCategory(
+            (f.Categories ?? new()).Select(c => new Fp.CategoryNode(
                 c.Code, c.Name, c.Definition ?? "",
-                (c.Subcategories ?? new()).Select(s => new NormSubcategory(
+                (c.Subcategories ?? new()).Select(s => new Fp.SubcategoryNode(
                     s.Code, s.Description ?? "", s.ImplementationExamples,
-                    s.InformativeReferences ?? new())).ToList())).ToList())).ToList();
+                    s.InformativeReferences ?? new())).ToList<Fp.SubcategoryNode>())).ToList<Fp.CategoryNode>())).ToList();
 
-    private static List<NormFunction> NormalizeFromEntities(FrameworkVersion fv) =>
-        fv.Functions.Select(f => new NormFunction(
+    private static List<Fp.FunctionNode> ToFingerprint(FrameworkVersion fv) =>
+        fv.Functions.Select(f => new Fp.FunctionNode(
             f.Code, f.Name, f.Definition,
-            f.Categories.Select(c => new NormCategory(
+            f.Categories.Select(c => new Fp.CategoryNode(
                 c.Code, c.Name, c.Definition,
-                c.Subcategories.Select(s => new NormSubcategory(
+                c.Subcategories.Select(s => new Fp.SubcategoryNode(
                     s.Code, s.Description, s.ImplementationExamples,
-                    s.InformativeReferences ?? new())).ToList())).ToList())).ToList();
+                    s.InformativeReferences ?? new())).ToList<Fp.SubcategoryNode>())).ToList<Fp.CategoryNode>())).ToList();
 
-    /// <summary>Assinatura de TOPOLOGIA: só o conjunto ordenado de códigos (funções/categorias/subcategorias).</summary>
-    private static string TopologySignature(List<NormFunction> functions)
-    {
-        var codes = functions.Select(f => "F" + f.Code)
-            .Concat(functions.SelectMany(f => f.Categories).Select(c => "C" + c.Code))
-            .Concat(functions.SelectMany(f => f.Categories).SelectMany(c => c.Subcategories).Select(s => "S" + s.Code))
-            .OrderBy(x => x, StringComparer.Ordinal);
-        return string.Join("|", codes);
-    }
-
-    /// <summary>Hash SHA-256 do conteúdo OFICIAL (independe de ordem de carga e de referências).</summary>
-    private static string ComputeCatalogHash(List<NormFunction> functions)
-    {
-        var sb = new StringBuilder();
-        foreach (var f in functions.OrderBy(x => x.Code, StringComparer.Ordinal))
-        {
-            W(sb, "F"); W(sb, f.Code); W(sb, f.Name); W(sb, f.Definition);
-            foreach (var c in f.Categories.OrderBy(x => x.Code, StringComparer.Ordinal))
-            {
-                W(sb, "C"); W(sb, c.Code); W(sb, c.Name); W(sb, c.Definition);
-                foreach (var s in c.Subcategories.OrderBy(x => x.Code, StringComparer.Ordinal))
-                {
-                    W(sb, "S"); W(sb, s.Code); W(sb, s.Description); W(sb, s.ImplementationExamples);
-                    var refs = s.Refs.OrderBy(x => x, StringComparer.Ordinal).ToList();
-                    W(sb, refs.Count.ToString());
-                    foreach (var r in refs) W(sb, r);
-                }
-            }
-        }
-        return Sha256Hex(sb.ToString());
-    }
-
-    private static string ComputeMethodologyHash(MethodologyDto m)
-    {
-        var sb = new StringBuilder();
-        W(sb, m.MethodologyVersion);
-        foreach (var lvl in m.MaturityScale.OrderBy(ResolveLevel))
-        {
-            W(sb, "L"); W(sb, lvl.Level); W(sb, lvl.Name); W(sb, lvl.Label);
-            W(sb, lvl.Description); W(sb, lvl.Score.ToString());
-        }
-        var weights = (m.SubcategoryWeights ?? new()).OrderBy(x => x.Key, StringComparer.Ordinal).ToList();
-        W(sb, weights.Count.ToString());
-        foreach (var kv in weights) { W(sb, kv.Key); W(sb, kv.Value.ToString()); }
-        var codes = (m.NonAutomatedSubcategories?.Codes ?? new()).OrderBy(x => x, StringComparer.Ordinal).ToList();
-        W(sb, codes.Count.ToString());
-        foreach (var code in codes) W(sb, code);
-        return Sha256Hex(sb.ToString());
-    }
-
-    private static string ComputeRulesHash(List<RuleDto> rules)
-    {
-        var sb = new StringBuilder();
-        foreach (var r in rules.OrderBy(x => x.SubcategoryId, StringComparer.Ordinal))
-        {
-            W(sb, r.SubcategoryId); W(sb, r.CalculationLogic);
-            var metrics = r.EvaluationMetrics ?? new();
-            W(sb, metrics.Count.ToString());
-            foreach (var mx in metrics) W(sb, mx);
-            var evidence = r.EvidenceRequirements ?? new();
-            W(sb, evidence.Count.ToString());
-            foreach (var e in evidence) W(sb, e);
-        }
-        return Sha256Hex(sb.ToString());
-    }
-
-    /// <summary>Campo length-prefixed: o comprimento declarado impede qualquer colisão de fronteira.</summary>
-    private static void W(StringBuilder sb, string? value)
-    {
-        if (value is null) { sb.Append("_:\n"); return; }
-        sb.Append(value.Length).Append(':').Append(value).Append('\n');
-    }
-
-    private static string Sha256Hex(string s) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s))).ToLowerInvariant();
+    private static string MethodologyHashOf(MethodologyDto m) => Fp.MethodologyHash(
+        m.Provenance?.MethodologyVersion,
+        m.MaturityScale.Select(l => new Fp.MaturityNode(ResolveLevel(l), l.Name, l.Description, l.Score)).ToList(),
+        m.SubcategoryWeights ?? new(),
+        m.NonAutomatedSubcategories?.Codes ?? new());
 
     // ==================================================================================================
     //  Utilitários

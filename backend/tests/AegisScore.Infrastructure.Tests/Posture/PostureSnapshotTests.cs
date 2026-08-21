@@ -69,24 +69,36 @@ public sealed class PostureSnapshotTests : IDisposable
     // ---- 1b) [POSTURE-01] CatalogVersion carrega a identificação REPRODUZÍVEL do bundle -------------
 
     [Fact]
-    public async Task Publish_Aegis_CatalogVersion_IdentificaOBundle_CatalogoMetodologiaRegras()
+    public async Task Publish_Aegis_CatalogVersion_EhSha256CompletoDoBundle_Reproduzivel_ESensivel()
     {
         await using var db = NewContext(TenantA);
         await SeedDefaultLedgerAsync(db);
 
+        var catHash = new string('a', 64);
+        var methHash = new string('b', 64);
+        var rulesHash = new string('c', 64);
         var fvId = await db.FrameworkVersions.Where(f => f.IsActive).Select(f => f.Id).SingleAsync();
         db.ReferenceDatasetProvenances.AddRange(
-            Prov(fvId, ReferenceDatasetKind.NistCatalog, new string('a', 64), null),
-            Prov(fvId, ReferenceDatasetKind.AegisMethodology, new string('b', 64), "aegis-methodology-v1"),
-            Prov(fvId, ReferenceDatasetKind.AegisAssessmentRules, new string('c', 64), null));
+            Prov(fvId, ReferenceDatasetKind.NistCatalog, catHash, null),
+            Prov(fvId, ReferenceDatasetKind.AegisMethodology, methHash, "aegis-methodology-v1"),
+            Prov(fvId, ReferenceDatasetKind.AegisAssessmentRules, rulesHash, null));
         await db.SaveChangesAsync();
 
         var detail = await ServiceFor(db, TenantA).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
 
-        detail.Summary.CatalogVersion.Should().Be(
-            "NIST CSF 2.0 (cat:aaaaaaaa meth:aegis-methodology-v1/bbbbbbbb rules:cccccccc)");
-        detail.Summary.CatalogVersion.Should().NotBe("NIST CSF 2.0",
-            "o bundle distingue revisões que o nome do framework sozinho não distinguiria");
+        // Reproduzível: SHA-256 COMPLETO sobre os três hashes completos + versões (não 8 chars de cada).
+        var canonical = string.Join("|", "NIST CSF 2.0", "aegis-methodology-v1",
+            "cat:" + catHash, "meth:" + methHash, "rules:" + rulesHash);
+        var expected = $"NIST CSF 2.0|aegis-methodology-v1|bundle:{ReferenceDataFingerprint.Sha256Hex(canonical)}";
+        detail.Summary.CatalogVersion.Should().Be(expected);
+        detail.Summary.CatalogVersion.Length.Should().BeLessThanOrEqualTo(200);
+        detail.Summary.CatalogVersion.Should().NotBe("NIST CSF 2.0");
+
+        // Sensível: mudar QUALQUER componente muda o bundle (o comparador retornaria DifferentCatalogVersion).
+        var differentRules = string.Join("|", "NIST CSF 2.0", "aegis-methodology-v1",
+            "cat:" + catHash, "meth:" + methHash, "rules:" + new string('d', 64));
+        var differentBundle = $"NIST CSF 2.0|aegis-methodology-v1|bundle:{ReferenceDataFingerprint.Sha256Hex(differentRules)}";
+        differentBundle.Should().NotBe(expected);
     }
 
     private static ReferenceDatasetProvenance Prov(Guid fvId, ReferenceDatasetKind kind, string hash, string? methodologyVersion) => new()

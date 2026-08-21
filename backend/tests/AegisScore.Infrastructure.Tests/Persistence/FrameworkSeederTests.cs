@@ -287,6 +287,63 @@ public sealed class FrameworkSeederTests : IDisposable
         (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*não pertencem mais*");
     }
 
+    // ---- Recusa: mudança de HIERARQUIA (topologia) sem mudar código -----------------------------------
+
+    [Fact]
+    public async Task AlteracaoDeHierarquia_SubcategoriaMovidaDeCategoria_SemMudarCodigo_EhRecusadaComoEstrutural()
+    {
+        await SeedAllAsync();
+
+        // Move uma subcategoria para OUTRA categoria (mesmo conjunto de códigos, hierarquia diferente).
+        await using (var mut = NewContext())
+        {
+            var sub = await mut.Subcategories.OrderBy(s => s.Code).FirstAsync();
+            var otherCategoryId = await mut.Categories.Where(c => c.Id != sub.CategoryId).Select(c => c.Id).FirstAsync();
+            sub.CategoryId = otherCategoryId;
+            await mut.SaveChangesAsync();
+        }
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAsync(ctx, CatalogPath, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*ESTRUTURAL*");
+    }
+
+    // ---- Recusa: códigos de função/categoria duplicados no artefato ------------------------------------
+
+    [Fact]
+    public async Task CatalogoComCodigoDeFuncaoDuplicado_EhRecusado()
+    {
+        var catalogTemp = MutateJson(CatalogPath, root =>
+            root!["functions"]![1]!["code"] = root!["functions"]![0]!["code"]!.GetValue<string>());
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAsync(ctx, catalogTemp, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*função*");
+    }
+
+    [Fact]
+    public async Task CatalogoComCodigoDeCategoriaDuplicado_EhRecusado()
+    {
+        var catalogTemp = MutateJson(CatalogPath, root =>
+            root!["functions"]![0]!["categories"]![1]!["code"] =
+                root!["functions"]![0]!["categories"]![0]!["code"]!.GetValue<string>());
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAsync(ctx, catalogTemp, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*categoria*");
+    }
+
+    [Fact]
+    public async Task ClassificacaoDeProveniencia_Desconhecida_EhRecusada()
+    {
+        var catalogTemp = MutateJson(CatalogPath, root =>
+            root!["provenance"]!["classification"] = "inventada");
+
+        await using var ctx = NewContext();
+        var act = () => FrameworkSeeder.SeedAsync(ctx, catalogTemp, MethodologyPath);
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*desconhecida*");
+    }
+
     // ---- infraestrutura do teste ----------------------------------------------------------------------
 
     private async Task SeedAllAsync()

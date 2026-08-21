@@ -90,10 +90,11 @@ public enum RuleEvidenceType
 }
 
 /// <summary>
-/// Regra técnica de avaliação de UMA subcategoria do CSF 2.0, extraída do NIST SP 800-53 Rev 5.2.0.
-/// Reference data GLOBAL — é o motor do Aegis, compartilhado entre todos os tenants; por isso NÃO
-/// implementa <see cref="ITenantOwned"/> (não é carimbada nem filtrada por tenant). Conjunto DERIVADO/autoral
-/// do AEGIS (não é conteúdo oficial do NIST); a proveniência fica em <see cref="ReferenceDatasetProvenance"/>.
+/// Regra técnica de avaliação de UMA subcategoria do CSF 2.0 — rubrica AUTORAL do AEGIS, derivada do NIST
+/// SP 800-53 Rev 5 (conforme a proveniência do conjunto). Reference data GLOBAL — é o motor do Aegis,
+/// compartilhado entre todos os tenants; por isso NÃO implementa <see cref="ITenantOwned"/> (não é carimbada
+/// nem filtrada por tenant). Conjunto DERIVADO (não é conteúdo oficial do NIST); a proveniência fica em
+/// <see cref="ReferenceDatasetProvenance"/>.
 ///
 /// Modelada LLM-friendly (RAG): os arrays ficam em <c>jsonb</c> na própria linha, sem tabelas 1-N que
 /// poluiriam o schema e fragmentariam a consulta da IA. A ligação com o framework é transitiva via
@@ -114,9 +115,10 @@ public class AegisAssessmentRule : Entity
     /// <summary>
     /// Rubrica CONSULTIVA (texto): descreve como um humano/IA resolveria o status do controle. NÃO é executada
     /// por nenhum motor determinístico neste pacote — é persistida e enviada como TEXTO de apoio para a IA
-    /// interpretar. O veredito determinístico vem de telemetria + <c>SignalMapping.ScoringHint</c> e da
-    /// evidência documental com trecho literal validado, nunca desta fórmula textual. Os prompts que a enviam
-    /// para a IA a rotulam como rubrica consultiva (não como fórmula executada) — vide os context builders.
+    /// interpretar, nunca desta fórmula textual. O veredito por TELEMETRIA é determinístico (telemetria +
+    /// <c>SignalMapping.ScoringHint</c>); o veredito DOCUMENTAL ainda passa por JULGAMENTO da IA, com validação
+    /// de trecho LITERAL e reconciliação posteriores (não é totalmente determinístico). Os prompts que a
+    /// enviam para a IA a rotulam como rubrica consultiva (não como fórmula executada) — vide os context builders.
     /// </summary>
     public string CalculationLogic { get; set; } = "";
 
