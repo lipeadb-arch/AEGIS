@@ -23,7 +23,7 @@ public sealed class StubLlmClient : ILLMClient
         // A regra de conformidade vem da autoridade, não daqui. O código-alvo é lido do cabeçalho do prompt
         // (âncora para regras multi-controle); o restante do prompt é a telemetria varrida pela autoridade.
         var verdict = DeterministicControlEvaluator.Evaluate(
-            ExtractSubcategoryCode(userPrompt), userPrompt, evidenceRequirements: null);
+            ExtractSubcategoryCode(userPrompt), userPrompt, evidenceType: null, evidenceRequirements: null);
 
         var json = JsonSerializer.Serialize(new
         {

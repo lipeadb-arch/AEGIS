@@ -31,6 +31,11 @@
     <Content Update="Data\nist_csf_2_0_catalog.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- Metodologia AUTORAL do AEGIS (maturidade + pesos + subcategorias não automatizadas), SEPARADA do
+         catálogo oficial NIST para nunca apresentar conteúdo autoral como conteúdo NIST. -->
+    <Content Update="Data\aegis_methodology.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Update="Data\aegis_assessment_rules.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

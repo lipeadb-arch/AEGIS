@@ -38,11 +38,14 @@ public static class DeterministicControlEvaluator
     /// Avalia UM controle contra o payload de telemetria, de forma determinística. A âncora de código
     /// (<paramref name="subcategoryCode"/>) é injetada no texto varrido para que regras multi-controle
     /// (ex.: o mesmo retrato de identidade do Entra ID → PR.AA-01 e GV.RR-01) discriminem pelo controle-alvo.
-    /// <paramref name="evidenceRequirements"/> (o <c>evidence_requirements</c> da regra do 800-53) alimenta a
-    /// distinção telemetria × documento nas lacunas — nulo/ausente quando não há regra extraída.
+    /// <paramref name="evidenceType"/> é a natureza TIPADA da evidência (autoridade PERSISTIDA de
+    /// classificação — telemetria × documental × híbrida); <paramref name="evidenceRequirements"/> (o
+    /// <c>evidence_requirements</c> da regra) alimenta apenas a DESCRIÇÃO/identificador de fonte da lacuna.
+    /// Ambos nulos quando não há regra extraída para o controle.
     /// </summary>
     public static DeterministicVerdict Evaluate(
-        string subcategoryCode, string rawPayload, IReadOnlyList<string>? evidenceRequirements)
+        string subcategoryCode, string rawPayload,
+        RuleEvidenceType? evidenceType, IReadOnlyList<string>? evidenceRequirements)
     {
         // Âncora de código + payload, minúsculo: o MESMO texto que o avaliador lia do User Prompt.
         var p = ($"subcategory: {subcategoryCode}\n{rawPayload}").ToLowerInvariant();
@@ -53,7 +56,8 @@ public static class DeterministicControlEvaluator
             : ControlStatus.NonCompliant;   // fail-closed: rótulo desconhecido nunca vira "conforme"
 
         return new DeterministicVerdict(
-            status, evidence, BuildProtectChecks(p), BuildMissingRequirements(statusText, evidenceRequirements, p));
+            status, evidence, BuildProtectChecks(p),
+            BuildMissingRequirements(statusText, evidenceType, evidenceRequirements, p));
     }
 
     // ---- Roteamento por família de payload (Tolerância Zero, binária) -------------------------------
@@ -302,14 +306,16 @@ public static class DeterministicControlEvaluator
     /// <c>evidence_requirements</c> da regra e os marcadores de simulação presentes no payload.
     /// </summary>
     private static IReadOnlyList<MissingRequirement> BuildMissingRequirements(
-        string status, IReadOnlyList<string>? evidenceRequirements, string p)
+        string status, RuleEvidenceType? evidenceType, IReadOnlyList<string>? evidenceRequirements, string p)
     {
         if (status != "NonCompliant")
             return Array.Empty<MissingRequirement>();
-        if (evidenceRequirements is null || evidenceRequirements.Count == 0)
+        if (evidenceType is null || evidenceRequirements is null || evidenceRequirements.Count == 0)
             return Array.Empty<MissingRequirement>();   // sem regra não há como afirmar a natureza da prova
 
+        // Classificação da lacuna pelo tipo PERSISTIDO (autoridade única), não por re-inferência da string.
         return RuleEvaluator.Compile(
+            evidenceType.Value,
             evidenceRequirements,
             hasTelemetrySignal: !p.Contains(TelemetryAbsentMarker),
             hasProcessedDocument: p.Contains(DocumentProcessedMarker));

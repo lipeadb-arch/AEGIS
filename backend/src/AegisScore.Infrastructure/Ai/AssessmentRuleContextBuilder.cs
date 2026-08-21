@@ -34,14 +34,25 @@ public sealed class AssessmentRuleContextBuilder : IAssessmentRuleContextBuilder
             sb.AppendLine($"  • {metric}");
 
         sb.AppendLine();
-        sb.AppendLine("CALCULATION LOGIC — the scoring rubric that decides the status (follow it strictly):");
+        // [AEGIS-MVP-POSTURE-01] A rubrica é CONSULTIVA: nenhum motor determinístico a executa. O veredito
+        // (status/pontos) já é decidido por telemetria/evidência validada — a IA a usa só como referência.
+        sb.AppendLine("CONSULTATIVE RUBRIC (reference only — NOT an executed formula; the status/score is decided");
+        sb.AppendLine("deterministically by validated telemetry/evidence, never by this text):");
         sb.AppendLine($"  {rule.CalculationLogic}");
 
         sb.AppendLine();
+        sb.AppendLine($"EXPECTED EVIDENCE NATURE (typed): {DescribeEvidenceType(rule.EvidenceType)}");
         sb.AppendLine("EXPECTED EVIDENCE SOURCES — where legitimate proof comes from in our stack:");
         foreach (var source in rule.EvidenceRequirements)
             sb.AppendLine($"  • {source}");
 
         return sb.ToString().TrimEnd();
     }
+
+    private static string DescribeEvidenceType(AegisScore.Domain.RuleEvidenceType type) => type switch
+    {
+        AegisScore.Domain.RuleEvidenceType.Telemetry => "telemetry (tool signal)",
+        AegisScore.Domain.RuleEvidenceType.Documentation => "documentary / manual-attested",
+        _ => "hybrid (both telemetry and documentary)",
+    };
 }

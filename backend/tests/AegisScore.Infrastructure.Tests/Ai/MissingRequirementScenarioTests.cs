@@ -175,6 +175,7 @@ public sealed class MissingRequirementScenarioTests : IDisposable
                     "Entra ID: authenticationMethods e sign-in logs para cobertura de MFA privilegiado",
                     "Microsoft Sentinel: regras analíticas de autenticação sem MFA",
                 },
+                EvidenceType = RuleEvidenceType.Telemetry,
             },
             new AegisAssessmentRule
             {
@@ -183,6 +184,7 @@ public sealed class MissingRequirementScenarioTests : IDisposable
                 EvaluationMetrics = new() { "Existência e vigência da política aprovada (PM-1)" },
                 CalculationLogic = "score = politica_aprovada AND revisada_nos_ultimos_12_meses",
                 EvidenceRequirements = new() { RuleEvaluator.ManualAuditToken },
+                EvidenceType = RuleEvidenceType.Documentation,
             });
         ctx.SaveChanges();
     }

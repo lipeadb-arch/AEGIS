@@ -66,6 +66,44 @@ public sealed class PostureSnapshotTests : IDisposable
         detail.Summary.ContentHash.Should().HaveLength(64);
     }
 
+    // ---- 1b) [POSTURE-01] CatalogVersion carrega a identificação REPRODUZÍVEL do bundle -------------
+
+    [Fact]
+    public async Task Publish_Aegis_CatalogVersion_IdentificaOBundle_CatalogoMetodologiaRegras()
+    {
+        await using var db = NewContext(TenantA);
+        await SeedDefaultLedgerAsync(db);
+
+        var fvId = await db.FrameworkVersions.Where(f => f.IsActive).Select(f => f.Id).SingleAsync();
+        db.ReferenceDatasetProvenances.AddRange(
+            Prov(fvId, ReferenceDatasetKind.NistCatalog, new string('a', 64), null),
+            Prov(fvId, ReferenceDatasetKind.AegisMethodology, new string('b', 64), "aegis-methodology-v1"),
+            Prov(fvId, ReferenceDatasetKind.AegisAssessmentRules, new string('c', 64), null));
+        await db.SaveChangesAsync();
+
+        var detail = await ServiceFor(db, TenantA).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+
+        detail.Summary.CatalogVersion.Should().Be(
+            "NIST CSF 2.0 (cat:aaaaaaaa meth:aegis-methodology-v1/bbbbbbbb rules:cccccccc)");
+        detail.Summary.CatalogVersion.Should().NotBe("NIST CSF 2.0",
+            "o bundle distingue revisões que o nome do framework sozinho não distinguiria");
+    }
+
+    private static ReferenceDatasetProvenance Prov(Guid fvId, ReferenceDatasetKind kind, string hash, string? methodologyVersion) => new()
+    {
+        FrameworkVersionId = fvId,
+        Kind = kind,
+        Revision = 1,
+        IsCurrent = true,
+        RecordedAt = DateTimeOffset.UtcNow,
+        Identifier = kind.ToString(),
+        Classification = kind == ReferenceDatasetKind.NistCatalog ? DatasetClassification.Official : DatasetClassification.Derived,
+        SchemaVersion = "1.0",
+        Origin = "teste",
+        ContentHash = hash,
+        MethodologyVersion = methodologyVersion,
+    };
+
     // ---- 2) "Não avaliado" é DISTINTO de zero e de NonCompliant ------------------------------------
 
     [Fact]

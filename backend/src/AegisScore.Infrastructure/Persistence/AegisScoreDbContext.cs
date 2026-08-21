@@ -29,6 +29,7 @@ public class AegisScoreDbContext : DbContext
     public DbSet<NistCategory> Categories => Set<NistCategory>();
     public DbSet<NistSubcategory> Subcategories => Set<NistSubcategory>();
     public DbSet<MaturityLevel> MaturityLevels => Set<MaturityLevel>();
+    public DbSet<ReferenceDatasetProvenance> ReferenceDatasetProvenances => Set<ReferenceDatasetProvenance>();
     public DbSet<SignalMapping> SignalMappings => Set<SignalMapping>();
     // Motor GLOBAL de avaliação: regras técnicas por subcategoria (extraídas do 800-53 5.2.0). Reference
     // data, sem tenant — como o resto do catálogo NIST.
@@ -194,9 +195,41 @@ public class AegisScoreDbContext : DbContext
                 .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
             e.Property(x => x.EvidenceRequirements)
                 .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
+            // [AEGIS-MVP-POSTURE-01] Natureza da evidência TIPADA (persistida como int); default Telemetry
+            // preenche as linhas legadas na migration — o seed reconcilia o valor correto por regra.
+            e.Property(x => x.EvidenceType).HasConversion<int>();
             e.HasOne(x => x.Subcategory).WithMany()
                 .HasForeignKey(x => x.SubcategoryId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // [AEGIS-MVP-POSTURE-01] Proveniência auditável dos conjuntos de dados de referência. Reference data
+        // GLOBAL (sem query filter/stamp). HISTÓRICO PRESERVADO: uma linha por (FrameworkVersion, Kind,
+        // Revision) — o índice único impede colisão de revisão — e um índice PARCIAL garante EXATAMENTE uma
+        // revisão vigente (IsCurrent) por conjunto. Um hash antigo nunca é apagado; a versão cascateia.
+        b.Entity<ReferenceDatasetProvenance>(e =>
+        {
+            e.Property(x => x.Kind).HasConversion<int>();
+            e.Property(x => x.Classification).HasConversion<int>();
+            e.Property(x => x.Identifier).HasMaxLength(100).IsRequired();
+            e.Property(x => x.SchemaVersion).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Origin).HasMaxLength(300).IsRequired();
+            e.Property(x => x.OfficialReference).HasMaxLength(100);
+            e.Property(x => x.Release).HasMaxLength(100);
+            e.Property(x => x.OfficialUrl).HasMaxLength(500);
+            e.Property(x => x.ObtainedOn).HasMaxLength(50);
+            e.Property(x => x.AppliesToCatalog).HasMaxLength(100);
+            e.Property(x => x.ContentHash).HasMaxLength(64).IsRequired();   // SHA-256 hex
+            e.Property(x => x.MethodologyVersion).HasMaxLength(50);
+            e.Property(x => x.Notes).HasMaxLength(1000);
+            e.HasIndex(x => new { x.FrameworkVersionId, x.Kind, x.Revision }).IsUnique();
+            e.HasIndex(x => new { x.FrameworkVersionId, x.Kind })
+                .IsUnique()
+                .HasDatabaseName("UX_ReferenceDatasetProvenance_Current")
+                .HasFilter("\"IsCurrent\"");
+            e.HasOne<FrameworkVersion>().WithMany(f => f.Provenance)
+                .HasForeignKey(x => x.FrameworkVersionId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
         b.Entity<Risk>().HasIndex(x => new { x.TenantId, x.Code }).IsUnique();
         b.Entity<EvidenceSignal>().HasIndex(x => new { x.TenantId, x.SignalKey, x.CollectedAt });

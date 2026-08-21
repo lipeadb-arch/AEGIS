@@ -247,4 +247,84 @@ public sealed class SchemaReadinessGuardTests : IDisposable
             .Which.Message.Should().Contain("AegisScore.DbMigrator",
                 "a mensagem precisa dizer ao operador qual é a ação, não apenas que falhou");
     }
+
+    // ---- Validação COMPLETA do pacote (CheckActivePackageAsync) — sobre o artefato REAL semeado ---------
+
+    [Fact]
+    public async Task PacoteCsfCompleto_Semeado_EhAprovado()
+    {
+        await using var db = NewContext();
+        await SeedRealPackageAsync(db);
+
+        var result = await SchemaReadinessGuard.CheckActivePackageAsync(db);
+
+        result.IsReady.Should().BeTrue(result.Describe());
+    }
+
+    [Fact]
+    public async Task PacoteSemVersaoAtiva_EhReprovado()
+    {
+        await using var db = NewContext();
+
+        var result = await SchemaReadinessGuard.CheckActivePackageAsync(db);
+
+        result.IsReady.Should().BeFalse();
+        result.Describe().Should().Contain("ATIVA");
+    }
+
+    [Fact]
+    public async Task PacoteComRegraFaltando_EhReprovado()
+    {
+        await using var db = NewContext();
+        await SeedRealPackageAsync(db);
+        db.AssessmentRules.Remove(await db.AssessmentRules.FirstAsync());
+        await db.SaveChangesAsync();
+
+        var result = await SchemaReadinessGuard.CheckActivePackageAsync(db);
+
+        result.IsReady.Should().BeFalse();
+        result.Describe().Should().Contain("Rubricas");
+    }
+
+    [Fact]
+    public async Task PacoteComHintDesconhecido_EhReprovado()
+    {
+        await using var db = NewContext();
+        await SeedRealPackageAsync(db);
+        var mapping = await db.SignalMappings.FirstAsync();
+        mapping.ScoringHint = "hint.inexistente.v9";
+        await db.SaveChangesAsync();
+
+        var result = await SchemaReadinessGuard.CheckActivePackageAsync(db);
+
+        result.IsReady.Should().BeFalse();
+        result.Describe().Should().Contain("Hint");
+    }
+
+    [Fact]
+    public async Task PacoteSemProveniencia_EhReprovado()
+    {
+        await using var db = NewContext();
+        await SeedRealPackageAsync(db);
+        db.ReferenceDatasetProvenances.RemoveRange(db.ReferenceDatasetProvenances);
+        await db.SaveChangesAsync();
+
+        var result = await SchemaReadinessGuard.CheckActivePackageAsync(db);
+
+        result.IsReady.Should().BeFalse();
+        result.Describe().Should().Contain("Proveniência");
+    }
+
+    private static readonly string DataDir = Path.Combine(AppContext.BaseDirectory, "Data");
+
+    private static async Task SeedRealPackageAsync(AegisScoreDbContext db)
+    {
+        await FrameworkSeeder.SeedAsync(db,
+            Path.Combine(DataDir, "nist_csf_2_0_catalog.json"),
+            Path.Combine(DataDir, "aegis_methodology.json"));
+        await FrameworkSeeder.SeedAssessmentRulesAsync(db,
+            Path.Combine(DataDir, "aegis_assessment_rules.json"),
+            Path.Combine(DataDir, "aegis_methodology.json"));
+        await FrameworkSeeder.SeedSignalMappingsAsync(db);
+    }
 }

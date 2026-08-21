@@ -72,14 +72,17 @@ public sealed class AegisAiEvaluatorService : IAegisAiEvaluatorService
             ?? throw new InvalidOperationException(
                 $"Subcategoria '{subcategoryCode}' não existe no catálogo NIST CSF 2.0.");
 
-        // 3) Regra do 800-53 (evidence_requirements): a natureza da prova ausente (telemetria × documento).
-        var evidenceRequirements = await _db.AssessmentRules.AsNoTracking()
+        // 3) Regra do 800-53: a natureza TIPADA da prova (telemetria × documento) vem do tipo PERSISTIDO,
+        //    não de re-inferência da string — evidence_requirements alimenta só a descrição da lacuna.
+        var rule = await _db.AssessmentRules.AsNoTracking()
             .Where(r => r.SubcategoryCode == subcategoryCode)
-            .Select(r => r.EvidenceRequirements)
+            .Select(r => new { r.EvidenceRequirements, r.EvidenceType })
             .FirstOrDefaultAsync(ct);
 
         // 4) [AEGIS-AUD-019] STATUS + checks + justificativa por CÓDIGO DETERMINÍSTICO. Imutável a partir daqui.
-        var deterministic = DeterministicControlEvaluator.Evaluate(subcategoryCode, rawTelemetryPayload, evidenceRequirements);
+        var deterministic = DeterministicControlEvaluator.Evaluate(
+            subcategoryCode, rawTelemetryPayload,
+            rule is null ? null : rule.EvidenceType, rule?.EvidenceRequirements);
 
         // 5) IA CONSULTIVA: só o enriquecimento (severidade/ameaças/remediação). O status que o LLM devolver é
         //    ignorado; sua falha não impede o veredito. Cancelamento normal é respeitado.
