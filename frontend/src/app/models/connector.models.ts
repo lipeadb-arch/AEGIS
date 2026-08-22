@@ -10,6 +10,7 @@
  */
 export type ProviderKey =
   | 'Microsoft'
+  | 'MicrosoftDefenderVuln'
   | 'MicrosoftEntraKnight'
   | 'GoogleWorkspaceKnight'
   | 'Google'
@@ -190,6 +191,23 @@ export const PROVIDERS: ProviderSpec[] = [
     ],
   },
   {
+    key: 'MicrosoftDefenderVuln',
+    value: 0, // ConnectorProvider.Microsoft
+    label: 'Microsoft Defender Vulnerability Management',
+    authType: 'OAuthClientCredentials',
+    authTypeValue: 0,
+    capability: 'VulnerabilityScanner',
+    capabilityValue: 8, // ConnectorCapability.VulnerabilityScanner
+    infoNote:
+      'Coleta REAL somente leitura de vulnerabilidades associadas a ativos (máquinas × CVEs). “Testar” valida a autenticação e as duas permissões; “Sincronizar” atualiza ativos, CVEs e exposições. O destino é a API oficial do Defender — não há URL configurável. Exige licença/capacidade compatível, máquinas onboardadas e consentimento administrativo. Veja os achados em Vulnerabilidades.',
+    appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All'],
+    fields: [
+      { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
+      { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
+      { key: 'clientSecret', label: 'Client secret', secret: true },
+    ],
+  },
+  {
     key: 'Google',
     value: 1,
     label: 'Google SecOps (Chronicle)',
@@ -297,6 +315,29 @@ export interface SaveConnectorRequest {
 export interface ConnectorHealth {
   status: string;
   message: string | null;
+}
+
+/** [AEGIS-MVP-VULN-01] Espelha `VulnerabilitySyncSummaryDto` — contagens de uma sincronização de vulnerabilidades. */
+export interface VulnerabilitySyncSummary {
+  machinesObserved: number;
+  assetsCreated: number;
+  cvesUpserted: number;
+  exposuresCreated: number;
+  observationsOpened: number;
+  observationsReopened: number;
+  observationsResolved: number;
+  bindingsDeactivated: number;
+  assetsDeactivated: number;
+  wasComplete: boolean;
+  invalidMachines: number;
+  invalidCves: number;
+  invalidRelations: number;
+}
+
+/** Espelha `SyncResultDto`. `vulnerabilities` só vem preenchido para conectores de vulnerabilidade. */
+export interface SyncResult {
+  signalsCollected: number;
+  vulnerabilities?: VulnerabilitySyncSummary | null;
 }
 
 /** Rótulo PT-BR do status operacional do conector (texto exibido ao usuário). */

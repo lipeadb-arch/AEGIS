@@ -42,6 +42,8 @@ const CONTEXTS: Record<AgentContext, NistContext> = {
 const ROUTE_TO_CONTEXT: Record<string, AgentContext> = {
   governance: 'Govern',
   assets: 'Identify',
+  // [AEGIS-MVP-VULN-01] Vulnerabilidades = gestão de vulnerabilidades (ID.RA) → foco Identify no Copiloto.
+  vulnerabilities: 'Identify',
   // Postura de identidade (Entra ID) → Protect: no NIST CSF 2.0 a gestão de identidade e acesso é PR.AA
   // (Protect), não o pilar Identify (que é inventário/ID.AM). O System Prompt de PR foca em MFA/identidade.
   identity: 'Protect',
