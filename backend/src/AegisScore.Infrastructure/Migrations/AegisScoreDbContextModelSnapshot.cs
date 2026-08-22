@@ -452,9 +452,9 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AssetId");
+                    b.HasIndex("AssetId", "TenantId");
 
-                    b.HasIndex("ConnectorConfigId");
+                    b.HasIndex("ConnectorConfigId", "TenantId");
 
                     b.HasIndex("TenantId", "AssetId");
 
@@ -508,9 +508,9 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AssetId");
-
                     b.HasIndex("ThreatId");
+
+                    b.HasIndex("AssetId", "TenantId");
 
                     b.HasIndex("TenantId", "AssetId", "ThreatId")
                         .IsUnique();
@@ -556,9 +556,9 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AssetThreatExposureId");
+                    b.HasIndex("AssetThreatExposureId", "TenantId");
 
-                    b.HasIndex("ConnectorConfigId");
+                    b.HasIndex("ConnectorConfigId", "TenantId");
 
                     b.HasIndex("TenantId", "AssetThreatExposureId");
 
@@ -3015,15 +3015,19 @@ namespace AegisScore.Infrastructure.Migrations
                 {
                     b.HasOne("AegisScore.Domain.Asset", "Asset")
                         .WithMany()
-                        .HasForeignKey("AssetId")
+                        .HasForeignKey("AssetId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_AssetSourceBindings_Assets_Asset_Tenant");
 
                     b.HasOne("AegisScore.Domain.ConnectorConfig", "ConnectorConfig")
                         .WithMany()
-                        .HasForeignKey("ConnectorConfigId")
+                        .HasForeignKey("ConnectorConfigId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_AssetSourceBindings_Connectors_Connector_Tenant");
 
                     b.Navigation("Asset");
 
@@ -3032,17 +3036,19 @@ namespace AegisScore.Infrastructure.Migrations
 
             modelBuilder.Entity("AegisScore.Domain.AssetThreatExposure", b =>
                 {
-                    b.HasOne("AegisScore.Domain.Asset", "Asset")
-                        .WithMany()
-                        .HasForeignKey("AssetId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.HasOne("AegisScore.Domain.Threat", "Threat")
                         .WithMany()
                         .HasForeignKey("ThreatId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("AegisScore.Domain.Asset", "Asset")
+                        .WithMany()
+                        .HasForeignKey("AssetId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_AssetThreatExposures_Assets_Asset_Tenant");
 
                     b.Navigation("Asset");
 
@@ -3053,15 +3059,19 @@ namespace AegisScore.Infrastructure.Migrations
                 {
                     b.HasOne("AegisScore.Domain.AssetThreatExposure", "AssetThreatExposure")
                         .WithMany()
-                        .HasForeignKey("AssetThreatExposureId")
+                        .HasForeignKey("AssetThreatExposureId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_AssetThreatObservations_Exposure_Tenant");
 
                     b.HasOne("AegisScore.Domain.ConnectorConfig", "ConnectorConfig")
                         .WithMany()
-                        .HasForeignKey("ConnectorConfigId")
+                        .HasForeignKey("ConnectorConfigId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_AssetThreatObservations_Connector_Tenant");
 
                     b.Navigation("AssetThreatExposure");
 

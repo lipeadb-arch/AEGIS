@@ -316,6 +316,9 @@ public class AegisScoreDbContext : DbContext
         b.Entity<ConnectorConfig>()
             .HasIndex(x => new { x.TenantId, x.Provider, x.Capability })
             .IsUnique();
+        // [AEGIS-MVP-VULN-01] Chave alternativa (Id, TenantId): alvo das FKs COMPOSTAS tenant-safe de
+        // AssetSourceBinding e AssetThreatObservation — o banco recusa referência cruzada entre tenants.
+        b.Entity<ConnectorConfig>().HasAlternateKey(x => new { x.Id, x.TenantId });
 
         // Tenant-leading indexes for operational entities that don't get one from an FK
         // convention, so the multi-tenant query filter uses an index instead of a full scan.
@@ -335,6 +338,11 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(a => new { a.TenantId, a.ExternalRef })
                 .IsUnique()
                 .HasFilter("\"ExternalRef\" IS NOT NULL");
+
+            // [AEGIS-MVP-VULN-01] Chave alternativa (Id, TenantId): alvo das FKs COMPOSTAS tenant-safe de
+            // AssetSourceBinding e AssetThreatExposure — o banco recusa binding/exposição de um tenant apontando
+            // para ativo de outro (query filter/stamping isolam LEITURA/insert; a FK composta garante o banco).
+            e.HasAlternateKey(a => new { a.Id, a.TenantId });
 
             // ID.RA — matriz de impacto de negócio como Owned Value Object (colunas BusinessImpact_* na
             // própria tabela do Asset). É a ÚNICA config EF que a adição do VO ao Domain torna OBRIGATÓRIA:
@@ -553,8 +561,16 @@ public class AegisScoreDbContext : DbContext
         // auditoria — apagar ativo/ameaça não a cascateia).
         b.Entity<AssetThreatExposure>(e =>
         {
+            // [AEGIS-MVP-VULN-01] Chave alternativa (Id, TenantId): alvo da FK composta da observação por fonte.
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            // FK COMPOSTA tenant-safe (AssetId, TenantId) → Asset (Id, TenantId): o banco recusa uma exposição de
+            // um tenant apontando para ativo de outro. Restrict preservado (exposição é registro de auditoria).
             e.HasOne(x => x.Asset).WithMany()
-                .HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Restrict);
+                .HasForeignKey(x => new { x.AssetId, x.TenantId })
+                .HasPrincipalKey(a => new { a.Id, a.TenantId })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_AssetThreatExposures_Assets_Asset_Tenant");
+            // Threat é catálogo GLOBAL (TenantId pode ser nulo, CVE público) — FK SIMPLES de propósito, NÃO composta.
             e.HasOne(x => x.Threat).WithMany()
                 .HasForeignKey(x => x.ThreatId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.TenantId, x.AssetId, x.ThreatId }).IsUnique();
@@ -569,10 +585,19 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
             e.Property(x => x.DisplayName).HasMaxLength(200);
             e.Property(x => x.SubType).HasMaxLength(100);
+            // FKs COMPOSTAS tenant-safe: (AssetId, TenantId) → Asset (Id, TenantId) e (ConnectorConfigId, TenantId)
+            // → ConnectorConfig (Id, TenantId). O banco recusa um binding de um tenant apontando para ativo/conector
+            // de outro — o query filter/stamping isola LEITURA/insert, a FK composta garante a integridade no banco.
             e.HasOne(x => x.Asset).WithMany()
-                .HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Restrict);
+                .HasForeignKey(x => new { x.AssetId, x.TenantId })
+                .HasPrincipalKey(a => new { a.Id, a.TenantId })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_AssetSourceBindings_Assets_Asset_Tenant");
             e.HasOne(x => x.ConnectorConfig).WithMany()
-                .HasForeignKey(x => x.ConnectorConfigId).OnDelete(DeleteBehavior.Restrict);
+                .HasForeignKey(x => new { x.ConnectorConfigId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_AssetSourceBindings_Connectors_Connector_Tenant");
             e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.ExternalId })
                 .IsUnique()
                 .HasDatabaseName("UX_AssetSourceBinding_Natural");
@@ -585,10 +610,19 @@ public class AegisScoreDbContext : DbContext
         // Índices tenant-leading por exposição (consolidação/leitura efetiva) e por conector (reconciliação por fonte).
         b.Entity<AssetThreatObservation>(e =>
         {
+            // FKs COMPOSTAS tenant-safe: (AssetThreatExposureId, TenantId) → AssetThreatExposure (Id, TenantId) e
+            // (ConnectorConfigId, TenantId) → ConnectorConfig (Id, TenantId). O banco recusa uma observação de um
+            // tenant apontando para exposição/conector de outro.
             e.HasOne(x => x.AssetThreatExposure).WithMany()
-                .HasForeignKey(x => x.AssetThreatExposureId).OnDelete(DeleteBehavior.Restrict);
+                .HasForeignKey(x => new { x.AssetThreatExposureId, x.TenantId })
+                .HasPrincipalKey(a => new { a.Id, a.TenantId })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_AssetThreatObservations_Exposure_Tenant");
             e.HasOne(x => x.ConnectorConfig).WithMany()
-                .HasForeignKey(x => x.ConnectorConfigId).OnDelete(DeleteBehavior.Restrict);
+                .HasForeignKey(x => new { x.ConnectorConfigId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_AssetThreatObservations_Connector_Tenant");
             e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.AssetThreatExposureId })
                 .IsUnique()
                 .HasDatabaseName("UX_AssetThreatObservation_Natural");

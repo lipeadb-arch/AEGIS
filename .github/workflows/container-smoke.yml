@@ -213,6 +213,9 @@ jobs:
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
+          # [AEGIS-MVP-VULN-01] Gate anti-falso-verde: se AEGIS_TEST_PG faltar/estiver inválido neste job, a bateria
+          # PostgreSQL real FALHA (PostgresProbe.TryCreateAsync lança) em vez de virar no-op silencioso.
+          AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
           -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests"

@@ -176,7 +176,22 @@ internal sealed class PostgresProbe : IAsyncDisposable
     public static async Task<PostgresProbe?> TryCreateAsync()
     {
         var baseConn = Environment.GetEnvironmentVariable("AEGIS_TEST_PG");
-        if (string.IsNullOrWhiteSpace(baseConn)) return null;
+        if (string.IsNullOrWhiteSpace(baseConn))
+        {
+            // [AEGIS-MVP-VULN-01] Anti-falso-verde no CI: quando o job PostgreSQL declara AEGIS_PG_GATE_REQUIRED,
+            // a ausência de AEGIS_TEST_PG NÃO pode virar no-op silencioso — a bateria PostgreSQL real precisa rodar.
+            // Falha com causa acionável. (Localmente, sem o gate, segue o no-op previsto — return null.) Um gate
+            // específico evita o falso positivo do genérico CI=true, que outras suítes ativam sem PostgreSQL.
+            var gate = Environment.GetEnvironmentVariable("AEGIS_PG_GATE_REQUIRED");
+            if (!string.IsNullOrWhiteSpace(gate)
+                && (gate == "1" || gate.Equals("true", StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException(
+                    "AEGIS_PG_GATE_REQUIRED está ativo, mas AEGIS_TEST_PG não está definido: a bateria PostgreSQL " +
+                    "real NÃO pode ser pulada (falso verde). Defina AEGIS_TEST_PG apontando para o PostgreSQL de teste.");
+            }
+            return null;
+        }
 
         var dbName = "aegis_aud050_test_" + Guid.NewGuid().ToString("N")[..12];
         var builder = new NpgsqlConnectionStringBuilder(baseConn) { Pooling = false };
