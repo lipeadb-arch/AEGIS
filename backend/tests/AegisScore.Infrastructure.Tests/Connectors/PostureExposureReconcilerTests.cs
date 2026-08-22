@@ -40,6 +40,12 @@ public sealed class PostureExposureReconcilerTests : IDisposable
         _options = new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(_connection).Options;
         using var ctx = NewContext(null);
         ctx.Database.EnsureCreated();
+        // ConnectorConfig tem FK para Tenant — os testes de query semeiam conectores reais, então os tenants
+        // precisam existir. (Os testes do reconciliador tocam só PostureExposureFinding, que não tem essa FK.)
+        ctx.Tenants.AddRange(
+            new Tenant { Id = TenantA, Name = "Alfa", Slug = "alfa", Status = TenantStatus.Active },
+            new Tenant { Id = TenantB, Name = "Bravo", Slug = "bravo", Status = TenantStatus.Active });
+        ctx.SaveChanges();
     }
 
     public void Dispose() => _connection.Dispose();
@@ -57,6 +63,32 @@ public sealed class PostureExposureReconcilerTests : IDisposable
     {
         await using var db = NewContext(tenant);
         await new PostureExposureReconciler(db).ReconcileAsync(connector, collection, CancellationToken.None);
+    }
+
+    /// <summary>Semeia um ConnectorConfig Microsoft/SecureScore REAL (âncora da "última coleta" e do score do resumo).</summary>
+    private async Task<Guid> SeedSecureScoreConnectorAsync(Guid tenant, DateTimeOffset? lastSyncAt)
+    {
+        await using var db = NewContext(tenant);
+        var cfg = new ConnectorConfig
+        {
+            TenantId = tenant, Provider = ConnectorProvider.Microsoft, Capability = ConnectorCapability.SecureScore,
+            DisplayName = "Microsoft Secure Score", AuthType = ConnectorAuthType.OAuthClientCredentials,
+            Enabled = true, LastSyncAt = lastSyncAt,
+        };
+        db.Connectors.Add(cfg);
+        await db.SaveChangesAsync();
+        return cfg.Id;
+    }
+
+    private async Task SeedOverallSignalAsync(Guid tenant, Guid connectorId, double percent)
+    {
+        await using var db = NewContext(tenant);
+        db.Signals.Add(new EvidenceSignal
+        {
+            ConnectorConfigId = connectorId, SignalKey = "secureScore.overall",
+            NumericValue = percent, Unit = "percent", CollectedAt = DateTimeOffset.UtcNow,
+        });
+        await db.SaveChangesAsync();
     }
 
     // ---- 9) Criação, atualização, resolução e reabertura idempotentes -----------------------------
@@ -181,23 +213,17 @@ public sealed class PostureExposureReconcilerTests : IDisposable
     [Fact]
     public async Task Query_ListAndSummary_OrdersByRankThenGap_AndFilters()
     {
-        await ReconcileAsync(TenantA, ConnA, Collection(true,
+        var lastSync = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var conn = await SeedSecureScoreConnectorAsync(TenantA, lastSync);
+        await ReconcileAsync(TenantA, conn, Collection(true,
             Finding("id-rank3", 5, 10, 3, "Identity"),
             Finding("data-rank1", 4, 10, 1, "Data"),
             Finding("id-rank2big", 1, 10, 2, "Identity")));
         // Resolve uma para checar a contagem de resolvidas + o Secure Score do resumo (via sinal).
-        await ReconcileAsync(TenantA, ConnA, Collection(true,
+        await ReconcileAsync(TenantA, conn, Collection(true,
             Finding("data-rank1", 4, 10, 1, "Data"),
             Finding("id-rank2big", 1, 10, 2, "Identity")));   // id-rank3 resolvido
-        await using (var seed = NewContext(TenantA))
-        {
-            seed.Signals.Add(new EvidenceSignal
-            {
-                ConnectorConfigId = ConnA, SignalKey = "secureScore.overall",
-                NumericValue = 62, Unit = "percent", CollectedAt = DateTimeOffset.UtcNow,
-            });
-            await seed.SaveChangesAsync();
-        }
+        await SeedOverallSignalAsync(TenantA, conn, 62);
 
         var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA));
         var open = await query.GetAsync(new PostureExposureFilter(PostureExposureStateFilter.Open));
@@ -205,7 +231,8 @@ public sealed class PostureExposureReconcilerTests : IDisposable
         open.Summary.TotalOpen.Should().Be(2);
         open.Summary.TotalResolved.Should().Be(1);
         open.Summary.LatestSecureScorePercent.Should().Be(62, "o resumo traz o Secure Score geral mais recente");
-        open.Summary.LastCollectedAt.Should().NotBeNull();
+        open.Summary.LastCollectedAt.Should().BeCloseTo(lastSync, TimeSpan.FromSeconds(2),
+            "a última coleta vem do LastSyncAt do conector Microsoft/SecureScore");
         open.Items.Should().HaveCount(2);
         open.Items.Select(i => i.ExternalId).Should().Equal(new[] { "data-rank1", "id-rank2big" },
             "ordena por rank asc (nulos por último), depois maior gap");
@@ -230,6 +257,79 @@ public sealed class PostureExposureReconcilerTests : IDisposable
         result.Summary.LastCollectedAt.Should().BeNull();
         result.Summary.TotalOpen.Should().Be(0);
         result.Items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Query_SuccessfulCollectionWithZeroFindings_IsNotUncollected()
+    {
+        // Coleta bem-sucedida (LastSyncAt + Secure Score), porém SEM exposições → NÃO é "Ainda não coletado".
+        var lastSync = DateTimeOffset.UtcNow.AddMinutes(-2);
+        var conn = await SeedSecureScoreConnectorAsync(TenantA, lastSync);
+        await SeedOverallSignalAsync(TenantA, conn, 88);
+
+        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA));
+        var result = await query.GetAsync(new PostureExposureFilter());
+
+        result.Summary.LastCollectedAt.Should().BeCloseTo(lastSync, TimeSpan.FromSeconds(2),
+            "houve coleta (LastSyncAt do conector), mesmo sem exposições");
+        result.Summary.LatestSecureScorePercent.Should().Be(88);
+        result.Summary.TotalOpen.Should().Be(0);
+        result.Summary.TotalResolved.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Query_SameSignalKeyFromOtherCapability_DoesNotContaminate()
+    {
+        // O conector Microsoft/SecureScore existe (âncora da coleta), mas NÃO tem sinal overall próprio.
+        var lastSync = DateTimeOffset.UtcNow;
+        await SeedSecureScoreConnectorAsync(TenantA, lastSync);
+
+        // Outro conector (Generic/Siem) com um sinal de MESMA chave "secureScore.overall" — não pode contaminar.
+        await using (var db = NewContext(TenantA))
+        {
+            var other = new ConnectorConfig
+            {
+                TenantId = TenantA, Provider = ConnectorProvider.Generic, Capability = ConnectorCapability.Siem,
+                DisplayName = "SIEM", AuthType = ConnectorAuthType.ApiKey, Enabled = true,
+            };
+            db.Connectors.Add(other);
+            await db.SaveChangesAsync();
+            db.Signals.Add(new EvidenceSignal
+            {
+                ConnectorConfigId = other.Id, SignalKey = "secureScore.overall",
+                NumericValue = 99, Unit = "percent", CollectedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA));
+        var result = await query.GetAsync(new PostureExposureFilter());
+
+        result.Summary.LatestSecureScorePercent.Should().BeNull(
+            "sinal de mesma chave de OUTRA capability/conector não é o Secure Score do resumo");
+        result.Summary.LastCollectedAt.Should().NotBeNull("a última coleta vem do conector Microsoft/SecureScore");
+    }
+
+    [Fact]
+    public async Task Query_IsolatesScoreSyncAndExposures_BetweenTenants()
+    {
+        var connA = await SeedSecureScoreConnectorAsync(TenantA, DateTimeOffset.UtcNow);
+        await ReconcileAsync(TenantA, connA, Collection(true, Finding("a-only", 5, 10, 1)));
+        await SeedOverallSignalAsync(TenantA, connA, 40);
+
+        var connB = await SeedSecureScoreConnectorAsync(TenantB, DateTimeOffset.UtcNow);
+        await ReconcileAsync(TenantB, connB, Collection(true, Finding("b-only", 2, 10, 1)));
+        await SeedOverallSignalAsync(TenantB, connB, 80);
+
+        var rA = await new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA))
+            .GetAsync(new PostureExposureFilter());
+        rA.Summary.LatestSecureScorePercent.Should().Be(40, "A vê só o próprio score");
+        rA.Items.Should().OnlyContain(i => i.ExternalId == "a-only");
+
+        var rB = await new PostureExposureQuery(NewContext(TenantB), new SystemTenantContext(TenantB))
+            .GetAsync(new PostureExposureFilter());
+        rB.Summary.LatestSecureScorePercent.Should().Be(80, "B vê só o próprio score");
+        rB.Items.Should().OnlyContain(i => i.ExternalId == "b-only");
     }
 
     // ---- 13) Contexto da IA contém somente os campos permitidos -----------------------------------

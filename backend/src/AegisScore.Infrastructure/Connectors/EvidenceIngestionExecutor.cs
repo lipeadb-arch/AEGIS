@@ -198,36 +198,37 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         var now = DateTimeOffset.UtcNow;
         await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(config.TenantId));
 
+        // [AEGIS-MVP-POSTURE-02] UMA fotografia da fonte por sincronização. Quando o adaptador suporta coleta
+        // COMBINADA (ICombinedEvidenceCollector), sinais E exposições vêm da MESMA aquisição — sem buscar a fonte
+        // duas vezes e sem risco de sinais e findings virem de fotografias diferentes. Conectores que NÃO a
+        // suportam seguem pelo contrato existente (CollectAsync + CollectFindingsAsync opcional). Uma única
+        // try/catch: qualquer falha de coleta (sinais, exposições ou combinada) carimba Failed antes de persistir.
         List<EvidenceSignal> collected;
+        PostureFindingCollection? findings = null;
         try
         {
-            collected = new List<EvidenceSignal>();
-            await foreach (var s in adapter.CollectAsync(config, ct))
-                collected.Add(s);
+            if (adapter is ICombinedEvidenceCollector combined)
+            {
+                var all = await combined.CollectAllAsync(config, ct);
+                collected = all.Signals.ToList();
+                findings = all.Findings;
+            }
+            else
+            {
+                collected = new List<EvidenceSignal>();
+                await foreach (var s in adapter.CollectAsync(config, ct))
+                    collected.Add(s);
+
+                // O adaptador NÃO escreve no banco — a reconciliação (upsert + resolução) ocorre adiante, no executor.
+                if (adapter is IPostureFindingConnector findingConnector)
+                    findings = await findingConnector.CollectFindingsAsync(config, ct);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogError(ex, "Coleta do conector {ConnectorId} falhou.", config.Id);
             await TryStampFailedAsync(config.Id, config.TenantId, ct);
             throw;
-        }
-
-        // [AEGIS-MVP-POSTURE-02] Se o adaptador também expõe EXPOSIÇÕES de configuração, coleta-as no MESMO fluxo
-        // pull (network junto dos sinais, para uma falha da fonte carimbar Failed antes de qualquer persistência).
-        // O adaptador NÃO escreve no banco — a reconciliação (upsert + resolução) ocorre adiante, no executor.
-        PostureFindingCollection? findings = null;
-        if (adapter is IPostureFindingConnector findingConnector)
-        {
-            try
-            {
-                findings = await findingConnector.CollectFindingsAsync(config, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogError(ex, "Coleta de exposições do conector {ConnectorId} falhou.", config.Id);
-                await TryStampFailedAsync(config.Id, config.TenantId, ct);
-                throw;
-            }
         }
 
         // RE-MAPA pela MESMA autoridade central — IGNORA os MappedSubcategoryCodes trazidos pelo adaptador.

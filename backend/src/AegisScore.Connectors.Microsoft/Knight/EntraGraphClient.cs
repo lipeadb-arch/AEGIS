@@ -132,7 +132,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
             // Extrai clones ANTES de dispor o documento — clones sobrevivem ao dispose (evita element inválido).
             var pageItems = new List<JsonElement>();
             string? nextLink;
-            using (var doc = JsonDocument.Parse(body))
+            using (var doc = ParseOrThrow(body))
             {
                 var root = doc.RootElement;
                 if (root.TryGetProperty("value", out var arr) && arr.ValueKind == JsonValueKind.Array)
@@ -153,7 +153,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
         var url = BuildGraphUrl(relativeUrl);
         ValidateGraphUrl(url);
         var body = await SendGetAsync(token, url, ct);
-        using var doc = JsonDocument.Parse(body);
+        using var doc = ParseOrThrow(body);
         return doc.RootElement.Clone();
     }
 
@@ -188,9 +188,25 @@ public sealed class EntraGraphClient : IEntraGraphClient
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var resp = await _http.SendAsync(req, ct);
-        if (!resp.IsSuccessStatusCode)
+        // Fail-CLOSED de completude: SÓ 200 OK é resposta completa esperada. Qualquer outro status — inclusive
+        // 206 Partial Content, que é 2xx mas NÃO é a resposta completa — vira falha sanitizada. Aceitar 206 como
+        // sucesso permitiria reconciliar/resolver por omissão sobre uma fotografia incompleta.
+        if (resp.StatusCode != HttpStatusCode.OK)
             throw new EntraGraphException(Classify(resp.StatusCode), $"graph retornou {(int)resp.StatusCode}");
         return await resp.Content.ReadAsStringAsync(ct);
+    }
+
+    /// <summary>Parse DEFENSIVO: JSON inválido do Graph vira falha SANITIZADA (sem corpo/token/URL/segredo).</summary>
+    private static JsonDocument ParseOrThrow(string body)
+    {
+        try
+        {
+            return JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "resposta do Graph nao e JSON valido");
+        }
     }
 
     private static EntraGraphErrorKind Classify(HttpStatusCode code) => code switch

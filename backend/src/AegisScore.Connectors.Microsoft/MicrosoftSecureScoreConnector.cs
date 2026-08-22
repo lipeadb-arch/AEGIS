@@ -32,7 +32,7 @@ namespace AegisScore.Connectors.Microsoft;
 /// tenant configurado, JSON inválido ou campos essenciais ausentes → falha sanitizada (nunca 0%, conformidade
 /// ou sucesso simulado); NUNCA cai para valores demonstrativos. O SampleScores() foi REMOVIDO.
 /// </summary>
-public sealed class MicrosoftSecureScoreConnector : IEvidenceConnector, IPostureFindingConnector
+public sealed class MicrosoftSecureScoreConnector : IEvidenceConnector, IPostureFindingConnector, ICombinedEvidenceCollector
 {
     /// <summary>Rótulo estável da fonte — exibido na tela e usado como <c>SourceLabel</c> das exposições.</summary>
     public const string SourceLabel = "Microsoft Secure Score";
@@ -114,98 +114,214 @@ public sealed class MicrosoftSecureScoreConnector : IEvidenceConnector, IPosture
         }
     }
 
-    // ---- Sinais determinísticos (IEvidenceConnector) -----------------------------------------------
+    // ---- Coleta: UMA fotografia por sincronização --------------------------------------------------
+    // CollectAsync (sinais) e CollectFindingsAsync (exposições) mantêm o contrato existente e cada um faz UMA
+    // aquisição própria quando chamados isoladamente. O executor, porém, usa a coleta COMBINADA
+    // (ICombinedEvidenceCollector.CollectAllAsync) — token + secureScores + secureScoreControlProfiles UMA vez —
+    // para que sinais e exposições de uma sincronização venham SEMPRE da mesma fotografia. Sem cache global/estático.
 
     public async IAsyncEnumerable<EvidenceSignal> CollectAsync(
         ConnectorConfig config, [EnumeratorCancellation] CancellationToken ct)
     {
-        // Fetch + normalização ANTES de qualquer yield: uma falha do Graph propaga como EntraGraphException
-        // para o executor (que carimba LastStatus=Failed e sobe), nunca vira coleta vazia mascarada.
-        var signals = await BuildSignalsAsync(config, ct);
-        foreach (var s in signals)
+        // Fetch + validação ANTES de qualquer yield: uma falha do Graph propaga como EntraGraphException para o
+        // executor (que carimba LastStatus=Failed e sobe), nunca vira coleta vazia mascarada.
+        var snapshot = await FetchAndValidateSnapshotAsync(config, ct);
+        if (snapshot is null) yield break;   // sem fotografia: nenhum sinal (controles seguem NotEvaluated)
+        foreach (var s in DeriveSignals(config, snapshot))
         {
             ct.ThrowIfCancellationRequested();
             yield return s;
         }
     }
 
-    private async Task<IReadOnlyList<EvidenceSignal>> BuildSignalsAsync(ConnectorConfig config, CancellationToken ct)
+    public async Task<PostureFindingCollection> CollectFindingsAsync(ConnectorConfig config, CancellationToken ct)
+    {
+        var snapshot = await FetchAndValidateSnapshotAsync(config, ct);
+        if (snapshot is null)
+            // Sem fotografia: nada a reconciliar. Coleta NÃO completa → o reconciliador não resolve por omissão.
+            return new PostureFindingCollection(Array.Empty<PostureFinding>(), IsComplete: false, SourceLabel);
+        return new PostureFindingCollection(DeriveFindings(snapshot), IsComplete: true, SourceLabel);
+    }
+
+    /// <summary>
+    /// [AEGIS-MVP-POSTURE-02] Coleta COMBINADA: UMA aquisição da fonte (token + secureScores + perfis paginados)
+    /// produz sinais E exposições da MESMA fotografia. É o caminho usado pelo executor no fluxo pull.
+    /// </summary>
+    public async Task<CombinedCollection> CollectAllAsync(ConnectorConfig config, CancellationToken ct)
+    {
+        var snapshot = await FetchAndValidateSnapshotAsync(config, ct);
+        if (snapshot is null)
+            return new CombinedCollection(
+                Array.Empty<EvidenceSignal>(),
+                new PostureFindingCollection(Array.Empty<PostureFinding>(), IsComplete: false, SourceLabel));
+        return new CombinedCollection(
+            DeriveSignals(config, snapshot),
+            new PostureFindingCollection(DeriveFindings(snapshot), IsComplete: true, SourceLabel));
+    }
+
+    // ---- Fotografia normalizada e VALIDADA (fail-closed) -------------------------------------------
+
+    /// <summary>
+    /// Adquire UMA fotografia (token + secureScores $top=1 + perfis paginados) e a VALIDA integralmente ANTES de
+    /// devolver — fail-closed. Devolve <c>null</c> SOMENTE quando o tenant não tem Secure Score (array
+    /// <c>value</c> vazio): situação legítima, não é falha. Qualquer inconsistência estrutural ou de dados lança
+    /// <see cref="EntraGraphException"/> SANITIZADA (o executor carimba Failed e não persiste/resolve nada):
+    /// resposta sem array <c>value</c>; azureTenantId divergente; <c>controlScores</c> ausente/malformado;
+    /// controlName vazio, score não-finito/negativo ou controlName DUPLICADO; perfil com id DUPLICADO; e, para
+    /// cada par controlScore×perfil UTILIZADO (perfil não-deprecated), maxScore não-finito/não-positivo ou
+    /// <c>score &gt; maxScore</c>. Nenhuma inconsistência vira 0%/100%/conformidade/resolução.
+    /// </summary>
+    private async Task<SecureScoreSnapshot?> FetchAndValidateSnapshotAsync(ConnectorConfig config, CancellationToken ct)
     {
         var creds = DecryptCredentials(config)
             ?? throw new EntraGraphException(EntraGraphErrorKind.AuthFailure,
                 "conector do Secure Score sem credenciais legíveis");
 
         var token = await _graph.AcquireTokenAsync(creds, ct);
-        var latest = await FetchLatestScoreAsync(token, creds, ct);
-        if (latest is null)
-            return Array.Empty<EvidenceSignal>();   // sem fotografia: nenhum sinal (controles seguem NotEvaluated)
 
-        var snapshot = latest.Value;
+        // secureScores?$top=1 — o transporte já exige 200 OK e JSON válido (206 e JSON inválido → falha sanitizada).
+        var scoreRoot = await _graph.GetJsonAsync(token, creds, LatestScoreUrl, ct);
+        if (scoreRoot.ValueKind != JsonValueKind.Object
+            || !scoreRoot.TryGetProperty("value", out var valueArr)
+            || valueArr.ValueKind != JsonValueKind.Array)
+            throw new EntraGraphException(EntraGraphErrorKind.Unavailable,
+                "resposta do Secure Score sem o array value esperado");
+
+        JsonElement? first = null;
+        foreach (var it in valueArr.EnumerateArray()) { first = it; break; }   // $top=1
+        if (first is null) return null;   // tenant sem Secure Score ainda — legítimo (não é falha)
+
+        var snapshot = first.Value;
         if (!TenantMatches(snapshot, creds.AzureTenantId))
             throw new EntraGraphException(EntraGraphErrorKind.AuthFailure,
                 "azureTenantId do Secure Score diverge do tenant configurado");
 
-        var collectedAt = DateOf(snapshot, "createdDateTime") ?? DateTimeOffset.UtcNow;
-        var profiles = await FetchProfilesAsync(token, creds, ct);
+        // controlScores: presença + formato; controlName não vazio/não duplicado; score finito e não negativo.
+        if (!TryGetArray(snapshot, "controlScores", out var csArr))
+            throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlScores ausente ou malformado");
 
+        var controlScores = new Dictionary<string, ControlScoreFact>(StringComparer.OrdinalIgnoreCase);
+        foreach (var cs in csArr.EnumerateArray())
+        {
+            var name = StrOf(cs, "controlName");
+            if (string.IsNullOrWhiteSpace(name))
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlScore com controlName vazio");
+            var score = NumOf(cs, "score");
+            if (score is not { } sv || !IsFinite(sv))
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlScore com score invalido");
+            if (sv < 0)
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlScore com score negativo");
+            if (!controlScores.TryAdd(name!, new ControlScoreFact(name!, StrOf(cs, "controlCategory"), sv)))
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlName duplicado na fotografia");
+        }
+
+        // Perfis (paginado): id não vazio (id vazio é ignorado, perfil inutilizável) e NÃO duplicado.
+        var profiles = new Dictionary<string, ProfileFacts>(StringComparer.OrdinalIgnoreCase);
+        await foreach (var p in _graph.GetPagedAsync(token, creds, ControlProfilesUrl, ct))
+        {
+            var id = StrOf(p, "id");
+            if (string.IsNullOrWhiteSpace(id)) continue;
+            if (!profiles.TryAdd(id!, ProfileFacts.From(p)))
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "perfil de controle duplicado (id repetido)");
+        }
+
+        // Pares UTILIZADOS (controlScore com perfil não-deprecated): maxScore finito+positivo e 0 <= score <= maxScore.
+        foreach (var fact in controlScores.Values)
+        {
+            if (!profiles.TryGetValue(fact.Name, out var prof) || prof.Deprecated) continue;   // não é par utilizado
+            if (!IsFinite(prof.MaxScore) || prof.MaxScore <= 0)
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "maxScore invalido para controle utilizado");
+            if (fact.Score > prof.MaxScore)
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "score acima do maximo do controle");
+        }
+
+        var collectedAt = DateOf(snapshot, "createdDateTime") ?? DateTimeOffset.UtcNow;
+        return new SecureScoreSnapshot(
+            NumOf(snapshot, "currentScore"), NumOf(snapshot, "maxScore"), collectedAt, controlScores, profiles);
+    }
+
+    // ---- Derivações puras (a partir da fotografia já validada) -------------------------------------
+
+    private IReadOnlyList<EvidenceSignal> DeriveSignals(ConnectorConfig config, SecureScoreSnapshot snap)
+    {
         var signals = new List<EvidenceSignal>();
 
         // Overall: currentScore / maxScore × 100 — só com valores válidos e maxScore > 0.
-        var current = NumOf(snapshot, "currentScore");
-        var max = NumOf(snapshot, "maxScore");
-        if (current is { } cv && max is { } mv && mv > 0 && IsFinite(cv))
+        if (snap.OverallCurrent is { } cv && snap.OverallMax is { } mv && mv > 0 && IsFinite(cv))
         {
             var overall = Clamp01Pct(100.0 * cv / mv);
             if (overall is { } pct)
-                signals.Add(MakeSignal(config, "secureScore.overall", pct, collectedAt));
+                signals.Add(MakeSignal(config, "secureScore.overall", pct, snap.CollectedAt));
         }
 
-        // Categorias: controlScores confrontados com os perfis correspondentes. Denominador = soma dos maxScore
-        // dos controles EFETIVAMENTE correspondentes; correspondência incompleta ou denominador inválido → sem sinal.
+        // Categorias: denominador = Σ(maxScore) dos controles EFETIVAMENTE correspondentes (já validados);
+        // categoria com controle sem perfil correspondente é incompleta → sinal não emitido.
         foreach (var (category, signalKey) in CategorySignalKeys)
         {
-            var pct = ComputeCategoryPercent(snapshot, profiles, category);
+            var pct = ComputeCategoryPercent(snap, category);
             if (pct is { } value)
-                signals.Add(MakeSignal(config, signalKey, value, collectedAt));
+                signals.Add(MakeSignal(config, signalKey, value, snap.CollectedAt));
         }
 
         return signals;
     }
 
     /// <summary>
-    /// Percentual de uma categoria = 100 × Σ(score dos controles correspondentes) / Σ(maxScore dos perfis
-    /// correspondentes). Retorna null (não emite) quando não há controle na categoria, quando ALGUM controle da
-    /// categoria não tem perfil correspondente (correspondência incompleta), ou quando o denominador é inválido.
+    /// Percentual de uma categoria = 100 × Σ(score) / Σ(maxScore) dos controles correspondentes (perfil
+    /// não-deprecated). Null (não emite) quando não há controle na categoria, quando ALGUM controle da categoria
+    /// não tem perfil correspondente (incompleta), ou quando o denominador é inválido.
     /// </summary>
-    private static double? ComputeCategoryPercent(
-        JsonElement snapshot, IReadOnlyDictionary<string, ProfileFacts> profiles, string category)
+    private static double? ComputeCategoryPercent(SecureScoreSnapshot snap, string category)
     {
-        if (!TryGetArray(snapshot, "controlScores", out var controlScores))
-            return null;
-
         double numerator = 0, denominator = 0;
         var any = false;
-        foreach (var cs in controlScores.EnumerateArray())
+        foreach (var fact in snap.ControlScores.Values)
         {
-            var csCategory = StrOf(cs, "controlCategory");
-            if (!string.Equals(csCategory, category, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(fact.Category, category, StringComparison.OrdinalIgnoreCase))
                 continue;
-
-            var name = StrOf(cs, "controlName");
-            var score = NumOf(cs, "score");
-            if (string.IsNullOrWhiteSpace(name) || score is not { } sv || !IsFinite(sv))
-                return null;   // controle malformado na categoria → correspondência incompleta, fail-closed
-            if (!profiles.TryGetValue(name!, out var prof) || prof.MaxScore <= 0)
-                return null;   // sem perfil correspondente (ou maxScore inválido) → incompleta
-            if (prof.Deprecated) continue;   // controle depreciado não conta na categoria (nem cria exposição)
+            if (!snap.Profiles.TryGetValue(fact.Name, out var prof))
+                return null;   // controle da categoria sem perfil correspondente → incompleta, fail-closed
+            if (prof.Deprecated) continue;   // controle depreciado não conta na categoria
 
             any = true;
-            numerator += sv;
+            numerator += fact.Score;         // maxScore>0 garantido pela validação dos pares utilizados
             denominator += prof.MaxScore;
         }
 
         if (!any || denominator <= 0) return null;
         return Clamp01Pct(100.0 * numerator / denominator);
+    }
+
+    private static List<PostureFinding> DeriveFindings(SecureScoreSnapshot snap)
+    {
+        var findings = new List<PostureFinding>();
+        foreach (var (id, prof) in snap.Profiles)
+        {
+            if (prof.Deprecated) continue;                                   // depreciado não cria exposição
+            if (!snap.ControlScores.TryGetValue(id, out var fact)) continue; // sem controlScore correspondente
+
+            var gap = prof.MaxScore - fact.Score;   // maxScore>0 e 0<=score<=max já validados para pares utilizados
+            if (gap <= 0) continue;                  // sem gap positivo → não é exposição aberta
+
+            findings.Add(new PostureFinding(
+                ExternalId: id,
+                Title: prof.Title ?? id,
+                Category: prof.ControlCategory,
+                Service: prof.Service,
+                ActionType: prof.ActionType,
+                CurrentScore: Math.Round(fact.Score, 2),
+                MaxScore: Math.Round(prof.MaxScore, 2),
+                Gap: Math.Round(gap, 2),
+                SourceRank: prof.Rank,
+                Tier: prof.Tier,
+                ImplementationCost: prof.ImplementationCost,
+                UserImpact: prof.UserImpact,
+                Remediation: prof.Remediation,
+                RemediationImpact: prof.RemediationImpact,
+                Threats: prof.Threats,
+                SourceState: prof.SourceState));
+        }
+        return findings;
     }
 
     private EvidenceSignal MakeSignal(ConnectorConfig config, string key, double percent, DateTimeOffset collectedAt) => new()
@@ -220,94 +336,6 @@ public sealed class MicrosoftSecureScoreConnector : IEvidenceConnector, IPosture
         // executor re-mapeia por NistSignalMapper (o campo trazido aqui seria ignorado de qualquer forma).
         CollectedAt = collectedAt,
     };
-
-    // ---- Exposições de configuração (IPostureFindingConnector) --------------------------------------
-
-    public async Task<PostureFindingCollection> CollectFindingsAsync(ConnectorConfig config, CancellationToken ct)
-    {
-        var creds = DecryptCredentials(config)
-            ?? throw new EntraGraphException(EntraGraphErrorKind.AuthFailure,
-                "conector do Secure Score sem credenciais legíveis");
-
-        var token = await _graph.AcquireTokenAsync(creds, ct);
-        var latest = await FetchLatestScoreAsync(token, creds, ct);
-        if (latest is null)
-            // Sem fotografia: nada a reconciliar. Coleta NÃO completa → o reconciliador não resolve por omissão.
-            return new PostureFindingCollection(Array.Empty<PostureFinding>(), IsComplete: false, SourceLabel);
-
-        var snapshot = latest.Value;
-        if (!TenantMatches(snapshot, creds.AzureTenantId))
-            throw new EntraGraphException(EntraGraphErrorKind.AuthFailure,
-                "azureTenantId do Secure Score diverge do tenant configurado");
-
-        // Mapa controlName → score atual, a partir da fotografia mais recente.
-        var currentScores = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-        if (TryGetArray(snapshot, "controlScores", out var controlScores))
-        {
-            foreach (var cs in controlScores.EnumerateArray())
-            {
-                var name = StrOf(cs, "controlName");
-                var score = NumOf(cs, "score");
-                if (!string.IsNullOrWhiteSpace(name) && score is { } sv && IsFinite(sv))
-                    currentScores[name!] = sv;
-            }
-        }
-
-        var profiles = await FetchProfilesAsync(token, creds, ct);
-        var findings = new List<PostureFinding>();
-
-        foreach (var (id, prof) in profiles)
-        {
-            if (prof.Deprecated) continue;                          // controle depreciado não cria exposição aberta
-            if (!currentScores.TryGetValue(id, out var current)) continue;  // sem controlScore correspondente
-            if (prof.MaxScore <= 0 || !IsFinite(current)) continue; // valores inválidos
-
-            var gap = prof.MaxScore - current;
-            if (gap <= 0) continue;                                 // sem gap positivo → não é exposição aberta
-
-            findings.Add(new PostureFinding(
-                ExternalId: id,
-                Title: prof.Title ?? id,
-                Category: prof.ControlCategory,
-                Service: prof.Service,
-                ActionType: prof.ActionType,
-                CurrentScore: Math.Round(current, 2),
-                MaxScore: Math.Round(prof.MaxScore, 2),
-                Gap: Math.Round(gap, 2),
-                SourceRank: prof.Rank,
-                Tier: prof.Tier,
-                ImplementationCost: prof.ImplementationCost,
-                UserImpact: prof.UserImpact,
-                Remediation: prof.Remediation,
-                RemediationImpact: prof.RemediationImpact,
-                Threats: prof.Threats,
-                SourceState: prof.SourceState));
-        }
-
-        // Chegou aqui sem exceção → leitura completa (score + todas as páginas de perfis). Pode resolver por omissão.
-        return new PostureFindingCollection(findings, IsComplete: true, SourceLabel);
-    }
-
-    // ---- Acesso ao Graph -----------------------------------------------------------------------------
-
-    private async Task<JsonElement?> FetchLatestScoreAsync(string token, IMicrosoftGraphCredentials creds, CancellationToken ct)
-    {
-        var root = await _graph.GetJsonAsync(token, creds, LatestScoreUrl, ct);
-        return FirstValue(root);
-    }
-
-    private async Task<IReadOnlyDictionary<string, ProfileFacts>> FetchProfilesAsync(
-        string token, IMicrosoftGraphCredentials creds, CancellationToken ct)
-    {
-        var map = new Dictionary<string, ProfileFacts>(StringComparer.OrdinalIgnoreCase);
-        await foreach (var p in _graph.GetPagedAsync(token, creds, ControlProfilesUrl, ct))
-        {
-            var id = StrOf(p, "id");
-            if (string.IsNullOrWhiteSpace(id)) continue;
-            map[id!] = ProfileFacts.From(p);   // última ocorrência vence (Graph não repete id)
-        }
-        return map;
-    }
 
     // ---- Credenciais + validação de tenant ---------------------------------------------------------
 
@@ -427,6 +455,15 @@ public sealed class MicrosoftSecureScoreConnector : IEvidenceConnector, IPosture
         public override string ToString() =>
             $"GraphCredentials {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = *** }}";
     }
+
+    /// <summary>Fotografia NORMALIZADA e VALIDADA do Secure Score: score geral + controlScores (por nome) + perfis (por id).</summary>
+    private sealed record SecureScoreSnapshot(
+        double? OverallCurrent, double? OverallMax, DateTimeOffset CollectedAt,
+        IReadOnlyDictionary<string, ControlScoreFact> ControlScores,
+        IReadOnlyDictionary<string, ProfileFacts> Profiles);
+
+    /// <summary>Fato NORMALIZADO de um controlScore da fotografia (nome, categoria informada, score atual).</summary>
+    private sealed record ControlScoreFact(string Name, string? Category, double Score);
 
     /// <summary>Fatos NORMALIZADOS de um secureScoreControlProfile (só o necessário; sem actionUrl/updatedBy/PII).</summary>
     private sealed record ProfileFacts(

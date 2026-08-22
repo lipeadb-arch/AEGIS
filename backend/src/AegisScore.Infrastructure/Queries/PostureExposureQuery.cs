@@ -55,7 +55,18 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
                 f.Threats, f.SourceState, f.LifecycleState, f.FirstSeenAt, f.LastSeenAt, f.ResolvedAt))
             .ToListAsync(ct);
 
-        var summary = BuildSummary(all, await LatestSecureScoreAsync(ct));
+        // Âncora do resumo: o conector Microsoft/SecureScore do tenant (query filter fail-closed). "Última coleta"
+        // vem do LastSyncAt dele — não do LastSeenAt dos findings, que é incorreto quando a coleta foi bem-sucedida
+        // mas sem exposições, quando tudo foi resolvido, ou quando uma nova coleta não trouxe novo gap.
+        var connector = await _db.Connectors.AsNoTracking()
+            .Where(c => c.Provider == ConnectorProvider.Microsoft && c.Capability == ConnectorCapability.SecureScore)
+            .Select(c => new { c.Id, c.LastSyncAt })
+            .FirstOrDefaultAsync(ct);
+
+        var score = connector is null
+            ? ((double?)null, (DateTimeOffset?)null)
+            : await LatestSecureScoreAsync(connector.Id, ct);
+        var summary = BuildSummary(all, connector?.LastSyncAt, score);
 
         // Filtro da LISTA (o resumo reflete o tenant inteiro).
         IEnumerable<Row> q = all;
@@ -95,12 +106,14 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
         return new PostureExposureListDto(summary, ordered, total, page, pageSize);
     }
 
-    private async Task<(double? Percent, DateTimeOffset? At)> LatestSecureScoreAsync(CancellationToken ct)
+    private async Task<(double? Percent, DateTimeOffset? At)> LatestSecureScoreAsync(Guid connectorId, CancellationToken ct)
     {
-        // Materializa os sinais overall (bounded por tenant) e escolhe o mais recente em memória — evita ORDER BY
-        // de DateTimeOffset no provedor (SQLite não o traduz de forma consistente).
+        // O sinal overall é ancorado ao CONECTOR Microsoft/SecureScore (ConnectorConfigId), não só ao texto
+        // "secureScore.overall": SignalKey é definido no escopo da capability, então um sinal de mesma chave de
+        // OUTRA capability/conector não pode contaminar o resumo. Materializa (bounded) e escolhe o mais recente
+        // em memória — evita ORDER BY de DateTimeOffset no provedor (SQLite não o traduz de forma consistente).
         var overall = await _db.Signals.AsNoTracking()
-            .Where(s => s.SignalKey == OverallSignalKey && s.NumericValue != null)
+            .Where(s => s.ConnectorConfigId == connectorId && s.SignalKey == OverallSignalKey && s.NumericValue != null)
             .Select(s => new { s.NumericValue, s.CollectedAt })
             .ToListAsync(ct);
         if (overall.Count == 0) return (null, null);
@@ -109,7 +122,7 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
     }
 
     private static PostureExposureSummaryDto BuildSummary(
-        IReadOnlyList<Row> all, (double? Percent, DateTimeOffset? At) score)
+        IReadOnlyList<Row> all, DateTimeOffset? lastCollectedAt, (double? Percent, DateTimeOffset? At) score)
     {
         var open = all.Where(r => r.LifecycleState == PostureExposureState.Open).ToList();
         var resolved = all.Count(r => r.LifecycleState == PostureExposureState.Resolved);
@@ -121,11 +134,10 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
             .ThenBy(c => c.Category, StringComparer.Ordinal)
             .ToList();
 
-        // Última coleta = observação mais recente entre TODAS as exposições (null = ainda não coletado, nunca 0).
-        DateTimeOffset? lastCollected = all.Count == 0 ? null : all.Max(r => r.LastSeenAt);
-
+        // Última coleta = LastSyncAt do conector Microsoft/SecureScore (null = ainda não coletado, nunca 0). Uma
+        // coleta bem-sucedida SEM exposições, ou com tudo resolvido, ainda conta como coletada.
         return new PostureExposureSummaryDto(
-            SourceLabel, open.Count, resolved, byCategory, lastCollected, score.Percent, score.At);
+            SourceLabel, open.Count, resolved, byCategory, lastCollectedAt, score.Percent, score.At);
     }
 
     private static PostureExposureItemDto ToDto(Row r) => new(

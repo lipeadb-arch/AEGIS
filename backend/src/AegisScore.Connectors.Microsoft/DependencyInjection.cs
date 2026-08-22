@@ -17,10 +17,11 @@ public static class DependencyInjection
     public static IServiceCollection AddMicrosoftConnectors(this IServiceCollection services)
     {
         // [AEGIS-MVP-POSTURE-02] Coletor REAL do Microsoft Secure Score (sinais + exposições de configuração).
-        // Reusa o transporte VALIDADO do Graph (IEntraGraphClient) e o protetor de segredos existente. Singleton,
-        // como os demais adaptadores do registry: o IEntraGraphClient injetado é um typed HttpClient — a captura
-        // por um singleton é aceitável aqui (host oficial fixo, volume baixo de sync), sem segunda infra de OAuth.
-        services.AddSingleton<IEvidenceConnector, MicrosoftSecureScoreConnector>();
+        // Reusa o transporte VALIDADO do Graph (IEntraGraphClient) e o protetor de segredos existente. SCOPED (não
+        // singleton): o IEntraGraphClient é um typed HttpClient (transient, gerido pelo IHttpClientFactory) — um
+        // singleton o CAPTURARIA no root provider (o handler nunca rotacionaria). Scoped resolve um cliente fresco
+        // por escopo (o IConnectorRegistry também é scoped), sem segunda infra de OAuth/HttpClient.
+        services.AddScoped<IEvidenceConnector, MicrosoftSecureScoreConnector>();
         // services.AddSingleton<IEvidenceConnector, MicrosoftDefenderExposureConnector>();
         // services.AddSingleton<IEvidenceConnector, MicrosoftPurviewConnector>();
         // services.AddSingleton<IEvidenceConnector, AzureAdvisorConnector>();

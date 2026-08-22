@@ -256,6 +256,89 @@ public sealed class MicrosoftSecureScoreConnectorTests
         result.Findings.Should().BeEmpty();
     }
 
+    // ---- 2) Completude realmente fail-closed (206, JSON inválido, estrutura/dados inconsistentes) --
+    // Cada caso deve LANÇAR EntraGraphException sanitizada (o executor carimba Failed e não resolve por omissão).
+    // Nenhum vira IsComplete=true, 0%, 100%, conformidade ou resolução.
+
+    [Fact]
+    public async Task CollectFindings_PartialContent206_FailsClosed()
+    {
+        // 206 é 2xx mas NÃO é resposta completa — recusado como fonte incompleta/indisponível.
+        var handler = new StubHandler(req => IsToken(req)
+            ? (HttpStatusCode.OK, TokenJson)
+            : (HttpStatusCode.PartialContent, ScorePayload(54, 100, DefaultControlScores())));
+        var act = async () => await NewConnector(handler).CollectFindingsAsync(Config(), CancellationToken.None);
+        (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
+    }
+
+    [Fact]
+    public async Task CollectFindings_InvalidJsonInSecureScores_FailsClosedSanitized()
+    {
+        var handler = new StubHandler(req => IsToken(req)
+            ? (HttpStatusCode.OK, TokenJson)
+            : (HttpStatusCode.OK, "not-json-at-all"));
+        var act = async () => await NewConnector(handler).CollectFindingsAsync(Config(), CancellationToken.None);
+        var ex = (await act.Should().ThrowAsync<EntraGraphException>()).Which;
+        ex.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
+        (ex.Message ?? "").Should().NotContain(ClientSecret);
+        (ex.Message ?? "").Should().NotContain("fake-access-token");
+    }
+
+    [Fact]
+    public async Task CollectFindings_InvalidJsonInProfilePage_FailsClosed()
+    {
+        var handler = new StubHandler(req =>
+        {
+            if (IsToken(req)) return (HttpStatusCode.OK, TokenJson);
+            if (req.RequestUri!.AbsoluteUri.Contains("secureScores"))
+                return (HttpStatusCode.OK, ScorePayload(54, 100, DefaultControlScores()));
+            return (HttpStatusCode.OK, "not-json");   // página de perfis com JSON inválido
+        });
+        var act = async () => await NewConnector(handler).CollectFindingsAsync(Config(), CancellationToken.None);
+        (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
+    }
+
+    [Fact]
+    public async Task CollectFindings_ControlScoresMissing_FailsClosed()
+    {
+        var score = $$"""{"value":[{"azureTenantId":"{{TenantId}}","currentScore":54,"maxScore":100,"createdDateTime":"2026-08-20T10:00:00Z"}]}""";
+        var act = async () => await NewConnector(HandlerWith(score, DefaultProfiles())).CollectFindingsAsync(Config(), CancellationToken.None);
+        (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
+    }
+
+    [Fact]
+    public async Task CollectFindings_DuplicateControlName_FailsClosed()
+    {
+        var score = ScorePayload(54, 100, new[] { ("c-id-1", "Identity", 5.0), ("c-id-1", "Identity", 4.0) });
+        var act = async () => await NewConnector(HandlerWith(score, DefaultProfiles())).CollectFindingsAsync(Config(), CancellationToken.None);
+        (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
+    }
+
+    [Fact]
+    public async Task CollectFindings_DuplicateProfileId_FailsClosed()
+    {
+        var score = ScorePayload(54, 100, new[] { ("c-id-1", "Identity", 5.0) });
+        var profiles = """{"value":[{"id":"c-id-1","controlCategory":"Identity","maxScore":10,"threats":[]},{"id":"c-id-1","controlCategory":"Identity","maxScore":10,"threats":[]}]}""";
+        var act = async () => await NewConnector(HandlerWith(score, profiles)).CollectFindingsAsync(Config(), CancellationToken.None);
+        (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
+    }
+
+    [Fact]
+    public async Task CollectFindings_ScoreAboveMax_FailsClosed()
+    {
+        var score = ScorePayload(54, 100, new[] { ("c-id-1", "Identity", 15.0) });   // 15 > maxScore 10
+        var act = async () => await NewConnector(HandlerWith(score, DefaultProfiles())).CollectFindingsAsync(Config(), CancellationToken.None);
+        (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
+    }
+
+    [Fact]
+    public async Task CollectFindings_NegativeScore_FailsClosed()
+    {
+        var score = ScorePayload(54, 100, new[] { ("c-id-1", "Identity", -1.0) });
+        var act = async () => await NewConnector(HandlerWith(score, DefaultProfiles())).CollectFindingsAsync(Config(), CancellationToken.None);
+        (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
+    }
+
     // ---- TestAsync: autenticação + leitura real ($top=1) ------------------------------------------
 
     [Fact]

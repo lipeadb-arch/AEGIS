@@ -62,3 +62,25 @@ public interface IPostureFindingConnector
     /// <summary>Coleta as exposições de configuração do conector (só leitura). Falha da fonte é sanitizada e sobe.</summary>
     Task<PostureFindingCollection> CollectFindingsAsync(ConnectorConfig config, CancellationToken ct);
 }
+
+/// <summary>Saída de UMA coleta combinada: sinais + exposições derivados da MESMA fotografia da fonte.</summary>
+public sealed record CombinedCollection(
+    IReadOnlyList<EvidenceSignal> Signals,
+    PostureFindingCollection Findings);
+
+/// <summary>
+/// [AEGIS-MVP-POSTURE-02] Capacidade de coleta COMBINADA numa ÚNICA aquisição da fonte: sinais determinísticos
+/// E exposições de configuração vindos da MESMA fotografia (ex.: um único token + <c>secureScores</c> +
+/// <c>secureScoreControlProfiles</c> por sincronização). Evita que o executor busque a fonte duas vezes e que
+/// sinais e findings de uma sincronização venham de fotografias diferentes. Provider-neutral e COMPLEMENTAR: um
+/// conector que NÃO a implemente continua funcionando pelo contrato existente (CollectAsync + CollectFindingsAsync).
+/// Sem cache global/estático/temporal — cada chamada faz uma aquisição fresca. O adaptador NUNCA escreve no banco.
+/// </summary>
+public interface ICombinedEvidenceCollector
+{
+    ConnectorProvider Provider { get; }
+    ConnectorCapability Capability { get; }
+
+    /// <summary>Uma aquisição/coleta normalizada que produz sinais e exposições da MESMA fotografia. Falha sanitizada sobe.</summary>
+    Task<CombinedCollection> CollectAllAsync(ConnectorConfig config, CancellationToken ct);
+}

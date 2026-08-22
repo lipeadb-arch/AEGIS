@@ -124,6 +124,59 @@ public sealed class PostureExposurePullTests : IDisposable
         // Repetição não duplica.
         (await assert.PostureExposureFindings.CountAsync(f => f.ExternalId == "c-dev-1")).Should().Be(1);
     }
+
+    // ---- 1) UMA fotografia do Graph por sincronização ---------------------------------------------
+
+    [Fact]
+    public async Task Pull_SingleSnapshotPerSync_OneToken_OneScore_OnePaginatedProfilesPass()
+    {
+        var handler = SecureScoreTestData.NewCountingHandler(AzureTenantId);
+        var connector = new MicrosoftSecureScoreConnector(
+            new EntraGraphClient(new HttpClient(handler)), new SecureScoreTestData.IdentityProtector());
+        var exec = MakeExecutor(new FakeRegistry(connector));
+
+        await using (var read = NewContext(Tenant))
+            await exec.CollectPullAsync(await read.Connectors.SingleAsync(c => c.Id == _connectorId), default);
+
+        handler.TokenRequests.Should().Be(1, "uma única aquisição de token por sincronização");
+        handler.ScoreRequests.Should().Be(1, "uma única leitura de secureScores por sincronização");
+        handler.ProfilePageRequests.Should().Be(2,
+            "uma passagem COMPLETA e paginada por secureScoreControlProfiles (2 páginas) — nenhuma segunda coleta redundante");
+    }
+
+    // ---- 2) Falha de completude não resolve achados abertos --------------------------------------
+
+    [Fact]
+    public async Task Pull_MalformedSnapshot_KeepsOpenFindingOpen_AndStampsFailed()
+    {
+        // 1ª coleta saudável cria a exposição c-id-1 (aberta).
+        var exec1 = MakeExecutor(new FakeRegistry(new MicrosoftSecureScoreConnector(
+            new EntraGraphClient(new HttpClient(SecureScoreTestData.HappyHandler(AzureTenantId))), new SecureScoreTestData.IdentityProtector())));
+        await using (var read = NewContext(Tenant))
+            await exec1.CollectPullAsync(await read.Connectors.SingleAsync(c => c.Id == _connectorId), default);
+        await using (var mid = NewContext(Tenant))
+            (await mid.PostureExposureFindings.SingleAsync(f => f.ExternalId == "c-id-1")).LifecycleState
+                .Should().Be(PostureExposureState.Open);
+
+        // 2ª coleta com fotografia MALFORMADA (controlName duplicado) → a coleta falha fechada.
+        var exec2 = MakeExecutor(new FakeRegistry(new MicrosoftSecureScoreConnector(
+            new EntraGraphClient(new HttpClient(SecureScoreTestData.DuplicateControlHandler(AzureTenantId))), new SecureScoreTestData.IdentityProtector())));
+        await using (var read = NewContext(Tenant))
+        {
+            var cfg = await read.Connectors.SingleAsync(c => c.Id == _connectorId);
+            var act = async () => await exec2.CollectPullAsync(cfg, default);
+            await act.Should().ThrowAsync<Exception>("fotografia malformada falha fechada, não é mascarada");
+        }
+
+        await using var assert = NewContext(Tenant);
+        // O achado antes aberto PERMANECE aberto (nenhuma resolução por omissão a partir de coleta falha).
+        var finding = await assert.PostureExposureFindings.SingleAsync(f => f.ExternalId == "c-id-1");
+        finding.LifecycleState.Should().Be(PostureExposureState.Open);
+        finding.ResolvedAt.Should().BeNull();
+        // O conector fica Failed.
+        (await assert.Connectors.SingleAsync(c => c.Id == _connectorId)).LastStatus
+            .Should().Be(ConnectorStatus.Failed);
+    }
 }
 
 /// <summary>[AEGIS-MVP-POSTURE-02] Migration, unicidade e reconciliação em PostgreSQL real (gate <c>AEGIS_TEST_PG</c>).</summary>
@@ -139,10 +192,14 @@ public sealed class PostureExposurePostgresTests
         var tenant = Guid.NewGuid();
         var connector = Guid.NewGuid();
 
-        // (a) A MIGRATION aplica de fato no PostgreSQL (cria a tabela + o índice único natural).
+        // (a) A MIGRATION aplica de fato no PostgreSQL (cria a tabela + o índice único natural) e aparece na
+        // lista de migrations APLICADAS — evidência inequívoca de que a migration desta entrega rodou no PG real.
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
         {
             await db.Database.MigrateAsync();
+            var applied = await db.Database.GetAppliedMigrationsAsync();
+            applied.Should().Contain("20260821232922_PostureExposureFindings",
+                "a migration da entrega POSTURE-02 deve constar como aplicada no PostgreSQL real");
             db.Tenants.Add(new Tenant { Id = tenant, Name = "T", Slug = "t-" + tenant.ToString("N"), Status = TenantStatus.Active });
             await db.SaveChangesAsync();
         }
@@ -261,22 +318,96 @@ internal static class SecureScoreTestData
         return $$"""{"value":[{"azureTenantId":"{{azureTenantId}}","currentScore":54,"maxScore":100,"createdDateTime":"2026-08-20T10:00:00Z","controlScores":[{{controls}}]}]}""";
     }
 
+    private static string Profile(string id, string cat, int rank, bool dep = false) =>
+        $$"""{"id":"{{id}}","title":"{{id}}","controlCategory":"{{cat}}","service":"AAD","maxScore":10,"rank":{{rank}},"tier":"Core","implementationCost":"Low","userImpact":"Low","actionType":"Config","remediation":"fix","remediationImpact":"none","threats":["Account Breach"],"deprecated":{{(dep ? "true" : "false")}},"controlStateUpdates":[]}""";
+
     private static string ProfilesJson()
     {
-        static string P(string id, string cat, int rank, bool dep = false) =>
-            $$"""{"id":"{{id}}","title":"{{id}}","controlCategory":"{{cat}}","service":"AAD","maxScore":10,"rank":{{rank}},"tier":"Core","implementationCost":"Low","userImpact":"Low","actionType":"Config","remediation":"fix","remediationImpact":"none","threats":["Account Breach"],"deprecated":{{(dep ? "true" : "false")}},"controlStateUpdates":[]}""";
         var profiles = new[]
         {
-            P("c-id-1", "Identity", 1), P("c-id-2", "Identity", 2), P("c-data-1", "Data", 3),
-            P("c-dev-1", "Device", 4), P("c-apps-1", "Apps", 5), P("c-dep-1", "Identity", 6, dep: true),
+            Profile("c-id-1", "Identity", 1), Profile("c-id-2", "Identity", 2), Profile("c-data-1", "Data", 3),
+            Profile("c-dev-1", "Device", 4), Profile("c-apps-1", "Apps", 5), Profile("c-dep-1", "Identity", 6, dep: true),
         };
         return $$"""{"value":[{{string.Join(",", profiles)}}]}""";
     }
+
+    // Perfis paginados em DUAS páginas (para provar UMA passagem completa e paginada por sincronização).
+    private static string ProfilesPage1() =>
+        $$"""{"value":[{{Profile("c-id-1", "Identity", 1)}},{{Profile("c-id-2", "Identity", 2)}},{{Profile("c-data-1", "Data", 3)}}],"@odata.nextLink":"https://graph.microsoft.com/v1.0/security/secureScoreControlProfiles?page=2"}""";
+
+    private static string ProfilesPage2() =>
+        $$"""{"value":[{{Profile("c-dev-1", "Device", 4)}},{{Profile("c-apps-1", "Apps", 5)}},{{Profile("c-dep-1", "Identity", 6, dep: true)}}]}""";
+
+    // Fotografia MALFORMADA: controlName duplicado em secureScores → o coletor deve falhar fechado.
+    private static string DuplicateControlScoreJson(string azureTenantId) =>
+        $$"""{"value":[{"azureTenantId":"{{azureTenantId}}","currentScore":54,"maxScore":100,"createdDateTime":"2026-08-20T10:00:00Z","controlScores":[{"controlName":"c-id-1","controlCategory":"Identity","score":5},{"controlName":"c-id-1","controlCategory":"Identity","score":4}]}]}""";
+
+    public static CountingHandler NewCountingHandler(string azureTenantId) => new(azureTenantId);
+    public static HttpMessageHandler DuplicateControlHandler(string azureTenantId) => new MalformedHandler(azureTenantId);
 
     public sealed class IdentityProtector : IConnectorSecretProtector
     {
         public string Protect(string plaintext) => plaintext;
         public string Unprotect(string protectedValue) => protectedValue;
+    }
+
+    /// <summary>Conta requisições por tipo; perfis em 2 páginas — prova UMA passagem completa e nenhuma coleta redundante.</summary>
+    public sealed class CountingHandler : HttpMessageHandler
+    {
+        public int TokenRequests;
+        public int ScoreRequests;
+        public int ProfilePageRequests;
+        private readonly string _azureTenantId;
+        public CountingHandler(string azureTenantId) => _azureTenantId = azureTenantId;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var url = request.RequestUri!.AbsoluteUri;
+            string body;
+            if (request.Method == HttpMethod.Post && url.Contains("/oauth2/v2.0/token"))
+            {
+                Interlocked.Increment(ref TokenRequests);
+                body = TokenJson;
+            }
+            else if (url.Contains("secureScores"))
+            {
+                Interlocked.Increment(ref ScoreRequests);
+                body = ScoreJson(_azureTenantId, 2);
+            }
+            else if (url.Contains("secureScoreControlProfiles"))
+            {
+                Interlocked.Increment(ref ProfilePageRequests);
+                body = url.Contains("page=2") ? ProfilesPage2() : ProfilesPage1();
+            }
+            else
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") });
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            });
+        }
+    }
+
+    private sealed class MalformedHandler : HttpMessageHandler
+    {
+        private readonly string _azureTenantId;
+        public MalformedHandler(string azureTenantId) => _azureTenantId = azureTenantId;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var url = request.RequestUri!.AbsoluteUri;
+            string body;
+            if (request.Method == HttpMethod.Post && url.Contains("/oauth2/v2.0/token")) body = TokenJson;
+            else if (url.Contains("secureScores")) body = DuplicateControlScoreJson(_azureTenantId);
+            else if (url.Contains("secureScoreControlProfiles")) body = ProfilesJson();
+            else return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            });
+        }
     }
 
     private sealed class StubHandler : HttpMessageHandler
