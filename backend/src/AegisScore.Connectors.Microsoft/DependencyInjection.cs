@@ -4,6 +4,7 @@ using AegisScore.Application.Abstractions;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Services;
 using AegisScore.Application.Telemetry.Providers;
+using AegisScore.Connectors.Microsoft.Defender;
 using AegisScore.Connectors.Microsoft.Knight;
 
 namespace AegisScore.Connectors.Microsoft;
@@ -22,7 +23,15 @@ public static class DependencyInjection
         // singleton o CAPTURARIA no root provider (o handler nunca rotacionaria). Scoped resolve um cliente fresco
         // por escopo (o IConnectorRegistry também é scoped), sem segunda infra de OAuth/HttpClient.
         services.AddScoped<IEvidenceConnector, MicrosoftSecureScoreConnector>();
-        // services.AddSingleton<IEvidenceConnector, MicrosoftDefenderExposureConnector>();
+
+        // [AEGIS-MVP-VULN-01] Microsoft Defender Vulnerability Management (Microsoft/VulnerabilityScanner): máquinas +
+        // CVEs por máquina + catálogo de CVE, somente leitura. Transporte PRÓPRIO (IDefenderApiClient) — host
+        // api.security.microsoft.com, token no recurso legado api.securitycenter.microsoft.com — pois o
+        // EntraGraphClient é, corretamente, restrito ao Microsoft Graph. Typed HttpClient com a resiliência padrão
+        // (retry/backoff, Retry-After no 429, circuit breaker), como o Graph client. SCOPED pelo mesmo motivo do
+        // Secure Score (injeta um typed HttpClient — não pode ser capturado no root provider).
+        services.AddHttpClient<IDefenderApiClient, DefenderApiClient>().AddStandardResilienceHandler();
+        services.AddScoped<IEvidenceConnector, MicrosoftDefenderVulnerabilityConnector>();
         // services.AddSingleton<IEvidenceConnector, MicrosoftPurviewConnector>();
         // services.AddSingleton<IEvidenceConnector, AzureAdvisorConnector>();
 

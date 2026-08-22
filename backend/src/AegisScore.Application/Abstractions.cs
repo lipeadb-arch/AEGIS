@@ -106,7 +106,30 @@ public sealed record AuditorTenantContext(
     IReadOnlyList<string> PendingRecommendations,
     // [AEGIS-MVP-POSTURE-02] Principais exposições de configuração ABERTAS (no máx. 8), só campos permitidos —
     // nunca resposta bruta, actionUrl, segredo ou PII. Opcional/default null para preservar construções existentes.
-    IReadOnlyList<AuditorPostureExposure>? TopExposures = null);
+    IReadOnlyList<AuditorPostureExposure>? TopExposures = null,
+    // [AEGIS-MVP-VULN-01] Principais vulnerabilidades ativo×CVE ABERTAS (no máx. 8), priorizadas. SÓ campos
+    // permitidos — nunca machineId/ExternalRef, IP, aadDeviceId, segredo, payload bruto, inventário completo ou PII.
+    IReadOnlyList<AuditorVulnerability>? TopVulnerabilities = null);
+
+/// <summary>
+/// [AEGIS-MVP-VULN-01] Uma vulnerabilidade (exposição ativo×CVE) para o contexto do Auditor — FATO DA FONTE,
+/// consultivo. Só os campos permitidos: CVE, severidade/CVSS, indicadores de exploit e EPSS, nome e criticidade
+/// do ativo, produto afetado e ciclo de vida. NUNCA machineId/ExternalRef, IP, aadDeviceId ou payload bruto. A IA
+/// explica/correlaciona/prioriza e apoia remediação, mas NÃO cria CVE, ativo, exploit, estado de resolução ou score.
+/// </summary>
+public sealed record AuditorVulnerability(
+    string CveId,
+    string? Severity,
+    double? CvssScore,
+    bool? PublicExploit,
+    bool? ExploitVerified,
+    double? Epss,
+    string AssetName,
+    int AssetCriticality,
+    string? Product,
+    string LifecycleState,
+    // Fontes (providers) que OBSERVAM esta exposição — só o rótulo do provedor, nunca conector/binding/machineId.
+    IReadOnlyList<string> Sources);
 
 /// <summary>
 /// [AEGIS-MVP-POSTURE-02] Uma exposição de configuração (postura) para o contexto do Auditor — FATO DA FONTE,

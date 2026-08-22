@@ -92,6 +92,9 @@ public class AegisScoreDbContext : DbContext
     public DbSet<AssetDependency> AssetDependencies => Set<AssetDependency>();
     public DbSet<Threat> Threats => Set<Threat>();
     public DbSet<AssetThreatExposure> AssetThreatExposures => Set<AssetThreatExposure>();
+    // [AEGIS-MVP-VULN-01] Fundação multicloud: vínculo Asset↔fonte e observação por fonte da exposição consolidada.
+    public DbSet<AssetSourceBinding> AssetSourceBindings => Set<AssetSourceBinding>();
+    public DbSet<AssetThreatObservation> AssetThreatObservations => Set<AssetThreatObservation>();
     public DbSet<BlastRadiusAssessment> BlastRadiusAssessments => Set<BlastRadiusAssessment>();
     public DbSet<BlastRadiusImpactNode> BlastRadiusImpactNodes => Set<BlastRadiusImpactNode>();
 
@@ -527,12 +530,23 @@ public class AegisScoreDbContext : DbContext
         });
 
         // Catálogo de ameaças (reference data, idioma do IcrWeightProfile): TenantId nulo = global.
-        // Unicidade composta (TenantId, Code, Source). ⚠️ No PostgreSQL NULLs são distintos — dois threats
-        // GLOBAIS de mesmo Code/Source ainda passariam; a ingestão do catálogo público dedupe na origem.
+        // Unicidade composta (TenantId, Code, Source) para ameaças TENANT-SPECIFIC.
         b.Entity<Threat>(e =>
         {
             e.Property(t => t.Code).HasMaxLength(64).IsRequired();
+            // [AEGIS-MVP-VULN-01] Metadados CONSULTÁVEIS de CVE (fatos da fonte). Tamanhos fixos = invariante de banco.
+            e.Property(t => t.Severity).HasMaxLength(50);
+            e.Property(t => t.CvssVector).HasMaxLength(200);
             e.HasIndex(t => new { t.TenantId, t.Code, t.Source }).IsUnique();
+            // [AEGIS-MVP-VULN-01] ⚠️ No PostgreSQL NULLs são DISTINTOS, então o índice acima NÃO dedupe o catálogo
+            // GLOBAL (TenantId nulo): dois CVEs globais de mesmo Code+Source passariam. Um índice único PARCIAL
+            // sobre (Code, Source) WHERE TenantId IS NULL torna a unicidade do catálogo público uma invariante de
+            // banco (mesmo idioma do dedupe parcial de Asset.ExternalRef) — e o reconciliador reconhece SÓ esta
+            // violação como corrida de inserção. A unicidade tenant-specific acima é preservada.
+            e.HasIndex(t => new { t.Code, t.Source })
+                .IsUnique()
+                .HasDatabaseName("UX_Threat_GlobalNaturalKey")
+                .HasFilter("\"TenantId\" IS NULL");
         });
 
         // Exposição ativo↔ameaça: uma linha por par no tenant. FKs Restrict (a exposição é registro de
@@ -544,6 +558,42 @@ public class AegisScoreDbContext : DbContext
             e.HasOne(x => x.Threat).WithMany()
                 .HasForeignKey(x => x.ThreatId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.TenantId, x.AssetId, x.ThreatId }).IsUnique();
+        });
+
+        // [AEGIS-MVP-VULN-01] Vínculo Asset ↔ FONTE (provider-neutral). Chave natural (Tenant, Conector, ExternalId)
+        // como ÍNDICE ÚNICO NOMEADO — o upsert idempotente por fonte é invariante de banco (o reconciliador reconhece
+        // SÓ esta violação como corrida). FKs Restrict (o binding é histórico; apagar Asset/Conector não cascateia).
+        // Tenant-leading por Asset (recompute agregado) e por Conector (reconciliação por fonte). Sem IP/PII.
+        b.Entity<AssetSourceBinding>(e =>
+        {
+            e.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.DisplayName).HasMaxLength(200);
+            e.Property(x => x.SubType).HasMaxLength(100);
+            e.HasOne(x => x.Asset).WithMany()
+                .HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.ConnectorConfig).WithMany()
+                .HasForeignKey(x => x.ConnectorConfigId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.ExternalId })
+                .IsUnique()
+                .HasDatabaseName("UX_AssetSourceBinding_Natural");
+            e.HasIndex(x => new { x.TenantId, x.AssetId });
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId });
+        });
+
+        // [AEGIS-MVP-VULN-01] Observação de UMA fonte sobre uma exposição CONSOLIDADA ativo×CVE. Chave natural
+        // (Tenant, Conector, Exposição) única — cada fonte tem no máximo uma observação por exposição. FKs Restrict.
+        // Índices tenant-leading por exposição (consolidação/leitura efetiva) e por conector (reconciliação por fonte).
+        b.Entity<AssetThreatObservation>(e =>
+        {
+            e.HasOne(x => x.AssetThreatExposure).WithMany()
+                .HasForeignKey(x => x.AssetThreatExposureId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.ConnectorConfig).WithMany()
+                .HasForeignKey(x => x.ConnectorConfigId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.AssetThreatExposureId })
+                .IsUnique()
+                .HasDatabaseName("UX_AssetThreatObservation_Natural");
+            e.HasIndex(x => new { x.TenantId, x.AssetThreatExposureId });
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId });
         });
 
         // Snapshot do raio + nós materializados (1:N). O nó NÃO existe sem o assessment → Cascade PERMITIDO
@@ -702,6 +752,10 @@ public class AegisScoreDbContext : DbContext
         // Identify (ID.RA) — grafo, exposições e snapshots são ITenantOwned (Threat é reference data, sem filtro).
         b.Entity<AssetDependency>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<AssetThreatExposure>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-MVP-VULN-01] Binding e observação são ITenantOwned (fail-closed): uma fonte de um tenant jamais
+        // enxerga bindings/observações de outro. Stamping do TenantId no insert é automático (SaveChanges guard).
+        b.Entity<AssetSourceBinding>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<AssetThreatObservation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<BlastRadiusAssessment>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<BlastRadiusImpactNode>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         // AEGIS KNIGHT — execução e resultados são ITenantOwned (fail-closed, como o restante do modelo).

@@ -207,10 +207,12 @@ jobs:
 
       # AEGIS_TEST_PG aponta para o banco de MANUTENÇÃO (postgres); o PostgresProbe cria/derruba um
       # database descartável a cada teste. Só as classes de migration/postura em PostgreSQL rodam (filtro por
-      # classe), incluindo PostureExposurePostgresTests (migration + unicidade + reconciliação da POSTURE-02).
+      # classe), incluindo PostureExposurePostgresTests (POSTURE-02) e VulnerabilityManagementPostgresTests
+      # (AEGIS-MVP-VULN-01: migration multifonte, índice global de CVE, constraints de binding/observação e
+      # reconciliação/lifecycle multifonte).
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests"
