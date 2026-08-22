@@ -162,14 +162,23 @@ public sealed class MicrosoftSecureScoreConnector : IEvidenceConnector, IPosture
     // ---- Fotografia normalizada e VALIDADA (fail-closed) -------------------------------------------
 
     /// <summary>
-    /// Adquire UMA fotografia (token + secureScores $top=1 + perfis paginados) e a VALIDA integralmente ANTES de
-    /// devolver — fail-closed. Devolve <c>null</c> SOMENTE quando o tenant não tem Secure Score (array
-    /// <c>value</c> vazio): situação legítima, não é falha. Qualquer inconsistência estrutural ou de dados lança
-    /// <see cref="EntraGraphException"/> SANITIZADA (o executor carimba Failed e não persiste/resolve nada):
-    /// resposta sem array <c>value</c>; azureTenantId divergente; <c>controlScores</c> ausente/malformado;
-    /// controlName vazio, score não-finito/negativo ou controlName DUPLICADO; perfil com id DUPLICADO; e, para
-    /// cada par controlScore×perfil UTILIZADO (perfil não-deprecated), maxScore não-finito/não-positivo ou
-    /// <c>score &gt; maxScore</c>. Nenhuma inconsistência vira 0%/100%/conformidade/resolução.
+    /// Adquire UMA fotografia (token + secureScores $top=1 + perfis paginados) e a VALIDA INTEGRALMENTE antes de
+    /// devolver — fail-closed. Devolve <c>null</c> SOMENTE quando o tenant não tem Secure Score (array <c>value</c>
+    /// vazio): situação legítima, não é falha (→ IsComplete=false, sem resolução por omissão). Qualquer outra
+    /// inconsistência estrutural ou de dados lança <see cref="EntraGraphException"/> SANITIZADA (o executor carimba
+    /// Failed e não persiste/resolve nada) e NUNCA vira 0%/100%/conformidade/resolução. Só depois de TODAS estas
+    /// validações a coleção pode ser tratada como completa:
+    /// <list type="bullet">
+    /// <item>resposta raiz objeto + <c>value</c> array; azureTenantId coincidente;</item>
+    /// <item><c>currentScore</c>/<c>maxScore</c> gerais presentes, finitos, <c>maxScore &gt; 0</c> e <c>0 ≤ currentScore ≤ maxScore</c>;</item>
+    /// <item><c>createdDateTime</c> presente e válido (NUNCA substituído por horário local);</item>
+    /// <item><c>controlScores</c> presente, array e NÃO vazio; cada um com controlName não vazio/não duplicado,
+    /// controlCategory não vazio e score finito e não negativo;</item>
+    /// <item>perfis com <c>id</c> não vazio e não duplicado;</item>
+    /// <item>TODO controlScore tem perfil correspondente inequívoco (ausência invalida a coleta INTEIRA); categoria
+    /// coerente entre score e perfil (só diferença de caixa é ignorada); e, para cada par não-deprecated, maxScore
+    /// finito/positivo e <c>score ≤ maxScore</c>.</item>
+    /// </list>
     /// </summary>
     private async Task<SecureScoreSnapshot?> FetchAndValidateSnapshotAsync(ConnectorConfig config, CancellationToken ct)
     {
@@ -196,7 +205,19 @@ public sealed class MicrosoftSecureScoreConnector : IEvidenceConnector, IPosture
             throw new EntraGraphException(EntraGraphErrorKind.AuthFailure,
                 "azureTenantId do Secure Score diverge do tenant configurado");
 
-        // controlScores: presença + formato; controlName não vazio/não duplicado; score finito e não negativo.
+        // Score GERAL: currentScore/maxScore presentes, finitos, maxScore > 0 e 0 <= currentScore <= maxScore.
+        if (NumOf(snapshot, "maxScore") is not { } overallMax || !IsFinite(overallMax) || overallMax <= 0)
+            throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "maxScore geral ausente ou invalido");
+        if (NumOf(snapshot, "currentScore") is not { } overallCurrent || !IsFinite(overallCurrent)
+            || overallCurrent < 0 || overallCurrent > overallMax)
+            throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "currentScore geral ausente ou fora de faixa");
+
+        // createdDateTime: DEVE existir e ser válido — nunca substituído por horário local (não se inventa o instante).
+        var collectedAt = DateOf(snapshot, "createdDateTime")
+            ?? throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "createdDateTime ausente ou invalido");
+
+        // controlScores: presença + array; NÃO vazio (fotografia existente com controlScores vazio NÃO autoriza
+        // resolução por omissão); controlName não vazio/não duplicado; controlCategory não vazio; score finito e ≥ 0.
         if (!TryGetArray(snapshot, "controlScores", out var csArr))
             throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlScores ausente ou malformado");
 
@@ -206,38 +227,49 @@ public sealed class MicrosoftSecureScoreConnector : IEvidenceConnector, IPosture
             var name = StrOf(cs, "controlName");
             if (string.IsNullOrWhiteSpace(name))
                 throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlScore com controlName vazio");
+            var category = StrOf(cs, "controlCategory");
+            if (string.IsNullOrWhiteSpace(category))
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlScore com controlCategory vazio");
             var score = NumOf(cs, "score");
             if (score is not { } sv || !IsFinite(sv))
                 throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlScore com score invalido");
             if (sv < 0)
                 throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlScore com score negativo");
-            if (!controlScores.TryAdd(name!, new ControlScoreFact(name!, StrOf(cs, "controlCategory"), sv)))
+            if (!controlScores.TryAdd(name!, new ControlScoreFact(name!, category!, sv)))
                 throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlName duplicado na fotografia");
         }
+        if (controlScores.Count == 0)
+            throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "fotografia com controlScores vazio");
 
-        // Perfis (paginado): id não vazio (id vazio é ignorado, perfil inutilizável) e NÃO duplicado.
+        // Perfis (paginado): id não vazio (id vazio FALHA — não é ignorado) e NÃO duplicado.
         var profiles = new Dictionary<string, ProfileFacts>(StringComparer.OrdinalIgnoreCase);
         await foreach (var p in _graph.GetPagedAsync(token, creds, ControlProfilesUrl, ct))
         {
             var id = StrOf(p, "id");
-            if (string.IsNullOrWhiteSpace(id)) continue;
+            if (string.IsNullOrWhiteSpace(id))
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "perfil de controle com id vazio");
             if (!profiles.TryAdd(id!, ProfileFacts.From(p)))
                 throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "perfil de controle duplicado (id repetido)");
         }
 
-        // Pares UTILIZADOS (controlScore com perfil não-deprecated): maxScore finito+positivo e 0 <= score <= maxScore.
+        // Correspondência INTEGRAL: TODO controlScore precisa de um perfil inequívoco — a ausência invalida a coleta
+        // inteira (não apenas suprime o sinal da categoria). Categoria coerente (só caixa é ignorada) quando o perfil
+        // a informa. Para cada par não-deprecated: maxScore finito+positivo e 0 <= score <= maxScore.
         foreach (var fact in controlScores.Values)
         {
-            if (!profiles.TryGetValue(fact.Name, out var prof) || prof.Deprecated) continue;   // não é par utilizado
+            if (!profiles.TryGetValue(fact.Name, out var prof))
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "controlScore sem perfil correspondente");
+            if (!string.IsNullOrWhiteSpace(prof.ControlCategory)
+                && !string.Equals(prof.ControlCategory, fact.Category, StringComparison.OrdinalIgnoreCase))
+                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "categoria divergente entre controlScore e perfil");
+            if (prof.Deprecated) continue;
             if (!IsFinite(prof.MaxScore) || prof.MaxScore <= 0)
                 throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "maxScore invalido para controle utilizado");
             if (fact.Score > prof.MaxScore)
                 throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "score acima do maximo do controle");
         }
 
-        var collectedAt = DateOf(snapshot, "createdDateTime") ?? DateTimeOffset.UtcNow;
-        return new SecureScoreSnapshot(
-            NumOf(snapshot, "currentScore"), NumOf(snapshot, "maxScore"), collectedAt, controlScores, profiles);
+        return new SecureScoreSnapshot(overallCurrent, overallMax, collectedAt, controlScores, profiles);
     }
 
     // ---- Derivações puras (a partir da fotografia já validada) -------------------------------------

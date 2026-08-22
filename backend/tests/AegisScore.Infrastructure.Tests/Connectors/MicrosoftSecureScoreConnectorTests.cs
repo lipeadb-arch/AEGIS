@@ -102,23 +102,17 @@ public sealed class MicrosoftSecureScoreConnectorTests
         await act.Should().ThrowAsync<EntraGraphException>();
     }
 
-    // ---- 4/5) Categoria incompleta não emitida ----------------------------------------------------
+    // ---- 4/5) ControlScore sem perfil → FALHA FECHADA (não é seguro reconciliar com correspondência incompleta) --
 
     [Fact]
-    public async Task Collect_CategoryWithControlMissingProfile_NotEmitted()
+    public async Task Collect_ControlScoreWithoutProfile_FailsClosed()
     {
-        // Identity ganha um controlScore ("c-id-3") SEM perfil correspondente → correspondência incompleta.
+        // Um controlScore ("c-id-3") SEM perfil correspondente NÃO é uma coleta parcialmente "saudável": a
+        // correspondência incompleta invalida a fotografia inteira (não se resolve/reconcilia por omissão).
         var score = ScorePayload(current: 54, max: 100, controls: DefaultControlScores()
             .Append(("c-id-3", "Identity", 1)).ToArray());
-        var handler = HandlerWith(score, DefaultProfiles());
-        var connector = NewConnector(handler);
-
-        var signals = await CollectSignalsAsync(connector, Config());
-        var keys = signals.Select(s => s.SignalKey).ToList();
-
-        keys.Should().NotContain("secureScore.identity", "categoria com controle sem perfil correspondente não é emitida");
-        keys.Should().Contain("secureScore.overall", "o overall continua válido");
-        keys.Should().Contain("secureScore.data", "as demais categorias completas seguem emitidas");
+        var act = async () => await CollectSignalsAsync(NewConnector(HandlerWith(score, DefaultProfiles())), Config());
+        (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
     }
 
     // ---- 6) Mismatch de azureTenantId falha fechado -----------------------------------------------
@@ -180,7 +174,8 @@ public sealed class MicrosoftSecureScoreConnectorTests
         {
             var url = req.RequestUri!.AbsoluteUri;
             if (IsToken(req)) return (HttpStatusCode.OK, TokenJson);
-            if (url.Contains("secureScores")) return (HttpStatusCode.OK, ScorePayload(54, 100, DefaultControlScores()));
+            // Só os controles que têm perfil nas duas páginas — cada controlScore precisa de um perfil correspondente.
+            if (url.Contains("secureScores")) return (HttpStatusCode.OK, ScorePayload(54, 100, new[] { ("c-id-1", "Identity", 5.0), ("c-data-1", "Data", 7.0) }));
             if (url.Contains("page=2")) return (HttpStatusCode.OK, page2);
             if (url.Contains("secureScoreControlProfiles"))
                 return (HttpStatusCode.OK, """{"value":[{"id":"c-id-1","title":"I1","controlCategory":"Identity","service":"AAD","maxScore":10,"rank":1,"tier":"Core","threats":[]}],"@odata.nextLink":"https://graph.microsoft.com/v1.0/security/secureScoreControlProfiles?page=2"}""");
@@ -338,6 +333,117 @@ public sealed class MicrosoftSecureScoreConnectorTests
         var act = async () => await NewConnector(HandlerWith(score, DefaultProfiles())).CollectFindingsAsync(Config(), CancellationToken.None);
         (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
     }
+
+    // ---- 2b) Validação INTEGRAL da fotografia (perfil, correspondência, categoria, score geral, data) ---------
+
+    // Controle válido reutilizado quando a falha esperada NÃO está no controlScore (perfil c-id-1 é Identity/max 10).
+    private static object[] ValidControl => new object[] { new { controlName = "c-id-1", controlCategory = "Identity", score = 5 } };
+
+    private static string ScoreDoc(object score) => JsonSerializer.Serialize(new { value = new[] { score } });
+
+    private async Task AssertFindingsFailClosedAsync(string scoreJson, string? profilesJson = null)
+    {
+        var handler = HandlerWith(scoreJson, profilesJson ?? DefaultProfiles());
+        var act = async () => await NewConnector(handler).CollectFindingsAsync(Config(), CancellationToken.None);
+        (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
+    }
+
+    [Fact]
+    public Task Collect_ProfileWithEmptyId_FailsClosed()
+    {
+        var profiles = JsonSerializer.Serialize(new
+        {
+            value = new object[]
+            {
+                new { id = "", controlCategory = "Identity", maxScore = 10 },
+                new { id = "c-id-1", controlCategory = "Identity", maxScore = 10 },
+            },
+        });
+        return AssertFindingsFailClosedAsync(
+            ScoreDoc(new { azureTenantId = TenantId, currentScore = 54, maxScore = 100, createdDateTime = "2026-08-20T10:00:00Z", controlScores = ValidControl }),
+            profiles);
+    }
+
+    [Fact]
+    public Task Collect_ControlScoresEmpty_FailsClosed() =>
+        AssertFindingsFailClosedAsync(ScoreDoc(new
+        {
+            azureTenantId = TenantId, currentScore = 54, maxScore = 100, createdDateTime = "2026-08-20T10:00:00Z",
+            controlScores = Array.Empty<object>(),
+        }));
+
+    [Fact]
+    public Task Collect_ControlCategoryEmpty_FailsClosed() =>
+        AssertFindingsFailClosedAsync(ScoreDoc(new
+        {
+            azureTenantId = TenantId, currentScore = 54, maxScore = 100, createdDateTime = "2026-08-20T10:00:00Z",
+            controlScores = new object[] { new { controlName = "c-id-1", controlCategory = "", score = 5 } },
+        }));
+
+    [Fact]
+    public Task Collect_CategoryMismatchBetweenScoreAndProfile_FailsClosed() =>
+        // controlScore diz "Data"; o perfil c-id-1 é "Identity" — divergência (mais que caixa) → falha fechada.
+        AssertFindingsFailClosedAsync(ScoreDoc(new
+        {
+            azureTenantId = TenantId, currentScore = 54, maxScore = 100, createdDateTime = "2026-08-20T10:00:00Z",
+            controlScores = new object[] { new { controlName = "c-id-1", controlCategory = "Data", score = 5 } },
+        }));
+
+    [Fact]
+    public Task Collect_OverallCurrentMissing_FailsClosed() =>
+        AssertFindingsFailClosedAsync(ScoreDoc(new
+        {
+            azureTenantId = TenantId, maxScore = 100, createdDateTime = "2026-08-20T10:00:00Z", controlScores = ValidControl,
+        }));
+
+    [Fact]
+    public Task Collect_OverallCurrentNegative_FailsClosed() =>
+        AssertFindingsFailClosedAsync(ScoreDoc(new
+        {
+            azureTenantId = TenantId, currentScore = -1, maxScore = 100, createdDateTime = "2026-08-20T10:00:00Z", controlScores = ValidControl,
+        }));
+
+    [Fact]
+    public Task Collect_OverallCurrentAboveMax_FailsClosed() =>
+        AssertFindingsFailClosedAsync(ScoreDoc(new
+        {
+            azureTenantId = TenantId, currentScore = 150, maxScore = 100, createdDateTime = "2026-08-20T10:00:00Z", controlScores = ValidControl,
+        }));
+
+    [Fact]
+    public Task Collect_OverallMaxMissing_FailsClosed() =>
+        AssertFindingsFailClosedAsync(ScoreDoc(new
+        {
+            azureTenantId = TenantId, currentScore = 54, createdDateTime = "2026-08-20T10:00:00Z", controlScores = ValidControl,
+        }));
+
+    [Fact]
+    public Task Collect_OverallMaxZero_FailsClosed() =>
+        AssertFindingsFailClosedAsync(ScoreDoc(new
+        {
+            azureTenantId = TenantId, currentScore = 54, maxScore = 0, createdDateTime = "2026-08-20T10:00:00Z", controlScores = ValidControl,
+        }));
+
+    [Fact]
+    public Task Collect_OverallMaxNonNumeric_FailsClosed() =>
+        AssertFindingsFailClosedAsync(ScoreDoc(new
+        {
+            azureTenantId = TenantId, currentScore = 54, maxScore = "abc", createdDateTime = "2026-08-20T10:00:00Z", controlScores = ValidControl,
+        }));
+
+    [Fact]
+    public Task Collect_CreatedDateTimeMissing_FailsClosed() =>
+        AssertFindingsFailClosedAsync(ScoreDoc(new
+        {
+            azureTenantId = TenantId, currentScore = 54, maxScore = 100, controlScores = ValidControl,
+        }));
+
+    [Fact]
+    public Task Collect_CreatedDateTimeInvalid_FailsClosed() =>
+        AssertFindingsFailClosedAsync(ScoreDoc(new
+        {
+            azureTenantId = TenantId, currentScore = 54, maxScore = 100, createdDateTime = "not-a-date", controlScores = ValidControl,
+        }));
 
     // ---- TestAsync: autenticação + leitura real ($top=1) ------------------------------------------
 

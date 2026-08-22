@@ -135,10 +135,34 @@ public sealed class EntraGraphClient : IEntraGraphClient
             using (var doc = ParseOrThrow(body))
             {
                 var root = doc.RootElement;
-                if (root.TryGetProperty("value", out var arr) && arr.ValueKind == JsonValueKind.Array)
-                    foreach (var item in arr.EnumerateArray())
-                        pageItems.Add(item.Clone());
-                nextLink = root.TryGetProperty("@odata.nextLink", out var nl) ? nl.GetString() : null;
+                // Fail-CLOSED estrutural: a raiz precisa ser OBJETO e conter 'value' como ARRAY. Um 200 OK com
+                // corpo error/{}/raiz array/'value' de outro tipo NÃO é uma página completa — nunca produz coleção
+                // vazia em silêncio (isso truncaria a paginação e falsearia contagem/completude).
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("value", out var arr)
+                    || arr.ValueKind != JsonValueKind.Array)
+                    throw new EntraGraphException(EntraGraphErrorKind.Unavailable,
+                        "pagina do Graph sem o array value esperado");
+
+                foreach (var item in arr.EnumerateArray())
+                    pageItems.Add(item.Clone());
+
+                // @odata.nextLink: SOMENTE ausente, null ou string. Qualquer outro tipo estrutural falha
+                // sanitizado — nunca um InvalidOperationException de GetString() sobre um tipo inesperado.
+                if (root.TryGetProperty("@odata.nextLink", out var nl))
+                {
+                    nextLink = nl.ValueKind switch
+                    {
+                        JsonValueKind.String => nl.GetString(),
+                        JsonValueKind.Null => null,
+                        _ => throw new EntraGraphException(EntraGraphErrorKind.Unavailable,
+                            "@odata.nextLink com tipo invalido"),
+                    };
+                }
+                else
+                {
+                    nextLink = null;
+                }
             }
 
             foreach (var it in pageItems)

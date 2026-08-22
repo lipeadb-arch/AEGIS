@@ -177,6 +177,33 @@ public sealed class PostureExposurePullTests : IDisposable
         (await assert.Connectors.SingleAsync(c => c.Id == _connectorId)).LastStatus
             .Should().Be(ConnectorStatus.Failed);
     }
+
+    [Fact]
+    public async Task Pull_ControlScoreLosesProfile_KeepsOpenFindingOpen_AndStampsFailed()
+    {
+        // 1ª coleta saudável cria a exposição c-id-1 (aberta).
+        var exec1 = MakeExecutor(new FakeRegistry(new MicrosoftSecureScoreConnector(
+            new EntraGraphClient(new HttpClient(SecureScoreTestData.HappyHandler(AzureTenantId))), new SecureScoreTestData.IdentityProtector())));
+        await using (var read = NewContext(Tenant))
+            await exec1.CollectPullAsync(await read.Connectors.SingleAsync(c => c.Id == _connectorId), default);
+
+        // 2ª coleta: um controlScore ("c-orphan") sem perfil correspondente → correspondência incompleta → falha fechada.
+        var exec2 = MakeExecutor(new FakeRegistry(new MicrosoftSecureScoreConnector(
+            new EntraGraphClient(new HttpClient(SecureScoreTestData.ControlWithoutProfileHandler(AzureTenantId))), new SecureScoreTestData.IdentityProtector())));
+        await using (var read = NewContext(Tenant))
+        {
+            var cfg = await read.Connectors.SingleAsync(c => c.Id == _connectorId);
+            var act = async () => await exec2.CollectPullAsync(cfg, default);
+            await act.Should().ThrowAsync<Exception>("controlScore sem perfil invalida a coleta inteira");
+        }
+
+        await using var assert = NewContext(Tenant);
+        var finding = await assert.PostureExposureFindings.SingleAsync(f => f.ExternalId == "c-id-1");
+        finding.LifecycleState.Should().Be(PostureExposureState.Open, "correspondência incompleta não resolve por omissão");
+        finding.ResolvedAt.Should().BeNull();
+        (await assert.Connectors.SingleAsync(c => c.Id == _connectorId)).LastStatus
+            .Should().Be(ConnectorStatus.Failed);
+    }
 }
 
 /// <summary>[AEGIS-MVP-POSTURE-02] Migration, unicidade e reconciliação em PostgreSQL real (gate <c>AEGIS_TEST_PG</c>).</summary>
@@ -342,8 +369,13 @@ internal static class SecureScoreTestData
     private static string DuplicateControlScoreJson(string azureTenantId) =>
         $$"""{"value":[{"azureTenantId":"{{azureTenantId}}","currentScore":54,"maxScore":100,"createdDateTime":"2026-08-20T10:00:00Z","controlScores":[{"controlName":"c-id-1","controlCategory":"Identity","score":5},{"controlName":"c-id-1","controlCategory":"Identity","score":4}]}]}""";
 
+    // Fotografia com um controlScore ("c-orphan") SEM perfil correspondente em ProfilesJson → falha fechada.
+    private static string OrphanControlScoreJson(string azureTenantId) =>
+        $$"""{"value":[{"azureTenantId":"{{azureTenantId}}","currentScore":54,"maxScore":100,"createdDateTime":"2026-08-20T10:00:00Z","controlScores":[{"controlName":"c-id-1","controlCategory":"Identity","score":5},{"controlName":"c-orphan","controlCategory":"Identity","score":1}]}]}""";
+
     public static CountingHandler NewCountingHandler(string azureTenantId) => new(azureTenantId);
-    public static HttpMessageHandler DuplicateControlHandler(string azureTenantId) => new MalformedHandler(azureTenantId);
+    public static HttpMessageHandler DuplicateControlHandler(string azureTenantId) => new MalformedHandler(DuplicateControlScoreJson(azureTenantId));
+    public static HttpMessageHandler ControlWithoutProfileHandler(string azureTenantId) => new MalformedHandler(OrphanControlScoreJson(azureTenantId));
 
     public sealed class IdentityProtector : IConnectorSecretProtector
     {
@@ -392,15 +424,15 @@ internal static class SecureScoreTestData
 
     private sealed class MalformedHandler : HttpMessageHandler
     {
-        private readonly string _azureTenantId;
-        public MalformedHandler(string azureTenantId) => _azureTenantId = azureTenantId;
+        private readonly string _scoreJson;
+        public MalformedHandler(string scoreJson) => _scoreJson = scoreJson;
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var url = request.RequestUri!.AbsoluteUri;
             string body;
             if (request.Method == HttpMethod.Post && url.Contains("/oauth2/v2.0/token")) body = TokenJson;
-            else if (url.Contains("secureScores")) body = DuplicateControlScoreJson(_azureTenantId);
+            else if (url.Contains("secureScores")) body = _scoreJson;
             else if (url.Contains("secureScoreControlProfiles")) body = ProfilesJson();
             else return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") });
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
