@@ -180,10 +180,12 @@ export const PROVIDERS: ProviderSpec[] = [
     authTypeValue: 0,
     capability: 'SecureScore',
     capabilityValue: 0,
-    adapterNote: 'Demonstração/stub: emite valores representativos (não é conexão real com o Microsoft Graph).',
+    infoNote:
+      'Coleta REAL somente leitura do Microsoft Secure Score (client credentials). “Testar” valida autenticação e leitura ($top=1); “Coletar” atualiza o Secure Score e as exposições de configuração. O destino é o Microsoft Graph oficial — não há URL configurável. Veja os achados em Exposições.',
+    appPermissions: ['SecurityEvents.Read.All'],
     fields: [
-      { key: 'tenantId', label: 'Directory (tenant) ID', secret: false },
-      { key: 'clientId', label: 'Application (client) ID', secret: false },
+      { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
+      { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientSecret', label: 'Client secret', secret: true },
     ],
   },

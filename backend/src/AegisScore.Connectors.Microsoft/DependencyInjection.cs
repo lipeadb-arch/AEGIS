@@ -16,6 +16,10 @@ public static class DependencyInjection
     /// </summary>
     public static IServiceCollection AddMicrosoftConnectors(this IServiceCollection services)
     {
+        // [AEGIS-MVP-POSTURE-02] Coletor REAL do Microsoft Secure Score (sinais + exposições de configuração).
+        // Reusa o transporte VALIDADO do Graph (IEntraGraphClient) e o protetor de segredos existente. Singleton,
+        // como os demais adaptadores do registry: o IEntraGraphClient injetado é um typed HttpClient — a captura
+        // por um singleton é aceitável aqui (host oficial fixo, volume baixo de sync), sem segunda infra de OAuth.
         services.AddSingleton<IEvidenceConnector, MicrosoftSecureScoreConnector>();
         // services.AddSingleton<IEvidenceConnector, MicrosoftDefenderExposureConnector>();
         // services.AddSingleton<IEvidenceConnector, MicrosoftPurviewConnector>();

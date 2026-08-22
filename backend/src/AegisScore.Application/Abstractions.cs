@@ -103,7 +103,26 @@ public sealed record AuditorTenantContext(
     IReadOnlyList<AuditorControlGap> TopGaps,
     IReadOnlyList<AuditorDocumentEvidence> RecentEvidence,
     AuditorConnectorContext Connectors,
-    IReadOnlyList<string> PendingRecommendations);
+    IReadOnlyList<string> PendingRecommendations,
+    // [AEGIS-MVP-POSTURE-02] Principais exposições de configuração ABERTAS (no máx. 8), só campos permitidos —
+    // nunca resposta bruta, actionUrl, segredo ou PII. Opcional/default null para preservar construções existentes.
+    IReadOnlyList<AuditorPostureExposure>? TopExposures = null);
+
+/// <summary>
+/// [AEGIS-MVP-POSTURE-02] Uma exposição de configuração (postura) para o contexto do Auditor — FATO DA FONTE,
+/// consultivo. Só os campos permitidos: identificador da fonte, título, categoria/serviço, gap, rank/tier,
+/// remediação CURTA e ameaças. A IA explica/correlaciona/prioriza, mas NÃO abre/fecha/altera rank/gap/estado.
+/// </summary>
+public sealed record AuditorPostureExposure(
+    string ExternalId,
+    string Title,
+    string? Category,
+    string? Service,
+    double Gap,
+    int? SourceRank,
+    string? Tier,
+    string? Remediation,
+    IReadOnlyList<string> Threats);
 
 /// <summary>Resumo de postura de UMA Função NIST para o contexto do Auditor.</summary>
 public sealed record AuditorFunctionPosture(

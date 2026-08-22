@@ -34,9 +34,9 @@ public sealed class EntraGraphException : Exception
 /// </summary>
 public interface IEntraGraphClient
 {
-    Task<string> AcquireTokenAsync(KnightEntraIdConfiguration config, CancellationToken ct);
-    IAsyncEnumerable<JsonElement> GetPagedAsync(string token, KnightEntraIdConfiguration config, string relativeUrl, CancellationToken ct);
-    Task<JsonElement> GetJsonAsync(string token, KnightEntraIdConfiguration config, string relativeUrl, CancellationToken ct);
+    Task<string> AcquireTokenAsync(IMicrosoftGraphCredentials config, CancellationToken ct);
+    IAsyncEnumerable<JsonElement> GetPagedAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct);
+    Task<JsonElement> GetJsonAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct);
 }
 
 /// <inheritdoc cref="IEntraGraphClient"/>
@@ -66,7 +66,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
         _maxPages = maxPages > 0 ? maxPages : DefaultMaxPages;
     }
 
-    public async Task<string> AcquireTokenAsync(KnightEntraIdConfiguration config, CancellationToken ct)
+    public async Task<string> AcquireTokenAsync(IMicrosoftGraphCredentials config, CancellationToken ct)
     {
         // URL do endpoint de token montada só a partir de CONSTANTE oficial + tenantId escapado — sem entrada livre.
         var url = $"{LoginBaseUrl}/{Uri.EscapeDataString(config.AzureTenantId)}/oauth2/v2.0/token";
@@ -111,7 +111,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
     }
 
     public async IAsyncEnumerable<JsonElement> GetPagedAsync(
-        string token, KnightEntraIdConfiguration config, string relativeUrl, [EnumeratorCancellation] CancellationToken ct)
+        string token, IMicrosoftGraphCredentials config, string relativeUrl, [EnumeratorCancellation] CancellationToken ct)
     {
         var next = BuildGraphUrl(relativeUrl);
 
@@ -148,7 +148,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
         }
     }
 
-    public async Task<JsonElement> GetJsonAsync(string token, KnightEntraIdConfiguration config, string relativeUrl, CancellationToken ct)
+    public async Task<JsonElement> GetJsonAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct)
     {
         var url = BuildGraphUrl(relativeUrl);
         ValidateGraphUrl(url);

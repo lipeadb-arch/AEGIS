@@ -79,6 +79,20 @@ public sealed record KnightCapabilityStatus(KnightCapability Capability, KnightC
 
 // ---- Configuração de fonte (tipada por fonte; sem dicionário de strings) --------------------------------
 
+/// <summary>
+/// [AEGIS-MVP-POSTURE-02] Credenciais mínimas de client credentials para o Microsoft Graph (tenant + app id +
+/// segredo). Extraída para que o transporte VALIDADO do Graph (<c>EntraGraphClient</c>) seja reutilizável por
+/// mais de um coletor Microsoft (KNIGHT/Entra e Secure Score) SEM uma segunda implementação ingênua de OAuth,
+/// paginação ou validação de destino — e SEM acoplar o transporte a um tipo específico de coletor. As bases de
+/// login/Graph continuam CONSTANTES oficiais no cliente HTTP; o tenant nunca fornece URL de destino.
+/// </summary>
+public interface IMicrosoftGraphCredentials
+{
+    string AzureTenantId { get; }
+    string ClientId { get; }
+    string ClientSecret { get; }
+}
+
 /// <summary>Configuração RESOLVIDA de uma fonte para um tenant. Subtipos tipados por fonte; nunca um dict solto.</summary>
 public abstract record KnightSourceConfiguration
 {
@@ -106,7 +120,7 @@ public sealed record KnightDemoConfiguration : KnightSourceConfiguration
 public sealed record KnightEntraIdConfiguration(
     string AzureTenantId,
     string ClientId,
-    string ClientSecret) : KnightSourceConfiguration
+    string ClientSecret) : KnightSourceConfiguration, IMicrosoftGraphCredentials
 {
     public override KnightSourceType Source => KnightSourceType.MicrosoftEntraId;
 

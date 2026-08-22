@@ -66,6 +66,8 @@ public class AegisScoreDbContext : DbContext
     // Connectors
     public DbSet<ConnectorConfig> Connectors => Set<ConnectorConfig>();
     public DbSet<EvidenceSignal> Signals => Set<EvidenceSignal>();
+    // [AEGIS-MVP-POSTURE-02] Exposições de configuração (postura) — tenant-owned, provider-neutral.
+    public DbSet<PostureExposureFinding> PostureExposureFindings => Set<PostureExposureFinding>();
 
     // Risks & scoring
     public DbSet<Risk> Risks => Set<Risk>();
@@ -270,6 +272,33 @@ public class AegisScoreDbContext : DbContext
 
         // [AEGIS-AUD-020] Hash SHA-256 (hex) da chave de ingestão — comprimento fixo é a invariante de banco.
         b.Entity<ConnectorConfig>().Property(x => x.IngestionKeyHash).HasMaxLength(64);
+
+        // [AEGIS-MVP-POSTURE-02] Exposição de configuração (postura). Chave natural (Tenant, ConnectorConfig,
+        // ExternalId) como ÍNDICE ÚNICO NOMEADO — torna a reconciliação (upsert + resolução) uma invariante de
+        // banco (o reconciliador reconhece SÓ esta violação como corrida de inserção). Índices tenant-leading
+        // por estado de ciclo de vida e por conector cobrem a listagem e a reconciliação sem full scan. Ameaças
+        // → jsonb (mesmo idioma das listas do catálogo). Tamanhos fixos = invariante de banco; sem actionUrl/PII.
+        b.Entity<PostureExposureFinding>(e =>
+        {
+            e.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(500).IsRequired();
+            e.Property(x => x.Category).HasMaxLength(100);
+            e.Property(x => x.Service).HasMaxLength(200);
+            e.Property(x => x.ActionType).HasMaxLength(100);
+            e.Property(x => x.Tier).HasMaxLength(100);
+            e.Property(x => x.ImplementationCost).HasMaxLength(100);
+            e.Property(x => x.UserImpact).HasMaxLength(100);
+            e.Property(x => x.Remediation).HasMaxLength(4000);
+            e.Property(x => x.RemediationImpact).HasMaxLength(2000);
+            e.Property(x => x.SourceState).HasMaxLength(100);
+            e.Property(x => x.Threats)
+                .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.ExternalId })
+                .IsUnique()
+                .HasDatabaseName("UX_PostureExposureFinding_Natural");
+            e.HasIndex(x => new { x.TenantId, x.LifecycleState });
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId });
+        });
 
         // Conector: UM registro por (tenant, provedor, capacidade) — a chave NATURAL da configuração.
         // O índice único torna o upsert do TenantManagementService.ConfigureConnectorAsync uma invariante
@@ -649,6 +678,8 @@ public class AegisScoreDbContext : DbContext
         b.Entity<Evidence>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<ConnectorConfig>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<EvidenceSignal>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-MVP-POSTURE-02] Exposições de postura são ITenantOwned (fail-closed): um tenant jamais lê as de outro.
+        b.Entity<PostureExposureFinding>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<Risk>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<RiskAppetite>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<IcrScore>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

@@ -292,6 +292,15 @@ public sealed class AegisAssessmentService : IAiAssessmentService
         "seria preciso coletar — não preencha lacunas com suposição.\n" +
         "• O score oficial, os pontos e a cobertura são DETERMINÍSTICOS: reporte os valores do contexto, " +
         "nunca recalcule por conta própria.\n\n" +
+        "EXPOSIÇÕES DE CONFIGURAÇÃO (campo TopExposures do contexto, quando houver — modelo Microsoft Secure Score):\n" +
+        "• São RECOMENDAÇÕES DE POSTURA da fonte — NÃO são CVEs nem vulnerabilidades de ativo. Nunca invente CVE, " +
+        "ativo afetado ou evidência.\n" +
+        "• Os campos PERSISTIDOS (rank, gap, score, estado) e o AEGIS Score determinístico são AUTORITATIVOS; sua " +
+        "resposta é CONSULTIVA.\n" +
+        "• Você PODE explicar o impacto, correlacionar as exposições com lacunas NIST e a postura existente, e " +
+        "sugerir uma SEQUÊNCIA de remediação (do menor rank / maior gap para o restante).\n" +
+        "• Você NÃO abre, fecha ou aceita exposição; NÃO altera rank, gap, score, severidade ou estado; NÃO muda o " +
+        "estado de um controle; e NÃO transforma uma recomendação Microsoft em conformidade NIST automaticamente.\n\n" +
         "ROTEIE A INTENÇÃO da mensagem do usuário em uma de duas:\n" +
         "• \"COPILOT\": dúvida/consulta geral. Responda diretamente no campo \"message\".\n" +
         "• \"START_INTERVIEW\": o usuário quer AUDITAR, DIAGNOSTICAR ou FECHAR LACUNAS. Então \"message\" JÁ " +

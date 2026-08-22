@@ -212,6 +212,24 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             throw;
         }
 
+        // [AEGIS-MVP-POSTURE-02] Se o adaptador também expõe EXPOSIÇÕES de configuração, coleta-as no MESMO fluxo
+        // pull (network junto dos sinais, para uma falha da fonte carimbar Failed antes de qualquer persistência).
+        // O adaptador NÃO escreve no banco — a reconciliação (upsert + resolução) ocorre adiante, no executor.
+        PostureFindingCollection? findings = null;
+        if (adapter is IPostureFindingConnector findingConnector)
+        {
+            try
+            {
+                findings = await findingConnector.CollectFindingsAsync(config, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex, "Coleta de exposições do conector {ConnectorId} falhou.", config.Id);
+                await TryStampFailedAsync(config.Id, config.TenantId, ct);
+                throw;
+            }
+        }
+
         // RE-MAPA pela MESMA autoridade central — IGNORA os MappedSubcategoryCodes trazidos pelo adaptador.
         var mapped = await _mapper.ResolveAsync(config.Capability, collected.Select(s => s.SignalKey).ToList(), ct);
 
@@ -252,6 +270,25 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // Um único SaveChanges: os sinais adicionados + o carimbo de sync são o MESMO fato.
         await StampConnectorAsync(db, config.Id, now, status, ct);
 
+        // [AEGIS-MVP-POSTURE-02] Reconcilia as exposições coletadas (upsert idempotente + resolução em coleta
+        // completa) sob o tenant proprietário. Falha NÃO é mascarada: carimba Failed e propaga (mesma semântica
+        // da projeção). Um contexto NOVO isola a reconciliação do change tracker dos sinais já persistidos.
+        if (findings is not null)
+        {
+            try
+            {
+                await ReconcilePostureFindingsAsync(config.TenantId, config.Id, findings, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex,
+                    "Reconciliação de exposições do conector {ConnectorId} falhou; conector marcado como Failed.",
+                    config.Id);
+                await TryStampFailedAsync(config.Id, config.TenantId, ct);
+                throw;
+            }
+        }
+
         // [AEGIS-AUD-019] Projeta a evidência coletada no ledger (recompute GLOBAL from-newest). Semântica
         // coerente com o push: falha na projeção NÃO é mascarada — carimba Failed e propaga como 500. Uma
         // nova coleta (mesmo sync) refaz o recompute sobre a evidência mais nova.
@@ -269,6 +306,22 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         }
 
         return new PullIngestionResult(persisted, 0, skipped, status);
+    }
+
+    // ---- Reconciliação de exposições de postura (AEGIS-MVP-POSTURE-02) ----------------------------
+
+    /// <summary>
+    /// Reconcilia as exposições coletadas no ledger de postura, sob o tenant proprietário
+    /// (<see cref="SystemTenantContext"/>): contexto NOVO (isolado do change tracker dos sinais) + query filter
+    /// fail-closed + stamping do SaveChanges. A lógica de upsert/resolução/reabertura vive no
+    /// <see cref="PostureExposureReconciler"/>; o adaptador nunca escreve no banco.
+    /// </summary>
+    private async Task ReconcilePostureFindingsAsync(
+        Guid tenantId, Guid connectorId, PostureFindingCollection findings, CancellationToken ct)
+    {
+        await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
+        var reconciler = new PostureExposureReconciler(db, _log);
+        await reconciler.ReconcileAsync(connectorId, findings, ct);
     }
 
     // ---- Projeção determinística no ledger (AEGIS-AUD-019) ----------------------------------------
