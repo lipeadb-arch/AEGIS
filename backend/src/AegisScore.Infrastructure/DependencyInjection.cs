@@ -176,6 +176,8 @@ public static class DependencyInjection
         services.AddScoped<IGetPendingControlsQuery, PendingControlsQuery>();
         services.AddScoped<IControlStateDashboardQuery, ControlStateDashboardQuery>();
         services.AddScoped<IWorkspacePostureQuery, WorkspacePostureQuery>();
+        // [AEGIS-MVP-POSTURE-02] Leitura tenant-scoped das exposições de configuração (Global Query Filter fail-closed).
+        services.AddScoped<IPostureExposureQuery, PostureExposureQuery>();
         // Janela de frescor do sinal (TTL) usada pela auditoria de obsolescência do dashboard. TimeProvider
         // é o relógio injetável do .NET — mantém a regra de TTL testável sem congelar o sistema todo.
         services.Configure<ScoringOptions>(config.GetSection(ScoringOptions.SectionName));
@@ -185,8 +187,11 @@ public static class DependencyInjection
         // DbContext (stamping fail-closed do tenant) + o IAiAssessmentService para redigir o texto.
         services.AddScoped<IGenerateAdvisoryHandler, GenerateAdvisoryHandler>();
 
-        // Connector registry resolves every IEvidenceConnector registered in DI.
-        services.AddSingleton<IConnectorRegistry, ConnectorRegistry>();
+        // Connector registry resolves every IEvidenceConnector registered in DI. SCOPED (não singleton): os
+        // conectores que ele agrega podem ser scoped — ex.: o MicrosoftSecureScoreConnector, que injeta um typed
+        // HttpClient (IEntraGraphClient) e NÃO pode ser capturado no root provider. Os consumidores do registry
+        // (ConnectorsController, EvidenceIngestionExecutor) já são scoped, então nenhuma dependência cativa surge.
+        services.AddScoped<IConnectorRegistry, ConnectorRegistry>();
 
         // Govern → Provider Pattern de ingestão de documentos: a fábrica resolve a estratégia de fonte
         // (SharePoint, Google Workspace…) por ConnectorProvider. Os providers concretos são registrados

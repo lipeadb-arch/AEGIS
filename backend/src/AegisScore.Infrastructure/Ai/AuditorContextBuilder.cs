@@ -22,8 +22,10 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
     private const int MaxGaps = 8;
     private const int MaxEvidence = 6;
     private const int MaxRecommendations = 6;
+    private const int MaxExposures = 8;
     private const int EvidenceQuoteMaxChars = 240;
     private const int ReasonMaxChars = 160;
+    private const int RemediationMaxChars = 240;
 
     private readonly AegisScoreDbContext _db;
     private readonly IWorkspacePostureQuery _posture;
@@ -85,6 +87,24 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
             w.Connectors.Configured, w.Connectors.Enabled, w.Connectors.Healthy,
             w.Connectors.Degraded, w.Connectors.Failed, w.Connectors.NeverSynced, w.Connectors.LastSyncAt);
 
+        // [AEGIS-MVP-POSTURE-02] Principais exposições de configuração ABERTAS (no máx. 8), ordenadas pelo rank da
+        // fonte e depois pelo maior gap. SÓ os campos permitidos — nunca resposta bruta, actionUrl, segredo ou PII.
+        // Ordenação em memória (conjunto pequeno por tenant): rank asc com nulos por último, depois maior gap.
+        var exposureEntities = (await _db.PostureExposureFindings.AsNoTracking()
+                .Where(f => f.LifecycleState == PostureExposureState.Open)
+                .ToListAsync(ct))
+            .OrderBy(f => f.SourceRank ?? int.MaxValue)
+            .ThenByDescending(f => f.Gap)
+            .Take(MaxExposures)
+            .ToList();
+
+        var topExposures = exposureEntities
+            .Select(f => new AuditorPostureExposure(
+                f.ExternalId, f.Title, f.Category, f.Service, f.Gap, f.SourceRank, f.Tier,
+                Truncate(f.Remediation, RemediationMaxChars),
+                f.Threats ?? new List<string>()))
+            .ToList();
+
         // Recomendações pendentes derivadas das lacunas (curtas, sem inventar): "código: o que falta".
         var recommendations = topGaps
             .Select(g => string.IsNullOrWhiteSpace(g.Reason) ? g.SubcategoryCode : $"{g.SubcategoryCode}: {g.Reason}")
@@ -104,7 +124,8 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
             topGaps,
             recentEvidence,
             connectors,
-            recommendations);
+            recommendations,
+            topExposures);
     }
 
     private static string Truncate(string? s, int max)

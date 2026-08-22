@@ -34,9 +34,9 @@ public sealed class EntraGraphException : Exception
 /// </summary>
 public interface IEntraGraphClient
 {
-    Task<string> AcquireTokenAsync(KnightEntraIdConfiguration config, CancellationToken ct);
-    IAsyncEnumerable<JsonElement> GetPagedAsync(string token, KnightEntraIdConfiguration config, string relativeUrl, CancellationToken ct);
-    Task<JsonElement> GetJsonAsync(string token, KnightEntraIdConfiguration config, string relativeUrl, CancellationToken ct);
+    Task<string> AcquireTokenAsync(IMicrosoftGraphCredentials config, CancellationToken ct);
+    IAsyncEnumerable<JsonElement> GetPagedAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct);
+    Task<JsonElement> GetJsonAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct);
 }
 
 /// <inheritdoc cref="IEntraGraphClient"/>
@@ -66,7 +66,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
         _maxPages = maxPages > 0 ? maxPages : DefaultMaxPages;
     }
 
-    public async Task<string> AcquireTokenAsync(KnightEntraIdConfiguration config, CancellationToken ct)
+    public async Task<string> AcquireTokenAsync(IMicrosoftGraphCredentials config, CancellationToken ct)
     {
         // URL do endpoint de token montada só a partir de CONSTANTE oficial + tenantId escapado — sem entrada livre.
         var url = $"{LoginBaseUrl}/{Uri.EscapeDataString(config.AzureTenantId)}/oauth2/v2.0/token";
@@ -111,7 +111,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
     }
 
     public async IAsyncEnumerable<JsonElement> GetPagedAsync(
-        string token, KnightEntraIdConfiguration config, string relativeUrl, [EnumeratorCancellation] CancellationToken ct)
+        string token, IMicrosoftGraphCredentials config, string relativeUrl, [EnumeratorCancellation] CancellationToken ct)
     {
         var next = BuildGraphUrl(relativeUrl);
 
@@ -132,13 +132,37 @@ public sealed class EntraGraphClient : IEntraGraphClient
             // Extrai clones ANTES de dispor o documento — clones sobrevivem ao dispose (evita element inválido).
             var pageItems = new List<JsonElement>();
             string? nextLink;
-            using (var doc = JsonDocument.Parse(body))
+            using (var doc = ParseOrThrow(body))
             {
                 var root = doc.RootElement;
-                if (root.TryGetProperty("value", out var arr) && arr.ValueKind == JsonValueKind.Array)
-                    foreach (var item in arr.EnumerateArray())
-                        pageItems.Add(item.Clone());
-                nextLink = root.TryGetProperty("@odata.nextLink", out var nl) ? nl.GetString() : null;
+                // Fail-CLOSED estrutural: a raiz precisa ser OBJETO e conter 'value' como ARRAY. Um 200 OK com
+                // corpo error/{}/raiz array/'value' de outro tipo NÃO é uma página completa — nunca produz coleção
+                // vazia em silêncio (isso truncaria a paginação e falsearia contagem/completude).
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("value", out var arr)
+                    || arr.ValueKind != JsonValueKind.Array)
+                    throw new EntraGraphException(EntraGraphErrorKind.Unavailable,
+                        "pagina do Graph sem o array value esperado");
+
+                foreach (var item in arr.EnumerateArray())
+                    pageItems.Add(item.Clone());
+
+                // @odata.nextLink: SOMENTE ausente, null ou string. Qualquer outro tipo estrutural falha
+                // sanitizado — nunca um InvalidOperationException de GetString() sobre um tipo inesperado.
+                if (root.TryGetProperty("@odata.nextLink", out var nl))
+                {
+                    nextLink = nl.ValueKind switch
+                    {
+                        JsonValueKind.String => nl.GetString(),
+                        JsonValueKind.Null => null,
+                        _ => throw new EntraGraphException(EntraGraphErrorKind.Unavailable,
+                            "@odata.nextLink com tipo invalido"),
+                    };
+                }
+                else
+                {
+                    nextLink = null;
+                }
             }
 
             foreach (var it in pageItems)
@@ -148,12 +172,12 @@ public sealed class EntraGraphClient : IEntraGraphClient
         }
     }
 
-    public async Task<JsonElement> GetJsonAsync(string token, KnightEntraIdConfiguration config, string relativeUrl, CancellationToken ct)
+    public async Task<JsonElement> GetJsonAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct)
     {
         var url = BuildGraphUrl(relativeUrl);
         ValidateGraphUrl(url);
         var body = await SendGetAsync(token, url, ct);
-        using var doc = JsonDocument.Parse(body);
+        using var doc = ParseOrThrow(body);
         return doc.RootElement.Clone();
     }
 
@@ -188,9 +212,25 @@ public sealed class EntraGraphClient : IEntraGraphClient
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var resp = await _http.SendAsync(req, ct);
-        if (!resp.IsSuccessStatusCode)
+        // Fail-CLOSED de completude: SÓ 200 OK é resposta completa esperada. Qualquer outro status — inclusive
+        // 206 Partial Content, que é 2xx mas NÃO é a resposta completa — vira falha sanitizada. Aceitar 206 como
+        // sucesso permitiria reconciliar/resolver por omissão sobre uma fotografia incompleta.
+        if (resp.StatusCode != HttpStatusCode.OK)
             throw new EntraGraphException(Classify(resp.StatusCode), $"graph retornou {(int)resp.StatusCode}");
         return await resp.Content.ReadAsStringAsync(ct);
+    }
+
+    /// <summary>Parse DEFENSIVO: JSON inválido do Graph vira falha SANITIZADA (sem corpo/token/URL/segredo).</summary>
+    private static JsonDocument ParseOrThrow(string body)
+    {
+        try
+        {
+            return JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "resposta do Graph nao e JSON valido");
+        }
     }
 
     private static EntraGraphErrorKind Classify(HttpStatusCode code) => code switch

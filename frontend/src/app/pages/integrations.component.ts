@@ -165,18 +165,19 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
             @if (s.adapterNote) {
               <p class="note warn-note">⚠ {{ s.adapterNote }}</p>
             }
-            @if (s.knight) {
+            <!-- infoNote/appPermissions valem para QUALQUER coletor real (KNIGHT e Secure Score), não só o KNIGHT. -->
+            @if (s.infoNote) {
               <p class="note ok-note">{{ s.infoNote }}</p>
-              @if (s.appPermissions?.length) {
-                <div class="perms">
-                  <span class="perms-label">Permissões/escopos (somente leitura) necessários:</span>
-                  <ul>
-                    @for (perm of s.appPermissions; track perm) {
-                      <li><code>{{ perm }}</code></li>
-                    }
-                  </ul>
-                </div>
-              }
+            }
+            @if (s.appPermissions?.length) {
+              <div class="perms">
+                <span class="perms-label">Permissões/escopos (somente leitura) necessários:</span>
+                <ul>
+                  @for (perm of s.appPermissions; track perm) {
+                    <li><code>{{ perm }}</code></li>
+                  }
+                </ul>
+              </div>
             }
 
             <div class="grid" formGroupName="credentials">
