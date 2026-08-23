@@ -330,11 +330,11 @@ public class DevController : ControllerBase
         var cve2 = DemoCve("CVE-2024-0002", "Elevação de privilégio", "High", 7.8, pub: true, verified: false, epss: 0.42);
         var cve3 = DemoCve("CVE-2024-0003", "Divulgação de informação", "Medium", 5.3, pub: false, verified: false, epss: 0.06);
 
-        AssetSourceBinding DemoBinding(Asset a, string externalId, string dns) => new()
+        AssetSourceBinding DemoBinding(Asset a, Guid connectorId, string externalId, string dns) => new()
         {
             TenantId = DemoTenantId,
             AssetId = a.Id,
-            ConnectorConfigId = vulnConnector.Id,
+            ConnectorConfigId = connectorId,
             ExternalId = externalId,
             DisplayName = dns,
             SubType = a.SubType,
@@ -343,8 +343,8 @@ public class DevController : ControllerBase
             SourceLastSeenAt = DateTimeOffset.UtcNow.AddMinutes(-20),
             IsActive = true,
         };
-        var bindAdDc = DemoBinding(assets[0], "demo-mde-addc-01", "addc01.demo.example.com");
-        var bindVpn = DemoBinding(assets[6], "demo-mde-vpn-01", "vpn01.demo.example.com");
+        var bindAdDc = DemoBinding(assets[0], vulnConnector.Id, "demo-mde-addc-01", "addc01.demo.example.com");
+        var bindVpn = DemoBinding(assets[6], vulnConnector.Id, "demo-mde-vpn-01", "vpn01.demo.example.com");
 
         AssetThreatExposure DemoExposure(Asset a, Threat t) => new()
         {
@@ -360,11 +360,11 @@ public class DevController : ControllerBase
         var expDc2 = DemoExposure(assets[0], cve2);
         var expVpn = DemoExposure(assets[6], cve3);
 
-        AssetThreatObservation DemoObservation(AssetThreatExposure e, string product, string vendor, string version) => new()
+        AssetThreatObservation DemoObservation(AssetThreatExposure e, Guid connectorId, string product, string vendor, string version) => new()
         {
             TenantId = DemoTenantId,
             AssetThreatExposureId = e.Id,
-            ConnectorConfigId = vulnConnector.Id,
+            ConnectorConfigId = connectorId,
             LifecycleState = ObservationLifecycle.Open,
             FirstSeenAt = DateTimeOffset.UtcNow.AddDays(-18),
             LastSeenAt = DateTimeOffset.UtcNow.AddMinutes(-15),
@@ -376,14 +376,51 @@ public class DevController : ControllerBase
             }),
         };
 
-        db.Connectors.Add(vulnConnector);
+        // ---- [AEGIS-MVP-MULTICLOUD-01] Segunda FONTE de vulnerabilidade: GOOGLE CLOUD (sintético) ----
+        // ⚠️ Dados 100% sintéticos — NÃO são coleta real do Google Cloud VM Manager. Recurso/projeto FICTÍCIOS
+        // (projeto "demo-aegis-lab", domínio reservado demo.example.com; nenhum identificador de empresa real).
+        // Prova a arquitetura MULTIFONTE: um ativo HÍBRIDO (VM na nuvem) observado pelo Defender E pelo VM Manager,
+        // compartilhando o MESMO CVE (cve1) → UMA exposição consolidada, DUAS observações. Correlação EXPLÍCITA
+        // (dois bindings no mesmo Asset), nunca automática. Reusa o modelo existente — sem duplicação artificial.
+        var googleVulnConnector = new ConnectorConfig
+        {
+            TenantId = DemoTenantId,
+            Provider = ConnectorProvider.Google,
+            Capability = ConnectorCapability.VulnerabilityScanner,
+            DisplayName = "Google Cloud VM Manager · Vulnerability Reports (Demonstração)",
+            AuthType = ConnectorAuthType.ServiceAccount,
+            Enabled = true,
+            LastSyncAt = DateTimeOffset.UtcNow.AddMinutes(-12),
+            LastStatus = ConnectorStatus.Healthy,
+        };
+        var gceVm = new Asset
+        {
+            TenantId = DemoTenantId,
+            Name = "gce-lnx-web-01",
+            Category = AssetCategory.Hardware,
+            SubType = "Container-Optimized OS",
+            DiscoverySource = AssetDiscoverySource.Connector,
+            Criticality = 3,
+            IsActive = true,
+            LastSeenAt = DateTimeOffset.UtcNow.AddMinutes(-12),
+        };
+        var bindGceMde = DemoBinding(gceVm, vulnConnector.Id, "demo-mde-gce-web-01", "gce-lnx-web-01.demo.example.com");
+        var bindGceGoogle = DemoBinding(gceVm, googleVulnConnector.Id,
+            "projects/demo-aegis-lab/locations/southamerica-east1-a/instances/gce-lnx-web-01", "gce-lnx-web-01");
+        var expGce = DemoExposure(gceVm, cve1);   // MESMO CVE (cve1) compartilhado com a fonte Microsoft
+
+        db.Connectors.AddRange(vulnConnector, googleVulnConnector);
+        db.Assets.Add(gceVm);
         db.Threats.AddRange(cve1, cve2, cve3);
-        db.AssetSourceBindings.AddRange(bindAdDc, bindVpn);
-        db.AssetThreatExposures.AddRange(expDc1, expDc2, expVpn);
+        db.AssetSourceBindings.AddRange(bindAdDc, bindVpn, bindGceMde, bindGceGoogle);
+        db.AssetThreatExposures.AddRange(expDc1, expDc2, expVpn, expGce);
         db.AssetThreatObservations.AddRange(
-            DemoObservation(expDc1, "windows_server_2022", "microsoft", "10.0.20348.1"),
-            DemoObservation(expDc2, "windows_server_2022", "microsoft", "10.0.20348.1"),
-            DemoObservation(expVpn, "vpn_gateway_firmware", "demo-vendor", "3.4.1"));
+            DemoObservation(expDc1, vulnConnector.Id, "windows_server_2022", "microsoft", "10.0.20348.1"),
+            DemoObservation(expDc2, vulnConnector.Id, "windows_server_2022", "microsoft", "10.0.20348.1"),
+            DemoObservation(expVpn, vulnConnector.Id, "vpn_gateway_firmware", "demo-vendor", "3.4.1"),
+            // MESMA exposição (gce × cve1), DUAS fontes observadoras: Defender + Google Cloud VM Manager.
+            DemoObservation(expGce, vulnConnector.Id, "openssl", "openbsd", "3.0.11"),
+            DemoObservation(expGce, googleVulnConnector.Id, "openssl", "openbsd", "3.0.11"));
 
         await db.SaveChangesAsync(ct);
 
@@ -404,8 +441,9 @@ public class DevController : ControllerBase
             overdueActionPlans = overdue,
             governanceDocuments = 2,
             coverageEntries = coverage.Length,
-            // [AEGIS-MVP-VULN-01] Demonstração sintética de vulnerabilidades (não é coleta real do Defender).
-            vulnerabilityDemo = new { sources = 1, cves = 3, bindings = 2, exposures = 3, observations = 3 },
+            // [AEGIS-MVP-VULN-01/MULTICLOUD-01] Demonstração sintética MULTIFONTE (não é coleta real). Duas fontes
+            // (Microsoft Defender + Google Cloud VM Manager); uma exposição gce×cve1 com DUAS observações.
+            vulnerabilityDemo = new { sources = 2, cves = 3, bindings = 4, exposures = 4, observations = 5, multiSourceSharedExposure = true },
         });
     }
 
