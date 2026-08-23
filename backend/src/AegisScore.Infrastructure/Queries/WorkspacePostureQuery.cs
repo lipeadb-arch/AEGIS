@@ -53,11 +53,21 @@ public sealed class WorkspacePostureQuery : IWorkspacePostureQuery
                 .ToListAsync(ct))
             .ToDictionary(x => x.SubcategoryId);
 
+        // [AEGIS-MVP-ENV-01] Natureza da prova por subcategoria ATIVA — autoridade EXCLUSIVA do tipo persistido
+        // em AegisAssessmentRule.EvidenceType (nunca texto/nome de conector/prefixo de Função). A ausência de
+        // regra é um estado próprio (NotAutomated), resolvido adiante pela AUSÊNCIA de chave neste mapa.
+        var evidenceBySubcategory = await BuildEvidenceMapAsync(catalog, ct);
+
         // Uma passada em memória (dados pequenos: catálogo é reference data): agrega por Função e no total.
         var byFunction = new Dictionary<string, FunctionAccumulator>(StringComparer.Ordinal);
         var order = new Dictionary<string, int>(StringComparer.Ordinal);
         var names = new Dictionary<string, string>(StringComparer.Ordinal);
         var overall = new FunctionAccumulator();
+        // Buckets de cobertura por natureza — PARTICIONAM o mesmo universo elegível do total.
+        var telemetry = new CoverageAccumulator();
+        var documentation = new CoverageAccumulator();
+        var both = new CoverageAccumulator();
+        var notAutomated = new CoverageAccumulator();
         DateTimeOffset? latestEvidence = null;
 
         foreach (var row in catalog)
@@ -73,10 +83,25 @@ public sealed class WorkspacePostureQuery : IWorkspacePostureQuery
             acc.AddEligible(row.MaxScorePoints);
             overall.AddEligible(row.MaxScorePoints);
 
+            // Bucket EXCLUSIVO desta subcategoria: pelo EvidenceType da regra, ou NotAutomated se não houver regra.
+            var bucket = evidenceBySubcategory.TryGetValue(row.SubcategoryId, out var et)
+                ? et switch
+                {
+                    RuleEvidenceType.Telemetry => telemetry,
+                    RuleEvidenceType.Documentation => documentation,
+                    RuleEvidenceType.Both => both,
+                    // Inalcançável: BuildEvidenceMapAsync já rejeitou enums inválidos (nunca fallback silencioso).
+                    _ => throw new InvalidOperationException(
+                        $"EvidenceType não mapeado ({(int)et}) para a subcategoria {row.SubcategoryId}."),
+                }
+                : notAutomated;
+            bucket.AddEligible(row.MaxScorePoints);
+
             if (states.TryGetValue(row.SubcategoryId, out var st))
             {
                 acc.AddEvaluated(row.MaxScorePoints, st.CurrentScore, st.Status);
                 overall.AddEvaluated(row.MaxScorePoints, st.CurrentScore, st.Status);
+                bucket.AddEvaluated(row.MaxScorePoints);
                 if (latestEvidence is null || st.LastEvaluatedAt > latestEvidence)
                     latestEvidence = st.LastEvaluatedAt;
             }
@@ -87,7 +112,51 @@ public sealed class WorkspacePostureQuery : IWorkspacePostureQuery
             .Select(kv => ToFunctionDto(kv.Key, names[kv.Key], kv.Value))
             .ToList();
 
-        return new WorkspacePostureDto(ToOverallDto(overall, latestEvidence), functions, await LoadConnectorsAsync(ct));
+        var evidenceCoverage = new EvidenceCoverageSummaryDto(
+            telemetry.ToDto(), documentation.ToDto(), both.ToDto(), notAutomated.ToDto());
+
+        return new WorkspacePostureDto(
+            ToOverallDto(overall, latestEvidence), functions, await LoadConnectorsAsync(ct), evidenceCoverage);
+    }
+
+    /// <summary>
+    /// [AEGIS-MVP-ENV-01] Mapa SubcategoryId → natureza da prova, restrito às subcategorias do catálogo ATIVO
+    /// (uma regra de outro framework não perturba esta projeção). A autoridade é EXCLUSIVAMENTE
+    /// <c>AegisAssessmentRule.EvidenceType</c>. Falha ACIONÁVEL — nunca fallback silencioso para Telemetry —
+    /// diante de um enum inválido (fora de Telemetry/Documentation/Both) ou de duplicidade INCOERENTE (duas
+    /// regras para a MESMA subcategoria com naturezas divergentes). A ausência de regra NÃO entra no mapa:
+    /// vira NotAutomated no consumidor.
+    /// </summary>
+    private async Task<Dictionary<Guid, RuleEvidenceType>> BuildEvidenceMapAsync(
+        IReadOnlyList<CatalogRow> catalog, CancellationToken ct)
+    {
+        var catalogIds = catalog.Select(c => c.SubcategoryId).ToHashSet();
+
+        // Reference data GLOBAL (sem filtro de tenant). Só os dois campos escalares — evita materializar jsonb.
+        var rules = await _db.AssessmentRules.AsNoTracking()
+            .Select(r => new RuleRow(r.SubcategoryId, r.EvidenceType))
+            .ToListAsync(ct);
+
+        var map = new Dictionary<Guid, RuleEvidenceType>();
+        foreach (var r in rules)
+        {
+            if (!catalogIds.Contains(r.SubcategoryId))
+                continue;   // regra de subcategoria fora do framework ativo — irrelevante para esta projeção.
+
+            if (!Enum.IsDefined(r.EvidenceType))
+                throw new InvalidOperationException(
+                    $"AegisAssessmentRule com EvidenceType inválido ({(int)r.EvidenceType}) na subcategoria " +
+                    $"{r.SubcategoryId}. A classificação de cobertura exige um tipo tipado válido; corrija a regra.");
+
+            if (map.TryGetValue(r.SubcategoryId, out var existing) && existing != r.EvidenceType)
+                throw new InvalidOperationException(
+                    $"Duplicidade incoerente de regra para a subcategoria {r.SubcategoryId}: naturezas " +
+                    $"divergentes ({existing} × {r.EvidenceType}). Deve haver UMA natureza por controle.");
+
+            map[r.SubcategoryId] = r.EvidenceType;
+        }
+
+        return map;
     }
 
     private static WorkspaceOverallDto ToOverallDto(FunctionAccumulator a, DateTimeOffset? latestEvidence)
@@ -142,16 +211,21 @@ public sealed class WorkspacePostureQuery : IWorkspacePostureQuery
             LastSyncAt: lastSync, Items: items);
     }
 
-    /// <summary>Projeção vazia (sem tenant): NotEvaluated, sem Funções nem conectores — nunca 0% por ausência.</summary>
+    /// <summary>Fatia de cobertura zerada (sem tenant / bucket vazio): cobertura 0, jamais divisão por zero.</summary>
+    private static readonly EvidenceCoverageSliceDto EmptySlice = new(0, 0, 0, 0, 0);
+
+    /// <summary>Projeção vazia (sem tenant): NotEvaluated, sem Funções, conectores nem cobertura — nunca 0% por ausência.</summary>
     private static readonly WorkspacePostureDto Empty = new(
         new WorkspaceOverallDto(
             AegisScoreFormulaV1.Version, nameof(ScoreEvaluationState.NotEvaluated), null, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, Array.Empty<SeverityCountDto>(), null),
         Array.Empty<FunctionPostureDto>(),
-        new ConnectorHealthSummaryDto(0, 0, 0, 0, 0, 0, 0, null, Array.Empty<ConnectorHealthItemDto>()));
+        new ConnectorHealthSummaryDto(0, 0, 0, 0, 0, 0, 0, null, Array.Empty<ConnectorHealthItemDto>()),
+        new EvidenceCoverageSummaryDto(EmptySlice, EmptySlice, EmptySlice, EmptySlice));
 
     private sealed record CatalogRow(string FunctionCode, string FunctionName, int FunctionOrder, Guid SubcategoryId, int MaxScorePoints);
     private sealed record StateRow(Guid SubcategoryId, int CurrentScore, ControlStatus Status, DateTimeOffset LastEvaluatedAt);
+    private sealed record RuleRow(Guid SubcategoryId, RuleEvidenceType EvidenceType);
 
     /// <summary>Acumulador de agregados de uma Função (ou do total), consolidado pela fórmula única no fim.</summary>
     private sealed class FunctionAccumulator
@@ -186,5 +260,34 @@ public sealed class WorkspacePostureQuery : IWorkspacePostureQuery
 
         public AegisScoreResult ToResult() =>
             AegisScoreFormulaV1.Compute(Achieved, EvaluatedMax, EvaluatedControls, EligibleMax, EligibleControls);
+    }
+
+    /// <summary>
+    /// [AEGIS-MVP-ENV-01] Acumulador de UMA fatia de cobertura por natureza de prova. Só cobertura ponderada
+    /// (elegível × avaliado por <c>MaxScorePoints</c>) — sem numerador de score. A cobertura reusa o MESMO
+    /// arredondamento oficial da fórmula e trata bucket sem peso elegível como 0 (nunca divisão por zero).
+    /// </summary>
+    private sealed class CoverageAccumulator
+    {
+        private int _eligibleControls;
+        private int _evaluatedControls;
+        private int _eligibleMax;
+        private int _evaluatedMax;
+
+        public void AddEligible(int maxScorePoints)
+        {
+            _eligibleControls++;
+            _eligibleMax += maxScorePoints;
+        }
+
+        public void AddEvaluated(int maxScorePoints)
+        {
+            _evaluatedControls++;
+            _evaluatedMax += maxScorePoints;
+        }
+
+        public EvidenceCoverageSliceDto ToDto() => new(
+            _eligibleControls, _evaluatedControls, _eligibleMax, _evaluatedMax,
+            _eligibleMax > 0 ? AegisScoreFormulaV1.RoundPercentage((double)_evaluatedMax / _eligibleMax * 100) : 0);
     }
 }

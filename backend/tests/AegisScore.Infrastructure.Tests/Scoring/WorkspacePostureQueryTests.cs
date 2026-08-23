@@ -206,6 +206,226 @@ public sealed class WorkspacePostureQueryTests : IDisposable
         SevOf(nameof(SeverityLevel.Low)).Should().Be(1);
     }
 
+    // ---- [AEGIS-MVP-ENV-01] cobertura por NATUREZA da evidência ---------------------
+    // A autoridade de classificação é EXCLUSIVAMENTE AegisAssessmentRule.EvidenceType; a AUSÊNCIA de regra é
+    // um estado próprio (NotAutomated). Os testes usam regras TIPADAS mínimas no fixture — NUNCA congelam a
+    // distribuição real do catálogo (58/41/0) como constante de domínio.
+
+    [Fact]
+    public async Task Classificacao_PorEvidenceType_Telemetry_Documentation_Both_EAvaliadoNoBucketCerto()
+    {
+        // Uma regra tipada por natureza. Pesos: Telemetry 20 · Documentation 20 · Both 15.
+        await SeedRuleAsync(PrAa, RuleEvidenceType.Telemetry);
+        await SeedRuleAsync(PrDs, RuleEvidenceType.Documentation);
+        await SeedRuleAsync(DeCm, RuleEvidenceType.Both);
+        // Avalia SÓ o de telemetria: se Telemetry/Documentation estivessem trocados, o avaliado cairia no bucket errado.
+        await SeedStateAsync(PrAa, ControlStatus.Compliant, 20);
+
+        await using var db = NewContext(TenantA);
+        var ec = (await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync()).EvidenceCoverage;
+
+        ec.Telemetry.EligibleControls.Should().Be(1);
+        ec.Telemetry.EligibleMaxScore.Should().Be(20);
+        ec.Telemetry.EvaluatedControls.Should().Be(1, "PR.AA-01 (telemetria) foi avaliado");
+        ec.Telemetry.EvaluatedMaxScore.Should().Be(20);
+        ec.Telemetry.CoveragePercentage.Should().Be(100);
+
+        ec.Documentation.EligibleControls.Should().Be(1);
+        ec.Documentation.EligibleMaxScore.Should().Be(20);
+        ec.Documentation.EvaluatedControls.Should().Be(0, "PR.DS-01 (documental) não foi avaliado");
+        ec.Documentation.CoveragePercentage.Should().Be(0);
+
+        ec.Both.EligibleControls.Should().Be(1);
+        ec.Both.EligibleMaxScore.Should().Be(15);
+        ec.Both.EvaluatedControls.Should().Be(0);
+
+        ec.NotAutomated.EligibleControls.Should().Be(0, "todas as três subcategorias têm regra");
+    }
+
+    [Fact]
+    public async Task SubcategoriaSemRegra_ClassificadaComoNotAutomated_NaoComoDocumentacao()
+    {
+        // Só PR.AA-01 tem regra; PR.DS-01 e DE.CM-01 ficam SEM regra → NotAutomated (nunca documentação por default).
+        await SeedRuleAsync(PrAa, RuleEvidenceType.Telemetry);
+
+        await using var db = NewContext(TenantA);
+        var ec = (await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync()).EvidenceCoverage;
+
+        ec.NotAutomated.EligibleControls.Should().Be(2, "PR.DS-01 e DE.CM-01 não têm regra");
+        ec.NotAutomated.EligibleMaxScore.Should().Be(35, "20 (PR.DS-01) + 15 (DE.CM-01)");
+        ec.NotAutomated.EvaluatedControls.Should().Be(0);
+        ec.Documentation.EligibleControls.Should().Be(0, "ausência de regra NÃO é documentação");
+        ec.Telemetry.EligibleControls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task QuatroBuckets_Exclusivos_ReconciliamExatamenteComOverall()
+    {
+        // Uma 4ª subcategoria SEM regra dá conteúdo ao bucket NotAutomated (peso 10, sob DE.CM).
+        await SeedActiveSubcategoryAsync("DE.CM", "DE.CM-02", 10);
+        await SeedRuleAsync(PrAa, RuleEvidenceType.Telemetry);      // 20
+        await SeedRuleAsync(PrDs, RuleEvidenceType.Documentation);  // 20
+        await SeedRuleAsync(DeCm, RuleEvidenceType.Both);           // 15
+        // DE.CM-02 (10) fica sem regra → NotAutomated.
+        await SeedStateAsync(PrAa, ControlStatus.Compliant, 20);    // avalia 1 de telemetria
+        await SeedStateAsync(DeCm, ControlStatus.NonCompliant, 0);  // avalia 1 híbrido (avaliado ≠ conforme)
+
+        await using var db = NewContext(TenantA);
+        var w = await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync();
+        var ec = w.EvidenceCoverage;
+        var buckets = new[] { ec.Telemetry, ec.Documentation, ec.Both, ec.NotAutomated };
+
+        // Exclusividade/partição: as somas dos quatro buckets batem EXATAMENTE com o total — se qualquer
+        // subcategoria fosse contada em dois buckets, a soma excederia o Overall.
+        buckets.Sum(b => b.EligibleControls).Should().Be(w.Overall.EligibleControls).And.Be(4);
+        buckets.Sum(b => b.EligibleMaxScore).Should().Be(w.Overall.EligibleMaxScore).And.Be(65);
+        buckets.Sum(b => b.EvaluatedControls).Should().Be(w.Overall.EvaluatedControls).And.Be(2);
+        buckets.Sum(b => b.EvaluatedMaxScore).Should().Be(w.Overall.EvaluatedMaxScore).And.Be(35);
+
+        ec.NotAutomated.EligibleControls.Should().Be(1);
+        ec.NotAutomated.EligibleMaxScore.Should().Be(10);
+    }
+
+    [Fact]
+    public async Task CoberturaPonderada_UsaMaxScorePoints_NaoMediaSimplesDeQuantidade()
+    {
+        // Dois controles de PESOS diferentes no MESMO bucket; avalia só o mais pesado.
+        await SeedRuleAsync(PrAa, RuleEvidenceType.Telemetry);  // 20
+        await SeedRuleAsync(DeCm, RuleEvidenceType.Telemetry);  // 15
+        await SeedStateAsync(PrAa, ControlStatus.Compliant, 20);
+
+        await using var db = NewContext(TenantA);
+        var ec = (await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync()).EvidenceCoverage;
+
+        ec.Telemetry.EligibleControls.Should().Be(2);
+        ec.Telemetry.EligibleMaxScore.Should().Be(35);
+        ec.Telemetry.EvaluatedControls.Should().Be(1);
+        ec.Telemetry.EvaluatedMaxScore.Should().Be(20);
+        // Ponderada por peso: 20/35 = 57,1% — NÃO a média simples de quantidade (1/2 = 50%).
+        ec.Telemetry.CoveragePercentage.Should().Be(AegisScoreFormulaV1.RoundPercentage(20.0 / 35 * 100));
+        ec.Telemetry.CoveragePercentage.Should().NotBe(50, "cobertura é ponderada por MaxScorePoints, não por contagem");
+    }
+
+    [Fact]
+    public async Task SemTenant_BucketsDeEvidencia_VaziosZerados()
+    {
+        await using var db = NewContext(null);
+        var ec = (await new WorkspacePostureQuery(db, new SystemTenantContext(null)).GetAsync()).EvidenceCoverage;
+
+        foreach (var b in new[] { ec.Telemetry, ec.Documentation, ec.Both, ec.NotAutomated })
+        {
+            b.EligibleControls.Should().Be(0);
+            b.EvaluatedControls.Should().Be(0);
+            b.EligibleMaxScore.Should().Be(0);
+            b.EvaluatedMaxScore.Should().Be(0);
+            b.CoveragePercentage.Should().Be(0);
+        }
+    }
+
+    [Fact]
+    public async Task FrameworkInativo_E_SuasRegras_NaoEntramEmNenhumBucket()
+    {
+        await SeedRuleAsync(PrAa, RuleEvidenceType.Telemetry);
+        // Subcategoria + estado + regra de um framework INATIVO: nada disso pode inflar cobertura por evidência.
+        await SeedInactiveFrameworkStateAsync("OLD.XX-01", weight: 40, ControlStatus.Compliant, 40);
+        await SeedRuleAsync("OLD.XX-01", RuleEvidenceType.Documentation);
+
+        await using var db = NewContext(TenantA);
+        var ec = (await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync()).EvidenceCoverage;
+        var buckets = new[] { ec.Telemetry, ec.Documentation, ec.Both, ec.NotAutomated };
+
+        buckets.Sum(b => b.EligibleControls).Should().Be(EligibleCount, "só o catálogo ATIVO entra");
+        buckets.Sum(b => b.EligibleMaxScore).Should().Be(EligibleMax);
+        ec.Documentation.EligibleControls.Should().Be(0, "a regra do framework inativo é ignorada");
+    }
+
+    [Fact]
+    public async Task IsolamentoPorTenant_CoberturaAvaliada_NaoVazaDeAparaB()
+    {
+        // Catálogo e regras são GLOBAIS; o AVALIADO é tenant-scoped. B vê o elegível, nunca a avaliação de A.
+        await SeedRuleAsync(PrAa, RuleEvidenceType.Telemetry);
+        await SeedStateAsync(PrAa, ControlStatus.Compliant, 20);
+
+        await using var db = NewContext(TenantB);
+        var ec = (await new WorkspacePostureQuery(db, new SystemTenantContext(TenantB)).GetAsync()).EvidenceCoverage;
+
+        ec.Telemetry.EligibleControls.Should().Be(1, "o elegível vem do catálogo global");
+        ec.Telemetry.EvaluatedControls.Should().Be(0, "o tenant B não vê a avaliação de A");
+        ec.Telemetry.EvaluatedMaxScore.Should().Be(0);
+        ec.Telemetry.CoveragePercentage.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task BucketComPesoElegivelZero_NaoDividePorZero_CoberturaZero()
+    {
+        // Subcategoria de peso 0 com regra documental, e avaliada: peso elegível do bucket = 0 → cobertura 0 (guard).
+        await SeedActiveSubcategoryAsync("DE.CM", "DE.CM-00", 0);
+        await SeedRuleAsync("DE.CM-00", RuleEvidenceType.Documentation);
+        await SeedStateAsync("DE.CM-00", ControlStatus.Compliant, 0);
+
+        await using var db = NewContext(TenantA);
+        var ec = (await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync()).EvidenceCoverage;
+
+        ec.Documentation.EligibleControls.Should().Be(1);
+        ec.Documentation.EligibleMaxScore.Should().Be(0);
+        ec.Documentation.EvaluatedControls.Should().Be(1, "avaliado, ainda que sem peso");
+        ec.Documentation.CoveragePercentage.Should().Be(0, "peso elegível 0 → cobertura 0, nunca divisão por zero");
+        ec.Both.CoveragePercentage.Should().Be(0, "bucket vazio também é 0 sem exceção");
+    }
+
+    [Fact]
+    public async Task Classificacao_NaoInferePorTextoDeEvidenceRequirements_SoPorEvidenceType()
+    {
+        // Texto INVERTIDO em relação ao tipo: se houvesse inferência textual, cairiam nos buckets trocados.
+        await SeedRuleAsync(PrAa, RuleEvidenceType.Telemetry, new List<string> { "MANUAL_AUDIT_REQUIRED" });
+        await SeedRuleAsync(PrDs, RuleEvidenceType.Documentation, new List<string> { "Ferramenta: Microsoft Defender" });
+
+        await using var db = NewContext(TenantA);
+        var ec = (await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync()).EvidenceCoverage;
+
+        ec.Telemetry.EligibleControls.Should().Be(1, "EvidenceType=Telemetry manda, apesar do texto MANUAL_AUDIT_REQUIRED");
+        ec.Telemetry.EligibleMaxScore.Should().Be(20);
+        ec.Documentation.EligibleControls.Should().Be(1, "EvidenceType=Documentation manda, apesar do texto de ferramenta");
+        ec.Documentation.EligibleMaxScore.Should().Be(20);
+    }
+
+    [Fact]
+    public async Task EvidenceTypeInvalido_FalhaAcionavel_SemFallbackSilencioso()
+    {
+        await SeedRuleAsync(PrAa, (RuleEvidenceType)99);
+
+        await using var db = NewContext(TenantA);
+        var act = async () => await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync();
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .WithMessage("*EvidenceType inválido*");
+    }
+
+    [Fact]
+    public async Task DuplicidadeIncoerenteDeRegra_MesmaSubcategoria_NaturezasDivergentes_Falha()
+    {
+        // Duas regras para o MESMO SubcategoryId com naturezas divergentes (códigos distintos driblam o índice único).
+        await using (var seed = NewContext(TenantA))
+        {
+            var subId = await seed.Subcategories.Where(s => s.Code == PrAa).Select(s => s.Id).SingleAsync();
+            seed.AssessmentRules.Add(new AegisAssessmentRule
+            {
+                SubcategoryId = subId, SubcategoryCode = PrAa, EvidenceType = RuleEvidenceType.Telemetry,
+            });
+            seed.AssessmentRules.Add(new AegisAssessmentRule
+            {
+                SubcategoryId = subId, SubcategoryCode = PrAa + "-DUP", EvidenceType = RuleEvidenceType.Documentation,
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await using var db = NewContext(TenantA);
+        var act = async () => await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync();
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .WithMessage("*Duplicidade incoerente*");
+    }
+
     // ---- fixture --------------------------------------------------------------------
 
     private AegisScoreDbContext NewContext(Guid? tenantId) =>
@@ -220,6 +440,30 @@ public sealed class WorkspacePostureQueryTests : IDisposable
         {
             SubcategoryId = subId, Status = status, CurrentScore = score, LastVerdictSource = VerdictSource.Telemetry,
         });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Regra tipada GLOBAL (reference data) para uma subcategoria — a AUTORIDADE de classificação de cobertura.</summary>
+    private async Task SeedRuleAsync(string subCode, RuleEvidenceType evidenceType, List<string>? evidenceRequirements = null)
+    {
+        await using var db = NewContext(TenantA);
+        var subId = await db.Subcategories.Where(s => s.Code == subCode).Select(s => s.Id).SingleAsync();
+        db.AssessmentRules.Add(new AegisAssessmentRule
+        {
+            SubcategoryId = subId,
+            SubcategoryCode = subCode,
+            EvidenceType = evidenceType,
+            EvidenceRequirements = evidenceRequirements ?? new List<string>(),
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Adiciona uma subcategoria ao catálogo ATIVO (sob uma categoria existente), para compor os buckets.</summary>
+    private async Task SeedActiveSubcategoryAsync(string categoryCode, string subCode, int weight)
+    {
+        await using var db = NewContext(TenantA);
+        var catId = await db.Categories.Where(c => c.Code == categoryCode).Select(c => c.Id).SingleAsync();
+        db.Subcategories.Add(new NistSubcategory { CategoryId = catId, Code = subCode, Description = "x", MaxScorePoints = weight });
         await db.SaveChangesAsync();
     }
 

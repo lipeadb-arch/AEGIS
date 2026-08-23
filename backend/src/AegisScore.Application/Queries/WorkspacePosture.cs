@@ -16,7 +16,8 @@ namespace AegisScore.Application.Queries;
 public sealed record WorkspacePostureDto(
     WorkspaceOverallDto Overall,
     IReadOnlyList<FunctionPostureDto> Functions,
-    ConnectorHealthSummaryDto Connectors);
+    ConnectorHealthSummaryDto Connectors,
+    EvidenceCoverageSummaryDto EvidenceCoverage);
 
 /// <summary>Postura consolidada do tenant (todas as Funções) pela autoridade aegis-score-v1.</summary>
 /// <param name="EvaluationState">"Evaluated" ou "NotEvaluated" — separa "sem score" de "0%".</param>
@@ -84,6 +85,47 @@ public sealed record ConnectorHealthItemDto(
     DateTimeOffset? LastSyncAt,
     bool EverSynced,
     bool Enabled);
+
+/// <summary>
+/// [AEGIS-MVP-ENV-01] Cobertura de avaliação recortada pela NATUREZA da prova esperada — o eixo que sustenta
+/// a jornada environment-first: quanto do catálogo é medível por AMBIENTE/telemetria × quanto exige
+/// governança/evidência dirigida × quanto é híbrido × quanto ainda não tem automação. É COBERTURA (peso
+/// avaliado ÷ elegível), NÃO score: 100% de cobertura pode conter controles não conformes, e 0% significa
+/// "não avaliado", nunca reprovação. PROVIDER-NEUTRAL — não depende de Microsoft/Google nem de qual conector
+/// mediu.
+///
+/// Os quatro buckets PARTICIONAM o mesmo universo elegível do <see cref="WorkspaceOverallDto"/> (framework
+/// ATIVO): cada subcategoria pertence a EXATAMENTE um, e as somas reconciliam com o total. A autoridade de
+/// classificação é EXCLUSIVAMENTE <c>AegisAssessmentRule.EvidenceType</c> (contrato tipado), nunca o texto de
+/// <c>EvidenceRequirements</c>, a <c>CalculationLogic</c>, o nome do conector ou o prefixo da Função.
+/// </summary>
+/// <param name="Telemetry">Regra com <c>EvidenceType == Telemetry</c> — medição esperada por ambiente/telemetria.</param>
+/// <param name="Documentation">Regra com <c>EvidenceType == Documentation</c> — governança/evidência dirigida.</param>
+/// <param name="Both">Regra com <c>EvidenceType == Both</c> — exigência híbrida (telemetria E documental).</param>
+/// <param name="NotAutomated">Subcategoria ativa SEM <c>AegisAssessmentRule</c> — ainda sem automação/regra
+/// (estado próprio; NÃO é reclassificada como documentação).</param>
+public sealed record EvidenceCoverageSummaryDto(
+    EvidenceCoverageSliceDto Telemetry,
+    EvidenceCoverageSliceDto Documentation,
+    EvidenceCoverageSliceDto Both,
+    EvidenceCoverageSliceDto NotAutomated);
+
+/// <summary>
+/// Uma fatia de cobertura por natureza de prova. Só cobertura (elegível × avaliado ponderados por
+/// <c>MaxScorePoints</c>) — NÃO há score por bucket nesta entrega (não se criam quatro scores concorrentes).
+/// </summary>
+/// <param name="EligibleControls">Subcategorias do bucket no catálogo ativo.</param>
+/// <param name="EvaluatedControls">Subcategorias do bucket que têm <c>TenantControlState</c> do tenant.</param>
+/// <param name="EligibleMaxScore">Soma dos pesos (<c>MaxScorePoints</c>) elegíveis do bucket.</param>
+/// <param name="EvaluatedMaxScore">Soma dos pesos das subcategorias avaliadas do bucket.</param>
+/// <param name="CoveragePercentage">Peso avaliado ÷ peso elegível × 100 (arredondamento oficial da fórmula);
+/// 0 quando o bucket não tem peso elegível — nunca divisão por zero.</param>
+public sealed record EvidenceCoverageSliceDto(
+    int EligibleControls,
+    int EvaluatedControls,
+    int EligibleMaxScore,
+    int EvaluatedMaxScore,
+    double CoveragePercentage);
 
 /// <summary>
 /// Consulta de leitura da projeção única do workspace. O tenant é IMPLÍCITO (fail-closed via ITenantContext

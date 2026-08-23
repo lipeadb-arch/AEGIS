@@ -4,8 +4,10 @@ import { BlastRadiusSummary, ExecutiveDashboard, GapBalance } from '../models/da
 import { ComplianceHistoryPoint, buildGapBalance, trendToSparkline } from '../models/scoring.models';
 import { WorkspacePosture, connectorBreakdown } from '../models/workspace.models';
 import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
+import { EnvironmentFirstComponent } from '../components/environment-first.component';
 import { DashboardService } from '../services/dashboard.service';
 import { AegisScoreService } from '../services/aegis-score.service';
+import { AuthService } from '../services/auth.service';
 import { ScoringService } from '../services/scoring.service';
 import { SparklineComponent } from '../components/scoring/sparkline.component';
 import { GapBalanceComponent } from '../components/scoring/gap-balance.component';
@@ -36,13 +38,14 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
     RiskLevelsComponent,
     ExposureCardComponent,
     PostureSummaryComponent,
+    EnvironmentFirstComponent,
   ],
   template: `
     <div class="app">
       <header class="topbar">
         <div class="brand">
           <span class="mark">Aegis <b>Score</b></span>
-          <span class="sub">Auditoria de Maturidade Cibernética</span>
+          <span class="sub">Gestão de Postura e Exposição Cibernética</span>
         </div>
         <!-- Cliente e ICR só aparecem com dados REAIS. Durante carga ou erro não há postura para
              exibir, e um nome/ICR remanescente leria como a leitura atual de outro cliente. -->
@@ -113,6 +116,13 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         }
       </section>
 
+      <!-- [AEGIS-MVP-ENV-01] Jornada environment-first: reusa a MESMA projeção do workspace (nenhuma chamada
+           extra). Aparece assim que a projeção carrega — onboarding num tenant começando e resumo de progresso
+           num já medido. A etapa (A→D) é derivada por função pura da projeção; a IA aqui é só apresentação. -->
+      @if (workspace(); as w) {
+        <app-environment-first [posture]="w" [isTenantAdmin]="isTenantAdmin()" />
+      }
+
       @if (loading()) {
         <div class="notice">
           <span class="scan" aria-hidden="true"></span>
@@ -158,10 +168,13 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
             passam a significar algo depois da primeira medição — <b>zero aqui não é ausência de
             risco, é ausência de leitura</b>.
           </p>
+          <!-- [AEGIS-MVP-ENV-01] Environment-first: conectar o ambiente é o ponto de partida. Documentos NÃO são
+               etapa obrigatória paralela — a governança entra depois, onde houver lacuna organizacional. O bloco
+               "Comece pelo ambiente" acima conduz a jornada; estes passos apenas a resumem. -->
           <ul class="es-steps">
-            <li><b>Ligue um conector</b> de telemetria para as Funções técnicas (PR · DE · RS · RC).</li>
-            <li><b>Suba as políticas</b> no Document Hub para cobrir a Função Govern (GV).</li>
-            <li><b>Rode uma avaliação</b> para popular a maturidade CMMI por Função.</li>
+            <li><b>Conecte um ambiente</b> — a leitura somente leitura de cloud, identidade, ativos e controles é o primeiro valor.</li>
+            <li><b>Revise o que foi coletado</b> — ativos, exposições e vulnerabilidades aparecem antes mesmo de o Score mudar.</li>
+            <li><b>Complemente a governança depois</b> — só onde houver lacuna organizacional, com entrevista, evidência dirigida ou documento.</li>
           </ul>
         </section>
       } @else {
@@ -519,6 +532,10 @@ export class ExecutiveDashboardComponent implements OnInit {
   private readonly svc = inject(DashboardService);
   private readonly scoreSvc = inject(AegisScoreService);
   private readonly scoringSvc = inject(ScoringService);
+  private readonly auth = inject(AuthService);
+
+  /** Papel no tenant ativo — gate de visibilidade do CTA administrativo no bloco environment-first. */
+  readonly isTenantAdmin = this.auth.isTenantAdmin;
 
   // Começa NULO: o dashboard operacional nunca nasce com uma postura de exemplo. Só recebe conteúdo
   // de uma resposta REAL da API; qualquer falha o mantém nulo e aciona o estado de erro (ver `load`).
