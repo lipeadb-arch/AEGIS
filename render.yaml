@@ -18,8 +18,11 @@ services:
     plan: starter            # ajuste conforme necessidade (starter/standard/...)
     region: oregon           # ajuste para a região desejada
     autoDeploy: false        # deploy manual durante a homologação
-    # Readiness: PostgreSQL + migrations + catálogo íntegro (só leitura). O Render só
-    # roteia tráfego quando /health/ready devolve 200. (Liveness fica em /health/live.)
+    # Readiness (probe recorrente, barato): arranque estrutural aprovado + PostgreSQL acessível
+    # (checagem LEVE de conectividade, só leitura). A validação INTEGRAL do pacote (migrations dos dois
+    # contextos + catálogo/regras/proveniência) roda UMA vez no arranque, fail-closed, e NÃO é refeita a
+    # cada probe — o Render sonda em laço. O Render só roteia tráfego quando /health/ready devolve 200.
+    # (Liveness fica em /health/live, independente do banco.)
     healthCheckPath: /health/ready
 
     # Secret File montado em /etc/secrets/<nome>. ⚠️ O Render aceita Secret Files apenas como TEXTO —
