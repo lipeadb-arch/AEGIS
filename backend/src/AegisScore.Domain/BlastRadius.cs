@@ -56,8 +56,41 @@ public class Threat : Entity
     /// <summary>Tática/categoria (ex.: "Impact", "Initial Access") para agrupar cenários.</summary>
     public string? Tactic { get; set; }
 
-    /// <summary>Explorada ativamente in-the-wild (KEV/threat-intel) — eleva a probabilidade.</summary>
+    /// <summary>
+    /// Explorada ativamente in-the-wild (KEV/threat-intel) — eleva a probabilidade. ⚠️ [AEGIS-MVP-VULN-01] NÃO é
+    /// derivado de <see cref="PublicExploit"/>/<see cref="ExploitVerified"/> do Defender: disponibilidade de
+    /// exploit NÃO prova exploração ativa. Só uma fonte KEV/threat-intel dedicada preenche este campo.
+    /// </summary>
     public bool KnownExploited { get; set; }
+
+    // ---- [AEGIS-MVP-VULN-01] Metadados CONSULTÁVEIS de CVE (preenchidos quando Source = Cve, via Defender
+    // Vulnerability Management). São FATOS DA FONTE, somente leitura; o AEGIS nunca os inventa. Nulos quando
+    // a fonte não os informa (ex.: CVSS ausente NÃO vira 0). exposedMachines/status de exceção são dependentes
+    // do tenant e por isso NÃO moram aqui (o vínculo por tenant é a AssetThreatExposure).
+
+    /// <summary>Severidade TEXTUAL informada pela fonte (ex.: "Low", "Medium", "High", "Critical"). Fato da fonte.</summary>
+    public string? Severity { get; set; }
+
+    /// <summary>Pontuação CVSS v3 (0–10) informada pela fonte. Nulo quando ausente — nunca inventado.</summary>
+    public double? CvssScore { get; set; }
+
+    /// <summary>Vetor CVSS v3 informado pela fonte (ex.: "CVSS:3.1/AV:N/..."). Nulo quando ausente.</summary>
+    public string? CvssVector { get; set; }
+
+    /// <summary>Data de publicação do CVE informada pela fonte. Nulo quando ausente.</summary>
+    public DateTimeOffset? PublishedOn { get; set; }
+
+    /// <summary>Data da última atualização do CVE informada pela fonte. Nulo quando ausente.</summary>
+    public DateTimeOffset? UpdatedOn { get; set; }
+
+    /// <summary>Existe exploit PÚBLICO (fato da fonte). ≠ exploração ativa — NÃO alimenta <see cref="KnownExploited"/>.</summary>
+    public bool? PublicExploit { get; set; }
+
+    /// <summary>Exploit VERIFICADO pela fonte (fato da fonte). ≠ exploração ativa — NÃO alimenta <see cref="KnownExploited"/>.</summary>
+    public bool? ExploitVerified { get; set; }
+
+    /// <summary>EPSS (0–1) informado pela fonte — probabilidade de exploração. Nulo quando ausente.</summary>
+    public double? Epss { get; set; }
 
     public bool IsActive { get; set; } = true;
 }
@@ -79,6 +112,11 @@ public class AssetThreatExposure : Entity, ITenantOwned
     /// <summary>Probabilidade de materialização NESTE ativo, 1–4 (mesma régua de <see cref="RiskEvaluation"/>).</summary>
     public int Likelihood { get; set; } = 1;
 
+    /// <summary>
+    /// DISPOSIÇÃO da exposição (decisão humana): Active/Mitigated/Accepted/FalsePositive. É ORTOGONAL ao ciclo de
+    /// vida das observações de fonte (<see cref="AssetThreatObservation"/>, Open/Resolved): a reconciliação NUNCA
+    /// escreve aqui — uma exposição marcada Accepted/FalsePositive preserva essa disposição.
+    /// </summary>
     public ExposureStatus Status { get; set; } = ExposureStatus.Active;
 
     /// <summary>Subcategoria NIST que mitiga esta exposição (ex.: "PR.PS-01" patch) — elo com o ledger de score.</summary>
@@ -86,6 +124,12 @@ public class AssetThreatExposure : Entity, ITenantOwned
 
     public AssetDiscoverySource DiscoverySource { get; set; } = AssetDiscoverySource.Connector;
     public DateTimeOffset DetectedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// Evidência LEGADA da exposição (ex.: cenário do raio de explosão). ⚠️ [AEGIS-MVP-VULN-01] O detalhe POR FONTE
+    /// (produtos/versões de um scanner) vive na <see cref="AssetThreatObservation"/>, não aqui — a exposição é
+    /// consolidada e provider-neutral. Nunca a resposta bruta da fonte, IP ou PII.
+    /// </summary>
     public string? EvidenceJson { get; set; }
 }
 

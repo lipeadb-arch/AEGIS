@@ -92,8 +92,18 @@ public class ConnectorsController : ControllerBase
         if (result is null)
             return Problem($"No adapter registered for {cfg.Provider}/{cfg.Capability}.", statusCode: 501);
 
-        // O front usa apenas a contagem; a lista de sinais fica vazia (os sinais são internos, sob outro contexto).
-        return new SyncResultDto(result.Persisted, Array.Empty<SignalDto>());
+        // [AEGIS-MVP-VULN-01] Um conector de vulnerabilidade não produz sinais (SignalsCollected=0), mas devolve as
+        // contagens de ativos/CVEs/exposições/observações — o usuário nunca vê "0 coletados" após um sync real.
+        var vuln = result.Vulnerabilities is { } v
+            ? new VulnerabilitySyncSummaryDto(
+                v.MachinesObserved, v.AssetsCreated, v.CvesUpserted, v.ExposuresCreated,
+                v.ObservationsOpened, v.ObservationsReopened, v.ObservationsResolved,
+                v.BindingsDeactivated, v.AssetsDeactivated, v.WasComplete,
+                v.InvalidMachines, v.InvalidCves, v.InvalidRelations)
+            : null;
+
+        // O front usa a contagem; a lista de sinais fica vazia (os sinais são internos, sob outro contexto).
+        return new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln);
     }
 
     private static bool IsGenericPush(ConnectorConfig c) =>

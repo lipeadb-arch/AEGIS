@@ -54,8 +54,14 @@ public sealed record PushIngestionResult(
     IReadOnlyList<string> Errors,
     DateTimeOffset ReceivedAt);
 
-/// <summary>Desfecho de uma coleta PULL executada pela autoridade única (mesmo executor/mapping do push).</summary>
-public sealed record PullIngestionResult(int Persisted, int Deduplicated, int Skipped, ConnectorStatus Status);
+/// <summary>
+/// Desfecho de uma coleta PULL executada pela autoridade única (mesmo executor/mapping do push).
+/// <see cref="Vulnerabilities"/> é ADITIVO (default null): preenchido só por conectores de vulnerabilidade
+/// (<see cref="IVulnerabilityFindingConnector"/>), preservando os consumidores existentes.
+/// </summary>
+public sealed record PullIngestionResult(
+    int Persisted, int Deduplicated, int Skipped, ConnectorStatus Status,
+    VulnerabilitySyncResult? Vulnerabilities = null);
 
 /// <summary>
 /// [AEGIS-AUD-020] Autentica o endpoint EXTERNO de ingestão pela CHAVE do conector (nunca por JWT). Faz o

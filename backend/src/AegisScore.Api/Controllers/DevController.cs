@@ -1,4 +1,5 @@
 #if DEBUG
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -290,6 +291,100 @@ public class DevController : ControllerBase
         db.Threats.Add(ransomware);
         db.AssetDependencies.AddRange(dependencies);
         db.AssetThreatExposures.Add(ransomwareExposure);
+
+        // ---- [AEGIS-MVP-VULN-01] Vulnerabilidades (ativo×CVE) — DEMONSTRAÇÃO SINTÉTICA ----
+        // ⚠️ Dados 100% sintéticos, NÃO são coleta real do Microsoft Defender. Identificados como demonstração
+        // (conector "(Demonstração)"; CVEs tenant-scoped). O catálogo GLOBAL de CVE (TenantId nulo) NÃO é tocado —
+        // esta demo usa Threats do próprio tenant, que o wipe remove; nunca duplica nem apaga referência global.
+        var vulnConnector = new ConnectorConfig
+        {
+            TenantId = DemoTenantId,
+            Provider = ConnectorProvider.Microsoft,
+            Capability = ConnectorCapability.VulnerabilityScanner,
+            DisplayName = "Microsoft Defender Vulnerability Management (Demonstração)",
+            AuthType = ConnectorAuthType.OAuthClientCredentials,
+            Enabled = true,
+            LastSyncAt = DateTimeOffset.UtcNow.AddMinutes(-15),
+            LastStatus = ConnectorStatus.Healthy,
+        };
+
+        Threat DemoCve(string code, string title, string severity, double cvss, bool pub, bool verified, double epss) => new()
+        {
+            TenantId = DemoTenantId,   // Threat NÃO é ITenantOwned — CVE SINTÉTICO tenant-scoped (removido pelo wipe)
+            Source = ThreatSource.Cve,
+            Code = code,
+            Title = $"{title} (Demonstração)",
+            Description = "CVE sintético para demonstração da tela de Vulnerabilidades — não é coleta real do Defender.",
+            Severity = severity,
+            CvssScore = cvss,
+            BaseSeverity = cvss,
+            CvssVector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+            PublishedOn = DateTimeOffset.UtcNow.AddDays(-30),
+            UpdatedOn = DateTimeOffset.UtcNow.AddDays(-2),
+            PublicExploit = pub,
+            ExploitVerified = verified,
+            Epss = epss,
+            IsActive = true,
+        };
+        var cve1 = DemoCve("CVE-2024-0001", "Execução remota de código", "Critical", 9.8, pub: true, verified: true, epss: 0.94);
+        var cve2 = DemoCve("CVE-2024-0002", "Elevação de privilégio", "High", 7.8, pub: true, verified: false, epss: 0.42);
+        var cve3 = DemoCve("CVE-2024-0003", "Divulgação de informação", "Medium", 5.3, pub: false, verified: false, epss: 0.06);
+
+        AssetSourceBinding DemoBinding(Asset a, string externalId, string dns) => new()
+        {
+            TenantId = DemoTenantId,
+            AssetId = a.Id,
+            ConnectorConfigId = vulnConnector.Id,
+            ExternalId = externalId,
+            DisplayName = dns,
+            SubType = a.SubType,
+            FirstObservedAt = DateTimeOffset.UtcNow.AddDays(-20),
+            LastObservedAt = DateTimeOffset.UtcNow.AddMinutes(-15),
+            SourceLastSeenAt = DateTimeOffset.UtcNow.AddMinutes(-20),
+            IsActive = true,
+        };
+        var bindAdDc = DemoBinding(assets[0], "demo-mde-addc-01", "addc01.demo.example.com");
+        var bindVpn = DemoBinding(assets[6], "demo-mde-vpn-01", "vpn01.demo.example.com");
+
+        AssetThreatExposure DemoExposure(Asset a, Threat t) => new()
+        {
+            TenantId = DemoTenantId,
+            AssetId = a.Id,
+            ThreatId = t.Id,
+            Status = ExposureStatus.Active,
+            Likelihood = 1,
+            DiscoverySource = AssetDiscoverySource.Connector,
+            DetectedAt = DateTimeOffset.UtcNow.AddDays(-18),
+        };
+        var expDc1 = DemoExposure(assets[0], cve1);
+        var expDc2 = DemoExposure(assets[0], cve2);
+        var expVpn = DemoExposure(assets[6], cve3);
+
+        AssetThreatObservation DemoObservation(AssetThreatExposure e, string product, string vendor, string version) => new()
+        {
+            TenantId = DemoTenantId,
+            AssetThreatExposureId = e.Id,
+            ConnectorConfigId = vulnConnector.Id,
+            LifecycleState = ObservationLifecycle.Open,
+            FirstSeenAt = DateTimeOffset.UtcNow.AddDays(-18),
+            LastSeenAt = DateTimeOffset.UtcNow.AddMinutes(-15),
+            EvidenceJson = JsonSerializer.Serialize(new
+            {
+                Products = new[] { new { Product = product, Vendor = vendor, Version = version, FixingKb = (string?)null } },
+                TotalProducts = 1,
+                ProductsTruncated = false,
+            }),
+        };
+
+        db.Connectors.Add(vulnConnector);
+        db.Threats.AddRange(cve1, cve2, cve3);
+        db.AssetSourceBindings.AddRange(bindAdDc, bindVpn);
+        db.AssetThreatExposures.AddRange(expDc1, expDc2, expVpn);
+        db.AssetThreatObservations.AddRange(
+            DemoObservation(expDc1, "windows_server_2022", "microsoft", "10.0.20348.1"),
+            DemoObservation(expDc2, "windows_server_2022", "microsoft", "10.0.20348.1"),
+            DemoObservation(expVpn, "vpn_gateway_firmware", "demo-vendor", "3.4.1"));
+
         await db.SaveChangesAsync(ct);
 
         var overdue = plans.Count(p => p.Status != ActionPlanStatus.Concluido && p.DueDate is { } d && d < today);
@@ -309,6 +404,8 @@ public class DevController : ControllerBase
             overdueActionPlans = overdue,
             governanceDocuments = 2,
             coverageEntries = coverage.Length,
+            // [AEGIS-MVP-VULN-01] Demonstração sintética de vulnerabilidades (não é coleta real do Defender).
+            vulnerabilityDemo = new { sources = 1, cves = 3, bindings = 2, exposures = 3, observations = 3 },
         });
     }
 
@@ -569,12 +666,21 @@ public class DevController : ControllerBase
         db.Scopes.RemoveRange(await db.Scopes.IgnoreQueryFilters().Where(s => s.TenantId == DemoTenantId).ToListAsync(ct));
         db.Assessments.RemoveRange(await db.Assessments.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
 
-        // Identify (ID.RA) — remover ANTES dos Assets (FKs Restrict): nós → snapshots → exposições → arestas → ameaças.
+        // Identify (ID.RA) — remover ANTES dos Assets (FKs Restrict): nós → snapshots → observações → exposições →
+        // bindings → arestas → ameaças → conector de vulnerabilidade (FK Restrict de observações/bindings).
         db.BlastRadiusImpactNodes.RemoveRange(await db.BlastRadiusImpactNodes.IgnoreQueryFilters().Where(n => n.TenantId == DemoTenantId).ToListAsync(ct));
         db.BlastRadiusAssessments.RemoveRange(await db.BlastRadiusAssessments.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
+        // [AEGIS-MVP-VULN-01] Observações (FK → exposição/conector) e bindings (FK → ativo/conector) primeiro.
+        db.AssetThreatObservations.RemoveRange(await db.AssetThreatObservations.IgnoreQueryFilters().Where(o => o.TenantId == DemoTenantId).ToListAsync(ct));
         db.AssetThreatExposures.RemoveRange(await db.AssetThreatExposures.IgnoreQueryFilters().Where(e => e.TenantId == DemoTenantId).ToListAsync(ct));
+        db.AssetSourceBindings.RemoveRange(await db.AssetSourceBindings.IgnoreQueryFilters().Where(b => b.TenantId == DemoTenantId).ToListAsync(ct));
         db.AssetDependencies.RemoveRange(await db.AssetDependencies.IgnoreQueryFilters().Where(d => d.TenantId == DemoTenantId).ToListAsync(ct));
+        // Ameaças do tenant demo (inclui os CVEs SINTÉTICOS tenant-scoped). O catálogo GLOBAL (TenantId nulo) NÃO é
+        // tocado — nunca apagamos referência global que outro tenant possa usar.
         db.Threats.RemoveRange(await db.Threats.IgnoreQueryFilters().Where(t => t.TenantId == DemoTenantId).ToListAsync(ct));
+        // Conector de vulnerabilidade de demonstração (depois de observações/bindings, por causa das FKs Restrict).
+        db.Connectors.RemoveRange(await db.Connectors.IgnoreQueryFilters()
+            .Where(c => c.TenantId == DemoTenantId && c.Capability == ConnectorCapability.VulnerabilityScanner).ToListAsync(ct));
 
         db.Assets.RemoveRange(await db.Assets.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
         db.Processes.RemoveRange(await db.Processes.IgnoreQueryFilters().Where(p => p.TenantId == DemoTenantId).ToListAsync(ct));

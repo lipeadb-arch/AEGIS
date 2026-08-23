@@ -675,7 +675,18 @@ export class IntegrationsComponent {
     this.busyId.set(c.id);
     this.api.sync(c.id).subscribe({
       next: (r) => {
-        this.setMsg(c.id, `Coleta concluída: ${r.signalsCollected} sinal(is).`);
+        // Conector de vulnerabilidade não gera sinais: reporta as contagens reais (ativos/CVEs/exposições).
+        if (r.vulnerabilities) {
+          const v = r.vulnerabilities;
+          const parcial = v.wasComplete ? '' : ' (coleta parcial/degradada)';
+          this.setMsg(
+            c.id,
+            `Coleta concluída${parcial}: ${v.machinesObserved} máquina(s), ${v.cvesUpserted} CVE(s), ` +
+              `${v.exposuresCreated} nova(s) exposição(ões), ${v.observationsOpened} observação(ões) aberta(s).`,
+          );
+        } else {
+          this.setMsg(c.id, `Coleta concluída: ${r.signalsCollected} sinal(is).`);
+        }
         this.busyId.set(null);
         this.reload();
       },

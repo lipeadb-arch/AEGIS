@@ -196,7 +196,17 @@ public record IngestionResultDto(
 
 public record ConnectorHealthDto(string Status, string? Message);
 public record SignalDto(string SignalKey, double? NumericValue, string? Unit, int? Severity, IReadOnlyList<string> MappedSubcategoryCodes, DateTimeOffset CollectedAt);
-public record SyncResultDto(int SignalsCollected, IReadOnlyList<SignalDto> Signals);
+public record SyncResultDto(
+    int SignalsCollected, IReadOnlyList<SignalDto> Signals,
+    // [AEGIS-MVP-VULN-01] Aditivo: contagens honestas de uma sincronização de vulnerabilidades (null p/ outros conectores).
+    VulnerabilitySyncSummaryDto? Vulnerabilities = null);
+
+/// <summary>[AEGIS-MVP-VULN-01] Contagens de uma sincronização de vulnerabilidades (ativos/CVEs/exposições/observações).</summary>
+public record VulnerabilitySyncSummaryDto(
+    int MachinesObserved, int AssetsCreated, int CvesUpserted, int ExposuresCreated,
+    int ObservationsOpened, int ObservationsReopened, int ObservationsResolved,
+    int BindingsDeactivated, int AssetsDeactivated, bool WasComplete,
+    int InvalidMachines, int InvalidCves, int InvalidRelations);
 
 // ---- Assessments ----
 public record CreateAssessmentRequest(string Name, Guid? FrameworkVersionId);

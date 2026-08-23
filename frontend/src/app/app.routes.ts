@@ -7,6 +7,7 @@ import { ProtectDashboardComponent } from './pages/protect-dashboard.component';
 import { AegisKnightComponent } from './pages/aegis-knight.component';
 import { PostureHistoryComponent } from './pages/posture-history.component';
 import { PostureExposuresComponent } from './pages/posture-exposures.component';
+import { VulnerabilitiesComponent } from './pages/vulnerabilities.component';
 import { DetectDashboardComponent } from './pages/detect-dashboard.component';
 import { RespondDashboardComponent } from './pages/respond-dashboard.component';
 import { RecoverDashboardComponent } from './pages/recover-dashboard.component';
@@ -33,6 +34,8 @@ export const routes: Routes = [
   { path: 'history', component: PostureHistoryComponent, canActivate: [authGuard], title: 'Aegis · Histórico de Postura' },
   // [AEGIS-MVP-POSTURE-02] Exposições de configuração (postura cloud-first) — Microsoft Secure Score real.
   { path: 'exposures', component: PostureExposuresComponent, canActivate: [authGuard], title: 'Aegis · Exposições de Configuração' },
+  // [AEGIS-MVP-VULN-01] Vulnerabilidades (ativo×CVE) multicloud — Microsoft Defender como primeira fonte.
+  { path: 'vulnerabilities', component: VulnerabilitiesComponent, canActivate: [authGuard], title: 'Aegis · Vulnerabilidades' },
   { path: 'detect', component: DetectDashboardComponent, canActivate: [authGuard], title: 'Aegis · Detect (DE)' },
   { path: 'respond', component: RespondDashboardComponent, canActivate: [authGuard], title: 'Aegis · Respond (RS)' },
   { path: 'recover', component: RecoverDashboardComponent, canActivate: [authGuard], title: 'Aegis · Recover (RC)' },

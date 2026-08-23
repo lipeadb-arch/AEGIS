@@ -205,6 +205,9 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // try/catch: qualquer falha de coleta (sinais, exposições ou combinada) carimba Failed antes de persistir.
         List<EvidenceSignal> collected;
         PostureFindingCollection? findings = null;
+        // [AEGIS-MVP-VULN-01] Coleta de vulnerabilidades associadas a ativos (máquinas × CVEs). Aditiva: um conector
+        // pode implementar IEvidenceConnector sem emitir sinais e ainda produzir esta coleção (o Defender VM faz isso).
+        VulnerabilityCollection? vulnerabilities = null;
         try
         {
             if (adapter is ICombinedEvidenceCollector combined)
@@ -223,6 +226,10 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
                 if (adapter is IPostureFindingConnector findingConnector)
                     findings = await findingConnector.CollectFindingsAsync(config, ct);
             }
+
+            // Vulnerabilidades: coletadas na MESMA try/catch (uma falha da fonte carimba Failed ANTES de persistir).
+            if (adapter is IVulnerabilityFindingConnector vulnConnector)
+                vulnerabilities = await vulnConnector.CollectVulnerabilitiesAsync(config, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -267,7 +274,13 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             foreach (var code in resolution.SubcategoryCodes) affectedCodes.Add(code);
         }
 
-        var status = skipped > 0 ? ConnectorStatus.Degraded : ConnectorStatus.Healthy;
+        // [AEGIS-MVP-VULN-01] Uma coleta de vulnerabilidades INCOMPLETA ou com registros inválidos degrada a saúde
+        // do conector (Degraded) — honestidade operacional (a reconciliação, já ciente do IsComplete, não resolve
+        // por omissão). Uma coleta COMPLETA sem achados segue Healthy. Falha real vira Failed no catch abaixo.
+        var degradedByVuln = vulnerabilities is not null
+            && (!vulnerabilities.IsComplete || vulnerabilities.InvalidMachines > 0
+                || vulnerabilities.InvalidCves > 0 || vulnerabilities.InvalidRelations > 0);
+        var status = (skipped > 0 || degradedByVuln) ? ConnectorStatus.Degraded : ConnectorStatus.Healthy;
         // Um único SaveChanges: os sinais adicionados + o carimbo de sync são o MESMO fato.
         await StampConnectorAsync(db, config.Id, now, status, ct);
 
@@ -290,6 +303,27 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             }
         }
 
+        // [AEGIS-MVP-VULN-01] Reconcilia as vulnerabilidades coletadas (upsert idempotente de Asset/Threat/exposição +
+        // resolução/desativação SÓ em coleta completa) sob o tenant proprietário. Falha NÃO é mascarada: carimba
+        // Failed e propaga (mesma semântica da projeção/posture). Contexto NOVO isola do change tracker anterior.
+        // NUNCA cria EvidenceSignal nem toca o AEGIS Score — vulnerabilidade é fato operacional/de exposição.
+        VulnerabilitySyncResult? vulnResult = null;
+        if (vulnerabilities is not null)
+        {
+            try
+            {
+                vulnResult = await ReconcileVulnerabilitiesAsync(config.TenantId, config.Id, vulnerabilities, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex,
+                    "Reconciliação de vulnerabilidades do conector {ConnectorId} falhou; conector marcado como Failed.",
+                    config.Id);
+                await TryStampFailedAsync(config.Id, config.TenantId, ct);
+                throw;
+            }
+        }
+
         // [AEGIS-AUD-019] Projeta a evidência coletada no ledger (recompute GLOBAL from-newest). Semântica
         // coerente com o push: falha na projeção NÃO é mascarada — carimba Failed e propaga como 500. Uma
         // nova coleta (mesmo sync) refaz o recompute sobre a evidência mais nova.
@@ -306,7 +340,23 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             throw;
         }
 
-        return new PullIngestionResult(persisted, 0, skipped, status);
+        return new PullIngestionResult(persisted, 0, skipped, status, vulnResult);
+    }
+
+    // ---- Reconciliação de vulnerabilidades associadas a ativos (AEGIS-MVP-VULN-01) ----------------
+
+    /// <summary>
+    /// Reconcilia a coleta de vulnerabilidades no domínio existente (Asset/Threat/AssetThreatExposure), sob o tenant
+    /// proprietário (<see cref="SystemTenantContext"/>): contexto NOVO (isolado do change tracker dos sinais) + query
+    /// filter fail-closed + stamping do SaveChanges. A lógica de upsert/colapso/resolução vive no
+    /// <see cref="VulnerabilityReconciler"/>; o adaptador nunca escreve no banco. NÃO cria EvidenceSignal.
+    /// </summary>
+    private async Task<VulnerabilitySyncResult> ReconcileVulnerabilitiesAsync(
+        Guid tenantId, Guid connectorId, VulnerabilityCollection collection, CancellationToken ct)
+    {
+        await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
+        var reconciler = new VulnerabilityReconciler(db, _log);
+        return await reconciler.ReconcileAsync(connectorId, collection, ct);
     }
 
     // ---- Reconciliação de exposições de postura (AEGIS-MVP-POSTURE-02) ----------------------------

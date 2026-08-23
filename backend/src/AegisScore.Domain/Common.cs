@@ -226,5 +226,14 @@ public enum ThreatSource { Cve = 0, MitreAttck = 1, Kev = 2, ThreatIntel = 3, In
 /// <summary>Situação da exposição de um ativo a uma ameaça (a aresta ativo↔ameaça).</summary>
 public enum ExposureStatus { Active = 0, Mitigated = 1, Accepted = 2, FalsePositive = 3 }
 
+/// <summary>
+/// [AEGIS-MVP-VULN-01] Ciclo de vida de uma OBSERVAÇÃO de fonte (<see cref="AssetThreatObservation"/>): ABERTA ou
+/// RESOLVIDA numa coleta COMPLETA daquela fonte. Genérico e PROVIDER-NEUTRAL — cada conector controla o ciclo das
+/// SUAS observações; a exposição consolidada (<see cref="AssetThreatExposure"/>) fica efetivamente aberta enquanto
+/// QUALQUER observação estiver <see cref="Open"/>. Nunca há exclusão silenciosa; coleta parcial NÃO resolve por
+/// omissão. É DISTINTO da disposição humana <see cref="ExposureStatus"/>, que o reconciliador jamais toca.
+/// </summary>
+public enum ObservationLifecycle { Open = 0, Resolved = 1 }
+
 /// <summary>Gatilho que originou o cálculo de um raio de explosão.</summary>
 public enum BlastRadiusTrigger { Manual = 0, Scheduled = 1, ThreatDriven = 2 }

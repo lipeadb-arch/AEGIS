@@ -2,7 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { ConnectorConfig, ConnectorHealth, SaveConnectorRequest } from '../models/connector.models';
+import { ConnectorConfig, ConnectorHealth, SaveConnectorRequest, SyncResult } from '../models/connector.models';
 
 /**
  * Cliente das rotas de integração.
@@ -44,10 +44,14 @@ export class ConnectorService {
       .pipe(catchError((err) => throwError(() => this.describe(err))));
   }
 
-  /** Coleta sob demanda: grava os sinais e carimba LastSyncAt/LastStatus numa transação. */
-  sync(connectorId: string): Observable<{ signalsCollected: number }> {
+  /**
+   * Coleta sob demanda: grava os sinais e carimba LastSyncAt/LastStatus numa transação. Para conectores de
+   * VULNERABILIDADE, `signalsCollected` é 0 (não há sinais) e `vulnerabilities` traz as contagens reais
+   * (ativos/CVEs/exposições/observações) — o usuário nunca vê "0 coletados" após um sync real.
+   */
+  sync(connectorId: string): Observable<SyncResult> {
     return this.http
-      .post<{ signalsCollected: number }>(`${this.base}/connectors/${connectorId}/sync`, {})
+      .post<SyncResult>(`${this.base}/connectors/${connectorId}/sync`, {})
       .pipe(catchError((err) => throwError(() => this.describe(err))));
   }
 

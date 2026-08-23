@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,7 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
     private const int MaxEvidence = 6;
     private const int MaxRecommendations = 6;
     private const int MaxExposures = 8;
+    private const int MaxVulnerabilities = 8;
     private const int EvidenceQuoteMaxChars = 240;
     private const int ReasonMaxChars = 160;
     private const int RemediationMaxChars = 240;
@@ -105,6 +107,56 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
                 f.Threats ?? new List<string>()))
             .ToList();
 
+        // [AEGIS-MVP-VULN-01] Principais vulnerabilidades ativo×CVE efetivamente ABERTAS (no máx. 8), priorizadas por
+        // FATOS DA FONTE + criticidade do ativo (a MESMA régua determinística da tela). Consulta LIMITADA no banco
+        // (Take 8 + observações só dos 8) — nunca materializa todo o tenant. SÓ campos permitidos — NUNCA machineId,
+        // ExternalId de binding, IP, aadDeviceId, segredo ou payload bruto.
+        var topExposureRows = await _db.AssetThreatExposures.AsNoTracking()
+            .Where(e => e.Threat!.Source == ThreatSource.Cve
+                && (_db.AssetThreatObservations.Any(o => o.AssetThreatExposureId == e.Id && o.LifecycleState == ObservationLifecycle.Open)
+                    || !_db.AssetThreatObservations.Any(o => o.AssetThreatExposureId == e.Id)))
+            .OrderByDescending(e => e.Threat!.ExploitVerified == true)
+            .ThenByDescending(e => e.Threat!.PublicExploit == true)
+            .ThenByDescending(e => e.Threat!.CvssScore ?? -1)
+            .ThenByDescending(e => e.Threat!.Epss ?? -1)
+            .ThenByDescending(e => e.Asset!.Criticality)
+            .ThenBy(e => e.Threat!.Code)
+            .ThenBy(e => e.Asset!.Name)
+            .ThenBy(e => e.Id)
+            .Take(MaxVulnerabilities)
+            .Select(e => new
+            {
+                e.Id,
+                CveId = e.Threat!.Code, e.Threat!.Severity, e.Threat!.CvssScore,
+                e.Threat!.PublicExploit, e.Threat!.ExploitVerified, e.Threat!.Epss,
+                AssetName = e.Asset!.Name, AssetCriticality = e.Asset!.Criticality,
+            })
+            .ToListAsync(ct);
+
+        var topIds = topExposureRows.Select(r => r.Id).ToList();
+        var obsForTop = await _db.AssetThreatObservations.AsNoTracking()
+            .Where(o => topIds.Contains(o.AssetThreatExposureId))
+            .Select(o => new { o.AssetThreatExposureId, Provider = o.ConnectorConfig!.Provider, o.EvidenceJson })
+            .ToListAsync(ct);
+        var obsByExposure = obsForTop.GroupBy(o => o.AssetThreatExposureId).ToDictionary(g => g.Key, g => g.ToList());
+
+        var topVulnerabilities = topExposureRows
+            .Select(r =>
+            {
+                obsByExposure.TryGetValue(r.Id, out var os);
+                os ??= new();
+                var providers = os.Select(o => o.Provider.ToString())
+                    .Distinct(System.StringComparer.Ordinal)
+                    .OrderBy(p => p, System.StringComparer.Ordinal)
+                    .ToList();
+                var product = os.Select(o => FirstProduct(o.EvidenceJson))
+                    .FirstOrDefault(p => !string.IsNullOrWhiteSpace(p));
+                return new AuditorVulnerability(
+                    r.CveId, r.Severity, r.CvssScore, r.PublicExploit, r.ExploitVerified, r.Epss,
+                    r.AssetName, r.AssetCriticality, product, "Open", providers);
+            })
+            .ToList();
+
         // Recomendações pendentes derivadas das lacunas (curtas, sem inventar): "código: o que falta".
         var recommendations = topGaps
             .Select(g => string.IsNullOrWhiteSpace(g.Reason) ? g.SubcategoryCode : $"{g.SubcategoryCode}: {g.Reason}")
@@ -125,12 +177,39 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
             recentEvidence,
             connectors,
             recommendations,
-            topExposures);
+            topExposures,
+            topVulnerabilities);
     }
 
     private static string Truncate(string? s, int max)
     {
         var t = (s ?? "").Trim();
         return t.Length <= max ? t : t[..max] + "…";
+    }
+
+    /// <summary>Primeiro produto afetado (rótulo curto) do EvidenceJson da exposição, ou null. Defensivo a jsonb inválido.</summary>
+    private static string? FirstProduct(string? evidenceJson)
+    {
+        if (string.IsNullOrWhiteSpace(evidenceJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(evidenceJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty("Products", out var products)
+                || products.ValueKind != JsonValueKind.Array)
+                return null;
+            foreach (var p in products.EnumerateArray())
+            {
+                var vendor = p.TryGetProperty("Vendor", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+                var name = p.TryGetProperty("Product", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
+                var label = string.Join(" ", new[] { vendor, name }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                if (!string.IsNullOrWhiteSpace(label)) return label.Length <= 120 ? label : label[..120];
+            }
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }
