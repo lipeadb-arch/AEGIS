@@ -12,57 +12,150 @@ using Xunit;
 namespace AegisScore.Infrastructure.Tests.Health;
 
 /// <summary>
-/// [AEGIS-AUD-048] Comportamentos de MAIOR RISCO dos health checks: readiness que degrada com segurança
-/// (nunca propaga exceção) e a resposta HTTP que NÃO vaza detalhe interno. O caminho "Healthy" ponta a
-/// ponta é coberto pelo smoke real contra PostgreSQL migrado (readiness sobre SQLite reporta sempre
-/// migrations pendentes, por design do EnsureCreated).
+/// [AEGIS-AUD-048 / AEGIS-MVP-OPS-01] Comportamentos de MAIOR RISCO dos health checks: readiness que
+/// degrada com segurança (nunca propaga exceção), o CURTO-CIRCUITO barato do probe recorrente (não
+/// reexecuta o <see cref="SchemaReadinessGuard"/> a cada sondagem) e a resposta HTTP que NÃO vaza detalhe
+/// interno. A validação estrutural COMPLETA continua provada pelos <c>SchemaReadinessGuardTests</c>, onde
+/// ela roda uma vez no arranque, fail-closed.
 /// </summary>
 public sealed class HealthCheckTests
 {
-    /// <summary>IServiceProvider vazio — o readiness resolve o key ring OPCIONALMENTE (ausente em teste).</summary>
-    private sealed class EmptyServiceProvider : IServiceProvider
+    private static AegisReadinessHealthCheck NewCheck(AegisScoreDbContext db, StartupReadinessState startup) =>
+        new(db, startup, NullLogger<AegisReadinessHealthCheck>.Instance);
+
+    /// <summary>Estado de arranque já APROVADO (o guard completo passou uma vez, no boot).</summary>
+    private static StartupReadinessState ReadyState()
     {
-        public object? GetService(Type serviceType) => null;
+        var state = new StartupReadinessState();
+        state.MarkReady();
+        return state;
     }
 
-    private static AegisReadinessHealthCheck NewCheck(AegisScoreDbContext db) =>
-        new(db, new EmptyServiceProvider(), NullLogger<AegisReadinessHealthCheck>.Instance);
+    /// <summary>
+    /// DbContext apontando para um SQLite cujo DIRETÓRIO não existe: <c>CanConnectAsync</c> falha de forma
+    /// determinística (retorna false ou lança, e o check trata) — simula o PostgreSQL inacessível sem
+    /// depender de rede. Diferente de fechar uma conexão <c>:memory:</c>, que reabriria um banco novo e
+    /// vazio, mascarando a indisponibilidade.
+    /// </summary>
+    private static AegisScoreDbContext UnreachableDb() =>
+        new(new DbContextOptionsBuilder<AegisScoreDbContext>()
+                .UseSqlite($"DataSource=/aegis-unreachable-{Guid.NewGuid():N}/db.sqlite").Options,
+            new SystemTenantContext(null));
+
+    // ---- Readiness recorrente ----------------------------------------------------
 
     [Fact]
-    public async Task Readiness_SchemaNaoPreparado_RetornaUnhealthy_SemLancar()
+    public async Task Readiness_ArranqueNaoPronto_RetornaUnhealthy_SemTocarOBanco()
+    {
+        // Banco INACESSÍVEL de propósito: se o check o tocasse, o rótulo seria "database-unavailable" ou
+        // "dependency-unavailable". Obter "startup-not-ready" prova o curto-circuito ANTES de qualquer
+        // acesso ao banco.
+        await using var db = UnreachableDb();
+
+        var startup = new StartupReadinessState();   // NÃO pronto
+
+        var result = await NewCheck(db, startup).CheckHealthAsync(new HealthCheckContext());
+
+        result.Status.Should().Be(HealthStatus.Unhealthy);
+        // Rótulo genérico do arranque — nunca lista de pendências, nome de tabela ou connection string.
+        result.Description.Should().Be("startup-not-ready");
+    }
+
+    [Fact]
+    public async Task Readiness_ArranquePronto_BancoAcessivel_RetornaHealthy()
     {
         using var connection = new SqliteConnection("DataSource=:memory:");
         connection.Open();
         await using var db = new AegisScoreDbContext(
             new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(connection).Options,
             new SystemTenantContext(null));
-        await db.Database.EnsureCreatedAsync();   // schema do MODELO, sem histórico de migrations → "pendente"
+        // Nem sequer criamos o schema: CanConnectAsync verifica a CONEXÃO, não tabelas nem catálogo.
 
-        var result = await NewCheck(db).CheckHealthAsync(new HealthCheckContext());
+        var result = await NewCheck(db, ReadyState()).CheckHealthAsync(new HealthCheckContext());
 
-        result.Status.Should().Be(HealthStatus.Unhealthy);
-        // Rótulo genérico — nunca a lista de pendências, nomes de tabela ou connection string.
-        result.Description.Should().Be("schema-not-ready");
+        result.Status.Should().Be(HealthStatus.Healthy);
     }
 
     [Fact]
-    public async Task Readiness_BancoInacessivel_RetornaUnhealthy_SemLancar()
+    public async Task Readiness_ArranquePronto_BancoInacessivel_RetornaUnhealthy_SemLancar()
     {
-        var connection = new SqliteConnection("DataSource=:memory:");
-        connection.Open();
-        await using var db = new AegisScoreDbContext(
-            new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(connection).Options,
-            new SystemTenantContext(null));
-
-        // Simula indisponibilidade do banco: a conexão some por baixo do contexto.
-        connection.Dispose();
+        // Arranque aprovado, mas o PostgreSQL não responde: CanConnectAsync falha.
+        await using var db = UnreachableDb();
 
         // Não pode PROPAGAR — o health check tem de degradar com segurança.
-        var act = async () => await NewCheck(db).CheckHealthAsync(new HealthCheckContext());
+        var act = async () => await NewCheck(db, ReadyState()).CheckHealthAsync(new HealthCheckContext());
         var result = await act.Should().NotThrowAsync();
 
         result.Which.Status.Should().Be(HealthStatus.Unhealthy);
     }
+
+    [Fact]
+    public async Task Readiness_ArranquePronto_SchemaSemCatalogo_RetornaHealthy_ProvaQueNaoRodaOGuard()
+    {
+        using var connection = new SqliteConnection("DataSource=:memory:");
+        connection.Open();
+        await using var db = new AegisScoreDbContext(
+            new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(connection).Options,
+            new SystemTenantContext(null));
+        // Schema do MODELO, catálogo VAZIO e, para o EF, migrations "pendentes" (sem histórico). Sob o
+        // comportamento ANTIGO (guard completo por probe) isto reprovaria com "schema-not-ready".
+        await db.Database.EnsureCreatedAsync();
+
+        var result = await NewCheck(db, ReadyState()).CheckHealthAsync(new HealthCheckContext());
+
+        // Prova COMPORTAMENTAL de que o probe recorrente NÃO executa mais o SchemaReadinessGuard: catálogo
+        // ausente e migrations pendentes não reprovam — só a conectividade importa aqui.
+        result.Status.Should().Be(HealthStatus.Healthy);
+    }
+
+    [Fact]
+    public async Task Readiness_ChamadasRepetidas_ArranquePronto_PermanecemHealthy()
+    {
+        using var connection = new SqliteConnection("DataSource=:memory:");
+        connection.Open();
+        await using var db = new AegisScoreDbContext(
+            new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(connection).Options,
+            new SystemTenantContext(null));
+        await db.Database.EnsureCreatedAsync();   // catálogo vazio de propósito
+
+        var check = NewCheck(db, ReadyState());
+
+        // Sondagem em laço, como o Render: permanece saudável sem depender de catálogo/regras/proveniência.
+        for (var i = 0; i < 5; i++)
+        {
+            var result = await check.CheckHealthAsync(new HealthCheckContext());
+            result.Status.Should().Be(HealthStatus.Healthy, $"probe recorrente #{i} não relê o pacote");
+        }
+    }
+
+    // ---- StartupReadinessState (latch monotônico) --------------------------------
+
+    [Fact]
+    public void StartupReadinessState_ComecaNaoPronto_ETransitaUmaVezParaPronto()
+    {
+        var state = new StartupReadinessState();
+        state.IsReady.Should().BeFalse("o estado inicial é NÃO pronto");
+
+        state.MarkReady();
+        state.IsReady.Should().BeTrue();
+
+        // Idempotente e sem volta: marcar de novo mantém o latch em "pronto".
+        state.MarkReady();
+        state.IsReady.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task StartupReadinessState_SeguroSobConcorrencia()
+    {
+        var state = new StartupReadinessState();
+
+        // Várias tarefas marcando ao mesmo tempo: latch monotônico, termina "pronto", sem exceção.
+        await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(() => state.MarkReady())));
+
+        state.IsReady.Should().BeTrue();
+    }
+
+    // ---- Resposta HTTP sanitizada ------------------------------------------------
 
     [Fact]
     public async Task ResponseWriter_NaoVazaDetalheInterno()

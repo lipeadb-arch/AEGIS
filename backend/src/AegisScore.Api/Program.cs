@@ -268,11 +268,19 @@ builder.Services.AddRateLimiter(o =>
         ?? (ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown");
 });
 
-// [AEGIS-AUD-048] Health checks REAIS, separando dois conceitos distintos:
+// [AEGIS-MVP-OPS-01] Estado em memória de que a validação estrutural COMPLETA do arranque foi aprovada.
+// Singleton: latch monotônico, sem banco/cache/tabela/worker. O readiness recorrente o consulta para NÃO
+// reexecutar o SchemaReadinessGuard completo a cada probe (ver StartupReadinessState e o bloco de arranque).
+builder.Services.AddSingleton<StartupReadinessState>();
+
+// [AEGIS-AUD-048 / AEGIS-MVP-OPS-01] Health checks REAIS, separando dois conceitos distintos:
 //  - "self" (liveness): confirma só que o PROCESSO está vivo. Não toca banco, IA, SIEM/EDR ou fornecedor
 //    externo — é o que um orquestrador usa para decidir reiniciar um processo travado.
-//  - "readiness": confirma que a aplicação está APTA a servir (PostgreSQL + migrations + catálogo íntegro),
-//    reusando o SchemaReadinessGuard. Só leitura; a ausência de Azure OpenAI/Entra/conectores NÃO reprova.
+//  - "readiness": confirma que a aplicação está APTA a servir, de forma BARATA para sondagem recorrente:
+//    (1) o arranque concluiu a validação estrutural COMPLETA (StartupReadinessState) + (2) o PostgreSQL
+//    continua acessível (checagem LEVE de conectividade). A validação integral do pacote (catálogo/regras/
+//    proveniência) roda UMA vez no arranque, fail-closed, NÃO a cada probe. Só leitura; a ausência de
+//    Azure OpenAI/Entra/conectores NÃO reprova.
 // Os endpoints (/health/live e /health/ready) são mapeados abaixo, anônimos e com resposta sanitizada.
 builder.Services.AddHealthChecks()
     .AddCheck("self", () => HealthCheckResult.Healthy(), tags: new[] { "live" })
@@ -295,6 +303,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    var startupReadiness = scope.ServiceProvider.GetRequiredService<StartupReadinessState>();
     try
     {
         var db = scope.ServiceProvider.GetRequiredService<AegisScoreDbContext>();
@@ -303,9 +312,14 @@ using (var scope = app.Services.CreateScope())
 
         await SchemaReadinessGuard.EnsureReadyAsync(db, keyRingDb);
 
+        // [AEGIS-MVP-OPS-01] SOMENTE após o guard COMPLETO aprovar: habilita o readiness recorrente
+        // barato. Se EnsureReadyAsync lançar, este ponto não é alcançado — o estado continua "não pronto"
+        // e o boot aborta abaixo, antes de app.Run().
+        startupReadiness.MarkReady();
+
         logger.LogInformation(
             "Startup: banco verificado — migrations aplicadas nos dois contextos, catálogo NIST CSF 2.0 " +
-            "e regras de avaliação presentes e íntegros.");
+            "e regras de avaliação presentes e íntegros. Readiness recorrente habilitado (checagem leve).");
     }
     catch (Exception ex)
     {
