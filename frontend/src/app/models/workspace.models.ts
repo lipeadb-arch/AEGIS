@@ -82,10 +82,104 @@ export function connectorBreakdown(c: ConnectorHealthSummary): string {
   return parts.join(' · ');
 }
 
+/**
+ * [AEGIS-MVP-ENV-01] Uma fatia de cobertura por NATUREZA da prova esperada. É só COBERTURA (peso avaliado ÷
+ * elegível), NUNCA score: 100% coberto pode conter controles não conformes, e 0% significa "não avaliado",
+ * jamais reprovação. Sem score por bucket — a entrega trata de cobertura, não de quatro scores concorrentes.
+ */
+export interface EvidenceCoverageSlice {
+  eligibleControls: number;
+  evaluatedControls: number;
+  eligibleMaxScore: number;
+  evaluatedMaxScore: number;
+  coveragePercentage: number;
+}
+
+/**
+ * Cobertura recortada pela NATUREZA da medição esperada. Os quatro buckets PARTICIONAM o mesmo universo
+ * elegível de `overall` (framework ativo); a autoridade de classificação é o `EvidenceType` tipado da regra —
+ * a ausência de regra é o estado próprio `notAutomated` (nunca reclassificado como documentação).
+ */
+export interface EvidenceCoverageSummary {
+  telemetry: EvidenceCoverageSlice; // Ambiente e telemetria
+  documentation: EvidenceCoverageSlice; // Governança e evidência dirigida
+  both: EvidenceCoverageSlice; // Evidência híbrida
+  notAutomated: EvidenceCoverageSlice; // Avaliação orientada
+}
+
 export interface WorkspacePosture {
   overall: WorkspaceOverall;
   functions: FunctionPosture[];
   connectors: ConnectorHealthSummary;
+  evidenceCoverage: EvidenceCoverageSummary;
+}
+
+/** Natureza da prova esperada — chave estável dos quatro buckets de cobertura. */
+export type EvidenceNature = 'telemetry' | 'documentation' | 'both' | 'notAutomated';
+
+/** Um bucket já com rótulo e texto de ajuda para a UI (a natureza da medição, não a existência de um PDF). */
+export interface EvidenceNatureView {
+  key: EvidenceNature;
+  label: string;
+  help: string;
+  slice: EvidenceCoverageSlice;
+}
+
+/**
+ * Rótulos e ajuda por natureza — a classificação descreve a NATUREZA ESPERADA da medição, não a existência de
+ * um documento. `documentation` é governança/evidência dirigida (entrevista, evidência literal OU documento),
+ * jamais "faça upload de todas as políticas"; `notAutomated` é a fronteira atual da automação, nunca falha do usuário.
+ */
+export function evidenceNatures(ec: EvidenceCoverageSummary): EvidenceNatureView[] {
+  return [
+    {
+      key: 'telemetry',
+      label: 'Ambiente e telemetria',
+      help: 'Controles cuja medição esperada vem do ambiente — cloud, identidade, ativos, EDR. Coletáveis por conector.',
+      slice: ec.telemetry,
+    },
+    {
+      key: 'documentation',
+      label: 'Governança e evidência dirigida',
+      help: 'Controles organizacionais, comprovados por evidência dirigida, entrevista ou documento — não necessariamente um PDF.',
+      slice: ec.documentation,
+    },
+    {
+      key: 'both',
+      label: 'Evidência híbrida',
+      // A cobertura só afirma que EXISTE avaliação da subcategoria — não que telemetria E documento foram
+      // observados simultaneamente. A completude das fontes é do fluxo de avaliação, não desta projeção.
+      help: 'Controles classificados como híbridos; a completude das fontes é validada pelo fluxo de avaliação responsável.',
+      slice: ec.both,
+    },
+    {
+      key: 'notAutomated',
+      label: 'Avaliação orientada',
+      help: 'Controles ainda sem regra de automação. Não é falha sua — é a fronteira atual da automação.',
+      slice: ec.notAutomated,
+    },
+  ];
+}
+
+/** Etapa da jornada environment-first, derivada EXCLUSIVAMENTE da projeção do workspace (ver `environmentStage`). */
+export type EnvironmentStage = 'no-enabled-connector' | 'never-synced' | 'synced-no-tech-coverage' | 'measured';
+
+/**
+ * Deriva a etapa environment-first por FUNÇÃO PURA sobre a projeção — sem estado próprio nem chamada extra:
+ *  • A `no-enabled-connector` — nenhum conector HABILITADO. NÃO significa "nada configurado": pode haver
+ *    integrações configuradas porém desabilitadas (coleta histórica preservada). A UI diferencia as DUAS
+ *    apresentações por `connectors.configured` (0 = nada configurado; >0 = configurado mas nada ativo);
+ *  • B `never-synced`         — habilitado(s), porém nenhum jamais sincronizou;
+ *  • C `synced-no-tech-coverage` — houve sincronização, mas ainda sem cobertura técnica (telemetria avaliada = 0);
+ *  • D `measured`             — já existe cobertura técnica (telemetria avaliada > 0).
+ */
+export function environmentStage(w: WorkspacePosture): EnvironmentStage {
+  const c = w.connectors;
+  if (c.enabled === 0) return 'no-enabled-connector';
+  const everSynced = c.items.some((i) => i.enabled && i.everSynced);
+  if (!everSynced) return 'never-synced';
+  if (w.evidenceCoverage.telemetry.evaluatedControls === 0) return 'synced-no-tech-coverage';
+  return 'measured';
 }
 
 /** Rótulo de postura para a UI: "Não avaliado" quando não há score; caso contrário o percentual com 1 casa. */
