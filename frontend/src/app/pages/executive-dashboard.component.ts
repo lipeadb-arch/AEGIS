@@ -172,7 +172,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
                etapa obrigatória paralela — a governança entra depois, onde houver lacuna organizacional. O bloco
                "Comece pelo ambiente" acima conduz a jornada; estes passos apenas a resumem. -->
           <ul class="es-steps">
-            <li><b>Conecte um ambiente</b> — a leitura somente leitura de cloud, identidade, ativos e controles é o primeiro valor.</li>
+            <li><b>Conecte um ambiente</b> — a leitura segura e somente leitura de cloud, identidade, ativos e controles é o primeiro valor.</li>
             <li><b>Revise o que foi coletado</b> — ativos, exposições e vulnerabilidades aparecem antes mesmo de o Score mudar.</li>
             <li><b>Complemente a governança depois</b> — só onde houver lacuna organizacional, com entrevista, evidência dirigida ou documento.</li>
           </ul>

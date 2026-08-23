@@ -147,7 +147,9 @@ export function evidenceNatures(ec: EvidenceCoverageSummary): EvidenceNatureView
     {
       key: 'both',
       label: 'Evidência híbrida',
-      help: 'Exigem as duas naturezas: sinal do ambiente E evidência de governança.',
+      // A cobertura só afirma que EXISTE avaliação da subcategoria — não que telemetria E documento foram
+      // observados simultaneamente. A completude das fontes é do fluxo de avaliação, não desta projeção.
+      help: 'Controles classificados como híbridos; a completude das fontes é validada pelo fluxo de avaliação responsável.',
       slice: ec.both,
     },
     {
@@ -160,18 +162,20 @@ export function evidenceNatures(ec: EvidenceCoverageSummary): EvidenceNatureView
 }
 
 /** Etapa da jornada environment-first, derivada EXCLUSIVAMENTE da projeção do workspace (ver `environmentStage`). */
-export type EnvironmentStage = 'no-connector' | 'never-synced' | 'synced-no-tech-coverage' | 'measured';
+export type EnvironmentStage = 'no-enabled-connector' | 'never-synced' | 'synced-no-tech-coverage' | 'measured';
 
 /**
  * Deriva a etapa environment-first por FUNÇÃO PURA sobre a projeção — sem estado próprio nem chamada extra:
- *  • A `no-connector`         — nenhum conector habilitado;
+ *  • A `no-enabled-connector` — nenhum conector HABILITADO. NÃO significa "nada configurado": pode haver
+ *    integrações configuradas porém desabilitadas (coleta histórica preservada). A UI diferencia as DUAS
+ *    apresentações por `connectors.configured` (0 = nada configurado; >0 = configurado mas nada ativo);
  *  • B `never-synced`         — habilitado(s), porém nenhum jamais sincronizou;
  *  • C `synced-no-tech-coverage` — houve sincronização, mas ainda sem cobertura técnica (telemetria avaliada = 0);
  *  • D `measured`             — já existe cobertura técnica (telemetria avaliada > 0).
  */
 export function environmentStage(w: WorkspacePosture): EnvironmentStage {
   const c = w.connectors;
-  if (c.enabled === 0) return 'no-connector';
+  if (c.enabled === 0) return 'no-enabled-connector';
   const everSynced = c.items.some((i) => i.enabled && i.everSynced);
   if (!everSynced) return 'never-synced';
   if (w.evidenceCoverage.telemetry.evaluatedControls === 0) return 'synced-no-tech-coverage';

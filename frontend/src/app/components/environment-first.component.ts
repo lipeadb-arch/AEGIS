@@ -35,7 +35,7 @@ import {
         <span class="step">Etapa {{ stepLabel() }}</span>
       </div>
 
-      <!-- Aviso de conectores independe da etapa: falha/degradação nunca é "ambiente medido de forma saudável". -->
+      <!-- Aviso operacional: falha, degradação OU sincronização parcial (nunca-sincronizado fora da etapa B). -->
       @if (hasConnectorAlert()) {
         <div class="alert">
           <b>Atenção aos conectores.</b>
@@ -50,19 +50,36 @@ import {
       }
 
       @switch (stage()) {
-        @case ('no-connector') {
-          <h4>Nenhum ambiente conectado</h4>
-          <p>
-            O primeiro valor do Aegis vem da <b>leitura somente leitura</b> do seu ambiente — cloud, identidade,
-            ativos e controles. <b>Documentos não são necessários para começar</b>: a governança entra depois,
-            onde houver lacuna genuinamente organizacional.
-          </p>
-          @if (isTenantAdmin()) {
-            <a routerLink="/settings/integrations" class="cta">Conectar um ambiente</a>
-          } @else {
-            <p class="muted">
-              Peça a um administrador para conectar um ambiente em <b>Configurações › Integrações</b>.
+        @case ('no-enabled-connector') {
+          <!-- Etapa A, duas apresentações derivadas de configured: enabled==0 não implica nada configurado. -->
+          @if (connectors().configured === 0) {
+            <h4>Nenhum ambiente conectado</h4>
+            <p>
+              O primeiro valor do Aegis vem da <b>leitura segura e somente leitura</b> do seu ambiente — cloud,
+              identidade, ativos e controles. <b>Documentos não são necessários para começar</b>: a governança
+              entra depois, onde houver lacuna genuinamente organizacional.
             </p>
+            @if (isTenantAdmin()) {
+              <a routerLink="/settings/integrations" class="cta">Conectar um ambiente</a>
+            } @else {
+              <p class="muted">
+                Peça a um administrador para conectar um ambiente em <b>Configurações › Integrações</b>.
+              </p>
+            }
+          } @else {
+            <h4>Nenhuma coleta está ativa</h4>
+            <p>
+              Há {{ connectors().configured }} integração(ões) configurada(s), porém <b>nenhuma habilitada</b>.
+              Resultados já coletados podem seguir visíveis, mas <b>nenhuma nova sincronização ocorrerá</b>
+              enquanto as integrações permanecerem desabilitadas.
+            </p>
+            @if (isTenantAdmin()) {
+              <a routerLink="/settings/integrations" class="cta">Revisar integrações</a>
+            } @else {
+              <p class="muted">
+                Peça a um administrador para revisar as integrações em <b>Configurações › Integrações</b>.
+              </p>
+            }
           }
         }
 
@@ -96,13 +113,19 @@ import {
         }
 
         @case ('measured') {
-          <h4>Ambiente medido</h4>
+          <!-- Existe coleta técnica. O TÍTULO reflete a saúde ATUAL sem apagar a evidência histórica. -->
+          @if (hasConnectorAlert()) {
+            <h4>Medição disponível, integrações requerem atenção</h4>
+          } @else {
+            <h4>Ambiente medido</h4>
+          }
           <p>
-            Cobertura técnica real de <b>{{ telemetry().coveragePercentage.toFixed(1) }}%</b>
-            ({{ telemetry().evaluatedControls }}/{{ telemetry().eligibleControls }} controles de ambiente).
-            Última sincronização
-            {{ connectors().lastSyncAt ? (connectors().lastSyncAt | date: 'dd/MM HH:mm') : '—' }} ·
-            conectores {{ connectors().healthy }}/{{ connectors().enabled }} operacionais.
+            Cobertura técnica de <b>{{ telemetry().coveragePercentage.toFixed(1) }}%</b>
+            ({{ telemetry().evaluatedControls }}/{{ telemetry().eligibleControls }} controles de ambiente),
+            apurada da última evidência válida@if (connectors().lastSyncAt) {
+              (sincronização {{ connectors().lastSyncAt | date: 'dd/MM HH:mm' }})}. A cobertura e os resultados
+            vêm dessa última evidência; a <b>saúde operacional atual</b> dos conectores
+            ({{ connectors().healthy }}/{{ connectors().enabled }} operacionais) é um eixo à parte.
           </p>
           <div class="links">
             <a routerLink="/exposures" class="link">Exposições</a>
@@ -390,19 +413,29 @@ export class EnvironmentFirstComponent {
   readonly telemetry = computed(() => this.posture().evidenceCoverage.telemetry);
   readonly natures = computed<EvidenceNatureView[]>(() => evidenceNatures(this.posture().evidenceCoverage));
 
-  /** Falha OU degradação em conectores habilitados — aviso visível, em qualquer etapa. */
+  /**
+   * Aviso operacional visível: falha, degradação OU sincronização parcial (algum habilitado nunca sincronizou).
+   * O nunca-sincronizado NÃO duplica o aviso na etapa B, onde TODOS os habilitados nunca sincronizaram e o
+   * conteúdo central já explica isso. `disabled` NÃO é falha (pode ser intencional) e não dispara o aviso.
+   */
   readonly hasConnectorAlert = computed(() => {
     const c = this.connectors();
-    return c.failed > 0 || c.degraded > 0;
+    return c.failed > 0 || c.degraded > 0 || (c.neverSynced > 0 && this.stage() !== 'never-synced');
   });
 
-  /** Cobertura por natureza aparece assim que há coleta (etapas C e D). */
+  /**
+   * Cobertura por natureza aparece sempre que há ALGO real (histórico inclusive): alguma sincronização em
+   * qualquer conector (mesmo depois desabilitado) OU algum controle avaliado. Some apenas quando não há
+   * nenhuma avaliação e nenhuma sincronização. `overall.evaluatedControls > 0` já equivale a "algum bucket
+   * avaliado" (os buckets particionam o total). Não usa `lastSyncAt` (que só olha habilitados).
+   */
   readonly showCoverage = computed(() => {
-    const s = this.stage();
-    return s === 'synced-no-tech-coverage' || s === 'measured';
+    const w = this.posture();
+    const anySync = w.connectors.items.some((i) => i.everSynced);
+    return anySync || w.overall.evaluatedControls > 0;
   });
 
-  /** Nota da IA consultiva — só após a coleta (não antes de haver o que explicar). */
+  /** Nota da IA consultiva — quando há algo real a explicar (alguma sincronização OU algum controle avaliado). */
   readonly showAiNote = computed(() => this.showCoverage());
 
   /** Leitura honesta do escopo do score, quando há score e a cobertura geral ainda não é total. */
@@ -412,7 +445,10 @@ export class EnvironmentFirstComponent {
   });
 
   readonly stepLabel = computed(
-    () => ({ 'no-connector': 'A', 'never-synced': 'B', 'synced-no-tech-coverage': 'C', measured: 'D' })[this.stage()],
+    () =>
+      ({ 'no-enabled-connector': 'A', 'never-synced': 'B', 'synced-no-tech-coverage': 'C', measured: 'D' })[
+        this.stage()
+      ],
   );
 
   /** Barra de cobertura: largura clampada a [0,100] — nunca estoura o trilho por dado inesperado. */

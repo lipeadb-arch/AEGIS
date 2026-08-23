@@ -402,28 +402,45 @@ public sealed class WorkspacePostureQueryTests : IDisposable
     }
 
     [Fact]
-    public async Task DuplicidadeIncoerenteDeRegra_MesmaSubcategoria_NaturezasDivergentes_Falha()
+    public async Task DuplicidadeDeRegra_MesmaSubcategoria_TiposDivergentes_Falha()
     {
-        // Duas regras para o MESMO SubcategoryId com naturezas divergentes (códigos distintos driblam o índice único).
-        await using (var seed = NewContext(TenantA))
-        {
-            var subId = await seed.Subcategories.Where(s => s.Code == PrAa).Select(s => s.Id).SingleAsync();
-            seed.AssessmentRules.Add(new AegisAssessmentRule
-            {
-                SubcategoryId = subId, SubcategoryCode = PrAa, EvidenceType = RuleEvidenceType.Telemetry,
-            });
-            seed.AssessmentRules.Add(new AegisAssessmentRule
-            {
-                SubcategoryId = subId, SubcategoryCode = PrAa + "-DUP", EvidenceType = RuleEvidenceType.Documentation,
-            });
-            await seed.SaveChangesAsync();
-        }
+        // Duas regras para o MESMO SubcategoryId com tipos DIVERGENTES → falha (fail-closed).
+        await SeedDuplicateRulesAsync(PrAa, RuleEvidenceType.Telemetry, RuleEvidenceType.Documentation);
 
         await using var db = NewContext(TenantA);
         var act = async () => await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync();
 
         (await act.Should().ThrowAsync<InvalidOperationException>())
-            .WithMessage("*Duplicidade incoerente*");
+            .WithMessage("*Duplicidade de regra*");
+    }
+
+    [Fact]
+    public async Task DuplicidadeDeRegra_MesmaSubcategoria_MesmoTipo_TambemFalha()
+    {
+        // Segunda regra para o MESMO SubcategoryId com tipo IGUAL também falha — nada de sobrescrever em silêncio.
+        await SeedDuplicateRulesAsync(PrAa, RuleEvidenceType.Telemetry, RuleEvidenceType.Telemetry);
+
+        await using var db = NewContext(TenantA);
+        var act = async () => await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync();
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .WithMessage("*Duplicidade de regra*");
+    }
+
+    [Fact]
+    public async Task RegrasDistintas_EmSubcategoriasDiferentes_PermanecemValidas()
+    {
+        // Regras em subcategorias DIFERENTES não são duplicidade — a classificação segue normalmente.
+        await SeedRuleAsync(PrAa, RuleEvidenceType.Telemetry);
+        await SeedRuleAsync(PrDs, RuleEvidenceType.Documentation);
+
+        await using var db = NewContext(TenantA);
+        var ec = (await new WorkspacePostureQuery(db, new SystemTenantContext(TenantA)).GetAsync()).EvidenceCoverage;
+
+        ec.Telemetry.EligibleControls.Should().Be(1);
+        ec.Documentation.EligibleControls.Should().Be(1);
+        ec.Both.EligibleControls.Should().Be(0);
+        ec.NotAutomated.EligibleControls.Should().Be(1, "DE.CM-01 ficou sem regra");
     }
 
     // ---- fixture --------------------------------------------------------------------
@@ -455,6 +472,16 @@ public sealed class WorkspacePostureQueryTests : IDisposable
             EvidenceType = evidenceType,
             EvidenceRequirements = evidenceRequirements ?? new List<string>(),
         });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Duas regras para o MESMO SubcategoryId (códigos distintos driblam o índice único em SubcategoryCode).</summary>
+    private async Task SeedDuplicateRulesAsync(string subCode, RuleEvidenceType first, RuleEvidenceType second)
+    {
+        await using var db = NewContext(TenantA);
+        var subId = await db.Subcategories.Where(s => s.Code == subCode).Select(s => s.Id).SingleAsync();
+        db.AssessmentRules.Add(new AegisAssessmentRule { SubcategoryId = subId, SubcategoryCode = subCode, EvidenceType = first });
+        db.AssessmentRules.Add(new AegisAssessmentRule { SubcategoryId = subId, SubcategoryCode = subCode + "-DUP", EvidenceType = second });
         await db.SaveChangesAsync();
     }
 

@@ -123,8 +123,11 @@ public sealed class WorkspacePostureQuery : IWorkspacePostureQuery
     /// [AEGIS-MVP-ENV-01] Mapa SubcategoryId → natureza da prova, restrito às subcategorias do catálogo ATIVO
     /// (uma regra de outro framework não perturba esta projeção). A autoridade é EXCLUSIVAMENTE
     /// <c>AegisAssessmentRule.EvidenceType</c>. Falha ACIONÁVEL — nunca fallback silencioso para Telemetry —
-    /// diante de um enum inválido (fora de Telemetry/Documentation/Both) ou de duplicidade INCOERENTE (duas
-    /// regras para a MESMA subcategoria com naturezas divergentes). A ausência de regra NÃO entra no mapa:
+    /// diante de um enum inválido (fora de Telemetry/Documentation/Both) ou de DUPLICIDADE DE REGRA: QUALQUER
+    /// segunda regra para o MESMO SubcategoryId, com tipo igual OU divergente — jamais sobrescrita, dedução
+    /// silenciosa ou eleição de vencedora. A invariante é UMA regra por subcategoria; como o índice único ainda
+    /// vive só em <c>SubcategoryCode</c> (uma constraint por SubcategoryId ficaria para pacote próprio, com
+    /// migration PostgreSQL real), o consumidor permanece fail-closed. A ausência de regra NÃO entra no mapa:
     /// vira NotAutomated no consumidor.
     /// </summary>
     private async Task<Dictionary<Guid, RuleEvidenceType>> BuildEvidenceMapAsync(
@@ -148,10 +151,13 @@ public sealed class WorkspacePostureQuery : IWorkspacePostureQuery
                     $"AegisAssessmentRule com EvidenceType inválido ({(int)r.EvidenceType}) na subcategoria " +
                     $"{r.SubcategoryId}. A classificação de cobertura exige um tipo tipado válido; corrija a regra.");
 
-            if (map.TryGetValue(r.SubcategoryId, out var existing) && existing != r.EvidenceType)
+            // Duplicidade de regra: QUALQUER segunda regra para o mesmo SubcategoryId falha — tipo igual OU
+            // divergente. Nada de sobrescrever, deduplicar em silêncio ou eleger uma vencedora: 1 regra/controle.
+            if (map.ContainsKey(r.SubcategoryId))
                 throw new InvalidOperationException(
-                    $"Duplicidade incoerente de regra para a subcategoria {r.SubcategoryId}: naturezas " +
-                    $"divergentes ({existing} × {r.EvidenceType}). Deve haver UMA natureza por controle.");
+                    $"Duplicidade de regra para a subcategoria {r.SubcategoryId}: há mais de uma " +
+                    $"AegisAssessmentRule para o mesmo controle. Deve haver UMA regra por subcategoria; " +
+                    $"corrija o conjunto de regras.");
 
             map[r.SubcategoryId] = r.EvidenceType;
         }
