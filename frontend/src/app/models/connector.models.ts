@@ -13,6 +13,7 @@ export type ProviderKey =
   | 'MicrosoftDefenderVuln'
   | 'MicrosoftEntraKnight'
   | 'GoogleWorkspaceKnight'
+  | 'GoogleCloudVuln'
   | 'Google'
   | 'Aws'
   | 'MicrosoftSentinel'
@@ -205,6 +206,24 @@ export const PROVIDERS: ProviderSpec[] = [
       { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientSecret', label: 'Client secret', secret: true },
+    ],
+  },
+  // ---- [AEGIS-MVP-MULTICLOUD-01] Google Cloud VM Manager: PRIMEIRA fonte de vulnerabilidade não-Microsoft ----
+  {
+    key: 'GoogleCloudVuln',
+    value: 1, // ConnectorProvider.Google
+    label: 'Google Cloud · VM Manager (Vulnerability Reports)',
+    authType: 'ServiceAccount',
+    authTypeValue: 2, // ConnectorAuthType.ServiceAccount
+    capability: 'VulnerabilityScanner',
+    capabilityValue: 8, // ConnectorCapability.VulnerabilityScanner
+    infoNote:
+      'Coleta REAL somente leitura de vulnerabilidades por instância de VM (recurso × CVE) via VM Manager / OS Config Vulnerability Reports. “Testar” valida autenticação e leitura (pageSize=1); “Sincronizar” atualiza ativos, CVEs e exposições. O destino é a API oficial osconfig.googleapis.com — não há URL configurável. Pré-requisitos: habilitar a API OS Config, ativar o VM Manager e ter o agente OS Config com inventário de SO nas VMs (incluído no Compute Engine — sem tier pago). Service account SEM domain-wide delegation (a leitura efetiva vem do papel IAM). Veja os achados em Vulnerabilidades.',
+    appPermissions: ['roles/osconfig.vulnerabilityReportViewer (osconfig.vulnerabilityReports.list)'],
+    fields: [
+      { key: 'projectId', label: 'Project ID', secret: false, placeholder: 'meu-projeto-123' },
+      { key: 'locations', label: 'Localizações / zonas (separadas por vírgula)', secret: false, placeholder: 'southamerica-east1-a, us-central1-a' },
+      { key: 'serviceAccountJson', label: 'Service Account JSON (somente leitura — SEM domain-wide delegation)', secret: true },
     ],
   },
   {

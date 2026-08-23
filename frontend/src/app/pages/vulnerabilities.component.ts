@@ -12,7 +12,8 @@ import {
 /**
  * [AEGIS-MVP-VULN-01] Vulnerabilidades (exposição ativo×CVE) — MULTICLOUD. Consome a superfície somente
  * leitura `GET /api/v1/vulnerabilities`: exposições consolidadas, fontes observadoras, ordenação determinística
- * (exploit verificado → público → CVSS → EPSS → criticidade). Microsoft aparece apenas como FONTE/integrador.
+ * (exploit verificado → público → CVSS → EPSS → criticidade). As fontes (Microsoft, Google…) aparecem apenas
+ * como FONTE/integrador observadora — sem lógica específica de provedor espalhada na tela.
  *
  * Honestidade do produto: "Ainda não coletado" (nenhum scanner sincronizou) é distinto de "coletado sem
  * achados"; estados loading/vazio/erro/retry explícitos; ZERO fallback demonstrativo. NÃO se mistura com
@@ -135,10 +136,11 @@ import {
         } @else if (summary()?.neverCollected) {
           <div class="state empty">
             <p class="muted">
-              Ainda não coletado. Configure o <strong>Microsoft Defender Vulnerability Management</strong> em
+              Ainda não coletado. Configure um scanner de vulnerabilidades — <strong>Microsoft Defender
+              Vulnerability Management</strong> ou <strong>Google Cloud VM Manager</strong> — em
               <strong>Configurações → Integrações</strong> e use <strong>Sincronizar agora</strong> para trazer
-              os ativos e CVEs. É necessário licença/capacidade compatível, máquinas onboardadas e consentimento
-              administrativo.
+              os ativos e CVEs. Cada fonte exige seus próprios pré-requisitos (licença/capacidade, API habilitada,
+              máquinas/instâncias com inventário e as permissões somente leitura).
             </p>
           </div>
         } @else if (items().length === 0) {
