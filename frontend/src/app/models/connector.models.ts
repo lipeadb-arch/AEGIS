@@ -218,7 +218,7 @@ export const PROVIDERS: ProviderSpec[] = [
     capability: 'VulnerabilityScanner',
     capabilityValue: 8, // ConnectorCapability.VulnerabilityScanner
     infoNote:
-      'Coleta REAL somente leitura de vulnerabilidades por instância de VM (recurso × CVE) via VM Manager / OS Config Vulnerability Reports. “Testar” valida autenticação e leitura (pageSize=1); “Sincronizar” atualiza ativos, CVEs e exposições. O destino é a API oficial osconfig.googleapis.com — não há URL configurável. Pré-requisitos: habilitar a API OS Config, ativar o VM Manager e ter o agente OS Config com inventário de SO nas VMs (incluído no Compute Engine — sem tier pago). Service account SEM domain-wide delegation (a leitura efetiva vem do papel IAM). Veja os achados em Vulnerabilidades.',
+      'Coleta REAL somente leitura de vulnerabilidades por instância de VM (recurso × CVE) via VM Manager / OS Config Vulnerability Reports. “Testar” valida autenticação e leitura (pageSize=1); “Sincronizar” atualiza ativos, CVEs e exposições. O destino é a API oficial osconfig.googleapis.com — não há URL configurável. Pré-requisitos: habilitar a API OS Config, ativar o VM Manager e ter o agente OS Config com inventário de SO nas VMs. A API direta do VM Manager/OS Config não exige o nível Premium do Security Command Center; permanecem aplicáveis os pré-requisitos, quotas e eventuais custos dos recursos Google Cloud utilizados. Service account SEM domain-wide delegation (a leitura efetiva vem do papel IAM). Veja os achados em Vulnerabilidades.',
     appPermissions: ['roles/osconfig.vulnerabilityReportViewer (osconfig.vulnerabilityReports.list)'],
     fields: [
       { key: 'projectId', label: 'Project ID', secret: false, placeholder: 'meu-projeto-123' },

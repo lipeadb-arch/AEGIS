@@ -35,13 +35,16 @@ public sealed class GoogleCloudApiException : Exception
 
 /// <summary>
 /// [AEGIS-MVP-MULTICLOUD-01] Autenticação da service account do GOOGLE CLOUD (não Workspace) — porta TESTÁVEL. A
-/// implementação de produção usa a biblioteca OFICIAL do Google, assinando o JWT da service account e trocando-o
-/// por um access token contra os endpoints oficiais, com o ESCOPO Cloud Platform.
+/// implementação de produção VALIDA o JSON pela autoridade única <see cref="GoogleCloudServiceAccountValidator"/>
+/// (só service account oficial) e então constrói um <c>ServiceAccountCredential</c> DIRETAMENTE dos campos
+/// validados — NÃO usa <c>GoogleCredential.FromJson</c> —, trocando o JWT por um access token contra o endpoint de
+/// token OFICIAL (constante), com o ESCOPO Cloud Platform.
 ///
-/// ⚠️ SEM domain-wide delegation: NÃO chama <c>CreateWithUser</c> e NÃO recebe e-mail de administrador delegado
-/// — diferente do <see cref="GoogleWorkspaceAuthenticator"/>. A restrição efetiva de leitura vem dos papéis IAM
-/// somente leitura concedidos à service account (ex.: <c>roles/osconfig.vulnerabilityReportViewer</c>), não do
-/// escopo. A assinatura deste método (só o JSON da service account, sem e-mail) é a garantia estrutural disso.
+/// ⚠️ SEM domain-wide delegation: NÃO define <c>User</c>/<c>Subject</c> nem recebe e-mail de administrador delegado
+/// — diferente do <see cref="GoogleWorkspaceAuthenticator"/>. Nenhum endpoint/credential source do documento do
+/// tenant decide o destino da troca OAuth. A restrição efetiva de leitura vem dos papéis IAM somente leitura
+/// concedidos à service account (ex.: <c>roles/osconfig.vulnerabilityReportViewer</c>), não do escopo. A assinatura
+/// deste método (só o JSON da service account, sem e-mail) é a garantia estrutural de que não há delegação.
 /// </summary>
 public interface IGoogleCloudOsConfigAuthenticator
 {
@@ -71,6 +74,100 @@ public interface IGoogleCloudOsConfigApiClient
     Task ProbeAsync(string token, string projectId, string location, CancellationToken ct);
 }
 
+/// <summary>
+/// [AEGIS-MVP-MULTICLOUD-01] Campos JÁ VALIDADOS de uma service account do Google Cloud (imutável). Nunca carrega o
+/// JSON bruto. <c>ToString</c> oculta a chave privada — e a credencial nunca é interpolada em exception/log.
+/// </summary>
+internal sealed record GoogleCloudServiceAccountCredential(string ClientEmail, string PrivateKey)
+{
+    public override string ToString() =>
+        $"GoogleCloudServiceAccountCredential {{ ClientEmail = {ClientEmail}, PrivateKey = *** }}";
+}
+
+/// <summary>
+/// [AEGIS-MVP-MULTICLOUD-01] Autoridade ÚNICA, PURA e testável de validação do JSON da service account do Google
+/// Cloud — o boundary de segredo/autenticação. O JSON vem do tenant (só cifrado em repouso): <c>GoogleCredential
+/// .FromJson</c> aceitaria formatos além de <c>service_account</c> (ex.: <c>authorized_user</c>,
+/// <c>external_account</c>) e poderia interpretar endpoints/credential sources presentes no próprio documento,
+/// direcionando a troca OAuth para destinos fora da allowlist. Esta autoridade FECHA esse boundary: aceita SOMENTE
+/// service account com <c>token_uri</c> igual ao endpoint OFICIAL, sem domain-wide delegation. NUNCA devolve/loga a
+/// chave privada nem inclui valores recebidos (chave, e-mail, URL, JSON) em exceptions — a falha é uma constante.
+/// </summary>
+internal static class GoogleCloudServiceAccountValidator
+{
+    // Endpoint de token OFICIAL suportado pelo conector — CONSTANTE. É a ÚNICA origem de troca OAuth aceita, e é o
+    // valor efetivamente passado ao ServiceAccountCredential (o token_uri do tenant é validado, mas nunca é o destino).
+    public const string OfficialTokenUri = "https://oauth2.googleapis.com/token";
+    private const string OfficialTokenHost = "oauth2.googleapis.com";
+    private const string OfficialTokenPath = "/token";
+
+    /// <summary>
+    /// Valida o JSON da service account. Sucesso → <see cref="GoogleCloudServiceAccountCredential"/>. Qualquer
+    /// desvio (tipo diferente de service_account, campo ausente/vazio, token_uri não oficial) →
+    /// <see cref="GoogleCloudApiException"/> com <see cref="GoogleCloudApiErrorKind.AuthFailure"/> e mensagem
+    /// CONSTANTE (sem chave, e-mail, URL recebida ou JSON).
+    /// </summary>
+    public static GoogleCloudServiceAccountCredential Validate(string serviceAccountJson)
+    {
+        if (string.IsNullOrWhiteSpace(serviceAccountJson)) throw Fail();
+
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(serviceAccountJson); }
+        catch (JsonException) { throw Fail(); }
+
+        using (doc)
+        {
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) throw Fail();
+
+            // type DEVE ser EXATAMENTE "service_account": rejeita authorized_user, external_account,
+            // impersonated_service_account e qualquer outro formato de credencial.
+            if (!TryStr(root, "type", out var type) || !string.Equals(type, "service_account", StringComparison.Ordinal))
+                throw Fail();
+
+            if (!TryStr(root, "client_email", out var email) || string.IsNullOrWhiteSpace(email)) throw Fail();
+            if (!TryStr(root, "private_key", out var key) || string.IsNullOrWhiteSpace(key)) throw Fail();
+
+            // token_uri OBRIGATÓRIO e EXATAMENTE o endpoint oficial (HTTPS, host oficial, porta padrão, sem
+            // userinfo/query/fragmento). Fecha o vetor de credential source / token URL arbitrário do tenant.
+            if (!TryStr(root, "token_uri", out var tokenUri) || !IsOfficialTokenUri(tokenUri)) throw Fail();
+
+            // NÃO lê project_id: o projeto DONO da service account pode diferir do projeto consultado (a SA pode
+            // receber acesso somente leitura a outro projeto). NÃO lê subject/delegated user: sem domain-wide delegation.
+            return new GoogleCloudServiceAccountCredential(email!.Trim(), key!);
+        }
+    }
+
+    /// <summary>Falha SANITIZADA de configuração/credencial — mensagem CONSTANTE, jamais valores recebidos.</summary>
+    private static GoogleCloudApiException Fail() => new(
+        GoogleCloudApiErrorKind.AuthFailure,
+        "credencial do Google Cloud inválida ou não suportada (exige service account oficial com token_uri oficial; sem domain-wide delegation).");
+
+    private static bool TryStr(JsonElement root, string prop, out string? value)
+    {
+        if (root.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String)
+        {
+            value = v.GetString();
+            return true;
+        }
+        value = null;
+        return false;
+    }
+
+    private static bool IsOfficialTokenUri(string? tokenUri)
+    {
+        if (string.IsNullOrWhiteSpace(tokenUri) || !Uri.TryCreate(tokenUri.Trim(), UriKind.Absolute, out var uri))
+            return false;
+        return string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.Ordinal)
+            && string.Equals(uri.Host, OfficialTokenHost, StringComparison.OrdinalIgnoreCase)
+            && uri.IsDefaultPort
+            && string.IsNullOrEmpty(uri.UserInfo)
+            && string.IsNullOrEmpty(uri.Query)
+            && string.IsNullOrEmpty(uri.Fragment)
+            && string.Equals(uri.AbsolutePath, OfficialTokenPath, StringComparison.Ordinal);
+    }
+}
+
 /// <inheritdoc cref="IGoogleCloudOsConfigAuthenticator"/>
 public sealed class GoogleCloudOsConfigAuthenticator : IGoogleCloudOsConfigAuthenticator
 {
@@ -82,16 +179,23 @@ public sealed class GoogleCloudOsConfigAuthenticator : IGoogleCloudOsConfigAuthe
 
     public async Task<string> AcquireAccessTokenAsync(string serviceAccountJson, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(serviceAccountJson))
-            throw new GoogleCloudApiException(GoogleCloudApiErrorKind.AuthFailure, "service account do Google Cloud ausente");
+        // Boundary FECHADO: valida o JSON pela autoridade única (rejeita tudo que não seja service account oficial)
+        // ANTES de qualquer construção de credencial ou rede. Falha de validação = AuthFailure sanitizada.
+        var cred = GoogleCloudServiceAccountValidator.Validate(serviceAccountJson);
 
         try
         {
-            // A biblioteca oficial assina o JWT da service account e o troca por access token contra os
-            // endpoints oficiais do Google. SEM CreateWithUser → SEM impersonação/domain-wide delegation:
-            // a service account atua como ela mesma, limitada aos papéis IAM que possui.
-            var credential = GoogleCredential.FromJson(serviceAccountJson)
-                .CreateScoped(CloudPlatformScope);
+            // Constrói o ServiceAccountCredential DIRETAMENTE dos campos validados — NÃO usa GoogleCredential.FromJson
+            // (que interpretaria endpoints/credential source do documento do tenant). O endpoint de token é a CONSTANTE
+            // oficial (nunca o valor do tenant). SEM User/Subject/CreateWithUser → SEM domain-wide delegation: a service
+            // account atua como ela mesma, limitada aos papéis IAM que possui.
+            var initializer = new ServiceAccountCredential.Initializer(
+                    cred.ClientEmail, GoogleCloudServiceAccountValidator.OfficialTokenUri)
+                {
+                    Scopes = new[] { CloudPlatformScope },
+                }
+                .FromPrivateKey(cred.PrivateKey);
+            var credential = new ServiceAccountCredential(initializer);
 
             var token = await ((ITokenAccess)credential).GetAccessTokenForRequestAsync(cancellationToken: ct);
             if (string.IsNullOrEmpty(token))
@@ -108,7 +212,7 @@ public sealed class GoogleCloudOsConfigAuthenticator : IGoogleCloudOsConfigAuthe
         }
         catch (Exception)
         {
-            // SANITIZADO: nunca inclui a chave privada, o JSON da service account nem o detalhe do erro.
+            // SANITIZADO: nunca inclui a chave privada, o e-mail, a URL, o JSON da service account nem o detalhe do erro.
             throw new GoogleCloudApiException(GoogleCloudApiErrorKind.AuthFailure,
                 "falha ao obter access token da service account do Google Cloud");
         }
