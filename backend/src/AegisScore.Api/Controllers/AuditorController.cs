@@ -56,7 +56,7 @@ public class AuditorController : ControllerBase
         // Contexto tenant-scoped (score/cobertura, lacunas, evidência documental curta, conectores,
         // recomendações) montado SERVER-SIDE a partir do tenant autenticado — nunca do corpo (Zero Trust).
         // No modo simulado ou fora da allowlist, este contexto NÃO trafega para nenhum motor externo (o gate
-        // roteia para o stub); no modo demonstrativo, só tenants sintéticos da allowlist o enviam ao Gemini.
+        // roteia para o stub); no modo demonstrativo, só tenants sintéticos da allowlist o enviam ao Anthropic.
         var context = await _context.BuildAsync(ct);
 
         // A IA roteia a intenção (COPILOT vs START_INTERVIEW) e o campo Message já traz a resposta/pergunta.

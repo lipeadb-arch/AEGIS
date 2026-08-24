@@ -13,7 +13,7 @@ namespace AegisScore.Infrastructure.Tests;
 /// <summary>
 /// Composition root REAL (ServiceCollection + IConfiguration in-memory), sem rede nem banco. Sob o provedor
 /// ÚNICO, as interfaces neutras (ILLMClient, IAiAssessmentService) sempre resolvem os ROTEADORES tenant-scoped
-/// — a decisão Gemini × stub é do gate em runtime, não do registro. O gate reflete a configuração <c>Ai</c>.
+/// — a decisão externo × stub é do gate em runtime, não do registro. O gate reflete a configuração <c>Ai</c>.
 /// </summary>
 public sealed class AegisAiDependencyInjectionTests
 {
@@ -42,9 +42,9 @@ public sealed class AegisAiDependencyInjectionTests
     }
 
     [Fact]
-    public void Gate_GeminiFreeDemoComChave_ConfiguradoELiberaSomenteAllowlist()
+    public void Gate_ExternalDemoComChave_ConfiguradoELiberaSomenteAllowlist()
     {
-        using var provider = BuildProvider(mode: "GeminiFreeDemo", apiKey: "chave", allowedSlug: "sandbox");
+        using var provider = BuildProvider(mode: "ExternalDemo", apiKey: "chave", allowedSlug: "sandbox");
 
         var gate = provider.GetRequiredService<IAiFreeTierGate>();
 
@@ -54,11 +54,11 @@ public sealed class AegisAiDependencyInjectionTests
     }
 
     [Fact]
-    public void HttpClientDoGemini_TemTimeoutNativoDesabilitado_PollyEhAutoridadeUnica()
+    public void HttpClientDoAnthropic_TemTimeoutNativoDesabilitado_PollyEhAutoridadeUnica()
     {
-        using var provider = BuildProvider(mode: "GeminiFreeDemo", apiKey: "chave");
+        using var provider = BuildProvider(mode: "ExternalDemo", apiKey: "chave");
 
-        var client = provider.GetRequiredService<System.Net.Http.IHttpClientFactory>().CreateClient(nameof(GeminiLlmClient));
+        var client = provider.GetRequiredService<System.Net.Http.IHttpClientFactory>().CreateClient(nameof(AnthropicLlmClient));
 
         client.Timeout.Should().Be(System.Threading.Timeout.InfiniteTimeSpan,
             "o timeout nativo (100s) do HttpClient é desabilitado para o Polly (120s) ser a única autoridade");

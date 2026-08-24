@@ -19,7 +19,7 @@ public sealed class AiStatusControllerTests
     [Fact]
     public async Task Status_TenantAllowlisted_DemoConfigured_SemVazarChave()
     {
-        var ctrl = Controller(mode: AiMode.GeminiFreeDemo, apiKey: "chave-super-secreta", slug: "sandbox", allow: "sandbox");
+        var ctrl = Controller(mode: AiMode.ExternalDemo, apiKey: "chave-super-secreta", slug: "sandbox", allow: "sandbox");
 
         var dto = await Read(ctrl);
 
@@ -35,7 +35,7 @@ public sealed class AiStatusControllerTests
     [Fact]
     public async Task Status_TenantForaDaAllowlist_ExternalBlocked()
     {
-        var ctrl = Controller(mode: AiMode.GeminiFreeDemo, apiKey: "k", slug: "tenant-corporativo", allow: "sandbox");
+        var ctrl = Controller(mode: AiMode.ExternalDemo, apiKey: "k", slug: "tenant-corporativo", allow: "sandbox");
 
         var dto = await Read(ctrl);
 

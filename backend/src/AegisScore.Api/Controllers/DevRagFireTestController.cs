@@ -19,11 +19,11 @@ namespace AegisScore.Api.Controllers;
 
 /// <summary>
 /// ⚠️ DEBUG-ONLY — "Teste de Fogo" do motor RAG: dispara o <see cref="AegisAiEvaluatorService"/> contra
-/// o motor de IA REAL (Gemini, quando <c>AegisAi:ApiKey</c> está configurada) com telemetria FORJADA,
+/// o motor de IA REAL (Anthropic/Claude, quando <c>Ai:ApiKey</c> está configurada) com telemetria FORJADA,
 /// e imprime o <c>ComplianceVerdict</c> no console de forma estruturada.
 ///
 /// O que este harness prova, ponta a ponta e sem mock: catálogo NIST + <c>AegisAssessmentRule</c> (jsonb)
-/// → RAG por chave (<see cref="AssessmentRuleContextBuilder"/>) → System/User Prompt → Gemini →
+/// → RAG por chave (<see cref="AssessmentRuleContextBuilder"/>) → System/User Prompt → Anthropic/Claude →
 /// parsing do bloco <c>intelligence</c> → <see cref="ControlStateWriter"/> → ledger.
 ///
 /// ⚠️ **NÃO é um teste automatizado**: não afirma nada sozinho. A saída traz a EXPECTATIVA de cada
@@ -31,7 +31,7 @@ namespace AegisScore.Api.Controllers;
 /// isso num assert verde/vermelho criaria um teste instável (flaky) que mentiria nas duas direções.
 ///
 /// ⚠️ **ESCREVE NO LEDGER** do tenant demo (o avaliador persiste por design). É a prova de que o caminho
-/// completo funciona — e de quebra enche o `/scoring/dashboard` com inteligência REAL do Gemini.
+/// completo funciona — e de quebra enche o `/scoring/dashboard` com inteligência REAL do Anthropic/Claude.
 /// </summary>
 [ApiController]
 [Route("api/v1/dev/rag-fire-test")]
@@ -64,7 +64,7 @@ public sealed class DevRagFireTestController : ControllerBase
         _env = env;
     }
 
-    /// <summary>Lista os cenários disponíveis e qual motor está cabeado (Gemini real vs Stub).</summary>
+    /// <summary>Lista os cenários disponíveis e qual motor está cabeado (Anthropic/Claude real vs Stub).</summary>
     [HttpGet]
     public IActionResult Describe()
     {
@@ -112,7 +112,7 @@ public sealed class DevRagFireTestController : ControllerBase
 
         // O avaliador é montado À MÃO (não resolvido do DI) porque suas dependências scoped estão presas
         // ao DbContext da REQUISIÇÃO, cujo tenant HTTP é nulo aqui (endpoint anônimo). O ILLMClient, esse
-        // sim, vem do DI — é ele que carrega o Gemini real e é o ponto do teste.
+        // sim, vem do DI — é ele que carrega o motor Anthropic real e é o ponto do teste.
         var writer = new ControlStateWriter(db, new FireTestTenantContext(tenantId), _loggerFactory.CreateLogger<ControlStateWriter>());
         // A persona VEM do DI (singleton, lida do AuditorPersonality.json): o teste de fogo tem de exercitar
         // o System Prompt REAL, camada de personalidade inclusa — é ela que decide a redação do plano.
@@ -252,7 +252,7 @@ public sealed class DevRagFireTestController : ControllerBase
             : RagFireTestScenarios.All.TryGetValue(scenario, out var one) ? [one] : [];
 
     private string EngineName() =>
-        _llm is GeminiLlmClient ? "Gemini (REAL)" : $"{_llm.GetType().Name} (⚠️ NÃO é o motor real)";
+        _llm is AnthropicLlmClient ? "Anthropic/Claude (REAL)" : $"{_llm.GetType().Name} (⚠️ NÃO é o motor real)";
 
     /// <summary>Contexto de tenant privilegiado, não-HTTP — espelha o SystemTenantContext do DevController.</summary>
     private sealed class FireTestTenantContext : ITenantContext

@@ -7,9 +7,9 @@ namespace AegisScore.Infrastructure.Ai;
 
 /// <summary>
 /// Autoridade de CONFIGURAÇÃO do Free Tier: decide, sem tocar banco, se a IA externa pode ser chamada para
-/// um tenant. É a FRONTEIRA DE DADOS do modo gratuito — nenhum consumidor chama o cliente Gemini sem passar
-/// por aqui. Um tenant só é liberado quando o modo é <see cref="AiMode.GeminiFreeDemo"/>, há chave e o slug
-/// está na allowlist (laboratório sandbox, dados sintéticos). Nada é hardcoded: slugs vêm da configuração.
+/// um tenant. É a FRONTEIRA DE DADOS do modo demonstrativo — nenhum consumidor chama o cliente externo sem
+/// passar por aqui. Um tenant só é liberado quando o modo é <see cref="AiMode.ExternalDemo"/>, há chave e o
+/// slug está na allowlist (laboratório sandbox, dados sintéticos). Nada é hardcoded: slugs vêm da configuração.
 /// </summary>
 public interface IAiFreeTierGate
 {
@@ -42,7 +42,7 @@ public sealed class AiFreeTierGate : IAiFreeTierGate
     public AiMode Mode => _opt.Mode;
 
     public bool ProviderConfigured =>
-        _opt.Mode == AiMode.GeminiFreeDemo && !string.IsNullOrWhiteSpace(_opt.ApiKey);
+        _opt.Mode == AiMode.ExternalDemo && !string.IsNullOrWhiteSpace(_opt.ApiKey);
 
     public bool IsExternalAllowedForSlug(string? tenantSlug) =>
         ProviderConfigured

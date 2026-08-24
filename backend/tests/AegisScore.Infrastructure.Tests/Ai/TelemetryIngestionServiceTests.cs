@@ -138,7 +138,7 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
     [Fact]
     public async Task IngestAsync_ComStubLlmClientReal_PayloadDeBloqueio_ResultaCompliant()
     {
-        // Prova o caminho de DEV (sem chave Gemini): o StubLlmClient reconhece 'blocked'/'success' como
+        // Prova o caminho de DEV (sem chave externa): o StubLlmClient reconhece 'blocked'/'success' como
         // evidência de controle efetivo. É exatamente o que o curl de demonstração dispara para bater 100%.
         await using var db = NewContext(TenantA);
         var ingestion = IngestionFor(db, TenantA, new StubLlmClient());

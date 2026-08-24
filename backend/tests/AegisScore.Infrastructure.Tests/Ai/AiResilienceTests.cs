@@ -21,16 +21,16 @@ namespace AegisScore.Infrastructure.Tests.Ai;
 /// </summary>
 public sealed class AiResilienceTests
 {
-    private const string ValidGeminiBody =
-        """{"candidates":[{"content":{"parts":[{"text":"veredito"}]}}]}""";
+    private const string ValidAnthropicBody =
+        """{"content":[{"type":"text","text":"veredito"}],"stop_reason":"end_turn"}""";
 
     [Fact]
     public async Task Erro429_EhRetentado_ESucedeNaTentativaSeguinte()
     {
-        // Rate limit é o caso central: a cota do Gemini estoura em rajada e volta sozinha em segundos.
+        // Rate limit é o caso central: a cota estoura em rajada e volta sozinha em segundos.
         var handler = new SequenceHandler(
             (HttpStatusCode.TooManyRequests, "{}"),
-            (HttpStatusCode.OK, ValidGeminiBody));
+            (HttpStatusCode.OK, ValidAnthropicBody));
 
         var client = ResolveLlmClient(handler);
         var result = await client.ExecutePromptAsync("system", "user");
@@ -45,7 +45,7 @@ public sealed class AiResilienceTests
         var handler = new SequenceHandler(
             (HttpStatusCode.ServiceUnavailable, "{}"),
             (HttpStatusCode.InternalServerError, "{}"),
-            (HttpStatusCode.OK, ValidGeminiBody));
+            (HttpStatusCode.OK, ValidAnthropicBody));
 
         var client = ResolveLlmClient(handler);
         var result = await client.ExecutePromptAsync("system", "user");
@@ -60,7 +60,7 @@ public sealed class AiResilienceTests
         // Chave inválida não melhora com insistência: repetir só queima latência e polui o log de cota.
         var handler = new SequenceHandler(
             (HttpStatusCode.Unauthorized, "{}"),
-            (HttpStatusCode.OK, ValidGeminiBody));
+            (HttpStatusCode.OK, ValidAnthropicBody));
 
         var client = ResolveLlmClient(handler);
 
@@ -73,10 +73,10 @@ public sealed class AiResilienceTests
     [Fact]
     public async Task Erro404_NAO_EhRetentado()
     {
-        // Modelo aposentado (o caso real do gemini-2.5-flash) — contrato errado, não falha transitória.
+        // Modelo aposentado/inexistente — contrato errado, não falha transitória.
         var handler = new SequenceHandler(
             (HttpStatusCode.NotFound, "{}"),
-            (HttpStatusCode.OK, ValidGeminiBody));
+            (HttpStatusCode.OK, ValidAnthropicBody));
 
         var client = ResolveLlmClient(handler);
 
@@ -111,16 +111,16 @@ public sealed class AiResilienceTests
     public async Task TimeoutInjetavelCurto_ComHandlerLento_ProduzAiUnavailable()
     {
         // Autoridade ÚNICA e INJETÁVEL do timeout do pipeline: teto de teste de 50ms + handler que demora 5s
-        // → o Polly dispara o timeout, o GeminiLlmClient traduz para AiUnavailableException — em milissegundos
+        // → o Polly dispara o timeout, o AnthropicLlmClient traduz para AiUnavailableException — em milissegundos
         // (o teste NÃO espera 120s). O HttpClient tem o timeout nativo desabilitado (Polly é a única autoridade).
         var services = new ServiceCollection();
         services.AddSingleton(Options.Create(new AiOptions { ApiKey = "chave-de-teste" }));
-        services.AddHttpClient<GeminiLlmClient>(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
+        services.AddHttpClient<AnthropicLlmClient>(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
             .AddAiResilience(TimeSpan.FromMilliseconds(50))
             .ConfigurePrimaryHttpMessageHandler(() => new SlowHandler(TimeSpan.FromSeconds(5)));
         using var provider = services.BuildServiceProvider();
 
-        var client = provider.GetRequiredService<GeminiLlmClient>();
+        var client = provider.GetRequiredService<AnthropicLlmClient>();
         var acao = () => client.ExecutePromptAsync("system", "user");
 
         await acao.Should().ThrowAsync<AiUnavailableException>();
@@ -129,9 +129,9 @@ public sealed class AiResilienceTests
     // ---- harness -------------------------------------------------------------------
 
     /// <summary>
-    /// Resolve o <see cref="GeminiLlmClient"/> do container REAL, com a chave presente (para o guard passar)
+    /// Resolve o <see cref="AnthropicLlmClient"/> do container REAL, com a chave presente (para o guard passar)
     /// e o handler de teste no lugar do transporte. O pipeline de resiliência vem do registro de produção —
-    /// reaproveita-se o MESMO named client "GeminiLlmClient" (que já tem AddAiResilience), trocando só o
+    /// reaproveita-se o MESMO named client "AnthropicLlmClient" (que já tem AddAiResilience), trocando só o
     /// primary handler pelo roteiro de teste. Testa-se o transporte real, isolado do roteador do gate.
     /// </summary>
     private static ILLMClient ResolveLlmClient(HttpMessageHandler handler)
@@ -139,16 +139,16 @@ public sealed class AiResilienceTests
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:AegisScore"] = "Host=localhost;Database=aegis_test;Username=t;Password=t",
-            ["Ai:Mode"] = "GeminiFreeDemo",
+            ["Ai:Mode"] = "ExternalDemo",
             ["Ai:ApiKey"] = "chave-de-teste",
         }).Build();
 
         var services = new ServiceCollection();
         services.AddAegisScoreInfrastructure(config);
-        services.AddHttpClient<GeminiLlmClient>()
+        services.AddHttpClient<AnthropicLlmClient>()
             .ConfigurePrimaryHttpMessageHandler(() => handler);
 
-        return services.BuildServiceProvider().GetRequiredService<GeminiLlmClient>();
+        return services.BuildServiceProvider().GetRequiredService<AnthropicLlmClient>();
     }
 
     /// <summary>Devolve as respostas na ordem dada e conta quantas tentativas chegaram até aqui.</summary>
@@ -186,7 +186,7 @@ public sealed class AiResilienceTests
             await Task.Delay(_delay, ct);
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(ValidGeminiBody, Encoding.UTF8, "application/json"),
+                Content = new StringContent(ValidAnthropicBody, Encoding.UTF8, "application/json"),
             };
         }
     }

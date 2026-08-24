@@ -98,13 +98,13 @@ public sealed class AegisAssessmentServiceTests
         llm.LastUserPrompt.Should().Contain("GV.SC-01", "a lacuna do tenant precisa chegar ao modelo como fato");
     }
 
-    // ---- Modo demonstrativo: contexto de laboratório sintético (SÓ GeminiFreeDemo) ----
+    // ---- Modo demonstrativo: contexto de laboratório sintético (SÓ ExternalDemo) ----
 
     [Fact]
     public async Task EvaluateDocumentControl_NoModoDemo_InjetaContextoDeLaboratorio_MantendoCitacaoLiteral()
     {
         var llm = new CapturingLlmClient(VerdictJson);
-        var sut = new AegisAssessmentService(llm, StaticAuditorPersonaProvider.Neutral, GateFor(AiMode.GeminiFreeDemo));
+        var sut = new AegisAssessmentService(llm, StaticAuditorPersonaProvider.Neutral, GateFor(AiMode.ExternalDemo));
 
         await sut.EvaluateDocumentControlAsync(SampleControlRequest(), CancellationToken.None);
 
@@ -123,7 +123,7 @@ public sealed class AegisAssessmentServiceTests
         await sut.EvaluateDocumentControlAsync(SampleControlRequest(), CancellationToken.None);
 
         llm.LastSystemPrompt.Should().NotContain("SYNTHETIC LABORATORY",
-            "fora do GeminiFreeDemo a tolerância demonstrativa NUNCA é injetada — produção intacta");
+            "fora do ExternalDemo a tolerância demonstrativa NUNCA é injetada — produção intacta");
         llm.LastSystemPrompt.Should().Contain("VERBATIM");
     }
 

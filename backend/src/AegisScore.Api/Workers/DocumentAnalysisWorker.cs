@@ -113,7 +113,7 @@ public sealed class DocumentAnalysisWorker : BackgroundService
         var sp = scope.ServiceProvider;
         var options = sp.GetRequiredService<DbContextOptions<AegisScoreDbContext>>();
         // Gate do Free Tier: o worker NÃO tem tenant HTTP ambiente, então FIXA o tenant DONO do lease no
-        // resolver ANTES de resolver a IA — os roteadores (assessment + transporte) decidem Gemini × stub
+        // resolver ANTES de resolver a IA — os roteadores (assessment + transporte) decidem externo × stub
         // pelo slug desse tenant. Sem isto, um tenant da allowlist cairia sempre no stub aqui.
         sp.GetRequiredService<IAiTenantResolver>().OverrideTenant(lease.TenantId);
         var ai = sp.GetRequiredService<IAiAssessmentService>();

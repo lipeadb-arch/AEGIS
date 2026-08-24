@@ -23,7 +23,7 @@ public sealed class AiFreeTierGateTests
     [Fact]
     public void SemChave_ProviderNaoConfigurado_NuncaLiberaExterno()
     {
-        var g = Gate(AiMode.GeminiFreeDemo, "", "sandbox");
+        var g = Gate(AiMode.ExternalDemo, "", "sandbox");
 
         g.ProviderConfigured.Should().BeFalse();
         g.IsExternalAllowedForSlug("sandbox").Should().BeFalse("sem chave, nem o tenant da allowlist chama externo");
@@ -39,9 +39,9 @@ public sealed class AiFreeTierGateTests
     }
 
     [Fact]
-    public void GeminiFreeDemo_ComChave_LiberaSomenteAllowlist_CaseInsensitive()
+    public void ExternalDemo_ComChave_LiberaSomenteAllowlist_CaseInsensitive()
     {
-        var g = Gate(AiMode.GeminiFreeDemo, "chave", "sandbox-lab");
+        var g = Gate(AiMode.ExternalDemo, "chave", "sandbox-lab");
 
         g.ProviderConfigured.Should().BeTrue();
         g.IsExternalAllowedForSlug("sandbox-lab").Should().BeTrue();
@@ -54,7 +54,7 @@ public sealed class AiFreeTierGateTests
     [Fact]
     public void AllowlistVazia_NuncaLibera()
     {
-        var g = Gate(AiMode.GeminiFreeDemo, "chave");
+        var g = Gate(AiMode.ExternalDemo, "chave");
 
         g.ProviderConfigured.Should().BeTrue();
         g.IsExternalAllowedForSlug("qualquer").Should().BeFalse("allowlist vazia = nenhum tenant externo");

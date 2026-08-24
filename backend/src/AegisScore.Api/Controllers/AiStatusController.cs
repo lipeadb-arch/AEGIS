@@ -33,7 +33,7 @@ public sealed class AiStatusController : ControllerBase
         var mode = _gate.Mode;
 
         // Estado EFETIVO para este tenant (o que a UI rotula). É um retrato de CONFIGURAÇÃO, NÃO um health
-        // check em tempo real — não prova que o Gemini respondeu agora (não afirma "ativa/saudável"):
+        // check em tempo real — não prova que o provedor externo respondeu agora (não afirma "ativa/saudável"):
         //  - DemoConfigured: provedor demonstrativo CONFIGURADO para este tenant (chave + allowlist);
         //  - ExternalBlockedForTenant: provedor configurado, mas este tenant não está na allowlist → só stub;
         //  - Simulated: sem chave ou modo simulado → stub;
@@ -41,12 +41,12 @@ public sealed class AiStatusController : ControllerBase
         var state = mode switch
         {
             AiMode.Disabled => "Unavailable",
-            AiMode.GeminiFreeDemo when configured && externalAllowed => "DemoConfigured",
-            AiMode.GeminiFreeDemo when configured => "ExternalBlockedForTenant",
+            AiMode.ExternalDemo when configured && externalAllowed => "DemoConfigured",
+            AiMode.ExternalDemo when configured => "ExternalBlockedForTenant",
             _ => "Simulated",
         };
 
-        var freeTier = mode == AiMode.GeminiFreeDemo;
+        var freeTier = mode == AiMode.ExternalDemo;
         var notice = freeTier
             ? "Somente dados sintéticos ou demonstrativos. Não envie informações pessoais, confidenciais ou corporativas."
             : null;

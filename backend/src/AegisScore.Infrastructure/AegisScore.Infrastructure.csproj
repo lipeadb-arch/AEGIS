@@ -11,7 +11,7 @@
          (via Http.Diagnostics); uma versão inferior causa NU1605. -->
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.10" />
     <!-- Polly v8 sob a fachada oficial da Microsoft: retry exponencial + circuit breaker nos HttpClients
-         dos motores de IA (Gemini/Claude). Registro em DependencyInjection.cs, nunca nos clients. -->
+         dos motores de IA (Anthropic/Claude). Registro em DependencyInjection.cs, nunca nos clients. -->
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.8.0" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.10" />
