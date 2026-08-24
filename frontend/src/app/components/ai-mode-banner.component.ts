@@ -2,10 +2,8 @@ import { Component, OnInit, inject, signal } from '@angular/core';
 import { AiStatus, AiStatusService } from '../services/ai-status.service';
 
 /**
- * Componente REUTILIZÁVEL do estado da IA: um chip com o modo efetivo para o tenant (demonstrativo real /
- * simulado / indisponível / externo bloqueado) e, no Free Tier, o aviso de que só dados sintéticos podem
- * trafegar. Auto-suficiente: busca o status no init e some silenciosamente se a API não responder. NUNCA
- * exibe chave — o backend não a envia.
+ * Componente reutilizável do estado tenant-scoped da IA. Mostra o modo efetivo e, quando aplicável,
+ * um aviso operacional. Nunca exibe segredo.
  */
 @Component({
   selector: 'app-ai-mode-banner',
@@ -17,8 +15,10 @@ import { AiStatus, AiStatusService } from '../services/ai-status.service';
           <span class="dot"></span>
           {{ label(s) }}
         </span>
-        @if (s.freeTier && s.limitationNotice) {
-          <p class="notice">{{ s.limitationNotice }}</p>
+        @if (s.limitationNotice) {
+          <p class="notice" [class.enterprise]="s.effectiveState === 'EnterpriseConfigured'">
+            {{ s.limitationNotice }}
+          </p>
         }
       </div>
     }
@@ -50,14 +50,11 @@ import { AiStatus, AiStatusService } from '../services/ai-status.service';
         background: currentColor;
         box-shadow: 0 0 8px 0 currentColor;
       }
-      /* Demonstrativo CONFIGURADO (não é health check em tempo real) — cyan/brand. */
+      .st-enterpriseconfigured .chip,
       .st-democonfigured .chip { color: var(--cyan); }
-      /* Simulado — mutado. */
       .st-simulated .chip { color: var(--muted); }
       .st-simulated .dot { box-shadow: none; }
-      /* Externo bloqueado para o tenant — âmbar (funciona, mas só determinístico). */
       .st-externalblockedfortenant .chip { color: var(--amber); }
-      /* Indisponível — vermelho. */
       .st-unavailable .chip { color: var(--red); }
 
       .notice {
@@ -70,6 +67,11 @@ import { AiStatus, AiStatusService } from '../services/ai-status.service';
         border: 1px solid rgba(255, 176, 32, 0.28);
         border-radius: 9px;
         padding: 7px 11px;
+      }
+      .notice.enterprise {
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.03);
+        border-color: rgba(255, 255, 255, 0.12);
       }
     `,
   ],
@@ -84,6 +86,8 @@ export class AiModeBannerComponent implements OnInit {
 
   protected label(s: AiStatus): string {
     switch (s.effectiveState) {
+      case 'EnterpriseConfigured':
+        return 'IA corporativa configurada · Claude';
       case 'DemoConfigured':
         return 'IA demonstrativa configurada · Claude';
       case 'ExternalBlockedForTenant':

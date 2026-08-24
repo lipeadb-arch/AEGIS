@@ -5,9 +5,8 @@ using AegisScore.Infrastructure.Ai;
 namespace AegisScore.Api.Controllers;
 
 /// <summary>
-/// Estado tenant-scoped da IA para a interface: qual motor está efetivamente ativo PARA ESTE TENANT
-/// (demonstrativo real, simulado, indisponível ou externo bloqueado) e o aviso do Free Tier. NUNCA expõe a
-/// chave nem fragmento dela. Tenant IMPLÍCITO (claim do JWT via ITenantContext) — o slug decide o gate.
+/// Estado tenant-scoped da IA para a interface. É um retrato de configuração, não um health check em tempo real,
+/// e nunca expõe a chave nem fragmentos dela.
 /// </summary>
 [ApiController]
 [Authorize]
@@ -23,7 +22,6 @@ public sealed class AiStatusController : ControllerBase
         _resolver = resolver;
     }
 
-    /// <summary>Estado efetivo da IA para o tenant autenticado.</summary>
     [HttpGet("status")]
     public async Task<ActionResult<AiStatusDto>> Status(CancellationToken ct)
     {
@@ -32,33 +30,33 @@ public sealed class AiStatusController : ControllerBase
         var externalAllowed = _gate.IsExternalAllowedForSlug(slug);
         var mode = _gate.Mode;
 
-        // Estado EFETIVO para este tenant (o que a UI rotula). É um retrato de CONFIGURAÇÃO, NÃO um health
-        // check em tempo real — não prova que o provedor externo respondeu agora (não afirma "ativa/saudável"):
-        //  - DemoConfigured: provedor demonstrativo CONFIGURADO para este tenant (chave + allowlist);
-        //  - ExternalBlockedForTenant: provedor configurado, mas este tenant não está na allowlist → só stub;
-        //  - Simulated: sem chave ou modo simulado → stub;
-        //  - Unavailable: IA desligada por configuração.
         var state = mode switch
         {
             AiMode.Disabled => "Unavailable",
+            AiMode.ExternalEnterprise when configured && externalAllowed => "EnterpriseConfigured",
+            AiMode.ExternalEnterprise when configured => "ExternalBlockedForTenant",
             AiMode.ExternalDemo when configured && externalAllowed => "DemoConfigured",
             AiMode.ExternalDemo when configured => "ExternalBlockedForTenant",
             _ => "Simulated",
         };
 
         var freeTier = mode == AiMode.ExternalDemo;
-        var notice = freeTier
-            ? "Somente dados sintéticos ou demonstrativos. Não envie informações pessoais, confidenciais ou corporativas."
-            : null;
+        var notice = mode switch
+        {
+            AiMode.ExternalDemo =>
+                "Somente dados sintéticos ou demonstrativos. Não envie informações pessoais, confidenciais ou corporativas.",
+            AiMode.ExternalEnterprise =>
+                "Uso corporativo habilitado para este tenant. Respeite as políticas internas de classificação, necessidade e minimização de dados.",
+            _ => null,
+        };
 
         return Ok(new AiStatusDto(mode.ToString(), state, configured, externalAllowed, freeTier, notice));
     }
 }
 
 /// <summary>
-/// Estado da IA para a UI — retrato de CONFIGURAÇÃO, não health check em tempo real. Nenhum campo carrega
-/// segredo. <c>EffectiveState</c> é o rótulo do tenant:
-/// "DemoConfigured" | "ExternalBlockedForTenant" | "Simulated" | "Unavailable".
+/// Estado da IA para a UI — retrato de configuração, não health check em tempo real.
+/// <c>EffectiveState</c>: EnterpriseConfigured | DemoConfigured | ExternalBlockedForTenant | Simulated | Unavailable.
 /// </summary>
 public sealed record AiStatusDto(
     string Mode,

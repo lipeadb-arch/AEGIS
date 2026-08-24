@@ -1,13 +1,11 @@
 # =============================================================================
-# AEGIS Score — Blueprint de homologação para Render (https://render.com)
+# AEGIS Score — Blueprint para Render (https://render.com)
 #
 # UM único Web Service Docker: a API .NET 10 serve o SPA Angular no MESMO domínio.
 # O PostgreSQL é EXTERNO (ex.: Neon, com TLS) — NÃO é provisionado aqui.
 #
 # Este arquivo NÃO contém segredo. Toda variável sensível é declarada com `sync: false`
 # (o valor é definido no painel do Render, nunca versionado). Ajuste `plan`/`region`.
-#
-# ⚠️ Este Blueprint descreve a implantação; NÃO provisiona Neon nem executa deploy.
 # =============================================================================
 services:
   - type: web
@@ -15,57 +13,33 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    plan: starter            # ajuste conforme necessidade (starter/standard/...)
-    region: oregon           # ajuste para a região desejada
-    autoDeploy: false        # deploy manual durante a homologação
-    # Readiness (probe recorrente, barato): arranque estrutural aprovado + PostgreSQL acessível
-    # (checagem LEVE de conectividade, só leitura). A validação INTEGRAL do pacote (migrations dos dois
-    # contextos + catálogo/regras/proveniência) roda UMA vez no arranque, fail-closed, e NÃO é refeita a
-    # cada probe — o Render sonda em laço. O Render só roteia tráfego quando /health/ready devolve 200.
-    # (Liveness fica em /health/live, independente do banco.)
+    plan: starter
+    region: oregon
+    autoDeploy: false
     healthCheckPath: /health/ready
-
-    # Secret File montado em /etc/secrets/<nome>. ⚠️ O Render aceita Secret Files apenas como TEXTO —
-    # então o arquivo `aegis-dataprotection.pfx.b64` deve conter o BASE64 do PKCS#12 (não os bytes
-    # binários do .pfx). A app decodifica em memória. (O Render pede o CONTEÚDO no painel; nada versionado.)
 
     envVars:
       # ---- Ambiente ----
       - key: ASPNETCORE_ENVIRONMENT
         value: Production
-      - key: DOTNET_ENVIRONMENT           # o DbMigrator lê este; a API lê o ASPNETCORE_ENVIRONMENT
+      - key: DOTNET_ENVIRONMENT
         value: Production
-      # PORT é injetada automaticamente pelo Render; o Program.cs a respeita (não declarar aqui).
 
-      # ---- Banco (PostgreSQL EXTERNO — ex.: Neon, TLS OBRIGATÓRIO) ----
-      # Use a connection string fornecida pelo provedor, em formato Npgsql (chave=valor), e prefira
-      # VERIFICAR a identidade do servidor (cadeia + hostname) — nunca desabilite a validação:
-      #   SSL Mode=VerifyFull
-      # Ex.: Host=<host>.neon.tech;Database=<db>;Username=<user>;Password=<pwd>;SSL Mode=VerifyFull
-      # O Neon usa CA pública, coberta pelo trust store do container. Se o provedor exigir uma CA raiz
-      # própria, aponte "Root Certificate=<caminho-do-.crt>" — não relaxe a verificação.
-      # ⚠️ NÃO use "Trust Server Certificate=true": cifra o tráfego mas aceita QUALQUER certificado (MITM).
-      # Ref.: https://www.npgsql.org/doc/security.html#encryption-ssltls
+      # ---- Banco ----
       - key: ConnectionStrings__AegisScore
         sync: false
 
-      # ---- JWT (assinatura HS256; >= 32 bytes) ----
+      # ---- JWT ----
       - key: Jwt__SigningKey
         sync: false
 
-      # ---- Data Protection (envelope do key ring — OBRIGATÓRIO em Production) ----
-      # O Secret File `aegis-dataprotection.pfx.b64` contém o BASE64 do PKCS#12 (o Render só aceita Secret
-      # Files textuais — não é possível colar bytes binários). A extensão `.b64` ativa a decodificação e a
-      # carga EM MEMÓRIA; a senha vem SEPARADA, nunca versionada, e continua protegendo o PKCS#12.
-      # (Para uso local/binário, aponte para um `.pfx` real — o suporte binário permanece intacto.)
+      # ---- Data Protection ----
       - key: DataProtection__Certificate__Path
         value: /etc/secrets/aegis-dataprotection.pfx.b64
       - key: DataProtection__Certificate__Password
         sync: false
 
-      # ---- Bootstrap do PRIMEIRO administrador (opcional; ative só no 1º deploy) ----
-      # Com Enabled=true, o DbMigrator cria a 1ª IdentityAccount (PlatformAdmin) + tenant +
-      # membership (TenantAdmin). É idempotente e fail-closed. Após o 1º deploy, volte a "false".
+      # ---- Bootstrap do primeiro administrador ----
       - key: Bootstrap__Enabled
         value: "false"
       - key: Bootstrap__AdminEmail
@@ -74,49 +48,34 @@ services:
         sync: false
       - key: Bootstrap__TenantName
         sync: false
-      - key: Bootstrap__TenantSlug         # opcional; se omitido, é derivado do TenantName
+      - key: Bootstrap__TenantSlug
         sync: false
 
-      # ---- IA (Anthropic Messages API — modo DEMONSTRATIVO; provedor externo ÚNICO do MVP) ----
-      # Configuração GENÉRICA Ai__* (nenhum nome de provedor espalhado pela app). A CHAVE nunca é versionada
-      # (sync:false) — e ela é o GATE DURO: sem Ai__ApiKey, ProviderConfigured=false e TUDO cai no modo
-      # SIMULADO determinístico, MESMO com Ai__Mode=ExternalDemo. A FRONTEIRA DE DADOS é dupla: Ai__Mode +
-      # a allowlist de slugs — só o tenant sandbox SINTÉTICO autorizado tem dados enviados ao provedor externo.
-      # ⚠️ Ambiente de HOMOLOGAÇÃO: envie APENAS dados sintéticos/demonstrativos — JAMAIS documento, log,
-      # credencial, PII ou dado corporativo REAL. A chave (sk-ant-...) é inserida MANUALMENTE no painel do
-      # Render DEPOIS do merge/deploy — nunca neste arquivo.
+      # ---- IA corporativa (Anthropic Messages API) ----
+      # A chave nunca é versionada e continua sendo gate obrigatório. O modo corporativo NÃO remove a
+      # allowlist tenant-scoped: somente slugs explicitamente autorizados podem enviar dados ao provedor externo.
+      # O uso de dados reais deve respeitar as políticas internas de classificação, necessidade e minimização.
       - key: Ai__Provider
         value: Anthropic
-      - key: Ai__Model                     # identificador ESTÁVEL do Claude (sem alias volátil nem sufixo de data)
+      - key: Ai__Model
         value: claude-opus-4-8
       - key: Ai__BaseUrl
         value: https://api.anthropic.com/v1/messages
-      # Ai__Mode (Simulated | ExternalDemo | Disabled): ExternalDemo HABILITA o provedor externo, mas o
-      # comportamento só muda de fato quando Ai__ApiKey também estiver presente (o gate exige AMBOS + allowlist).
-      # Até a chave ser inserida no painel, o serviço permanece em modo SIMULADO determinístico e sobe normal.
       - key: Ai__Mode
-        value: ExternalDemo
-      - key: Ai__ApiKey                    # chave da Anthropic (sk-ant-...) — definir NO PAINEL (nunca versionar)
+        value: ExternalEnterprise
+      - key: Ai__ApiKey
         sync: false
-      # Slug do tenant sandbox autorizado (dados sintéticos) — NÃO é segredo, então é versionado. Somente este
-      # tenant tem dados enviados ao provedor externo; qualquer outro cai no stub determinístico (fronteira dura).
+      # Nome legado de configuração preservado por compatibilidade; a allowlist também governa ExternalEnterprise.
       - key: Ai__FreeTier__AllowedTenantSlugs__0
         value: aegis-homolog
 
-      # ---- Fila de análise documental (específico da HOMOLOGAÇÃO) ----
-      # Limite de tentativas específico desta homologação: impede um ciclo longo de 5 tentativas quando o
-      # provedor externo dá timeout/indisponível, poupando latência e cota. O default genérico do código = 5.
-      # Não altera lease, heartbeat, backoff nem schema.
+      # ---- Fila de análise documental ----
       - key: DocumentAnalysisQueue__MaxAttempts
         value: "2"
 
-    # ---- (Opcional) Persistência de uploads do Document Hub ----
-    # Sem disco, os documentos vão para /app/document-store (efêmero, recriado a cada deploy).
-    # Para PERSISTIR, descomente o disco abaixo e aponte DocumentStorage__RootPath para o mountPath.
+    # ---- Persistência opcional de uploads ----
     # disk:
     #   name: aegis-document-store
     #   mountPath: /var/aegis-data
     #   sizeGB: 1
-    # (e adicione em envVars:)
-    #   - key: DocumentStorage__RootPath
-    #     value: /var/aegis-data/document-store
+    # e DocumentStorage__RootPath=/var/aegis-data/document-store
