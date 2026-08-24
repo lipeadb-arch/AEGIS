@@ -7,8 +7,8 @@ using Xunit;
 namespace AegisScore.Infrastructure.Tests.Ai;
 
 /// <summary>
-/// Gate do Free Tier — a FRONTEIRA DE DADOS por configuração. Prova a matriz mode × chave × allowlist sem
-/// rede nem banco: só o modo demonstrativo, com chave, e para um slug da allowlist libera o motor externo.
+/// Fronteira de dados por configuração: modo externo + chave + allowlist. Prova tanto o uso demonstrativo
+/// quanto o corporativo sem rede nem banco.
 /// </summary>
 public sealed class AiFreeTierGateTests
 {
@@ -20,43 +20,49 @@ public sealed class AiFreeTierGateTests
             FreeTier = new AiFreeTierOptions { AllowedTenantSlugs = allow.ToList() },
         }));
 
-    [Fact]
-    public void SemChave_ProviderNaoConfigurado_NuncaLiberaExterno()
+    [Theory]
+    [InlineData(AiMode.ExternalDemo)]
+    [InlineData(AiMode.ExternalEnterprise)]
+    public void ModoExterno_SemChave_NuncaLibera(AiMode mode)
     {
-        var g = Gate(AiMode.ExternalDemo, "", "sandbox");
+        var g = Gate(mode, "", "tenant");
 
         g.ProviderConfigured.Should().BeFalse();
-        g.IsExternalAllowedForSlug("sandbox").Should().BeFalse("sem chave, nem o tenant da allowlist chama externo");
+        g.IsExternalAllowedForSlug("tenant").Should().BeFalse();
     }
 
     [Fact]
     public void ModoSimulado_NuncaLiberaExterno_MesmoComChaveEAllowlist()
     {
-        var g = Gate(AiMode.Simulated, "chave", "sandbox");
+        var g = Gate(AiMode.Simulated, "chave", "tenant");
 
         g.ProviderConfigured.Should().BeFalse();
-        g.IsExternalAllowedForSlug("sandbox").Should().BeFalse();
+        g.IsExternalAllowedForSlug("tenant").Should().BeFalse();
     }
 
-    [Fact]
-    public void ExternalDemo_ComChave_LiberaSomenteAllowlist_CaseInsensitive()
+    [Theory]
+    [InlineData(AiMode.ExternalDemo)]
+    [InlineData(AiMode.ExternalEnterprise)]
+    public void ModoExterno_ComChave_LiberaSomenteAllowlist_CaseInsensitive(AiMode mode)
     {
-        var g = Gate(AiMode.ExternalDemo, "chave", "sandbox-lab");
+        var g = Gate(mode, "chave", "tenant-autorizado");
 
         g.ProviderConfigured.Should().BeTrue();
-        g.IsExternalAllowedForSlug("sandbox-lab").Should().BeTrue();
-        g.IsExternalAllowedForSlug("SANDBOX-LAB").Should().BeTrue("a comparação de slug é case-insensitive");
-        g.IsExternalAllowedForSlug("tenant-corporativo").Should().BeFalse("fora da allowlist NUNCA libera");
+        g.IsExternalAllowedForSlug("tenant-autorizado").Should().BeTrue();
+        g.IsExternalAllowedForSlug("TENANT-AUTORIZADO").Should().BeTrue();
+        g.IsExternalAllowedForSlug("outro-tenant").Should().BeFalse("fora da allowlist nunca libera");
         g.IsExternalAllowedForSlug(null).Should().BeFalse();
         g.IsExternalAllowedForSlug("").Should().BeFalse();
     }
 
-    [Fact]
-    public void AllowlistVazia_NuncaLibera()
+    [Theory]
+    [InlineData(AiMode.ExternalDemo)]
+    [InlineData(AiMode.ExternalEnterprise)]
+    public void AllowlistVazia_NuncaLibera(AiMode mode)
     {
-        var g = Gate(AiMode.ExternalDemo, "chave");
+        var g = Gate(mode, "chave");
 
         g.ProviderConfigured.Should().BeTrue();
-        g.IsExternalAllowedForSlug("qualquer").Should().BeFalse("allowlist vazia = nenhum tenant externo");
+        g.IsExternalAllowedForSlug("qualquer").Should().BeFalse();
     }
 }
