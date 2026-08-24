@@ -86,6 +86,11 @@ import { AuthService } from './services/auth.service';
           <span class="lb">Histórico de Postura</span>
         </a>
 
+        <a class="nav-item" routerLink="/priorities" routerLinkActive="active">
+          <span class="ic" aria-hidden="true">◎</span>
+          <span class="lb">Prioridades</span>
+        </a>
+
         <a class="nav-item" routerLink="/exposures" routerLinkActive="active">
           <span class="ic" aria-hidden="true">◇</span>
           <span class="lb">Exposições</span>

@@ -180,6 +180,9 @@ public static class DependencyInjection
         services.AddScoped<IPostureExposureQuery, PostureExposureQuery>();
         // [AEGIS-MVP-VULN-01] Leitura tenant-scoped das vulnerabilidades ativo×CVE (Global Query Filter fail-closed).
         services.AddScoped<IVulnerabilityQuery, VulnerabilityQuery>();
+        // [AEGIS-MVP-PRIORITIES-01] Central de Prioridades: leitura COMPOSTA (postura + exposições + vulnerabilidades).
+        // Scoped: apenas orquestra as três queries acima, que compartilham o mesmo DbContext scoped da requisição.
+        services.AddScoped<IPriorityWorkspaceQuery, PriorityWorkspaceQuery>();
         // Janela de frescor do sinal (TTL) usada pela auditoria de obsolescência do dashboard. TimeProvider
         // é o relógio injetável do .NET — mantém a regra de TTL testável sem congelar o sistema todo.
         services.Configure<ScoringOptions>(config.GetSection(ScoringOptions.SectionName));
