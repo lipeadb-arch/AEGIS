@@ -5,8 +5,8 @@ using AegisScore.Application.Queries;
 namespace AegisScore.Infrastructure.Queries;
 
 /// <summary>
-/// [AEGIS-MVP-PRIORITIES-01] Autoridade de leitura COMPOSTA da Central de Prioridades. PURA COMPOSIÇÃO das
-/// três autoridades já existentes — <see cref="IWorkspacePostureQuery"/>, <see cref="IPostureExposureQuery"/>
+/// [AEGIS-MVP-PRIORITIES-01] Leitura COMPOSTA da Central de Prioridades — NÃO uma nova autoridade de decisão,
+/// e sim PURA COMPOSIÇÃO das três autoridades já existentes — <see cref="IWorkspacePostureQuery"/>, <see cref="IPostureExposureQuery"/>
 /// e <see cref="IVulnerabilityQuery"/>: reúne postura, exposições de configuração e vulnerabilidades numa
 /// única leitura SEM recalcular score, gap, rank, lifecycle, CVSS, EPSS, criticidade ou postura, e SEM
 /// combinar as dimensões num índice único (as duas filas permanecem separadas).

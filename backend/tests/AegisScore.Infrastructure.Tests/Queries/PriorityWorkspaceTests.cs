@@ -5,11 +5,16 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Api.Controllers;
+using AegisScore.Application.Abstractions;
 using AegisScore.Application.Queries;
+using AegisScore.Infrastructure;
+using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Queries;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -306,5 +311,31 @@ public sealed class PriorityWorkspaceTests
         // Tenant IMPLÍCITO: o endpoint jamais aceita tenant por parâmetro (URL/QueryString/body). Só o token.
         get.GetParameters().Should().OnlyContain(pr => pr.ParameterType == typeof(CancellationToken),
             "o tenant é herdado do contexto autenticado, nunca recebido como parâmetro");
+    }
+
+    // ---- (9) DI: a árvore completa resolve em runtime a partir do composition root real ----------------
+
+    [Fact]
+    public void Di_ResolveArvoreCompleta_EmRuntime()
+    {
+        // Composition root REAL (mesmo padrão de AegisAiDependencyInjectionTests): AddAegisScoreInfrastructure
+        // registra o DbContext (só REGISTRA — connection string dummy, nenhuma conexão é aberta) e as três
+        // queries; o host provê o ITenantContext. Resolver IPriorityWorkspaceQuery força a CONSTRUÇÃO de toda a
+        // árvore (as três queries + DbContext + TimeProvider) — prova o wiring de runtime que a reflexão não cobre.
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:AegisScore"] = "Host=localhost;Database=aegis_test;Username=test;Password=test",
+            ["Ai:Mode"] = "Simulated",
+        }).Build();
+
+        var services = new ServiceCollection();
+        services.AddAegisScoreInfrastructure(config);
+        services.AddScoped<ITenantContext>(_ => new SystemTenantContext(null));
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        scope.ServiceProvider.GetRequiredService<IPriorityWorkspaceQuery>()
+            .Should().BeOfType<PriorityWorkspaceQuery>("o endpoint compõe as três queries + TimeProvider");
     }
 }

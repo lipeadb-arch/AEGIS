@@ -270,24 +270,23 @@ import { postureLabel } from '../models/workspace.models';
   `,
   styles: [
     `
+      /* Alias local da cor de acento (dual-neon cyan): encurta os ~14 usos de color-mix e mantém o
+         fallback #26e0ff quando --hud-cyan não está definido. Custom property herda para todo o componente. */
+      :host { --c: var(--hud-cyan, #26e0ff); }
       .page { padding: 1.25rem 1.5rem 2rem; display: flex; flex-direction: column; gap: 1.1rem; }
       .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
-      h1 { margin: 0; font-size: 1.35rem; letter-spacing: 0.02em; }
-      h2 { margin: 0; font-size: 1.02rem; letter-spacing: 0.01em; }
+      h1 { margin: 0; font-size: 1.35rem; }
+      h2 { margin: 0; font-size: 1.02rem; }
       .sub { margin: 0.35rem 0 0; max-width: 82ch; opacity: 0.72; font-size: 0.85rem; line-height: 1.45; }
-      .freshness { margin: 0.4rem 0 0; font-size: 0.72rem; opacity: 0.55; font-family: ui-monospace, monospace; }
+      .freshness { margin: 0.4rem 0 0; font-size: 0.72rem; opacity: 0.55; }
       .head-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
       .muted { opacity: 0.65; font-size: 0.85rem; }
       .dim { opacity: 0.4; }
       .err { color: #ff6b8a; font-size: 0.85rem; }
 
-      /* ---- resumo ---- */
       .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.75rem; }
-      .card {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 4%, transparent);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 22%, transparent);
-        border-radius: 8px; padding: 0.8rem 0.95rem; display: flex; flex-direction: column; gap: 0.2rem;
-      }
+      .card, .panel { background: color-mix(in srgb, var(--c) 4%, transparent); border: 1px solid color-mix(in srgb, var(--c) 22%, transparent); border-radius: 8px; }
+      .card { padding: 0.8rem 0.95rem; display: flex; flex-direction: column; gap: 0.2rem; }
       .card.wide { grid-column: span 2; min-width: 0; }
       .card-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.6; }
       .card-value { font-size: 1.6rem; font-weight: 600; }
@@ -296,72 +295,52 @@ import { postureLabel } from '../models/workspace.models';
       .collect { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.15rem; }
       .collect-row { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.78rem; }
       .collect-k { opacity: 0.62; }
-      .collect-v { font-family: ui-monospace, monospace; font-size: 0.76rem; }
+      .collect-v { font-size: 0.76rem; }
       .collect-v.muted { font-family: inherit; }
 
-      /* ---- filas ---- */
       .queue { display: flex; flex-direction: column; gap: 0.5rem; }
       .queue-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; }
       .queue-sub { margin: 0.2rem 0 0; max-width: 78ch; opacity: 0.68; font-size: 0.8rem; }
-      .linknav {
-        color: var(--hud-cyan, #26e0ff); text-decoration: none; font-size: 0.8rem; white-space: nowrap;
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 30%, transparent);
-        border-radius: 5px; padding: 0.35rem 0.7rem;
-      }
-      .linknav:hover { background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 12%, transparent); }
+      .linknav { color: var(--c); text-decoration: none; font-size: 0.8rem; white-space: nowrap; border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); border-radius: 5px; padding: 0.35rem 0.7rem; }
+      .linknav:hover { background: color-mix(in srgb, var(--c) 12%, transparent); }
 
-      .panel {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 4%, transparent);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 22%, transparent);
-        border-radius: 8px; padding: 0.6rem; overflow-x: auto;
-      }
+      .panel { padding: 0.6rem; overflow-x: auto; }
       .state { padding: 1.4rem 1rem; text-align: center; display: flex; flex-direction: column; gap: 0.75rem; align-items: center; }
 
       .grid-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-      .grid-table th {
-        text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.6;
-        padding: 0.4rem 0.6rem; border-bottom: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent);
-      }
-      .grid-table td { padding: 0.5rem 0.6rem; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 8%, transparent); }
+      .grid-table th { text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.6; padding: 0.4rem 0.6rem; border-bottom: 1px solid color-mix(in srgb, var(--c) 18%, transparent); }
+      .grid-table td { padding: 0.5rem 0.6rem; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--c) 8%, transparent); }
       .row.resolved { opacity: 0.6; }
       .title { display: block; line-height: 1.3; }
       .rem { display: block; font-size: 0.74rem; opacity: 0.66; margin-top: 0.15rem; max-width: 60ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .meta { font-size: 0.72rem; opacity: 0.62; display: block; }
-      .asset { color: var(--hud-cyan, #26e0ff); text-decoration: none; }
+      .asset { color: var(--c); text-decoration: none; }
       .asset:hover { text-decoration: underline; }
       .c-rank { width: 3.5rem; opacity: 0.85; }
       .c-cvss, .c-epss, .c-sev, .c-gap, .c-tier, .c-state, .c-when { white-space: nowrap; }
-      .gap { color: #f5a524; font-weight: 600; }
-      .mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
+      .freshness, .collect-v, .mono { font-family: ui-monospace, monospace; }
+      .gap, .badge.warn, .sev-medium { color: #f5a524; }
+      .gap { font-weight: 600; }
+      .mono { font-size: 0.82rem; }
       .badge { font-size: 0.62rem; padding: 0.05rem 0.4rem; border-radius: 3px; border: 1px solid currentColor; text-transform: uppercase; letter-spacing: 0.05em; color: #9aa7c7; }
-      .badge.ok { color: var(--hud-cyan, #26e0ff); }
-      .badge.warn { color: #f5a524; }
+      .badge.ok { color: var(--c); }
       .badge.bad { color: #ff3d6a; }
       .badge.src { margin-right: 0.2rem; }
       .badge.lc { margin-top: 0.2rem; display: inline-block; }
       .sev-tag { font-size: 0.72rem; padding: 0.1rem 0.45rem; border-radius: 3px; border: 1px solid currentColor; }
       .sev-critical { color: #ff3d6a; }
       .sev-high { color: #ff8a5c; }
-      .sev-medium { color: #f5a524; }
       .sev-low { color: #26e0ff; }
       .sev-desconhecida { color: #9aa7c7; }
 
       .foot-note { margin: 0.2rem 0 0; font-size: 0.74rem; opacity: 0.55; max-width: 90ch; line-height: 1.4; }
 
-      /* ---- botões ---- */
-      button.primary {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent); border: 1px solid var(--hud-cyan, #26e0ff);
-        color: inherit; border-radius: 5px; padding: 0.45rem 1rem; font: inherit; font-size: 0.82rem; cursor: pointer;
-      }
-      button.ghost {
-        background: transparent; border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 30%, transparent);
-        color: inherit; border-radius: 5px; padding: 0.4rem 0.8rem; font: inherit; font-size: 0.8rem; cursor: pointer;
-      }
+      button.primary, button.ghost { color: inherit; border-radius: 5px; font: inherit; cursor: pointer; }
+      button.primary { background: color-mix(in srgb, var(--c) 18%, transparent); border: 1px solid var(--c); padding: 0.45rem 1rem; font-size: 0.82rem; }
+      button.ghost { background: transparent; border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); padding: 0.4rem 0.8rem; font-size: 0.8rem; }
       button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-      @media (max-width: 720px) {
-        .card.wide { grid-column: span 1; }
-      }
+      @media (max-width: 720px) { .card.wide { grid-column: span 1; } }
     `,
   ],
 })

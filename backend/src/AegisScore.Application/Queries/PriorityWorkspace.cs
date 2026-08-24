@@ -22,8 +22,8 @@ namespace AegisScore.Application.Queries;
 //
 // MULTICLOUD/provider-neutral: o agregado não é nomeado por fornecedor; cada conjunto carrega e mostra a
 // própria fonte/provider real (SourceLabel das exposições, Sources das vulnerabilidades). Campos específicos
-// de uma fonte permanecem OPCIONAIS (ex.: SourceRank) — o read model está pronto para exposições futuras de
-// Google Cloud, AWS e ambientes on-premise, sem enum ou condicional fechado de Microsoft.
+// de uma fonte permanecem OPCIONAIS (ex.: SourceRank) e não há enum/condicional fechado de Microsoft — o
+// contrato NÃO bloqueia futuras fontes (Google Cloud, AWS, on-premise), que NÃO são implementadas aqui.
 
 /// <summary>
 /// Uma FILA de exposições de configuração para a Central de Prioridades: o resumo tenant-scoped (autoridade
@@ -71,11 +71,12 @@ public sealed record PriorityWorkspaceDto(
 }
 
 /// <summary>
-/// Autoridade de leitura COMPOSTA da Central de Prioridades do tenant ambiente. Somente leitura e PURA
-/// COMPOSIÇÃO das três queries autoritativas: nunca aciona coleta, nunca aciona IA, nunca altera estado e
-/// nunca recalcula valores. O tenant é IMPLÍCITO — herdado por construção das queries tenant-scoped que
-/// compõe (ITenantContext + Global Query Filter fail-closed); jamais recebido por parâmetro. Sem tenant, o
-/// resultado reflete os vazios fail-closed das queries subjacentes.
+/// Composição de leitura da Central de Prioridades do tenant ambiente — NÃO uma nova autoridade de decisão, e
+/// sim a agregação das três autoridades de leitura já existentes. Somente leitura e PURA COMPOSIÇÃO: nunca
+/// aciona coleta, nunca aciona IA, nunca altera estado e nunca recalcula valores. O tenant é IMPLÍCITO —
+/// herdado por construção das queries tenant-scoped que compõe (ITenantContext + Global Query Filter
+/// fail-closed); jamais recebido por parâmetro. Sem tenant, o resultado reflete os vazios fail-closed das
+/// queries subjacentes.
 /// </summary>
 public interface IPriorityWorkspaceQuery
 {
