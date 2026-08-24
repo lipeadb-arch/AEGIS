@@ -85,7 +85,7 @@ export class AiModeBannerComponent implements OnInit {
   protected label(s: AiStatus): string {
     switch (s.effectiveState) {
       case 'DemoConfigured':
-        return 'IA demonstrativa configurada · Gemini Free';
+        return 'IA demonstrativa configurada · Claude';
       case 'ExternalBlockedForTenant':
         return 'IA externa bloqueada para este tenant';
       case 'Unavailable':

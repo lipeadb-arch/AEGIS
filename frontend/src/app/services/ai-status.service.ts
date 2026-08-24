@@ -6,7 +6,7 @@ import { environment } from '../../environments/environment';
 /**
  * Estado EFETIVO da IA para o tenant autenticado (espelha AiStatusDto do backend). É um retrato de
  * CONFIGURAÇÃO, não um health check em tempo real: `DemoConfigured` = provedor demonstrativo configurado
- * para este tenant, NÃO prova que o Gemini respondeu agora.
+ * para este tenant, NÃO prova que o provedor externo respondeu agora.
  */
 export type AiEffectiveState =
   | 'DemoConfigured'

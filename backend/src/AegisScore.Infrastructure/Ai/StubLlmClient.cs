@@ -14,7 +14,7 @@ namespace AegisScore.Infrastructure.Ai;
 /// o lugar onde mora a regra oficial (que agora vive na autoridade). Não emite bloco <c>intelligence</c>: o
 /// enriquecimento (severidade, ameaças, remediação) é papel do motor real de IA, e o
 /// <see cref="AegisAiEvaluatorService"/> ignora qualquer status devolvido aqui de qualquer forma.
-/// Para produção, registre um ILLMClient de verdade (Anthropic/OpenAI) — o <see cref="GeminiLlmClient"/> serve de molde.
+/// Para produção, registre um ILLMClient de verdade (Anthropic/OpenAI) — o <see cref="AnthropicLlmClient"/> serve de molde.
 /// </summary>
 public sealed class StubLlmClient : ILLMClient
 {

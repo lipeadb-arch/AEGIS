@@ -8,7 +8,7 @@ namespace AegisScore.Infrastructure.Ai;
 /// Implementação PROVIDER-NEUTRAL de <see cref="IAiAssessmentService"/>: concentra TODA a engenharia de
 /// prompt do AEGIS (análise documental, julgamento dirigido de controle, Auditor, entrevista, maturidade,
 /// advisory, plano de ação, relatório executivo e normalização) e delega o transporte ao
-/// <see cref="ILLMClient"/> — o seam agnóstico de provedor. Trocar o provedor (Gemini → Azure/OpenAI/
+/// <see cref="ILLMClient"/> — o seam agnóstico de provedor. Trocar o provedor (Anthropic → Azure/OpenAI/
 /// Bedrock/interno) é implementar outro <see cref="ILLMClient"/>: os prompts, o parsing e o domínio não mudam.
 ///
 /// O acesso é SEMPRE mediado pelo <see cref="TenantScopedAssessmentRouter"/> (gate do Free Tier). Toda saída
@@ -47,16 +47,16 @@ public sealed class AegisAssessmentService : IAiAssessmentService
     }
 
     /// <summary>
-    /// True SÓ no modo demonstrativo (<see cref="AiMode.GeminiFreeDemo"/>) — o único em que o contexto de
+    /// True SÓ no modo demonstrativo (<see cref="AiMode.ExternalDemo"/>) — o único em que o contexto de
     /// laboratório sintético autorizado é injetado nos prompts DOCUMENTAIS. Sinalização EXPLÍCITA derivada do
     /// modo (nunca de slug hardcoded), e nunca ativa em produção. O acesso ao serviço real já foi filtrado
     /// pelo <see cref="TenantScopedAssessmentRouter"/> + allowlist antes de chegar aqui.
     /// </summary>
-    private bool DemoLab => _gate?.Mode == AiMode.GeminiFreeDemo;
+    private bool DemoLab => _gate?.Mode == AiMode.ExternalDemo;
 
     /// <summary>
     /// System Prompt dos prompts DOCUMENTAIS (triagem + julgamento dirigido): persona + (só no modo
-    /// demonstrativo) o contexto do laboratório sintético autorizado. Fora do GeminiFreeDemo, é só a persona.
+    /// demonstrativo) o contexto do laboratório sintético autorizado. Fora do ExternalDemo, é só a persona.
     /// Não é aplicado ao chat/advisory/entrevista — apenas à análise documental.
     /// </summary>
     private string DocSystem(string baseSystem)

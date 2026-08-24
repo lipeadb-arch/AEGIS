@@ -40,7 +40,7 @@ public static class RagFireTestScenarios
     ///   D — telemetria de cifragem que REPROVA → prova que ele aplica os LIMIARES (fail-closed).
     ///
     /// C e D são o coração do teste: os números foram escolhidos para que a fórmula do PR.DS-01 dê um
-    /// resultado ÚNICO e conferível na mão (ver os comentários de cada um) — se o Gemini acertar o
+    /// resultado ÚNICO e conferível na mão (ver os comentários de cada um) — se o motor real acertar o
     /// status, ele leu a `calculation_logic` do jsonb e a aplicou.
     /// </summary>
     public static IReadOnlyDictionary<string, FireTestScenario> All { get; } =

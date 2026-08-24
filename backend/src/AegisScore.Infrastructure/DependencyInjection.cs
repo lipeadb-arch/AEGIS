@@ -89,11 +89,11 @@ public static class DependencyInjection
         // das credenciais, que assim deixa de morar na camada HTTP.
         services.AddScoped<ITenantManagementService, TenantManagementService>();
 
-        // ---- Motor de IA: provedor ÚNICO (Gemini Free demonstrativo) e configuração ÚNICA (seção "Ai") ----
+        // ---- Motor de IA: provedor externo ÚNICO (Anthropic/Claude demonstrativo) e configuração ÚNICA ("Ai") ----
         // Portabilidade: o domínio, os controllers e os workers dependem SÓ das interfaces neutras do AEGIS
         // (IAiAssessmentService de alto nível + ILLMClient de transporte). Trocar de provedor é implementar
         // outro adaptador de ILLMClient, registrá-lo aqui, ajustar a config e rodar os testes de contrato —
-        // nada mais muda. Nenhum tipo Gemini aparece fora da Infrastructure.
+        // nada mais muda. Nenhum tipo Anthropic aparece fora da Infrastructure.
         services.Configure<AiOptions>(config.GetSection(AiOptions.SectionName));
 
         // Motores CONCRETOS (sempre registrados). O gate do Free Tier decide REAL × SIMULADO em RUNTIME;
@@ -102,19 +102,19 @@ public static class DependencyInjection
         services.AddSingleton<StubLlmClient>();
         services.AddSingleton<StubAssessmentService>();
         services.AddScoped<AegisAssessmentService>();     // IAiAssessmentService neutro sobre ILLMClient
-        // Adaptador Gemini ISOLADO na Infrastructure (HttpClient tipado + resiliência Polly já existente). O
+        // Adaptador Anthropic ISOLADO na Infrastructure (HttpClient tipado + resiliência Polly já existente). O
         // HttpClient nativo cancela aos 100s por padrão — abortaria ANTES do timeout de 120s do Polly. Aqui o
         // timeout nativo é DESABILITADO para o Polly reger o limite sozinho (única autoridade de timeout).
-        services.AddHttpClient<GeminiLlmClient>(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
+        services.AddHttpClient<AnthropicLlmClient>(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
             .AddAiResilience();
 
         // Gate do Free Tier (configuração pura), resolver de tenant→slug (scoped; overridável no worker) e os
         // ROTEADORES que são a ÚNICA ligação das interfaces neutras na DI — a fronteira de dados do modo
-        // gratuito passa por eles: allowlist → Gemini; fora dela → stub; sem provedor → stub.
+        // demonstrativo passa por eles: allowlist → Anthropic; fora dela → stub; sem provedor → stub.
         services.AddSingleton<IAiFreeTierGate, AiFreeTierGate>();
         services.AddScoped<IAiTenantResolver, AiTenantResolver>();
         services.AddScoped<ILLMClient>(sp => new TenantScopedLlmRouter(
-            sp.GetRequiredService<GeminiLlmClient>(), sp.GetRequiredService<StubLlmClient>(),
+            sp.GetRequiredService<AnthropicLlmClient>(), sp.GetRequiredService<StubLlmClient>(),
             sp.GetRequiredService<IAiFreeTierGate>(), sp.GetRequiredService<IAiTenantResolver>()));
         services.AddScoped<IAiAssessmentService>(sp => new TenantScopedAssessmentRouter(
             sp.GetRequiredService<AegisAssessmentService>(), sp.GetRequiredService<StubAssessmentService>(),

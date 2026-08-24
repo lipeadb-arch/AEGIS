@@ -5,11 +5,11 @@ using Polly;
 namespace AegisScore.Infrastructure.Ai;
 
 /// <summary>
-/// Política de resiliência dos HttpClients dos motores de IA (Gemini e Claude), sob a fachada oficial
+/// Política de resiliência dos HttpClients dos motores de IA (Anthropic/Claude), sob a fachada oficial
 /// <c>Microsoft.Extensions.Http.Resilience</c> (Polly v8).
 ///
 /// Vive num handler do pipeline HTTP, e NÃO dentro do client, por uma razão concreta: o
-/// <see cref="GeminiLlmClient"/> traduz qualquer resposta não-2xx em falha de aplicação
+/// <see cref="AnthropicLlmClient"/> traduz qualquer resposta não-2xx em falha de aplicação
 /// (<c>AiUnavailableException</c>/<c>AiQuotaExhaustedException</c>) no instante em que a vê. Um retry acima
 /// dele nunca enxergaria o 429 — só a exceção já mastigada. No handler, a repetição acontece ANTES: o
 /// client recebe apenas o desfecho final da tentativa.
@@ -66,7 +66,7 @@ internal static class AiResilienceExtensions
 
             // 3) TIMEOUT por tentativa (ÚNICA autoridade do limite). Um LLM que pendura a conexão é pior que
             //    um que recusa: sem teto, o worker fica preso e o shutdown gracioso não acontece. 120s cobre a
-            //    análise documental real do Gemini (60s truncava → TimeoutRejectedException nas 5 tentativas).
+            //    análise documental real do motor (60s truncava → TimeoutRejectedException nas 5 tentativas).
             //    Fica DEPOIS do retry no pipeline, portanto vale para cada tentativa individual, não o conjunto.
             pipeline.AddTimeout(perAttempt);
         });

@@ -77,34 +77,35 @@ services:
       - key: Bootstrap__TenantSlug         # opcional; se omitido, é derivado do TenantName
         sync: false
 
-      # ---- IA (Gemini Developer API — Free Tier DEMONSTRATIVO; provedor ÚNICO do MVP) ----
+      # ---- IA (Anthropic Messages API — modo DEMONSTRATIVO; provedor externo ÚNICO do MVP) ----
       # Configuração GENÉRICA Ai__* (nenhum nome de provedor espalhado pela app). A CHAVE nunca é versionada
-      # (sync:false). A FRONTEIRA DE DADOS é dupla: Ai__Mode + a allowlist de slugs — só um tenant sandbox
-      # SINTÉTICO autorizado tem dados enviados ao provedor gratuito. Sem chave/allowlist, a IA opera em modo
-      # SIMULADO determinístico (o serviço sobe sem chave). ⚠️ Free Tier: entradas/respostas podem ser usadas
-      # pelo Google e passar por revisão humana — JAMAIS envie documento, log, credencial, PII ou dado
-      # corporativo REAL. Configuração da chave e do tenant sandbox: DEPOIS do merge (fora deste PR).
+      # (sync:false) — e ela é o GATE DURO: sem Ai__ApiKey, ProviderConfigured=false e TUDO cai no modo
+      # SIMULADO determinístico, MESMO com Ai__Mode=ExternalDemo. A FRONTEIRA DE DADOS é dupla: Ai__Mode +
+      # a allowlist de slugs — só o tenant sandbox SINTÉTICO autorizado tem dados enviados ao provedor externo.
+      # ⚠️ Ambiente de HOMOLOGAÇÃO: envie APENAS dados sintéticos/demonstrativos — JAMAIS documento, log,
+      # credencial, PII ou dado corporativo REAL. A chave (sk-ant-...) é inserida MANUALMENTE no painel do
+      # Render DEPOIS do merge/deploy — nunca neste arquivo.
       - key: Ai__Provider
-        value: Gemini
-      - key: Ai__Model                     # modelo estável pinado (GA, Free Tier) — não usar alias -latest
-        value: gemini-3.5-flash
+        value: Anthropic
+      - key: Ai__Model                     # identificador ESTÁVEL do Claude (sem alias volátil nem sufixo de data)
+        value: claude-opus-4-8
       - key: Ai__BaseUrl
-        value: https://generativelanguage.googleapis.com/v1beta/models
-      # Ai__Mode (Simulated | GeminiFreeDemo | Disabled): administrado NO PAINEL do Render (sync:false), não
-      # pelo Blueprint. Na criação inicial use o padrão SEGURO "Simulated"; mude manualmente para
-      # "GeminiFreeDemo" SOMENTE quando a chave e a allowlist sintética estiverem configuradas. Sem valor
-      # versionado, uma sincronização futura do Blueprint NÃO sobrescreve o valor operacional do painel.
+        value: https://api.anthropic.com/v1/messages
+      # Ai__Mode (Simulated | ExternalDemo | Disabled): ExternalDemo HABILITA o provedor externo, mas o
+      # comportamento só muda de fato quando Ai__ApiKey também estiver presente (o gate exige AMBOS + allowlist).
+      # Até a chave ser inserida no painel, o serviço permanece em modo SIMULADO determinístico e sobe normal.
       - key: Ai__Mode
+        value: ExternalDemo
+      - key: Ai__ApiKey                    # chave da Anthropic (sk-ant-...) — definir NO PAINEL (nunca versionar)
         sync: false
-      - key: Ai__ApiKey                    # chave da Gemini Developer API — definir no painel (nunca versionar)
-        sync: false
-      # Slug do tenant sandbox autorizado (dados sintéticos). Definir no painel SÓ quando o sandbox existir.
+      # Slug do tenant sandbox autorizado (dados sintéticos) — NÃO é segredo, então é versionado. Somente este
+      # tenant tem dados enviados ao provedor externo; qualquer outro cai no stub determinístico (fronteira dura).
       - key: Ai__FreeTier__AllowedTenantSlugs__0
-        sync: false
+        value: aegis-homolog
 
       # ---- Fila de análise documental (específico da HOMOLOGAÇÃO) ----
       # Limite de tentativas específico desta homologação: impede um ciclo longo de 5 tentativas quando o
-      # Gemini dá timeout/indisponível, poupando latência e cota gratuita. O default genérico do código = 5.
+      # provedor externo dá timeout/indisponível, poupando latência e cota. O default genérico do código = 5.
       # Não altera lease, heartbeat, backoff nem schema.
       - key: DocumentAnalysisQueue__MaxAttempts
         value: "2"

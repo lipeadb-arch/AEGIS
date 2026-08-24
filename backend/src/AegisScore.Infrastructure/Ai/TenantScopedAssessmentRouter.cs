@@ -6,8 +6,8 @@ using AegisScore.Application.Abstractions;
 namespace AegisScore.Infrastructure.Ai;
 
 /// <summary>
-/// Roteador tenant-scoped do <see cref="IAiAssessmentService"/>: por chamada, decide o motor REAL (Gemini via
-/// <see cref="AegisAssessmentService"/>) × SIMULADO (<see cref="StubAssessmentService"/>) pelo gate do Free
+/// Roteador tenant-scoped do <see cref="IAiAssessmentService"/>: por chamada, decide o motor REAL (Anthropic
+/// via <see cref="AegisAssessmentService"/>) × SIMULADO (<see cref="StubAssessmentService"/>) pelo gate do Free
 /// Tier. Tenant fora da allowlist → NUNCA chama o motor externo. É a ÚNICA ligação de
 /// <see cref="IAiAssessmentService"/> na DI: todo consumidor (worker documental, Auditor, entrevistas,
 /// assessments, advisories) passa por aqui — nenhum injeta o serviço real diretamente, ignorando o gate.
