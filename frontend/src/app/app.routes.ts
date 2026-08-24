@@ -8,6 +8,7 @@ import { AegisKnightComponent } from './pages/aegis-knight.component';
 import { PostureHistoryComponent } from './pages/posture-history.component';
 import { PostureExposuresComponent } from './pages/posture-exposures.component';
 import { VulnerabilitiesComponent } from './pages/vulnerabilities.component';
+import { PrioritiesComponent } from './pages/priorities.component';
 import { DetectDashboardComponent } from './pages/detect-dashboard.component';
 import { RespondDashboardComponent } from './pages/respond-dashboard.component';
 import { RecoverDashboardComponent } from './pages/recover-dashboard.component';
@@ -32,6 +33,8 @@ export const routes: Routes = [
   { path: 'identity', component: AegisKnightComponent, canActivate: [authGuard], title: 'AEGIS KNIGHT' },
   // Histórico auditável COMPARTILHADO entre AEGIS Score/NIST e AEGIS KNIGHT (fotografias imutáveis + comparação).
   { path: 'history', component: PostureHistoryComponent, canActivate: [authGuard], title: 'Aegis · Histórico de Postura' },
+  // [AEGIS-MVP-PRIORITIES-01] Central operacional de prioridades — compõe postura + exposições + vulnerabilidades.
+  { path: 'priorities', component: PrioritiesComponent, canActivate: [authGuard], title: 'Aegis · Central de Prioridades' },
   // [AEGIS-MVP-POSTURE-02] Exposições de configuração (postura cloud-first) — Microsoft Secure Score real.
   { path: 'exposures', component: PostureExposuresComponent, canActivate: [authGuard], title: 'Aegis · Exposições de Configuração' },
   // [AEGIS-MVP-VULN-01] Vulnerabilidades (ativo×CVE) multicloud — Microsoft Defender como primeira fonte.
