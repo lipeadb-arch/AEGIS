@@ -6,20 +6,13 @@ using Microsoft.Extensions.Options;
 namespace AegisScore.Infrastructure.Ai;
 
 /// <summary>
-/// Autoridade de CONFIGURAÇÃO do Free Tier: decide, sem tocar banco, se a IA externa pode ser chamada para
-/// um tenant. É a FRONTEIRA DE DADOS do modo demonstrativo — nenhum consumidor chama o cliente externo sem
-/// passar por aqui. Um tenant só é liberado quando o modo é <see cref="AiMode.ExternalDemo"/>, há chave e o
-/// slug está na allowlist (laboratório sandbox, dados sintéticos). Nada é hardcoded: slugs vêm da configuração.
+/// Autoridade de configuração que decide, sem tocar banco, se a IA externa pode ser chamada para um tenant.
+/// A fronteira continua fail-closed: é necessário modo externo, chave presente e slug explicitamente allowlisted.
 /// </summary>
 public interface IAiFreeTierGate
 {
-    /// <summary>Modo operacional configurado.</summary>
     AiMode Mode { get; }
-
-    /// <summary>True quando o provedor externo está APTO a ser chamado (modo demonstrativo + chave presente).</summary>
     bool ProviderConfigured { get; }
-
-    /// <summary>True quando o tenant do slug informado pode ter dados enviados ao provedor externo gratuito.</summary>
     bool IsExternalAllowedForSlug(string? tenantSlug);
 }
 
@@ -41,8 +34,11 @@ public sealed class AiFreeTierGate : IAiFreeTierGate
 
     public AiMode Mode => _opt.Mode;
 
+    private bool IsExternalMode =>
+        _opt.Mode is AiMode.ExternalDemo or AiMode.ExternalEnterprise;
+
     public bool ProviderConfigured =>
-        _opt.Mode == AiMode.ExternalDemo && !string.IsNullOrWhiteSpace(_opt.ApiKey);
+        IsExternalMode && !string.IsNullOrWhiteSpace(_opt.ApiKey);
 
     public bool IsExternalAllowedForSlug(string? tenantSlug) =>
         ProviderConfigured
