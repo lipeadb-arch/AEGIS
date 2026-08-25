@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using AegisScore.Api.Contracts;
@@ -23,31 +24,56 @@ namespace AegisScore.Api.Controllers;
 [Authorize]
 public class ConnectorsController : ControllerBase
 {
+    // Sincronizações de VulnerabilityScanner podem levar muitos minutos em tenants grandes. Mantê-las presas à
+    // requisição HTTP faz o proxy da hospedagem expirar (502/504) mesmo quando o Defender continua respondendo.
+    // O dicionário evita duas execuções simultâneas do MESMO conector dentro desta instância e também é a fonte
+    // transitória do estado "Syncing" exposto pela listagem enquanto a reconciliação ainda não terminou.
+    private static readonly ConcurrentDictionary<Guid, byte> BackgroundSyncs = new();
+
     private readonly ITenantManagementService _connectors;
     private readonly IConnectorRegistry _registry;
     private readonly IEvidenceIngestionExecutor _executor;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IHostApplicationLifetime _lifetime;
+    private readonly ILogger<ConnectorsController> _log;
 
     public ConnectorsController(
-        ITenantManagementService connectors, IConnectorRegistry registry, IEvidenceIngestionExecutor executor)
+        ITenantManagementService connectors,
+        IConnectorRegistry registry,
+        IEvidenceIngestionExecutor executor,
+        IServiceScopeFactory scopeFactory,
+        IHostApplicationLifetime lifetime,
+        ILogger<ConnectorsController> log)
     {
         _connectors = connectors;
         _registry = registry;
         _executor = executor;
+        _scopeFactory = scopeFactory;
+        _lifetime = lifetime;
+        _log = log;
     }
 
     /// <summary>
     /// Lista os conectores DESTE tenant (implícito no JWT) para a tela de integrações. Somente leitura e sem
     /// segredo: só os booleanos <c>hasCredentials</c>/<c>hasIngestionKey</c> atravessam a fronteira.
+    /// Para coletas de vulnerabilidade em background, NÃO publica Healthy/LastSyncAt enquanto o executor ainda
+    /// está reconciliando/persistindo: a UI recebe status transitório "Syncing" e timestamp nulo até o fim real.
     /// </summary>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ConnectorConfigDto>>> List(CancellationToken ct)
     {
         var connectors = await _connectors.ListConnectorsAsync(ct);
         return Ok(connectors
-            .Select(c => new ConnectorConfigDto(
-                c.ConnectorId, c.Provider.ToString(), c.Capability.ToString(), c.DisplayName,
-                c.AuthType.ToString(), c.Enabled, c.SyncIntervalMinutes, c.LastSyncAt,
-                c.LastStatus.ToString(), c.HasCredentials, c.HasIngestionKey))
+            .Select(c =>
+            {
+                var syncing = BackgroundSyncs.ContainsKey(c.ConnectorId);
+                return new ConnectorConfigDto(
+                    c.ConnectorId, c.Provider.ToString(), c.Capability.ToString(), c.DisplayName,
+                    c.AuthType.ToString(), c.Enabled, c.SyncIntervalMinutes,
+                    syncing ? null : c.LastSyncAt,
+                    syncing ? "Syncing" : c.LastStatus.ToString(),
+                    c.HasCredentials, c.HasIngestionKey);
+            })
             .ToList());
     }
 
@@ -78,15 +104,61 @@ public class ConnectorsController : ControllerBase
     }
 
     /// <summary>
-    /// Coleta PULL sob demanda: delega ao executor único (coleta via adaptador → mapping determinístico →
-    /// proteção → persistência → carimbo). 404 fora do tenant; 501 quando não há adaptador pull; falha
-    /// operacional vira LastStatus=Failed no próprio executor e sobe como 500.
+    /// Coleta PULL sob demanda. Coletores rápidos continuam síncronos. VulnerabilityScanner é deliberadamente
+    /// destacado da requisição HTTP e responde 202 imediatamente, porque um tenant real pode ter centenas de
+    /// milhares de relações machine×CVE e ultrapassar o timeout do gateway do Render.
     /// </summary>
     [HttpPost("{connectorId:guid}/sync")]
-    public async Task<ActionResult<SyncResultDto>> Sync(Guid connectorId, CancellationToken ct)
+    public async Task<IActionResult> Sync(Guid connectorId, CancellationToken ct)
     {
         var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
         if (cfg is null) return NotFound();
+
+        if (cfg.Capability == ConnectorCapability.VulnerabilityScanner)
+        {
+            if (!BackgroundSyncs.TryAdd(cfg.Id, 0))
+                return Accepted(new SyncAcceptedDto(true, "Sincronização de vulnerabilidades já está em andamento."));
+
+            // O ConnectorConfig contém apenas o blob EncryptedSettings; nenhum segredo em claro é capturado.
+            // O trabalho usa escopo próprio e ApplicationStopping, nunca RequestAborted: o gateway/browser pode
+            // encerrar a requisição sem cancelar a coleta longa.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var executor = scope.ServiceProvider.GetRequiredService<IEvidenceIngestionExecutor>();
+                    _log.LogInformation(
+                        "Sincronização de vulnerabilidades em segundo plano iniciada para conector {ConnectorId}.",
+                        cfg.Id);
+
+                    var result = await executor.CollectPullAsync(cfg, _lifetime.ApplicationStopping);
+                    _log.LogInformation(
+                        "Sincronização de vulnerabilidades em segundo plano concluída para conector {ConnectorId}; resultado presente: {HasResult}.",
+                        cfg.Id, result is not null);
+                }
+                catch (OperationCanceledException) when (_lifetime.ApplicationStopping.IsCancellationRequested)
+                {
+                    _log.LogInformation(
+                        "Sincronização de vulnerabilidades {ConnectorId} interrompida por shutdown da aplicação.", cfg.Id);
+                }
+                catch (Exception ex)
+                {
+                    // O executor é a autoridade que carimba Failed. Não devolvemos body/HTML/stack trace ao browser.
+                    _log.LogError(ex,
+                        "Sincronização de vulnerabilidades em segundo plano falhou para conector {ConnectorId}.", cfg.Id);
+                }
+                finally
+                {
+                    // Só removemos o estado transitório depois de CollectPullAsync terminar por sucesso/falha.
+                    // Portanto, a listagem não consegue mostrar "Operacional" enquanto a reconciliação está rodando.
+                    BackgroundSyncs.TryRemove(cfg.Id, out _);
+                }
+            }, CancellationToken.None);
+
+            return Accepted(new SyncAcceptedDto(true,
+                "Sincronização de vulnerabilidades iniciada em segundo plano. O status será atualizado ao concluir."));
+        }
 
         var result = await _executor.CollectPullAsync(cfg, ct);
         if (result is null)
@@ -102,11 +174,12 @@ public class ConnectorsController : ControllerBase
                 v.InvalidMachines, v.InvalidCves, v.InvalidRelations)
             : null;
 
-        // O front usa a contagem; a lista de sinais fica vazia (os sinais são internos, sob outro contexto).
-        return new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln);
+        return Ok(new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln));
     }
 
     private static bool IsGenericPush(ConnectorConfig c) =>
         c.Provider == ConnectorProvider.Generic
         && (c.Capability == ConnectorCapability.Siem || c.Capability == ConnectorCapability.Edr);
 }
+
+public sealed record SyncAcceptedDto(bool Queued, string Message);

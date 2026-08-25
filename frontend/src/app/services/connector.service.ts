@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable, catchError, throwError } from 'rxjs';
+import { Observable, catchError, map, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { ConnectorConfig, ConnectorHealth, SaveConnectorRequest, SyncResult } from '../models/connector.models';
 
@@ -45,20 +45,28 @@ export class ConnectorService {
   }
 
   /**
-   * Coleta sob demanda: grava os sinais e carimba LastSyncAt/LastStatus numa transação. Para conectores de
-   * VULNERABILIDADE, `signalsCollected` é 0 (não há sinais) e `vulnerabilities` traz as contagens reais
-   * (ativos/CVEs/exposições/observações) — o usuário nunca vê "0 coletados" após um sync real.
+   * Coleta sob demanda. VulnerabilityScanner pode responder 202 e continuar em segundo plano para não manter
+   * uma requisição HTTP aberta durante centenas de milhares de relações machine×CVE.
    */
   sync(connectorId: string): Observable<SyncResult> {
     return this.http
-      .post<SyncResult>(`${this.base}/connectors/${connectorId}/sync`, {})
-      .pipe(catchError((err) => throwError(() => this.describe(err))));
+      .post<SyncResult | { queued: boolean; message?: string }>(`${this.base}/connectors/${connectorId}/sync`, {})
+      .pipe(
+        map((result) => {
+          if ('queued' in result && result.queued) {
+            // A tela atual trata mensagens de ação pelo caminho de erro para poder encerrar o estado busy sem
+            // fingir que a coleta já terminou. É uma notificação operacional, não o body bruto do gateway.
+            throw new Error(result.message || 'Sincronização iniciada em segundo plano. Atualize em alguns minutos.');
+          }
+          return result as SyncResult;
+        }),
+        catchError((err) => throwError(() => (err instanceof Error ? err : this.describe(err)))),
+      );
   }
 
   /**
-   * Traduz o erro HTTP em mensagem acionável. Os códigos aqui são os que estas rotas realmente emitem —
-   * 403 vem do `[Authorize(Roles = "TenantAdmin")]`, 501 do registry sem adaptador para o par
-   * provider+capability (caso real enquanto os conectores são stubs).
+   * Traduz erro HTTP em mensagem curta e acionável. Nunca ecoa HTML de proxy/gateway, stack trace ou body bruto
+   * para o DOM — um 502 do Render anteriormente fazia a página inteira de erro aparecer dentro do card.
    */
   private describe(err: { status?: number; error?: unknown }): Error {
     switch (err?.status) {
@@ -72,12 +80,16 @@ export class ConnectorService {
         return new Error('Conector não encontrado neste cliente.');
       case 501:
         return new Error('Ainda não há adaptador implementado para este provedor/capacidade.');
-      default:
-        return new Error(
-          typeof err?.error === 'string' && err.error
-            ? err.error
-            : 'Não foi possível concluir a operação. Tente novamente.',
-        );
+      case 502:
+      case 503:
+      case 504:
+        return new Error('Serviço temporariamente indisponível no gateway. A sincronização pode continuar em segundo plano; atualize o status em alguns minutos.');
+      default: {
+        const raw = typeof err?.error === 'string' ? err.error.trim() : '';
+        const looksLikeHtml = /^(?:<!doctype\s+html|<html\b)/i.test(raw) || /<title>\s*50[234]\s*<\/title>/i.test(raw);
+        if (raw && !looksLikeHtml && raw.length <= 500) return new Error(raw);
+        return new Error('Não foi possível concluir a operação. Consulte os logs e tente novamente.');
+      }
     }
   }
 }
