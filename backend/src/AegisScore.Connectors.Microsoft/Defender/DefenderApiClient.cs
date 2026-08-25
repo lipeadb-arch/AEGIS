@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -45,14 +46,28 @@ public interface IDefenderApiClient
     Task<string> AcquireTokenAsync(IDefenderCredentials creds, CancellationToken ct);
 
     /// <summary>
-    /// Coleta INTEGRAL e paginada de <paramref name="relativeUrl"/> (ex.: <c>api/machines</c>), materializada em
-    /// memória. Segue <c>@odata.nextLink</c> quando presente e cai para <c>$top</c>+<c>$skip</c> quando a página
-    /// veio cheia sem nextLink. Só 200 é página completa; um <c>404</c> na PRIMEIRA página, quando
-    /// <paramref name="notFoundAsEmpty"/>, significa coleção COMPLETA vazia (ex.: tenant sem máquinas). Falha
-    /// fechado ao exceder o teto de páginas/itens ou ao detectar repetição de página.
+    /// Compatibilidade para consumidores que ainda precisam materializar a coleção inteira. O conector real de
+    /// vulnerabilidades usa <see cref="StreamAllPagesAsync"/> para não reter o JSON bruto de todas as páginas.
     /// </summary>
     Task<IReadOnlyList<JsonElement>> GetAllPagesAsync(
         string token, string relativeUrl, bool notFoundAsEmpty, CancellationToken ct);
+
+    /// <summary>
+    /// Percorre integralmente o endpoint, mas libera cada página depois que seus itens foram consumidos. A
+    /// implementação default preserva compatibilidade com fakes antigos; <see cref="DefenderApiClient"/> fornece
+    /// a implementação realmente streaming usada em produção.
+    /// </summary>
+    async IAsyncEnumerable<JsonElement> StreamAllPagesAsync(
+        string token, string relativeUrl, bool notFoundAsEmpty,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var all = await GetAllPagesAsync(token, relativeUrl, notFoundAsEmpty, ct);
+        foreach (var item in all)
+        {
+            ct.ThrowIfCancellationRequested();
+            yield return item;
+        }
+    }
 
     /// <summary>
     /// Leitura MÍNIMA (<c>$top=1</c>) usada pelo teste de conexão para PROVAR uma permissão específica sem coletar
@@ -74,10 +89,11 @@ public sealed class DefenderApiClient : IDefenderApiClient
     private const string ApiBaseUrl = "https://api.security.microsoft.com";
     private const string ApiHost = "api.security.microsoft.com";
 
-    /// <summary>Tamanho de página pedido no <c>$top</c> — dentro do teto dos três endpoints (machines/vulns 10k, catálogo 8k).</summary>
-    private const int PageSize = 8000;
-    private const int DefaultMaxPages = 500;      // teto defensivo de páginas
-    private const int DefaultMaxItems = 2_000_000; // teto defensivo de itens materializados
+    // Página deliberadamente menor que o máximo da API. Em tenants grandes, 8k registros por página geravam um
+    // pico desnecessário de DOM JSON + clones. O streaming torna o custo O(tamanho-da-página), não O(dataset bruto).
+    private const int PageSize = 1000;
+    private const int DefaultMaxPages = 2000;       // 1000 itens/página mantém capacidade equivalente ao teto antigo
+    private const int DefaultMaxItems = 2_000_000;  // teto defensivo total por endpoint
 
     private readonly HttpClient _http;
     private readonly int _maxPages;
@@ -101,35 +117,28 @@ public sealed class DefenderApiClient : IDefenderApiClient
 
     public async Task<string> AcquireTokenAsync(IDefenderCredentials creds, CancellationToken ct)
     {
-        // Contrato configurado: tenantId/clientId/clientSecret precisam existir ANTES de qualquer requisição
-        // (fail-closed — não se dispara um POST de token com credencial vazia). O conector já valida; o transporte
-        // reforça de forma defensiva. Mensagem sanitizada (nunca ecoa o valor).
         if (string.IsNullOrWhiteSpace(creds.AzureTenantId)
             || string.IsNullOrWhiteSpace(creds.ClientId)
             || string.IsNullOrWhiteSpace(creds.ClientSecret))
             throw new DefenderApiException(DefenderApiErrorKind.AuthFailure, "credenciais app-only incompletas");
 
-        // URL do endpoint de token montada só a partir de CONSTANTE oficial + tenantId escapado — sem entrada livre.
         var url = $"{LoginBaseUrl}/{Uri.EscapeDataString(creds.AzureTenantId)}/oauth2/v2.0/token";
 
         var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["client_id"] = creds.ClientId,
             ["client_secret"] = creds.ClientSecret,
-            ["scope"] = TokenResource,   // recurso LEGADO securitycenter — a audiência que a API valida
+            ["scope"] = TokenResource,
             ["grant_type"] = "client_credentials",
         });
 
         using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = form };
         using var resp = await _http.SendAsync(req, ct);
-        // EXATAMENTE 200: um 2xx que não seja 200 (ex.: 204/206) NÃO é uma resposta de token válida.
         if (resp.StatusCode != HttpStatusCode.OK)
             throw new DefenderApiException(Classify(resp.StatusCode), $"token endpoint retornou {(int)resp.StatusCode}");
 
         var body = await resp.Content.ReadAsStringAsync(ct);
 
-        // Parsing DEFENSIVO: JSON inválido ou access_token com tipo/valor inesperado vira AuthFailure SANITIZADA —
-        // nenhuma exceção de parsing escapa e a mensagem nunca carrega corpo, token, segredo ou URL.
         JsonDocument doc;
         try
         {
@@ -154,20 +163,31 @@ public sealed class DefenderApiClient : IDefenderApiClient
     public async Task<IReadOnlyList<JsonElement>> GetAllPagesAsync(
         string token, string relativeUrl, bool notFoundAsEmpty, CancellationToken ct)
     {
+        // Mantido para compatibilidade/testes. Produção usa StreamAllPagesAsync e normaliza item a item.
         var results = new List<JsonElement>();
-        var visited = new HashSet<string>(StringComparer.Ordinal);   // detecção de ciclo/repetição de página
+        await foreach (var item in StreamAllPagesAsync(token, relativeUrl, notFoundAsEmpty, ct))
+            results.Add(item);
+        return results;
+    }
 
+    public async IAsyncEnumerable<JsonElement> StreamAllPagesAsync(
+        string token, string relativeUrl, bool notFoundAsEmpty,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var visited = new HashSet<string>(StringComparer.Ordinal);
         string? next = BuildUrl(relativeUrl, top: _pageSize, skip: null);
         var pages = 0;
+        var consumed = 0;
 
         while (!string.IsNullOrEmpty(next))
         {
+            ct.ThrowIfCancellationRequested();
+
             if (pages >= _maxPages)
                 throw new DefenderApiException(DefenderApiErrorKind.Unavailable, "limite de paginação atingido com páginas restantes");
             if (!visited.Add(next!))
                 throw new DefenderApiException(DefenderApiErrorKind.Unavailable, "ciclo/repetição de página detectado na paginação");
 
-            // Valida o destino ANTES de enviar — inclusive o @odata.nextLink devolvido pela página anterior.
             ValidateDefenderUrl(next!);
 
             string body;
@@ -177,37 +197,34 @@ public sealed class DefenderApiClient : IDefenderApiClient
             }
             catch (DefenderApiException ex) when (ex.Kind == DefenderApiErrorKind.NotFound && notFoundAsEmpty && pages == 0)
             {
-                // 404 na PRIMEIRA página de um endpoint que admite vazio (ex.: /api/machines): coleção COMPLETA vazia.
-                return results;
+                yield break;
             }
             pages++;
 
+            // ParsePage materializa SOMENTE a página atual. Depois do último yield desta página, os clones e o
+            // corpo bruto ficam elegíveis para GC antes da próxima requisição.
             var (items, nextLink) = ParsePage(body);
-            foreach (var it in items)
+            foreach (var item in items)
             {
-                results.Add(it);
-                if (results.Count > _maxItems)
-                    throw new DefenderApiException(DefenderApiErrorKind.Unavailable, "limite de itens materializados excedido");
+                consumed++;
+                if (consumed > _maxItems)
+                    throw new DefenderApiException(DefenderApiErrorKind.Unavailable, "limite de itens processados excedido");
+                yield return item;
             }
 
             if (!string.IsNullOrEmpty(nextLink))
             {
-                next = nextLink;   // paginação por @odata.nextLink
+                next = nextLink;
             }
             else if (items.Count >= _pageSize)
             {
-                // Página CHEIA sem nextLink → continua por $top+$skip. O $skip usa a quantidade EFETIVAMENTE
-                // CONSUMIDA (results.Count) — inclusive após páginas por nextLink — para nunca reiniciar em 0 e
-                // repetir dados na transição entre os dois modos de paginação.
-                next = BuildUrl(relativeUrl, top: _pageSize, skip: results.Count);
+                next = BuildUrl(relativeUrl, top: _pageSize, skip: consumed);
             }
             else
             {
-                next = null;   // última página
+                next = null;
             }
         }
-
-        return results;
     }
 
     public async Task ProbeAsync(string token, string relativeUrl, bool notFoundAsEmpty, CancellationToken ct)
@@ -217,7 +234,6 @@ public sealed class DefenderApiClient : IDefenderApiClient
         try
         {
             var body = await SendGetAsync(token, url, ct);
-            // Estruturalmente válido (raiz objeto + value array) confirma que a API respondeu de fato — não só 200 de proxy.
             ParsePage(body);
         }
         catch (DefenderApiException ex) when (ex.Kind == DefenderApiErrorKind.NotFound && notFoundAsEmpty)
@@ -228,11 +244,10 @@ public sealed class DefenderApiClient : IDefenderApiClient
 
     // ---- Construção e validação de destino ---------------------------------------------------------
 
-    /// <summary>Monta a URL absoluta a partir do caminho relativo + paginação (o coletor nunca passa URL absoluta).</summary>
     private static string BuildUrl(string relativeUrl, int top, int? skip)
     {
         if (relativeUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
-            return relativeUrl;   // caso raro: validado por ValidateDefenderUrl adiante
+            return relativeUrl;
         var baseUrl = $"{ApiBaseUrl}/{relativeUrl.TrimStart('/')}";
         var sep = relativeUrl.Contains('?') ? "&" : "?";
         var url = $"{baseUrl}{sep}$top={top}";
@@ -240,11 +255,6 @@ public sealed class DefenderApiClient : IDefenderApiClient
         return url;
     }
 
-    /// <summary>
-    /// Aceita SOMENTE HTTPS na MESMA origem oficial da API do Defender. Rejeita mudança de esquema, host, porta,
-    /// userinfo ou origem — antes de qualquer envio, para o bearer nunca sair para um destino reprovado. A exceção
-    /// é SANITIZADA (não inclui a URL, o token nem o payload).
-    /// </summary>
     private static void ValidateDefenderUrl(string url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
@@ -263,17 +273,14 @@ public sealed class DefenderApiClient : IDefenderApiClient
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var resp = await _http.SendAsync(req, ct);
-        // Fail-CLOSED de completude: SÓ 200 OK é resposta completa esperada. 206 (2xx, mas NÃO completa) e qualquer
-        // outro status viram falha sanitizada. O 404 é classificado (o chamador decide se é "vazio legítimo").
         if (resp.StatusCode != HttpStatusCode.OK)
             throw new DefenderApiException(Classify(resp.StatusCode), $"defender retornou {(int)resp.StatusCode}");
         return await resp.Content.ReadAsStringAsync(ct);
     }
 
     /// <summary>
-    /// Parse estrutural FAIL-CLOSED de uma página: raiz OBJETO + <c>value</c> ARRAY. Um 200 OK com corpo
-    /// error/{}/raiz array/<c>value</c> de outro tipo NÃO é página completa — nunca vira coleção vazia em silêncio.
-    /// Devolve clones (sobrevivem ao dispose do documento) + o <c>@odata.nextLink</c> (só ausente/null/string).
+    /// Parse estrutural FAIL-CLOSED de UMA página. Os clones sobrevivem ao dispose do documento, mas deixam de ser
+    /// retidos assim que a página é consumida pelo streaming.
     /// </summary>
     private static (List<JsonElement> Items, string? NextLink) ParsePage(string body)
     {
