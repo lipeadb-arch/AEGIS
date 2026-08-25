@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Application.Knight;
 using AegisScore.Connectors.Microsoft.Knight;
+using AegisScore.Domain;
 using FluentAssertions;
 using Xunit;
 
