@@ -91,7 +91,6 @@ const INGESTION_KEY_FIELD: CredentialField = {
 };
 
 export const PROVIDERS: ProviderSpec[] = [
-  // ---- Genéricos de PUSH (operacionais no MVP): recebem eventos por endpoint autenticado ----
   {
     key: 'GenericSiem',
     value: 99,
@@ -114,7 +113,6 @@ export const PROVIDERS: ProviderSpec[] = [
     push: true,
     fields: [INGESTION_KEY_FIELD],
   },
-  // ---- Adaptadores específicos: honestamente marcados (ainda não implementados / demonstração) ----
   {
     key: 'MicrosoftSentinel',
     value: 3,
@@ -131,15 +129,14 @@ export const PROVIDERS: ProviderSpec[] = [
       { key: 'workspaceId', label: 'Log Analytics Workspace ID', secret: false },
     ],
   },
-  // ---- AEGIS KNIGHT: coletor REAL somente-leitura do Microsoft Entra ID (IdentityPosture) ----
   {
     key: 'MicrosoftEntraKnight',
-    value: 0, // ConnectorProvider.Microsoft
+    value: 0,
     label: 'Microsoft Entra ID · AEGIS KNIGHT',
     authType: 'OAuthClientCredentials',
     authTypeValue: 0,
     capability: 'IdentityPosture',
-    capabilityValue: 10, // ConnectorCapability.IdentityPosture
+    capabilityValue: 10,
     knight: true,
     infoNote:
       'Coletor REAL somente-leitura do Microsoft Entra ID (client credentials). Após salvar, dispare a coleta em Abrir AEGIS KNIGHT → “Coletar do Entra ID”. O destino é o Microsoft Graph oficial — não há URL configurável.',
@@ -152,12 +149,12 @@ export const PROVIDERS: ProviderSpec[] = [
   },
   {
     key: 'GoogleWorkspaceKnight',
-    value: 1, // ConnectorProvider.Google
+    value: 1,
     label: 'Google Workspace · AEGIS KNIGHT',
     authType: 'ServiceAccount',
     authTypeValue: 2,
     capability: 'IdentityPosture',
-    capabilityValue: 10, // ConnectorCapability.IdentityPosture
+    capabilityValue: 10,
     knight: true,
     infoNote:
       'Coletor REAL somente-leitura do Google Workspace (service account com domain-wide delegation). Após salvar, dispare a coleta em Abrir AEGIS KNIGHT → “Coletar do Google Workspace”. Coleta apenas metadados administrativos/auditoria — nunca conteúdo de Gmail, Drive ou Chat.',
@@ -193,12 +190,12 @@ export const PROVIDERS: ProviderSpec[] = [
   },
   {
     key: 'MicrosoftDefenderVuln',
-    value: 0, // ConnectorProvider.Microsoft
+    value: 0,
     label: 'Microsoft Defender Vulnerability Management',
     authType: 'OAuthClientCredentials',
     authTypeValue: 0,
     capability: 'VulnerabilityScanner',
-    capabilityValue: 8, // ConnectorCapability.VulnerabilityScanner
+    capabilityValue: 8,
     infoNote:
       'Coleta REAL somente leitura de vulnerabilidades associadas a ativos (máquinas × CVEs). “Testar” valida a autenticação e as duas permissões; “Sincronizar” atualiza ativos, CVEs e exposições. O destino é a API oficial do Defender — não há URL configurável. Exige licença/capacidade compatível, máquinas onboardadas e consentimento administrativo. Veja os achados em Vulnerabilidades.',
     appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All'],
@@ -208,15 +205,14 @@ export const PROVIDERS: ProviderSpec[] = [
       { key: 'clientSecret', label: 'Client secret', secret: true },
     ],
   },
-  // ---- [AEGIS-MVP-MULTICLOUD-01] Google Cloud VM Manager: PRIMEIRA fonte de vulnerabilidade não-Microsoft ----
   {
     key: 'GoogleCloudVuln',
-    value: 1, // ConnectorProvider.Google
+    value: 1,
     label: 'Google Cloud · VM Manager (Vulnerability Reports)',
     authType: 'ServiceAccount',
-    authTypeValue: 2, // ConnectorAuthType.ServiceAccount
+    authTypeValue: 2,
     capability: 'VulnerabilityScanner',
-    capabilityValue: 8, // ConnectorCapability.VulnerabilityScanner
+    capabilityValue: 8,
     infoNote:
       'Coleta REAL somente leitura de vulnerabilidades por instância de VM (recurso × CVE) via VM Manager / OS Config Vulnerability Reports. “Testar” valida autenticação e leitura (pageSize=1); “Sincronizar” atualiza ativos, CVEs e exposições. O destino é a API oficial osconfig.googleapis.com — não há URL configurável. Pré-requisitos: habilitar a API OS Config, ativar o VM Manager e ter o agente OS Config com inventário de SO nas VMs. A API direta do VM Manager/OS Config não exige o nível Premium do Security Command Center; permanecem aplicáveis os pré-requisitos, quotas e eventuais custos dos recursos Google Cloud utilizados. Service account SEM domain-wide delegation (a leitura efetiva vem do papel IAM). Veja os achados em Vulnerabilidades.',
     appPermissions: ['roles/osconfig.vulnerabilityReportViewer (osconfig.vulnerabilityReports.list)'],
@@ -291,7 +287,6 @@ export function providerByKey(key: string | null | undefined): ProviderSpec | un
   return PROVIDERS.find((p) => p.key === key);
 }
 
-/** Espelha `ConnectorConfigDto`. NUNCA carrega o segredo — só os booleanos `hasCredentials`/`hasIngestionKey`. */
 export interface ConnectorConfig {
   id: string;
   provider: string;
@@ -303,24 +298,17 @@ export interface ConnectorConfig {
   lastSyncAt: string | null;
   lastStatus: string;
   hasCredentials: boolean;
-  /** [AEGIS-AUD-020] Há chave de ingestão configurada? A chave em si NUNCA volta para a tela. */
   hasIngestionKey: boolean;
 }
 
-/** É um conector GENÉRICO de push (Generic/Siem ou Generic/Edr)? Deriva dos rótulos do DTO. */
 export function isGenericPush(c: ConnectorConfig): boolean {
   return c.provider === 'Generic' && (c.capability === 'Siem' || c.capability === 'Edr');
 }
 
-/**
- * É o conector do AEGIS KNIGHT (postura de identidade)? Deriva da capacidade IdentityPosture. Não usa o
- * pipeline genérico de evidências — a tela mostra "Abrir AEGIS KNIGHT" em vez de "Testar"/"Coletar".
- */
 export function isKnightConnector(c: ConnectorConfig): boolean {
   return c.capability === 'IdentityPosture';
 }
 
-/** Corpo de `POST /api/v1/tenants/connectors`. O TenantId NÃO trafega: vem do JWT. */
 export interface SaveConnectorRequest {
   provider: number;
   capability: number;
@@ -330,13 +318,11 @@ export interface SaveConnectorRequest {
   syncIntervalMinutes: number;
 }
 
-/** Espelha `ConnectorHealthDto`. */
 export interface ConnectorHealth {
   status: string;
   message: string | null;
 }
 
-/** [AEGIS-MVP-VULN-01] Espelha `VulnerabilitySyncSummaryDto` — contagens de uma sincronização de vulnerabilidades. */
 export interface VulnerabilitySyncSummary {
   machinesObserved: number;
   assetsCreated: number;
@@ -353,17 +339,17 @@ export interface VulnerabilitySyncSummary {
   invalidRelations: number;
 }
 
-/** Espelha `SyncResultDto`. `vulnerabilities` só vem preenchido para conectores de vulnerabilidade. */
 export interface SyncResult {
   signalsCollected: number;
   vulnerabilities?: VulnerabilitySyncSummary | null;
 }
 
-/** Rótulo PT-BR do status operacional do conector (texto exibido ao usuário). */
 export function statusLabel(status: string): string {
   switch (status) {
     case 'Healthy':
       return 'Operacional';
+    case 'Syncing':
+      return 'Sincronizando';
     case 'Degraded':
       return 'Degradado';
     case 'Failed':
@@ -373,11 +359,11 @@ export function statusLabel(status: string): string {
   }
 }
 
-/** Faixa de cor do HUD por status — mesma régua dos painéis de pilar (cyan/âmbar/vermelho). */
 export function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'idle' {
   switch (status) {
     case 'Healthy':
       return 'ok';
+    case 'Syncing':
     case 'Degraded':
       return 'warn';
     case 'Failed':
