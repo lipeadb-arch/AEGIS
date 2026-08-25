@@ -26,7 +26,8 @@ public class ConnectorsController : ControllerBase
 {
     // Sincronizações de VulnerabilityScanner podem levar muitos minutos em tenants grandes. Mantê-las presas à
     // requisição HTTP faz o proxy da hospedagem expirar (502/504) mesmo quando o Defender continua respondendo.
-    // O dicionário evita duas execuções simultâneas do MESMO conector dentro desta instância.
+    // O dicionário evita duas execuções simultâneas do MESMO conector dentro desta instância e também é a fonte
+    // transitória do estado "Syncing" exposto pela listagem enquanto a reconciliação ainda não terminou.
     private static readonly ConcurrentDictionary<Guid, byte> BackgroundSyncs = new();
 
     private readonly ITenantManagementService _connectors;
@@ -55,16 +56,24 @@ public class ConnectorsController : ControllerBase
     /// <summary>
     /// Lista os conectores DESTE tenant (implícito no JWT) para a tela de integrações. Somente leitura e sem
     /// segredo: só os booleanos <c>hasCredentials</c>/<c>hasIngestionKey</c> atravessam a fronteira.
+    /// Para coletas de vulnerabilidade em background, NÃO publica Healthy/LastSyncAt enquanto o executor ainda
+    /// está reconciliando/persistindo: a UI recebe status transitório "Syncing" e timestamp nulo até o fim real.
     /// </summary>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ConnectorConfigDto>>> List(CancellationToken ct)
     {
         var connectors = await _connectors.ListConnectorsAsync(ct);
         return Ok(connectors
-            .Select(c => new ConnectorConfigDto(
-                c.ConnectorId, c.Provider.ToString(), c.Capability.ToString(), c.DisplayName,
-                c.AuthType.ToString(), c.Enabled, c.SyncIntervalMinutes, c.LastSyncAt,
-                c.LastStatus.ToString(), c.HasCredentials, c.HasIngestionKey))
+            .Select(c =>
+            {
+                var syncing = BackgroundSyncs.ContainsKey(c.ConnectorId);
+                return new ConnectorConfigDto(
+                    c.ConnectorId, c.Provider.ToString(), c.Capability.ToString(), c.DisplayName,
+                    c.AuthType.ToString(), c.Enabled, c.SyncIntervalMinutes,
+                    syncing ? null : c.LastSyncAt,
+                    syncing ? "Syncing" : c.LastStatus.ToString(),
+                    c.HasCredentials, c.HasIngestionKey);
+            })
             .ToList());
     }
 
@@ -141,6 +150,8 @@ public class ConnectorsController : ControllerBase
                 }
                 finally
                 {
+                    // Só removemos o estado transitório depois de CollectPullAsync terminar por sucesso/falha.
+                    // Portanto, a listagem não consegue mostrar "Operacional" enquanto a reconciliação está rodando.
                     BackgroundSyncs.TryRemove(cfg.Id, out _);
                 }
             }, CancellationToken.None);
