@@ -20,11 +20,49 @@ public enum EntraGraphErrorKind
     Unavailable,
 }
 
-/// <summary>Falha SANITIZADA de acesso ao Graph (nunca carrega token/segredo/URL/PII/payload na mensagem).</summary>
+/// <summary>
+/// Falha SANITIZADA de acesso ao Graph. Expõe somente metadados operacionais seguros para diagnóstico:
+/// status HTTP, código de erro do Graph e caminho do endpoint (sem query string). Nunca carrega token,
+/// segredo, URL completa, mensagem bruta, PII ou payload.
+/// </summary>
 public sealed class EntraGraphException : Exception
 {
     public EntraGraphErrorKind Kind { get; }
-    public EntraGraphException(EntraGraphErrorKind kind, string? detail = null) : base(detail) => Kind = kind;
+    public int? HttpStatusCode { get; }
+    public string? GraphErrorCode { get; }
+    public string? EndpointPath { get; }
+
+    public EntraGraphException(
+        EntraGraphErrorKind kind,
+        string? detail = null,
+        int? httpStatusCode = null,
+        string? graphErrorCode = null,
+        string? endpointPath = null) : base(detail)
+    {
+        Kind = kind;
+        HttpStatusCode = httpStatusCode;
+        GraphErrorCode = SanitizeCode(graphErrorCode);
+        EndpointPath = SanitizePath(endpointPath);
+    }
+
+    private static string? SanitizeCode(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        if (trimmed.Length > 96) trimmed = trimmed[..96];
+        foreach (var ch in trimmed)
+            if (!(char.IsLetterOrDigit(ch) || ch is '_' or '-' or '.')) return null;
+        return trimmed;
+    }
+
+    private static string? SanitizePath(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var path = value.Trim();
+        var query = path.IndexOf('?');
+        if (query >= 0) path = path[..query];
+        return path.StartsWith('/') && path.Length <= 180 ? path : null;
+    }
 }
 
 /// <summary>
@@ -42,24 +80,16 @@ public interface IEntraGraphClient
 /// <inheritdoc cref="IEntraGraphClient"/>
 public sealed class EntraGraphClient : IEntraGraphClient
 {
-    // Origens OFICIAIS (constantes). O tenant NUNCA fornece base URL nem destino de requisição — impede
-    // exfiltrar o bearer token para uma origem arbitrária via @odata.nextLink forjado. Nuvens soberanas
-    // ficam FORA desta entrega; um suporte futuro exigiria uma ALLOWLIST explícita de ambientes, nunca URL livre.
     private const string LoginBaseUrl = "https://login.microsoftonline.com";
     private const string GraphBaseUrl = "https://graph.microsoft.com";
     private const string GraphHost = "graph.microsoft.com";
-    private const int DefaultMaxPages = 200;   // teto defensivo de paginação
+    private const int DefaultMaxPages = 200;
 
     private readonly HttpClient _http;
     private readonly int _maxPages;
 
     public EntraGraphClient(HttpClient http) : this(http, DefaultMaxPages) { }
 
-    /// <summary>
-    /// Construtor com teto de paginação injetável — SOMENTE para teste (exercita o limite sem 200 páginas reais).
-    /// É <c>internal</c> de propósito: o teto NUNCA vem do <c>ConnectorConfig</c>/tenant, e a DI só enxerga o
-    /// construtor público de um argumento.
-    /// </summary>
     internal EntraGraphClient(HttpClient http, int maxPages)
     {
         _http = http;
@@ -68,9 +98,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
 
     public async Task<string> AcquireTokenAsync(IMicrosoftGraphCredentials config, CancellationToken ct)
     {
-        // URL do endpoint de token montada só a partir de CONSTANTE oficial + tenantId escapado — sem entrada livre.
         var url = $"{LoginBaseUrl}/{Uri.EscapeDataString(config.AzureTenantId)}/oauth2/v2.0/token";
-
         var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["client_id"] = config.ClientId,
@@ -82,13 +110,13 @@ public sealed class EntraGraphClient : IEntraGraphClient
         using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = form };
         using var resp = await _http.SendAsync(req, ct);
         if (!resp.IsSuccessStatusCode)
-            throw new EntraGraphException(Classify(resp.StatusCode), $"token endpoint retornou {(int)resp.StatusCode}");
+            throw new EntraGraphException(
+                Classify(resp.StatusCode),
+                $"token endpoint retornou {(int)resp.StatusCode}",
+                (int)resp.StatusCode,
+                endpointPath: "/oauth2/v2.0/token");
 
         var body = await resp.Content.ReadAsStringAsync(ct);
-
-        // Parsing DEFENSIVO: JSON inválido ou access_token com tipo/valor inesperado vira AuthFailure SANITIZADA
-        // — nenhuma JsonException/InvalidOperationException escapa para a API, e a mensagem não carrega corpo,
-        // token, segredo ou URL. (Um servidor de token comprometido/errado não derruba a coleta com stack cru.)
         JsonDocument doc;
         try
         {
@@ -114,30 +142,21 @@ public sealed class EntraGraphClient : IEntraGraphClient
         string token, IMicrosoftGraphCredentials config, string relativeUrl, [EnumeratorCancellation] CancellationToken ct)
     {
         var next = BuildGraphUrl(relativeUrl);
-
         var pages = 0;
         while (!string.IsNullOrEmpty(next))
         {
-            // Teto de paginação atingido com páginas AINDA pendentes: NÃO truncamos em silêncio (isso viraria
-            // conformidade/contagem com dados incompletos). A capacidade correspondente fica indisponível.
             if (pages >= _maxPages)
                 throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "limite de paginação atingido com páginas restantes");
 
-            // Valida o destino ANTES de criar/enviar a requisição — inclusive o @odata.nextLink devolvido pela
-            // página anterior. Um nextLink de origem diferente é REPROVADO aqui: o bearer nunca chega a ele.
             ValidateGraphUrl(next!);
             var body = await SendGetAsync(token, next!, ct);
             pages++;
 
-            // Extrai clones ANTES de dispor o documento — clones sobrevivem ao dispose (evita element inválido).
             var pageItems = new List<JsonElement>();
             string? nextLink;
             using (var doc = ParseOrThrow(body))
             {
                 var root = doc.RootElement;
-                // Fail-CLOSED estrutural: a raiz precisa ser OBJETO e conter 'value' como ARRAY. Um 200 OK com
-                // corpo error/{}/raiz array/'value' de outro tipo NÃO é uma página completa — nunca produz coleção
-                // vazia em silêncio (isso truncaria a paginação e falsearia contagem/completude).
                 if (root.ValueKind != JsonValueKind.Object
                     || !root.TryGetProperty("value", out var arr)
                     || arr.ValueKind != JsonValueKind.Array)
@@ -147,8 +166,6 @@ public sealed class EntraGraphClient : IEntraGraphClient
                 foreach (var item in arr.EnumerateArray())
                     pageItems.Add(item.Clone());
 
-                // @odata.nextLink: SOMENTE ausente, null ou string. Qualquer outro tipo estrutural falha
-                // sanitizado — nunca um InvalidOperationException de GetString() sobre um tipo inesperado.
                 if (root.TryGetProperty("@odata.nextLink", out var nl))
                 {
                     nextLink = nl.ValueKind switch
@@ -167,7 +184,6 @@ public sealed class EntraGraphClient : IEntraGraphClient
 
             foreach (var it in pageItems)
                 yield return it;
-
             next = nextLink;
         }
     }
@@ -181,19 +197,11 @@ public sealed class EntraGraphClient : IEntraGraphClient
         return doc.RootElement.Clone();
     }
 
-    // ---- Construção e validação de destino ---------------------------------------------------------
-
-    /// <summary>Constrói a URL absoluta a partir de um caminho relativo (o coletor nunca passa URL absoluta).</summary>
     private static string BuildGraphUrl(string relativeUrl) =>
         relativeUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? relativeUrl                                        // caso raro: validado por ValidateGraphUrl adiante
+            ? relativeUrl
             : $"{GraphBaseUrl}/v1.0/{relativeUrl.TrimStart('/')}";
 
-    /// <summary>
-    /// Aceita SOMENTE HTTPS na MESMA origem oficial do Microsoft Graph. Rejeita mudança de esquema, host,
-    /// porta, userinfo ou origem — antes de qualquer envio, para o bearer nunca sair para um destino reprovado.
-    /// A exceção é SANITIZADA (não inclui a URL, o token nem o payload).
-    /// </summary>
     private static void ValidateGraphUrl(string url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
@@ -212,15 +220,41 @@ public sealed class EntraGraphClient : IEntraGraphClient
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var resp = await _http.SendAsync(req, ct);
-        // Fail-CLOSED de completude: SÓ 200 OK é resposta completa esperada. Qualquer outro status — inclusive
-        // 206 Partial Content, que é 2xx mas NÃO é a resposta completa — vira falha sanitizada. Aceitar 206 como
-        // sucesso permitiria reconciliar/resolver por omissão sobre uma fotografia incompleta.
+        var body = await resp.Content.ReadAsStringAsync(ct);
         if (resp.StatusCode != HttpStatusCode.OK)
-            throw new EntraGraphException(Classify(resp.StatusCode), $"graph retornou {(int)resp.StatusCode}");
-        return await resp.Content.ReadAsStringAsync(ct);
+        {
+            var endpointPath = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.AbsolutePath : null;
+            throw new EntraGraphException(
+                Classify(resp.StatusCode),
+                $"graph retornou {(int)resp.StatusCode}",
+                (int)resp.StatusCode,
+                TryReadGraphErrorCode(body),
+                endpointPath);
+        }
+        return body;
     }
 
-    /// <summary>Parse DEFENSIVO: JSON inválido do Graph vira falha SANITIZADA (sem corpo/token/URL/segredo).</summary>
+    private static string? TryReadGraphErrorCode(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body) || body.Length > 64_000) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("error", out var error)
+                || error.ValueKind != JsonValueKind.Object
+                || !error.TryGetProperty("code", out var code)
+                || code.ValueKind != JsonValueKind.String)
+                return null;
+            return code.GetString();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     private static JsonDocument ParseOrThrow(string body)
     {
         try
