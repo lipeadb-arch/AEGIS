@@ -7,7 +7,8 @@
     "ng": "ng",
     "start": "ng serve",
     "build": "ng build",
-    "watch": "ng build --watch --configuration development"
+    "watch": "ng build --watch --configuration development",
+    "test:logic": "tsc tests/connector.models.spec.ts --outDir out-tsc/spec --module commonjs --moduleResolution node --target es2022 --lib es2022,dom --skipLibCheck --esModuleInterop && node out-tsc/spec/tests/connector.models.spec.js"
   },
   "dependencies": {
     "@angular/common": "^19.2.0",
