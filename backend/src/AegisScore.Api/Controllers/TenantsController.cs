@@ -154,4 +154,43 @@ public class TenantsController : ControllerBase
         // e um CreatedAtAction apontando de volta para este POST seria uma URL mentirosa.
         return result.Created ? StatusCode(StatusCodes.Status201Created, dto) : Ok(dto);
     }
+
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-HUB] Configura a CONEXÃO MICROSOFT UNIFICADA do tenant ambiente: uma credencial comum,
+    /// informada UMA vez, é aplicada+cifrada em cada serviço Microsoft selecionado. É um fan-out de UPSERTs pela
+    /// chave natural (sem duplicatas); cada serviço permanece um conector independente. Devolve a lista (sem
+    /// segredo) dos serviços configurados. Entrada inválida → 400 sem ecoar credencial.
+    /// </summary>
+    [HttpPost("connectors/microsoft")]
+    [Authorize(Roles = "TenantAdmin")]
+    public async Task<ActionResult<IReadOnlyList<ConnectorConfigDto>>> ConfigureMicrosoftHub(
+        ConfigureMicrosoftHubRequest req, CancellationToken ct)
+    {
+        IReadOnlyList<ConnectorConfigurationResult> results;
+        try
+        {
+            results = await _onboarding.ConfigureMicrosoftHubAsync(
+                new ConfigureMicrosoftHubCommand(
+                    req.TenantId, req.ClientId, req.ClientSecret,
+                    (req.Services ?? Array.Empty<MicrosoftHubServiceRequest>())
+                        .Select(s => new MicrosoftHubServiceSelection(
+                            s.Capability, s.SyncIntervalMinutes, s.WorkspaceId, s.DisplayName))
+                        .ToList()),
+                ct);
+        }
+        catch (MicrosoftHubValidationException ex)
+        {
+            // Entrada inválida é resultado de borda (400), não falha excepcional. A mensagem descreve o
+            // problema sem ecoar a credencial comum.
+            return BadRequest(ex.Message);
+        }
+
+        var dtos = results
+            .Select(r => new ConnectorConfigDto(
+                r.ConnectorId, r.Provider.ToString(), r.Capability.ToString(), r.DisplayName,
+                r.AuthType.ToString(), r.Enabled, r.SyncIntervalMinutes, r.LastSyncAt, r.LastStatus.ToString(),
+                r.HasCredentials, r.HasIngestionKey))
+            .ToList();
+        return Ok(dtos);
+    }
 }

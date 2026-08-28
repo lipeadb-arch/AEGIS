@@ -145,6 +145,27 @@ public record CreateConnectorRequest(
     string Settings,             // texto em claro; cifrado no servidor (Data Protection) antes de persistir
     int SyncIntervalMinutes = 360);
 
+// ---- [AEGIS-MVP-MICROSOFT-HUB] Conexão Microsoft unificada ----
+/// <summary>
+/// Configuração da CONEXÃO MICROSOFT UNIFICADA: a credencial comum (informada UMA vez) e os serviços a conectar.
+///
+/// ⚠️ <see cref="ClientSecret"/> é escrita-apenas — trafega em claro só sob o TLS, é cifrado no servidor e NUNCA
+/// retorna. O backend replica a credencial (cifrada) em cada serviço selecionado; cada um permanece um conector
+/// independente. O <c>WorkspaceId</c> de um serviço só é usado pelo Sentinel (Siem).
+/// </summary>
+public record ConfigureMicrosoftHubRequest(
+    string TenantId,
+    string ClientId,
+    string ClientSecret,
+    IReadOnlyList<MicrosoftHubServiceRequest> Services);
+
+/// <summary>Um serviço Microsoft selecionado. <see cref="WorkspaceId"/> só é exigido/usado para <c>Siem</c> (Sentinel).</summary>
+public record MicrosoftHubServiceRequest(
+    ConnectorCapability Capability,
+    int SyncIntervalMinutes = 360,
+    string? WorkspaceId = null,
+    string? DisplayName = null);
+
 public record IdResponse(Guid Id);
 
 // ---- Connectors ----
