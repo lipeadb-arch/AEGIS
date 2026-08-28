@@ -6,6 +6,7 @@ using AegisScore.Application.Services;
 using AegisScore.Application.Telemetry.Providers;
 using AegisScore.Connectors.Microsoft.Defender;
 using AegisScore.Connectors.Microsoft.Knight;
+using AegisScore.Connectors.Microsoft.Sentinel;
 
 namespace AegisScore.Connectors.Microsoft;
 
@@ -34,6 +35,15 @@ public static class DependencyInjection
         services.AddScoped<IEvidenceConnector, MicrosoftDefenderVulnerabilityConnector>();
         // services.AddSingleton<IEvidenceConnector, MicrosoftPurviewConnector>();
         // services.AddSingleton<IEvidenceConnector, AzureAdvisorConnector>();
+
+        // [AEGIS-MVP-MICROSOFT-SENTINEL] Microsoft Sentinel (MicrosoftSentinel/Siem): coletor REAL, somente leitura,
+        // via Azure Monitor Log Analytics Query API. Transporte PRÓPRIO (ILogAnalyticsClient) — host/recurso oficiais
+        // api.loganalytics.azure.com, distintos do Graph e do Defender. Typed HttpClient com a resiliência padrão
+        // (retry/backoff, Retry-After no 429, circuit breaker). SCOPED pelo mesmo motivo dos demais (injeta um typed
+        // HttpClient — não pode ser capturado no root provider). NÃO emite sinais de score; expõe a postura
+        // operacional por ISiemPostureCollector (fato consultivo), sem tocar a autoridade determinística.
+        services.AddHttpClient<ILogAnalyticsClient, LogAnalyticsClient>().AddStandardResilienceHandler();
+        services.AddScoped<IEvidenceConnector, MicrosoftSentinelConnector>();
 
         // Govern → Provider Pattern de ingestão de documentos: o SharePoint/M365 como fonte de políticas.
         // A DocumentIntegrationFactory resolve esta estratégia por ConnectorProvider.Microsoft.

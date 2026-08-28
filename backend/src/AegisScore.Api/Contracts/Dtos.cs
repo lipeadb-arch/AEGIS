@@ -220,7 +220,9 @@ public record SignalDto(string SignalKey, double? NumericValue, string? Unit, in
 public record SyncResultDto(
     int SignalsCollected, IReadOnlyList<SignalDto> Signals,
     // [AEGIS-MVP-VULN-01] Aditivo: contagens honestas de uma sincronização de vulnerabilidades (null p/ outros conectores).
-    VulnerabilitySyncSummaryDto? Vulnerabilities = null);
+    VulnerabilitySyncSummaryDto? Vulnerabilities = null,
+    // [AEGIS-MVP-MICROSOFT-SENTINEL] Aditivo: postura operacional do Sentinel (null para os demais conectores).
+    SentinelSyncSummaryDto? Sentinel = null);
 
 /// <summary>[AEGIS-MVP-VULN-01] Contagens de uma sincronização de vulnerabilidades (ativos/CVEs/exposições/observações).</summary>
 public record VulnerabilitySyncSummaryDto(
@@ -228,6 +230,17 @@ public record VulnerabilitySyncSummaryDto(
     int ObservationsOpened, int ObservationsReopened, int ObservationsResolved,
     int BindingsDeactivated, int AssetsDeactivated, bool WasComplete,
     int InvalidMachines, int InvalidCves, int InvalidRelations);
+
+/// <summary>
+/// [AEGIS-MVP-MICROSOFT-SENTINEL] Fotografia OPERACIONAL de uma sincronização do Sentinel (só agregados e instantes —
+/// nunca título, entidade, IP, host, usuário, alerta bruto ou payload). É FATO CONSULTIVO: não vira EvidenceSignal
+/// nem altera o AEGIS Score. <see cref="IsComplete"/> falso = a fonte sinalizou resultado parcial/truncado.
+/// </summary>
+public record SentinelSyncSummaryDto(
+    int WindowDays, int IncidentsObserved, int OpenIncidents, int NewIncidents, int ClosedIncidents,
+    int OpenHighSeverity, int OpenMediumSeverity, int OpenLowSeverity, int OpenInformationalSeverity,
+    double? MeanTimeToCloseHours, int AlertsObserved, int AlertsHighSeverity, int AlertsMediumSeverity,
+    DateTimeOffset? LastEvidenceAt, bool IsComplete);
 
 // ---- Assessments ----
 public record CreateAssessmentRequest(string Name, Guid? FrameworkVersionId);

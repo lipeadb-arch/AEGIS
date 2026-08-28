@@ -174,7 +174,16 @@ public class ConnectorsController : ControllerBase
                 v.InvalidMachines, v.InvalidCves, v.InvalidRelations)
             : null;
 
-        return Ok(new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln));
+        // [AEGIS-MVP-MICROSOFT-SENTINEL] Fotografia operacional do Sentinel (fato consultivo; nunca sinal/score).
+        var sentinel = result.Sentinel is { } s
+            ? new SentinelSyncSummaryDto(
+                s.WindowDays, s.IncidentsObserved, s.OpenIncidents, s.NewIncidents, s.ClosedIncidents,
+                s.OpenHighSeverity, s.OpenMediumSeverity, s.OpenLowSeverity, s.OpenInformationalSeverity,
+                s.MeanTimeToCloseHours, s.AlertsObserved, s.AlertsHighSeverity, s.AlertsMediumSeverity,
+                s.LastEvidenceAt, s.IsComplete)
+            : null;
+
+        return Ok(new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln, sentinel));
     }
 
     private static bool IsGenericPush(ConnectorConfig c) =>
