@@ -1,6 +1,6 @@
 import { DatePipe } from '@angular/common';
 import { Component, inject, input, signal } from '@angular/core';
-import { AdvisoryDto, ControlView } from '../../models/scoring.models';
+import { AdvisoryDto, ControlView, notEvaluatedLabel } from '../../models/scoring.models';
 import { categoryName } from '../../models/nist-glossary';
 import { AdvisoryService } from '../../services/advisory.service';
 import { MissingRequirementsComponent } from './missing-requirements.component';
@@ -38,12 +38,20 @@ type AdvisoryUiState =
           [class.is-fail]="c.status === 'NonCompliant'"
           [class.is-partial]="c.status === 'MitigatedByThirdParty'"
           [class.is-ok]="c.status === 'Compliant'"
+          [class.is-na]="c.status === 'NotEvaluated'"
         >
           <button type="button" class="ctl-head" (click)="toggle(c.code)" [attr.aria-expanded]="isOpen(c.code)">
             <span class="dot" aria-hidden="true"></span>
             <span class="names">
-              <span class="name">{{ categoryName(c.code) }}</span>
-              <span class="code">{{ c.code }}</span>
+              <!-- Título ESPECÍFICO em pt-BR como informação principal (nunca o nome genérico da categoria).
+                   Sem redação (backend antigo), degrada para o código — jamais para a categoria. -->
+              <span class="name">{{ c.title || c.code }}</span>
+              <!-- Resumo curto visível SEM depender da IA. -->
+              @if (c.summary) {
+                <span class="summary">{{ c.summary }}</span>
+              }
+              <!-- Categoria e código: referências SECUNDÁRIas. -->
+              <span class="code">{{ categoryName(c.code) }} · {{ c.code }}</span>
             </span>
             <!-- Slot SEMPRE presente (vazio sem série): a linha é um grid próprio e a coluna fixa
                  impede que a ausência de histórico desloque severidade/pontos. -->
@@ -54,12 +62,43 @@ type AdvisoryUiState =
             </span>
             <app-severity [level]="c.severity" />
             <span class="status">{{ statusLabel(c) }}</span>
-            <span class="pts">{{ c.scorePoints }}<i>/{{ c.maxScorePoints }}</i></span>
+            <!-- NotEvaluated não é reprovação: mostra "—/max", nunca "0/max" (que leria como zerado). -->
+            <span class="pts">
+              @if (c.status === 'NotEvaluated') { <span class="na-pts">—</span> } @else { {{ c.scorePoints }} }<i>/{{ c.maxScorePoints }}</i>
+            </span>
             <span class="chev" [class.open]="isOpen(c.code)" aria-hidden="true">›</span>
           </button>
 
           @if (isOpen(c.code)) {
             <div class="ctl-body">
+              <!-- [AEGIS-MVP-LANGUAGE-01] Linguagem clara DETERMINÍSTICA: entender o controle sem depender da
+                   IA — o que ele garante, por que importa e a primeira ação. Vem do backend, não do LLM. -->
+              @if (c.summary || c.impact || c.initialAction) {
+                <section class="plain">
+                  @if (c.summary) {
+                    <p class="plain-lead">{{ c.summary }}</p>
+                  }
+                  @if (c.impact) {
+                    <div class="plain-row"><span class="k">Por que importa</span><p>{{ c.impact }}</p></div>
+                  }
+                  @if (c.initialAction) {
+                    <div class="plain-row"><span class="k">Primeira ação</span><p>{{ c.initialAction }}</p></div>
+                  }
+                  @if (c.officialDescription) {
+                    <p class="plain-ref">Referência NIST: {{ c.officialDescription }}</p>
+                  }
+                </section>
+              }
+
+              <!-- Motivo DETERMINÍSTICO de ainda não estar avaliado — neutro, sem tom de reprovação, e sem
+                   depender de recomendação de IA para ser compreendido. -->
+              @if (c.status === 'NotEvaluated') {
+                <section class="na-box">
+                  <span class="k">Ainda não avaliado</span>
+                  <p>{{ c.reason || naLabel(c.notEvaluatedReason) }}</p>
+                </section>
+              }
+
               @if (c.checks.length > 0) {
                 <ul class="checks">
                   @for (chk of c.checks; track chk.name) {
@@ -71,7 +110,10 @@ type AdvisoryUiState =
                   }
                 </ul>
               }
-              <p class="evidence">{{ c.evidence || 'Sem evidência registrada para este controle.' }}</p>
+              <!-- Evidência só para AVALIADOS: em NotEvaluated o motivo acima já explica; não há evidência. -->
+              @if (c.status !== 'NotEvaluated') {
+                <p class="evidence">{{ c.evidence || 'Sem evidência registrada para este controle.' }}</p>
+              }
 
               <!-- Lacunas de EVIDÊNCIA: por que o controle não pôde ser provado. Vem antes do plano de
                    ação porque é a causa raiz — e separa a pendência de SENSOR (ligar conector) da
@@ -181,15 +223,23 @@ type AdvisoryUiState =
                 </section>
               }
 
-              <div class="meta">
-                <span>Fonte: <b>{{ c.source === 'Telemetry' ? 'Telemetria' : 'Documental' }}</b></span>
-                <span>Avaliado em {{ c.evaluatedAt | date: 'dd/MM/yyyy HH:mm' }}</span>
-              </div>
+              <!-- Fonte e data só quando EXISTEM: em NotEvaluated ambas são nulas — nunca rotular "Documental"
+                   nem exibir uma data inválida onde não houve avaliação. -->
+              @if (c.source || c.evaluatedAt) {
+                <div class="meta">
+                  @if (c.source) {
+                    <span>Fonte: <b>{{ c.source === 'Telemetry' ? 'Telemetria' : 'Documental' }}</b></span>
+                  }
+                  @if (c.evaluatedAt) {
+                    <span>Avaliado em {{ c.evaluatedAt | date: 'dd/MM/yyyy HH:mm' }}</span>
+                  }
+                </div>
+              }
             </div>
           }
         </li>
       } @empty {
-        <li class="empty">Nenhum controle avaliado neste pilar ainda.</li>
+        <li class="empty">Nenhum controle neste pilar.</li>
       }
     </ul>
   `,
@@ -256,6 +306,16 @@ type AdvisoryUiState =
         font-size: 10.5px;
         letter-spacing: 0.03em;
         color: var(--muted);
+      }
+      /* Resumo curto no cabeçalho — compreensão SEM IA e sem expandir. Uma linha, com reticências, para não
+         inflar a altura da linha em listas longas. */
+      .summary {
+        font-family: var(--sans);
+        font-size: 11.5px;
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       /* Slot da sparkline: altura reservada mesmo vazio, para a linha não "pular" entre controles
          com e sem histórico. */
@@ -391,6 +451,63 @@ type AdvisoryUiState =
       .meta b {
         color: var(--text);
         font-weight: 600;
+      }
+
+      /* ---- [AEGIS-MVP-LANGUAGE-01] NotEvaluated NEUTRO + linguagem clara (rótulos .k reusam a regra acima) ---- */
+      /* Não avaliado: sem vermelho de reprovação — dot e status mutados, leve recuo. */
+      .ctl.is-na {
+        opacity: 0.9;
+      }
+      .ctl.is-na .dot {
+        background: var(--muted);
+        opacity: 0.5;
+      }
+      .ctl.is-na .status,
+      .na-pts {
+        color: var(--muted);
+      }
+      /* Bloco de linguagem clara determinística: o que garante / por que importa / primeira ação. */
+      .plain {
+        margin: 12px 0 4px;
+      }
+      .plain-lead {
+        margin: 0 0 8px;
+        font-family: var(--sans);
+        font-size: 13px;
+        line-height: 1.55;
+        color: var(--text);
+      }
+      .plain-row {
+        margin: 8px 0 0;
+      }
+      .plain-row p,
+      .na-box p {
+        margin: 0;
+        font-family: var(--sans);
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--text);
+      }
+      /* Descrição oficial NIST — referência secundária, contida e mutada. */
+      .plain-ref {
+        margin: 10px 0 0;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        line-height: 1.5;
+        color: var(--muted);
+        opacity: 0.85;
+      }
+      /* Motivo de ainda não avaliado — caixa NEUTRA (cyan discreto), jamais o vermelho de reprovação. */
+      .na-box {
+        margin: 12px 0 0;
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--cyan);
+        border-radius: 9px;
+        background: rgba(122, 145, 190, 0.04);
+        padding: 10px 12px;
+      }
+      .na-box .k {
+        color: var(--cyan);
       }
 
       /* ---- Dossiê do controle: as seções que a IA preenche ---- */
@@ -575,7 +692,9 @@ type AdvisoryUiState =
       /* Rótulo de seção: o MESMO em todo o dossiê (advisory, telemetria, ameaças, plano, confiança). */
       .advise-sec .k,
       .sec > .k,
-      .conf > .k {
+      .conf > .k,
+      .plain-row .k,
+      .na-box .k {
         display: block;
         font-family: var(--mono);
         font-size: 10px;
@@ -720,9 +839,12 @@ export class ControlComplianceCardComponent {
       case 'MitigatedByThirdParty':
         return c.source === 'Documentary' ? 'Evidência parcial' : 'Compensado';
       case 'NotEvaluated':
-        return 'Não avaliado';
+        return 'Ainda não medido';
     }
   }
+
+  /** Rótulo CURTO do motivo de não-avaliação — a frase completa determinística vem do backend em `reason`. */
+  protected readonly naLabel = notEvaluatedLabel;
 
   /**
    * Cor da confiança da IA, na MESMA régua de faixa do ScoreGauge/Sparkline (≥80 cyan · ≥50 âmbar ·

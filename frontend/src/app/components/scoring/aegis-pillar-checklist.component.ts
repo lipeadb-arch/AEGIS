@@ -5,6 +5,7 @@ import {
   PillarKey,
   TenantControlStateDto,
   buildPillarGapAnalysis,
+  notEvaluatedLabel,
 } from '../../models/scoring.models';
 import { categoryName } from '../../models/nist-glossary';
 import { ScoringService } from '../../services/scoring.service';
@@ -58,27 +59,40 @@ import { MissingRequirementsComponent } from './missing-requirements.component';
           <p class="blind-lede">
             O Aegis não consegue avaliar
             <b>{{ gap().blindSpots.length }}</b>
-            {{ gap().blindSpots.length === 1 ? 'controle' : 'controles' }} por falta de prova —
+            {{ gap().blindSpots.length === 1 ? 'controle' : 'controles' }} —
             <b>{{ gap().telemetryGaps }}</b> de telemetria e
             <b>{{ gap().documentationGaps }}</b> de documentação.
+            @if (gap().unsupportedGaps > 0) {
+              <b>{{ gap().unsupportedGaps }}</b>
+              {{ gap().unsupportedGaps === 1 ? 'ainda não tem' : 'ainda não têm' }} método de avaliação no AEGIS.
+            }
           </p>
         }
 
         <ul class="rows">
           @for (c of gap().blindSpots; track c.code) {
-            <li class="row">
+            <li class="row" [class.na]="c.status === 'NotEvaluated'">
               <div class="blind-hd">
                 <span class="names">
-                  <span class="name">{{ categoryName(c.code) }}</span>
-                  <span class="code">{{ c.code }}</span>
+                  <!-- Título ESPECÍFICO como principal; categoria e código como referência secundária. -->
+                  <span class="name">{{ c.title || c.code }}</span>
+                  <span class="code">{{ categoryName(c.code) }} · {{ c.code }}</span>
                 </span>
-                <span class="pts">{{ c.scorePoints }}<i>/{{ c.maxScorePoints }}</i></span>
+                <!-- NotEvaluated não é reprovação: "—/max", nunca "0/max". -->
+                <span class="pts">
+                  @if (c.status === 'NotEvaluated') { — } @else { {{ c.scorePoints }} }<i>/{{ c.maxScorePoints }}</i>
+                </span>
               </div>
               <app-missing-requirements [groups]="c.missingGroups" />
+              <!-- Sem lacuna materializada (Unsupported): o motivo determinístico é a ÚNICA explicação —
+                   sem fingir que falta telemetria ou documento. -->
+              @if (c.status === 'NotEvaluated' && c.missingGroups.length === 0) {
+                <p class="na-note">{{ c.reason || naLabel(c.notEvaluatedReason) }}</p>
+              }
             </li>
           } @empty {
             <li class="empty ok-empty">
-              Nenhum ponto cego — toda não-conformidade aqui tem evidência por trás.
+              Nenhum ponto cego — todo controle deste pilar já foi avaliado com evidência.
             </li>
           }
         </ul>
@@ -173,6 +187,18 @@ import { MissingRequirementsComponent } from './missing-requirements.component';
         border-radius: 9px;
         padding: 10px 13px 12px;
         background: rgba(122, 145, 190, 0.02);
+      }
+      /* NotEvaluated: borda NEUTRA (cyan), não o âmbar de dívida de governança nem o vermelho de reprovação. */
+      .row.na {
+        border-left-color: var(--cyan);
+      }
+      /* Motivo determinístico do não avaliado (usado quando não há lacuna materializada — ex.: Unsupported). */
+      .na-note {
+        margin: 10px 0 0;
+        font-family: var(--sans);
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--muted);
       }
       .blind-hd {
         display: flex;
@@ -310,6 +336,9 @@ export class AegisPillarChecklistComponent {
   readonly gap = computed<PillarGapAnalysis>(() => buildPillarGapAnalysis(this.meta(), this.controls()));
 
   protected readonly categoryName = categoryName;
+
+  /** Rótulo CURTO do motivo de não-avaliação — a frase completa determinística vem do backend em `reason`. */
+  protected readonly naLabel = notEvaluatedLabel;
 
   constructor() {
     // O pilar é input: trocá-lo tem de recarregar a matriz, senão a tela mostraria o pilar anterior

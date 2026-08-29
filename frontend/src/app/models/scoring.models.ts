@@ -14,6 +14,14 @@ export type ControlStatus = 'Compliant' | 'MitigatedByThirdParty' | 'NonComplian
 export type VerdictSource = 'Telemetry' | 'Documentary';
 
 /**
+ * [AEGIS-MVP-LANGUAGE-01] Motivo DETERMINÍSTICO de um controle estar `NotEvaluated` (espelha
+ * `NotEvaluatedReasonKind` do backend, que chega como NOME — nunca índice de enum). Distingue as quatro
+ * situações que o operador precisa separar: falta telemetria, falta prova documental, faltam as duas, ou o
+ * AEGIS ainda não sabe avaliar. Nulo em controle avaliado.
+ */
+export type NotEvaluatedReason = 'TelemetryRequired' | 'DocumentationRequired' | 'BothRequired' | 'Unsupported';
+
+/**
  * Gravidade de um achado — a régua ÚNICA de severidade do produto (espelha o enum SeverityLevel do
  * backend). Mora aqui, no modelo de scoring, porque TODO controle NIST tem severidade; a tela de
  * identidade (identity.models) a reimporta daqui em vez de manter uma segunda escala.
@@ -74,11 +82,22 @@ export interface TenantControlStateDto {
   scorePoints: number; // numerador (pontos obtidos)
   maxScorePoints: number; // denominador (peso da subcategoria no catálogo)
   controlStatus: ControlStatus;
-  reason: string | null; // [AUD-002] motivo legível de por que não pontua (null em Compliant)
+  reason: string | null; // [AUD-002] motivo legível de por que não pontua (null em Compliant); em NotEvaluated, o motivo determinístico
   aiEvidence: string | null;
-  lastEvaluatedAt: string; // ISO 8601
-  lastVerdictSource: VerdictSource;
+  // [AEGIS-MVP-LANGUAGE-01] NULOS em NotEvaluated: um controle sem estado não tem data nem fonte de veredito.
+  // Tipar como obrigatórios faria a tela exibir "Documental" e uma data inválida por engano.
+  lastEvaluatedAt: string | null; // ISO 8601; null em NotEvaluated
+  lastVerdictSource: VerdictSource | null; // null em NotEvaluated
   checks: ComplianceCheck[]; // checklist técnico que justifica o status (vazio se o motor não decompôs)
+
+  // ---- [AEGIS-MVP-LANGUAGE-01] Camada de LINGUAGEM CLARA (autoral, provider-neutral, vinda do backend) ----
+  // O frontend NÃO mantém uma segunda cópia do catálogo: estes campos chegam prontos de /scoring/dashboard.
+  title: string | null; // título direto e específico do controle (nunca o nome genérico da categoria)
+  summary: string | null; // o que o controle garante, em uma frase
+  impact: string | null; // por que a ausência importa
+  initialAction: string | null; // primeira ação prática e curta
+  officialDescription: string | null; // descrição OFICIAL NIST — referência técnica secundária
+  notEvaluatedReason: NotEvaluatedReason | null; // motivo determinístico do NotEvaluated (null se avaliado)
 
   // ---- Enriquecimento para o HUD (o motor de IA preenche; hoje trafega vazio/nulo) ----
   severity: SeverityLevel; // do motor, ou o proxy derivado do status — nunca ausente
@@ -201,12 +220,18 @@ export interface PillarGapAnalysis {
   meta: PillarMeta;
   /** Controles com evidência: o motor conseguiu avaliá-los (conformes ou não). */
   covered: ControlView[];
-  /** Pontos cegos: controles cuja reprovação é por FALTA DE PROVA, não por falha de prática. */
+  /** Pontos cegos: controles que o Aegis não consegue avaliar — por falta de prova OU ainda não avaliados. */
   blindSpots: ControlView[];
   /** Total de lacunas de telemetria entre os pontos cegos (inclui as de dupla evidência). */
   telemetryGaps: number;
   /** Total de lacunas documentais entre os pontos cegos (inclui as de dupla evidência). */
   documentationGaps: number;
+  /**
+   * [AEGIS-MVP-LANGUAGE-01] Controles cegos cuja avaliação AINDA NÃO É SUPORTADA pelo AEGIS (sem regra
+   * avaliável). Contados à parte, JAMAIS como lacuna de telemetria ou documentação — não se finge que falta
+   * um sinal ou um documento onde o método sequer existe.
+   */
+  unsupportedGaps: number;
 }
 
 /**
@@ -217,7 +242,11 @@ export interface PillarGapAnalysis {
  */
 export function buildPillarGapAnalysis(meta: PillarMeta, dtos: TenantControlStateDto[]): PillarGapAnalysis {
   const all = buildPillarView(meta, dtos).controls;
-  const isBlind = (c: ControlView) => c.missingGroups.length > 0;
+  // [AEGIS-MVP-LANGUAGE-01] Cego é o controle que o Aegis não consegue avaliar: reprovação por FALTA DE PROVA
+  // (tem missingGroups) OU controle ainda NÃO AVALIADO (NotEvaluated) — inclusive o Unsupported, que não tem
+  // lacuna de telemetria/documento mas segue sendo um ponto cego (o método ainda não existe). Um NonCompliant
+  // cuja telemetria CHEGOU e reprovou continua coberto: o Aegis o enxerga, ele é que está mal.
+  const isBlind = (c: ControlView) => c.status === 'NotEvaluated' || c.missingGroups.length > 0;
 
   const blindSpots = all.filter(isBlind);
   const countOf = (types: ComplianceRequirementType[]) =>
@@ -233,6 +262,8 @@ export function buildPillarGapAnalysis(meta: PillarMeta, dtos: TenantControlStat
     // 'Both' conta nos DOIS lados: é uma pendência que só fecha com as duas provas.
     telemetryGaps: countOf(['Telemetry', 'Both']),
     documentationGaps: countOf(['Documentation', 'Both']),
+    // Unsupported não tem missingGroups — é contado à parte, nunca como telemetria ou documentação.
+    unsupportedGaps: blindSpots.filter((c) => c.notEvaluatedReason === 'Unsupported').length,
   };
 }
 
@@ -250,6 +281,26 @@ export const MANUAL_AUDIT_TOKEN = 'MANUAL_AUDIT_REQUIRED';
  */
 export function sourceLabelOf(sourceIdentifier: string): string {
   return sourceIdentifier === MANUAL_AUDIT_TOKEN ? 'Validação manual' : sourceIdentifier;
+}
+
+/**
+ * [AEGIS-MVP-LANGUAGE-01] Rótulo CURTO e neutro do motivo de não-avaliação — para badges e seções da tela. A
+ * frase completa e determinística vem do backend em `reason`; este é o resumo de uma linha. Provider-neutral:
+ * nunca afirma que falta conectar uma ferramenta específica.
+ */
+export function notEvaluatedLabel(reason: NotEvaluatedReason | null): string {
+  switch (reason) {
+    case 'TelemetryRequired':
+      return 'Aguardando telemetria';
+    case 'DocumentationRequired':
+      return 'Aguardando validação documental';
+    case 'BothRequired':
+      return 'Aguardando telemetria e documento';
+    case 'Unsupported':
+      return 'Avaliação ainda não suportada';
+    default:
+      return 'Ainda não medido';
+  }
 }
 
 /**
@@ -345,8 +396,9 @@ export interface ControlView {
   maxScorePoints: number;
   pct: number; // 0..100 da célula
   evidence: string | null;
-  source: VerdictSource;
-  evaluatedAt: string;
+  reason: string | null; // motivo legível de não-pontuação; em NotEvaluated, o motivo determinístico
+  source: VerdictSource | null; // NULA em NotEvaluated — a tela não rotula "Documental" onde não há fonte
+  evaluatedAt: string | null; // NULA em NotEvaluated — a tela não mostra data onde não houve avaliação
   checks: ComplianceCheck[]; // decomposição técnica do veredito, exibida no accordion do card
   severity: SeverityLevel; // tinge o badge do card
   history: ComplianceHistoryPoint[]; // sparkline 30d (vazia ⇒ o card a omite)
@@ -358,6 +410,14 @@ export interface ControlView {
   mttrMinutes: number | null;
   /** Lacunas de PROVA, já agrupadas por natureza — o card renderiza um bloco por grupo. */
   missingGroups: MissingRequirementGroup[];
+
+  // ---- [AEGIS-MVP-LANGUAGE-01] Apresentação em linguagem clara (título específico como informação principal) ----
+  title: string | null; // título específico do controle — o TÍTULO PRINCIPAL da linha (nunca a categoria)
+  summary: string | null; // o que o controle garante
+  impact: string | null; // por que importa
+  initialAction: string | null; // primeira ação
+  officialDescription: string | null; // descrição OFICIAL NIST — referência secundária
+  notEvaluatedReason: NotEvaluatedReason | null; // motivo determinístico do NotEvaluated (null se avaliado)
 }
 
 /**
@@ -379,12 +439,18 @@ export interface MissingRequirementGroup {
 /** Postura consolidada de um pilar — o que o Smart Component monta e distribui aos Dumb Components. */
 export interface PillarView {
   meta: PillarMeta;
-  compliancePct: number; // SUM(scorePoints)/SUM(maxScorePoints)*100 (0 se vazio)
-  total: number;
+  /**
+   * SUM(scorePoints)/SUM(maxScorePoints)*100 sobre os controles AVALIADOS (NotEvaluated fora do numerador E
+   * do denominador). [AEGIS-MVP-LANGUAGE-01] NULO quando nada foi avaliado: 0/0 é "não avaliado", não 0% — o
+   * headline oficial vem de /scoring/workspace; este percentual local jamais inventa uma queda de postura.
+   */
+  compliancePct: number | null;
+  total: number; // TODOS os controles do pilar (inclui NotEvaluated)
   compliant: number;
   partial: number;
   nonCompliant: number;
-  controls: ControlView[]; // ordenados: NonCompliant primeiro (o que precisa saltar aos olhos)
+  notEvaluated: number; // controles ainda não medidos — fora do score, exibidos na lista
+  controls: ControlView[]; // ordenados: NonCompliant → Mitigated → Compliant → NotEvaluated; empate por código
   mttdMinutes: number | null; // média dos controles que reportam (null = ninguém reportou)
   mttrMinutes: number | null;
 }
@@ -404,8 +470,9 @@ export function toControlView(d: TenantControlStateDto): ControlView {
     maxScorePoints: d.maxScorePoints,
     pct: d.maxScorePoints === 0 ? 0 : Math.round((100 * d.scorePoints) / d.maxScorePoints),
     evidence: d.aiEvidence,
-    source: d.lastVerdictSource,
-    evaluatedAt: d.lastEvaluatedAt,
+    reason: d.reason ?? null,
+    source: d.lastVerdictSource ?? null,
+    evaluatedAt: d.lastEvaluatedAt ?? null,
     checks: d.checks ?? [],
     severity: d.severity ?? severityForStatus(d.controlStatus),
     history: d.historicalCompliance ?? [],
@@ -416,6 +483,12 @@ export function toControlView(d: TenantControlStateDto): ControlView {
     mttdMinutes: d.mttdMinutes ?? null,
     mttrMinutes: d.mttrMinutes ?? null,
     missingGroups: groupMissingRequirements(d.missingRequirements ?? []),
+    title: d.title ?? null,
+    summary: d.summary ?? null,
+    impact: d.impact ?? null,
+    initialAction: d.initialAction ?? null,
+    officialDescription: d.officialDescription ?? null,
+    notEvaluatedReason: d.notEvaluatedReason ?? null,
   };
 }
 
@@ -477,25 +550,30 @@ const STATUS_RANK: Record<ControlStatus, number> = { NonCompliant: 0, MitigatedB
  * livre de Angular; o Smart Component só a chama dentro de um `computed`.
  */
 export function buildPillarView(meta: PillarMeta, dtos: TenantControlStateDto[]): PillarView {
-  // [AEGIS-AUD-002] Controles NotEvaluated ficam FORA do numerador e do denominador do score do pilar
-  // (não são 0%): são lacuna de cobertura, não de conformidade. Exibir os NotEvaluated na matriz por
-  // controle é redesenho do Dashboard/NIST — pertence à Entrega 4.
-  const evaluated = dtos.filter((d) => d.controlStatus !== 'NotEvaluated');
-  const controls = evaluated
+  // [AEGIS-MVP-LANGUAGE-01] TODOS os controles do pilar entram na LISTA — inclusive os NotEvaluated, que antes
+  // eram descartados (deixando Respond/Recover parecerem vazios). A ordenação leva o risco ao topo e os não
+  // avaliados ao fim: NonCompliant → Mitigated → Compliant → NotEvaluated, empate por código (STATUS_RANK).
+  const controls = dtos
     .map(toControlView)
     .sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.code.localeCompare(b.code));
 
+  // O SCORE, porém, usa SOMENTE os avaliados: NotEvaluated fica fora do numerador E do denominador — não é 0%,
+  // não é NonCompliant e não altera o AEGIS Score. É lacuna de COBERTURA, não de conformidade.
+  const evaluated = dtos.filter((d) => d.controlStatus !== 'NotEvaluated');
   const sumScore = evaluated.reduce((s, d) => s + d.scorePoints, 0);
   const sumMax = evaluated.reduce((s, d) => s + d.maxScorePoints, 0);
 
   return {
     meta,
-    compliancePct: sumMax === 0 ? 0 : Math.round((100 * sumScore) / sumMax),
+    // Nulo quando NADA foi avaliado (0/0): não se inventa 0% como score. Ver PillarView.compliancePct.
+    compliancePct: sumMax === 0 ? null : Math.round((100 * sumScore) / sumMax),
     total: controls.length,
     compliant: controls.filter((c) => c.status === 'Compliant').length,
     partial: controls.filter((c) => c.status === 'MitigatedByThirdParty').length,
     nonCompliant: controls.filter((c) => c.status === 'NonCompliant').length,
+    notEvaluated: controls.filter((c) => c.status === 'NotEvaluated').length,
     controls,
+    // A média de MTTD/MTTR ignora nulos (averageOf) — NotEvaluated não reporta tempo e não afunda a média.
     mttdMinutes: averageOf(controls.map((c) => c.mttdMinutes)),
     mttrMinutes: averageOf(controls.map((c) => c.mttrMinutes)),
   };
