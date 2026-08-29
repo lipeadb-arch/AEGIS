@@ -40,9 +40,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <!-- [AEGIS-MVP-LANGUAGE-01] Camada de apresentação AUTORAL do AEGIS (linguagem clara provider-neutral,
-         pt-BR) por subcategoria. SEPARADA do catálogo oficial NIST — não é tradução oficial. Lida no startup
-         pelo ControlLanguageCatalog (singleton) a partir do Data/ ao lado do binário e usada pela query do
-         dashboard para entregar título/resumo/impacto/ação ao frontend. -->
+         pt-BR) por subcategoria. SEPARADA do catálogo oficial NIST — não é tradução oficial. Lida uma vez, na
+         primeira utilização, pelo ControlLanguageCatalog (singleton) a partir do Data/ ao lado do binário e
+         usada pela query do dashboard para entregar título/resumo/impacto/ação ao frontend. -->
     <Content Update="Data\aegis_control_language.pt-BR.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

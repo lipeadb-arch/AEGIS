@@ -11,9 +11,11 @@
 import {
   PILLARS,
   TenantControlStateDto,
+  buildGapBalance,
   buildPillarGapAnalysis,
   buildPillarView,
   notEvaluatedLabel,
+  sourceLabelOf,
   toControlView,
 } from '../src/app/models/scoring.models';
 
@@ -187,6 +189,44 @@ test('notEvaluatedLabel mapeia os quatro motivos deterministicamente', () => {
   eq(notEvaluatedLabel('DocumentationRequired'), 'Aguardando validação documental', 'documentação');
   eq(notEvaluatedLabel('BothRequired'), 'Aguardando telemetria e documento', 'ambos');
   eq(notEvaluatedLabel('Unsupported'), 'Avaliação ainda não suportada', 'não suportado');
+});
+
+// ---- 11) balanço executivo usa TÍTULO específico, não o nome da categoria ----------------------
+test('buildGapBalance: dois controles da mesma categoria geram títulos executivos distintos', () => {
+  const gap = (): { type: 'Telemetry'; sourceIdentifier: string; description: string } => ({
+    type: 'Telemetry',
+    sourceIdentifier: 'ELIGIBLE_TELEMETRY_SOURCE',
+    description: 'Nenhuma telemetria elegível foi avaliada para este controle.',
+  });
+  const bal = buildGapBalance([
+    mkDto({
+      subcategoryCode: 'PR.AA-01',
+      controlStatus: 'NotEvaluated',
+      title: 'Controlar o ciclo de vida de identidades e credenciais',
+      maxScorePoints: 10,
+      missingRequirements: [gap()],
+    }),
+    mkDto({
+      subcategoryCode: 'PR.AA-03',
+      controlStatus: 'NotEvaluated',
+      title: 'Autenticar usuários, serviços e dispositivos',
+      maxScorePoints: 10,
+      missingRequirements: [gap()],
+    }),
+  ]);
+  const labels = bal.topBlindSpots.map((b) => b.label);
+  eq(labels.length, 2, 'dois pontos cegos no balanço');
+  assert(labels[0] !== labels[1], 'a mesma categoria (PR.AA) gera títulos executivos DISTINTOS');
+  assert(!labels.includes('Identidade e Acesso'), 'nunca o nome genérico da categoria como título');
+  assert(labels.includes('Autenticar usuários, serviços e dispositivos'), 'usa o título específico do backend');
+});
+
+// ---- 12) sourceLabelOf traduz os tokens genéricos provider-neutral -----------------------------
+test('sourceLabelOf traduz os identificadores genéricos sem vazar token de máquina', () => {
+  eq(sourceLabelOf('ELIGIBLE_TELEMETRY_SOURCE'), 'Fonte de telemetria compatível', 'telemetria genérica');
+  eq(sourceLabelOf('TELEMETRY_AND_VALIDATION'), 'Telemetria e validação', 'híbrida genérica');
+  eq(sourceLabelOf('MANUAL_AUDIT_REQUIRED'), 'Validação manual', 'documental');
+  eq(sourceLabelOf('Entra ID'), 'Entra ID', 'nome real de ferramenta passa direto (controle avaliado)');
 });
 
 console.log(`\n${count - failures}/${count} testes de lógica do frontend (scoring) aprovados.`);

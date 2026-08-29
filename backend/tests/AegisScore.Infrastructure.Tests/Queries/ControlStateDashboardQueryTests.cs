@@ -161,20 +161,29 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
     }
 
     [Fact]
-    public async Task GetDashboardAsync_NotEvaluatedComRegraTelemetria_ClassificaTelemetryRequired()
+    public async Task GetDashboardAsync_NotEvaluatedComRegraTelemetria_GeraLacunaGenericaSemFornecedor()
     {
-        await SeedRuleAsync(_gvOcId, "GV.OC-01", RuleEvidenceType.Telemetry, "Sensor: sinais de telemetria");
+        // A regra cita FORNECEDORES — mas um controle NUNCA avaliado não permite afirmar fornecedor, conector
+        // nem aplicabilidade: a lacuna materializada é GENÉRICA e provider-neutral (não passa por Compile).
+        await SeedRuleAsync(_gvOcId, "GV.OC-01", RuleEvidenceType.Telemetry,
+            "Microsoft Sentinel: incident logs", "Google SecOps: detections");
 
         await using var db = NewContext(TenantA);
         var gv = (await QueryFor(db, TenantA).GetDashboardAsync()).Single(r => r.SubcategoryCode == "GV.OC-01");
 
         gv.NotEvaluatedReason.Should().Be("TelemetryRequired");
         gv.Reason.Should().Be("Ainda não medido: nenhuma telemetria elegível foi avaliada.");
-        gv.MissingRequirements.Should().ContainSingle().Which.Type.Should().Be("Telemetry");
+        var gap = gv.MissingRequirements.Should().ContainSingle().Which;
+        gap.Type.Should().Be("Telemetry");
+        gap.SourceIdentifier.Should().Be("ELIGIBLE_TELEMETRY_SOURCE", "identificador de máquina estável, traduzido no frontend");
+        gap.Description.Should().Be("Nenhuma telemetria elegível foi avaliada para este controle.");
+        (gap.SourceIdentifier + " " + gap.Description).Should()
+            .NotContain("Microsoft").And.NotContain("Google").And.NotContain("Sentinel")
+            .And.NotContain("SecOps").And.NotContain("conector");
     }
 
     [Fact]
-    public async Task GetDashboardAsync_NotEvaluatedComRegraDocumental_ClassificaDocumentationRequired()
+    public async Task GetDashboardAsync_NotEvaluatedComRegraDocumental_GeraLacunaDocumentalGenerica()
     {
         await SeedRuleAsync(_gvOcId, "GV.OC-01", RuleEvidenceType.Documentation, RuleEvaluator.ManualAuditToken);
 
@@ -183,21 +192,28 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
 
         gv.NotEvaluatedReason.Should().Be("DocumentationRequired");
         gv.Reason.Should().Be("Ainda não validado: exige documento ou validação humana.");
-        gv.MissingRequirements.Should().ContainSingle().Which.Type.Should().Be("Documentation");
+        var gap = gv.MissingRequirements.Should().ContainSingle().Which;
+        gap.Type.Should().Be("Documentation");
+        gap.SourceIdentifier.Should().Be(RuleEvaluator.ManualAuditToken, "reusa o token já mapeado para 'Validação manual'");
+        gap.Description.Should().Be("Este controle exige documento processado ou validação humana.");
     }
 
     [Fact]
-    public async Task GetDashboardAsync_NotEvaluatedComRegraHibrida_ClassificaBothRequired()
+    public async Task GetDashboardAsync_NotEvaluatedComRegraHibrida_GeraLacunaHibridaSemFornecedor()
     {
         await SeedRuleAsync(_gvOcId, "GV.OC-01", RuleEvidenceType.Both,
-            "Sensor: sinais de telemetria", RuleEvaluator.ManualAuditToken);
+            "Amazon GuardDuty: findings", RuleEvaluator.ManualAuditToken);
 
         await using var db = NewContext(TenantA);
         var gv = (await QueryFor(db, TenantA).GetDashboardAsync()).Single(r => r.SubcategoryCode == "GV.OC-01");
 
         gv.NotEvaluatedReason.Should().Be("BothRequired");
         gv.Reason.Should().Be("Ainda não medido por completo: exige telemetria e validação documental.");
-        gv.MissingRequirements.Should().ContainSingle().Which.Type.Should().Be("Both");
+        var gap = gv.MissingRequirements.Should().ContainSingle().Which;
+        gap.Type.Should().Be("Both");
+        gap.SourceIdentifier.Should().Be("TELEMETRY_AND_VALIDATION");
+        gap.Description.Should().Be("Este controle exige telemetria elegível e validação documental.");
+        (gap.SourceIdentifier + " " + gap.Description).Should().NotContain("Amazon").And.NotContain("GuardDuty");
     }
 
     [Fact]
@@ -210,6 +226,31 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
         rows.Should().HaveCount(2);
         rows.Should().OnlyContain(r => r.ControlStatus == "NotEvaluated", "nada foi avaliado neste tenant");
         (await db.TenantControlStates.CountAsync()).Should().Be(0, "NotEvaluated não materializa linha persistida");
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_SubcategoriaAtivaSemRedacao_FalhaExplicitaSanitizada()
+    {
+        // FAIL-CLOSED em runtime: um catálogo de linguagem que cobre PR.AA-01 mas NÃO GV.OC-01 (ambos ATIVOS no
+        // catálogo semeado) faz a consulta FALHAR explicitamente — em vez de devolver DTO com campos nulos que
+        // fariam o frontend cair para o código. A mensagem é SANITIZADA: só o código, sem caminho/conteúdo.
+        var incompleteLanguage = new StaticControlLanguageCatalog(
+            new Dictionary<string, ControlLanguage>(StringComparer.Ordinal)
+            {
+                ["PR.AA-01"] = new("Título", "Resumo", "Impacto", "Ação"),
+            });
+
+        await using var db = NewContext(TenantA);
+        var query = new ControlStateDashboardQuery(
+            db, new SystemTenantContext(TenantA),
+            Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = 0 }), TimeProvider.System, incompleteLanguage);
+
+        var act = async () => await query.GetDashboardAsync();
+        (await act.Should().ThrowAsync<InvalidOperationException>("código ativo sem redação não pode ser silencioso"))
+            .Which.Message.Should().Contain("GV.OC-01")
+                .And.NotContain(".json", "a mensagem não expõe caminho do arquivo")
+                .And.NotContain("Data", "a mensagem não expõe caminho interno");
+        (await db.TenantControlStates.CountAsync()).Should().Be(0, "a falha de leitura não grava nada");
     }
 
     // ---- infraestrutura do teste ----------------------------------------------------

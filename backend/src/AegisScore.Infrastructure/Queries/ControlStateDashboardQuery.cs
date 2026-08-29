@@ -133,57 +133,72 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
     /// [AEGIS-MVP-LANGUAGE-01] Classifica DETERMINISTICAMENTE por que um controle está sem estado, a partir do
     /// tipo de evidência TIPADO e PERSISTIDO da regra (nunca por texto): Telemetry → TelemetryRequired;
     /// Documentation → DocumentationRequired; Both → BothRequired; sem regra → Unsupported. Para os três
-    /// primeiros, materializa as lacunas cruzando a regra com "nada coletado ainda" (sem telemetria, sem
-    /// cobertura documental verificada), de modo que "Pontos Cegos" mostre a natureza da pendência. Não afirma
-    /// que falta conectar uma ferramenta específica — usa a mensagem provider-neutral da classificação.
+    /// primeiros, materializa UMA lacuna GENÉRICA e provider-neutral (para "Pontos Cegos" mostrar a natureza),
+    /// SEM revelar fornecedor, conector, permissão ou aplicabilidade — que um controle NUNCA avaliado não permite
+    /// afirmar. Por isso NÃO passa por <see cref="RuleEvaluator.Compile"/>, que escolheria fonte primária e
+    /// alternativas do catálogo de regras (revelando nomes de produto); Compile fica só no caminho dos AVALIADOS
+    /// (<see cref="EnrichWithStaleness"/>). Unsupported não materializa lacuna alguma.
     /// </summary>
-    private (NotEvaluatedReasonKind Kind, string Reason, IReadOnlyList<MissingRequirementDto> Missing) ClassifyNotEvaluated(
+    private static (NotEvaluatedReasonKind Kind, string Reason, IReadOnlyList<MissingRequirementDto> Missing) ClassifyNotEvaluated(
         string code,
         IReadOnlyDictionary<string, (List<string> Requirements, RuleEvidenceType EvidenceType)> rules)
     {
+        // Sem regra avaliável → o AEGIS não tem método. SEM lacuna forjada.
         if (!rules.TryGetValue(code, out var rule))
             return (NotEvaluatedReasonKind.Unsupported, UnsupportedMessage, Array.Empty<MissingRequirementDto>());
-
-        // "Nada coletado ainda": sem telemetria e sem cobertura documental verificada. Compile emite a lacuna
-        // da(s) natureza(s) que a regra exige (Telemetry/Documentation/Both) — a autoridade é o tipo persistido.
-        var derived = RuleEvaluator.Compile(
-            rule.EvidenceType, rule.Requirements,
-            new EvidenceAvailability(LastTelemetryAt: null, HasVerifiedDocumentaryCoverage: false),
-            _clock.GetUtcNow(), _options.FreshnessWindow);
-        var missing = derived
-            .Select(d => new MissingRequirementDto(d.Type.ToString(), d.SourceIdentifier, d.Description))
-            .ToList();
 
         return rule.EvidenceType switch
         {
             RuleEvidenceType.Telemetry => (NotEvaluatedReasonKind.TelemetryRequired,
-                "Ainda não medido: nenhuma telemetria elegível foi avaliada.", missing),
+                "Ainda não medido: nenhuma telemetria elegível foi avaliada.",
+                One(ComplianceRequirementType.Telemetry, EligibleTelemetrySource,
+                    "Nenhuma telemetria elegível foi avaliada para este controle.")),
             RuleEvidenceType.Documentation => (NotEvaluatedReasonKind.DocumentationRequired,
-                "Ainda não validado: exige documento ou validação humana.", missing),
+                "Ainda não validado: exige documento ou validação humana.",
+                One(ComplianceRequirementType.Documentation, RuleEvaluator.ManualAuditToken,
+                    "Este controle exige documento processado ou validação humana.")),
             RuleEvidenceType.Both => (NotEvaluatedReasonKind.BothRequired,
-                "Ainda não medido por completo: exige telemetria e validação documental.", missing),
-            // Tipo fora do enum conhecido (regra adulterada) → trata como não avaliável, sem forjar lacuna.
+                "Ainda não medido por completo: exige telemetria e validação documental.",
+                One(ComplianceRequirementType.Both, TelemetryAndValidationSource,
+                    "Este controle exige telemetria elegível e validação documental.")),
+            // Tipo fora do enum conhecido (regra adulterada) → não avaliável, sem forjar lacuna.
             _ => (NotEvaluatedReasonKind.Unsupported, UnsupportedMessage, Array.Empty<MissingRequirementDto>()),
         };
     }
+
+    /// <summary>Uma única lacuna genérica e provider-neutral — o caminho NotEvaluated não revela fornecedor.</summary>
+    private static IReadOnlyList<MissingRequirementDto> One(ComplianceRequirementType type, string source, string description) =>
+        new[] { new MissingRequirementDto(type.ToString(), source, description) };
+
+    /// <summary>
+    /// Identificadores de FONTE estáveis (de máquina) para as lacunas genéricas de um controle NUNCA avaliado —
+    /// traduzidos por <c>sourceLabelOf()</c> no frontend (o rótulo de apresentação mora lá, não no identificador).
+    /// A lacuna documental reusa <see cref="RuleEvaluator.ManualAuditToken"/> (já mapeado para "Validação manual").
+    /// </summary>
+    private const string EligibleTelemetrySource = "ELIGIBLE_TELEMETRY_SOURCE";
+    private const string TelemetryAndValidationSource = "TELEMETRY_AND_VALIDATION";
 
     private const string UnsupportedMessage =
         "O AEGIS ainda não possui método suficiente para avaliar este controle.";
 
     /// <summary>
-    /// Acopla a camada de LINGUAGEM CLARA (autoral) e a descrição OFICIAL (secundária) ao DTO. A ausência de
-    /// redação para um código deixa os campos NULOS — o frontend degrada para o próprio código NIST, nunca para
-    /// o nome genérico da categoria (o defeito que esta camada corrige). A completude é garantida por teste.
+    /// Acopla a camada de LINGUAGEM CLARA (autoral) e a descrição OFICIAL (secundária) ao DTO. FAIL-CLOSED em
+    /// runtime: toda subcategoria ATIVA consultada EXIGE redação (<see cref="IControlLanguageCatalog.GetRequired"/>).
+    /// Se o catálogo ativo do banco ganhar um código sem entrada, a consulta FALHA de forma explícita e
+    /// SANITIZADA (só o código no erro — sem caminho nem conteúdo do arquivo), em vez de devolver campos nulos que
+    /// fariam o frontend cair para o código: nenhum controle ativo volta silenciosamente à apresentação
+    /// incompleta. A completude do artefato versionado (106 códigos) é garantida por teste; este guard cobre a
+    /// divergência catálogo↔redação em runtime.
     /// </summary>
     private TenantControlStateDto WithLanguage(TenantControlStateDto dto, CatalogEntry entry)
     {
-        var lang = _language.Get(entry.Code);
+        var lang = _language.GetRequired(entry.Code);
         return dto with
         {
-            Title = lang?.Title,
-            Summary = lang?.Summary,
-            Impact = lang?.Impact,
-            InitialAction = lang?.InitialAction,
+            Title = lang.Title,
+            Summary = lang.Summary,
+            Impact = lang.Impact,
+            InitialAction = lang.InitialAction,
             OfficialDescription = string.IsNullOrWhiteSpace(entry.Description) ? null : entry.Description,
         };
     }

@@ -1,4 +1,4 @@
-import { NIST_FUNCTION_DESCRIPTIONS, categoryName } from './nist-glossary';
+import { NIST_FUNCTION_DESCRIPTIONS } from './nist-glossary';
 import { BlindSpotRow, GapBalance } from './dashboard.models';
 
 // Espelha AegisScore.Application.Queries.TenantControlStateDto — o contrato de /api/v1/scoring/dashboard.
@@ -274,13 +274,24 @@ export function buildPillarGapAnalysis(meta: PillarMeta, dtos: TenantControlStat
 export const MANUAL_AUDIT_TOKEN = 'MANUAL_AUDIT_REQUIRED';
 
 /**
- * Rótulo da fonte para exibição. Vive AQUI, e não em cada componente, porque já vazou uma vez: o
- * `MissingRequirementsComponent` traduzia com uma constante local e o painel de balanço, escrito
- * depois, mostrou `MANUAL_AUDIT_REQUIRED` cru na vitrine executiva. Vocabulário de máquina na tela do
- * board é ruído — e a segunda cópia da regra é como ele chega lá.
+ * Identificadores de FONTE de máquina → rótulo de apresentação. O mapa mora AQUI, e não em cada componente,
+ * porque já vazou uma vez: o `MissingRequirementsComponent` traduzia com uma constante local e o painel de
+ * balanço, escrito depois, mostrou `MANUAL_AUDIT_REQUIRED` cru na vitrine executiva. Vocabulário de máquina na
+ * tela do board é ruído — e a segunda cópia da regra é como ele chega lá.
+ *
+ * [AEGIS-MVP-LANGUAGE-01] As duas últimas entradas são as lacunas GENÉRICAS de um controle NUNCA avaliado
+ * (provider-neutral, sem nome de fornecedor — o AEGIS ainda não sabe qual o tenant usa). Espelham os
+ * identificadores estáveis emitidos pelo backend em `ClassifyNotEvaluated`.
  */
+const SOURCE_LABELS: Record<string, string> = {
+  [MANUAL_AUDIT_TOKEN]: 'Validação manual',
+  ELIGIBLE_TELEMETRY_SOURCE: 'Fonte de telemetria compatível',
+  TELEMETRY_AND_VALIDATION: 'Telemetria e validação',
+};
+
+/** Rótulo da fonte para exibição — a regra vive no mapa acima, nunca duplicada nos componentes. */
 export function sourceLabelOf(sourceIdentifier: string): string {
-  return sourceIdentifier === MANUAL_AUDIT_TOKEN ? 'Validação manual' : sourceIdentifier;
+  return SOURCE_LABELS[sourceIdentifier] ?? sourceIdentifier;
 }
 
 /**
@@ -342,7 +353,9 @@ export function buildGapBalance(dtos: TenantControlStateDto[], topN = 3): GapBal
       const chosen = both ?? gaps[0];
       return {
         code: d.subcategoryCode,
-        label: categoryName(d.subcategoryCode),
+        // [AEGIS-MVP-LANGUAGE-01] Título ESPECÍFICO do controle (não o nome genérico da categoria, que fazia
+        // dois controles da mesma categoria aparecerem iguais no balanço executivo). Fallback só para o código.
+        label: d.title ?? d.subcategoryCode,
         nature: chosen.type,
         sourceIdentifier: sourceLabelOf(chosen.sourceIdentifier),
         // O que se perde mantendo o controle cego: o peso ainda NÃO conquistado.

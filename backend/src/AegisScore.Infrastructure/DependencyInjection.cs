@@ -142,8 +142,9 @@ public static class DependencyInjection
 
         // [AEGIS-MVP-LANGUAGE-01] Camada de LINGUAGEM CLARA (autoral, provider-neutral, pt-BR) por subcategoria —
         // título/resumo/impacto/ação que a query do dashboard injeta no contrato de leitura. Singleton: o JSON é
-        // lido UMA vez no startup. Caminho relativo ao diretório do binário (o Data/ do Api é copiado para o
-        // output). FAIL-CLOSED por dentro (ver ControlLanguageCatalog): ausência/duplicidade/campo vazio abortam.
+        // lido UMA vez, na PRIMEIRA resolução (a fábrica abaixo é lazy). Caminho relativo ao diretório do binário
+        // (o Data/ do Api é copiado para o output). FAIL-CLOSED por dentro (ver ControlLanguageCatalog):
+        // ausência/duplicidade/campo vazio abortam; e a query exige redação para todo código ativo (GetRequired).
         var controlLanguagePath = config["Reference:ControlLanguagePath"]
             ?? Path.Combine("Data", "aegis_control_language.pt-BR.json");
         if (!Path.IsPathRooted(controlLanguagePath))

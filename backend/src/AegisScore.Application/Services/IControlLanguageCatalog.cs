@@ -19,10 +19,13 @@ public sealed record ControlLanguage(string Title, string Summary, string Impact
 
 /// <summary>
 /// Porta de leitura da camada de linguagem clara. Implementada na Infraestrutura por um provedor SINGLETON
-/// que lê o JSON UMA vez no startup e o VALIDA fail-closed (arquivo ausente, inválido, código duplicado ou
-/// campo vazio ABORTAM — nunca há fallback silencioso para o nome genérico da categoria). A ausência de
-/// entrada para um código específico é devolvida como <c>null</c> por <see cref="Get"/>, deixando ao
-/// consumidor a decisão explícita (o dashboard nunca inventa o rótulo de categoria como título).
+/// que lê o JSON UMA vez — na PRIMEIRA resolução (a fábrica do singleton é lazy) — e o VALIDA fail-closed
+/// (arquivo ausente, inválido, código duplicado ou campo vazio ABORTAM; nunca há fallback silencioso para o
+/// nome genérico da categoria).
+///
+/// Dois acessos, de propósito: <see cref="Get"/> devolve <c>null</c> quando não há entrada (para usos que
+/// toleram ausência); <see cref="GetRequired"/> é FAIL-CLOSED em runtime — o dashboard o usa para garantir que
+/// nenhuma subcategoria ATIVA caia silenciosamente para a apresentação incompleta.
 /// </summary>
 public interface IControlLanguageCatalog
 {
@@ -34,6 +37,15 @@ public interface IControlLanguageCatalog
 
     /// <summary>Redação clara do código, ou <c>null</c> se não houver entrada (sem fallback silencioso).</summary>
     ControlLanguage? Get(string code);
+
+    /// <summary>
+    /// Redação OBRIGATÓRIA do código: lança <see cref="InvalidOperationException"/> SANITIZADA (só o código no
+    /// erro — sem caminho nem conteúdo do arquivo) quando a subcategoria ativa não tem entrada. É o guard
+    /// fail-closed de runtime — a ausência de redação para um código ATIVO nunca é silenciosa.
+    /// </summary>
+    ControlLanguage GetRequired(string code) =>
+        Get(code) ?? throw new InvalidOperationException(
+            $"Sem redação em linguagem clara para a subcategoria ativa '{code}'.");
 }
 
 /// <summary>
@@ -50,7 +62,10 @@ public sealed class StaticControlLanguageCatalog : IControlLanguageCatalog
         _byCode = byCode ?? throw new ArgumentNullException(nameof(byCode));
     }
 
-    /// <summary>Catálogo vazio — o dashboard degrada campo a campo (título nulo → o frontend mostra o código).</summary>
+    /// <summary>
+    /// Catálogo VAZIO — <see cref="Get"/> devolve <c>null</c> para todo código e <see cref="IControlLanguageCatalog.GetRequired"/>
+    /// lança. Útil só para testes que NÃO projetam subcategorias ativas pelo dashboard (que é fail-closed).
+    /// </summary>
     public static StaticControlLanguageCatalog Empty { get; } =
         new(new Dictionary<string, ControlLanguage>(StringComparer.Ordinal));
 
