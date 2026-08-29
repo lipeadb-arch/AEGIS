@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -31,11 +30,19 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
 
     private readonly AegisScoreDbContext _db;
     private readonly IWorkspacePostureQuery _posture;
+    private readonly IPostureExposureQuery _exposureQuery;
+    private readonly IVulnerabilityQuery _vulnerabilityQuery;
 
-    public AuditorContextBuilder(AegisScoreDbContext db, IWorkspacePostureQuery posture)
+    public AuditorContextBuilder(
+        AegisScoreDbContext db,
+        IWorkspacePostureQuery posture,
+        IPostureExposureQuery exposureQuery,
+        IVulnerabilityQuery vulnerabilityQuery)
     {
         _db = db;
         _posture = posture;
+        _exposureQuery = exposureQuery;
+        _vulnerabilityQuery = vulnerabilityQuery;
     }
 
     public async Task<AuditorTenantContext> BuildAsync(CancellationToken ct = default)
@@ -89,72 +96,31 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
             w.Connectors.Configured, w.Connectors.Enabled, w.Connectors.Healthy,
             w.Connectors.Degraded, w.Connectors.Failed, w.Connectors.NeverSynced, w.Connectors.LastSyncAt);
 
-        // [AEGIS-MVP-POSTURE-02] Principais exposições de configuração ABERTAS (no máx. 8), ordenadas pelo rank da
-        // fonte e depois pelo maior gap. SÓ os campos permitidos — nunca resposta bruta, actionUrl, segredo ou PII.
-        // Ordenação em memória (conjunto pequeno por tenant): rank asc com nulos por último, depois maior gap.
-        var exposureEntities = (await _db.PostureExposureFindings.AsNoTracking()
-                .Where(f => f.LifecycleState == PostureExposureState.Open)
-                .ToListAsync(ct))
-            .OrderBy(f => f.SourceRank ?? int.MaxValue)
-            .ThenByDescending(f => f.Gap)
-            .Take(MaxExposures)
+        // [AEGIS-MVP-LANGUAGE-02] Exposições de configuração ABERTAS pela AUTORIDADE de leitura — já com linguagem
+        // CLARA e texto de fonte SANITIZADO (nunca HTML/bruto atravessa para a IA). No máx. MaxExposures, ordenação
+        // da fonte (rank asc, depois maior gap) preservada pela query.
+        var exposurePage = await _exposureQuery.GetAsync(
+            new PostureExposureFilter(State: PostureExposureStateFilter.Open, Page: 1, PageSize: MaxExposures), ct);
+        var topExposures = exposurePage.Items
+            .Select(e => new AuditorPostureExposure(
+                e.ExternalId, e.DisplayTitle, e.WhyItMatters,
+                e.FirstAction is null ? null : Truncate(e.FirstAction, RemediationMaxChars),
+                e.Category, e.Service, e.Gap, e.SourceRank, e.Tier, e.Threats))
             .ToList();
 
-        var topExposures = exposureEntities
-            .Select(f => new AuditorPostureExposure(
-                f.ExternalId, f.Title, f.Category, f.Service, f.Gap, f.SourceRank, f.Tier,
-                Truncate(f.Remediation, RemediationMaxChars),
-                f.Threats ?? new List<string>()))
-            .ToList();
-
-        // [AEGIS-MVP-VULN-01] Principais vulnerabilidades ativo×CVE efetivamente ABERTAS (no máx. 8), priorizadas por
-        // FATOS DA FONTE + criticidade do ativo (a MESMA régua determinística da tela). Consulta LIMITADA no banco
-        // (Take 8 + observações só dos 8) — nunca materializa todo o tenant. SÓ campos permitidos — NUNCA machineId,
-        // ExternalId de binding, IP, aadDeviceId, segredo ou payload bruto.
-        var topExposureRows = await _db.AssetThreatExposures.AsNoTracking()
-            .Where(e => e.Threat!.Source == ThreatSource.Cve
-                && (_db.AssetThreatObservations.Any(o => o.AssetThreatExposureId == e.Id && o.LifecycleState == ObservationLifecycle.Open)
-                    || !_db.AssetThreatObservations.Any(o => o.AssetThreatExposureId == e.Id)))
-            .OrderByDescending(e => e.Threat!.ExploitVerified == true)
-            .ThenByDescending(e => e.Threat!.PublicExploit == true)
-            .ThenByDescending(e => e.Threat!.CvssScore ?? -1)
-            .ThenByDescending(e => e.Threat!.Epss ?? -1)
-            .ThenByDescending(e => e.Asset!.Criticality)
-            .ThenBy(e => e.Threat!.Code)
-            .ThenBy(e => e.Asset!.Name)
-            .ThenBy(e => e.Id)
-            .Take(MaxVulnerabilities)
-            .Select(e => new
-            {
-                e.Id,
-                CveId = e.Threat!.Code, e.Threat!.Severity, e.Threat!.CvssScore,
-                e.Threat!.PublicExploit, e.Threat!.ExploitVerified, e.Threat!.Epss,
-                AssetName = e.Asset!.Name, AssetCriticality = e.Asset!.Criticality,
-            })
-            .ToListAsync(ct);
-
-        var topIds = topExposureRows.Select(r => r.Id).ToList();
-        var obsForTop = await _db.AssetThreatObservations.AsNoTracking()
-            .Where(o => topIds.Contains(o.AssetThreatExposureId))
-            .Select(o => new { o.AssetThreatExposureId, Provider = o.ConnectorConfig!.Provider, o.EvidenceJson })
-            .ToListAsync(ct);
-        var obsByExposure = obsForTop.GroupBy(o => o.AssetThreatExposureId).ToDictionary(g => g.Key, g => g.ToList());
-
-        var topVulnerabilities = topExposureRows
-            .Select(r =>
-            {
-                obsByExposure.TryGetValue(r.Id, out var os);
-                os ??= new();
-                var providers = os.Select(o => o.Provider.ToString())
-                    .Distinct(System.StringComparer.Ordinal)
-                    .OrderBy(p => p, System.StringComparer.Ordinal)
-                    .ToList();
-                var product = os.Select(o => FirstProduct(o.EvidenceJson))
-                    .FirstOrDefault(p => !string.IsNullOrWhiteSpace(p));
-                return new AuditorVulnerability(
-                    r.CveId, r.Severity, r.CvssScore, r.PublicExploit, r.ExploitVerified, r.Epss,
-                    r.AssetName, r.AssetCriticality, product, "Open", providers);
-            })
+        // [AEGIS-MVP-LANGUAGE-02] Vulnerabilidades AGRUPADAS por CVE/problema (JAMAIS o mesmo CVE repetido por ativo)
+        // pela AUTORIDADE de leitura. Título CLARO determinístico + rótulo de exploit (DISPONIBILIDADE, não ataque no
+        // ambiente) + ALCANCE (quantidade de ativos). No máx. MaxVulnerabilities. SÓ campos permitidos — NUNCA
+        // machineId, ExternalId de binding, IP, aadDeviceId, segredo, payload bruto ou inventário completo.
+        var vulnOverview = await _vulnerabilityQuery.GetOverviewAsync(
+            new VulnerabilityFilter(State: VulnerabilityLifecycleFilter.Open, Page: 1, PageSize: MaxVulnerabilities), ct);
+        var topVulnerabilities = vulnOverview.Groups
+            .Select(g => new AuditorVulnerability(
+                g.CveId,
+                VulnerabilityNarrative.Title(g.Severity, g.ProductLabel),
+                g.Severity, g.CvssScore, g.Epss,
+                VulnerabilityNarrative.ExploitLabel(g.ExploitVerified, g.PublicExploit),
+                g.AffectedAssetCount, g.MaxAssetCriticality, g.EffectiveLifecycle, g.Providers))
             .ToList();
 
         // Recomendações pendentes derivadas das lacunas (curtas, sem inventar): "código: o que falta".
@@ -185,31 +151,5 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
     {
         var t = (s ?? "").Trim();
         return t.Length <= max ? t : t[..max] + "…";
-    }
-
-    /// <summary>Primeiro produto afetado (rótulo curto) do EvidenceJson da exposição, ou null. Defensivo a jsonb inválido.</summary>
-    private static string? FirstProduct(string? evidenceJson)
-    {
-        if (string.IsNullOrWhiteSpace(evidenceJson)) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(evidenceJson);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object
-                || !doc.RootElement.TryGetProperty("Products", out var products)
-                || products.ValueKind != JsonValueKind.Array)
-                return null;
-            foreach (var p in products.EnumerateArray())
-            {
-                var vendor = p.TryGetProperty("Vendor", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-                var name = p.TryGetProperty("Product", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
-                var label = string.Join(" ", new[] { vendor, name }.Where(s => !string.IsNullOrWhiteSpace(s)));
-                if (!string.IsNullOrWhiteSpace(label)) return label.Length <= 120 ? label : label[..120];
-            }
-            return null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
     }
 }

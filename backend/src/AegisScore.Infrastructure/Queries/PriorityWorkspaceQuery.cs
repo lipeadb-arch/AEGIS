@@ -49,10 +49,10 @@ public sealed class PriorityWorkspaceQuery : IPriorityWorkspaceQuery
                 PageSize: PriorityWorkspaceDto.MaxQueueItems),
             ct);
 
-        // Fila 2 — VULNERABILIDADES ativo×CVE: página 1, somente abertas, teto de itens; sem filtros extras.
-        // A ordenação determinística (exploit verificado → público → CVSS → EPSS → criticidade) é preservada
-        // exatamente pela query autoritativa. NÃO se força ordem única entre esta fila e a de exposições.
-        var vulnerabilities = await _vulnerabilities.GetAsync(
+        // Fila 2 — VULNERABILIDADES por GRUPO/CVE (não ocorrências ativo×CVE repetidas): página 1, somente
+        // abertas, teto de itens. A ordenação determinística (grupo aberto → exploit → CVSS → EPSS → criticidade
+        // → nº de ativos) é preservada exatamente pela query autoritativa. NÃO se força ordem única entre as filas.
+        var vulnerabilities = await _vulnerabilities.GetOverviewAsync(
             new VulnerabilityFilter(
                 State: VulnerabilityLifecycleFilter.Open,
                 Page: 1,
@@ -64,6 +64,6 @@ public sealed class PriorityWorkspaceQuery : IPriorityWorkspaceQuery
             GeneratedAt: _clock.GetUtcNow(),
             Posture: posture.Overall,
             ConfigurationExposures: new PriorityExposureQueueDto(exposures.Summary, exposures.Items),
-            Vulnerabilities: new PriorityVulnerabilityQueueDto(vulnerabilities.Summary, vulnerabilities.Items));
+            Vulnerabilities: new PriorityVulnerabilityQueueDto(vulnerabilities.Summary, vulnerabilities.Groups));
     }
 }

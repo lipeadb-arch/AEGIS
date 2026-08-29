@@ -117,18 +117,19 @@ public sealed record AuditorTenantContext(
 /// do ativo, produto afetado e ciclo de vida. NUNCA machineId/ExternalRef, IP, aadDeviceId ou payload bruto. A IA
 /// explica/correlaciona/prioriza e apoia remediação, mas NÃO cria CVE, ativo, exploit, estado de resolução ou score.
 /// </summary>
+// [AEGIS-MVP-LANGUAGE-02] AGRUPADA por CVE/problema — um CVE observado em N ativos, JAMAIS repetido por ativo.
+// Título CLARO determinístico + quantidade de ativos + rótulo de exploit (disponibilidade, NUNCA exploração ativa).
 public sealed record AuditorVulnerability(
     string CveId,
+    string Title,                 // título claro determinístico (severidade + produto), nunca só o CVE
     string? Severity,
     double? CvssScore,
-    bool? PublicExploit,
-    bool? ExploitVerified,
     double? Epss,
-    string AssetName,
-    int AssetCriticality,
-    string? Product,
+    string ExploitStatus,         // "Exploit confirmado disponível" | "Exploit público disponível" | "Sem exploit informado pela fonte"
+    int AffectedAssetCount,       // ALCANCE do grupo — nº de ativos afetados distintos
+    int MaxAssetCriticality,
     string LifecycleState,
-    // Fontes (providers) que OBSERVAM esta exposição — só o rótulo do provedor, nunca conector/binding/machineId.
+    // Fontes (providers) que OBSERVAM este CVE — só o rótulo do provedor, nunca conector/binding/machineId.
     IReadOnlyList<string> Sources);
 
 /// <summary>
@@ -136,15 +137,18 @@ public sealed record AuditorVulnerability(
 /// consultivo. Só os campos permitidos: identificador da fonte, título, categoria/serviço, gap, rank/tier,
 /// remediação CURTA e ameaças. A IA explica/correlaciona/prioriza, mas NÃO abre/fecha/altera rank/gap/estado.
 /// </summary>
+// [AEGIS-MVP-LANGUAGE-02] Título CLARO + remediação SANITIZADA (nunca HTML/bruto). O texto de fonte é convertido
+// em texto simples pela autoridade única antes de chegar ao contexto da IA.
 public sealed record AuditorPostureExposure(
     string ExternalId,
-    string Title,
+    string DisplayTitle,
+    string? WhyItMatters,
+    string? FirstAction,
     string? Category,
     string? Service,
     double Gap,
     int? SourceRank,
     string? Tier,
-    string? Remediation,
     IReadOnlyList<string> Threats);
 
 /// <summary>Resumo de postura de UMA Função NIST para o contexto do Auditor.</summary>

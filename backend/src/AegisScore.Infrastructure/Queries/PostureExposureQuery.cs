@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Queries;
+using AegisScore.Application.Services;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
@@ -30,11 +31,13 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
 
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
+    private readonly IExposureLanguageCatalog _language;
 
-    public PostureExposureQuery(AegisScoreDbContext db, ITenantContext tenant)
+    public PostureExposureQuery(AegisScoreDbContext db, ITenantContext tenant, IExposureLanguageCatalog language)
     {
         _db = db;
         _tenant = tenant;
+        _language = language;
     }
 
     public async Task<PostureExposureListDto> GetAsync(PostureExposureFilter filter, CancellationToken ct = default)
@@ -140,13 +143,47 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
             SourceLabel, open.Count, resolved, byCategory, lastCollectedAt, score.Percent, score.At);
     }
 
-    private static PostureExposureItemDto ToDto(Row r) => new(
-        r.Id, r.ExternalId, r.Title, r.Category, r.Service, r.ActionType,
-        r.CurrentScore, r.MaxScore, r.Gap, r.SourceRank, r.Tier,
-        r.ImplementationCost, r.UserImpact, r.Remediation, r.RemediationImpact,
-        r.Threats ?? new List<string>(), r.SourceState,
-        r.LifecycleState == PostureExposureState.Open ? "Open" : "Resolved",
-        r.FirstSeenAt, r.LastSeenAt, r.ResolvedAt);
+    /// <summary>
+    /// [AEGIS-MVP-LANGUAGE-02] Projeta a exposição com a camada CLARA e a fonte SANITIZADA. O texto de fonte
+    /// (título/remediação/impacto) é convertido em texto simples pela autoridade única (<see cref="SourceTextSanitizer"/>)
+    /// — conteúdo bruto de conector JAMAIS cruza a fronteira. Sem entrada no catálogo, cai em <c>SourceOnly</c>:
+    /// título claro = título de fonte sanitizado; primeira ação = remediação de fonte sanitizada (fallback honesto).
+    /// </summary>
+    private PostureExposureItemDto ToDto(Row r)
+    {
+        var sourceTitle = SourceTextSanitizer.ToPlainText(r.Title, 200);
+        var sourceRemediation = SourceTextSanitizer.ToPlainText(r.Remediation, SourceTextSanitizer.DefaultMaxLength);
+        var sourceRemediationImpact = SourceTextSanitizer.ToPlainText(r.RemediationImpact, SourceTextSanitizer.DefaultMaxLength);
+
+        var lang = _language.Match(r.ExternalId, sourceTitle ?? r.Title);
+        var localized = lang is not null;
+
+        var displayTitle = localized
+            ? lang!.DisplayTitle
+            : sourceTitle ?? "Exposição de configuração";                      // fallback honesto quando a fonte não dá título
+        var firstAction = localized ? lang!.FirstAction : sourceRemediation;   // SourceOnly: a própria remediação sanitizada
+
+        return new PostureExposureItemDto(
+            r.Id, r.ExternalId,
+            sourceTitle ?? "",                                                  // Title (compat) — SANITIZADO, nunca bruto
+            r.Category, r.Service, r.ActionType,
+            r.CurrentScore, r.MaxScore, r.Gap, r.SourceRank, r.Tier,
+            r.ImplementationCost, r.UserImpact,
+            sourceRemediation, sourceRemediationImpact,                         // Remediation/RemediationImpact (compat) — sanitizados
+            r.Threats ?? new List<string>(), r.SourceState,
+            r.LifecycleState == PostureExposureState.Open ? "Open" : "Resolved",
+            r.FirstSeenAt, r.LastSeenAt, r.ResolvedAt)
+        {
+            DisplayTitle = displayTitle,
+            PlainSummary = localized ? lang!.PlainSummary : null,
+            WhyItMatters = localized ? lang!.WhyItMatters : null,
+            FirstAction = firstAction,
+            SourceTitle = sourceTitle,
+            SourceRemediation = sourceRemediation,
+            SourceRemediationImpact = sourceRemediationImpact,
+            LanguageCoverage = (localized ? ExposureLanguageCoverage.Localized : ExposureLanguageCoverage.SourceOnly).ToString(),
+        };
+    }
 
     private static PostureExposureListDto Empty(int page, int pageSize) => new(
         new PostureExposureSummaryDto(SourceLabel, 0, 0, Array.Empty<PostureExposureCategoryCountDto>(), null, null, null),

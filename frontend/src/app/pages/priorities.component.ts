@@ -4,6 +4,14 @@ import { AgentStateService } from '../services/agent-state.service';
 import { PriorityService } from '../services/priority.service';
 import { PriorityWorkspace } from '../models/priority.models';
 import { postureLabel } from '../models/workspace.models';
+import {
+  VULNERABILITY_FIRST_ACTION,
+  exploitLabel,
+  severityPt,
+  vulnerabilityTitle,
+  vulnerabilityWhyItMatters,
+} from '../models/vulnerability.models';
+import { EXPOSURE_REACH_UNKNOWN, categoryPt } from '../models/posture-exposure.models';
 
 /**
  * [AEGIS-MVP-PRIORITIES-01] Central de Prioridades — visão operacional que REÚNE, sem combinar num único
@@ -146,10 +154,13 @@ import { postureLabel } from '../models/workspace.models';
                     <tr class="row">
                       <td class="c-rank">{{ x.sourceRank ?? '—' }}</td>
                       <td>
-                        <strong class="title">{{ x.title }}</strong>
-                        <span class="meta">{{ x.service || '—' }} · {{ x.category || '—' }}</span>
-                        @if (x.remediation) {
-                          <span class="rem">{{ x.remediation }}</span>
+                        <strong class="title">{{ x.displayTitle }}</strong>
+                        <span class="meta">{{ x.service || '—' }} · {{ cat(x.category) || '—' }} · {{ reachUnknown }}</span>
+                        @if (x.whyItMatters) {
+                          <span class="rem">{{ x.whyItMatters }}</span>
+                        }
+                        @if (x.firstAction) {
+                          <span class="rem"><em>Ação:</em> {{ x.firstAction }}</span>
                         }
                       </td>
                       <td class="c-gap"><span class="gap">{{ num(x.gap) }}</span></td>
@@ -201,57 +212,41 @@ import { postureLabel } from '../models/workspace.models';
               <table class="grid-table">
                 <thead>
                   <tr>
-                    <th>CVE</th>
-                    <th class="c-sev">Severidade</th>
-                    <th class="c-cvss">CVSS</th>
-                    <th class="c-epss">EPSS</th>
+                    <th>Problema</th>
+                    <th>Por que importa</th>
+                    <th class="c-cvss">Alcance</th>
                     <th>Exploit</th>
-                    <th>Ativo</th>
                     <th>Fontes</th>
-                    <th class="c-when">Detectado</th>
                   </tr>
                 </thead>
                 <tbody>
-                  @for (x of vulns()!.top; track x.id) {
-                    <tr class="row" [class.resolved]="x.effectiveLifecycle === 'Resolved'">
+                  @for (g of vulns()!.top; track g.cveId) {
+                    <tr class="row" [class.resolved]="g.effectiveLifecycle === 'Resolved'">
                       <td>
-                        <strong class="mono">{{ x.cveId }}</strong>
-                        @if (x.cveTitle) {
-                          <span class="meta">{{ x.cveTitle }}</span>
-                        }
+                        <strong class="title">{{ vTitle(g) }}</strong>
+                        <span class="meta mono">{{ g.cveId }} · {{ sevPt(g.severity) }}</span>
+                        <span class="rem"><em>Ação:</em> {{ vFirstAction }}</span>
                       </td>
-                      <td class="c-sev">
-                        <span class="sev-tag" [class]="'sev-' + (x.severity || 'desconhecida').toLowerCase()">
-                          {{ x.severity || '—' }}
-                        </span>
+                      <td><span class="meta">{{ vWhy(g) }}</span></td>
+                      <td class="c-cvss">
+                        <strong>{{ g.affectedAssetCount }}</strong>
+                        <span class="meta">ativo(s)</span>
                       </td>
-                      <td class="c-cvss">{{ x.cvssScore != null ? num(x.cvssScore) : '—' }}</td>
-                      <td class="c-epss">{{ x.epss != null ? pctEpss(x.epss) : '—' }}</td>
                       <td class="c-exploit">
-                        @if (x.exploitVerified) {
-                          <span class="badge bad">Verificado</span>
-                        } @else if (x.publicExploit) {
+                        @if (g.exploitVerified) {
+                          <span class="badge bad">Confirmado</span>
+                        } @else if (g.publicExploit) {
                           <span class="badge warn">Público</span>
                         } @else {
                           <span class="dim">—</span>
                         }
                       </td>
-                      <td>
-                        <a class="asset" routerLink="/assets">{{ x.assetName }}</a>
-                        <span class="meta">crit. {{ x.assetCriticality }} · {{ x.assetSubType || '—' }}</span>
-                      </td>
                       <td class="c-src">
-                        @for (s of x.sources; track s.connectorConfigId) {
-                          <span class="badge src" [title]="s.displayName">{{ s.provider }}</span>
+                        @for (p of g.providers; track p) {
+                          <span class="badge src">{{ p }}</span>
                         } @empty {
                           <span class="dim">—</span>
                         }
-                      </td>
-                      <td class="c-when">
-                        <span class="meta">{{ fmtDate(x.detectedAt) }}</span>
-                        <span class="badge lc" [class.ok]="x.effectiveLifecycle === 'Resolved'">
-                          {{ x.effectiveLifecycle === 'Resolved' ? 'Resolvida' : 'Aberta' }}
-                        </span>
                       </td>
                     </tr>
                   }
@@ -367,6 +362,15 @@ export class PrioritiesComponent {
   /** Fontes distintas de vulnerabilidade configuradas (provider-neutral: nomes reais, não hardcoded). */
   protected readonly sourceNames = computed(() =>
     (this.vulns()?.summary.sources ?? []).map((s) => s.provider).join(', '));
+
+  // [AEGIS-MVP-LANGUAGE-02] Linguagem clara determinística (funções puras dos models) — exposta ao template.
+  protected readonly vTitle = vulnerabilityTitle;
+  protected readonly vWhy = vulnerabilityWhyItMatters;
+  protected readonly vExploit = exploitLabel;
+  protected readonly sevPt = severityPt;
+  protected readonly vFirstAction = VULNERABILITY_FIRST_ACTION;
+  protected readonly cat = categoryPt;
+  protected readonly reachUnknown = EXPOSURE_REACH_UNKNOWN;
 
   constructor() {
     this.load();

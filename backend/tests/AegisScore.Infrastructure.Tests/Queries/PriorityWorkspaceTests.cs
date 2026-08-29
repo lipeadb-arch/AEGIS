@@ -64,16 +64,20 @@ public sealed class PriorityWorkspaceTests
 
     private sealed class FakeVulnerabilityQuery : IVulnerabilityQuery
     {
-        public VulnerabilityListDto Result = null!;
+        public VulnerabilityOverviewDto Result = null!;   // [LANGUAGE-02] a fila usa a visão AGRUPADA (overview)
         public VulnerabilityFilter? Filter;
         public CancellationToken Token;
 
-        public Task<VulnerabilityListDto> GetAsync(VulnerabilityFilter filter, CancellationToken ct = default)
+        public Task<VulnerabilityOverviewDto> GetOverviewAsync(VulnerabilityFilter filter, CancellationToken ct = default)
         {
             Filter = filter;
             Token = ct;
             return Task.FromResult(Result);
         }
+
+        // A composição NÃO chama mais GetAsync (ocorrências) — mantido só para satisfazer o contrato.
+        public Task<VulnerabilityListDto> GetAsync(VulnerabilityFilter filter, CancellationToken ct = default) =>
+            Task.FromResult(new VulnerabilityListDto(Result.Summary, Array.Empty<VulnerabilityItemDto>(), 0, 1, 5));
     }
 
     // ---- Builders de DTOs canônicos ---------------------------------------------------------------------
@@ -109,25 +113,27 @@ public sealed class PriorityWorkspaceTests
         return new PostureExposureListDto(summary, items, items.Count, page, pageSize);
     }
 
-    private static VulnerabilityItemDto VulnItem(string cve) => new(
-        Guid.NewGuid(), cve, $"{cve} title", "High", CvssScore: 8.1, CvssVector: "v", PublicExploit: true,
-        ExploitVerified: false, Epss: 0.3, PublishedOn: DateTimeOffset.UnixEpoch, AssetId: Guid.NewGuid(),
-        AssetName: "web-01", AssetCriticality: 4, AssetSubType: "Server", EffectiveLifecycle: "Open",
-        Status: "Open", DetectedAt: DateTimeOffset.UnixEpoch, Sources: Array.Empty<VulnerabilityObservationDto>());
+    private static VulnerabilityGroupDto VulnGroup(string cve) => new(
+        cve, "High", CvssScore: 8.1, CvssVector: "v", Epss: 0.3, PublicExploit: true, ExploitVerified: false,
+        PublishedOn: DateTimeOffset.UnixEpoch, SourceTitle: null, ProductLabel: "Windows 11",
+        AffectedAssetCount: 3, MaxAssetCriticality: 4,
+        AssetPreview: Array.Empty<VulnerabilityAssetPreviewDto>(), AssetPreviewTruncated: false,
+        Providers: new[] { "Microsoft" }, FirstSeenAt: DateTimeOffset.UnixEpoch, LastSeenAt: DateTimeOffset.UnixEpoch,
+        EffectiveLifecycle: "Open");
 
-    private static VulnerabilityListDto VulnList(
-        IReadOnlyList<VulnerabilityItemDto> items, DateTimeOffset? collectedAt, bool neverCollected,
+    private static VulnerabilityOverviewDto VulnOverview(
+        IReadOnlyList<VulnerabilityGroupDto> groups, DateTimeOffset? collectedAt, bool neverCollected,
         int page = 1, int pageSize = 5)
     {
         var summary = new VulnerabilitySummaryDto(
-            TotalOpen: items.Count, TotalResolved: 0, DistinctCvesOpen: items.Count, AffectedAssetsOpen: items.Count,
+            TotalOpen: groups.Count, TotalResolved: 0, DistinctCvesOpen: groups.Count, AffectedAssetsOpen: groups.Count,
             OpenBySeverity: Array.Empty<VulnerabilitySeverityCountDto>(), Sources: Array.Empty<VulnerabilitySourceDto>(),
             LastCollectedAt: collectedAt, NeverCollected: neverCollected);
-        return new VulnerabilityListDto(summary, items, items.Count, page, pageSize);
+        return new VulnerabilityOverviewDto(summary, groups, groups.Count, page, pageSize);
     }
 
     private static (PriorityWorkspaceQuery query, FakePostureQuery p, FakeExposureQuery e, FakeVulnerabilityQuery v, FakeTimeProvider clock)
-        Build(WorkspacePostureDto posture, PostureExposureListDto exposures, VulnerabilityListDto vulns, DateTimeOffset? now = null)
+        Build(WorkspacePostureDto posture, PostureExposureListDto exposures, VulnerabilityOverviewDto vulns, DateTimeOffset? now = null)
     {
         var p = new FakePostureQuery { Result = posture };
         var e = new FakeExposureQuery { Result = exposures };
@@ -144,7 +150,7 @@ public sealed class PriorityWorkspaceTests
         var (query, p, e, v, _) = Build(
             Posture(),
             ExposureList(new[] { ExposureItem("MFA") }, DateTimeOffset.UnixEpoch),
-            VulnList(new[] { VulnItem("CVE-1") }, DateTimeOffset.UnixEpoch, neverCollected: false));
+            VulnOverview(new[] { VulnGroup("CVE-1") }, DateTimeOffset.UnixEpoch, neverCollected: false));
 
         var result = await query.GetAsync();
 
@@ -163,7 +169,7 @@ public sealed class PriorityWorkspaceTests
         var (query, _, e, v, _) = Build(
             Posture(),
             ExposureList(Array.Empty<PostureExposureItemDto>(), null),
-            VulnList(Array.Empty<VulnerabilityItemDto>(), null, neverCollected: true));
+            VulnOverview(Array.Empty<VulnerabilityGroupDto>(), null, neverCollected: true));
 
         await query.GetAsync();
 
@@ -194,7 +200,7 @@ public sealed class PriorityWorkspaceTests
     {
         var posture = Posture();
         var exposures = ExposureList(new[] { ExposureItem("MFA") }, DateTimeOffset.UnixEpoch);
-        var vulns = VulnList(new[] { VulnItem("CVE-1") }, DateTimeOffset.UnixEpoch, neverCollected: false);
+        var vulns = VulnOverview(new[] { VulnGroup("CVE-1") }, DateTimeOffset.UnixEpoch, neverCollected: false);
         var (query, _, _, _, _) = Build(posture, exposures, vulns);
 
         var result = await query.GetAsync();
@@ -204,7 +210,7 @@ public sealed class PriorityWorkspaceTests
         result.ConfigurationExposures.Summary.Should().BeSameAs(exposures.Summary);
         result.ConfigurationExposures.Top.Should().BeSameAs(exposures.Items);
         result.Vulnerabilities.Summary.Should().BeSameAs(vulns.Summary);
-        result.Vulnerabilities.Top.Should().BeSameAs(vulns.Items);
+        result.Vulnerabilities.Top.Should().BeSameAs(vulns.Groups);
 
         // Ativos afetados e frescor derivam dos resumos existentes — não há campo recalculado.
         result.Vulnerabilities.Summary.AffectedAssetsOpen.Should().Be(1);
@@ -219,7 +225,7 @@ public sealed class PriorityWorkspaceTests
         var (query, _, _, _, _) = Build(
             Posture(state: "NotEvaluated", pct: null),
             ExposureList(Array.Empty<PostureExposureItemDto>(), collectedAt: null),
-            VulnList(Array.Empty<VulnerabilityItemDto>(), collectedAt: null, neverCollected: true));
+            VulnOverview(Array.Empty<VulnerabilityGroupDto>(), collectedAt: null, neverCollected: true));
 
         var result = await query.GetAsync();
 
@@ -239,7 +245,7 @@ public sealed class PriorityWorkspaceTests
         var (query, p, e, v, _) = Build(
             Posture(),
             ExposureList(Array.Empty<PostureExposureItemDto>(), null),
-            VulnList(Array.Empty<VulnerabilityItemDto>(), null, neverCollected: true));
+            VulnOverview(Array.Empty<VulnerabilityGroupDto>(), null, neverCollected: true));
         using var cts = new CancellationTokenSource();
 
         await query.GetAsync(cts.Token);
@@ -258,7 +264,7 @@ public sealed class PriorityWorkspaceTests
         var (query, _, _, _, clock) = Build(
             Posture(),
             ExposureList(Array.Empty<PostureExposureItemDto>(), null),
-            VulnList(Array.Empty<VulnerabilityItemDto>(), null, neverCollected: true), now);
+            VulnOverview(Array.Empty<VulnerabilityGroupDto>(), null, neverCollected: true), now);
 
         var result = await query.GetAsync();
 

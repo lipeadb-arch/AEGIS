@@ -84,6 +84,10 @@
     <Content Include="..\..\src\AegisScore.Api\Data\aegis_control_language.pt-BR.json" Link="Data\aegis_control_language.pt-BR.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- [AEGIS-MVP-LANGUAGE-02] Catálogo de linguagem de EXPOSIÇÕES de produção, linkado para o output do teste. -->
+    <Content Include="..\..\src\AegisScore.Api\Data\aegis_exposure_language.pt-BR.json" Link="Data\aegis_exposure_language.pt-BR.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

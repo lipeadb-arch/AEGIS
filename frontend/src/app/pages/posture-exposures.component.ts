@@ -3,9 +3,14 @@ import { FormsModule } from '@angular/forms';
 import { AgentStateService } from '../services/agent-state.service';
 import { PostureExposureService } from '../services/posture-exposure.service';
 import {
+  EXPOSURE_REACH_UNKNOWN,
   PostureExposureItem,
   PostureExposureList,
   PostureExposureStateFilter,
+  actionTypePt,
+  categoryPt,
+  impactPt,
+  tierPt,
 } from '../models/posture-exposure.models';
 
 /**
@@ -78,7 +83,7 @@ import {
                   [class.active]="categoryFilter() === c.category"
                   (click)="toggleCategory(c.category)"
                 >
-                  {{ c.category }} <span class="cat-n">{{ c.open }}</span>
+                  {{ cat(c.category) }} <span class="cat-n">{{ c.open }}</span>
                 </button>
               }
             </div>
@@ -154,9 +159,9 @@ import {
                 <tr class="row" [class.resolved]="x.lifecycleState === 'Resolved'">
                   <td class="c-rank">{{ x.sourceRank ?? '—' }}</td>
                   <td>
-                    <strong class="title">{{ x.title }}</strong>
+                    <strong class="title">{{ x.displayTitle }}</strong>
                     <span class="meta">
-                      {{ x.service || '—' }} · {{ x.category || '—' }}
+                      {{ x.service || '—' }} · {{ cat(x.category) || '—' }} · {{ reachUnknown }}
                       @if (x.lifecycleState === 'Resolved') {
                         <span class="badge ok">Resolvida</span>
                       }
@@ -164,10 +169,13 @@ import {
                         <span class="badge src" title="Estado informado pela fonte (metadado)">{{ x.sourceState }}</span>
                       }
                     </span>
+                    @if (x.whyItMatters) {
+                      <span class="meta why">{{ x.whyItMatters }}</span>
+                    }
                   </td>
                   <td class="c-score">{{ num(x.currentScore) }}/{{ num(x.maxScore) }}</td>
                   <td class="c-gap"><span class="gap">{{ num(x.gap) }}</span></td>
-                  <td class="c-tier">{{ x.tier || '—' }}</td>
+                  <td class="c-tier">{{ tier(x.tier) || '—' }}</td>
                   <td class="c-exp">
                     <button type="button" class="linkbtn" (click)="toggleExpand(x.id)">
                       {{ expanded().has(x.id) ? 'Ocultar' : 'Detalhes' }}
@@ -178,22 +186,34 @@ import {
                   <tr class="details-row">
                     <td colspan="6">
                       <div class="details">
+                        @if (x.plainSummary) {
+                          <div class="det"><span class="det-label">O que precisa de atenção</span><p>{{ x.plainSummary }}</p></div>
+                        }
+                        @if (x.whyItMatters) {
+                          <div class="det"><span class="det-label">Por que importa</span><p>{{ x.whyItMatters }}</p></div>
+                        }
+                        @if (x.firstAction) {
+                          <div class="det"><span class="det-label">Primeira ação</span><p>{{ x.firstAction }}</p></div>
+                        }
                         <div class="det">
-                          <span class="det-label">Remediação</span>
-                          <p>{{ x.remediation || 'Sem detalhe de remediação fornecido pela fonte.' }}</p>
+                          <span class="det-label">Remediação (texto da fonte)</span>
+                          <p>{{ x.sourceRemediation || 'Sem detalhe de remediação fornecido pela fonte.' }}</p>
                         </div>
-                        @if (x.remediationImpact) {
+                        @if (x.sourceRemediationImpact) {
                           <div class="det">
-                            <span class="det-label">Impacto da remediação</span>
-                            <p>{{ x.remediationImpact }}</p>
+                            <span class="det-label">Impacto da remediação (fonte)</span>
+                            <p>{{ x.sourceRemediationImpact }}</p>
                           </div>
                         }
                         <div class="det-grid">
-                          <div><span class="det-label">Custo</span><span>{{ x.implementationCost || '—' }}</span></div>
-                          <div><span class="det-label">Impacto ao usuário</span><span>{{ x.userImpact || '—' }}</span></div>
-                          <div><span class="det-label">Tipo de ação</span><span>{{ x.actionType || '—' }}</span></div>
+                          <div><span class="det-label">Custo</span><span>{{ impact(x.implementationCost) || '—' }}</span></div>
+                          <div><span class="det-label">Impacto ao usuário</span><span>{{ impact(x.userImpact) || '—' }}</span></div>
+                          <div><span class="det-label">Tipo de ação</span><span>{{ actionType(x.actionType) || '—' }}</span></div>
                           <div><span class="det-label">Controle (fonte)</span><span class="mono">{{ x.externalId }}</span></div>
                         </div>
+                        @if (x.sourceTitle && x.sourceTitle !== x.displayTitle) {
+                          <div class="det"><span class="det-label">Título original (fonte)</span><p class="meta">{{ x.sourceTitle }}</p></div>
+                        }
                         @if (x.threats.length > 0) {
                           <div class="det">
                             <span class="det-label">Ameaças</span>
@@ -583,6 +603,13 @@ export class PostureExposuresComponent {
 
   protected readonly summary = computed(() => this.data()?.summary ?? null);
   protected readonly items = computed<PostureExposureItem[]>(() => this.data()?.items ?? []);
+
+  // [AEGIS-MVP-LANGUAGE-02] Vocabulário visível traduzido (funções puras dos models) — exposto ao template.
+  protected readonly cat = categoryPt;
+  protected readonly tier = tierPt;
+  protected readonly impact = impactPt;
+  protected readonly actionType = actionTypePt;
+  protected readonly reachUnknown = EXPOSURE_REACH_UNKNOWN;
   protected readonly total = computed(() => this.data()?.total ?? 0);
   protected readonly pageCount = computed(() => {
     const d = this.data();

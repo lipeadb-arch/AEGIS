@@ -10,7 +10,7 @@
 
 import { WorkspaceOverall } from './workspace.models';
 import { PostureExposureItem, PostureExposureSummary } from './posture-exposure.models';
-import { VulnerabilityItem, VulnerabilitySummary } from './vulnerability.models';
+import { VulnerabilityGroup, VulnerabilitySummary } from './vulnerability.models';
 
 /** Fila de exposições de configuração: resumo tenant-scoped + os principais itens ABERTOS (≤5, ordem da fonte). */
 export interface PriorityExposureQueue {
@@ -18,10 +18,14 @@ export interface PriorityExposureQueue {
   top: PostureExposureItem[];
 }
 
-/** Fila de vulnerabilidades ativo×CVE: resumo multicloud + as principais exposições ABERTAS (≤5, ordem determinística). */
+/**
+ * [AEGIS-MVP-LANGUAGE-02] Fila de vulnerabilidades por GRUPO/CVE (não mais a mesma ocorrência ativo×CVE repetida):
+ * resumo multicloud + os principais GRUPOS ABERTOS (≤5, ordem determinística). O ALCANCE de cada item é a
+ * quantidade de ativos afetados (`affectedAssetCount`).
+ */
 export interface PriorityVulnerabilityQueue {
   summary: VulnerabilitySummary;
-  top: VulnerabilityItem[];
+  top: VulnerabilityGroup[];
 }
 
 /**

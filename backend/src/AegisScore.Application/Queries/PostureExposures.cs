@@ -22,7 +22,23 @@ public sealed record PostureExposureFilter(
     int Page = 1,
     int PageSize = 25);
 
-/// <summary>Uma exposição de configuração projetada para a tela (sem segredo, sem actionUrl, sem PII).</summary>
+/// <summary>Estado de cobertura da linguagem clara de uma exposição (o catálogo do fornecedor é dinâmico).</summary>
+public enum ExposureLanguageCoverage
+{
+    /// <summary>Há redação autoral (catálogo) para esta exposição.</summary>
+    Localized = 0,
+
+    /// <summary>Sem redação autoral — usa o texto de fonte SANITIZADO (fallback honesto), nunca tradução inventada.</summary>
+    SourceOnly = 1,
+}
+
+/// <summary>
+/// Uma exposição de configuração projetada para a tela (sem segredo, sem actionUrl, sem PII). [AEGIS-MVP-LANGUAGE-02]
+/// Os campos de TEXTO DA FONTE (<see cref="Title"/>/<see cref="Remediation"/>/<see cref="RemediationImpact"/> e os
+/// <c>Source*</c>) já vêm SANITIZADOS (sem HTML/script/href) — conteúdo bruto de conector nunca cruza a fronteira.
+/// As telas novas consomem a camada CLARA (<see cref="DisplayTitle"/>/<see cref="PlainSummary"/>/
+/// <see cref="WhyItMatters"/>/<see cref="FirstAction"/>); os campos antigos ficam por compatibilidade.
+/// </summary>
 public sealed record PostureExposureItemDto(
     Guid Id,
     string ExternalId,
@@ -44,7 +60,35 @@ public sealed record PostureExposureItemDto(
     string LifecycleState,
     DateTimeOffset FirstSeenAt,
     DateTimeOffset LastSeenAt,
-    DateTimeOffset? ResolvedAt);
+    DateTimeOffset? ResolvedAt)
+{
+    // ---- [AEGIS-MVP-LANGUAGE-02] Camada CLARA (autoral) + texto de FONTE sanitizado (secundário) ----
+    // Aditivos: um cliente antigo continua lendo os campos originais; as telas novas usam estes.
+
+    /// <summary>Título claro (autoral) OU, sem catálogo, o título de fonte sanitizado (SourceOnly). Nunca vazio.</summary>
+    public string DisplayTitle { get; init; } = "";
+
+    /// <summary>O que a exposição significa (autoral). Nulo em SourceOnly.</summary>
+    public string? PlainSummary { get; init; }
+
+    /// <summary>Por que importa (autoral). Nulo em SourceOnly.</summary>
+    public string? WhyItMatters { get; init; }
+
+    /// <summary>Primeira ação (autoral) OU a remediação de fonte sanitizada (fallback). Nulo se nenhuma existir.</summary>
+    public string? FirstAction { get; init; }
+
+    /// <summary>Título ORIGINAL da fonte, sanitizado — referência técnica secundária.</summary>
+    public string? SourceTitle { get; init; }
+
+    /// <summary>Remediação ORIGINAL da fonte, sanitizada — referência técnica secundária (não bloco bruto).</summary>
+    public string? SourceRemediation { get; init; }
+
+    /// <summary>Impacto da remediação ORIGINAL da fonte, sanitizado — referência técnica secundária.</summary>
+    public string? SourceRemediationImpact { get; init; }
+
+    /// <summary>Cobertura da linguagem: "Localized" (há redação autoral) ou "SourceOnly" (fallback de fonte).</summary>
+    public string LanguageCoverage { get; init; } = nameof(ExposureLanguageCoverage.SourceOnly);
+}
 
 /// <summary>Contagem de exposições ABERTAS por categoria (distribuição do resumo).</summary>
 public sealed record PostureExposureCategoryCountDto(string Category, int Open);
