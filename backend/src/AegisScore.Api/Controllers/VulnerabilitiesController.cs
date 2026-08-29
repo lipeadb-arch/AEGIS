@@ -49,6 +49,34 @@ public class VulnerabilitiesController : ControllerBase
         return await _query.GetAsync(filter, ct);
     }
 
+    /// <summary>
+    /// [AEGIS-MVP-LANGUAGE-02] Visão AGRUPADA por CVE/problema — a leitura PADRÃO da tela. Paginação por GRUPO
+    /// (CVE distinto), nunca por ocorrência ativo×CVE. Os ativos de um grupo carregam sob demanda em <see cref="List"/>
+    /// com <c>cveId</c> exato.
+    /// </summary>
+    [HttpGet("overview")]
+    public async Task<ActionResult<VulnerabilityOverviewDto>> Overview(
+        [FromQuery] string? state,
+        [FromQuery] string? severity,
+        [FromQuery] string? exploit,
+        [FromQuery] string? provider,
+        [FromQuery] Guid? connectorId,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 25,
+        CancellationToken ct = default)
+    {
+        var filter = new VulnerabilityFilter(
+            State: ParseState(state),
+            Severity: string.IsNullOrWhiteSpace(severity) ? null : severity.Trim(),
+            Exploit: ParseExploit(exploit),
+            Provider: string.IsNullOrWhiteSpace(provider) ? null : provider.Trim(),
+            ConnectorId: connectorId,
+            Page: page,
+            PageSize: pageSize);
+
+        return await _query.GetOverviewAsync(filter, ct);
+    }
+
     private static VulnerabilityLifecycleFilter ParseState(string? s) => (s ?? "").Trim().ToLowerInvariant() switch
     {
         "resolved" => VulnerabilityLifecycleFilter.Resolved,

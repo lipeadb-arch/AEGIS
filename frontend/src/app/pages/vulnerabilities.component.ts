@@ -3,10 +3,16 @@ import { FormsModule } from '@angular/forms';
 import { AgentStateService } from '../services/agent-state.service';
 import { VulnerabilityService } from '../services/vulnerability.service';
 import {
+  VULNERABILITY_FIRST_ACTION,
   VulnerabilityExploitFilter,
+  VulnerabilityGroup,
   VulnerabilityItem,
   VulnerabilityLifecycleFilter,
-  VulnerabilityList,
+  VulnerabilityOverview,
+  exploitLabel,
+  severityPt,
+  vulnerabilityTitle,
+  vulnerabilityWhyItMatters,
 } from '../models/vulnerability.models';
 
 /**
@@ -29,8 +35,8 @@ import {
         <div>
           <h1>Vulnerabilidades</h1>
           <p class="sub">
-            Vulnerabilidades (CVEs) associadas a ativos, consolidadas por ativo × CVE e atribuídas às fontes
-            que as observam. São fatos operacionais/de exposição — não alteram o AEGIS Score.
+            Vulnerabilidades (CVEs) agrupadas por PROBLEMA — cada linha é um CVE observado em um ou mais ativos.
+            Expanda para ver os ativos afetados. São fatos operacionais/de exposição — não alteram o AEGIS Score.
           </p>
         </div>
         <div class="head-actions">
@@ -76,7 +82,7 @@ import {
                   [class.active]="severityFilter() === s.severity"
                   (click)="toggleSeverity(s.severity)"
                 >
-                  {{ s.severity }} <span class="cat-n">{{ s.open }}</span>
+                  {{ sevPt(s.severity) }} <span class="cat-n">{{ s.open }}</span>
                 </button>
               }
             </div>
@@ -110,16 +116,9 @@ import {
             }
           </select>
         }
-        <input
-          type="search"
-          class="search"
-          placeholder="Buscar CVE, título ou ativo…"
-          [ngModel]="search()"
-          (ngModelChange)="onSearch($event)"
-        />
         @if (severityFilter()) {
           <button type="button" class="ghost sm" (click)="toggleSeverity(severityFilter()!)">
-            Severidade: {{ severityFilter() }} ✕
+            Severidade: {{ sevPt(severityFilter()) }} ✕
           </button>
         }
       </div>
@@ -143,7 +142,7 @@ import {
               máquinas/instâncias com inventário e as permissões somente leitura).
             </p>
           </div>
-        } @else if (items().length === 0) {
+        } @else if (groups().length === 0) {
           <div class="state empty">
             <p class="muted">Nenhuma vulnerabilidade para o filtro atual.</p>
           </div>
@@ -151,93 +150,93 @@ import {
           <table class="grid-table">
             <thead>
               <tr>
-                <th>CVE</th>
-                <th class="c-sev">Severidade</th>
-                <th class="c-cvss">CVSS</th>
+                <th>Problema</th>
+                <th>Por que importa</th>
+                <th class="c-cvss">Ativos afetados</th>
                 <th>Exploit</th>
-                <th class="c-epss">EPSS</th>
-                <th>Ativo</th>
                 <th>Fontes</th>
+                <th>Primeira ação</th>
                 <th class="c-exp" aria-label="Detalhes"></th>
               </tr>
             </thead>
             <tbody>
-              @for (x of items(); track x.id) {
-                <tr class="row" [class.resolved]="x.effectiveLifecycle === 'Resolved'">
+              @for (g of groups(); track g.cveId) {
+                <tr class="row" [class.resolved]="g.effectiveLifecycle === 'Resolved'">
                   <td>
-                    <strong class="mono">{{ x.cveId }}</strong>
-                    @if (x.effectiveLifecycle === 'Resolved') {
+                    <strong class="title">{{ title(g) }}</strong>
+                    @if (g.effectiveLifecycle === 'Resolved') {
                       <span class="badge ok">Resolvida</span>
                     }
-                    @if (x.cveTitle) {
-                      <span class="meta">{{ x.cveTitle }}</span>
-                    }
+                    <span class="meta mono">{{ g.cveId }} · {{ sevPt(g.severity) }}</span>
                   </td>
-                  <td class="c-sev">
-                    <span class="sev-tag" [class]="'sev-' + (x.severity || 'desconhecida').toLowerCase()">
-                      {{ x.severity || '—' }}
-                    </span>
+                  <td><span class="meta why">{{ why(g) }}</span></td>
+                  <td class="c-cvss">
+                    <strong>{{ g.affectedAssetCount }}</strong>
+                    <span class="meta">crít. máx. {{ g.maxAssetCriticality }}</span>
                   </td>
-                  <td class="c-cvss">{{ x.cvssScore != null ? num(x.cvssScore) : '—' }}</td>
                   <td class="c-exploit">
-                    @if (x.exploitVerified) {
-                      <span class="badge bad">Verificado</span>
-                    } @else if (x.publicExploit) {
+                    @if (g.exploitVerified) {
+                      <span class="badge bad">Confirmado</span>
+                    } @else if (g.publicExploit) {
                       <span class="badge warn">Público</span>
                     } @else {
                       <span class="dim">—</span>
                     }
                   </td>
-                  <td class="c-epss">{{ x.epss != null ? pctEpss(x.epss) : '—' }}</td>
-                  <td>
-                    <span class="title">{{ x.assetName }}</span>
-                    <span class="meta">crit. {{ x.assetCriticality }} · {{ x.assetSubType || '—' }}</span>
-                  </td>
                   <td class="c-src">
-                    @for (s of x.sources; track s.connectorConfigId) {
-                      <span class="badge src" [class.res]="s.lifecycleState === 'Resolved'" [title]="s.displayName">
-                        {{ s.provider }}
-                      </span>
+                    @for (p of g.providers; track p) {
+                      <span class="badge src">{{ p }}</span>
                     }
                   </td>
+                  <td><span class="meta">{{ firstAction }}</span></td>
                   <td class="c-exp">
-                    <button type="button" class="linkbtn" (click)="toggleExpand(x.id)">
-                      {{ expanded().has(x.id) ? 'Ocultar' : 'Detalhes' }}
+                    <button type="button" class="linkbtn" (click)="toggleExpand(g.cveId)">
+                      {{ expanded().has(g.cveId) ? 'Ocultar' : 'Detalhes' }}
                     </button>
                   </td>
                 </tr>
-                @if (expanded().has(x.id)) {
+                @if (expanded().has(g.cveId)) {
                   <tr class="details-row">
-                    <td colspan="8">
+                    <td colspan="7">
                       <div class="details">
                         <div class="det-grid">
-                          <div><span class="det-label">CVSS vetor</span><span class="mono">{{ x.cvssVector || '—' }}</span></div>
-                          <div><span class="det-label">Publicado em</span><span>{{ fmtDate(x.publishedOn) }}</span></div>
-                          <div><span class="det-label">Detectado em</span><span>{{ fmtDate(x.detectedAt) }}</span></div>
-                          <div><span class="det-label">Disposição</span><span>{{ x.status }}</span></div>
+                          <div><span class="det-label">CVE</span><span class="mono">{{ g.cveId }}</span></div>
+                          <div><span class="det-label">Exploit</span><span>{{ exploit(g) }}</span></div>
+                          <div><span class="det-label">CVSS</span><span class="mono">{{ g.cvssScore != null ? num(g.cvssScore) : '—' }} {{ g.cvssVector ? '· ' + g.cvssVector : '' }}</span></div>
+                          <div><span class="det-label">EPSS</span><span>{{ g.epss != null ? pctEpss(g.epss) : '—' }}</span></div>
+                          <div><span class="det-label">Publicado em</span><span>{{ fmtDate(g.publishedOn) }}</span></div>
+                          <div><span class="det-label">Primeira observação</span><span>{{ fmtDate(g.firstSeenAt) }}</span></div>
+                          <div><span class="det-label">Última observação</span><span>{{ fmtDate(g.lastSeenAt) }}</span></div>
                         </div>
-                        <div class="det">
-                          <span class="det-label">Observações por fonte</span>
-                          <div class="obs">
-                            @for (s of x.sources; track s.connectorConfigId) {
-                              <div class="obs-row">
-                                <span class="badge src" [class.res]="s.lifecycleState === 'Resolved'">{{ s.provider }}</span>
-                                <span class="obs-name">{{ s.displayName }}</span>
-                                <span class="obs-life">{{ s.lifecycleState === 'Open' ? 'Aberta' : 'Resolvida' }}</span>
-                                <span class="obs-seen">visto {{ fmtDate(s.lastSeenAt) }}</span>
-                                @if (s.products.length > 0) {
-                                  <span class="obs-prod">
-                                    {{ productLabel(s.products[0]) }}
-                                    @if (s.totalProducts > s.products.length || s.productsTruncated) {
-                                      <em>(+{{ s.totalProducts - 1 }} produto(s))</em>
-                                    } @else if (s.totalProducts > 1) {
-                                      <em>(+{{ s.totalProducts - 1 }})</em>
-                                    }
-                                  </span>
-                                }
-                              </div>
-                            }
+                        @if (g.sourceTitle) {
+                          <div class="det">
+                            <span class="det-label">Título original da fonte</span>
+                            <span class="meta">{{ g.sourceTitle }}</span>
                           </div>
+                        }
+                        <div class="det">
+                          <span class="det-label">Ativos afetados ({{ g.affectedAssetCount }})</span>
+                          @if (isOccLoading(g.cveId)) {
+                            <p class="muted">Carregando ativos…</p>
+                          } @else {
+                            <div class="obs">
+                              @for (o of occurrences(g.cveId); track o.id) {
+                                <div class="obs-row">
+                                  <span class="obs-name">{{ o.assetName }}</span>
+                                  <span class="obs-life">crít. {{ o.assetCriticality }} · {{ o.assetSubType || '—' }}</span>
+                                  <span class="obs-seen">{{ o.effectiveLifecycle === 'Open' ? 'Aberta' : 'Resolvida' }}</span>
+                                  @for (s of o.sources; track s.connectorConfigId) {
+                                    <span class="badge src" [class.res]="s.lifecycleState === 'Resolved'" [title]="s.displayName">{{ s.provider }}</span>
+                                  }
+                                </div>
+                              } @empty {
+                                <p class="muted">Nenhum ativo carregado.</p>
+                              }
+                            </div>
+                            @if (occurrences(g.cveId).length >= 50 && g.affectedAssetCount > occurrences(g.cveId).length) {
+                              <p class="meta">Exibindo os primeiros 50 ativos de {{ g.affectedAssetCount }}.</p>
+                            }
+                          }
                         </div>
                       </div>
                     </td>
@@ -249,7 +248,7 @@ import {
 
           <footer class="pager">
             <button type="button" class="ghost sm" (click)="prevPage()" [disabled]="page() <= 1">← Anterior</button>
-            <span class="pg-info">Página {{ page() }} de {{ pageCount() }} · {{ total() }} no total</span>
+            <span class="pg-info">Página {{ page() }} de {{ pageCount() }} · {{ total() }} problema(s)</span>
             <button type="button" class="ghost sm" (click)="nextPage()" [disabled]="page() >= pageCount()">Próxima →</button>
           </footer>
         }
@@ -370,7 +369,8 @@ export class VulnerabilitiesComponent {
     { value: 'verified', label: 'Verificado' },
   ];
 
-  protected readonly data = signal<VulnerabilityList | null>(null);
+  // [AEGIS-MVP-LANGUAGE-02] A leitura PADRÃO é a visão AGRUPADA por CVE/problema (paginação por PROBLEMA).
+  protected readonly data = signal<VulnerabilityOverview | null>(null);
   protected readonly loading = signal(false);
   protected readonly error = signal<string | null>(null);
 
@@ -378,20 +378,28 @@ export class VulnerabilitiesComponent {
   protected readonly exploitFilter = signal<VulnerabilityExploitFilter>('all');
   protected readonly severityFilter = signal<string | null>(null);
   protected readonly connectorFilter = signal<string | null>(null);
-  protected readonly search = signal('');
   protected readonly page = signal(1);
-  protected readonly expanded = signal<Set<string>>(new Set());
 
-  private searchTimer: ReturnType<typeof setTimeout> | null = null;
+  // Expansão de um GRUPO carrega as ocorrências ativo×CVE sob demanda (filtro EXATO por CVE) — sem N+1 inicial.
+  protected readonly expanded = signal<Set<string>>(new Set());
+  protected readonly occByCve = signal<Map<string, VulnerabilityItem[]>>(new Map());
+  protected readonly occLoading = signal<Set<string>>(new Set());
 
   protected readonly summary = computed(() => this.data()?.summary ?? null);
-  protected readonly items = computed<VulnerabilityItem[]>(() => this.data()?.items ?? []);
+  protected readonly groups = computed<VulnerabilityGroup[]>(() => this.data()?.groups ?? []);
   protected readonly total = computed(() => this.data()?.total ?? 0);
   protected readonly pageCount = computed(() => {
     const d = this.data();
     if (!d || d.pageSize <= 0) return 1;
     return Math.max(1, Math.ceil(d.total / d.pageSize));
   });
+
+  // Linguagem clara determinística (funções puras dos models) — exposta ao template.
+  protected readonly title = vulnerabilityTitle;
+  protected readonly why = vulnerabilityWhyItMatters;
+  protected readonly exploit = exploitLabel;
+  protected readonly sevPt = severityPt;
+  protected readonly firstAction = VULNERABILITY_FIRST_ACTION;
 
   constructor() {
     this.load();
@@ -400,19 +408,20 @@ export class VulnerabilitiesComponent {
   protected load(): void {
     this.loading.set(true);
     this.error.set(null);
+    this.expanded.set(new Set());
+    this.occByCve.set(new Map());
     this.api
-      .list({
+      .overview({
         state: this.stateFilter(),
         exploit: this.exploitFilter(),
         severity: this.severityFilter() ?? undefined,
         connectorId: this.connectorFilter() ?? undefined,
-        search: this.search().trim() || undefined,
         page: this.page(),
         pageSize: 25,
       })
       .subscribe({
-        next: (list) => {
-          this.data.set(list);
+        next: (ov) => {
+          this.data.set(ov);
           this.loading.set(false);
         },
         error: (err: Error) => {
@@ -457,22 +466,48 @@ export class VulnerabilitiesComponent {
     this.load();
   }
 
-  protected onSearch(value: string): void {
-    this.search.set(value);
-    if (this.searchTimer) clearTimeout(this.searchTimer);
-    this.searchTimer = setTimeout(() => {
-      this.page.set(1);
-      this.load();
-    }, 350);
-  }
-
-  protected toggleExpand(id: string): void {
+  protected toggleExpand(cveId: string): void {
+    const isOpen = this.expanded().has(cveId);
     this.expanded.update((set) => {
       const next = new Set(set);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(cveId)) next.delete(cveId);
+      else next.add(cveId);
       return next;
     });
+    // Carrega as ocorrências do grupo só na PRIMEIRA expansão.
+    if (!isOpen && !this.occByCve().has(cveId) && !this.occLoading().has(cveId)) {
+      this.loadOccurrences(cveId);
+    }
+  }
+
+  private loadOccurrences(cveId: string): void {
+    this.occLoading.update((s) => new Set(s).add(cveId));
+    this.api.list({ cveId, state: this.stateFilter(), page: 1, pageSize: 50 }).subscribe({
+      next: (list) => {
+        this.occByCve.update((m) => new Map(m).set(cveId, list.items));
+        this.occLoading.update((s) => {
+          const n = new Set(s);
+          n.delete(cveId);
+          return n;
+        });
+      },
+      error: () => {
+        this.occByCve.update((m) => new Map(m).set(cveId, []));
+        this.occLoading.update((s) => {
+          const n = new Set(s);
+          n.delete(cveId);
+          return n;
+        });
+      },
+    });
+  }
+
+  protected occurrences(cveId: string): VulnerabilityItem[] {
+    return this.occByCve().get(cveId) ?? [];
+  }
+
+  protected isOccLoading(cveId: string): boolean {
+    return this.occLoading().has(cveId);
   }
 
   protected prevPage(): void {
