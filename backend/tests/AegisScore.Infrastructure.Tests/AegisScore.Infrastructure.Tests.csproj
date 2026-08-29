@@ -78,6 +78,12 @@
     <Content Include="..\..\src\AegisScore.Api\Data\aegis_assessment_rules.json" Link="Data\aegis_assessment_rules.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- [AEGIS-MVP-LANGUAGE-01] O catálogo de LINGUAGEM CLARA de PRODUÇÃO, linkado para o output do teste:
+         o ControlLanguageCatalogTests exercita ESTE arquivo (cobertura exata das 106 subcategorias, sem
+         duplicata, sem campo vazio, títulos distintos por categoria) para o CI pegar qualquer quebra. -->
+    <Content Include="..\..\src\AegisScore.Api\Data\aegis_control_language.pt-BR.json" Link="Data\aegis_control_language.pt-BR.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

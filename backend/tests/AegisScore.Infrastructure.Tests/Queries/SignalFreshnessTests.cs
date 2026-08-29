@@ -1,5 +1,6 @@
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Assessment;
+using AegisScore.Application.Services;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Queries;
@@ -24,6 +25,16 @@ public sealed class SignalFreshnessTests : IDisposable
     private const string TelemetryControl = "PR.AA-01";     // regra com fonte de ferramenta
     private const string DocumentaryControl = "GV.PO-01";   // regra MANUAL_AUDIT_REQUIRED
     private static readonly Guid TenantA = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+    // Redação (irrelevante para o TTL, mas OBRIGATÓRIA: a query é fail-closed e exige linguagem para todo
+    // código ativo — GetRequired lançaria com um catálogo vazio). Cobre exatamente os dois códigos semeados.
+    private static readonly IControlLanguageCatalog Language = new StaticControlLanguageCatalog(
+        new Dictionary<string, ControlLanguage>(StringComparer.Ordinal)
+        {
+            [TelemetryControl] = new("Título PR.AA-01", "Resumo", "Impacto", "Ação"),
+            [DocumentaryControl] = new("Título GV.PO-01", "Resumo", "Impacto", "Ação"),
+        });
+
     private static readonly DateTimeOffset Now = new(2026, 7, 18, 12, 0, 0, TimeSpan.Zero);
 
     private readonly SqliteConnection _connection;
@@ -196,7 +207,8 @@ public sealed class SignalFreshnessTests : IDisposable
             db,
             new SystemTenantContext(TenantA),
             Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = freshnessHours }),
-            new FakeTimeProvider(Now));
+            new FakeTimeProvider(Now),
+            Language);
 
         var rows = await query.GetDashboardAsync();
         return rows.Single(r => r.SubcategoryCode == code);

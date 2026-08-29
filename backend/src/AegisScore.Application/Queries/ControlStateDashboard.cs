@@ -17,6 +17,30 @@ namespace AegisScore.Application.Queries;
 public record MissingRequirementDto(string Type, string SourceIdentifier, string Description);
 
 /// <summary>
+/// [AEGIS-MVP-LANGUAGE-01] Classificação DETERMINÍSTICA do motivo de um controle estar <c>NotEvaluated</c> —
+/// derivada do <see cref="AegisScore.Domain.RuleEvidenceType"/> da regra (ou da ausência dela), NUNCA de LLM
+/// nem de parsing livre de texto. Distingue as quatro situações que o operador precisa separar: o que espera
+/// telemetria, o que espera prova documental, o que espera as duas, e o que o AEGIS ainda não sabe avaliar.
+///
+/// Cruza a fronteira como STRING (<c>.ToString()</c>), no mesmo idioma dos demais enums deste contrato — um
+/// cliente TypeScript não deve depender do valor numérico. Nulo em controle AVALIADO (só descreve o não avaliado).
+/// </summary>
+public enum NotEvaluatedReasonKind
+{
+    /// <summary>Regra tipada como telemetria: falta um sinal técnico elegível para medir o controle.</summary>
+    TelemetryRequired = 0,
+
+    /// <summary>Regra tipada como documental: exige documento ou validação humana, não medível por telemetria.</summary>
+    DocumentationRequired = 1,
+
+    /// <summary>Regra tipada como híbrida: exige as DUAS provas (telemetria e validação documental).</summary>
+    BothRequired = 2,
+
+    /// <summary>Sem regra/método avaliável: o AEGIS ainda não possui como avaliar este controle.</summary>
+    Unsupported = 3,
+}
+
+/// <summary>
 /// Estado atual de UM controle NIST do tenant, achatado para consumo do HUD. É um contrato de leitura:
 /// o frontend jamais recebe a entidade de domínio (<c>TenantControlState</c>) crua, o que nos deixa
 /// evoluir o modelo sem quebrar o Angular — e impede que campos internos vazem por acidente.
@@ -99,6 +123,35 @@ public record TenantControlStateDto(
     /// MÉRITO (a evidência existia e o controle falhou).
     /// </summary>
     public IReadOnlyList<MissingRequirementDto> MissingRequirements { get; init; } = Array.Empty<MissingRequirementDto>();
+
+    // ---- [AEGIS-MVP-LANGUAGE-01] Camada de apresentação em LINGUAGEM CLARA (autoral, provider-neutral) ----
+    // ADITIVOS (init) com default seguro NULO: um cliente/serviço antigo continua funcionando, e a ausência
+    // de redação NUNCA vira o nome genérico da categoria — o frontend degrada para o próprio código NIST.
+
+    /// <summary>Título direto e específico do controle em pt-BR (nunca o nome da categoria). Nulo se sem redação.</summary>
+    public string? Title { get; init; }
+
+    /// <summary>O que o controle garante, em uma frase. Nulo se sem redação.</summary>
+    public string? Summary { get; init; }
+
+    /// <summary>Por que a ausência do controle importa, em uma frase. Nulo se sem redação.</summary>
+    public string? Impact { get; init; }
+
+    /// <summary>Primeira ação prática e curta para avançar no controle. Nulo se sem redação.</summary>
+    public string? InitialAction { get; init; }
+
+    /// <summary>
+    /// Descrição OFICIAL da subcategoria (conteúdo NIST), como referência técnica SECUNDÁRIA — separada da
+    /// redação autoral acima. Nunca é o título principal; existe para quem quiser conferir o texto de origem.
+    /// </summary>
+    public string? OfficialDescription { get; init; }
+
+    /// <summary>
+    /// Motivo DETERMINÍSTICO de o controle ainda não ter sido avaliado (<see cref="NotEvaluatedReasonKind"/> como
+    /// string): "TelemetryRequired" | "DocumentationRequired" | "BothRequired" | "Unsupported". NULO em controle
+    /// avaliado — só descreve o <c>NotEvaluated</c>. Derivado do tipo de evidência da regra, sem LLM.
+    /// </summary>
+    public string? NotEvaluatedReason { get; init; }
 }
 
 /// <summary>
