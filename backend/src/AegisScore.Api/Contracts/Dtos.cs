@@ -145,6 +145,27 @@ public record CreateConnectorRequest(
     string Settings,             // texto em claro; cifrado no servidor (Data Protection) antes de persistir
     int SyncIntervalMinutes = 360);
 
+// ---- [AEGIS-MVP-MICROSOFT-HUB] Conexão Microsoft unificada ----
+/// <summary>
+/// Configuração da CONEXÃO MICROSOFT UNIFICADA: a credencial comum (informada UMA vez) e os serviços a conectar.
+///
+/// ⚠️ <see cref="ClientSecret"/> é escrita-apenas — trafega em claro só sob o TLS, é cifrado no servidor e NUNCA
+/// retorna. O backend replica a credencial (cifrada) em cada serviço selecionado; cada um permanece um conector
+/// independente. O <c>WorkspaceId</c> de um serviço só é usado pelo Sentinel (Siem).
+/// </summary>
+public record ConfigureMicrosoftHubRequest(
+    string TenantId,
+    string ClientId,
+    string ClientSecret,
+    IReadOnlyList<MicrosoftHubServiceRequest> Services);
+
+/// <summary>Um serviço Microsoft selecionado. <see cref="WorkspaceId"/> só é exigido/usado para <c>Siem</c> (Sentinel).</summary>
+public record MicrosoftHubServiceRequest(
+    ConnectorCapability Capability,
+    int SyncIntervalMinutes = 360,
+    string? WorkspaceId = null,
+    string? DisplayName = null);
+
 public record IdResponse(Guid Id);
 
 // ---- Connectors ----
@@ -199,7 +220,9 @@ public record SignalDto(string SignalKey, double? NumericValue, string? Unit, in
 public record SyncResultDto(
     int SignalsCollected, IReadOnlyList<SignalDto> Signals,
     // [AEGIS-MVP-VULN-01] Aditivo: contagens honestas de uma sincronização de vulnerabilidades (null p/ outros conectores).
-    VulnerabilitySyncSummaryDto? Vulnerabilities = null);
+    VulnerabilitySyncSummaryDto? Vulnerabilities = null,
+    // [AEGIS-MVP-MICROSOFT-SENTINEL] Aditivo: postura operacional do Sentinel (null para os demais conectores).
+    SentinelSyncSummaryDto? Sentinel = null);
 
 /// <summary>[AEGIS-MVP-VULN-01] Contagens de uma sincronização de vulnerabilidades (ativos/CVEs/exposições/observações).</summary>
 public record VulnerabilitySyncSummaryDto(
@@ -207,6 +230,21 @@ public record VulnerabilitySyncSummaryDto(
     int ObservationsOpened, int ObservationsReopened, int ObservationsResolved,
     int BindingsDeactivated, int AssetsDeactivated, bool WasComplete,
     int InvalidMachines, int InvalidCves, int InvalidRelations);
+
+/// <summary>
+/// [AEGIS-MVP-MICROSOFT-SENTINEL] Fotografia OPERACIONAL de uma sincronização do Sentinel (só agregados e instantes —
+/// nunca título, entidade, IP, host, usuário, alerta bruto ou payload). É FATO CONSULTIVO: não vira EvidenceSignal
+/// nem altera o AEGIS Score. <see cref="IsComplete"/> falso = a fonte sinalizou resultado parcial/truncado.
+/// </summary>
+public record SentinelSyncSummaryDto(
+    int WindowDays, int IncidentsObserved, int OpenIncidents, int NewIncidents, int ClosedIncidents,
+    int OpenHighSeverity, int OpenMediumSeverity, int OpenLowSeverity, int OpenInformationalSeverity,
+    double? MeanTimeToCloseHours,
+    // [AEGIS-MVP-MICROSOFT-SENTINEL] Estado EXPLÍCITO da coleta de alertas (Available/TableUnavailable/
+    // PermissionDenied/Throttled/Timeout/Unavailable/Partial). A UI mostra "alertas indisponíveis" quando ≠ Available
+    // — nunca "0 alertas". As contagens de alerta só são verdade quando AlertsState == "Available".
+    string AlertsState, int AlertsObserved, int AlertsHighSeverity, int AlertsMediumSeverity,
+    DateTimeOffset? LastEvidenceAt, bool IsComplete);
 
 // ---- Assessments ----
 public record CreateAssessmentRequest(string Name, Guid? FrameworkVersionId);

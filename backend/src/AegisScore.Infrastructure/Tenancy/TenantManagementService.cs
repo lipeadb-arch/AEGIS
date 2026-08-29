@@ -274,6 +274,125 @@ public sealed class TenantManagementService : ITenantManagementService
         }
     }
 
+    // ---- [AEGIS-MVP-MICROSOFT-HUB] Conexão Microsoft unificada -------------------------------------
+
+    /// <summary>Serviços que compõem a família Microsoft (uma credencial comum, coletores independentes).</summary>
+    private static readonly IReadOnlyList<ConnectorCapability> MicrosoftHubCapabilities = new[]
+    {
+        ConnectorCapability.SecureScore,
+        ConnectorCapability.IdentityPosture,
+        ConnectorCapability.VulnerabilityScanner,
+        ConnectorCapability.Siem,
+    };
+
+    public async Task<IReadOnlyList<ConnectorConfigurationResult>> ConfigureMicrosoftHubAsync(
+        ConfigureMicrosoftHubCommand command, CancellationToken ct = default)
+    {
+        // Fail-closed antes de qualquer escrita (mesmo idioma de ConfigureConnectorAsync): sem tenant no
+        // contexto não há a quem vincular os conectores.
+        _ = _tenant.TenantId
+            ?? throw new TenantSecurityException(
+                "Configuração da conexão Microsoft sem tenant resolvido no contexto (fail-closed).");
+
+        // Credencial comum: as três partes são obrigatórias. O usuário as informa UMA vez; o backend as replica
+        // (cifradas) em cada serviço. Mensagem NUNCA ecoa o segredo.
+        var tenantId = (command.TenantId ?? "").Trim();
+        var clientId = (command.ClientId ?? "").Trim();
+        var clientSecret = command.ClientSecret ?? "";
+        if (tenantId.Length == 0 || clientId.Length == 0 || string.IsNullOrWhiteSpace(clientSecret))
+            throw new MicrosoftHubValidationException(
+                "Informe Directory (tenant) ID, Application (client) ID e Client secret da conexão Microsoft.");
+
+        if (command.Services is null || command.Services.Count == 0)
+            throw new MicrosoftHubValidationException("Selecione ao menos um serviço Microsoft para conectar.");
+
+        // Valida TODA a seleção ANTES de escrever qualquer filho: uma seleção inválida não pode deixar
+        // conectores meio-configurados.
+        var seen = new HashSet<ConnectorCapability>();
+        foreach (var svc in command.Services)
+        {
+            if (!MicrosoftHubCapabilities.Contains(svc.Capability))
+                throw new MicrosoftHubValidationException(
+                    $"Capacidade '{svc.Capability}' não pertence à conexão Microsoft.");
+            if (!seen.Add(svc.Capability))
+                throw new MicrosoftHubValidationException(
+                    $"Serviço '{svc.Capability}' repetido na seleção Microsoft.");
+
+            // workspaceId é OBRIGATÓRIO, formato GUID e EXCLUSIVO do Sentinel (Siem). A seleção INTEIRA é validada
+            // AQUI, antes do primeiro upsert — um workspaceId inválido rejeita tudo (400) sem escrita parcial.
+            if (svc.Capability == ConnectorCapability.Siem)
+            {
+                if (string.IsNullOrWhiteSpace(svc.WorkspaceId))
+                    throw new MicrosoftHubValidationException(
+                        "O Microsoft Sentinel exige o Log Analytics Workspace ID.");
+                if (!Guid.TryParse(svc.WorkspaceId!.Trim(), out _))
+                    throw new MicrosoftHubValidationException(
+                        "O Log Analytics Workspace ID do Sentinel deve ser um GUID válido.");
+            }
+        }
+
+        // Fan-out: um upsert INDEPENDENTE por serviço (cada um com SaveChanges próprio, isolado). O provider é
+        // derivado da capacidade; o blob cifrado leva a credencial comum + (só no Sentinel) o workspaceId.
+        var results = new List<ConnectorConfigurationResult>(command.Services.Count);
+        foreach (var svc in command.Services)
+        {
+            var provider = ProviderFor(svc.Capability);
+            var settings = BuildMicrosoftChildSettings(
+                tenantId, clientId, clientSecret,
+                svc.Capability == ConnectorCapability.Siem ? svc.WorkspaceId!.Trim() : null);
+
+            var displayName = string.IsNullOrWhiteSpace(svc.DisplayName)
+                ? DefaultDisplayNameFor(svc.Capability)
+                : svc.DisplayName!.Trim();
+
+            var result = await ConfigureConnectorAsync(
+                new ConfigureConnectorCommand(
+                    provider, svc.Capability, displayName,
+                    ConnectorAuthType.OAuthClientCredentials, settings, svc.SyncIntervalMinutes, Enabled: true),
+                ct);
+            results.Add(result);
+        }
+
+        _log.LogInformation(
+            "Conexão Microsoft unificada aplicada: {Count} serviço(s) configurado(s) com a credencial comum.",
+            results.Count);
+        return results;
+    }
+
+    /// <summary>Provider da família Microsoft por capacidade: Siem ⇒ MicrosoftSentinel; demais ⇒ Microsoft.</summary>
+    private static ConnectorProvider ProviderFor(ConnectorCapability capability) =>
+        capability == ConnectorCapability.Siem ? ConnectorProvider.MicrosoftSentinel : ConnectorProvider.Microsoft;
+
+    /// <summary>Rótulo canônico de cada serviço Microsoft (fallback quando a interface não envia um nome).</summary>
+    private static string DefaultDisplayNameFor(ConnectorCapability capability) => capability switch
+    {
+        ConnectorCapability.SecureScore          => "Microsoft 365 · Secure Score",
+        ConnectorCapability.IdentityPosture      => "Microsoft Entra ID · AEGIS KNIGHT",
+        ConnectorCapability.VulnerabilityScanner => "Microsoft Defender Vulnerability Management",
+        ConnectorCapability.Siem                 => "Microsoft Sentinel · SIEM",
+        _                                        => "Microsoft",
+    };
+
+    /// <summary>
+    /// Monta o blob de settings de UM filho Microsoft: credencial comum (tenantId/clientId/clientSecret) e — SÓ no
+    /// Sentinel — o <c>workspaceId</c>. camelCase para casar com o que a interface envia; os conectores decifram
+    /// com <c>PropertyNameCaseInsensitive</c>. Nunca escreve workspaceId nos serviços que não são Sentinel.
+    /// </summary>
+    private static string BuildMicrosoftChildSettings(
+        string tenantId, string clientId, string clientSecret, string? workspaceId)
+    {
+        // Dictionary ordenado por inserção → JSON estável e legível; JsonSerializer escapa os valores.
+        var map = new Dictionary<string, string>
+        {
+            ["tenantId"] = tenantId,
+            ["clientId"] = clientId,
+            ["clientSecret"] = clientSecret,
+        };
+        if (!string.IsNullOrWhiteSpace(workspaceId))
+            map["workspaceId"] = workspaceId!;
+        return JsonSerializer.Serialize(map);
+    }
+
     /// <summary>
     /// [AEGIS-AUD-020] Separa a chave de ingestão (<c>ingestionKey</c>) do restante dos settings. Devolve o
     /// RESTANTE re-serializado (ou <c>null</c> quando nada sobra) e a chave em claro (ou <c>null</c>). Um blob

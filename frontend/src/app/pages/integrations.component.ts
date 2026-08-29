@@ -4,10 +4,17 @@ import { Router } from '@angular/router';
 import { environment } from '../../environments/environment';
 import { ConnectorService } from '../services/connector.service';
 import {
+  buildMicrosoftHubRequest,
+  buildSentinelSyncMessage,
   ConnectorConfig,
+  GENERIC_PROVIDERS,
   isGenericPush,
+  isGuid,
   isKnightConnector,
-  PROVIDERS,
+  isMicrosoftFamily,
+  MICROSOFT_HUB_SERVICES,
+  MicrosoftServiceKey,
+  MicrosoftServiceSelection,
   ProviderSpec,
   providerByKey,
   statusLabel,
@@ -15,6 +22,14 @@ import {
 } from '../models/connector.models';
 
 type SaveState = 'idle' | 'saving' | 'done' | 'error';
+
+/** Ordem canônica das chaves de serviço Microsoft no formulário do hub. */
+const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
+  'SecureScore',
+  'IdentityPosture',
+  'VulnerabilityScanner',
+  'Sentinel',
+];
 
 /**
  * Central de Integrações — onde o analista conecta o Aegis aos ambientes reais do cliente.
@@ -58,8 +73,12 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
             ambiente.
           </p>
         } @else {
-          <ul class="conn-list">
-            @for (c of connectors(); track c.id) {
+          @for (grp of connectorGroups(); track grp.title) {
+            @if (grp.title) {
+              <h3 class="group-title">{{ grp.title }}</h3>
+            }
+            <ul class="conn-list">
+            @for (c of grp.items; track c.id) {
               <li class="conn">
                 <span class="tone" [class]="'tone-' + tone(c.lastStatus)" aria-hidden="true"></span>
                 <div class="conn-main">
@@ -108,13 +127,110 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
                 }
               </li>
             }
-          </ul>
+            </ul>
+          }
         }
       </div>
 
-      <!-- ---------- Formulário ---------- -->
+      <!-- ---------- Conexão Microsoft unificada ---------- -->
+      <form class="panel" [formGroup]="hubForm" (ngSubmit)="submitMicrosoftHub()">
+        <h2 class="panel-title">Conexão Microsoft</h2>
+        <p class="muted small">
+          Informe a credencial <strong>uma única vez</strong> — ela é aplicada aos serviços Microsoft que você
+          marcar. Cada serviço permanece <strong>independente</strong> (estado, teste e sincronização próprios).
+          Organizações com separação rígida de privilégios podem usar registros de aplicativo distintos e
+          configurar cada serviço pelo formulário genérico abaixo.
+        </p>
+
+        <fieldset class="creds">
+          <legend>Credencial comum · OAuth client credentials</legend>
+          <div class="grid">
+            <label class="field">
+              <span>Directory (tenant) ID</span>
+              <input type="text" formControlName="tenantId" placeholder="00000000-0000-0000-0000-000000000000" />
+              @if (showHubError('tenantId')) {
+                <em class="err">Campo obrigatório.</em>
+              }
+            </label>
+            <label class="field">
+              <span>Application (client) ID</span>
+              <input type="text" formControlName="clientId" placeholder="00000000-0000-0000-0000-000000000000" />
+              @if (showHubError('clientId')) {
+                <em class="err">Campo obrigatório.</em>
+              }
+            </label>
+            <label class="field">
+              <span>Client secret</span>
+              <input
+                [type]="hubRevealSecret() ? 'text' : 'password'"
+                formControlName="clientSecret"
+                autocomplete="new-password"
+                spellcheck="false"
+              />
+              <button type="button" class="reveal" (click)="toggleHubReveal()">
+                {{ hubRevealSecret() ? 'Ocultar' : 'Mostrar' }}
+              </button>
+              @if (showHubError('clientSecret')) {
+                <em class="err">Campo obrigatório.</em>
+              }
+            </label>
+            <label class="field">
+              <span>Intervalo de coleta (min)</span>
+              <input type="number" formControlName="syncIntervalMinutes" min="5" max="10080" />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="creds" formGroupName="services">
+          <legend>Serviços Microsoft (marque os que deseja conectar)</legend>
+          <div class="svc-grid">
+            @for (s of microsoftServices; track s.key) {
+              <label class="svc">
+                <input type="checkbox" [formControlName]="s.key" />
+                <span class="svc-main">
+                  <strong>{{ s.label }}</strong>
+                  <span class="muted small">{{ s.description }}</span>
+                </span>
+              </label>
+            }
+          </div>
+        </fieldset>
+
+        @if (sentinelSelected()) {
+          <fieldset class="creds">
+            <legend>Microsoft Sentinel</legend>
+            <div class="grid">
+              <label class="field">
+                <span>Log Analytics Workspace ID</span>
+                <input type="text" formControlName="workspaceId" placeholder="00000000-0000-0000-0000-000000000000" />
+                @if (showWorkspaceError()) {
+                  <em class="err">Informe um GUID válido (ex.: 00000000-0000-0000-0000-000000000000).</em>
+                }
+                <em class="hint">
+                  Exclusivo do Sentinel — não afeta os demais serviços. O service principal precisa de Azure RBAC
+                  de leitura no workspace (Log Analytics Reader ou permissão mínima equivalente).
+                </em>
+              </label>
+            </div>
+          </fieldset>
+        }
+
+        <footer class="form-foot">
+          <button type="submit" class="primary" [disabled]="hubState() === 'saving'">
+            {{ hubState() === 'saving' ? 'Salvando…' : 'Salvar conexão Microsoft' }}
+          </button>
+          @if (hubState() === 'done') {
+            <span class="ok">✓ Conexão Microsoft salva. As credenciais foram cifradas no servidor.</span>
+          }
+          @if (hubState() === 'error') {
+            <span class="err">⚠ {{ hubError() }}</span>
+          }
+        </footer>
+      </form>
+
+      <!-- ---------- Formulário genérico (demais provedores) ---------- -->
       <form class="panel" [formGroup]="form" (ngSubmit)="submit()">
-        <h2 class="panel-title">Nova integração</h2>
+        <h2 class="panel-title">Outra integração</h2>
         <p class="muted small">
           Configurar o mesmo provedor duas vezes <strong>reconfigura</strong> a integração existente —
           não cria duplicata.
@@ -280,6 +396,17 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
       }
 
       /* ---- lista ---- */
+      .group-title {
+        margin: 0.85rem 0 0.4rem;
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        opacity: 0.85;
+        color: var(--hud-cyan, #26e0ff);
+      }
+      .group-title:first-child {
+        margin-top: 0;
+      }
       .conn-list {
         list-style: none;
         margin: 0;
@@ -287,6 +414,42 @@ type SaveState = 'idle' | 'saving' | 'done' | 'error';
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
+      }
+      .conn-list + .group-title {
+        margin-top: 1rem;
+      }
+
+      /* ---- seleção de serviços do hub Microsoft ---- */
+      .svc-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+        gap: 0.6rem;
+      }
+      .svc {
+        display: flex;
+        gap: 0.55rem;
+        align-items: flex-start;
+        padding: 0.55rem 0.65rem;
+        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 16%, transparent);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .svc input[type='checkbox'] {
+        margin-top: 0.2rem;
+        width: auto;
+        accent-color: var(--hud-cyan, #26e0ff);
+      }
+      .svc-main {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        min-width: 0;
+      }
+      .hint {
+        font-size: 0.72rem;
+        opacity: 0.65;
+        font-style: normal;
+        line-height: 1.4;
       }
       .conn {
         display: grid;
@@ -514,11 +677,27 @@ export class IntegrationsComponent {
   private readonly fb = inject(FormBuilder);
   private readonly router = inject(Router);
 
-  protected readonly providers = PROVIDERS;
+  // Formulário genérico: a família Microsoft sai daqui (vai para a conexão unificada).
+  protected readonly providers = GENERIC_PROVIDERS;
+  protected readonly microsoftServices = MICROSOFT_HUB_SERVICES;
   protected readonly label = statusLabel;
   protected readonly tone = statusTone;
   protected readonly push = isGenericPush;
   protected readonly knight = isKnightConnector;
+
+  /**
+   * Conectores agrupados: a família Microsoft sob um cabeçalho “Microsoft” (serviços filhos), o resto abaixo.
+   * Os estados e botões permanecem INDIVIDUAIS — o agrupamento é só de apresentação.
+   */
+  protected readonly connectorGroups = computed(() => {
+    const all = this.connectors();
+    const ms = all.filter(isMicrosoftFamily);
+    const rest = all.filter((c) => !isMicrosoftFamily(c));
+    const groups: { title: string | null; items: ConnectorConfig[] }[] = [];
+    if (ms.length) groups.push({ title: 'Microsoft', items: ms });
+    if (rest.length) groups.push({ title: ms.length ? 'Outras integrações' : null, items: rest });
+    return groups;
+  });
 
   /** Abre a tela do AEGIS KNIGHT (postura de identidade); a coleta real do Entra é disparada de lá. */
   protected openKnight(): void {
@@ -562,6 +741,31 @@ export class IntegrationsComponent {
 
   /** Provedor selecionado, derivado do controle (não duplicado em signal próprio). */
   protected readonly spec = signal<ProviderSpec | undefined>(undefined);
+
+  // ---- [AEGIS-MVP-MICROSOFT-HUB] Conexão Microsoft unificada ----
+  protected readonly hubState = signal<SaveState>('idle');
+  protected readonly hubError = signal<string | null>(null);
+  protected readonly hubRevealSecret = signal(false);
+
+  /** Uma credencial comum + a seleção de serviços. O workspaceId só é exigido/usado pelo Sentinel. */
+  protected readonly hubForm: FormGroup = this.fb.group({
+    tenantId: ['', Validators.required],
+    clientId: ['', Validators.required],
+    clientSecret: ['', Validators.required],
+    syncIntervalMinutes: [360, [Validators.required, Validators.min(5), Validators.max(10080)]],
+    workspaceId: [''],
+    services: this.fb.group({
+      SecureScore: [false],
+      IdentityPosture: [false],
+      VulnerabilityScanner: [false],
+      Sentinel: [false],
+    }),
+  });
+
+  /** True quando o Sentinel está marcado — só então o campo workspaceId aparece/é exigido. */
+  protected sentinelSelected(): boolean {
+    return !!this.hubForm.get(['services', 'Sentinel'])!.value;
+  }
 
   constructor() {
     this.reload();
@@ -615,6 +819,20 @@ export class IntegrationsComponent {
     return !!c && c.invalid && (c.touched || c.dirty);
   }
 
+  protected showHubError(control: string): boolean {
+    const c = this.hubForm.get(control);
+    return !!c && c.invalid && (c.touched || c.dirty);
+  }
+
+  /** Erro do workspaceId: só quando o Sentinel está marcado e o valor está vazio ou não é GUID (após tocar). */
+  protected showWorkspaceError(): boolean {
+    if (!this.sentinelSelected()) return false;
+    const c = this.hubForm.get('workspaceId')!;
+    if (!c.touched && !c.dirty) return false;
+    const v = ((c.value as string | null) ?? '').trim();
+    return v.length === 0 || !isGuid(v);
+  }
+
   protected submit(): void {
     const spec = this.spec();
     if (!spec) return;
@@ -656,6 +874,78 @@ export class IntegrationsComponent {
       });
   }
 
+  protected toggleHubReveal(): void {
+    this.hubRevealSecret.update((v) => !v);
+  }
+
+  /**
+   * [AEGIS-MVP-MICROSOFT-HUB] Salva a conexão Microsoft unificada: a credencial comum é aplicada+cifrada no
+   * servidor a cada serviço marcado. A `buildMicrosoftHubRequest` garante que o workspaceId só vá ao Sentinel.
+   */
+  protected submitMicrosoftHub(): void {
+    const raw = this.hubForm.getRawValue();
+    const services = raw.services as Record<MicrosoftServiceKey, boolean>;
+    const selectedKeys = MICROSOFT_SERVICE_KEYS.filter((k) => services[k]);
+
+    // Ao menos um serviço + a credencial comum válida.
+    if (this.hubForm.get('tenantId')!.invalid || this.hubForm.get('clientId')!.invalid ||
+        this.hubForm.get('clientSecret')!.invalid || this.hubForm.get('syncIntervalMinutes')!.invalid ||
+        selectedKeys.length === 0) {
+      this.hubForm.markAllAsTouched();
+      this.hubState.set('error');
+      this.hubError.set('Informe a credencial comum e selecione ao menos um serviço Microsoft.');
+      return;
+    }
+
+    // workspaceId é obrigatório e deve ser GUID SÓ quando o Sentinel está marcado. O backend é a autoridade
+    // final; esta checagem só dá feedback imediato (não envia nada aos demais serviços).
+    const workspaceId = (raw.workspaceId as string | null) ?? '';
+    if (selectedKeys.includes('Sentinel')) {
+      this.hubForm.get('workspaceId')!.markAsTouched();
+      if (workspaceId.trim().length === 0) {
+        this.hubState.set('error');
+        this.hubError.set('O Microsoft Sentinel exige o Log Analytics Workspace ID.');
+        return;
+      }
+      if (!isGuid(workspaceId)) {
+        this.hubState.set('error');
+        this.hubError.set('O Log Analytics Workspace ID deve ser um GUID válido (ex.: 00000000-0000-0000-0000-000000000000).');
+        return;
+      }
+    }
+
+    const selections: MicrosoftServiceSelection[] = selectedKeys.map((key) => ({
+      key,
+      syncIntervalMinutes: Number(raw.syncIntervalMinutes),
+      // workspaceId só acompanha o Sentinel — a função pura reforça isso.
+      workspaceId: key === 'Sentinel' ? workspaceId : null,
+    }));
+
+    const body = buildMicrosoftHubRequest(
+      { tenantId: raw.tenantId as string, clientId: raw.clientId as string, clientSecret: raw.clientSecret as string },
+      selections,
+    );
+
+    this.hubState.set('saving');
+    this.hubError.set(null);
+    this.api.saveMicrosoftHub(body).subscribe({
+      next: () => {
+        this.hubState.set('done');
+        // Limpa APENAS o segredo do DOM (nunca volta do servidor); mantém tenant/client e a seleção.
+        this.hubForm.get('clientSecret')!.reset('');
+        this.hubRevealSecret.set(false);
+        this.reload();
+      },
+      error: (err: Error) => {
+        this.hubState.set('error');
+        this.hubError.set(err.message);
+        // Fan-out de upserts sequenciais: um erro intermediário pode ter configurado alguns filhos ANTES da
+        // falha. Recarregar a lista mesmo no erro reflete o estado real; reexecutar é seguro (idempotente).
+        this.reload();
+      },
+    });
+  }
+
   protected test(c: ConnectorConfig): void {
     this.busyId.set(c.id);
     this.api.test(c.id).subscribe({
@@ -684,6 +974,10 @@ export class IntegrationsComponent {
             `Coleta concluída${parcial}: ${v.machinesObserved} máquina(s), ${v.cvesUpserted} CVE(s), ` +
               `${v.exposuresCreated} nova(s) exposição(ões), ${v.observationsOpened} observação(ões) aberta(s).`,
           );
+        } else if (r.sentinel) {
+          // Sentinel não gera sinais de score: reporta a postura operacional observada (fato consultivo). A
+          // mensagem (função pura) só mostra a contagem de alertas quando alertsState == Available.
+          this.setMsg(c.id, buildSentinelSyncMessage(r.sentinel));
         } else {
           this.setMsg(c.id, `Coleta concluída: ${r.signalsCollected} sinal(is).`);
         }

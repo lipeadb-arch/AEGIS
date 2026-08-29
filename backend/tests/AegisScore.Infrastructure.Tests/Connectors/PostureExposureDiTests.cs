@@ -1,6 +1,7 @@
 using System;
 using AegisScore.Application.Abstractions;
 using AegisScore.Connectors.Microsoft;
+using AegisScore.Connectors.Microsoft.Sentinel;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Connectors;
 using FluentAssertions;
@@ -66,6 +67,20 @@ public sealed class PostureExposureDiTests
 
         // Escopos distintos → instâncias distintas: o conector é scoped, não um singleton com o typed client capturado.
         conn1.Should().NotBeSameAs(conn2, "o conector é resolvido por escopo (não capturado no root)");
+    }
+
+    [Fact]
+    public void Registry_ResolvesMicrosoftSentinelSiem()
+    {
+        // [AEGIS-MVP-MICROSOFT-SENTINEL] O registry resolve MicrosoftSentinel/Siem para o adaptador REAL (não mais
+        // "adaptador não implementado"). Distinto de Generic/Siem (push) — o par provider+capability é a chave.
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        var resolved = scope.ServiceProvider.GetRequiredService<IConnectorRegistry>()
+            .Resolve(ConnectorProvider.MicrosoftSentinel, ConnectorCapability.Siem);
+
+        resolved.Should().BeOfType<MicrosoftSentinelConnector>("o registry resolve o adaptador MicrosoftSentinel/Siem");
     }
 
     private sealed class FakeProtectorForDi : IConnectorSecretProtector

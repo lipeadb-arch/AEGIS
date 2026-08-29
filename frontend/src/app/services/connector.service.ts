@@ -2,7 +2,13 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, map, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { ConnectorConfig, ConnectorHealth, SaveConnectorRequest, SyncResult } from '../models/connector.models';
+import {
+  ConnectorConfig,
+  ConnectorHealth,
+  MicrosoftHubRequest,
+  SaveConnectorRequest,
+  SyncResult,
+} from '../models/connector.models';
 
 /**
  * Cliente das rotas de integração.
@@ -34,6 +40,19 @@ export class ConnectorService {
   save(body: SaveConnectorRequest): Observable<ConnectorConfig> {
     return this.http
       .post<ConnectorConfig>(`${this.base}/tenants/connectors`, body)
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
+  /**
+   * [AEGIS-MVP-MICROSOFT-HUB] Configura a CONEXÃO MICROSOFT UNIFICADA: a credencial comum (informada uma vez)
+   * é aplicada+cifrada no servidor a cada serviço selecionado. Devolve os serviços configurados (sem segredo).
+   *
+   * ⚠️ Como no `save`, o `clientSecret` viaja em CLARO sob o TLS e é cifrado NO SERVIDOR; nunca retorna. O
+   * `workspaceId` só acompanha o serviço Sentinel (garantido pela `buildMicrosoftHubRequest`).
+   */
+  saveMicrosoftHub(body: MicrosoftHubRequest): Observable<ConnectorConfig[]> {
+    return this.http
+      .post<ConnectorConfig[]>(`${this.base}/tenants/connectors/microsoft`, body)
       .pipe(catchError((err) => throwError(() => this.describe(err))));
   }
 

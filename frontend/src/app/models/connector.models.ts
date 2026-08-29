@@ -116,17 +116,19 @@ export const PROVIDERS: ProviderSpec[] = [
   {
     key: 'MicrosoftSentinel',
     value: 3,
-    label: 'Microsoft Sentinel',
+    label: 'Microsoft Sentinel · SIEM',
     authType: 'OAuthClientCredentials',
     authTypeValue: 0,
     capability: 'Siem',
     capabilityValue: 5,
-    adapterNote: 'Adaptador específico ainda não implementado. Envie eventos pelo Generic SIEM (push).',
+    infoNote:
+      'Coleta REAL somente leitura do Microsoft Sentinel via Azure Monitor Log Analytics (KQL fixa no servidor). “Testar” valida autenticação e executa uma consulta mínima no workspace; “Sincronizar” lê a postura operacional (incidentes/alertas agregados). O destino é a API oficial do Log Analytics — não há URL configurável. Exige o Log Analytics Workspace ID e Azure RBAC de leitura no workspace. Não altera o AEGIS Score (fato consultivo).',
+    appPermissions: ['Log Analytics Reader (Azure RBAC de leitura no workspace) — ou permissão mínima equivalente'],
     fields: [
       { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientSecret', label: 'Client secret', secret: true },
-      { key: 'workspaceId', label: 'Log Analytics Workspace ID', secret: false },
+      { key: 'workspaceId', label: 'Log Analytics Workspace ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
     ],
   },
   {
@@ -287,6 +289,175 @@ export function providerByKey(key: string | null | undefined): ProviderSpec | un
   return PROVIDERS.find((p) => p.key === key);
 }
 
+// ============================================================================
+// [AEGIS-MVP-MICROSOFT-HUB] Conexão Microsoft unificada
+// ----------------------------------------------------------------------------
+// UMA credencial comum (tenantId/clientId/clientSecret) informada uma vez, aplicada+cifrada no servidor a cada
+// serviço Microsoft selecionado. Cada serviço permanece um conector INDEPENDENTE (estado/sincronização/falha
+// próprios). O workspaceId é EXCLUSIVO do Sentinel — a lógica pura abaixo garante que ele nunca vaze aos demais.
+// ============================================================================
+
+/** Chave de um serviço Microsoft dentro do hub. */
+export type MicrosoftServiceKey = 'SecureScore' | 'IdentityPosture' | 'VulnerabilityScanner' | 'Sentinel';
+
+/** Especificação de um serviço Microsoft filho: capacidade/provider (para o POST) + apresentação. */
+export interface MicrosoftServiceSpec {
+  key: MicrosoftServiceKey;
+  capability: CapabilityKey;
+  capabilityValue: number;
+  provider: ProviderKey;
+  providerValue: number;
+  label: string;
+  description: string;
+  /** Só o Sentinel exige/usa o workspaceId (Log Analytics). */
+  needsWorkspaceId: boolean;
+  appPermissions: string[];
+}
+
+/**
+ * Os quatro serviços da família Microsoft. O provider é derivado da capacidade (Siem ⇒ MicrosoftSentinel; demais
+ * ⇒ Microsoft) — igual ao backend. IdentityPosture (AEGIS KNIGHT) coleta pela tela /identity, mas a credencial é
+ * a mesma da conexão unificada.
+ */
+export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
+  {
+    key: 'SecureScore',
+    capability: 'SecureScore',
+    capabilityValue: 0,
+    provider: 'Microsoft',
+    providerValue: 0,
+    label: 'Microsoft 365 · Secure Score',
+    description: 'Sinais e exposições de configuração do Secure Score (Microsoft Graph).',
+    needsWorkspaceId: false,
+    appPermissions: ['SecurityEvents.Read.All'],
+  },
+  {
+    key: 'IdentityPosture',
+    capability: 'IdentityPosture',
+    capabilityValue: 10,
+    provider: 'Microsoft',
+    providerValue: 0,
+    label: 'Microsoft Entra ID · AEGIS KNIGHT',
+    description: 'Postura de identidade (somente leitura). A coleta é disparada em Abrir AEGIS KNIGHT.',
+    needsWorkspaceId: false,
+    appPermissions: ['Directory.Read.All', 'AuditLog.Read.All', 'User.Read.All', 'Policy.Read.All', 'Application.Read.All'],
+  },
+  {
+    key: 'VulnerabilityScanner',
+    capability: 'VulnerabilityScanner',
+    capabilityValue: 8,
+    provider: 'Microsoft',
+    providerValue: 0,
+    label: 'Microsoft Defender Vulnerability Management',
+    description: 'Vulnerabilidades associadas a ativos (máquinas × CVEs), somente leitura.',
+    needsWorkspaceId: false,
+    appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All'],
+  },
+  {
+    key: 'Sentinel',
+    capability: 'Siem',
+    capabilityValue: 5,
+    provider: 'MicrosoftSentinel',
+    providerValue: 3,
+    label: 'Microsoft Sentinel · SIEM',
+    description: 'Postura operacional (incidentes/alertas) via Azure Monitor Log Analytics, somente leitura.',
+    needsWorkspaceId: true,
+    appPermissions: ['Log Analytics Reader (Azure RBAC de leitura no workspace) — ou permissão mínima equivalente'],
+  },
+];
+
+export function microsoftServiceByKey(key: string | null | undefined): MicrosoftServiceSpec | undefined {
+  return MICROSOFT_HUB_SERVICES.find((s) => s.key === key);
+}
+
+/** Chaves de PROVIDERS que a conexão Microsoft unificada absorve — removidas do formulário genérico. */
+const MICROSOFT_HUB_PROVIDER_KEYS: ProviderKey[] = [
+  'Microsoft',
+  'MicrosoftDefenderVuln',
+  'MicrosoftEntraKnight',
+  'MicrosoftSentinel',
+];
+
+/** Provedores do formulário GENÉRICO (a família Microsoft sai daqui — vai para o hub unificado). */
+export const GENERIC_PROVIDERS: ProviderSpec[] = PROVIDERS.filter(
+  (p) => !MICROSOFT_HUB_PROVIDER_KEYS.includes(p.key),
+);
+
+/** Um conector configurado pertence à família Microsoft (agrupado sob “Microsoft”)? */
+export function isMicrosoftFamily(c: ConnectorConfig): boolean {
+  return (
+    (c.provider === 'Microsoft' &&
+      (c.capability === 'SecureScore' ||
+        c.capability === 'IdentityPosture' ||
+        c.capability === 'VulnerabilityScanner')) ||
+    (c.provider === 'MicrosoftSentinel' && c.capability === 'Siem')
+  );
+}
+
+/** Especificação do serviço Microsoft que corresponde a um conector configurado (para rótulo/agrupamento). */
+export function microsoftServiceFor(c: ConnectorConfig): MicrosoftServiceSpec | undefined {
+  return MICROSOFT_HUB_SERVICES.find((s) => s.provider === c.provider && s.capability === c.capability);
+}
+
+/** Uma seleção de serviço no formulário do hub (marcada pelo usuário). */
+export interface MicrosoftServiceSelection {
+  key: MicrosoftServiceKey;
+  syncIntervalMinutes: number;
+  workspaceId?: string | null;
+}
+
+/** Um serviço no corpo do POST do hub (capacidade numérica + extras). */
+export interface MicrosoftHubServiceInput {
+  capability: number;
+  syncIntervalMinutes: number;
+  workspaceId?: string;
+  displayName?: string;
+}
+
+/** Corpo do POST /tenants/connectors/microsoft — credencial comum informada UMA vez + serviços. */
+export interface MicrosoftHubRequest {
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+  services: MicrosoftHubServiceInput[];
+}
+
+/**
+ * Monta o corpo do hub a partir de UMA credencial comum + as seleções. Regra central (testada): o `workspaceId`
+ * só entra no serviço Sentinel — nunca contamina Secure Score, Entra ID ou Vulnerability Management. A mesma
+ * credencial é aplicada a todos os serviços selecionados (informada uma única vez).
+ */
+export function buildMicrosoftHubRequest(
+  creds: { tenantId: string; clientId: string; clientSecret: string },
+  selections: MicrosoftServiceSelection[],
+): MicrosoftHubRequest {
+  const services: MicrosoftHubServiceInput[] = selections.map((sel) => {
+    const spec = microsoftServiceByKey(sel.key);
+    if (!spec) throw new Error(`Serviço Microsoft desconhecido: ${sel.key}`);
+    const input: MicrosoftHubServiceInput = {
+      capability: spec.capabilityValue,
+      syncIntervalMinutes: sel.syncIntervalMinutes,
+      displayName: spec.label,
+    };
+    // workspaceId SOMENTE no Sentinel — os demais nunca o recebem.
+    if (spec.needsWorkspaceId) input.workspaceId = (sel.workspaceId ?? '').trim();
+    return input;
+  });
+  return {
+    tenantId: creds.tenantId.trim(),
+    clientId: creds.clientId.trim(),
+    clientSecret: creds.clientSecret,
+    services,
+  };
+}
+
+/** Formato GUID canônico (8-4-4-4-12 hex). Valida o workspaceId do Sentinel na borda do formulário (o backend
+ *  continua sendo a autoridade final). Função pura e testável. */
+const GUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+export function isGuid(value: string | null | undefined): boolean {
+  return !!value && GUID_RE.test(value.trim());
+}
+
 export interface ConnectorConfig {
   id: string;
   provider: string;
@@ -339,9 +510,85 @@ export interface VulnerabilitySyncSummary {
   invalidRelations: number;
 }
 
+/**
+ * [AEGIS-MVP-MICROSOFT-SENTINEL] Estado EXPLÍCITO da coleta secundária de SecurityAlert (espelha o enum do backend).
+ * Só `Available` permite ler as contagens de alertas (inclusive zero) como fato; qualquer outro estado significa
+ * "não comprovado" — a UI mostra indisponibilidade, nunca "0 alertas".
+ */
+export type SentinelAlertsState =
+  | 'Available'
+  | 'TableUnavailable'
+  | 'PermissionDenied'
+  | 'Throttled'
+  | 'Timeout'
+  | 'Unavailable'
+  | 'Partial';
+
+/**
+ * [AEGIS-MVP-MICROSOFT-SENTINEL] Fotografia operacional de uma sincronização do Sentinel (só agregados e instantes).
+ * FATO CONSULTIVO: não vira sinal nem altera o AEGIS Score. `isComplete` falso = resultado parcial/truncado OU
+ * alertas não comprovados (`alertsState` ≠ `Available`).
+ */
+export interface SentinelSyncSummary {
+  windowDays: number;
+  incidentsObserved: number;
+  openIncidents: number;
+  newIncidents: number;
+  closedIncidents: number;
+  openHighSeverity: number;
+  openMediumSeverity: number;
+  openLowSeverity: number;
+  openInformationalSeverity: number;
+  meanTimeToCloseHours: number | null;
+  alertsState: SentinelAlertsState;
+  alertsObserved: number;
+  alertsHighSeverity: number;
+  alertsMediumSeverity: number;
+  lastEvidenceAt: string | null;
+  isComplete: boolean;
+}
+
+/**
+ * Texto do trecho de ALERTAS da mensagem de sincronização. Função PURA e testável: só `Available` mostra a
+ * contagem (inclusive `0`); qualquer outro estado produz uma frase de indisponibilidade — nunca "0 alerta(s)".
+ */
+export function sentinelAlertsText(s: SentinelSyncSummary): string {
+  switch (s.alertsState) {
+    case 'Available':
+      return `${s.alertsObserved} alerta(s)`;
+    case 'TableUnavailable':
+      return 'tabela de alertas não disponível';
+    case 'PermissionDenied':
+      return 'sem permissão para consultar alertas';
+    case 'Throttled':
+      return 'consulta de alertas temporariamente limitada';
+    case 'Timeout':
+      return 'consulta de alertas excedeu o tempo';
+    case 'Partial':
+      return 'resultado de alertas parcial';
+    case 'Unavailable':
+    default:
+      return 'alertas indisponíveis';
+  }
+}
+
+/**
+ * Mensagem COMPLETA da sincronização do Sentinel: preserva os agregados VÁLIDOS de incidentes, aplica o texto de
+ * alertas conforme o estado e deixa explícito que a fotografia NÃO altera o AEGIS Score. Função pura e testável.
+ */
+export function buildSentinelSyncMessage(s: SentinelSyncSummary): string {
+  const parcial = s.isComplete ? '' : ' (coleta parcial/degradada)';
+  return (
+    `Postura do Sentinel${parcial} (${s.windowDays}d): ${s.incidentsObserved} incidente(s), ` +
+    `${s.openIncidents} aberto(s) [${s.openHighSeverity} alto(s)], ${s.closedIncidents} encerrado(s); ` +
+    `${sentinelAlertsText(s)}. Não altera o AEGIS Score.`
+  );
+}
+
 export interface SyncResult {
   signalsCollected: number;
   vulnerabilities?: VulnerabilitySyncSummary | null;
+  sentinel?: SentinelSyncSummary | null;
 }
 
 export function statusLabel(status: string): string {

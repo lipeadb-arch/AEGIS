@@ -38,6 +38,38 @@ public record ConfigureConnectorCommand(
     int SyncIntervalMinutes = 360,
     bool Enabled = true);
 
+/// <summary>
+/// [AEGIS-MVP-MICROSOFT-HUB] Seleção de UM serviço Microsoft dentro da conexão unificada. A capacidade é a
+/// chave (cada capacidade Microsoft aparece uma única vez na família): <see cref="ConnectorCapability.SecureScore"/>,
+/// <see cref="ConnectorCapability.IdentityPosture"/>, <see cref="ConnectorCapability.VulnerabilityScanner"/> e
+/// <see cref="ConnectorCapability.Siem"/> (Microsoft Sentinel). O provider é DERIVADO da capacidade pelo serviço —
+/// Siem ⇒ <see cref="ConnectorProvider.MicrosoftSentinel"/>, as demais ⇒ <see cref="ConnectorProvider.Microsoft"/>.
+///
+/// <paramref name="WorkspaceId"/> é EXCLUSIVO do Sentinel (Log Analytics workspace): obrigatório para o Siem e
+/// ignorado nas demais — nunca entra no blob cifrado dos outros serviços, para não contaminá-los.
+/// </summary>
+public record MicrosoftHubServiceSelection(
+    ConnectorCapability Capability,
+    int SyncIntervalMinutes = 360,
+    string? WorkspaceId = null,
+    string? DisplayName = null);
+
+/// <summary>
+/// [AEGIS-MVP-MICROSOFT-HUB] Configuração da CONEXÃO MICROSOFT UNIFICADA. O usuário informa a credencial comum
+/// (<paramref name="TenantId"/>/<paramref name="ClientId"/>/<paramref name="ClientSecret"/>) UMA vez, e o backend
+/// a aplica+cifra em cada serviço selecionado (fan-out sobre <see cref="ITenantManagementService.ConfigureConnectorAsync"/>,
+/// upsert pela chave natural — sem duplicatas). Cada serviço permanece um <c>ConnectorConfig</c> INDEPENDENTE
+/// (habilitação, intervalo, última sync, status, erro, testar/sincronizar e isolamento de falha próprios).
+///
+/// ⚠️ O segredo trafega em claro só sob o TLS e é cifrado NO SERVIDOR; nunca retorna pela API nem vai a log.
+/// Configurações específicas de uma capacidade (o <c>workspaceId</c> do Sentinel) NÃO contaminam as demais.
+/// </summary>
+public record ConfigureMicrosoftHubCommand(
+    string TenantId,
+    string ClientId,
+    string ClientSecret,
+    IReadOnlyList<MicrosoftHubServiceSelection> Services);
+
 // ---- Resultados de saída ----------------------------------------------------
 
 /// <summary>
@@ -94,6 +126,17 @@ public record ConnectorSummary(
 public sealed class WeakIngestionKeyException : Exception
 {
     public WeakIngestionKeyException(string message) : base(message) { }
+}
+
+/// <summary>
+/// [AEGIS-MVP-MICROSOFT-HUB] A configuração da conexão Microsoft unificada é inválida (credencial comum ausente,
+/// nenhum serviço selecionado, capacidade fora da família Microsoft, capacidade repetida ou <c>workspaceId</c>
+/// ausente para o Sentinel). É resultado ESPERADO da borda (400), não falha excepcional; a mensagem descreve o
+/// problema SEM ecoar segredo/credencial. Mesmo idioma de <see cref="WeakIngestionKeyException"/>.
+/// </summary>
+public sealed class MicrosoftHubValidationException : Exception
+{
+    public MicrosoftHubValidationException(string message) : base(message) { }
 }
 
 /// <summary>
@@ -170,6 +213,22 @@ public interface ITenantManagementService
     /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
     Task<ConnectorConfigurationResult> ConfigureConnectorAsync(
         ConfigureConnectorCommand command, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-HUB] Configura a CONEXÃO MICROSOFT UNIFICADA: uma credencial comum informada uma vez é
+    /// aplicada+cifrada em cada serviço Microsoft selecionado. Internamente é um FAN-OUT sobre
+    /// <see cref="ConfigureConnectorAsync"/> (um upsert por serviço, pela chave natural — sem duplicatas), então
+    /// cada serviço permanece um conector INDEPENDENTE com estado/sincronização/falha próprios. NÃO existe uma
+    /// operação que carregue todos os serviços numa mesma transação/unidade de memória — cada filho é uma escrita
+    /// isolada e idempotente.
+    ///
+    /// O <c>workspaceId</c> só entra no blob do Sentinel (Siem); as demais capacidades recebem apenas a credencial
+    /// comum. Devolve o resultado (sem segredo) de cada serviço configurado, na ordem pedida.
+    /// </summary>
+    /// <exception cref="MicrosoftHubValidationException">Entrada inválida (borda 400) — ver a exceção.</exception>
+    /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
+    Task<IReadOnlyList<ConnectorConfigurationResult>> ConfigureMicrosoftHubAsync(
+        ConfigureMicrosoftHubCommand command, CancellationToken ct = default);
 
     /// <summary>
     /// Lista os conectores do tenant ambiente (Global Query Filter). Somente leitura e SEM segredo —
