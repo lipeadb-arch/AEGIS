@@ -67,6 +67,31 @@ public sealed record PullIngestionResult(
 // ---- [AEGIS-MVP-MICROSOFT-SENTINEL] Postura operacional de SIEM (somente leitura) ----
 
 /// <summary>
+/// [AEGIS-MVP-MICROSOFT-SENTINEL] Estado EXPLÍCITO da coleta secundária de <c>SecurityAlert</c>. Distingue situações
+/// que uma contagem sozinha confundiria: uma consulta bem-sucedida com zero alertas (<see cref="Available"/>) NÃO é
+/// o mesmo que tabela ausente, acesso negado, throttling, timeout, resposta inválida ou resultado parcial. Só
+/// <see cref="Available"/> permite ler <c>AlertsObserved</c> como verdade; nos demais estados a UI mostra
+/// "alertas indisponíveis", nunca "0 alertas", e o conector termina Degraded (agregados de incidentes preservados).
+/// </summary>
+public enum SiemAlertCollectionState
+{
+    /// <summary>Consulta executada com sucesso — <c>AlertsObserved</c> é confiável (zero ou mais).</summary>
+    Available = 0,
+    /// <summary>A tabela <c>SecurityAlert</c> não existe no workspace (não comprovada).</summary>
+    TableUnavailable = 1,
+    /// <summary>Acesso à tabela negado (403) — não comprovada.</summary>
+    PermissionDenied = 2,
+    /// <summary>Throttling (429) — não comprovada.</summary>
+    Throttled = 3,
+    /// <summary>Tempo esgotado — não comprovada.</summary>
+    Timeout = 4,
+    /// <summary>Indisponível/resposta inválida — não comprovada.</summary>
+    Unavailable = 5,
+    /// <summary>Resultado parcial/truncado sinalizado pela fonte — incompleta.</summary>
+    Partial = 6,
+}
+
+/// <summary>
 /// [AEGIS-MVP-MICROSOFT-SENTINEL] Fotografia NORMALIZADA e SEGURA da postura operacional de um SIEM (Microsoft
 /// Sentinel via Log Analytics). SÓ agregados e instantes — NUNCA título de incidente, entidade, IP, host, usuário,
 /// conteúdo de alerta, payload bruto, token ou segredo. É um FATO OPERACIONAL consultivo: NÃO vira EvidenceSignal,
@@ -74,7 +99,10 @@ public sealed record PullIngestionResult(
 ///
 /// Deliberadamente NÃO infere contenção, recuperação, comunicação, aderência a plano, sucesso de playbook, nem
 /// tempo de reconhecimento/triagem (sem campo confiável), nem reabertura (arg_max entrega só o estado mais recente).
-/// <see cref="IsComplete"/> é falso quando a fonte sinalizou resultado parcial/truncado — o chamador degrada a saúde.
+/// <see cref="IsComplete"/> é falso quando a fonte sinalizou resultado parcial/truncado OU quando os alertas não
+/// foram comprovados (<see cref="AlertsState"/> ≠ <see cref="SiemAlertCollectionState.Available"/>) — o chamador
+/// degrada a saúde. Quando <see cref="AlertsState"/> não é Available, os campos de alerta ficam em 0 e NÃO devem ser
+/// lidos como "zero alertas confiável".
 /// </summary>
 public sealed record SiemPostureSnapshot(
     int WindowDays,
@@ -87,6 +115,7 @@ public sealed record SiemPostureSnapshot(
     int OpenLowSeverity,
     int OpenInformationalSeverity,
     double? MeanTimeToCloseHours,
+    SiemAlertCollectionState AlertsState,
     int AlertsObserved,
     int AlertsHighSeverity,
     int AlertsMediumSeverity,

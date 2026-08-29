@@ -174,8 +174,11 @@ SecurityAlert
         var meanMinutes = ReadDouble(incidents.Primary!, incRow, "MeanTimeToCloseMinutes");
         var meanHours = meanMinutes is { } m && m >= 0 ? Math.Round(m / 60.0, 2) : (double?)null;
 
-        // SECUNDÁRIO: alertas "quando disponível". Best-effort — se SecurityAlert não existir (ou falhar), alertas
-        // = 0 e a coleta primária permanece válida (o token/workspace já foram provados acima).
+        // SECUNDÁRIO: alertas "quando disponível", com ESTADO EXPLÍCITO. Distingue sucesso-vazio (Available,
+        // AlertsObserved=0) de tabela ausente/negada/throttled/timeout/inválida/parcial — nunca finge "0 alertas"
+        // confiável. Só Available lê as contagens; qualquer outro estado zera os alertas e marca a coleta incompleta
+        // (o executor termina Degraded, preservando os agregados válidos de incidentes). Cancelamento (OCE) propaga.
+        var alertsState = SiemAlertCollectionState.Available;
         var alertsObserved = 0;
         var alertsHigh = 0;
         var alertsMedium = 0;
@@ -183,21 +186,40 @@ SecurityAlert
         try
         {
             var alerts = await _client.QueryAsync(token, cfg.WorkspaceId!, AlertQuery, Timespan, ct);
-            if (alerts.Primary is { Rows.Count: > 0 } at)
+            if (alerts.IsPartial)
             {
+                alertsState = SiemAlertCollectionState.Partial;
+            }
+            else if (alerts.Primary is { Rows.Count: > 0 } at)
+            {
+                // summarize SEM 'by' devolve SEMPRE uma linha (mesmo com zero alertas) — sucesso comprovado.
                 var aRow = at.Rows[0];
                 alertsObserved = (int)ReadLongOrZero(at, aRow, "AlertsObserved");
                 alertsHigh = (int)ReadLongOrZero(at, aRow, "AlertsHigh");
                 alertsMedium = (int)ReadLongOrZero(at, aRow, "AlertsMedium");
                 lastAlertAt = ReadDate(at, aRow, "LastAlertAt");
-                if (alerts.IsPartial) isComplete = false;
+            }
+            else
+            {
+                // 200 OK sem a linha de agregação esperada: resposta inválida — não comprovada.
+                alertsState = SiemAlertCollectionState.Unavailable;
             }
         }
         catch (LogAnalyticsException ex)
         {
-            // SecurityAlert ausente/indisponível NÃO derruba a coleta — é a metade "quando disponível".
+            alertsState = AlertStateFrom(ex);
             _log?.LogInformation(
-                "Sentinel: SecurityAlert indisponível no workspace ({Kind}); prosseguindo só com incidentes.", ex.Kind);
+                "Sentinel: coleta de SecurityAlert não comprovada ({State}); prosseguindo só com incidentes.", alertsState);
+        }
+
+        // Alertas não comprovados: não fingir zero e degradar a completude (o conector termina Degraded).
+        if (alertsState != SiemAlertCollectionState.Available)
+        {
+            alertsObserved = 0;
+            alertsHigh = 0;
+            alertsMedium = 0;
+            lastAlertAt = null;
+            isComplete = false;
         }
 
         var primary = incidents.Primary!;
@@ -215,12 +237,35 @@ SecurityAlert
             OpenLowSeverity: (int)ReadLongOrZero(primary, incRow, "OpenLow"),
             OpenInformationalSeverity: (int)ReadLongOrZero(primary, incRow, "OpenInformational"),
             MeanTimeToCloseHours: meanHours,
+            AlertsState: alertsState,
             AlertsObserved: alertsObserved,
             AlertsHighSeverity: alertsHigh,
             AlertsMediumSeverity: alertsMedium,
             LastEvidenceAt: lastEvidenceAt,
             IsComplete: isComplete);
     }
+
+    /// <summary>Mapeia a falha SANITIZADA da consulta de alertas ao estado explícito da coleta secundária.</summary>
+    private static SiemAlertCollectionState AlertStateFrom(LogAnalyticsException ex) => ex.Kind switch
+    {
+        LogAnalyticsErrorKind.InsufficientPermission => SiemAlertCollectionState.PermissionDenied,
+        LogAnalyticsErrorKind.Throttled => SiemAlertCollectionState.Throttled,
+        LogAnalyticsErrorKind.Timeout => SiemAlertCollectionState.Timeout,
+        LogAnalyticsErrorKind.Unavailable => IsTableMissing(ex.ApiErrorCode)
+            ? SiemAlertCollectionState.TableUnavailable
+            : SiemAlertCollectionState.Unavailable,
+        // AuthFailure na consulta secundária (token/audiência) — indisponível, sem fingir zero.
+        _ => SiemAlertCollectionState.Unavailable,
+    };
+
+    /// <summary>
+    /// Códigos ESPECÍFICOS da Query API que indicam tabela/coluna não resolvida (SecurityAlert ausente). NÃO inclui
+    /// o envelope genérico <c>BadArgumentError</c> — um 400 genérico é <c>Unavailable</c>, não tabela ausente. O
+    /// transporte já extrai o código específico de <c>error.details[]</c>, então <c>SemanticError</c> chega aqui
+    /// mesmo quando o Log Analytics o envolve em <c>BadArgumentError</c>.
+    /// </summary>
+    private static bool IsTableMissing(string? apiErrorCode) =>
+        apiErrorCode is "SemanticError" or "PathNotFoundError";
 
     // ---- Credenciais + settings --------------------------------------------------------------------
 

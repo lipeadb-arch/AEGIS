@@ -25,6 +25,9 @@ public sealed class TenantManagementServiceTests : IDisposable
     /// <summary>Identidade global que "cria" os tenants nos testes — recebe o membership TenantAdmin.</summary>
     private static readonly Guid CreatorId = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
+    /// <summary>Workspace ID do Sentinel — GUID VÁLIDO (o hub valida o formato antes de qualquer escrita).</summary>
+    private const string WorkspaceGuid = "abcdefab-1234-5678-9abc-abcdefabcdef";
+
     private readonly SqliteConnection _connection;
 
     public TenantManagementServiceTests()
@@ -356,7 +359,7 @@ public sealed class TenantManagementServiceTests : IDisposable
             HubService(ConnectorCapability.SecureScore),
             HubService(ConnectorCapability.IdentityPosture),
             HubService(ConnectorCapability.VulnerabilityScanner),
-            HubService(ConnectorCapability.Siem, workspaceId: "ws-1234")));
+            HubService(ConnectorCapability.Siem, workspaceId: WorkspaceGuid)));
 
         results.Should().HaveCount(4);
         results.Should().OnlyContain(r => r.Created && r.HasCredentials);
@@ -385,12 +388,12 @@ public sealed class TenantManagementServiceTests : IDisposable
 
         await svc.ConfigureMicrosoftHubAsync(HubCommand(
             HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.Siem, workspaceId: "ws-9999")));
+            HubService(ConnectorCapability.Siem, workspaceId: WorkspaceGuid)));
 
         var sentinel = await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.Siem);
         var secureScore = await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.SecureScore);
 
-        WorkspaceIdOf(protector.Unprotect(sentinel.EncryptedSettings)).Should().Be("ws-9999");
+        WorkspaceIdOf(protector.Unprotect(sentinel.EncryptedSettings)).Should().Be(WorkspaceGuid);
         WorkspaceIdOf(protector.Unprotect(secureScore.EncryptedSettings))
             .Should().BeNull("workspaceId é exclusivo do Sentinel e não pode contaminar os demais serviços");
     }
@@ -410,6 +413,25 @@ public sealed class TenantManagementServiceTests : IDisposable
             HubService(ConnectorCapability.SecureScore),
             HubService(ConnectorCapability.VulnerabilityScanner)));
         semSentinel.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task ConfigureMicrosoftHub_WorkspaceIdInvalido_RejeitaSemEscritaParcial()
+    {
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+
+        // Seleção com um serviço Microsoft VÁLIDO + Sentinel com workspaceId NÃO-GUID.
+        var act = () => svc.ConfigureMicrosoftHubAsync(HubCommand(
+            HubService(ConnectorCapability.SecureScore),
+            HubService(ConnectorCapability.Siem, workspaceId: "nao-e-guid")));
+
+        await act.Should().ThrowAsync<MicrosoftHubValidationException>();
+
+        // A validação ocorre ANTES do primeiro upsert: NENHUM conector da seleção (nem o Secure Score válido) foi
+        // inserido ou atualizado.
+        (await db.Connectors.CountAsync()).Should().Be(0,
+            "workspaceId inválido rejeita a seleção inteira, sem escrita parcial");
     }
 
     [Fact]
@@ -434,13 +456,13 @@ public sealed class TenantManagementServiceTests : IDisposable
 
         await svc.ConfigureMicrosoftHubAsync(HubCommand(
             HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.Siem, workspaceId: "ws-1")));
+            HubService(ConnectorCapability.Siem, workspaceId: WorkspaceGuid)));
 
         // Atualiza a credencial comum (novo segredo) — deve atualizar os serviços selecionados, sem duplicar.
         var again = await svc.ConfigureMicrosoftHubAsync(HubCommandSecret(
             "secret-rotacionado",
             HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.Siem, workspaceId: "ws-1")));
+            HubService(ConnectorCapability.Siem, workspaceId: WorkspaceGuid)));
 
         again.Should().OnlyContain(r => !r.Created, "reaplicar RECONFIGURA (upsert pela chave natural)");
         (await db.Connectors.CountAsync()).Should().Be(2, "sem duplicidade de provider/capability");

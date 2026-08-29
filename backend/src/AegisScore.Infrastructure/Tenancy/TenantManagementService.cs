@@ -318,10 +318,17 @@ public sealed class TenantManagementService : ITenantManagementService
                 throw new MicrosoftHubValidationException(
                     $"Serviço '{svc.Capability}' repetido na seleção Microsoft.");
 
-            // workspaceId é OBRIGATÓRIO e EXCLUSIVO do Sentinel (Siem). Ausente ⇒ falha SÓ para o Sentinel.
-            if (svc.Capability == ConnectorCapability.Siem && string.IsNullOrWhiteSpace(svc.WorkspaceId))
-                throw new MicrosoftHubValidationException(
-                    "O Microsoft Sentinel exige o Log Analytics Workspace ID.");
+            // workspaceId é OBRIGATÓRIO, formato GUID e EXCLUSIVO do Sentinel (Siem). A seleção INTEIRA é validada
+            // AQUI, antes do primeiro upsert — um workspaceId inválido rejeita tudo (400) sem escrita parcial.
+            if (svc.Capability == ConnectorCapability.Siem)
+            {
+                if (string.IsNullOrWhiteSpace(svc.WorkspaceId))
+                    throw new MicrosoftHubValidationException(
+                        "O Microsoft Sentinel exige o Log Analytics Workspace ID.");
+                if (!Guid.TryParse(svc.WorkspaceId!.Trim(), out _))
+                    throw new MicrosoftHubValidationException(
+                        "O Log Analytics Workspace ID do Sentinel deve ser um GUID válido.");
+            }
         }
 
         // Fan-out: um upsert INDEPENDENTE por serviço (cada um com SaveChanges próprio, isolado). O provider é

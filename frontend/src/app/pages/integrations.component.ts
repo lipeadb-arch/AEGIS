@@ -5,9 +5,11 @@ import { environment } from '../../environments/environment';
 import { ConnectorService } from '../services/connector.service';
 import {
   buildMicrosoftHubRequest,
+  buildSentinelSyncMessage,
   ConnectorConfig,
   GENERIC_PROVIDERS,
   isGenericPush,
+  isGuid,
   isKnightConnector,
   isMicrosoftFamily,
   MICROSOFT_HUB_SERVICES,
@@ -201,6 +203,9 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
               <label class="field">
                 <span>Log Analytics Workspace ID</span>
                 <input type="text" formControlName="workspaceId" placeholder="00000000-0000-0000-0000-000000000000" />
+                @if (showWorkspaceError()) {
+                  <em class="err">Informe um GUID válido (ex.: 00000000-0000-0000-0000-000000000000).</em>
+                }
                 <em class="hint">
                   Exclusivo do Sentinel — não afeta os demais serviços. O service principal precisa de Azure RBAC
                   de leitura no workspace (Log Analytics Reader ou permissão mínima equivalente).
@@ -819,6 +824,15 @@ export class IntegrationsComponent {
     return !!c && c.invalid && (c.touched || c.dirty);
   }
 
+  /** Erro do workspaceId: só quando o Sentinel está marcado e o valor está vazio ou não é GUID (após tocar). */
+  protected showWorkspaceError(): boolean {
+    if (!this.sentinelSelected()) return false;
+    const c = this.hubForm.get('workspaceId')!;
+    if (!c.touched && !c.dirty) return false;
+    const v = ((c.value as string | null) ?? '').trim();
+    return v.length === 0 || !isGuid(v);
+  }
+
   protected submit(): void {
     const spec = this.spec();
     if (!spec) return;
@@ -883,13 +897,21 @@ export class IntegrationsComponent {
       return;
     }
 
-    // workspaceId é obrigatório SÓ quando o Sentinel está marcado.
+    // workspaceId é obrigatório e deve ser GUID SÓ quando o Sentinel está marcado. O backend é a autoridade
+    // final; esta checagem só dá feedback imediato (não envia nada aos demais serviços).
     const workspaceId = (raw.workspaceId as string | null) ?? '';
-    if (selectedKeys.includes('Sentinel') && workspaceId.trim().length === 0) {
+    if (selectedKeys.includes('Sentinel')) {
       this.hubForm.get('workspaceId')!.markAsTouched();
-      this.hubState.set('error');
-      this.hubError.set('O Microsoft Sentinel exige o Log Analytics Workspace ID.');
-      return;
+      if (workspaceId.trim().length === 0) {
+        this.hubState.set('error');
+        this.hubError.set('O Microsoft Sentinel exige o Log Analytics Workspace ID.');
+        return;
+      }
+      if (!isGuid(workspaceId)) {
+        this.hubState.set('error');
+        this.hubError.set('O Log Analytics Workspace ID deve ser um GUID válido (ex.: 00000000-0000-0000-0000-000000000000).');
+        return;
+      }
     }
 
     const selections: MicrosoftServiceSelection[] = selectedKeys.map((key) => ({
@@ -917,6 +939,9 @@ export class IntegrationsComponent {
       error: (err: Error) => {
         this.hubState.set('error');
         this.hubError.set(err.message);
+        // Fan-out de upserts sequenciais: um erro intermediário pode ter configurado alguns filhos ANTES da
+        // falha. Recarregar a lista mesmo no erro reflete o estado real; reexecutar é seguro (idempotente).
+        this.reload();
       },
     });
   }
@@ -950,15 +975,9 @@ export class IntegrationsComponent {
               `${v.exposuresCreated} nova(s) exposição(ões), ${v.observationsOpened} observação(ões) aberta(s).`,
           );
         } else if (r.sentinel) {
-          // Sentinel não gera sinais de score: reporta a postura operacional observada (fato consultivo).
-          const s = r.sentinel;
-          const parcial = s.isComplete ? '' : ' (coleta parcial/degradada)';
-          this.setMsg(
-            c.id,
-            `Postura do Sentinel${parcial} (${s.windowDays}d): ${s.incidentsObserved} incidente(s), ` +
-              `${s.openIncidents} aberto(s) [${s.openHighSeverity} alto(s)], ${s.closedIncidents} encerrado(s), ` +
-              `${s.alertsObserved} alerta(s). Não altera o AEGIS Score.`,
-          );
+          // Sentinel não gera sinais de score: reporta a postura operacional observada (fato consultivo). A
+          // mensagem (função pura) só mostra a contagem de alertas quando alertsState == Available.
+          this.setMsg(c.id, buildSentinelSyncMessage(r.sentinel));
         } else {
           this.setMsg(c.id, `Coleta concluída: ${r.signalsCollected} sinal(is).`);
         }

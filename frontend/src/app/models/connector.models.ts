@@ -451,6 +451,13 @@ export function buildMicrosoftHubRequest(
   };
 }
 
+/** Formato GUID canônico (8-4-4-4-12 hex). Valida o workspaceId do Sentinel na borda do formulário (o backend
+ *  continua sendo a autoridade final). Função pura e testável. */
+const GUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+export function isGuid(value: string | null | undefined): boolean {
+  return !!value && GUID_RE.test(value.trim());
+}
+
 export interface ConnectorConfig {
   id: string;
   provider: string;
@@ -504,8 +511,23 @@ export interface VulnerabilitySyncSummary {
 }
 
 /**
+ * [AEGIS-MVP-MICROSOFT-SENTINEL] Estado EXPLÍCITO da coleta secundária de SecurityAlert (espelha o enum do backend).
+ * Só `Available` permite ler as contagens de alertas (inclusive zero) como fato; qualquer outro estado significa
+ * "não comprovado" — a UI mostra indisponibilidade, nunca "0 alertas".
+ */
+export type SentinelAlertsState =
+  | 'Available'
+  | 'TableUnavailable'
+  | 'PermissionDenied'
+  | 'Throttled'
+  | 'Timeout'
+  | 'Unavailable'
+  | 'Partial';
+
+/**
  * [AEGIS-MVP-MICROSOFT-SENTINEL] Fotografia operacional de uma sincronização do Sentinel (só agregados e instantes).
- * FATO CONSULTIVO: não vira sinal nem altera o AEGIS Score. `isComplete` falso = resultado parcial/truncado.
+ * FATO CONSULTIVO: não vira sinal nem altera o AEGIS Score. `isComplete` falso = resultado parcial/truncado OU
+ * alertas não comprovados (`alertsState` ≠ `Available`).
  */
 export interface SentinelSyncSummary {
   windowDays: number;
@@ -518,11 +540,49 @@ export interface SentinelSyncSummary {
   openLowSeverity: number;
   openInformationalSeverity: number;
   meanTimeToCloseHours: number | null;
+  alertsState: SentinelAlertsState;
   alertsObserved: number;
   alertsHighSeverity: number;
   alertsMediumSeverity: number;
   lastEvidenceAt: string | null;
   isComplete: boolean;
+}
+
+/**
+ * Texto do trecho de ALERTAS da mensagem de sincronização. Função PURA e testável: só `Available` mostra a
+ * contagem (inclusive `0`); qualquer outro estado produz uma frase de indisponibilidade — nunca "0 alerta(s)".
+ */
+export function sentinelAlertsText(s: SentinelSyncSummary): string {
+  switch (s.alertsState) {
+    case 'Available':
+      return `${s.alertsObserved} alerta(s)`;
+    case 'TableUnavailable':
+      return 'tabela de alertas não disponível';
+    case 'PermissionDenied':
+      return 'sem permissão para consultar alertas';
+    case 'Throttled':
+      return 'consulta de alertas temporariamente limitada';
+    case 'Timeout':
+      return 'consulta de alertas excedeu o tempo';
+    case 'Partial':
+      return 'resultado de alertas parcial';
+    case 'Unavailable':
+    default:
+      return 'alertas indisponíveis';
+  }
+}
+
+/**
+ * Mensagem COMPLETA da sincronização do Sentinel: preserva os agregados VÁLIDOS de incidentes, aplica o texto de
+ * alertas conforme o estado e deixa explícito que a fotografia NÃO altera o AEGIS Score. Função pura e testável.
+ */
+export function buildSentinelSyncMessage(s: SentinelSyncSummary): string {
+  const parcial = s.isComplete ? '' : ' (coleta parcial/degradada)';
+  return (
+    `Postura do Sentinel${parcial} (${s.windowDays}d): ${s.incidentsObserved} incidente(s), ` +
+    `${s.openIncidents} aberto(s) [${s.openHighSeverity} alto(s)], ${s.closedIncidents} encerrado(s); ` +
+    `${sentinelAlertsText(s)}. Não altera o AEGIS Score.`
+  );
 }
 
 export interface SyncResult {

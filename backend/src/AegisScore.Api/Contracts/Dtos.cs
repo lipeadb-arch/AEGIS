@@ -239,7 +239,11 @@ public record VulnerabilitySyncSummaryDto(
 public record SentinelSyncSummaryDto(
     int WindowDays, int IncidentsObserved, int OpenIncidents, int NewIncidents, int ClosedIncidents,
     int OpenHighSeverity, int OpenMediumSeverity, int OpenLowSeverity, int OpenInformationalSeverity,
-    double? MeanTimeToCloseHours, int AlertsObserved, int AlertsHighSeverity, int AlertsMediumSeverity,
+    double? MeanTimeToCloseHours,
+    // [AEGIS-MVP-MICROSOFT-SENTINEL] Estado EXPLÍCITO da coleta de alertas (Available/TableUnavailable/
+    // PermissionDenied/Throttled/Timeout/Unavailable/Partial). A UI mostra "alertas indisponíveis" quando ≠ Available
+    // — nunca "0 alertas". As contagens de alerta só são verdade quando AlertsState == "Available".
+    string AlertsState, int AlertsObserved, int AlertsHighSeverity, int AlertsMediumSeverity,
     DateTimeOffset? LastEvidenceAt, bool IsComplete);
 
 // ---- Assessments ----

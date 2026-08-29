@@ -8,12 +8,17 @@
  */
 import {
   buildMicrosoftHubRequest,
+  buildSentinelSyncMessage,
   ConnectorConfig,
   GENERIC_PROVIDERS,
+  isGuid,
   isMicrosoftFamily,
   MICROSOFT_HUB_SERVICES,
   microsoftServiceFor,
   MicrosoftServiceSelection,
+  SentinelAlertsState,
+  SentinelSyncSummary,
+  sentinelAlertsText,
 } from '../src/app/models/connector.models';
 
 // ---- micro-harness (sem dependências externas) -------------------------------------------------
@@ -43,6 +48,15 @@ function conn(provider: string, capability: string): ConnectorConfig {
 }
 
 const CREDS = { tenantId: '  t-1  ', clientId: 'c-1', clientSecret: 's-1' };
+
+function sentinelSummary(alertsState: SentinelAlertsState, alertsObserved: number, isComplete = true): SentinelSyncSummary {
+  return {
+    windowDays: 30, incidentsObserved: 10, openIncidents: 4, newIncidents: 6, closedIncidents: 3,
+    openHighSeverity: 2, openMediumSeverity: 1, openLowSeverity: 1, openInformationalSeverity: 0,
+    meanTimeToCloseHours: 2, alertsState, alertsObserved, alertsHighSeverity: 0, alertsMediumSeverity: 0,
+    lastEvidenceAt: null, isComplete,
+  };
+}
 
 // ---- 1) credencial comum informada UMA vez, aplicada a todos os serviços -----------------------
 test('credencial comum é informada uma vez e vale para todos os serviços selecionados', () => {
@@ -116,6 +130,50 @@ test('o formulário genérico não lista a família Microsoft', () => {
   // Provedores não-Microsoft continuam disponíveis no genérico.
   assert(genericKeys.includes('GenericSiem'), 'GenericSiem continua no formulário genérico');
   assert(genericKeys.includes('GoogleCloudVuln'), 'GoogleCloudVuln continua no formulário genérico');
+});
+
+// ---- 6) validação de GUID do workspaceId (borda do formulário) ---------------------------------
+test('isGuid aceita GUID válido e rejeita texto não-GUID', () => {
+  assert(isGuid('abcdefab-1234-5678-9abc-abcdefabcdef'), 'GUID canônico é aceito');
+  assert(isGuid('  ABCDEFAB-1234-5678-9ABC-ABCDEFABCDEF  '), 'GUID com espaços/maiúsculas é aceito (aparado)');
+  assert(!isGuid('ws-1234'), 'texto não-GUID é rejeitado');
+  assert(!isGuid(''), 'vazio é rejeitado');
+  assert(!isGuid(null), 'null é rejeitado');
+  assert(!isGuid('abcdefab-1234-5678-9abc-abcdefabcde'), 'GUID curto/malformado é rejeitado');
+});
+
+// ---- 7) alertas: Available mostra a contagem, inclusive zero -----------------------------------
+test('alertas Available mostram a contagem, inclusive zero', () => {
+  eq(sentinelAlertsText(sentinelSummary('Available', 25)), '25 alerta(s)', 'Available com dados mostra o número');
+  eq(sentinelAlertsText(sentinelSummary('Available', 0)), '0 alerta(s)', 'Available com zero mostra 0 (fato)');
+
+  const msg = buildSentinelSyncMessage(sentinelSummary('Available', 0));
+  assert(msg.includes('0 alerta(s)'), 'a mensagem completa mostra 0 quando Available');
+  assert(msg.includes('10 incidente(s)'), 'preserva os agregados de incidentes');
+  assert(msg.includes('Não altera o AEGIS Score'), 'deixa explícito que não altera o score');
+});
+
+// ---- 8) alertas: estados não-Available → indisponibilidade, NUNCA zero como evidência ----------
+test('alertas não-Available mostram indisponibilidade e nunca zero como evidência', () => {
+  const states: [SentinelAlertsState, string][] = [
+    ['TableUnavailable', 'tabela de alertas não disponível'],
+    ['PermissionDenied', 'sem permissão para consultar alertas'],
+    ['Throttled', 'consulta de alertas temporariamente limitada'],
+    ['Timeout', 'consulta de alertas excedeu o tempo'],
+    ['Partial', 'resultado de alertas parcial'],
+    ['Unavailable', 'alertas indisponíveis'],
+  ];
+  for (const [state, expected] of states) {
+    const text = sentinelAlertsText(sentinelSummary(state, 0));
+    eq(text, expected, `${state} produz a frase de indisponibilidade`);
+    assert(!text.includes('alerta(s)'), `${state} nunca mostra 'N alerta(s)'`);
+    assert(!/\b0\b/.test(text), `${state} nunca apresenta 0 como evidência`);
+
+    const msg = buildSentinelSyncMessage(sentinelSummary(state, 0, false));
+    assert(msg.includes(expected), `mensagem completa inclui a indisponibilidade (${state})`);
+    assert(!msg.includes('0 alerta'), `mensagem nunca mostra '0 alerta' em ${state}`);
+    assert(msg.includes('10 incidente(s)'), `preserva incidentes mesmo com alertas indisponíveis (${state})`);
+  }
 });
 
 console.log(`\n${count - failures}/${count} testes de lógica do frontend aprovados.`);

@@ -179,8 +179,8 @@ public class ConnectorsController : ControllerBase
             ? new SentinelSyncSummaryDto(
                 s.WindowDays, s.IncidentsObserved, s.OpenIncidents, s.NewIncidents, s.ClosedIncidents,
                 s.OpenHighSeverity, s.OpenMediumSeverity, s.OpenLowSeverity, s.OpenInformationalSeverity,
-                s.MeanTimeToCloseHours, s.AlertsObserved, s.AlertsHighSeverity, s.AlertsMediumSeverity,
-                s.LastEvidenceAt, s.IsComplete)
+                s.MeanTimeToCloseHours, s.AlertsState.ToString(), s.AlertsObserved, s.AlertsHighSeverity,
+                s.AlertsMediumSeverity, s.LastEvidenceAt, s.IsComplete)
             : null;
 
         return Ok(new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln, sentinel));

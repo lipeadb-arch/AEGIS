@@ -115,11 +115,13 @@ public interface ILogAnalyticsClient
 /// <inheritdoc cref="ILogAnalyticsClient"/>
 public sealed class LogAnalyticsClient : ILogAnalyticsClient
 {
-    // Origens OFICIAIS e CONSTANTES. O host da API e o RECURSO do token são o MESMO domínio oficial do Log
-    // Analytics (api.loganalytics.azure.com) — audiência divergente faz a API devolver 401/403 mesmo com o host
-    // certo. O tenant NUNCA fornece base URL nem destino: impede exfiltrar o bearer para uma origem arbitrária.
+    // Origens OFICIAIS e CONSTANTES. ⚠️ O HOST da consulta e o RECURSO (audience) do token são domínios DISTINTOS:
+    // a consulta vai para api.loganalytics.azure.com, mas o token client-credentials deve ser pedido com o scope
+    // api.loganalytics.io/.default (doc oficial: learn.microsoft.com/azure/azure-monitor/logs/api/access-api). Usar
+    // o mesmo domínio nos dois faz o AAD devolver 401/403 (audiência divergente). São constantes distintas de
+    // propósito. O tenant NUNCA fornece base URL nem destino: impede exfiltrar o bearer para uma origem arbitrária.
     private const string LoginBaseUrl = "https://login.microsoftonline.com";
-    private const string TokenResource = "https://api.loganalytics.azure.com/.default";
+    private const string TokenResource = "https://api.loganalytics.io/.default";
     private const string ApiBaseUrl = "https://api.loganalytics.azure.com";
     private const string ApiHost = "api.loganalytics.azure.com";
 
@@ -173,9 +175,17 @@ public sealed class LogAnalyticsClient : ILogAnalyticsClient
         using (resp)
         {
             if (resp.StatusCode != HttpStatusCode.OK)
+            {
+                // O endpoint OAuth (AAD) devolve credencial inválida como HTTP 400 com um campo string `error`
+                // (invalid_client/unauthorized_client/invalid_grant/…). Parsing DEFENSIVO e LIMITADO: só o código
+                // `error` (sanitizado) — nunca `error_description`, segredo ou corpo bruto — para não classificar
+                // uma falha de autenticação como Unavailable. Throttling/timeout/indisponibilidade são preservados.
+                var errBody = await SafeReadAsync(resp, ct);
+                var oauthCode = TryReadOAuthErrorCode(errBody);
                 throw new LogAnalyticsException(
-                    Classify(resp.StatusCode), $"token endpoint retornou {(int)resp.StatusCode}",
-                    (int)resp.StatusCode, retryAfterSeconds: RetryAfter(resp));
+                    ClassifyTokenError(resp.StatusCode, oauthCode), $"token endpoint retornou {(int)resp.StatusCode}",
+                    (int)resp.StatusCode, apiErrorCode: oauthCode, retryAfterSeconds: RetryAfter(resp));
+            }
 
             var body = await resp.Content.ReadAsStringAsync(ct);
             JsonDocument doc;
@@ -355,6 +365,13 @@ public sealed class LogAnalyticsClient : ILogAnalyticsClient
         return null;
     }
 
+    /// <summary>
+    /// Código de erro SANITIZADO da Query API. Prefere o código MAIS ESPECÍFICO: o Log Analytics envolve a falha
+    /// real num <c>error.code</c> genérico (ex.: <c>BadArgumentError</c>) e detalha a causa em
+    /// <c>error.details[].code</c> (ex.: <c>SemanticError</c> para tabela/coluna não resolvida). Sem isso, tabela
+    /// ausente ficaria indistinguível de um 400 qualquer. Leitura defensiva e limitada — só o campo <c>code</c>,
+    /// nunca <c>message</c>/corpo bruto.
+    /// </summary>
     private static string? TryReadApiErrorCode(string body)
     {
         if (string.IsNullOrWhiteSpace(body) || body.Length > 64_000) return null;
@@ -364,11 +381,26 @@ public sealed class LogAnalyticsClient : ILogAnalyticsClient
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object
                 || !root.TryGetProperty("error", out var error)
-                || error.ValueKind != JsonValueKind.Object
-                || !error.TryGetProperty("code", out var code)
-                || code.ValueKind != JsonValueKind.String)
+                || error.ValueKind != JsonValueKind.Object)
                 return null;
-            return code.GetString();
+
+            // Código específico do primeiro detalhe (a causa real), quando presente.
+            if (error.TryGetProperty("details", out var details)
+                && details.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var detail in details.EnumerateArray())
+                {
+                    if (detail.ValueKind == JsonValueKind.Object
+                        && detail.TryGetProperty("code", out var dcode)
+                        && dcode.ValueKind == JsonValueKind.String
+                        && dcode.GetString() is { Length: > 0 } specific)
+                        return specific;
+                    break;   // só o primeiro detalhe — não varre a lista inteira
+                }
+            }
+
+            return error.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String
+                ? code.GetString() : null;
         }
         catch (JsonException)
         {
@@ -385,6 +417,63 @@ public sealed class LogAnalyticsClient : ILogAnalyticsClient
         HttpStatusCode.GatewayTimeout => LogAnalyticsErrorKind.Timeout,
         _ => LogAnalyticsErrorKind.Unavailable,
     };
+
+    /// <summary>
+    /// Classificação de uma resposta de ERRO do endpoint OAuth (AAD). Um código de erro OAuth de autenticação
+    /// conhecido, ou qualquer HTTP 400 do endpoint de token (rejeição de client_credentials), é
+    /// <see cref="LogAnalyticsErrorKind.AuthFailure"/>. Demais status caem na classificação por HTTP — preservando
+    /// 429 (Throttled), 408/504 (Timeout) e 5xx (Unavailable). Nunca vira Unavailable uma credencial inválida.
+    /// </summary>
+    private static LogAnalyticsErrorKind ClassifyTokenError(HttpStatusCode status, string? oauthErrorCode)
+    {
+        if (oauthErrorCode is not null && IsAuthErrorCode(oauthErrorCode)) return LogAnalyticsErrorKind.AuthFailure;
+        if (status == HttpStatusCode.BadRequest) return LogAnalyticsErrorKind.AuthFailure;
+        return Classify(status);
+    }
+
+    /// <summary>Códigos OAuth (RFC 6749 / AAD) que indicam falha de autenticação/autorização da credencial.</summary>
+    private static bool IsAuthErrorCode(string code) => code switch
+    {
+        "invalid_client" or "unauthorized_client" or "invalid_grant"
+            or "invalid_request" or "unsupported_grant_type" or "invalid_scope" => true,
+        _ => false,
+    };
+
+    /// <summary>
+    /// Lê APENAS o campo string <c>error</c> de uma resposta OAuth (ex.: <c>{"error":"invalid_client",…}</c>).
+    /// Distinto do erro da Query API (objeto <c>error.code</c>). NUNCA lê <c>error_description</c>/corpo bruto.
+    /// </summary>
+    private static string? TryReadOAuthErrorCode(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body) || body!.Length > 64_000) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("error", out var error)
+                || error.ValueKind != JsonValueKind.String)
+                return null;
+            return error.GetString();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Lê o corpo com tolerância a falha (o classificador de erro não pode lançar por causa da leitura).</summary>
+    private static async Task<string?> SafeReadAsync(HttpResponseMessage resp, CancellationToken ct)
+    {
+        try
+        {
+            return await resp.Content.ReadAsStringAsync(ct);
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
 
     /// <summary>Corpo da consulta: KQL FIXA + timespan explícito. camelCase por contrato da API.</summary>
     private sealed record QueryBody(string query, string timespan);

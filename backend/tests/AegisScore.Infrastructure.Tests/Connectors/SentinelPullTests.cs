@@ -76,6 +76,7 @@ public sealed class SentinelPullTests : IDisposable
         result.Sentinel.Should().NotBeNull();
         result.Sentinel!.IncidentsObserved.Should().Be(10);
         result.Sentinel.OpenHighSeverity.Should().Be(2);
+        result.Sentinel.AlertsState.Should().Be(SiemAlertCollectionState.Available);
         result.Sentinel.AlertsObserved.Should().Be(25);
         result.Sentinel.IsComplete.Should().BeTrue();
 
@@ -83,6 +84,48 @@ public sealed class SentinelPullTests : IDisposable
         (await assert.Signals.CountAsync()).Should().Be(0, "nenhuma evidência/sinal foi persistido");
         (await assert.TenantControlStates.CountAsync()).Should().Be(0, "o ledger determinístico não foi tocado");
         (await assert.Connectors.SingleAsync(c => c.Id == connectorId)).LastStatus.Should().Be(ConnectorStatus.Healthy);
+    }
+
+    [Fact]
+    public async Task Pull_SentinelAlertsTableMissing_ConnectorDegraded_IncidentsPreserved_NoScore()
+    {
+        var sentinelId = SeedSentinelConnector();
+
+        // Outra capacidade previamente saudável — uma coleta PARCIAL do Sentinel não pode alterá-la.
+        var otherId = Guid.NewGuid();
+        await using (var seed = NewContext(Tenant))
+        {
+            seed.Connectors.Add(new ConnectorConfig
+            {
+                Id = otherId, Provider = ConnectorProvider.Microsoft, Capability = ConnectorCapability.SecureScore,
+                DisplayName = "Secure Score", EncryptedSettings = "x", LastStatus = ConnectorStatus.Healthy,
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        // Token + incidentes OK; SecurityAlert falha de forma TIPADA (400 SemanticError = tabela ausente).
+        var exec = MakeExecutor(new SentinelHandler(incidentBody: IncidentBody, alertStatus: HttpStatusCode.BadRequest));
+
+        await using var read = NewContext(Tenant);
+        var config = await read.Connectors.SingleAsync(c => c.Id == sentinelId);
+
+        var result = await exec.CollectPullAsync(config, default);
+
+        result.Should().NotBeNull();
+        result!.Status.Should().Be(ConnectorStatus.Degraded, "alertas não comprovados degradam a saúde (não Failed)");
+        result.Sentinel.Should().NotBeNull();
+        result.Sentinel!.IncidentsObserved.Should().Be(10, "os agregados de incidentes são preservados");
+        result.Sentinel.OpenHighSeverity.Should().Be(2);
+        result.Sentinel.AlertsState.Should().Be(SiemAlertCollectionState.TableUnavailable);
+        result.Sentinel.AlertsObserved.Should().Be(0, "estado ≠ Available não é zero confiável");
+        result.Sentinel.IsComplete.Should().BeFalse();
+
+        await using var assert = NewContext(Tenant);
+        (await assert.Signals.CountAsync()).Should().Be(0, "nenhum EvidenceSignal criado");
+        (await assert.TenantControlStates.CountAsync()).Should().Be(0, "o ledger determinístico não foi tocado");
+        (await assert.Connectors.SingleAsync(c => c.Id == sentinelId)).LastStatus.Should().Be(ConnectorStatus.Degraded);
+        (await assert.Connectors.SingleAsync(c => c.Id == otherId)).LastStatus
+            .Should().Be(ConnectorStatus.Healthy, "coleta parcial do Sentinel não contamina outra capacidade");
     }
 
     [Fact]
@@ -167,18 +210,26 @@ public sealed class SentinelPullTests : IDisposable
         public string Unprotect(string protectedValue) => protectedValue;
     }
 
+    /// <summary>
+    /// Roteia token (login) e consultas (loganalytics) por corpo KQL. <c>queryStatus</c> governa a consulta
+    /// PRIMÁRIA (incidentes) e <c>alertStatus</c> governa a SECUNDÁRIA (alertas), de forma INDEPENDENTE — para
+    /// exercitar incidentes com sucesso enquanto SecurityAlert falha de modo tipado.
+    /// </summary>
     private sealed class SentinelHandler : HttpMessageHandler
     {
         private readonly string? _incidentBody;
         private readonly string? _alertBody;
         private readonly HttpStatusCode _queryStatus;
+        private readonly HttpStatusCode _alertStatus;
 
         public SentinelHandler(
-            string? incidentBody = null, string? alertBody = null, HttpStatusCode queryStatus = HttpStatusCode.OK)
+            string? incidentBody = null, string? alertBody = null,
+            HttpStatusCode queryStatus = HttpStatusCode.OK, HttpStatusCode alertStatus = HttpStatusCode.OK)
         {
             _incidentBody = incidentBody;
             _alertBody = alertBody;
             _queryStatus = queryStatus;
+            _alertStatus = alertStatus;
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
@@ -186,14 +237,21 @@ public sealed class SentinelPullTests : IDisposable
             if (req.RequestUri!.AbsoluteUri.Contains("/oauth2/v2.0/token"))
                 return Json(HttpStatusCode.OK, TokenJson);
 
-            if (_queryStatus != HttpStatusCode.OK)
-                return Json(_queryStatus, """{"error":{"code":"Forbidden"}}""");
-
             var body = req.Content is null ? "" : await req.Content.ReadAsStringAsync(ct);
+
             if (body.Contains("SecurityIncident"))
+            {
+                if (_queryStatus != HttpStatusCode.OK)
+                    return Json(_queryStatus, """{"error":{"code":"Forbidden"}}""");
                 return Json(HttpStatusCode.OK, _incidentBody ?? """{"tables":[]}""");
+            }
             if (body.Contains("SecurityAlert"))
-                return Json(HttpStatusCode.OK, _alertBody ?? """{"tables":[{"name":"PrimaryResult","columns":[],"rows":[]}]}""");
+            {
+                if (_alertStatus != HttpStatusCode.OK)
+                    return Json(_alertStatus, _alertBody ?? """{"error":{"code":"SemanticError"}}""");
+                // Default de sucesso: uma linha de zeros (Available com zero alertas).
+                return Json(HttpStatusCode.OK, _alertBody ?? """{"tables":[{"name":"PrimaryResult","columns":[{"name":"AlertsObserved","type":"long"}],"rows":[[0]]}]}""");
+            }
             return Json(HttpStatusCode.OK, """{"tables":[{"name":"PrimaryResult","columns":[{"name":"AegisProbe","type":"long"}],"rows":[[1]]}]}""");
         }
 

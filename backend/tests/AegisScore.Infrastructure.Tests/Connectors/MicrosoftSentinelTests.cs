@@ -37,14 +37,70 @@ public sealed class LogAnalyticsClientTests
     }
 
     [Fact]
-    public async Task AcquireToken_UsesOfficialLogAnalyticsScope()
+    public async Task AcquireToken_SendsClientCredentialsWithOfficialLogAnalyticsIoScope()
     {
         string? sentBody = null;
         var client = new LogAnalyticsClient(new HttpClient(new RouteHandler((_, body) => { sentBody = body; return Json(HttpStatusCode.OK, TokenJson); })));
         await client.AcquireTokenAsync(Cfg, CancellationToken.None);
-        // O audience/scope OFICIAL exigido pela API do Log Analytics (client credentials).
-        sentBody.Should().Contain("api.loganalytics.azure.com%2F.default");
+
+        // Recurso OFICIAL do token (client credentials) = api.loganalytics.io/.default — DISTINTO do host da consulta.
+        sentBody.Should().Contain("scope=https%3A%2F%2Fapi.loganalytics.io%2F.default");
         sentBody.Should().Contain("grant_type=client_credentials");
+        sentBody.Should().Contain("client_id=app");
+        sentBody.Should().Contain("client_secret=SUPER-SECRET", "o segredo é ENVIADO no formulário (necessário para autenticar)");
+        // Não aceitar o domínio da CONSULTA como recurso do token — nem como fallback silencioso.
+        sentBody.Should().NotContain("api.loganalytics.azure.com%2F.default");
+    }
+
+    [Fact]
+    public async Task AcquireToken_400InvalidClient_ClassifiedAsAuthFailure_WithoutLeakingSecretOrDescription()
+    {
+        // AAD devolve credencial inválida como HTTP 400 com um campo string `error`. NUNCA vira Unavailable, e a
+        // exceção nunca carrega error_description, corpo bruto ou o segredo.
+        const string body = """{"error":"invalid_client","error_description":"AADSTS7000215: Invalid client secret provided.","error_codes":[7000215]}""";
+        var client = new LogAnalyticsClient(new HttpClient(new RouteHandler((_, _) => Json(HttpStatusCode.BadRequest, body))));
+
+        var ex = (await ((Func<Task>)(() => client.AcquireTokenAsync(Cfg, CancellationToken.None)))
+            .Should().ThrowAsync<LogAnalyticsException>()).Which;
+        ex.Kind.Should().Be(LogAnalyticsErrorKind.AuthFailure);
+        ex.ApiErrorCode.Should().Be("invalid_client");
+        var surface = $"{ex.Message}|{ex.ApiErrorCode}";
+        surface.Should().NotContain("SUPER-SECRET").And.NotContain("error_description")
+            .And.NotContain("AADSTS7000215").And.NotContain("Invalid client secret");
+    }
+
+    [Fact]
+    public async Task AcquireToken_400InvalidJson_ClassifiedAsAuthFailure()
+    {
+        var client = new LogAnalyticsClient(new HttpClient(new RouteHandler((_, _) => Json(HttpStatusCode.BadRequest, "not-json"))));
+        var ex = (await ((Func<Task>)(() => client.AcquireTokenAsync(Cfg, CancellationToken.None)))
+            .Should().ThrowAsync<LogAnalyticsException>()).Which;
+        ex.Kind.Should().Be(LogAnalyticsErrorKind.AuthFailure, "400 no endpoint OAuth é rejeição de credencial, não indisponibilidade");
+        ex.ApiErrorCode.Should().BeNull("corpo não-JSON não produz código, mas não vira Unavailable");
+    }
+
+    [Fact]
+    public async Task AcquireToken_401_ClassifiedAsAuthFailure()
+    {
+        var client = new LogAnalyticsClient(new HttpClient(new RouteHandler((_, _) => Json(HttpStatusCode.Unauthorized, """{"error":"invalid_client"}"""))));
+        var ex = (await ((Func<Task>)(() => client.AcquireTokenAsync(Cfg, CancellationToken.None)))
+            .Should().ThrowAsync<LogAnalyticsException>()).Which;
+        ex.Kind.Should().Be(LogAnalyticsErrorKind.AuthFailure);
+    }
+
+    [Fact]
+    public async Task AcquireToken_429WithRetryAfter_ClassifiedAsThrottled()
+    {
+        var client = new LogAnalyticsClient(new HttpClient(new RouteHandler((_, _) =>
+        {
+            var resp = Json((HttpStatusCode)429, """{"error":"temporarily_unavailable"}""");
+            resp.Headers.Add("Retry-After", "42");
+            return resp;
+        })));
+        var ex = (await ((Func<Task>)(() => client.AcquireTokenAsync(Cfg, CancellationToken.None)))
+            .Should().ThrowAsync<LogAnalyticsException>()).Which;
+        ex.Kind.Should().Be(LogAnalyticsErrorKind.Throttled, "throttling é preservado no endpoint de token");
+        ex.RetryAfterSeconds.Should().Be(42);
     }
 
     // ---- Query -------------------------------------------------------------------------------------
@@ -293,6 +349,7 @@ public sealed class MicrosoftSentinelConnectorTests
         snap.NewIncidents.Should().Be(6);
         snap.ClosedIncidents.Should().Be(3);
         snap.MeanTimeToCloseHours.Should().Be(2.0, "120 minutos ÷ 60");
+        snap.AlertsState.Should().Be(SiemAlertCollectionState.Available);
         snap.AlertsObserved.Should().Be(25);
         snap.AlertsHighSeverity.Should().Be(5);
         snap.AlertsMediumSeverity.Should().Be(7);
@@ -301,19 +358,80 @@ public sealed class MicrosoftSentinelConnectorTests
     }
 
     [Fact]
-    public async Task CollectPosture_SecurityAlertUnavailable_IncidentsStillValid()
+    public async Task CollectPosture_AlertsAvailableEmpty_StateAvailable_ZeroObserved_Complete()
     {
-        // SecurityAlert ausente ⇒ a consulta de alertas retorna 400 (SemanticError). É ABSORVIDO: alertas = 0 e a
-        // coleta primária de incidentes permanece válida.
-        var router = new SentinelRouter(incidentBody: IncidentBody, alertStatus: HttpStatusCode.BadRequest,
-            alertBody: """{"error":{"code":"SemanticError"}}""");
-        var conn = NewConnector(router);
+        // Consulta bem-sucedida com ZERO alertas (summarize devolve uma linha de zeros) → Available, e a coleta
+        // permanece COMPLETA (incidentes completos). Distinto de "indisponível".
+        const string emptyAlerts = """{"tables":[{"name":"PrimaryResult","columns":[{"name":"AlertsObserved","type":"long"},{"name":"AlertsHigh","type":"long"},{"name":"AlertsMedium","type":"long"},{"name":"LastAlertAt","type":"datetime"}],"rows":[[0,0,0,null]]}]}""";
+        var snap = await NewConnector(new SentinelRouter(incidentBody: IncidentBody, alertBody: emptyAlerts))
+            .CollectPostureAsync(Config(), CancellationToken.None);
 
-        var snap = await conn.CollectPostureAsync(Config(), CancellationToken.None);
-
-        snap.IncidentsObserved.Should().Be(10);
-        snap.AlertsObserved.Should().Be(0, "alertas são 'quando disponível' — a ausência não derruba a coleta");
+        snap.AlertsState.Should().Be(SiemAlertCollectionState.Available);
+        snap.AlertsObserved.Should().Be(0);
         snap.IsComplete.Should().BeTrue();
+    }
+
+    [Theory]
+    // Tabela ausente: código específico direto, OU envolto em BadArgumentError.details[] (forma REAL do Log Analytics).
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"SemanticError"}}""", SiemAlertCollectionState.TableUnavailable)]
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"BadArgumentError","details":[{"code":"SemanticError","message":"failed to resolve table 'SecurityAlert'"}]}}""", SiemAlertCollectionState.TableUnavailable)]
+    // ⚠️ 400 GENÉRICO (sem código reconhecido de tabela ausente) → Unavailable, NÃO TableUnavailable.
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"BadArgumentError"}}""", SiemAlertCollectionState.Unavailable)]
+    [InlineData(HttpStatusCode.Forbidden, """{"error":{"code":"Forbidden"}}""", SiemAlertCollectionState.PermissionDenied)]
+    [InlineData((HttpStatusCode)429, """{"error":{"code":"Throttled"}}""", SiemAlertCollectionState.Throttled)]
+    [InlineData(HttpStatusCode.InternalServerError, """{"error":{"code":"Boom"}}""", SiemAlertCollectionState.Unavailable)]
+    public async Task CollectPosture_AlertsFailure_TypedState_ZeroedAndIncomplete_IncidentsPreserved(
+        HttpStatusCode alertStatus, string alertBody, SiemAlertCollectionState expected)
+    {
+        var snap = await NewConnector(new SentinelRouter(incidentBody: IncidentBody, alertStatus: alertStatus, alertBody: alertBody))
+            .CollectPostureAsync(Config(), CancellationToken.None);
+
+        snap.IncidentsObserved.Should().Be(10, "os agregados de incidentes são preservados");
+        snap.AlertsState.Should().Be(expected);
+        snap.AlertsObserved.Should().Be(0, "estado ≠ Available não finge zero confiável — a UI mostra 'indisponível'");
+        snap.IsComplete.Should().BeFalse("alertas não comprovados → coleta incompleta (conector Degraded)");
+    }
+
+    [Fact]
+    public async Task CollectPosture_Alerts200InvalidShape_StateUnavailable_Incomplete()
+    {
+        // 200 OK mas SEM a linha de agregação esperada (summarize sempre devolveria uma) → resposta inválida.
+        const string invalid = """{"tables":[{"name":"PrimaryResult","columns":[{"name":"AlertsObserved","type":"long"}],"rows":[]}]}""";
+        var snap = await NewConnector(new SentinelRouter(incidentBody: IncidentBody, alertBody: invalid))
+            .CollectPostureAsync(Config(), CancellationToken.None);
+        snap.AlertsState.Should().Be(SiemAlertCollectionState.Unavailable);
+        snap.AlertsObserved.Should().Be(0);
+        snap.IsComplete.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CollectPosture_AlertsTimeout_StateTimeout_Incomplete()
+    {
+        var router = new SentinelRouter(incidentBody: IncidentBody, alertThrow: new TaskCanceledException("timeout"));
+        var snap = await NewConnector(router).CollectPostureAsync(Config(), CancellationToken.None);
+        snap.AlertsState.Should().Be(SiemAlertCollectionState.Timeout);
+        snap.IsComplete.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CollectPosture_AlertsPartial_StatePartial_Incomplete()
+    {
+        const string partialAlerts = """{"tables":[{"name":"PrimaryResult","columns":[{"name":"AlertsObserved","type":"long"}],"rows":[[3]]}],"error":{"code":"PartialError"}}""";
+        var snap = await NewConnector(new SentinelRouter(incidentBody: IncidentBody, alertBody: partialAlerts))
+            .CollectPostureAsync(Config(), CancellationToken.None);
+        snap.AlertsState.Should().Be(SiemAlertCollectionState.Partial);
+        snap.AlertsObserved.Should().Be(0, "resultado parcial não é contagem confiável");
+        snap.IsComplete.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CollectPosture_Cancellation_Propagates()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var router = new SentinelRouter(incidentBody: IncidentBody, alertBody: AlertBody);
+        var act = async () => await NewConnector(router).CollectPostureAsync(Config(), cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>("cancelamento solicitado continua propagando");
     }
 
     [Fact]
@@ -390,13 +508,14 @@ public sealed class MicrosoftSentinelConnectorTests
         private readonly HttpStatusCode _alertStatus;
         private readonly string? _queryBody;
         private readonly Action? _onQuery;
+        private readonly Exception? _alertThrow;
 
         public string? IncidentQuerySent { get; private set; }
 
         public SentinelRouter(
             string? incidentBody = null, string? alertBody = null,
             HttpStatusCode queryStatus = HttpStatusCode.OK, HttpStatusCode alertStatus = HttpStatusCode.OK,
-            string? queryBody = null, Action? onQuery = null)
+            string? queryBody = null, Action? onQuery = null, Exception? alertThrow = null)
         {
             _incidentBody = incidentBody;
             _alertBody = alertBody;
@@ -404,10 +523,12 @@ public sealed class MicrosoftSentinelConnectorTests
             _alertStatus = alertStatus;
             _queryBody = queryBody;
             _onQuery = onQuery;
+            _alertThrow = alertThrow;
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
         {
+            ct.ThrowIfCancellationRequested();   // cancelamento solicitado propaga
             var uri = req.RequestUri!;
             if (uri.AbsoluteUri.Contains("/oauth2/v2.0/token"))
                 return Json(HttpStatusCode.OK, TokenJson);
@@ -425,7 +546,10 @@ public sealed class MicrosoftSentinelConnectorTests
                 return Json(HttpStatusCode.OK, _incidentBody ?? """{"tables":[]}""");
             }
             if (body.Contains("SecurityAlert"))
+            {
+                if (_alertThrow is not null) throw _alertThrow;   // ex.: TaskCanceledException = timeout HTTP
                 return Json(_alertStatus, _alertBody ?? """{"error":{"code":"SemanticError"}}""");
+            }
 
             // Probe (print AegisProbe=1).
             return Json(HttpStatusCode.OK, _incidentBody ?? ProbeBody);
