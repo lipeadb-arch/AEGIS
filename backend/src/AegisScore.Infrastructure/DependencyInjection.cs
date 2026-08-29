@@ -22,6 +22,7 @@ using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Posture;
 using AegisScore.Infrastructure.Posture.Export;
 using AegisScore.Infrastructure.Queries;
+using AegisScore.Infrastructure.Reference;
 using AegisScore.Infrastructure.RiskAssessment;
 using AegisScore.Infrastructure.Scoring;
 using AegisScore.Infrastructure.Tenancy;
@@ -138,6 +139,17 @@ public static class DependencyInjection
         services.AddSingleton<IAuditorPersonaProvider>(sp => new AuditorPersonaProvider(
             personalityPath, sp.GetRequiredService<ILogger<AuditorPersonaProvider>>()));
         services.AddScoped<IAegisAiEvaluatorService, AegisAiEvaluatorService>();
+
+        // [AEGIS-MVP-LANGUAGE-01] Camada de LINGUAGEM CLARA (autoral, provider-neutral, pt-BR) por subcategoria —
+        // título/resumo/impacto/ação que a query do dashboard injeta no contrato de leitura. Singleton: o JSON é
+        // lido UMA vez no startup. Caminho relativo ao diretório do binário (o Data/ do Api é copiado para o
+        // output). FAIL-CLOSED por dentro (ver ControlLanguageCatalog): ausência/duplicidade/campo vazio abortam.
+        var controlLanguagePath = config["Reference:ControlLanguagePath"]
+            ?? Path.Combine("Data", "aegis_control_language.pt-BR.json");
+        if (!Path.IsPathRooted(controlLanguagePath))
+            controlLanguagePath = Path.Combine(AppContext.BaseDirectory, controlLanguagePath);
+        services.AddSingleton<IControlLanguageCatalog>(sp => new ControlLanguageCatalog(
+            controlLanguagePath, sp.GetRequiredService<ILogger<ControlLanguageCatalog>>()));
 
         // Auditor Virtual — construtor do CONTEXTO tenant-scoped (somente leitura) que fundamenta o chat:
         // score/cobertura, lacunas, controles, evidência documental curta, conectores e recomendações. Scoped:

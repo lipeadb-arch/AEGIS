@@ -1,0 +1,755 @@
+{
+  "provenance": {
+    "identifier": "aegis-control-language-pt-BR",
+    "schemaVersion": "1.0",
+    "classification": "derived",
+    "language": "pt-BR",
+    "origin": "AEGIS — camada de apresentação autoral (linguagem clara provider-neutral)",
+    "appliesToCatalog": "nist-csf-2.0-catalog",
+    "notes": "Redação AUTORAL do AEGIS em português claro para apresentar cada controle sem depender de IA. NÃO é tradução oficial do NIST CSF 2.0 nem substitui as descrições oficiais (que permanecem em nist_csf_2_0_catalog.json). O código NIST continua sendo a referência técnica; estes textos são a leitura em linguagem clara. Provider-neutral: nenhum texto depende de Microsoft, Google, AWS ou de qualquer fornecedor específico."
+  },
+  "controls": [
+    {
+      "code": "GV.OC-01",
+      "title": "Alinhar a segurança à missão da organização",
+      "summary": "Garante que a gestão de risco cibernético parta da missão do negócio e sirva aos seus objetivos.",
+      "impact": "Sem esse elo, a segurança protege o que é secundário e deixa exposto o que sustenta a operação.",
+      "initialAction": "Registre a missão da organização e relacione os riscos que podem impedi-la."
+    },
+    {
+      "code": "GV.OC-02",
+      "title": "Mapear expectativas das partes interessadas",
+      "summary": "Assegura que necessidades de clientes, reguladores, sócios e equipes sejam consideradas nas decisões de segurança.",
+      "impact": "Ignorar quem depende da organização leva a decisões que quebram confiança e contratos.",
+      "initialAction": "Liste as partes interessadas internas e externas e o que cada uma espera de segurança."
+    },
+    {
+      "code": "GV.OC-03",
+      "title": "Acompanhar obrigações legais, regulatórias e contratuais",
+      "summary": "Mantém sob controle as exigências de leis, regulações e contratos, incluindo privacidade.",
+      "impact": "Descumprir uma obrigação legal expõe a organização a multas, sanções e responsabilização.",
+      "initialAction": "Monte uma lista das obrigações aplicáveis e do responsável por cada uma."
+    },
+    {
+      "code": "GV.OC-04",
+      "title": "Conhecer os serviços críticos esperados por terceiros",
+      "summary": "Deixa claros os serviços e capacidades de que clientes e parceiros dependem da organização.",
+      "impact": "Sem esse mapa, uma interrupção atinge quem depende de você sem que ninguém tivesse previsto.",
+      "initialAction": "Liste os serviços que terceiros esperam da organização e comunique-os internamente."
+    },
+    {
+      "code": "GV.OC-05",
+      "title": "Mapear os serviços externos de que dependemos",
+      "summary": "Identifica capacidades e serviços de fora dos quais a própria organização depende para operar.",
+      "impact": "Uma dependência externa desconhecida vira ponto único de falha na primeira indisponibilidade.",
+      "initialAction": "Relacione os serviços externos essenciais à operação e comunique quem depende deles."
+    },
+    {
+      "code": "GV.RM-01",
+      "title": "Definir objetivos de gestão de risco cibernético",
+      "summary": "Estabelece e acorda com a liderança os objetivos que orientam a gestão de risco.",
+      "impact": "Sem objetivos acordados, cada área trata risco à sua maneira e nada é priorizado de fato.",
+      "initialAction": "Formalize os objetivos de gestão de risco e obtenha o aval da liderança."
+    },
+    {
+      "code": "GV.RM-02",
+      "title": "Estabelecer apetite e tolerância a risco",
+      "summary": "Define, comunica e mantém quanto risco a organização aceita correr.",
+      "impact": "Sem esse limite, decisões viram opinião e riscos altos passam sem que ninguém precise aprovar.",
+      "initialAction": "Escreva declarações de apetite e tolerância a risco e comunique-as às áreas."
+    },
+    {
+      "code": "GV.RM-03",
+      "title": "Integrar risco cibernético à gestão de riscos corporativa",
+      "summary": "Insere as atividades e resultados de risco cibernético no processo de risco do negócio.",
+      "impact": "Tratado à parte, o risco cibernético fica invisível para quem decide o rumo da empresa.",
+      "initialAction": "Inclua o risco cibernético nos fóruns e relatórios de risco corporativo."
+    },
+    {
+      "code": "GV.RM-04",
+      "title": "Definir a direção estratégica de resposta a riscos",
+      "summary": "Estabelece e comunica as opções apropriadas de resposta (aceitar, mitigar, transferir, evitar).",
+      "impact": "Sem direção, a resposta a cada risco é improvisada e inconsistente entre áreas.",
+      "initialAction": "Documente as opções de resposta a risco aceitas e quando cada uma se aplica."
+    },
+    {
+      "code": "GV.RM-05",
+      "title": "Manter canais de comunicação de risco, inclusive de terceiros",
+      "summary": "Garante linhas claras para comunicar riscos cibernéticos, incluindo os de fornecedores.",
+      "impact": "Sem canais definidos, um risco conhecido por um time não chega a quem poderia agir.",
+      "initialAction": "Defina por onde riscos cibernéticos, próprios e de terceiros, são comunicados e a quem."
+    },
+    {
+      "code": "GV.RM-06",
+      "title": "Padronizar o cálculo e a priorização de riscos",
+      "summary": "Adota um método único para calcular, documentar, categorizar e priorizar riscos.",
+      "impact": "Sem método comum, dois riscos iguais recebem tratamentos diferentes e a fila perde sentido.",
+      "initialAction": "Escolha e comunique um método padrão de avaliação e priorização de riscos."
+    },
+    {
+      "code": "GV.RM-07",
+      "title": "Considerar oportunidades estratégicas na gestão de risco",
+      "summary": "Caracteriza e inclui oportunidades (riscos positivos) nas discussões de risco.",
+      "impact": "Olhar só para a ameaça faz a organização perder ganhos que uma decisão de risco poderia trazer.",
+      "initialAction": "Inclua oportunidades relevantes nas discussões e no registro de risco."
+    },
+    {
+      "code": "GV.RR-01",
+      "title": "Responsabilizar a liderança pelo risco cibernético",
+      "summary": "Torna a liderança responsável pelo risco e promotora de uma cultura ética e de melhoria contínua.",
+      "impact": "Sem dono no topo, segurança vira tema técnico sem orçamento, prioridade ou consequência.",
+      "initialAction": "Atribua formalmente à liderança a responsabilidade pelo risco cibernético."
+    },
+    {
+      "code": "GV.RR-02",
+      "title": "Definir papéis, responsabilidades e alçadas de segurança",
+      "summary": "Estabelece, comunica e faz cumprir quem responde por cada atividade de segurança.",
+      "impact": "Papéis difusos deixam tarefas críticas sem dono — todos supõem que outro cuida.",
+      "initialAction": "Documente papéis e responsabilidades de segurança e comunique a cada envolvido."
+    },
+    {
+      "code": "GV.RR-03",
+      "title": "Alocar recursos compatíveis com a estratégia de risco",
+      "summary": "Garante orçamento, pessoas e ferramentas proporcionais aos riscos, papéis e políticas.",
+      "impact": "Estratégia sem recurso é intenção no papel; as lacunas seguem abertas por falta de meios.",
+      "initialAction": "Confronte a estratégia de risco com os recursos disponíveis e registre as faltas."
+    },
+    {
+      "code": "GV.RR-04",
+      "title": "Incluir segurança nas práticas de recursos humanos",
+      "summary": "Integra a segurança ao ciclo de pessoas: contratação, movimentação e desligamento.",
+      "impact": "Sem esse elo, acessos sobrevivem a desligamentos e novos riscos entram junto com pessoas.",
+      "initialAction": "Inclua etapas de segurança nos processos de admissão, mudança e saída."
+    },
+    {
+      "code": "GV.PO-01",
+      "title": "Estabelecer a política de gestão de risco cibernético",
+      "summary": "Cria, comunica e faz cumprir a política que orienta a gestão de risco na organização.",
+      "impact": "Sem política, não há critério comum e cada decisão de segurança depende de quem está na sala.",
+      "initialAction": "Publique uma política de gestão de risco cibernético aprovada pela liderança."
+    },
+    {
+      "code": "GV.PO-02",
+      "title": "Revisar e atualizar a política de segurança",
+      "summary": "Mantém a política revisada e atualizada frente a mudanças de ameaças, tecnologia e negócio.",
+      "impact": "Uma política defasada orienta decisões erradas e perde autoridade junto às equipes.",
+      "initialAction": "Defina um ciclo de revisão da política e registre a última atualização."
+    },
+    {
+      "code": "GV.OV-01",
+      "title": "Revisar resultados para ajustar a estratégia de risco",
+      "summary": "Usa os resultados obtidos para informar e ajustar a estratégia e a direção de risco.",
+      "impact": "Sem revisão, a estratégia se descola da realidade e insiste no que já não funciona.",
+      "initialAction": "Revise periodicamente os resultados de risco e registre os ajustes de rumo."
+    },
+    {
+      "code": "GV.OV-02",
+      "title": "Revisar a cobertura da estratégia de risco",
+      "summary": "Verifica se a estratégia continua cobrindo os requisitos e riscos da organização.",
+      "impact": "Lacunas de cobertura deixam riscos reais fora do alcance da estratégia sem que se perceba.",
+      "initialAction": "Compare a estratégia com os riscos atuais e aponte o que ficou de fora."
+    },
+    {
+      "code": "GV.OV-03",
+      "title": "Avaliar o desempenho da gestão de risco cibernético",
+      "summary": "Mede e revisa o desempenho da gestão de risco para identificar ajustes necessários.",
+      "impact": "Sem medir desempenho, não se sabe se a gestão de risco melhora ou apenas consome recursos.",
+      "initialAction": "Defina indicadores de desempenho da gestão de risco e revise-os regularmente."
+    },
+    {
+      "code": "GV.SC-01",
+      "title": "Estabelecer um programa de risco da cadeia de suprimentos",
+      "summary": "Cria e acorda o programa, a estratégia, as políticas e os processos de risco de fornecedores.",
+      "impact": "Sem programa, cada contratação decide sozinha o risco que aceita trazer de fora.",
+      "initialAction": "Formalize um programa de gestão de risco da cadeia de suprimentos."
+    },
+    {
+      "code": "GV.SC-02",
+      "title": "Coordenar responsabilidades de segurança com fornecedores",
+      "summary": "Estabelece e coordena papéis de segurança com fornecedores, clientes e parceiros.",
+      "impact": "Responsabilidades indefinidas na relação deixam brechas que ninguém assume nas duas pontas.",
+      "initialAction": "Defina e comunique responsabilidades de segurança nas relações com terceiros."
+    },
+    {
+      "code": "GV.SC-03",
+      "title": "Integrar o risco de fornecedores à gestão de riscos",
+      "summary": "Insere o risco da cadeia nos processos de risco, avaliação e melhoria da organização.",
+      "impact": "Tratado à parte, o risco de terceiros não entra na conta ao priorizar o que proteger.",
+      "initialAction": "Inclua o risco de fornecedores nas avaliações e nos processos de melhoria."
+    },
+    {
+      "code": "GV.SC-04",
+      "title": "Conhecer e priorizar fornecedores por criticidade",
+      "summary": "Mantém os fornecedores conhecidos e ordenados pela criticidade para a operação.",
+      "impact": "Sem essa priorização, dá-se a mesma atenção a um fornecedor vital e a um irrelevante.",
+      "initialAction": "Liste os fornecedores e classifique-os por criticidade para o negócio."
+    },
+    {
+      "code": "GV.SC-05",
+      "title": "Exigir requisitos de segurança em contratos com fornecedores",
+      "summary": "Estabelece e integra requisitos de segurança em contratos e acordos com terceiros.",
+      "impact": "Sem cláusulas de segurança, não há como cobrar do fornecedor o que ele deveria proteger.",
+      "initialAction": "Padronize requisitos de segurança e inclua-os nos contratos com fornecedores."
+    },
+    {
+      "code": "GV.SC-06",
+      "title": "Fazer due diligence antes de contratar terceiros",
+      "summary": "Executa planejamento e verificação para reduzir risco antes de formalizar a relação.",
+      "impact": "Contratar sem avaliar traz para dentro riscos que seriam evitáveis com uma checagem prévia.",
+      "initialAction": "Defina uma checagem de segurança obrigatória antes de fechar com um fornecedor."
+    },
+    {
+      "code": "GV.SC-07",
+      "title": "Monitorar o risco de fornecedores ao longo da relação",
+      "summary": "Entende, registra, prioriza, avalia e acompanha o risco do fornecedor durante todo o vínculo.",
+      "impact": "Avaliar só na entrada ignora que o risco de um fornecedor muda ao longo do tempo.",
+      "initialAction": "Estabeleça um acompanhamento periódico do risco dos fornecedores ativos."
+    },
+    {
+      "code": "GV.SC-08",
+      "title": "Incluir fornecedores no plano de resposta a incidentes",
+      "summary": "Envolve fornecedores relevantes no planejamento, na resposta e na recuperação de incidentes.",
+      "impact": "Se um incidente envolve o fornecedor e ele não está no plano, a resposta trava na hora crítica.",
+      "initialAction": "Inclua os fornecedores relevantes nos planos e testes de resposta a incidentes."
+    },
+    {
+      "code": "GV.SC-09",
+      "title": "Acompanhar a segurança da cadeia por todo o ciclo de vida",
+      "summary": "Integra as práticas de segurança da cadeia ao ciclo de vida de produtos e serviços e monitora seu desempenho.",
+      "impact": "Segurança verificada só na compra ignora riscos que surgem no uso e na descontinuação.",
+      "initialAction": "Acompanhe a segurança dos produtos e serviços de terceiros do início ao fim do ciclo."
+    },
+    {
+      "code": "GV.SC-10",
+      "title": "Planejar o encerramento seguro de contratos com terceiros",
+      "summary": "Prevê as atividades de segurança para depois do fim de uma parceria ou contrato.",
+      "impact": "Sem plano de saída, dados e acessos ficam com o ex-fornecedor após o contrato acabar.",
+      "initialAction": "Defina o que deve ocorrer em segurança ao encerrar cada relação com terceiros."
+    },
+    {
+      "code": "ID.AM-01",
+      "title": "Manter o inventário de hardware",
+      "summary": "Mantém atualizada a lista dos equipamentos físicos sob gestão da organização.",
+      "impact": "Não se protege o que não se conhece: um equipamento fora do inventário é um ponto cego.",
+      "initialAction": "Consolide um inventário de hardware e defina quem o mantém atualizado."
+    },
+    {
+      "code": "ID.AM-02",
+      "title": "Manter o inventário de software e sistemas",
+      "summary": "Mantém atualizada a lista de softwares, serviços e sistemas sob gestão da organização.",
+      "impact": "Software desconhecido não é atualizado nem monitorado — vira porta de entrada silenciosa.",
+      "initialAction": "Consolide um inventário de software e sistemas e mantenha-o atualizado."
+    },
+    {
+      "code": "ID.AM-03",
+      "title": "Mapear os fluxos de comunicação da rede",
+      "summary": "Mantém representações dos fluxos de rede autorizados, internos e externos.",
+      "impact": "Sem conhecer os fluxos, tráfego malicioso se confunde com o legítimo e passa despercebido.",
+      "initialAction": "Documente os principais fluxos de comunicação de rede autorizados."
+    },
+    {
+      "code": "ID.AM-04",
+      "title": "Inventariar os serviços prestados por fornecedores",
+      "summary": "Mantém a lista dos serviços fornecidos por terceiros dos quais a organização depende.",
+      "impact": "Um serviço de terceiro fora do inventário deixa a dependência e seu risco invisíveis.",
+      "initialAction": "Liste os serviços prestados por fornecedores e mantenha o registro atualizado."
+    },
+    {
+      "code": "ID.AM-05",
+      "title": "Priorizar ativos por criticidade e impacto",
+      "summary": "Ordena os ativos conforme classificação, criticidade e impacto na missão.",
+      "impact": "Sem priorização, gasta-se proteção com o trivial e deixa-se o essencial desguarnecido.",
+      "initialAction": "Classifique os ativos por criticidade e impacto no negócio."
+    },
+    {
+      "code": "ID.AM-07",
+      "title": "Inventariar dados e seus metadados",
+      "summary": "Mantém inventários dos tipos de dados designados e seus metadados correspondentes.",
+      "impact": "Sem saber onde estão os dados sensíveis, não há como protegê-los nem responder a um vazamento.",
+      "initialAction": "Mapeie os tipos de dados relevantes e onde estão armazenados."
+    },
+    {
+      "code": "ID.AM-08",
+      "title": "Gerenciar ativos por todo o ciclo de vida",
+      "summary": "Administra sistemas, hardware, software, serviços e dados do início ao fim de sua vida útil.",
+      "impact": "Ativos esquecidos no fim da vida seguem conectados, sem dono e sem correções — alvo fácil.",
+      "initialAction": "Defina o processo de gestão de ativos da aquisição ao descarte."
+    },
+    {
+      "code": "ID.RA-01",
+      "title": "Identificar e registrar vulnerabilidades nos ativos",
+      "summary": "Identifica, valida e registra as vulnerabilidades presentes nos ativos.",
+      "impact": "Vulnerabilidade não registrada não é corrigida e permanece disponível para exploração.",
+      "initialAction": "Estabeleça a identificação contínua de vulnerabilidades e registre os achados."
+    },
+    {
+      "code": "ID.RA-02",
+      "title": "Receber inteligência sobre ameaças cibernéticas",
+      "summary": "Recebe inteligência de ameaças de fóruns e fontes de compartilhamento.",
+      "impact": "Sem inteligência externa, a organização só descobre uma ameaça depois de ser atingida por ela.",
+      "initialAction": "Assine ao menos uma fonte confiável de inteligência de ameaças."
+    },
+    {
+      "code": "ID.RA-03",
+      "title": "Identificar e registrar ameaças internas e externas",
+      "summary": "Identifica e registra as ameaças internas e externas à organização.",
+      "impact": "Ameaça não mapeada não entra na análise de risco e fica sem qualquer tratamento.",
+      "initialAction": "Monte e mantenha um registro das ameaças internas e externas relevantes."
+    },
+    {
+      "code": "ID.RA-04",
+      "title": "Estimar impacto e probabilidade das ameaças",
+      "summary": "Identifica e registra os impactos potenciais e a probabilidade de ameaças explorarem vulnerabilidades.",
+      "impact": "Sem estimar impacto e chance, prioriza-se pelo que faz barulho, não pelo que faz estrago.",
+      "initialAction": "Avalie impacto e probabilidade dos principais cenários de ameaça."
+    },
+    {
+      "code": "ID.RA-05",
+      "title": "Priorizar a resposta a riscos com base no risco inerente",
+      "summary": "Combina ameaças, vulnerabilidades, probabilidades e impactos para entender o risco e priorizar respostas.",
+      "impact": "Sem uma visão de risco consolidada, a fila de correções não reflete o que mais expõe o negócio.",
+      "initialAction": "Consolide o risco inerente e use-o para ordenar as respostas."
+    },
+    {
+      "code": "ID.RA-06",
+      "title": "Escolher, planejar e acompanhar respostas a riscos",
+      "summary": "Seleciona, prioriza, planeja, acompanha e comunica as respostas a cada risco.",
+      "impact": "Risco identificado sem resposta acompanhada permanece aberto apesar de já ser conhecido.",
+      "initialAction": "Registre para cada risco relevante a resposta escolhida e o responsável."
+    },
+    {
+      "code": "ID.RA-07",
+      "title": "Gerenciar mudanças e exceções com avaliação de risco",
+      "summary": "Administra, avalia por risco, registra e acompanha mudanças e exceções.",
+      "impact": "Mudança sem avaliação e exceção sem prazo abrem brechas que ficam esquecidas no ambiente.",
+      "initialAction": "Exija avaliação de risco e registro para mudanças e exceções."
+    },
+    {
+      "code": "ID.RA-08",
+      "title": "Tratar divulgações de vulnerabilidades recebidas",
+      "summary": "Estabelece processos para receber, analisar e responder a divulgações de vulnerabilidades.",
+      "impact": "Sem um canal para receber alertas, uma falha reportada por terceiros se perde sem tratamento.",
+      "initialAction": "Crie um canal e um fluxo para receber e tratar divulgações de vulnerabilidades."
+    },
+    {
+      "code": "ID.RA-09",
+      "title": "Verificar autenticidade e integridade antes de adquirir",
+      "summary": "Avalia a autenticidade e a integridade de hardware e software antes da aquisição e do uso.",
+      "impact": "Sem verificação, componente adulterado entra no ambiente já comprometido de fábrica.",
+      "initialAction": "Inclua a verificação de autenticidade e integridade no processo de aquisição."
+    },
+    {
+      "code": "ID.RA-10",
+      "title": "Avaliar fornecedores críticos antes da contratação",
+      "summary": "Avalia os fornecedores críticos antes da aquisição.",
+      "impact": "Contratar um fornecedor crítico sem avaliação transfere ao negócio um risco não medido.",
+      "initialAction": "Avalie a segurança de fornecedores críticos antes de contratá-los."
+    },
+    {
+      "code": "ID.IM-01",
+      "title": "Extrair melhorias das avaliações realizadas",
+      "summary": "Identifica melhorias a partir das avaliações conduzidas.",
+      "impact": "Avaliar sem transformar o resultado em ação faz a organização repetir as mesmas falhas.",
+      "initialAction": "Converta os achados das avaliações em melhorias com responsável e prazo."
+    },
+    {
+      "code": "ID.IM-02",
+      "title": "Extrair melhorias de testes e exercícios de segurança",
+      "summary": "Identifica melhorias a partir de testes e exercícios, inclusive os feitos com terceiros.",
+      "impact": "Um exercício cujas lições não viram mudança dá falsa sensação de preparo.",
+      "initialAction": "Registre as lições de cada teste ou exercício e acompanhe as correções."
+    },
+    {
+      "code": "ID.IM-03",
+      "title": "Extrair melhorias da operação do dia a dia",
+      "summary": "Identifica melhorias a partir da execução dos processos e atividades operacionais.",
+      "impact": "Sinais de problema no dia a dia se perdem quando não alimentam a melhoria contínua.",
+      "initialAction": "Colete melhorias observadas na operação e priorize as mais relevantes."
+    },
+    {
+      "code": "ID.IM-04",
+      "title": "Manter e aprimorar os planos de resposta a incidentes",
+      "summary": "Estabelece, comunica, mantém e melhora os planos de resposta e demais planos que afetam a operação.",
+      "impact": "Um plano desatualizado falha justamente na hora do incidente, quando é a única referência.",
+      "initialAction": "Revise e comunique os planos de resposta a incidentes com periodicidade definida."
+    },
+    {
+      "code": "PR.AA-01",
+      "title": "Controlar o ciclo de vida de identidades e credenciais",
+      "summary": "Garante que contas e credenciais de usuários, serviços e dispositivos sejam criadas, mantidas e removidas corretamente.",
+      "impact": "Contas abandonadas ou sem responsável podem permitir acesso indevido despercebido.",
+      "initialAction": "Revise contas inativas, duplicadas e sem responsável definido."
+    },
+    {
+      "code": "PR.AA-02",
+      "title": "Comprovar identidades antes de emitir credenciais",
+      "summary": "Assegura que a identidade seja verificada e vinculada à credencial conforme o contexto.",
+      "impact": "Emitir credencial sem comprovar quem a recebe abre porta para fraude e uso indevido.",
+      "initialAction": "Defina como a identidade é comprovada antes de conceder cada credencial."
+    },
+    {
+      "code": "PR.AA-03",
+      "title": "Autenticar usuários, serviços e dispositivos",
+      "summary": "Garante que todo acesso seja autenticado antes de ser concedido.",
+      "impact": "Acesso sem autenticação forte é a via mais comum de invasão por conta comprometida.",
+      "initialAction": "Verifique se todos os acessos exigem autenticação e reforce os pontos fracos."
+    },
+    {
+      "code": "PR.AA-04",
+      "title": "Proteger e verificar as asserções de identidade",
+      "summary": "Protege, transmite e verifica as asserções de identidade (como tokens e sessões).",
+      "impact": "Asserção de identidade desprotegida pode ser roubada e reutilizada para se passar por alguém.",
+      "initialAction": "Verifique como tokens e sessões são protegidos em trânsito e validados."
+    },
+    {
+      "code": "PR.AA-05",
+      "title": "Aplicar menor privilégio e segregação de funções",
+      "summary": "Define, gerencia, aplica e revisa permissões com base em menor privilégio e separação de funções.",
+      "impact": "Excesso de privilégio faz uma única conta comprometida abrir todo o ambiente.",
+      "initialAction": "Revise acessos privilegiados e remova permissões além do necessário."
+    },
+    {
+      "code": "PR.AA-06",
+      "title": "Controlar o acesso físico aos ativos",
+      "summary": "Gerencia, monitora e faz cumprir o acesso físico aos ativos conforme o risco.",
+      "impact": "Acesso físico não controlado contorna qualquer defesa lógica sobre o equipamento.",
+      "initialAction": "Revise quem tem acesso físico às áreas e equipamentos críticos."
+    },
+    {
+      "code": "PR.AT-01",
+      "title": "Capacitar todos os colaboradores em segurança",
+      "summary": "Fornece conscientização e treinamento para que as pessoas atuem considerando os riscos de segurança.",
+      "impact": "Sem preparo básico, o colaborador vira o elo por onde o ataque entra (phishing, engano).",
+      "initialAction": "Ofereça treinamento de conscientização de segurança a todo o quadro."
+    },
+    {
+      "code": "PR.AT-02",
+      "title": "Treinar funções especializadas em segurança",
+      "summary": "Capacita pessoas em papéis especializados com o conhecimento específico de suas tarefas.",
+      "impact": "Função técnica sem capacitação específica comete erros que abrem brechas difíceis de ver.",
+      "initialAction": "Mapeie funções especializadas e defina o treinamento de segurança de cada uma."
+    },
+    {
+      "code": "PR.DS-01",
+      "title": "Proteger os dados armazenados",
+      "summary": "Protege a confidencialidade, a integridade e a disponibilidade dos dados em repouso.",
+      "impact": "Dado armazenado sem proteção é lido ou alterado por quem alcança o meio de armazenamento.",
+      "initialAction": "Identifique os dados sensíveis em repouso e verifique sua proteção."
+    },
+    {
+      "code": "PR.DS-02",
+      "title": "Proteger os dados em trânsito",
+      "summary": "Protege a confidencialidade, a integridade e a disponibilidade dos dados em trânsito.",
+      "impact": "Dado trafegando sem proteção pode ser interceptado ou adulterado no caminho.",
+      "initialAction": "Verifique se as comunicações que carregam dados sensíveis são cifradas."
+    },
+    {
+      "code": "PR.DS-10",
+      "title": "Proteger os dados em uso",
+      "summary": "Protege a confidencialidade, a integridade e a disponibilidade dos dados em processamento.",
+      "impact": "Dado exposto durante o processamento pode vazar mesmo quando está protegido em repouso e trânsito.",
+      "initialAction": "Avalie como os dados sensíveis são protegidos enquanto estão em uso."
+    },
+    {
+      "code": "PR.DS-11",
+      "title": "Criar e testar cópias de segurança (backups)",
+      "summary": "Cria, protege, mantém e testa os backups dos dados.",
+      "impact": "Backup que nunca foi testado costuma falhar exatamente quando é preciso restaurar.",
+      "initialAction": "Confirme que há backups dos dados críticos e teste uma restauração."
+    },
+    {
+      "code": "PR.PS-01",
+      "title": "Gerenciar a configuração segura dos sistemas",
+      "summary": "Estabelece e aplica práticas de gestão de configuração.",
+      "impact": "Configuração insegura ou não controlada abre brechas que passam por qualquer outra defesa.",
+      "initialAction": "Defina configurações-padrão seguras e acompanhe desvios."
+    },
+    {
+      "code": "PR.PS-02",
+      "title": "Manter e atualizar o software conforme o risco",
+      "summary": "Mantém, substitui e remove software na medida do risco.",
+      "impact": "Software desatualizado acumula falhas conhecidas e vira alvo preferencial de ataque.",
+      "initialAction": "Estabeleça um processo de atualização e remoção de software por risco."
+    },
+    {
+      "code": "PR.PS-03",
+      "title": "Manter e substituir o hardware conforme o risco",
+      "summary": "Mantém, substitui e remove hardware na medida do risco.",
+      "impact": "Hardware obsoleto sem suporte deixa de receber correções e compromete o que roda nele.",
+      "initialAction": "Mapeie hardware em fim de vida e planeje manutenção ou substituição."
+    },
+    {
+      "code": "PR.PS-04",
+      "title": "Gerar e disponibilizar registros de log",
+      "summary": "Gera registros de log e os disponibiliza para o monitoramento contínuo.",
+      "impact": "Sem logs, um incidente não deixa rastro — não há como detectar nem investigar o que houve.",
+      "initialAction": "Garanta que os sistemas críticos gerem logs e os enviem para monitoramento."
+    },
+    {
+      "code": "PR.PS-05",
+      "title": "Impedir a execução de software não autorizado",
+      "summary": "Previne a instalação e a execução de software não autorizado.",
+      "impact": "Software não autorizado pode carregar código malicioso e escapar de todo o controle.",
+      "initialAction": "Estabeleça controle sobre qual software pode ser instalado e executado."
+    },
+    {
+      "code": "PR.PS-06",
+      "title": "Adotar práticas de desenvolvimento seguro",
+      "summary": "Integra e monitora práticas de desenvolvimento seguro ao longo do ciclo do software.",
+      "impact": "Falhas introduzidas no desenvolvimento chegam à produção e viram vulnerabilidade explorável.",
+      "initialAction": "Inclua verificações de segurança no ciclo de desenvolvimento de software."
+    },
+    {
+      "code": "PR.IR-01",
+      "title": "Proteger redes e ambientes de acesso não autorizado",
+      "summary": "Protege redes e ambientes contra acesso e uso lógico não autorizados.",
+      "impact": "Rede sem segmentação e controle permite que uma invasão se espalhe sem barreira.",
+      "initialAction": "Revise a segmentação e os controles de acesso lógico das redes."
+    },
+    {
+      "code": "PR.IR-02",
+      "title": "Proteger os ativos contra ameaças ambientais",
+      "summary": "Protege os ativos de tecnologia contra ameaças ambientais (energia, temperatura, água, fogo).",
+      "impact": "Uma falha ambiental derruba serviços tão bem quanto um ataque — só que sem aviso.",
+      "initialAction": "Verifique as proteções ambientais dos locais que abrigam ativos críticos."
+    },
+    {
+      "code": "PR.IR-03",
+      "title": "Implementar mecanismos de resiliência",
+      "summary": "Implementa mecanismos para atingir os requisitos de resiliência em situações normais e adversas.",
+      "impact": "Sem redundância e resiliência, uma falha isolada vira parada total do serviço.",
+      "initialAction": "Identifique pontos únicos de falha e planeje mecanismos de resiliência."
+    },
+    {
+      "code": "PR.IR-04",
+      "title": "Manter capacidade adequada para a disponibilidade",
+      "summary": "Mantém capacidade de recursos suficiente para assegurar a disponibilidade.",
+      "impact": "Capacidade insuficiente derruba o serviço sob pico de demanda, como num ataque de negação.",
+      "initialAction": "Acompanhe a capacidade dos recursos críticos e defina limites de alerta."
+    },
+    {
+      "code": "DE.CM-01",
+      "title": "Monitorar redes e serviços de rede",
+      "summary": "Monitora redes e serviços de rede para encontrar eventos potencialmente adversos.",
+      "impact": "Sem monitorar a rede, atividade maliciosa transita livremente sem gerar nenhum alerta.",
+      "initialAction": "Ative o monitoramento de eventos nas redes e serviços críticos."
+    },
+    {
+      "code": "DE.CM-02",
+      "title": "Monitorar o ambiente físico",
+      "summary": "Monitora o ambiente físico para encontrar eventos potencialmente adversos.",
+      "impact": "Sem monitoramento físico, acessos e incidentes no local passam sem registro nem reação.",
+      "initialAction": "Estabeleça o monitoramento das áreas físicas sensíveis."
+    },
+    {
+      "code": "DE.CM-03",
+      "title": "Monitorar a atividade de pessoas e do uso de tecnologia",
+      "summary": "Monitora a atividade de pessoas e o uso de tecnologia para encontrar eventos potencialmente adversos.",
+      "impact": "Uso indevido interno passa despercebido quando ninguém observa a atividade nos sistemas.",
+      "initialAction": "Defina o monitoramento de atividades relevantes respeitando privacidade e regras."
+    },
+    {
+      "code": "DE.CM-06",
+      "title": "Monitorar a atividade de provedores externos",
+      "summary": "Monitora as atividades e serviços de provedores externos para encontrar eventos potencialmente adversos.",
+      "impact": "Ação indevida por um provedor externo passa em branco se sua atividade não for observada.",
+      "initialAction": "Estabeleça visibilidade sobre as atividades dos provedores externos relevantes."
+    },
+    {
+      "code": "DE.CM-09",
+      "title": "Monitorar equipamentos, software e ambientes de execução",
+      "summary": "Monitora hardware, software, ambientes de execução e seus dados para encontrar eventos potencialmente adversos.",
+      "impact": "Comprometimento em um servidor ou aplicação passa despercebido sem monitoramento no ativo.",
+      "initialAction": "Ative o monitoramento de segurança nos equipamentos e aplicações críticos."
+    },
+    {
+      "code": "DE.AE-02",
+      "title": "Analisar eventos potencialmente adversos",
+      "summary": "Analisa os eventos suspeitos para entender melhor as atividades associadas.",
+      "impact": "Evento coletado, mas não analisado, deixa um ataque em andamento passar como ruído.",
+      "initialAction": "Defina como os eventos suspeitos são analisados e por quem."
+    },
+    {
+      "code": "DE.AE-03",
+      "title": "Correlacionar informações de múltiplas fontes",
+      "summary": "Correlaciona informações de várias fontes para revelar o que eventos isolados não mostram.",
+      "impact": "Sem correlação, sinais espalhados nunca se juntam e o ataque coordenado passa fatiado.",
+      "initialAction": "Reúna eventos de fontes diferentes em um ponto que permita correlacioná-los."
+    },
+    {
+      "code": "DE.AE-04",
+      "title": "Estimar o impacto e o alcance dos eventos",
+      "summary": "Compreende o impacto estimado e o alcance dos eventos adversos.",
+      "impact": "Sem dimensionar o evento, a resposta é grande demais para o trivial ou pequena para o grave.",
+      "initialAction": "Estabeleça como estimar rapidamente o impacto e o alcance de um evento."
+    },
+    {
+      "code": "DE.AE-06",
+      "title": "Levar informação de eventos a quem responde",
+      "summary": "Fornece informações sobre eventos adversos ao pessoal e às ferramentas autorizadas.",
+      "impact": "Evento detectado que não chega a quem age fica parado enquanto o incidente avança.",
+      "initialAction": "Defina o fluxo que leva os alertas às pessoas e ferramentas de resposta."
+    },
+    {
+      "code": "DE.AE-07",
+      "title": "Enriquecer a análise com inteligência de ameaças",
+      "summary": "Integra inteligência de ameaças e contexto adicional à análise dos eventos.",
+      "impact": "Sem contexto de ameaça, um sinal crítico é tratado como alerta comum e subestimado.",
+      "initialAction": "Incorpore inteligência de ameaças à análise dos eventos de segurança."
+    },
+    {
+      "code": "DE.AE-08",
+      "title": "Declarar incidentes quando os critérios forem atendidos",
+      "summary": "Declara incidentes quando os eventos adversos atingem os critérios definidos.",
+      "impact": "Sem critério de declaração, um incidente real é tratado como evento e a resposta nunca começa.",
+      "initialAction": "Defina os critérios que transformam um evento em incidente declarado."
+    },
+    {
+      "code": "RS.MA-01",
+      "title": "Executar o plano de resposta a incidentes",
+      "summary": "Executa o plano de resposta em coordenação com terceiros relevantes assim que um incidente é declarado.",
+      "impact": "Um plano que não é acionado na hora certa deixa o incidente evoluir sem contenção.",
+      "initialAction": "Garanta que o plano de resposta esteja pronto para ser executado ao declarar um incidente."
+    },
+    {
+      "code": "RS.MA-02",
+      "title": "Triar e validar os relatos de incidentes",
+      "summary": "Faz a triagem e valida os relatos de incidentes recebidos.",
+      "impact": "Sem triagem, alarme falso consome a equipe e o incidente real espera atrás da fila.",
+      "initialAction": "Defina como relatos de incidente são triados e validados na entrada."
+    },
+    {
+      "code": "RS.MA-03",
+      "title": "Categorizar e priorizar incidentes",
+      "summary": "Categoriza e prioriza os incidentes conforme sua natureza e gravidade.",
+      "impact": "Sem priorização, o incidente grave recebe a mesma atenção do trivial e o dano cresce.",
+      "initialAction": "Estabeleça categorias e critérios de priorização de incidentes."
+    },
+    {
+      "code": "RS.MA-04",
+      "title": "Escalar incidentes quando necessário",
+      "summary": "Escala ou eleva os incidentes conforme a necessidade.",
+      "impact": "Incidente que não sobe a tempo à alçada certa fica sem a decisão que exigia rapidez.",
+      "initialAction": "Defina os gatilhos e caminhos de escalonamento de incidentes."
+    },
+    {
+      "code": "RS.MA-05",
+      "title": "Aplicar os critérios para iniciar a recuperação",
+      "summary": "Aplica os critérios definidos para dar início à recuperação do incidente.",
+      "impact": "Iniciar a recuperação cedo demais reabre a brecha; tarde demais prolonga a indisponibilidade.",
+      "initialAction": "Defina os critérios que autorizam iniciar a recuperação de um incidente."
+    },
+    {
+      "code": "RS.AN-03",
+      "title": "Investigar a causa raiz do incidente",
+      "summary": "Realiza a análise para estabelecer o que ocorreu durante o incidente e sua causa raiz.",
+      "impact": "Sem achar a causa raiz, o mesmo incidente volta porque a origem nunca foi corrigida.",
+      "initialAction": "Estabeleça a prática de investigar a causa raiz de cada incidente relevante."
+    },
+    {
+      "code": "RS.AN-06",
+      "title": "Registrar as ações da investigação de forma íntegra",
+      "summary": "Registra as ações realizadas na investigação e preserva a integridade e a procedência desses registros.",
+      "impact": "Ações não registradas ou adulteráveis invalidam a investigação e a eventual responsabilização.",
+      "initialAction": "Defina como as ações da investigação são registradas e protegidas."
+    },
+    {
+      "code": "RS.AN-07",
+      "title": "Preservar dados e evidências do incidente",
+      "summary": "Coleta os dados e metadados do incidente e preserva sua integridade e procedência.",
+      "impact": "Evidência perdida ou corrompida impede entender o incidente e sustentar qualquer ação legal.",
+      "initialAction": "Estabeleça a coleta e a preservação íntegra das evidências de incidentes."
+    },
+    {
+      "code": "RS.AN-08",
+      "title": "Estimar e validar a magnitude do incidente",
+      "summary": "Estima e valida a dimensão do incidente.",
+      "impact": "Subestimar a magnitude deixa parte do dano sem tratamento e o incidente incompleto.",
+      "initialAction": "Defina como a magnitude do incidente é estimada e confirmada."
+    },
+    {
+      "code": "RS.CO-02",
+      "title": "Notificar as partes interessadas sobre incidentes",
+      "summary": "Notifica as partes interessadas internas e externas sobre os incidentes.",
+      "impact": "Não notificar a tempo quebra confiança e pode configurar descumprimento de obrigação legal.",
+      "initialAction": "Defina quem deve ser notificado, quando e por qual canal em um incidente."
+    },
+    {
+      "code": "RS.CO-03",
+      "title": "Compartilhar informações com quem precisa saber",
+      "summary": "Compartilha informações com as partes interessadas internas e externas designadas.",
+      "impact": "Informação retida durante o incidente deixa quem decide e quem apoia agindo às cegas.",
+      "initialAction": "Estabeleça o que é compartilhado, com quem e em que momento durante um incidente."
+    },
+    {
+      "code": "RS.MI-01",
+      "title": "Conter incidentes em andamento",
+      "summary": "Contém os incidentes para limitar o alcance do dano.",
+      "impact": "Sem contenção rápida, o incidente se espalha e transforma um problema local em crise ampla.",
+      "initialAction": "Defina ações de contenção prontas para os cenários de incidente mais prováveis."
+    },
+    {
+      "code": "RS.MI-02",
+      "title": "Erradicar a causa do incidente",
+      "summary": "Elimina do ambiente a causa e os vestígios do incidente.",
+      "impact": "Erradicação incompleta deixa o atacante com um caminho de volta ao ambiente.",
+      "initialAction": "Estabeleça como confirmar que a causa do incidente foi totalmente removida."
+    },
+    {
+      "code": "RC.RP-01",
+      "title": "Executar o plano de recuperação após o incidente",
+      "summary": "Executa a parte de recuperação do plano assim que ela é iniciada pelo processo de resposta.",
+      "impact": "Sem executar a recuperação de forma ordenada, a volta à normalidade é lenta e cheia de falhas.",
+      "initialAction": "Garanta que o plano de recuperação esteja pronto para ser executado quando acionado."
+    },
+    {
+      "code": "RC.RP-02",
+      "title": "Selecionar e priorizar as ações de recuperação",
+      "summary": "Seleciona, delimita, prioriza e executa as ações de recuperação.",
+      "impact": "Sem priorizar, recupera-se o secundário antes do essencial e o negócio segue parado.",
+      "initialAction": "Defina a ordem de recuperação dos serviços conforme sua criticidade."
+    },
+    {
+      "code": "RC.RP-03",
+      "title": "Verificar a integridade dos backups antes de restaurar",
+      "summary": "Verifica a integridade dos backups e ativos de restauração antes de usá-los.",
+      "impact": "Restaurar de um backup corrompido ou comprometido reintroduz o problema no ambiente.",
+      "initialAction": "Estabeleça a verificação de integridade dos backups antes de qualquer restauração."
+    },
+    {
+      "code": "RC.RP-04",
+      "title": "Definir normas operacionais pós-incidente",
+      "summary": "Considera as funções críticas e a gestão de risco para estabelecer as normas operacionais após o incidente.",
+      "impact": "Voltar sem novas normas repete as condições que permitiram o incidente acontecer.",
+      "initialAction": "Defina as condições e normas para operar em segurança logo após um incidente."
+    },
+    {
+      "code": "RC.RP-05",
+      "title": "Confirmar a integridade dos ativos restaurados",
+      "summary": "Verifica a integridade dos ativos restaurados, restabelece sistemas e confirma o retorno à operação normal.",
+      "impact": "Declarar normalidade sem confirmar integridade pode manter em produção um ativo ainda comprometido.",
+      "initialAction": "Estabeleça a verificação de integridade e a confirmação do retorno à operação normal."
+    },
+    {
+      "code": "RC.RP-06",
+      "title": "Declarar o fim da recuperação e documentar o incidente",
+      "summary": "Declara o encerramento da recuperação com base em critérios e conclui a documentação do incidente.",
+      "impact": "Sem encerramento formal e documentação, perde-se o aprendizado e o histórico do incidente.",
+      "initialAction": "Defina os critérios de encerramento e a documentação mínima de cada incidente."
+    },
+    {
+      "code": "RC.CO-03",
+      "title": "Comunicar o progresso da recuperação às partes interessadas",
+      "summary": "Comunica às partes interessadas internas e externas designadas as atividades e o progresso da recuperação.",
+      "impact": "Silêncio durante a recuperação gera pânico, boato e decisões erradas de quem depende do serviço.",
+      "initialAction": "Defina como e a quem comunicar o andamento da recuperação."
+    },
+    {
+      "code": "RC.CO-04",
+      "title": "Divulgar atualizações públicas sobre a recuperação",
+      "summary": "Compartilha atualizações públicas sobre a recuperação usando métodos e mensagens aprovados.",
+      "impact": "Comunicação pública improvisada agrava a crise de imagem e pode contradizer obrigações legais.",
+      "initialAction": "Defina os métodos e mensagens aprovados para comunicação pública em um incidente."
+    }
+  ]
+}

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Assessment;
 using AegisScore.Application.Queries;
+using AegisScore.Application.Services;
 using AegisScore.Application.Telemetry.Models;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -27,14 +28,17 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
     private readonly ITenantContext _tenant;
     private readonly ScoringOptions _options;
     private readonly TimeProvider _clock;
+    private readonly IControlLanguageCatalog _language;
 
     public ControlStateDashboardQuery(
-        AegisScoreDbContext db, ITenantContext tenant, IOptions<ScoringOptions> options, TimeProvider clock)
+        AegisScoreDbContext db, ITenantContext tenant, IOptions<ScoringOptions> options, TimeProvider clock,
+        IControlLanguageCatalog language)
     {
         _db = db;
         _tenant = tenant;
         _options = options.Value;
         _clock = clock;
+        _language = language;
     }
 
     public async Task<IReadOnlyList<TenantControlStateDto>> GetDashboardAsync(CancellationToken ct = default)
@@ -43,14 +47,15 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
         if (_tenant.TenantId is null)
             return Array.Empty<TenantControlStateDto>();
 
-        // A projeção PARTE do catálogo ativo (reference data global), ordenado pelo código NIST.
+        // A projeção PARTE do catálogo ativo (reference data global), ordenado pelo código NIST. A descrição
+        // OFICIAL viaja junto — referência técnica secundária, separada da redação autoral em linguagem clara.
         var catalog = await (from s in _db.Subcategories.AsNoTracking()
                              join c in _db.Categories on s.CategoryId equals c.Id
                              join f in _db.Functions on c.FunctionId equals f.Id
                              join fv in _db.FrameworkVersions on f.FrameworkVersionId equals fv.Id
                              where fv.IsActive
                              orderby s.Code
-                             select new CatalogEntry(s.Id, s.Code, s.MaxScorePoints)).ToListAsync(ct);
+                             select new CatalogEntry(s.Id, s.Code, s.MaxScorePoints, s.Description)).ToListAsync(ct);
 
         // Estados AVALIADOS do tenant (Global Query Filter fail-closed). Enums CRUS: o status decide a
         // severidade-proxy e o motivo antes de achatar o DTO.
@@ -71,17 +76,16 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
             .ToListAsync(ct);
         var stateBySub = states.ToDictionary(r => r.SubcategoryId);
 
-        // Contexto de FRESCOR (ver EnrichWithStaleness) apenas para os avaliados — NotEvaluated não tem
-        // sinal a envelhecer. Duas consultas fixas, fora do laço — nunca N+1.
-        var codes = states.Select(r => r.SubcategoryCode).ToList();
         // Carrega o tipo PERSISTIDO de evidência junto das exigências — a compilação de lacunas classifica
-        // pelo tipo (autoridade única), não por re-inferência da string (AEGIS-MVP-POSTURE-01).
+        // pelo tipo (autoridade única), não por re-inferência da string (AEGIS-MVP-POSTURE-01). O catálogo de
+        // regras é GLOBAL e pequeno (99 linhas): carregá-lo INTEIRO numa consulta serve tanto o FRESCOR dos
+        // avaliados (EnrichWithStaleness) quanto a CLASSIFICAÇÃO dos NotEvaluated — sem N+1 e sem filtrar por
+        // um subconjunto de códigos (que deixaria os NotEvaluated sem a regra para classificar o motivo).
         var ruleRows = await _db.AssessmentRules.AsNoTracking()
-            .Where(r => codes.Contains(r.SubcategoryCode))
             .Select(r => new { r.SubcategoryCode, r.EvidenceRequirements, r.EvidenceType })
             .ToListAsync(ct);
         var rules = ruleRows.ToDictionary(
-            r => r.SubcategoryCode, r => (r.EvidenceRequirements, r.EvidenceType));
+            r => r.SubcategoryCode, r => (r.EvidenceRequirements, r.EvidenceType), StringComparer.Ordinal);
 
         var verifiedCoverage = await _db.SubcategoryCoverages.AsNoTracking()
             .Where(c => c.Status == CoverageStatus.Coberto
@@ -95,21 +99,94 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
         var result = new List<TenantControlStateDto>(catalog.Count);
         foreach (var entry in catalog)
         {
-            result.Add(stateBySub.TryGetValue(entry.Id, out var r)
+            var dto = stateBySub.TryGetValue(entry.Id, out var r)
                 ? EnrichWithStaleness(ToDto(r), r, rules, verified, now)   // avaliado
-                : NotEvaluated(entry));                                     // sem estado → NotEvaluated
+                : NotEvaluated(entry, rules);                              // sem estado → NotEvaluated
+            result.Add(WithLanguage(dto, entry));                          // linguagem clara + descrição oficial
         }
         return result;
     }
 
-    /// <summary>Subcategoria do catálogo SEM estado — NotEvaluated no read model, nunca uma linha zero no banco.</summary>
-    private static TenantControlStateDto NotEvaluated(CatalogEntry entry) =>
-        new(entry.Id, entry.Code, 0, entry.MaxScorePoints,
+    /// <summary>
+    /// Subcategoria do catálogo SEM estado — NotEvaluated no read model, nunca uma linha zero no banco. O motivo
+    /// é DETERMINÍSTICO (ver <see cref="ClassifyNotEvaluated"/>): derivado do tipo de evidência da regra, ou
+    /// <c>Unsupported</c> quando não há regra avaliável — jamais de LLM ou parsing livre. Quando há regra tipada,
+    /// as lacunas são MATERIALIZADAS (para "Pontos Cegos"); em <c>Unsupported</c>, ficam vazias (não se finge
+    /// que falta telemetria ou documento onde o AEGIS simplesmente não sabe avaliar).
+    /// </summary>
+    private TenantControlStateDto NotEvaluated(
+        CatalogEntry entry,
+        IReadOnlyDictionary<string, (List<string> Requirements, RuleEvidenceType EvidenceType)> rules)
+    {
+        var (kind, reason, missing) = ClassifyNotEvaluated(entry.Code, rules);
+        return new(entry.Id, entry.Code, 0, entry.MaxScorePoints,
             NotEvaluatedStatus, null, null, null, Array.Empty<ComplianceCheck>())
         {
             Severity = nameof(SeverityLevel.Informational),
-            Reason = "Sem evidência avaliada para este controle.",
+            Reason = reason,
+            NotEvaluatedReason = kind.ToString(),
+            MissingRequirements = missing,
         };
+    }
+
+    /// <summary>
+    /// [AEGIS-MVP-LANGUAGE-01] Classifica DETERMINISTICAMENTE por que um controle está sem estado, a partir do
+    /// tipo de evidência TIPADO e PERSISTIDO da regra (nunca por texto): Telemetry → TelemetryRequired;
+    /// Documentation → DocumentationRequired; Both → BothRequired; sem regra → Unsupported. Para os três
+    /// primeiros, materializa as lacunas cruzando a regra com "nada coletado ainda" (sem telemetria, sem
+    /// cobertura documental verificada), de modo que "Pontos Cegos" mostre a natureza da pendência. Não afirma
+    /// que falta conectar uma ferramenta específica — usa a mensagem provider-neutral da classificação.
+    /// </summary>
+    private (NotEvaluatedReasonKind Kind, string Reason, IReadOnlyList<MissingRequirementDto> Missing) ClassifyNotEvaluated(
+        string code,
+        IReadOnlyDictionary<string, (List<string> Requirements, RuleEvidenceType EvidenceType)> rules)
+    {
+        if (!rules.TryGetValue(code, out var rule))
+            return (NotEvaluatedReasonKind.Unsupported, UnsupportedMessage, Array.Empty<MissingRequirementDto>());
+
+        // "Nada coletado ainda": sem telemetria e sem cobertura documental verificada. Compile emite a lacuna
+        // da(s) natureza(s) que a regra exige (Telemetry/Documentation/Both) — a autoridade é o tipo persistido.
+        var derived = RuleEvaluator.Compile(
+            rule.EvidenceType, rule.Requirements,
+            new EvidenceAvailability(LastTelemetryAt: null, HasVerifiedDocumentaryCoverage: false),
+            _clock.GetUtcNow(), _options.FreshnessWindow);
+        var missing = derived
+            .Select(d => new MissingRequirementDto(d.Type.ToString(), d.SourceIdentifier, d.Description))
+            .ToList();
+
+        return rule.EvidenceType switch
+        {
+            RuleEvidenceType.Telemetry => (NotEvaluatedReasonKind.TelemetryRequired,
+                "Ainda não medido: nenhuma telemetria elegível foi avaliada.", missing),
+            RuleEvidenceType.Documentation => (NotEvaluatedReasonKind.DocumentationRequired,
+                "Ainda não validado: exige documento ou validação humana.", missing),
+            RuleEvidenceType.Both => (NotEvaluatedReasonKind.BothRequired,
+                "Ainda não medido por completo: exige telemetria e validação documental.", missing),
+            // Tipo fora do enum conhecido (regra adulterada) → trata como não avaliável, sem forjar lacuna.
+            _ => (NotEvaluatedReasonKind.Unsupported, UnsupportedMessage, Array.Empty<MissingRequirementDto>()),
+        };
+    }
+
+    private const string UnsupportedMessage =
+        "O AEGIS ainda não possui método suficiente para avaliar este controle.";
+
+    /// <summary>
+    /// Acopla a camada de LINGUAGEM CLARA (autoral) e a descrição OFICIAL (secundária) ao DTO. A ausência de
+    /// redação para um código deixa os campos NULOS — o frontend degrada para o próprio código NIST, nunca para
+    /// o nome genérico da categoria (o defeito que esta camada corrige). A completude é garantida por teste.
+    /// </summary>
+    private TenantControlStateDto WithLanguage(TenantControlStateDto dto, CatalogEntry entry)
+    {
+        var lang = _language.Get(entry.Code);
+        return dto with
+        {
+            Title = lang?.Title,
+            Summary = lang?.Summary,
+            Impact = lang?.Impact,
+            InitialAction = lang?.InitialAction,
+            OfficialDescription = string.IsNullOrWhiteSpace(entry.Description) ? null : entry.Description,
+        };
+    }
 
     /// <summary>Status de fronteira (não existe no enum de domínio) para uma subcategoria sem TenantControlState.</summary>
     private const string NotEvaluatedStatus = "NotEvaluated";
@@ -210,8 +287,9 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
         catch (JsonException) { return null; }
     }
 
-    /// <summary>Entrada do catálogo ativo (reference data global) para a projeção catalog-first.</summary>
-    private sealed record CatalogEntry(Guid Id, string Code, int MaxScorePoints);
+    /// <summary>Entrada do catálogo ativo (reference data global) para a projeção catalog-first — inclui a
+    /// descrição OFICIAL da subcategoria, referência técnica secundária ao lado da redação em linguagem clara.</summary>
+    private sealed record CatalogEntry(Guid Id, string Code, int MaxScorePoints, string Description);
 
     /// <summary>Projeção intermediária: as colunas cruas do banco, antes da desserialização dos blobs.</summary>
     private sealed record Row(

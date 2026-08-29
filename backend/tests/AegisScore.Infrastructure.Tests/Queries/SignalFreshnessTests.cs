@@ -1,5 +1,6 @@
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Assessment;
+using AegisScore.Application.Services;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Queries;
@@ -196,7 +197,8 @@ public sealed class SignalFreshnessTests : IDisposable
             db,
             new SystemTenantContext(TenantA),
             Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = freshnessHours }),
-            new FakeTimeProvider(Now));
+            new FakeTimeProvider(Now),
+            StaticControlLanguageCatalog.Empty);
 
         var rows = await query.GetDashboardAsync();
         return rows.Single(r => r.SubcategoryCode == code);
