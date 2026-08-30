@@ -1,5 +1,6 @@
 # [Homologação] Valida a imagem ÚNICA de homologação em Linux real (o que não pôde rodar localmente por
-# ausência de Docker): PDF/acentos no Linux, build da imagem do Dockerfile atual e um smoke do container
+# ausência de Docker): PDF/acentos no Linux, testes DIRECIONADOS dos conectores SIEM (Google SecOps/Chronicle
+# + Microsoft Sentinel, HTTP simulado), build da imagem do Dockerfile atual e um smoke do container
 # (não-root + grupo 1000 + secret file, migrator -> bootstrap -> API, health e SPA). NÃO é uma suíte geral.
 name: container-smoke
 
@@ -50,6 +51,16 @@ jobs:
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
           -c Release --filter "FullyQualifiedName~PostureSnapshotExportTests"
+
+      # 1b) Testes DIRECIONADOS dos conectores SIEM em Linux real — HTTP SIMULADO (sem credenciais Google, sem API
+      #     viva, sem PostgreSQL). Prova em Linux: contrato HTTP oficial do Chronicle (instances.get, cases.list v1,
+      #     legacySearchEnterpriseWideAlerts), autenticação Google (service account, sem DWD), allowlist e segurança
+      #     do bearer, agregação/parcialidade, ZERO sinais de score, registro na DI e a regressão do Microsoft
+      #     Sentinel. Filtro por FullyQualifiedName nas 7 classes envolvidas — NÃO roda a suíte backend inteira.
+      - name: Google SecOps and Sentinel connector tests on Linux
+        run: >
+          dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
