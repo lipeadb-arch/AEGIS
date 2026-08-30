@@ -391,16 +391,12 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
     // ---- Projeção determinística no ledger (AEGIS-AUD-019) ----------------------------------------
 
     /// <summary>
-    /// Projeta a evidência ingerida nos controles AFETADOS, pela autoridade determinística
-    /// <see cref="EvidenceSignalEvaluator"/> (via <see cref="SignalMapping.ScoringHint"/>) e pelo escritor
-    /// ÚNICO do ledger (<see cref="ControlStateWriter"/>). Estratégia RECOMPUTE-FROM-NEWEST GLOBAL: para cada
-    /// controle, considera TODOS os <c>EvidenceSignals</c> do TENANT que mapeiam para ele — de QUALQUER conector,
-    /// não só o que disparou este lote (DE.CM-01, por exemplo, recebe sinais de SIEM e de EDR). A capability vem
-    /// do <c>ConnectorConfig</c> de cada sinal e resolve o <see cref="SignalMapping"/> correspondente; escolhe a
-    /// evidência determinística GLOBALMENTE mais recente, com desempate estável e INDEPENDENTE da ordem do banco
-    /// (ver <see cref="ScoredEvidence.IsMoreAuthoritativeThan"/>). Assim, evento antigo — mesmo de outro conector —
-    /// nunca sobrescreve evidência mais nova, a ordem do lote não muda o resultado, e um retry deduplicado repara
-    /// a projeção. Sem hint conhecido, nenhum veredito é inventado (o controle segue NotEvaluated).
+    /// Projeta a evidência ingerida nos controles AFETADOS pela autoridade ÚNICA de recomputo
+    /// (<see cref="EvidenceTelemetryRecompute"/>, compartilhada com o reparo de estados legados) e pelo escritor
+    /// ÚNICO do ledger (<see cref="ControlStateWriter"/>). Recompute-from-newest GLOBAL: para cada controle,
+    /// considera TODOS os <c>EvidenceSignals</c> do tenant que mapeiam para ele — de QUALQUER conector, não só o
+    /// que disparou este lote —, escolhe a evidência mais autoritativa (desempate estável, independente da ordem do
+    /// banco) e aplica o veredito. Sem hint conhecido, nenhum veredito é inventado (o controle segue NotEvaluated).
     ///
     /// Opera sob o tenant do conector (SystemTenantContext): o Global Query Filter (fail-closed) restringe sinais
     /// E conectores a esse tenant — SEM IgnoreQueryFilters. Uma falha do escritor sobe para o chamador (que carimba
@@ -413,84 +409,17 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
 
         await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
 
-        // TODOS os sinais do tenant (query filter fail-closed em Signals E Connectors), cada um com a capability
-        // do SEU conector — a evidência de um controle é global, não por conector. Sem IgnoreQueryFilters.
-        var signals = await (
-            from s in db.Signals
-            join c in db.Connectors on s.ConnectorConfigId equals c.Id
-            select new PersistedSignal(
-                s.Id, s.SignalKey, s.NumericValue, s.Severity, s.Unit, s.CollectedAt, c.Capability))
-            .ToListAsync(ct);
-        if (signals.Count == 0) return;
-
-        // Re-mapa por CAPABILITY (a resolução depende dela): uma resolução do mapper por capability distinta.
-        var byCapability = new Dictionary<ConnectorCapability, IReadOnlyDictionary<string, SignalMappingResolution>>();
-        foreach (var cap in signals.Select(s => s.Capability).Distinct())
-        {
-            var keys = signals.Where(s => s.Capability == cap)
-                .Select(s => (s.SignalKey ?? "").Trim()).Distinct().ToList();
-            byCapability[cap] = await _mapper.ResolveAsync(cap, keys, ct);
-        }
+        var verdicts = await new EvidenceTelemetryRecompute(db, _mapper).ComputeAsync(affectedCodes, ct);
+        if (verdicts.Count == 0) return;   // nenhum controle afetado tem evidência com hint conhecido
 
         var writer = new ControlStateWriter(db, new SystemTenantContext(tenantId), _writerLog);
-
-        foreach (var code in affectedCodes)
+        foreach (var (code, verdict) in verdicts)
         {
-            ScoredEvidence? best = null;
-            foreach (var s in signals)
-            {
-                var key = (s.SignalKey ?? "").Trim();
-                if (!byCapability[s.Capability].TryGetValue(key, out var r) || !r.SubcategoryCodes.Contains(code))
-                    continue;
-                var verdict = EvidenceSignalEvaluator.Evaluate(r.ScoringHint, s.NumericValue, s.Severity, s.Unit);
-                if (verdict is null) continue;
-
-                var candidate = new ScoredEvidence(verdict, s.CollectedAt, key, s.Id);
-                if (best is null || candidate.IsMoreAuthoritativeThan(best))
-                    best = candidate;
-            }
-            if (best is null) continue;   // nenhum sinal com hint conhecido → controle segue NotEvaluated
-
             // Falha do escritor NÃO é mascarada: sobe para o chamador, que carimba Failed e propaga. O escritor
             // é idempotente (upsert determinístico), então o retry reprojeta o mesmo veredito sem efeito colateral.
             await writer.ApplyVerdictAsync(
-                tenantId, code, best.Verdict.Status, best.Verdict.Reason, VerdictSource.Telemetry, ct: ct);
+                tenantId, code, verdict.Status, verdict.Reason, VerdictSource.Telemetry, ct: ct);
         }
-    }
-
-    /// <summary>Projeção leve de um sinal persistido (com a capability do seu conector), para o recompute global.</summary>
-    private sealed record PersistedSignal(
-        Guid Id, string SignalKey, double? NumericValue, int? Severity, string? Unit,
-        DateTimeOffset CollectedAt, ConnectorCapability Capability);
-
-    /// <summary>
-    /// Evidência já avaliada, candidata a autoridade de um controle. Precedência DETERMINÍSTICA e independente
-    /// da ordem do banco: (1) <c>CollectedAt</c> mais recente vence; (2) empate EXATO de instante → PIOR veredito
-    /// de forma conservadora (NonCompliant &gt; Mitigated &gt; Compliant, para nunca inflar o score num empate);
-    /// (3) ainda empatado → chave e depois Id estáveis. Nenhum critério depende da ordem de leitura das linhas.
-    /// </summary>
-    private sealed record ScoredEvidence(EvidenceVerdict Verdict, DateTimeOffset CollectedAt, string SignalKey, Guid Id)
-    {
-        public bool IsMoreAuthoritativeThan(ScoredEvidence other)
-        {
-            if (CollectedAt != other.CollectedAt) return CollectedAt > other.CollectedAt;
-
-            var rank = ConservativeRank(Verdict.Status);
-            var otherRank = ConservativeRank(other.Verdict.Status);
-            if (rank != otherRank) return rank < otherRank;   // menor rank = pior veredito = vence o empate exato
-
-            var byKey = string.CompareOrdinal(SignalKey, other.SignalKey);
-            return byKey != 0 ? byKey > 0 : Id.CompareTo(other.Id) > 0;
-        }
-
-        /// <summary>Rank de conservadorismo: 0 = pior (mais penaliza o score) → vence o empate EXATO de CollectedAt.</summary>
-        private static int ConservativeRank(ControlStatus status) => status switch
-        {
-            ControlStatus.NonCompliant          => 0,
-            ControlStatus.MitigatedByThirdParty => 1,
-            ControlStatus.Compliant             => 2,
-            _                                   => 3,
-        };
     }
 
     // ---- Contrato ---------------------------------------------------------------------------------

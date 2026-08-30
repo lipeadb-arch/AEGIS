@@ -29,3 +29,10 @@ Invoke-RestMethod -Method Post `
 
 Reenviar o mesmo lote responde `deduplicated` (idempotência por `eventId`). Um `signalKey` sem mapeamento
 conhecido responde 422; chave inválida responde 401 genérico.
+
+> ⚠️ [AEGIS-MVP-SCORE-GUARD-SIEM-01] `siem.alert.highSeverity` é FATO OPERACIONAL/consultivo, não evidência de
+> controle: a mera presença ou quantidade de alertas SIEM **não comprova** monitoramento suficiente, cobertura,
+> resposta ou contenção e **não concede conformidade nem pontos** no AEGIS Score. Esse mapping de scoring foi
+> **aposentado** — por isso o push deste `signalKey` responde **422** (sem mapeamento de scoring aprovado). A
+> postura de alertas continua disponível na fotografia operacional do SIEM (Microsoft Sentinel / Google SecOps),
+> fora do score. O lote `edr.threat.blocked` (`edr-batch.example.json`) segue sendo evidência determinística válida.

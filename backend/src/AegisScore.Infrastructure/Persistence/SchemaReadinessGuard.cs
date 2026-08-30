@@ -258,6 +258,17 @@ public static class SchemaReadinessGuard
         if (unknownHints.Count > 0)
             problems.Add($"Hint(s) de scoring desconhecido(s): {string.Join(", ", unknownHints.Take(10))}.");
 
+        // [AEGIS-MVP-SCORE-GUARD-SIEM-01] Invariante fail-closed: o mapping de scoring PROIBIDO — o alerta de alta
+        // severidade do SIEM concedendo conformidade — nunca pode permanecer ATIVO em silêncio. A base não é aprovada
+        // enquanto ele existir; o AegisScore.DbMigrator o aposenta antes desta verificação.
+        var forbiddenSiemAlert = await db.SignalMappings.AnyAsync(m => m.FrameworkVersionId == fv.Id
+            && m.Capability == RetiredSiemAlertMapping.Capability && m.SignalKey == RetiredSiemAlertMapping.SignalKey, ct);
+        if (forbiddenSiemAlert)
+            problems.Add(
+                $"Mapping de scoring PROIBIDO ainda ativo: {RetiredSiemAlertMapping.Capability}/'{RetiredSiemAlertMapping.SignalKey}' " +
+                "concederia conformidade por mera presença de alerta. Execute o AegisScore.DbMigrator para aposentá-lo " +
+                "(AEGIS-MVP-SCORE-GUARD-SIEM-01).");
+
         // Proveniência vigente COMPLETA: metadados, classificação EXATA, hash válido, versão de metodologia.
         var provenance = await db.ReferenceDatasetProvenances
             .Where(p => p.FrameworkVersionId == fv.Id && p.IsCurrent).ToListAsync(ct);

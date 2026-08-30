@@ -62,8 +62,10 @@ public sealed class EvidenceIngestionTests : IDisposable
 
         var (exec, protector) = MakeExecutor();
         const string payload = "{\"rule\":\"segredo-tecnico\",\"srcIp\":\"192.0.2.10\"}";
+        // Sinal SIEM AINDA MAPEADO (cobertura percentual) — o alerta de alta severidade foi aposentado (fail-closed).
         var result = await exec.IngestPushAsync(
-            connector, IngestionTestData.Batch(IngestionTestData.SiemEvent(eventId: "e1", payload: payload)), default);
+            connector, IngestionTestData.Batch(IngestionTestData.SiemEvent(
+                eventId: "e1", signalKey: "siem.metric.coverage", numericValue: 90, unit: "percent", payload: payload)), default);
 
         result.Outcome.Should().Be(PushOutcome.Accepted);
         result.Accepted.Should().Be(1);
@@ -73,7 +75,7 @@ public sealed class EvidenceIngestionTests : IDisposable
         var signal = await assert.Signals.SingleAsync();
         signal.TenantId.Should().Be(TenantA);
         signal.ConnectorConfigId.Should().Be(_siemA);
-        signal.MappedSubcategoryCodes.Should().BeEquivalentTo(new[] { "DE.AE-02", "DE.CM-01" },
+        signal.MappedSubcategoryCodes.Should().BeEquivalentTo(new[] { "DE.CM-01" },
             "o mapping determinístico (SignalMapping) é a autoridade");
         signal.ReceivedAt.Should().NotBeNull();
         signal.DeduplicationKey.Should().NotBeNullOrEmpty();
@@ -150,7 +152,9 @@ public sealed class EvidenceIngestionTests : IDisposable
     {
         var connector = await Auth().AuthenticateAsync(_siemA, IngestionTestData.SiemKeyA, default);
         var (exec, _) = MakeExecutor();
-        var ev = IngestionTestData.SiemEvent(eventId: byEventId ? "mesmo-id" : null);
+        // Sinal SIEM AINDA MAPEADO (cobertura) — o alerta grave foi aposentado (fail-closed).
+        var ev = IngestionTestData.SiemEvent(
+            eventId: byEventId ? "mesmo-id" : null, signalKey: "siem.metric.coverage", numericValue: 90, unit: "percent");
 
         var r1 = await exec.IngestPushAsync(connector!, IngestionTestData.Batch(ev), default);
         var r2 = await exec.IngestPushAsync(connector!, IngestionTestData.Batch(ev), default);   // reenvio idêntico
@@ -166,11 +170,13 @@ public sealed class EvidenceIngestionTests : IDisposable
     [Fact]
     public async Task Pull_UsaMesmoExecutorEMapping_IgnorandoCodigosDoAdapter()
     {
-        // Adaptador FAKE que emite um sinal SIEM com códigos ERRADOS — o executor deve SUBSTITUÍ-los pelo mapping.
+        // Adaptador FAKE que emite um sinal SIEM (ainda mapeado: cobertura) com códigos ERRADOS — o executor
+        // deve SUBSTITUÍ-los pelo mapping central.
         var fakeSignal = new EvidenceSignal
         {
-            SignalKey = "siem.alert.highSeverity",
-            NumericValue = 1,
+            SignalKey = "siem.metric.coverage",
+            NumericValue = 90,
+            Unit = "percent",
             MappedSubcategoryCodes = new() { "ZZ.ZZ-99" },   // o adaptador "mente"
             CollectedAt = DateTimeOffset.UtcNow,
         };
@@ -186,7 +192,7 @@ public sealed class EvidenceIngestionTests : IDisposable
 
         await using var assert = NewContext(TenantA);
         var signal = await assert.Signals.SingleAsync();
-        signal.MappedSubcategoryCodes.Should().BeEquivalentTo(new[] { "DE.AE-02", "DE.CM-01" },
+        signal.MappedSubcategoryCodes.Should().BeEquivalentTo(new[] { "DE.CM-01" },
             "o mapping central manda tanto no pull quanto no push");
         signal.MappedSubcategoryCodes.Should().NotContain("ZZ.ZZ-99", "os códigos do adaptador são ignorados");
     }
@@ -194,21 +200,24 @@ public sealed class EvidenceIngestionTests : IDisposable
     // ---- [AEGIS-AUD-019] Projeção determinística da evidência no ledger/score ---------------------
 
     [Fact]
-    public async Task Push_SiemDeExemplo_ProjetaVeredictoNoLedger_ComScore()
+    public async Task Push_SiemAlertaGrave_NaoConcedeConformidade_NemPontos_NemEstado()
     {
+        // [AEGIS-MVP-SCORE-GUARD-SIEM-01] CARACTERIZAÇÃO do defeito, agora CORRIGIDO: o mapping de scoring do
+        // alerta de alta severidade foi APOSENTADO. Um push de siem.alert.highSeverity é fail-closed (Unmapped/422),
+        // não persiste evidência, NÃO cria TenantControlState e NÃO concede conformidade nem pontos.
         var connector = await Auth().AuthenticateAsync(_siemA, IngestionTestData.SiemKeyA, default);
         var (exec, _) = MakeExecutor();
 
-        await exec.IngestPushAsync(connector!, IngestionTestData.Batch(IngestionTestData.SiemEvent(eventId: "s1")), default);
+        var result = await exec.IngestPushAsync(
+            connector!, IngestionTestData.Batch(IngestionTestData.SiemEvent(eventId: "s1")), default);   // siem.alert.highSeverity
 
-        await using var assert = NewContext(TenantA);
-        // O sinal SIEM de exemplo (event.controlProven) COMPROVA os controles mapeados → Compliant, com pontos.
-        var deAe = await assert.TenantControlStates.Include(x => x.Subcategory)
-            .SingleAsync(x => x.Subcategory!.Code == "DE.AE-02");
-        deAe.Status.Should().Be(ControlStatus.Compliant);
-        deAe.CurrentScore.Should().Be(10, "peso 10 do catálogo de teste, 100% Compliant");
-        deAe.LastVerdictSource.Should().Be(VerdictSource.Telemetry);
-        (await assert.TenantControlStates.CountAsync()).Should().Be(2, "DE.AE-02 e DE.CM-01 — os dois mapeados");
+        result.Outcome.Should().Be(PushOutcome.Unmapped, "alerta grave não tem mapping de scoring aprovado");
+        result.Errors.Should().Contain("siem.alert.highSeverity");
+
+        await using var assert = NewContext(null);
+        (await assert.Signals.IgnoreQueryFilters().CountAsync()).Should().Be(0, "nada é persistido (all-or-nothing)");
+        (await assert.TenantControlStates.IgnoreQueryFilters().CountAsync())
+            .Should().Be(0, "nenhum controle vira Compliant por mera presença/quantidade de alerta");
     }
 
     [Fact]
@@ -268,7 +277,8 @@ public sealed class EvidenceIngestionTests : IDisposable
     {
         var connector = await Auth().AuthenticateAsync(_siemA, IngestionTestData.SiemKeyA, default);
         var (exec, _) = MakeExecutor();
-        await exec.IngestPushAsync(connector!, IngestionTestData.Batch(IngestionTestData.SiemEvent(eventId: "t1")), default);
+        await exec.IngestPushAsync(connector!, IngestionTestData.Batch(IngestionTestData.SiemEvent(
+            eventId: "t1", signalKey: "siem.metric.coverage", numericValue: 90, unit: "percent")), default);
 
         await using var dbB = NewContext(TenantB);
         (await dbB.TenantControlStates.CountAsync()).Should().Be(0, "o tenant B não vê o estado derivado da evidência de A");
@@ -387,7 +397,8 @@ public sealed class EvidenceIngestionTests : IDisposable
             _options, mapper, new FakeProtector(), new FakeRegistry(),
             NullLogger<EvidenceIngestionExecutor>.Instance, NullLogger<ControlStateWriter>.Instance);
 
-        var ev = IngestionTestData.SiemEvent(eventId: "retry-1");   // → DE.AE-02, DE.CM-01 (event.controlProven)
+        var ev = IngestionTestData.SiemEvent(
+            eventId: "retry-1", signalKey: "siem.metric.coverage", numericValue: 90, unit: "percent");   // → DE.CM-01 (>= 80% → Compliant)
 
         // 1º push: a evidência persiste, mas a PROJEÇÃO falha → propaga (não mascara como sucesso integral).
         var primeiro = () => exec.IngestPushAsync(connector!, IngestionTestData.Batch(ev), default);
@@ -409,8 +420,8 @@ public sealed class EvidenceIngestionTests : IDisposable
 
         await using var assert = NewContext(TenantA);
         (await assert.Signals.CountAsync()).Should().Be(1, "o retry NÃO duplica EvidenceSignal");
-        (await assert.TenantControlStates.CountAsync()).Should().Be(2, "DE.AE-02 e DE.CM-01 projetados no retry");
-        (await assert.TenantControlStates.Include(x => x.Subcategory).SingleAsync(x => x.Subcategory!.Code == "DE.AE-02"))
+        (await assert.TenantControlStates.CountAsync()).Should().Be(1, "DE.CM-01 projetado no retry");
+        (await assert.TenantControlStates.Include(x => x.Subcategory).SingleAsync(x => x.Subcategory!.Code == "DE.CM-01"))
             .Status.Should().Be(ControlStatus.Compliant, "após o retry, a projeção reparou o estado");
         (await assert.Connectors.SingleAsync(c => c.Id == _siemA)).LastStatus
             .Should().Be(ConnectorStatus.Healthy, "após projeção bem-sucedida o conector volta a Healthy");
@@ -424,15 +435,17 @@ public sealed class EvidenceIngestionTests : IDisposable
         var siem = await Auth().AuthenticateAsync(_siemA, IngestionTestData.SiemKeyA, default);
         var edr = await Auth().AuthenticateAsync(_edrA, IngestionTestData.EdrKeyA, default);
         var (exec, _) = MakeExecutor();
-        await exec.IngestPushAsync(siem!, IngestionTestData.Batch(IngestionTestData.SiemEvent(eventId: "sm-siem")), default);
+        // SIEM: sinal AINDA MAPEADO (cobertura 90% → Compliant em DE.CM-01) — o alerta grave foi aposentado.
+        await exec.IngestPushAsync(siem!, IngestionTestData.Batch(IngestionTestData.SiemEvent(
+            eventId: "sm-siem", signalKey: "siem.metric.coverage", numericValue: 90, unit: "percent")), default);
         await exec.IngestPushAsync(edr!, IngestionTestData.Batch(IngestionTestData.EdrEvent(eventId: "sm-edr")), default);
 
         await using var db = NewContext(TenantA);
         var score = await new CurrentScoreQuery(db).GetCurrentAsync();
 
-        score.EvaluatedControls.Should().Be(3, "DE.AE-02, DE.CM-01 e RS.MI-01 avaliados pela evidência ingerida");
-        score.Percentage.Should().Be(100, "os controles são comprovados pela evidência (event.controlProven)");
-        score.CoveragePercentage.Should().Be(100, "os 3 controles do catálogo de teste foram avaliados");
+        score.EvaluatedControls.Should().Be(2, "DE.CM-01 (cobertura/EDR) e RS.MI-01 (EDR) — DE.AE-02 NÃO (alerta SIEM aposentado)");
+        score.Percentage.Should().Be(100, "os controles avaliados são comprovados por evidência determinística válida");
+        score.CoveragePercentage.Should().BeApproximately(66.67, 0.5, "2 dos 3 controles avaliados — presença de alerta não cobre DE.AE-02");
         score.EvaluationState.Should().Be(nameof(ScoreEvaluationState.Evaluated));
     }
 
@@ -633,12 +646,9 @@ internal static class IngestionTestData
         db.FrameworkVersions.Add(fv);
 
         db.SignalMappings.AddRange(
-            new SignalMapping
-            {
-                FrameworkVersionId = fv.Id, Capability = ConnectorCapability.Siem,
-                SignalKey = "siem.alert.highSeverity", SubcategoryCodes = new() { "DE.AE-02", "DE.CM-01" },
-                ScoringHint = EvidenceSignalEvaluator.EventControlProven,
-            },
+            // [AEGIS-MVP-SCORE-GUARD-SIEM-01] O mapping (Siem, siem.alert.highSeverity) foi APOSENTADO: um alerta
+            // de alta severidade NÃO concede conformidade/pontos. Deliberadamente AUSENTE aqui — um push desse
+            // signalKey passa a ser fail-closed (Unmapped/422), como em produção.
             new SignalMapping
             {
                 FrameworkVersionId = fv.Id, Capability = ConnectorCapability.Edr,

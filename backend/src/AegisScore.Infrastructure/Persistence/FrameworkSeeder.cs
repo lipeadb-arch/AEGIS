@@ -285,6 +285,18 @@ public static class FrameworkSeeder
         var existingByKey = existingMappings.ToDictionary(m => (m.Capability, m.SignalKey));
 
         var changed = false;
+
+        // [AEGIS-MVP-SCORE-GUARD-SIEM-01] Aposenta o mapping legado incorreto de forma CIRÚRGICA e idempotente:
+        // remove SOMENTE o par exato (Siem, siem.alert.highSeverity) de bancos já semeados — nunca toca outro
+        // mapping/capability, nem o Secure Score/EDR. Segunda execução é no-op (o par já não existe).
+        var retired = existingMappings.FirstOrDefault(m =>
+            m.Capability == RetiredSiemAlertMapping.Capability && m.SignalKey == RetiredSiemAlertMapping.SignalKey);
+        if (retired is not null)
+        {
+            db.SignalMappings.Remove(retired);
+            changed = true;
+        }
+
         foreach (var d in desired)
         {
             if (existingByKey.TryGetValue((d.Capability, d.SignalKey), out var e) && e.ScoringHint != d.ScoringHint)
@@ -309,7 +321,10 @@ public static class FrameworkSeeder
         Map(fvId, ConnectorCapability.SecureScore, "secureScore.data",     EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.DS-01", "PR.DS-02", "PR.DS-10"),
         Map(fvId, ConnectorCapability.SecureScore, "secureScore.device",   EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.PS-01", "PR.PS-05", "DE.CM-01"),
         Map(fvId, ConnectorCapability.SecureScore, "secureScore.apps",     EvidenceSignalEvaluator.PercentHigherIsBetter, "PR.PS-06", "DE.CM-09"),
-        Map(fvId, ConnectorCapability.Siem,        "siem.alert.highSeverity", EvidenceSignalEvaluator.EventControlProven, "DE.AE-02", "DE.CM-01"),
+        // [AEGIS-MVP-SCORE-GUARD-SIEM-01] O mapping (Siem, siem.alert.highSeverity) foi APOSENTADO: um alerta de
+        // alta severidade não comprova eficácia de controle e NÃO pode conceder Compliant/pontos. Não há substituto
+        // por event.controlFailure (um alerta também não é falha do controle). A dimensão de alertas do SIEM segue
+        // como FATO OPERACIONAL consultivo (fotografia do Sentinel/Google SecOps), fora do score.
         Map(fvId, ConnectorCapability.Edr,         "edr.threat.blocked", EvidenceSignalEvaluator.EventControlProven, "DE.CM-01", "RS.MI-01"),
     };
 
