@@ -1,0 +1,89 @@
+{
+  "provenance": {
+    "identifier": "aegis-exposure-language-pt-BR",
+    "schemaVersion": "1.0",
+    "classification": "derived",
+    "language": "pt-BR",
+    "origin": "AEGIS — camada de apresentação autoral (exposições de configuração, provider-neutral)",
+    "notes": "Redação AUTORAL do AEGIS em português claro para apresentar exposições de configuração. NÃO é tradução oficial da Microsoft nem substitui os textos originais da fonte (que permanecem disponíveis, sanitizados, na área técnica). Como o catálogo do fornecedor é DINÂMICO, a ausência de entrada NÃO derruba a tela: cai em SourceOnly com o texto de fonte sanitizado. A chave de correspondência é o título original normalizado (matchTitle); externalId é opcional e tem precedência quando presente."
+  },
+  "exposures": [
+    {
+      "matchTitle": "Block Adobe Reader from creating child processes",
+      "displayTitle": "Impedir que o Adobe Reader abra outros programas",
+      "plainSummary": "Impede que o Adobe Reader inicie outros processos no dispositivo.",
+      "whyItMatters": "Documentos maliciosos costumam usar o leitor de PDF para executar programas e infectar a máquina.",
+      "firstAction": "Ative a regra de redução de superfície de ataque correspondente nos dispositivos gerenciados."
+    },
+    {
+      "matchTitle": "Block JavaScript or VBScript from launching downloaded executable content",
+      "displayTitle": "Impedir que JavaScript ou VBScript execute arquivos baixados",
+      "plainSummary": "Bloqueia que scripts JavaScript ou VBScript executem conteúdo baixado da internet.",
+      "whyItMatters": "É um caminho comum de infecção: um script baixa e executa um programa malicioso sem o usuário perceber.",
+      "firstAction": "Ative a regra de redução de superfície de ataque correspondente nos dispositivos gerenciados."
+    },
+    {
+      "matchTitle": "Block Office applications from creating executable content",
+      "displayTitle": "Impedir que aplicativos do Office criem conteúdo executável",
+      "plainSummary": "Impede que Word, Excel e outros aplicativos do Office gravem arquivos executáveis.",
+      "whyItMatters": "Macros e documentos maliciosos criam executáveis para persistir e se espalhar pela rede.",
+      "firstAction": "Ative a regra de redução de superfície de ataque correspondente nos dispositivos gerenciados."
+    },
+    {
+      "matchTitle": "Block Office applications from injecting code into other processes",
+      "displayTitle": "Impedir que aplicativos do Office injetem código em outros processos",
+      "plainSummary": "Bloqueia que aplicativos do Office insiram código em outros processos em execução.",
+      "whyItMatters": "A injeção de código permite que um ataque se esconda dentro de um processo legítimo e escape da detecção.",
+      "firstAction": "Ative a regra de redução de superfície de ataque correspondente nos dispositivos gerenciados."
+    },
+    {
+      "matchTitle": "Block Office communication application from creating child processes",
+      "displayTitle": "Impedir que aplicativos de comunicação do Office abram outros programas",
+      "plainSummary": "Impede que aplicativos de comunicação do Office iniciem outros processos.",
+      "whyItMatters": "Aplicativos de e-mail e mensagens são alvo frequente para disparar programas maliciosos a partir de um anexo.",
+      "firstAction": "Ative a regra de redução de superfície de ataque correspondente nos dispositivos gerenciados."
+    },
+    {
+      "matchTitle": "Block Win32 API calls from Office macros",
+      "displayTitle": "Bloquear chamadas à API Win32 em macros do Office",
+      "plainSummary": "Bloqueia que macros do Office chamem funções de baixo nível do sistema operacional (API Win32).",
+      "whyItMatters": "Macros maliciosas usam a API do Windows para baixar e executar código sem passar pelas proteções comuns.",
+      "firstAction": "Ative a regra de redução de superfície de ataque correspondente nos dispositivos gerenciados."
+    },
+    {
+      "matchTitle": "Block abuse of exploited vulnerable signed drivers",
+      "displayTitle": "Bloquear o uso indevido de drivers assinados vulneráveis",
+      "plainSummary": "Impede o carregamento de drivers assinados que sejam sabidamente vulneráveis.",
+      "whyItMatters": "Atacantes carregam um driver vulnerável legítimo para obter acesso ao núcleo do sistema e desligar defesas.",
+      "firstAction": "Ative a regra de redução de superfície de ataque correspondente nos dispositivos gerenciados."
+    },
+    {
+      "matchTitle": "Block all Office applications from creating child processes",
+      "displayTitle": "Impedir que aplicativos do Office abram outros programas",
+      "plainSummary": "Impede que qualquer aplicativo do Office inicie outros processos no dispositivo.",
+      "whyItMatters": "Abrir outros programas a partir do Office é um dos caminhos mais explorados por documentos maliciosos.",
+      "firstAction": "Ative a regra de redução de superfície de ataque correspondente nos dispositivos gerenciados."
+    },
+    {
+      "matchTitle": "Block executable content from email client and webmail",
+      "displayTitle": "Bloquear conteúdo executável vindo de e-mail e webmail",
+      "plainSummary": "Bloqueia a execução de arquivos executáveis recebidos por e-mail ou webmail.",
+      "whyItMatters": "Anexos executáveis por e-mail são uma das principais portas de entrada de malware.",
+      "firstAction": "Ative a regra de redução de superfície de ataque correspondente nos dispositivos gerenciados."
+    },
+    {
+      "matchTitle": "Block executable files from running unless they meet a prevalence, age, or trusted list criterion",
+      "displayTitle": "Bloquear arquivos executáveis que não sejam conhecidos ou confiáveis",
+      "plainSummary": "Só permite executar arquivos comuns, antigos o suficiente ou presentes em uma lista confiável.",
+      "whyItMatters": "Malware recém-criado costuma ser raro e desconhecido — bloqueá-lo por padrão reduz muito o risco.",
+      "firstAction": "Ative a regra de redução de superfície de ataque correspondente nos dispositivos gerenciados."
+    },
+    {
+      "matchTitle": "Block execution of potentially obfuscated scripts",
+      "displayTitle": "Bloquear scripts potencialmente ofuscados",
+      "plainSummary": "Bloqueia a execução de scripts que aparentam estar deliberadamente ofuscados.",
+      "whyItMatters": "A ofuscação é usada para esconder código malicioso das ferramentas de segurança.",
+      "firstAction": "Ative a regra de redução de superfície de ataque correspondente nos dispositivos gerenciados."
+    }
+  ]
+}

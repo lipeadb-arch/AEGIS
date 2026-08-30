@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Queries;
+using AegisScore.Application.Services;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Ai;
 using AegisScore.Infrastructure.Connectors;
@@ -225,7 +226,7 @@ public sealed class PostureExposureReconcilerTests : IDisposable
             Finding("id-rank2big", 1, 10, 2, "Identity")));   // id-rank3 resolvido
         await SeedOverallSignalAsync(TenantA, conn, 62);
 
-        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA));
+        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA), StaticExposureLanguageCatalog.Empty);
         var open = await query.GetAsync(new PostureExposureFilter(PostureExposureStateFilter.Open));
 
         open.Summary.TotalOpen.Should().Be(2);
@@ -248,9 +249,41 @@ public sealed class PostureExposureReconcilerTests : IDisposable
     }
 
     [Fact]
+    public async Task Query_SourceOnly_ClearPortugueseFrame_TranslatedThreats_SearchesClearLanguage()
+    {
+        var conn = await SeedSecureScoreConnectorAsync(TenantA, DateTimeOffset.UtcNow);
+        // StaticExposureLanguageCatalog.Empty ⇒ SourceOnly: JAMAIS finge tradução autoral — usa a MOLDURA genérica pt-BR.
+        await ReconcileAsync(TenantA, conn, Collection(true, Finding("id-1", 5, 10, 1, "Identity")));
+
+        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA), StaticExposureLanguageCatalog.Empty);
+        var item = (await query.GetAsync(new PostureExposureFilter(PostureExposureStateFilter.Open))).Items.Single();
+
+        // §11: moldura CLARA em pt-BR (categoria traduzida + serviço), NUNCA o título de fonte em inglês como principal.
+        item.LanguageCoverage.Should().Be("SourceOnly");
+        item.DisplayTitle.Should().Be("Revisar configuração de Identidades em Azure Active Directory");
+        item.DisplayTitle.Should().NotContain("id-1 title", "o título de fonte não vira o título principal");
+        item.PlainSummary.Should().NotBeNullOrWhiteSpace();
+        item.FirstAction.Should().Be(
+            "Revise a configuração indicada pela fonte, valide o impacto em um grupo controlado e então aplique a correção.");
+        // Ameaça conhecida traduzida deterministicamente (Account Breach → Comprometimento de contas) — tela + IA.
+        item.Threats.Should().ContainSingle().Which.Should().Be("Comprometimento de contas");
+        item.WhyItMatters.Should().Contain("Comprometimento de contas");
+        // O título ORIGINAL segue como referência técnica secundária (sanitizado).
+        item.SourceTitle.Should().Be("id-1 title");
+
+        // §12: a BUSCA enxerga a LINGUAGEM CLARA — "Identidades" só existe no DisplayTitle DERIVADO (não no título
+        // cru "id-1 title", nem no ExternalId "id-1", nem na categoria "Identity"), e ainda assim casa.
+        var byClear = await query.GetAsync(new PostureExposureFilter(PostureExposureStateFilter.Open, Search: "Identidades"));
+        byClear.Items.Should().ContainSingle(i => i.ExternalId == "id-1", "busca casa pela categoria traduzida no título claro");
+        // …e também pelo serviço (campo cru permitido na busca).
+        var byService = await query.GetAsync(new PostureExposureFilter(PostureExposureStateFilter.Open, Search: "Azure"));
+        byService.Items.Should().ContainSingle(i => i.ExternalId == "id-1");
+    }
+
+    [Fact]
     public async Task Query_NeverCollected_ReportsNullSecureScore_NotZero()
     {
-        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA));
+        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA), StaticExposureLanguageCatalog.Empty);
         var result = await query.GetAsync(new PostureExposureFilter());
 
         result.Summary.LatestSecureScorePercent.Should().BeNull("ausência de coleta é null, nunca 0%");
@@ -267,7 +300,7 @@ public sealed class PostureExposureReconcilerTests : IDisposable
         var conn = await SeedSecureScoreConnectorAsync(TenantA, lastSync);
         await SeedOverallSignalAsync(TenantA, conn, 88);
 
-        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA));
+        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA), StaticExposureLanguageCatalog.Empty);
         var result = await query.GetAsync(new PostureExposureFilter());
 
         result.Summary.LastCollectedAt.Should().BeCloseTo(lastSync, TimeSpan.FromSeconds(2),
@@ -302,7 +335,7 @@ public sealed class PostureExposureReconcilerTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA));
+        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA), StaticExposureLanguageCatalog.Empty);
         var result = await query.GetAsync(new PostureExposureFilter());
 
         result.Summary.LatestSecureScorePercent.Should().BeNull(
@@ -321,12 +354,12 @@ public sealed class PostureExposureReconcilerTests : IDisposable
         await ReconcileAsync(TenantB, connB, Collection(true, Finding("b-only", 2, 10, 1)));
         await SeedOverallSignalAsync(TenantB, connB, 80);
 
-        var rA = await new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA))
+        var rA = await new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA), StaticExposureLanguageCatalog.Empty)
             .GetAsync(new PostureExposureFilter());
         rA.Summary.LatestSecureScorePercent.Should().Be(40, "A vê só o próprio score");
         rA.Items.Should().OnlyContain(i => i.ExternalId == "a-only");
 
-        var rB = await new PostureExposureQuery(NewContext(TenantB), new SystemTenantContext(TenantB))
+        var rB = await new PostureExposureQuery(NewContext(TenantB), new SystemTenantContext(TenantB), StaticExposureLanguageCatalog.Empty)
             .GetAsync(new PostureExposureFilter());
         rB.Summary.LatestSecureScorePercent.Should().Be(80, "B vê só o próprio score");
         rB.Items.Should().OnlyContain(i => i.ExternalId == "b-only");
@@ -341,7 +374,12 @@ public sealed class PostureExposureReconcilerTests : IDisposable
             Finding("id-1", 5, 10, 1, "Identity"),
             Finding("data-1", 4, 10, 2, "Data")));
 
-        var builder = new AuditorContextBuilder(NewContext(TenantA), new WorkspacePostureQuery(NewContext(TenantA), new SystemTenantContext(TenantA)));
+        var tc = new SystemTenantContext(TenantA);
+        var builder = new AuditorContextBuilder(
+            NewContext(TenantA),
+            new WorkspacePostureQuery(NewContext(TenantA), tc),
+            new PostureExposureQuery(NewContext(TenantA), tc, StaticExposureLanguageCatalog.Empty),
+            new VulnerabilityQuery(NewContext(TenantA), tc));
         var context = await builder.BuildAsync();
 
         context.TopExposures.Should().NotBeNull();
@@ -349,10 +387,11 @@ public sealed class PostureExposureReconcilerTests : IDisposable
         context.TopExposures!.First().ExternalId.Should().Be("id-1", "ordenado por rank");
 
         // Serialização do contexto: SÓ os campos permitidos das exposições; nunca resposta bruta/actionUrl/PII.
-        // Lowercased para ser robusto à política de nomes (a IA recebe os campos, não importa a caixa).
+        // [LANGUAGE-02] O contexto agora traz título CLARO e primeira ação SANITIZADA (nunca HTML/bruto).
         var json = JsonSerializer.Serialize(context.TopExposures).ToLowerInvariant();
         json.Should().Contain("gap", "o gap é campo permitido");
-        json.Should().Contain("remediation", "a remediação curta é campo permitido");
+        json.Should().Contain("firstaction", "a primeira ação (remediação sanitizada) é campo permitido");
+        json.Should().Contain("displaytitle", "o título claro é campo permitido");
         json.Should().NotContain("currentscore", "score bruto do controle não vai à IA (só o gap)");
         json.Should().NotContain("maxscore");
         json.Should().NotContain("sourcestate", "estado da fonte é metadado — não vai ao contexto da IA");

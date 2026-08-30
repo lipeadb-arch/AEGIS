@@ -91,6 +91,12 @@ public sealed class AuditorContextBuilderTests : IDisposable
         new(new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(_connection).Options,
             new SystemTenantContext(tenantId));
 
-    private static AuditorContextBuilder BuilderFor(AegisScoreDbContext db, Guid tenantId) =>
-        new(db, new WorkspacePostureQuery(db, new SystemTenantContext(tenantId)));
+    private static AuditorContextBuilder BuilderFor(AegisScoreDbContext db, Guid tenantId)
+    {
+        var tc = new SystemTenantContext(tenantId);
+        return new(db,
+            new WorkspacePostureQuery(db, tc),
+            new PostureExposureQuery(db, tc, AegisScore.Application.Services.StaticExposureLanguageCatalog.Empty),
+            new VulnerabilityQuery(db, tc));
+    }
 }

@@ -29,7 +29,10 @@ public sealed record VulnerabilityFilter(
     Guid? ConnectorId = null,
     string? Search = null,
     int Page = 1,
-    int PageSize = 25);
+    int PageSize = 25,
+    // [AEGIS-MVP-LANGUAGE-02] Filtro EXATO por CVE (case-insensitive, sem Contains) — carrega as ocorrências
+    // ativo×CVE de UM grupo quando o usuário expande. Distinto de Search (que casa por prefixo/substring).
+    string? CveId = null);
 
 /// <summary>Produto/versão AFETADO por um CVE num ativo (detalhe normalizado por fonte — nunca a resposta bruta).</summary>
 public sealed record VulnerabilityProductDto(string? Product, string? Vendor, string? Version, string? FixingKb);
@@ -108,6 +111,62 @@ public sealed record VulnerabilityListDto(
     int Page,
     int PageSize);
 
+// ---- [AEGIS-MVP-LANGUAGE-02] Visão AGRUPADA por CVE/problema — a leitura PADRÃO da tela e da fila de prioridades ----
+// A unidade passa a ser o PROBLEMA (CVE), não a ocorrência ativo×CVE: ~11k CVEs em vez de 334k linhas. Agregação,
+// filtros, ordenação e paginação acontecem NO BANCO; detalhes por ativo carregam sob demanda (filtro EXATO por CVE).
+
+/// <summary>Prévia curta de um ativo afetado por um CVE (para o card do grupo — teto explícito).</summary>
+public sealed record VulnerabilityAssetPreviewDto(string AssetName, int Criticality, string? SubType);
+
+/// <summary>
+/// Um GRUPO de vulnerabilidade (um CVE observado em N ativos), projetado para a tela. FATOS DA FONTE
+/// (severidade/CVSS/EPSS/exploit) são do CVE; contagem de ativos, criticidade máxima e ciclo de vida efetivo são
+/// agregados do grupo. <see cref="SourceTitle"/> é o título ORIGINAL sanitizado (nulo quando vazio ou igual ao CVE).
+/// <see cref="ProductLabel"/> só é preenchido quando TODOS os ativos afetados compartilham um mesmo subtipo (produto
+/// confiável); do contrário nulo (o front cai em "ativos do ambiente"). A linguagem clara do título é DERIVADA
+/// deterministicamente no cliente a partir de severidade + produto — não afirmamos exploração ativa em lugar algum.
+/// </summary>
+public sealed record VulnerabilityGroupDto(
+    string CveId,
+    // ---- Linguagem clara DETERMINÍSTICA (autoridade única VulnerabilityNarrative, no backend) ----
+    string DisplayTitle,
+    string SeverityLabel,
+    string ExploitLabel,
+    string WhyItMatters,
+    string FirstAction,
+    // ---- Fatos da fonte (referência técnica secundária) ----
+    string? Severity,
+    double? CvssScore,
+    string? CvssVector,
+    double? Epss,
+    bool PublicExploit,
+    bool ExploitVerified,
+    DateTimeOffset? PublishedOn,
+    string? SourceTitle,
+    string? ProductLabel,
+    // ---- Alcance por estado: total = abertos + resolvidos; a interface diz quantos AINDA estão abertos ----
+    int AffectedAssetCount,
+    int OpenAssetCount,
+    int ResolvedAssetCount,
+    int MaxAssetCriticality,
+    IReadOnlyList<VulnerabilityAssetPreviewDto> AssetPreview,
+    bool AssetPreviewTruncated,
+    IReadOnlyList<string> Providers,
+    DateTimeOffset FirstSeenAt,
+    DateTimeOffset LastSeenAt,
+    string EffectiveLifecycle);
+
+/// <summary>
+/// Página da visão AGRUPADA + resumo tenant-scoped. <see cref="Total"/> é a contagem de GRUPOS/CVEs distintos
+/// (filtrada) — a paginação da tela principal é por PROBLEMA, nunca por ocorrência ativo×CVE.
+/// </summary>
+public sealed record VulnerabilityOverviewDto(
+    VulnerabilitySummaryDto Summary,
+    IReadOnlyList<VulnerabilityGroupDto> Groups,
+    int Total,
+    int Page,
+    int PageSize);
+
 /// <summary>
 /// Autoridade ÚNICA de leitura das vulnerabilidades do tenant ambiente (Global Query Filter fail-closed). Somente
 /// leitura; nunca cria/altera/resolve exposição/observação. Filtros/agregações/ordenação/paginação NO BANCO —
@@ -115,5 +174,9 @@ public sealed record VulnerabilityListDto(
 /// </summary>
 public interface IVulnerabilityQuery
 {
+    /// <summary>Ocorrências ativo×CVE (detalhe/compatibilidade). Aceita filtro EXATO por CVE para expandir um grupo.</summary>
     Task<VulnerabilityListDto> GetAsync(VulnerabilityFilter filter, CancellationToken ct = default);
+
+    /// <summary>[AEGIS-MVP-LANGUAGE-02] Visão AGRUPADA por CVE/problema — leitura PADRÃO da tela e da fila de prioridades.</summary>
+    Task<VulnerabilityOverviewDto> GetOverviewAsync(VulnerabilityFilter filter, CancellationToken ct = default);
 }

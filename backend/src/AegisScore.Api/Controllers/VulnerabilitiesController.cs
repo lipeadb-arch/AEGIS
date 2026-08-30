@@ -31,6 +31,7 @@ public class VulnerabilitiesController : ControllerBase
         [FromQuery] string? provider,
         [FromQuery] Guid? connectorId,
         [FromQuery] string? search,
+        [FromQuery] string? cveId,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
         CancellationToken ct = default)
@@ -43,10 +44,43 @@ public class VulnerabilitiesController : ControllerBase
             Provider: string.IsNullOrWhiteSpace(provider) ? null : provider.Trim(),
             ConnectorId: connectorId,
             Search: string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+            // [AEGIS-MVP-LANGUAGE-02] Filtro EXATO por CVE (só espaços aparados) — encaminhado à query, que compara
+            // case-insensitive SEM Contains. É o que a expansão de um grupo usa para carregar seus ativos.
+            CveId: string.IsNullOrWhiteSpace(cveId) ? null : cveId.Trim(),
             Page: page,
             PageSize: pageSize);
 
         return await _query.GetAsync(filter, ct);
+    }
+
+    /// <summary>
+    /// [AEGIS-MVP-LANGUAGE-02] Visão AGRUPADA por CVE/problema — a leitura PADRÃO da tela. Paginação por GRUPO
+    /// (CVE distinto), nunca por ocorrência ativo×CVE. Os ativos de um grupo carregam sob demanda em <see cref="List"/>
+    /// com <c>cveId</c> exato.
+    /// </summary>
+    [HttpGet("overview")]
+    public async Task<ActionResult<VulnerabilityOverviewDto>> Overview(
+        [FromQuery] string? state,
+        [FromQuery] string? severity,
+        [FromQuery] string? exploit,
+        [FromQuery] string? provider,
+        [FromQuery] Guid? connectorId,
+        [FromQuery] string? search,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 25,
+        CancellationToken ct = default)
+    {
+        var filter = new VulnerabilityFilter(
+            State: ParseState(state),
+            Severity: string.IsNullOrWhiteSpace(severity) ? null : severity.Trim(),
+            Exploit: ParseExploit(exploit),
+            Provider: string.IsNullOrWhiteSpace(provider) ? null : provider.Trim(),
+            ConnectorId: connectorId,
+            Search: string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+            Page: page,
+            PageSize: pageSize);
+
+        return await _query.GetOverviewAsync(filter, ct);
     }
 
     private static VulnerabilityLifecycleFilter ParseState(string? s) => (s ?? "").Trim().ToLowerInvariant() switch

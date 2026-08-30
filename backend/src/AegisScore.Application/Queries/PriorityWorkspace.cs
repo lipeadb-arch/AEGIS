@@ -35,14 +35,16 @@ public sealed record PriorityExposureQueueDto(
     IReadOnlyList<PostureExposureItemDto> Top);
 
 /// <summary>
-/// Uma FILA de vulnerabilidades ativo×CVE para a Central de Prioridades: o resumo tenant-scoped MULTICLOUD +
-/// as principais exposições ABERTAS. Ambos vêm VERBATIM de <see cref="IVulnerabilityQuery"/> (página 1, no
-/// máximo <see cref="PriorityWorkspaceDto.MaxQueueItems"/> itens, ciclo de vida efetivo aberto, ordenação
-/// determinística por fatos da fonte + criticidade do ativo).
+/// [AEGIS-MVP-LANGUAGE-02] Uma FILA de vulnerabilidades para a Central de Prioridades — agora por GRUPO/CVE
+/// (não mais a mesma ocorrência ativo×CVE repetida em N ativos). Resumo tenant-scoped MULTICLOUD + os principais
+/// GRUPOS ABERTOS, VERBATIM de <see cref="IVulnerabilityQuery.GetOverviewAsync"/> (página 1, no máximo
+/// <see cref="PriorityWorkspaceDto.MaxQueueItems"/>, ciclo de vida efetivo aberto, ordenação determinística).
+/// O ALCANCE de cada item é a quantidade de ativos afetados (<c>AffectedAssetCount</c>); CVE/métricas ficam
+/// secundários.
 /// </summary>
 public sealed record PriorityVulnerabilityQueueDto(
     VulnerabilitySummaryDto Summary,
-    IReadOnlyList<VulnerabilityItemDto> Top);
+    IReadOnlyList<VulnerabilityGroupDto> Top);
 
 /// <summary>
 /// Read model COMPOSTO da Central de Prioridades. Reúne, SEM combinar num único índice, as três dimensões
@@ -63,8 +65,11 @@ public sealed record PriorityWorkspaceDto(
     PriorityExposureQueueDto ConfigurationExposures,
     PriorityVulnerabilityQueueDto Vulnerabilities)
 {
-    /// <summary>Versão semântica do contrato composto (análoga a <c>aegis-score-v1</c> da fórmula de postura).</summary>
-    public const string Version = "priority-workspace-v1";
+    /// <summary>
+    /// Versão semântica do contrato composto. [AEGIS-MVP-LANGUAGE-02] Incrementada para <c>v2</c>: o read model da
+    /// fila de vulnerabilidades passou de ocorrências ativo×CVE para GRUPOS por CVE/problema (semântica diferente).
+    /// </summary>
+    public const string Version = "priority-workspace-v2";
 
     /// <summary>Teto de itens por fila nesta primeira versão (página 1, somente abertos).</summary>
     public const int MaxQueueItems = 5;

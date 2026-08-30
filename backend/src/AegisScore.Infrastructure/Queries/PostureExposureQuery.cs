@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Queries;
+using AegisScore.Application.Services;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
@@ -30,11 +31,13 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
 
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
+    private readonly IExposureLanguageCatalog _language;
 
-    public PostureExposureQuery(AegisScoreDbContext db, ITenantContext tenant)
+    public PostureExposureQuery(AegisScoreDbContext db, ITenantContext tenant, IExposureLanguageCatalog language)
     {
         _db = db;
         _tenant = tenant;
+        _language = language;
     }
 
     public async Task<PostureExposureListDto> GetAsync(PostureExposureFilter filter, CancellationToken ct = default)
@@ -68,7 +71,9 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
             : await LatestSecureScoreAsync(connector.Id, ct);
         var summary = BuildSummary(all, connector?.LastSyncAt, score);
 
-        // Filtro da LISTA (o resumo reflete o tenant inteiro).
+        // Filtro da LISTA por ESTADO/CATEGORIA/SERVIÇO (o resumo reflete o tenant inteiro). A BUSCA por texto NÃO
+        // entra aqui: [AEGIS-MVP-LANGUAGE-02] ela precisa enxergar a LINGUAGEM CLARA (DisplayTitle/PlainSummary),
+        // que só nasce no ToDto — então projeta-se PRIMEIRO e filtra-se DEPOIS.
         IEnumerable<Row> q = all;
         q = filter.State switch
         {
@@ -80,30 +85,39 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
             q = q.Where(r => string.Equals(r.Category, filter.Category!.Trim(), StringComparison.OrdinalIgnoreCase));
         if (!string.IsNullOrWhiteSpace(filter.Service))
             q = q.Where(r => string.Equals(r.Service, filter.Service!.Trim(), StringComparison.OrdinalIgnoreCase));
-        if (!string.IsNullOrWhiteSpace(filter.Search))
-        {
-            var needle = filter.Search!.Trim();
-            q = q.Where(r =>
-                (r.Title?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
-                || (r.ExternalId?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
-                || (r.Service?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false));
-        }
 
-        var filtered = q.ToList();
-        var total = filtered.Count;
-
-        // Ordenação padrão: rank asc (nulos por ÚLTIMO), depois maior gap, depois título/Id (estável).
-        var ordered = filtered
+        // Ordena sobre Row (rank asc, nulos por ÚLTIMO; depois maior gap; depois título/Id estável) e PROJETA na
+        // sequência para a linguagem clara. O conjunto por tenant é pequeno (bounded), então projetar tudo é barato.
+        var projected = q
             .OrderBy(r => r.SourceRank ?? int.MaxValue)
             .ThenByDescending(r => r.Gap)
             .ThenBy(r => r.Title, StringComparer.Ordinal)
             .ThenBy(r => r.Id)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
             .Select(ToDto)
             .ToList();
 
-        return new PostureExposureListDto(summary, ordered, total, page, pageSize);
+        // [AEGIS-MVP-LANGUAGE-02] BUSCA sobre a linguagem já CLARA/sanitizada: título e resumo em pt-BR, mais o título
+        // ORIGINAL de fonte, o ExternalId e o serviço — assim o cliente encontra por "senha", "MFA" etc. e não só pelo
+        // texto em inglês da fonte. Roda ANTES da paginação (varre o tenant inteiro), depois de projetar/enriquecer.
+        if (!string.IsNullOrWhiteSpace(filter.Search))
+        {
+            var needle = filter.Search!.Trim();
+            projected = projected.Where(d =>
+                (d.DisplayTitle?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (d.PlainSummary?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (d.SourceTitle?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (d.ExternalId?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (d.Service?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false))
+                .ToList();
+        }
+
+        var total = projected.Count;
+        var pageItems = projected
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToList();
+
+        return new PostureExposureListDto(summary, pageItems, total, page, pageSize);
     }
 
     private async Task<(double? Percent, DateTimeOffset? At)> LatestSecureScoreAsync(Guid connectorId, CancellationToken ct)
@@ -140,13 +154,66 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
             SourceLabel, open.Count, resolved, byCategory, lastCollectedAt, score.Percent, score.At);
     }
 
-    private static PostureExposureItemDto ToDto(Row r) => new(
-        r.Id, r.ExternalId, r.Title, r.Category, r.Service, r.ActionType,
-        r.CurrentScore, r.MaxScore, r.Gap, r.SourceRank, r.Tier,
-        r.ImplementationCost, r.UserImpact, r.Remediation, r.RemediationImpact,
-        r.Threats ?? new List<string>(), r.SourceState,
-        r.LifecycleState == PostureExposureState.Open ? "Open" : "Resolved",
-        r.FirstSeenAt, r.LastSeenAt, r.ResolvedAt);
+    /// <summary>
+    /// [AEGIS-MVP-LANGUAGE-02] Projeta a exposição com a camada CLARA e a fonte SANITIZADA. O texto de fonte
+    /// (título/remediação/impacto) é convertido em texto simples pela autoridade única (<see cref="SourceTextSanitizer"/>)
+    /// — conteúdo bruto de conector JAMAIS cruza a fronteira. Sem entrada no catálogo, cai em <c>SourceOnly</c>:
+    /// título claro = título de fonte sanitizado; primeira ação = remediação de fonte sanitizada (fallback honesto).
+    /// </summary>
+    private PostureExposureItemDto ToDto(Row r)
+    {
+        var sourceTitle = SourceTextSanitizer.ToPlainText(r.Title, 200);
+        var sourceRemediation = SourceTextSanitizer.ToPlainText(r.Remediation, SourceTextSanitizer.DefaultMaxLength);
+        var sourceRemediationImpact = SourceTextSanitizer.ToPlainText(r.RemediationImpact, SourceTextSanitizer.DefaultMaxLength);
+        var threats = ExposureVocabulary.ThreatsPt(r.Threats);   // AMEAÇAS traduzidas — tela principal + contexto da IA
+
+        var lang = _language.Match(r.ExternalId, sourceTitle ?? r.Title);
+        var localized = lang is not null;
+
+        string displayTitle, firstAction;
+        string? plainSummary, whyItMatters;
+        if (localized)
+        {
+            displayTitle = lang!.DisplayTitle;
+            plainSummary = lang.PlainSummary;
+            whyItMatters = lang.WhyItMatters;
+            firstAction = lang.FirstAction;
+        }
+        else
+        {
+            // [AEGIS-MVP-LANGUAGE-02] SourceOnly: MOLDURA genérica em pt-BR — NUNCA finge tradução oficial. O título e a
+            // remediação ORIGINAIS sanitizados permanecem nos detalhes como referência da fonte.
+            var categoryPt = ExposureVocabulary.CategoryPt(r.Category);
+            var serviceLabel = string.IsNullOrWhiteSpace(r.Service) ? "um serviço" : r.Service!.Trim();
+            displayTitle = $"Revisar configuração de {categoryPt ?? "segurança"} em {serviceLabel}";
+            plainSummary = "A fonte identificou uma configuração que reduz a postura de segurança deste serviço.";
+            whyItMatters = threats.Count > 0
+                ? $"Relacionada a: {string.Join(", ", threats)}."
+                : "Pode facilitar ataques se não for revisada e corrigida.";
+            firstAction = "Revise a configuração indicada pela fonte, valide o impacto em um grupo controlado e então aplique a correção.";
+        }
+
+        return new PostureExposureItemDto(
+            r.Id, r.ExternalId,
+            sourceTitle ?? "",                                                  // Title (compat) — SANITIZADO, nunca bruto
+            r.Category, r.Service, r.ActionType,
+            r.CurrentScore, r.MaxScore, r.Gap, r.SourceRank, r.Tier,
+            r.ImplementationCost, r.UserImpact,
+            sourceRemediation, sourceRemediationImpact,                         // Remediation/RemediationImpact (compat) — sanitizados
+            threats, r.SourceState,
+            r.LifecycleState == PostureExposureState.Open ? "Open" : "Resolved",
+            r.FirstSeenAt, r.LastSeenAt, r.ResolvedAt)
+        {
+            DisplayTitle = displayTitle,
+            PlainSummary = plainSummary,
+            WhyItMatters = whyItMatters,
+            FirstAction = firstAction,
+            SourceTitle = sourceTitle,
+            SourceRemediation = sourceRemediation,
+            SourceRemediationImpact = sourceRemediationImpact,
+            LanguageCoverage = (localized ? ExposureLanguageCoverage.Localized : ExposureLanguageCoverage.SourceOnly).ToString(),
+        };
+    }
 
     private static PostureExposureListDto Empty(int page, int pageSize) => new(
         new PostureExposureSummaryDto(SourceLabel, 0, 0, Array.Empty<PostureExposureCategoryCountDto>(), null, null, null),

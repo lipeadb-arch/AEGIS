@@ -152,6 +152,16 @@ public static class DependencyInjection
         services.AddSingleton<IControlLanguageCatalog>(sp => new ControlLanguageCatalog(
             controlLanguagePath, sp.GetRequiredService<ILogger<ControlLanguageCatalog>>()));
 
+        // [AEGIS-MVP-LANGUAGE-02] Camada de LINGUAGEM CLARA de EXPOSIÇÕES de configuração (autoral, provider-neutral,
+        // pt-BR). Singleton lazy; mesmo padrão de Data/. Arquivo validado FAIL-CLOSED (schema/duplicata/campo vazio);
+        // LOOKUP fail-soft (catálogo do fornecedor é dinâmico → ausência vira SourceOnly, nunca tradução inventada).
+        var exposureLanguagePath = config["Reference:ExposureLanguagePath"]
+            ?? Path.Combine("Data", "aegis_exposure_language.pt-BR.json");
+        if (!Path.IsPathRooted(exposureLanguagePath))
+            exposureLanguagePath = Path.Combine(AppContext.BaseDirectory, exposureLanguagePath);
+        services.AddSingleton<IExposureLanguageCatalog>(sp => new ExposureLanguageCatalog(
+            exposureLanguagePath, sp.GetRequiredService<ILogger<ExposureLanguageCatalog>>()));
+
         // Auditor Virtual — construtor do CONTEXTO tenant-scoped (somente leitura) que fundamenta o chat:
         // score/cobertura, lacunas, controles, evidência documental curta, conectores e recomendações. Scoped:
         // usa o DbContext + as projeções de leitura sob o Global Query Filter fail-closed do tenant.

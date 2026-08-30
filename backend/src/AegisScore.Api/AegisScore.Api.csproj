@@ -46,6 +46,12 @@
     <Content Update="Data\aegis_control_language.pt-BR.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- [AEGIS-MVP-LANGUAGE-02] Camada de apresentação AUTORAL do AEGIS para EXPOSIÇÕES de configuração
+         (linguagem clara provider-neutral, pt-BR). SEPARADA do conteúdo dinâmico da fonte — não é tradução
+         oficial. Lida na primeira utilização pelo ExposureLanguageCatalog (singleton). -->
+    <Content Update="Data\aegis_exposure_language.pt-BR.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <!-- Personalidade do Auditor Virtual: lida no startup pelo AuditorPersonaProvider (singleton) a partir
          do diretório do binário. Ajustar o TOM do motor não exige recompilar — só reiniciar. -->
     <Content Update="Data\AuditorPersonality.json">
