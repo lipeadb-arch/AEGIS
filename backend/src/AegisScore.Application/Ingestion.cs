@@ -56,78 +56,123 @@ public sealed record PushIngestionResult(
 
 /// <summary>
 /// Desfecho de uma coleta PULL executada pela autoridade única (mesmo executor/mapping do push).
-/// <see cref="Vulnerabilities"/> e <see cref="Sentinel"/> são ADITIVOS (default null): preenchidos só por
-/// conectores que implementam a capacidade correspondente, preservando os consumidores existentes.
+/// <see cref="Vulnerabilities"/> e <see cref="Siem"/> são ADITIVOS (default null): preenchidos só por
+/// conectores que implementam a capacidade correspondente, preservando os consumidores existentes. O resumo de
+/// SIEM é PROVIDER-NEUTRAL (<see cref="SiemPostureSnapshot"/>) — o mesmo contrato serve Microsoft Sentinel, Google
+/// SecOps e futuros SIEMs; o rótulo da fonte vive dentro do próprio resumo.
 /// </summary>
 public sealed record PullIngestionResult(
     int Persisted, int Deduplicated, int Skipped, ConnectorStatus Status,
     VulnerabilitySyncResult? Vulnerabilities = null,
-    SiemPostureSnapshot? Sentinel = null);
+    SiemPostureSnapshot? Siem = null);
 
-// ---- [AEGIS-MVP-MICROSOFT-SENTINEL] Postura operacional de SIEM (somente leitura) ----
+// ---- [AEGIS-MVP-SIEM] Postura operacional de SIEM — PROVIDER-NEUTRAL (somente leitura) ----
 
 /// <summary>
-/// [AEGIS-MVP-MICROSOFT-SENTINEL] Estado EXPLÍCITO da coleta secundária de <c>SecurityAlert</c>. Distingue situações
-/// que uma contagem sozinha confundiria: uma consulta bem-sucedida com zero alertas (<see cref="Available"/>) NÃO é
-/// o mesmo que tabela ausente, acesso negado, throttling, timeout, resposta inválida ou resultado parcial. Só
-/// <see cref="Available"/> permite ler <c>AlertsObserved</c> como verdade; nos demais estados a UI mostra
-/// "alertas indisponíveis", nunca "0 alertas", e o conector termina Degraded (agregados de incidentes preservados).
+/// [AEGIS-MVP-SIEM] Estado EXPLÍCITO e PROVIDER-NEUTRAL da coleta de UMA dimensão da postura de SIEM (casos/incidentes
+/// OU alertas). Distingue situações que uma contagem sozinha confundiria: uma consulta bem-sucedida com zero
+/// resultados (<see cref="Available"/>) NÃO é o mesmo que a dimensão não existir na fonte, acesso negado, throttling,
+/// timeout, resposta inválida ou resultado parcial/truncado. Só <see cref="Available"/> permite ler as contagens
+/// como verdade completa; em qualquer outro estado a UI mostra indisponibilidade, NUNCA "0" — as contagens da
+/// dimensão ficam ANULÁVEIS (nunca zero sintético). Vale para Microsoft Sentinel, Google SecOps e futuros SIEMs.
 /// </summary>
-public enum SiemAlertCollectionState
+public enum SiemCollectionState
 {
-    /// <summary>Consulta executada com sucesso — <c>AlertsObserved</c> é confiável (zero ou mais).</summary>
+    /// <summary>Coleta executada com sucesso e COMPLETA — as contagens são confiáveis (zero ou mais).</summary>
     Available = 0,
-    /// <summary>A tabela <c>SecurityAlert</c> não existe no workspace (não comprovada).</summary>
-    TableUnavailable = 1,
-    /// <summary>Acesso à tabela negado (403) — não comprovada.</summary>
-    PermissionDenied = 2,
+    /// <summary>Coletada, mas a fonte sinalizou truncamento OU um limite defensivo impediu a coleta integral —
+    /// os agregados obtidos são um PISO, não o total. Degrada a saúde.</summary>
+    Partial = 1,
+    /// <summary>A fonte/instância não oferece esta dimensão (não comprovada — nunca "zero").</summary>
+    Unsupported = 2,
+    /// <summary>Acesso negado (403/permissão insuficiente) — não comprovada.</summary>
+    PermissionDenied = 3,
     /// <summary>Throttling (429) — não comprovada.</summary>
-    Throttled = 3,
-    /// <summary>Tempo esgotado — não comprovada.</summary>
-    Timeout = 4,
-    /// <summary>Indisponível/resposta inválida — não comprovada.</summary>
-    Unavailable = 5,
-    /// <summary>Resultado parcial/truncado sinalizado pela fonte — incompleta.</summary>
-    Partial = 6,
+    Throttled = 4,
+    /// <summary>Tempo esgotado/cancelamento não-solicitado — não comprovada.</summary>
+    Timeout = 5,
+    /// <summary>Indisponível/erro de transporte/resposta inválida — não comprovada.</summary>
+    Unavailable = 6,
 }
 
 /// <summary>
-/// [AEGIS-MVP-MICROSOFT-SENTINEL] Fotografia NORMALIZADA e SEGURA da postura operacional de um SIEM (Microsoft
-/// Sentinel via Log Analytics). SÓ agregados e instantes — NUNCA título de incidente, entidade, IP, host, usuário,
-/// conteúdo de alerta, payload bruto, token ou segredo. É um FATO OPERACIONAL consultivo: NÃO vira EvidenceSignal,
-/// NÃO alimenta o AEGIS Score e NÃO altera status/lifecycle de controle (a autoridade continua determinística).
-///
-/// Deliberadamente NÃO infere contenção, recuperação, comunicação, aderência a plano, sucesso de playbook, nem
-/// tempo de reconhecimento/triagem (sem campo confiável), nem reabertura (arg_max entrega só o estado mais recente).
-/// <see cref="IsComplete"/> é falso quando a fonte sinalizou resultado parcial/truncado OU quando os alertas não
-/// foram comprovados (<see cref="AlertsState"/> ≠ <see cref="SiemAlertCollectionState.Available"/>) — o chamador
-/// degrada a saúde. Quando <see cref="AlertsState"/> não é Available, os campos de alerta ficam em 0 e NÃO devem ser
-/// lidos como "zero alertas confiável".
+/// [AEGIS-MVP-SIEM] Semântica do PERÍODO de uma dimensão — deliberadamente EXPLÍCITA para nunca confundir um
+/// inventário instantâneo com uma janela temporal.
 /// </summary>
-public sealed record SiemPostureSnapshot(
-    int WindowDays,
-    int IncidentsObserved,
-    int OpenIncidents,
-    int NewIncidents,
-    int ClosedIncidents,
-    int OpenHighSeverity,
-    int OpenMediumSeverity,
-    int OpenLowSeverity,
-    int OpenInformationalSeverity,
-    double? MeanTimeToCloseHours,
-    SiemAlertCollectionState AlertsState,
-    int AlertsObserved,
-    int AlertsHighSeverity,
-    int AlertsMediumSeverity,
-    DateTimeOffset? LastEvidenceAt,
-    bool IsComplete);
+public enum SiemPeriodKind
+{
+    /// <summary>Janela deslizante de <c>WindowDays</c> dias (início inclusivo, fim exclusivo, calculada no servidor).</summary>
+    RollingWindow = 0,
+    /// <summary>Inventário no instante da coleta — NÃO finge representar uma janela temporal (ex.: listagem de casos
+    /// sem garantia de filtro por criação/atualização).</summary>
+    CurrentInventory = 1,
+}
+
+/// <summary>[AEGIS-MVP-SIEM] Uma contagem por prioridade declarada pela fonte (ex.: casos por prioridade no Google SecOps).</summary>
+public sealed record SiemPriorityCount(string Priority, int Count);
 
 /// <summary>
-/// [AEGIS-MVP-MICROSOFT-SENTINEL] Capacidade COMPLEMENTAR a <see cref="IEvidenceConnector"/>: um conector de SIEM
-/// que produz a POSTURA OPERACIONAL (somente leitura) via consultas fixas no servidor. O
-/// <c>EvidenceIngestionExecutor</c> a detecta no MESMO fluxo pull e devolve a fotografia no resultado — SEM criar
-/// EvidenceSignal, SEM mapear NIST e SEM tocar o score. Não quebra o contrato de <see cref="IEvidenceConnector"/>
-/// (o conector pode não emitir sinais). O adaptador NUNCA escreve no banco — apenas devolve a fotografia normalizada.
+/// [AEGIS-MVP-SIEM] Dimensão de CASOS/INCIDENTES da postura de SIEM. Só AGREGADOS e INSTANTES — nunca título,
+/// descrição, entidade, usuário, comentário ou payload bruto. Todas as contagens são ANULÁVEIS: <c>null</c> = não
+/// coletada/não aplicável (NUNCA zero sintético). <see cref="OpenByPriority"/> (distribuição por prioridade, quando
+/// a fonte a fornece) e o desmembramento por severidade coexistem porque provedores diferentes expõem eixos
+/// diferentes — cada um preenche o que tem e deixa o resto nulo.
+/// </summary>
+public sealed record SiemCasePosture(
+    SiemCollectionState State,
+    SiemPeriodKind Period,
+    int? WindowDays,
+    bool IsComplete,
+    int? Observed,
+    int? Open,
+    int? New,
+    int? Closed,
+    int? OpenHighSeverity,
+    int? OpenMediumSeverity,
+    int? OpenLowSeverity,
+    int? OpenInformationalSeverity,
+    IReadOnlyList<SiemPriorityCount>? OpenByPriority,
+    double? MeanTimeToCloseHours,
+    DateTimeOffset? LastEvidenceAt);
+
+/// <summary>
+/// [AEGIS-MVP-SIEM] Dimensão de ALERTAS da postura de SIEM. Só AGREGADOS e INSTANTES — nunca ativo, usuário, IP,
+/// título ou payload. Contagens ANULÁVEIS (null = não coletada/não aplicável, nunca zero sintético).
+/// </summary>
+public sealed record SiemAlertPosture(
+    SiemCollectionState State,
+    SiemPeriodKind Period,
+    int? WindowDays,
+    bool IsComplete,
+    int? Observed,
+    int? HighSeverity,
+    int? MediumSeverity,
+    DateTimeOffset? LastEvidenceAt);
+
+/// <summary>
+/// [AEGIS-MVP-SIEM] Fotografia NORMALIZADA, SEGURA e PROVIDER-NEUTRAL da postura operacional de um SIEM, modelada em
+/// DUAS DIMENSÕES INDEPENDENTES: <see cref="Cases"/> (casos/incidentes) e <see cref="Alerts"/> (alertas). SÓ agregados
+/// e instantes — NUNCA título, entidade, IP, host, usuário, conteúdo de alerta, payload bruto, token ou segredo. É um
+/// FATO OPERACIONAL consultivo: NÃO vira EvidenceSignal, NÃO alimenta o AEGIS Score e NÃO altera status/lifecycle de
+/// controle (a autoridade continua determinística). <see cref="Source"/> é o rótulo estável da origem
+/// ("Microsoft Sentinel", "Google SecOps"). A falha de UMA dimensão NUNCA é convertida em zero: a outra dimensão
+/// preserva seus agregados e a completude é derivada de AMBAS.
+/// </summary>
+public sealed record SiemPostureSnapshot(
+    string Source,
+    SiemCasePosture Cases,
+    SiemAlertPosture Alerts)
+{
+    /// <summary>Completude derivada: só é completa quando AMBAS as dimensões o são. Um <c>false</c> degrada a saúde.</summary>
+    public bool IsComplete => Cases.IsComplete && Alerts.IsComplete;
+}
+
+/// <summary>
+/// [AEGIS-MVP-SIEM] Capacidade COMPLEMENTAR a <see cref="IEvidenceConnector"/>: um conector de SIEM que produz a
+/// POSTURA OPERACIONAL (somente leitura) via consultas fixas no servidor. O <c>EvidenceIngestionExecutor</c> a detecta
+/// no MESMO fluxo pull e devolve a fotografia PROVIDER-NEUTRAL no resultado — SEM criar EvidenceSignal, SEM mapear
+/// NIST e SEM tocar o score. Não quebra o contrato de <see cref="IEvidenceConnector"/> (o conector pode não emitir
+/// sinais). O adaptador NUNCA escreve no banco — apenas devolve a fotografia normalizada.
 /// </summary>
 public interface ISiemPostureCollector
 {

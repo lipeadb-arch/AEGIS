@@ -165,32 +165,50 @@ SecurityAlert
 
         var token = await _client.AcquireTokenAsync(cfg.Credentials, ct);
 
-        // PRIMÁRIO: incidentes (falha propaga — carimba Failed no executor).
+        // DIMENSÃO DE CASOS (incidentes) — PRIMÁRIA: falha propaga (carimba Failed no executor). É uma JANELA
+        // DESLIZANTE de 30 dias (o timespan limita TimeGenerated); a semântica temporal é explícita no snapshot.
         var incidents = await _client.QueryAsync(token, cfg.WorkspaceId!, IncidentQuery, Timespan, ct);
         var incRow = SingleRowOrThrow(incidents, "consulta de incidentes sem linha de agregação");
+        var primary = incidents.Primary!;
 
-        var isComplete = !incidents.IsPartial;
-
-        var meanMinutes = ReadDouble(incidents.Primary!, incRow, "MeanTimeToCloseMinutes");
+        var casesComplete = !incidents.IsPartial;
+        var meanMinutes = ReadDouble(primary, incRow, "MeanTimeToCloseMinutes");
         var meanHours = meanMinutes is { } m && m >= 0 ? Math.Round(m / 60.0, 2) : (double?)null;
 
-        // SECUNDÁRIO: alertas "quando disponível", com ESTADO EXPLÍCITO. Distingue sucesso-vazio (Available,
-        // AlertsObserved=0) de tabela ausente/negada/throttled/timeout/inválida/parcial — nunca finge "0 alertas"
-        // confiável. Só Available lê as contagens; qualquer outro estado zera os alertas e marca a coleta incompleta
-        // (o executor termina Degraded, preservando os agregados válidos de incidentes). Cancelamento (OCE) propaga.
-        var alertsState = SiemAlertCollectionState.Available;
-        var alertsObserved = 0;
-        var alertsHigh = 0;
-        var alertsMedium = 0;
+        var cases = new SiemCasePosture(
+            State: casesComplete ? SiemCollectionState.Available : SiemCollectionState.Partial,
+            Period: SiemPeriodKind.RollingWindow,
+            WindowDays: WindowDays,
+            IsComplete: casesComplete,
+            Observed: (int)ReadLongOrZero(primary, incRow, "IncidentsObserved"),
+            Open: (int)ReadLongOrZero(primary, incRow, "OpenIncidents"),
+            New: (int)ReadLongOrZero(primary, incRow, "NewIncidents"),
+            Closed: (int)ReadLongOrZero(primary, incRow, "ClosedIncidents"),
+            OpenHighSeverity: (int)ReadLongOrZero(primary, incRow, "OpenHigh"),
+            OpenMediumSeverity: (int)ReadLongOrZero(primary, incRow, "OpenMedium"),
+            OpenLowSeverity: (int)ReadLongOrZero(primary, incRow, "OpenLow"),
+            OpenInformationalSeverity: (int)ReadLongOrZero(primary, incRow, "OpenInformational"),
+            OpenByPriority: null,   // o Sentinel expõe SEVERIDADE, não uma distribuição por prioridade
+            MeanTimeToCloseHours: meanHours,
+            LastEvidenceAt: ReadDate(primary, incRow, "LastEvidenceAt"));
+
+        // DIMENSÃO DE ALERTAS — "quando disponível", com ESTADO EXPLÍCITO. Distingue sucesso-vazio (Available,
+        // Observed=0) de dimensão ausente/negada/throttled/timeout/inválida/parcial — nunca finge "0 alertas". Só
+        // Available lê as contagens; qualquer outro estado ANULA as contagens (nunca zero) e a dimensão fica
+        // incompleta (o executor termina Degraded, preservando os agregados válidos de incidentes). Cancelamento (OCE) propaga.
+        var alertsState = SiemCollectionState.Available;
+        int? alertsObserved = 0;
+        int? alertsHigh = 0;
+        int? alertsMedium = 0;
         DateTimeOffset? lastAlertAt = null;
         try
         {
-            var alerts = await _client.QueryAsync(token, cfg.WorkspaceId!, AlertQuery, Timespan, ct);
-            if (alerts.IsPartial)
+            var alertResult = await _client.QueryAsync(token, cfg.WorkspaceId!, AlertQuery, Timespan, ct);
+            if (alertResult.IsPartial)
             {
-                alertsState = SiemAlertCollectionState.Partial;
+                alertsState = SiemCollectionState.Partial;
             }
-            else if (alerts.Primary is { Rows.Count: > 0 } at)
+            else if (alertResult.Primary is { Rows.Count: > 0 } at)
             {
                 // summarize SEM 'by' devolve SEMPRE uma linha (mesmo com zero alertas) — sucesso comprovado.
                 var aRow = at.Rows[0];
@@ -202,7 +220,7 @@ SecurityAlert
             else
             {
                 // 200 OK sem a linha de agregação esperada: resposta inválida — não comprovada.
-                alertsState = SiemAlertCollectionState.Unavailable;
+                alertsState = SiemCollectionState.Unavailable;
             }
         }
         catch (LogAnalyticsException ex)
@@ -212,50 +230,40 @@ SecurityAlert
                 "Sentinel: coleta de SecurityAlert não comprovada ({State}); prosseguindo só com incidentes.", alertsState);
         }
 
-        // Alertas não comprovados: não fingir zero e degradar a completude (o conector termina Degraded).
-        if (alertsState != SiemAlertCollectionState.Available)
+        // Alertas não comprovados: NÃO fingir zero — as contagens ficam ANULÁVEIS (a dimensão fica incompleta).
+        if (alertsState != SiemCollectionState.Available)
         {
-            alertsObserved = 0;
-            alertsHigh = 0;
-            alertsMedium = 0;
+            alertsObserved = null;
+            alertsHigh = null;
+            alertsMedium = null;
             lastAlertAt = null;
-            isComplete = false;
         }
 
-        var primary = incidents.Primary!;
-        var lastIncidentAt = ReadDate(primary, incRow, "LastEvidenceAt");
-        var lastEvidenceAt = MaxDate(lastIncidentAt, lastAlertAt);
-
-        return new SiemPostureSnapshot(
+        var alerts = new SiemAlertPosture(
+            State: alertsState,
+            Period: SiemPeriodKind.RollingWindow,
             WindowDays: WindowDays,
-            IncidentsObserved: (int)ReadLongOrZero(primary, incRow, "IncidentsObserved"),
-            OpenIncidents: (int)ReadLongOrZero(primary, incRow, "OpenIncidents"),
-            NewIncidents: (int)ReadLongOrZero(primary, incRow, "NewIncidents"),
-            ClosedIncidents: (int)ReadLongOrZero(primary, incRow, "ClosedIncidents"),
-            OpenHighSeverity: (int)ReadLongOrZero(primary, incRow, "OpenHigh"),
-            OpenMediumSeverity: (int)ReadLongOrZero(primary, incRow, "OpenMedium"),
-            OpenLowSeverity: (int)ReadLongOrZero(primary, incRow, "OpenLow"),
-            OpenInformationalSeverity: (int)ReadLongOrZero(primary, incRow, "OpenInformational"),
-            MeanTimeToCloseHours: meanHours,
-            AlertsState: alertsState,
-            AlertsObserved: alertsObserved,
-            AlertsHighSeverity: alertsHigh,
-            AlertsMediumSeverity: alertsMedium,
-            LastEvidenceAt: lastEvidenceAt,
-            IsComplete: isComplete);
+            IsComplete: alertsState == SiemCollectionState.Available,
+            Observed: alertsObserved,
+            HighSeverity: alertsHigh,
+            MediumSeverity: alertsMedium,
+            LastEvidenceAt: lastAlertAt);
+
+        return new SiemPostureSnapshot(SourceLabel, cases, alerts);
     }
 
-    /// <summary>Mapeia a falha SANITIZADA da consulta de alertas ao estado explícito da coleta secundária.</summary>
-    private static SiemAlertCollectionState AlertStateFrom(LogAnalyticsException ex) => ex.Kind switch
+    /// <summary>Mapeia a falha SANITIZADA da consulta de alertas ao estado explícito PROVIDER-NEUTRAL da dimensão.</summary>
+    private static SiemCollectionState AlertStateFrom(LogAnalyticsException ex) => ex.Kind switch
     {
-        LogAnalyticsErrorKind.InsufficientPermission => SiemAlertCollectionState.PermissionDenied,
-        LogAnalyticsErrorKind.Throttled => SiemAlertCollectionState.Throttled,
-        LogAnalyticsErrorKind.Timeout => SiemAlertCollectionState.Timeout,
+        LogAnalyticsErrorKind.InsufficientPermission => SiemCollectionState.PermissionDenied,
+        LogAnalyticsErrorKind.Throttled => SiemCollectionState.Throttled,
+        LogAnalyticsErrorKind.Timeout => SiemCollectionState.Timeout,
+        // Tabela SecurityAlert ausente no workspace = dimensão NÃO oferecida pela fonte → Unsupported (neutro).
         LogAnalyticsErrorKind.Unavailable => IsTableMissing(ex.ApiErrorCode)
-            ? SiemAlertCollectionState.TableUnavailable
-            : SiemAlertCollectionState.Unavailable,
+            ? SiemCollectionState.Unsupported
+            : SiemCollectionState.Unavailable,
         // AuthFailure na consulta secundária (token/audiência) — indisponível, sem fingir zero.
-        _ => SiemAlertCollectionState.Unavailable,
+        _ => SiemCollectionState.Unavailable,
     };
 
     /// <summary>
@@ -345,9 +353,6 @@ SecurityAlert
         return DateTimeOffset.TryParse(cell.GetString(), CultureInfo.InvariantCulture,
             DateTimeStyles.AdjustToUniversal, out var d) ? d : (DateTimeOffset?)null;
     }
-
-    private static DateTimeOffset? MaxDate(DateTimeOffset? a, DateTimeOffset? b) =>
-        a is null ? b : b is null ? a : (a.Value >= b.Value ? a : b);
 
     private static IReadOnlyList<JsonElement> SingleRowOrThrow(LogAnalyticsQueryResult result, string detail)
     {
