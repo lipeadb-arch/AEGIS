@@ -249,6 +249,38 @@ public sealed class PostureExposureReconcilerTests : IDisposable
     }
 
     [Fact]
+    public async Task Query_SourceOnly_ClearPortugueseFrame_TranslatedThreats_SearchesClearLanguage()
+    {
+        var conn = await SeedSecureScoreConnectorAsync(TenantA, DateTimeOffset.UtcNow);
+        // StaticExposureLanguageCatalog.Empty ⇒ SourceOnly: JAMAIS finge tradução autoral — usa a MOLDURA genérica pt-BR.
+        await ReconcileAsync(TenantA, conn, Collection(true, Finding("id-1", 5, 10, 1, "Identity")));
+
+        var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA), StaticExposureLanguageCatalog.Empty);
+        var item = (await query.GetAsync(new PostureExposureFilter(PostureExposureStateFilter.Open))).Items.Single();
+
+        // §11: moldura CLARA em pt-BR (categoria traduzida + serviço), NUNCA o título de fonte em inglês como principal.
+        item.LanguageCoverage.Should().Be("SourceOnly");
+        item.DisplayTitle.Should().Be("Revisar configuração de Identidades em Azure Active Directory");
+        item.DisplayTitle.Should().NotContain("id-1 title", "o título de fonte não vira o título principal");
+        item.PlainSummary.Should().NotBeNullOrWhiteSpace();
+        item.FirstAction.Should().Be(
+            "Revise a configuração indicada pela fonte, valide o impacto em um grupo controlado e então aplique a correção.");
+        // Ameaça conhecida traduzida deterministicamente (Account Breach → Comprometimento de contas) — tela + IA.
+        item.Threats.Should().ContainSingle().Which.Should().Be("Comprometimento de contas");
+        item.WhyItMatters.Should().Contain("Comprometimento de contas");
+        // O título ORIGINAL segue como referência técnica secundária (sanitizado).
+        item.SourceTitle.Should().Be("id-1 title");
+
+        // §12: a BUSCA enxerga a LINGUAGEM CLARA — "Identidades" só existe no DisplayTitle DERIVADO (não no título
+        // cru "id-1 title", nem no ExternalId "id-1", nem na categoria "Identity"), e ainda assim casa.
+        var byClear = await query.GetAsync(new PostureExposureFilter(PostureExposureStateFilter.Open, Search: "Identidades"));
+        byClear.Items.Should().ContainSingle(i => i.ExternalId == "id-1", "busca casa pela categoria traduzida no título claro");
+        // …e também pelo serviço (campo cru permitido na busca).
+        var byService = await query.GetAsync(new PostureExposureFilter(PostureExposureStateFilter.Open, Search: "Azure"));
+        byService.Items.Should().ContainSingle(i => i.ExternalId == "id-1");
+    }
+
+    [Fact]
     public async Task Query_NeverCollected_ReportsNullSecureScore_NotZero()
     {
         var query = new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA), StaticExposureLanguageCatalog.Empty);

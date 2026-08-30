@@ -117,16 +117,21 @@ public sealed record AuditorTenantContext(
 /// do ativo, produto afetado e ciclo de vida. NUNCA machineId/ExternalRef, IP, aadDeviceId ou payload bruto. A IA
 /// explica/correlaciona/prioriza e apoia remediação, mas NÃO cria CVE, ativo, exploit, estado de resolução ou score.
 /// </summary>
-// [AEGIS-MVP-LANGUAGE-02] AGRUPADA por CVE/problema — um CVE observado em N ativos, JAMAIS repetido por ativo.
-// Título CLARO determinístico + quantidade de ativos + rótulo de exploit (disponibilidade, NUNCA exploração ativa).
+// [AEGIS-MVP-LANGUAGE-02] AGRUPADA por CVE/problema — um CVE observado em N ativos, JAMAIS repetido por ativo. Os
+// textos claros (Title/ExploitStatus/WhyItMatters/FirstAction) vêm VERBATIM da AUTORIDADE ÚNICA no backend
+// (VulnerabilityNarrative, via VulnerabilityGroupDto) — a IA não recalcula significado. Exploit = disponibilidade,
+// NUNCA exploração ativa. O alcance é OpenAssetCount (ativos ainda abertos).
 public sealed record AuditorVulnerability(
     string CveId,
-    string Title,                 // título claro determinístico (severidade + produto), nunca só o CVE
+    string Title,
     string? Severity,
     double? CvssScore,
     double? Epss,
-    string ExploitStatus,         // "Exploit confirmado disponível" | "Exploit público disponível" | "Sem exploit informado pela fonte"
-    int AffectedAssetCount,       // ALCANCE do grupo — nº de ativos afetados distintos
+    string ExploitStatus,
+    string WhyItMatters,
+    string FirstAction,
+    int OpenAssetCount,
+    int AffectedAssetCount,
     int MaxAssetCriticality,
     string LifecycleState,
     // Fontes (providers) que OBSERVAM este CVE — só o rótulo do provedor, nunca conector/binding/machineId.

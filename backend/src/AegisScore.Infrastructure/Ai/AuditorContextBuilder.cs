@@ -114,13 +114,12 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
         // machineId, ExternalId de binding, IP, aadDeviceId, segredo, payload bruto ou inventário completo.
         var vulnOverview = await _vulnerabilityQuery.GetOverviewAsync(
             new VulnerabilityFilter(State: VulnerabilityLifecycleFilter.Open, Page: 1, PageSize: MaxVulnerabilities), ct);
+        // Textos claros VERBATIM da autoridade única (VulnerabilityNarrative via a query) — a IA não recalcula.
         var topVulnerabilities = vulnOverview.Groups
             .Select(g => new AuditorVulnerability(
-                g.CveId,
-                VulnerabilityNarrative.Title(g.Severity, g.ProductLabel),
-                g.Severity, g.CvssScore, g.Epss,
-                VulnerabilityNarrative.ExploitLabel(g.ExploitVerified, g.PublicExploit),
-                g.AffectedAssetCount, g.MaxAssetCriticality, g.EffectiveLifecycle, g.Providers))
+                g.CveId, g.DisplayTitle, g.Severity, g.CvssScore, g.Epss,
+                g.ExploitLabel, g.WhyItMatters, g.FirstAction,
+                g.OpenAssetCount, g.AffectedAssetCount, g.MaxAssetCriticality, g.EffectiveLifecycle, g.Providers))
             .ToList();
 
         // Recomendações pendentes derivadas das lacunas (curtas, sem inventar): "código: o que falta".

@@ -31,6 +31,7 @@ public class VulnerabilitiesController : ControllerBase
         [FromQuery] string? provider,
         [FromQuery] Guid? connectorId,
         [FromQuery] string? search,
+        [FromQuery] string? cveId,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
         CancellationToken ct = default)
@@ -43,6 +44,9 @@ public class VulnerabilitiesController : ControllerBase
             Provider: string.IsNullOrWhiteSpace(provider) ? null : provider.Trim(),
             ConnectorId: connectorId,
             Search: string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+            // [AEGIS-MVP-LANGUAGE-02] Filtro EXATO por CVE (só espaços aparados) — encaminhado à query, que compara
+            // case-insensitive SEM Contains. É o que a expansão de um grupo usa para carregar seus ativos.
+            CveId: string.IsNullOrWhiteSpace(cveId) ? null : cveId.Trim(),
             Page: page,
             PageSize: pageSize);
 
@@ -61,6 +65,7 @@ public class VulnerabilitiesController : ControllerBase
         [FromQuery] string? exploit,
         [FromQuery] string? provider,
         [FromQuery] Guid? connectorId,
+        [FromQuery] string? search,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
         CancellationToken ct = default)
@@ -71,6 +76,7 @@ public class VulnerabilitiesController : ControllerBase
             Exploit: ParseExploit(exploit),
             Provider: string.IsNullOrWhiteSpace(provider) ? null : provider.Trim(),
             ConnectorId: connectorId,
+            Search: string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
             Page: page,
             PageSize: pageSize);
 

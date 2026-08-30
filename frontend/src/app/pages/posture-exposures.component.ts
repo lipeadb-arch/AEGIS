@@ -116,7 +116,7 @@ import {
         />
         @if (categoryFilter()) {
           <button type="button" class="ghost sm" (click)="toggleCategory(categoryFilter()!)">
-            Categoria: {{ categoryFilter() }} ✕
+            Categoria: {{ cat(categoryFilter()) }} ✕
           </button>
         }
       </div>
@@ -165,12 +165,22 @@ import {
                       @if (x.lifecycleState === 'Resolved') {
                         <span class="badge ok">Resolvida</span>
                       }
+                      @if (x.languageCoverage === 'SourceOnly') {
+                        <span
+                          class="badge gen"
+                          title="Descrição genérica em português desta recomendação; o texto original da fonte (sanitizado) está nos detalhes."
+                          >Descrição da fonte</span
+                        >
+                      }
                       @if (x.sourceState && x.sourceState !== 'Default') {
                         <span class="badge src" title="Estado informado pela fonte (metadado)">{{ x.sourceState }}</span>
                       }
                     </span>
                     @if (x.whyItMatters) {
                       <span class="meta why">{{ x.whyItMatters }}</span>
+                    }
+                    @if (x.firstAction) {
+                      <span class="meta act"><em>Ação:</em> {{ x.firstAction }}</span>
                     }
                   </td>
                   <td class="c-score">{{ num(x.currentScore) }}/{{ num(x.maxScore) }}</td>
@@ -472,6 +482,18 @@ import {
       }
       .badge.src {
         color: #f5a524;
+      }
+      .badge.gen {
+        color: #9aa7c7;
+      }
+      .meta.why,
+      .meta.act {
+        display: block;
+        margin-top: 0.2rem;
+      }
+      .meta.act em {
+        font-style: italic;
+        opacity: 0.8;
       }
       .linkbtn {
         background: transparent;

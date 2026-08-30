@@ -3,17 +3,25 @@ import { FormsModule } from '@angular/forms';
 import { AgentStateService } from '../services/agent-state.service';
 import { VulnerabilityService } from '../services/vulnerability.service';
 import {
-  VULNERABILITY_FIRST_ACTION,
   VulnerabilityExploitFilter,
   VulnerabilityGroup,
   VulnerabilityItem,
   VulnerabilityLifecycleFilter,
   VulnerabilityOverview,
-  exploitLabel,
   severityPt,
-  vulnerabilityTitle,
-  vulnerabilityWhyItMatters,
 } from '../models/vulnerability.models';
+
+/**
+ * [AEGIS-MVP-LANGUAGE-02 §8/§9] Estado de PAGINAÇÃO por CVE das ocorrências (ativo×CVE) na expansão de um grupo.
+ * `error` NUNCA é substituído por lista vazia: uma falha preserva os itens já carregados e oferece "Tentar novamente".
+ */
+interface OccState {
+  items: VulnerabilityItem[];
+  total: number;
+  loadedPages: number;
+  loading: boolean;
+  error: string | null;
+}
 
 /**
  * [AEGIS-MVP-VULN-01] Vulnerabilidades (exposição ativo×CVE) — MULTICLOUD. Consome a superfície somente
@@ -52,14 +60,14 @@ import {
       <!-- ---------- Resumo ---------- -->
       <div class="cards">
         <div class="card">
-          <span class="card-label">CVEs abertos</span>
+          <span class="card-label">Problemas distintos</span>
           <span class="card-value">{{ summary()?.distinctCvesOpen ?? '—' }}</span>
-          <span class="card-meta">{{ summary()?.affectedAssetsOpen ?? 0 }} ativo(s) afetado(s)</span>
+          <span class="card-meta">{{ summary()?.affectedAssetsOpen ?? 0 }} ativo(s) ainda afetado(s)</span>
         </div>
         <div class="card">
-          <span class="card-label">Exposições abertas</span>
+          <span class="card-label">Ocorrências abertas</span>
           <span class="card-value">{{ summary()?.totalOpen ?? '—' }}</span>
-          <span class="card-meta">{{ summary()?.totalResolved ?? 0 }} resolvida(s)</span>
+          <span class="card-meta">{{ summary()?.totalResolved ?? 0 }} ocorrência(s) resolvida(s)</span>
         </div>
         <div class="card">
           <span class="card-label">Última coleta</span>
@@ -121,6 +129,14 @@ import {
             Severidade: {{ sevPt(severityFilter()) }} ✕
           </button>
         }
+        <input
+          class="search"
+          type="search"
+          placeholder="Buscar por CVE ou título…"
+          [ngModel]="searchTerm()"
+          (ngModelChange)="onSearchInput($event)"
+          aria-label="Buscar vulnerabilidades por CVE ou título"
+        />
       </div>
 
       <!-- ---------- Tabela ---------- -->
@@ -163,24 +179,27 @@ import {
               @for (g of groups(); track g.cveId) {
                 <tr class="row" [class.resolved]="g.effectiveLifecycle === 'Resolved'">
                   <td>
-                    <strong class="title">{{ title(g) }}</strong>
+                    <strong class="title">{{ g.displayTitle }}</strong>
                     @if (g.effectiveLifecycle === 'Resolved') {
                       <span class="badge ok">Resolvida</span>
                     }
-                    <span class="meta mono">{{ g.cveId }} · {{ sevPt(g.severity) }}</span>
+                    <span class="meta mono">{{ g.cveId }} · {{ g.severityLabel }}</span>
                   </td>
-                  <td><span class="meta why">{{ why(g) }}</span></td>
+                  <td><span class="meta why">{{ g.whyItMatters }}</span></td>
                   <td class="c-cvss">
-                    <strong>{{ g.affectedAssetCount }}</strong>
+                    <strong>{{ reach(g) }}</strong>
                     <span class="meta">crít. máx. {{ g.maxAssetCriticality }}</span>
+                    @if (g.openAssetCount > 0 && g.resolvedAssetCount > 0) {
+                      <span class="meta">{{ g.openAssetCount }} aberto(s) · {{ g.resolvedAssetCount }} resolvido(s)</span>
+                    }
                   </td>
                   <td class="c-exploit">
                     @if (g.exploitVerified) {
-                      <span class="badge bad">Confirmado</span>
+                      <span class="badge bad">{{ g.exploitLabel }}</span>
                     } @else if (g.publicExploit) {
-                      <span class="badge warn">Público</span>
+                      <span class="badge warn">{{ g.exploitLabel }}</span>
                     } @else {
-                      <span class="dim">—</span>
+                      <span class="dim">{{ g.exploitLabel }}</span>
                     }
                   </td>
                   <td class="c-src">
@@ -188,7 +207,7 @@ import {
                       <span class="badge src">{{ p }}</span>
                     }
                   </td>
-                  <td><span class="meta">{{ firstAction }}</span></td>
+                  <td><span class="meta">{{ g.firstAction }}</span></td>
                   <td class="c-exp">
                     <button type="button" class="linkbtn" (click)="toggleExpand(g.cveId)">
                       {{ expanded().has(g.cveId) ? 'Ocultar' : 'Detalhes' }}
@@ -201,7 +220,7 @@ import {
                       <div class="details">
                         <div class="det-grid">
                           <div><span class="det-label">CVE</span><span class="mono">{{ g.cveId }}</span></div>
-                          <div><span class="det-label">Exploit</span><span>{{ exploit(g) }}</span></div>
+                          <div><span class="det-label">Exploit</span><span>{{ g.exploitLabel }}</span></div>
                           <div><span class="det-label">CVSS</span><span class="mono">{{ g.cvssScore != null ? num(g.cvssScore) : '—' }} {{ g.cvssVector ? '· ' + g.cvssVector : '' }}</span></div>
                           <div><span class="det-label">EPSS</span><span>{{ g.epss != null ? pctEpss(g.epss) : '—' }}</span></div>
                           <div><span class="det-label">Publicado em</span><span>{{ fmtDate(g.publishedOn) }}</span></div>
@@ -216,11 +235,18 @@ import {
                         }
                         <div class="det">
                           <span class="det-label">Ativos afetados ({{ g.affectedAssetCount }})</span>
-                          @if (isOccLoading(g.cveId)) {
+                          @let os = occ(g.cveId);
+                          @if (os?.loading && (os?.items?.length ?? 0) === 0) {
                             <p class="muted">Carregando ativos…</p>
+                          } @else if (os?.error && (os?.items?.length ?? 0) === 0) {
+                            <!-- §9: falha na PRIMEIRA carga — NUNCA vira lista vazia silenciosa. -->
+                            <div class="occ-err">
+                              <span class="err">⚠ {{ os?.error }}</span>
+                              <button type="button" class="ghost sm" (click)="loadOccurrences(g.cveId)">Tentar novamente</button>
+                            </div>
                           } @else {
                             <div class="obs">
-                              @for (o of occurrences(g.cveId); track o.id) {
+                              @for (o of os?.items ?? []; track o.id) {
                                 <div class="obs-row">
                                   <span class="obs-name">{{ o.assetName }}</span>
                                   <span class="obs-life">crít. {{ o.assetCriticality }} · {{ o.assetSubType || '—' }}</span>
@@ -233,8 +259,19 @@ import {
                                 <p class="muted">Nenhum ativo carregado.</p>
                               }
                             </div>
-                            @if (occurrences(g.cveId).length >= 50 && g.affectedAssetCount > occurrences(g.cveId).length) {
-                              <p class="meta">Exibindo os primeiros 50 ativos de {{ g.affectedAssetCount }}.</p>
+                            @if (os?.error) {
+                              <!-- §9: falha ao carregar MAIS — preserva os itens já vistos e oferece nova tentativa. -->
+                              <div class="occ-err">
+                                <span class="err sm">⚠ {{ os?.error }}</span>
+                                <button type="button" class="linkbtn" (click)="loadOccurrences(g.cveId)">Tentar novamente</button>
+                              </div>
+                            }
+                            @if (occHasMore(g.cveId)) {
+                              <button type="button" class="ghost sm load-more" (click)="loadOccurrences(g.cveId)" [disabled]="os?.loading">
+                                {{ os?.loading ? 'Carregando…' : 'Carregar mais (' + (os?.items?.length ?? 0) + ' de ' + (os?.total ?? 0) + ')' }}
+                              </button>
+                            } @else if ((os?.items?.length ?? 0) > 0) {
+                              <p class="meta">Todos os {{ os?.total ?? 0 }} ativo(s) carregado(s).</p>
                             }
                           }
                         </div>
@@ -338,6 +375,9 @@ import {
       .obs-life { opacity: 0.7; }
       .obs-seen, .obs-prod { opacity: 0.55; font-size: 0.72rem; }
       .obs-prod em { opacity: 0.7; }
+      .occ-err { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.4rem; }
+      .occ-err .err.sm { font-size: 0.75rem; }
+      .load-more { margin-top: 0.5rem; }
       .pager { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.6rem 0.4rem 0.2rem; }
       .pg-info { font-size: 0.75rem; opacity: 0.65; }
 
@@ -378,12 +418,18 @@ export class VulnerabilitiesComponent {
   protected readonly exploitFilter = signal<VulnerabilityExploitFilter>('all');
   protected readonly severityFilter = signal<string | null>(null);
   protected readonly connectorFilter = signal<string | null>(null);
+  protected readonly searchTerm = signal('');
   protected readonly page = signal(1);
 
-  // Expansão de um GRUPO carrega as ocorrências ativo×CVE sob demanda (filtro EXATO por CVE) — sem N+1 inicial.
+  // [AEGIS-MVP-LANGUAGE-02 §8] Expansão de um GRUPO carrega as ocorrências ativo×CVE PAGINADAS sob demanda (filtro
+  // EXATO por CVE) — sem N+1 inicial. O estado por CVE guarda itens/total/páginas/loading/erro (ver OccState).
   protected readonly expanded = signal<Set<string>>(new Set());
-  protected readonly occByCve = signal<Map<string, VulnerabilityItem[]>>(new Map());
-  protected readonly occLoading = signal<Set<string>>(new Set());
+  protected readonly occByCve = signal<Map<string, OccState>>(new Map());
+
+  /** Tamanho de página das ocorrências dentro de um grupo (independente da paginação por PROBLEMA). */
+  private readonly OCC_PAGE_SIZE = 25;
+  /** Debounce da busca (§7) — sem RxJS Subject; timer simples. */
+  private searchTimer: ReturnType<typeof setTimeout> | null = null;
 
   protected readonly summary = computed(() => this.data()?.summary ?? null);
   protected readonly groups = computed<VulnerabilityGroup[]>(() => this.data()?.groups ?? []);
@@ -394,12 +440,21 @@ export class VulnerabilitiesComponent {
     return Math.max(1, Math.ceil(d.total / d.pageSize));
   });
 
-  // Linguagem clara determinística (funções puras dos models) — exposta ao template.
-  protected readonly title = vulnerabilityTitle;
-  protected readonly why = vulnerabilityWhyItMatters;
-  protected readonly exploit = exploitLabel;
+  // [AEGIS-MVP-LANGUAGE-02 §5] A narrativa (título/porquê/exploit/1ª ação) é AUTORIDADE do backend e chega pronta em
+  // cada VulnerabilityGroup. O único helper de apresentação restante traduz o ENUM cru dos chips de severidade do RESUMO.
   protected readonly sevPt = severityPt;
-  protected readonly firstAction = VULNERABILITY_FIRST_ACTION;
+
+  /** Alcance relevante ao estado atual (§2): abertas → ativos abertos; resolvidas → resolvidos; todas → total. */
+  protected reach(g: VulnerabilityGroup): number {
+    switch (this.stateFilter()) {
+      case 'resolved':
+        return g.resolvedAssetCount;
+      case 'all':
+        return g.affectedAssetCount;
+      default:
+        return g.openAssetCount;
+    }
+  }
 
   constructor() {
     this.load();
@@ -408,6 +463,7 @@ export class VulnerabilitiesComponent {
   protected load(): void {
     this.loading.set(true);
     this.error.set(null);
+    // §9: ao mudar filtros/página/busca, a expansão e seu estado de paginação são DESCARTADOS (nada de itens órfãos).
     this.expanded.set(new Set());
     this.occByCve.set(new Map());
     this.api
@@ -416,6 +472,7 @@ export class VulnerabilitiesComponent {
         exploit: this.exploitFilter(),
         severity: this.severityFilter() ?? undefined,
         connectorId: this.connectorFilter() ?? undefined,
+        search: this.searchTerm().trim() || undefined,
         page: this.page(),
         pageSize: 25,
       })
@@ -466,6 +523,17 @@ export class VulnerabilitiesComponent {
     this.load();
   }
 
+  /** [AEGIS-MVP-LANGUAGE-02 §7] Busca na visão AGRUPADA com debounce; reseta para a página 1 a cada mudança. */
+  protected onSearchInput(value: string): void {
+    this.searchTerm.set(value);
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.searchTimer = setTimeout(() => {
+      this.searchTimer = null;
+      this.page.set(1);
+      this.load();
+    }, 300);
+  }
+
   protected toggleExpand(cveId: string): void {
     const isOpen = this.expanded().has(cveId);
     this.expanded.update((set) => {
@@ -474,40 +542,61 @@ export class VulnerabilitiesComponent {
       else next.add(cveId);
       return next;
     });
-    // Carrega as ocorrências do grupo só na PRIMEIRA expansão.
-    if (!isOpen && !this.occByCve().has(cveId) && !this.occLoading().has(cveId)) {
+    // Carrega a PRIMEIRA página de ocorrências só na primeira expansão (sem N+1 inicial); reexpandir não recarrega.
+    if (!isOpen && !this.occByCve().has(cveId)) {
       this.loadOccurrences(cveId);
     }
   }
 
-  private loadOccurrences(cveId: string): void {
-    this.occLoading.update((s) => new Set(s).add(cveId));
-    this.api.list({ cveId, state: this.stateFilter(), page: 1, pageSize: 50 }).subscribe({
+  /**
+   * [AEGIS-MVP-LANGUAGE-02 §8/§9] Carrega a PRÓXIMA página de ocorrências do CVE (também serve de "Carregar mais" e
+   * de "Tentar novamente"): respeita o filtro de estado, deduplica por id e NUNCA transforma erro em lista vazia —
+   * uma falha preserva os itens já carregados e apenas registra o erro para nova tentativa.
+   */
+  protected loadOccurrences(cveId: string): void {
+    const cur = this.occByCve().get(cveId);
+    if (cur?.loading) return;
+    const nextPage = (cur?.loadedPages ?? 0) + 1;
+    this.patchOcc(cveId, {
+      items: cur?.items ?? [],
+      total: cur?.total ?? 0,
+      loadedPages: cur?.loadedPages ?? 0,
+      loading: true,
+      error: null,
+    });
+    this.api.list({ cveId, state: this.stateFilter(), page: nextPage, pageSize: this.OCC_PAGE_SIZE }).subscribe({
       next: (list) => {
-        this.occByCve.update((m) => new Map(m).set(cveId, list.items));
-        this.occLoading.update((s) => {
-          const n = new Set(s);
-          n.delete(cveId);
-          return n;
-        });
+        const prev = this.occByCve().get(cveId);
+        const base = prev?.items ?? [];
+        const seen = new Set(base.map((i) => i.id));
+        const merged = base.concat(list.items.filter((i) => !seen.has(i.id)));   // sem duplicar ocorrências
+        this.patchOcc(cveId, { items: merged, total: list.total, loadedPages: nextPage, loading: false, error: null });
       },
-      error: () => {
-        this.occByCve.update((m) => new Map(m).set(cveId, []));
-        this.occLoading.update((s) => {
-          const n = new Set(s);
-          n.delete(cveId);
-          return n;
+      error: (err: Error) => {
+        const prev = this.occByCve().get(cveId);
+        this.patchOcc(cveId, {
+          items: prev?.items ?? [],                       // §9: mantém o que já havia
+          total: prev?.total ?? 0,
+          loadedPages: prev?.loadedPages ?? 0,            // não avança a página falha
+          loading: false,
+          error: err.message || 'Falha ao carregar os ativos afetados.',
         });
       },
     });
   }
 
-  protected occurrences(cveId: string): VulnerabilityItem[] {
-    return this.occByCve().get(cveId) ?? [];
+  private patchOcc(cveId: string, state: OccState): void {
+    this.occByCve.update((m) => new Map(m).set(cveId, state));
   }
 
-  protected isOccLoading(cveId: string): boolean {
-    return this.occLoading().has(cveId);
+  protected occ(cveId: string): OccState | null {
+    return this.occByCve().get(cveId) ?? null;
+  }
+
+  /** Há mais ocorrências a carregar? (itens carregados < total conhecido). */
+  protected occHasMore(cveId: string): boolean {
+    const s = this.occByCve().get(cveId);
+    return !!s && !s.loading && s.loadedPages > 0 && s.items.length < s.total;
   }
 
   protected prevPage(): void {
@@ -542,10 +631,6 @@ export class VulnerabilitiesComponent {
 
   protected pctEpss(n: number): string {
     return `${Math.round(n * 100)}%`;
-  }
-
-  protected productLabel(p: { product: string | null; vendor: string | null; version: string | null }): string {
-    return [p.vendor, p.product, p.version].filter((s) => !!s).join(' ') || '—';
   }
 
   protected fmtDate(iso: string | null | undefined): string {

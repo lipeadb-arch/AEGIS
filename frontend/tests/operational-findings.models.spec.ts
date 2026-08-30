@@ -1,18 +1,13 @@
 /**
  * [AEGIS-MVP-LANGUAGE-02] Testes de LÓGICA PURA da linguagem clara de vulnerabilidades e exposições (frontend).
  *
- * Cobrem, sem DOM: tradução de severidade/categoria/tier/impacto/tipo de ação; escolha do título principal
- * (com produto × "ativos do ambiente") com o CVE como referência SECUNDÁRIA; rótulos de exploit semanticamente
- * corretos (NUNCA "exploração ativa"); "por que importa" só com fatos; "alcance não informado" para exposição;
- * grupo com vários ativos; e ausência de HTML cru na saída. Compiladas por `tsc` e executadas por `node`.
+ * Após a rodada de correções, a NARRATIVA de vulnerabilidade (título/exploit/porquê/1ª ação/severidade do grupo)
+ * é AUTORIDADE ÚNICA do backend (VulnerabilityNarrative) e chega PRONTA em `VulnerabilityGroup` — o frontend NÃO
+ * recompõe. Portanto, aqui cobrimos: (a) o CONTRATO do grupo carrega os campos claros do backend e o frontend os
+ * consome verbatim; (b) os helpers de APRESENTAÇÃO que sobrevivem (enum de severidade do resumo; vocabulário de
+ * EXPOSIÇÃO: categoria/tier/impacto/tipo de ação; "alcance não informado"). Compiladas por `tsc`, executadas por `node`.
  */
-import {
-  VulnerabilityGroup,
-  exploitLabel,
-  severityPt,
-  vulnerabilityTitle,
-  vulnerabilityWhyItMatters,
-} from '../src/app/models/vulnerability.models';
+import { VulnerabilityGroup, severityPt } from '../src/app/models/vulnerability.models';
 import {
   EXPOSURE_REACH_UNKNOWN,
   actionTypePt,
@@ -41,9 +36,16 @@ function eq<T>(actual: T, expected: T, msg: string): void {
   if (actual !== expected) throw new Error(`${msg}: esperado ${String(expected)}, obtido ${String(actual)}`);
 }
 
+// Fábrica de grupo com TODOS os campos de narrativa já preenchidos pelo backend (autoridade única). O tsc falha
+// se algum campo do contrato sumir/for renomeado — é a trava de que o frontend espelha o DTO do backend.
 function group(over: Partial<VulnerabilityGroup>): VulnerabilityGroup {
   return {
     cveId: 'CVE-2024-0001',
+    displayTitle: 'Vulnerabilidade alta em Apache Log4j',
+    severityLabel: 'Alta',
+    exploitLabel: 'Sem exploit informado pela fonte',
+    whyItMatters: 'Afeta 1 ativo ainda aberto.',
+    firstAction: 'Valide a atualização ou mitigação disponível e priorize os ativos mais críticos.',
     severity: 'High',
     cvssScore: 8.1,
     cvssVector: 'v',
@@ -52,8 +54,10 @@ function group(over: Partial<VulnerabilityGroup>): VulnerabilityGroup {
     exploitVerified: false,
     publishedOn: null,
     sourceTitle: null,
-    productLabel: null,
+    productLabel: 'Apache Log4j',
     affectedAssetCount: 1,
+    openAssetCount: 1,
+    resolvedAssetCount: 0,
     maxAssetCriticality: 1,
     assetPreview: [],
     assetPreviewTruncated: false,
@@ -65,7 +69,7 @@ function group(over: Partial<VulnerabilityGroup>): VulnerabilityGroup {
   };
 }
 
-// ---- 1) tradução de severidade ----------------------------------------------------------------
+// ---- 1) tradução de severidade (enum cru → rótulo dos chips do RESUMO) -------------------------
 test('severityPt traduz os níveis e cai em Desconhecida', () => {
   eq(severityPt('Critical'), 'Crítica', 'critical');
   eq(severityPt('high'), 'Alta', 'high');
@@ -75,60 +79,31 @@ test('severityPt traduz os níveis e cai em Desconhecida', () => {
   eq(severityPt('weird'), 'Desconhecida', 'desconhecido');
 });
 
-// ---- 2) título principal: produto × "ativos do ambiente"; CVE é secundário --------------------
-test('vulnerabilityTitle usa o produto quando confiável, senão "ativos do ambiente"', () => {
-  eq(
-    vulnerabilityTitle({ severity: 'Critical', productLabel: 'Apache Log4j' }),
-    'Vulnerabilidade crítica em Apache Log4j',
-    'com produto',
-  );
-  eq(
-    vulnerabilityTitle({ severity: 'High', productLabel: 'Windows 11' }),
-    'Vulnerabilidade alta em Windows 11',
-    'produto Windows',
-  );
-  eq(
-    vulnerabilityTitle({ severity: 'Critical', productLabel: null }),
-    'Vulnerabilidade crítica em ativos do ambiente',
-    'sem produto',
-  );
-  const t = vulnerabilityTitle({ severity: 'Low', productLabel: null });
-  assert(!/^CVE-/.test(t), 'o título principal nunca é apenas o CVE');
+// ---- 2) CONTRATO: o grupo carrega a narrativa do backend e o frontend a consome verbatim -------
+test('VulnerabilityGroup expõe a narrativa CLARA do backend (frontend não recompõe)', () => {
+  const g = group({
+    displayTitle: 'Vulnerabilidade crítica em ativos do ambiente',
+    severityLabel: 'Crítica',
+    exploitLabel: 'Exploit confirmado disponível',
+    whyItMatters: 'Afeta 3 ativos ainda abertos · CVSS 9.8.',
+    firstAction: 'Aplicar a correção KB5000001 nos ativos afetados, começando pelos mais críticos.',
+    openAssetCount: 3,
+    resolvedAssetCount: 2,
+    affectedAssetCount: 5,
+  });
+  // A tela usa estes campos DIRETO (sem funções locais de narrativa): título nunca é só o CVE, e os rótulos são
+  // exatamente o que o backend mandou.
+  assert(!/^CVE-/.test(g.displayTitle), 'o título principal nunca é apenas o CVE');
+  eq(g.severityLabel, 'Crítica', 'rótulo de severidade verbatim');
+  eq(g.exploitLabel, 'Exploit confirmado disponível', 'rótulo de exploit verbatim');
+  assert(g.exploitLabel.toLowerCase().includes('disponível'), 'exploit = DISPONIBILIDADE');
+  assert(!g.exploitLabel.toLowerCase().includes('exploração ativa'), 'jamais "exploração ativa"');
+  assert(!g.whyItMatters.includes('<'), 'porquê nunca traz HTML cru');
+  // Contagens por estado presentes e coerentes (abertas + resolvidas cabem no total de ativos afetados).
+  assert(g.openAssetCount + g.resolvedAssetCount <= g.affectedAssetCount, 'abertas+resolvidas ≤ afetados');
 });
 
-// ---- 3) rótulos de exploit — NUNCA "exploração ativa" -----------------------------------------
-test('exploitLabel usa os três rótulos e nunca afirma exploração ativa', () => {
-  eq(exploitLabel({ exploitVerified: true, publicExploit: true }), 'Exploit confirmado disponível', 'verificado');
-  eq(exploitLabel({ exploitVerified: false, publicExploit: true }), 'Exploit público disponível', 'público');
-  eq(exploitLabel({ exploitVerified: false, publicExploit: false }), 'Sem exploit informado pela fonte', 'nenhum');
-  for (const g of [
-    { exploitVerified: true, publicExploit: true },
-    { exploitVerified: false, publicExploit: true },
-    { exploitVerified: false, publicExploit: false },
-  ]) {
-    assert(!exploitLabel(g).toLowerCase().includes('exploração ativa'), 'jamais "exploração ativa"');
-    assert(!exploitLabel(g).toLowerCase().includes('atacado'), 'jamais afirma que o tenant foi atacado');
-  }
-});
-
-// ---- 4) "por que importa" só com fatos; grupo com vários ativos; sem HTML cru -----------------
-test('vulnerabilityWhyItMatters usa fatos (alcance, criticidade, CVSS, EPSS, exploit)', () => {
-  const w = vulnerabilityWhyItMatters(
-    group({ affectedAssetCount: 12, maxAssetCriticality: 4, cvssScore: 9.8, epss: 0.42, exploitVerified: true }),
-  );
-  assert(w.includes('12 ativos'), 'alcance');
-  assert(w.includes('alta criticidade'), 'criticidade máxima alta');
-  assert(w.includes('CVSS 9.8'), 'CVSS');
-  assert(w.includes('EPSS 42%'), 'EPSS');
-  assert(w.includes('exploit confirmado disponível'), 'exploit');
-  assert(!w.includes('<'), 'nunca HTML cru');
-
-  const one = vulnerabilityWhyItMatters(group({ affectedAssetCount: 1, maxAssetCriticality: 1, cvssScore: null, epss: null }));
-  assert(one.includes('1 ativo do ambiente'), 'singular');
-  assert(!one.includes('alta criticidade'), 'sem criticidade alta quando baixa');
-});
-
-// ---- 5) vocabulário visível de exposição ------------------------------------------------------
+// ---- 3) vocabulário visível de EXPOSIÇÃO (helpers de apresentação que sobrevivem) --------------
 test('categoryPt/tierPt/impactPt/actionTypePt traduzem e deixam o desconhecido passar', () => {
   eq(categoryPt('Device'), 'Dispositivos', 'device');
   eq(categoryPt('Apps'), 'Aplicativos', 'apps');
@@ -147,7 +122,7 @@ test('categoryPt/tierPt/impactPt/actionTypePt traduzem e deixam o desconhecido p
   eq(categoryPt(null), null, 'null preserva null');
 });
 
-// ---- 6) alcance por ativo não informado (exposição) -------------------------------------------
+// ---- 4) alcance por ativo não informado (exposição) -------------------------------------------
 test('exposição declara honestamente que o alcance por ativo não é informado', () => {
   eq(EXPOSURE_REACH_UNKNOWN, 'Alcance por ativo não informado pela fonte', 'texto honesto de alcance');
 });

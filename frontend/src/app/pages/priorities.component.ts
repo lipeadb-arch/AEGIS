@@ -4,14 +4,7 @@ import { AgentStateService } from '../services/agent-state.service';
 import { PriorityService } from '../services/priority.service';
 import { PriorityWorkspace } from '../models/priority.models';
 import { postureLabel } from '../models/workspace.models';
-import {
-  VULNERABILITY_FIRST_ACTION,
-  exploitLabel,
-  severityPt,
-  vulnerabilityTitle,
-  vulnerabilityWhyItMatters,
-} from '../models/vulnerability.models';
-import { EXPOSURE_REACH_UNKNOWN, categoryPt } from '../models/posture-exposure.models';
+import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-exposure.models';
 
 /**
  * [AEGIS-MVP-PRIORITIES-01] Central de Prioridades — visão operacional que REÚNE, sem combinar num único
@@ -164,7 +157,7 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt } from '../models/posture-exposure.m
                         }
                       </td>
                       <td class="c-gap"><span class="gap">{{ num(x.gap) }}</span></td>
-                      <td class="c-tier">{{ x.tier || '—' }}</td>
+                      <td class="c-tier">{{ tier(x.tier) || '—' }}</td>
                       <td class="c-state">
                         <span class="badge" [class.ok]="x.lifecycleState === 'Resolved'">
                           {{ x.lifecycleState === 'Resolved' ? 'Resolvida' : 'Aberta' }}
@@ -223,22 +216,22 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt } from '../models/posture-exposure.m
                   @for (g of vulns()!.top; track g.cveId) {
                     <tr class="row" [class.resolved]="g.effectiveLifecycle === 'Resolved'">
                       <td>
-                        <strong class="title">{{ vTitle(g) }}</strong>
-                        <span class="meta mono">{{ g.cveId }} · {{ sevPt(g.severity) }}</span>
-                        <span class="rem"><em>Ação:</em> {{ vFirstAction }}</span>
+                        <strong class="title">{{ g.displayTitle }}</strong>
+                        <span class="meta mono">{{ g.cveId }} · {{ g.severityLabel }}</span>
+                        <span class="rem"><em>Ação:</em> {{ g.firstAction }}</span>
                       </td>
-                      <td><span class="meta">{{ vWhy(g) }}</span></td>
+                      <td><span class="meta">{{ g.whyItMatters }}</span></td>
                       <td class="c-cvss">
-                        <strong>{{ g.affectedAssetCount }}</strong>
-                        <span class="meta">ativo(s)</span>
+                        <strong>{{ g.openAssetCount }}</strong>
+                        <span class="meta">ativo(s) aberto(s)</span>
                       </td>
                       <td class="c-exploit">
                         @if (g.exploitVerified) {
-                          <span class="badge bad">Confirmado</span>
+                          <span class="badge bad">{{ g.exploitLabel }}</span>
                         } @else if (g.publicExploit) {
-                          <span class="badge warn">Público</span>
+                          <span class="badge warn">{{ g.exploitLabel }}</span>
                         } @else {
-                          <span class="dim">—</span>
+                          <span class="dim">{{ g.exploitLabel }}</span>
                         }
                       </td>
                       <td class="c-src">
@@ -363,13 +356,11 @@ export class PrioritiesComponent {
   protected readonly sourceNames = computed(() =>
     (this.vulns()?.summary.sources ?? []).map((s) => s.provider).join(', '));
 
-  // [AEGIS-MVP-LANGUAGE-02] Linguagem clara determinística (funções puras dos models) — exposta ao template.
-  protected readonly vTitle = vulnerabilityTitle;
-  protected readonly vWhy = vulnerabilityWhyItMatters;
-  protected readonly vExploit = exploitLabel;
-  protected readonly sevPt = severityPt;
-  protected readonly vFirstAction = VULNERABILITY_FIRST_ACTION;
+  // [AEGIS-MVP-LANGUAGE-02 §5] A narrativa de vulnerabilidade (título/porquê/exploit/1ª ação/severidade) é
+  // AUTORIDADE do backend e chega pronta em cada VulnerabilityGroup — o frontend NÃO recompõe. Restam helpers de
+  // APRESENTAÇÃO puros que traduzem enums da fonte de EXPOSIÇÃO (categoria/tier) que não têm rótulo pronto.
   protected readonly cat = categoryPt;
+  protected readonly tier = tierPt;
   protected readonly reachUnknown = EXPOSURE_REACH_UNKNOWN;
 
   constructor() {

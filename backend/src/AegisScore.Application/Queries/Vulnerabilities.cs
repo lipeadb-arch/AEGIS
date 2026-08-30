@@ -128,6 +128,13 @@ public sealed record VulnerabilityAssetPreviewDto(string AssetName, int Critical
 /// </summary>
 public sealed record VulnerabilityGroupDto(
     string CveId,
+    // ---- Linguagem clara DETERMINÍSTICA (autoridade única VulnerabilityNarrative, no backend) ----
+    string DisplayTitle,
+    string SeverityLabel,
+    string ExploitLabel,
+    string WhyItMatters,
+    string FirstAction,
+    // ---- Fatos da fonte (referência técnica secundária) ----
     string? Severity,
     double? CvssScore,
     string? CvssVector,
@@ -137,7 +144,10 @@ public sealed record VulnerabilityGroupDto(
     DateTimeOffset? PublishedOn,
     string? SourceTitle,
     string? ProductLabel,
+    // ---- Alcance por estado: total = abertos + resolvidos; a interface diz quantos AINDA estão abertos ----
     int AffectedAssetCount,
+    int OpenAssetCount,
+    int ResolvedAssetCount,
     int MaxAssetCriticality,
     IReadOnlyList<VulnerabilityAssetPreviewDto> AssetPreview,
     bool AssetPreviewTruncated,

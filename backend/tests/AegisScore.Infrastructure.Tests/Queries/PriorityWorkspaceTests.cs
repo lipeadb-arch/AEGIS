@@ -113,10 +113,17 @@ public sealed class PriorityWorkspaceTests
         return new PostureExposureListDto(summary, items, items.Count, page, pageSize);
     }
 
+    // Grupo já com a NARRATIVA clara preenchida (autoridade do backend) — a fila de prioridades a repassa verbatim.
     private static VulnerabilityGroupDto VulnGroup(string cve) => new(
-        cve, "High", CvssScore: 8.1, CvssVector: "v", Epss: 0.3, PublicExploit: true, ExploitVerified: false,
-        PublishedOn: DateTimeOffset.UnixEpoch, SourceTitle: null, ProductLabel: "Windows 11",
-        AffectedAssetCount: 3, MaxAssetCriticality: 4,
+        CveId: cve,
+        DisplayTitle: "Vulnerabilidade alta em Apache Log4j",
+        SeverityLabel: "Alta",
+        ExploitLabel: "Exploit público disponível",
+        WhyItMatters: "Afeta 3 ativos ainda abertos.",
+        FirstAction: "Valide a atualização ou mitigação disponível e priorize os ativos mais críticos.",
+        Severity: "High", CvssScore: 8.1, CvssVector: "v", Epss: 0.3, PublicExploit: true, ExploitVerified: false,
+        PublishedOn: DateTimeOffset.UnixEpoch, SourceTitle: null, ProductLabel: "Apache Log4j",
+        AffectedAssetCount: 3, OpenAssetCount: 3, ResolvedAssetCount: 0, MaxAssetCriticality: 4,
         AssetPreview: Array.Empty<VulnerabilityAssetPreviewDto>(), AssetPreviewTruncated: false,
         Providers: new[] { "Microsoft" }, FirstSeenAt: DateTimeOffset.UnixEpoch, LastSeenAt: DateTimeOffset.UnixEpoch,
         EffectiveLifecycle: "Open");
