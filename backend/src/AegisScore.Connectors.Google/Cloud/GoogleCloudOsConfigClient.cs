@@ -6,7 +6,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Google.Apis.Auth.OAuth2;
+using AegisScore.Connectors.Google.Auth;
 
 namespace AegisScore.Connectors.Google.Cloud;
 
@@ -179,43 +179,10 @@ public sealed class GoogleCloudOsConfigAuthenticator : IGoogleCloudOsConfigAuthe
 
     public async Task<string> AcquireAccessTokenAsync(string serviceAccountJson, CancellationToken ct)
     {
-        // Boundary FECHADO: valida o JSON pela autoridade única (rejeita tudo que não seja service account oficial)
-        // ANTES de qualquer construção de credencial ou rede. Falha de validação = AuthFailure sanitizada.
-        var cred = GoogleCloudServiceAccountValidator.Validate(serviceAccountJson);
-
-        try
-        {
-            // Constrói o ServiceAccountCredential DIRETAMENTE dos campos validados — NÃO usa GoogleCredential.FromJson
-            // (que interpretaria endpoints/credential source do documento do tenant). O endpoint de token é a CONSTANTE
-            // oficial (nunca o valor do tenant). SEM User/Subject/CreateWithUser → SEM domain-wide delegation: a service
-            // account atua como ela mesma, limitada aos papéis IAM que possui.
-            var initializer = new ServiceAccountCredential.Initializer(
-                    cred.ClientEmail, GoogleCloudServiceAccountValidator.OfficialTokenUri)
-                {
-                    Scopes = new[] { CloudPlatformScope },
-                }
-                .FromPrivateKey(cred.PrivateKey);
-            var credential = new ServiceAccountCredential(initializer);
-
-            var token = await ((ITokenAccess)credential).GetAccessTokenForRequestAsync(cancellationToken: ct);
-            if (string.IsNullOrEmpty(token))
-                throw new GoogleCloudApiException(GoogleCloudApiErrorKind.AuthFailure, "access token vazio da service account do Google Cloud");
-            return token;
-        }
-        catch (GoogleCloudApiException)
-        {
-            throw;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception)
-        {
-            // SANITIZADO: nunca inclui a chave privada, o e-mail, a URL, o JSON da service account nem o detalhe do erro.
-            throw new GoogleCloudApiException(GoogleCloudApiErrorKind.AuthFailure,
-                "falha ao obter access token da service account do Google Cloud");
-        }
+        // [AEGIS-MVP-GOOGLE-SECOPS-01] Delega à autoridade COMPARTILHADA de token de service account do Google — a
+        // MESMA usada pelo conector do Google SecOps —, sem duplicar a validação nem a construção do credential. O
+        // escopo é o cloud-platform desta API (a leitura efetiva vem dos papéis IAM); sem domain-wide delegation.
+        return await GoogleServiceAccountTokenSource.AcquireAsync(serviceAccountJson, new[] { CloudPlatformScope }, ct);
     }
 }
 

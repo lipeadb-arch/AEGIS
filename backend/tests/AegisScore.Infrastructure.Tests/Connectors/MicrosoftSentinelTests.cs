@@ -338,23 +338,32 @@ public sealed class MicrosoftSentinelConnectorTests
         router.IncidentQuerySent.Should().Contain("arg_max(TimeGenerated").And.Contain("by IncidentNumber");
         router.IncidentQuerySent.Should().Contain("SecurityIncident");
 
-        // Agregação determinística a partir da fotografia canned.
-        snap.WindowDays.Should().Be(30);
-        snap.IncidentsObserved.Should().Be(10);
-        snap.OpenIncidents.Should().Be(4);
-        snap.OpenHighSeverity.Should().Be(2);
-        snap.OpenMediumSeverity.Should().Be(1);
-        snap.OpenLowSeverity.Should().Be(1);
-        snap.OpenInformationalSeverity.Should().Be(0);
-        snap.NewIncidents.Should().Be(6);
-        snap.ClosedIncidents.Should().Be(3);
-        snap.MeanTimeToCloseHours.Should().Be(2.0, "120 minutos ÷ 60");
-        snap.AlertsState.Should().Be(SiemAlertCollectionState.Available);
-        snap.AlertsObserved.Should().Be(25);
-        snap.AlertsHighSeverity.Should().Be(5);
-        snap.AlertsMediumSeverity.Should().Be(7);
-        snap.LastEvidenceAt.Should().Be(DateTimeOffset.Parse("2026-08-21T09:00:00Z"), "o mais recente entre incidente e alerta");
-        snap.IsComplete.Should().BeTrue();
+        // Fonte PROVIDER-NEUTRAL rotulada; incidentes = dimensão de casos numa JANELA deslizante de 30 dias.
+        snap.Source.Should().Be("Microsoft Sentinel");
+        snap.Cases.State.Should().Be(SiemCollectionState.Available);
+        snap.Cases.Period.Should().Be(SiemPeriodKind.RollingWindow);
+        snap.Cases.WindowDays.Should().Be(30);
+        snap.Cases.Observed.Should().Be(10);
+        snap.Cases.Open.Should().Be(4);
+        snap.Cases.OpenHighSeverity.Should().Be(2);
+        snap.Cases.OpenMediumSeverity.Should().Be(1);
+        snap.Cases.OpenLowSeverity.Should().Be(1);
+        snap.Cases.OpenInformationalSeverity.Should().Be(0);
+        snap.Cases.New.Should().Be(6);
+        snap.Cases.Closed.Should().Be(3);
+        snap.Cases.MeanTimeToCloseHours.Should().Be(2.0, "120 minutos ÷ 60");
+        snap.Cases.LastEvidenceAt.Should().Be(DateTimeOffset.Parse("2026-08-20T10:00:00Z"));
+
+        // Alertas = dimensão INDEPENDENTE, também janela de 30 dias, com estado explícito.
+        snap.Alerts.State.Should().Be(SiemCollectionState.Available);
+        snap.Alerts.Period.Should().Be(SiemPeriodKind.RollingWindow);
+        snap.Alerts.WindowDays.Should().Be(30);
+        snap.Alerts.Observed.Should().Be(25);
+        snap.Alerts.HighSeverity.Should().Be(5);
+        snap.Alerts.MediumSeverity.Should().Be(7);
+        snap.Alerts.LastEvidenceAt.Should().Be(DateTimeOffset.Parse("2026-08-21T09:00:00Z"));
+
+        snap.IsComplete.Should().BeTrue("ambas as dimensões completas");
     }
 
     [Fact]
@@ -366,29 +375,31 @@ public sealed class MicrosoftSentinelConnectorTests
         var snap = await NewConnector(new SentinelRouter(incidentBody: IncidentBody, alertBody: emptyAlerts))
             .CollectPostureAsync(Config(), CancellationToken.None);
 
-        snap.AlertsState.Should().Be(SiemAlertCollectionState.Available);
-        snap.AlertsObserved.Should().Be(0);
+        snap.Alerts.State.Should().Be(SiemCollectionState.Available);
+        snap.Alerts.Observed.Should().Be(0);
         snap.IsComplete.Should().BeTrue();
     }
 
     [Theory]
     // Tabela ausente: código específico direto, OU envolto em BadArgumentError.details[] (forma REAL do Log Analytics).
-    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"SemanticError"}}""", SiemAlertCollectionState.TableUnavailable)]
-    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"BadArgumentError","details":[{"code":"SemanticError","message":"failed to resolve table 'SecurityAlert'"}]}}""", SiemAlertCollectionState.TableUnavailable)]
-    // ⚠️ 400 GENÉRICO (sem código reconhecido de tabela ausente) → Unavailable, NÃO TableUnavailable.
-    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"BadArgumentError"}}""", SiemAlertCollectionState.Unavailable)]
-    [InlineData(HttpStatusCode.Forbidden, """{"error":{"code":"Forbidden"}}""", SiemAlertCollectionState.PermissionDenied)]
-    [InlineData((HttpStatusCode)429, """{"error":{"code":"Throttled"}}""", SiemAlertCollectionState.Throttled)]
-    [InlineData(HttpStatusCode.InternalServerError, """{"error":{"code":"Boom"}}""", SiemAlertCollectionState.Unavailable)]
-    public async Task CollectPosture_AlertsFailure_TypedState_ZeroedAndIncomplete_IncidentsPreserved(
-        HttpStatusCode alertStatus, string alertBody, SiemAlertCollectionState expected)
+    // A tabela ausente é a dimensão NÃO oferecida pela fonte → estado neutro Unsupported.
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"SemanticError"}}""", SiemCollectionState.Unsupported)]
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"BadArgumentError","details":[{"code":"SemanticError","message":"failed to resolve table 'SecurityAlert'"}]}}""", SiemCollectionState.Unsupported)]
+    // ⚠️ 400 GENÉRICO (sem código reconhecido de tabela ausente) → Unavailable, NÃO Unsupported.
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"BadArgumentError"}}""", SiemCollectionState.Unavailable)]
+    [InlineData(HttpStatusCode.Forbidden, """{"error":{"code":"Forbidden"}}""", SiemCollectionState.PermissionDenied)]
+    [InlineData((HttpStatusCode)429, """{"error":{"code":"Throttled"}}""", SiemCollectionState.Throttled)]
+    [InlineData(HttpStatusCode.InternalServerError, """{"error":{"code":"Boom"}}""", SiemCollectionState.Unavailable)]
+    public async Task CollectPosture_AlertsFailure_TypedState_NulledAndIncomplete_IncidentsPreserved(
+        HttpStatusCode alertStatus, string alertBody, SiemCollectionState expected)
     {
         var snap = await NewConnector(new SentinelRouter(incidentBody: IncidentBody, alertStatus: alertStatus, alertBody: alertBody))
             .CollectPostureAsync(Config(), CancellationToken.None);
 
-        snap.IncidentsObserved.Should().Be(10, "os agregados de incidentes são preservados");
-        snap.AlertsState.Should().Be(expected);
-        snap.AlertsObserved.Should().Be(0, "estado ≠ Available não finge zero confiável — a UI mostra 'indisponível'");
+        snap.Cases.Observed.Should().Be(10, "os agregados de incidentes são preservados");
+        snap.Cases.IsComplete.Should().BeTrue("a dimensão de casos não é contaminada pela falha de alertas");
+        snap.Alerts.State.Should().Be(expected);
+        snap.Alerts.Observed.Should().BeNull("estado ≠ Available não finge zero — a contagem fica ANULÁVEL");
         snap.IsComplete.Should().BeFalse("alertas não comprovados → coleta incompleta (conector Degraded)");
     }
 
@@ -399,8 +410,8 @@ public sealed class MicrosoftSentinelConnectorTests
         const string invalid = """{"tables":[{"name":"PrimaryResult","columns":[{"name":"AlertsObserved","type":"long"}],"rows":[]}]}""";
         var snap = await NewConnector(new SentinelRouter(incidentBody: IncidentBody, alertBody: invalid))
             .CollectPostureAsync(Config(), CancellationToken.None);
-        snap.AlertsState.Should().Be(SiemAlertCollectionState.Unavailable);
-        snap.AlertsObserved.Should().Be(0);
+        snap.Alerts.State.Should().Be(SiemCollectionState.Unavailable);
+        snap.Alerts.Observed.Should().BeNull();
         snap.IsComplete.Should().BeFalse();
     }
 
@@ -409,7 +420,7 @@ public sealed class MicrosoftSentinelConnectorTests
     {
         var router = new SentinelRouter(incidentBody: IncidentBody, alertThrow: new TaskCanceledException("timeout"));
         var snap = await NewConnector(router).CollectPostureAsync(Config(), CancellationToken.None);
-        snap.AlertsState.Should().Be(SiemAlertCollectionState.Timeout);
+        snap.Alerts.State.Should().Be(SiemCollectionState.Timeout);
         snap.IsComplete.Should().BeFalse();
     }
 
@@ -419,8 +430,8 @@ public sealed class MicrosoftSentinelConnectorTests
         const string partialAlerts = """{"tables":[{"name":"PrimaryResult","columns":[{"name":"AlertsObserved","type":"long"}],"rows":[[3]]}],"error":{"code":"PartialError"}}""";
         var snap = await NewConnector(new SentinelRouter(incidentBody: IncidentBody, alertBody: partialAlerts))
             .CollectPostureAsync(Config(), CancellationToken.None);
-        snap.AlertsState.Should().Be(SiemAlertCollectionState.Partial);
-        snap.AlertsObserved.Should().Be(0, "resultado parcial não é contagem confiável");
+        snap.Alerts.State.Should().Be(SiemCollectionState.Partial);
+        snap.Alerts.Observed.Should().BeNull("resultado parcial não é contagem confiável");
         snap.IsComplete.Should().BeFalse();
     }
 

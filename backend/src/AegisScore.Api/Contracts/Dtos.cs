@@ -221,8 +221,9 @@ public record SyncResultDto(
     int SignalsCollected, IReadOnlyList<SignalDto> Signals,
     // [AEGIS-MVP-VULN-01] Aditivo: contagens honestas de uma sincronização de vulnerabilidades (null p/ outros conectores).
     VulnerabilitySyncSummaryDto? Vulnerabilities = null,
-    // [AEGIS-MVP-MICROSOFT-SENTINEL] Aditivo: postura operacional do Sentinel (null para os demais conectores).
-    SentinelSyncSummaryDto? Sentinel = null);
+    // [AEGIS-MVP-SIEM] Aditivo e PROVIDER-NEUTRAL: postura operacional do SIEM (null para os demais conectores). O
+    // mesmo campo serve Microsoft Sentinel, Google SecOps e futuros SIEMs — o rótulo da fonte vive dentro do resumo.
+    SiemSyncSummaryDto? Siem = null);
 
 /// <summary>[AEGIS-MVP-VULN-01] Contagens de uma sincronização de vulnerabilidades (ativos/CVEs/exposições/observações).</summary>
 public record VulnerabilitySyncSummaryDto(
@@ -232,19 +233,34 @@ public record VulnerabilitySyncSummaryDto(
     int InvalidMachines, int InvalidCves, int InvalidRelations);
 
 /// <summary>
-/// [AEGIS-MVP-MICROSOFT-SENTINEL] Fotografia OPERACIONAL de uma sincronização do Sentinel (só agregados e instantes —
-/// nunca título, entidade, IP, host, usuário, alerta bruto ou payload). É FATO CONSULTIVO: não vira EvidenceSignal
-/// nem altera o AEGIS Score. <see cref="IsComplete"/> falso = a fonte sinalizou resultado parcial/truncado.
+/// [AEGIS-MVP-SIEM] Fotografia OPERACIONAL, PROVIDER-NEUTRAL, de uma sincronização de SIEM — só agregados e instantes
+/// (nunca título, entidade, IP, host, usuário, alerta bruto ou payload). É FATO CONSULTIVO: não vira EvidenceSignal
+/// nem altera o AEGIS Score. Modelada em DUAS DIMENSÕES INDEPENDENTES (<see cref="Cases"/> e <see cref="Alerts"/>);
+/// <see cref="Source"/> identifica a origem ("Microsoft Sentinel", "Google SecOps"). <see cref="IsComplete"/> falso =
+/// alguma dimensão parcial/degradada. Contagens ANULÁVEIS: null = não coletada/não aplicável, NUNCA zero sintético.
 /// </summary>
-public record SentinelSyncSummaryDto(
-    int WindowDays, int IncidentsObserved, int OpenIncidents, int NewIncidents, int ClosedIncidents,
-    int OpenHighSeverity, int OpenMediumSeverity, int OpenLowSeverity, int OpenInformationalSeverity,
-    double? MeanTimeToCloseHours,
-    // [AEGIS-MVP-MICROSOFT-SENTINEL] Estado EXPLÍCITO da coleta de alertas (Available/TableUnavailable/
-    // PermissionDenied/Throttled/Timeout/Unavailable/Partial). A UI mostra "alertas indisponíveis" quando ≠ Available
-    // — nunca "0 alertas". As contagens de alerta só são verdade quando AlertsState == "Available".
-    string AlertsState, int AlertsObserved, int AlertsHighSeverity, int AlertsMediumSeverity,
-    DateTimeOffset? LastEvidenceAt, bool IsComplete);
+public record SiemSyncSummaryDto(
+    string Source, bool IsComplete, SiemCasePostureDto Cases, SiemAlertPostureDto Alerts);
+
+/// <summary>
+/// [AEGIS-MVP-SIEM] Dimensão de CASOS/INCIDENTES. <see cref="State"/> é PROVIDER-NEUTRAL (Available/Partial/Unsupported/
+/// PermissionDenied/Throttled/Timeout/Unavailable) — a UI mostra indisponibilidade quando ≠ Available, nunca "0".
+/// <see cref="Period"/> distingue RollingWindow (com <see cref="WindowDays"/>) de CurrentInventory (sem janela).
+/// </summary>
+public record SiemCasePostureDto(
+    string State, string Period, int? WindowDays, bool IsComplete,
+    int? Observed, int? Open, int? New, int? Closed,
+    int? OpenHighSeverity, int? OpenMediumSeverity, int? OpenLowSeverity, int? OpenInformationalSeverity,
+    IReadOnlyList<SiemPriorityCountDto>? OpenByPriority,
+    double? MeanTimeToCloseHours, DateTimeOffset? LastEvidenceAt);
+
+/// <summary>[AEGIS-MVP-SIEM] Dimensão de ALERTAS. Mesma semântica de estado/período; contagens ANULÁVEIS.</summary>
+public record SiemAlertPostureDto(
+    string State, string Period, int? WindowDays, bool IsComplete,
+    int? Observed, int? HighSeverity, int? MediumSeverity, DateTimeOffset? LastEvidenceAt);
+
+/// <summary>[AEGIS-MVP-SIEM] Uma contagem de casos por prioridade declarada pela fonte (ex.: Google SecOps).</summary>
+public record SiemPriorityCountDto(string Priority, int Count);
 
 // ---- Assessments ----
 public record CreateAssessmentRequest(string Name, Guid? FrameworkVersionId);

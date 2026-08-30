@@ -174,16 +174,26 @@ public class ConnectorsController : ControllerBase
                 v.InvalidMachines, v.InvalidCves, v.InvalidRelations)
             : null;
 
-        // [AEGIS-MVP-MICROSOFT-SENTINEL] Fotografia operacional do Sentinel (fato consultivo; nunca sinal/score).
-        var sentinel = result.Sentinel is { } s
-            ? new SentinelSyncSummaryDto(
-                s.WindowDays, s.IncidentsObserved, s.OpenIncidents, s.NewIncidents, s.ClosedIncidents,
-                s.OpenHighSeverity, s.OpenMediumSeverity, s.OpenLowSeverity, s.OpenInformationalSeverity,
-                s.MeanTimeToCloseHours, s.AlertsState.ToString(), s.AlertsObserved, s.AlertsHighSeverity,
-                s.AlertsMediumSeverity, s.LastEvidenceAt, s.IsComplete)
+        // [AEGIS-MVP-SIEM] Fotografia operacional PROVIDER-NEUTRAL do SIEM (fato consultivo; nunca sinal/score). O
+        // enum de estado/período vai como STRING (mesmo idioma dos demais DTOs de leitura); contagens seguem anuláveis.
+        var siem = result.Siem is { } s
+            ? new SiemSyncSummaryDto(
+                s.Source, s.IsComplete,
+                new SiemCasePostureDto(
+                    s.Cases.State.ToString(), s.Cases.Period.ToString(), s.Cases.WindowDays, s.Cases.IsComplete,
+                    s.Cases.Observed, s.Cases.Open, s.Cases.New, s.Cases.Closed,
+                    s.Cases.OpenHighSeverity, s.Cases.OpenMediumSeverity, s.Cases.OpenLowSeverity,
+                    s.Cases.OpenInformationalSeverity,
+                    s.Cases.OpenByPriority is { } bp
+                        ? bp.Select(p => new SiemPriorityCountDto(p.Priority, p.Count)).ToList()
+                        : null,
+                    s.Cases.MeanTimeToCloseHours, s.Cases.LastEvidenceAt),
+                new SiemAlertPostureDto(
+                    s.Alerts.State.ToString(), s.Alerts.Period.ToString(), s.Alerts.WindowDays, s.Alerts.IsComplete,
+                    s.Alerts.Observed, s.Alerts.HighSeverity, s.Alerts.MediumSeverity, s.Alerts.LastEvidenceAt))
             : null;
 
-        return Ok(new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln, sentinel));
+        return Ok(new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln, siem));
     }
 
     private static bool IsGenericPush(ConnectorConfig c) =>

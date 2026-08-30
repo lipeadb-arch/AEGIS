@@ -73,12 +73,13 @@ public sealed class SentinelPullTests : IDisposable
         result!.Persisted.Should().Be(0, "o Sentinel não emite sinais de score");
         result.Skipped.Should().Be(0);
         result.Status.Should().Be(ConnectorStatus.Healthy);
-        result.Sentinel.Should().NotBeNull();
-        result.Sentinel!.IncidentsObserved.Should().Be(10);
-        result.Sentinel.OpenHighSeverity.Should().Be(2);
-        result.Sentinel.AlertsState.Should().Be(SiemAlertCollectionState.Available);
-        result.Sentinel.AlertsObserved.Should().Be(25);
-        result.Sentinel.IsComplete.Should().BeTrue();
+        result.Siem.Should().NotBeNull();
+        result.Siem!.Source.Should().Be("Microsoft Sentinel");
+        result.Siem.Cases.Observed.Should().Be(10);
+        result.Siem.Cases.OpenHighSeverity.Should().Be(2);
+        result.Siem.Alerts.State.Should().Be(SiemCollectionState.Available);
+        result.Siem.Alerts.Observed.Should().Be(25);
+        result.Siem.IsComplete.Should().BeTrue();
 
         await using var assert = NewContext(Tenant);
         (await assert.Signals.CountAsync()).Should().Be(0, "nenhuma evidência/sinal foi persistido");
@@ -113,12 +114,12 @@ public sealed class SentinelPullTests : IDisposable
 
         result.Should().NotBeNull();
         result!.Status.Should().Be(ConnectorStatus.Degraded, "alertas não comprovados degradam a saúde (não Failed)");
-        result.Sentinel.Should().NotBeNull();
-        result.Sentinel!.IncidentsObserved.Should().Be(10, "os agregados de incidentes são preservados");
-        result.Sentinel.OpenHighSeverity.Should().Be(2);
-        result.Sentinel.AlertsState.Should().Be(SiemAlertCollectionState.TableUnavailable);
-        result.Sentinel.AlertsObserved.Should().Be(0, "estado ≠ Available não é zero confiável");
-        result.Sentinel.IsComplete.Should().BeFalse();
+        result.Siem.Should().NotBeNull();
+        result.Siem!.Cases.Observed.Should().Be(10, "os agregados de incidentes são preservados");
+        result.Siem.Cases.OpenHighSeverity.Should().Be(2);
+        result.Siem.Alerts.State.Should().Be(SiemCollectionState.Unsupported);
+        result.Siem.Alerts.Observed.Should().BeNull("estado ≠ Available não é zero confiável — a contagem fica anulável");
+        result.Siem.IsComplete.Should().BeFalse();
 
         await using var assert = NewContext(Tenant);
         (await assert.Signals.CountAsync()).Should().Be(0, "nenhum EvidenceSignal criado");

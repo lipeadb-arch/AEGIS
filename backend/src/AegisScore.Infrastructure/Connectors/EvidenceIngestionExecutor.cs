@@ -208,10 +208,10 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // [AEGIS-MVP-VULN-01] Coleta de vulnerabilidades associadas a ativos (máquinas × CVEs). Aditiva: um conector
         // pode implementar IEvidenceConnector sem emitir sinais e ainda produzir esta coleção (o Defender VM faz isso).
         VulnerabilityCollection? vulnerabilities = null;
-        // [AEGIS-MVP-MICROSOFT-SENTINEL] Postura operacional de SIEM (fato consultivo). Aditiva: o Sentinel não emite
-        // sinais de score e produz apenas esta fotografia. Coletada na MESMA try/catch — NÃO vira EvidenceSignal,
-        // NÃO é reconciliada no banco e NÃO toca o AEGIS Score.
-        SiemPostureSnapshot? sentinel = null;
+        // [AEGIS-MVP-SIEM] Postura operacional de SIEM PROVIDER-NEUTRAL (fato consultivo). Aditiva: o adaptador de
+        // SIEM (Microsoft Sentinel, Google SecOps, …) não emite sinais de score e produz apenas esta fotografia.
+        // Coletada na MESMA try/catch — NÃO vira EvidenceSignal, NÃO é reconciliada no banco e NÃO toca o AEGIS Score.
+        SiemPostureSnapshot? siem = null;
         try
         {
             if (adapter is ICombinedEvidenceCollector combined)
@@ -235,9 +235,9 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             if (adapter is IVulnerabilityFindingConnector vulnConnector)
                 vulnerabilities = await vulnConnector.CollectVulnerabilitiesAsync(config, ct);
 
-            // Postura operacional de SIEM (Sentinel): também na MESMA try/catch. Uma falha da fonte carimba Failed.
+            // Postura operacional de SIEM (provider-neutral): também na MESMA try/catch. Uma falha da fonte carimba Failed.
             if (adapter is ISiemPostureCollector siemCollector)
-                sentinel = await siemCollector.CollectPostureAsync(config, ct);
+                siem = await siemCollector.CollectPostureAsync(config, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -288,10 +288,11 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         var degradedByVuln = vulnerabilities is not null
             && (!vulnerabilities.IsComplete || vulnerabilities.InvalidMachines > 0
                 || vulnerabilities.InvalidCves > 0 || vulnerabilities.InvalidRelations > 0);
-        // [AEGIS-MVP-MICROSOFT-SENTINEL] Uma fotografia PARCIAL (fonte sinalizou truncamento) degrada a saúde —
-        // honestidade operacional. Uma fotografia completa (mesmo sem incidentes) segue Healthy.
-        var degradedBySentinel = sentinel is not null && !sentinel.IsComplete;
-        var status = (skipped > 0 || degradedByVuln || degradedBySentinel)
+        // [AEGIS-MVP-SIEM] Uma fotografia de SIEM PARCIAL/degradada (fonte sinalizou truncamento, ou uma dimensão
+        // não comprovada) degrada a saúde — honestidade operacional. Uma fotografia completa (mesmo sem casos/alertas)
+        // segue Healthy. A completude é derivada de AMBAS as dimensões (casos e alertas).
+        var degradedBySiem = siem is not null && !siem.IsComplete;
+        var status = (skipped > 0 || degradedByVuln || degradedBySiem)
             ? ConnectorStatus.Degraded : ConnectorStatus.Healthy;
         // Um único SaveChanges: os sinais adicionados + o carimbo de sync são o MESMO fato.
         await StampConnectorAsync(db, config.Id, now, status, ct);
@@ -352,7 +353,7 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             throw;
         }
 
-        return new PullIngestionResult(persisted, 0, skipped, status, vulnResult, sentinel);
+        return new PullIngestionResult(persisted, 0, skipped, status, vulnResult, siem);
     }
 
     // ---- Reconciliação de vulnerabilidades associadas a ativos (AEGIS-MVP-VULN-01) ----------------

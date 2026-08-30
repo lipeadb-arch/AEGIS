@@ -5,7 +5,7 @@ import { environment } from '../../environments/environment';
 import { ConnectorService } from '../services/connector.service';
 import {
   buildMicrosoftHubRequest,
-  buildSentinelSyncMessage,
+  buildSiemSyncMessage,
   ConnectorConfig,
   GENERIC_PROVIDERS,
   isGenericPush,
@@ -310,6 +310,14 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                     <button type="button" class="reveal" (click)="toggleReveal(f.key)">
                       {{ revealed()[f.key] ? 'Ocultar' : 'Mostrar' }}
                     </button>
+                  } @else if (f.options?.length) {
+                    <!-- Seleção CONTROLADA (ex.: localidade do Google SecOps): sem texto livre — nada de URL/host arbitrário. -->
+                    <select [formControlName]="f.key">
+                      <option value="">Selecione…</option>
+                      @for (o of f.options; track o.value) {
+                        <option [value]="o.value">{{ o.label }}</option>
+                      }
+                    </select>
                   } @else {
                     <input type="text" [formControlName]="f.key" [placeholder]="f.placeholder ?? ''" />
                   }
@@ -974,10 +982,11 @@ export class IntegrationsComponent {
             `Coleta concluída${parcial}: ${v.machinesObserved} máquina(s), ${v.cvesUpserted} CVE(s), ` +
               `${v.exposuresCreated} nova(s) exposição(ões), ${v.observationsOpened} observação(ões) aberta(s).`,
           );
-        } else if (r.sentinel) {
-          // Sentinel não gera sinais de score: reporta a postura operacional observada (fato consultivo). A
-          // mensagem (função pura) só mostra a contagem de alertas quando alertsState == Available.
-          this.setMsg(c.id, buildSentinelSyncMessage(r.sentinel));
+        } else if (r.siem) {
+          // SIEM (Sentinel, Google SecOps, …) não gera sinais de score: reporta a postura operacional observada
+          // (fato consultivo, provider-neutral). A mensagem (função pura) só mostra a contagem de uma dimensão
+          // quando o estado é Available/Partial — nunca "0" para um estado indisponível.
+          this.setMsg(c.id, buildSiemSyncMessage(r.siem));
         } else {
           this.setMsg(c.id, `Coleta concluída: ${r.signalsCollected} sinal(is).`);
         }
