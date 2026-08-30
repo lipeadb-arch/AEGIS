@@ -9,6 +9,7 @@
 import {
   buildMicrosoftHubRequest,
   buildSiemSyncMessage,
+  CHRONICLE_LOCATIONS,
   ConnectorConfig,
   GENERIC_PROVIDERS,
   isGuid,
@@ -22,6 +23,17 @@ import {
   siemDimensionText,
   SyncResult,
 } from '../src/app/models/connector.models';
+
+/** Conjunto OFICIAL de localidades do Google SecOps — o frontend deve usar EXATAMENTE este conjunto (igual ao backend). */
+const OFFICIAL_SECOPS_LOCATIONS = [
+  'us', 'eu', 'europe',
+  'africa-south1',
+  'asia-east1', 'asia-northeast1', 'asia-northeast3', 'asia-south1', 'asia-southeast1', 'asia-southeast2',
+  'australia-southeast1',
+  'europe-central2', 'europe-west2', 'europe-west3', 'europe-west6', 'europe-west9', 'europe-west12',
+  'me-central1', 'me-central2', 'me-west1',
+  'northamerica-northeast2', 'southamerica-east1',
+];
 
 // ---- micro-harness (sem dependências externas) -------------------------------------------------
 let failures = 0;
@@ -216,6 +228,26 @@ test('o catálogo do Google SecOps traz os quatro campos canônicos e não exibe
   assert(sa.secret === true, 'o JSON da service account é mascarado (segredo, escrita-apenas — nunca retorna)');
   const loc = g!.fields.find((f) => f.key === 'location')!;
   assert((loc.options?.length ?? 0) > 0, 'a localidade é seleção controlada (sem URL/host arbitrário)');
+
+  // Honestidade de produto: sem "REAL" e sem afirmar "readonly"; scope chronicle + GET-only/IAM + pendência de validação.
+  assert(!/\bREAL\b/.test(g!.infoNote ?? ''), 'não afirma coleta "REAL" enquanto não há validação contra instância viva');
+  assert((g!.infoNote ?? '').includes('somente leitura'), 'descreve coleta operacional somente leitura');
+  assert((g!.infoNote ?? '').includes('scope é chronicle'), 'declara o OAuth scope chronicle');
+  assert((g!.infoNote ?? '').toLowerCase().includes('pendente de validação'), 'admite a validação pendente contra instância real');
+  const perms = (g!.appPermissions ?? []).join(' ');
+  assert(perms.includes('auth/chronicle') && !perms.includes('chronicle.readonly'), 'lista o scope chronicle (não readonly)');
+  assert(perms.includes('chronicle.instances.get') && perms.includes('chronicle.cases.get')
+    && perms.includes('chronicle.legacies.legacySearchEnterpriseWideAlerts'), 'lista as permissões IAM mínimas');
+});
+
+// ---- 12) allowlist de localidades: frontend == conjunto oficial (igual ao backend) --------------
+test('CHRONICLE_LOCATIONS usa exatamente o conjunto oficial de localidades', () => {
+  const values = CHRONICLE_LOCATIONS.map((l) => l.value);
+  eq(values.length, OFFICIAL_SECOPS_LOCATIONS.length, 'mesma quantidade de localidades oficiais');
+  const front = [...values].sort();
+  const official = [...OFFICIAL_SECOPS_LOCATIONS].sort();
+  eq(JSON.stringify(front), JSON.stringify(official), 'valores idênticos ao conjunto oficial (sem sobra nem falta)');
+  eq(new Set(values).size, values.length, 'sem localidade duplicada');
 });
 
 // ---- 11) SyncResult expõe a postura de SIEM em `siem` (não `sentinel`) --------------------------

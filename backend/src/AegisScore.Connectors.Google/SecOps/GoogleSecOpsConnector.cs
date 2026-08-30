@@ -30,15 +30,24 @@ public interface IGoogleSecOpsAuthenticator
 /// <inheritdoc cref="IGoogleSecOpsAuthenticator"/>
 public sealed class GoogleSecOpsAuthenticator : IGoogleSecOpsAuthenticator
 {
-    /// <summary>Escopo OAuth SOMENTE LEITURA oficial do Chronicle/Google SecOps — preferido ao cloud-platform (a intenção é leitura).</summary>
-    public const string ChronicleReadonlyScope = "https://www.googleapis.com/auth/chronicle.readonly";
+    /// <summary>
+    /// Escopo OAuth OFICIAL do Chronicle/Google SecOps — o ÚNICO aceito por TODAS as três operações usadas
+    /// (instances.get, cases.list e legacySearchEnterpriseWideAlerts). ⚠️ Deliberadamente NÃO é o
+    /// <c>chronicle.readonly</c>: a documentação de <c>cases.list</c> NÃO o lista entre os escopos aceitos (só
+    /// <c>chronicle</c> e <c>cloud-platform</c>). Escolhido <c>chronicle</c> em vez de <c>cloud-platform</c> (menor
+    /// superfície). Este escopo NÃO é "readonly": o AEGIS permanece operacionalmente somente leitura porque só executa
+    /// métodos HTTP GET; o MENOR PRIVILÉGIO efetivo depende das permissões IAM concedidas à service account
+    /// (ex.: <c>chronicle.instances.get</c>, <c>chronicle.cases.get</c>,
+    /// <c>chronicle.legacies.legacySearchEnterpriseWideAlerts</c>).
+    /// </summary>
+    public const string ChronicleScope = "https://www.googleapis.com/auth/chronicle";
 
     public async Task<string> AcquireAccessTokenAsync(string serviceAccountJson, CancellationToken ct)
     {
         try
         {
             return await GoogleServiceAccountTokenSource.AcquireAsync(
-                serviceAccountJson, new[] { ChronicleReadonlyScope }, ct);
+                serviceAccountJson, new[] { ChronicleScope }, ct);
         }
         catch (GoogleCloudApiException)
         {
@@ -143,6 +152,9 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
                     "Instância do Google SecOps não encontrada — verifique o project ID, a localidade e o instance ID."),
                 ChronicleApiErrorKind.AuthFailure or ChronicleApiErrorKind.Unauthorized => new ConnectorHealth(ConnectorStatus.Failed,
                     "Falha de autenticação ou configuração inválida — verifique o JSON da service account (oficial, sem domain-wide delegation), o project ID, a localidade e o instance ID."),
+                // 400: a REQUISIÇÃO foi rejeitada (contrato/argumento). NÃO instruir troca de credenciais.
+                ChronicleApiErrorKind.InvalidRequest => new ConnectorHealth(ConnectorStatus.Failed,
+                    "Requisição rejeitada pela Chronicle API do Google SecOps (contrato/argumento inválido). Não é falha de credencial — reporte a ocorrência."),
                 ChronicleApiErrorKind.Throttled => new ConnectorHealth(ConnectorStatus.Degraded,
                     "Throttling da Chronicle API; tente novamente em instantes."),
                 ChronicleApiErrorKind.Timeout => new ConnectorHealth(ConnectorStatus.Degraded,
@@ -180,15 +192,19 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
         return new SiemPostureSnapshot(SourceLabel, cases, alerts);
     }
 
-    // ---- Dimensão de CASOS (inventário atual) ------------------------------------------------------
+    // ---- Dimensão de CASOS (inventário atual) — agregação INCREMENTAL, sem materializar a coleção ---
 
     private async Task<(SiemCasePosture Posture, ChronicleApiException? Error)> CollectCasesAsync(
         string token, GoogleSecOpsSettings s, CancellationToken ct)
     {
+        var acc = new CaseAccumulator();
         try
         {
-            var cases = await _api.ListCasesAsync(token, s.ProjectId, s.Location, s.InstanceId, ct);
-            return (AggregateCases(cases), null);
+            // O transporte ENTREGA cada caso ao acumulador (piso mínimo) e devolve se a coleta foi PARCIAL. Falha na
+            // PRIMEIRA página lança (sem piso) → dimensão falha classificada; falha APÓS ≥1 página preserva o piso e
+            // marca Partial. Nenhum objeto de caso é retido após a agregação por página.
+            var isPartial = await _api.CollectCasesAsync(token, s.ProjectId, s.Location, s.InstanceId, acc.Add, ct);
+            return (acc.ToPosture(isPartial), null);
         }
         catch (ChronicleApiException ex)
         {
@@ -197,60 +213,73 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
         }
     }
 
-    /// <summary>
-    /// Agrega os casos como INVENTÁRIO ATUAL (não uma janela temporal — a listagem não garante filtro por
-    /// criação/atualização). Só operacional: total, abertos, fechados, distribuição por prioridade (quando fornecida)
-    /// e a evidência mais recente por <c>updateTime</c>. Nunca título, descrição, usuário, comentário ou entidade.
-    /// </summary>
-    private static SiemCasePosture AggregateCases(IReadOnlyList<JsonElement> cases)
-    {
-        var closed = 0;
-        var byPriority = new Dictionary<string, int>(StringComparer.Ordinal);
-        DateTimeOffset? last = null;
-
-        foreach (var c in cases)
-        {
-            if (IsCaseClosed(c))
-            {
-                closed++;
-            }
-            else
-            {
-                var priority = CasePriority(c);
-                if (priority is not null)
-                    byPriority[priority] = byPriority.GetValueOrDefault(priority) + 1;
-            }
-
-            var updated = ReadDate(c, "updateTime");
-            if (updated is { } d && (last is null || d > last)) last = d;
-        }
-
-        var observed = cases.Count;
-        var priorityList = byPriority.Count == 0
-            ? null
-            : byPriority.OrderBy(kv => kv.Key, StringComparer.Ordinal)
-                .Select(kv => new SiemPriorityCount(kv.Key, kv.Value)).ToList();
-
-        return new SiemCasePosture(
-            State: SiemCollectionState.Available,
-            Period: SiemPeriodKind.CurrentInventory,
-            WindowDays: null,
-            IsComplete: true,
-            Observed: observed,
-            Open: observed - closed,
-            New: null,                 // inventário atual não distingue "novo" (sem garantia temporal na listagem)
-            Closed: closed,
-            OpenHighSeverity: null, OpenMediumSeverity: null, OpenLowSeverity: null, OpenInformationalSeverity: null,
-            OpenByPriority: priorityList,
-            MeanTimeToCloseHours: null,
-            LastEvidenceAt: last);
-    }
-
     private static SiemCasePosture FailedCases(SiemCollectionState state) => new(
         State: state, Period: SiemPeriodKind.CurrentInventory, WindowDays: null, IsComplete: false,
         Observed: null, Open: null, New: null, Closed: null,
         OpenHighSeverity: null, OpenMediumSeverity: null, OpenLowSeverity: null, OpenInformationalSeverity: null,
         OpenByPriority: null, MeanTimeToCloseHours: null, LastEvidenceAt: null);
+
+    /// <summary>Situação oficial de um caso (<c>Case.status</c>) reduzida ao que a postura precisa distinguir.</summary>
+    private enum CaseStatusKind { Opened, Closed, Other, Unknown }
+
+    /// <summary>
+    /// Acumulador MÍNIMO de casos, alimentado PÁGINA A PÁGINA — total observado, abertos, fechados, distribuição por
+    /// prioridade dos ABERTOS e a última evidência — para NÃO reter os objetos completos (evita materializar centenas de
+    /// milhares de JsonElement). Interpreta EXCLUSIVAMENTE os campos oficiais <c>status</c>, <c>priority</c> e
+    /// <c>updateTime</c>. É INVENTÁRIO ATUAL (a listagem não garante filtro temporal), então não há "novo".
+    /// </summary>
+    private sealed class CaseAccumulator
+    {
+        private int _observed;
+        private int _open;
+        private int _closed;
+        private readonly Dictionary<string, int> _openByPriority = new(StringComparer.Ordinal);
+        private DateTimeOffset? _last;
+
+        public void Add(JsonElement c)
+        {
+            _observed++;
+            switch (CaseStatus(c))
+            {
+                case CaseStatusKind.Opened:
+                    _open++;
+                    var priority = CasePriority(c);   // distribuição por prioridade SÓ dos abertos
+                    if (priority is not null)
+                        _openByPriority[priority] = _openByPriority.GetValueOrDefault(priority) + 1;
+                    break;
+                case CaseStatusKind.Closed:
+                    _closed++;
+                    break;
+                // MERGED / CREATION_PENDING / CASE_DATA_STATE_UNSPECIFIED / desconhecido / ausente: contam SÓ no total
+                // observado — NUNCA presumidos como abertos ou fechados.
+            }
+
+            var updated = CaseUpdateTime(c);   // epoch-millis (int64); ausente/inválido → ignorado p/ LastEvidenceAt
+            if (updated is { } d && (_last is null || d > _last)) _last = d;
+        }
+
+        public SiemCasePosture ToPosture(bool isPartial)
+        {
+            var priorityList = _openByPriority.Count == 0
+                ? null
+                : _openByPriority.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                    .Select(kv => new SiemPriorityCount(kv.Key, kv.Value)).ToList();
+            var state = isPartial ? SiemCollectionState.Partial : SiemCollectionState.Available;
+            return new SiemCasePosture(
+                State: state,
+                Period: SiemPeriodKind.CurrentInventory,
+                WindowDays: null,
+                IsComplete: !isPartial,
+                Observed: _observed,
+                Open: _open,
+                New: null,
+                Closed: _closed,
+                OpenHighSeverity: null, OpenMediumSeverity: null, OpenLowSeverity: null, OpenInformationalSeverity: null,
+                OpenByPriority: priorityList,
+                MeanTimeToCloseHours: null,
+                LastEvidenceAt: _last);
+        }
+    }
 
     // ---- Dimensão de ALERTAS (janela deslizante de 30 dias) ----------------------------------------
 
@@ -272,9 +301,12 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
     }
 
     /// <summary>
-    /// Agrega os alertas da janela: total (deduplicado por identidade estável quando existente), contagem por
-    /// severidade (quando a fonte a fornece) e a evidência mais recente. <c>moreDataAvailable</c> ou um teto interno
-    /// ⇒ PARCIAL (agregados preservados como PISO, resultado degradado). Nunca ativo, usuário, IP, título ou payload.
+    /// Agrega os itens de alerta ACHATADOS dos dois agrupamentos oficiais (ativo e usuário). Deduplica por identidade
+    /// ESTÁVEL da origem: preferindo <c>alertNumber</c> (reconhece o MESMO alerta associado a ativo E a usuário), com
+    /// <c>uid</c>/<c>eventLogToken</c> apenas como fallback. Um item SEM identidade confiável NÃO é contado como total
+    /// confiável nem vira hash com PII — apenas marca a dimensão PARCIAL (os identificáveis ficam como piso). Severidade
+    /// só quando a fonte a fornece; instante por <c>alertTime</c>. <c>moreDataAvailable</c>, um teto interno OU um item
+    /// sem identidade ⇒ PARCIAL. Nunca projeta ativo, usuário, evento UDM, displayName, filterProperties, título ou payload.
     /// </summary>
     private static SiemAlertPosture AggregateAlerts(ChronicleAlertSearchResult result)
     {
@@ -283,12 +315,18 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
         var high = 0;
         var medium = 0;
         var severityKnown = 0;
+        var hasUnidentified = false;
         DateTimeOffset? last = null;
 
-        foreach (var a in result.Alerts)
+        foreach (var a in result.AlertInfos)
         {
             var id = AlertIdentity(a);
-            if (id is not null && !seen.Add(id)) continue;   // deduplicação por identidade estável da origem
+            if (id is null)
+            {
+                hasUnidentified = true;   // sem identidade confiável → não conta e degrada (nunca inventa hash com PII)
+                continue;
+            }
+            if (!seen.Add(id)) continue;   // dedup ativo+usuário pelo MESMO alertNumber (ou fallback estável)
             observed++;
 
             var rank = AlertSeverityRank(a);
@@ -299,11 +337,12 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
                 else if (rank == 1) medium++;
             }
 
-            var ts = AlertTimestamp(a);
+            var ts = ReadDate(a, "alertTime");
             if (ts is { } d && (last is null || d > last)) last = d;
         }
 
-        var state = result.IsPartial ? SiemCollectionState.Partial : SiemCollectionState.Available;
+        var partial = result.IsPartial || hasUnidentified;
+        var state = partial ? SiemCollectionState.Partial : SiemCollectionState.Available;
         return new SiemAlertPosture(
             State: state,
             Period: SiemPeriodKind.RollingWindow,
@@ -327,39 +366,75 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
         ChronicleApiErrorKind.Throttled => SiemCollectionState.Throttled,
         ChronicleApiErrorKind.Timeout => SiemCollectionState.Timeout,
         ChronicleApiErrorKind.InstanceNotFound => SiemCollectionState.Unsupported,
-        // AuthFailure/Unauthorized/Unavailable/InvalidResponse/IncompleteCollection: dimensão não comprovada.
+        // AuthFailure/Unauthorized/InvalidRequest/Unavailable/InvalidResponse: dimensão não comprovada.
         _ => SiemCollectionState.Unavailable,
     };
 
-    // ---- Parsing operacional (defensivo; nomes de campo conforme o contrato documentado — ver SECOPS-02) ----
+    // ---- Parsing operacional dos campos OFICIAIS (defensivo) ---------------------------------------
 
-    /// <summary>Caso FECHADO? Lê o primeiro campo de estado presente (<c>status</c>/<c>stage</c>/<c>state</c>); fechado quando o valor indica encerramento.</summary>
-    private static bool IsCaseClosed(JsonElement c)
+    /// <summary>
+    /// Situação de um caso a partir do campo OFICIAL <c>status</c>. SEM fallback para <c>stage</c> (que é fase de
+    /// triagem — "Triage"/"Investigation"/"Incident" —, não indicador de fechamento). Ausente/desconhecido → Unknown
+    /// (nem aberto nem fechado). MERGED/CREATION_PENDING/CASE_DATA_STATE_UNSPECIFIED → Other.
+    /// </summary>
+    private static CaseStatusKind CaseStatus(JsonElement c) => (FieldStr(c, "status")?.Trim().ToUpperInvariant()) switch
     {
-        var raw = FieldStr(c, "status") ?? FieldStr(c, "stage") ?? FieldStr(c, "state");
-        if (string.IsNullOrWhiteSpace(raw)) return false;   // sem marcador de fechamento → tratado como ABERTO (inventário atual)
-        var v = raw.Trim().ToUpperInvariant();
-        return v.Contains("CLOS") || v.Contains("RESOLV") || v.Contains("DONE");
+        "OPENED" => CaseStatusKind.Opened,
+        "CLOSED" => CaseStatusKind.Closed,
+        "MERGED" or "CREATION_PENDING" or "CASE_DATA_STATE_UNSPECIFIED" => CaseStatusKind.Other,
+        _ => CaseStatusKind.Unknown,
+    };
+
+    /// <summary>
+    /// <c>Case.updateTime</c> é uma string no formato <c>int64</c> com epoch em MILISSEGUNDOS. Converte com
+    /// <see cref="DateTimeOffset.FromUnixTimeMilliseconds"/>; ausente, tipo inesperado, não-numérico, negativo ou fora
+    /// do intervalo → <c>null</c> (ignorado para LastEvidenceAt, SEM invalidar as demais contagens).
+    /// </summary>
+    private static DateTimeOffset? CaseUpdateTime(JsonElement c)
+    {
+        if (c.ValueKind != JsonValueKind.Object || !c.TryGetProperty("updateTime", out var v)) return null;
+        long millis;
+        switch (v.ValueKind)
+        {
+            case JsonValueKind.String when long.TryParse(v.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var m):
+                millis = m; break;
+            case JsonValueKind.Number when v.TryGetInt64(out var m):
+                millis = m; break;
+            default:
+                return null;
+        }
+        if (millis < 0) return null;
+        try { return DateTimeOffset.FromUnixTimeMilliseconds(millis); }
+        catch (ArgumentOutOfRangeException) { return null; }
     }
 
-    /// <summary>Prioridade declarada pela fonte (valor bruto do provedor, ex.: <c>PRIORITY_HIGH</c>) — nunca reinterpretada. Null quando ausente.</summary>
+    /// <summary>Prioridade OFICIAL do caso (<c>PRIORITY_*</c>) — valor bruto preservado, nunca reinterpretado. Null quando ausente.</summary>
     private static string? CasePriority(JsonElement c)
     {
         var raw = FieldStr(c, "priority");
         return string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
     }
 
-    /// <summary>Identidade estável de um alerta (para deduplicar), quando a origem a fornece: <c>id</c>/<c>alertId</c>/<c>name</c>.</summary>
+    /// <summary>
+    /// Identidade ESTÁVEL de um item de alerta para deduplicar. Prefere <c>alertNumber</c> (reconhece o MESMO alerta
+    /// associado a ativo E a usuário); <c>uid</c> e <c>eventLogToken</c> só como fallback estável. Prefixa por tipo
+    /// para não colidir entre eixos. <c>null</c> quando não há identidade confiável — nunca deriva hash com PII.
+    /// </summary>
     private static string? AlertIdentity(JsonElement a)
     {
-        var id = FieldStr(a, "id") ?? FieldStr(a, "alertId") ?? FieldStr(a, "name");
-        return string.IsNullOrWhiteSpace(id) ? null : id.Trim();
+        var num = FieldStrOrNumber(a, "alertNumber");
+        if (!string.IsNullOrWhiteSpace(num)) return "n:" + num.Trim();
+        var uid = FieldStr(a, "uid");
+        if (!string.IsNullOrWhiteSpace(uid)) return "u:" + uid.Trim();
+        var tok = FieldStr(a, "eventLogToken");
+        if (!string.IsNullOrWhiteSpace(tok)) return "t:" + tok.Trim();
+        return null;
     }
 
-    /// <summary>Rank de severidade do alerta: 0=alto (HIGH/CRITICAL), 1=médio (MEDIUM/MODERATE), 2=outro conhecido, -1=ausente.</summary>
+    /// <summary>Rank de severidade do alerta (campo oficial <c>severity</c>): 0=alto (HIGH/CRITICAL), 1=médio (MEDIUM/MODERATE), 2=outro conhecido, -1=ausente.</summary>
     private static int AlertSeverityRank(JsonElement a)
     {
-        var raw = FieldStr(a, "severity") ?? FieldStr(a, "alertSeverity");
+        var raw = FieldStr(a, "severity");
         if (string.IsNullOrWhiteSpace(raw)) return -1;
         return raw.Trim().ToUpperInvariant() switch
         {
@@ -369,14 +444,23 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
         };
     }
 
-    /// <summary>Instante do alerta (evidência mais recente), quando presente: <c>detectionTimestamp</c>/<c>createTime</c>/<c>createdTime</c>/<c>timestamp</c>.</summary>
-    private static DateTimeOffset? AlertTimestamp(JsonElement a) =>
-        ReadDate(a, "detectionTimestamp") ?? ReadDate(a, "createTime") ?? ReadDate(a, "createdTime") ?? ReadDate(a, "timestamp");
-
     private static string? FieldStr(JsonElement e, string prop) =>
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String
             ? v.GetString() : null;
 
+    /// <summary>Lê um campo como string OU número (ex.: <c>alertNumber</c>, que a fonte pode enviar como int64-string ou número). Null se ausente/outro tipo.</summary>
+    private static string? FieldStrOrNumber(JsonElement e, string prop)
+    {
+        if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty(prop, out var v)) return null;
+        return v.ValueKind switch
+        {
+            JsonValueKind.String => v.GetString(),
+            JsonValueKind.Number => v.GetRawText(),
+            _ => null,
+        };
+    }
+
+    /// <summary>Lê um instante RFC 3339 (ex.: <c>AssetAlertInfo.alertTime</c>). Ausente/inválido → null.</summary>
     private static DateTimeOffset? ReadDate(JsonElement e, string prop)
     {
         var s = FieldStr(e, prop);
