@@ -1,8 +1,10 @@
+using System.Net.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Knight;
 using AegisScore.Connectors.Google.Cloud;
+using AegisScore.Connectors.Google.SecOps;
 
 namespace AegisScore.Connectors.Google;
 
@@ -31,6 +33,20 @@ public static class DependencyInjection
         services.AddSingleton<IGoogleCloudOsConfigAuthenticator, GoogleCloudOsConfigAuthenticator>();
         services.AddHttpClient<IGoogleCloudOsConfigApiClient, GoogleCloudOsConfigApiClient>().AddStandardResilienceHandler();
         services.AddScoped<IEvidenceConnector, GoogleCloudVulnerabilityConnector>();
+
+        // [AEGIS-MVP-GOOGLE-SECOPS-01] Google SecOps / Chronicle (Google/Siem): coletor REAL, somente leitura, da
+        // postura operacional (casos + alertas) via Chronicle API unificada. Transporte PRÓPRIO (IChronicleApiClient) —
+        // hosts regionais oficiais *-chronicle.googleapis.com derivados de uma allowlist por localidade, sem baseUrl do
+        // tenant. Auto-redirect DESABILITADO no handler primário (o bearer nunca segue um Location para outro host);
+        // resiliência padrão (retry/backoff, Retry-After no 429, circuit breaker). A autenticação (biblioteca oficial,
+        // sem HttpClient injetado) é singleton, como os demais autenticadores Google. SCOPED como os outros conectores
+        // (injeta um typed HttpClient — não pode ser capturado no root provider). NÃO emite sinais de score; expõe a
+        // postura por ISiemPostureCollector (fato consultivo), sem tocar a autoridade determinística.
+        services.AddSingleton<IGoogleSecOpsAuthenticator, GoogleSecOpsAuthenticator>();
+        services.AddHttpClient<IChronicleApiClient, ChronicleApiClient>()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+            .AddStandardResilienceHandler();
+        services.AddScoped<IEvidenceConnector, GoogleSecOpsConnector>();
         return services;
     }
 }

@@ -45,7 +45,36 @@ export interface CredentialField {
   label: string;
   secret: boolean;
   placeholder?: string;
+  /**
+   * Quando presente, o campo é uma SELEÇÃO CONTROLADA (dropdown) — a UI não aceita texto livre. Usado para
+   * localidades/endpoints oficialmente suportados (ex.: Google SecOps), fechando o vetor de URL/host arbitrário.
+   */
+  options?: { value: string; label: string }[];
 }
+
+/**
+ * [AEGIS-MVP-GOOGLE-SECOPS-01] Localidades OFICIALMENTE suportadas do Google SecOps (Chronicle). Espelha a allowlist
+ * interna do backend (ChronicleRegions): o backend é a autoridade final; a seleção controlada aqui só impede que o
+ * usuário digite uma região/host arbitrário. O host regional é derivado no servidor ({location}-chronicle...).
+ */
+export const CHRONICLE_LOCATIONS: { value: string; label: string }[] = [
+  { value: 'us', label: 'US (multirregião)' },
+  { value: 'europe', label: 'Europa (multirregião)' },
+  { value: 'europe-west2', label: 'Europa — Londres (europe-west2)' },
+  { value: 'europe-west3', label: 'Europa — Frankfurt (europe-west3)' },
+  { value: 'europe-west6', label: 'Europa — Zurique (europe-west6)' },
+  { value: 'europe-west9', label: 'Europa — Paris (europe-west9)' },
+  { value: 'europe-west12', label: 'Europa — Turim (europe-west12)' },
+  { value: 'asia-southeast1', label: 'Ásia — Singapura (asia-southeast1)' },
+  { value: 'asia-south1', label: 'Ásia — Mumbai (asia-south1)' },
+  { value: 'asia-northeast1', label: 'Ásia — Tóquio (asia-northeast1)' },
+  { value: 'australia-southeast1', label: 'Austrália — Sydney (australia-southeast1)' },
+  { value: 'me-west1', label: 'Oriente Médio — Tel Aviv (me-west1)' },
+  { value: 'me-central1', label: 'Oriente Médio — Doha (me-central1)' },
+  { value: 'me-central2', label: 'Oriente Médio — Damã (me-central2)' },
+  { value: 'northamerica-northeast2', label: 'América do Norte — Toronto (northamerica-northeast2)' },
+  { value: 'southamerica-east1', label: 'América do Sul — São Paulo (southamerica-east1)' },
+];
 
 /**
  * Catálogo de provedores. Define, por provedor, quais credenciais a tela pede — é o que evita um
@@ -232,11 +261,17 @@ export const PROVIDERS: ProviderSpec[] = [
     authTypeValue: 2,
     capability: 'Siem',
     capabilityValue: 5,
-    adapterNote: 'Adaptador específico ainda não implementado. Envie eventos pelo Generic SIEM (push).',
+    infoNote:
+      'Coleta REAL somente leitura da postura operacional do Google SecOps (Chronicle) — casos (inventário atual) e alertas (últimos 30 dias). “Testar” valida autenticação e leitura da instância (instances.get); “Sincronizar” lê os agregados de casos e alertas. O destino é o endpoint regional oficial *-chronicle.googleapis.com, derivado da localidade — não há URL configurável. A conta de serviço precisa de acesso somente leitura à instância, aos casos e à pesquisa de alertas. Não altera o AEGIS Score (fato consultivo).',
+    appPermissions: [
+      'Acesso somente leitura à instância do Google SecOps (Chronicle API — chronicle.readonly)',
+      'Leitura de casos (cases.list) e de alertas (legacySearchEnterpriseWideAlerts)',
+    ],
     fields: [
-      { key: 'customerId', label: 'Customer ID', secret: false },
-      { key: 'region', label: 'Região', secret: false, placeholder: 'us / europe / asia-southeast1' },
-      { key: 'serviceAccountJson', label: 'Service Account JSON', secret: true },
+      { key: 'projectId', label: 'Project ID', secret: false, placeholder: 'meu-projeto-123' },
+      { key: 'location', label: 'Localidade / região', secret: false, options: CHRONICLE_LOCATIONS },
+      { key: 'instanceId', label: 'Instance ID do SecOps', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
+      { key: 'serviceAccountJson', label: 'Service Account JSON (somente leitura — SEM domain-wide delegation)', secret: true },
     ],
   },
   {
@@ -511,84 +546,119 @@ export interface VulnerabilitySyncSummary {
 }
 
 /**
- * [AEGIS-MVP-MICROSOFT-SENTINEL] Estado EXPLÍCITO da coleta secundária de SecurityAlert (espelha o enum do backend).
- * Só `Available` permite ler as contagens de alertas (inclusive zero) como fato; qualquer outro estado significa
- * "não comprovado" — a UI mostra indisponibilidade, nunca "0 alertas".
+ * [AEGIS-MVP-SIEM] Estado EXPLÍCITO e PROVIDER-NEUTRAL da coleta de UMA dimensão de SIEM (espelha o enum do backend).
+ * Só `Available` (e `Partial`, como piso) trazem contagem; os demais estados significam "não comprovado" — a UI
+ * mostra indisponibilidade, NUNCA "0". Serve Microsoft Sentinel, Google SecOps e futuros SIEMs.
  */
-export type SentinelAlertsState =
+export type SiemCollectionState =
   | 'Available'
-  | 'TableUnavailable'
+  | 'Partial'
+  | 'Unsupported'
   | 'PermissionDenied'
   | 'Throttled'
   | 'Timeout'
-  | 'Unavailable'
-  | 'Partial';
+  | 'Unavailable';
 
-/**
- * [AEGIS-MVP-MICROSOFT-SENTINEL] Fotografia operacional de uma sincronização do Sentinel (só agregados e instantes).
- * FATO CONSULTIVO: não vira sinal nem altera o AEGIS Score. `isComplete` falso = resultado parcial/truncado OU
- * alertas não comprovados (`alertsState` ≠ `Available`).
- */
-export interface SentinelSyncSummary {
-  windowDays: number;
-  incidentsObserved: number;
-  openIncidents: number;
-  newIncidents: number;
-  closedIncidents: number;
-  openHighSeverity: number;
-  openMediumSeverity: number;
-  openLowSeverity: number;
-  openInformationalSeverity: number;
-  meanTimeToCloseHours: number | null;
-  alertsState: SentinelAlertsState;
-  alertsObserved: number;
-  alertsHighSeverity: number;
-  alertsMediumSeverity: number;
-  lastEvidenceAt: string | null;
-  isComplete: boolean;
+/** [AEGIS-MVP-SIEM] Semântica do período de uma dimensão: janela deslizante (com dias) ou inventário atual (sem janela). */
+export type SiemPeriodKind = 'RollingWindow' | 'CurrentInventory';
+
+/** [AEGIS-MVP-SIEM] Uma contagem de casos por prioridade declarada pela fonte. */
+export interface SiemPriorityCount {
+  priority: string;
+  count: number;
 }
 
 /**
- * Texto do trecho de ALERTAS da mensagem de sincronização. Função PURA e testável: só `Available` mostra a
- * contagem (inclusive `0`); qualquer outro estado produz uma frase de indisponibilidade — nunca "0 alerta(s)".
+ * [AEGIS-MVP-SIEM] Dimensão de CASOS/INCIDENTES. Contagens ANULÁVEIS (null = não coletada/não aplicável, nunca zero
+ * sintético). `openByPriority` (Google SecOps) e o desmembramento por severidade (Sentinel) coexistem — cada
+ * provedor preenche o eixo que expõe e deixa o resto nulo.
  */
-export function sentinelAlertsText(s: SentinelSyncSummary): string {
-  switch (s.alertsState) {
+export interface SiemCasePosture {
+  state: SiemCollectionState;
+  period: SiemPeriodKind;
+  windowDays: number | null;
+  isComplete: boolean;
+  observed: number | null;
+  open: number | null;
+  'new': number | null;
+  closed: number | null;
+  openHighSeverity: number | null;
+  openMediumSeverity: number | null;
+  openLowSeverity: number | null;
+  openInformationalSeverity: number | null;
+  openByPriority: SiemPriorityCount[] | null;
+  meanTimeToCloseHours: number | null;
+  lastEvidenceAt: string | null;
+}
+
+/** [AEGIS-MVP-SIEM] Dimensão de ALERTAS. Contagens ANULÁVEIS (null = não coletada/não aplicável, nunca zero sintético). */
+export interface SiemAlertPosture {
+  state: SiemCollectionState;
+  period: SiemPeriodKind;
+  windowDays: number | null;
+  isComplete: boolean;
+  observed: number | null;
+  highSeverity: number | null;
+  mediumSeverity: number | null;
+  lastEvidenceAt: string | null;
+}
+
+/**
+ * [AEGIS-MVP-SIEM] Fotografia operacional PROVIDER-NEUTRAL de uma sincronização de SIEM, em DUAS DIMENSÕES
+ * INDEPENDENTES. FATO CONSULTIVO: não vira sinal nem altera o AEGIS Score. `isComplete` falso = alguma dimensão
+ * parcial/degradada. `source` identifica a origem ("Microsoft Sentinel", "Google SecOps").
+ */
+export interface SiemSyncSummary {
+  source: string;
+  isComplete: boolean;
+  cases: SiemCasePosture;
+  alerts: SiemAlertPosture;
+}
+
+/**
+ * Texto de UMA dimensão para o toast. Função PURA e testável: só `Available` mostra a contagem (inclusive `0`);
+ * `Partial` mostra a contagem como PISO; qualquer outro estado produz uma frase de indisponibilidade — nunca "0".
+ */
+export function siemDimensionText(state: SiemCollectionState, observed: number | null, noun: string): string {
+  switch (state) {
     case 'Available':
-      return `${s.alertsObserved} alerta(s)`;
-    case 'TableUnavailable':
-      return 'tabela de alertas não disponível';
-    case 'PermissionDenied':
-      return 'sem permissão para consultar alertas';
-    case 'Throttled':
-      return 'consulta de alertas temporariamente limitada';
-    case 'Timeout':
-      return 'consulta de alertas excedeu o tempo';
+      return `${observed ?? 0} ${noun}(s)`;
     case 'Partial':
-      return 'resultado de alertas parcial';
+      return observed !== null ? `≥ ${observed} ${noun}(s) (parcial)` : `${noun}s parciais`;
+    case 'Unsupported':
+      return `${noun}s não disponíveis nesta fonte`;
+    case 'PermissionDenied':
+      return `sem permissão para consultar ${noun}s`;
+    case 'Throttled':
+      return `consulta de ${noun}s temporariamente limitada`;
+    case 'Timeout':
+      return `consulta de ${noun}s excedeu o tempo`;
     case 'Unavailable':
     default:
-      return 'alertas indisponíveis';
+      return `${noun}s indisponíveis`;
   }
 }
 
+/** Rótulo curto do período de uma dimensão (janela em dias ou inventário atual). */
+export function siemPeriodText(period: SiemPeriodKind, windowDays: number | null): string {
+  return period === 'RollingWindow' ? `últimos ${windowDays ?? 30}d` : 'inventário atual';
+}
+
 /**
- * Mensagem COMPLETA da sincronização do Sentinel: preserva os agregados VÁLIDOS de incidentes, aplica o texto de
- * alertas conforme o estado e deixa explícito que a fotografia NÃO altera o AEGIS Score. Função pura e testável.
+ * Mensagem CURTA da sincronização de SIEM: fonte + casos + alertas (com período/inventário), aviso de coleta
+ * parcial/degradada quando aplicável, e a nota explícita de que NÃO altera o AEGIS Score. Função pura e testável.
  */
-export function buildSentinelSyncMessage(s: SentinelSyncSummary): string {
-  const parcial = s.isComplete ? '' : ' (coleta parcial/degradada)';
-  return (
-    `Postura do Sentinel${parcial} (${s.windowDays}d): ${s.incidentsObserved} incidente(s), ` +
-    `${s.openIncidents} aberto(s) [${s.openHighSeverity} alto(s)], ${s.closedIncidents} encerrado(s); ` +
-    `${sentinelAlertsText(s)}. Não altera o AEGIS Score.`
-  );
+export function buildSiemSyncMessage(s: SiemSyncSummary): string {
+  const degradada = s.isComplete ? '' : ' (coleta parcial/degradada)';
+  const casos = `${siemDimensionText(s.cases.state, s.cases.observed, 'caso')} (${siemPeriodText(s.cases.period, s.cases.windowDays)})`;
+  const alertas = `${siemDimensionText(s.alerts.state, s.alerts.observed, 'alerta')} (${siemPeriodText(s.alerts.period, s.alerts.windowDays)})`;
+  return `Postura de ${s.source}${degradada}: ${casos}; ${alertas}. Não altera o AEGIS Score.`;
 }
 
 export interface SyncResult {
   signalsCollected: number;
   vulnerabilities?: VulnerabilitySyncSummary | null;
-  sentinel?: SentinelSyncSummary | null;
+  siem?: SiemSyncSummary | null;
 }
 
 export function statusLabel(status: string): string {
