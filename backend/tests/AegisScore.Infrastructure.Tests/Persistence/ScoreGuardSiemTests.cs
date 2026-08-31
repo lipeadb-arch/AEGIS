@@ -378,4 +378,224 @@ public sealed class ScoreGuardSiemRepairPostgresTests
         (await LegacySiemAlertScoreRepair.RepairAsync(opt, NullLoggerFactory.Instance))
             .Should().Be(0, "reexecução no PostgreSQL real é no-op");
     }
+
+    // ---- A. Remoção do mapping aposentado em PostgreSQL real (pacote REAL) --------------------------
+
+    [Fact]
+    public async Task SeedSignalMappings_RemoveAlertaLegado_Idempotente_PreservaOutros_OnRealPostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+
+        // Pacote REAL (106 subcategorias / 99 regras / proveniência) — necessário para SeedSignalMappingsAsync e
+        // para CheckActivePackageAsync. Semeia os mappings JÁ pós-aposentadoria (sem o alerta).
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+        {
+            await db.Database.EnsureCreatedAsync();
+            await FrameworkSeeder.SeedAsync(db, CatalogPath, MethodologyPath);
+            await FrameworkSeeder.SeedAssessmentRulesAsync(db, RulesPath, MethodologyPath);
+            await FrameworkSeeder.SeedSignalMappingsAsync(db);
+        }
+
+        // Injeta o mapping LEGADO EXATO + um mapping AUTORAL desconhecido (o legado PRECISA existir antes da execução).
+        int before;
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+        {
+            var fvId = await db.FrameworkVersions.Where(f => f.IsActive).Select(f => f.Id).SingleAsync();
+            db.SignalMappings.Add(new SignalMapping
+            {
+                FrameworkVersionId = fvId, Capability = ConnectorCapability.Siem, SignalKey = RetiredKey,
+                SubcategoryCodes = new() { "DE.AE-02", "DE.CM-01" }, ScoringHint = EvidenceSignalEvaluator.EventControlProven,
+            });
+            db.SignalMappings.Add(new SignalMapping
+            {
+                FrameworkVersionId = fvId, Capability = ConnectorCapability.Cmdb, SignalKey = "custom.author.signal",
+                SubcategoryCodes = new() { "DE.CM-01" }, ScoringHint = EvidenceSignalEvaluator.PercentHigherIsBetter,
+            });
+            await db.SaveChangesAsync();
+            before = await db.SignalMappings.CountAsync();
+        }
+
+        // Antes da remoção: a base é RECUSADA pela invariante de prontidão (mapping proibido ativo).
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            (await SchemaReadinessGuard.CheckActivePackageAsync(db)).IsReady
+                .Should().BeFalse("o mapping proibido torna a base NÃO pronta antes da remoção");
+
+        // Reexecuta o seed → remove SOMENTE o par aposentado.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            await FrameworkSeeder.SeedSignalMappingsAsync(db);
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+        {
+            (await db.SignalMappings.AnyAsync(m => m.Capability == ConnectorCapability.Siem && m.SignalKey == RetiredKey))
+                .Should().BeFalse("o par aposentado foi removido");
+            (await db.SignalMappings.AnyAsync(m => m.SignalKey == "custom.author.signal"))
+                .Should().BeTrue("mapping autoral/desconhecido preservado");
+            (await db.SignalMappings.AnyAsync(m => m.Capability == ConnectorCapability.SecureScore && m.SignalKey == "secureScore.overall"))
+                .Should().BeTrue("Secure Score preservado");
+            (await db.SignalMappings.AnyAsync(m => m.Capability == ConnectorCapability.Edr && m.SignalKey == "edr.threat.blocked"))
+                .Should().BeTrue("EDR preservado");
+            (await db.SignalMappings.CountAsync()).Should().Be(before - 1, "EXATAMENTE um mapping (o proibido) removido");
+        }
+
+        // Idempotência: 2ª execução no-op.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            await FrameworkSeeder.SeedSignalMappingsAsync(db);
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            (await db.SignalMappings.CountAsync()).Should().Be(before - 1, "reexecução é no-op");
+
+        // Depois da remoção: a base fica PRONTA.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            (await SchemaReadinessGuard.CheckActivePackageAsync(db)).IsReady
+                .Should().BeTrue("removido o mapping proibido, a base volta a ser aprovada");
+    }
+
+    // ---- B. Reprojeção por evidência EDR válida remanescente em PostgreSQL real --------------------
+
+    [Fact]
+    public async Task Repair_DeCm01SustentadoPorEdr_NaoRetrai_ProvadoPorContraste_OnRealPostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+
+        var tenant = Guid.NewGuid();
+        await SeedMinimalAsync(opt, tenant);
+        var siem = await SeedConnectorAsync(opt, tenant, ConnectorCapability.Siem);
+        var edr = await SeedConnectorAsync(opt, tenant, ConnectorCapability.Edr);
+        await SeedSignalAsync(opt, tenant, siem, RetiredKey, new[] { "DE.AE-02", "DE.CM-01" });
+        await SeedSignalAsync(opt, tenant, edr, "edr.threat.blocked", new[] { "DE.CM-01", "RS.MI-01" }, numericValue: 1);
+        // DOIS estados inflados IDÊNTICOS por telemetria: DE.CM-01 (tem EDR remanescente) e DE.AE-02 (só o alerta).
+        await SeedTelemetryStateAsync(opt, tenant, "DE.CM-01", ControlStatus.Compliant, 10);
+        await SeedTelemetryStateAsync(opt, tenant, "DE.AE-02", ControlStatus.Compliant, 10);
+
+        var changed = await LegacySiemAlertScoreRepair.RepairAsync(opt, NullLoggerFactory.Instance);
+
+        // CONTRASTE (mesma inflação, mesma execução): DE.CM-01 sobrevive PORQUE o EDR remanescente o sustenta;
+        // DE.AE-02, idêntico mas SEM evidência remanescente, é retraído. O alerta aposentado não sustenta nenhum.
+        changed.Should().Be(1, "apenas DE.AE-02 foi retraído; DE.CM-01 já está correto e sustentado pelo EDR");
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var deCm = await db.TenantControlStates.Include(x => x.Subcategory).SingleAsync(x => x.Subcategory!.Code == "DE.CM-01");
+            deCm.Status.Should().Be(ControlStatus.Compliant);
+            deCm.CurrentScore.Should().Be(10);
+            deCm.LastVerdictSource.Should().Be(VerdictSource.Telemetry, "sustentado por telemetria (EDR), não documental");
+            (await db.TenantControlStates.Include(x => x.Subcategory).AnyAsync(x => x.Subcategory!.Code == "DE.AE-02"))
+                .Should().BeFalse("DE.AE-02 (só o alerta) foi retraído");
+        }
+
+        // Idempotência: 2ª execução não altera nada.
+        (await LegacySiemAlertScoreRepair.RepairAsync(opt, NullLoggerFactory.Instance))
+            .Should().Be(0, "reexecução no PostgreSQL real é no-op");
+
+        // PROVA DEFINITIVA de que era o EDR: removido o sinal EDR, DE.CM-01 deixa de ser sustentado e é retraído.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var edrSignals = await db.Signals.Where(s => s.SignalKey == "edr.threat.blocked").ToListAsync();
+            db.Signals.RemoveRange(edrSignals);
+            await db.SaveChangesAsync();
+        }
+        (await LegacySiemAlertScoreRepair.RepairAsync(opt, NullLoggerFactory.Instance))
+            .Should().Be(1, "sem o EDR, nada mais sustenta DE.CM-01 → retraído");
+        await using (var assert = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+            (await assert.TenantControlStates.CountAsync()).Should().Be(0, "removido o EDR, DE.CM-01 volta a NÃO avaliado");
+    }
+
+    // ---- C. Isolamento entre tenants em PostgreSQL real -------------------------------------------
+
+    [Fact]
+    public async Task Repair_IsolaTenants_SoAlcancaQuemTemSinalLegado_OnRealPostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+
+        var tenantA = Guid.NewGuid();
+        var tenantB = Guid.NewGuid();
+        await SeedMinimalAsync(opt, tenantA, tenantB);
+
+        // A: possui o sinal legado + estado inflado. B: possui estado telemétrico, SEM o sinal legado.
+        var siemA = await SeedConnectorAsync(opt, tenantA, ConnectorCapability.Siem);
+        await SeedSignalAsync(opt, tenantA, siemA, RetiredKey, new[] { "DE.AE-02" });
+        await SeedTelemetryStateAsync(opt, tenantA, "DE.AE-02", ControlStatus.Compliant, 10);
+        await SeedTelemetryStateAsync(opt, tenantB, "DE.AE-02", ControlStatus.Compliant, 10);
+
+        var changed = await LegacySiemAlertScoreRepair.RepairAsync(opt, NullLoggerFactory.Instance);
+        changed.Should().Be(1, "somente o Tenant A (com sinal legado) foi alcançado");
+
+        // Asserções SOB CONTEXTO tenant-scoped (sem IgnoreQueryFilters): A retraído, B intacto.
+        await using (var a = new AegisScoreDbContext(opt, new SystemTenantContext(tenantA)))
+        {
+            (await a.TenantControlStates.CountAsync()).Should().Be(0, "Tenant A teve o estado inflado retraído");
+            (await a.Signals.CountAsync()).Should().Be(1, "sinal legado do Tenant A preservado");
+        }
+        await using (var b = new AegisScoreDbContext(opt, new SystemTenantContext(tenantB)))
+        {
+            var deAe = await b.TenantControlStates.Include(x => x.Subcategory).SingleAsync(x => x.Subcategory!.Code == "DE.AE-02");
+            deAe.Status.Should().Be(ControlStatus.Compliant, "Tenant B (sem sinal legado) permanece EXATAMENTE inalterado");
+            deAe.LastVerdictSource.Should().Be(VerdictSource.Telemetry);
+            (await b.Signals.CountAsync()).Should().Be(0, "Tenant B nunca teve o sinal legado — nada cruzou tenants");
+        }
+
+        // Idempotência.
+        (await LegacySiemAlertScoreRepair.RepairAsync(opt, NullLoggerFactory.Instance))
+            .Should().Be(0, "reexecução no PostgreSQL real é no-op");
+    }
+
+    // ---- Harness (pacote mínimo / paths do pacote real) --------------------------------------------
+
+    private static readonly string DataDir = Path.Combine(AppContext.BaseDirectory, "Data");
+    private static string CatalogPath => Path.Combine(DataDir, "nist_csf_2_0_catalog.json");
+    private static string MethodologyPath => Path.Combine(DataDir, "aegis_methodology.json");
+    private static string RulesPath => Path.Combine(DataDir, "aegis_assessment_rules.json");
+
+    private static async Task SeedMinimalAsync(DbContextOptions<AegisScoreDbContext> opt, params Guid[] tenants)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(null));
+        await db.Database.EnsureCreatedAsync();
+        IngestionTestData.SeedFrameworkAndMappings(db);   // mappings JÁ pós-aposentadoria (sem o alerta)
+        foreach (var t in tenants)
+            db.Tenants.Add(new Tenant { Id = t, Name = "T", Slug = "t-" + t.ToString("N"), Status = TenantStatus.Active });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<Guid> SeedConnectorAsync(DbContextOptions<AegisScoreDbContext> opt, Guid tenant, ConnectorCapability capability)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        var cfg = new ConnectorConfig
+        {
+            TenantId = tenant, Provider = ConnectorProvider.Generic, Capability = capability,
+            DisplayName = $"Generic {capability}", AuthType = ConnectorAuthType.ApiKey, Enabled = true,
+        };
+        db.Connectors.Add(cfg);
+        await db.SaveChangesAsync();
+        return cfg.Id;
+    }
+
+    private static async Task SeedSignalAsync(
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, Guid connectorId, string signalKey, string[] mapped,
+        double? numericValue = 3, string? unit = "count")
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        db.Signals.Add(new EvidenceSignal
+        {
+            ConnectorConfigId = connectorId, SignalKey = signalKey, NumericValue = numericValue, Unit = unit,
+            MappedSubcategoryCodes = mapped.ToList(), CollectedAt = DateTimeOffset.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedTelemetryStateAsync(
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, string code, ControlStatus status, int score)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        var subId = await db.Subcategories.Where(s => s.Code == code).Select(s => s.Id).SingleAsync();
+        db.TenantControlStates.Add(new TenantControlState
+        {
+            SubcategoryId = subId, Status = status, CurrentScore = score,
+            LastVerdictSource = VerdictSource.Telemetry, AiEvidence = "legado",
+        });
+        await db.SaveChangesAsync();
+    }
 }
