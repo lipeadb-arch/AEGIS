@@ -5,6 +5,9 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using AegisScore.Application.Abstractions;
 using AegisScore.Domain;
+// A entidade persistida de cobertura de detecção (Domain) tem o mesmo nome do record consultivo da camada
+// Application; aqui o DbContext lida SEMPRE com a entidade de domínio.
+using DetectionCoverageSnapshot = AegisScore.Domain.DetectionCoverageSnapshot;
 
 namespace AegisScore.Infrastructure.Persistence;
 
@@ -68,6 +71,10 @@ public class AegisScoreDbContext : DbContext
     public DbSet<EvidenceSignal> Signals => Set<EvidenceSignal>();
     // [AEGIS-MVP-POSTURE-02] Exposições de configuração (postura) — tenant-owned, provider-neutral.
     public DbSet<PostureExposureFinding> PostureExposureFindings => Set<PostureExposureFinding>();
+    // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (regras × MITRE) — tenant-owned, provider-neutral,
+    // CONSULTIVA. Snapshot atual por (tenant, conector) + filhos agregados por técnica. NUNCA vira score/evidência.
+    public DbSet<DetectionCoverageSnapshot> DetectionCoverageSnapshots => Set<DetectionCoverageSnapshot>();
+    public DbSet<DetectionCoverageTechnique> DetectionCoverageTechniques => Set<DetectionCoverageTechnique>();
 
     // Risks & scoring
     public DbSet<Risk> Risks => Set<Risk>();
@@ -301,6 +308,41 @@ public class AegisScoreDbContext : DbContext
                 .HasDatabaseName("UX_PostureExposureFinding_Natural");
             e.HasIndex(x => new { x.TenantId, x.LifecycleState });
             e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId });
+        });
+
+        // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção: UM snapshot ATUAL por (tenant, conector) + filhos
+        // AGREGADOS por técnica. A chave natural (TenantId, ConnectorConfigId) como ÍNDICE ÚNICO NOMEADO torna o
+        // upsert idempotente uma invariante de banco (o reconciliador reconhece SÓ esta violação como corrida). A
+        // chave alternativa composta (Id, TenantId) é o alvo da FK dos filhos, para o banco recusar filho de tenant
+        // divergente — mesmo idioma de KnightAssessmentRun/PostureSnapshot. Estados persistidos como int (defaults na
+        // migration). NUNCA persiste nome/texto/autor/conteúdo de regra — só ID de técnica MITRE e contagens.
+        b.Entity<DetectionCoverageSnapshot>(e =>
+        {
+            e.Property(x => x.Source).HasMaxLength(200).IsRequired();
+            e.Property(x => x.AttackVersion).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Fingerprint).HasMaxLength(64).IsRequired();   // SHA-256 hex
+            e.Property(x => x.CollectionState).HasConversion<int>();
+            e.Property(x => x.LastAttemptState).HasConversion<int>();
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId })
+                .IsUnique()
+                .HasDatabaseName("UX_DetectionCoverageSnapshot_Natural");
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            e.HasMany(x => x.Techniques).WithOne(t => t.Snapshot)
+                .HasForeignKey(t => new { t.DetectionCoverageSnapshotId, t.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Técnica AGREGADA congelada no snapshot: tenant-owned. Só ID MITRE + contagens (nome/táticas vêm do catálogo
+        // fixado na leitura). Índice tenant-leading por snapshot (leitura) e único (Tenant, Snapshot, TechniqueId)
+        // (uma técnica não se repete no mesmo snapshot — idempotência da agregação como invariante de banco).
+        b.Entity<DetectionCoverageTechnique>(e =>
+        {
+            e.Property(x => x.TechniqueId).HasMaxLength(20).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.DetectionCoverageSnapshotId });
+            e.HasIndex(x => new { x.TenantId, x.DetectionCoverageSnapshotId, x.TechniqueId })
+                .IsUnique()
+                .HasDatabaseName("UX_DetectionCoverageTechnique_Natural");
         });
 
         // Conector: UM registro por (tenant, provedor, capacidade) — a chave NATURAL da configuração.
@@ -764,6 +806,10 @@ public class AegisScoreDbContext : DbContext
         b.Entity<EvidenceSignal>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         // [AEGIS-MVP-POSTURE-02] Exposições de postura são ITenantOwned (fail-closed): um tenant jamais lê as de outro.
         b.Entity<PostureExposureFinding>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (pai e filhos) é ITenantOwned (fail-closed): um tenant
+        // jamais lê a cobertura de detecção de outro. Stamping do TenantId no insert é automático (SaveChanges guard).
+        b.Entity<DetectionCoverageSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<DetectionCoverageTechnique>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<Risk>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<RiskAppetite>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<IcrScore>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

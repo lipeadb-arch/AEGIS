@@ -14,6 +14,7 @@ using AegisScore.Application.Scoring;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Scoring;
+using AppDetectionCoverage = AegisScore.Application.Abstractions.DetectionCoverageSnapshot;
 
 namespace AegisScore.Infrastructure.Connectors;
 
@@ -212,6 +213,10 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // SIEM (Microsoft Sentinel, Google SecOps, …) não emite sinais de score e produz apenas esta fotografia.
         // Coletada na MESMA try/catch — NÃO vira EvidenceSignal, NÃO é reconciliada no banco e NÃO toca o AEGIS Score.
         SiemPostureSnapshot? siem = null;
+        // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (regras × MITRE) — dimensão INDEPENDENTE de casos/alertas.
+        // O coletor NÃO lança em falha da fonte (devolve estado classificado), então uma Rules API indisponível NÃO
+        // derruba a sincronização de casos/alertas. Reconciliada no banco (agregado consultivo), NUNCA vira score.
+        AppDetectionCoverage? detectionCoverage = null;
         try
         {
             if (adapter is ICombinedEvidenceCollector combined)
@@ -238,6 +243,12 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             // Postura operacional de SIEM (provider-neutral): também na MESMA try/catch. Uma falha da fonte carimba Failed.
             if (adapter is ISiemPostureCollector siemCollector)
                 siem = await siemCollector.CollectPostureAsync(config, ct);
+
+            // Cobertura de detecção (provider-neutral): dimensão INDEPENDENTE. O coletor devolve SEMPRE uma fotografia
+            // com estado classificado (Available/Partial/Unavailable) — nunca lança por falha da fonte, então a Rules
+            // API indisponível NÃO derruba casos/alertas nem carimba Failed. Só o cancelamento solicitado propaga.
+            if (adapter is IDetectionCoverageCollector coverageCollector)
+                detectionCoverage = await coverageCollector.CollectCoverageAsync(config, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -292,7 +303,10 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // não comprovada) degrada a saúde — honestidade operacional. Uma fotografia completa (mesmo sem casos/alertas)
         // segue Healthy. A completude é derivada de AMBAS as dimensões (casos e alertas).
         var degradedBySiem = siem is not null && !siem.IsComplete;
-        var status = (skipped > 0 || degradedByVuln || degradedBySiem)
+        // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção parcial/indisponível degrada a saúde — honestidade
+        // operacional (ex.: sem `chronicle.rules.list`, a dimensão fica indisponível, mas casos/alertas seguem).
+        var degradedByCoverage = detectionCoverage is not null && !detectionCoverage.IsComplete;
+        var status = (skipped > 0 || degradedByVuln || degradedBySiem || degradedByCoverage)
             ? ConnectorStatus.Degraded : ConnectorStatus.Healthy;
         // Um único SaveChanges: os sinais adicionados + o carimbo de sync são o MESMO fato.
         await StampConnectorAsync(db, config.Id, now, status, ct);
@@ -337,6 +351,26 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             }
         }
 
+        // [AEGIS-MVP-GOOGLE-SECOPS-02] Reconcilia a cobertura de detecção (snapshot agregado por tenant+conector), sob
+        // o tenant proprietário. Contexto NOVO isola do change tracker dos sinais. Falha NÃO é mascarada (carimba
+        // Failed e propaga, como as demais reconciliações). O reconciliador NUNCA cria EvidenceSignal nem toca o
+        // score — é agregado CONSULTIVO. Uma coleta Unavailable NÃO é erro: preserva o snapshot anterior e retorna.
+        if (detectionCoverage is not null)
+        {
+            try
+            {
+                await ReconcileDetectionCoverageAsync(config.TenantId, config.Id, detectionCoverage, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex,
+                    "Reconciliação da cobertura de detecção do conector {ConnectorId} falhou; conector marcado como Failed.",
+                    config.Id);
+                await TryStampFailedAsync(config.Id, config.TenantId, ct);
+                throw;
+            }
+        }
+
         // [AEGIS-AUD-019] Projeta a evidência coletada no ledger (recompute GLOBAL from-newest). Semântica
         // coerente com o push: falha na projeção NÃO é mascarada — carimba Failed e propaga como 500. Uma
         // nova coleta (mesmo sync) refaz o recompute sobre a evidência mais nova.
@@ -353,7 +387,23 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             throw;
         }
 
-        return new PullIngestionResult(persisted, 0, skipped, status, vulnResult, siem);
+        return new PullIngestionResult(persisted, 0, skipped, status, vulnResult, siem, detectionCoverage);
+    }
+
+    // ---- Reconciliação da cobertura de detecção (AEGIS-MVP-GOOGLE-SECOPS-02) -----------------------
+
+    /// <summary>
+    /// Reconcilia a fotografia de cobertura de detecção no snapshot por (tenant, conector), sob o tenant proprietário
+    /// (<see cref="SystemTenantContext"/>): contexto NOVO (isolado do change tracker dos sinais) + query filter
+    /// fail-closed + stamping. A substituição atômica/preservação vive no <see cref="DetectionCoverageReconciler"/>;
+    /// o adaptador nunca escreve no banco. NUNCA cria EvidenceSignal — cobertura é agregado CONSULTIVO.
+    /// </summary>
+    private async Task ReconcileDetectionCoverageAsync(
+        Guid tenantId, Guid connectorId, AppDetectionCoverage coverage, CancellationToken ct)
+    {
+        await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
+        var reconciler = new DetectionCoverageReconciler(db, _log);
+        await reconciler.ReconcileAsync(connectorId, coverage, ct);
     }
 
     // ---- Reconciliação de vulnerabilidades associadas a ativos (AEGIS-MVP-VULN-01) ----------------
