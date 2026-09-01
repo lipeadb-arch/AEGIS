@@ -379,7 +379,8 @@ public sealed class PostureExposureReconcilerTests : IDisposable
             NewContext(TenantA),
             new WorkspacePostureQuery(NewContext(TenantA), tc),
             new PostureExposureQuery(NewContext(TenantA), tc, StaticExposureLanguageCatalog.Empty),
-            new VulnerabilityQuery(NewContext(TenantA), tc));
+            new VulnerabilityQuery(NewContext(TenantA), tc),
+            new AegisScore.Infrastructure.Queries.DetectionCoverageQuery(NewContext(TenantA), tc, new FakeMitreCatalog()));
         var context = await builder.BuildAsync();
 
         context.TopExposures.Should().NotBeNull();

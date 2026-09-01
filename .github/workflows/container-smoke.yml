@@ -56,11 +56,14 @@ jobs:
       #     viva, sem PostgreSQL). Prova em Linux: contrato HTTP oficial do Chronicle (instances.get, cases.list v1,
       #     legacySearchEnterpriseWideAlerts), autenticação Google (service account, sem DWD), allowlist e segurança
       #     do bearer, agregação/parcialidade, ZERO sinais de score, registro na DI e a regressão do Microsoft
-      #     Sentinel. Filtro por FullyQualifiedName nas 7 classes envolvidas — NÃO roda a suíte backend inteira.
+      #     Sentinel. [AEGIS-MVP-GOOGLE-SECOPS-02] Inclui a COBERTURA DE DETECÇÃO: transporte rules.list CONFIG_ONLY
+      #     (ChronicleRulesApiTests), agregação regras×MITRE (DetectionCoverageCollectorTests), catálogo MITRE v17.1
+      #     real (MitreAttackCatalogTests) e a reconciliação/leitura + GARANTIA de zero score (DetectionCoveragePersistenceTests,
+      #     SQLite). Filtro por FullyQualifiedName — NÃO roda a suíte backend inteira.
       - name: Google SecOps and Sentinel connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
@@ -218,9 +221,10 @@ jobs:
 
       # AEGIS_TEST_PG aponta para o banco de MANUTENÇÃO (postgres); o PostgresProbe cria/derruba um
       # database descartável a cada teste. Só as classes de migration/postura em PostgreSQL rodam (filtro por
-      # classe), incluindo PostureExposurePostgresTests (POSTURE-02) e VulnerabilityManagementPostgresTests
+      # classe), incluindo PostureExposurePostgresTests (POSTURE-02), VulnerabilityManagementPostgresTests
       # (AEGIS-MVP-VULN-01: migration multifonte, índice global de CVE, constraints de binding/observação e
-      # reconciliação/lifecycle multifonte).
+      # reconciliação/lifecycle multifonte) e DetectionCoveragePostgresTests (AEGIS-MVP-GOOGLE-SECOPS-02:
+      # migration da cobertura de detecção, índice único (tenant, conector), substituição atômica e isolamento).
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
@@ -229,4 +233,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests"
