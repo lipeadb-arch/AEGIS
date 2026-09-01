@@ -109,7 +109,10 @@ public sealed record AuditorTenantContext(
     IReadOnlyList<AuditorPostureExposure>? TopExposures = null,
     // [AEGIS-MVP-VULN-01] Principais vulnerabilidades ativo×CVE ABERTAS (no máx. 8), priorizadas. SÓ campos
     // permitidos — nunca machineId/ExternalRef, IP, aadDeviceId, segredo, payload bruto, inventário completo ou PII.
-    IReadOnlyList<AuditorVulnerability>? TopVulnerabilities = null);
+    IReadOnlyList<AuditorVulnerability>? TopVulnerabilities = null,
+    // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (regras do SIEM × MITRE), CONSULTIVA e LIMITADA. Só
+    // agregados + técnicas priorizadas — nunca nome/texto de regra, credencial ou payload. Opcional/default null.
+    AuditorDetectionCoverage? DetectionCoverage = null);
 
 /// <summary>
 /// [AEGIS-MVP-VULN-01] Uma vulnerabilidade (exposição ativo×CVE) para o contexto do Auditor — FATO DA FONTE,
@@ -155,6 +158,29 @@ public sealed record AuditorPostureExposure(
     int? SourceRank,
     string? Tier,
     IReadOnlyList<string> Threats);
+
+/// <summary>
+/// [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (regras × MITRE ATT&CK) para o contexto do Auditor — FATO
+/// OPERACIONAL consultivo. Só agregados + as técnicas que requerem atenção primeiro (limite determinístico). A IA
+/// EXPLICA e prioriza a cobertura observada, mas NÃO afirma eficácia, NÃO cria mapeamento MITRE e NÃO converte
+/// quantidade de regras em pontuação/conformidade. NUNCA carrega nome/texto de regra, credencial ou payload.
+/// </summary>
+public sealed record AuditorDetectionCoverage(
+    string Source,
+    string AttackVersion,
+    string State,
+    int ActiveRules,
+    int RulesWithMitre,
+    int RulesWithoutMitre,
+    int RulesInLiveMode,
+    int RulesWithAlerting,
+    int TechniquesObserved,
+    IReadOnlyList<AuditorDetectionTechnique> Techniques);
+
+/// <summary>Uma técnica MITRE observada, para o Auditor: ID, nome oficial, táticas, contagens e estado legível.</summary>
+public sealed record AuditorDetectionTechnique(
+    string TechniqueId, string Name, IReadOnlyList<string> Tactics,
+    int RuleCount, int LiveRuleCount, int AlertingRuleCount, string Status);
 
 /// <summary>Resumo de postura de UMA Função NIST para o contexto do Auditor.</summary>
 public sealed record AuditorFunctionPosture(

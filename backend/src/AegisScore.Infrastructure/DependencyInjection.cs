@@ -162,6 +162,17 @@ public static class DependencyInjection
         services.AddSingleton<IExposureLanguageCatalog>(sp => new ExposureLanguageCatalog(
             exposureLanguagePath, sp.GetRequiredService<ILogger<ExposureLanguageCatalog>>()));
 
+        // [AEGIS-MVP-GOOGLE-SECOPS-02] Catálogo MITRE ATT&CK Enterprise v17.1 (reference data derivado do STIX
+        // OFICIAL versionado — ver scripts/mitre/generate_mitre_catalog.py). Singleton lazy; mesmo padrão de Data/.
+        // Autoridade ÚNICA de nome/hierarquia/táticas de técnica, usada pelo conector de SecOps (validação estrita)
+        // e pela query de cobertura de detecção (resolução de nomes). FAIL-CLOSED por dentro (versão fixada em 17.1).
+        var mitreCatalogPath = config["Reference:MitreAttackCatalogPath"]
+            ?? Path.Combine("Data", "mitre_attack_enterprise_v17_1.json");
+        if (!Path.IsPathRooted(mitreCatalogPath))
+            mitreCatalogPath = Path.Combine(AppContext.BaseDirectory, mitreCatalogPath);
+        services.AddSingleton<IMitreAttackCatalog>(sp => new MitreAttackCatalog(
+            mitreCatalogPath, sp.GetRequiredService<ILogger<MitreAttackCatalog>>()));
+
         // Auditor Virtual — construtor do CONTEXTO tenant-scoped (somente leitura) que fundamenta o chat:
         // score/cobertura, lacunas, controles, evidência documental curta, conectores e recomendações. Scoped:
         // usa o DbContext + as projeções de leitura sob o Global Query Filter fail-closed do tenant.
@@ -203,6 +214,8 @@ public static class DependencyInjection
         services.AddScoped<IPostureExposureQuery, PostureExposureQuery>();
         // [AEGIS-MVP-VULN-01] Leitura tenant-scoped das vulnerabilidades ativo×CVE (Global Query Filter fail-closed).
         services.AddScoped<IVulnerabilityQuery, VulnerabilityQuery>();
+        // [AEGIS-MVP-GOOGLE-SECOPS-02] Leitura tenant-scoped da cobertura de detecção (regras × MITRE), CONSULTIVA.
+        services.AddScoped<IDetectionCoverageQuery, DetectionCoverageQuery>();
         // [AEGIS-MVP-PRIORITIES-01] Central de Prioridades: leitura COMPOSTA (postura + exposições + vulnerabilidades).
         // Scoped: apenas orquestra as três queries acima, que compartilham o mesmo DbContext scoped da requisição.
         services.AddScoped<IPriorityWorkspaceQuery, PriorityWorkspaceQuery>();

@@ -223,7 +223,20 @@ public record SyncResultDto(
     VulnerabilitySyncSummaryDto? Vulnerabilities = null,
     // [AEGIS-MVP-SIEM] Aditivo e PROVIDER-NEUTRAL: postura operacional do SIEM (null para os demais conectores). O
     // mesmo campo serve Microsoft Sentinel, Google SecOps e futuros SIEMs — o rótulo da fonte vive dentro do resumo.
-    SiemSyncSummaryDto? Siem = null);
+    SiemSyncSummaryDto? Siem = null,
+    // [AEGIS-MVP-GOOGLE-SECOPS-02] Aditivo e PROVIDER-NEUTRAL: cobertura de detecção (regras × MITRE), dimensão
+    // INDEPENDENTE de casos/alertas. Estado por dimensão — completa/parcial/indisponível. NUNCA vira sinal/score.
+    DetectionCoverageSyncSummaryDto? DetectionCoverage = null);
+
+/// <summary>
+/// [AEGIS-MVP-GOOGLE-SECOPS-02] Resumo ADITIVO e PROVIDER-NEUTRAL de uma sincronização de cobertura de detecção —
+/// só agregados. <see cref="State"/> = Available/Partial/Unavailable (dimensão INDEPENDENTE de casos/alertas). É FATO
+/// CONSULTIVO: não vira EvidenceSignal nem altera o AEGIS Score. Nunca nome/texto de regra, credencial ou payload.
+/// </summary>
+public record DetectionCoverageSyncSummaryDto(
+    string Source, string AttackVersion, string State,
+    int ActiveRules, int RulesWithMitre, int RulesWithoutMitre,
+    int RulesInLiveMode, int RulesWithAlerting, int TechniquesObserved);
 
 /// <summary>[AEGIS-MVP-VULN-01] Contagens de uma sincronização de vulnerabilidades (ativos/CVEs/exposições/observações).</summary>
 public record VulnerabilitySyncSummaryDto(

@@ -316,6 +316,15 @@ public sealed class AegisAssessmentService : IAiAssessmentService
         "conector uma correção que ele não forneceu.\n" +
         "• Múltiplas fontes independentes podem REFORÇAR o contexto, mas concordância entre elas NÃO vira um novo fato " +
         "técnico criado por você.\n\n" +
+        "COBERTURA DE DETECÇÃO (campo DetectionCoverage do contexto, quando houver — regras do SIEM × MITRE ATT&CK):\n" +
+        "• É a COBERTURA baseada em CONFIGURAÇÃO de regras: mostra quais técnicas MITRE têm regra, quais estão em " +
+        "execução (live) e quais geram alertas. A existência de uma regra NÃO comprova controle implementado, regra " +
+        "funcional, fonte de logs disponível, ataque detectado nem conformidade.\n" +
+        "• Você PODE explicar a cobertura observada, correlacionar técnicas com riscos/exposições já conhecidos e " +
+        "sugerir perguntas e próximos passos (ex.: técnica com regra mas sem live mode, ou sem alerting).\n" +
+        "• Você NÃO afirma eficácia (\"protegido\"/\"detectado\"); NÃO cria, corrige ou infere mapeamento MITRE; NÃO " +
+        "altera NIST, score ou conformidade; e NUNCA converte quantidade de regras, alertas, detecções ou técnicas em " +
+        "pontuação. A cobertura é CONSULTIVA — o AEGIS Score permanece determinístico e alheio a ela.\n\n" +
         "ROTEIE A INTENÇÃO da mensagem do usuário em uma de duas:\n" +
         "• \"COPILOT\": dúvida/consulta geral. Responda diretamente no campo \"message\".\n" +
         "• \"START_INTERVIEW\": o usuário quer AUDITAR, DIAGNOSTICAR ou FECHAR LACUNAS. Então \"message\" JÁ " +

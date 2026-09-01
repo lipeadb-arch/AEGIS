@@ -24,6 +24,7 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
     private const int MaxRecommendations = 6;
     private const int MaxExposures = 8;
     private const int MaxVulnerabilities = 8;
+    private const int MaxDetectionTechniques = 12;
     private const int EvidenceQuoteMaxChars = 240;
     private const int ReasonMaxChars = 160;
     private const int RemediationMaxChars = 240;
@@ -32,17 +33,20 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
     private readonly IWorkspacePostureQuery _posture;
     private readonly IPostureExposureQuery _exposureQuery;
     private readonly IVulnerabilityQuery _vulnerabilityQuery;
+    private readonly IDetectionCoverageQuery _detectionCoverageQuery;
 
     public AuditorContextBuilder(
         AegisScoreDbContext db,
         IWorkspacePostureQuery posture,
         IPostureExposureQuery exposureQuery,
-        IVulnerabilityQuery vulnerabilityQuery)
+        IVulnerabilityQuery vulnerabilityQuery,
+        IDetectionCoverageQuery detectionCoverageQuery)
     {
         _db = db;
         _posture = posture;
         _exposureQuery = exposureQuery;
         _vulnerabilityQuery = vulnerabilityQuery;
+        _detectionCoverageQuery = detectionCoverageQuery;
     }
 
     public async Task<AuditorTenantContext> BuildAsync(CancellationToken ct = default)
@@ -122,6 +126,30 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
                 g.OpenAssetCount, g.AffectedAssetCount, g.MaxAssetCriticality, g.EffectiveLifecycle, g.Providers))
             .ToList();
 
+        // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (regras × MITRE) pela AUTORIDADE de leitura — só agregados
+        // e as técnicas que requerem atenção primeiro (a query já ordena assim), no máx. MaxDetectionTechniques. FATO
+        // CONSULTIVO: só entra quando há inventário (Available/Partial ou Unavailable com dados preservados); nunca
+        // nome/texto de regra, credencial ou payload. NÃO vira score/evidência/conformidade.
+        var coverageView = await _detectionCoverageQuery.GetAsync(ct);
+        AuditorDetectionCoverage? detectionCoverage = coverageView.Techniques.Count > 0
+            ? new AuditorDetectionCoverage(
+                coverageView.Source ?? "SIEM",
+                coverageView.AttackVersion,
+                coverageView.State.ToString(),
+                coverageView.Summary.ActiveRules,
+                coverageView.Summary.RulesWithMitre,
+                coverageView.Summary.RulesWithoutMitre,
+                coverageView.Summary.RulesInLiveMode,
+                coverageView.Summary.RulesWithAlerting,
+                coverageView.Summary.TechniquesObserved,
+                coverageView.Techniques
+                    .Take(MaxDetectionTechniques)
+                    .Select(t => new AuditorDetectionTechnique(
+                        t.TechniqueId, t.Name, t.Tactics.Select(x => x.Name).ToList(),
+                        t.RuleCount, t.LiveRuleCount, t.AlertingRuleCount, t.StatusLabel))
+                    .ToList())
+            : null;
+
         // Recomendações pendentes derivadas das lacunas (curtas, sem inventar): "código: o que falta".
         var recommendations = topGaps
             .Select(g => string.IsNullOrWhiteSpace(g.Reason) ? g.SubcategoryCode : $"{g.SubcategoryCode}: {g.Reason}")
@@ -143,7 +171,8 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
             connectors,
             recommendations,
             topExposures,
-            topVulnerabilities);
+            topVulnerabilities,
+            detectionCoverage);
     }
 
     private static string Truncate(string? s, int max)
