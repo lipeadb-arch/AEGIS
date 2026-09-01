@@ -57,5 +57,11 @@
     <Content Update="Data\AuditorPersonality.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- [AEGIS-MVP-GOOGLE-SECOPS-02] Catálogo compacto MITRE ATT&CK Enterprise v17.1, derivado do STIX OFICIAL
+         versionado (scripts/mitre/generate_mitre_catalog.py). Lido uma vez pelo MitreAttackCatalog (singleton)
+         a partir do Data/ ao lado do binário — runtime e testes NÃO dependem de internet. -->
+    <Content Update="Data\mitre_attack_enterprise_v17_1.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>

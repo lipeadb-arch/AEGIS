@@ -41,7 +41,9 @@ public static class DependencyInjection
         // resiliência padrão (retry/backoff, Retry-After no 429, circuit breaker). A autenticação (biblioteca oficial,
         // sem HttpClient injetado) é singleton, como os demais autenticadores Google. SCOPED como os outros conectores
         // (injeta um typed HttpClient — não pode ser capturado no root provider). NÃO emite sinais de score; expõe a
-        // postura por ISiemPostureCollector (fato consultivo), sem tocar a autoridade determinística.
+        // postura por ISiemPostureCollector e, [AEGIS-MVP-GOOGLE-SECOPS-02], a COBERTURA DE DETECÇÃO (regras × MITRE
+        // via rules.list CONFIG_ONLY) por IDetectionCoverageCollector — ambas CONSULTIVAS, validando técnicas pelo
+        // catálogo MITRE fixado (IMitreAttackCatalog, injetado da Infrastructure), sem tocar a autoridade determinística.
         services.AddSingleton<IGoogleSecOpsAuthenticator, GoogleSecOpsAuthenticator>();
         services.AddHttpClient<IChronicleApiClient, ChronicleApiClient>()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
