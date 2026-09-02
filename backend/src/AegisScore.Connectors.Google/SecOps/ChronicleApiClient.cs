@@ -107,6 +107,19 @@ internal static class ChronicleRegions
 public sealed record ChronicleInstance(string? Name);
 
 /// <summary>
+/// [AEGIS-MVP-GOOGLE-SECOPS-02] Desfecho ESTRUTURAL da coleta de regras (rules.list, <c>view=CONFIG_ONLY</c>). Os
+/// itens de regra são ENTREGUES incrementalmente ao chamador; este resultado só sinaliza a COMPLETUDE. <see
+/// cref="LimitHit"/> = um teto defensivo (páginas/itens) ou o fim antecipado por ciclo de <c>pageToken</c> impediu
+/// a coleta integral (o piso já entregue é preservado). <see cref="FailedAfterFirstPage"/> = uma falha ocorreu
+/// APÓS ao menos uma página válida (piso preservado, mas incompleto). Qualquer um dos dois ⇒ coleta PARCIAL. Uma
+/// falha na PRIMEIRA página lança <see cref="ChronicleApiException"/> (nenhuma página válida).
+/// </summary>
+public sealed record ChronicleRulesResult(bool LimitHit, bool FailedAfterFirstPage)
+{
+    public bool IsPartial => LimitHit || FailedAfterFirstPage;
+}
+
+/// <summary>
 /// Resultado da busca de alertas (legacySearchEnterpriseWideAlerts): os itens de alerta ACHATADOS dos dois
 /// agrupamentos oficiais (por ativo e por usuário) + se a fonte sinalizou <c>moreDataAvailable</c> e/ou se um limite
 /// defensivo impediu a coleta integral. Qualquer um dos dois ⇒ PARCIAL. A deduplicação (por <c>alertNumber</c>) e a
@@ -146,6 +159,18 @@ public interface IChronicleApiClient
     Task<ChronicleAlertSearchResult> SearchAlertsAsync(
         string token, string projectId, string location, string instanceId,
         DateTimeOffset startInclusive, DateTimeOffset endExclusive, CancellationToken ct);
+
+    /// <summary>
+    /// [AEGIS-MVP-GOOGLE-SECOPS-02] rules.list (<c>view=CONFIG_ONLY</c>) — pagina e ENTREGA cada regra ao
+    /// <paramref name="onRule"/> SEM materializar a coleção inteira. Rota FIXA
+    /// <c>GET /v1alpha/{parent}/rules?view=CONFIG_ONLY&amp;pageSize=5000</c>; os demais parâmetros permanecem
+    /// idênticos na paginação (só <c>pageToken</c> muda). Devolve o desfecho estrutural (teto/ciclo ou falha após
+    /// a primeira página ⇒ parcial); lança <see cref="ChronicleApiException"/> SOMENTE quando a PRIMEIRA requisição
+    /// falha. CONFIG_ONLY traz a configuração da regra (sem detecções/volumes); a agregação vive no conector.
+    /// </summary>
+    Task<ChronicleRulesResult> CollectRulesAsync(
+        string token, string projectId, string location, string instanceId,
+        Action<JsonElement> onRule, CancellationToken ct);
 }
 
 /// <inheritdoc cref="IChronicleApiClient"/>
@@ -156,6 +181,9 @@ public sealed class ChronicleApiClient : IChronicleApiClient
     private const int DefaultMaxItems = 200_000;            // teto defensivo de CASOS observados
     private const int DefaultMaxAlertsReturn = 10_000;      // maxNumAlertsReturn — proporcional ao MVP/memória (≠ teto de casos)
     private const int DefaultMaxResponseBytes = 8 * 1024 * 1024;   // teto defensivo do corpo de UMA resposta
+    private const int RulesPageSize = 5000;                 // rules.list CONFIG_ONLY — máximo oficial nessa view
+    private const int RulesMaxPages = 40;                   // teto defensivo de páginas (rules.list) — 40 × 5000 = 200k regras
+    private const int RulesMaxItems = 200_000;              // teto defensivo de REGRAS observadas
 
     private readonly HttpClient _http;
     private readonly int _maxPages;
@@ -163,6 +191,8 @@ public sealed class ChronicleApiClient : IChronicleApiClient
     private readonly int _maxAlerts;
     private readonly int _maxResponseBytes;
     private readonly int _pageSize;
+    private readonly int _rulesMaxPages;
+    private readonly int _rulesMaxItems;
 
     public ChronicleApiClient(HttpClient http)
         : this(http, DefaultMaxPages, DefaultMaxItems, DefaultMaxResponseBytes, DefaultPageSize, DefaultMaxAlertsReturn) { }
@@ -170,7 +200,7 @@ public sealed class ChronicleApiClient : IChronicleApiClient
     /// <summary>Ctor com tetos injetáveis — SOMENTE para teste (exercita limites/ciclo sem dados reais em excesso). <c>internal</c>: nada disso vem do tenant.</summary>
     internal ChronicleApiClient(
         HttpClient http, int maxPages, int maxItems, int maxResponseBytes, int pageSize,
-        int maxAlerts = DefaultMaxAlertsReturn)
+        int maxAlerts = DefaultMaxAlertsReturn, int rulesMaxPages = RulesMaxPages, int rulesMaxItems = RulesMaxItems)
     {
         _http = http;
         _maxPages = maxPages > 0 ? maxPages : DefaultMaxPages;
@@ -178,6 +208,8 @@ public sealed class ChronicleApiClient : IChronicleApiClient
         _maxAlerts = maxAlerts > 0 ? maxAlerts : DefaultMaxAlertsReturn;
         _maxResponseBytes = maxResponseBytes > 0 ? maxResponseBytes : DefaultMaxResponseBytes;
         _pageSize = pageSize > 0 ? pageSize : DefaultPageSize;
+        _rulesMaxPages = rulesMaxPages > 0 ? rulesMaxPages : RulesMaxPages;
+        _rulesMaxItems = rulesMaxItems > 0 ? rulesMaxItems : RulesMaxItems;
     }
 
     // ---- instances.get (prova de conexão) ---------------------------------------------------------
@@ -266,6 +298,66 @@ public sealed class ChronicleApiClient : IChronicleApiClient
         return ParseAlertSearch(body);
     }
 
+    // ---- rules.list (CONFIG_ONLY, agregação INCREMENTAL — nunca materializa a coleção) -------------
+
+    public async Task<ChronicleRulesResult> CollectRulesAsync(
+        string token, string projectId, string location, string instanceId,
+        Action<JsonElement> onRule, CancellationToken ct)
+    {
+        var host = ChronicleRegions.ResolveHost(location);
+        var visitedTokens = new HashSet<string>(StringComparer.Ordinal);   // detecção de repetição/ciclo de page token
+        string? pageToken = null;
+        var pages = 0;
+        var observed = 0;
+
+        while (true)
+        {
+            // Teto de páginas / ciclo de token → PARCIAL (piso já entregue preservado), NUNCA descarta as boas.
+            if (pages >= _rulesMaxPages) return new ChronicleRulesResult(LimitHit: true, FailedAfterFirstPage: false);
+            if (!string.IsNullOrEmpty(pageToken) && !visitedTokens.Add(pageToken))
+                return new ChronicleRulesResult(LimitHit: true, FailedAfterFirstPage: false);
+
+            var url = BuildRulesUrl(host, projectId, location, instanceId, pageToken);
+            ValidateOfficialUrl(url, host);
+
+            string body;
+            try
+            {
+                body = await SendGetAsync(token, url, host, ct);
+            }
+            catch (ChronicleApiException)
+            {
+                if (pages == 0) throw;   // a PRIMEIRA requisição falhou → falha classificada (sem piso)
+                return new ChronicleRulesResult(LimitHit: false, FailedAfterFirstPage: true);
+            }
+
+            List<JsonElement> items;
+            string? next;
+            try
+            {
+                (items, next) = ParseListPage(body, "rules");
+            }
+            catch (ChronicleApiException)
+            {
+                if (pages == 0) throw;
+                return new ChronicleRulesResult(LimitHit: false, FailedAfterFirstPage: true);
+            }
+            pages++;
+
+            foreach (var it in items)
+            {
+                if (observed >= _rulesMaxItems)
+                    return new ChronicleRulesResult(LimitHit: true, FailedAfterFirstPage: false);   // teto → PARCIAL
+                onRule(it);                                 // agrega incrementalmente; o objeto não é retido pelo transporte
+                observed++;
+            }
+
+            pageToken = next;
+            if (string.IsNullOrEmpty(pageToken))
+                return new ChronicleRulesResult(LimitHit: false, FailedAfterFirstPage: false);   // COMPLETO
+        }
+    }
+
     // ---- Construção e validação de destino --------------------------------------------------------
 
     private static string BuildInstanceUrl(string host, string projectId, string location, string instanceId) =>
@@ -275,6 +367,17 @@ public sealed class ChronicleApiClient : IChronicleApiClient
     {
         // Endpoint ESTÁVEL v1 de cases.list (não v1beta). pageSize máximo oficial de 1000.
         var url = $"https://{host}/v1/{InstancePath(projectId, location, instanceId)}/cases?pageSize={_pageSize}";
+        if (!string.IsNullOrEmpty(pageToken))
+            url += $"&pageToken={Uri.EscapeDataString(pageToken)}";
+        return url;
+    }
+
+    private static string BuildRulesUrl(string host, string projectId, string location, string instanceId, string? pageToken)
+    {
+        // Rota FIXA de rules.list na view CONFIG_ONLY (configuração da regra, sem detecções/volumes). pageSize
+        // máximo oficial de 5000 nessa view. Os parâmetros view/pageSize permanecem IDÊNTICOS na paginação —
+        // só pageToken muda — como exige o contrato de paginação estável.
+        var url = $"https://{host}/v1alpha/{InstancePath(projectId, location, instanceId)}/rules?view=CONFIG_ONLY&pageSize={RulesPageSize}";
         if (!string.IsNullOrEmpty(pageToken))
             url += $"&pageToken={Uri.EscapeDataString(pageToken)}";
         return url;

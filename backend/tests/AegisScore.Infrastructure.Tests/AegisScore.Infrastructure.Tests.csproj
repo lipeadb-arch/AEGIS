@@ -88,6 +88,10 @@
     <Content Include="..\..\src\AegisScore.Api\Data\aegis_exposure_language.pt-BR.json" Link="Data\aegis_exposure_language.pt-BR.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- [AEGIS-MVP-GOOGLE-SECOPS-02] Catálogo MITRE ATT&CK v17.1 para os testes do MitreAttackCatalog (carrega o artefato real). -->
+    <Content Include="..\..\src\AegisScore.Api\Data\mitre_attack_enterprise_v17_1.json" Link="Data\mitre_attack_enterprise_v17_1.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

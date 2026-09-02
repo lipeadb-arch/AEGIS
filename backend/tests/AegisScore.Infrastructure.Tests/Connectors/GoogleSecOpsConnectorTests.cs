@@ -419,7 +419,8 @@ public sealed class GoogleSecOpsConnectorTests
 
     private static GoogleSecOpsConnector NewConnector(
         ChronicleApiClientTests.RecordingHandler handler, IGoogleSecOpsAuthenticator? auth = null) =>
-        new(auth ?? new FakeAuth("fake-token"), new ChronicleApiClient(new HttpClient(handler)), new PassThroughProtector());
+        new(auth ?? new FakeAuth("fake-token"), new ChronicleApiClient(new HttpClient(handler)),
+            new PassThroughProtector(), new FakeMitreCatalog());
 
     [Fact]
     public void ProviderCapabilityAuth_AreGoogleSiemServiceAccount()
@@ -740,6 +741,8 @@ public sealed class GoogleSecOpsDiTests
         services.AddGoogleConnectors();
         services.AddScoped<IConnectorRegistry, ConnectorRegistry>();
         services.AddSingleton<IConnectorSecretProtector, FakeProtector>();
+        // [AEGIS-MVP-GOOGLE-SECOPS-02] O conector do SecOps agora depende do catálogo MITRE (validação de técnicas).
+        services.AddSingleton<AegisScore.Application.Services.IMitreAttackCatalog, FakeMitreCatalog>();
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
     }
 

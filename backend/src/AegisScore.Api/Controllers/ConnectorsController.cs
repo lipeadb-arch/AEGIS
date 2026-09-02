@@ -193,7 +193,16 @@ public class ConnectorsController : ControllerBase
                     s.Alerts.Observed, s.Alerts.HighSeverity, s.Alerts.MediumSeverity, s.Alerts.LastEvidenceAt))
             : null;
 
-        return Ok(new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln, siem));
+        // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (regras × MITRE) — dimensão INDEPENDENTE, fato consultivo.
+        // Estado como STRING (mesmo idioma dos demais DTOs). Só agregados — nunca nome/texto de regra ou payload.
+        var coverage = result.DetectionCoverage is { } dc
+            ? new DetectionCoverageSyncSummaryDto(
+                dc.Source, dc.AttackVersion, dc.State.ToString(),
+                dc.TotalActiveRules, dc.RulesWithMitre, dc.RulesWithoutMitre,
+                dc.RulesInLiveMode, dc.RulesWithAlerting, dc.Techniques.Count)
+            : null;
+
+        return Ok(new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln, siem, coverage));
     }
 
     private static bool IsGenericPush(ConnectorConfig c) =>

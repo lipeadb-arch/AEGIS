@@ -97,6 +97,7 @@ public sealed class AuditorContextBuilderTests : IDisposable
         return new(db,
             new WorkspacePostureQuery(db, tc),
             new PostureExposureQuery(db, tc, AegisScore.Application.Services.StaticExposureLanguageCatalog.Empty),
-            new VulnerabilityQuery(db, tc));
+            new VulnerabilityQuery(db, tc),
+            new AegisScore.Infrastructure.Queries.DetectionCoverageQuery(db, tc, new Connectors.FakeMitreCatalog()));
     }
 }

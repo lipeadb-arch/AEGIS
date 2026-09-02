@@ -56,15 +56,18 @@ public sealed record PushIngestionResult(
 
 /// <summary>
 /// Desfecho de uma coleta PULL executada pela autoridade única (mesmo executor/mapping do push).
-/// <see cref="Vulnerabilities"/> e <see cref="Siem"/> são ADITIVOS (default null): preenchidos só por
-/// conectores que implementam a capacidade correspondente, preservando os consumidores existentes. O resumo de
-/// SIEM é PROVIDER-NEUTRAL (<see cref="SiemPostureSnapshot"/>) — o mesmo contrato serve Microsoft Sentinel, Google
-/// SecOps e futuros SIEMs; o rótulo da fonte vive dentro do próprio resumo.
+/// <see cref="Vulnerabilities"/>, <see cref="Siem"/> e <see cref="DetectionCoverage"/> são ADITIVOS (default null):
+/// preenchidos só por conectores que implementam a capacidade correspondente, preservando os consumidores
+/// existentes. Os resumos de SIEM são PROVIDER-NEUTRAL (<see cref="SiemPostureSnapshot"/> e
+/// <see cref="DetectionCoverageSnapshot"/>) — o mesmo contrato serve Microsoft Sentinel, Google SecOps e futuros
+/// SIEMs; o rótulo da fonte vive dentro do próprio resumo. Casos/alertas e cobertura de detecção são dimensões
+/// INDEPENDENTES: a falha de uma NÃO apaga a outra.
 /// </summary>
 public sealed record PullIngestionResult(
     int Persisted, int Deduplicated, int Skipped, ConnectorStatus Status,
     VulnerabilitySyncResult? Vulnerabilities = null,
-    SiemPostureSnapshot? Siem = null);
+    SiemPostureSnapshot? Siem = null,
+    DetectionCoverageSnapshot? DetectionCoverage = null);
 
 // ---- [AEGIS-MVP-SIEM] Postura operacional de SIEM — PROVIDER-NEUTRAL (somente leitura) ----
 
