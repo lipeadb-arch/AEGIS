@@ -2,6 +2,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { TenantAdmin } from '../models/tenant-admin.models';
 
 /** Resposta da criação de tenant: só o id do ambiente recém-criado. */
 export interface CreatedTenant {
@@ -22,6 +23,38 @@ export class TenantAdminService {
   createTenant(name: string, slug: string): Observable<CreatedTenant> {
     return this.http
       .post<CreatedTenant>(`${this.base}/tenants`, { name, slug })
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
+  // ---- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ciclo de vida administrativo (PlatformAdmin) ----
+  // NENHUM método envia autoridade de tenant: o ator vem do JWT (policy de plataforma). O alvo é o id do
+  // ambiente na rota. O slug é IMUTÁVEL — a renomeação só carrega o nome.
+
+  /** Catálogo COMPLETO de tenants (inclui suspensos). */
+  listTenants(): Observable<TenantAdmin[]> {
+    return this.http
+      .get<TenantAdmin[]>(`${this.base}/platform/tenants`)
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
+  /** Renomeia o nome de exibição (slug inalterado). */
+  renameTenant(tenantId: string, name: string): Observable<TenantAdmin> {
+    return this.http
+      .put<TenantAdmin>(`${this.base}/platform/tenants/${tenantId}`, { name })
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
+  /** Suspende (preserva histórico; impede o uso operacional). 409 se deixaria o ator sem ambiente de recuperação. */
+  suspendTenant(tenantId: string): Observable<TenantAdmin> {
+    return this.http
+      .post<TenantAdmin>(`${this.base}/platform/tenants/${tenantId}/suspend`, {})
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
+  /** Reativa um tenant suspenso (→ Ativo). Idempotente. */
+  reactivateTenant(tenantId: string): Observable<TenantAdmin> {
+    return this.http
+      .post<TenantAdmin>(`${this.base}/platform/tenants/${tenantId}/reactivate`, {})
       .pipe(catchError((err) => throwError(() => this.describe(err))));
   }
 

@@ -1,11 +1,17 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
+import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { ConnectorService } from '../services/connector.service';
 import {
   buildMicrosoftHubRequest,
   buildSiemSyncMessage,
+  canSyncConnector,
+  canTestConnector,
+  connectionState,
+  connectionStateLabel,
+  connectionStateTone,
   ConnectorConfig,
   GENERIC_PROVIDERS,
   isGenericPush,
@@ -79,25 +85,24 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
             }
             <ul class="conn-list">
             @for (c of grp.items; track c.id) {
-              <li class="conn">
-                <span class="tone" [class]="'tone-' + tone(c.lastStatus)" aria-hidden="true"></span>
+              <li class="conn" [class.disconnected]="connState(c) === 'disconnected'">
+                <span class="tone" [class]="'tone-' + connTone(connState(c))" aria-hidden="true"></span>
                 <div class="conn-main">
                   <strong>{{ c.displayName }}</strong>
                   <span class="meta">{{ c.provider }} · {{ c.capability }} · {{ c.authType }}</span>
-                  @if (push(c)) {
+                  @if (push(c) && c.hasIngestionKey) {
                     <span class="meta ok-note">Push genérico disponível</span>
                   }
                 </div>
                 <div class="conn-state">
-                  <span class="badge" [class]="'tone-' + tone(c.lastStatus)">{{ label(c.lastStatus) }}</span>
-                  @if (push(c)) {
-                    @if (!c.hasIngestionKey) {
-                      <span class="badge warn">Sem chave</span>
-                    }
-                  } @else if (!c.hasCredentials) {
-                    <span class="badge warn">Sem credencial</span>
+                  <!-- Estado de CONEXÃO ATUAL (autoridade): Conectado / Desabilitado / Desconectado. Derivado de
+                       habilitação + credencial, NÃO do lastStatus (que é evidência histórica da última coleta). -->
+                  <span class="badge" [class]="'tone-' + connTone(connState(c))">{{ connLabel(connState(c)) }}</span>
+                  <!-- Evidência histórica, claramente rotulada — nunca apresentada como saúde operacional atual. -->
+                  @if (c.lastStatus !== 'Unknown') {
+                    <span class="badge subtle" title="Resultado da última coleta (histórico)">coleta: {{ label(c.lastStatus) }}</span>
                   }
-                  <span class="meta">último: {{ lastSync(c) }}</span>
+                  <span class="meta">última coleta: {{ lastSync(c) }}</span>
                 </div>
                 <div class="conn-actions">
                   <!-- IdentityPosture não usa o pipeline genérico: Testar/Coletar retornariam 501. A ação real
@@ -105,23 +110,81 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                   @if (knight(c)) {
                     <button type="button" class="ghost sm" (click)="openKnight()">Abrir AEGIS KNIGHT</button>
                   } @else {
-                    <button type="button" class="ghost sm" (click)="test(c)" [disabled]="busyId() === c.id">
-                      {{ busyId() === c.id ? '…' : 'Testar conexão' }}
-                    </button>
-                    <!-- [AEGIS-AUD-020] Push não tem coleta pull: nada de "Sincronizar" para conector genérico. -->
-                    @if (!push(c)) {
+                    @if (canTest(c)) {
+                      <button type="button" class="ghost sm" (click)="test(c)" [disabled]="busyId() === c.id">
+                        {{ busyId() === c.id ? '…' : 'Testar conexão' }}
+                      </button>
+                    }
+                    <!-- [AEGIS-AUD-020] Push não tem coleta pull; e conector desabilitado/desconectado não sincroniza. -->
+                    @if (!push(c) && canSync(c)) {
                       <button type="button" class="ghost sm" (click)="sync(c)" [disabled]="busyId() === c.id">
                         Sincronizar agora
                       </button>
                     }
                   }
+                  <!-- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ações administrativas (a rota inteira já é TenantAdmin). -->
+                  <button type="button" class="ghost sm" (click)="startEdit(c)" [disabled]="busyId() === c.id">Editar</button>
+                  @if (connState(c) === 'connected') {
+                    <button type="button" class="ghost sm" (click)="disable(c)" [disabled]="busyId() === c.id">Desabilitar</button>
+                  } @else if (connState(c) === 'disabled') {
+                    <button type="button" class="ghost sm" (click)="enable(c)" [disabled]="busyId() === c.id">Reativar</button>
+                  }
+                  @if (connState(c) !== 'disconnected') {
+                    <button type="button" class="ghost sm danger" (click)="askDisconnect(c)" [disabled]="busyId() === c.id">
+                      Desconectar
+                    </button>
+                  }
                 </div>
-                @if (push(c)) {
+
+                @if (connState(c) === 'disconnected') {
+                  <p class="conn-msg hint-reconnect">
+                    Conector <strong>desconectado</strong> — a credencial foi eliminada. Para reconectar, informe a
+                    credencial novamente pelo formulário de configuração abaixo. O histórico já coletado foi preservado.
+                  </p>
+                }
+
+                @if (push(c) && c.hasIngestionKey) {
                   <p class="conn-endpoint" title="Endpoint de ingestão (envie eventos com POST + header X-Ingestion-Key)">
                     <span class="ep-label">Ingestão</span>
                     <code>POST {{ ingestionEndpoint(c.id) }}</code>
                   </p>
                 }
+
+                <!-- Edição inline (nome + intervalo). Sem campo de segredo: editar nunca reescreve a credencial. -->
+                @if (editingId() === c.id) {
+                  <form class="edit-conn" [formGroup]="editForm" (ngSubmit)="saveEdit(c)">
+                    <label class="field">
+                      <span>Nome de exibição</span>
+                      <input type="text" formControlName="displayName" />
+                    </label>
+                    <label class="field">
+                      <span>Intervalo de coleta (min)</span>
+                      <input type="number" formControlName="syncIntervalMinutes" min="5" max="10080" />
+                    </label>
+                    <div class="edit-actions">
+                      <button type="submit" class="primary sm" [disabled]="busyId() === c.id || editForm.invalid">Salvar</button>
+                      <button type="button" class="ghost sm" (click)="cancelEdit()">Cancelar</button>
+                    </div>
+                  </form>
+                }
+
+                <!-- Confirmação FORTE de desconexão (explica que a credencial precisará ser informada de novo). -->
+                @if (disconnectingId() === c.id) {
+                  <div class="confirm-disc" role="alertdialog">
+                    <span>
+                      Desconectar <strong>{{ c.displayName }}</strong>? A credencial armazenada será
+                      <strong>eliminada</strong> e será necessário <strong>informá-la novamente</strong> para reconectar.
+                      O histórico já coletado é preservado.
+                    </span>
+                    <div class="edit-actions">
+                      <button type="button" class="danger sm" (click)="disconnect(c)" [disabled]="busyId() === c.id">
+                        Confirmar desconexão
+                      </button>
+                      <button type="button" class="ghost sm" (click)="disconnectingId.set(null)">Cancelar</button>
+                    </div>
+                  </div>
+                }
+
                 @if (actionMsg()[c.id]; as msg) {
                   <p class="conn-msg" [class.err]="msg.startsWith('⚠')">{{ msg }}</p>
                 }
@@ -580,6 +643,58 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
       .conn-actions {
         display: flex;
         gap: 0.4rem;
+        flex-wrap: wrap;
+      }
+      /* Conector desconectado: rebaixado visualmente, estado inequívoco. */
+      .conn.disconnected {
+        opacity: 0.85;
+        border-style: dashed;
+      }
+      .badge.subtle {
+        color: var(--muted, #7a91be);
+        opacity: 0.75;
+      }
+      .badge.tone-idle {
+        color: #94a3b8;
+      }
+      .hint-reconnect {
+        color: #f5a524;
+      }
+      /* Edição inline + confirmação de desconexão. */
+      .edit-conn,
+      .confirm-disc {
+        grid-column: 1 / -1;
+        margin: 0.5rem 0 0;
+        padding-top: 0.6rem;
+        border-top: 1px dashed color-mix(in srgb, var(--hud-cyan, #26e0ff) 20%, transparent);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: flex-end;
+      }
+      .confirm-disc {
+        align-items: center;
+        font-size: 0.82rem;
+        line-height: 1.4;
+      }
+      .edit-actions {
+        display: flex;
+        gap: 0.4rem;
+      }
+      button.danger {
+        background: transparent;
+        border: 1px solid #ff3d6a;
+        color: #ff8098;
+        border-radius: 5px;
+        padding: 0.4rem 0.8rem;
+        font: inherit;
+        font-size: 0.8rem;
+        cursor: pointer;
+      }
+      button.primary.sm,
+      button.danger.sm {
+        padding: 0.25rem 0.6rem;
+        font-size: 0.72rem;
       }
 
       /* ---- formulário ---- */
@@ -692,6 +807,12 @@ export class IntegrationsComponent {
   protected readonly tone = statusTone;
   protected readonly push = isGenericPush;
   protected readonly knight = isKnightConnector;
+  // [AEGIS-MVP-ADMIN-LIFECYCLE-01] Estado de conexão ATUAL (derivado) e gates de ação — funções puras.
+  protected readonly connState = connectionState;
+  protected readonly connLabel = connectionStateLabel;
+  protected readonly connTone = connectionStateTone;
+  protected readonly canTest = canTestConnector;
+  protected readonly canSync = canSyncConnector;
 
   /**
    * Conectores agrupados: a família Microsoft sob um cabeçalho “Microsoft” (serviços filhos), o resto abaixo.
@@ -737,6 +858,14 @@ export class IntegrationsComponent {
   // ---- Estado das ações por conector ----
   protected readonly busyId = signal<string | null>(null);
   protected readonly actionMsg = signal<Record<string, string>>({});
+
+  // ---- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ciclo de vida administrativo ----
+  protected readonly editingId = signal<string | null>(null);
+  protected readonly disconnectingId = signal<string | null>(null);
+  protected readonly editForm: FormGroup = this.fb.group({
+    displayName: ['', [Validators.required, Validators.minLength(2), Validators.maxLength(200)]],
+    syncIntervalMinutes: [360, [Validators.required, Validators.min(5), Validators.max(10080)]],
+  });
 
   protected readonly form: FormGroup = this.fb.group({
     providerKey: ['', Validators.required],
@@ -997,6 +1126,112 @@ export class IntegrationsComponent {
         this.setMsg(c.id, `⚠ ${err.message}`);
         this.busyId.set(null);
       },
+    });
+  }
+
+  // ---- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ações administrativas ----
+
+  /** Abre a edição inline (nome + intervalo). O segredo NUNCA é pré-preenchido — não trafega na edição. */
+  protected startEdit(c: ConnectorConfig): void {
+    this.disconnectingId.set(null);
+    this.clearMsg(c.id);
+    this.editForm.reset({ displayName: c.displayName, syncIntervalMinutes: c.syncIntervalMinutes });
+    this.editingId.set(c.id);
+  }
+
+  protected cancelEdit(): void {
+    this.editingId.set(null);
+  }
+
+  protected saveEdit(c: ConnectorConfig): void {
+    if (this.editForm.invalid || this.busyId() === c.id) {
+      this.editForm.markAllAsTouched();
+      return;
+    }
+    const raw = this.editForm.getRawValue();
+    this.busyId.set(c.id);
+    this.clearMsg(c.id);
+    this.api
+      .update(c.id, {
+        displayName: (raw.displayName as string).trim(),
+        syncIntervalMinutes: Number(raw.syncIntervalMinutes),
+      })
+      .subscribe({
+        next: (updated) => {
+          this.replaceRow(updated);           // atualiza pelo estado devolvido pelo backend
+          this.editingId.set(null);
+          this.busyId.set(null);
+          this.setMsg(c.id, 'Integração atualizada.');
+        },
+        error: (err: Error) => this.actionFail(c.id, err),
+      });
+  }
+
+  /** Desabilita (pausa coletas; preserva a credencial). Idempotente. */
+  protected disable(c: ConnectorConfig): void {
+    this.runAdmin(c, () => this.api.disable(c.id), 'Conector desabilitado (credencial preservada).');
+  }
+
+  /** Reabilita um conector desabilitado. */
+  protected enable(c: ConnectorConfig): void {
+    this.runAdmin(c, () => this.api.enable(c.id), 'Conector reativado.');
+  }
+
+  protected askDisconnect(c: ConnectorConfig): void {
+    this.editingId.set(null);
+    this.clearMsg(c.id);
+    this.disconnectingId.set(c.id);
+  }
+
+  /** Desconecta (elimina o segredo; preserva a linha/histórico). Confirmação forte já exibida no template. */
+  protected disconnect(c: ConnectorConfig): void {
+    this.runAdmin(
+      c,
+      () => this.api.disconnect(c.id),
+      'Conector desconectado — credencial eliminada; histórico preservado. Reconfigure para reconectar.',
+      () => this.disconnectingId.set(null),
+    );
+  }
+
+  /** Executa uma ação administrativa com trava de duplo clique e atualização pelo estado do backend. */
+  private runAdmin(
+    c: ConnectorConfig,
+    call: () => Observable<ConnectorConfig>,
+    okMsg: string,
+    onDone?: () => void,
+  ): void {
+    if (this.busyId() === c.id) return;   // impede duplo clique / ações simultâneas
+    this.busyId.set(c.id);
+    this.clearMsg(c.id);
+    call().subscribe({
+      next: (updated) => {
+        this.replaceRow(updated);
+        this.busyId.set(null);
+        onDone?.();
+        this.setMsg(c.id, okMsg);
+      },
+      error: (err: Error) => {
+        onDone?.();
+        this.actionFail(c.id, err);
+      },
+    });
+  }
+
+  /** Substitui a linha na lista pelo DTO devolvido pelo backend — nunca fabrica sucesso local. */
+  private replaceRow(updated: ConnectorConfig): void {
+    this.connectors.update((list) => list.map((x) => (x.id === updated.id ? updated : x)));
+  }
+
+  private actionFail(id: string, err: Error): void {
+    this.busyId.set(null);
+    this.setMsg(id, `⚠ ${err.message}`);
+  }
+
+  private clearMsg(id: string): void {
+    this.actionMsg.update((m) => {
+      const next = { ...m };
+      delete next[id];
+      return next;
     });
   }
 

@@ -17,8 +17,10 @@ import { IntegrationsComponent } from './pages/integrations.component';
 import { SettingsComponent } from './pages/settings/settings.component';
 import { SettingsGeneralComponent } from './pages/settings/settings-general.component';
 import { SettingsUsersComponent } from './pages/settings/settings-users.component';
+import { SettingsTenantsComponent } from './pages/settings/settings-tenants.component';
 import { authGuard } from './guards/auth.guard';
 import { tenantAdminGuard } from './guards/tenant-admin.guard';
+import { platformAdminGuard } from './guards/platform-admin.guard';
 
 export const routes: Routes = [
   { path: 'login', component: LoginComponent, title: 'Aegis · Entrar' },
@@ -63,6 +65,13 @@ export const routes: Routes = [
         component: IntegrationsComponent,
         canActivate: [tenantAdminGuard],
         title: 'Aegis · Integrações',
+      },
+      {
+        // [AEGIS-MVP-ADMIN-LIFECYCLE-01] Administração de AMBIENTES — autoridade GLOBAL (PlatformAdmin).
+        path: 'tenants',
+        component: SettingsTenantsComponent,
+        canActivate: [platformAdminGuard],
+        title: 'Aegis · Ambientes',
       },
     ],
   },
