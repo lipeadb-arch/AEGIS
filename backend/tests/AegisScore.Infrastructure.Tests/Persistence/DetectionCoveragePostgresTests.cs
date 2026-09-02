@@ -54,7 +54,8 @@ public sealed class DetectionCoveragePostgresTests
         var connector = Guid.NewGuid();        // conector do tenant principal
         var otherConnector = Guid.NewGuid();   // conector distinto do outro tenant (Id de ConnectorConfig é global)
 
-        // (a) A MIGRATION aplica de fato no PostgreSQL e aparece entre as aplicadas; semeia tenants + conectores.
+        // (a) A MIGRATION aplica de fato no PostgreSQL e aparece entre as aplicadas; semeia tenants (contexto sistêmico)
+        // e conectores (cada um sob o contexto do SEU tenant — a gravação multi-tenant é fail-closed sem tenant resolvido).
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
         {
             await db.Database.MigrateAsync();
@@ -63,7 +64,15 @@ public sealed class DetectionCoveragePostgresTests
                     "a migration da entrega GOOGLE-SECOPS-02 deve constar como aplicada no PostgreSQL real");
             db.Tenants.Add(new Tenant { Id = tenant, Name = "T", Slug = "t-" + tenant.ToString("N"), Status = TenantStatus.Active });
             db.Tenants.Add(new Tenant { Id = other, Name = "O", Slug = "o-" + other.ToString("N"), Status = TenantStatus.Active });
+            await db.SaveChangesAsync();
+        }
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
             db.Connectors.Add(NewSiemConnector(tenant, connector));
+            await db.SaveChangesAsync();
+        }
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(other)))
+        {
             db.Connectors.Add(NewSiemConnector(other, otherConnector));
             await db.SaveChangesAsync();
         }
@@ -129,6 +138,10 @@ public sealed class DetectionCoveragePostgresTests
             await db.Database.MigrateAsync();
             db.Tenants.Add(new Tenant { Id = tenantA, Name = "A", Slug = "a-" + tenantA.ToString("N"), Status = TenantStatus.Active });
             db.Tenants.Add(new Tenant { Id = tenantB, Name = "B", Slug = "b-" + tenantB.ToString("N"), Status = TenantStatus.Active });
+            await db.SaveChangesAsync();
+        }
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenantA)))
+        {
             db.Connectors.Add(NewSiemConnector(tenantA, connectorA));   // conector existe SÓ no tenant A
             await db.SaveChangesAsync();
         }
