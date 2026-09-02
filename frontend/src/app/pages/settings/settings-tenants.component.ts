@@ -113,7 +113,8 @@ import {
               <div class="confirm" role="alertdialog">
                 <span>
                   Suspender <strong>{{ t.name }}</strong>? Preserva histórico e configurações, mas impede o uso
-                  operacional; as sessões ativas do ambiente serão encerradas.
+                  operacional: novos acessos e renovações são bloqueados de imediato; sessões já autenticadas
+                  não podem ser renovadas e expiram no prazo normal do token (até 10&nbsp;minutos).
                 </span>
                 <div class="actions">
                   <button type="button" class="btn sm danger" (click)="suspend(t)" [disabled]="busyId() === t.id">
@@ -307,7 +308,9 @@ export class SettingsTenantsComponent implements OnInit {
         this.confirmingId.set(null);
         this.busyId.set(null);
         this.rowOkId.set(t.id);
-        this.rowOk.set('Ambiente suspenso. As sessões ativas foram encerradas.');
+        this.rowOk.set(
+          'Ambiente suspenso. Novos acessos e renovações foram bloqueados; sessões já autenticadas expiram no prazo normal do token.',
+        );
       },
       error: (e: Error) => {
         this.confirmingId.set(null);

@@ -654,6 +654,114 @@ public sealed class TenantManagementServiceTests : IDisposable
         saved.EncryptedSettings.Should().BeEmpty("a coleta tardia NÃO reescreveu o segredo eliminado");
         saved.Enabled.Should().BeFalse("continua desconectado/desabilitado");
         saved.LastStatus.Should().Be(ConnectorStatus.Healthy, "o carimbo histórico do sync é permitido");
+
+        // E a PROJEÇÃO de leitura (a mesma que alimenta a UI) continua sem credencial: a coleta tardia registra
+        // só o desfecho histórico (LastStatus), nunca reapresenta a conexão como operacional. A UI deriva
+        // "Desconectado" da ausência de credencial — coberto no lado do frontend por connector-lifecycle.models.spec.
+        var summary = (await ServiceFor(assert, TenantA).ListConnectorsAsync()).Single();
+        summary.HasCredentials.Should().BeFalse("a projeção permanece sem credencial após a coleta tardia");
+        summary.HasIngestionKey.Should().BeFalse();
+        summary.Enabled.Should().BeFalse("a coleta tardia não habilita a conexão");
+    }
+
+    [Fact]
+    public async Task SetConnectorEnabledAsync_HabilitarDesconectadoPull_EhMissingCredential_NaoAlteraLinha()
+    {
+        // Um conector PULL desconectado (credencial eliminada) não pode ser HABILITADO: habilitar não recria
+        // segredo. A UI não oferece a ação, mas uma chamada direta à API não pode criar Enabled=true sem credencial.
+        Guid connectorId;
+        await using (var db = NewContext(TenantA))
+        {
+            var svc = ServiceFor(db, TenantA);
+            connectorId = (await svc.ConfigureConnectorAsync(Command(settings: "segredo"))).ConnectorId;
+            await svc.DisconnectConnectorAsync(connectorId);
+        }
+
+        await using var assert = NewContext(TenantA);
+        var result = await ServiceFor(assert, TenantA).SetConnectorEnabledAsync(connectorId, enabled: true);
+
+        result.Succeeded.Should().BeFalse();
+        result.Status.Should().Be(ConnectorAdminStatus.MissingCredential, "pull sem EncryptedSettings não habilita");
+        result.Connector.Should().BeNull("recusa não projeta estado");
+        var saved = await assert.Connectors.SingleAsync();
+        saved.Enabled.Should().BeFalse("a linha permanece intacta — nada foi habilitado");
+        saved.EncryptedSettings.Should().BeEmpty("a recusa não fabricou credencial");
+    }
+
+    [Fact]
+    public async Task SetConnectorEnabledAsync_HabilitarDesconectadoPush_EhMissingCredential_NaoAlteraLinha()
+    {
+        // Idem para o push genérico, cujo material de autenticação é a CHAVE DE INGESTÃO (hash). Desconectado,
+        // sem hash, também não pode ser habilitado.
+        Guid connectorId;
+        await using (var db = NewContext(TenantA))
+        {
+            var svc = ServiceFor(db, TenantA);
+            var pushCmd = new ConfigureConnectorCommand(
+                ConnectorProvider.Generic, ConnectorCapability.Siem, "SIEM push",
+                ConnectorAuthType.ApiKey, """{"ingestionKey":"chave-de-ingestao-de-alta-entropia-1234"}""");
+            connectorId = (await svc.ConfigureConnectorAsync(pushCmd)).ConnectorId;
+            await svc.DisconnectConnectorAsync(connectorId);
+        }
+
+        await using var assert = NewContext(TenantA);
+        var result = await ServiceFor(assert, TenantA).SetConnectorEnabledAsync(connectorId, enabled: true);
+
+        result.Status.Should().Be(ConnectorAdminStatus.MissingCredential, "push sem IngestionKeyHash não habilita");
+        result.Connector.Should().BeNull();
+        var saved = await assert.Connectors.SingleAsync();
+        saved.Enabled.Should().BeFalse();
+        saved.IngestionKeyHash.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SetConnectorEnabledAsync_ReabilitarDesabilitadoCredenciado_Sucede()
+    {
+        // Contraprova: um conector apenas DESABILITADO (credencial preservada) PODE ser reabilitado — o guard
+        // de credencial só barra o desconectado, nunca a pausa idempotente.
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+        var created = await svc.ConfigureConnectorAsync(Command(settings: "segredo"));
+        await svc.SetConnectorEnabledAsync(created.ConnectorId, enabled: false);
+
+        var reenabled = await svc.SetConnectorEnabledAsync(created.ConnectorId, enabled: true);
+        reenabled.Succeeded.Should().BeTrue("desabilitado com credencial reativa normalmente");
+        reenabled.Connector!.Enabled.Should().BeTrue();
+        reenabled.Connector.HasCredentials.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task SetConnectorEnabledAsync_HabilitarDesconectado_NaoVazaSegredoNoDesfecho()
+    {
+        // A recusa de habilitação não pode ecoar segredo: o desfecho não projeta conector, e a mensagem de
+        // ação orienta a reconectar sem citar credencial.
+        Guid connectorId;
+        await using (var db = NewContext(TenantA))
+        {
+            var svc = ServiceFor(db, TenantA);
+            connectorId = (await svc.ConfigureConnectorAsync(Command(settings: "s3gr3d0-supersecreto"))).ConnectorId;
+            await svc.DisconnectConnectorAsync(connectorId);
+        }
+
+        await using var assert = NewContext(TenantA);
+        var result = await ServiceFor(assert, TenantA).SetConnectorEnabledAsync(connectorId, enabled: true);
+
+        result.Connector.Should().BeNull("nenhuma projeção de estado na recusa");
+        (result.Detail ?? "").Should().NotContain("s3gr3d0", "a mensagem orienta a reconectar, sem citar segredo");
+    }
+
+    [Fact]
+    public async Task SetConnectorEnabledAsync_ConectorDeOutroTenant_EhNotFound()
+    {
+        Guid connectorId;
+        await using (var db = NewContext(TenantA))
+            connectorId = (await ServiceFor(db, TenantA).ConfigureConnectorAsync(Command())).ConnectorId;
+
+        await using (var db = NewContext(TenantB))
+        {
+            var result = await ServiceFor(db, TenantB).SetConnectorEnabledAsync(connectorId, enabled: true);
+            result.Status.Should().Be(ConnectorAdminStatus.NotFound, "cross-tenant é indistinguível de inexistente");
+        }
     }
 
     [Fact]

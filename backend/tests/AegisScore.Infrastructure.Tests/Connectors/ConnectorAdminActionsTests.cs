@@ -57,11 +57,33 @@ public sealed class ConnectorAdminActionsTests
         StatusOf(result).Should().Be(409, "conector desabilitado não inicia novas coletas");
     }
 
+    [Fact]
+    public async Task Enable_ConectorDesconectado_Recusa409()
+    {
+        // O serviço devolve MissingCredential (habilitar um desconectado); a borda o traduz em 409 orientado à
+        // ação — nunca 400/500 —, para o frontend tratar pelo mesmo caminho dos demais conflitos de estado.
+        var cfg = Cfg(enabled: false, encryptedSettings: "");
+        var tenants = new FakeTenants(cfg)
+        {
+            EnabledResult = ConnectorAdminResult.Rejected(
+                ConnectorAdminStatus.MissingCredential, "Conector desconectado: reconecte antes de habilitar."),
+        };
+        var controller = new ConnectorsController(
+            tenants, registry: null!, executor: null!, scopeFactory: null!, lifetime: null!,
+            NullLogger<ConnectorsController>.Instance);
+
+        var result = await controller.Enable(cfg.Id, default);
+        StatusOf(result.Result).Should().Be(409, "habilitar um conector desconectado é conflito de estado");
+    }
+
     /// <summary>ITenantManagementService mínimo: só GetConnectorAsync responde; o resto não é exercitado aqui.</summary>
     private sealed class FakeTenants : ITenantManagementService
     {
         private readonly ConnectorConfig _config;
         public FakeTenants(ConnectorConfig config) => _config = config;
+
+        /// <summary>Desfecho que <see cref="SetConnectorEnabledAsync"/> devolve (quando o teste exercita habilitar/desabilitar).</summary>
+        public ConnectorAdminResult? EnabledResult { get; init; }
 
         public Task<ConnectorConfig?> GetConnectorAsync(Guid connectorId, CancellationToken ct = default) =>
             Task.FromResult<ConnectorConfig?>(connectorId == _config.Id ? _config : null);
@@ -79,7 +101,9 @@ public sealed class ConnectorAdminActionsTests
         public Task<ConnectorAdminResult> UpdateConnectorAsync(UpdateConnectorCommand c, CancellationToken ct = default) =>
             throw new NotImplementedException();
         public Task<ConnectorAdminResult> SetConnectorEnabledAsync(Guid id, bool enabled, CancellationToken ct = default) =>
-            throw new NotImplementedException();
+            EnabledResult is not null
+                ? Task.FromResult(EnabledResult)
+                : throw new NotImplementedException();
         public Task<ConnectorAdminResult> DisconnectConnectorAsync(Guid id, CancellationToken ct = default) =>
             throw new NotImplementedException();
     }

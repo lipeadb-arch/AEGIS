@@ -266,13 +266,17 @@ public class ConnectorsController : ControllerBase
     public async Task<ActionResult<ConnectorConfigDto>> Disconnect(Guid connectorId, CancellationToken ct) =>
         RespondAdmin(await _connectors.DisconnectConnectorAsync(connectorId, ct));
 
-    /// <summary>Traduz o desfecho administrativo em HTTP: 200 (aplicado) · 404 (inexistente/cross-tenant) · 400 (nome).</summary>
+    /// <summary>Traduz o desfecho administrativo em HTTP: 200 (aplicado) · 404 (inexistente/cross-tenant) · 400 (nome) · 409 (habilitar desconectado).</summary>
     private ActionResult<ConnectorConfigDto> RespondAdmin(ConnectorAdminResult result) => result.Status switch
     {
         ConnectorAdminStatus.Updated => Ok(ToDto(result.Connector!)),
         ConnectorAdminStatus.NotFound => NotFound(),
         ConnectorAdminStatus.InvalidDisplayName =>
             BadRequest(new { title = result.Detail ?? "Nome de exibição inválido.", status = 400 }),
+        // Habilitar um conector desconectado é conflito de ESTADO, não requisição malformada: 409 orientado à
+        // ação (reconecte antes). A resposta carrega só {title, status} — nunca segredo.
+        ConnectorAdminStatus.MissingCredential =>
+            Conflict(new { title = result.Detail ?? "Conector desconectado: reconecte antes de habilitar.", status = 409 }),
         _ => BadRequest(new { title = "Requisição inválida.", status = 400 }),
     };
 

@@ -525,6 +525,16 @@ public sealed class TenantManagementService : ITenantManagementService
         if (config is null)
             return ConnectorAdminResult.Rejected(ConnectorAdminStatus.NotFound);
 
+        // HABILITAR um conector DESCONECTADO seria incoerente: Enabled=true sobre uma linha sem credencial não
+        // coleta nada e ainda a apresentaria como "conectada". Habilitar não recria segredo — reconectar é o
+        // caminho explícito (ConfigureConnectorAsync). A linha NÃO é tocada; devolve 409 orientado à ação. A
+        // regra espelha a classificação de credencial do resto do modelo: push genérico se autentica pela chave
+        // de ingestão; os demais (pull), pelo blob cifrado. Desabilitar nunca é barrado (continua idempotente).
+        if (enabled && !HasAuthMaterial(config))
+            return ConnectorAdminResult.Rejected(
+                ConnectorAdminStatus.MissingCredential,
+                "Conector desconectado: informe a credencial novamente (reconecte) antes de habilitar.");
+
         if (config.Enabled != enabled)
         {
             config.Enabled = enabled;
@@ -566,6 +576,22 @@ public sealed class TenantManagementService : ITenantManagementService
         c.LastSyncAt, c.LastStatus,
         HasCredentials: !string.IsNullOrWhiteSpace(c.EncryptedSettings),
         HasIngestionKey: !string.IsNullOrWhiteSpace(c.IngestionKeyHash));
+
+    /// <summary>
+    /// [AEGIS-MVP-ADMIN-LIFECYCLE-01] Este conector tem material de autenticação compatível com o seu tipo? O
+    /// push genérico (Generic/Siem, Generic/Edr) se autentica pela CHAVE DE INGESTÃO (<c>IngestionKeyHash</c>);
+    /// os demais (pull) pelo BLOB CIFRADO (<c>EncryptedSettings</c>). Espelha exatamente a classificação de
+    /// <c>ConfigureConnectorAsync</c>/<c>ConnectorsController.IsGenericPush</c> — divergir aqui abriria a porta
+    /// de habilitar um push só porque tem settings clássicos, ou de barrar um pull que só tem o blob.
+    /// </summary>
+    private static bool HasAuthMaterial(ConnectorConfig c)
+    {
+        var isGenericPush = c.Provider == ConnectorProvider.Generic
+            && (c.Capability == ConnectorCapability.Siem || c.Capability == ConnectorCapability.Edr);
+        return isGenericPush
+            ? !string.IsNullOrWhiteSpace(c.IngestionKeyHash)
+            : !string.IsNullOrWhiteSpace(c.EncryptedSettings);
+    }
 
     /// <summary>Tenant ambiente, fail-closed. Falhar aqui dá a mensagem certa e evita montar a entidade à toa.</summary>
     private Guid RequireAmbientTenant() => _tenant.TenantId

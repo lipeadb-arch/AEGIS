@@ -15,8 +15,11 @@ namespace AegisScore.Infrastructure.Tenancy;
 /// policy de plataforma na borda HTTP; aqui só aplicamos regra e traduzimos desfecho.
 ///
 /// Nada aqui exclui fisicamente tenant, altera slug, toca score/ledger/NIST ou concede autoridade nova. A
-/// suspensão apenas IMPEDE o uso operacional (os fluxos de login/seletor/troca já excluem suspensos) e revoga
-/// as sessões ativas do ambiente.
+/// suspensão IMPEDE o uso operacional imediatamente na porta de entrada: login, seleção, troca e RENOVAÇÃO já
+/// recusam o tenant suspenso, e os refresh tokens ativos do ambiente são revogados. Um access token JÁ EMITIDO
+/// permanece válido até o seu vencimento (o teto de vida é curto — ver <c>JwtOptions.AccessTokenMinutes</c>);
+/// não há revogação retroativa de access token aqui, e nós NÃO afirmamos "sessões encerradas imediatamente":
+/// as sessões deixam de poder ser renovadas e expiram no prazo normal do token.
 /// </summary>
 public sealed class PlatformTenantAdminService : IPlatformTenantAdminService
 {
@@ -114,10 +117,11 @@ public sealed class PlatformTenantAdminService : IPlatformTenantAdminService
         tenant.Status = TenantStatus.Suspended;
         await _db.SaveChangesAsync(ct);
 
-        // As sessões não sobrevivem à suspensão: revoga os refresh tokens ATIVOS do ambiente (ExecuteUpdate —
-        // atômico, fora do change tracker, participante da transação). IgnoreQueryFilters porque o ambiente
-        // suspenso pode NÃO ser o tenant ambiente do ator. O teto do access token já emitido (10 min) é
-        // preservado; a renovação, não. Login/seletor/troca já barram o tenant suspenso.
+        // Revoga os refresh tokens ATIVOS do ambiente (ExecuteUpdate — atômico, fora do change tracker,
+        // participante da transação). IgnoreQueryFilters porque o ambiente suspenso pode NÃO ser o tenant
+        // ambiente do ator. Efeito honesto: novas autenticações e RENOVAÇÕES ficam bloqueadas na porta de
+        // entrada (login/seletor/troca já barram suspenso); um access token JÁ EMITIDO segue válido até vencer
+        // (teto curto de JwtOptions.AccessTokenMinutes) — não há revogação retroativa de access token aqui.
         var revokedAt = DateTimeOffset.UtcNow;
         await _db.UserRefreshTokens.IgnoreQueryFilters()
             .Where(t => t.TenantId == tenant.Id && t.RevokedAt == null)
@@ -126,7 +130,9 @@ public sealed class PlatformTenantAdminService : IPlatformTenantAdminService
         await tx.CommitAsync(ct);
 
         _log.LogInformation(
-            "Tenant {TenantId} SUSPENSO por {ActorAccountId}; sessões ativas revogadas.", tenant.Id, actorAccountId);
+            "Tenant {TenantId} SUSPENSO por {ActorAccountId}; refresh tokens do ambiente revogados " +
+            "(novas autenticações e renovações bloqueadas; access tokens já emitidos expiram no TTL normal).",
+            tenant.Id, actorAccountId);
         return TenantAdminMutationResult.Ok(Summarize(tenant));
     }
 

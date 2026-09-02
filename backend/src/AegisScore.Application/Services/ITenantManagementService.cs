@@ -183,6 +183,14 @@ public enum ConnectorAdminStatus
 
     /// <summary>Nome de exibição ausente ou acima do teto (400).</summary>
     InvalidDisplayName = 2,
+
+    /// <summary>
+    /// [AEGIS-MVP-ADMIN-LIFECYCLE-01] Tentativa de HABILITAR um conector DESCONECTADO — sem material de
+    /// autenticação compatível (o pull precisa de <c>EncryptedSettings</c>; o push genérico, de
+    /// <c>IngestionKeyHash</c>). Habilitar não recria credencial: reconectar é o caminho explícito. A linha
+    /// NÃO é alterada. Conflito de estado ESPERADO (409 na borda), não falha excepcional.
+    /// </summary>
+    MissingCredential = 3,
 }
 
 /// <summary>Resultado de uma ação administrativa de conector. <see cref="Connector"/> traz o estado APÓS a escrita (sem segredo).</summary>
@@ -305,7 +313,12 @@ public interface ITenantManagementService
     /// <summary>
     /// Habilita ou desabilita (pausa) um conector do tenant ambiente. Desabilitar INTERROMPE novas coletas
     /// (os workers e a ingestão push já respeitam <c>Enabled</c>), mas PRESERVA a credencial para futura
-    /// reativação — não é desconexão. Idempotente (habilitar o já-habilitado é sucesso sem efeito).
+    /// reativação — não é desconexão; é sempre idempotente (desabilitar o já-desabilitado é sucesso sem efeito).
+    /// HABILITAR EXIGE material de autenticação compatível: um conector DESCONECTADO (pull sem
+    /// <c>EncryptedSettings</c>, ou push genérico sem <c>IngestionKeyHash</c>) NÃO pode ser habilitado —
+    /// habilitar não recria credencial. Nesse caso a linha permanece intacta e o desfecho é
+    /// <see cref="ConnectorAdminStatus.MissingCredential"/> (reconecte pelo fluxo de configuração). Habilitar o
+    /// já-habilitado e credenciado é sucesso sem efeito.
     /// </summary>
     /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
     Task<ConnectorAdminResult> SetConnectorEnabledAsync(
