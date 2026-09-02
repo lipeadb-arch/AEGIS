@@ -95,6 +95,16 @@ public class ConnectorsController : ControllerBase
                     : "Configure uma chave de ingestão e habilite o conector para receber eventos.");
         }
 
+        // [AEGIS-MVP-ADMIN-LIFECYCLE-01] Conector DESCONECTADO (credencial eliminada) não pode ser testado: sem
+        // segredo não há o que autenticar contra o provedor. 409 orientado à ação (reconecte antes). Push tem
+        // sua própria leitura de prontidão acima (chave de ingestão), então esta guarda é do caminho pull.
+        if (string.IsNullOrWhiteSpace(cfg.EncryptedSettings))
+            return Conflict(new
+            {
+                title = "Conector desconectado: informe a credencial novamente antes de testar.",
+                status = 409,
+            });
+
         var connector = _registry.Resolve(cfg.Provider, cfg.Capability);
         if (connector is null)
             return Problem($"No adapter registered for {cfg.Provider}/{cfg.Capability}.", statusCode: 501);
@@ -113,6 +123,19 @@ public class ConnectorsController : ControllerBase
     {
         var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
         if (cfg is null) return NotFound();
+
+        // [AEGIS-MVP-ADMIN-LIFECYCLE-01] Novas coletas são recusadas de forma controlada quando o conector está
+        // desabilitado (coleta pausada) ou desconectado (credencial eliminada). 409 orientado à ação. Isto,
+        // somado ao registro de sync que NUNCA reescreve a credencial, impede que uma coleta em andamento
+        // "ressuscite" uma conexão desconectada no meio do caminho.
+        if (!cfg.Enabled)
+            return Conflict(new { title = "Conector desabilitado: reative-o antes de sincronizar.", status = 409 });
+        if (string.IsNullOrWhiteSpace(cfg.EncryptedSettings) && string.IsNullOrWhiteSpace(cfg.IngestionKeyHash))
+            return Conflict(new
+            {
+                title = "Conector desconectado: informe a credencial novamente antes de sincronizar.",
+                status = 409,
+            });
 
         if (cfg.Capability == ConnectorCapability.VulnerabilityScanner)
         {
@@ -204,6 +227,59 @@ public class ConnectorsController : ControllerBase
 
         return Ok(new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln, siem, coverage));
     }
+
+    // ---- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ciclo de vida administrativo (TenantAdmin) --------------------
+    // Listar/testar/sincronizar são operações de qualquer autenticado; EDITAR o estado de uma integração é
+    // ato de administrador do ambiente. A autorização vive no backend (papel do JWT), não só na visibilidade
+    // da UI. O tenant nunca vem da rota — o serviço resolve o conector DENTRO do tenant do JWT.
+
+    /// <summary>Edita o nome de exibição e o intervalo de coleta. NUNCA toca a credencial (não há campo de segredo).</summary>
+    [HttpPut("{connectorId:guid}")]
+    [Authorize(Roles = "TenantAdmin")]
+    public async Task<ActionResult<ConnectorConfigDto>> Update(
+        Guid connectorId, UpdateConnectorRequest req, CancellationToken ct)
+    {
+        var result = await _connectors.UpdateConnectorAsync(
+            new UpdateConnectorCommand(connectorId, req.DisplayName, req.SyncIntervalMinutes), ct);
+        return RespondAdmin(result);
+    }
+
+    /// <summary>Desabilita (pausa novas coletas; PRESERVA a credencial para futura reativação). Idempotente.</summary>
+    [HttpPost("{connectorId:guid}/disable")]
+    [Authorize(Roles = "TenantAdmin")]
+    public async Task<ActionResult<ConnectorConfigDto>> Disable(Guid connectorId, CancellationToken ct) =>
+        RespondAdmin(await _connectors.SetConnectorEnabledAsync(connectorId, enabled: false, ct));
+
+    /// <summary>Reabilita um conector desabilitado (retoma coletas com a credencial preservada). Idempotente.</summary>
+    [HttpPost("{connectorId:guid}/enable")]
+    [Authorize(Roles = "TenantAdmin")]
+    public async Task<ActionResult<ConnectorConfigDto>> Enable(Guid connectorId, CancellationToken ct) =>
+        RespondAdmin(await _connectors.SetConnectorEnabledAsync(connectorId, enabled: true, ct));
+
+    /// <summary>
+    /// Desconecta: desabilita E elimina TODO o material secreto (EncryptedSettings + IngestionKeyHash),
+    /// preservando a linha e a proveniência histórica. Reconfigurar depois reativa a MESMA linha (upsert pela
+    /// chave natural). Idempotente.
+    /// </summary>
+    [HttpPost("{connectorId:guid}/disconnect")]
+    [Authorize(Roles = "TenantAdmin")]
+    public async Task<ActionResult<ConnectorConfigDto>> Disconnect(Guid connectorId, CancellationToken ct) =>
+        RespondAdmin(await _connectors.DisconnectConnectorAsync(connectorId, ct));
+
+    /// <summary>Traduz o desfecho administrativo em HTTP: 200 (aplicado) · 404 (inexistente/cross-tenant) · 400 (nome).</summary>
+    private ActionResult<ConnectorConfigDto> RespondAdmin(ConnectorAdminResult result) => result.Status switch
+    {
+        ConnectorAdminStatus.Updated => Ok(ToDto(result.Connector!)),
+        ConnectorAdminStatus.NotFound => NotFound(),
+        ConnectorAdminStatus.InvalidDisplayName =>
+            BadRequest(new { title = result.Detail ?? "Nome de exibição inválido.", status = 400 }),
+        _ => BadRequest(new { title = "Requisição inválida.", status = 400 }),
+    };
+
+    /// <summary>Projeção SEGURA (sem segredo) do resumo de conector para o DTO da API — enums como STRING.</summary>
+    private static ConnectorConfigDto ToDto(ConnectorSummary c) => new(
+        c.ConnectorId, c.Provider.ToString(), c.Capability.ToString(), c.DisplayName, c.AuthType.ToString(),
+        c.Enabled, c.SyncIntervalMinutes, c.LastSyncAt, c.LastStatus.ToString(), c.HasCredentials, c.HasIngestionKey);
 
     private static bool IsGenericPush(ConnectorConfig c) =>
         c.Provider == ConnectorProvider.Generic

@@ -90,6 +90,11 @@ public static class DependencyInjection
         // das credenciais, que assim deixa de morar na camada HTTP.
         services.AddScoped<ITenantManagementService, TenantManagementService>();
 
+        // [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ciclo de vida ADMINISTRATIVO dos tenants (PlatformAdmin): catálogo,
+        // renomear, suspender e reativar. Scoped: opera sobre a entidade GLOBAL Tenant (sem query filter) e
+        // usa o DbContext para a guarda de auto-lockout e a revogação de sessões na suspensão.
+        services.AddScoped<IPlatformTenantAdminService, PlatformTenantAdminService>();
+
         // ---- Motor de IA: provedor externo ÚNICO (Anthropic/Claude demonstrativo) e configuração ÚNICA ("Ai") ----
         // Portabilidade: o domínio, os controllers e os workers dependem SÓ das interfaces neutras do AEGIS
         // (IAiAssessmentService de alto nível + ILLMClient de transporte). Trocar de provedor é implementar

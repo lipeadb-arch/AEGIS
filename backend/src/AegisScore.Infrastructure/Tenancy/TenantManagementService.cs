@@ -483,6 +483,95 @@ public sealed class TenantManagementService : ITenantManagementService
         return true;
     }
 
+    // ---- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ciclo de vida administrativo do conector -------------------
+
+    /// <summary>Teto do nome de exibição do conector (espelha o limite de 200 do formulário).</summary>
+    private const int MaxConnectorDisplayNameLength = 200;
+
+    public async Task<ConnectorAdminResult> UpdateConnectorAsync(
+        UpdateConnectorCommand command, CancellationToken ct = default)
+    {
+        RequireAmbientTenant();
+
+        var displayName = (command.DisplayName ?? "").Trim();
+        if (displayName.Length is 0 or > MaxConnectorDisplayNameLength)
+            return ConnectorAdminResult.Rejected(
+                ConnectorAdminStatus.InvalidDisplayName,
+                $"Nome de exibição obrigatório, com até {MaxConnectorDisplayNameLength} caracteres.");
+
+        // Query filter restringe ao tenant ambiente — outro tenant é o MESMO null de inexistente.
+        var config = await _db.Connectors.FirstOrDefaultAsync(c => c.Id == command.ConnectorId, ct);
+        if (config is null)
+            return ConnectorAdminResult.Rejected(ConnectorAdminStatus.NotFound);
+
+        // ⚠️ Só nome e intervalo. EncryptedSettings/IngestionKeyHash NÃO são tocados: editar jamais reescreve
+        // a credencial (o change tracker do EF só emite UPDATE das colunas alteradas).
+        config.DisplayName = displayName;
+        config.SyncIntervalMinutes = Math.Max(command.SyncIntervalMinutes, MinimumSyncIntervalMinutes);
+        await _db.SaveChangesAsync(ct);
+
+        _log.LogInformation(
+            "Conector {Provider}/{Capability} ({ConnectorId}) editado (nome/intervalo).",
+            config.Provider, config.Capability, config.Id);
+        return ConnectorAdminResult.Ok(Summarize(config));
+    }
+
+    public async Task<ConnectorAdminResult> SetConnectorEnabledAsync(
+        Guid connectorId, bool enabled, CancellationToken ct = default)
+    {
+        RequireAmbientTenant();
+
+        var config = await _db.Connectors.FirstOrDefaultAsync(c => c.Id == connectorId, ct);
+        if (config is null)
+            return ConnectorAdminResult.Rejected(ConnectorAdminStatus.NotFound);
+
+        if (config.Enabled != enabled)
+        {
+            config.Enabled = enabled;
+            await _db.SaveChangesAsync(ct);
+            _log.LogInformation(
+                "Conector {Provider}/{Capability} ({ConnectorId}) {Action}.",
+                config.Provider, config.Capability, config.Id, enabled ? "habilitado" : "desabilitado");
+        }
+        return ConnectorAdminResult.Ok(Summarize(config));   // idempotente: já no estado pedido é sucesso
+    }
+
+    public async Task<ConnectorAdminResult> DisconnectConnectorAsync(
+        Guid connectorId, CancellationToken ct = default)
+    {
+        RequireAmbientTenant();
+
+        var config = await _db.Connectors.FirstOrDefaultAsync(c => c.Id == connectorId, ct);
+        if (config is null)
+            return ConnectorAdminResult.Rejected(ConnectorAdminStatus.NotFound);
+
+        // Desconectar = desabilitar + eliminar TODO material secreto. A linha e a proveniência histórica
+        // (sinais/exposições/vulnerabilidades/cobertura) permanecem — não há exclusão física aqui. LastSyncAt/
+        // LastStatus são deixados como estão (fato histórico); o estado de CONEXÃO é derivado da ausência de
+        // credencial, então mostrar evidência antiga não é apresentar a conexão como operacional.
+        config.Enabled = false;
+        config.EncryptedSettings = "";        // "" (não Protect("")): a projeção HasCredentials fica falsa
+        config.IngestionKeyHash = null;       // chave de ingestão eliminada
+        await _db.SaveChangesAsync(ct);
+
+        _log.LogInformation(
+            "Conector {Provider}/{Capability} ({ConnectorId}) DESCONECTADO — credencial eliminada, linha e evidências preservadas.",
+            config.Provider, config.Capability, config.Id);
+        return ConnectorAdminResult.Ok(Summarize(config));
+    }
+
+    /// <summary>Projeção SEGURA (sem segredo) do conector para o desfecho administrativo — mesmo idioma de <see cref="Project"/>.</summary>
+    private static ConnectorSummary Summarize(ConnectorConfig c) => new(
+        c.Id, c.Provider, c.Capability, c.DisplayName, c.AuthType, c.Enabled, c.SyncIntervalMinutes,
+        c.LastSyncAt, c.LastStatus,
+        HasCredentials: !string.IsNullOrWhiteSpace(c.EncryptedSettings),
+        HasIngestionKey: !string.IsNullOrWhiteSpace(c.IngestionKeyHash));
+
+    /// <summary>Tenant ambiente, fail-closed. Falhar aqui dá a mensagem certa e evita montar a entidade à toa.</summary>
+    private Guid RequireAmbientTenant() => _tenant.TenantId
+        ?? throw new TenantSecurityException(
+            "Operação de conector sem tenant resolvido no contexto (fail-closed).");
+
     /// <summary>Normaliza o slug para a forma canônica comparada pelo índice único.</summary>
     private static string NormalizeSlug(string? raw) => (raw ?? "").Trim().ToLowerInvariant();
 
