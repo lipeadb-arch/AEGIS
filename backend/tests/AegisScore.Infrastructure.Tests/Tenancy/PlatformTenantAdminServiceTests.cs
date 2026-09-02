@@ -155,7 +155,7 @@ public sealed class PlatformTenantAdminServiceTests : IDisposable
 
         await using var assert = NewContext(TenantB);
         var token = await assert.UserRefreshTokens.IgnoreQueryFilters().SingleAsync(t => t.UserId == userBId);
-        token.RevokedAt.Should().NotBeNull("suspender revoga as sessões ativas do ambiente");
+        token.RevokedAt.Should().NotBeNull("suspender revoga os refresh tokens ativos do ambiente (renovação bloqueada)");
     }
 
     [Fact]

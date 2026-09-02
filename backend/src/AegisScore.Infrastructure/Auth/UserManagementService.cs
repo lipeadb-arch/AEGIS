@@ -182,7 +182,7 @@ public sealed class UserManagementService : IUserManagementService
             return MembershipAdminResult.Rejected(MembershipAdminStatus.NotFound);
 
         // MESMA autoridade guardada da concessão: auto-rebaixamento, último admin (sob concorrência) e
-        // revogação de sessões ao reduzir privilégio. Edição não reativa (reactivate: false).
+        // revogação dos refresh tokens ao reduzir privilégio. Edição não reativa (reactivate: false).
         var rejection = await ApplyGuardedMembershipChangeAsync(
             target, command.ActorAccountId, command.DisplayName, command.Role, reactivate: false, tenantId, ct);
         if (rejection is { } r)
@@ -235,7 +235,9 @@ public sealed class UserManagementService : IUserManagementService
                 membership.IsActive = true;
             await _db.SaveChangesAsync(ct);
 
-            // Reduzir privilégio derruba as sessões daquele membership (o papel antigo não sobrevive no token).
+            // Reduzir privilégio REVOGA os refresh tokens ativos daquele membership: renovar o papel antigo
+            // deixa de ser possível. Um access token JÁ emitido ainda carrega o papel anterior até expirar (teto
+            // de 10 min); não há revogação retroativa de access token aqui.
             if (reducesPrivilege)
                 await RevokeMembershipSessionsAsync(membership.Id, ct);
             return null;   // sucesso
@@ -259,7 +261,7 @@ public sealed class UserManagementService : IUserManagementService
 
         var isSelf = account.Id == command.ActorAccountId;
 
-        // ---- Reativação: só adiciona acesso, sem guardas. NÃO restaura sessões (nunca des-revogamos). ----
+        // ---- Reativação: só adiciona acesso, sem guardas. NÃO des-revoga os refresh tokens já revogados. ----
         if (command.Active)
         {
             if (!target.IsActive)
@@ -285,7 +287,9 @@ public sealed class UserManagementService : IUserManagementService
         {
             target.IsActive = false;
             await _db.SaveChangesAsync(ct);
-            // Desativar REVOGA os refresh tokens ativos do membership (as sessões não sobrevivem à desativação).
+            // Desativar REVOGA os refresh tokens ativos do membership: novas autenticações e renovações neste
+            // ambiente ficam bloqueadas. Um access token JÁ emitido não é invalidado retroativamente e expira no
+            // TTL normal (até 10 min).
             await RevokeMembershipSessionsAsync(target.Id, ct);
             _log.LogInformation("Acesso {UserId} DESATIVADO no tenant {TenantId}.", target.Id, tenantId);
             return MembershipAdminResult.Ok(Project(target, account));

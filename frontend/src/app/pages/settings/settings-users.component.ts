@@ -101,9 +101,11 @@ import {
 
     <!-- Semântica operacional: "remover acesso" ≠ "excluir a pessoa". -->
     <p class="note access-note">
-      <strong>Remover acesso</strong> retira a pessoa deste ambiente e encerra suas sessões, mas
+      <strong>Remover acesso</strong> bloqueia novas autenticações e renovações neste ambiente, mas
       <strong>preserva a identidade e o histórico</strong> — a mesma identidade pode ter acesso a outros
-      ambientes. Não há exclusão da pessoa por esta tela; o acesso pode ser <strong>readmitido</strong> depois.
+      ambientes. Uma sessão já autenticada pode permanecer válida até o vencimento normal do token, por no
+      máximo <strong>10 minutos</strong>. Não há exclusão da pessoa por esta tela; o acesso pode ser
+      <strong>readmitido</strong> depois.
     </p>
 
     <!-- ============ Busca + filtros ============ -->
@@ -219,9 +221,10 @@ import {
             @if (confirmingId() === u.id) {
               <div class="confirm" role="alertdialog">
                 <span>
-                  Remover o acesso de <strong>{{ u.displayName }}</strong> a este ambiente? A identidade e o
-                  histórico são <strong>preservados</strong> e as sessões ativas serão <strong>encerradas</strong>.
-                  Você pode readmitir o acesso depois.
+                  Remover o acesso de <strong>{{ u.displayName }}</strong> a este ambiente? Novas autenticações
+                  e renovações serão <strong>bloqueadas imediatamente</strong>. A identidade e o histórico são
+                  <strong>preservados</strong>; sessões já autenticadas expiram no prazo normal do token, em até
+                  <strong>10 minutos</strong>. Você pode readmitir o acesso depois.
                 </span>
                 <div class="actions">
                   <button type="button" class="btn sm danger" (click)="deactivate(u)" [disabled]="busyId() === u.id">
