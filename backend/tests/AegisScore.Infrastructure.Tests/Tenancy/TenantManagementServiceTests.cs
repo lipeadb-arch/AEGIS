@@ -493,6 +493,198 @@ public sealed class TenantManagementServiceTests : IDisposable
         (await db.Connectors.CountAsync()).Should().Be(0, "nenhuma escrita parcial numa entrada inválida");
     }
 
+    // ---- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ciclo de vida administrativo do conector -----------------
+
+    [Fact]
+    public async Task UpdateConnectorAsync_EditaNomeEIntervalo_PreservaSegredo()
+    {
+        const string segredo = "credencial-vigente";
+        await using var db = NewContext(TenantA);
+        var protector = new FakeProtector();
+        var svc = ServiceFor(db, TenantA, protector);
+
+        var created = await svc.ConfigureConnectorAsync(Command(settings: segredo));
+        var cifradoOriginal = (await db.Connectors.SingleAsync()).EncryptedSettings;
+
+        var result = await svc.UpdateConnectorAsync(
+            new UpdateConnectorCommand(created.ConnectorId, "Graph (novo nome)", 120));
+
+        result.Succeeded.Should().BeTrue();
+        result.Connector!.DisplayName.Should().Be("Graph (novo nome)");
+        result.Connector.SyncIntervalMinutes.Should().Be(120);
+        result.Connector.HasCredentials.Should().BeTrue("editar não pode apagar a credencial");
+
+        var saved = await db.Connectors.SingleAsync();
+        saved.EncryptedSettings.Should().Be(cifradoOriginal, "editar nome/intervalo NUNCA reescreve o segredo");
+        protector.Unprotect(saved.EncryptedSettings).Should().Be(segredo);
+    }
+
+    [Fact]
+    public async Task UpdateConnectorAsync_AplicaPisoDoIntervalo()
+    {
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+        var created = await svc.ConfigureConnectorAsync(Command());
+
+        var result = await svc.UpdateConnectorAsync(new UpdateConnectorCommand(created.ConnectorId, "Graph", 0));
+        result.Connector!.SyncIntervalMinutes.Should().Be(5, "intervalo 0 viraria hot loop contra a API do cliente");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task UpdateConnectorAsync_NomeInvalido_EhRejeitado(string nome)
+    {
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+        var created = await svc.ConfigureConnectorAsync(Command(displayName: "Original"));
+
+        var result = await svc.UpdateConnectorAsync(new UpdateConnectorCommand(created.ConnectorId, nome, 360));
+        result.Status.Should().Be(ConnectorAdminStatus.InvalidDisplayName);
+        (await db.Connectors.SingleAsync()).DisplayName.Should().Be("Original", "nada foi alterado");
+    }
+
+    [Fact]
+    public async Task UpdateConnectorAsync_ConectorDeOutroTenant_EhNotFound()
+    {
+        Guid connectorId;
+        await using (var db = NewContext(TenantA))
+            connectorId = (await ServiceFor(db, TenantA).ConfigureConnectorAsync(Command())).ConnectorId;
+
+        await using (var db = NewContext(TenantB))
+        {
+            var result = await ServiceFor(db, TenantB).UpdateConnectorAsync(
+                new UpdateConnectorCommand(connectorId, "sequestro", 360));
+            result.Status.Should().Be(ConnectorAdminStatus.NotFound, "cross-tenant é indistinguível de inexistente");
+        }
+    }
+
+    [Fact]
+    public async Task SetConnectorEnabledAsync_Desabilita_PreservaSegredo_EhIdempotente()
+    {
+        const string segredo = "credencial";
+        await using var db = NewContext(TenantA);
+        var protector = new FakeProtector();
+        var svc = ServiceFor(db, TenantA, protector);
+        var created = await svc.ConfigureConnectorAsync(Command(settings: segredo));
+
+        var disabled = await svc.SetConnectorEnabledAsync(created.ConnectorId, enabled: false);
+        disabled.Connector!.Enabled.Should().BeFalse();
+        disabled.Connector.HasCredentials.Should().BeTrue("desabilitar PRESERVA a credencial para reativação");
+
+        // Idempotente: desabilitar de novo é sucesso sem efeito.
+        (await svc.SetConnectorEnabledAsync(created.ConnectorId, enabled: false)).Succeeded.Should().BeTrue();
+
+        var saved = await db.Connectors.SingleAsync();
+        saved.Enabled.Should().BeFalse();
+        protector.Unprotect(saved.EncryptedSettings).Should().Be(segredo);
+
+        (await svc.SetConnectorEnabledAsync(created.ConnectorId, enabled: true)).Connector!.Enabled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DisconnectConnectorAsync_EliminaAmbasCredenciais_DesabilitaEPreservaLinha()
+    {
+        // Conector genérico de PUSH: tem chave de ingestão (hash) além (potencialmente) de settings.
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+        var pushCmd = new ConfigureConnectorCommand(
+            ConnectorProvider.Generic, ConnectorCapability.Siem, "SIEM push",
+            ConnectorAuthType.ApiKey, """{"ingestionKey":"chave-de-ingestao-de-alta-entropia-1234"}""");
+        var created = await svc.ConfigureConnectorAsync(pushCmd);
+        (await db.Connectors.SingleAsync()).IngestionKeyHash.Should().NotBeNull("push nasce com hash da chave");
+
+        var result = await svc.DisconnectConnectorAsync(created.ConnectorId);
+        result.Succeeded.Should().BeTrue();
+        result.Connector!.Enabled.Should().BeFalse();
+        result.Connector.HasCredentials.Should().BeFalse();
+        result.Connector.HasIngestionKey.Should().BeFalse();
+
+        var saved = await db.Connectors.SingleAsync();
+        saved.Should().NotBeNull("a linha é PRESERVADA — nunca exclusão física");
+        saved.EncryptedSettings.Should().BeEmpty("EncryptedSettings eliminado");
+        saved.IngestionKeyHash.Should().BeNull("IngestionKeyHash eliminado");
+        saved.Enabled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DisconnectConnectorAsync_DepoisReconfigurar_ReativaMesmaLinhaSemDuplicar()
+    {
+        await using var db = NewContext(TenantA);
+        var protector = new FakeProtector();
+        var svc = ServiceFor(db, TenantA, protector);
+
+        var created = await svc.ConfigureConnectorAsync(Command(settings: "segredo-antigo"));
+        await svc.DisconnectConnectorAsync(created.ConnectorId);
+
+        // Reconfigurar o MESMO provider+capability reativa a linha existente (upsert pela chave natural).
+        var again = await svc.ConfigureConnectorAsync(Command(settings: "segredo-novo"));
+        again.Created.Should().BeFalse("reconfigurar reativa a linha existente, não cria outra");
+        again.ConnectorId.Should().Be(created.ConnectorId);
+
+        (await db.Connectors.CountAsync()).Should().Be(1, "sem duplicidade de provider/capability");
+        var saved = await db.Connectors.SingleAsync();
+        saved.Enabled.Should().BeTrue("reconfigurar volta a habilitar");
+        protector.Unprotect(saved.EncryptedSettings).Should().Be("segredo-novo");
+    }
+
+    [Fact]
+    public async Task DisconnectConnectorAsync_NaoRessuscitaSeUmaColetaConcluiDepois()
+    {
+        // Corrida: uma coleta em andamento conclui APÓS a desconexão e chama RecordSyncResultAsync. O carimbo de
+        // sync NUNCA reescreve a credencial (o EF só emite UPDATE das colunas alteradas), então a conexão NÃO
+        // ressuscita — HasCredentials permanece falso.
+        Guid connectorId;
+        await using (var db = NewContext(TenantA))
+            connectorId = (await ServiceFor(db, TenantA).ConfigureConnectorAsync(Command(settings: "segredo"))).ConnectorId;
+
+        await using (var db = NewContext(TenantA))
+            await ServiceFor(db, TenantA).DisconnectConnectorAsync(connectorId);
+
+        // "Coleta que conclui tarde": contexto separado, como o background sync real.
+        await using (var db = NewContext(TenantA))
+        {
+            var ok = await ServiceFor(db, TenantA).RecordSyncResultAsync(
+                connectorId, Array.Empty<EvidenceSignal>(), ConnectorStatus.Healthy);
+            ok.Should().BeTrue("registrar o desfecho é permitido — só não pode ressuscitar a credencial");
+        }
+
+        await using var assert = NewContext(TenantA);
+        var saved = await assert.Connectors.SingleAsync();
+        saved.EncryptedSettings.Should().BeEmpty("a coleta tardia NÃO reescreveu o segredo eliminado");
+        saved.Enabled.Should().BeFalse("continua desconectado/desabilitado");
+        saved.LastStatus.Should().Be(ConnectorStatus.Healthy, "o carimbo histórico do sync é permitido");
+    }
+
+    [Fact]
+    public async Task DisconnectConnectorAsync_PreservaEvidenciaHistorica()
+    {
+        // A desconexão elimina só a CREDENCIAL — a proveniência histórica (sinais coletados) permanece.
+        Guid connectorId;
+        await using (var db = NewContext(TenantA))
+        {
+            connectorId = (await ServiceFor(db, TenantA).ConfigureConnectorAsync(Command(settings: "segredo"))).ConnectorId;
+            await ServiceFor(db, TenantA).RecordSyncResultAsync(
+                connectorId,
+                new[]
+                {
+                    new EvidenceSignal
+                    {
+                        TenantId = TenantA, ConnectorConfigId = connectorId,
+                        SignalKey = "secureScore.overall", NumericValue = 42,
+                    },
+                },
+                ConnectorStatus.Healthy);
+        }
+
+        await using (var db = NewContext(TenantA))
+            await ServiceFor(db, TenantA).DisconnectConnectorAsync(connectorId);
+
+        await using var assert = NewContext(TenantA);
+        (await assert.Signals.CountAsync()).Should().Be(1, "a evidência histórica é preservada na desconexão");
+        (await assert.Connectors.CountAsync()).Should().Be(1, "a linha do conector também é preservada");
+    }
+
     // ---- Fixture ----------------------------------------------------------------
 
     private static ConfigureConnectorCommand Command(
