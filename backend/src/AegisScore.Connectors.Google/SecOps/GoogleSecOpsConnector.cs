@@ -288,18 +288,37 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
 
     private AppDetectionCoverage UnavailableCoverage(DateTimeOffset attemptedAt) => new(
         SourceLabel, _mitre.AttackVersion, DetectionCoverageCollectionState.Unavailable, attemptedAt,
-        TotalActiveRules: 0, RulesWithMitre: 0, RulesWithoutMitre: 0, RulesInLiveMode: 0, RulesWithAlerting: 0,
-        Techniques: Array.Empty<DetectionTechniqueCoverage>());
+        TotalActiveRules: 0, RulesWithMitre: 0, RulesWithoutMitre: 0, RulesInLiveMode: 0,
+        RulesInNormalExecution: 0, RulesInLimitedExecution: 0, RulesInPausedExecution: 0, RulesInUnknownExecution: 0,
+        RulesWithAlerting: 0, Techniques: Array.Empty<DetectionTechniqueCoverage>());
 
     // ---- Agregação de regras (CONFIG_ONLY) — só configuração, nunca texto/nome/autor/conteúdo -------------------
 
-    /// <summary>Formatos MITRE documentados: técnica <c>T</c>+4 dígitos, opcionalmente <c>.ddd</c> (subtécnica).</summary>
+    /// <summary>
+    /// Formato de um ID de técnica MITRE: <c>T</c>+4 dígitos, opcionalmente <c>.ddd</c> (subtécnica). CASE-INSENSITIVE
+    /// para reconhecer o formato OFICIAL em minúsculas do Google SecOps (ex.: <c>t1136.003</c>); a normalização para o
+    /// ID canônico MAIÚSCULO ocorre SÓ depois da validação. Usado APENAS nos campos de metadados DEDICADOS
+    /// (<c>technique</c>/<c>mitre_ttp</c>), onde qualquer <c>T####</c> É uma referência de técnica.
+    /// </summary>
     private static readonly Regex TechniqueTokenRegex =
-        new(@"\bT\d{4}(?:\.\d{3})?\b", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        new(@"\bT\d{4}(?:\.\d{3})?\b",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
-    /// <summary>Chaves de metadados (meta compilado da YARA-L) que a doc oficial reconhece para técnicas MITRE.</summary>
-    private static readonly string[] TechniqueMetaKeys =
-        { "technique", "mitre_attack_technique", "mitre_attack_technique_id", "mitre_technique" };
+    /// <summary>
+    /// Tag MITRE no namespace OFICIAL <c>google.mitre.technique.&lt;ID&gt;</c> — aceita tanto a tag curta
+    /// (<c>google.mitre.technique.t1136.003</c>) quanto o resource name completo terminando nela
+    /// (<c>projects/.../google.mitre.technique.T1595</c>). O ID fica ancorado ao FIM da string, de modo que
+    /// <c>google.mitre.tactic.*</c> NUNCA casa e um <c>T####</c> solto numa tag qualquer NÃO é extraído.
+    /// </summary>
+    private static readonly Regex TechniqueTagRegex =
+        new(@"google\.mitre\.technique\.(T\d{4}(?:\.\d{3})?)$",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Chaves de metadados (meta compilado da YARA-L) OFICIALMENTE reconhecidas para técnicas MITRE, conforme a doc de
+    /// unified rules. SOMENTE <c>technique</c> e <c>mitre_ttp</c> — chaves de fonte comunitária não são autoridade.
+    /// </summary>
+    private static readonly string[] TechniqueMetaKeys = { "technique", "mitre_ttp" };
 
     /// <summary>
     /// Acumulador de cobertura de regras alimentado PÁGINA A PÁGINA — totais + agregação por técnica MITRE VÁLIDA —
@@ -314,6 +333,11 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
         private int _withMitre;
         private int _withoutMitre;
         private int _liveRules;
+        // Condição de execução das regras em live mode (partição de _liveRules).
+        private int _liveNormal;
+        private int _liveLimited;
+        private int _livePaused;
+        private int _liveUnknown;
         private int _alertingRules;
         private readonly HashSet<string> _seenRuleIds = new(StringComparer.Ordinal);
         private readonly Dictionary<string, TechniqueAgg> _byTechnique = new(StringComparer.Ordinal);
@@ -331,7 +355,20 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
             _activeRules++;
             var live = RuleLiveMode(rule);
             var alerting = RuleAlerting(rule);
-            if (live) _liveRules++;
+            // A condição de execução SÓ é operacionalmente relevante para regras em live mode (uma regra fora de live
+            // mode não roda contra dados ao vivo). Assim os quatro buckets particionam EXATAMENTE _liveRules.
+            var exec = live ? RuleExecutionStateOf(rule) : (RuleExecution?)null;
+            if (live)
+            {
+                _liveRules++;
+                switch (exec)
+                {
+                    case RuleExecution.Normal: _liveNormal++; break;
+                    case RuleExecution.Limited: _liveLimited++; break;
+                    case RuleExecution.Paused: _livePaused++; break;
+                    default: _liveUnknown++; break;
+                }
+            }
             if (alerting) _alertingRules++;
 
             var techniques = ExtractValidTechniques(rule, _mitre);   // deduplicadas por regra, validadas no catálogo
@@ -345,7 +382,17 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
             {
                 if (!_byTechnique.TryGetValue(tid, out var agg)) { agg = new TechniqueAgg(); _byTechnique[tid] = agg; }
                 agg.RuleCount++;
-                if (live) agg.LiveRuleCount++;
+                if (live)
+                {
+                    agg.LiveRuleCount++;
+                    switch (exec)
+                    {
+                        case RuleExecution.Normal: agg.NormalExec++; break;
+                        case RuleExecution.Limited: agg.LimitedExec++; break;
+                        case RuleExecution.Paused: agg.PausedExec++; break;
+                        default: agg.UnknownExec++; break;
+                    }
+                }
                 if (alerting) agg.AlertingRuleCount++;
             }
         }
@@ -359,31 +406,46 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
                     var t = _mitre.GetTechnique(kv.Key)!;   // só entram IDs já validados no catálogo (nunca null aqui)
                     return new DetectionTechniqueCoverage(
                         t.Id, t.Name, t.IsSubtechnique, t.ParentId, t.TacticIds,
-                        kv.Value.RuleCount, kv.Value.LiveRuleCount, kv.Value.AlertingRuleCount);
+                        kv.Value.RuleCount, kv.Value.LiveRuleCount,
+                        kv.Value.NormalExec, kv.Value.LimitedExec, kv.Value.PausedExec, kv.Value.UnknownExec,
+                        kv.Value.AlertingRuleCount);
                 })
                 .OrderBy(t => t.TechniqueId, StringComparer.Ordinal)
                 .ToList();
 
             return new AppDetectionCoverage(
                 source, attackVersion, state, attemptedAt,
-                _activeRules, _withMitre, _withoutMitre, _liveRules, _alertingRules, techniques);
+                _activeRules, _withMitre, _withoutMitre, _liveRules,
+                _liveNormal, _liveLimited, _livePaused, _liveUnknown,
+                _alertingRules, techniques);
         }
 
-        private sealed class TechniqueAgg { public int RuleCount; public int LiveRuleCount; public int AlertingRuleCount; }
+        private sealed class TechniqueAgg
+        {
+            public int RuleCount;
+            public int LiveRuleCount;
+            public int NormalExec;
+            public int LimitedExec;
+            public int PausedExec;
+            public int UnknownExec;
+            public int AlertingRuleCount;
+        }
     }
 
     private static IReadOnlyCollection<string> ExtractValidTechniques(JsonElement rule, IMitreAttackCatalog mitre)
     {
         var found = new HashSet<string>(StringComparer.Ordinal);   // dedup POR REGRA
         // O meta compilado da YARA-L chega como um mapa (`metadata`/`meta`) string→string. As chaves MITRE oficiais
-        // (`technique` etc.) carregam o(s) ID(s), possivelmente separados por vírgula e no formato "T#### - Nome".
+        // (`technique`/`mitre_ttp`) carregam o(s) ID(s), possivelmente separados por vírgula e no formato "T#### - Nome".
         CollectTechniquesFromMap(rule, "metadata", found, mitre);
         CollectTechniquesFromMap(rule, "meta", found, mitre);
-        // `tags` (quando presentes): normalizadas pela fonte — mesmo tratamento (extrai IDs, valida no catálogo).
+        // `tags` (quando presentes): SÓ o namespace documentado `google.mitre.technique.<ID>` (tag curta ou resource
+        // name completo). `google.mitre.tactic.*` é tática — ignorada aqui; um `T####` avulso numa tag qualquer NÃO é
+        // interpretado como MITRE (evita falso mapeamento a partir de texto arbitrário).
         if (rule.ValueKind == JsonValueKind.Object && rule.TryGetProperty("tags", out var tags)
             && tags.ValueKind == JsonValueKind.Array)
             foreach (var t in tags.EnumerateArray())
-                if (t.ValueKind == JsonValueKind.String) AddTechniqueTokens(t.GetString(), found, mitre);
+                if (t.ValueKind == JsonValueKind.String) AddTechniqueFromTag(t.GetString(), found, mitre);
         return found;
     }
 
@@ -405,15 +467,34 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
         }
     }
 
-    /// <summary>Extrai IDs de técnica do texto, normaliza a caixa e ACEITA só os que EXISTEM no catálogo fixado (v17.1).</summary>
+    /// <summary>
+    /// Extrai IDs de técnica dos campos de metadados DEDICADOS (<c>technique</c>/<c>mitre_ttp</c>), onde qualquer
+    /// <c>T####</c> é uma referência de técnica. Valida o FORMATO (case-insensitive), normaliza para o ID canônico
+    /// MAIÚSCULO e SÓ então aceita os que EXISTEM no catálogo fixado (v17.1) — nunca inventa nem aproxima.
+    /// </summary>
     private static void AddTechniqueTokens(string? raw, HashSet<string> into, IMitreAttackCatalog mitre)
     {
         if (string.IsNullOrWhiteSpace(raw)) return;
         foreach (Match m in TechniqueTokenRegex.Matches(raw))
         {
-            var id = m.Value.ToUpperInvariant();
-            if (mitre.GetTechnique(id) is not null) into.Add(id);   // validação ESTRITA — nunca inventa nem aproxima
+            var id = m.Value.ToUpperInvariant();   // normaliza SÓ após a validação de formato pela regex
+            if (mitre.GetTechnique(id) is not null) into.Add(id);   // validação ESTRITA no catálogo v17.1
         }
+    }
+
+    /// <summary>
+    /// Extrai a técnica de UMA tag SOMENTE quando ela pertence ao namespace oficial <c>google.mitre.technique</c>
+    /// (tag curta ou resource name completo). Nunca interpreta <c>google.mitre.tactic.*</c> como técnica, nem extrai
+    /// um <c>T####</c> avulso de uma tag fora do namespace. Formato validado (case-insensitive), normalizado para o
+    /// ID canônico MAIÚSCULO e então validado no catálogo fixado (v17.1).
+    /// </summary>
+    private static void AddTechniqueFromTag(string? raw, HashSet<string> into, IMitreAttackCatalog mitre)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return;
+        var m = TechniqueTagRegex.Match(raw.Trim());
+        if (!m.Success) return;
+        var id = m.Groups[1].Value.ToUpperInvariant();   // normaliza SÓ após validar o namespace + formato
+        if (mitre.GetTechnique(id) is not null) into.Add(id);   // validação ESTRITA no catálogo v17.1
     }
 
     private static bool RuleArchived(JsonElement r) =>
@@ -436,6 +517,31 @@ public sealed class GoogleSecOpsConnector : IEvidenceConnector, ISiemPostureColl
             && d.ValueKind == JsonValueKind.Object && ReadBool(d, "alerting") is { } a) return a;
         return false;
     }
+
+    /// <summary>
+    /// Condição operacional da execução de uma regra (enum oficial <c>executionState</c>), DISTINTA de live mode e de
+    /// alerting. <c>DEFAULT</c>=execução normal; <c>LIMITED</c>=execução não garantida; <c>PAUSED</c>=não executa;
+    /// <c>EXECUTION_STATE_UNSPECIFIED</c>, ausente ou não reconhecido ⇒ <see cref="RuleExecution.Unknown"/> (estado não
+    /// comprovado — nunca assumido como saudável). Lê o campo no topo da regra e, como defesa, no <c>deployment</c>.
+    /// </summary>
+    private static RuleExecution RuleExecutionStateOf(JsonElement r)
+    {
+        var raw = FieldStr(r, "executionState");
+        if (string.IsNullOrWhiteSpace(raw) && r.ValueKind == JsonValueKind.Object
+            && r.TryGetProperty("deployment", out var d) && d.ValueKind == JsonValueKind.Object)
+            raw = FieldStr(d, "executionState");
+        return (raw?.Trim().ToUpperInvariant()) switch
+        {
+            "DEFAULT" => RuleExecution.Normal,
+            "LIMITED" => RuleExecution.Limited,
+            "PAUSED" => RuleExecution.Paused,
+            // EXECUTION_STATE_UNSPECIFIED, ausente ou valor futuro/desconhecido: NÃO comprovado.
+            _ => RuleExecution.Unknown,
+        };
+    }
+
+    /// <summary>Condição de execução PROVIDER-NEUTRAL derivada do <c>executionState</c> oficial.</summary>
+    private enum RuleExecution { Normal, Limited, Paused, Unknown }
 
     /// <summary>Identidade ESTÁVEL da regra (name = resource path; ou ruleId/revisionId) — SÓ para deduplicar.</summary>
     private static string? RuleIdentity(JsonElement r)

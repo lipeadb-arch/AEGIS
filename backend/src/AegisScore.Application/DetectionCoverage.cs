@@ -27,6 +27,14 @@ public sealed record DetectionCoverageSnapshot(
     int RulesWithMitre,
     int RulesWithoutMitre,
     int RulesInLiveMode,
+    // ---- Condição de EXECUÇÃO das regras em live mode (dimensão INDEPENDENTE de live/alerting) ----
+    // Particiona EXATAMENTE as regras em live mode: Normal+Limited+Paused+Unknown == RulesInLiveMode. live mode
+    // habilitado NÃO implica execução saudável — só DEFAULT (Normal) executa como esperado; LIMITED não garante,
+    // PAUSED não executa, e o estado não comprovado (EXECUTION_STATE_UNSPECIFIED/ausente) é Unknown.
+    int RulesInNormalExecution,
+    int RulesInLimitedExecution,
+    int RulesInPausedExecution,
+    int RulesInUnknownExecution,
     int RulesWithAlerting,
     IReadOnlyList<DetectionTechniqueCoverage> Techniques)
 {
@@ -52,6 +60,11 @@ public sealed record DetectionTechniqueCoverage(
     IReadOnlyList<string> TacticIds,
     int RuleCount,
     int LiveRuleCount,
+    // Condição de execução das regras em live mode desta técnica (particiona LiveRuleCount).
+    int NormalExecutionRuleCount,
+    int LimitedExecutionRuleCount,
+    int PausedExecutionRuleCount,
+    int UnknownExecutionRuleCount,
     int AlertingRuleCount);
 
 /// <summary>

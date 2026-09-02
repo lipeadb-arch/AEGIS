@@ -25,6 +25,11 @@ export interface DetectionCoverageTechnique {
   tactics: DetectionCoverageTactic[];
   ruleCount: number;
   liveRuleCount: number;
+  // Condição de execução das regras em live mode desta técnica (particiona liveRuleCount).
+  normalExecutionRuleCount: number;
+  limitedExecutionRuleCount: number;
+  pausedExecutionRuleCount: number;
+  unknownExecutionRuleCount: number;
   alertingRuleCount: number;
   statusLabel: string;
   needsAttention: boolean;
@@ -35,6 +40,11 @@ export interface DetectionCoverageSummary {
   rulesWithMitre: number;
   rulesWithoutMitre: number;
   rulesInLiveMode: number;
+  // Partição das regras em live mode por condição de execução.
+  rulesInNormalExecution: number;
+  rulesInLimitedExecution: number;
+  rulesInPausedExecution: number;
+  rulesInUnknownExecution: number;
   rulesWithAlerting: number;
   techniquesObserved: number;
   techniquesNeedingAttention: number;

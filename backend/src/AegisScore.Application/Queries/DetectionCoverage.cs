@@ -42,12 +42,21 @@ public sealed record DetectionCoverageViewDto(
     bool AffectsScore,
     string ScoreDisclaimer);
 
-/// <summary>Totais AGREGADOS em linguagem clara. Regras arquivadas NUNCA entram; quantidade nunca vira pontos.</summary>
+/// <summary>
+/// Totais AGREGADOS em linguagem clara. Regras arquivadas NUNCA entram; quantidade nunca vira pontos. As três
+/// dimensões ficam SEPARADAS: live mode (<see cref="RulesInLiveMode"/>), condição de execução
+/// (<see cref="RulesInNormalExecution"/>/<see cref="RulesInLimitedExecution"/>/<see cref="RulesInPausedExecution"/>/
+/// <see cref="RulesInUnknownExecution"/>, partição das em live mode) e alerting (<see cref="RulesWithAlerting"/>).
+/// </summary>
 public sealed record DetectionCoverageSummaryDto(
     int ActiveRules,
     int RulesWithMitre,
     int RulesWithoutMitre,
     int RulesInLiveMode,
+    int RulesInNormalExecution,
+    int RulesInLimitedExecution,
+    int RulesInPausedExecution,
+    int RulesInUnknownExecution,
     int RulesWithAlerting,
     int TechniquesObserved,
     int TechniquesNeedingAttention);
@@ -64,6 +73,11 @@ public sealed record DetectionCoverageTechniqueDto(
     IReadOnlyList<DetectionCoverageTacticDto> Tactics,
     int RuleCount,
     int LiveRuleCount,
+    // Condição de execução das regras em live mode desta técnica (particiona LiveRuleCount).
+    int NormalExecutionRuleCount,
+    int LimitedExecutionRuleCount,
+    int PausedExecutionRuleCount,
+    int UnknownExecutionRuleCount,
     int AlertingRuleCount,
     string StatusLabel,
     bool NeedsAttention);

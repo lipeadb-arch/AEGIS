@@ -28,6 +28,10 @@ namespace AegisScore.Infrastructure.Migrations
                     RulesWithMitre = table.Column<int>(type: "integer", nullable: false),
                     RulesWithoutMitre = table.Column<int>(type: "integer", nullable: false),
                     RulesInLiveMode = table.Column<int>(type: "integer", nullable: false),
+                    RulesInNormalExecution = table.Column<int>(type: "integer", nullable: false),
+                    RulesInLimitedExecution = table.Column<int>(type: "integer", nullable: false),
+                    RulesInPausedExecution = table.Column<int>(type: "integer", nullable: false),
+                    RulesInUnknownExecution = table.Column<int>(type: "integer", nullable: false),
                     RulesWithAlerting = table.Column<int>(type: "integer", nullable: false),
                     TechniquesObserved = table.Column<int>(type: "integer", nullable: false),
                     Fingerprint = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
@@ -38,6 +42,12 @@ namespace AegisScore.Infrastructure.Migrations
                 {
                     table.PrimaryKey("PK_DetectionCoverageSnapshots", x => x.Id);
                     table.UniqueConstraint("AK_DetectionCoverageSnapshots_Id_TenantId", x => new { x.Id, x.TenantId });
+                    table.ForeignKey(
+                        name: "FK_DetectionCoverageSnapshots_Connectors_ConnectorConfigId_Ten~",
+                        columns: x => new { x.ConnectorConfigId, x.TenantId },
+                        principalTable: "Connectors",
+                        principalColumns: new[] { "Id", "TenantId" },
+                        onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
@@ -50,6 +60,10 @@ namespace AegisScore.Infrastructure.Migrations
                     TechniqueId = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
                     RuleCount = table.Column<int>(type: "integer", nullable: false),
                     LiveRuleCount = table.Column<int>(type: "integer", nullable: false),
+                    NormalExecutionRuleCount = table.Column<int>(type: "integer", nullable: false),
+                    LimitedExecutionRuleCount = table.Column<int>(type: "integer", nullable: false),
+                    PausedExecutionRuleCount = table.Column<int>(type: "integer", nullable: false),
+                    UnknownExecutionRuleCount = table.Column<int>(type: "integer", nullable: false),
                     AlertingRuleCount = table.Column<int>(type: "integer", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true)
@@ -64,6 +78,11 @@ namespace AegisScore.Infrastructure.Migrations
                         principalColumns: new[] { "Id", "TenantId" },
                         onDelete: ReferentialAction.Cascade);
                 });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_DetectionCoverageSnapshots_ConnectorConfigId_TenantId",
+                table: "DetectionCoverageSnapshots",
+                columns: new[] { "ConnectorConfigId", "TenantId" });
 
             migrationBuilder.CreateIndex(
                 name: "UX_DetectionCoverageSnapshot_Natural",

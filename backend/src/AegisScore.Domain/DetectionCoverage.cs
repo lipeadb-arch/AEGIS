@@ -71,6 +71,16 @@ public class DetectionCoverageSnapshot : Entity, ITenantOwned
     public int RulesWithMitre { get; set; }
     public int RulesWithoutMitre { get; set; }
     public int RulesInLiveMode { get; set; }
+
+    // ---- Condição de EXECUÇÃO das regras em live mode (partição de RulesInLiveMode) ----
+    // live mode habilitado NÃO é sinônimo de execução saudável: DEFAULT (Normal) executa como esperado; LIMITED não
+    // garante; PAUSED não executa; Unknown = estado não comprovado (EXECUTION_STATE_UNSPECIFIED/ausente). Por
+    // construção Normal+Limited+Paused+Unknown == RulesInLiveMode.
+    public int RulesInNormalExecution { get; set; }
+    public int RulesInLimitedExecution { get; set; }
+    public int RulesInPausedExecution { get; set; }
+    public int RulesInUnknownExecution { get; set; }
+
     public int RulesWithAlerting { get; set; }
     public int TechniquesObserved { get; set; }
 
@@ -100,8 +110,18 @@ public class DetectionCoverageTechnique : Entity, ITenantOwned
     /// <summary>Regras (não arquivadas) configuradas com esta técnica.</summary>
     public int RuleCount { get; set; }
 
-    /// <summary>Dessas, quantas estão em live mode (execução ativa).</summary>
+    /// <summary>Dessas, quantas estão em live mode (habilitadas como live rule — não implica execução saudável).</summary>
     public int LiveRuleCount { get; set; }
+
+    // ---- Condição de execução das regras em live mode desta técnica (partição de LiveRuleCount) ----
+    /// <summary>Em live mode e com executionState=DEFAULT (executa como esperado).</summary>
+    public int NormalExecutionRuleCount { get; set; }
+    /// <summary>Em live mode, mas LIMITED (execução não garantida).</summary>
+    public int LimitedExecutionRuleCount { get; set; }
+    /// <summary>Em live mode, mas PAUSED (não executa).</summary>
+    public int PausedExecutionRuleCount { get; set; }
+    /// <summary>Em live mode, com estado de execução não comprovado (UNSPECIFIED/ausente/desconhecido).</summary>
+    public int UnknownExecutionRuleCount { get; set; }
 
     /// <summary>Dessas, quantas têm alerting habilitado.</summary>
     public int AlertingRuleCount { get; set; }

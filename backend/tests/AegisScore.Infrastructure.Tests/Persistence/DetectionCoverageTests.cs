@@ -54,18 +54,45 @@ public sealed class DetectionCoveragePersistenceTests : IDisposable
 
     private AegisScoreDbContext NewContext(Guid? tenant) => new(_options, new SystemTenantContext(tenant));
 
-    private static AppTechnique Tech(string id, int rules, int live, int alerting) =>
-        new(id, id, id.Contains('.'), null, Array.Empty<string>(), rules, live, alerting);
+    private static AppTechnique Tech(string id, int rules, int live, int alerting,
+        int normal = 0, int limited = 0, int paused = 0, int unknown = 0) =>
+        new(id, id, id.Contains('.'), null, Array.Empty<string>(),
+            rules, live, normal, limited, paused, unknown, alerting);
 
     private static AppCoverage Snap(
         DetectionCoverageCollectionState state, int active, int withMitre, int withoutMitre, int live, int alerting,
         params AppTechnique[] techniques) =>
-        new("Google SecOps", "17.1", state, DateTimeOffset.UtcNow, active, withMitre, withoutMitre, live, alerting, techniques);
+        new("Google SecOps", "17.1", state, DateTimeOffset.UtcNow, active, withMitre, withoutMitre, live,
+            0, 0, 0, 0, alerting, techniques);
 
+    private static AppCoverage Snap(
+        DetectionCoverageCollectionState state, int active, int withMitre, int withoutMitre, int live,
+        int normal, int limited, int paused, int unknown, int alerting, params AppTechnique[] techniques) =>
+        new("Google SecOps", "17.1", state, DateTimeOffset.UtcNow, active, withMitre, withoutMitre, live,
+            normal, limited, paused, unknown, alerting, techniques);
+
+    /// <summary>
+    /// Reconcilia, semeando ANTES um ConnectorConfig para (tenant, connector) — a FK tenant-safe do snapshot exige que
+    /// o conector de origem exista no MESMO tenant. Idempotente por Id (não recria em segundas coletas do mesmo conector).
+    /// </summary>
     private async Task Reconcile(Guid tenant, Guid connector, AppCoverage snap)
     {
+        await EnsureConnector(tenant, connector);
         await using var db = NewContext(tenant);
         await new DetectionCoverageReconciler(db).ReconcileAsync(connector, snap, CancellationToken.None);
+    }
+
+    private async Task EnsureConnector(Guid tenant, Guid id)
+    {
+        await using var db = NewContext(tenant);
+        if (await db.Connectors.AnyAsync(c => c.Id == id)) return;
+        db.Connectors.Add(new ConnectorConfig
+        {
+            Id = id, TenantId = tenant, Provider = ConnectorProvider.Google, Capability = ConnectorCapability.Siem,
+            DisplayName = "Google SecOps", AuthType = ConnectorAuthType.ServiceAccount, Enabled = true,
+            EncryptedSettings = DetectionPullFixtures.Settings,
+        });
+        await db.SaveChangesAsync();
     }
 
     // ---- Reconciler --------------------------------------------------------------------------------
@@ -84,6 +111,27 @@ public sealed class DetectionCoveragePersistenceTests : IDisposable
         s.Techniques.Should().HaveCount(2);
         s.Fingerprint.Should().NotBeNullOrEmpty();
         s.LastCollectionAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Reconcile_ExecutionBuckets_RoundTripOnSnapshotAndTechnique()
+    {
+        var connector = Guid.NewGuid();
+        await Reconcile(Tenant, connector, Snap(DetectionCoverageCollectionState.Available, 4, 4, 0, 4,
+            normal: 1, limited: 1, paused: 1, unknown: 1, alerting: 2,
+            Tech("T1059", 4, 4, 2, normal: 1, limited: 1, paused: 1, unknown: 1)));
+
+        await using var db = NewContext(Tenant);
+        var s = await db.DetectionCoverageSnapshots.Include(x => x.Techniques).SingleAsync();
+        s.RulesInNormalExecution.Should().Be(1);
+        s.RulesInLimitedExecution.Should().Be(1);
+        s.RulesInPausedExecution.Should().Be(1);
+        s.RulesInUnknownExecution.Should().Be(1);
+        var t = s.Techniques.Single();
+        t.NormalExecutionRuleCount.Should().Be(1);
+        t.LimitedExecutionRuleCount.Should().Be(1);
+        t.PausedExecutionRuleCount.Should().Be(1);
+        t.UnknownExecutionRuleCount.Should().Be(1);
     }
 
     [Fact]
@@ -161,11 +209,13 @@ public sealed class DetectionCoveragePersistenceTests : IDisposable
     }
 
     [Fact]
-    public async Task Reconcile_TenantIsolation_And_UniquePerTenantConnector()
+    public async Task Reconcile_TenantIsolation_EachTenantHasOwnSnapshot()
     {
-        var connector = Guid.NewGuid();   // MESMO connectorId em dois tenants → um snapshot em cada
-        await Reconcile(Tenant, connector, Snap(DetectionCoverageCollectionState.Available, 1, 1, 0, 1, 1, Tech("T1059", 1, 1, 1)));
-        await Reconcile(OtherTenant, connector, Snap(DetectionCoverageCollectionState.Available, 5, 5, 0, 5, 5, Tech("T1110", 5, 5, 5)));
+        // Conectores DISTINTOS por tenant (o Id de ConnectorConfig é global) — cada tenant tem seu próprio snapshot.
+        var connectorA = Guid.NewGuid();
+        var connectorB = Guid.NewGuid();
+        await Reconcile(Tenant, connectorA, Snap(DetectionCoverageCollectionState.Available, 1, 1, 0, 1, 1, Tech("T1059", 1, 1, 1)));
+        await Reconcile(OtherTenant, connectorB, Snap(DetectionCoverageCollectionState.Available, 5, 5, 0, 5, 5, Tech("T1110", 5, 5, 5)));
 
         await using (var a = NewContext(Tenant))
             (await a.DetectionCoverageSnapshots.SingleAsync()).TotalActiveRules.Should().Be(1);
@@ -199,19 +249,39 @@ public sealed class DetectionCoveragePersistenceTests : IDisposable
     {
         var connector = await SeedSiemConnector(Tenant);
         await Reconcile(Tenant, connector, Snap(DetectionCoverageCollectionState.Available, 3, 3, 0, 2, 1,
-            Tech("T1566", 1, 1, 1),   // ok (rank 2)
-            Tech("T1059", 1, 1, 0),   // live sem alerting (rank 1)
-            Tech("T1110", 1, 0, 0))); // sem live (rank 0)
+            Tech("T1566", 1, 1, 1, normal: 1),   // execução normal + alerting (rank 3, ok)
+            Tech("T1059", 1, 1, 0, normal: 1),   // execução normal, sem alerting (rank 2)
+            Tech("T1110", 1, 0, 0)));            // sem live mode (rank 0)
 
         var view = await Query(Tenant).GetAsync();
         view.State.Should().Be(DetectionCoverageViewState.Available);
         view.Summary.ActiveRules.Should().Be(3);
         view.Summary.TechniquesNeedingAttention.Should().Be(2);
-        view.Techniques[0].TechniqueId.Should().Be("T1110", "sem regra em execução vem primeiro");
+        view.Techniques[0].TechniqueId.Should().Be("T1110", "live mode desabilitado vem primeiro");
         view.Techniques[0].Name.Should().Be("Brute Force", "nome resolvido pelo catálogo");
-        view.Techniques[1].TechniqueId.Should().Be("T1059", "live mas sem alerting vem em seguida");
-        view.Techniques[2].TechniqueId.Should().Be("T1566", "ok vem por último");
+        view.Techniques[0].StatusLabel.Should().Be("Live mode desabilitado");
+        view.Techniques[1].TechniqueId.Should().Be("T1059", "em execução mas sem alerting vem em seguida");
+        view.Techniques[1].StatusLabel.Should().Be("Em execução; alertas não habilitados");
+        view.Techniques[2].TechniqueId.Should().Be("T1566", "execução normal + alerting vem por último");
+        view.Techniques[2].StatusLabel.Should().Be("Em execução e configurada para alertas");
         view.Techniques[2].NeedsAttention.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Query_LiveButLimitedOrPaused_ReportsPartialExecution_NotHealthy()
+    {
+        var connector = await SeedSiemConnector(Tenant);
+        // Técnica com regras em live mode, porém NENHUMA em execução normal (só limitada/pausada) → não é "execução normal".
+        await Reconcile(Tenant, connector, Snap(DetectionCoverageCollectionState.Available, 2, 2, 0, 2, 0,
+            Tech("T1059", 2, 2, 0, normal: 0, limited: 1, paused: 1)));
+
+        var view = await Query(Tenant).GetAsync();
+        var t = view.Techniques.Single();
+        t.StatusLabel.Should().Be("Execução parcial: há regras limitadas ou pausadas");
+        t.NeedsAttention.Should().BeTrue("live mode com execução limitada/pausada não é saudável");
+        t.NormalExecutionRuleCount.Should().Be(0);
+        t.LimitedExecutionRuleCount.Should().Be(1);
+        t.PausedExecutionRuleCount.Should().Be(1);
     }
 
     [Fact]

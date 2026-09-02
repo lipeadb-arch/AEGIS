@@ -331,6 +331,15 @@ public class AegisScoreDbContext : DbContext
                 .HasForeignKey(t => new { t.DetectionCoverageSnapshotId, t.TenantId })
                 .HasPrincipalKey(x => new { x.Id, x.TenantId })
                 .OnDelete(DeleteBehavior.Cascade);
+            // Integridade referencial ao conector de origem via FK COMPOSTA tenant-safe (ConnectorConfigId, TenantId)
+            // → ConnectorConfig (Id, TenantId), reusando a chave alternativa existente. O banco recusa snapshot
+            // apontando para conector inexistente OU de OUTRO tenant; Cascade remove o snapshot (e, em cadeia, suas
+            // técnicas) quando o conector é excluído — sem cobertura órfã. Sem navegação inversa (leitura só agregada).
+            e.HasOne<ConnectorConfig>()
+                .WithMany()
+                .HasForeignKey(x => new { x.ConnectorConfigId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // Técnica AGREGADA congelada no snapshot: tenant-owned. Só ID MITRE + contagens (nome/táticas vêm do catálogo

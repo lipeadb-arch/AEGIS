@@ -835,7 +835,19 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Property<DateTimeOffset?>("LastCollectionAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("RulesInLimitedExecution")
+                        .HasColumnType("integer");
+
                     b.Property<int>("RulesInLiveMode")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RulesInNormalExecution")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RulesInPausedExecution")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RulesInUnknownExecution")
                         .HasColumnType("integer");
 
                     b.Property<int>("RulesWithAlerting")
@@ -866,6 +878,8 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ConnectorConfigId", "TenantId");
+
                     b.HasIndex("TenantId", "ConnectorConfigId")
                         .IsUnique()
                         .HasDatabaseName("UX_DetectionCoverageSnapshot_Natural");
@@ -888,7 +902,16 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Property<Guid>("DetectionCoverageSnapshotId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("LimitedExecutionRuleCount")
+                        .HasColumnType("integer");
+
                     b.Property<int>("LiveRuleCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("NormalExecutionRuleCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("PausedExecutionRuleCount")
                         .HasColumnType("integer");
 
                     b.Property<int>("RuleCount")
@@ -901,6 +924,9 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
+
+                    b.Property<int>("UnknownExecutionRuleCount")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -3258,6 +3284,16 @@ namespace AegisScore.Infrastructure.Migrations
                     b.HasOne("AegisScore.Domain.Tenant", null)
                         .WithMany("Connectors")
                         .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AegisScore.Domain.DetectionCoverageSnapshot", b =>
+                {
+                    b.HasOne("AegisScore.Domain.ConnectorConfig", null)
+                        .WithMany()
+                        .HasForeignKey("ConnectorConfigId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

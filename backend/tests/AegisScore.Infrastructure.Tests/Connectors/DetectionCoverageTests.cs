@@ -29,13 +29,19 @@ internal sealed class FakeMitreCatalog : IMitreAttackCatalog
         ["T1059.003"] = new("T1059.003", "Windows Command Shell", true, "T1059", new[] { "TA0002" }),
         ["T1110"] = new("T1110", "Brute Force", false, null, new[] { "TA0006" }),
         ["T1566"] = new("T1566", "Phishing", false, null, new[] { "TA0001" }),
+        // Exemplos OFICIAIS da doc de unified rules (namespace google.mitre.technique).
+        ["T1136"] = new("T1136", "Create Account", false, null, new[] { "TA0003" }),
+        ["T1136.003"] = new("T1136.003", "Cloud Account", true, "T1136", new[] { "TA0003" }),
+        ["T1595"] = new("T1595", "Active Scanning", false, null, new[] { "TA0043" }),
     };
 
     private readonly Dictionary<string, MitreTactic> _ta = new(StringComparer.Ordinal)
     {
         ["TA0001"] = new("TA0001", "initial-access", "Initial Access", "Acesso Inicial"),
         ["TA0002"] = new("TA0002", "execution", "Execution", "Execução"),
+        ["TA0003"] = new("TA0003", "persistence", "Persistence", "Persistência"),
         ["TA0006"] = new("TA0006", "credential-access", "Credential Access", "Acesso a Credenciais"),
+        ["TA0043"] = new("TA0043", "reconnaissance", "Reconnaissance", "Reconhecimento"),
     };
 
     public string AttackVersion => "17.1";
@@ -50,25 +56,33 @@ internal sealed class FakeMitreCatalog : IMitreAttackCatalog
 /// <summary>[AEGIS-MVP-GOOGLE-SECOPS-02] Fixtures de regra CONFIG_ONLY para os testes de transporte e agregação.</summary>
 internal static class RuleFixtures
 {
-    /// <summary>Regra CONFIG_ONLY: só campos de CONFIGURAÇÃO. <paramref name="techniqueMeta"/> vai no mapa metadata.technique.</summary>
+    /// <summary>
+    /// Regra CONFIG_ONLY: só campos de CONFIGURAÇÃO. <paramref name="techniqueMeta"/>→metadata.technique;
+    /// <paramref name="mitreTtp"/>→metadata.mitre_ttp (chaves OFICIAIS); <paramref name="tags"/> vão literais (o teste
+    /// escolhe o namespace google.mitre.technique.* quando quer que a tag mapeie). <paramref name="execState"/> é o
+    /// campo oficial executionState (DEFAULT por padrão para uma regra saudável; passe <c>null</c> p/ omiti-lo).
+    /// </summary>
     public static string Rule(
         string name, bool archived = false, bool live = true, bool alerting = true,
-        string? techniqueMeta = null, string? mitreAttackTechnique = null, string[]? tags = null,
-        bool? deploymentEnabled = null, bool? deploymentAlerting = null)
+        string? techniqueMeta = null, string? mitreTtp = null, string[]? tags = null,
+        string? execState = "DEFAULT", bool? deploymentEnabled = null, bool? deploymentAlerting = null,
+        string? deploymentExecState = null)
     {
         var parts = new List<string> { $"\"name\":\"{name}\"", $"\"archived\":{(archived ? "true" : "false")}" };
         if (deploymentEnabled is null) parts.Add($"\"liveModeEnabled\":{(live ? "true" : "false")}");
         if (deploymentAlerting is null) parts.Add($"\"alertingEnabled\":{(alerting ? "true" : "false")}");
+        if (execState is not null) parts.Add($"\"executionState\":\"{execState}\"");
         var meta = new List<string>();
         if (techniqueMeta is not null) meta.Add($"\"technique\":\"{techniqueMeta}\"");
-        if (mitreAttackTechnique is not null) meta.Add($"\"mitre_attack_technique\":\"{mitreAttackTechnique}\"");
+        if (mitreTtp is not null) meta.Add($"\"mitre_ttp\":\"{mitreTtp}\"");
         if (meta.Count > 0) parts.Add("\"metadata\":{" + string.Join(",", meta) + "}");
         if (tags is not null) parts.Add("\"tags\":[" + string.Join(",", tags.Select(t => $"\"{t}\"")) + "]");
-        if (deploymentEnabled is not null || deploymentAlerting is not null)
+        if (deploymentEnabled is not null || deploymentAlerting is not null || deploymentExecState is not null)
         {
             var dep = new List<string>();
             if (deploymentEnabled is not null) dep.Add($"\"enabled\":{(deploymentEnabled.Value ? "true" : "false")}");
             if (deploymentAlerting is not null) dep.Add($"\"alerting\":{(deploymentAlerting.Value ? "true" : "false")}");
+            if (deploymentExecState is not null) dep.Add($"\"executionState\":\"{deploymentExecState}\"");
             parts.Add("\"deployment\":{" + string.Join(",", dep) + "}");
         }
         return "{" + string.Join(",", parts) + "}";
@@ -245,6 +259,10 @@ public sealed class DetectionCoverageCollectorTests
         snap.RulesWithMitre.Should().Be(3);
         snap.RulesWithoutMitre.Should().Be(1);
         snap.RulesInLiveMode.Should().Be(3);
+        snap.RulesInNormalExecution.Should().Be(3, "as 3 regras em live mode têm executionState=DEFAULT");
+        snap.RulesInLimitedExecution.Should().Be(0);
+        snap.RulesInPausedExecution.Should().Be(0);
+        snap.RulesInUnknownExecution.Should().Be(0);
         snap.RulesWithAlerting.Should().Be(2);
 
         snap.Techniques.Should().HaveCount(2);
@@ -252,10 +270,12 @@ public sealed class DetectionCoverageCollectorTests
         t1059.Name.Should().Be("Command and Scripting Interpreter");
         t1059.RuleCount.Should().Be(2);
         t1059.LiveRuleCount.Should().Be(2);
+        t1059.NormalExecutionRuleCount.Should().Be(2);
         t1059.AlertingRuleCount.Should().Be(1);
         var t1110 = snap.Techniques.Single(t => t.TechniqueId == "T1110");
         t1110.RuleCount.Should().Be(1);
-        t1110.LiveRuleCount.Should().Be(0, "regra pausada — técnica com regra mas sem execução");
+        t1110.LiveRuleCount.Should().Be(0, "regra fora de live mode — técnica com regra mas sem execução ativa");
+        t1110.NormalExecutionRuleCount.Should().Be(0);
     }
 
     [Fact]
@@ -280,29 +300,94 @@ public sealed class DetectionCoverageCollectorTests
         t.ParentTechniqueId.Should().Be("T1059");
     }
 
+    // ==== [§1] Parser MITRE: formatos OFICIAIS (doc unified-rules) — case-insensitive, namespace estrito ====
+
     [Fact]
-    public async Task Coverage_MitreAttackTechniqueValueForm_IsParsed()
+    public async Task Parse_MetadataMitreTtp_ValueForm_IsParsed()
     {
-        // Formato "T#### - Nome" na chave mitre_attack_technique — extrai só o ID e valida no catálogo.
+        // Chave OFICIAL mitre_ttp no formato "T#### - Nome" — extrai só o ID e valida no catálogo.
         var snap = await Collect(_ => Ok(RuleFixtures.List(
-            RuleFixtures.Rule("ru/x", techniqueMeta: null, mitreAttackTechnique: "T1110 - Brute Force"))));
+            RuleFixtures.Rule("ru/x", techniqueMeta: null, mitreTtp: "T1110 - Brute Force"))));
         snap.RulesWithMitre.Should().Be(1);
         snap.Techniques.Single().TechniqueId.Should().Be("T1110");
     }
 
     [Fact]
-    public async Task Coverage_TagsArray_IsScanned()
+    public async Task Parse_MetadataMitreTtp_MultipleTechniques_AreParsed()
     {
+        // mitre_ttp com mais de uma técnica (separadas por vírgula).
         var snap = await Collect(_ => Ok(RuleFixtures.List(
-            RuleFixtures.Rule("ru/tags", techniqueMeta: null, tags: new[] { "T1566", "internal-label" }))));
+            RuleFixtures.Rule("ru/multi", techniqueMeta: null, mitreTtp: "T1059, T1110"))));
         snap.RulesWithMitre.Should().Be(1);
-        snap.Techniques.Single().TechniqueId.Should().Be("T1566");
+        snap.Techniques.Select(t => t.TechniqueId).Should().BeEquivalentTo(new[] { "T1059", "T1110" });
     }
 
     [Fact]
-    public async Task Coverage_InvalidTag_And_UnknownTechnique_CountAsWithoutMitre_NoInvention()
+    public async Task Parse_MetadataTechnique_Value_IsParsed()
     {
-        // "TA0002" (tática, não técnica), "not-a-technique" e "T9999" (não existe no catálogo) → nenhuma técnica válida.
+        // metadata.technique = "T1136.003" (exemplo oficial).
+        var snap = await Collect(_ => Ok(RuleFixtures.List(RuleFixtures.Rule("ru/meta", techniqueMeta: "T1136.003"))));
+        snap.Techniques.Single().TechniqueId.Should().Be("T1136.003");
+    }
+
+    [Fact]
+    public async Task Parse_OfficialShortTag_Technique_Lowercase_IsParsed()
+    {
+        // Tag curta oficial em MINÚSCULAS: google.mitre.technique.t1136.003 → normaliza p/ T1136.003.
+        var snap = await Collect(_ => Ok(RuleFixtures.List(
+            RuleFixtures.Rule("ru/tag", techniqueMeta: null, tags: new[] { "google.mitre.technique.t1136.003" }))));
+        snap.RulesWithMitre.Should().Be(1);
+        snap.Techniques.Single().TechniqueId.Should().Be("T1136.003");
+    }
+
+    [Fact]
+    public async Task Parse_FullResourceNameTag_Technique_IsParsed()
+    {
+        // Resource name completo terminando no namespace: .../google.mitre.technique.T1595 → T1595.
+        var snap = await Collect(_ => Ok(RuleFixtures.List(RuleFixtures.Rule("ru/res", techniqueMeta: null,
+            tags: new[] { "projects/p/locations/us/instances/i/curatedRuleSets/x/google.mitre.technique.T1595" }))));
+        snap.RulesWithMitre.Should().Be(1);
+        snap.Techniques.Single().TechniqueId.Should().Be("T1595");
+    }
+
+    [Fact]
+    public async Task Parse_TacticTag_IsNotTreatedAsTechnique()
+    {
+        // google.mitre.tactic.ta0003 é TÁTICA — nunca vira técnica.
+        var snap = await Collect(_ => Ok(RuleFixtures.List(
+            RuleFixtures.Rule("ru/tac", techniqueMeta: null, tags: new[] { "google.mitre.tactic.ta0003" }))));
+        snap.RulesWithMitre.Should().Be(0);
+        snap.RulesWithoutMitre.Should().Be(1);
+        snap.Techniques.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Parse_ArbitraryTagContainingTechniqueToken_IsNotMitre()
+    {
+        // Uma tag arbitrária que POR ACASO contém "T1059" NÃO pode ser interpretada como MITRE (fora do namespace).
+        var snap = await Collect(_ => Ok(RuleFixtures.List(
+            RuleFixtures.Rule("ru/arb", techniqueMeta: null, tags: new[] { "internal-detection-T1059-lab" }))));
+        snap.RulesWithMitre.Should().Be(0);
+        snap.RulesWithoutMitre.Should().Be(1, "T#### solto numa tag fora do namespace não é MITRE");
+        snap.Techniques.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Parse_MixedCase_Tag_And_Metadata_NormalizeToCanonicalUpper()
+    {
+        // Caixa mista tanto na tag quanto no metadado — validação case-insensitive, ID canônico MAIÚSCULO na saída.
+        var snapTag = await Collect(_ => Ok(RuleFixtures.List(
+            RuleFixtures.Rule("ru/mix", techniqueMeta: null, tags: new[] { "google.mitre.technique.T1136.003" }))));
+        snapTag.Techniques.Single().TechniqueId.Should().Be("T1136.003");
+
+        var snapMeta = await Collect(_ => Ok(RuleFixtures.List(RuleFixtures.Rule("ru/mixmeta", techniqueMeta: "t1059"))));
+        snapMeta.Techniques.Single().TechniqueId.Should().Be("T1059");
+    }
+
+    [Fact]
+    public async Task Parse_NonexistentTechnique_And_TacticInMetadata_CountAsWithoutMitre_NoInvention()
+    {
+        // "TA0002" (tática, não técnica) e "T9999" (não existe no catálogo v17.1) → nenhuma técnica válida, sem invenção.
         var body = RuleFixtures.List(
             RuleFixtures.Rule("ru/bad", techniqueMeta: "TA0002", tags: new[] { "not-a-technique" }),
             RuleFixtures.Rule("ru/unknown", techniqueMeta: "T9999"));
@@ -313,6 +398,56 @@ public sealed class DetectionCoverageCollectorTests
         snap.RulesWithoutMitre.Should().Be(2, "tag inválida ou técnica inexistente no catálogo não vira técnica");
         snap.Techniques.Should().BeEmpty();
         snap.State.Should().Be(DetectionCoverageCollectionState.Available, "uma tag inválida não quebra a coleta inteira");
+    }
+
+    // ==== [§2] executionState: DEFAULT / LIMITED / PAUSED / desconhecido ====
+
+    [Fact]
+    public async Task ExecutionState_Buckets_ArePartitionedAmongLiveRules()
+    {
+        // Todas em live mode, mas com condições de execução diferentes; a sem executionState é "desconhecida".
+        var body = RuleFixtures.List(
+            RuleFixtures.Rule("ru/normal", techniqueMeta: "T1059", execState: "DEFAULT"),
+            RuleFixtures.Rule("ru/limited", techniqueMeta: "T1059", execState: "LIMITED"),
+            RuleFixtures.Rule("ru/paused", techniqueMeta: "T1059", execState: "PAUSED"),
+            RuleFixtures.Rule("ru/unspecified", techniqueMeta: "T1059", execState: "EXECUTION_STATE_UNSPECIFIED"),
+            RuleFixtures.Rule("ru/absent", techniqueMeta: "T1059", execState: null));   // campo ausente → desconhecido
+        var snap = await Collect(_ => Ok(body));
+
+        snap.RulesInLiveMode.Should().Be(5);
+        snap.RulesInNormalExecution.Should().Be(1);
+        snap.RulesInLimitedExecution.Should().Be(1);
+        snap.RulesInPausedExecution.Should().Be(1);
+        snap.RulesInUnknownExecution.Should().Be(2, "UNSPECIFIED e ausente são estado não comprovado");
+
+        var t = snap.Techniques.Single(x => x.TechniqueId == "T1059");
+        t.LiveRuleCount.Should().Be(5);
+        (t.NormalExecutionRuleCount + t.LimitedExecutionRuleCount + t.PausedExecutionRuleCount + t.UnknownExecutionRuleCount)
+            .Should().Be(t.LiveRuleCount, "os buckets particionam exatamente as regras em live mode");
+        t.NormalExecutionRuleCount.Should().Be(1);
+        t.PausedExecutionRuleCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExecutionState_NotLive_IsNotBucketed()
+    {
+        // Regra fora de live mode não conta em nenhum bucket de execução, mesmo com executionState=DEFAULT.
+        var snap = await Collect(_ => Ok(RuleFixtures.List(
+            RuleFixtures.Rule("ru/off", techniqueMeta: "T1059", live: false, execState: "DEFAULT"))));
+        snap.RulesInLiveMode.Should().Be(0);
+        snap.RulesInNormalExecution.Should().Be(0, "executionState só é relevante para regras em live mode");
+    }
+
+    [Fact]
+    public async Task ExecutionState_FromDeployment_IsRead()
+    {
+        // executionState pode vir no sub-objeto deployment.
+        var snap = await Collect(_ => Ok(RuleFixtures.List(
+            RuleFixtures.Rule("ru/dep", techniqueMeta: "T1059", execState: null,
+                deploymentEnabled: true, deploymentExecState: "LIMITED"))));
+        snap.RulesInLiveMode.Should().Be(1);
+        snap.RulesInLimitedExecution.Should().Be(1);
+        snap.RulesInNormalExecution.Should().Be(0);
     }
 
     [Fact]

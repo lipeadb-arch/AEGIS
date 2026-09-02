@@ -124,6 +124,10 @@ public sealed class DetectionCoverageReconciler
             RulesWithMitre = incoming.RulesWithMitre,
             RulesWithoutMitre = incoming.RulesWithoutMitre,
             RulesInLiveMode = incoming.RulesInLiveMode,
+            RulesInNormalExecution = incoming.RulesInNormalExecution,
+            RulesInLimitedExecution = incoming.RulesInLimitedExecution,
+            RulesInPausedExecution = incoming.RulesInPausedExecution,
+            RulesInUnknownExecution = incoming.RulesInUnknownExecution,
             RulesWithAlerting = incoming.RulesWithAlerting,
             TechniquesObserved = incoming.Techniques.Count,
             Fingerprint = newFingerprint,
@@ -135,6 +139,10 @@ public sealed class DetectionCoverageReconciler
                 TechniqueId = t.TechniqueId,
                 RuleCount = t.RuleCount,
                 LiveRuleCount = t.LiveRuleCount,
+                NormalExecutionRuleCount = t.NormalExecutionRuleCount,
+                LimitedExecutionRuleCount = t.LimitedExecutionRuleCount,
+                PausedExecutionRuleCount = t.PausedExecutionRuleCount,
+                UnknownExecutionRuleCount = t.UnknownExecutionRuleCount,
                 AlertingRuleCount = t.AlertingRuleCount,
             });
         }
@@ -157,10 +165,15 @@ public sealed class DetectionCoverageReconciler
         sb.Append(s.AttackVersion).Append('|')
           .Append(s.TotalActiveRules).Append('|').Append(s.RulesWithMitre).Append('|')
           .Append(s.RulesWithoutMitre).Append('|').Append(s.RulesInLiveMode).Append('|')
+          .Append(s.RulesInNormalExecution).Append('|').Append(s.RulesInLimitedExecution).Append('|')
+          .Append(s.RulesInPausedExecution).Append('|').Append(s.RulesInUnknownExecution).Append('|')
           .Append(s.RulesWithAlerting).Append('|').Append(s.Techniques.Count).Append(';');
         foreach (var t in s.Techniques.OrderBy(x => x.TechniqueId, StringComparer.Ordinal))
             sb.Append(t.TechniqueId).Append(':')
-              .Append(t.RuleCount).Append(',').Append(t.LiveRuleCount).Append(',').Append(t.AlertingRuleCount).Append(';');
+              .Append(t.RuleCount).Append(',').Append(t.LiveRuleCount).Append(',')
+              .Append(t.NormalExecutionRuleCount).Append(',').Append(t.LimitedExecutionRuleCount).Append(',')
+              .Append(t.PausedExecutionRuleCount).Append(',').Append(t.UnknownExecutionRuleCount).Append(',')
+              .Append(t.AlertingRuleCount).Append(';');
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()))).ToLowerInvariant();
     }
 }

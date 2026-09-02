@@ -72,12 +72,24 @@ import {
             </div>
           }
 
-          <!-- Resumo em linguagem clara. -->
+          <!-- Resumo em linguagem clara e HONESTA: live mode, execução e alerting são dimensões separadas. -->
           <div class="summary">
             <div class="chip"><span class="n">{{ view()!.summary.activeRules }}</span><span class="l">Regras ativas</span></div>
             <div class="chip ok"><span class="n">{{ view()!.summary.rulesWithMitre }}</span><span class="l">Com técnica MITRE</span></div>
-            <div class="chip"><span class="n">{{ view()!.summary.rulesInLiveMode }}</span><span class="l">Em execução</span></div>
-            <div class="chip"><span class="n">{{ view()!.summary.rulesWithAlerting }}</span><span class="l">Gerando alertas</span></div>
+            <div class="chip" title="Regras habilitadas como live rule (não implica execução saudável)">
+              <span class="n">{{ view()!.summary.rulesInLiveMode }}</span><span class="l">Em live mode</span>
+            </div>
+            <div class="chip ok" title="Em live mode e com estado de execução normal (DEFAULT)">
+              <span class="n">{{ view()!.summary.rulesInNormalExecution }}</span><span class="l">Execução normal</span>
+            </div>
+            @if (view()!.summary.rulesInLimitedExecution + view()!.summary.rulesInPausedExecution > 0) {
+              <div class="chip warn" title="Em live mode, mas com execução limitada ou pausada">
+                <span class="n">{{ view()!.summary.rulesInLimitedExecution + view()!.summary.rulesInPausedExecution }}</span><span class="l">Limitadas / pausadas</span>
+              </div>
+            }
+            <div class="chip" title="Regras configuradas para marcar detecções como alertas">
+              <span class="n">{{ view()!.summary.rulesWithAlerting }}</span><span class="l">Alertas habilitados</span>
+            </div>
             <div class="chip" [class.warn]="view()!.summary.rulesWithoutMitre > 0">
               <span class="n">{{ view()!.summary.rulesWithoutMitre }}</span><span class="l">Sem mapeamento MITRE</span>
             </div>
@@ -106,8 +118,12 @@ import {
                   </div>
                   <div class="tech-meta">
                     <span class="count" title="Regras configuradas">{{ t.ruleCount }} config.</span>
-                    <span class="count" title="Regras em execução">{{ t.liveRuleCount }} em execução</span>
-                    <span class="count" title="Regras gerando alertas">{{ t.alertingRuleCount }} c/ alerta</span>
+                    <span class="count" title="Regras em live mode">{{ t.liveRuleCount }} live mode</span>
+                    <span class="count" title="Regras em execução normal (live mode + executionState DEFAULT)">{{ t.normalExecutionRuleCount }} exec. normal</span>
+                    @if (t.limitedExecutionRuleCount + t.pausedExecutionRuleCount > 0) {
+                      <span class="count" title="Regras em live mode, mas limitadas ou pausadas">{{ t.limitedExecutionRuleCount + t.pausedExecutionRuleCount }} limit./paus.</span>
+                    }
+                    <span class="count" title="Regras com alertas habilitados">{{ t.alertingRuleCount }} alertas hab.</span>
                     <span class="status" [class.attn]="t.needsAttention">{{ t.statusLabel }}</span>
                   </div>
                 </li>
