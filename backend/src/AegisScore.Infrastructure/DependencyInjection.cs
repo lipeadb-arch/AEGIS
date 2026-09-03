@@ -228,6 +228,8 @@ public static class DependencyInjection
         services.AddScoped<IVulnerabilityQuery, VulnerabilityQuery>();
         // [AEGIS-MVP-GOOGLE-SECOPS-02] Leitura tenant-scoped da cobertura de detecção (regras × MITRE), CONSULTIVA.
         services.AddScoped<IDetectionCoverageQuery, DetectionCoverageQuery>();
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Leitura tenant-scoped do inventário/exposição de software, CONSULTIVA.
+        services.AddScoped<ISoftwareInventoryQuery, SoftwareInventoryQuery>();
         // [AEGIS-MVP-PRIORITIES-01] Central de Prioridades: leitura COMPOSTA (postura + exposições + vulnerabilidades).
         // Scoped: apenas orquestra as três queries acima, que compartilham o mesmo DbContext scoped da requisição.
         services.AddScoped<IPriorityWorkspaceQuery, PriorityWorkspaceQuery>();
