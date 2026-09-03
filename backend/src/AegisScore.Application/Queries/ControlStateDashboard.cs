@@ -17,6 +17,38 @@ namespace AegisScore.Application.Queries;
 public record MissingRequirementDto(string Type, string SourceIdentifier, string Description);
 
 /// <summary>
+/// [AEGIS-MVP-EVIDENCE-FABRIC-01] Contexto da Evidence Fabric de identidade acoplado a UM controle NIST de
+/// identidade (PR.AA-01/PR.AA-03/GV.RR-01) no HUD vivo. Faz a postura reconhecer a coleta REAL do AEGIS KNIGHT
+/// — fonte e horário — e separa as TRÊS dimensões que o operador precisa distinguir: o estado do CONECTOR
+/// (não configurado / desabilitado / credencial ausente / apto), o estado da COLETA (nunca coletado / completa
+/// / parcial / última tentativa falhou porém há snapshot preservado) e o estado da EVIDÊNCIA deste controle
+/// (sem fonte / nunca coletado / coletado porém insuficiente / efetivamente avaliado).
+///
+/// NUNCA concede veredito nem pontos: o teto para os controles de identidade nesta fundação é "coletado, porém
+/// insuficiente" — a existência de telemetria não é aprovação. Nulo em todo controle que não seja de identidade.
+/// Enums viajam como STRING (nome), no mesmo idioma dos demais enums deste contrato.
+/// </summary>
+/// <param name="ConnectorState">"NotConfigured" | "Disabled" | "MissingCredential" | "Configured".</param>
+/// <param name="CollectionState">"NoConnector" | "Disabled" | "MissingCredential" | "NeverCollected" | "Complete" | "Partial".</param>
+/// <param name="ControlEvidenceState">"NoSource" | "NeverCollected" | "CollectedButInsufficient" | "Evaluated".</param>
+/// <param name="IsDegraded">Há evidência preservada, mas a última tentativa falhou ou o conector já não está apto.</param>
+/// <param name="Source">Fonte real do snapshot ("Microsoft Entra ID") — nunca segredo nem PII.</param>
+/// <param name="CollectedAt">Horário da coleta que produziu os dados armazenados (freshness). Nulo se nunca coletado.</param>
+/// <param name="LastAttemptAt">Horário da última TENTATIVA (onde a degradação aparece sem destruir a evidência válida).</param>
+/// <param name="LastAttemptState">Desfecho da última tentativa (Completed/PartialCollection/AuthenticationFailure…).</param>
+/// <param name="Explanation">Razão HONESTA: reconhece a coleta e explica por que ela não basta para o requisito do controle.</param>
+public record IdentityEvidenceContextDto(
+    string ConnectorState,
+    string CollectionState,
+    string ControlEvidenceState,
+    bool IsDegraded,
+    string Source,
+    DateTimeOffset? CollectedAt,
+    DateTimeOffset? LastAttemptAt,
+    string LastAttemptState,
+    string Explanation);
+
+/// <summary>
 /// [AEGIS-MVP-LANGUAGE-01] Classificação DETERMINÍSTICA do motivo de um controle estar <c>NotEvaluated</c> —
 /// derivada do <see cref="AegisScore.Domain.RuleEvidenceType"/> da regra (ou da ausência dela), NUNCA de LLM
 /// nem de parsing livre de texto. Distingue as quatro situações que o operador precisa separar: o que espera
@@ -152,6 +184,15 @@ public record TenantControlStateDto(
     /// avaliado — só descreve o <c>NotEvaluated</c>. Derivado do tipo de evidência da regra, sem LLM.
     /// </summary>
     public string? NotEvaluatedReason { get; init; }
+
+    /// <summary>
+    /// [AEGIS-MVP-EVIDENCE-FABRIC-01] Contexto da Evidence Fabric de identidade para os controles de identidade
+    /// (PR.AA-01/PR.AA-03/GV.RR-01): faz o HUD vivo reconhecer que a telemetria real do AEGIS KNIGHT foi coletada
+    /// (fonte + horário) e distinguir "sem fonte" de "coletado, porém insuficiente" — sem conceder veredito nem
+    /// pontos ao AEGIS Score. Nulo em todo controle que não seja de identidade (default seguro: cliente antigo
+    /// continua serializando). Ver <see cref="IdentityEvidenceContextDto"/>.
+    /// </summary>
+    public IdentityEvidenceContextDto? IdentityEvidence { get; init; }
 }
 
 /// <summary>
