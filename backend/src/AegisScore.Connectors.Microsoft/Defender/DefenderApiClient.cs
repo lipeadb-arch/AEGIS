@@ -18,6 +18,9 @@ public enum DefenderApiErrorKind
     Throttled,
     NotFound,
     Unavailable,
+    /// <summary>[AEGIS-MVP-MICROSOFT-COVERAGE-01] 402 — licença/capacidade do tenant não cobre o recurso pedido
+    /// (ex.: inventário de software fora do plano). Distinta de InsufficientPermission (403, RBAC).</summary>
+    LicenseRequired,
 }
 
 /// <summary>Falha SANITIZADA de acesso à API do Defender (nunca carrega token/segredo/URL/PII/payload na mensagem).</summary>
@@ -75,6 +78,25 @@ public interface IDefenderApiClient
     /// vira <see cref="DefenderApiException"/> classificada.
     /// </summary>
     Task ProbeAsync(string token, string relativeUrl, bool notFoundAsEmpty, CancellationToken ct);
+
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-COVERAGE-01] Percorre um endpoint cuja PRIMEIRA página já vem PRONTA em
+    /// <paramref name="firstPageRelativeUrl"/> (com o parâmetro de tamanho de página PRÓPRIO do endpoint — ex.:
+    /// <c>pageSize</c> em vez de <c>$top</c>) e continua EXCLUSIVAMENTE por <c>@odata.nextLink</c> — sem sintetizar
+    /// <c>$skip</c> (não documentado para endpoints deste formato). Mesmas proteções de <see cref="StreamAllPagesAsync"/>:
+    /// allowlist de host, teto de páginas/itens, detecção de ciclo. Implementação default preserva compatibilidade
+    /// com fakes antigos delegando a <see cref="StreamAllPagesAsync"/> tratando a URL completa como relativa.
+    /// </summary>
+    async IAsyncEnumerable<JsonElement> StreamPagesFromUrlAsync(
+        string token, string firstPageRelativeUrl, bool notFoundAsEmpty,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        await foreach (var item in StreamAllPagesAsync(token, firstPageRelativeUrl, notFoundAsEmpty, ct))
+        {
+            ct.ThrowIfCancellationRequested();
+            yield return item;
+        }
+    }
 }
 
 /// <inheritdoc cref="IDefenderApiClient"/>
@@ -170,12 +192,35 @@ public sealed class DefenderApiClient : IDefenderApiClient
         return results;
     }
 
-    public async IAsyncEnumerable<JsonElement> StreamAllPagesAsync(
-        string token, string relativeUrl, bool notFoundAsEmpty,
+    public IAsyncEnumerable<JsonElement> StreamAllPagesAsync(
+        string token, string relativeUrl, bool notFoundAsEmpty, CancellationToken ct) =>
+        // $top/$skip é o mecanismo DOCUMENTADO de /api/machines, machinesVulnerabilities, /api/vulnerabilities e
+        // /api/Software — o fallback por $skip (linha "else if" abaixo) só entra em jogo quando a página não trouxe
+        // @odata.nextLink mas veio cheia (sinal de que a API tem mais dados e simplesmente omitiu o link).
+        StreamPagesCoreAsync(token, BuildUrl(relativeUrl, top: _pageSize, skip: null), relativeUrl, notFoundAsEmpty, ct);
+
+    /// <inheritdoc cref="IDefenderApiClient.StreamPagesFromUrlAsync"/>
+    public IAsyncEnumerable<JsonElement> StreamPagesFromUrlAsync(
+        string token, string firstPageRelativeUrl, bool notFoundAsEmpty, CancellationToken ct) =>
+        // ToAbsoluteUrl: o chamador entrega a URL RELATIVA já com o parâmetro de página PRÓPRIO do endpoint (ex.:
+        // "api/machines/SoftwareInventoryByMachine?pageSize=20000") — precisa virar absoluta (host oficial) ANTES
+        // de ValidateDefenderUrl, exatamente como BuildUrl já faz para StreamAllPagesAsync. skipFallbackRelativeUrl
+        // = null: este formato de endpoint só documenta pageSize+@odata.nextLink — sintetizar $skip inventariaria
+        // um contrato não documentado.
+        StreamPagesCoreAsync(token, ToAbsoluteUrl(firstPageRelativeUrl), skipFallbackRelativeUrl: null, notFoundAsEmpty, ct);
+
+    /// <summary>
+    /// Núcleo ÚNICO de paginação, compartilhado por <see cref="StreamAllPagesAsync"/> (sintetiza <c>$top</c>/<c>$skip</c>
+    /// a partir de <paramref name="skipFallbackRelativeUrl"/> quando não há <c>nextLink</c>) e por
+    /// <see cref="StreamPagesFromUrlAsync"/> (segue SOMENTE <c>@odata.nextLink</c> — <paramref name="skipFallbackRelativeUrl"/>
+    /// nulo). Mesmas proteções nos dois casos: allowlist de host, teto de páginas/itens, detecção de ciclo.
+    /// </summary>
+    private async IAsyncEnumerable<JsonElement> StreamPagesCoreAsync(
+        string token, string firstUrl, string? skipFallbackRelativeUrl, bool notFoundAsEmpty,
         [EnumeratorCancellation] CancellationToken ct)
     {
         var visited = new HashSet<string>(StringComparer.Ordinal);
-        string? next = BuildUrl(relativeUrl, top: _pageSize, skip: null);
+        string? next = firstUrl;
         var pages = 0;
         var consumed = 0;
 
@@ -216,9 +261,9 @@ public sealed class DefenderApiClient : IDefenderApiClient
             {
                 next = nextLink;
             }
-            else if (items.Count >= _pageSize)
+            else if (skipFallbackRelativeUrl is not null && items.Count >= _pageSize)
             {
-                next = BuildUrl(relativeUrl, top: _pageSize, skip: consumed);
+                next = BuildUrl(skipFallbackRelativeUrl, top: _pageSize, skip: consumed);
             }
             else
             {
@@ -246,14 +291,18 @@ public sealed class DefenderApiClient : IDefenderApiClient
 
     private static string BuildUrl(string relativeUrl, int top, int? skip)
     {
-        if (relativeUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
-            return relativeUrl;
-        var baseUrl = $"{ApiBaseUrl}/{relativeUrl.TrimStart('/')}";
+        var baseUrl = ToAbsoluteUrl(relativeUrl);
         var sep = relativeUrl.Contains('?') ? "&" : "?";
         var url = $"{baseUrl}{sep}$top={top}";
         if (skip is { } s && s > 0) url += $"&$skip={s}";
         return url;
     }
+
+    /// <summary>Absolutiza uma URL relativa (host oficial fixo) sem tocar em query string — idempotente se já absoluta.</summary>
+    private static string ToAbsoluteUrl(string relativeUrl) =>
+        relativeUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? relativeUrl
+            : $"{ApiBaseUrl}/{relativeUrl.TrimStart('/')}";
 
     private static void ValidateDefenderUrl(string url)
     {
@@ -331,6 +380,8 @@ public sealed class DefenderApiClient : IDefenderApiClient
         HttpStatusCode.Forbidden => DefenderApiErrorKind.InsufficientPermission,
         HttpStatusCode.NotFound => DefenderApiErrorKind.NotFound,
         HttpStatusCode.TooManyRequests => DefenderApiErrorKind.Throttled,
+        // 402: licença/capacidade do tenant não cobre o recurso (ex.: inventário de software fora do plano).
+        HttpStatusCode.PaymentRequired => DefenderApiErrorKind.LicenseRequired,
         _ => DefenderApiErrorKind.Unavailable,
     };
 }
