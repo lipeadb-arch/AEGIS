@@ -223,8 +223,11 @@ jobs:
       # database descartável a cada teste. Só as classes de migration/postura em PostgreSQL rodam (filtro por
       # classe), incluindo PostureExposurePostgresTests (POSTURE-02), VulnerabilityManagementPostgresTests
       # (AEGIS-MVP-VULN-01: migration multifonte, índice global de CVE, constraints de binding/observação e
-      # reconciliação/lifecycle multifonte) e DetectionCoveragePostgresTests (AEGIS-MVP-GOOGLE-SECOPS-02:
-      # migration da cobertura de detecção, índice único (tenant, conector), substituição atômica e isolamento).
+      # reconciliação/lifecycle multifonte), DetectionCoveragePostgresTests (AEGIS-MVP-GOOGLE-SECOPS-02:
+      # migration da cobertura de detecção, índice único (tenant, conector), substituição atômica e isolamento) e
+      # IdentityEvidencePostgresTests (AEGIS-MVP-EVIDENCE-FABRIC-01: migration da Evidence Fabric de identidade,
+      # chave natural (tenant, conector), upsert idempotente, preservação degradation-safe, isolamento por tenant
+      # e FK COMPOSTA tenant-safe — rejeição de órfão/cross-tenant e cascade na exclusão do conector).
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
@@ -233,4 +236,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests"
