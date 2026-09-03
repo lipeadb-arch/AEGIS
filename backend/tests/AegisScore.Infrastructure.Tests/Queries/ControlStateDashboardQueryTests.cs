@@ -1,4 +1,6 @@
 using AegisScore.Application.Assessment;
+using AegisScore.Application.Identity;
+using AegisScore.Application.Knight;
 using AegisScore.Application.Queries;
 using AegisScore.Application.Services;
 using AegisScore.Domain;
@@ -243,7 +245,8 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
         await using var db = NewContext(TenantA);
         var query = new ControlStateDashboardQuery(
             db, new SystemTenantContext(TenantA),
-            Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = 0 }), TimeProvider.System, incompleteLanguage);
+            Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = 0 }), TimeProvider.System, incompleteLanguage,
+            new Identity.FakeIdentityEvidenceService());
 
         var act = async () => await query.GetDashboardAsync();
         (await act.Should().ThrowAsync<InvalidOperationException>("código ativo sem redação não pode ser silencioso"))
@@ -252,6 +255,153 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
                 .And.NotContain("Data", "a mensagem não expõe caminho interno");
         (await db.TenantControlStates.CountAsync()).Should().Be(0, "a falha de leitura não grava nada");
     }
+
+    // ---- [AEGIS-MVP-EVIDENCE-FABRIC-01] HUD vivo reconhece a coleta do KNIGHT (sem conceder score) --------
+
+    /// <summary>
+    /// O CENÁRIO que originou o pacote: o KNIGHT coleta o Entra ID com sucesso e o snapshot COMPARTILHADO é
+    /// persistido; ao consultar a postura NIST, a resposta RECONHECE a coleta e seu horário, NÃO diz "telemetria
+    /// ausente", e explica que a evidência é INSUFICIENTE para PR.AA-01 — sem conceder conformidade nem pontos.
+    /// </summary>
+    [Fact]
+    public async Task GetDashboardAsync_ComColetaDoKnight_ReconheceEvidencia_SemConcederScore()
+    {
+        // PR.AA-01 tem regra de TELEMETRIA (fontes de ferramenta) e NENHUM TenantControlState → hoje o HUD diria
+        // "nenhuma telemetria elegível foi avaliada". A Evidence Fabric traz a coleta real do KNIGHT.
+        await SeedRuleAsync(_prAaId, "PR.AA-01", RuleEvidenceType.Telemetry,
+            "Entra ID: lifecycle workflows, access reviews e last sign-in activity");
+        var collectedAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var projection = IdentityEvidenceProjection.Build(
+            IdentityEvidenceConnectorState.Configured, CollectedEntraView(collectedAt));
+
+        await using var db = NewContext(TenantA);
+        var rows = await QueryFor(db, TenantA, projection).GetDashboardAsync();
+        var prAa01 = rows.Single(r => r.SubcategoryCode == "PR.AA-01");
+
+        // (1) SCORE INTOCADO: continua NÃO AVALIADO, zero ponto, fora do denominador — a coleta não vira aprovação.
+        prAa01.ControlStatus.Should().Be("NotEvaluated", "telemetria coletada não é veredito de conformidade");
+        prAa01.ScorePoints.Should().Be(0);
+        prAa01.MaxScorePoints.Should().Be(20, "o denominador vem do catálogo, nunca da presença de telemetria");
+
+        // (2) A resposta RECONHECE a coleta e o horário — e distingue conector × coleta × evidência do controle.
+        prAa01.IdentityEvidence.Should().NotBeNull();
+        prAa01.IdentityEvidence!.ConnectorState.Should().Be("Configured");
+        prAa01.IdentityEvidence.CollectionState.Should().Be("Complete");
+        prAa01.IdentityEvidence.ControlEvidenceState.Should().Be("CollectedButInsufficient");
+        prAa01.IdentityEvidence.Source.Should().Be("Microsoft Entra ID");
+        prAa01.IdentityEvidence.CollectedAt.Should().BeCloseTo(collectedAt, TimeSpan.FromSeconds(1));
+        prAa01.IdentityEvidence.IsDegraded.Should().BeFalse();
+
+        // (3) NÃO diz "telemetria ausente": o motivo e a lacuna passam a reconhecer a coleta e explicar a insuficiência.
+        prAa01.Reason.Should().NotContain("nenhuma telemetria elegível foi avaliada");
+        prAa01.Reason.Should().ContainAny("insuficiente", "ciclo de vida", "offboarding");
+        var telemetryGap = prAa01.MissingRequirements.Single(m => m.Type == "Telemetry");
+        telemetryGap.SourceIdentifier.Should().Be("Microsoft Entra ID", "a fonte real da coleta é reconhecida");
+        telemetryGap.Description.Should().NotBe("Nenhuma telemetria elegível foi avaliada para este controle.");
+        telemetryGap.Description.Should().Contain("insuficiente");
+
+        // (4) Nenhum vazamento: um controle NÃO-identidade sem estado continua NotEvaluated e sem contexto de identidade.
+        var gvOc = rows.Single(r => r.SubcategoryCode == "GV.OC-01");
+        gvOc.IdentityEvidence.Should().BeNull("GV.OC-01 não é um controle de identidade da Evidence Fabric");
+    }
+
+    /// <summary>
+    /// A DISTINÇÃO no HUD vivo: SEM conector, PR.AA-01 permanece honestamente "sem fonte" (telemetria ausente é a
+    /// verdade); o contexto de identidade reflete <c>NoSource</c> e a lacuna genérica NÃO é reescrita.
+    /// </summary>
+    [Fact]
+    public async Task GetDashboardAsync_SemConector_MantemTelemetriaAusente_ContextoNoSource()
+    {
+        await SeedRuleAsync(_prAaId, "PR.AA-01", RuleEvidenceType.Telemetry,
+            "Entra ID: lifecycle workflows, access reviews e last sign-in activity");
+        var projection = IdentityEvidenceProjection.Build(IdentityEvidenceConnectorState.NotConfigured, null);
+
+        await using var db = NewContext(TenantA);
+        var rows = await QueryFor(db, TenantA, projection).GetDashboardAsync();
+        var prAa01 = rows.Single(r => r.SubcategoryCode == "PR.AA-01");
+
+        prAa01.ControlStatus.Should().Be("NotEvaluated");
+        prAa01.IdentityEvidence.Should().NotBeNull();
+        prAa01.IdentityEvidence!.ControlEvidenceState.Should().Be("NoSource");
+        prAa01.IdentityEvidence.CollectionState.Should().Be("NoConnector");
+        // Sem coleta, a lacuna de telemetria permanece a genérica (honesta): nada de coleta foi reescrito.
+        prAa01.MissingRequirements.Single(m => m.Type == "Telemetry").Description
+            .Should().Be("Nenhuma telemetria elegível foi avaliada para este controle.");
+    }
+
+    /// <summary>
+    /// GV.RR-01 é DOCUMENTAL (MANUAL_AUDIT_REQUIRED). Mesmo com o Entra ID COLETADO, ele NÃO troca de autoridade:
+    /// mantém <c>NotEvaluatedReason=DocumentationRequired</c>, o Reason documental, a lacuna documental e o token de
+    /// validação manual — não recebe telemetria como lacuna, nem pontos. O contexto de identidade pode viajar como
+    /// correlação, sem alterar a autoridade documental. Prova a correção do bug de reescrita indevida do Reason.
+    /// </summary>
+    [Fact]
+    public async Task GetDashboardAsync_GvRr01Documental_ComColeta_PreservaAutoridadeDocumental()
+    {
+        var gvRrId = await SeedGvRr01Async();
+        await SeedRuleAsync(gvRrId, "GV.RR-01", RuleEvidenceType.Documentation, RuleEvaluator.ManualAuditToken);
+        var projection = IdentityEvidenceProjection.Build(
+            IdentityEvidenceConnectorState.Configured, CollectedEntraView(DateTimeOffset.UtcNow.AddMinutes(-2)));
+
+        // Fail-closed em WithLanguage: TODA subcategoria ativa exige redação — cobre os três códigos ativos.
+        var language = new StaticControlLanguageCatalog(new Dictionary<string, ControlLanguage>(StringComparer.Ordinal)
+        {
+            ["PR.AA-01"] = new("t", "s", "i", "a"),
+            ["GV.OC-01"] = new("t", "s", "i", "a"),
+            ["GV.RR-01"] = new("Papéis, responsabilidades e autoridades", "s", "i", "a"),
+        });
+
+        await using var db = NewContext(TenantA);
+        var query = new ControlStateDashboardQuery(
+            db, new SystemTenantContext(TenantA),
+            Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = 0 }), TimeProvider.System, language,
+            new Identity.FakeIdentityEvidenceService(projection));
+        var rows = await query.GetDashboardAsync();
+        var gvRr = rows.Single(r => r.SubcategoryCode == "GV.RR-01");
+
+        // (1) Autoridade DOCUMENTAL intacta — a coleta de identidade não a converte em telemetria.
+        gvRr.ControlStatus.Should().Be("NotEvaluated");
+        gvRr.ScorePoints.Should().Be(0, "controle documental não recebe pontos por telemetria coletada");
+        gvRr.NotEvaluatedReason.Should().Be("DocumentationRequired", "GV.RR-01 continua exigindo documento/validação humana");
+        gvRr.Reason.Should().Be("Ainda não validado: exige documento ou validação humana.",
+            "a coleta de identidade NÃO sobrescreve o motivo documental");
+
+        // (2) A lacuna documental e o token de validação manual permanecem — nada de telemetria.
+        var gap = gvRr.MissingRequirements.Single();
+        gap.Type.Should().Be("Documentation");
+        gap.SourceIdentifier.Should().Be(RuleEvaluator.ManualAuditToken, "mantém o token de validação manual");
+        gvRr.MissingRequirements.Should().NotContain(m => m.Type == "Telemetry", "não troca a lacuna documental por telemetria");
+
+        // (3) Contexto correlacional pode existir, mas não altera a autoridade documental acima.
+        gvRr.IdentityEvidence.Should().NotBeNull();
+        gvRr.IdentityEvidence!.ControlEvidenceState.Should().Be("CollectedButInsufficient");
+    }
+
+    /// <summary>Adiciona a subcategoria GV.RR-01 sob a função GV ativa (só para este teste — fora do fixture compartilhado).</summary>
+    private async Task<Guid> SeedGvRr01Async()
+    {
+        await using var db = NewContext(TenantA);
+        // FK explícita (sem tocar a navegação da função tracked, que dispararia um UPDATE com token de concorrência).
+        var gvId = await db.Functions.AsNoTracking().Where(f => f.Code == "GV").Select(f => f.Id).FirstAsync();
+        var cat = new NistCategory { Code = "GV.RR", Name = "Roles, Responsibilities, and Authorities", FunctionId = gvId };
+        var sub = new NistSubcategory { Code = "GV.RR-01", Description = "Roles documented", MaxScorePoints = 5 };
+        cat.Subcategories.Add(sub);
+        db.Categories.Add(cat);
+        await db.SaveChangesAsync();
+        return sub.Id;
+    }
+
+    /// <summary>View de snapshot Entra COLETADO e completo (agregados tipados, sem PII) para a projeção compartilhada.</summary>
+    private static IdentityEvidenceSnapshotView CollectedEntraView(DateTimeOffset collectedAt) => new(
+        TenantA, Guid.NewGuid(), KnightSourceType.MicrosoftEntraId, "Microsoft Entra ID",
+        "aegis-identity-evidence-v1", KnightSourceState.Completed, KnightSourceState.Completed,
+        collectedAt, collectedAt, null,
+        new[]
+        {
+            KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsTotal, 12),
+            KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsWithoutMfa, 3),
+        },
+        new[] { new KnightCapabilityStatus(KnightCapability.PrivilegedRoleInventory, KnightCapabilityOutcome.Collected) });
 
     // ---- infraestrutura do teste ----------------------------------------------------
 
@@ -341,7 +491,9 @@ public sealed class ControlStateDashboardQueryTests : IDisposable
     /// O TTL tem cobertura própria em <c>SignalFreshnessTests</c>. O tenant vem do SystemTenantContext,
     /// igual ao do DbContext (fail-closed).
     /// </summary>
-    private static ControlStateDashboardQuery QueryFor(AegisScoreDbContext db, Guid? tenantId) =>
+    private static ControlStateDashboardQuery QueryFor(
+        AegisScoreDbContext db, Guid? tenantId, IdentityEvidenceProjection? identity = null) =>
         new(db, new SystemTenantContext(tenantId),
-            Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = 0 }), TimeProvider.System, Language);
+            Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = 0 }), TimeProvider.System, Language,
+            new Identity.FakeIdentityEvidenceService(identity));
 }

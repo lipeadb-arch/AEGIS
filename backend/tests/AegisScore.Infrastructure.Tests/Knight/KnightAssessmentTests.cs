@@ -184,10 +184,15 @@ public sealed class KnightAssessmentTests : IDisposable
 
         KnightAssessment a;
         await using (var db = NewContext(TenantA))
+        {
+            await SeedEntraConnectorAsync(db, TenantA);
             a = await ServiceFor(db, TenantA,
                 new[] { (IKnightCollector)new DemoKnightCollector(), new FakeCollector(KnightSourceType.MicrosoftEntraId, failResult) },
-                new FakeConfigProvider(s => new TestConfiguredSource(s)), new FakeLlmClient(ValidAiJson))
+                new FakeConfigProvider(s => s == KnightSourceType.MicrosoftEntraId
+                    ? new KnightEntraIdConfiguration("tenant", "client", "secret")
+                    : new TestConfiguredSource(s)), new FakeLlmClient(ValidAiJson))
                 .RunAssessmentAsync(KnightSourceType.MicrosoftEntraId);
+        }
 
         a.SourceType.Should().Be(KnightSourceType.MicrosoftEntraId);
         a.SourceState.Should().Be(KnightSourceState.AuthenticationFailure);
@@ -260,9 +265,33 @@ public sealed class KnightAssessmentTests : IDisposable
 
     private static IAegisKnightAssessmentService ServiceFor(
         AegisScoreDbContext db, Guid? tenantId, IEnumerable<IKnightCollector> collectors,
-        IKnightSourceConfigurationProvider config, ILLMClient llm) =>
-        new AegisKnightAssessmentService(
-            db, new KnightCollectorRegistry(collectors), config, new KnightAdvisoryGenerator(llm), new SystemTenantContext(tenantId));
+        IKnightSourceConfigurationProvider config, ILLMClient llm)
+    {
+        // [AEGIS-MVP-EVIDENCE-FABRIC-01] O caminho do Entra ID converge na Evidence Fabric REAL: a aquisição e a
+        // persistência do snapshot passam pelo mesmo serviço que a rota de postura usa (sem duplicar coleta).
+        var registry = new KnightCollectorRegistry(collectors);
+        var tenant = new SystemTenantContext(tenantId);
+        var evidence = new AegisScore.Infrastructure.Identity.IdentityEvidenceService(db, registry, config, tenant);
+        return new AegisKnightAssessmentService(
+            db, registry, config, new KnightAdvisoryGenerator(llm), evidence, tenant);
+    }
+
+    /// <summary>Semeia o conector Microsoft/IdentityPosture (Entra ID) do tenant — a fonte da Evidence Fabric.</summary>
+    private static async Task SeedEntraConnectorAsync(AegisScoreDbContext db, Guid tenantId)
+    {
+        if (!await db.Tenants.IgnoreQueryFilters().AnyAsync(t => t.Id == tenantId))
+            db.Tenants.Add(new Tenant { Id = tenantId, Name = "Cliente", Slug = $"fixture-{tenantId:N}", Status = TenantStatus.Active });
+        db.Connectors.Add(new ConnectorConfig
+        {
+            TenantId = tenantId,
+            Provider = ConnectorProvider.Microsoft,
+            Capability = ConnectorCapability.IdentityPosture,
+            DisplayName = "Microsoft Entra ID · AEGIS KNIGHT",
+            Enabled = true,
+            EncryptedSettings = "irrelevante-no-teste",   // a config é injetada pelo FakeConfigProvider, não decifrada aqui
+        });
+        await db.SaveChangesAsync();
+    }
 
     /// <summary>Config de fonte "configurada" genérica só para teste (IsConfigured=true, sem credencial).</summary>
     private sealed record TestConfiguredSource(KnightSourceType Src) : KnightSourceConfiguration

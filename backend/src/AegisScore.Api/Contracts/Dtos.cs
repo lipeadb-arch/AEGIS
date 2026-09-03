@@ -530,16 +530,37 @@ public record RolesTelemetryDto(
 public record TelemetryVerdictDto(
     string SubcategoryCode, string Status, int AwardedScore, int MaxScorePoints, int Percentage, string AiEvidence);
 
+// ---- [AEGIS-MVP-EVIDENCE-FABRIC-01] Postura de evidência de identidade (Entra ID) ----
+// Projeção CONSULTIVA da Evidence Fabric: separa conector × coleta × controle e NUNCA carrega score/veredito
+// NIST. É a leitura honesta do último snapshot compartilhado (a mesma aquisição que alimenta o AEGIS KNIGHT).
+
+/// <summary>Estado por capacidade da coleta (o que a fonte obteve ou por que faltou), sem PII.</summary>
+public record IdentityCapabilityDto(string Capability, string Outcome, string? Detail);
+
 /// <summary>
-/// Corpo OPCIONAL do POST de ingestão do Entra ID. As MÉTRICAS de identidade vêm do provider (Graph/stub),
-/// NÃO do cliente — aqui só trafega o CONTEXTO que o Entra desconhece: o domínio do tenant a consultar e os
-/// controles compensatórios de REDE (isolamento de OT/legado), que o motor pondera para não gerar falso
-/// positivo em ambiente industrial. O TenantId NÃO trafega: é resolvido do claim <c>tenant_id</c> do JWT.
+/// Evidência de identidade de UM controle NIST: o estado (NoSource/NeverCollected/CollectedButInsufficient/
+/// Evaluated) e a explicação honesta. NÃO carrega status de conformidade, pontos nem percentual — telemetria
+/// de identidade não concede score aos controles de identidade nesta fundação.
 /// </summary>
-public record EntraIdIdentityIngestionRequest(
-    string? TenantDomain = null,
-    bool HasNetworkIsolation = false,
-    IReadOnlyList<string>? CompensatingControls = null);
+public record IdentityControlEvidenceDto(string Code, string Title, string State, string Explanation);
+
+/// <summary>
+/// Postura de evidência de identidade projetada da Evidence Fabric: o estado do conector, o da coleta
+/// (completa/parcial/nunca), a degradação da última tentativa, a fonte/freshness reais e a evidência por
+/// controle NIST — tudo CONSULTIVO, sem tocar o AEGIS Score.
+/// </summary>
+public record IdentityEvidenceProjectionDto(
+    string ConnectorState,
+    string CollectionState,
+    string LastAttemptState,
+    bool IsDegraded,
+    string Source,
+    string? SchemaVersion,
+    DateTimeOffset? CollectedAt,
+    DateTimeOffset? LastAttemptAt,
+    string? LastAttemptDetail,
+    IReadOnlyList<IdentityCapabilityDto> Capabilities,
+    IReadOnlyList<IdentityControlEvidenceDto> Controls);
 
 // ---- Auditor Virtual (Copiloto GRC onipresente, com escopo de contexto) ----
 /// <summary>Uma fala do histórico do chat (Role: "user"|"assistant"; Content: texto). Dado NÃO confiável.</summary>

@@ -1,8 +1,10 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Assessment;
+using AegisScore.Application.Identity;
 using AegisScore.Application.Queries;
 using AegisScore.Application.Services;
 using AegisScore.Application.Telemetry.Models;
@@ -29,16 +31,21 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
     private readonly ScoringOptions _options;
     private readonly TimeProvider _clock;
     private readonly IControlLanguageCatalog _language;
+    private readonly IIdentityEvidenceService _identityEvidence;
+    private readonly ILogger<ControlStateDashboardQuery>? _log;
 
     public ControlStateDashboardQuery(
         AegisScoreDbContext db, ITenantContext tenant, IOptions<ScoringOptions> options, TimeProvider clock,
-        IControlLanguageCatalog language)
+        IControlLanguageCatalog language, IIdentityEvidenceService identityEvidence,
+        ILogger<ControlStateDashboardQuery>? log = null)
     {
         _db = db;
         _tenant = tenant;
         _options = options.Value;
         _clock = clock;
         _language = language;
+        _identityEvidence = identityEvidence;
+        _log = log;
     }
 
     public async Task<IReadOnlyList<TenantControlStateDto>> GetDashboardAsync(CancellationToken ct = default)
@@ -95,6 +102,13 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
             .ToListAsync(ct);
         var verified = verifiedCoverage.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // [AEGIS-MVP-EVIDENCE-FABRIC-01] Projeção COMPARTILHADA da evidência de identidade — LEITURA do último
+        // snapshot persistido, SEM nova aquisição do Graph (o dashboard nunca dispara coleta). É a mesma fonte que
+        // o AEGIS KNIGHT e a rota de postura consomem; aqui ela faz o HUD vivo reconhecer a coleta real do KNIGHT
+        // nos controles de identidade em vez de contradizê-la com "telemetria ausente". Consultiva: se falhar,
+        // o HUD de score não cai (a evidência de identidade é aditiva, o score é a informação crítica).
+        var identity = await SafeIdentityProjectionAsync(ct);
+
         var now = _clock.GetUtcNow();
         var result = new List<TenantControlStateDto>(catalog.Count);
         foreach (var entry in catalog)
@@ -102,9 +116,90 @@ public sealed class ControlStateDashboardQuery : IControlStateDashboardQuery
             var dto = stateBySub.TryGetValue(entry.Id, out var r)
                 ? EnrichWithStaleness(ToDto(r), r, rules, verified, now)   // avaliado
                 : NotEvaluated(entry, rules);                              // sem estado → NotEvaluated
-            result.Add(WithLanguage(dto, entry));                          // linguagem clara + descrição oficial
+            dto = WithLanguage(dto, entry);                                // linguagem clara + descrição oficial
+            result.Add(EnrichWithIdentityEvidence(dto, identity));         // Evidence Fabric (controles de identidade)
         }
         return result;
+    }
+
+    /// <summary>
+    /// Lê a projeção COMPARTILHADA da Evidence Fabric de identidade (último snapshot, sem tocar o Graph). Consultiva:
+    /// uma falha aqui NÃO derruba o HUD de score — a evidência de identidade é enriquecimento aditivo. Cancelamento
+    /// propaga (não é falha a engolir).
+    /// </summary>
+    private async Task<IdentityEvidenceProjection?> SafeIdentityProjectionAsync(CancellationToken ct)
+    {
+        try { return await _identityEvidence.GetLatestProjectionAsync(ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Sanitizado: só a exceção e uma mensagem fixa — nunca payload, segredo ou TenantId. A falha fica
+            // visível no log, mas o HUD segue com a evidência de identidade ausente (aditiva) e o score intacto.
+            _log?.LogWarning(ex, "Projeção da Evidence Fabric de identidade indisponível; HUD segue sem o contexto de identidade.");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// [AEGIS-MVP-EVIDENCE-FABRIC-01] Acopla o contexto da Evidence Fabric ao controle de identidade correspondente
+    /// (PR.AA-01/PR.AA-03/GV.RR-01) e ELIMINA a contradição "telemetria ausente" do HUD vivo: quando o KNIGHT já
+    /// coletou (estado <c>CollectedButInsufficient</c>), a lacuna de TELEMETRIA passa a reconhecer a coleta real
+    /// (fonte + frescor) e a explicar a insuficiência à luz da regra ativa — em vez de dizer que nada foi medido.
+    ///
+    /// INVARIANTE DE SCORE: NÃO altera <c>ControlStatus</c>, <c>ScorePoints</c>, <c>MaxScorePoints</c> nem cria
+    /// veredito — o controle permanece NÃO AVALIADO e FORA do denominador. Só reescreve texto (motivo/lacuna) e
+    /// anexa o contexto tipado. Controle que não seja de identidade sai intacto (a projeção não o reconhece).
+    /// </summary>
+    private static TenantControlStateDto EnrichWithIdentityEvidence(
+        TenantControlStateDto dto, IdentityEvidenceProjection? identity)
+    {
+        if (identity is null)
+            return dto;
+
+        var evidence = identity.Controls.FirstOrDefault(c =>
+            string.Equals(c.Code, dto.SubcategoryCode, StringComparison.Ordinal));
+        if (evidence is null)
+            return dto;   // não é um controle de identidade reconhecido pela Evidence Fabric — intacto
+
+        var context = new IdentityEvidenceContextDto(
+            identity.ConnectorState.ToString(),
+            identity.CollectionState.ToString(),
+            evidence.State.ToString(),
+            identity.IsDegraded,
+            identity.Source,
+            identity.CollectedAt,
+            identity.LastAttemptAt,
+            identity.LastAttemptState.ToString(),
+            evidence.Explanation);
+
+        // Sem coleta que tenha produzido dado → a evidência é HONESTAMENTE ausente ("sem fonte"/"nunca coletado"):
+        // não se reescreve a lacuna, só se anexa o contexto tipado para a UI distinguir os estados do conector.
+        if (evidence.State != IdentityControlEvidenceState.CollectedButInsufficient)
+            return dto with { IdentityEvidence = context };
+
+        // Coletado, porém insuficiente: a lacuna de TELEMETRIA reconhece a coleta real (fonte + frescor) e explica
+        // a insuficiência — nunca vira veredito nem pontos. GV.RR-01 é DOCUMENTAL e NÃO tem lacuna de telemetria:
+        // sua lacuna documental (MANUAL_AUDIT_REQUIRED), seu NotEvaluatedReason e seu Reason permanecem intactos —
+        // sai apenas com o contexto de identidade anexado (correlacional, sem alterar a autoridade documental).
+        var telemetryType = ComplianceRequirementType.Telemetry.ToString();
+        var rewroteTelemetryGap = false;
+        var rewritten = dto.MissingRequirements
+            .Select(m =>
+            {
+                if (!string.Equals(m.Type, telemetryType, StringComparison.OrdinalIgnoreCase))
+                    return m;   // preserva lacunas documentais (e quaisquer outras) sem tocar
+                rewroteTelemetryGap = true;
+                return new MissingRequirementDto(m.Type, identity.Source, evidence.Explanation);
+            })
+            .ToList();
+
+        // O motivo-título só é reescrito quando (a) o controle está NÃO AVALIADO e (b) havia EFETIVAMENTE uma lacuna
+        // de TELEMETRIA reescrita — a decisão é pela lacuna real, não pelo código do controle. Assim PR.AA-01/03
+        // passam a reconhecer a coleta ("coletado, porém insuficiente") e GV.RR-01 conserva seu Reason documental.
+        var reason = (dto.ControlStatus == NotEvaluatedStatus && rewroteTelemetryGap)
+            ? evidence.Explanation
+            : dto.Reason;
+
+        return dto with { MissingRequirements = rewritten, Reason = reason, IdentityEvidence = context };
     }
 
     /// <summary>

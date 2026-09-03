@@ -23,8 +23,8 @@ export type NotEvaluatedReason = 'TelemetryRequired' | 'DocumentationRequired' |
 
 /**
  * Gravidade de um achado — a régua ÚNICA de severidade do produto (espelha o enum SeverityLevel do
- * backend). Mora aqui, no modelo de scoring, porque TODO controle NIST tem severidade; a tela de
- * identidade (identity.models) a reimporta daqui em vez de manter uma segunda escala.
+ * backend). Mora aqui, no modelo de scoring, porque TODO controle NIST tem severidade; qualquer outra
+ * superfície de postura reimporta daqui em vez de manter uma segunda escala.
  */
 export type SeverityLevel = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
 
@@ -109,6 +109,30 @@ export interface TenantControlStateDto {
   mttdMinutes: number | null; // tempo médio de detecção (DE/RS/RC)
   mttrMinutes: number | null; // tempo médio de resposta (DE/RS/RC)
   missingRequirements: MissingRequirement[]; // lacunas de prova (vazia em controle conforme ou falha de mérito)
+
+  // [AEGIS-MVP-EVIDENCE-FABRIC-01] Contexto da Evidence Fabric de identidade — só nos controles de identidade
+  // (PR.AA-01/PR.AA-03/GV.RR-01). Nulo/ausente nos demais. A correção visível ("coletado, porém insuficiente"
+  // em vez de "telemetria ausente") já chega por `reason`/`missingRequirements`; este objeto tipado permite
+  // distinguir os estados de conector × coleta × evidência sem consultar uma API paralela.
+  identityEvidence?: IdentityEvidenceContext | null;
+}
+
+/**
+ * [AEGIS-MVP-EVIDENCE-FABRIC-01] Estado da Evidence Fabric de identidade projetado no HUD para um controle de
+ * identidade (espelha IdentityEvidenceContextDto). Separa as TRÊS dimensões — conector, coleta e evidência do
+ * controle — e reconhece a coleta REAL do AEGIS KNIGHT (fonte + horário). NUNCA representa veredito nem pontos:
+ * o teto é `CollectedButInsufficient`. Enums chegam como NOME (string), no idioma dos demais contratos.
+ */
+export interface IdentityEvidenceContext {
+  connectorState: 'NotConfigured' | 'Disabled' | 'MissingCredential' | 'Configured';
+  collectionState: 'NoConnector' | 'Disabled' | 'MissingCredential' | 'NeverCollected' | 'Complete' | 'Partial';
+  controlEvidenceState: 'NoSource' | 'NeverCollected' | 'CollectedButInsufficient' | 'Evaluated';
+  isDegraded: boolean; // há evidência preservada, mas a última tentativa falhou ou o conector não está mais apto
+  source: string; // fonte real do snapshot ("Microsoft Entra ID") — nunca segredo nem PII
+  collectedAt: string | null; // ISO 8601 do horário da coleta (freshness); null se nunca coletado
+  lastAttemptAt: string | null; // ISO 8601 da última tentativa (onde a degradação aparece)
+  lastAttemptState: string; // desfecho da última tentativa (Completed/PartialCollection/AuthenticationFailure…)
+  explanation: string; // razão honesta: reconhece a coleta e explica por que não basta para o controle
 }
 
 // ---- Recomendações de Remediação (Advisories) — espelha /api/v1/scoring/advisories ----

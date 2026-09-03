@@ -208,7 +208,8 @@ public sealed class SignalFreshnessTests : IDisposable
             new SystemTenantContext(TenantA),
             Options.Create(new ScoringOptions { DefaultSignalFreshnessHours = freshnessHours }),
             new FakeTimeProvider(Now),
-            Language);
+            Language,
+            new Identity.FakeIdentityEvidenceService());
 
         var rows = await query.GetDashboardAsync();
         return rows.Single(r => r.SubcategoryCode == code);
