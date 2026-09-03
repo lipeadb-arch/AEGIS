@@ -110,6 +110,10 @@ public class AegisScoreDbContext : DbContext
     public DbSet<KnightAssessmentRun> KnightAssessmentRuns => Set<KnightAssessmentRun>();
     public DbSet<KnightIndicatorResult> KnightIndicatorResults => Set<KnightIndicatorResult>();
 
+    // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidência de identidade NORMALIZADA e compartilhada (uma aquisição real do
+    // Entra ID → KNIGHT + projeção NIST + dashboard + relatórios). Snapshot ATUAL por (tenant, conector), sem PII.
+    public DbSet<IdentityEvidenceSnapshot> IdentityEvidenceSnapshots => Set<IdentityEvidenceSnapshot>();
+
     // [AEGIS-AUD-035/036/037] Fotografia AUDITÁVEL e IMUTÁVEL de postura (histórico compartilhado AEGIS
     // Score/NIST e KNIGHT). Append-only: sem update/delete (reforçado por gatilho no PostgreSQL — ver migration).
     public DbSet<PostureSnapshot> PostureSnapshots => Set<PostureSnapshot>();
@@ -352,6 +356,33 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.DetectionCoverageSnapshotId, x.TechniqueId })
                 .IsUnique()
                 .HasDatabaseName("UX_DetectionCoverageTechnique_Natural");
+        });
+
+        // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidência de identidade: UM snapshot ATUAL por (tenant, conector). A chave
+        // natural (TenantId, ConnectorConfigId) como ÍNDICE ÚNICO NOMEADO torna o upsert idempotente uma invariante de
+        // banco. A FK COMPOSTA tenant-safe (ConnectorConfigId, TenantId) → ConnectorConfig (Id, TenantId) faz o banco
+        // recusar snapshot apontando para conector inexistente OU de OUTRO tenant; Cascade remove o snapshot quando o
+        // conector é excluído — sem evidência órfã. Fatos/capacidades em jsonb tipado (sem PII); estados como int.
+        // Sem filhos: o corpo (fatos/capacidades) é agregado tipado — menor persistência correta, sem duplicar KNIGHT.
+        b.Entity<IdentityEvidenceSnapshot>(e =>
+        {
+            e.Property(x => x.Source).HasMaxLength(200).IsRequired();
+            e.Property(x => x.SchemaVersion).HasMaxLength(50).IsRequired();
+            e.Property(x => x.LastAttemptDetail).HasMaxLength(1000);
+            e.Property(x => x.Fingerprint).HasMaxLength(64);
+            e.Property(x => x.SourceType).HasConversion<int>();
+            e.Property(x => x.DataState).HasConversion<int>();
+            e.Property(x => x.LastAttemptState).HasConversion<int>();
+            e.Property(x => x.FactsJson).HasColumnType("jsonb").IsRequired();
+            e.Property(x => x.CapabilitiesJson).HasColumnType("jsonb").IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId })
+                .IsUnique()
+                .HasDatabaseName("UX_IdentityEvidenceSnapshot_Natural");
+            e.HasOne<ConnectorConfig>()
+                .WithMany()
+                .HasForeignKey(x => new { x.ConnectorConfigId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // Conector: UM registro por (tenant, provedor, capacidade) — a chave NATURAL da configuração.
@@ -850,6 +881,9 @@ public class AegisScoreDbContext : DbContext
         // AEGIS KNIGHT — execução e resultados são ITenantOwned (fail-closed, como o restante do modelo).
         b.Entity<KnightAssessmentRun>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<KnightIndicatorResult>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidência de identidade é ITenantOwned (fail-closed): um tenant jamais lê,
+        // projeta ou altera a evidência de outro. Stamping do TenantId no insert é automático (SaveChanges guard).
+        b.Entity<IdentityEvidenceSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         // Fotografia auditável de postura — pai e filhos são ITenantOwned (fail-closed): um tenant jamais lê,
         // consulta ou compara a fotografia de outro.
         b.Entity<PostureSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

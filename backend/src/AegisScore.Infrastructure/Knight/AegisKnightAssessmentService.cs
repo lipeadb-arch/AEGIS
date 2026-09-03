@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Identity;
 using AegisScore.Application.Knight;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -37,6 +38,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
     private readonly IKnightCollectorRegistry _registry;
     private readonly IKnightSourceConfigurationProvider _config;
     private readonly IKnightAdvisoryGenerator _advisory;
+    private readonly IIdentityEvidenceService _identityEvidence;
     private readonly ITenantContext _tenant;
     private readonly ILogger<AegisKnightAssessmentService>? _log;
 
@@ -45,6 +47,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         IKnightCollectorRegistry registry,
         IKnightSourceConfigurationProvider config,
         IKnightAdvisoryGenerator advisory,
+        IIdentityEvidenceService identityEvidence,
         ITenantContext tenant,
         ILogger<AegisKnightAssessmentService>? log = null)
     {
@@ -52,6 +55,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         _registry = registry;
         _config = config;
         _advisory = advisory;
+        _identityEvidence = identityEvidence;
         _tenant = tenant;
         _log = log;
     }
@@ -64,16 +68,28 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         var tenantId = _tenant.TenantId
             ?? throw new TenantSecurityException("Execução do assessment KNIGHT sem tenant resolvido no contexto (fail-closed).");
 
-        // 1) Resolve a CONFIGURAÇÃO da fonte. Fonte real sem configuração NÃO executa e NÃO cai para Demo.
-        var configuration = await _config.ResolveAsync(tenantId, source, ct);
-        if (source != KnightSourceType.Demo && !configuration.IsConfigured)
-            throw new KnightSourceNotConfiguredException(source);
+        // 1+2) COLETA → fatos normalizados + estado + capacidades. Fonte real sem configuração NÃO executa e NÃO
+        //       cai para Demo; o coletor NUNCA devolve dados sintéticos numa falha real.
+        KnightCollectionResult result;
+        if (source == KnightSourceType.MicrosoftEntraId)
+        {
+            // [AEGIS-MVP-EVIDENCE-FABRIC-01] Converge na Evidence Fabric: UMA aquisição real do Entra ID, que
+            // persiste o snapshot NORMALIZADO compartilhado; o KNIGHT avalia os MESMOS fatos. Sem segundo cliente
+            // Graph nem consulta duplicada. Conector não configurado/desabilitado/sem credencial → não executa.
+            var acquisition = await _identityEvidence.CollectAsync(ct);
+            if (acquisition.CollectionResult is null)
+                throw new KnightSourceNotConfiguredException(source);
+            result = acquisition.CollectionResult;
+        }
+        else
+        {
+            var configuration = await _config.ResolveAsync(tenantId, source, ct);
+            if (source != KnightSourceType.Demo && !configuration.IsConfigured)
+                throw new KnightSourceNotConfiguredException(source);
 
-        var collector = _registry.Resolve(source);
-
-        // 2) COLETA pela fonte → fatos normalizados + estado + capacidades. O coletor NUNCA devolve dados
-        //    sintéticos numa falha real: devolve o estado real (AuthenticationFailure/Partial/…).
-        var result = await collector.CollectAsync(new KnightCollectionContext(tenantId, configuration), ct);
+            var collector = _registry.Resolve(source);
+            result = await collector.CollectAsync(new KnightCollectionContext(tenantId, configuration), ct);
+        }
 
         // 3) Avaliação DETERMINÍSTICA dos indicadores aplicáveis à fonte sobre os fatos. Dado ausente → NotEvaluated.
         var evaluated = KnightIndicatorEvaluator.Evaluate(result.Facts, source);
