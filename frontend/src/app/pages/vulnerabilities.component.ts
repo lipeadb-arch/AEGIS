@@ -2,6 +2,7 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AgentStateService } from '../services/agent-state.service';
 import { VulnerabilityService } from '../services/vulnerability.service';
+import { SoftwareInventoryTabComponent } from './software-inventory-tab.component';
 import {
   VulnerabilityExploitFilter,
   VulnerabilityGroup,
@@ -10,6 +11,9 @@ import {
   VulnerabilityOverview,
   severityPt,
 } from '../models/vulnerability.models';
+
+/** [AEGIS-MVP-MICROSOFT-COVERAGE-01] Sub-área desta MESMA tela — sem novo item de primeiro nível no menu lateral. */
+type VulnTab = 'vulnerabilities' | 'software';
 
 /**
  * [AEGIS-MVP-LANGUAGE-02 §8/§9] Estado de PAGINAÇÃO por CVE das ocorrências (ativo×CVE) na expansão de um grupo.
@@ -36,26 +40,48 @@ interface OccState {
 @Component({
   selector: 'app-vulnerabilities',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, SoftwareInventoryTabComponent],
   template: `
     <section class="page">
       <header class="page-head">
         <div>
           <h1>Vulnerabilidades</h1>
           <p class="sub">
-            Vulnerabilidades (CVEs) agrupadas por PROBLEMA — cada linha é um CVE observado em um ou mais ativos.
-            Expanda para ver os ativos afetados. São fatos operacionais/de exposição — não alteram o AEGIS Score.
+            @if (tab() === 'software') {
+              Software observado pelo Microsoft Defender nos ativos do ambiente, com produtos, dispositivos
+              expostos, fraquezas conhecidas, exploit público e alerta ativo. É evidência operacional/de
+              exposição — não altera o AEGIS Score.
+            } @else {
+              Vulnerabilidades (CVEs) agrupadas por PROBLEMA — cada linha é um CVE observado em um ou mais ativos.
+              Expanda para ver os ativos afetados. São fatos operacionais/de exposição — não alteram o AEGIS Score.
+            }
           </p>
         </div>
         <div class="head-actions">
-          <button type="button" class="primary" (click)="analyzeWithAi()" [disabled]="loading() || !!error()">
-            Analisar com IA
-          </button>
-          <button type="button" class="ghost" (click)="reload()" [disabled]="loading()">
-            {{ loading() ? 'Carregando…' : 'Atualizar' }}
-          </button>
+          @if (tab() === 'vulnerabilities') {
+            <button type="button" class="primary" (click)="analyzeWithAi()" [disabled]="loading() || !!error()">
+              Analisar com IA
+            </button>
+            <button type="button" class="ghost" (click)="reload()" [disabled]="loading()">
+              {{ loading() ? 'Carregando…' : 'Atualizar' }}
+            </button>
+          }
         </div>
       </header>
+
+      <!-- ---------- Sub-área: Vulnerabilidades × Software exposto (MESMA tela, sem novo item de menu) ---------- -->
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab-btn" [class.active]="tab() === 'vulnerabilities'" (click)="setTab('vulnerabilities')">
+          Vulnerabilidades
+        </button>
+        <button type="button" class="tab-btn" [class.active]="tab() === 'software'" (click)="setTab('software')">
+          Software exposto
+        </button>
+      </div>
+
+      @if (tab() === 'software') {
+        <app-software-inventory-tab />
+      } @else {
 
       <!-- ---------- Resumo ---------- -->
       <div class="cards">
@@ -290,6 +316,7 @@ interface OccState {
           </footer>
         }
       </div>
+      }
     </section>
   `,
   styles: [
@@ -299,6 +326,9 @@ interface OccState {
       h1 { margin: 0; font-size: 1.35rem; letter-spacing: 0.02em; }
       .sub { margin: 0.35rem 0 0; max-width: 72ch; opacity: 0.72; font-size: 0.85rem; }
       .head-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+      .tabs { display: inline-flex; border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 26%, transparent); border-radius: 6px; overflow: hidden; width: fit-content; }
+      .tab-btn { background: transparent; border: 0; color: inherit; font: inherit; font-size: 0.82rem; padding: 0.45rem 1rem; cursor: pointer; }
+      .tab-btn.active { background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 20%, transparent); }
       .muted { opacity: 0.65; font-size: 0.85rem; }
       .dim { opacity: 0.4; }
       .err { color: #ff6b8a; font-size: 0.85rem; }
@@ -408,6 +438,13 @@ export class VulnerabilitiesComponent {
     { value: 'exploitable', label: 'Com exploit' },
     { value: 'verified', label: 'Verificado' },
   ];
+
+  // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Sub-área ativa desta MESMA tela (sem novo item de menu lateral).
+  protected readonly tab = signal<VulnTab>('vulnerabilities');
+
+  protected setTab(t: VulnTab): void {
+    this.tab.set(t);
+  }
 
   // [AEGIS-MVP-LANGUAGE-02] A leitura PADRÃO é a visão AGRUPADA por CVE/problema (paginação por PROBLEMA).
   protected readonly data = signal<VulnerabilityOverview | null>(null);

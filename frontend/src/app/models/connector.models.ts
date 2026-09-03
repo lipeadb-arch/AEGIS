@@ -234,8 +234,8 @@ export const PROVIDERS: ProviderSpec[] = [
     capability: 'VulnerabilityScanner',
     capabilityValue: 8,
     infoNote:
-      'Coleta REAL somente leitura de vulnerabilidades associadas a ativos (máquinas × CVEs). “Testar” valida a autenticação e as duas permissões; “Sincronizar” atualiza ativos, CVEs e exposições. O destino é a API oficial do Defender — não há URL configurável. Exige licença/capacidade compatível, máquinas onboardadas e consentimento administrativo. Veja os achados em Vulnerabilidades.',
-    appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All'],
+      'Coleta REAL somente leitura de vulnerabilidades associadas a ativos (máquinas × CVEs). “Testar” valida a autenticação e as permissões; “Sincronizar” atualiza ativos, CVEs e exposições — numa ÚNICA aquisição (mesmo token/inventário de máquinas). O destino é a API oficial do Defender — não há URL configurável. Exige licença/capacidade compatível, máquinas onboardadas e consentimento administrativo. Veja os achados em Vulnerabilidades. [AEGIS-MVP-MICROSOFT-COVERAGE-01] O MESMO conector também coleta o inventário de software instalado (produtos, versões e exposição por dispositivo) quando a permissão Software.Read.All estiver disponível — veja a aba “Software exposto”, dentro de Vulnerabilidades; a ausência dessa permissão degrada só essa dimensão, sem afetar máquinas/vulnerabilidades.',
+    appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All', 'Software.Read.All (opcional — habilita a aba Software exposto)'],
     fields: [
       { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
@@ -392,9 +392,10 @@ export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
     provider: 'Microsoft',
     providerValue: 0,
     label: 'Microsoft Defender Vulnerability Management',
-    description: 'Vulnerabilidades associadas a ativos (máquinas × CVEs), somente leitura.',
+    description:
+      'Vulnerabilidades associadas a ativos (máquinas × CVEs), somente leitura. O mesmo conector também coleta exposição de software (aba “Software exposto”, em Vulnerabilidades) quando Software.Read.All estiver disponível.',
     needsWorkspaceId: false,
-    appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All'],
+    appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All', 'Software.Read.All (opcional)'],
   },
   {
     key: 'Sentinel',
