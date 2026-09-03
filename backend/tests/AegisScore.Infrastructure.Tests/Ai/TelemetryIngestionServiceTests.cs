@@ -386,86 +386,6 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
         verdict.AwardedScore.Should().Be(GovernRrMaxPoints);
     }
 
-    // ---- Entra ID: retrato de identidade MULTI-CONTROLE (PR.AA-01 + GV.RR-01) --------
-
-    [Fact]
-    public async Task IngestCategory_EntraIdentity_PrivilegiadosSemMfa_ReprovaProtectPrAa()
-    {
-        await using var db = NewContext(TenantA);
-        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
-
-        // Retrato de alto risco (cenário sintético): 12 contas, 3 sem MFA — a dimensão MFA reprova PR.AA-01.
-        var verdict = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
-            SubCode, totalPrivileged: 12, privilegedWithoutMfa: 3));
-
-        verdict.Status.Should().Be(ControlStatus.NonCompliant, "conta privilegiada do Entra ID sem MFA é falha crítica (PR.AA)");
-        verdict.AwardedScore.Should().Be(0);
-
-        await using var assert = NewContext(TenantA);
-        var state = await assert.TenantControlStates.SingleAsync();
-        state.Status.Should().Be(ControlStatus.NonCompliant);
-        state.LastVerdictSource.Should().Be(VerdictSource.Telemetry);
-    }
-
-    [Fact]
-    public async Task IngestCategory_EntraIdentity_ExcessoDeAdministradores_ReprovaGovernGvRr()
-    {
-        await using var db = NewContext(TenantA);
-        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
-
-        // O MESMO retrato, agora avaliado como GV.RR-01: 12 contas privilegiadas (>10) quebra o menor privilégio.
-        var verdict = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
-            GovernRrCode, totalPrivileged: 12, privilegedWithoutMfa: 3));
-
-        verdict.Status.Should().Be(ControlStatus.NonCompliant, "mais de 10 contas privilegiadas quebra a governança de identidade (GV.RR)");
-        verdict.AwardedScore.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task IngestCategory_EntraIdentity_MesmoRetrato_DiscriminaPorControle()
-    {
-        // Prova a ÂNCORA DE CÓDIGO do StubLlmClient: um retrato com MFA íntegro (0 sem MFA) mas com excesso
-        // de admins (12) deve APROVAR PR.AA-01 e REPROVAR GV.RR-01 — a regra de um controle não decide o outro.
-        await using (var db = NewContext(TenantA))
-        {
-            var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
-            var prAa = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
-                SubCode, totalPrivileged: 12, privilegedWithoutMfa: 0));
-            prAa.Status.Should().Be(ControlStatus.Compliant, "0 privilegiados sem MFA → PR.AA conforme, mesmo com muitos admins");
-            prAa.AwardedScore.Should().Be(MaxPoints);
-        }
-
-        await using (var db = NewContext(TenantA))
-        {
-            var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
-            var gvRr = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
-                GovernRrCode, totalPrivileged: 12, privilegedWithoutMfa: 0));
-            gvRr.Status.Should().Be(ControlStatus.NonCompliant, "12 contas privilegiadas (>10) → GV.RR reprova, independente do MFA");
-        }
-    }
-
-    [Fact]
-    public async Task IngestCategory_EntraIdentity_ContasOtSemMfaMasIsoladas_ClassificaMitigated()
-    {
-        await using var db = NewContext(TenantA);
-        var ingestion = IngestionFor(db, TenantA, new StubLlmClient());
-
-        // O falso positivo industrial: contas de serviço/OT (PLC/HMI) sem MFA por legado, MAS isoladas na rede.
-        // A IA do Aegis PONDERA o controle compensatório → mitigado (50%), não reprova cegamente como as
-        // ferramentas de mercado. Mesmo retrato de alto risco do stub, agora com hasNetworkIsolation=true.
-        var verdict = await ingestion.IngestCategoryAsync(EntraIdentitySignal(
-            SubCode, totalPrivileged: 12, privilegedWithoutMfa: 3, hasNetworkIsolation: true));
-
-        verdict.Status.Should().Be(ControlStatus.MitigatedByThirdParty,
-            "contas de serviço/OT sem MFA isoladas na rede são risco compensado, não falha crítica");
-        verdict.AwardedScore.Should().Be(MaxPoints / 2, "MitigatedByThirdParty concede 50% do peso do controle");
-
-        await using var assert = NewContext(TenantA);
-        var state = await assert.TenantControlStates.SingleAsync();
-        state.Status.Should().Be(ControlStatus.MitigatedByThirdParty);
-        state.LastVerdictSource.Should().Be(VerdictSource.Telemetry);
-    }
-
     // ---- Protect (PR.DS/PR.PS/PR.IR): Data, Platform e Network — regras já existentes, agora COBERTAS ----
     // Exercitam os novos records tipados (Data/Platform/NetworkTelemetrySignal.ToMetricLines()) contra as
     // heurísticas de EvaluateProtect que já viviam no StubLlmClient — fechando a lacuna de cobertura.
@@ -614,27 +534,6 @@ public sealed class TelemetryIngestionServiceTests : IDisposable
             $"Admin Accounts Without Periodic Review: {adminsWithoutReview}",
             $"Privileged Access Review Configured: {(reviewConfigured ? "true" : "false")}",
         });
-
-    /// <summary>
-    /// Monta o sinal de categoria a partir do retrato de identidade do Entra ID — via
-    /// <see cref="IdentityTelemetrySignal.ToMetricLines"/>, o MESMO contrato de rótulos que a ingestão real
-    /// produzirá. O código-alvo varia (PR.AA-01 = dimensão MFA; GV.RR-01 = dimensão governança): um único
-    /// retrato, dois controles. O pilar do cabeçalho segue o prefixo do código (não afeta a regra, que
-    /// ancora no código do controle e nos rótulos).
-    /// </summary>
-    private static CategoryTelemetrySignal EntraIdentitySignal(
-        string subcategoryCode, int totalPrivileged, int privilegedWithoutMfa,
-        bool hasNetworkIsolation = false) =>
-        new(subcategoryCode,
-            subcategoryCode.StartsWith("GV") ? "Govern" : "Protect",
-            "Identity",
-            new IdentityTelemetrySignal(
-                TotalPrivilegedAccounts: totalPrivileged,
-                PrivilegedAccountsWithoutMfa: privilegedWithoutMfa,
-                PrivilegedAccountsWithMailbox: 5,
-                InactiveGuestAccountsOver30Days: 4,
-                MfaExemptServiceAccounts: new[] { "svc-ot-plc-01@example.com" },
-                HasNetworkIsolation: hasNetworkIsolation).ToMetricLines());
 
     /// <summary>Sinal de PR.DS a partir do <see cref="DataTelemetrySignal"/> TIPADO (via ToMetricLines) — prova que os rótulos do record casam com a regra PR.DS-01 já existente no StubLlmClient.</summary>
     private static CategoryTelemetrySignal DataSignal(double encryptionCoverage, bool unencryptedTraffic) =>

@@ -3,7 +3,6 @@ using Microsoft.Extensions.Http.Resilience;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Services;
-using AegisScore.Application.Telemetry.Providers;
 using AegisScore.Connectors.Microsoft.Defender;
 using AegisScore.Connectors.Microsoft.Knight;
 using AegisScore.Connectors.Microsoft.Sentinel;
@@ -49,9 +48,10 @@ public static class DependencyInjection
         // A DocumentIntegrationFactory resolve esta estratégia por ConnectorProvider.Microsoft.
         services.AddSingleton<IDocumentIntegrationProvider, SharePointProvider>();
 
-        // Identify/Protect/Govern → telemetria de identidade do Entra ID (postura de IAM). STUB por ora
-        // (dados de alto risco); troca-se por Microsoft Graph + OAuth client credentials mantendo a porta.
-        services.AddSingleton<IEntraIdTelemetryProvider, EntraIdTelemetryProviderStub>();
+        // [AEGIS-MVP-EVIDENCE-FABRIC-01] O antigo EntraIdTelemetryProviderStub (números fictícios → PR.AA-01/
+        // GV.RR-01) foi APOSENTADO: nenhuma rota de produção recebe telemetria de identidade simulada. A postura
+        // de identidade agora vem da Evidence Fabric compartilhada (uma aquisição real do Entra ID via o coletor
+        // do KNIGHT), consumida por IIdentityEvidenceService — registrada no AddAegisScoreInfrastructure.
 
         // AEGIS KNIGHT → coletor REAL do Microsoft Entra ID (somente leitura). HttpClient tipado com
         // resiliência padrão (retry/backoff, Retry-After no 429, circuit breaker) — reusa a fachada oficial,

@@ -106,21 +106,12 @@ public static class DeterministicControlEvaluator
                 : ("Compliant", "PR.AA conforme — MFA privilegiado integral e Conditional Access aplicado.");
         }
 
-        // PR.AA — Identity Posture (Entra ID), ancorado no controle; pondera controle compensatório OT/IoT.
-        if (TargetsControl(p, "pr.aa") && p.Contains("privileged accounts without mfa:"))
-        {
-            var privWithoutMfa = Num(p, "privileged accounts without mfa:");
-            var totalPriv = Num(p, "total privileged accounts:");
-            if (privWithoutMfa <= 0)
-                return ("Compliant", $"PR.AA conforme — todas as {totalPriv:0} contas privilegiadas do Entra ID com MFA efetivo.");
-
-            var exemptServiceAccounts = Num(p, "mfa-exempt service accounts:");
-            var networkIsolation = p.Contains("network isolation = true");
-            if (exemptServiceAccounts > 0 && networkIsolation)
-                return ("MitigatedByThirdParty", $"PR.AA mitigado — {privWithoutMfa:0} conta(s) sem MFA correspondem a serviço/OT ({exemptServiceAccounts:0} isenta(s) por legado) e o ativo está ISOLADO na rede (controle compensatório). Falso positivo de ambiente industrial evitado.");
-
-            return ("NonCompliant", $"PR.AA reprovado — {privWithoutMfa:0} de {totalPriv:0} conta(s) privilegiada(s) do Entra ID sem MFA e SEM controle compensatório (isolamento de rede). Privilégio sem MFA é falha crítica (PoLP).");
-        }
+        // [AEGIS-MVP-EVIDENCE-FABRIC-01] O retrato de identidade do Entra ID (contas privilegiadas sem MFA,
+        // isenções OT, isolamento de rede) NÃO mapeia mais para score de PR.AA. MFA/convidados/acesso condicional
+        // não provam o requisito de PR.AA-01 (ciclo de vida, titularidade, offboarding, contas órfãs) nem o de
+        // PR.AA-03 (imposição por política + resistência a phishing por logs de sign-in + legado + sessão). A
+        // evidência coletada é exposta como "coletada, porém insuficiente" pela Evidence Fabric (consultiva, sem
+        // score), nunca como veredito NIST. Ver IdentityEvidenceProjection.
 
         // PR.DS — Data Security.
         if (p.Contains("endpoint encryption coverage:"))
@@ -164,14 +155,6 @@ public static class DeterministicControlEvaluator
             var privMfa = Num(p, "privileged mfa coverage:");
             checks.Add(new("MFA Privilegiado Integral", privMfa >= 100, $"MFA em contas privilegiadas: {privMfa:0.#}% (exige 100%)."));
             checks.Add(new("Conditional Access Aplicado", Flag(p, "conditional access enforced:"), "Políticas de Conditional Access ativas no acesso."));
-        }
-
-        if (p.Contains("privileged accounts without mfa:"))
-        {
-            var without = Num(p, "privileged accounts without mfa:");
-            var total = Num(p, "total privileged accounts:");
-            checks.Add(new("Contas Privilegiadas com MFA", without <= 0, $"{without:0} de {total:0} contas privilegiadas sem MFA."));
-            checks.Add(new("Isolamento de Rede (OT)", p.Contains("network isolation = true"), "Ativos sem MFA em rede isolada (controle compensatório)."));
         }
 
         if (p.Contains("endpoint encryption coverage:"))
@@ -288,14 +271,9 @@ public static class DeterministicControlEvaluator
                 : ("Compliant", "GV.RR conforme — contas de administrador sob revisão periódica de acesso configurada.");
         }
 
-        // GV.RR — Identity Governance (Entra ID), ancorado no controle (excesso de admins > 10).
-        if (TargetsControl(p, "gv.rr") && p.Contains("total privileged accounts:"))
-        {
-            var totalPriv = Num(p, "total privileged accounts:");
-            return totalPriv > 10
-                ? ("NonCompliant", $"GV.RR reprovado — {totalPriv:0} contas privilegiadas (>10) no Entra ID. Excesso de administradores quebra o menor privilégio e a governança de identidade.")
-                : ("Compliant", $"GV.RR conforme — {totalPriv:0} contas privilegiadas (≤10), aderente ao menor privilégio.");
-        }
+        // [AEGIS-MVP-EVIDENCE-FABRIC-01] A QUANTIDADE de contas privilegiadas do Entra ID NÃO mapeia mais para
+        // GV.RR. GV.RR-01 é MANUAL_AUDIT_REQUIRED: exige evidência documental/manual de accountability executiva
+        // (matriz RACI, atas de comitê, termos assinados) — nenhuma telemetria de identidade a avalia. Removido.
 
         return null;
     }
@@ -320,10 +298,6 @@ public static class DeterministicControlEvaluator
             hasTelemetrySignal: !p.Contains(TelemetryAbsentMarker),
             hasProcessedDocument: p.Contains(DocumentProcessedMarker));
     }
-
-    /// <summary>True se o payload MIRA o controle indicado (prefixo NIST, ex.: "pr.aa"/"gv.rr").</summary>
-    private static bool TargetsControl(string p, string codePrefix) =>
-        p.Contains("subcategory: " + codePrefix) || p.Contains("(control " + codePrefix);
 
     /// <summary>Extrai o número que segue um rótulo no payload (já minúsculo). Fallback 0 se ausente.</summary>
     private static double Num(string p, string label)

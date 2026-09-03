@@ -1,102 +1,83 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.ModelBinding;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
-using AegisScore.Application.Services;
-using AegisScore.Application.Telemetry.Models;
-using AegisScore.Application.Telemetry.Providers;
+using AegisScore.Application.Identity;
 
 namespace AegisScore.Api.Controllers;
 
 /// <summary>
-/// Telemetria de IDENTIDADE (Microsoft Entra ID) — superfície ATIVA de coleta: diferente do
-/// <see cref="TelemetryController"/> (webhook passivo que recebe o payload pronto), aqui o Aegis PUXA a
-/// postura de identidade do tenant via <see cref="IEntraIdTelemetryProvider"/> e a avalia.
+/// [AEGIS-MVP-EVIDENCE-FABRIC-01] Postura de EVIDÊNCIA de identidade (Microsoft Entra ID). Superfície de
+/// LEITURA/COLETA da Evidence Fabric compartilhada: NÃO existe mais uma segunda integração Entra com números
+/// simulados nem um mapeamento hardcoded para PR.AA-01/GV.RR-01. Tanto esta rota quanto o botão de coleta do
+/// AEGIS KNIGHT convergem para o MESMO caso de uso (<see cref="IIdentityEvidenceService"/>) — uma aquisição
+/// real por operação lógica, sem um segundo cliente Graph, credencial ou consulta duplicada.
 ///
-/// Tenant IMPLÍCITO: resolvido do claim <c>tenant_id</c> do JWT (<c>HttpTenantContext</c>), nunca do corpo
-/// (Zero Trust). O corpo carrega apenas o CONTEXTO que o Entra desconhece — domínio a consultar e controles
-/// compensatórios de rede (isolamento de OT/legado). Reusa a esteira do <see cref="ITelemetryIngestionService"/>
-/// (nenhum serviço novo): o retrato de identidade é MULTI-CONTROLE, então é ingerido uma vez por controle
-/// que alimenta (PR.AA-01 = dimensão MFA; GV.RR-01 = dimensão governança/excesso de admins).
+/// A resposta é CONSULTIVA: separa explicitamente o estado do conector, o da coleta e a evidência POR
+/// controle NIST — e reconhece que a telemetria coletada, embora presente, é INSUFICIENTE para avaliar o
+/// requisito dos controles de identidade (PR.AA-01, PR.AA-03, GV.RR-01). NUNCA grava veredito no ledger,
+/// NUNCA concede pontos ao AEGIS Score. Tenant IMPLÍCITO do claim <c>tenant_id</c> do JWT (Zero Trust).
 /// </summary>
 [ApiController]
 [Authorize]
 [Route("api/v1/telemetry/identity")]
 public class IdentityTelemetryController : ControllerBase
 {
-    /// <summary>Controles NIST que o retrato de identidade do Entra alimenta (código + pilar do cabeçalho).</summary>
-    private static readonly (string Code, string Pillar)[] IdentityControls =
-    {
-        ("PR.AA-01", "Protect"),
-        ("GV.RR-01", "Govern"),
-    };
-
-    private readonly IEntraIdTelemetryProvider _entra;
-    private readonly ITelemetryIngestionService _ingestion;
+    private readonly IIdentityEvidenceService _evidence;
     private readonly ITenantContext _tenant;
 
-    public IdentityTelemetryController(
-        IEntraIdTelemetryProvider entra, ITelemetryIngestionService ingestion, ITenantContext tenant)
+    public IdentityTelemetryController(IIdentityEvidenceService evidence, ITenantContext tenant)
     {
-        _entra = entra;
-        _ingestion = ingestion;
+        _evidence = evidence;
         _tenant = tenant;
     }
 
     /// <summary>
-    /// Coleta a postura de identidade do Entra ID do tenant e a avalia contra PR.AA-01 e GV.RR-01. O corpo
-    /// é OPCIONAL: informe <c>hasNetworkIsolation</c>/<c>compensatingControls</c> para que o motor pondere
-    /// contas de serviço/OT sem MFA isoladas na rede (controle compensatório) e não gere falso positivo.
+    /// Lê a postura de evidência de identidade do ÚLTIMO snapshot compartilhado (sem nova aquisição): estado do
+    /// conector, estado da coleta (completa/parcial/nunca), degradação, fonte/freshness reais e a evidência por
+    /// controle NIST. Não consulta o Graph e não altera score.
     /// </summary>
-    /// <response code="200">Vereditos aplicados ao ledger (um por controle avaliado), com fonte Telemetry.</response>
-    /// <response code="400">Um dos controles-alvo não existe no catálogo NIST.</response>
+    /// <response code="200">Projeção consultiva da evidência de identidade (sem score).</response>
     /// <response code="401">Tenant não resolvido no contexto (claim tenant_id ausente).</response>
-    /// <response code="503">Motor de IA indisponível (transitório — repetir).</response>
-    [HttpPost("entra-id")]
-    public async Task<ActionResult<IReadOnlyList<TelemetryVerdictDto>>> IngestEntraId(
-        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] EntraIdIdentityIngestionRequest? request,
-        CancellationToken ct)
+    [HttpGet("entra-id")]
+    public async Task<ActionResult<IdentityEvidenceProjectionDto>> GetEntraId(CancellationToken ct)
     {
-        // Fail-closed: sem tenant resolvido do JWT, nada é coletado nem avaliado.
-        if (_tenant.TenantId is not Guid tenantId)
+        if (_tenant.TenantId is null)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
 
-        var domain = string.IsNullOrWhiteSpace(request?.TenantDomain) ? "" : request!.TenantDomain!;
-
-        // 1) Coleta a postura crua do Entra ID (stub agora; Microsoft Graph + OAuth depois).
-        var posture = await _entra.FetchIdentityPostureAsync(tenantId, domain, ct);
-
-        // 2) Normaliza ENXERTANDO o contexto de rede que o Entra não conhece (isolamento/compensatórios).
-        var signal = posture.ToTelemetrySignal(
-            request?.HasNetworkIsolation ?? false, request?.CompensatingControls);
-
-        // 3) Reusa a esteira: o MESMO retrato (ToMetricLines) alimenta cada controle. Um payload por controle,
-        //    cabeçalho de código distinto — o StubLlmClient/motor discrimina pela âncora de controle.
-        var metrics = signal.ToMetricLines();
-        try
-        {
-            var verdicts = new List<TelemetryVerdictDto>(IdentityControls.Length);
-            foreach (var (code, pillar) in IdentityControls)
-            {
-                var verdict = await _ingestion.IngestCategoryAsync(
-                    new CategoryTelemetrySignal(code, pillar, "Identity", metrics), ct);
-                verdicts.Add(ToDto(code, verdict));
-            }
-            return Ok(verdicts);
-        }
-        catch (InvalidOperationException ex)
-        {
-            // Código NIST fora do catálogo é erro do cliente/configuração, não 500 opaco.
-            return BadRequest(ex.Message);
-        }
+        var projection = await _evidence.GetLatestProjectionAsync(ct);
+        return Ok(ToDto(projection));
     }
 
-    private static TelemetryVerdictDto ToDto(string code, ComplianceVerdict v) => new(
-        code,
-        v.Status.ToString(),
-        v.AwardedScore,
-        v.MaxScorePoints,
-        v.MaxScorePoints == 0 ? 0 : (int)Math.Round(100.0 * v.AwardedScore / v.MaxScorePoints),
-        v.AiEvidence);
+    /// <summary>
+    /// Dispara UMA aquisição real da postura de identidade do Entra ID pela Evidence Fabric compartilhada,
+    /// persiste o snapshot normalizado (tenant-safe, com proveniência/completude) e devolve a projeção
+    /// consultiva resultante. Uma coleta que falhe NÃO apaga a última evidência válida — sinaliza a degradação.
+    /// Recusa conector desabilitado/sem credencial devolvendo o estado do conector. NÃO grava no ledger.
+    /// </summary>
+    /// <response code="200">Projeção consultiva após a aquisição (sem score).</response>
+    /// <response code="401">Tenant não resolvido no contexto (claim tenant_id ausente).</response>
+    [HttpPost("entra-id")]
+    public async Task<ActionResult<IdentityEvidenceProjectionDto>> CollectEntraId(CancellationToken ct)
+    {
+        if (_tenant.TenantId is null)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+
+        var acquisition = await _evidence.CollectAsync(ct);
+        var projection = IdentityEvidenceProjection.Build(acquisition.ConnectorState, acquisition.Snapshot);
+        return Ok(ToDto(projection));
+    }
+
+    private static IdentityEvidenceProjectionDto ToDto(IdentityEvidenceProjection p) => new(
+        p.ConnectorState.ToString(),
+        p.CollectionState.ToString(),
+        p.LastAttemptState.ToString(),
+        p.IsDegraded,
+        p.Source,
+        p.SchemaVersion,
+        p.CollectedAt,
+        p.LastAttemptAt,
+        p.LastAttemptDetail,
+        p.Capabilities.Select(c => new IdentityCapabilityDto(c.Capability.ToString(), c.Outcome.ToString(), c.Detail)).ToList(),
+        p.Controls.Select(c => new IdentityControlEvidenceDto(c.Code, c.Title, c.State.ToString(), c.Explanation)).ToList());
 }
