@@ -71,10 +71,12 @@ interface OccState {
 
       <!-- ---------- Sub-área: Vulnerabilidades × Software exposto (MESMA tela, sem novo item de menu) ---------- -->
       <div class="tabs" role="tablist">
-        <button type="button" class="tab-btn" [class.active]="tab() === 'vulnerabilities'" (click)="setTab('vulnerabilities')">
+        <button type="button" role="tab" class="tab-btn" [class.active]="tab() === 'vulnerabilities'"
+          [attr.aria-selected]="tab() === 'vulnerabilities'" (click)="setTab('vulnerabilities')">
           Vulnerabilidades
         </button>
-        <button type="button" class="tab-btn" [class.active]="tab() === 'software'" (click)="setTab('software')">
+        <button type="button" role="tab" class="tab-btn" [class.active]="tab() === 'software'"
+          [attr.aria-selected]="tab() === 'software'" (click)="setTab('software')">
           Software exposto
         </button>
       </div>
