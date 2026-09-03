@@ -112,7 +112,9 @@ public sealed class UsersController : ControllerBase
 
     /// <summary>
     /// Desativa (reversível — nunca exclusão física) um acesso do tenant ambiente. Barra auto-desativação e a
-    /// remoção do último administrador ativo; revoga os refresh tokens do membership.
+    /// remoção do último administrador ativo; revoga os refresh tokens do membership (novas autenticações e
+    /// renovações bloqueadas). Um access token já emitido expira no TTL normal (até 10 min) — sem revogação
+    /// retroativa.
     /// </summary>
     [Authorize(Roles = "TenantAdmin")]
     [HttpPost("{membershipId:guid}/deactivate")]
@@ -126,7 +128,7 @@ public sealed class UsersController : ControllerBase
         return RespondAdmin(result);
     }
 
-    /// <summary>Reativa um acesso do tenant ambiente. Idempotente; NÃO restaura sessões antigas (elas seguem revogadas).</summary>
+    /// <summary>Reativa um acesso do tenant ambiente. Idempotente; NÃO des-revoga os refresh tokens já revogados (é preciso autenticar de novo).</summary>
     [Authorize(Roles = "TenantAdmin")]
     [HttpPost("{membershipId:guid}/reactivate")]
     public async Task<ActionResult<TenantUserDto>> Reactivate(Guid membershipId, CancellationToken ct)

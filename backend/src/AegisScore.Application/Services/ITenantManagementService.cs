@@ -160,6 +160,50 @@ public record ConnectorConfigurationResult(
     bool HasCredentials,
     bool HasIngestionKey);
 
+/// <summary>
+/// [AEGIS-MVP-ADMIN-LIFECYCLE-01] Edição administrativa de um conector do tenant ambiente: só nome de
+/// exibição e intervalo de coleta. ⚠️ NÃO carrega segredo — editar um conector jamais reescreve a credencial
+/// (a rotação é o caminho explícito de <see cref="ConfigureConnectorCommand"/>). O alvo é o
+/// <see cref="ConnectorId"/> resolvido DENTRO do tenant ambiente (query filter fail-closed).
+/// </summary>
+public record UpdateConnectorCommand(Guid ConnectorId, string DisplayName, int SyncIntervalMinutes);
+
+/// <summary>
+/// [AEGIS-MVP-ADMIN-LIFECYCLE-01] Desfecho das ações administrativas de conector (editar/habilitar/desabilitar/
+/// desconectar). Como no resto do modelo, recusas ESPERADAS viajam como VALOR (o boundary global traduziria um
+/// throw num 500 opaco); só <see cref="TenantSecurityException"/> sobe. <see cref="Connector"/> só vem no sucesso.
+/// </summary>
+public enum ConnectorAdminStatus
+{
+    /// <summary>Ação aplicada (idempotente).</summary>
+    Updated = 0,
+
+    /// <summary>Conector inexistente OU de OUTRO tenant — indistinguíveis por design (404 na borda).</summary>
+    NotFound = 1,
+
+    /// <summary>Nome de exibição ausente ou acima do teto (400).</summary>
+    InvalidDisplayName = 2,
+
+    /// <summary>
+    /// [AEGIS-MVP-ADMIN-LIFECYCLE-01] Tentativa de HABILITAR um conector DESCONECTADO — sem material de
+    /// autenticação compatível (o pull precisa de <c>EncryptedSettings</c>; o push genérico, de
+    /// <c>IngestionKeyHash</c>). Habilitar não recria credencial: reconectar é o caminho explícito. A linha
+    /// NÃO é alterada. Conflito de estado ESPERADO (409 na borda), não falha excepcional.
+    /// </summary>
+    MissingCredential = 3,
+}
+
+/// <summary>Resultado de uma ação administrativa de conector. <see cref="Connector"/> traz o estado APÓS a escrita (sem segredo).</summary>
+public record ConnectorAdminResult(ConnectorAdminStatus Status, ConnectorSummary? Connector = null, string? Detail = null)
+{
+    public bool Succeeded => Status == ConnectorAdminStatus.Updated;
+
+    public static ConnectorAdminResult Ok(ConnectorSummary connector) => new(ConnectorAdminStatus.Updated, connector);
+
+    public static ConnectorAdminResult Rejected(ConnectorAdminStatus status, string? detail = null) =>
+        new(status, null, detail);
+}
+
 // ---- Porta ------------------------------------------------------------------
 
 /// <summary>
@@ -254,4 +298,41 @@ public interface ITenantManagementService
     Task<bool> RecordSyncResultAsync(
         Guid connectorId, IReadOnlyList<EvidenceSignal> signals, ConnectorStatus status,
         CancellationToken ct = default);
+
+    // ---- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ciclo de vida administrativo do conector (tenant-scoped) ----
+
+    /// <summary>
+    /// Edita APENAS o nome de exibição e o intervalo de coleta de um conector do tenant ambiente. NUNCA toca a
+    /// credencial: editar sem enviar segredo PRESERVA o vigente por construção (esta operação não conhece o
+    /// segredo). O intervalo recebe o mesmo piso de segurança da configuração. Conector inexistente/cross-tenant
+    /// → <see cref="ConnectorAdminStatus.NotFound"/> (nada gravado).
+    /// </summary>
+    /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
+    Task<ConnectorAdminResult> UpdateConnectorAsync(UpdateConnectorCommand command, CancellationToken ct = default);
+
+    /// <summary>
+    /// Habilita ou desabilita (pausa) um conector do tenant ambiente. Desabilitar INTERROMPE novas coletas
+    /// (os workers e a ingestão push já respeitam <c>Enabled</c>), mas PRESERVA a credencial para futura
+    /// reativação — não é desconexão; é sempre idempotente (desabilitar o já-desabilitado é sucesso sem efeito).
+    /// HABILITAR EXIGE material de autenticação compatível: um conector DESCONECTADO (pull sem
+    /// <c>EncryptedSettings</c>, ou push genérico sem <c>IngestionKeyHash</c>) NÃO pode ser habilitado —
+    /// habilitar não recria credencial. Nesse caso a linha permanece intacta e o desfecho é
+    /// <see cref="ConnectorAdminStatus.MissingCredential"/> (reconecte pelo fluxo de configuração). Habilitar o
+    /// já-habilitado e credenciado é sucesso sem efeito.
+    /// </summary>
+    /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
+    Task<ConnectorAdminResult> SetConnectorEnabledAsync(
+        Guid connectorId, bool enabled, CancellationToken ct = default);
+
+    /// <summary>
+    /// DESCONECTA um conector do tenant ambiente: desabilita E elimina TODO o material secreto armazenado —
+    /// <c>EncryptedSettings</c> e <c>IngestionKeyHash</c> — mas PRESERVA a linha e a proveniência histórica
+    /// (sinais, exposições, vulnerabilidades, cobertura). NÃO há exclusão física de <c>ConnectorConfig</c> nem
+    /// das evidências que apontam para ele. Reconfigurar depois REATIVA a MESMA linha (upsert pela chave
+    /// natural), sem duplicar. Idempotente. Uma coleta em andamento que conclua depois NÃO ressuscita a conexão:
+    /// o registro de sync só carimba <c>LastSyncAt</c>/<c>LastStatus</c> e nunca reescreve o segredo, então o
+    /// estado de conexão permanece derivado da ausência de credencial.
+    /// </summary>
+    /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
+    Task<ConnectorAdminResult> DisconnectConnectorAsync(Guid connectorId, CancellationToken ct = default);
 }

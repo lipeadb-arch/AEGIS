@@ -523,12 +523,83 @@ export function isKnightConnector(c: ConnectorConfig): boolean {
   return c.capability === 'IdentityPosture';
 }
 
+// ============================================================================
+// [AEGIS-MVP-ADMIN-LIFECYCLE-01] Estado de CONEXÃO ATUAL (derivado) e ações administrativas
+// ----------------------------------------------------------------------------
+// O estado de conexão é DERIVADO dos campos que o backend já expõe (enabled + credencial), e é a AUTORIDADE
+// sobre o que a UI apresenta como situação atual — distinto do `lastStatus`, que é evidência histórica da
+// última coleta. Assim, uma coleta antiga marcada "Operacional" jamais é apresentada como saúde atual de um
+// conector desconectado. Funções PURAS e testáveis (sem DOM).
+// ============================================================================
+
+/** Situação ATUAL da conexão de um conector. */
+export type ConnectorConnectionState = 'connected' | 'disabled' | 'disconnected';
+
+/** Há alguma credencial guardada? (segredo pull OU chave de ingestão push). */
+function hasAnyCredential(c: ConnectorConfig): boolean {
+  return c.hasCredentials || c.hasIngestionKey;
+}
+
+/**
+ * Estado de conexão derivado: sem credencial ⇒ `disconnected` (desconectado, credencial eliminada ou nunca
+ * configurada); com credencial e habilitado ⇒ `connected`; com credencial e desabilitado ⇒ `disabled`.
+ */
+export function connectionState(c: ConnectorConfig): ConnectorConnectionState {
+  if (!hasAnyCredential(c)) return 'disconnected';
+  return c.enabled ? 'connected' : 'disabled';
+}
+
+/** Rótulo INEQUÍVOCO do estado de conexão (o que o operador lê como situação atual). */
+export function connectionStateLabel(state: ConnectorConnectionState): string {
+  switch (state) {
+    case 'connected':
+      return 'Conectado';
+    case 'disabled':
+      return 'Desabilitado';
+    case 'disconnected':
+    default:
+      return 'Desconectado';
+  }
+}
+
+/** Tom visual do estado de conexão (reusa a paleta ok/warn/idle da tela). */
+export function connectionStateTone(state: ConnectorConnectionState): 'ok' | 'warn' | 'idle' {
+  switch (state) {
+    case 'connected':
+      return 'ok';
+    case 'disabled':
+      return 'warn';
+    case 'disconnected':
+    default:
+      return 'idle';
+  }
+}
+
+/** Testar exige credencial (não faz sentido testar um desconectado) — espelha a recusa 409 do backend. */
+export function canTestConnector(c: ConnectorConfig): boolean {
+  return connectionState(c) !== 'disconnected';
+}
+
+/** Sincronizar exige conexão ATIVA (habilitado + credencial) — espelha a recusa 409 do backend. */
+export function canSyncConnector(c: ConnectorConfig): boolean {
+  return connectionState(c) === 'connected';
+}
+
 export interface SaveConnectorRequest {
   provider: number;
   capability: number;
   displayName: string;
   authType: number;
   settings: string;
+  syncIntervalMinutes: number;
+}
+
+/**
+ * Corpo da edição administrativa (PUT /connectors/{id}): SÓ nome e intervalo. ⚠️ NÃO há campo de segredo —
+ * editar jamais reescreve a credencial; reconectar (informar credencial de novo) é o fluxo de (re)configuração.
+ */
+export interface UpdateConnectorRequest {
+  displayName: string;
   syncIntervalMinutes: number;
 }
 

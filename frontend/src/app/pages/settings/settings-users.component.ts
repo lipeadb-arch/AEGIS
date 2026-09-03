@@ -11,6 +11,7 @@ import {
   TENANT_ROLE_VALUE,
   TenantRoleName,
   TenantUser,
+  accessStateLabel,
   canResetLocalPassword,
   roleLabel,
 } from '../../models/users.models';
@@ -98,6 +99,15 @@ import {
       </p>
     }
 
+    <!-- Semântica operacional: "remover acesso" ≠ "excluir a pessoa". -->
+    <p class="note access-note">
+      <strong>Remover acesso</strong> bloqueia novas autenticações e renovações neste ambiente, mas
+      <strong>preserva a identidade e o histórico</strong> — a mesma identidade pode ter acesso a outros
+      ambientes. Uma sessão já autenticada pode permanecer válida até o vencimento normal do token, por no
+      máximo <strong>10 minutos</strong>. Não há exclusão da pessoa por esta tela; o acesso pode ser
+      <strong>readmitido</strong> depois.
+    </p>
+
     <!-- ============ Busca + filtros ============ -->
     <div class="toolbar">
       <input
@@ -148,7 +158,7 @@ import {
               <div class="meta">
                 <span class="badge role">{{ label(u.role) }}</span>
                 <span class="badge" [class.on]="u.isActive" [class.off]="!u.isActive">
-                  {{ u.isActive ? 'Ativo' : 'Inativo' }}
+                  {{ accessLabel(u.isActive) }}
                 </span>
                 @if (isSelf(u)) { <span class="badge self">Você</span> }
                 @if (!u.hasLocalCredential) { <span class="badge prov">Provedor corporativo</span> }
@@ -167,10 +177,10 @@ import {
                   class="btn sm danger"
                   (click)="confirmingId.set(u.id)"
                   [disabled]="busyId() === u.id || isSelf(u)"
-                  [title]="isSelf(u) ? 'Você não pode desativar o próprio acesso' : 'Desativar acesso'"
-                >Desativar</button>
+                  [title]="isSelf(u) ? 'Você não pode remover o próprio acesso' : 'Remover o acesso a este ambiente'"
+                >Remover acesso</button>
               } @else {
-                <button type="button" class="btn sm" (click)="reactivate(u)" [disabled]="busyId() === u.id">Reativar</button>
+                <button type="button" class="btn sm" (click)="reactivate(u)" [disabled]="busyId() === u.id">Readmitir acesso</button>
               }
               <!-- Redefinição administrativa: só PlatformAdmin, alvo com credencial local, e nunca a própria conta. -->
               @if (canReset(u)) {
@@ -207,13 +217,18 @@ import {
               </form>
             }
 
-            <!-- Confirmação de desativação -->
+            <!-- Confirmação de remoção de acesso (reversível — nunca exclusão física da identidade) -->
             @if (confirmingId() === u.id) {
               <div class="confirm" role="alertdialog">
-                <span>Desativar o acesso de <strong>{{ u.displayName }}</strong>? As sessões dele serão encerradas.</span>
+                <span>
+                  Remover o acesso de <strong>{{ u.displayName }}</strong> a este ambiente? Novas autenticações
+                  e renovações serão <strong>bloqueadas imediatamente</strong>. A identidade e o histórico são
+                  <strong>preservados</strong>; sessões já autenticadas expiram no prazo normal do token, em até
+                  <strong>10 minutos</strong>. Você pode readmitir o acesso depois.
+                </span>
                 <div class="actions">
                   <button type="button" class="btn sm danger" (click)="deactivate(u)" [disabled]="busyId() === u.id">
-                    Confirmar
+                    Confirmar remoção
                   </button>
                   <button type="button" class="btn sm" (click)="confirmingId.set(null)">Cancelar</button>
                 </div>
@@ -324,6 +339,9 @@ import {
       }
       .note.standalone {
         margin: 0 0 1.1rem;
+      }
+      .note.access-note {
+        margin: 0 0 1rem;
       }
       .toolbar {
         display: flex;
@@ -530,6 +548,7 @@ export class SettingsUsersComponent implements OnInit {
   protected readonly assignableRoles = ASSIGNABLE_ROLES;
   protected readonly labels = ROLE_LABELS;
   protected readonly label = roleLabel;
+  protected readonly accessLabel = accessStateLabel;
 
   protected readonly canCreate = computed(() => this.auth.isPlatformAdmin() && this.auth.isTenantAdmin());
   protected readonly isTenantAdmin = this.auth.isTenantAdmin;

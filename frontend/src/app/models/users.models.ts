@@ -99,3 +99,18 @@ export interface UpdateMembershipRequest {
 export function roleLabel(role: string): string {
   return ROLE_LABELS[role as TenantRoleName] ?? role;
 }
+
+/**
+ * [AEGIS-MVP-ADMIN-LIFECYCLE-01] Rótulo do ESTADO DE ACESSO na linguagem operacional da tela: o usuário
+ * procura "excluir", mas a operação segura é remover/desativar o ACESSO ao ambiente — a identidade global e o
+ * histórico são preservados. Função pura e testável. `true` (ativo) ⇒ "Ativo"; `false` ⇒ "Acesso removido"
+ * (nunca "Inativo"/"Excluído", que sugeririam apagamento).
+ */
+export function accessStateLabel(isActive: boolean): string {
+  return isActive ? 'Ativo' : 'Acesso removido';
+}
+
+/** Tom visual do estado de acesso (reusa a paleta on/off da lista). */
+export function accessStateTone(isActive: boolean): 'on' | 'off' {
+  return isActive ? 'on' : 'off';
+}

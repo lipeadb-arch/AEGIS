@@ -8,6 +8,7 @@ import {
   MicrosoftHubRequest,
   SaveConnectorRequest,
   SyncResult,
+  UpdateConnectorRequest,
 } from '../models/connector.models';
 
 /**
@@ -56,6 +57,40 @@ export class ConnectorService {
       .pipe(catchError((err) => throwError(() => this.describe(err))));
   }
 
+  /**
+   * [AEGIS-MVP-ADMIN-LIFECYCLE-01] Edita nome de exibição e intervalo (TenantAdmin). ⚠️ NÃO envia segredo —
+   * editar jamais reescreve a credencial. Devolve o conector com o estado APÓS a escrita (sem segredo).
+   */
+  update(connectorId: string, body: UpdateConnectorRequest): Observable<ConnectorConfig> {
+    return this.http
+      .put<ConnectorConfig>(`${this.base}/connectors/${connectorId}`, body)
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
+  /** Desabilita (pausa coletas; preserva a credencial). Idempotente. */
+  disable(connectorId: string): Observable<ConnectorConfig> {
+    return this.http
+      .post<ConnectorConfig>(`${this.base}/connectors/${connectorId}/disable`, {})
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
+  /** Reabilita um conector desabilitado (retoma coletas com a credencial preservada). Idempotente. */
+  enable(connectorId: string): Observable<ConnectorConfig> {
+    return this.http
+      .post<ConnectorConfig>(`${this.base}/connectors/${connectorId}/enable`, {})
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
+  /**
+   * Desconecta: desabilita e ELIMINA o material secreto (será preciso informar a credencial de novo para
+   * reconectar). A linha e a proveniência histórica são preservadas. Idempotente.
+   */
+  disconnect(connectorId: string): Observable<ConnectorConfig> {
+    return this.http
+      .post<ConnectorConfig>(`${this.base}/connectors/${connectorId}/disconnect`, {})
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
   /** Health check sob demanda do conector (não persiste sinais). */
   test(connectorId: string): Observable<ConnectorHealth> {
     return this.http
@@ -97,6 +132,13 @@ export class ConnectorService {
         return new Error('Somente administradores do cliente podem alterar integrações.');
       case 404:
         return new Error('Conector não encontrado neste cliente.');
+      case 409: {
+        // [AEGIS-MVP-ADMIN-LIFECYCLE-01] Conflito de estado (ex.: testar/sincronizar um conector desconectado
+        // ou desabilitado). O backend manda {title, status}; preferimos a mensagem orientada à ação.
+        const body = err?.error;
+        const title = typeof body === 'object' && body !== null ? (body as { title?: string }).title : null;
+        return new Error(title || 'Operação não permitida no estado atual do conector.');
+      }
       case 501:
         return new Error('Ainda não há adaptador implementado para este provedor/capacidade.');
       case 502:

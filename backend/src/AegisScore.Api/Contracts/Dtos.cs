@@ -135,6 +135,21 @@ public record MaturityLevelDto(int Level, string Name, string Description, int S
 
 // ---- Onboarding ----
 public record CreateTenantRequest(string Name, string Slug);
+
+// ---- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Platform: ciclo de vida administrativo de tenants (PlatformAdmin) ----
+/// <summary>
+/// Um tenant no catálogo administrativo da plataforma. <paramref name="Status"/> vai como STRING (nome do
+/// enum — "Onboarding"/"Active"/"Suspended"), mesmo idioma dos demais DTOs de leitura. Sem dados operacionais
+/// do cliente — este é o catálogo, não o painel interno de um tenant.
+/// </summary>
+public record TenantAdminDto(
+    Guid Id, string Name, string Slug, string Status, DateTimeOffset CreatedAt, DateTimeOffset? UpdatedAt);
+
+/// <summary>
+/// Corpo da renomeação de tenant (<c>PUT /api/v1/platform/tenants/{id}</c>). SÓ o nome de exibição — o
+/// <c>Slug</c> é imutável e por isso NÃO trafega aqui.
+/// </summary>
+public record RenameTenantRequest(string Name);
 public record CreateBusinessUnitRequest(string Name, string? Code, string? ManagerName, string? ManagerEmail);
 public record CreateProcessRequest(string Name, string? ProcessCategory, ProcessClassification Classification, int ProcessValue);
 public record CreateConnectorRequest(
@@ -214,6 +229,13 @@ public record IngestionBatchDto(string? SchemaVersion, IReadOnlyList<IngestionEv
 public record IngestionResultDto(
     int Accepted, int Deduplicated, int ContractErrors, DateTimeOffset ReceivedAt,
     IReadOnlyList<string>? Errors = null);
+
+/// <summary>
+/// [AEGIS-MVP-ADMIN-LIFECYCLE-01] Corpo da edição administrativa de um conector (<c>PUT
+/// /api/v1/connectors/{id}</c>): SÓ nome de exibição e intervalo de coleta. ⚠️ NÃO há campo de segredo —
+/// editar jamais reescreve a credencial; a rotação é o caminho explícito da (re)configuração.
+/// </summary>
+public record UpdateConnectorRequest(string DisplayName, int SyncIntervalMinutes);
 
 public record ConnectorHealthDto(string Status, string? Message);
 public record SignalDto(string SignalKey, double? NumericValue, string? Unit, int? Severity, IReadOnlyList<string> MappedSubcategoryCodes, DateTimeOffset CollectedAt);

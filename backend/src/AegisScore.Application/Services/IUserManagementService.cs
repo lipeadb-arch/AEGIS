@@ -229,7 +229,8 @@ public interface IUserManagementService
     /// <item>a pessoa NÃO pode rebaixar o PRÓPRIO papel de administrador (<see cref="MembershipAdminStatus.SelfDemotionForbidden"/>);</item>
     /// <item>rebaixar o ÚLTIMO administrador ativo é barrado (<see cref="MembershipAdminStatus.LastAdminProtected"/>),
     /// correto sob concorrência real (trava de linha no PostgreSQL);</item>
-    /// <item>reduzir privilégio REVOGA os refresh tokens ativos daquele membership (as sessões não sobrevivem à queda de papel).</item>
+    /// <item>reduzir privilégio REVOGA os refresh tokens ativos daquele membership (renovar o papel antigo deixa
+    /// de ser possível); um access token JÁ emitido ainda carrega o papel anterior até expirar (TTL de até 10 min).</item>
     /// </list>
     /// </summary>
     /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
@@ -242,7 +243,9 @@ public interface IUserManagementService
     /// <item>a pessoa NÃO pode desativar o PRÓPRIO acesso (<see cref="MembershipAdminStatus.SelfDeactivationForbidden"/>);</item>
     /// <item>desativar o ÚLTIMO administrador ativo é barrado (<see cref="MembershipAdminStatus.LastAdminProtected"/>),
     /// correto sob concorrência real;</item>
-    /// <item>desativar REVOGA os refresh tokens ativos do membership; reativar NÃO restaura sessões antigas.</item>
+    /// <item>desativar REVOGA os refresh tokens ativos do membership (novas autenticações e renovações bloqueadas;
+    /// um access token já emitido expira no TTL normal, até 10 min, sem revogação retroativa); reativar NÃO
+    /// des-revoga os refresh tokens já revogados.</item>
     /// </list>
     /// </summary>
     /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>

@@ -43,6 +43,15 @@ import { AuthService } from '../../services/auth.service';
             role="tab"
           >Integrações</a>
         }
+        @if (isPlatformAdmin()) {
+          <a
+            class="tab"
+            routerLink="tenants"
+            routerLinkActive="active"
+            ariaCurrentWhenActive="page"
+            role="tab"
+          >Ambientes</a>
+        }
       </nav>
 
       <div class="tab-panel">
@@ -118,4 +127,5 @@ import { AuthService } from '../../services/auth.service';
 export class SettingsComponent {
   private readonly auth = inject(AuthService);
   protected readonly isTenantAdmin = this.auth.isTenantAdmin;
+  protected readonly isPlatformAdmin = this.auth.isPlatformAdmin;
 }

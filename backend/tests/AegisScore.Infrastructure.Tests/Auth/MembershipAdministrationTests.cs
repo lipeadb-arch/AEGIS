@@ -186,7 +186,7 @@ public sealed class MembershipAdministrationTests : IDisposable
         result.Status.Should().Be(MembershipAdminStatus.Updated);
         (await db.Users.SingleAsync(u => u.Id == membership)).IsActive.Should().BeTrue();
         (await db.UserRefreshTokens.SingleAsync(t => t.Id == revokedToken)).RevokedAt
-            .Should().NotBeNull("reativar NÃO ressuscita sessões antigas");
+            .Should().NotBeNull("reativar NÃO des-revoga os refresh tokens já revogados");
     }
 
     // ---- Cenário 8: revogação de refresh tokens em desativação/rebaixamento -------
@@ -206,7 +206,7 @@ public sealed class MembershipAdministrationTests : IDisposable
 
         result.Status.Should().Be(MembershipAdminStatus.Updated);
         (await db.UserRefreshTokens.SingleAsync(t => t.Id == token)).RevokedAt
-            .Should().NotBeNull("desativar derruba as sessões do membership");
+            .Should().NotBeNull("desativar revoga os refresh tokens ativos do membership");
     }
 
     [Fact]
@@ -224,7 +224,7 @@ public sealed class MembershipAdministrationTests : IDisposable
 
         result.Status.Should().Be(MembershipAdminStatus.Updated);
         (await db.UserRefreshTokens.SingleAsync(t => t.Id == token)).RevokedAt
-            .Should().NotBeNull("reduzir privilégio derruba as sessões (o papel antigo não sobrevive no token)");
+            .Should().NotBeNull("reduzir privilégio revoga os refresh tokens (renovar o papel antigo deixa de ser possível)");
     }
 
     [Fact]
