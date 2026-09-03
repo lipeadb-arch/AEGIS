@@ -209,6 +209,10 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // [AEGIS-MVP-VULN-01] Coleta de vulnerabilidades associadas a ativos (máquinas × CVEs). Aditiva: um conector
         // pode implementar IEvidenceConnector sem emitir sinais e ainda produzir esta coleção (o Defender VM faz isso).
         VulnerabilityCollection? vulnerabilities = null;
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Inventário/exposição de software — dimensão INDEPENDENTE, produzida SÓ
+        // por conectores ICombinedVulnerabilityConnector (mesma aquisição/token/máquinas de Vulnerabilities). NUNCA
+        // vira EvidenceSignal, NUNCA mapeia NIST e NUNCA toca o score — fato operacional/de exposição consultivo.
+        SoftwareInventoryCollection? softwareInventory = null;
         // [AEGIS-MVP-SIEM] Postura operacional de SIEM PROVIDER-NEUTRAL (fato consultivo). Aditiva: o adaptador de
         // SIEM (Microsoft Sentinel, Google SecOps, …) não emite sinais de score e produz apenas esta fotografia.
         // Coletada na MESMA try/catch — NÃO vira EvidenceSignal, NÃO é reconciliada no banco e NÃO toca o AEGIS Score.
@@ -236,9 +240,22 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
                     findings = await findingConnector.CollectFindingsAsync(config, ct);
             }
 
-            // Vulnerabilidades: coletadas na MESMA try/catch (uma falha da fonte carimba Failed ANTES de persistir).
-            if (adapter is IVulnerabilityFindingConnector vulnConnector)
+            // Vulnerabilidades (+ software, quando combinado): coletadas na MESMA try/catch — uma falha de
+            // TRANSPORTE aqui carimba Failed ANTES de persistir. [AEGIS-MVP-MICROSOFT-COVERAGE-01] Quando o
+            // adaptador suporta a capacidade COMBINADA, ela é PREFERIDA: token e /api/machines são adquiridos UMA
+            // vez para as duas dimensões. O coletor combinado já isola falhas classificáveis de software (nunca
+            // lança) e degrada — em vez de lançar — uma falha de transporte isolada na dimensão de vulnerabilidades,
+            // então esta chamada só lança em falha de autenticação/máquinas (dependência dura de ambas as dimensões).
+            if (adapter is ICombinedVulnerabilityConnector combinedVulnConnector)
+            {
+                var combinedVuln = await combinedVulnConnector.CollectVulnerabilitiesAndSoftwareAsync(config, ct);
+                vulnerabilities = combinedVuln.Vulnerabilities;
+                softwareInventory = combinedVuln.SoftwareInventory;
+            }
+            else if (adapter is IVulnerabilityFindingConnector vulnConnector)
+            {
                 vulnerabilities = await vulnConnector.CollectVulnerabilitiesAsync(config, ct);
+            }
 
             // Postura operacional de SIEM (provider-neutral): também na MESMA try/catch. Uma falha da fonte carimba Failed.
             if (adapter is ISiemPostureCollector siemCollector)
@@ -306,7 +323,12 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção parcial/indisponível degrada a saúde — honestidade
         // operacional (ex.: sem `chronicle.rules.list`, a dimensão fica indisponível, mas casos/alertas seguem).
         var degradedByCoverage = detectionCoverage is not null && !detectionCoverage.IsComplete;
-        var status = (skipped > 0 || degradedByVuln || degradedBySiem || degradedByCoverage)
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Software é dimensão ADICIONAL: sua ausência/degradação NUNCA vira
+        // Failed (a autoridade continua sendo machines/vulnerabilities), mas também não deixa o conector
+        // "operacional" silenciosamente quando só vulnerabilidades funcionou — rebaixa para Degraded, como as
+        // demais dimensões aditivas (vulnerabilidades/SIEM/cobertura de detecção) já fazem.
+        var degradedBySoftware = softwareInventory is not null && !softwareInventory.IsComplete;
+        var status = (skipped > 0 || degradedByVuln || degradedBySiem || degradedByCoverage || degradedBySoftware)
             ? ConnectorStatus.Degraded : ConnectorStatus.Healthy;
         // Um único SaveChanges: os sinais adicionados + o carimbo de sync são o MESMO fato.
         await StampConnectorAsync(db, config.Id, now, status, ct);
@@ -351,6 +373,29 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             }
         }
 
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Reconcilia o inventário de software SOB o tenant proprietário, DEPOIS
+        // da reconciliação de vulnerabilidades acima: reusa os AssetSourceBindings que ela ACABOU de normalizar
+        // para as mesmas máquinas (nunca cria Asset por conta própria). Falha NÃO é mascarada: carimba Failed e
+        // propaga — mas uma coleta já classificada como falha (InsufficientPermission/Unsupported/Unavailable) NÃO
+        // lança aqui (o reconciliador só REGISTRA a tentativa e preserva os dados anteriores). NUNCA cria
+        // EvidenceSignal nem toca o AEGIS Score.
+        SoftwareInventorySyncResult? softwareResult = null;
+        if (softwareInventory is not null)
+        {
+            try
+            {
+                softwareResult = await ReconcileSoftwareInventoryAsync(config.TenantId, config.Id, softwareInventory, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex,
+                    "Reconciliação de inventário de software do conector {ConnectorId} falhou; conector marcado como Failed.",
+                    config.Id);
+                await TryStampFailedAsync(config.Id, config.TenantId, ct);
+                throw;
+            }
+        }
+
         // [AEGIS-MVP-GOOGLE-SECOPS-02] Reconcilia a cobertura de detecção (snapshot agregado por tenant+conector), sob
         // o tenant proprietário. Contexto NOVO isola do change tracker dos sinais. Falha NÃO é mascarada (carimba
         // Failed e propaga, como as demais reconciliações). O reconciliador NUNCA cria EvidenceSignal nem toca o
@@ -387,7 +432,23 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             throw;
         }
 
-        return new PullIngestionResult(persisted, 0, skipped, status, vulnResult, siem, detectionCoverage);
+        return new PullIngestionResult(persisted, 0, skipped, status, vulnResult, siem, detectionCoverage, softwareResult);
+    }
+
+    // ---- Reconciliação de inventário de software (AEGIS-MVP-MICROSOFT-COVERAGE-01) -----------------
+
+    /// <summary>
+    /// Reconcilia a coleta de inventário de software (produtos/bindings/instalações), sob o tenant proprietário
+    /// (<see cref="SystemTenantContext"/>): contexto NOVO (isolado do change tracker dos sinais/vulnerabilidades) +
+    /// query filter fail-closed + stamping. A lógica de upsert/colapso/resolução vive no
+    /// <see cref="SoftwareInventoryReconciler"/>; o adaptador nunca escreve no banco. NÃO cria EvidenceSignal.
+    /// </summary>
+    private async Task<SoftwareInventorySyncResult> ReconcileSoftwareInventoryAsync(
+        Guid tenantId, Guid connectorId, SoftwareInventoryCollection collection, CancellationToken ct)
+    {
+        await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
+        var reconciler = new SoftwareInventoryReconciler(db, _log);
+        return await reconciler.ReconcileAsync(connectorId, collection, ct);
     }
 
     // ---- Reconciliação da cobertura de detecção (AEGIS-MVP-GOOGLE-SECOPS-02) -----------------------

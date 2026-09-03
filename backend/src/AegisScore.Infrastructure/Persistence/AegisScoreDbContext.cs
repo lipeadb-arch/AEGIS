@@ -102,6 +102,12 @@ public class AegisScoreDbContext : DbContext
     // [AEGIS-MVP-VULN-01] Fundação multicloud: vínculo Asset↔fonte e observação por fonte da exposição consolidada.
     public DbSet<AssetSourceBinding> AssetSourceBindings => Set<AssetSourceBinding>();
     public DbSet<AssetThreatObservation> AssetThreatObservations => Set<AssetThreatObservation>();
+    // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Inventário de software: produto consolidado, binding por fonte, instalação
+    // por ativo (com versão) e o snapshot agregado de estado/última tentativa/KPIs por conector.
+    public DbSet<SoftwareProduct> SoftwareProducts => Set<SoftwareProduct>();
+    public DbSet<SoftwareProductSourceBinding> SoftwareProductSourceBindings => Set<SoftwareProductSourceBinding>();
+    public DbSet<SoftwareInstallation> SoftwareInstallations => Set<SoftwareInstallation>();
+    public DbSet<SoftwareInventorySnapshot> SoftwareInventorySnapshots => Set<SoftwareInventorySnapshot>();
     public DbSet<BlastRadiusAssessment> BlastRadiusAssessments => Set<BlastRadiusAssessment>();
     public DbSet<BlastRadiusImpactNode> BlastRadiusImpactNodes => Set<BlastRadiusImpactNode>();
 
@@ -712,6 +718,97 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId });
         });
 
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Produto de software CONSOLIDADO, tenant-scoped. Identidade natural
+        // determinística (TenantId, VendorKey, NameKey) — forma normalizada (trim + invariant lower) de Vendor/Name,
+        // a ÚNICA chave comum aos dois endpoints do Defender (o endpoint por máquina não repete o "id" do agregado).
+        // Chave alternativa (Id, TenantId): alvo das FKs compostas tenant-safe de SoftwareProductSourceBinding e
+        // SoftwareInstallation — o banco recusa referência cruzada entre tenants.
+        b.Entity<SoftwareProduct>(e =>
+        {
+            e.Property(x => x.Vendor).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(300).IsRequired();
+            e.Property(x => x.VendorKey).HasMaxLength(200).IsRequired();
+            e.Property(x => x.NameKey).HasMaxLength(300).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.VendorKey, x.NameKey })
+                .IsUnique()
+                .HasDatabaseName("UX_SoftwareProduct_Natural");
+            e.HasIndex(x => new { x.TenantId, x.IsActive });
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+        });
+
+        // Observação de UMA fonte sobre o produto CONSOLIDADO — espelha AssetSourceBinding. Chave natural
+        // (Tenant, Conector, ExternalProductId) única (upsert idempotente como invariante de banco). FKs Restrict
+        // (o binding é histórico; apagar produto/conector não cascateia).
+        b.Entity<SoftwareProductSourceBinding>(e =>
+        {
+            e.Property(x => x.ExternalProductId).HasMaxLength(300).IsRequired();
+            e.Property(x => x.VendorObserved).HasMaxLength(200);
+            e.Property(x => x.NameObserved).HasMaxLength(300);
+            e.HasOne(x => x.SoftwareProduct).WithMany()
+                .HasForeignKey(x => new { x.SoftwareProductId, x.TenantId })
+                .HasPrincipalKey(p => new { p.Id, p.TenantId })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_SoftwareProductSourceBindings_Product_Tenant");
+            e.HasOne(x => x.ConnectorConfig).WithMany()
+                .HasForeignKey(x => new { x.ConnectorConfigId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_SoftwareProductSourceBindings_Connector_Tenant");
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.ExternalProductId })
+                .IsUnique()
+                .HasDatabaseName("UX_SoftwareProductSourceBinding_Natural");
+            e.HasIndex(x => new { x.TenantId, x.SoftwareProductId });
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId });
+        });
+
+        // Instalação (produto+versão) de UMA fonte NUM ativo já normalizado por AssetSourceBinding. Version NUNCA
+        // nulo ("" = não informada pela fonte) — preserva o índice único determinístico mesmo com Postgres tratando
+        // NULL como sempre-distinto. FKs Restrict (histórico; nunca cascateia por exclusão de produto/ativo/conector).
+        b.Entity<SoftwareInstallation>(e =>
+        {
+            e.Property(x => x.Version).HasMaxLength(100).IsRequired();
+            e.HasOne(x => x.SoftwareProduct).WithMany()
+                .HasForeignKey(x => new { x.SoftwareProductId, x.TenantId })
+                .HasPrincipalKey(p => new { p.Id, p.TenantId })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_SoftwareInstallations_Product_Tenant");
+            e.HasOne(x => x.Asset).WithMany()
+                .HasForeignKey(x => new { x.AssetId, x.TenantId })
+                .HasPrincipalKey(a => new { a.Id, a.TenantId })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_SoftwareInstallations_Asset_Tenant");
+            e.HasOne(x => x.ConnectorConfig).WithMany()
+                .HasForeignKey(x => new { x.ConnectorConfigId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_SoftwareInstallations_Connector_Tenant");
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.AssetId, x.SoftwareProductId, x.Version })
+                .IsUnique()
+                .HasDatabaseName("UX_SoftwareInstallation_Natural");
+            e.HasIndex(x => new { x.TenantId, x.AssetId });
+            e.HasIndex(x => new { x.TenantId, x.SoftwareProductId });
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId });
+        });
+
+        // Snapshot agregado de estado/última tentativa/KPIs por (tenant, conector) — espelha DetectionCoverageSnapshot.
+        // Índice único nomeado torna o upsert idempotente uma invariante de banco. FK composta tenant-safe ao
+        // conector de origem, Cascade (sem snapshot órfão quando o conector é excluído).
+        b.Entity<SoftwareInventorySnapshot>(e =>
+        {
+            e.Property(x => x.Source).HasMaxLength(200).IsRequired();
+            e.Property(x => x.LastAttemptDetail).HasMaxLength(1000);
+            e.Property(x => x.CollectionState).HasConversion<int>();
+            e.Property(x => x.LastAttemptState).HasConversion<int>();
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId })
+                .IsUnique()
+                .HasDatabaseName("UX_SoftwareInventorySnapshot_Natural");
+            e.HasOne<ConnectorConfig>()
+                .WithMany()
+                .HasForeignKey(x => new { x.ConnectorConfigId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         // Snapshot do raio + nós materializados (1:N). O nó NÃO existe sem o assessment → Cascade PERMITIDO
         // aqui. As FKs para Asset (root e nó impactado) e para o Threat de cenário são Restrict: o snapshot é
         // histórico — apagar um ativo/ameaça não apaga avaliações passadas nem cascateia por múltiplos caminhos.
@@ -876,6 +973,10 @@ public class AegisScoreDbContext : DbContext
         // enxerga bindings/observações de outro. Stamping do TenantId no insert é automático (SaveChanges guard).
         b.Entity<AssetSourceBinding>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<AssetThreatObservation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<SoftwareProduct>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<SoftwareProductSourceBinding>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<SoftwareInstallation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<SoftwareInventorySnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<BlastRadiusAssessment>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<BlastRadiusImpactNode>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         // AEGIS KNIGHT — execução e resultados são ITenantOwned (fail-closed, como o restante do modelo).

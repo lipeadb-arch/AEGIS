@@ -67,7 +67,10 @@ public sealed record PullIngestionResult(
     int Persisted, int Deduplicated, int Skipped, ConnectorStatus Status,
     VulnerabilitySyncResult? Vulnerabilities = null,
     SiemPostureSnapshot? Siem = null,
-    DetectionCoverageSnapshot? DetectionCoverage = null);
+    DetectionCoverageSnapshot? DetectionCoverage = null,
+    // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Dimensão INDEPENDENTE de inventário de software — aditiva (default null),
+    // preenchida só por conectores ICombinedVulnerabilityConnector. Uma falha aqui nunca apaga Vulnerabilities.
+    SoftwareInventorySyncResult? SoftwareInventory = null);
 
 // ---- [AEGIS-MVP-SIEM] Postura operacional de SIEM — PROVIDER-NEUTRAL (somente leitura) ----
 

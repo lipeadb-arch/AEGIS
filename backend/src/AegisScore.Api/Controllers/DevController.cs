@@ -708,6 +708,12 @@ public class DevController : ControllerBase
         // bindings → arestas → ameaças → conector de vulnerabilidade (FK Restrict de observações/bindings).
         db.BlastRadiusImpactNodes.RemoveRange(await db.BlastRadiusImpactNodes.IgnoreQueryFilters().Where(n => n.TenantId == DemoTenantId).ToListAsync(ct));
         db.BlastRadiusAssessments.RemoveRange(await db.BlastRadiusAssessments.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Inventário de software antes de ativos/conector: instalação tem FK
+        // Restrict para Asset, ConnectorConfig E SoftwareProduct; o binding de produto, para produto e conector.
+        // (O SoftwareInventorySnapshot cascateia com o conector.) Sem isto, o re-seed falha por violação de FK.
+        db.SoftwareInstallations.RemoveRange(await db.SoftwareInstallations.IgnoreQueryFilters().Where(i => i.TenantId == DemoTenantId).ToListAsync(ct));
+        db.SoftwareProductSourceBindings.RemoveRange(await db.SoftwareProductSourceBindings.IgnoreQueryFilters().Where(b => b.TenantId == DemoTenantId).ToListAsync(ct));
+        db.SoftwareProducts.RemoveRange(await db.SoftwareProducts.IgnoreQueryFilters().Where(p => p.TenantId == DemoTenantId).ToListAsync(ct));
         // [AEGIS-MVP-VULN-01] Observações (FK → exposição/conector) e bindings (FK → ativo/conector) primeiro.
         db.AssetThreatObservations.RemoveRange(await db.AssetThreatObservations.IgnoreQueryFilters().Where(o => o.TenantId == DemoTenantId).ToListAsync(ct));
         db.AssetThreatExposures.RemoveRange(await db.AssetThreatExposures.IgnoreQueryFilters().Where(e => e.TenantId == DemoTenantId).ToListAsync(ct));

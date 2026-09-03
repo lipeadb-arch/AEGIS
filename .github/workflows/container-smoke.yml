@@ -227,7 +227,10 @@ jobs:
       # migration da cobertura de detecção, índice único (tenant, conector), substituição atômica e isolamento) e
       # IdentityEvidencePostgresTests (AEGIS-MVP-EVIDENCE-FABRIC-01: migration da Evidence Fabric de identidade,
       # chave natural (tenant, conector), upsert idempotente, preservação degradation-safe, isolamento por tenant
-      # e FK COMPOSTA tenant-safe — rejeição de órfão/cross-tenant e cascade na exclusão do conector).
+      # e FK COMPOSTA tenant-safe — rejeição de órfão/cross-tenant e cascade na exclusão do conector) e
+      # SoftwareInventoryPostgresTests (AEGIS-MVP-MICROSOFT-COVERAGE-01: migration do inventário de software,
+      # FKs COMPOSTAS tenant-safe para Asset/Conector/Produto, lifecycle idempotente, preservação dos dados em
+      # coleta de falha e ausência de escrita de score).
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
@@ -236,4 +239,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests"
