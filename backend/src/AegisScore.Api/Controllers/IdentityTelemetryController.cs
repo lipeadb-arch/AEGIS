@@ -79,5 +79,72 @@ public class IdentityTelemetryController : ControllerBase
         p.LastAttemptAt,
         p.LastAttemptDetail,
         p.Capabilities.Select(c => new IdentityCapabilityDto(c.Capability.ToString(), c.Outcome.ToString(), c.Detail)).ToList(),
-        p.Controls.Select(c => new IdentityControlEvidenceDto(c.Code, c.Title, c.State.ToString(), c.Explanation)).ToList());
+        p.Controls.Select(c => new IdentityControlEvidenceDto(c.Code, c.Title, c.State.ToString(), c.Explanation)).ToList(),
+        ToDto(p.IdentityRisk),
+        ToDto(p.AuthenticationPosture));
+
+    // ---- [AEGIS-MVP-MICROSOFT-COVERAGE-03] Risco de identidade -------------------------------------
+    // Projeção pura de AGREGADOS. Nenhum campo pessoal existe do lado de cá para ser mapeado: o que não foi
+    // coletado vira `null` (a UI mostra "não coletado"), jamais um zero que sugira ausência de risco.
+
+    private static IdentityRiskDto? ToDto(IdentityRiskPosture? risk) => risk is null ? null : new(
+        new IdentityRiskCapabilityDto(
+            risk.RiskyUsersOutcome.ToString(), risk.RiskyUsersDetail,
+            risk.RiskyUsers is not null, risk.RiskyUsers?.IsComplete ?? false),
+        new IdentityRiskCapabilityDto(
+            risk.RiskDetectionsOutcome.ToString(), risk.RiskDetectionsDetail,
+            risk.RiskDetections is not null, risk.RiskDetections?.IsComplete ?? false),
+        risk.RiskyUsers is null ? null : new IdentityRiskyUsersDto(
+            risk.RiskyUsers.Total,
+            risk.RiskyUsers.Deleted,
+            risk.RiskyUsers.Processing,
+            risk.RiskyUsers.Live,
+            risk.RiskyUsers.Active,
+            risk.RiskyUsers.HighRiskActive,
+            ToDto(risk.RiskyUsers.Levels),
+            ToDto(risk.RiskyUsers.States),
+            risk.RiskyUsers.MostRecentRiskUpdateAt,
+            risk.RiskyUsers.IsComplete),
+        risk.RiskDetections is null ? null : new IdentityRiskDetectionsDto(
+            risk.RiskDetections.WindowDays,
+            risk.RiskDetections.WindowStart,
+            risk.RiskDetections.WindowEnd,
+            risk.RiskDetections.TotalInWindow,
+            risk.RiskDetections.OutsideWindow,
+            risk.RiskDetections.Undated,
+            risk.RiskDetections.InRecentWindow,
+            risk.RiskDetections.Active,
+            risk.RiskDetections.Resolved,
+            risk.RiskDetections.HighRiskActive,
+            risk.RiskDetections.PremiumDetailWithheld,
+            risk.RiskDetections.Realtime,
+            risk.RiskDetections.NearRealtime,
+            risk.RiskDetections.Offline,
+            risk.RiskDetections.TimingNotDefined,
+            risk.RiskDetections.TimingUnknown,
+            ToDto(risk.RiskDetections.Levels),
+            ToDto(risk.RiskDetections.States),
+            risk.RiskDetections.TopTypes.Select(t => new IdentityRiskCategoryDto(t.Category, t.Count)).ToList(),
+            risk.RiskDetections.MostRecentDetectionAt,
+            risk.RiskDetections.IsComplete),
+        risk.EvaluatedAt);
+
+    private static IdentityAuthenticationPostureDto? ToDto(IdentityAuthenticationPosture? posture) =>
+        posture is null ? null : new(
+            posture.TotalUsers,
+            posture.MfaCapable,
+            posture.MfaRegistered,
+            posture.PasswordlessCapable,
+            posture.CapabilityUnknown,
+            posture.MfaCapableCoveragePercent,
+            posture.PasswordlessCoveragePercent,
+            posture.MethodsRegistered.Select(m => new IdentityRiskCategoryDto(m.Category, m.Count)).ToList(),
+            posture.IsComplete);
+
+    private static IdentityRiskLevelsDto ToDto(IdentityRiskLevelDistribution d) =>
+        new(d.High, d.Medium, d.Low, d.None, d.Hidden, d.Unknown);
+
+    private static IdentityRiskStatesDto ToDto(IdentityRiskStateDistribution d) =>
+        new(d.AtRisk, d.ConfirmedCompromised, d.Remediated, d.Dismissed, d.ConfirmedSafe, d.None, d.Unknown,
+            d.Active, d.Resolved);
 }

@@ -575,7 +575,69 @@ public record IdentityEvidenceProjectionDto(
     DateTimeOffset? LastAttemptAt,
     string? LastAttemptDetail,
     IReadOnlyList<IdentityCapabilityDto> Capabilities,
-    IReadOnlyList<IdentityControlEvidenceDto> Controls);
+    IReadOnlyList<IdentityControlEvidenceDto> Controls,
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-COVERAGE-03] Risco de identidade AGREGADO do mesmo snapshot. <c>null</c> em
+    /// snapshots do schema v1 e quando nunca houve coleta — a UI diz "não coletado", nunca "zero".
+    /// </summary>
+    IdentityRiskDto? IdentityRisk = null,
+    /// <summary>[AEGIS-MVP-MICROSOFT-COVERAGE-03] Postura agregada de métodos de autenticação registrados.</summary>
+    IdentityAuthenticationPostureDto? AuthenticationPosture = null);
+
+// ---- [AEGIS-MVP-MICROSOFT-COVERAGE-03] Risco de identidade (Microsoft Entra ID Protection) ----
+// Contrato de LEITURA, agregado e CONSULTIVO. Não carrega — e não pode carregar — id de usuário, nome,
+// userPrincipalName, IP, localização, requestId, correlationId, additionalInfo, user agent, token, segredo
+// nem payload bruto do Graph. Não altera o AEGIS Score, o KNIGHT Score, o ledger ou qualquer controle NIST.
+
+/// <summary>Estado de UMA das duas capacidades de risco: desfecho tipado, detalhe sanitizado e completude.</summary>
+public record IdentityRiskCapabilityDto(string Outcome, string? Detail, bool HasData, bool IsComplete);
+
+/// <summary>
+/// Distribuição por nível. <c>Hidden</c> (nível suprimido pela fonte, tipicamente por licença) e
+/// <c>Unknown</c> ficam separados de <c>None</c> — ausência de nível não é ausência de risco.
+/// </summary>
+public record IdentityRiskLevelsDto(long High, long Medium, long Low, long None, long Hidden, long Unknown);
+
+/// <summary>
+/// Distribuição por estado, com os derivados operacionais. <c>Active</c> = em aberto (atRisk +
+/// confirmedCompromised); <c>Resolved</c> = tratado; <c>Unknown</c> não entra em nenhum dos dois.
+/// </summary>
+public record IdentityRiskStatesDto(
+    long AtRisk, long ConfirmedCompromised, long Remediated, long Dismissed,
+    long ConfirmedSafe, long None, long Unknown, long Active, long Resolved);
+
+/// <summary>Contagem de uma categoria sanitizada (tipo de detecção / método de autenticação).</summary>
+public record IdentityRiskCategoryDto(string Category, long Count);
+
+/// <summary>Inventário agregado de usuários em risco. <c>IsComplete=false</c> ⇒ os números são um piso.</summary>
+public record IdentityRiskyUsersDto(
+    long Total, long Deleted, long Processing, long Live, long Active, long HighRiskActive,
+    IdentityRiskLevelsDto Levels, IdentityRiskStatesDto States,
+    DateTimeOffset? MostRecentRiskUpdateAt, bool IsComplete);
+
+/// <summary>Detecções agregadas na janela determinística, com o que ficou fora dela explicitado.</summary>
+public record IdentityRiskDetectionsDto(
+    int WindowDays, DateTimeOffset WindowStart, DateTimeOffset WindowEnd,
+    long TotalInWindow, long OutsideWindow, long Undated, long InRecentWindow,
+    long Active, long Resolved, long HighRiskActive, long PremiumDetailWithheld,
+    long Realtime, long NearRealtime, long Offline, long TimingNotDefined, long TimingUnknown,
+    IdentityRiskLevelsDto Levels, IdentityRiskStatesDto States,
+    IReadOnlyList<IdentityRiskCategoryDto> TopTypes,
+    DateTimeOffset? MostRecentDetectionAt, bool IsComplete);
+
+/// <summary>Postura agregada de métodos de autenticação — conceito DISTINTO de risco e de detecção.</summary>
+public record IdentityAuthenticationPostureDto(
+    long TotalUsers, long MfaCapable, long MfaRegistered, long PasswordlessCapable, long CapabilityUnknown,
+    double? MfaCapableCoveragePercent, double? PasswordlessCoveragePercent,
+    IReadOnlyList<IdentityRiskCategoryDto> MethodsRegistered, bool IsComplete);
+
+/// <summary>Postura de risco de identidade: as DUAS capacidades independentes e seus agregados.</summary>
+public record IdentityRiskDto(
+    IdentityRiskCapabilityDto RiskyUsersCapability,
+    IdentityRiskCapabilityDto RiskDetectionsCapability,
+    IdentityRiskyUsersDto? RiskyUsers,
+    IdentityRiskDetectionsDto? Detections,
+    DateTimeOffset EvaluatedAt);
 
 // ---- Auditor Virtual (Copiloto GRC onipresente, com escopo de contexto) ----
 /// <summary>Uma fala do histórico do chat (Role: "user"|"assistant"; Content: texto). Dado NÃO confiável.</summary>

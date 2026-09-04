@@ -687,6 +687,7 @@ public sealed class EntraIdKnightCollector : IKnightCollector
             TimingNotDefined: notDefined,
             TimingUnknown: unknownTiming,
             PremiumDetailWithheld: acc.CategoryCount(IdentityRiskVocabulary.GenericPremiumType),
+            HighRiskActive: acc.HighRiskActive,
             TopTypes: acc.TopCategories(IdentityRiskWindows.TopDetectionTypes),
             MostRecentDetectionAt: acc.MostRecent,
             IsComplete: outcome == KnightCapabilityOutcome.Collected && complete);

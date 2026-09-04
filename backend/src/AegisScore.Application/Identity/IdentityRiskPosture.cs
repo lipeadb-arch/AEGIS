@@ -260,6 +260,8 @@ public sealed record IdentityRiskDetectionFacts(
     /// limitado por licença. O evento é real; o que falta é a classificação.
     /// </summary>
     long PremiumDetailWithheld,
+    /// <summary>Detecções de nível ALTO ainda em aberto na janela — o cruzamento que a operação persegue.</summary>
+    long HighRiskActive,
     IReadOnlyList<IdentityRiskCategoryCount> TopTypes,
     DateTimeOffset? MostRecentDetectionAt,
     bool IsComplete)
