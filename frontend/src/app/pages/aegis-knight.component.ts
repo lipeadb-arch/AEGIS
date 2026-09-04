@@ -19,6 +19,9 @@ import {
   sourceTypeLabel,
   statusLabel,
 } from '../models/knight.models';
+import { IdentityRiskPanelComponent } from '../components/identity/identity-risk-panel.component';
+import { IdentityEvidenceProjection } from '../models/identity-risk.models';
+import { IdentityRiskService } from '../services/identity-risk.service';
 import { KnightService } from '../services/knight.service';
 
 /**
@@ -33,7 +36,7 @@ import { KnightService } from '../services/knight.service';
 @Component({
   selector: 'app-aegis-knight',
   standalone: true,
-  imports: [ScoreGaugeComponent, DatePipe, RouterLink],
+  imports: [ScoreGaugeComponent, DatePipe, RouterLink, IdentityRiskPanelComponent],
   template: `
     <section class="knight">
       <p class="eyebrow">AEGIS KNIGHT · Postura de Identidade e Exposição · Multicoletor</p>
@@ -180,6 +183,8 @@ import { KnightService } from '../services/knight.service';
               </div>
             </div>
           </div>
+
+          <app-identity-risk-panel [projection]="riskProjection()" />
 
           <div class="panel ai">
             <div class="hd">
@@ -368,6 +373,7 @@ import { KnightService } from '../services/knight.service';
 })
 export class AegisKnightComponent implements OnInit {
   private readonly knight = inject(KnightService);
+  private readonly identityRisk = inject(IdentityRiskService);
 
   readonly assessment = signal<KnightAssessment | null>(null);
   readonly sources = signal<KnightSources | null>(null);
@@ -398,6 +404,13 @@ export class AegisKnightComponent implements OnInit {
     () => this.sources()?.realSources.some((s) => s.source === 'GoogleWorkspace' && s.configured) ?? false,
   );
 
+  // ---- [AEGIS-MVP-MICROSOFT-COVERAGE-03] Risco de identidade -------------------------------------
+  // Lê o snapshot JÁ persistido pela Evidence Fabric: a MESMA fotografia que o KNIGHT avalia, sem uma
+  // segunda consulta ao Microsoft Graph.
+  readonly riskProjection = signal<IdentityEvidenceProjection | null>(null);
+
+
+
   ngOnInit(): void {
     // Somente LEITURA ao abrir — fontes + último assessment. NÃO executa análise automaticamente.
     this.reload();
@@ -419,6 +432,20 @@ export class AegisKnightComponent implements OnInit {
       error: (e: Error) => {
         this.error.set(e.message);
         this.loading.set(false);
+      },
+    });
+    this.reloadRisk();
+  }
+
+  /**
+   * Recarrega a fotografia de risco de identidade (somente leitura do snapshot compartilhado). Uma falha
+   * aqui NÃO bloqueia a tela nem zera a seção: mantemos a última projeção carregada, se houver.
+   */
+  private reloadRisk(): void {
+    this.identityRisk.get().subscribe({
+      next: (p) => this.riskProjection.set(p),
+      error: () => {
+        /* seção secundária: preserva a projeção anterior em vez de exibir zeros */
       },
     });
   }
@@ -444,6 +471,8 @@ export class AegisKnightComponent implements OnInit {
       next: (a) => {
         this.assessment.set(a);
         this.running.set(false);
+        // A coleta acabou de reescrever o snapshot compartilhado — relê a MESMA fotografia (sem novo Graph).
+        this.reloadRisk();
       },
       error: (e: Error) => {
         // Mantém o assessment anterior visível; NUNCA substitui por Demo numa falha real.
