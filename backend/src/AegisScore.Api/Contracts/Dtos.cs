@@ -248,7 +248,22 @@ public record SyncResultDto(
     SiemSyncSummaryDto? Siem = null,
     // [AEGIS-MVP-GOOGLE-SECOPS-02] Aditivo e PROVIDER-NEUTRAL: cobertura de detecção (regras × MITRE), dimensão
     // INDEPENDENTE de casos/alertas. Estado por dimensão — completa/parcial/indisponível. NUNCA vira sinal/score.
-    DetectionCoverageSyncSummaryDto? DetectionCoverage = null);
+    DetectionCoverageSyncSummaryDto? DetectionCoverage = null,
+    // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Aditivo e PROVIDER-NEUTRAL: postura de configuração/conformidade de
+    // dispositivos, em DUAS dimensões independentes. Null para os demais conectores. NUNCA vira sinal/score.
+    DevicePostureSyncSummaryDto? DevicePosture = null);
+
+/// <summary>
+/// [AEGIS-MVP-MICROSOFT-COVERAGE-02] Resumo ADITIVO e PROVIDER-NEUTRAL de uma sincronização de postura de
+/// dispositivos — só estados e agregados. Os estados das TRÊS dimensões (políticas, atribuição e dispositivos)
+/// viajam SEPARADOS: uma delas bloqueada por permissão nunca aparece como "zero" nas outras. É FATO CONSULTIVO:
+/// não vira EvidenceSignal nem altera o AEGIS Score. Nunca identificador/nome de dispositivo, usuário ou payload.
+/// <see cref="TotalDevices"/> é ANULÁVEL: null quando a dimensão de dispositivos não produziu inventário.
+/// </summary>
+public record DevicePostureSyncSummaryDto(
+    string ConfigurationState, string AssignmentState, string DeviceState,
+    int PoliciesStored, int DeviceGroupsStored, int? TotalDevices,
+    bool ConfigurationPreserved, bool DevicesPreserved);
 
 /// <summary>
 /// [AEGIS-MVP-GOOGLE-SECOPS-02] Resumo ADITIVO e PROVIDER-NEUTRAL de uma sincronização de cobertura de detecção —

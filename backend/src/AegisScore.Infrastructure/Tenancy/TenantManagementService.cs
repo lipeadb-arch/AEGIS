@@ -283,6 +283,9 @@ public sealed class TenantManagementService : ITenantManagementService
         ConnectorCapability.IdentityPosture,
         ConnectorCapability.VulnerabilityScanner,
         ConnectorCapability.Siem,
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Quinto serviço: Microsoft Intune (postura de configuração e
+        // conformidade de dispositivos). Reusa a MESMA credencial comum — nenhum segredo adicional é pedido.
+        ConnectorCapability.ConfigAnalyzer,
     };
 
     public async Task<IReadOnlyList<ConnectorConfigurationResult>> ConfigureMicrosoftHubAsync(
@@ -370,6 +373,7 @@ public sealed class TenantManagementService : ITenantManagementService
         ConnectorCapability.IdentityPosture      => "Microsoft Entra ID · AEGIS KNIGHT",
         ConnectorCapability.VulnerabilityScanner => "Microsoft Defender Vulnerability Management",
         ConnectorCapability.Siem                 => "Microsoft Sentinel · SIEM",
+        ConnectorCapability.ConfigAnalyzer        => "Microsoft Intune · Configuração e Conformidade",
         _                                        => "Microsoft",
     };
 
