@@ -62,12 +62,17 @@ jobs:
       #     SQLite). [AEGIS-MVP-MICROSOFT-COVERAGE-02] Inclui o Microsoft Intune: transporte/coletor por HTTP simulado
       #     sobre o Graph v1.0 (IntuneDevicePostureCollectorTests), reconciliação por DIMENSÃO + leitura honesta
       #     (DevicePosturePersistenceTests, SQLite) e a garantia de ZERO EvidenceSignal/TenantControlState pela cadeia
-      #     completa do executor (ScoreGuardDevicePostureTests). Filtro por FullyQualifiedName — NÃO roda a suíte
-      #     backend inteira; classe nova que não entre aqui simplesmente não executa.
-      - name: SIEM and device management connector tests on Linux
+      #     completa do executor (ScoreGuardDevicePostureTests). [AEGIS-MVP-MICROSOFT-COVERAGE-03] Inclui o RISCO
+      #     DE IDENTIDADE do Entra: transporte/semântica/parcialidade/privacidade por HTTP simulado sobre o Graph
+      #     v1.0 (EntraIdentityRiskCollectorTests) e o schema v2 da Evidence Fabric, a compatibilidade com o v1 e
+      #     as GUARDAS de score/NIST (IdentityRiskEvidenceFabricTests, SQLite).
+      # ⚠️ Filtro POR CLASSE, igual ao de migrations-pg, e NENHUM job roda a suíte backend inteira: uma classe de
+      #     teste NOVA que não seja adicionada aqui simplesmente não executa e o check fica verde assim mesmo
+      #     (falso verde). Confira SEMPRE a CONTAGEM no log, não só conclusion=success.
+      - name: SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
