@@ -70,7 +70,11 @@ public sealed record PullIngestionResult(
     DetectionCoverageSnapshot? DetectionCoverage = null,
     // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Dimensão INDEPENDENTE de inventário de software — aditiva (default null),
     // preenchida só por conectores ICombinedVulnerabilityConnector. Uma falha aqui nunca apaga Vulnerabilities.
-    SoftwareInventorySyncResult? SoftwareInventory = null);
+    SoftwareInventorySyncResult? SoftwareInventory = null,
+    // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Postura de configuração/conformidade de dispositivos — aditiva (default
+    // null), preenchida só por conectores IDevicePostureCollector. Carrega o estado de CADA dimensão (políticas,
+    // atribuição e dispositivos) separadamente: uma dimensão bloqueada por permissão nunca aparece como zero.
+    DevicePostureSyncResult? DevicePosture = null);
 
 // ---- [AEGIS-MVP-SIEM] Postura operacional de SIEM — PROVIDER-NEUTRAL (somente leitura) ----
 

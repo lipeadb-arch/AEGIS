@@ -225,7 +225,21 @@ public class ConnectorsController : ControllerBase
                 dc.RulesInLiveMode, dc.RulesWithAlerting, dc.Techniques.Count)
             : null;
 
-        return Ok(new SyncResultDto(result.Persisted, Array.Empty<SignalDto>(), vuln, siem, coverage));
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Postura de dispositivos — DUAS dimensões independentes, fato consultivo.
+        // TotalDevices só viaja quando a dimensão de dispositivos produziu inventário: uma dimensão bloqueada por
+        // permissão devolve null, JAMAIS 0 (o operador não pode confundir "não autorizado" com "nenhum dispositivo").
+        var devicePosture = result.DevicePosture is { } dp
+            ? new DevicePostureSyncSummaryDto(
+                dp.ConfigurationState.ToString(), dp.AssignmentState.ToString(), dp.DeviceState.ToString(),
+                dp.PoliciesStored, dp.DeviceGroupsStored,
+                dp.DeviceState is DevicePostureDimensionState.Available or DevicePostureDimensionState.Partial
+                    ? dp.TotalDevices
+                    : null,
+                dp.ConfigurationPreserved, dp.DevicesPreserved)
+            : null;
+
+        return Ok(new SyncResultDto(
+            result.Persisted, Array.Empty<SignalDto>(), vuln, siem, coverage, devicePosture));
     }
 
     // ---- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ciclo de vida administrativo (TenantAdmin) --------------------

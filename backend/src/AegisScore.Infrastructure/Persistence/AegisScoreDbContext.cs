@@ -8,6 +8,7 @@ using AegisScore.Domain;
 // A entidade persistida de cobertura de detecção (Domain) tem o mesmo nome do record consultivo da camada
 // Application; aqui o DbContext lida SEMPRE com a entidade de domínio.
 using DetectionCoverageSnapshot = AegisScore.Domain.DetectionCoverageSnapshot;
+using DevicePostureSnapshot = AegisScore.Domain.DevicePostureSnapshot;
 
 namespace AegisScore.Infrastructure.Persistence;
 
@@ -75,6 +76,12 @@ public class AegisScoreDbContext : DbContext
     // CONSULTIVA. Snapshot atual por (tenant, conector) + filhos agregados por técnica. NUNCA vira score/evidência.
     public DbSet<DetectionCoverageSnapshot> DetectionCoverageSnapshots => Set<DetectionCoverageSnapshot>();
     public DbSet<DetectionCoverageTechnique> DetectionCoverageTechniques => Set<DetectionCoverageTechnique>();
+    // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Postura de configuração/conformidade de dispositivos — tenant-owned,
+    // provider-neutral, CONSULTIVA. Snapshot atual por (tenant, conector) + políticas + grupos AGREGADOS de
+    // dispositivos (nenhuma linha por dispositivo, nenhuma PII). NUNCA vira score/evidência.
+    public DbSet<DevicePostureSnapshot> DevicePostureSnapshots => Set<DevicePostureSnapshot>();
+    public DbSet<DevicePosturePolicy> DevicePosturePolicies => Set<DevicePosturePolicy>();
+    public DbSet<DevicePostureDeviceGroup> DevicePostureDeviceGroups => Set<DevicePostureDeviceGroup>();
 
     // Risks & scoring
     public DbSet<Risk> Risks => Set<Risk>();
@@ -362,6 +369,76 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.DetectionCoverageSnapshotId, x.TechniqueId })
                 .IsUnique()
                 .HasDatabaseName("UX_DetectionCoverageTechnique_Natural");
+        });
+
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Postura de dispositivos: UM snapshot ATUAL por (tenant, conector). A
+        // chave natural (TenantId, ConnectorConfigId) como ÍNDICE ÚNICO NOMEADO torna o upsert idempotente uma
+        // invariante de banco. A chave alternativa composta (Id, TenantId) é o alvo das FKs dos filhos, para o
+        // banco recusar filho de tenant divergente — mesmo idioma de DetectionCoverageSnapshot. A FK COMPOSTA
+        // tenant-safe (ConnectorConfigId, TenantId) → ConnectorConfig (Id, TenantId) faz o banco recusar snapshot
+        // apontando para conector inexistente OU de OUTRO tenant; Cascade remove o snapshot (e, em cadeia, seus
+        // filhos) quando o conector é excluído — sem postura órfã. Estados persistidos como int.
+        b.Entity<DevicePostureSnapshot>(e =>
+        {
+            e.Property(x => x.Source).HasMaxLength(200).IsRequired();
+            e.Property(x => x.ConfigurationFingerprint).HasMaxLength(64).IsRequired();   // SHA-256 hex
+            e.Property(x => x.DeviceFingerprint).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ConfigurationState).HasConversion<int>();
+            e.Property(x => x.ConfigurationAttemptState).HasConversion<int>();
+            e.Property(x => x.AssignmentState).HasConversion<int>();
+            e.Property(x => x.DeviceState).HasConversion<int>();
+            e.Property(x => x.DeviceAttemptState).HasConversion<int>();
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId })
+                .IsUnique()
+                .HasDatabaseName("UX_DevicePostureSnapshot_Natural");
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            e.HasMany(x => x.Policies).WithOne(p => p.Snapshot)
+                .HasForeignKey(p => new { p.DevicePostureSnapshotId, p.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.DeviceGroups).WithOne(g => g.Snapshot)
+                .HasForeignKey(g => new { g.DevicePostureSnapshotId, g.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<ConnectorConfig>()
+                .WithMany()
+                .HasForeignKey(x => new { x.ConnectorConfigId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Política congelada no snapshot: tenant-owned. Índice único (Tenant, Snapshot, Kind, ExternalId) — uma
+        // política não se repete no mesmo snapshot (idempotência da reconciliação como invariante de banco).
+        // NUNCA guarda descrição, ajustes ou valores configurados: só id da fonte, nome, plataforma e atribuição.
+        b.Entity<DevicePosturePolicy>(e =>
+        {
+            e.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.DisplayName).HasMaxLength(200).IsRequired();
+            e.Property(x => x.PlatformLabel).HasMaxLength(60);
+            e.Property(x => x.Kind).HasConversion<int>();
+            e.Property(x => x.AssignmentState).HasConversion<int>();
+            e.HasIndex(x => new { x.TenantId, x.DevicePostureSnapshotId });
+            e.HasIndex(x => new { x.TenantId, x.DevicePostureSnapshotId, x.Kind, x.ExternalId })
+                .IsUnique()
+                .HasDatabaseName("UX_DevicePosturePolicy_Natural");
+        });
+
+        // Grupo AGREGADO de dispositivos: tenant-owned. É o ÚNICO grão em que dispositivos são persistidos —
+        // sem identificador, nome, usuário ou qualquer PII. Índice único pelo recorte (SO × conformidade ×
+        // criptografia × atividade): o mesmo recorte não se repete no snapshot.
+        b.Entity<DevicePostureDeviceGroup>(e =>
+        {
+            e.Property(x => x.OperatingSystem).HasMaxLength(60).IsRequired();
+            e.Property(x => x.Compliance).HasConversion<int>();
+            e.Property(x => x.Encryption).HasConversion<int>();
+            e.Property(x => x.Activity).HasConversion<int>();
+            e.HasIndex(x => new { x.TenantId, x.DevicePostureSnapshotId });
+            e.HasIndex(x => new
+                {
+                    x.TenantId, x.DevicePostureSnapshotId, x.OperatingSystem, x.Compliance, x.Encryption, x.Activity,
+                })
+                .IsUnique()
+                .HasDatabaseName("UX_DevicePostureDeviceGroup_Natural");
         });
 
         // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidência de identidade: UM snapshot ATUAL por (tenant, conector). A chave
@@ -947,6 +1024,11 @@ public class AegisScoreDbContext : DbContext
         // jamais lê a cobertura de detecção de outro. Stamping do TenantId no insert é automático (SaveChanges guard).
         b.Entity<DetectionCoverageSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<DetectionCoverageTechnique>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Postura de dispositivos (pai e filhos) é ITenantOwned (fail-closed):
+        // um tenant jamais lê políticas ou grupos de dispositivos de outro. Stamping automático no insert.
+        b.Entity<DevicePostureSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<DevicePosturePolicy>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<DevicePostureDeviceGroup>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<Risk>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<RiskAppetite>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<IcrScore>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
