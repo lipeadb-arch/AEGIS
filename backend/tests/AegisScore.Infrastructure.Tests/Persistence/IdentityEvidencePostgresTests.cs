@@ -181,6 +181,159 @@ public sealed class IdentityEvidencePostgresTests
             (await assert.IdentityEvidenceSnapshots.CountAsync()).Should().Be(0, "excluir o conector cascateia no snapshot");
     }
 
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-COVERAGE-03] O schema v2 do <c>FactsJson</c> em PostgreSQL REAL: os agregados de
+    /// risco sobrevivem ao round-trip, um snapshot gravado no formato v1 (array nu) continua legível SEM
+    /// inventar zeros, a coleta que falha depois preserva o risco anterior — e NADA disso escreve score.
+    ///
+    /// ⚠️ Esta classe está nominalmente no filtro do job `migrations-pg`; estes casos executam de fato lá.
+    /// </summary>
+    [Fact]
+    public async Task IdentityRisk_SchemaV2_RoundTrip_V1Compatibility_And_NoScoreWrite_OnRealPostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;   // AEGIS_TEST_PG não definido — pulado honestamente
+        var opt = pg.DbOptions();
+
+        var tenant = Guid.NewGuid();
+        var legacyTenant = Guid.NewGuid();
+        var connector = Guid.NewGuid();
+        var legacyConnector = Guid.NewGuid();
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+        {
+            await db.Database.MigrateAsync();
+            db.Tenants.Add(new Tenant { Id = tenant, Name = "R", Slug = "r-" + tenant.ToString("N"), Status = TenantStatus.Active });
+            db.Tenants.Add(new Tenant { Id = legacyTenant, Name = "L", Slug = "l-" + legacyTenant.ToString("N"), Status = TenantStatus.Active });
+            await db.SaveChangesAsync();
+        }
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            db.Connectors.Add(NewEntraConnector(tenant, connector));
+            await db.SaveChangesAsync();
+        }
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(legacyTenant)))
+        {
+            db.Connectors.Add(NewEntraConnector(legacyTenant, legacyConnector));
+            await db.SaveChangesAsync();
+        }
+
+        // (a) ROUND-TRIP v2: os agregados de risco atravessam o PostgreSQL real sem perda.
+        await CollectAsync(opt, tenant, CompletedWithRisk());
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var stored = await db.IdentityEvidenceSnapshots.AsNoTracking().SingleAsync();
+            stored.SchemaVersion.Should().Be(IdentityEvidenceService.SchemaVersion);
+
+            var projection = await ProjectionAsync(opt, tenant);
+            projection.IdentityRisk.Should().NotBeNull();
+            projection.IdentityRisk!.RiskyUsers!.Active.Should().Be(4);
+            projection.IdentityRisk.RiskyUsers.Levels.Hidden.Should().Be(1, "nível oculto pela licença sobrevive ao round-trip");
+            projection.IdentityRisk.RiskDetections!.TotalInWindow.Should().Be(6);
+            projection.IdentityRisk.RiskDetections.TopTypes.Should().ContainSingle(t => t.Category == "leakedcredentials");
+            projection.AuthenticationPosture!.PasswordlessCapable.Should().Be(2);
+
+            // PRIVACIDADE no banco real: nenhum campo pessoal foi persistido.
+            var body = stored.FactsJson + stored.CapabilitiesJson;
+            foreach (var sentinel in new[] { "userPrincipalName", "userDisplayName", "userId", "ipAddress", "requestId", "correlationId", "additionalInfo", "@" })
+                body.Should().NotContain(sentinel, $"'{sentinel}' jamais é persistido");
+        }
+
+        // (b) COMPATIBILIDADE v1: um snapshot no formato antigo (array nu) segue legível, sem agregados falsos.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(legacyTenant)))
+        {
+            db.IdentityEvidenceSnapshots.Add(new IdentityEvidenceSnapshot
+            {
+                ConnectorConfigId = legacyConnector,
+                Source = "Microsoft Entra ID",
+                SourceType = KnightSourceType.MicrosoftEntraId,
+                SchemaVersion = IdentityEvidenceService.LegacySchemaVersion,
+                DataState = KnightSourceState.Completed,
+                LastAttemptState = KnightSourceState.Completed,
+                LastAttemptAt = DateTimeOffset.UtcNow,
+                LastCollectionAt = DateTimeOffset.UtcNow,
+                FactsJson = """[{"key":"PrivilegedAccountsTotal","outcome":"Collected","count":5}]""",
+                CapabilitiesJson = """[{"capability":"PrivilegedRoleInventory","outcome":"Collected","detail":null}]""",
+                Fingerprint = "legacy",
+            });
+            await db.SaveChangesAsync();
+        }
+        var legacyProjection = await ProjectionAsync(opt, legacyTenant);
+        legacyProjection.CollectionState.Should().Be(IdentityEvidenceCollectionState.Complete);
+        legacyProjection.SchemaVersion.Should().Be(IdentityEvidenceService.LegacySchemaVersion, "o v1 NÃO é reescrito");
+        legacyProjection.Capabilities.Should().ContainSingle(c => c.Capability == KnightCapability.PrivilegedRoleInventory);
+        legacyProjection.IdentityRisk.Should().BeNull("snapshot v1 não tem risco — e ausência nunca vira zero");
+
+        // (c) DEGRADAÇÃO: a coleta seguinte falha e o risco ANTERIOR continua servido.
+        await CollectAsync(opt, tenant, Failure());
+        var preserved = await ProjectionAsync(opt, tenant);
+        preserved.IdentityRisk.Should().NotBeNull("a última fotografia válida de risco sobrevive à falha");
+        preserved.IdentityRisk!.RiskyUsers!.Active.Should().Be(4);
+        preserved.LastAttemptState.Should().Be(KnightSourceState.AuthenticationFailure);
+        preserved.IsDegraded.Should().BeTrue();
+
+        // (d) AUTORIDADE: nenhuma escrita de score em PostgreSQL real.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            (await db.Signals.CountAsync()).Should().Be(0, "risco de identidade não cria EvidenceSignal");
+            (await db.TenantControlStates.CountAsync()).Should().Be(0, "risco de identidade não grava veredito");
+            (await db.TenantScoreSnapshots.CountAsync()).Should().Be(0, "risco de identidade não produz score");
+        }
+    }
+
+    private static async Task<IdentityEvidenceProjection> ProjectionAsync(
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        var registry = new KnightCollectorRegistry(new[] { new FixedCollector(Completed()) });
+        return await new IdentityEvidenceService(db, registry, new FixedConfig(), new SystemTenantContext(tenant))
+            .GetLatestProjectionAsync();
+    }
+
+    /// <summary>Coleta completa carregando os agregados de risco do schema v2 (sem PII, só contagens).</summary>
+    private static KnightCollectionResult CompletedWithRisk()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var risk = new IdentityRiskPosture(
+            KnightCapabilityOutcome.Collected, null,
+            new IdentityRiskyUserFacts(
+                Total: 6, Deleted: 1, Processing: 1,
+                Levels: new IdentityRiskLevelDistribution(High: 2, Medium: 1, Low: 1, Hidden: 1),
+                States: new IdentityRiskStateDistribution(AtRisk: 3, ConfirmedCompromised: 1, Remediated: 1),
+                HighRiskActive: 2,
+                MostRecentRiskUpdateAt: now.AddDays(-1),
+                IsComplete: true),
+            KnightCapabilityOutcome.Collected, null,
+            new IdentityRiskDetectionFacts(
+                WindowDays: IdentityRiskWindows.DetectionWindowDays,
+                WindowStart: now.AddDays(-30), WindowEnd: now,
+                TotalInWindow: 6, OutsideWindow: 3, Undated: 1, InRecentWindow: 2,
+                Levels: new IdentityRiskLevelDistribution(High: 4, Low: 2),
+                States: new IdentityRiskStateDistribution(AtRisk: 4, Remediated: 2),
+                Realtime: 3, NearRealtime: 1, Offline: 2, TimingNotDefined: 0, TimingUnknown: 0,
+                PremiumDetailWithheld: 1, HighRiskActive: 4,
+                TopTypes: new[] { new IdentityRiskCategoryCount("leakedcredentials", 6) },
+                MostRecentDetectionAt: now.AddDays(-1),
+                IsComplete: true),
+            now);
+
+        var auth = new IdentityAuthenticationPosture(
+            TotalUsers: 8, MfaCapable: 6, MfaRegistered: 6, PasswordlessCapable: 2, CapabilityUnknown: 0,
+            MethodsRegistered: new[] { new IdentityRiskCategoryCount("microsoftauthenticatorpush", 6) },
+            IsComplete: true);
+
+        return new KnightCollectionResult(
+            KnightSourceType.MicrosoftEntraId, KnightSourceState.Completed, "Microsoft Entra ID",
+            new KnightFactSet(new[] { KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsTotal, 7) }),
+            new[]
+            {
+                new KnightCapabilityStatus(KnightCapability.PrivilegedRoleInventory, KnightCapabilityOutcome.Collected),
+                new KnightCapabilityStatus(KnightCapability.IdentityRiskyUsers, KnightCapabilityOutcome.Collected),
+                new KnightCapabilityStatus(KnightCapability.IdentityRiskDetections, KnightCapabilityOutcome.Collected),
+            },
+            now, "ok", risk, auth);
+    }
+
     private sealed class FixedCollector : IKnightCollector
     {
         private readonly KnightCollectionResult _result;

@@ -238,6 +238,11 @@ jobs:
       # (AEGIS-MVP-MICROSOFT-COVERAGE-02: migration da postura de dispositivos, chave natural (tenant, conector),
       # substituição por DIMENSÃO com preservação independente, FKs COMPOSTAS tenant-safe — rejeição de
       # órfão/cross-tenant e cascade na exclusão do conector — índices únicos naturais e zero escrita de score).
+      # [AEGIS-MVP-MICROSOFT-COVERAGE-03] O risco de identidade NÃO trouxe migration (o schema v2 do snapshot é
+      # uma extensão do contrato JSON): o caso novo
+      # `IdentityEvidencePostgresTests.IdentityRisk_SchemaV2_RoundTrip_V1Compatibility_And_NoScoreWrite_OnRealPostgres`
+      # foi acrescentado à classe `IdentityEvidencePostgresTests`, que JÁ consta no filtro abaixo — por isso ele
+      # executa de fato neste job (a contagem sobe de 20 para 21).
       # ⚠️ Este filtro é POR CLASSE e NENHUM job roda a suíte completa: uma classe PostgreSQL nova que não seja
       # adicionada AQUI nunca executa e o check fica verde assim mesmo (falso verde). Confira SEMPRE a contagem
       # de testes no log, não só conclusion=success.

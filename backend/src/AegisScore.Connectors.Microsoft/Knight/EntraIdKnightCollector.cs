@@ -557,9 +557,19 @@ public sealed class EntraIdKnightCollector : IKnightCollector
             if (!complete)
                 detail = $"Leitura interrompida no teto operacional de {MaxRiskItems} registros — os números são um piso, não o total.";
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Cancelamento do CHAMADOR: propaga — não é uma falha da fonte e não deve virar estado da capacidade.
+            throw;
+        }
         catch (OperationCanceledException)
         {
-            throw;
+            // TIMEOUT do HttpClient (o token do chamador NÃO foi cancelado): é indisponibilidade desta
+            // capacidade — a outra dimensão segue o seu curso, e o que já foi lido é preservado.
+            outcome = KnightCapabilityOutcome.Unavailable;
+            detail = "Tempo esgotado ao ler usuários em risco no Microsoft Graph."
+                + (total > 0 ? " Leitura parcial preservada." : "");
+            _log?.LogWarning("Timeout ao coletar {Capability} do Entra ID Protection.", KnightCapability.IdentityRiskyUsers);
         }
         catch (EntraGraphException ex)
         {
@@ -651,9 +661,19 @@ public sealed class EntraIdKnightCollector : IKnightCollector
             if (!complete)
                 detail = $"Leitura interrompida no teto operacional de {MaxRiskItems} detecções — os números são um piso, não o total.";
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Cancelamento do CHAMADOR: propaga — não é uma falha da fonte e não deve virar estado da capacidade.
+            throw;
+        }
         catch (OperationCanceledException)
         {
-            throw;
+            // TIMEOUT do HttpClient (o token do chamador NÃO foi cancelado): é indisponibilidade desta
+            // capacidade — a outra dimensão segue o seu curso, e o que já foi lido é preservado.
+            outcome = KnightCapabilityOutcome.Unavailable;
+            detail = "Tempo esgotado ao ler detecções de risco no Microsoft Graph."
+                + (read > 0 ? " Leitura parcial preservada." : "");
+            _log?.LogWarning("Timeout ao coletar {Capability} do Entra ID Protection.", KnightCapability.IdentityRiskDetections);
         }
         catch (EntraGraphException ex)
         {
