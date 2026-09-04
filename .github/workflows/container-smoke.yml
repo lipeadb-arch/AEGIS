@@ -59,11 +59,15 @@ jobs:
       #     Sentinel. [AEGIS-MVP-GOOGLE-SECOPS-02] Inclui a COBERTURA DE DETECÇÃO: transporte rules.list CONFIG_ONLY
       #     (ChronicleRulesApiTests), agregação regras×MITRE (DetectionCoverageCollectorTests), catálogo MITRE v17.1
       #     real (MitreAttackCatalogTests) e a reconciliação/leitura + GARANTIA de zero score (DetectionCoveragePersistenceTests,
-      #     SQLite). Filtro por FullyQualifiedName — NÃO roda a suíte backend inteira.
-      - name: Google SecOps and Sentinel connector tests on Linux
+      #     SQLite). [AEGIS-MVP-MICROSOFT-COVERAGE-02] Inclui o Microsoft Intune: transporte/coletor por HTTP simulado
+      #     sobre o Graph v1.0 (IntuneDevicePostureCollectorTests), reconciliação por DIMENSÃO + leitura honesta
+      #     (DevicePosturePersistenceTests, SQLite) e a garantia de ZERO EvidenceSignal/TenantControlState pela cadeia
+      #     completa do executor (ScoreGuardDevicePostureTests). Filtro por FullyQualifiedName — NÃO roda a suíte
+      #     backend inteira; classe nova que não entre aqui simplesmente não executa.
+      - name: SIEM and device management connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
@@ -230,7 +234,13 @@ jobs:
       # e FK COMPOSTA tenant-safe — rejeição de órfão/cross-tenant e cascade na exclusão do conector) e
       # SoftwareInventoryPostgresTests (AEGIS-MVP-MICROSOFT-COVERAGE-01: migration do inventário de software,
       # FKs COMPOSTAS tenant-safe para Asset/Conector/Produto, lifecycle idempotente, preservação dos dados em
-      # coleta de falha e ausência de escrita de score).
+      # coleta de falha e ausência de escrita de score) e DevicePosturePostgresTests
+      # (AEGIS-MVP-MICROSOFT-COVERAGE-02: migration da postura de dispositivos, chave natural (tenant, conector),
+      # substituição por DIMENSÃO com preservação independente, FKs COMPOSTAS tenant-safe — rejeição de
+      # órfão/cross-tenant e cascade na exclusão do conector — índices únicos naturais e zero escrita de score).
+      # ⚠️ Este filtro é POR CLASSE e NENHUM job roda a suíte completa: uma classe PostgreSQL nova que não seja
+      # adicionada AQUI nunca executa e o check fica verde assim mesmo (falso verde). Confira SEMPRE a contagem
+      # de testes no log, não só conclusion=success.
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
@@ -239,4 +249,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests"

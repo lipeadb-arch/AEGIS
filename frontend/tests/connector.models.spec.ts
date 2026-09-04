@@ -107,11 +107,24 @@ test('workspaceId só entra no serviço Sentinel', () => {
   eq(sentinel.workspaceId, 'ws-123', 'Sentinel recebe o workspaceId aparado');
 });
 
-// ---- 3) serviços exibidos separadamente (4 capacidades distintas) ------------------------------
-test('a família Microsoft tem quatro serviços distintos', () => {
-  eq(MICROSOFT_HUB_SERVICES.length, 4, 'quatro serviços');
+// [AEGIS-MVP-MICROSOFT-COVERAGE-02] O Intune entra no MESMO corpo, com a MESMA credencial e SEM workspaceId.
+test('o Intune reusa a credencial comum e nunca recebe workspaceId', () => {
+  const body = buildMicrosoftHubRequest(CREDS, [
+    { key: 'IntunePosture', syncIntervalMinutes: 720, workspaceId: 'nao-deveria-ir' },
+    { key: 'Sentinel', syncIntervalMinutes: 360, workspaceId: 'ws-123' },
+  ]);
+  const intune = body.services.find((s) => s.capability === 4)!;
+  assert(intune !== undefined, 'o Intune viaja como capacidade ConfigAnalyzer (4)');
+  eq(intune.workspaceId, undefined, 'o Intune nunca recebe workspaceId (exclusivo do Sentinel)');
+  eq(body.clientSecret, CREDS.clientSecret, 'nenhum segredo adicional é pedido para o Intune');
+  eq(body.services.length, 2, 'um serviço por seleção — nada duplicado');
+});
+
+// ---- 3) serviços exibidos separadamente (5 capacidades distintas) ------------------------------
+test('a família Microsoft tem cinco serviços distintos', () => {
+  eq(MICROSOFT_HUB_SERVICES.length, 5, 'cinco serviços');
   const caps = new Set(MICROSOFT_HUB_SERVICES.map((s) => s.capabilityValue));
-  eq(caps.size, 4, 'capacidades distintas');
+  eq(caps.size, 5, 'capacidades distintas');
   const sentinel = MICROSOFT_HUB_SERVICES.find((s) => s.key === 'Sentinel')!;
   eq(sentinel.capabilityValue, 5, 'Sentinel = Siem (5)');
   eq(sentinel.providerValue, 3, 'Sentinel provider = MicrosoftSentinel (3)');
@@ -119,6 +132,26 @@ test('a família Microsoft tem quatro serviços distintos', () => {
   assert(MICROSOFT_HUB_SERVICES.filter((s) => s.needsWorkspaceId).length === 1, 'apenas UM serviço exige workspaceId');
   const secure = MICROSOFT_HUB_SERVICES.find((s) => s.key === 'SecureScore')!;
   eq(secure.providerValue, 0, 'os demais serviços usam provider Microsoft (0)');
+
+  // [AEGIS-MVP-MICROSOFT-COVERAGE-02] O Intune declara AS DUAS permissões, nomeando a dimensão de cada uma —
+  // é o que permite a tela dizer o que já funciona e o que ainda falta conceder.
+  const intune = MICROSOFT_HUB_SERVICES.find((s) => s.key === 'IntunePosture')!;
+  eq(intune.capabilityValue, 4, 'Intune = ConfigAnalyzer (4)');
+  eq(intune.providerValue, 0, 'Intune provider = Microsoft (0)');
+  eq(intune.needsWorkspaceId, false, 'o Intune não usa workspaceId');
+  eq(intune.appPermissions.length, 2, 'duas permissões distintas, uma por dimensão');
+  assert(
+    intune.appPermissions.some((p) => p.startsWith('DeviceManagementConfiguration.Read.All')),
+    'declara a permissão de políticas',
+  );
+  assert(
+    intune.appPermissions.some((p) => p.startsWith('DeviceManagementManagedDevices.Read.All')),
+    'declara a permissão de estado efetivo dos dispositivos',
+  );
+  // Nenhuma permissão de ESCRITA é pedida em nenhum serviço da família.
+  for (const svc of MICROSOFT_HUB_SERVICES)
+    for (const perm of svc.appPermissions)
+      assert(!/ReadWrite/.test(perm), `${svc.key} não pede permissão de escrita: ${perm}`);
 });
 
 // ---- 4) conectores existentes agrupados sob "Microsoft" SEM duplicação -------------------------
@@ -128,19 +161,23 @@ test('conectores Microsoft são agrupados sem duplicar capacidade', () => {
     conn('Microsoft', 'IdentityPosture'),
     conn('Microsoft', 'VulnerabilityScanner'),
     conn('MicrosoftSentinel', 'Siem'),
+    conn('Microsoft', 'ConfigAnalyzer'), // [COVERAGE-02] Intune — quinto filho do hub
     conn('Generic', 'Siem'), // push genérico — NÃO é família Microsoft
     conn('Google', 'IdentityPosture'), // Google KNIGHT — NÃO é família Microsoft
+    conn('Aws', 'ConfigAnalyzer'), // MESMA capacidade, outro provider — NÃO é família Microsoft
   ];
   const family = all.filter(isMicrosoftFamily);
-  eq(family.length, 4, 'exatamente os quatro serviços Microsoft');
+  eq(family.length, 5, 'exatamente os cinco serviços Microsoft');
   assert(!isMicrosoftFamily(conn('Generic', 'Siem')), 'Generic/Siem não é família Microsoft');
   assert(!isMicrosoftFamily(conn('Google', 'IdentityPosture')), 'Google/IdentityPosture não é família Microsoft');
+  // A capacidade ConfigAnalyzer NÃO é exclusiva da Microsoft: o par provider+capability é que decide.
+  assert(!isMicrosoftFamily(conn('Aws', 'ConfigAnalyzer')), 'Aws/ConfigAnalyzer não é família Microsoft');
 
   // Cada membro mapeia para um serviço distinto (sem duplicidade de provider/capability).
   const specs = family.map((c) => microsoftServiceFor(c));
   assert(specs.every((s) => s !== undefined), 'todo membro da família resolve seu serviço');
   const keys = new Set(specs.map((s) => s!.key));
-  eq(keys.size, 4, 'quatro serviços distintos — sem duplicação');
+  eq(keys.size, 5, 'cinco serviços distintos — sem duplicação');
 });
 
 // ---- 5) formulário genérico exclui a família Microsoft -----------------------------------------

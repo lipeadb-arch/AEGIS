@@ -379,6 +379,90 @@ public sealed class TenantManagementServiceTests : IDisposable
         }
     }
 
+    // ---- [AEGIS-MVP-MICROSOFT-COVERAGE-02] Intune como QUINTO serviço do hub ----
+
+    [Fact]
+    public async Task ConfigureMicrosoftHub_IntuneEntraComoQuintoServico_ReusandoACredencialComum()
+    {
+        await using var db = NewContext(TenantA);
+        var protector = new FakeProtector();
+        var svc = ServiceFor(db, TenantA, protector);
+
+        var results = await svc.ConfigureMicrosoftHubAsync(HubCommand(
+            HubService(ConnectorCapability.SecureScore),
+            HubService(ConnectorCapability.IdentityPosture),
+            HubService(ConnectorCapability.VulnerabilityScanner),
+            HubService(ConnectorCapability.Siem, workspaceId: WorkspaceGuid),
+            HubService(ConnectorCapability.ConfigAnalyzer)));
+
+        results.Should().HaveCount(5);
+        results.Should().OnlyContain(r => r.Created && r.HasCredentials);
+
+        var intune = await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.ConfigAnalyzer);
+        intune.Provider.Should().Be(ConnectorProvider.Microsoft, "o Intune é um filho Microsoft, não um provider novo");
+        intune.DisplayName.Should().Be("Microsoft Intune · Configuração e Conformidade");
+
+        // A MESMA credencial comum — nenhum segredo adicional foi pedido para o Intune.
+        var settings = protector.Unprotect(intune.EncryptedSettings);
+        settings.Should().Contain("tenant-aaa").And.Contain("client-bbb").And.Contain("secret-ccc");
+        WorkspaceIdOf(settings).Should().BeNull("workspaceId continua exclusivo do Sentinel");
+    }
+
+    [Fact]
+    public async Task ConfigureMicrosoftHub_ReaplicarComIntune_NaoDuplicaNemAlteraOsDemaisServicos()
+    {
+        await using var db = NewContext(TenantA);
+        var protector = new FakeProtector();
+        var svc = ServiceFor(db, TenantA, protector);
+
+        await svc.ConfigureMicrosoftHubAsync(HubCommand(
+            HubService(ConnectorCapability.SecureScore),
+            HubService(ConnectorCapability.ConfigAnalyzer)));
+        var secureScoreIdBefore = (await db.Connectors
+            .SingleAsync(c => c.Capability == ConnectorCapability.SecureScore)).Id;
+
+        var again = await svc.ConfigureMicrosoftHubAsync(HubCommand(
+            HubService(ConnectorCapability.SecureScore),
+            HubService(ConnectorCapability.ConfigAnalyzer)));
+
+        again.Should().OnlyContain(r => !r.Created, "reaplicar RECONFIGURA (upsert pela chave natural)");
+        (await db.Connectors.CountAsync()).Should().Be(2, "sem duplicidade de provider/capability");
+        (await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.SecureScore)).Id
+            .Should().Be(secureScoreIdBefore, "os demais serviços Microsoft permanecem os MESMOS conectores");
+    }
+
+    [Fact]
+    public async Task ConfigureMicrosoftHub_ComIntune_NaoEcoaSegredoNoResultado()
+    {
+        await using var db = NewContext(TenantA);
+        var results = await ServiceFor(db, TenantA).ConfigureMicrosoftHubAsync(
+            HubCommand(HubService(ConnectorCapability.ConfigAnalyzer)));
+
+        var serialized = System.Text.Json.JsonSerializer.Serialize(results);
+        serialized.Should().NotContain("secret-ccc", "o segredo comum nunca volta para o frontend");
+    }
+
+    [Fact]
+    public async Task ConfigureMicrosoftHub_IntuneTemCicloDeVidaIndependente()
+    {
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+
+        await svc.ConfigureMicrosoftHubAsync(HubCommand(
+            HubService(ConnectorCapability.SecureScore),
+            HubService(ConnectorCapability.ConfigAnalyzer)));
+
+        var intuneId = (await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.ConfigAnalyzer)).Id;
+        var disabled = await svc.SetConnectorEnabledAsync(intuneId, enabled: false);
+        disabled.Status.Should().Be(ConnectorAdminStatus.Updated);
+
+        var intune = await db.Connectors.SingleAsync(c => c.Id == intuneId);
+        var secureScore = await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.SecureScore);
+        intune.Enabled.Should().BeFalse("desabilitar o Intune é um ato próprio dele");
+        intune.EncryptedSettings.Should().NotBeNullOrEmpty("a credencial é PRESERVADA para reativação");
+        secureScore.Enabled.Should().BeTrue("os demais serviços Microsoft seguem inalterados");
+    }
+
     [Fact]
     public async Task ConfigureMicrosoftHub_WorkspaceIdSomenteNoSentinel_NaoContaminaOsDemais()
     {
