@@ -48,7 +48,17 @@ public sealed record IdentityEvidenceSnapshotView(
     DateTimeOffset LastAttemptAt,
     string? LastAttemptDetail,
     IReadOnlyList<KnightObservation> Facts,
-    IReadOnlyList<KnightCapabilityStatus> Capabilities)
+    IReadOnlyList<KnightCapabilityStatus> Capabilities,
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-COVERAGE-03] Postura AGREGADA de risco de identidade preservada no snapshot
+    /// (schema v2). <c>null</c> em snapshots v1 — a leitura compatível NÃO inventa zeros para eles.
+    /// </summary>
+    IdentityRiskPosture? IdentityRisk = null,
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-COVERAGE-03] Postura AGREGADA de registro de métodos de autenticação (schema v2).
+    /// <c>null</c> em snapshots v1.
+    /// </summary>
+    IdentityAuthenticationPosture? AuthenticationPosture = null)
 {
     /// <summary>True quando o snapshot carrega dados de uma coleta completa (a leitura dos totais é verdade).</summary>
     public bool HasCompleteData => DataState == KnightSourceState.Completed;
@@ -56,6 +66,20 @@ public sealed record IdentityEvidenceSnapshotView(
     /// <summary>True quando há QUALQUER dado coletado (completo ou parcial), independente da última tentativa.</summary>
     public bool HasAnyData => DataState is KnightSourceState.Completed or KnightSourceState.PartialCollection;
 }
+
+/// <summary>
+/// [AEGIS-MVP-MICROSOFT-COVERAGE-03] Envelope VERSIONADO do <c>FactsJson</c> do snapshot de identidade.
+///
+/// Evolução SEM migration: o schema v1 persistia um ARRAY nu de observações; o v2 persiste um OBJETO que
+/// carrega as mesmas observações mais os blocos agregados novos. A leitura decide pelo formato da RAIZ do
+/// JSON (array ⇒ v1, objeto ⇒ v2), então qualquer snapshot já gravado continua legível e nada precisa ser
+/// reescrito no banco. Nenhum campo pessoal atravessa este envelope — só agregados.
+/// </summary>
+public sealed record IdentityEvidenceFacts(
+    string SchemaVersion,
+    IReadOnlyList<KnightObservation> Observations,
+    IdentityRiskPosture? IdentityRisk,
+    IdentityAuthenticationPosture? AuthenticationPosture);
 
 /// <summary>
 /// Desfecho de UMA aquisição lógica de evidência de identidade: o estado do conector, o resultado

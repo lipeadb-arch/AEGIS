@@ -57,6 +57,21 @@ public enum KnightCapability
 
     /// <summary>Auditoria de autorizações OAuth de terceiros (Reports API).</summary>
     OAuthTokenAudit = 13,
+
+    // ---- [AEGIS-MVP-MICROSOFT-COVERAGE-03] Risco de identidade (Microsoft Entra ID Protection) ----
+    /// <summary>
+    /// Inventário AGREGADO de usuários marcados em risco pelo provedor de identidade
+    /// (<c>IdentityRiskyUser.Read.All</c>). INDEPENDENTE de <see cref="IdentityRiskDetections"/>: uma falha
+    /// aqui não invalida a outra.
+    /// </summary>
+    IdentityRiskyUsers = 14,
+
+    /// <summary>
+    /// Detecções/eventos de risco recentes em janela determinística (<c>IdentityRiskEvent.Read.All</c>).
+    /// Conceito DISTINTO de "usuário em risco" — um usuário pode ter várias detecções, e detecções resolvidas
+    /// não tornam o usuário seguro.
+    /// </summary>
+    IdentityRiskDetections = 15,
 }
 
 /// <summary>
@@ -72,6 +87,14 @@ public enum KnightCapabilityOutcome
     Throttled = 4,
     AuthenticationFailure = 5,
     Error = 6,
+
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-COVERAGE-03] A permissão existe, mas a LICENÇA do tenant não habilita a
+    /// capacidade (ou entrega dados limitados). É honestamente distinto de <see cref="InsufficientPermission"/>
+    /// (falta consentimento) e de <see cref="Unavailable"/> (a fonte falhou): aqui a fonte respondeu que o
+    /// recurso não está licenciado. NUNCA vira coleção vazia nem "conforme".
+    /// </summary>
+    LimitedByLicense = 7,
 }
 
 /// <summary>Estado por capacidade — o que a fonte conseguiu (ou não) coletar, com detalhe sanitizado.</summary>
@@ -168,7 +191,18 @@ public sealed record KnightCollectionResult(
     KnightFactSet Facts,
     IReadOnlyList<KnightCapabilityStatus> Capabilities,
     DateTimeOffset CollectedAt,
-    string? Detail = null)
+    string? Detail = null,
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-COVERAGE-03] Postura AGREGADA de risco de identidade da MESMA coleta lógica
+    /// (provider-neutral, sem PII). Opcional: fontes que não a produzem deixam <c>null</c>, e o contrato
+    /// anterior segue intacto. NÃO entra na fórmula do KNIGHT Score — é fato consultivo.
+    /// </summary>
+    AegisScore.Application.Identity.IdentityRiskPosture? IdentityRisk = null,
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-COVERAGE-03] Postura AGREGADA de registro de métodos de autenticação, derivada do
+    /// MESMO relatório agregado já autorizado (sem chamadas por usuário e sem permissão nova).
+    /// </summary>
+    AegisScore.Application.Identity.IdentityAuthenticationPosture? AuthenticationPosture = null)
 {
     public static KnightCollectionResult NotConfigured(KnightSourceType source, string label) => new(
         source, KnightSourceState.NotConfigured, label, KnightFactSet.Empty,

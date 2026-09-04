@@ -30,8 +30,15 @@ namespace AegisScore.Infrastructure.Identity;
 /// </summary>
 public sealed class IdentityEvidenceService : IIdentityEvidenceService
 {
-    /// <summary>Versão do schema do snapshot de evidência de identidade — rastreabilidade do contrato persistido.</summary>
-    public const string SchemaVersion = "aegis-identity-evidence-v1";
+    /// <summary>
+    /// Versão CORRENTE do schema do snapshot de evidência de identidade. O v2
+    /// ([AEGIS-MVP-MICROSOFT-COVERAGE-03]) acrescenta ao <c>FactsJson</c> os agregados de risco de identidade e
+    /// de métodos de autenticação, envelopando as observações do v1 em vez de substituí-las.
+    /// </summary>
+    public const string SchemaVersion = "aegis-identity-evidence-v2";
+
+    /// <summary>Schema ANTERIOR — snapshots gravados assim continuam sendo lidos sem migration nem reescrita.</summary>
+    public const string LegacySchemaVersion = "aegis-identity-evidence-v1";
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -124,7 +131,14 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
         var producedData = result.State is KnightSourceState.Completed or KnightSourceState.PartialCollection;
         var now = result.CollectedAt == default ? DateTimeOffset.UtcNow : result.CollectedAt;
 
-        var factsJson = JsonSerializer.Serialize(result.Facts.All.OrderBy(o => (int)o.Key).ToList(), Json);
+        // Envelope v2: observações ORDENADAS (fingerprint estável) + agregados do pacote de risco. Escrito
+        // como OBJETO — a leitura reconhece o array nu do v1 pela forma da raiz.
+        var envelope = new IdentityEvidenceFacts(
+            SchemaVersion,
+            result.Facts.All.OrderBy(o => (int)o.Key).ToList(),
+            result.IdentityRisk,
+            result.AuthenticationPosture);
+        var factsJson = JsonSerializer.Serialize(envelope, Json);
         var capsJson = JsonSerializer.Serialize(result.Capabilities, Json);
         var fingerprint = Fingerprint(factsJson, capsJson, result.State);
 
@@ -202,33 +216,57 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
         return snapshot is null ? null : ToView(snapshot.TenantId, snapshot);
     }
 
-    private IdentityEvidenceSnapshotView ToView(Guid tenantId, IdentityEvidenceSnapshot s) => new(
-        tenantId,
-        s.ConnectorConfigId,
-        s.SourceType,
-        string.IsNullOrWhiteSpace(s.Source) ? "Microsoft Entra ID" : s.Source,
-        s.SchemaVersion,
-        s.DataState,
-        s.LastAttemptState,
-        s.LastCollectionAt,
-        s.LastAttemptAt,
-        s.LastAttemptDetail,
-        DeserializeFacts(s.FactsJson),
-        DeserializeCapabilities(s.CapabilitiesJson));
-
-    private IReadOnlyList<KnightObservation> DeserializeFacts(string? json)
+    private IdentityEvidenceSnapshotView ToView(Guid tenantId, IdentityEvidenceSnapshot s)
     {
-        if (string.IsNullOrWhiteSpace(json)) return Array.Empty<KnightObservation>();
+        // UMA desserialização do envelope por leitura — as observações e os agregados v2 saem da MESMA
+        // fotografia; um snapshot v1 devolve observações e agregados nulos (jamais zeros inventados).
+        var facts = DeserializeFacts(s.FactsJson);
+
+        return new IdentityEvidenceSnapshotView(
+            tenantId,
+            s.ConnectorConfigId,
+            s.SourceType,
+            string.IsNullOrWhiteSpace(s.Source) ? "Microsoft Entra ID" : s.Source,
+            s.SchemaVersion,
+            s.DataState,
+            s.LastAttemptState,
+            s.LastCollectionAt,
+            s.LastAttemptAt,
+            s.LastAttemptDetail,
+            facts.Observations,
+            DeserializeCapabilities(s.CapabilitiesJson),
+            facts.IdentityRisk,
+            facts.AuthenticationPosture);
+    }
+
+    /// <summary>
+    /// Lê o <c>FactsJson</c> em QUALQUER das duas versões do schema. Raiz ARRAY ⇒ v1 (só observações, sem
+    /// agregados — e sem inventar zeros para eles); raiz OBJETO ⇒ v2 (envelope completo). Um JSON ilegível
+    /// degrada para "sem fatos", nunca para números falsos.
+    /// </summary>
+    internal IdentityEvidenceFacts DeserializeFacts(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return EmptyFacts;
         try
         {
-            return JsonSerializer.Deserialize<List<KnightObservation>>(json, Json) ?? new List<KnightObservation>();
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                var legacy = JsonSerializer.Deserialize<List<KnightObservation>>(json, Json) ?? new List<KnightObservation>();
+                return new IdentityEvidenceFacts(LegacySchemaVersion, legacy, null, null);
+            }
+
+            return JsonSerializer.Deserialize<IdentityEvidenceFacts>(json, Json) ?? EmptyFacts;
         }
         catch (JsonException ex)
         {
             _log?.LogWarning(ex, "FactsJson do snapshot de identidade ilegível; retornando sem fatos.");
-            return Array.Empty<KnightObservation>();
+            return EmptyFacts;
         }
     }
+
+    private static readonly IdentityEvidenceFacts EmptyFacts =
+        new(SchemaVersion, Array.Empty<KnightObservation>(), null, null);
 
     private IReadOnlyList<KnightCapabilityStatus> DeserializeCapabilities(string? json)
     {
