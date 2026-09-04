@@ -4,6 +4,7 @@ using AegisScore.Application.Abstractions;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Services;
 using AegisScore.Connectors.Microsoft.Defender;
+using AegisScore.Connectors.Microsoft.Intune;
 using AegisScore.Connectors.Microsoft.Knight;
 using AegisScore.Connectors.Microsoft.Sentinel;
 
@@ -43,6 +44,14 @@ public static class DependencyInjection
         // operacional por ISiemPostureCollector (fato consultivo), sem tocar a autoridade determinística.
         services.AddHttpClient<ILogAnalyticsClient, LogAnalyticsClient>().AddStandardResilienceHandler();
         services.AddScoped<IEvidenceConnector, MicrosoftSentinelConnector>();
+
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Microsoft Intune (Microsoft/ConfigAnalyzer): postura de configuração e
+        // conformidade de dispositivos, somente leitura, via Graph v1.0. REUSA o transporte endurecido do Graph
+        // (IEntraGraphClient, já registrado abaixo como typed HttpClient com resiliência padrão) — sem segundo
+        // pipeline de OAuth/paginação/allowlist. SCOPED pelo mesmo motivo dos demais (injeta um typed HttpClient
+        // — não pode ser capturado no root provider). NÃO emite sinais de score: expõe a postura de dispositivos
+        // por IDevicePostureCollector (fato consultivo), sem tocar a autoridade determinística.
+        services.AddScoped<IEvidenceConnector, MicrosoftIntuneDevicePostureConnector>();
 
         // Govern → Provider Pattern de ingestão de documentos: o SharePoint/M365 como fonte de políticas.
         // A DocumentIntegrationFactory resolve esta estratégia por ConnectorProvider.Microsoft.
