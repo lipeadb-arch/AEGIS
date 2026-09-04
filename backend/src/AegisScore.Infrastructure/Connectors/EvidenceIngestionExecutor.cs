@@ -15,6 +15,7 @@ using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Scoring;
 using AppDetectionCoverage = AegisScore.Application.Abstractions.DetectionCoverageSnapshot;
+using AppDevicePosture = AegisScore.Application.Abstractions.DevicePostureSnapshot;
 
 namespace AegisScore.Infrastructure.Connectors;
 
@@ -221,6 +222,11 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // O coletor NÃO lança em falha da fonte (devolve estado classificado), então uma Rules API indisponível NÃO
         // derruba a sincronização de casos/alertas. Reconciliada no banco (agregado consultivo), NUNCA vira score.
         AppDetectionCoverage? detectionCoverage = null;
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Postura de configuração/conformidade de dispositivos — DUAS dimensões
+        // INDEPENDENTES (políticas configuradas e estado efetivo dos dispositivos). O coletor NÃO lança em falha da
+        // fonte (devolve estados classificados por dimensão), então a ausência da permissão de dispositivos NÃO
+        // derruba a sincronização. Reconciliada no banco (agregado consultivo), NUNCA vira EvidenceSignal/score.
+        AppDevicePosture? devicePosture = null;
         try
         {
             if (adapter is ICombinedEvidenceCollector combined)
@@ -266,6 +272,13 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             // API indisponível NÃO derruba casos/alertas nem carimba Failed. Só o cancelamento solicitado propaga.
             if (adapter is IDetectionCoverageCollector coverageCollector)
                 detectionCoverage = await coverageCollector.CollectCoverageAsync(config, ct);
+
+            // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Postura de dispositivos (provider-neutral): dimensão INDEPENDENTE.
+            // O coletor devolve SEMPRE uma fotografia com o estado de CADA dimensão classificado — nunca lança por
+            // falha da fonte, então a falta de DeviceManagementManagedDevices.Read.All NÃO carimba Failed nem
+            // invalida a leitura de políticas. Só o cancelamento solicitado propaga.
+            if (adapter is IDevicePostureCollector devicePostureCollector)
+                devicePosture = await devicePostureCollector.CollectDevicePostureAsync(config, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -328,7 +341,12 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // "operacional" silenciosamente quando só vulnerabilidades funcionou — rebaixa para Degraded, como as
         // demais dimensões aditivas (vulnerabilidades/SIEM/cobertura de detecção) já fazem.
         var degradedBySoftware = softwareInventory is not null && !softwareInventory.IsComplete;
-        var status = (skipped > 0 || degradedByVuln || degradedBySiem || degradedByCoverage || degradedBySoftware)
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] O conector do Intune só é "plenamente operacional" com AS DUAS
+        // dimensões completas. Sem DeviceManagementManagedDevices.Read.All ele fica Degraded — nunca Healthy com
+        // uma dimensão bloqueada, e nunca Failed (a dimensão de políticas segue válida e utilizável).
+        var degradedByDevicePosture = devicePosture is not null && !devicePosture.IsComplete;
+        var status = (skipped > 0 || degradedByVuln || degradedBySiem || degradedByCoverage || degradedBySoftware
+                || degradedByDevicePosture)
             ? ConnectorStatus.Degraded : ConnectorStatus.Healthy;
         // Um único SaveChanges: os sinais adicionados + o carimbo de sync são o MESMO fato.
         await StampConnectorAsync(db, config.Id, now, status, ct);
@@ -416,6 +434,28 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             }
         }
 
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Reconcilia a postura de dispositivos (snapshot por tenant+conector, com
+        // políticas e grupos AGREGADOS), sob o tenant proprietário. Contexto NOVO isola do change tracker dos
+        // sinais. Falha NÃO é mascarada (carimba Failed e propaga, como as demais reconciliações). O reconciliador
+        // NUNCA cria EvidenceSignal nem toca o score — é agregado CONSULTIVO. Uma dimensão que falhou NÃO é erro:
+        // preserva os dados anteriores daquela dimensão e apenas registra o desfecho da tentativa.
+        DevicePostureSyncResult? devicePostureResult = null;
+        if (devicePosture is not null)
+        {
+            try
+            {
+                devicePostureResult = await ReconcileDevicePostureAsync(config.TenantId, config.Id, devicePosture, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex,
+                    "Reconciliação da postura de dispositivos do conector {ConnectorId} falhou; conector marcado como Failed.",
+                    config.Id);
+                await TryStampFailedAsync(config.Id, config.TenantId, ct);
+                throw;
+            }
+        }
+
         // [AEGIS-AUD-019] Projeta a evidência coletada no ledger (recompute GLOBAL from-newest). Semântica
         // coerente com o push: falha na projeção NÃO é mascarada — carimba Failed e propaga como 500. Uma
         // nova coleta (mesmo sync) refaz o recompute sobre a evidência mais nova.
@@ -432,7 +472,8 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             throw;
         }
 
-        return new PullIngestionResult(persisted, 0, skipped, status, vulnResult, siem, detectionCoverage, softwareResult);
+        return new PullIngestionResult(
+            persisted, 0, skipped, status, vulnResult, siem, detectionCoverage, softwareResult, devicePostureResult);
     }
 
     // ---- Reconciliação de inventário de software (AEGIS-MVP-MICROSOFT-COVERAGE-01) -----------------
@@ -449,6 +490,23 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
         var reconciler = new SoftwareInventoryReconciler(db, _log);
         return await reconciler.ReconcileAsync(connectorId, collection, ct);
+    }
+
+    // ---- Reconciliação da postura de dispositivos (AEGIS-MVP-MICROSOFT-COVERAGE-02) ---------------
+
+    /// <summary>
+    /// Reconcilia a fotografia de postura de dispositivos no snapshot por (tenant, conector), sob o tenant
+    /// proprietário (<see cref="SystemTenantContext"/>): contexto NOVO (isolado do change tracker dos sinais) +
+    /// query filter fail-closed + stamping. A substituição por dimensão/preservação vive no
+    /// <see cref="DevicePostureReconciler"/>; o adaptador nunca escreve no banco. NUNCA cria EvidenceSignal —
+    /// postura de dispositivos é agregado CONSULTIVO.
+    /// </summary>
+    private async Task<DevicePostureSyncResult> ReconcileDevicePostureAsync(
+        Guid tenantId, Guid connectorId, AppDevicePosture posture, CancellationToken ct)
+    {
+        await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
+        var reconciler = new DevicePostureReconciler(db, _log);
+        return await reconciler.ReconcileAsync(connectorId, posture, ct);
     }
 
     // ---- Reconciliação da cobertura de detecção (AEGIS-MVP-GOOGLE-SECOPS-02) -----------------------
