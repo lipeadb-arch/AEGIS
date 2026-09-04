@@ -341,7 +341,12 @@ export function providerByKey(key: string | null | undefined): ProviderSpec | un
 // ============================================================================
 
 /** Chave de um serviço Microsoft dentro do hub. */
-export type MicrosoftServiceKey = 'SecureScore' | 'IdentityPosture' | 'VulnerabilityScanner' | 'Sentinel';
+export type MicrosoftServiceKey =
+  | 'SecureScore'
+  | 'IdentityPosture'
+  | 'VulnerabilityScanner'
+  | 'Sentinel'
+  | 'IntunePosture';
 
 /** Especificação de um serviço Microsoft filho: capacidade/provider (para o POST) + apresentação. */
 export interface MicrosoftServiceSpec {
@@ -358,9 +363,11 @@ export interface MicrosoftServiceSpec {
 }
 
 /**
- * Os quatro serviços da família Microsoft. O provider é derivado da capacidade (Siem ⇒ MicrosoftSentinel; demais
+ * Os cinco serviços da família Microsoft. O provider é derivado da capacidade (Siem ⇒ MicrosoftSentinel; demais
  * ⇒ Microsoft) — igual ao backend. IdentityPosture (AEGIS KNIGHT) coleta pela tela /identity, mas a credencial é
- * a mesma da conexão unificada.
+ * a mesma da conexão unificada. [AEGIS-MVP-MICROSOFT-COVERAGE-02] IntunePosture entra como o quinto serviço, com
+ * DUAS permissões distintas: uma para as políticas (já concedida no ambiente atual) e outra para o estado efetivo
+ * dos dispositivos — a tela deixa explícito qual dimensão cada uma destrava.
  */
 export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
   {
@@ -408,6 +415,24 @@ export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
     needsWorkspaceId: true,
     appPermissions: ['Log Analytics Reader (Azure RBAC de leitura no workspace) — ou permissão mínima equivalente'],
   },
+  {
+    key: 'IntunePosture',
+    capability: 'ConfigAnalyzer',
+    capabilityValue: 4,
+    provider: 'Microsoft',
+    providerValue: 0,
+    label: 'Microsoft Intune · Configuração e Conformidade',
+    description:
+      'Políticas de conformidade e configuração de dispositivos e — quando a permissão de dispositivos for ' +
+      'concedida — o estado efetivo dos aparelhos gerenciados (seção “Dispositivos gerenciados”, em Protect). ' +
+      'As duas dimensões são independentes: sem a permissão de dispositivos, as políticas continuam sendo lidas ' +
+      'e o estado dos aparelhos aparece como bloqueado — nunca como zero.',
+    needsWorkspaceId: false,
+    appPermissions: [
+      'DeviceManagementConfiguration.Read.All (políticas e configurações)',
+      'DeviceManagementManagedDevices.Read.All (estado efetivo dos dispositivos)',
+    ],
+  },
 ];
 
 export function microsoftServiceByKey(key: string | null | undefined): MicrosoftServiceSpec | undefined {
@@ -433,7 +458,9 @@ export function isMicrosoftFamily(c: ConnectorConfig): boolean {
     (c.provider === 'Microsoft' &&
       (c.capability === 'SecureScore' ||
         c.capability === 'IdentityPosture' ||
-        c.capability === 'VulnerabilityScanner')) ||
+        c.capability === 'VulnerabilityScanner' ||
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Microsoft Intune (postura de dispositivos) — quinto filho do hub.
+        c.capability === 'ConfigAnalyzer')) ||
     (c.provider === 'MicrosoftSentinel' && c.capability === 'Siem')
   );
 }
