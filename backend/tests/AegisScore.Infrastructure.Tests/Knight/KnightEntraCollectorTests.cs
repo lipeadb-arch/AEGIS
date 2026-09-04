@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AegisScore.Application.Identity;
 using AegisScore.Application.Knight;
 using AegisScore.Connectors.Microsoft.Knight;
 using AegisScore.Domain;
@@ -40,6 +41,32 @@ public sealed class KnightEntraCollectorTests
 
     private const string TokenJson = """{"access_token":"fake-access-token","expires_in":3600,"token_type":"Bearer"}""";
 
+    /// <summary>
+    /// Usuários em risco do cenário feliz: alto/atRisk, médio/confirmedCompromised, baixo/remediated e UM
+    /// EXCLUÍDO (que fica fora das distribuições, contado à parte). Nenhum campo pessoal — o $select do
+    /// coletor sequer os solicita.
+    /// </summary>
+    private static readonly string RiskyUsersJson = """
+        {"value":[
+          {"riskLevel":"high","riskState":"atRisk","isDeleted":false,"isProcessing":false,"riskLastUpdatedDateTime":"__RECENT__"},
+          {"riskLevel":"medium","riskState":"confirmedCompromised","isDeleted":false,"isProcessing":true,"riskLastUpdatedDateTime":"__RECENT__"},
+          {"riskLevel":"low","riskState":"remediated","isDeleted":false,"isProcessing":false,"riskLastUpdatedDateTime":"__RECENT__"},
+          {"riskLevel":"high","riskState":"atRisk","isDeleted":true,"riskLastUpdatedDateTime":"__RECENT__"}
+        ]}
+        """.Replace("__RECENT__", Recent);
+
+    /// <summary>
+    /// Detecções do cenário feliz: duas dentro da janela (uma delas <c>generic</c> = detalhe premium retido) e
+    /// uma FORA da janela de 30 dias, que não pode contaminar os agregados recentes.
+    /// </summary>
+    private static readonly string RiskDetectionsJson = """
+        {"value":[
+          {"riskEventType":"unfamiliarFeatures","riskState":"atRisk","riskLevel":"high","detectionTimingType":"realtime","detectedDateTime":"__RECENT__"},
+          {"riskEventType":"generic","riskState":"remediated","riskLevel":"hidden","detectionTimingType":"offline","detectedDateTime":"__RECENT__"},
+          {"riskEventType":"leakedCredentials","riskState":"atRisk","riskLevel":"medium","detectionTimingType":"offline","detectedDateTime":"__OLD__"}
+        ]}
+        """.Replace("__RECENT__", Recent).Replace("__OLD__", Old);
+
     // ---- 1) Normaliza respostas do Graph em fatos (coleta completa) --------------------------------
 
     [Fact]
@@ -58,6 +85,31 @@ public sealed class KnightEntraCollectorTests
         result.Facts.Get(KnightSignalKey.MfaRegistrationCoveragePercent).Ratio.Should().BeApproximately(66.7, 0.2); // 2 de 3
         result.Facts.Get(KnightSignalKey.InactiveGuestAccounts).Count.Should().Be(1);             // g1 inativo (120d)
         result.Facts.Get(KnightSignalKey.SecurityDefaultsEnabled).Flag.Should().BeTrue();
+
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-03] As duas capacidades novas entram na MESMA coleta lógica.
+        var risk = result.IdentityRisk.Should().NotBeNull().And.Subject.As<IdentityRiskPosture>();
+        risk.RiskyUsersOutcome.Should().Be(KnightCapabilityOutcome.Collected);
+        risk.RiskDetectionsOutcome.Should().Be(KnightCapabilityOutcome.Collected);
+
+        risk.RiskyUsers!.Total.Should().Be(4);              // inclui o excluído
+        risk.RiskyUsers.Deleted.Should().Be(1);
+        risk.RiskyUsers.Live.Should().Be(3);                // o excluído fica FORA das distribuições
+        risk.RiskyUsers.Active.Should().Be(2);              // atRisk + confirmedCompromised
+        risk.RiskyUsers.HighRiskActive.Should().Be(1);
+        risk.RiskyUsers.States.Resolved.Should().Be(1);     // remediated
+        risk.RiskyUsers.Processing.Should().Be(1);
+        risk.RiskyUsers.IsComplete.Should().BeTrue();
+
+        risk.RiskDetections!.TotalInWindow.Should().Be(2);  // a de 120 dias fica de fora
+        risk.RiskDetections.OutsideWindow.Should().Be(1);
+        risk.RiskDetections.Active.Should().Be(1);
+        risk.RiskDetections.PremiumDetailWithheld.Should().Be(1);   // "generic" = detalhe retido por licença
+        risk.RiskDetections.Levels.Hidden.Should().Be(1);           // nível oculto ≠ "sem risco"
+        risk.RiskDetections.WindowDays.Should().Be(IdentityRiskWindows.DetectionWindowDays);
+
+        // Postura AGREGADA de métodos: derivada do MESMO relatório já autorizado (sem permissão nova).
+        result.AuthenticationPosture!.TotalUsers.Should().Be(3);
+        result.AuthenticationPosture.MfaCapable.Should().Be(2);
     }
 
     // ---- 2) Paginação por @odata.nextLink (URL oficial) --------------------------------------------
@@ -488,6 +540,14 @@ public sealed class KnightEntraCollectorTests
 
         if (req.Method == HttpMethod.Post && url.Contains("/oauth2/v2.0/token"))
             return (HttpStatusCode.OK, TokenJson);
+
+        // [AEGIS-MVP-MICROSOFT-COVERAGE-03] Identity Protection — as duas capacidades novas respondem no
+        // cenário feliz (do contrário a coleta inteira viraria PartialCollection por 404).
+        if (url.Contains("identityProtection/riskyUsers"))
+            return (HttpStatusCode.OK, RiskyUsersJson);
+
+        if (url.Contains("identityProtection/riskDetections"))
+            return (HttpStatusCode.OK, RiskDetectionsJson);
 
         if (url.Contains("/directoryRoles/") && url.Contains("/members"))
             return (HttpStatusCode.OK,
