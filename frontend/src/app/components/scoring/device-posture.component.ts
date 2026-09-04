@@ -7,9 +7,13 @@ import {
   DeviceEncryptionBucket,
   DeviceGroup,
   DeviceGroupFilters,
+  DevicePolicy,
+  DevicePostureDimension,
   DevicePostureView,
   EMPTY_DEVICE_FILTERS,
+  canShowNumbers,
   countOrDash,
+  dimensionStatePt,
   filterDeviceGroups,
   operatingSystems,
   totalDevices,
@@ -76,8 +80,8 @@ import {
           <div class="dim">
             <div class="dim-head">
               <h3>Postura configurada</h3>
-              <span class="badge" [class.ok]="view()!.configuration.hasData" [class.warn]="!view()!.configuration.hasData">
-                {{ view()!.configuration.label }}
+              <span class="badge" [class.ok]="hasData(view()!.configuration)" [class.warn]="!hasData(view()!.configuration)">
+                {{ label(view()!.configuration) }}
               </span>
             </div>
 
@@ -88,7 +92,7 @@ import {
               </div>
             }
 
-            @if (view()!.configuration.hasData) {
+            @if (hasData(view()!.configuration)) {
               <div class="summary">
                 <div class="chip">
                   <span class="n">{{ dash(view()!.configurationSummary.totalPolicies) }}</span>
@@ -121,7 +125,7 @@ import {
                 }
               </div>
 
-              @if (!view()!.assignment.hasData) {
+              @if (!hasData(view()!.assignment)) {
                 <div class="notice warn">
                   A fonte não devolveu as atribuições das políticas. O alcance não pode ser afirmado — nenhuma
                   política é contada como "sem atribuição" por falta de dado.
@@ -164,7 +168,7 @@ import {
               }
             } @else {
               <div class="panel state warn">
-                <b>{{ view()!.configuration.label }}</b>
+                <b>{{ label(view()!.configuration) }}</b>
                 @if (view()!.configuration.actionHint) {
                   <span>{{ view()!.configuration.actionHint }}</span>
                 }
@@ -179,12 +183,12 @@ import {
           <div class="dim">
             <div class="dim-head">
               <h3>Estado efetivo dos dispositivos</h3>
-              <span class="badge" [class.ok]="view()!.devices.hasData" [class.warn]="!view()!.devices.hasData">
-                {{ view()!.devices.label }}
+              <span class="badge" [class.ok]="hasData(view()!.devices)" [class.warn]="!hasData(view()!.devices)">
+                {{ label(view()!.devices) }}
               </span>
             </div>
 
-            @if (view()!.devices.hasData) {
+            @if (hasData(view()!.devices)) {
               @if (view()!.devices.isStale) {
                 <div class="notice warn">
                   Mostrando o último inventário de dispositivos coletado — a tentativa mais recente falhou.
@@ -300,7 +304,7 @@ import {
               }
             } @else {
               <div class="panel state warn">
-                <b>{{ view()!.devices.label }}</b>
+                <b>{{ label(view()!.devices) }}</b>
                 @if (view()!.devices.actionHint) {
                   <span>{{ view()!.devices.actionHint }}</span>
                 }
@@ -669,8 +673,22 @@ export class DevicePostureComponent implements OnInit {
     return 'data';
   });
 
-  readonly visiblePolicies = computed(() => {
+  /**
+   * Políticas ordenadas por ACIONABILIDADE: as comprovadamente SEM atribuição primeiro (não alcançam ninguém —
+   * é o achado que o operador precisa ver), depois as de atribuição não comprovada, e por fim as atribuídas.
+   * Os dois primeiros baldes vêm da mesma lógica pura testada que os separa — atribuição desconhecida NUNCA é
+   * apresentada como "sem atribuição".
+   */
+  readonly orderedPolicies = computed<DevicePolicy[]>(() => {
     const all = this.view()?.policies ?? [];
+    const unassigned = unassignedPolicies(all);
+    const unknown = unknownAssignmentPolicies(all);
+    const assigned = all.filter((p) => p.assignmentState === 'Assigned');
+    return [...unassigned, ...unknown, ...assigned];
+  });
+
+  readonly visiblePolicies = computed(() => {
+    const all = this.orderedPolicies();
     return this.showAllPolicies() ? all : all.slice(0, DevicePostureComponent.InitialPolicyLimit);
   });
 
@@ -709,16 +727,21 @@ export class DevicePostureComponent implements OnInit {
     return countOrDash(value);
   }
 
+  /** A dimensão pode mostrar números? Uma única porta, testada, para os dois blocos da tela. */
+  protected hasData(dimension: DevicePostureDimension): boolean {
+    return canShowNumbers(dimension);
+  }
+
+  /**
+   * Rótulo do estado. O backend já entrega o texto pt-BR; o fallback determinístico cobre uma resposta antiga ou
+   * um estado novo que ele venha a introduzir — e nunca cai em "Disponível" por desconhecimento.
+   */
+  protected label(dimension: DevicePostureDimension): string {
+    return dimension.label || dimensionStatePt(dimension.state);
+  }
+
   protected groupKey(g: DeviceGroup): string {
     return `${g.operatingSystem}|${g.compliance}|${g.encryption}|${g.activity}`;
-  }
-
-  protected unassignedCount(): number {
-    return unassignedPolicies(this.view()?.policies ?? []).length;
-  }
-
-  protected unknownAssignmentCount(): number {
-    return unknownAssignmentPolicies(this.view()?.policies ?? []).length;
   }
 
   protected setCompliance(e: Event): void {
