@@ -74,7 +74,7 @@ import {
       } @else if (error()) {
         <div class="panel state err">
           <b>{{ error() }}</b>
-          <span>Verifique se a API está no ar em <code>{{ apiBase }}</code> e tente novamente.</span>
+          <span>O serviço não respondeu agora. Tente novamente em alguns instantes.</span>
           <button type="button" class="btn ghost" (click)="reload()">Tentar novamente</button>
         </div>
       } @else if (snapshots().length === 0) {

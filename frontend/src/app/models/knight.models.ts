@@ -267,6 +267,30 @@ export function capabilityOutcomeLabel(outcome: KnightCapabilityOutcome): string
   return CAPABILITY_OUTCOME_LABEL[outcome];
 }
 
+/**
+ * [AEGIS-MVP-PRODUCT-01] Nome LEGÍVEL de uma capacidade de coleta. O cliente não deve ler o identificador
+ * técnico do coletor ("MfaRegistration") numa tela de negócio. Autoridade ÚNICA: a Visão geral reexporta
+ * esta função em vez de manter um segundo dicionário que sairia do ar com o primeiro.
+ */
+const CAPABILITY_LABEL: Record<string, string> = {
+  PrivilegedRoleInventory: 'Contas com privilégio administrativo',
+  MfaRegistration: 'Registro de múltiplo fator',
+  GuestAccounts: 'Contas de convidado',
+  ConditionalAccessPolicies: 'Políticas de acesso condicional',
+  ApplicationInventory: 'Credenciais de aplicações',
+  ServiceAccountExemptions: 'Exceções de contas de serviço',
+  SecurityBaseline: 'Configuração de segurança padrão',
+  BreakGlassDesignation: 'Contas de emergência',
+  IdentityRiskDetections: 'Detecções de risco de identidade',
+  RiskyUsers: 'Usuários sinalizados como de risco',
+  AuthenticationMethods: 'Métodos de autenticação registrados',
+};
+
+/** Capacidade desconhecida degrada para o próprio identificador — nunca some da tela. */
+export function capabilityLabel(capability: string): string {
+  return CAPABILITY_LABEL[capability] ?? capability;
+}
+
 /** Capacidades com problema (não coletadas) — o que a UI mostra como limitação de cobertura. */
 export function problemCapabilities(caps: KnightCapability[]): KnightCapability[] {
   return caps.filter((c) => c.outcome !== 'Collected');

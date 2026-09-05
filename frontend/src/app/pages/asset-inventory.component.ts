@@ -165,8 +165,8 @@ import {
       <!-- ---- Estados ---- -->
       @if (loadError()) {
         <div class="notice">
-          <b>Falha ao carregar o inventário.</b> A API em <code>{{ apiBase }}</code> não respondeu —
-          confira o endereço e o <code>tenantId</code>. O console traz o erro completo.
+          <b>Não foi possível carregar o inventário.</b> O serviço não respondeu agora — nenhum ativo é
+          exibido, para que uma lista antiga não seja lida como o inventário atual.
         </div>
       }
 

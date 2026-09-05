@@ -573,11 +573,13 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         background: var(--panel);
         padding: 16px 18px;
       }
+      /* O título nunca é espremido pela dica: em painel estreito ela desce para a linha de baixo. */
       .panel .hd {
         display: flex;
         align-items: baseline;
         justify-content: space-between;
-        gap: 10px;
+        flex-wrap: wrap;
+        gap: 4px 10px;
         margin: 0 0 12px;
       }
       .panel .hd h3 {
@@ -776,17 +778,18 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
       }
       .coverage li {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 128px 58px;
+        grid-template-columns: minmax(0, 1fr) clamp(64px, 18%, 128px) 58px;
         align-items: center;
         gap: 10px;
       }
+      /* O rótulo QUEBRA em vez de truncar: em painéis estreitos "Avaliação orientada" virava
+         "Avaliação orient…", e o nome da natureza da prova é justamente o que se lê aqui. */
       .c-k {
         font-family: var(--sans);
         font-size: 12.5px;
+        line-height: 1.35;
         color: var(--text);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        min-width: 0;
       }
       .c-bar {
         display: block;

@@ -50,27 +50,29 @@ type AdvisoryUiState =
               @if (c.summary) {
                 <span class="summary">{{ c.summary }}</span>
               }
-              <!-- Categoria e código: referências SECUNDÁRIas. -->
-              <span class="code">{{ categoryName(c.code) }} · {{ c.code }}</span>
             </span>
-            <!-- Slot SEMPRE presente (vazio sem série): a linha é um grid próprio e a coluna fixa
-                 impede que a ausência de histórico desloque severidade/pontos. -->
-            <span class="spark">
-              @if (c.history.length > 1) {
-                <app-sparkline [points]="c.history" />
-              }
-            </span>
-            <app-severity [level]="c.severity" />
+            <!-- [AEGIS-MVP-PRODUCT-01] O cabeçalho carrega SÓ o que decide a leitura: o que é o controle e
+                 em que estado ele está. Código/categoria, severidade, pontos e a série histórica desceram
+                 para o corpo expansível — na mesma linha eles competiam com o título e estouravam a
+                 largura útil em telas de 1366px. -->
             <span class="status">{{ statusLabel(c) }}</span>
-            <!-- NotEvaluated não é reprovação: mostra "—/max", nunca "0/max" (que leria como zerado). -->
-            <span class="pts">
-              @if (c.status === 'NotEvaluated') { <span class="na-pts">—</span> } @else { {{ c.scorePoints }} }<i>/{{ c.maxScorePoints }}</i>
-            </span>
             <span class="chev" [class.open]="isOpen(c.code)" aria-hidden="true">›</span>
           </button>
 
           @if (isOpen(c.code)) {
             <div class="ctl-body">
+              <!-- Referência técnica do controle: onde ela não disputa a leitura do cabeçalho. -->
+              <div class="ctl-ref">
+                <span class="code">{{ categoryName(c.code) }} · {{ c.code }}</span>
+                <app-severity [level]="c.severity" />
+                <!-- NotEvaluated não é reprovação: mostra "—/max", nunca "0/max" (que leria como zerado). -->
+                <span class="pts">
+                  @if (c.status === 'NotEvaluated') { <span class="na-pts">—</span> } @else { {{ c.scorePoints }} }<i>/{{ c.maxScorePoints }}</i>
+                </span>
+                @if (c.history.length > 1) {
+                  <span class="spark"><app-sparkline [points]="c.history" /></span>
+                }
+              </div>
               <!-- [AEGIS-MVP-LANGUAGE-01] Linguagem clara DETERMINÍSTICA: entender o controle sem depender da
                    IA — o que ele garante, por que importa e a primeira ação. Vem do backend, não do LLM. -->
               @if (c.summary || c.impact || c.initialAction) {
@@ -269,8 +271,8 @@ type AdvisoryUiState =
       .ctl-head {
         width: 100%;
         display: grid;
-        /* dot · nomes · sparkline · severidade · status · pontos · chevron */
-        grid-template-columns: 14px minmax(0, 1fr) auto auto auto auto 16px;
+        /* dot · nomes · status · chevron */
+        grid-template-columns: 14px minmax(0, 1fr) auto 16px;
         align-items: center;
         gap: 12px;
         padding: 11px 14px;
@@ -316,6 +318,17 @@ type AdvisoryUiState =
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+      /* Faixa de referência técnica do corpo expandido: código, severidade, pontos e série na MESMA linha,
+         longe do cabeçalho — aqui elas são consulta, não decisão. */
+      .ctl-ref {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 12px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--line-2);
       }
       /* Slot da sparkline: altura reservada mesmo vazio, para a linha não "pular" entre controles
          com e sem histórico. */
@@ -754,10 +767,7 @@ type AdvisoryUiState =
          risco que o analista precisa ver de relance. */
       @media (max-width: 860px) {
         .ctl-head {
-          grid-template-columns: 14px minmax(0, 1fr) auto auto auto 16px;
-        }
-        .spark {
-          display: none;
+          grid-template-columns: 14px minmax(0, 1fr) auto 16px;
         }
       }
 

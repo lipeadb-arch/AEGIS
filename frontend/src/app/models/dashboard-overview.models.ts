@@ -163,35 +163,11 @@ export function identityOutcomeLabel(outcome: string): string {
   }
 }
 
-/** Nome legível de uma capacidade de identidade — o cliente não deve ler identificador técnico. */
-export function identityCapabilityLabel(capability: string): string {
-  switch (capability) {
-    case 'PrivilegedRoleInventory':
-      return 'Contas com privilégio administrativo';
-    case 'MfaRegistration':
-      return 'Registro de múltiplo fator';
-    case 'GuestAccounts':
-      return 'Contas de convidado';
-    case 'ConditionalAccessPolicies':
-      return 'Políticas de acesso condicional';
-    case 'ApplicationInventory':
-      return 'Credenciais de aplicações';
-    case 'ServiceAccountExemptions':
-      return 'Exceções de contas de serviço';
-    case 'SecurityBaseline':
-      return 'Configuração de segurança padrão';
-    case 'BreakGlassDesignation':
-      return 'Contas de emergência';
-    case 'IdentityRiskDetections':
-      return 'Detecções de risco de identidade';
-    case 'RiskyUsers':
-      return 'Usuários sinalizados como de risco';
-    case 'AuthenticationMethods':
-      return 'Métodos de autenticação registrados';
-    default:
-      return capability;
-  }
-}
+/**
+ * Nome legível de uma capacidade de identidade. Reexportado do modelo do AEGIS KNIGHT — as duas telas leem
+ * as MESMAS capacidades, e dois dicionários paralelos sairiam do ar um do outro na primeira capacidade nova.
+ */
+export { capabilityLabel as identityCapabilityLabel } from './knight.models';
 
 /**
  * Reconstrói a projeção do workspace a partir da leitura composta — para os componentes que já consomem
