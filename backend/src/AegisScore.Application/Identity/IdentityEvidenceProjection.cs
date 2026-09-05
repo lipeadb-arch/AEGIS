@@ -77,7 +77,18 @@ public sealed record IdentityEvidenceProjection(
     DateTimeOffset? LastAttemptAt,
     string? LastAttemptDetail,
     IReadOnlyList<IdentityCapabilityView> Capabilities,
-    IReadOnlyList<IdentityControlEvidence> Controls)
+    IReadOnlyList<IdentityControlEvidence> Controls,
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-COVERAGE-03] Postura AGREGADA de risco de identidade do MESMO snapshot — sem uma
+    /// segunda consulta ao Graph e sem PII. <c>null</c> quando o snapshot é v1 ou quando nunca houve coleta.
+    /// CONSULTIVA: não altera score, não vira EvidenceSignal e NÃO promove nem rebaixa controle NIST.
+    /// </summary>
+    IdentityRiskPosture? IdentityRisk = null,
+    /// <summary>
+    /// [AEGIS-MVP-MICROSOFT-COVERAGE-03] Postura AGREGADA de métodos de autenticação registrados. Conceito
+    /// DISTINTO de risco: registro de MFA não é detecção, e detecção não é método de autenticação.
+    /// </summary>
+    IdentityAuthenticationPosture? AuthenticationPosture = null)
 {
     /// <summary>
     /// Controles NIST de identidade que o dashboard reconhece — e a razão determinística pela qual a telemetria
@@ -158,7 +169,9 @@ public sealed record IdentityEvidenceProjection(
             snapshot?.LastAttemptAt,
             snapshot?.LastAttemptDetail,
             capabilities,
-            controls);
+            controls,
+            snapshot?.IdentityRisk,
+            snapshot?.AuthenticationPosture);
     }
 
     private static IdentityEvidenceCollectionState ResolveCollectionState(

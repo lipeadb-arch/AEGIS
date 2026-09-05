@@ -176,8 +176,16 @@ export const PROVIDERS: ProviderSpec[] = [
     capabilityValue: 10,
     knight: true,
     infoNote:
-      'Coletor REAL somente-leitura do Microsoft Entra ID (client credentials). Após salvar, dispare a coleta em Abrir AEGIS KNIGHT → “Coletar do Entra ID”. O destino é o Microsoft Graph oficial — não há URL configurável.',
-    appPermissions: ['Directory.Read.All', 'AuditLog.Read.All', 'User.Read.All', 'Policy.Read.All', 'Application.Read.All'],
+      'Coletor REAL somente-leitura do Microsoft Entra ID (client credentials). Após salvar, dispare a coleta em Abrir AEGIS KNIGHT → “Coletar do Entra ID”. O destino é o Microsoft Graph oficial — não há URL configurável. As duas permissões de risco de identidade dependem de Microsoft Entra ID P1/P2; sem elas (ou sem a licença) a coleta continua, e a dimensão correspondente é apresentada como não coletada — nunca como zero.',
+    appPermissions: [
+      'Directory.Read.All',
+      'AuditLog.Read.All',
+      'User.Read.All',
+      'Policy.Read.All',
+      'Application.Read.All',
+      'IdentityRiskyUser.Read.All',
+      'IdentityRiskEvent.Read.All',
+    ],
     fields: [
       { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
@@ -360,6 +368,11 @@ export interface MicrosoftServiceSpec {
   /** Só o Sentinel exige/usa o workspaceId (Log Analytics). */
   needsWorkspaceId: boolean;
   appPermissions: string[];
+  /**
+   * [AEGIS-MVP-MICROSOFT-COVERAGE-03] Matriz por capacidade (finalidade, permissão, licença e ação). Presente
+   * onde há mais de uma capacidade com permissões distintas.
+   */
+  capabilities?: MicrosoftCapabilitySpec[];
 }
 
 /**
@@ -369,6 +382,147 @@ export interface MicrosoftServiceSpec {
  * DUAS permissões distintas: uma para as políticas (já concedida no ambiente atual) e outra para o estado efetivo
  * dos dispositivos — a tela deixa explícito qual dimensão cada uma destrava.
  */
+/**
+ * [AEGIS-MVP-MICROSOFT-COVERAGE-03] Uso de uma permissão pelo AEGIS.
+ *
+ * ⚠️ Isto descreve o que o PRODUTO consome — NUNCA se o consentimento foi concedido no tenant. O estado real
+ * de cada capacidade vem da tentativa tipada da última coleta (visível em AEGIS KNIGHT → Risco de
+ * identidade), jamais da presença de um item neste catálogo do frontend.
+ */
+export type MicrosoftPermissionUsage =
+  /** Já consumida por capacidades existentes do conector. */
+  | 'Consumed'
+  /** Necessária para as capacidades de risco de identidade introduzidas neste pacote. */
+  | 'NewForIdentityRisk'
+  /** Deliberadamente NÃO exigida — com a justificativa técnica registrada em `action`. */
+  | 'NotRequired';
+
+/** Uma capacidade do conector: finalidade, permissão que a destrava, dependência de licença e ação objetiva. */
+export interface MicrosoftCapabilitySpec {
+  name: string;
+  purpose: string;
+  permission: string;
+  usage: MicrosoftPermissionUsage;
+  /** Dependência de licença conhecida, quando houver. `null` quando a capacidade não depende de plano. */
+  licenseNote: string | null;
+  action: string;
+}
+
+/**
+ * Matriz REAL de permissões do serviço "Microsoft Entra ID · AEGIS KNIGHT". Cinco permissões já consumidas,
+ * duas novas para risco de identidade e UMA explicitamente dispensada.
+ */
+export const ENTRA_IDENTITY_CAPABILITIES: MicrosoftCapabilitySpec[] = [
+  {
+    name: 'Papéis privilegiados e diretório',
+    purpose: 'Inventário de papéis privilegiados, membros, concessões de aplicativo e consentimentos delegados.',
+    permission: 'Directory.Read.All',
+    usage: 'Consumed',
+    licenseNote: null,
+    action: 'Nenhuma ação necessária — já em uso pelo conector.',
+  },
+  {
+    name: 'Registro de métodos de autenticação',
+    purpose:
+      'Relatório AGREGADO de registro de MFA e de métodos (inclui capacidade sem senha). Uma única consulta paginada — nunca uma chamada por usuário.',
+    permission: 'AuditLog.Read.All',
+    usage: 'Consumed',
+    licenseNote: 'O relatório de métodos de autenticação depende do plano do tenant.',
+    action: 'Nenhuma ação necessária — já em uso pelo conector.',
+  },
+  {
+    name: 'Contas de convidado',
+    purpose: 'Convidados e sua atividade de acesso.',
+    permission: 'User.Read.All',
+    usage: 'Consumed',
+    licenseNote: null,
+    action: 'Nenhuma ação necessária — já em uso pelo conector.',
+  },
+  {
+    name: 'Acesso condicional e baseline',
+    purpose: 'Políticas de acesso condicional e configuração padrão de segurança.',
+    permission: 'Policy.Read.All',
+    usage: 'Consumed',
+    licenseNote: null,
+    action: 'Nenhuma ação necessária — já em uso pelo conector.',
+  },
+  {
+    name: 'Aplicações e credenciais',
+    purpose: 'Credenciais de aplicação vencendo e permissões de alto privilégio efetivamente concedidas.',
+    permission: 'Application.Read.All',
+    usage: 'Consumed',
+    licenseNote: null,
+    action: 'Nenhuma ação necessária — já em uso pelo conector.',
+  },
+  {
+    name: 'Usuários em risco',
+    purpose:
+      'Inventário agregado dos usuários que o Microsoft Entra ID Protection marcou em risco, por nível e por situação. Sem nome, e-mail ou identificador.',
+    permission: 'IdentityRiskyUser.Read.All',
+    usage: 'NewForIdentityRisk',
+    licenseNote: 'Requer Microsoft Entra ID P2.',
+    action: 'Conceda a permissão à aplicação e refaça a coleta em AEGIS KNIGHT.',
+  },
+  {
+    name: 'Detecções de risco',
+    purpose:
+      'Detecções recentes dentro de uma janela determinística, por nível, situação e tipo. Sem IP, localização ou identificador de requisição.',
+    permission: 'IdentityRiskEvent.Read.All',
+    usage: 'NewForIdentityRisk',
+    licenseNote:
+      'Requer Microsoft Entra ID P1 ou P2. Com P1, as detecções premium chegam sem categoria — a cobertura é parcial, e a tela diz isso.',
+    action: 'Conceda a permissão à aplicação e refaça a coleta em AEGIS KNIGHT.',
+  },
+  {
+    name: 'Métodos de autenticação por usuário',
+    purpose:
+      'Leitura detalhada dos métodos de UM usuário por vez. O AEGIS NÃO usa: iterar toda a população seria uma chamada por usuário (N+1), ampliaria a exposição de dados pessoais e não é o uso recomendado pela Microsoft para auditoria.',
+    permission: 'UserAuthenticationMethod.Read.All',
+    usage: 'NotRequired',
+    licenseNote: null,
+    action:
+      'NÃO conceda por causa do AEGIS. A visão agregada equivalente já vem do relatório userRegistrationDetails, com AuditLog.Read.All.',
+  },
+];
+
+/** Permissões de uma matriz filtradas por uso — base das três listas da tela. */
+export function permissionsByUsage(
+  caps: MicrosoftCapabilitySpec[],
+  usage: MicrosoftPermissionUsage,
+): MicrosoftCapabilitySpec[] {
+  return caps.filter((c) => c.usage === usage);
+}
+
+/**
+ * Permissões que o tenant precisa conceder. `NotRequired` fica DE FORA por definição — nenhuma tela do AEGIS
+ * pode sugerir a concessão de uma permissão que o produto decidiu não usar.
+ */
+export function requiredPermissions(caps: MicrosoftCapabilitySpec[]): string[] {
+  return caps.filter((c) => c.usage !== 'NotRequired').map((c) => c.permission);
+}
+
+/** Capacidades cuja disponibilidade depende do plano contratado — a tela avisa antes da coleta. */
+export function licenseDependentCapabilities(caps: MicrosoftCapabilitySpec[]): MicrosoftCapabilitySpec[] {
+  return caps.filter((c) => c.licenseNote !== null);
+}
+
+const USAGE_LABEL: Record<MicrosoftPermissionUsage, string> = {
+  Consumed: 'Já consumida',
+  NewForIdentityRisk: 'Nova — risco de identidade',
+  NotRequired: 'Não necessária neste pacote',
+};
+
+export function permissionUsageLabel(usage: MicrosoftPermissionUsage): string {
+  return USAGE_LABEL[usage];
+}
+
+/**
+ * Ressalva OBRIGATÓRIA da matriz: constar aqui não significa consentimento concedido. Só a tentativa real de
+ * coleta diz se a permissão existe no tenant.
+ */
+export const PERMISSION_CATALOG_CAVEAT =
+  'Esta lista descreve o que o AEGIS consome. Ela não afirma que o consentimento foi concedido — o estado real de cada capacidade aparece após a coleta, em AEGIS KNIGHT → Risco de identidade.';
+
 export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
   {
     key: 'SecureScore',
@@ -388,9 +542,11 @@ export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
     provider: 'Microsoft',
     providerValue: 0,
     label: 'Microsoft Entra ID · AEGIS KNIGHT',
-    description: 'Postura de identidade (somente leitura). A coleta é disparada em Abrir AEGIS KNIGHT.',
+    description:
+      'Postura de identidade e RISCO de identidade (somente leitura). A coleta é disparada em Abrir AEGIS KNIGHT.',
     needsWorkspaceId: false,
-    appPermissions: ['Directory.Read.All', 'AuditLog.Read.All', 'User.Read.All', 'Policy.Read.All', 'Application.Read.All'],
+    appPermissions: requiredPermissions(ENTRA_IDENTITY_CAPABILITIES),
+    capabilities: ENTRA_IDENTITY_CAPABILITIES,
   },
   {
     key: 'VulnerabilityScanner',

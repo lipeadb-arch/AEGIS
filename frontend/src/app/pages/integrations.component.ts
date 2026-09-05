@@ -19,6 +19,8 @@ import {
   isKnightConnector,
   isMicrosoftFamily,
   MICROSOFT_HUB_SERVICES,
+  PERMISSION_CATALOG_CAVEAT,
+  permissionUsageLabel,
   MicrosoftServiceKey,
   MicrosoftServiceSelection,
   ProviderSpec,
@@ -248,13 +250,37 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
           <legend>Serviços Microsoft (marque os que deseja conectar)</legend>
           <div class="svc-grid">
             @for (s of microsoftServices; track s.key) {
-              <label class="svc">
-                <input type="checkbox" [formControlName]="s.key" />
-                <span class="svc-main">
-                  <strong>{{ s.label }}</strong>
-                  <span class="muted small">{{ s.description }}</span>
-                </span>
-              </label>
+              <div class="svc-cell">
+                <label class="svc">
+                  <input type="checkbox" [formControlName]="s.key" />
+                  <span class="svc-main">
+                    <strong>{{ s.label }}</strong>
+                    <span class="muted small">{{ s.description }}</span>
+                  </span>
+                </label>
+                @if (s.capabilities?.length) {
+                  <details class="cap-matrix">
+                    <summary>Permissões por capacidade ({{ s.capabilities!.length }})</summary>
+                    <p class="muted small caveat">{{ permissionCatalogCaveat }}</p>
+                    <ul>
+                      @for (c of s.capabilities; track c.permission) {
+                        <li [class]="c.usage">
+                          <span class="cap-hd">
+                            <strong>{{ c.name }}</strong>
+                            <em class="usage">{{ permissionUsageLabel(c.usage) }}</em>
+                          </span>
+                          <code>{{ c.permission }}</code>
+                          <span class="muted small">{{ c.purpose }}</span>
+                          @if (c.licenseNote) {
+                            <span class="muted small lic">Licença: {{ c.licenseNote }}</span>
+                          }
+                          <span class="muted small act">Ação: {{ c.action }}</span>
+                        </li>
+                      }
+                    </ul>
+                  </details>
+                }
+              </div>
             }
           </div>
         </fieldset>
@@ -552,6 +578,20 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         margin: 0.5rem 0 0;
         font-size: 0.78rem;
       }
+      /* [AEGIS-MVP-MICROSOFT-COVERAGE-03] Matriz de permissões por capacidade */
+      .svc-cell { display: flex; flex-direction: column; gap: 6px; }
+      .cap-matrix summary { cursor: pointer; font-size: 11px; color: var(--cyan); }
+      .cap-matrix .caveat { margin: 8px 0; }
+      .cap-matrix ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+      .cap-matrix li { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-left: 2px solid var(--line); }
+      .cap-matrix li.NewForIdentityRisk { border-left-color: var(--cyan); }
+      .cap-matrix li.NotRequired { border-left-color: var(--amber); }
+      .cap-hd { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+      .cap-matrix .usage { font-size: 10px; font-style: normal; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+      .cap-matrix li.NewForIdentityRisk .usage { color: var(--cyan); }
+      .cap-matrix li.NotRequired .usage { color: var(--amber); }
+      .cap-matrix .lic, .cap-matrix .act { line-height: 1.45; }
+
       .perms-label {
         display: block;
         opacity: 0.7;
@@ -803,6 +843,10 @@ export class IntegrationsComponent {
   // Formulário genérico: a família Microsoft sai daqui (vai para a conexão unificada).
   protected readonly providers = GENERIC_PROVIDERS;
   protected readonly microsoftServices = MICROSOFT_HUB_SERVICES;
+  // [AEGIS-MVP-MICROSOFT-COVERAGE-03] Matriz de permissões por capacidade — catálogo do produto, NUNCA uma
+  // afirmação de que o consentimento foi concedido no tenant.
+  protected readonly permissionUsageLabel = permissionUsageLabel;
+  protected readonly permissionCatalogCaveat = PERMISSION_CATALOG_CAVEAT;
   protected readonly label = statusLabel;
   protected readonly tone = statusTone;
   protected readonly push = isGenericPush;
