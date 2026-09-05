@@ -24,12 +24,14 @@ public class GovernanceDocumentsController : ControllerBase
     private readonly ITenantContext _tenant;
     private readonly IDocumentEvidenceReconciler _reconciler;
     private readonly IReadOnlyList<IDocumentTextExtractor> _extractors;
+    private readonly IDocumentIntegrationFactory _integrations;
     private readonly ILogger<GovernanceDocumentsController> _log;
 
     public GovernanceDocumentsController(
         AegisScoreDbContext db, IDocumentStorage storage,
         IPolicySyncQueue policySync, ITenantContext tenant,
         IDocumentEvidenceReconciler reconciler, IEnumerable<IDocumentTextExtractor> extractors,
+        IDocumentIntegrationFactory integrations,
         ILogger<GovernanceDocumentsController> log)
     {
         _db = db;
@@ -38,8 +40,18 @@ public class GovernanceDocumentsController : ControllerBase
         _tenant = tenant;
         _reconciler = reconciler;
         _extractors = extractors.ToList();
+        _integrations = integrations;
         _log = log;
     }
+
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-01] O que a INGESTÃO POR INTEGRAÇÃO consegue fazer neste ambiente. A interface
+    /// anunciava "puxe as políticas das fontes corporativas conectadas" tendo por trás apenas um provedor
+    /// SIMULADO; esta leitura permite dizer a verdade — e o upload manual, que é real, segue disponível.
+    /// </summary>
+    [HttpGet("integration")]
+    [ProducesResponseType(typeof(DocumentIntegrationAvailability), StatusCodes.Status200OK)]
+    public ActionResult<DocumentIntegrationAvailability> Integration() => Ok(_integrations.GetAvailability());
 
     /// <summary>
     /// Upload manual: grava o binário + hash SHA-256 e deixa o documento em <c>Queued</c> — que já É a entrada
@@ -130,7 +142,10 @@ public class GovernanceDocumentsController : ControllerBase
     /// (SharePoint, Google…) em background. Acompanhe o resultado por <c>GET /governance/documents</c>.
     /// </summary>
     /// <response code="202">Solicitação de sync persistida com sucesso; será processada em background pelo worker.</response>
+    /// <response code="409">Nenhuma fonte documental disponível neste ambiente — nada seria sincronizado.</response>
     [HttpPost("sync")]
+    [ProducesResponseType(typeof(PolicySyncAcceptedDto), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(PolicySyncAcceptedDto), StatusCodes.Status409Conflict)]
     public async Task<ActionResult<PolicySyncAcceptedDto>> Sync(CancellationToken ct)
     {
         // Tenant SEMPRE do contexto resolvido (claim tenant_id do JWT), NUNCA de input do cliente — o
@@ -139,6 +154,17 @@ public class GovernanceDocumentsController : ControllerBase
         var tenantId = _tenant.TenantId
             ?? throw new TenantSecurityException(
                 "Sync de políticas sem tenant resolvido no contexto (fail-closed).");
+
+        // [AEGIS-MVP-PRODUCT-01] Sem NENHUMA fonte documental resolvível, enfileirar um sync é prometer um
+        // trabalho que o worker vai descartar — e antes disso a única fonte disponível era um provedor
+        // SIMULADO, que ingeria políticas fictícias sob o nome do cliente. Aqui o pedido é RECUSADO com uma
+        // mensagem que o cliente entende, e o upload manual (real) permanece o caminho de governança.
+        var availability = _integrations.GetAvailability();
+        if (availability.AvailableProviders.Count == 0)
+            return Conflict(new PolicySyncAcceptedDto(
+                tenantId, "Unavailable",
+                "A sincronização automática de políticas ainda não está disponível neste ambiente. " +
+                "Envie os documentos de governança pelo upload da Central de Documentos."));
 
         // O 202 só sai DEPOIS de a solicitação estar duravelmente salva (idempotente por tenant). Se a
         // persistência falhar, o await propaga e o cliente recebe erro — nunca um 202 sobre trabalho perdido.
