@@ -70,6 +70,18 @@ export interface DocumentAccepted {
   analysisStatus: AiAnalysisStatus;
 }
 
+/**
+ * [AEGIS-MVP-PRODUCT-01] Disponibilidade REAL da ingestão documental por integração corporativa
+ * (DocumentIntegrationAvailability). `hasOperationalProvider` exige fonte REAL: o modo demonstrativo
+ * torna um provedor simulado resolvível, mas NÃO o promove a capacidade de produção — e a interface
+ * precisa dizer os dois casos com todas as letras.
+ */
+export interface DocumentIntegrationAvailability {
+  hasOperationalProvider: boolean;
+  simulatedModeEnabled: boolean;
+  availableProviders: string[];
+}
+
 /** Resposta 202 do gatilho manual de sincronização de políticas corporativas (PolicySyncAcceptedDto). */
 export interface PolicySyncAccepted {
   tenantId: string;

@@ -7,6 +7,7 @@ import {
   ConfirmMappingRequest,
   ConnectDocumentRequest,
   DocumentAccepted,
+  DocumentIntegrationAvailability,
   Gap,
   GovernCoverage,
   GovernanceDocument,
@@ -54,9 +55,23 @@ export class GovernanceService {
   }
 
   /**
+   * [AEGIS-MVP-PRODUCT-01] GET /documents/integration — o que a ingestão por integração REALMENTE consegue
+   * fazer neste ambiente. A tela anunciava "puxe as políticas das fontes corporativas conectadas" tendo por
+   * trás apenas um provedor SIMULADO; com esta leitura ela diz a verdade, e o upload manual (real) segue
+   * como o caminho de governança.
+   */
+  documentIntegration(): Observable<DocumentIntegrationAvailability> {
+    return this.http.get<DocumentIntegrationAvailability>(
+      `${this.documents}/integration`,
+      { headers: this.headers() },
+    );
+  }
+
+  /**
    * POST /documents/sync — gatilho MANUAL de sincronização das políticas corporativas: enfileira o tenant
    * para o PolicyIngestionWorker puxar as fontes externas (SharePoint/Google…) via Provider Pattern.
    * Retorna 202 (agendado); a ingestão roda em background — os documentos aparecem na lista em instantes.
+   * Responde 409 quando NENHUMA fonte documental está disponível (nada seria sincronizado).
    */
   syncPolicies(): Observable<PolicySyncAccepted> {
     return this.http.post<PolicySyncAccepted>(`${this.documents}/sync`, null, { headers: this.headers() });

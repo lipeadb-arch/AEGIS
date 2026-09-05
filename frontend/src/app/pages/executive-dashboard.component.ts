@@ -1,8 +1,19 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { BlastRadiusSummary, ExecutiveDashboard, GapBalance } from '../models/dashboard.models';
+import {
+  DashboardIdentityGap,
+  DashboardMetric,
+  DashboardOverview,
+  hasReading,
+  identityCapabilityLabel,
+  identityOutcomeLabel,
+  stateLabel,
+  workspaceFromOverview,
+} from '../models/dashboard-overview.models';
 import { ComplianceHistoryPoint, buildGapBalance, trendToSparkline } from '../models/scoring.models';
-import { WorkspacePosture, connectorBreakdown } from '../models/workspace.models';
+import { environmentStage } from '../models/workspace.models';
 import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
 import { EnvironmentFirstComponent } from '../components/environment-first.component';
 import { DashboardService } from '../services/dashboard.service';
@@ -13,7 +24,6 @@ import { SparklineComponent } from '../components/scoring/sparkline.component';
 import { GapBalanceComponent } from '../components/scoring/gap-balance.component';
 import { BlastRadiusSummaryComponent } from '../components/scoring/blast-radius-summary.component';
 import { icrColor } from '../lib/scales';
-import { environment } from '../../environments/environment';
 import { IcrGaugeComponent } from '../components/icr-gauge.component';
 import { RiskHeatmapComponent } from '../components/risk-heatmap.component';
 import { GapChartComponent } from '../components/gap-chart.component';
@@ -22,11 +32,35 @@ import { ExposureCardComponent } from '../components/exposure-card.component';
 import { MaturityGaugeComponent } from '../components/maturity-gauge.component';
 import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bars.component';
 
+/**
+ * [AEGIS-MVP-PRODUCT-01] VISÃO GERAL — a tela inicial do AEGIS.
+ *
+ * O defeito corrigido: a tela decidia "tem postura?" por UMA dimensão (maturidade CMMI + registro de riscos
+ * legado). Num ambiente com telemetria REAL — ativos inventariados, exposições e vulnerabilidades coletadas,
+ * identidade lida — porém sem assessment de maturidade, o painel inteiro exibia "Nenhuma postura medida" e
+ * escondia tudo o que já havia sido observado, enquanto o /scoring/workspace mostrava controles avaliados.
+ *
+ * A correção NÃO foi acrescentar uma condição ao antigo `hasPosture()` e liberar os gráficos legados zerados.
+ * A tela passou a ser PARTICIONADA por dimensão, e CADA painel exige a PRÓPRIA evidência para aparecer:
+ *
+ *  1. Ambiente observado — ativos, exposições, vulnerabilidades, identidade. Métricas independentes com
+ *     origem e estado próprios; ausência de coleta é `null` ("Ainda não coletado"), NUNCA zero.
+ *  2. Postura avaliada — a autoridade determinística (aegis-score-v1) e a cobertura por natureza de prova.
+ *  3. Risco de negócio — maturidade, ICR e registro de riscos. Só é montado (e só então busca os gráficos
+ *     legados) quando a PRÓPRIA dimensão tem avaliação. Sem isso, a seção diz "ainda não avaliado" — e não
+ *     esconde nada das dimensões acima.
+ *  4. O que merece atenção — as duas filas prioritárias, com a ordem e a fonte das autoridades.
+ *  5. Identidade e saúde das fontes — o que continua disponível numa coleta parcial e o que está antigo.
+ *
+ * Nenhum score novo: KNIGHT, NIST, CVSS e maturidade NÃO são combinados. Nada é recalculado no cliente e
+ * nenhuma coleta externa é acionada ao abrir a tela — a leitura composta chega numa requisição.
+ */
 @Component({
   selector: 'app-executive-dashboard',
   standalone: true,
   imports: [
     DatePipe,
+    RouterLink,
     SparklineComponent,
     GapBalanceComponent,
     BlastRadiusSummaryComponent,
@@ -41,381 +75,819 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
     EnvironmentFirstComponent,
   ],
   template: `
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <span class="mark">Aegis <b>Score</b></span>
-          <span class="sub">Gestão de Postura e Exposição Cibernética</span>
+    <div class="page">
+      <header class="page-head">
+        <div class="ph-title">
+          <h1>Visão geral</h1>
+          @if (data(); as d) {
+            <p class="ph-sub">
+              {{ d.clientName }}
+              @if (d.generatedAt) {
+                <span class="ph-when">· leitura de {{ d.generatedAt | date: 'dd/MM HH:mm' }}</span>
+              }
+            </p>
+          }
         </div>
-        <!-- Cliente e ICR só aparecem com dados REAIS. Durante carga ou erro não há postura para
-             exibir, e um nome/ICR remanescente leria como a leitura atual de outro cliente. -->
-        @if (data(); as d) {
-          <div class="client">
-            <span class="label">Cliente</span>
-            <span class="name">{{ d.clientName }}</span>
-            @if (generatedAt()) {
-              <span class="label" title="Instante da apuração no servidor">
-                apurado {{ generatedAt() | date: 'dd/MM HH:mm' }}
-              </span>
-            }
-            <!-- ICR só é número quando REALMENTE medido. Sem nenhum IcrScore, um estado neutro e
-                 explícito ("—" / "ICR · Não avaliado") — nunca um valor, cor de banda ou "Moderado"
-                 fabricados. O cliente e o instante de apuração acima seguem visíveis nos dois casos. -->
-            @if (d.icr; as icr) {
-              <span class="icr-pill" title="Índice de Criticidade de Risco Cibernético">
-                <span class="dot" [style.background]="icrColor(icr.band)"></span>
-                <span class="v" [style.color]="icrColor(icr.band)">
-                  {{ icr.score.toFixed(0) }}
-                </span>
-                <span class="b">ICR · {{ icr.band }}</span>
-              </span>
-            } @else {
-              <span
-                class="icr-pill is-empty"
-                title="Índice de Criticidade — nenhuma medição de ICR para este cliente"
-              >
-                <span class="dot"></span>
-                <span class="v">—</span>
-                <span class="b">ICR · Não avaliado</span>
-              </span>
-            }
-          </div>
-        }
+        <div class="ph-actions">
+          <a class="ghost" routerLink="/priorities">Ver prioridades</a>
+          <button type="button" class="ghost" (click)="reload()" [disabled]="loading()">
+            {{ loading() ? 'Carregando…' : 'Atualizar' }}
+          </button>
+        </div>
       </header>
 
-      <!-- AEGIS Score (aegis-score-v1): a postura DETERMINÍSTICA da projeção única (/scoring/workspace),
-           independente da maturidade CMMI/ICR abaixo — que é OUTRA métrica. Tem estado próprio de carga. -->
-      <section class="aegis-band">
-        @if (workspace(); as w) {
-          <div class="band-grid">
-            <app-posture-summary [posture]="w.overall" label="AEGIS Score" />
-            <div class="band-cards">
-              <div class="bcard" [class.hot]="w.overall.nonCompliantControls > 0">
-                <span class="bk">Não conformes</span>
-                <span class="bv">{{ w.overall.nonCompliantControls }}</span>
-                <span class="bsub">{{ w.overall.notEvaluatedControls }} não avaliados</span>
+      <!-- A leitura é o bloco PRIMÁRIO porque o alias 'as' só é permitido nele (NG5002). Carga e falha vêm
+           enquanto não há leitura REAL, a tela mostra estado, nunca números remanescentes. -->
+      @if (data(); as d) {
+
+        <!-- ============================ 1) AMBIENTE OBSERVADO ============================ -->
+        <section class="block">
+          <div class="block-head">
+            <h2>O que já foi observado</h2>
+            <a class="linknav" routerLink="/assets">Ver ambiente →</a>
+          </div>
+
+          <div class="metrics">
+            @for (m of environmentMetrics(); track m.key) {
+              <a class="metric" [class.is-void]="!hasReading(m.metric)" [class.is-partial]="m.metric.state === 'Partial'" [routerLink]="m.link">
+                <span class="m-k">{{ m.label }}</span>
+                @if (hasReading(m.metric)) {
+                  <span class="m-v">{{ m.metric.value }}</span>
+                } @else {
+                  <span class="m-v is-na">—</span>
+                }
+                <span class="m-state">{{ stateLabel(m.metric.state) }}</span>
+                <span class="m-src">{{ m.metric.sourceLabel }}</span>
+              </a>
+            }
+          </div>
+
+          <!-- Uma nota por métrica sem leitura, agrupada: explica o vazio sem poluir cada cartão. -->
+          @if (metricNotes().length > 0) {
+            <ul class="notes">
+              @for (n of metricNotes(); track n.label) {
+                <li><b>{{ n.label }}</b> · {{ n.note }}</li>
+              }
+            </ul>
+          }
+        </section>
+
+        <!-- ============================ 2) POSTURA AVALIADA ============================ -->
+        <section class="block">
+          <div class="block-head">
+            <h2>Quanto foi avaliado</h2>
+            <a class="linknav" routerLink="/controls">Ver controles →</a>
+          </div>
+
+          <div class="grid two">
+            <div class="panel">
+              <app-posture-summary [posture]="d.posture" label="AEGIS Score" />
+              <!-- Tendência só sob postura AVALIADA: uma curva ao lado de "Não avaliado" afirmaria evolução
+                   de um score que não existe. -->
+              @if (d.posture.evaluationState === 'Evaluated' && trend().length > 1) {
+                <div class="trend-strip">
+                  <app-sparkline [points]="trend()" />
+                  <span class="ts-meta">
+                    <b class="ts-delta" [class.up]="(trendDelta() ?? 0) > 0" [class.down]="(trendDelta() ?? 0) < 0">
+                      {{ (trendDelta() ?? 0) > 0 ? '▲' : (trendDelta() ?? 0) < 0 ? '▼' : '■' }}
+                      {{ trendDelta() }} p.p.
+                    </b>
+                    <em>últimos {{ trend().length }} dias</em>
+                  </span>
+                </div>
+              }
+            </div>
+
+            <div class="panel">
+              <div class="hd">
+                <h3>Cobertura por natureza da prova</h3>
+                <span class="hint">cobertura não é conformidade</span>
               </div>
-              <div class="bcard" [class.hot]="w.connectors.failed > 0">
-                <span class="bk">Conectores (habilitados)</span>
-                <span class="bv">{{ w.connectors.healthy }}/{{ w.connectors.enabled }} operacionais</span>
-                <span class="bsub">{{ connectorBreakdown(w.connectors) }}</span>
-              </div>
-              <div class="bcard">
-                <span class="bk">Última sincronização</span>
-                <span class="bv">{{ w.connectors.lastSyncAt ? (w.connectors.lastSyncAt | date: 'dd/MM HH:mm') : '—' }}</span>
-                <span class="bsub">
-                  {{ w.overall.latestEvidenceAt ? ('evidência ' + (w.overall.latestEvidenceAt | date: 'dd/MM')) : 'sem evidência' }}
-                </span>
-              </div>
+              <ul class="coverage">
+                @for (c of coverage(); track c.label) {
+                  <li>
+                    <span class="c-k">{{ c.label }}</span>
+                    <span class="c-bar" aria-hidden="true"><i [style.width.%]="c.percent"></i></span>
+                    <span class="c-v">{{ c.evaluated }}/{{ c.eligible }}</span>
+                  </li>
+                }
+              </ul>
             </div>
           </div>
-        } @else if (!workspaceLoaded()) {
-          <p class="band-pulse">Consolidando o AEGIS Score…</p>
-        } @else {
-          <p class="band-pulse">AEGIS Score indisponível — a API não respondeu. O console traz o erro.</p>
+        </section>
+
+        <!-- ============================ 3) O QUE MERECE ATENÇÃO ============================ -->
+        <section class="block">
+          <div class="block-head">
+            <h2>O que merece atenção</h2>
+            <a class="linknav" routerLink="/priorities">Central de Prioridades →</a>
+          </div>
+
+          <div class="grid two">
+            <div class="panel">
+              <div class="hd">
+                <h3>Exposições de configuração</h3>
+                <span class="hint">{{ d.configurationExposures.summary.sourceLabel }}</span>
+              </div>
+              @if (d.configurationExposures.top.length > 0) {
+                <ul class="queue">
+                  @for (e of d.configurationExposures.top; track e.id) {
+                    <li>
+                      <span class="q-t">{{ e.displayTitle || e.title }}</span>
+                      <span class="q-m">{{ e.plainSummary || e.category || 'Configuração exposta' }}</span>
+                    </li>
+                  }
+                </ul>
+              } @else {
+                <p class="panel-empty">{{ exposureEmptyText() }}</p>
+              }
+            </div>
+
+            <div class="panel">
+              <div class="hd">
+                <h3>Vulnerabilidades</h3>
+                <span class="hint">agrupadas por problema</span>
+              </div>
+              @if (d.vulnerabilities.top.length > 0) {
+                <ul class="queue">
+                  @for (v of d.vulnerabilities.top; track v.cveId) {
+                    <li>
+                      <span class="q-t">{{ v.displayTitle }}</span>
+                      <span class="q-m">
+                        {{ v.severityLabel }} · {{ v.openAssetCount }} ativo(s) em aberto
+                      </span>
+                    </li>
+                  }
+                </ul>
+              } @else {
+                <p class="panel-empty">{{ vulnerabilityEmptyText() }}</p>
+              }
+            </div>
+          </div>
+        </section>
+
+        <!-- ============================ 4) IDENTIDADE ============================ -->
+        <section class="block">
+          <div class="block-head">
+            <h2>Identidades</h2>
+            <a class="linknav" routerLink="/identity">AEGIS KNIGHT →</a>
+          </div>
+
+          <div class="panel">
+            @if (hasReading(d.identity)) {
+              <p class="lead">
+                Leitura de <b>{{ d.identity.sourceLabel }}</b>
+                @if (d.identity.collectedAt) {
+                  em {{ d.identity.collectedAt | date: 'dd/MM HH:mm' }}
+                }
+                — {{ d.identity.capabilitiesCollected.length }} de
+                {{ d.identity.capabilitiesCollected.length + d.identity.capabilitiesMissing.length }}
+                capacidades entregues.
+              </p>
+
+              <div class="caps">
+                <div class="cap-col">
+                  <span class="cap-k ok">Disponível agora</span>
+                  <ul>
+                    @for (c of d.identity.capabilitiesCollected; track c) {
+                      <li>{{ identityCapabilityLabel(c) }}</li>
+                    }
+                  </ul>
+                </div>
+                @if (d.identity.capabilitiesMissing.length > 0) {
+                  <div class="cap-col">
+                    <!-- Parcialidade NÃO é "integração sem dados": o que falta é nomeado com o motivo real. -->
+                    <span class="cap-k mid">Ainda indisponível</span>
+                    <ul>
+                      @for (g of d.identity.capabilitiesMissing; track g.capability) {
+                        <li>
+                          {{ identityCapabilityLabel(g.capability) }}
+                          <em>{{ identityOutcomeLabel(g.outcome) }}</em>
+                        </li>
+                      }
+                    </ul>
+                  </div>
+                }
+              </div>
+
+              @if (d.identity.controlsAwaitingEvidence > 0) {
+                <p class="foot">
+                  {{ d.identity.controlsAwaitingEvidence }} controle(s) de identidade seguem
+                  <b>não avaliados</b>: a telemetria existe, mas não cobre o requisito deles.
+                </p>
+              }
+            } @else {
+              <p class="panel-empty">{{ identityEmptyText() }}</p>
+            }
+          </div>
+        </section>
+
+        <!-- ============================ 5) SAÚDE DAS FONTES ============================ -->
+        <section class="block">
+          <div class="block-head">
+            <h2>Fontes conectadas</h2>
+            @if (isTenantAdmin()) {
+              <a class="linknav" routerLink="/settings/integrations">Gerenciar integrações →</a>
+            }
+          </div>
+
+          <div class="panel">
+            @if (d.sources.items.length > 0) {
+              <p class="lead">
+                {{ d.sources.healthy }} de {{ d.sources.enabled }} fontes habilitadas operacionais.
+                @if (d.sources.attention > 0) {
+                  <b class="warn">{{ d.sources.attention }} precisa(m) de atenção.</b>
+                }
+              </p>
+              <ul class="sources">
+                @for (s of d.sources.items; track s.id) {
+                  <li [class.attention]="needsAttention(s)">
+                    <span class="s-n">{{ s.displayName }}</span>
+                    <span class="s-c">{{ s.capability }}</span>
+                    <span class="s-s">{{ sourceStateText(s) }}</span>
+                  </li>
+                }
+              </ul>
+            } @else {
+              <p class="panel-empty">Nenhuma integração configurada neste ambiente ainda.</p>
+            }
+          </div>
+        </section>
+
+        <!-- ============================ 6) RISCO DE NEGÓCIO ============================ -->
+        <!-- Dimensão SEPARADA: vem de avaliação assistida, não de telemetria. Cada painel abaixo só aparece
+             com a PRÓPRIA evidência — nenhum gráfico legado é liberado zerado. -->
+        <section class="block">
+          <div class="block-head">
+            <div class="bh-title">
+              <h2>Risco de negócio</h2>
+              <span class="bh-sub">maturidade, criticidade e registro de riscos</span>
+            </div>
+          </div>
+
+          @if (!hasBusinessRisk()) {
+            <div class="panel">
+              <p class="panel-empty">
+                Ainda não avaliado. Maturidade, índice de criticidade e registro de riscos vêm de uma
+                avaliação conduzida com o cliente — <b>não são deriváveis da telemetria acima</b>, e a
+                ausência deles não altera nada do que já foi observado.
+              </p>
+            </div>
+          } @else {
+            @if (d.businessRisk.riskRegisterState === 'Available') {
+              <div class="cards">
+                <app-exposure-card
+                  label="Processos críticos expostos"
+                  [value]="d.businessRisk.criticalProcessesExposed ?? 0"
+                  tone="danger"
+                />
+                <app-exposure-card
+                  label="Planos de ação vencidos"
+                  [value]="d.businessRisk.overdueActionPlans ?? 0"
+                  tone="danger"
+                />
+              </div>
+            }
+
+            <div class="grid two">
+              @if (d.businessRisk.maturityState === 'Available') {
+                <div class="panel">
+                  <div class="hd">
+                    <h3>Maturidade geral</h3>
+                    <span class="hint">CMMI 1–5 · alvo {{ (d.businessRisk.targetMaturity ?? 0).toFixed(1) }}</span>
+                  </div>
+                  <app-maturity-gauge [value]="d.businessRisk.overallMaturity ?? 0" [max]="chartScale()" />
+                </div>
+
+                <div class="panel">
+                  <div class="hd">
+                    <h3>Maturidade por função</h3>
+                    <span class="hint">escala 0–{{ chartScale().toFixed(1) }}</span>
+                  </div>
+                  @if (maturityBars().length > 0) {
+                    <app-maturity-bars [data]="maturityBars()" [max]="chartScale()" />
+                  } @else {
+                    <p class="panel-empty">Carregando o detalhe por função…</p>
+                  }
+                </div>
+              }
+
+              @if (d.businessRisk.icrState === 'Available' && legacy()?.icr; as icr) {
+                <div class="panel">
+                  <div class="hd">
+                    <h3>Índice de criticidade</h3>
+                    <span class="hint" [style.color]="icrColor(icr.band)">{{ icr.band }}</span>
+                  </div>
+                  <app-icr-gauge [icr]="icr" />
+                </div>
+              }
+
+              @if ((legacy()?.riskByLevel?.length ?? 0) > 0) {
+                <div class="panel">
+                  <div class="hd"><h3>Riscos por nível</h3></div>
+                  <app-risk-levels [data]="legacy()!.riskByLevel" />
+                </div>
+              }
+
+              @if ((legacy()?.riskHeatmap?.length ?? 0) > 0) {
+                <div class="panel">
+                  <div class="hd"><h3>Matriz de risco</h3></div>
+                  <app-risk-heatmap [data]="legacy()!.riskHeatmap" />
+                </div>
+              }
+
+              @if ((legacy()?.topGaps?.length ?? 0) > 0) {
+                <div class="panel">
+                  <div class="hd">
+                    <h3>Maiores lacunas por categoria</h3>
+                    <span class="hint">distância até o alvo</span>
+                  </div>
+                  <app-gap-chart [data]="legacy()!.topGaps" />
+                </div>
+              }
+
+              @if (gapBalance(); as gb) {
+                <div class="panel">
+                  <div class="hd">
+                    <h3>Origem das lacunas</h3>
+                    <span class="hint">tecnologia × processo</span>
+                  </div>
+                  <app-gap-balance [balance]="gb" />
+                </div>
+              }
+
+              @if (blastRadius(); as br) {
+                <div class="panel">
+                  <div class="hd">
+                    <h3>Impacto potencial</h3>
+                    <span class="hint">pior cenário conhecido</span>
+                  </div>
+                  <app-blast-radius-summary [summary]="br" />
+                </div>
+              }
+            </div>
+          }
+        </section>
+
+        <!-- ============================ 7) PRÓXIMO PASSO ============================ -->
+        <!-- Jornada environment-first: reusa a MESMA leitura composta (nenhuma chamada extra). Aparece só
+             enquanto AINDA orienta (etapas A–C). Na etapa "medido" ela repetia a cobertura por natureza que a
+             seção "Quanto foi avaliado" já apresenta — duas leituras do mesmo número na mesma tela. -->
+        @if (onboardingView(); as w) {
+          <app-environment-first [posture]="w" [isTenantAdmin]="isTenantAdmin()" />
         }
-      </section>
-
-      <!-- [AEGIS-MVP-ENV-01] Jornada environment-first: reusa a MESMA projeção do workspace (nenhuma chamada
-           extra). Aparece assim que a projeção carrega — onboarding num tenant começando e resumo de progresso
-           num já medido. A etapa (A→D) é derivada por função pura da projeção; a IA aqui é só apresentação. -->
-      @if (workspace(); as w) {
-        <app-environment-first [posture]="w" [isTenantAdmin]="isTenantAdmin()" />
-      }
-
-      @if (loading()) {
-        <div class="notice">
+      } @else if (loading()) {
+        <section class="panel state">
           <span class="scan" aria-hidden="true"></span>
-          <b>Consolidando a postura do cliente…</b>
-        </div>
-      } @else if (loadError()) {
-        <!-- Falha operacional da API: NUNCA cair em dados de demonstração nem reaproveitar a carga
-             anterior. Sem indicadores, estado de erro explícito (distinto do estado vazio) e uma
-             nova tentativa. Zerar ou reusar a resposta anterior apresentaria dados fictícios — ou
-             de outro tenant — como se fossem a postura real deste cliente. -->
-        <section class="empty-state is-error">
-          <span class="es-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.3">
-              <path d="M12 3.5 2.4 20.2h19.2L12 3.5Z" stroke-linejoin="round" />
-              <path d="M12 10v4M12 16.8v.2" stroke-linecap="round" />
-            </svg>
-          </span>
-          <h3>Não foi possível carregar a postura do cliente</h3>
-          <p>
-            A API não respondeu em <code>{{ apiBase }}</code>. Nenhum indicador é exibido — <b>um
-            painel de exemplo ou os números da carga anterior seriam lidos como a postura real</b>.
-            Confira o endereço da API e o <code>tenantId</code> do cliente; o console traz o erro
-            completo.
-          </p>
-          <button type="button" class="retry" (click)="reload()">Tentar novamente</button>
+          <b>Consolidando a leitura do ambiente…</b>
         </section>
       } @else {
-        @if (data(); as d) {
-
-      <!-- Tenant provisionado e ainda sem medição: um painel de zeros leria como "nenhum risco".
-           O estado vazio diz o que falta e por onde começar, em vez de fingir uma leitura. -->
-      @if (!hasPosture()) {
-        <section class="empty-state">
-          <span class="es-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.3">
-              <path d="M12 3 4 6.5v5c0 4.6 3.2 8.4 8 9.5 4.8-1.1 8-4.9 8-9.5v-5L12 3Z" stroke-linejoin="round" />
-              <path d="M12 9.5v4M12 16.2v.2" stroke-linecap="round" />
-            </svg>
-          </span>
-          <h3>Nenhuma postura medida para {{ d.clientName }}</h3>
+        <!-- Falha operacional: NUNCA cair em exemplo nem reaproveitar a carga anterior — e sem mandar o
+             cliente investigar console, endereço de API ou identificador técnico. -->
+        <section class="panel state is-error">
+          <h3>Não foi possível carregar a visão geral</h3>
           <p>
-            O tenant está provisionado, mas ainda não recebeu evidência. Os indicadores abaixo só
-            passam a significar algo depois da primeira medição — <b>zero aqui não é ausência de
-            risco, é ausência de leitura</b>.
+            O serviço não respondeu agora. <b>Nenhum indicador é exibido</b> — números remanescentes seriam
+            lidos como a leitura atual deste ambiente.
           </p>
-          <!-- [AEGIS-MVP-ENV-01] Environment-first: conectar o ambiente é o ponto de partida. Documentos NÃO são
-               etapa obrigatória paralela — a governança entra depois, onde houver lacuna organizacional. O bloco
-               "Comece pelo ambiente" acima conduz a jornada; estes passos apenas a resumem. -->
-          <ul class="es-steps">
-            <li><b>Conecte um ambiente</b> — a leitura segura e somente leitura de cloud, identidade, ativos e controles é o primeiro valor.</li>
-            <li><b>Revise o que foi coletado</b> — ativos, exposições e vulnerabilidades aparecem antes mesmo de o Score mudar.</li>
-            <li><b>Complemente a governança depois</b> — só onde houver lacuna organizacional, com entrevista, evidência dirigida ou documento.</li>
-          </ul>
+          <button type="button" class="primary" (click)="reload()">Tentar novamente</button>
         </section>
-      } @else {
-
-      <p class="eyebrow">Exposição do negócio</p>
-      <section class="cards">
-        <app-exposure-card
-          label="Processos críticos expostos"
-          [value]="d.exposure.criticalProcessesExposed"
-          tone="danger"
-        />
-        <app-exposure-card
-          label="Planos de ação vencidos"
-          [value]="d.exposure.overdueActionPlans"
-          tone="danger"
-        />
-      </section>
-
-      <!-- Painéis principais (Cenário Hollywood): gauge de maturidade + histograma por função. -->
-      <div class="grid main">
-        <div class="panel">
-          <div class="hd">
-            <h3>Maturidade Geral</h3>
-            <span class="hint">CMMI 1–5 · alvo {{ targetMaturity().toFixed(1) }}</span>
-          </div>
-          <app-maturity-gauge [value]="overallMaturity()" [max]="chartScale()" />
-
-          <!-- A DERIVADA do risco: o gauge diz onde estamos, a curva diz para onde vamos. Carrega
-               depois do painel principal e se omite sozinha com menos de 2 snapshots. -->
-          @if (trend().length > 1) {
-            <div class="trend-strip">
-              <app-sparkline [points]="trend()" />
-              <span class="ts-meta">
-                <b
-                  class="ts-delta"
-                  [class.up]="(trendDelta() ?? 0) > 0"
-                  [class.down]="(trendDelta() ?? 0) < 0"
-                >
-                  {{ (trendDelta() ?? 0) > 0 ? '▲' : (trendDelta() ?? 0) < 0 ? '▼' : '■' }}
-                  {{ trendDelta() }} p.p.
-                </b>
-                <em>Aegis Score · {{ trend().length }} dias</em>
-              </span>
-            </div>
-          }
-        </div>
-
-        <div class="panel">
-          <div class="hd">
-            <h3>Maturidade por Função</h3>
-            <!-- 1 casa: com toFixed(0) a escala 4,42 virava "0–4" ao lado de um gauge marcado 4,4. -->
-            <span class="hint">escala 0–{{ chartScale().toFixed(1) }} · alvo {{ targetMaturity().toFixed(1) }}</span>
-          </div>
-          <app-maturity-bars [data]="maturityBars()" [max]="chartScale()" />
-        </div>
-      </div>
-
-      <!-- As duas perguntas de diretoria: "o que falta se compra ou se escreve?" e "quanto custa se
-           cair?". Painéis SECUNDÁRIOS — carregam por conta própria, fora do caminho do FCP. -->
-      <div class="grid main">
-        <div class="panel">
-          <div class="hd">
-            <h3>Origem das lacunas</h3>
-            <span class="hint">tecnologia × processo</span>
-          </div>
-          @if (gapBalance()) {
-            <app-gap-balance [balance]="gapBalance()" />
-          } @else {
-            <p class="panel-empty">Consolidando lacunas de evidência…</p>
-          }
-        </div>
-
-        <div class="panel">
-          <div class="hd">
-            <h3>Impacto potencial</h3>
-            <span class="hint">raio de impacto · pior cenário</span>
-          </div>
-          @if (blastLoaded()) {
-            <app-blast-radius-summary [summary]="blastRadius()" />
-          } @else {
-            <p class="panel-empty">Calculando o alcance do pior cenário…</p>
-          }
-        </div>
-      </div>
-
-      <div class="grid trio">
-        <div class="panel">
-          <div class="hd"><h3>Índice de Criticidade (ICR)</h3></div>
-          @if (d.icr; as icr) {
-            <app-icr-gauge [icr]="icr" />
-          } @else {
-            <p class="panel-empty">ICR não avaliado — nenhuma medição de criticidade para este cliente ainda.</p>
-          }
-          <div class="hd" style="margin-top:18px">
-            <h3 style="font-size:13px;color:var(--muted)">Riscos por nível</h3>
-          </div>
-          @if (d.riskByLevel.length > 0) {
-            <app-risk-levels [data]="d.riskByLevel" />
-          } @else {
-            <p class="panel-empty">Nenhum risco classificado ainda.</p>
-          }
-        </div>
-
-        <div class="panel">
-          <div class="hd">
-            <h3>Maiores lacunas por categoria</h3>
-            <span class="hint">distância até o alvo</span>
-          </div>
-          @if (d.topGaps.length > 0) {
-            <app-gap-chart [data]="d.topGaps" />
-          } @else {
-            <p class="panel-empty">Sem categorias avaliadas — as lacunas surgem com a primeira avaliação.</p>
-          }
-        </div>
-
-        <div class="panel">
-          <div class="hd"><h3>Matriz de risco</h3></div>
-          @if (d.riskHeatmap.length > 0) {
-            <app-risk-heatmap [data]="d.riskHeatmap" />
-          } @else {
-            <p class="panel-empty">Sem riscos avaliados — a matriz aparece após a primeira avaliação.</p>
-          }
-        </div>
-      </div>
-      }
-        }
       }
     </div>
   `,
   styles: [
     `
-      /* Banda do AEGIS Score (projeção única) — acima da maturidade, com seu próprio estado de carga. */
-      .aegis-band {
-        margin: 0 0 20px;
+      /* ---------- Página ---------- */
+      .page {
+        /* Folga inferior generosa: o FAB do Auditor flutua no canto inferior direito, e sem esta reserva
+           o último cartão da página ficaria permanentemente sob ele. */
+        padding: 20px 26px 104px;
+        max-width: 1320px;
       }
-      .aegis-band .band-pulse {
+      .page-head {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: flex-end;
+        justify-content: space-between;
+        margin-bottom: 22px;
+      }
+      .page-head h1 {
+        margin: 0;
+        font-family: var(--display);
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: var(--text);
+      }
+      .ph-sub {
+        margin: 5px 0 0;
         font-family: var(--mono);
         font-size: 12px;
         color: var(--muted);
-        margin: 0;
-        padding: 14px 2px;
       }
-      .aegis-band .band-grid {
-        display: grid;
-        grid-template-columns: minmax(260px, 340px) 1fr;
-        gap: 14px;
-        align-items: stretch;
+      .ph-when {
+        opacity: 0.8;
       }
-      .aegis-band .band-cards {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
+      .ph-actions {
+        display: flex;
+        gap: 8px;
+        flex: none;
+      }
+      .ghost,
+      .primary {
+        appearance: none;
+        cursor: pointer;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        letter-spacing: 0.03em;
+        text-decoration: none;
+        padding: 8px 14px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: rgba(122, 145, 190, 0.06);
+        color: var(--text);
+        transition: 0.15s;
+      }
+      .ghost:hover:not(:disabled) {
+        border-color: color-mix(in srgb, var(--cyan) 40%, var(--line));
+        background: rgba(38, 224, 255, 0.08);
+      }
+      .ghost:disabled {
+        opacity: 0.55;
+        cursor: progress;
+      }
+      .primary {
+        border-color: var(--cyan);
+        background: rgba(38, 224, 255, 0.12);
+      }
+
+      /* ---------- Blocos ---------- */
+      .block {
+        margin: 0 0 26px;
+      }
+      .block-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
         gap: 12px;
+        margin: 0 0 12px;
+        /* Título e ação não colidem: o link encolhe antes do título. */
+        flex-wrap: wrap;
       }
-      .aegis-band .bcard {
+      .bh-title {
         display: flex;
         flex-direction: column;
         gap: 3px;
-        justify-content: center;
-        padding: 12px 14px;
+        min-width: 0;
+      }
+      /* Subtítulo do bloco: ABAIXO do título, nunca na borda oposta (ali competia por leitura com ele). */
+      .bh-sub {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--muted);
+      }
+      .block-head h2 {
+        margin: 0;
+        font-family: var(--sans);
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .linknav {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--cyan);
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .linknav:hover {
+        text-decoration: underline;
+      }
+
+      .panel {
         border: 1px solid var(--line);
         border-radius: 12px;
-        background: rgba(122, 145, 190, 0.03);
+        background: var(--panel);
+        padding: 16px 18px;
       }
-      .aegis-band .bcard.hot {
-        border-color: rgba(255, 45, 111, 0.4);
-        background: rgba(255, 45, 111, 0.05);
+      /* O título nunca é espremido pela dica: em painel estreito ela desce para a linha de baixo. */
+      .panel .hd {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+        margin: 0 0 12px;
       }
-      .aegis-band .bk {
+      .panel .hd h3 {
+        margin: 0;
+        font-family: var(--sans);
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text);
+      }
+      .panel .hint {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .panel-empty {
+        margin: 0;
+        font-family: var(--sans);
+        font-size: 12.5px;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+      .panel-empty b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .lead {
+        margin: 0 0 12px;
+        font-family: var(--sans);
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--text);
+      }
+      .lead b {
+        font-weight: 600;
+      }
+      .lead .warn {
+        color: var(--amber);
+      }
+      .foot {
+        margin: 12px 0 0;
+        padding-top: 10px;
+        border-top: 1px solid var(--line-2);
+        font-family: var(--sans);
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+
+      /* ---------- Estado da página ---------- */
+      .state {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        align-items: flex-start;
+        font-family: var(--sans);
+        font-size: 13px;
+        color: var(--text);
+      }
+      .state h3 {
+        margin: 0;
+        font-family: var(--sans);
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .state p {
+        margin: 0;
+        max-width: 62ch;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+      .state.is-error {
+        border-left: 3px solid var(--red);
+      }
+      .state .scan {
+        display: inline-block;
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        border: 2px solid rgba(38, 224, 255, 0.25);
+        border-top-color: var(--cyan);
+        animation: exec-spin 0.75s linear infinite;
+      }
+      @keyframes exec-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .state .scan {
+          animation: none;
+        }
+      }
+
+      /* ---------- Métricas do ambiente ---------- */
+      /* auto-fit + minmax: em 1366px cabem 5 colunas; abaixo disso quebra sozinho, sem rolagem lateral. */
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+        gap: 12px;
+      }
+      .metric {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 14px 16px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--panel);
+        text-decoration: none;
+        transition: 0.15s;
+        min-width: 0;
+      }
+      .metric:hover {
+        border-color: color-mix(in srgb, var(--cyan) 35%, var(--line));
+      }
+      .m-k {
         font-family: var(--mono);
         font-size: 10px;
         letter-spacing: 0.12em;
         text-transform: uppercase;
         color: var(--muted);
       }
-      .aegis-band .bv {
+      .m-v {
         font-family: var(--display);
         font-weight: 700;
-        font-size: 19px;
+        font-size: 26px;
+        line-height: 1.15;
         color: var(--text);
       }
-      .aegis-band .bcard.hot .bv {
-        color: var(--red);
+      .m-v.is-na {
+        color: var(--muted);
+        opacity: 0.6;
       }
-      .aegis-band .bsub {
+      .m-state {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--cyan);
+        opacity: 0.85;
+      }
+      .metric.is-void .m-state {
+        color: var(--muted);
+      }
+      .metric.is-partial .m-state {
+        color: var(--amber);
+      }
+      .m-src {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--muted);
+        opacity: 0.7;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .notes {
+        list-style: none;
+        margin: 12px 0 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .notes li {
+        font-family: var(--sans);
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+      .notes b {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      /* ---------- Grades ---------- */
+      .grid.two {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+        gap: 14px;
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      /* ---------- Cobertura ---------- */
+      .coverage {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .coverage li {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) clamp(64px, 18%, 128px) 58px;
+        align-items: center;
+        gap: 10px;
+      }
+      /* O rótulo QUEBRA em vez de truncar: em painéis estreitos "Avaliação orientada" virava
+         "Avaliação orient…", e o nome da natureza da prova é justamente o que se lê aqui. */
+      .c-k {
+        font-family: var(--sans);
+        font-size: 12.5px;
+        line-height: 1.35;
+        color: var(--text);
+        min-width: 0;
+      }
+      .c-bar {
+        display: block;
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(122, 145, 190, 0.14);
+        overflow: hidden;
+      }
+      /* NEUTRO de propósito: cobertura não é conformidade — nada de verde/vermelho aqui. */
+      .c-bar i {
+        display: block;
+        height: 100%;
+        background: var(--cyan);
+        opacity: 0.55;
+      }
+      .c-v {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--muted);
+        text-align: right;
+      }
+
+      /* ---------- Filas ---------- */
+      .queue {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .queue li {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--line-2);
+      }
+      .queue li:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+      }
+      .q-t {
+        font-family: var(--sans);
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--text);
+      }
+      .q-m {
         font-family: var(--mono);
         font-size: 10.5px;
         color: var(--muted);
       }
-      @media (max-width: 860px) {
-        .aegis-band .band-grid {
-          grid-template-columns: 1fr;
-        }
+
+      /* ---------- Identidade ---------- */
+      .caps {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+      }
+      .cap-k {
+        display: block;
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-bottom: 7px;
+      }
+      .cap-k.ok {
+        color: var(--cyan);
+      }
+      .cap-k.mid {
+        color: var(--amber);
+      }
+      .caps ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .caps li {
+        font-family: var(--sans);
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--text);
+      }
+      .caps li em {
+        display: block;
+        font-style: normal;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--muted);
       }
 
-      /* Estado vazio do painel executivo — mesma linguagem HUD do resto do AEGIS. */
-      .empty-state {
-        border: 1px solid var(--line);
-        border-left: 3px solid var(--cyan);
-        border-radius: 12px;
-        background: linear-gradient(90deg, rgba(38, 224, 255, 0.05), rgba(38, 224, 255, 0.01));
-        padding: 22px 24px;
-        margin-top: 8px;
-        max-width: 760px;
-      }
-      /* Estado de ERRO — mesma família visual, porém em tom de alerta (vermelho) e com nova
-         tentativa, para NUNCA ser confundido com "resposta vazia". A falha não vira zero nem exemplo. */
-      .empty-state.is-error {
-        border-left-color: var(--red);
-        background: linear-gradient(90deg, rgba(255, 45, 111, 0.06), rgba(255, 45, 111, 0.01));
-      }
-      .empty-state.is-error .es-mark {
-        color: var(--red);
-      }
-      .empty-state.is-error b {
-        color: var(--red);
-      }
-      .es-mark {
-        display: inline-flex;
-        color: var(--cyan);
-        opacity: 0.85;
-      }
-      .empty-state h3 {
-        margin: 10px 0 8px;
-        font-family: var(--display);
-        font-size: 17px;
-        font-weight: 600;
-        color: var(--text);
-      }
-      .empty-state p {
-        margin: 0 0 14px;
-        font-family: var(--sans);
-        font-size: 13px;
-        line-height: 1.6;
-        color: var(--text);
-        opacity: 0.86;
-      }
-      .empty-state b {
-        color: var(--cyan);
-        font-weight: 600;
-      }
-      .es-steps {
+      /* ---------- Fontes ---------- */
+      .sources {
         list-style: none;
         margin: 0;
         padding: 0;
@@ -423,48 +895,42 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         flex-direction: column;
         gap: 8px;
       }
-      .es-steps li {
-        position: relative;
-        padding-left: 18px;
+      .sources li {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.3fr);
+        gap: 10px;
+        align-items: baseline;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--line-2);
+      }
+      .sources li:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+      }
+      .s-n {
+        font-family: var(--sans);
+        font-size: 12.5px;
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .s-c,
+      .s-s {
         font-family: var(--mono);
-        font-size: 11.5px;
-        line-height: 1.55;
+        font-size: 10.5px;
         color: var(--muted);
       }
-      .es-steps li::before {
-        content: '▸';
-        position: absolute;
-        left: 0;
-        color: var(--cyan);
-      }
-      .es-steps b {
-        color: var(--text);
-        font-weight: 600;
-      }
-      /* Botão de nova tentativa no estado de erro. */
-      .retry {
-        appearance: none;
-        cursor: pointer;
-        font-family: var(--mono);
-        font-size: 11.5px;
-        letter-spacing: 0.02em;
-        color: var(--text);
-        background: rgba(255, 45, 111, 0.08);
-        border: 1px solid var(--red);
-        border-radius: 8px;
-        padding: 8px 16px;
-        transition: background 0.15s ease;
-      }
-      .retry:hover {
-        background: rgba(255, 45, 111, 0.16);
+      .sources li.attention .s-s {
+        color: var(--amber);
       }
 
-      /* Faixa de tendência sob o gauge: a curva + a variação ponta a ponta. */
+      /* ---------- Tendência ---------- */
       .trend-strip {
         display: flex;
         align-items: center;
         gap: 12px;
-        margin-top: 12px;
+        margin-top: 14px;
         padding-top: 12px;
         border-top: 1px solid var(--line-2);
       }
@@ -480,7 +946,6 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         font-size: 13px;
         color: var(--muted);
       }
-      /* Subir é bom (cyan), cair é ruim (vermelho) — a MESMA régua do resto do produto. */
       .ts-delta.up {
         color: var(--cyan);
       }
@@ -495,34 +960,17 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         opacity: 0.75;
       }
 
-      /* Painel individual sem dados: nota discreta, nunca um gráfico vazio sem explicação. */
-      .panel-empty {
-        margin: 6px 0 0;
-        font-family: var(--mono);
-        font-size: 11.5px;
-        line-height: 1.55;
-        color: var(--muted);
-      }
-
-      .notice .scan {
-        display: inline-block;
-        width: 11px;
-        height: 11px;
-        margin-right: 8px;
-        vertical-align: -1px;
-        border-radius: 50%;
-        border: 2px solid rgba(38, 224, 255, 0.25);
-        border-top-color: var(--cyan);
-        animation: exec-spin 0.75s linear infinite;
-      }
-      @keyframes exec-spin {
-        to {
-          transform: rotate(360deg);
+      /* Telas estreitas: nada rola lateralmente — as grades já colapsam sozinhas. */
+      @media (max-width: 720px) {
+        .page {
+          padding: 16px 14px 48px;
         }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .notice .scan {
-          animation: none;
+        .sources li {
+          grid-template-columns: 1fr;
+          gap: 2px;
+        }
+        .coverage li {
+          grid-template-columns: minmax(0, 1fr) 60px 52px;
         }
       }
     `,
@@ -534,198 +982,246 @@ export class ExecutiveDashboardComponent implements OnInit {
   private readonly scoringSvc = inject(ScoringService);
   private readonly auth = inject(AuthService);
 
-  /** Papel no tenant ativo — gate de visibilidade do CTA administrativo no bloco environment-first. */
+  /** Papel no tenant ativo — gate de visibilidade das ações administrativas (o backend também barra). */
   readonly isTenantAdmin = this.auth.isTenantAdmin;
 
-  // Começa NULO: o dashboard operacional nunca nasce com uma postura de exemplo. Só recebe conteúdo
-  // de uma resposta REAL da API; qualquer falha o mantém nulo e aciona o estado de erro (ver `load`).
-  data = signal<ExecutiveDashboard | null>(null);
-  loadError = signal(false);
-
-  // ---- AEGIS Score (aegis-score-v1) da projeção única — independente da maturidade acima ----
-  workspace = signal<WorkspacePosture | null>(null);
-  workspaceLoaded = signal(false);
-
-  // ---- Maturidade: valores AUTORITATIVOS do backend ----
-  // O ExposureCardsDto já traz `overallMaturity`/`targetMaturity` prontos, calculados pelo
-  // MaturityScoringService. Eram campos ÓRFÃOS — o backend os enviava e o frontend os ignorava.
-  //
-  // ⚠️ Recalcular aqui a média de `maturityByFunction` (o que esta tela fazia) DIVERGE do servidor, e
-  // não por arredondamento: o radar preenche com 0 toda Função sem avaliação (`agg?.CurrentScore ?? 0`
-  // no DashboardController), enquanto o rollup só promedia as Funções que TÊM dados. Num tenant com só
-  // Govern avaliado em 3.0, o servidor reporta 3.0 e a média local diria 0.5 — o gauge C-Level mostraria
-  // um quinto da maturidade real. Consumir o número do servidor é a única fonte de verdade.
-
-  /**
-   * ALVO de maturidade — a MÉTRICA que o rollup do servidor apurou. É o número que a diretoria lê
-   * ("alvo 4,2"), e por isso vem do backend, não de uma conta local. Sem dados carregados → 0
-   * (não é exibido: os painéis só renderizam sob resposta real).
-   */
-  readonly targetMaturity = computed(() => this.data()?.exposure.targetMaturity ?? 0);
-
-  /** Maturidade geral — o `overall` do rollup, tal como o servidor o calculou. */
-  readonly overallMaturity = computed(() => this.data()?.exposure.overallMaturity ?? 0);
-
-  /**
-   * ESCALA dos gráficos — GEOMETRIA, não métrica. Precisa comportar a maior barra E o maior alvo
-   * INDIVIDUAL, senão o marcador de alvo de uma Função mais exigente é desenhado fora da área útil.
-   *
-   * ⚠️ Não confundir com <see cref="targetMaturity"/>: o alvo agregado (4,18 na demo) é MENOR que o
-   * maior alvo por Função (4,42 em RC) — usá-lo como teto cortaria justamente a Função de meta mais
-   * alta. Piso 4 para a régua CMMI não colapsar num tenant zerado.
-   */
-  readonly chartScale = computed(() => {
-    const d = this.data();
-    if (!d) return 4;
-    return Math.max(
-      4,
-      d.exposure.targetMaturity,
-      ...d.maturityByFunction.map((f) => f.target),
-      ...d.maturityByFunction.map((f) => f.current),
-    );
-  });
-
-  /** Maturidade por Função NIST, na ordem do catálogo que o backend já devolve. */
-  readonly maturityBars = computed<FunctionScore[]>(() =>
-    (this.data()?.maturityByFunction ?? []).map((f) => ({
-      code: f.function,
-      label: f.functionName.replace(/\s*\(.*\)$/, ''), // "GOVERN (GV)" → "GOVERN"
-      value: f.current,
-    })),
-  );
-
-  // ---- Estado da tela ----
-
-  /** Ainda aguardando a resposta em voo: evita pintar números antes da hora. Começa `true`. */
+  /** Leitura composta. Começa NULA: a tela nunca nasce com uma postura de exemplo. */
+  readonly data = signal<DashboardOverview | null>(null);
   readonly loading = signal(true);
+  readonly loadError = signal(false);
 
   /**
-   * O tenant tem postura avaliada? Um cliente recém-provisionado responde 200 com tudo zerado, e é
-   * PIOR que um erro: gauges em 0, painéis em branco e cartões de exposição zerados leem como
-   * "nenhum risco", quando o correto é "nada foi medido ainda". Num painel de diretoria essa
-   * diferença decide orçamento. Sem dados carregados → `false`.
+   * Painéis LEGADOS de maturidade/risco (radar por Função, matriz, lacunas por categoria, ICR). Só são
+   * buscados quando a leitura composta confirma que a dimensão de risco de negócio TEM avaliação — sem isso
+   * a chamada seria puro desperdício e os gráficos apareceriam zerados, que é justamente o defeito corrigido.
    */
-  readonly hasPosture = computed(() => {
-    const d = this.data();
-    if (!d) return false;
-    return d.maturityByFunction.some((f) => f.current > 0)
-      || d.topGaps.length > 0
-      || d.riskByLevel.length > 0
-      || d.riskHeatmap.length > 0
-      || d.exposure.criticalProcessesExposed > 0
-      || d.exposure.overdueActionPlans > 0;
-  });
+  readonly legacy = signal<ExecutiveDashboard | null>(null);
+  readonly gapBalance = signal<GapBalance | null>(null);
 
-  /** Instante da apuração — o backend já enviava `generatedAt` e a tela não o exibia. */
-  readonly generatedAt = computed(() => this.data()?.generatedAt ?? null);
+  /** Pior raio conhecido; `null` = nunca calculado (204) ou indisponível — o painel se omite. */
+  readonly blastRadius = signal<BlastRadiusSummary | null>(null);
 
-  // Resumo curto e honesto da saúde dos conectores (degradado/falha/nunca sincronizado/desabilitado).
-  protected readonly connectorBreakdown = connectorBreakdown;
-  // Exposto ao template para colorir a pílula do ICR.
-  protected readonly icrColor = icrColor;
-  // Exposto ao template para orientar o diagnóstico quando a carga falha.
-  protected readonly apiBase = environment.apiBase;
-
-  // ---- Painéis SECUNDÁRIOS: três cargas independentes, deliberadamente NÃO combinadas ----
-  // Nada de forkJoin/combineLatest aqui: encadear as quatro chamadas faria a tela inteira esperar a
-  // mais lenta, e o FCP do dashboard principal é o que a diretoria vê primeiro. Cada painel tem o
-  // próprio signal e acende quando o seu dado chega; falha de um não derruba os outros.
-
-  /** Série do Aegis Score já no formato do SparklineComponent (vazia = sparkline se omite). */
+  /** Série do AEGIS Score. Vazia = a faixa de tendência se omite. */
   readonly trend = signal<ComplianceHistoryPoint[]>([]);
-  /** Variação ponta a ponta da série, em pontos percentuais. `null` enquanto não há 2 pontos. */
   readonly trendDelta = computed(() => {
     const t = this.trend();
     return t.length > 1 ? Math.round(t[t.length - 1].compliancePercent - t[0].compliancePercent) : null;
   });
 
-  /** Balanço CAPEX × OPEX das lacunas; `null` enquanto carrega. */
-  readonly gapBalance = signal<GapBalance | null>(null);
+  // Expostos ao template.
+  protected readonly hasReading = hasReading;
+  protected readonly stateLabel = stateLabel;
+  protected readonly identityCapabilityLabel = identityCapabilityLabel;
+  protected readonly identityOutcomeLabel = identityOutcomeLabel;
+  protected readonly icrColor = icrColor;
 
-  /** Pior raio conhecido; `null` = nunca calculado (204) OU ainda carregando — ver `blastLoaded`. */
-  readonly blastRadius = signal<BlastRadiusSummary | null>(null);
-  readonly blastLoaded = signal(false);
+  /** As cinco métricas do ambiente, com rótulo e destino de investigação. */
+  readonly environmentMetrics = computed(() => {
+    const d = this.data();
+    if (!d) return [];
+    const e = d.environment;
+    return [
+      { key: 'assets', label: 'Ativos', metric: e.assets, link: '/assets' },
+      { key: 'exposures', label: 'Configurações expostas', metric: e.configurationExposures, link: '/exposures' },
+      { key: 'vulns', label: 'Vulnerabilidades', metric: e.vulnerabilities, link: '/vulnerabilities' },
+      { key: 'affected', label: 'Ativos afetados', metric: e.affectedAssets, link: '/vulnerabilities' },
+      { key: 'identity', label: 'Identidades', metric: e.identity, link: '/identity' },
+    ];
+  });
+
+  /** Explicações agrupadas das métricas sem leitura — o vazio explicado uma vez, não em cada cartão. */
+  readonly metricNotes = computed(() =>
+    this.environmentMetrics()
+      .filter((m) => m.metric.note)
+      .map((m) => ({ label: m.label, note: m.metric.note as string })),
+  );
+
+  /** Cobertura por natureza da prova — percentuais JÁ apurados pelo backend (nada é recalculado aqui). */
+  readonly coverage = computed(() => {
+    const ec = this.data()?.evidenceCoverage;
+    if (!ec) return [];
+    return [
+      { label: 'Ambiente e telemetria', slice: ec.telemetry },
+      { label: 'Governança e evidência dirigida', slice: ec.documentation },
+      { label: 'Evidência híbrida', slice: ec.both },
+      { label: 'Avaliação orientada', slice: ec.notAutomated },
+    ]
+      .filter((c) => c.slice.eligibleControls > 0)
+      .map((c) => ({
+        label: c.label,
+        percent: c.slice.coveragePercentage,
+        evaluated: c.slice.evaluatedControls,
+        eligible: c.slice.eligibleControls,
+      }));
+  });
+
+  /**
+   * Projeção do workspace reconstruída a partir da MESMA leitura composta, para alimentar o bloco
+   * environment-first sem uma segunda requisição ao /scoring/workspace.
+   */
+  readonly workspaceView = computed(() => {
+    const d = this.data();
+    return d ? workspaceFromOverview(d) : null;
+  });
+
+  /**
+   * A jornada environment-first ainda tem o que orientar? Nas etapas A–C ela conduz o próximo passo; na
+   * etapa "medido" o conteúdo dela é a MESMA cobertura por natureza já exibida em "Quanto foi avaliado".
+   */
+  readonly onboardingView = computed(() => {
+    const w = this.workspaceView();
+    return w && environmentStage(w) !== 'measured' ? w : null;
+  });
+
+  /** A dimensão de risco de negócio tem alguma avaliação própria? Governa a seção inteira. */
+  readonly hasBusinessRisk = computed(() => {
+    const b = this.data()?.businessRisk;
+    if (!b) return false;
+    return b.maturityState === 'Available'
+      || b.icrState === 'Available'
+      || b.riskRegisterState === 'Available';
+  });
+
+  /** Maturidade por Função NIST, na ordem do catálogo que o backend devolve. */
+  readonly maturityBars = computed<FunctionScore[]>(() =>
+    (this.legacy()?.maturityByFunction ?? []).map((f) => ({
+      code: f.function,
+      label: f.functionName.replace(/\s*\(.*\)$/, ''),
+      value: f.current,
+    })),
+  );
+
+  /**
+   * ESCALA dos gráficos de maturidade — GEOMETRIA, não métrica: precisa comportar a maior barra E o maior
+   * alvo INDIVIDUAL, senão o marcador de alvo de uma Função mais exigente sai da área útil. Piso 4 para a
+   * régua CMMI não colapsar. Não confundir com o ALVO agregado, que é menor que o maior alvo por Função.
+   */
+  readonly chartScale = computed(() => {
+    const l = this.legacy();
+    const target = this.data()?.businessRisk.targetMaturity ?? 0;
+    if (!l) return Math.max(4, target);
+    return Math.max(
+      4,
+      target,
+      ...l.maturityByFunction.map((f) => f.target),
+      ...l.maturityByFunction.map((f) => f.current),
+    );
+  });
+
+  /** Fila vazia de exposições: "nunca coletado" ≠ "coletado sem achados" — a diferença muda a decisão. */
+  readonly exposureEmptyText = computed(() =>
+    this.data()?.environment.configurationExposures.state === 'NeverCollected'
+      ? 'Ainda não coletado — nenhuma leitura de configuração foi feita neste ambiente.'
+      : 'Nenhuma exposição de configuração aberta na última leitura.',
+  );
+
+  /** Vazio de identidade: "sem fonte" e "fonte conectada sem coleta" pedem ações diferentes. */
+  readonly identityEmptyText = computed(() =>
+    this.data()?.identity.state === 'NoSource'
+      ? 'Nenhuma fonte de identidade conectada neste ambiente.'
+      : 'Fonte de identidade conectada, ainda sem coleta concluída.',
+  );
+
+  readonly vulnerabilityEmptyText = computed(() =>
+    this.data()?.environment.vulnerabilities.state === 'NeverCollected'
+      ? 'Ainda não coletado — nenhuma varredura de vulnerabilidades chegou a este ambiente.'
+      : 'Nenhuma vulnerabilidade aberta na última leitura.',
+  );
 
   ngOnInit(): void {
     this.load();
   }
 
-  /** Nova tentativa a partir do estado de erro — mesma limpeza e recarga total de `load`. */
   reload(): void {
     this.load();
   }
 
+  /** Uma fonte precisa de atenção? MESMA régua do backend (o número do resumo e a lista não divergem). */
+  needsAttention(s: { enabled: boolean; everSynced: boolean; status: string; staleDays: number | null }): boolean {
+    if (!s.enabled) return false;
+    if (!s.everSynced) return true;
+    if (s.status !== 'Healthy') return true;
+    return (s.staleDays ?? 0) >= 7;
+  }
+
+  /** Texto operacional do estado de uma fonte — sem jargão de implementação. */
+  sourceStateText(s: {
+    enabled: boolean;
+    everSynced: boolean;
+    status: string;
+    staleDays: number | null;
+  }): string {
+    if (!s.enabled) return 'Desabilitada';
+    if (!s.everSynced) return 'Nunca sincronizou';
+    if (s.status === 'Failed') return 'Falha na última coleta';
+    if (s.status === 'Degraded') return 'Coleta degradada';
+    const days = s.staleDays ?? 0;
+    if (days >= 7) return `Leitura de ${days} dias atrás`;
+    if (days >= 1) return `Leitura de ${days} dia(s) atrás`;
+    return 'Leitura de hoje';
+  }
+
   /**
-   * Carrega (ou recarrega) a postura do tenant. LIMPA a tela ANTES de disparar: nenhum valor da carga
-   * anterior — nem de outro tenant após um switch — pode sobreviver a um novo pedido, muito menos a
-   * uma falha. Se a nova carga falhar, o que fica é o estado de erro, jamais números remanescentes ou
-   * dados de exemplo.
+   * Carrega (ou recarrega) a visão geral. LIMPA a tela ANTES de disparar: nenhum valor da carga anterior —
+   * nem de outro ambiente após uma troca — sobrevive a um novo pedido, muito menos a uma falha.
    */
   private load(): void {
     this.loading.set(true);
     this.loadError.set(false);
     this.data.set(null);
-    this.trend.set([]);
+    this.legacy.set(null);
     this.gapBalance.set(null);
     this.blastRadius.set(null);
-    this.blastLoaded.set(false);
-    this.workspace.set(null);
-    this.workspaceLoaded.set(false);
+    this.trend.set([]);
 
-    // 1) Caminho crítico: o dashboard principal. É o único que governa `loading` e `loadError`.
-    this.svc.fetchExecutive().subscribe({
+    // Caminho crítico: UMA requisição traz o quadro inteiro, já composto pelo backend.
+    this.svc.fetchOverview().subscribe({
       next: (d) => {
         this.data.set(d);
         this.loadError.set(false);
         this.loading.set(false);
+        this.loadBusinessRiskDetail(d);
       },
       error: (err) => {
-        // Falha operacional: mantém os dados NULOS e sinaliza erro. Sem fallback de demonstração e
-        // sem reaproveitar a resposta anterior — o estado de erro é a única coisa que a tela mostra.
-        console.error('Falha ao carregar o dashboard executivo:', err);
+        console.error('Falha ao carregar a visão geral:', err);
         this.data.set(null);
         this.loadError.set(true);
         this.loading.set(false);
       },
     });
 
-    // 2) Tendência (a DERIVADA do risco). Reusa o AegisScoreService que já consome /scoring/trend —
-    //    duplicar o método no DashboardService criaria dois clientes para o mesmo endpoint.
+    // Tendência: painel SECUNDÁRIO com estado próprio — falhar aqui não derruba a tela.
     this.scoreSvc.fetchTrend(30).subscribe({
       next: (t) => this.trend.set(trendToSparkline(t)),
-      error: (err) => console.warn('Tendência indisponível (painel se omite):', err),
+      error: (err) => console.warn('Tendência indisponível (a faixa se omite):', err),
     });
 
-    // 3) Balanço de lacunas — deriva da MESMA matriz que os painéis de pilar já consomem.
+    // Raio de explosão: 204 → null (nunca calculado). O painel simplesmente não aparece.
+    this.svc.fetchBlastRadiusSummary().subscribe({
+      next: (s) => this.blastRadius.set(s),
+      error: (err) => console.warn('Raio de impacto indisponível:', err),
+    });
+  }
+
+  /**
+   * Detalhe de maturidade/risco. Só dispara quando a leitura composta CONFIRMA que a dimensão tem avaliação:
+   * num ambiente sem assessment nenhuma dessas requisições sai, e nenhum gráfico legado é montado zerado.
+   */
+  private loadBusinessRiskDetail(d: DashboardOverview): void {
+    const b = d.businessRisk;
+    if (b.maturityState !== 'Available' && b.icrState !== 'Available' && b.riskRegisterState !== 'Available') {
+      return;
+    }
+
+    this.svc.fetchExecutive().subscribe({
+      next: (l) => this.legacy.set(l),
+      error: (err) => console.warn('Detalhe de maturidade/risco indisponível:', err),
+    });
+
+    // Balanço de lacunas — deriva da MESMA matriz de controles que as telas de Função consomem.
     this.scoringSvc.getDashboard().subscribe({
       next: (rows) => this.gapBalance.set(buildGapBalance(rows)),
       error: (err) => console.warn('Balanço de lacunas indisponível:', err),
-    });
-
-    // 4) Raio de explosão. 204 → null (nunca calculado); `blastLoaded` separa isso de "carregando".
-    this.svc.fetchBlastRadiusSummary().subscribe({
-      next: (s) => {
-        this.blastRadius.set(s);
-        this.blastLoaded.set(true);
-      },
-      error: (err) => {
-        console.warn('Raio de explosão indisponível:', err);
-        this.blastLoaded.set(true);
-      },
-    });
-
-    // 5) AEGIS Score (projeção única do workspace) — a postura determinística. Estado próprio de carga:
-    //    a banda mostra "Não avaliado" (nunca 0%) num tenant sem evidência e um erro sanitizado se a API falhar.
-    this.scoreSvc.fetchWorkspace().subscribe({
-      next: (w) => {
-        this.workspace.set(w);
-        this.workspaceLoaded.set(true);
-      },
-      error: (err) => {
-        console.warn('AEGIS Score (workspace) indisponível:', err);
-        this.workspace.set(null);
-        this.workspaceLoaded.set(true);
-      },
     });
   }
 }

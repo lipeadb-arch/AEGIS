@@ -69,10 +69,14 @@ jobs:
       # ⚠️ Filtro POR CLASSE, igual ao de migrations-pg, e NENHUM job roda a suíte backend inteira: uma classe de
       #     teste NOVA que não seja adicionada aqui simplesmente não executa e o check fica verde assim mesmo
       #     (falso verde). Confira SEMPRE a CONTAGEM no log, não só conclusion=success.
-      - name: SIEM, device management and identity connector tests on Linux
+      #     [AEGIS-MVP-PRODUCT-01] Inclui a tela inicial e a honestidade documental: a COMPOSIÇÃO por dimensão
+      #     independente da Visão geral (DashboardOverviewQueryTests, SQLite — ambiente observado NÃO some por
+      #     falta de maturidade legada, e ausência de coleta é null, nunca zero) e o gate do provedor documental
+      #     SIMULADO (DocumentIntegrationFactoryTests + SimulatedDocumentProviderGuardTests).
+      - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
