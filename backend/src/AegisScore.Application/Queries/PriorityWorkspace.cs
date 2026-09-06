@@ -47,6 +47,54 @@ public sealed record PriorityVulnerabilityQueueDto(
     IReadOnlyList<VulnerabilityGroupDto> Top);
 
 /// <summary>
+/// [AEGIS-MVP-PRODUCT-02] UM achado de identidade na Central — VERBATIM da autoridade KNIGHT. Severidade,
+/// resultado, evidência, quantidade afetada e data vêm da avaliação persistida; a Central não recalcula,
+/// não reordena por critério próprio e não converte "não avaliado" em nada.
+/// </summary>
+/// <param name="HasAffectedDetail">
+/// TRUE quando a avaliação preservou os objetos que sustentam o achado — é o que autoriza a Central a
+/// oferecer o link "ver afetados" em vez de prometer um detalhe que não existe naquela execução.
+/// </param>
+public sealed record PriorityKnightFindingDto(
+    string IndicatorId,
+    string Title,
+    string Category,
+    string Severity,
+    string Status,
+    string Evidence,
+    int AffectedObjectCount,
+    bool HasAffectedDetail,
+    DateTimeOffset CollectedAt);
+
+/// <summary>
+/// [AEGIS-MVP-PRODUCT-02] FILA de achados de identidade do AEGIS KNIGHT — a TERCEIRA fila, e não uma quarta
+/// dimensão somada às outras. O score KNIGHT segue com fórmula própria e NÃO é combinado com postura NIST nem
+/// com CVSS/EPSS num índice novo: ele aparece aqui apenas identificado como o que é.
+///
+/// A fila aponta para a MESMA avaliação que a tela do KNIGHT mostra (<see cref="RunId"/>), de modo que os
+/// dois lugares não possam divergir; e a origem é sempre explícita (<see cref="IsDemo"/>), para que evidência
+/// demonstrativa e corporativa nunca se misturem sem aviso.
+/// </summary>
+/// <param name="RunId"><c>null</c> quando o tenant ainda não tem nenhuma avaliação — a Central diz isso.</param>
+/// <remarks>
+/// Categoria, severidade, veredito, fonte e estado viajam como NOME (string), não como ordinal — o mesmo
+/// idioma dos demais DTOs de leitura desta Central. A API não tem conversor global de enums; deixar um enum
+/// cru aqui faria a tela receber um número e comparar com um nome.
+/// </remarks>
+public sealed record PriorityKnightQueueDto(
+    Guid? RunId,
+    bool IsDemo,
+    string? SourceLabel,
+    string? SourceType,
+    string? SourceState,
+    DateTimeOffset? CollectedAt,
+    double? Score,
+    double Coverage,
+    int ExposedCount,
+    int NotEvaluatedCount,
+    IReadOnlyList<PriorityKnightFindingDto> Top);
+
+/// <summary>
 /// Read model COMPOSTO da Central de Prioridades. Reúne, SEM combinar num único índice, as três dimensões
 /// semanticamente distintas: <see cref="Posture"/> (postura NIST atual, já calculada pelo workspace),
 /// <see cref="ConfigurationExposures"/> (fila de exposições de configuração) e
@@ -58,18 +106,21 @@ public sealed record PriorityVulnerabilityQueueDto(
 /// <param name="Posture">Postura consolidada atual do tenant (mesma autoridade do Dashboard/Funções).</param>
 /// <param name="ConfigurationExposures">Fila de exposições de configuração (resumo + top abertos).</param>
 /// <param name="Vulnerabilities">Fila de vulnerabilidades em ativos (resumo + top abertos).</param>
+/// <param name="IdentityFindings">Fila de achados de identidade do AEGIS KNIGHT (leitura da avaliação persistida).</param>
 public sealed record PriorityWorkspaceDto(
     string ReadModelVersion,
     DateTimeOffset GeneratedAt,
     WorkspaceOverallDto Posture,
     PriorityExposureQueueDto ConfigurationExposures,
-    PriorityVulnerabilityQueueDto Vulnerabilities)
+    PriorityVulnerabilityQueueDto Vulnerabilities,
+    PriorityKnightQueueDto IdentityFindings)
 {
     /// <summary>
-    /// Versão semântica do contrato composto. [AEGIS-MVP-LANGUAGE-02] Incrementada para <c>v2</c>: o read model da
-    /// fila de vulnerabilidades passou de ocorrências ativo×CVE para GRUPOS por CVE/problema (semântica diferente).
+    /// Versão semântica do contrato composto. [AEGIS-MVP-LANGUAGE-02] o <c>v2</c> trocou ocorrências ativo×CVE
+    /// por GRUPOS de CVE/problema. [AEGIS-MVP-PRODUCT-02] o <c>v3</c> acrescenta a fila de achados de
+    /// identidade do KNIGHT — uma fila A MAIS, jamais um índice combinado com as outras.
     /// </summary>
-    public const string Version = "priority-workspace-v2";
+    public const string Version = "priority-workspace-v3";
 
     /// <summary>Teto de itens por fila nesta primeira versão (página 1, somente abertos).</summary>
     public const int MaxQueueItems = 5;

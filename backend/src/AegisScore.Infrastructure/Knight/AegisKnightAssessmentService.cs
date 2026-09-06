@@ -119,10 +119,23 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             CapabilitiesJson = JsonSerializer.Serialize(result.Capabilities, Json),
         };
 
+        // [AEGIS-MVP-PRODUCT-02] Objetos afetados preservados por SINAL pela mesma coleta — indexados pelo
+        // indicador que o mapa explicito de escopo aponta. Um sinal fora do escopo simplesmente nao gera
+        // detalhe, e o indicador correspondente se declara "sem detalhe preservado".
+        var affectedByIndicator = new Dictionary<string, KnightAffectedObjectEvidence>(StringComparer.Ordinal);
+        foreach (var set in result.AffectedObjectSets)
+        {
+            var mapped = KnightAffectedObjectScope.IndicatorFor(set.Signal);
+            if (mapped is not null) affectedByIndicator[mapped] = set;
+        }
+
         foreach (var e in evaluated)
         {
-            run.Indicators.Add(new KnightIndicatorResult
+            var indicator = new KnightIndicatorResult
             {
+                // O Id da execução já existe em memória (Entity o gera na construção); carimbá-lo aqui deixa
+                // o RunId denormalizado dos objetos afetados correto ANTES do SaveChanges.
+                RunId = run.Id,
                 IndicatorId = e.Definition.Id,
                 Title = e.Definition.Title,
                 Category = e.Definition.Category,
@@ -136,7 +149,15 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
                 SourceType = source,
                 NotEvaluatedReason = e.NotEvaluatedReason,
                 CollectedAt = result.CollectedAt,
-            });
+            };
+
+            // Só há "objetos afetados" quando o veredito sinalizou algum: num indicador CONFORME a contagem é
+            // zero por definição, e anexar ali a lista de objetos observados faria a tabela contradizer o
+            // número exibido ao lado dela.
+            if (e.AffectedObjectCount > 0 && affectedByIndicator.TryGetValue(e.Definition.Id, out var evidence))
+                AttachAffected(indicator, evidence);
+
+            run.Indicators.Add(indicator);
         }
 
         // 6) Persiste o veredito DETERMINÍSTICO ANTES da IA (durável já em Running).
@@ -184,7 +205,130 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         return new KnightSourcesStatus(DemoAvailable: true, real);
     }
 
+    /// <inheritdoc />
+    public async Task<KnightAffectedObjectsPage?> GetAffectedObjectsAsync(
+        Guid runId, string indicatorId, int page, int pageSize, string? search, CancellationToken ct = default)
+    {
+        // Paginacao SANEADA no servidor: um pageSize absurdo vindo do cliente nao vira varredura de tabela.
+        var safePage = page < 1 ? 1 : page;
+        var safeSize = pageSize < 1
+            ? KnightAffectedObjectsPage.DefaultPageSize
+            : Math.Min(pageSize, KnightAffectedObjectsPage.MaxPageSize);
+        var id = (indicatorId ?? "").Trim();
+
+        // O indicador e lido DENTRO da execucao pedida — e o Global Query Filter (fail-closed) faz de uma
+        // execucao de outro tenant algo indistinguivel de inexistente. Nada aqui aciona coleta na fonte.
+        var indicator = await _db.KnightIndicatorResults.AsNoTracking()
+            .Where(i => i.RunId == runId && i.IndicatorId == id)
+            .Select(i => new
+            {
+                i.Id,
+                i.AffectedObjectCount,
+                i.HasAffectedDetail,
+                i.AffectedDetailComplete,
+                i.AffectedDetailLimitation,
+                i.CollectedAt,
+            })
+            .FirstOrDefaultAsync(ct);
+
+        if (indicator is null) return null;
+
+        if (!indicator.HasAffectedDetail)
+        {
+            // TRÊS ausências distintas, e a tela precisa dizer qual é qual:
+            //   • o veredito não sinalizou objeto algum (contagem zero) → o conjunto vazio É a resposta certa,
+            //     e vale tanto para uma execução nova quanto para uma antiga;
+            //   • o achado está no escopo mas a execução é ANTERIOR à preservação → declara isso e não recebe
+            //     a coleta atual, que seria o presente apresentado como prova do passado;
+            //   • o achado não preserva detalhe nesta entrega.
+            var inScope = KnightAffectedObjectScope.IsInScope(id);
+            var missing = (inScope, indicator.AffectedObjectCount) switch
+            {
+                (true, 0) => KnightAffectedDetailState.Available,
+                (true, _) => KnightAffectedDetailState.NotPreserved,
+                _ => KnightAffectedDetailState.OutOfScope,
+            };
+            return KnightAffectedObjectsPage.Without(
+                runId, id, missing, indicator.AffectedObjectCount, safePage, safeSize,
+                indicator.AffectedDetailLimitation, indicator.CollectedAt);
+        }
+
+        var query = _db.KnightAffectedObjects.AsNoTracking()
+            .Where(o => o.IndicatorResultId == indicator.Id);
+
+        var totalPreserved = await query.CountAsync(ct);
+
+        // BUSCA NO BANCO (nome, UPN ou identificador). O navegador nunca recebe milhares de objetos para
+        // filtrar depois — e o servidor que filtra, conta e pagina.
+        var term = (search ?? "").Trim();
+        if (term.Length > 0)
+        {
+            var pattern = "%" + term + "%";
+            query = query.Where(o =>
+                EF.Functions.Like(o.ExternalId, pattern)
+                || (o.DisplayName != null && EF.Functions.Like(o.DisplayName, pattern))
+                || (o.UserPrincipalName != null && EF.Functions.Like(o.UserPrincipalName, pattern)));
+        }
+
+        var matchCount = term.Length > 0 ? await query.CountAsync(ct) : totalPreserved;
+
+        var items = await query
+            // Ordenacao deterministica e estavel entre paginas: nome quando existe, depois o identificador.
+            .OrderBy(o => o.DisplayName ?? o.UserPrincipalName ?? o.ExternalId).ThenBy(o => o.ExternalId)
+            .Skip((safePage - 1) * safeSize).Take(safeSize)
+            .Select(o => new KnightAffectedObjectView(
+                o.ExternalId, o.Kind, o.DisplayName, o.UserPrincipalName, o.Roles, o.Detail))
+            .ToListAsync(ct);
+
+        return new KnightAffectedObjectsPage(
+            runId, id,
+            indicator.AffectedDetailComplete ? KnightAffectedDetailState.Available : KnightAffectedDetailState.Partial,
+            indicator.AffectedObjectCount, totalPreserved, matchCount, safePage, safeSize, items,
+            indicator.AffectedDetailLimitation, indicator.CollectedAt);
+    }
+
     // ---- Helpers ----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Anexa ao resultado do indicador os objetos que sustentam o veredito, deduplicados pela MESMA chave que
+    /// o coletor usou (identificador do objeto na fonte). A completude e DECLARADA, nao deduzida: a lista fica
+    /// incompleta quando a coleta disse que nao enumerou tudo OU quando o numero de objetos preservados
+    /// diverge da contagem do veredito — e essa divergencia vira uma limitacao VISIVEL, em vez de uma tabela
+    /// que silenciosamente contradiz o numero exibido ao lado dela.
+    /// </summary>
+    private static void AttachAffected(KnightIndicatorResult indicator, KnightAffectedObjectEvidence evidence)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var o in evidence.Objects)
+        {
+            if (string.IsNullOrWhiteSpace(o.ExternalId) || !seen.Add(o.ExternalId)) continue;
+            indicator.AffectedObjects.Add(new KnightAffectedObject
+            {
+                RunId = indicator.RunId,
+                IndicatorId = indicator.IndicatorId,
+                ExternalId = o.ExternalId,
+                Kind = o.Kind,
+                DisplayName = o.DisplayName,
+                UserPrincipalName = o.UserPrincipalName,
+                Roles = o.Roles?.ToList() ?? new List<string>(),
+                Detail = o.Detail,
+            });
+        }
+
+        var preserved = indicator.AffectedObjects.Count;
+        var matchesCount = preserved == indicator.AffectedObjectCount;
+
+        indicator.HasAffectedDetail = true;
+        indicator.AffectedDetailComplete = evidence.IsComplete && matchesCount;
+        indicator.AffectedDetailLimitation = matchesCount
+            ? evidence.Limitation
+            : string.Join(" ", new[]
+            {
+                evidence.Limitation,
+                $"A lista preservada tem {preserved} objeto(s) e o veredito contou {indicator.AffectedObjectCount} — "
+                + "a diferenca e declarada aqui em vez de ser escondida.",
+            }.Where(x => !string.IsNullOrWhiteSpace(x)));
+    }
 
     private async Task<KnightAdvisoryResult> GenerateAdvisorySafeAsync(KnightAdvisoryInput input, CancellationToken ct)
     {
@@ -230,7 +374,8 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             .OrderBy(i => i.IndicatorId, StringComparer.Ordinal)
             .Select(i => new KnightIndicatorView(
                 i.IndicatorId, i.Title, i.Category, i.Severity, i.Status, i.Evidence, i.AffectedObjectCount,
-                i.NistCodes, i.MitreTechniques, i.Recommendation, i.CollectedAt, i.SourceType, i.NotEvaluatedReason))
+                i.NistCodes, i.MitreTechniques, i.Recommendation, i.CollectedAt, i.SourceType, i.NotEvaluatedReason,
+                i.HasAffectedDetail, i.AffectedDetailComplete, i.AffectedDetailLimitation))
             .ToList();
 
         return new KnightAssessment(

@@ -6,12 +6,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Api.Controllers;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Knight;
 using AegisScore.Application.Queries;
+using AegisScore.Domain;
 using AegisScore.Infrastructure;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Queries;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -80,6 +83,41 @@ public sealed class PriorityWorkspaceTests
             Task.FromResult(new VulnerabilityListDto(Result.Summary, Array.Empty<VulnerabilityItemDto>(), 0, 1, 5));
     }
 
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-02] Fake da AUTORIDADE KNIGHT. A Central apenas LÊ a avaliação persistida: este
+    /// fake falha explicitamente se a composição tentar EXECUTAR uma avaliação — abrir a Central jamais pode
+    /// disparar coleta.
+    /// </summary>
+    private sealed class FakeKnightService : IAegisKnightAssessmentService
+    {
+        public KnightAssessment? Latest;
+        public int Calls;
+        public CancellationToken Token;
+
+        public Task<KnightAssessment?> GetLatestAsync(CancellationToken ct = default)
+        {
+            Calls++;
+            Token = ct;
+            return Task.FromResult(Latest);
+        }
+
+        public Task<KnightAssessment> RunDemoAssessmentAsync(CancellationToken ct = default) =>
+            throw new InvalidOperationException("A Central de Prioridades NUNCA executa uma avaliação KNIGHT.");
+
+        public Task<KnightAssessment> RunAssessmentAsync(KnightSourceType source, CancellationToken ct = default) =>
+            throw new InvalidOperationException("A Central de Prioridades NUNCA executa uma coleta KNIGHT.");
+
+        public Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+            Task.FromResult<KnightAssessment?>(null);
+
+        public Task<KnightSourcesStatus> GetSourcesStatusAsync(CancellationToken ct = default) =>
+            Task.FromResult(new KnightSourcesStatus(true, Array.Empty<KnightSourceInfo>()));
+
+        public Task<KnightAffectedObjectsPage?> GetAffectedObjectsAsync(
+            Guid runId, string indicatorId, int page, int pageSize, string? search, CancellationToken ct = default) =>
+            Task.FromResult<KnightAffectedObjectsPage?>(null);
+    }
+
     // ---- Builders de DTOs canônicos ---------------------------------------------------------------------
 
     private static WorkspacePostureDto Posture(string state = "Evaluated", double? pct = 62.5, DateTimeOffset? latest = null)
@@ -142,12 +180,68 @@ public sealed class PriorityWorkspaceTests
     private static (PriorityWorkspaceQuery query, FakePostureQuery p, FakeExposureQuery e, FakeVulnerabilityQuery v, FakeTimeProvider clock)
         Build(WorkspacePostureDto posture, PostureExposureListDto exposures, VulnerabilityOverviewDto vulns, DateTimeOffset? now = null)
     {
+        var (query, p, e, v, _, clock) = BuildWithKnight(posture, exposures, vulns, knight: null, now);
+        return (query, p, e, v, clock);
+    }
+
+    /// <summary>Mesma composição, expondo também o fake do KNIGHT — a fila de achados de identidade.</summary>
+    private static (PriorityWorkspaceQuery query, FakePostureQuery p, FakeExposureQuery e, FakeVulnerabilityQuery v, FakeKnightService k, FakeTimeProvider clock)
+        BuildWithKnight(
+            WorkspacePostureDto posture, PostureExposureListDto exposures, VulnerabilityOverviewDto vulns,
+            KnightAssessment? knight, DateTimeOffset? now = null)
+    {
         var p = new FakePostureQuery { Result = posture };
         var e = new FakeExposureQuery { Result = exposures };
         var v = new FakeVulnerabilityQuery { Result = vulns };
+        var k = new FakeKnightService { Latest = knight };
         var clock = new FakeTimeProvider(now ?? new DateTimeOffset(2026, 8, 23, 12, 0, 0, TimeSpan.Zero));
-        return (new PriorityWorkspaceQuery(p, e, v, clock), p, e, v, clock);
+        return (new PriorityWorkspaceQuery(p, e, v, k, clock), p, e, v, k, clock);
     }
+
+    /// <summary>Avaliação KNIGHT canônica para a fila de identidade (a autoridade, não uma recontagem).</summary>
+    private static KnightAssessment KnightAssessmentWith(params KnightIndicatorView[] indicators) => new(
+        Id: Guid.Parse("11111111-1111-1111-1111-111111111111"),
+        Mode: KnightAssessmentMode.Demo,
+        SourceType: KnightSourceType.Demo,
+        SourceState: KnightSourceState.Completed,
+        Source: "Provedor de Demonstração AEGIS KNIGHT",
+        Status: KnightRunStatus.Completed,
+        CatalogVersion: "ak-knight-v1",
+        ScoreFormulaVersion: "knight-score-v1",
+        StartedAt: DateTimeOffset.UnixEpoch,
+        CompletedAt: DateTimeOffset.UnixEpoch,
+        Score: 23,
+        Coverage: 100,
+        PassedCount: 1,
+        ExposedCount: indicators.Count(i => i.Status == KnightIndicatorStatus.Exposed),
+        MitigatedCount: 0,
+        NotEvaluatedCount: 2,
+        ErrorCount: 0,
+        NotApplicableCount: 0,
+        Indicators: indicators,
+        Capabilities: Array.Empty<KnightCapabilityStatus>(),
+        Advisory: null,
+        AdvisoryFromAi: false);
+
+    private static KnightIndicatorView KnightIndicator(
+        string id, SeverityLevel severity, KnightIndicatorStatus status = KnightIndicatorStatus.Exposed,
+        int affected = 3, bool detail = true) => new(
+        IndicatorId: id,
+        Title: "Título de " + id,
+        Category: KnightIndicatorCategory.PrivilegedAccess,
+        Severity: severity,
+        Status: status,
+        Evidence: "Evidência de " + id,
+        AffectedObjectCount: affected,
+        NistCodes: new[] { "PR.AA-01" },
+        MitreTechniques: Array.Empty<string>(),
+        Recommendation: "Recomendação",
+        CollectedAt: DateTimeOffset.UnixEpoch,
+        SourceType: KnightSourceType.Demo,
+        NotEvaluatedReason: null,
+        HasAffectedDetail: detail,
+        AffectedDetailComplete: detail,
+        AffectedDetailLimitation: null);
 
     // ---- (1) Composição: reúne as três dimensões numa única leitura ------------------------------------
 
@@ -328,6 +422,89 @@ public sealed class PriorityWorkspaceTests
 
     // ---- (9) DI: a árvore completa resolve em runtime a partir do composition root real ----------------
 
+    // ---- [AEGIS-MVP-PRODUCT-02] Fila de achados de identidade: consistência KNIGHT → Prioridades ------
+
+    [Fact]
+    public async Task FilaKnight_PreservaOsValoresDaAutoridade_ESoLeAvaliacaoPersistida()
+    {
+        var knight = KnightAssessmentWith(
+            KnightIndicator("AK-ENTRA-004", SeverityLevel.Medium),
+            KnightIndicator("AK-ENTRA-001", SeverityLevel.Critical),
+            KnightIndicator("AK-ENTRA-003", SeverityLevel.Medium, KnightIndicatorStatus.Passed, affected: 0, detail: false),
+            KnightIndicator("AK-ENTRA-002", SeverityLevel.High));
+
+        var (query, _, _, _, k, _) = BuildWithKnight(
+            Posture(),
+            ExposureList(new[] { ExposureItem("MFA") }, DateTimeOffset.UnixEpoch),
+            VulnOverview(new[] { VulnGroup("CVE-1") }, DateTimeOffset.UnixEpoch, neverCollected: false),
+            knight);
+
+        var result = await query.GetAsync();
+        var fila = result.IdentityFindings;
+
+        k.Calls.Should().Be(1, "a Central LÊ a avaliação persistida — uma vez, e nunca executa coleta");
+
+        fila.RunId.Should().Be(knight.Id, "a Central aponta para a MESMA avaliação da tela do KNIGHT");
+        fila.IsDemo.Should().BeTrue("origem demonstrativa é sempre identificada");
+        fila.Score.Should().Be(knight.Score, "o score KNIGHT vem verbatim — e continua sendo o score KNIGHT");
+        fila.NotEvaluatedCount.Should().Be(2, "cobertura incompleta viaja como informação, não como silêncio");
+
+        fila.Top.Select(f => f.IndicatorId).Should().Equal(
+            new[] { "AK-ENTRA-001", "AK-ENTRA-002", "AK-ENTRA-004" },
+            "somente EXPOSTOS entram na fila, ordenados pela régua de severidade do produto");
+        fila.Top.Should().NotContain(f => f.IndicatorId == "AK-ENTRA-003",
+            "um achado CONFORME não é um item de fila de prioridade");
+
+        foreach (var f in fila.Top)
+        {
+            var origem = knight.Indicators.Single(i => i.IndicatorId == f.IndicatorId);
+            f.Severity.Should().Be(origem.Severity.ToString());
+            f.Status.Should().Be(origem.Status.ToString());
+            f.Evidence.Should().Be(origem.Evidence, "a evidência é preservada, não reescrita");
+            f.AffectedObjectCount.Should().Be(origem.AffectedObjectCount, "nada é recontado aqui");
+            f.HasAffectedDetail.Should().BeTrue("é o que autoriza o link para os afetados");
+        }
+    }
+
+    [Fact]
+    public async Task SemAvaliacaoKnight_AFilaDizIsso_EmVezDeMostrarZeros()
+    {
+        var (query, _, _, _, _, _) = BuildWithKnight(
+            Posture(),
+            ExposureList(Array.Empty<PostureExposureItemDto>(), null),
+            VulnOverview(Array.Empty<VulnerabilityGroupDto>(), null, neverCollected: true),
+            knight: null);
+
+        var fila = (await query.GetAsync()).IdentityFindings;
+
+        fila.RunId.Should().BeNull("sem avaliação, não existe resultado para apontar");
+        fila.Score.Should().BeNull("ausência de avaliação NUNCA vira score zero");
+        fila.SourceLabel.Should().BeNull();
+        fila.Top.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FilaKnight_NaoSeMisturaComAsOutrasFilas_NemNumIndiceUnico()
+    {
+        var (query, _, _, _, _, _) = BuildWithKnight(
+            Posture(),
+            ExposureList(new[] { ExposureItem("MFA") }, DateTimeOffset.UnixEpoch),
+            VulnOverview(new[] { VulnGroup("CVE-1") }, DateTimeOffset.UnixEpoch, neverCollected: false),
+            KnightAssessmentWith(KnightIndicator("AK-ENTRA-001", SeverityLevel.Critical)));
+
+        var result = await query.GetAsync();
+
+        // As filas continuam SEPARADAS e nenhuma propriedade nova soma KNIGHT com NIST/CVSS.
+        result.IdentityFindings.Top.Should().HaveCount(1);
+        result.ConfigurationExposures.Top.Should().HaveCount(1);
+        result.Vulnerabilities.Top.Should().HaveCount(1);
+
+        typeof(PriorityWorkspaceDto).GetProperties()
+            .Select(p => p.Name)
+            .Should().NotContain(n => n.Contains("Combined") || n.Contains("Overall") || n.Contains("RiskIndex"),
+                "não existe índice único combinando postura, vulnerabilidades e identidade");
+    }
+
     [Fact]
     public void Di_ResolveArvoreCompleta_EmRuntime()
     {
@@ -344,6 +521,11 @@ public sealed class PriorityWorkspaceTests
         var services = new ServiceCollection();
         services.AddAegisScoreInfrastructure(config);
         services.AddScoped<ITenantContext>(_ => new SystemTenantContext(null));
+        // [AEGIS-MVP-PRODUCT-02] A composição passou a incluir a autoridade KNIGHT, cuja árvore chega ao
+        // ConnectorSecretProtector (segredos de conector cifrados). O Program.cs registra a Data Protection
+        // com a política real (AddAegisDataProtection); aqui basta o provedor nu — nada é cifrado no teste,
+        // apenas se prova que a árvore CONSTRÓI.
+        services.AddDataProtection();
 
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
