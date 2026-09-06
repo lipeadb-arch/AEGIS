@@ -197,9 +197,10 @@ public sealed class KnightAffectedObjectsPostgresTests
             var inserirCru = async () => await db.Database.ExecuteSqlRawAsync(
                 sql, Guid.NewGuid(), tenantB, runA, indicatorA.Id);
 
-            var erro = (await inserirCru.Should().ThrowAsync<DbUpdateException>(
-                "o próprio banco precisa recusar um afetado de tenant divergente")).Which;
-            erro.InnerException.Should().BeOfType<PostgresException>()
+            // SQL cru sobe a exceção do provedor diretamente (não há SaveChanges para envolvê-la em
+            // DbUpdateException) — o que importa é o CÓDIGO do erro: violação de chave estrangeira.
+            (await inserirCru.Should().ThrowAsync<PostgresException>(
+                "o próprio banco precisa recusar um afetado de tenant divergente"))
                 .Which.SqlState.Should().Be(PostgresErrorCodes.ForeignKeyViolation);
         }
     }
