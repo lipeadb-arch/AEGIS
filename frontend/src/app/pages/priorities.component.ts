@@ -262,7 +262,7 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-ex
                 sustentam o resultado.
               </p>
             </div>
-            <a class="linknav" routerLink="/knight">Ver avaliação →</a>
+            <a class="linknav" routerLink="/identity">Ver avaliação →</a>
           </div>
           <div class="panel">
             @if (!knight()!.runId) {
@@ -319,7 +319,7 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-ex
                     @for (f of knight()!.top; track f.indicatorId) {
                       <tr class="row">
                         <td>
-                          <a class="title link" [routerLink]="['/knight']" [queryParams]="{ finding: f.indicatorId }">
+                          <a class="title link" [routerLink]="['/identity']" [queryParams]="{ finding: f.indicatorId }">
                             {{ f.title }}
                           </a>
                           <span class="meta mono">{{ f.indicatorId }}</span>
@@ -330,7 +330,7 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-ex
                         <td class="c-cvss">
                           <strong>{{ f.affectedObjectCount }}</strong>
                           @if (f.hasAffectedDetail) {
-                            <a class="meta link" [routerLink]="['/knight']" [queryParams]="{ finding: f.indicatorId }">
+                            <a class="meta link" [routerLink]="['/identity']" [queryParams]="{ finding: f.indicatorId }">
                               ver afetados
                             </a>
                           } @else {
