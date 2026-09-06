@@ -117,6 +117,9 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
                 } @else {
                   <span class="m-v is-na">—</span>
                 }
+                <!-- [AEGIS-MVP-PRODUCT-02] A UNIDADE do número, quando ela não é óbvia pelo rótulo. O cartão
+                     de identidade contava CAPACIDADES coletadas e parecia contar contas. -->
+                @if (m.unit) { <span class="m-unit">{{ m.unit }}</span> }
                 <span class="m-state" [class.is-stale]="m.fresh.stale">{{ m.fresh.label }}</span>
                 <span class="m-src">{{ m.metric.sourceLabel }}</span>
               </a>
@@ -230,7 +233,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         <!-- ============================ 4) IDENTIDADE ============================ -->
         <section class="block">
           <div class="block-head">
-            <h2>Identidades</h2>
+            <h2>Identidade</h2>
             <a class="linknav" routerLink="/identity">AEGIS KNIGHT →</a>
           </div>
 
@@ -1030,11 +1033,19 @@ export class ExecutiveDashboardComponent implements OnInit {
     // antiga, diz que está desatualizada — pelo mesmo limiar que a lista de fontes usa.
     const at = d.generatedAt;
     return [
-      { key: 'assets', label: 'Ativos', metric: e.assets, link: '/assets' },
-      { key: 'exposures', label: 'Configurações expostas', metric: e.configurationExposures, link: '/exposures' },
-      { key: 'vulns', label: 'Vulnerabilidades', metric: e.vulnerabilities, link: '/vulnerabilities' },
-      { key: 'affected', label: 'Ativos afetados', metric: e.affectedAssets, link: '/vulnerabilities' },
-      { key: 'identity', label: 'Identidades', metric: e.identity, link: '/identity' },
+      { key: 'assets', label: 'Ativos', metric: e.assets, link: '/assets' , unit: null },
+      { key: 'exposures', label: 'Configurações expostas', metric: e.configurationExposures, link: '/exposures' , unit: null },
+      { key: 'vulns', label: 'Vulnerabilidades', metric: e.vulnerabilities, link: '/vulnerabilities' , unit: null },
+      { key: 'affected', label: 'Ativos afetados', metric: e.affectedAssets, link: '/vulnerabilities' , unit: null },
+      // A quantidade aqui é de CAPACIDADES de identidade coletadas (o snapshot é agregado e sem PII) — não é
+      // o número de contas do diretório. O rótulo e a unidade dizem isso, em vez de deixar o número mentir.
+      {
+        key: 'identity',
+        label: 'Identidade',
+        metric: e.identity,
+        link: '/identity',
+        unit: 'capacidades coletadas · não é o nº de contas',
+      },
     ].map((m) => ({ ...m, fresh: metricFreshness(m.metric, at) }));
   });
 

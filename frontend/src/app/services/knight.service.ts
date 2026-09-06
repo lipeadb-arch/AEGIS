@@ -1,8 +1,13 @@
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, map, throwError, timeout } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { KnightAssessment, KnightSources, KnightSourceType } from '../models/knight.models';
+import {
+  KnightAffectedObjects,
+  KnightAssessment,
+  KnightSources,
+  KnightSourceType,
+} from '../models/knight.models';
 
 /** Slug de rota para cada fonte real/demo (espelha o parser do controller). */
 const SOURCE_SLUG: Record<KnightSourceType, string> = {
@@ -69,6 +74,33 @@ export class KnightService {
       timeout(this.READ_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível carregar a avaliação.')),
     );
+  }
+
+  /**
+   * [AEGIS-MVP-PRODUCT-02] Objetos que sustentam UM achado de UMA avaliação. A paginação e a busca são
+   * PARÂMETROS DE SERVIDOR — o cliente nunca baixa a lista inteira para filtrar depois. Somente leitura:
+   * abrir o detalhe não dispara coleta na fonte.
+   */
+  getAffected(
+    runId: string,
+    indicatorId: string,
+    page: number,
+    pageSize: number,
+    search: string | null,
+  ): Observable<KnightAffectedObjects> {
+    let params = new HttpParams().set('page', page).set('pageSize', pageSize);
+    const term = (search ?? '').trim();
+    if (term) params = params.set('search', term);
+
+    return this.http
+      .get<KnightAffectedObjects>(
+        `${this.base}/${runId}/indicators/${encodeURIComponent(indicatorId)}/affected`,
+        { params },
+      )
+      .pipe(
+        timeout(this.READ_TIMEOUT_MS),
+        catchError(this.normalize('Não foi possível carregar os objetos afetados por este achado.')),
+      );
   }
 
   private normalize(message: string) {

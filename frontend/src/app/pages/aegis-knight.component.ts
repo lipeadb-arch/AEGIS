@@ -1,24 +1,34 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { environment } from '../../environments/environment';
 import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
 import {
+  FindingReading,
+  KnightAffectedObjects,
   KnightAssessment,
+  KnightIndicator,
   KnightSourceType,
   KnightSources,
+  affectedKindLabel,
+  affectedLabel,
+  affectedNotice,
   capabilityLabel,
   capabilityOutcomeLabel,
   categoryLabel,
   connectionBadgeLabel,
   connectionStateOf,
   isProblemState,
+  findingReading,
+  hasAffectedTable,
+  isUnnamed,
   problemCapabilities,
   severityLabel,
   sortIndicatorsByRisk,
   sourceStateLabel,
   sourceTypeLabel,
   statusLabel,
+  totalPages,
 } from '../models/knight.models';
 import { IdentityRiskPanelComponent } from '../components/identity/identity-risk-panel.component';
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
@@ -156,41 +166,198 @@ import { KnightService } from '../services/knight.service';
 
             <div class="panel list">
               <div class="hd">
-                <h3>Indicadores</h3>
-                <span class="hint">Veredito por regras determinísticas · expostos no topo</span>
+                <h3>Achados</h3>
+                <span class="hint">Veredito por regras determinísticas · expostos no topo · abra um achado para ver quem sustenta o resultado</span>
               </div>
-              <div class="tbl-wrap">
-                <table class="tbl">
-                  <thead>
-                    <tr>
-                      <th>Indicador</th><th>Categoria</th><th>Severidade</th><th>Status</th>
-                      <th>Evidência</th><th class="num">Afetados</th><th>NIST / MITRE</th><th>Recomendação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    @for (ind of sortedIndicators(); track ind.indicatorId) {
-                      <tr>
-                        <td><span class="code">{{ ind.indicatorId }}</span><span class="tt">{{ ind.title }}</span></td>
-                        <td>{{ categoryLabel(ind.category) }}</td>
-                        <td><span class="sev" [class]="ind.severity">{{ severityLabel(ind.severity) }}</span></td>
-                        <td><span class="st" [class]="ind.status">{{ statusLabel(ind.status) }}</span></td>
-                        <td class="ev">
-                          {{ ind.evidence }}
-                          @if (ind.notEvaluatedReason) { <span class="ne-reason">Motivo: {{ ind.notEvaluatedReason }}</span> }
-                        </td>
-                        <td class="num">{{ ind.affectedObjectCount }}</td>
-                        <td class="map">
-                          <span class="nist">{{ ind.nistCodes.join(', ') || '—' }}</span>
-                          <span class="mitre">{{ ind.mitreTechniques.length ? ind.mitreTechniques.join(' · ') : '—' }}</span>
-                        </td>
-                        <td class="rec">{{ ind.recommendation }}</td>
-                      </tr>
-                    }
-                  </tbody>
-                </table>
-              </div>
+              <ul class="findings">
+                @for (ind of sortedIndicators(); track ind.indicatorId) {
+                  <li>
+                    <button
+                      type="button"
+                      class="finding"
+                      [class.open]="selected() === ind.indicatorId"
+                      (click)="selectFinding(ind.indicatorId)"
+                      [attr.aria-expanded]="selected() === ind.indicatorId">
+                      <span class="f-title">
+                        <span class="tt">{{ ind.title }}</span>
+                        <span class="code">{{ ind.indicatorId }}</span>
+                      </span>
+                      <span class="f-tags">
+                        <span class="sev" [class]="ind.severity">{{ severityLabel(ind.severity) }}</span>
+                        <span class="st" [class]="ind.status">{{ statusLabel(ind.status) }}</span>
+                      </span>
+                      <span class="f-affected">
+                        @if (ind.status === 'Exposed' || ind.status === 'Mitigated') {
+                          <b>{{ ind.affectedObjectCount }}</b><span class="l">afetado(s)</span>
+                        } @else {
+                          <span class="l">—</span>
+                        }
+                      </span>
+                    </button>
+                  </li>
+                }
+              </ul>
             </div>
           </div>
+
+          <!-- ================= Detalhe de UM achado: resumo · afetados · evidência ================= -->
+          @if (selectedIndicator(); as ind) {
+            <div class="panel detail">
+              <div class="d-head">
+                <div class="d-title">
+                  <h3>{{ ind.title }}</h3>
+                  <span class="d-meta">
+                    <span class="code">{{ ind.indicatorId }}</span> ·
+                    {{ categoryLabel(ind.category) }} ·
+                    <span class="sev" [class]="ind.severity">{{ severityLabel(ind.severity) }}</span> ·
+                    <span class="st" [class]="ind.status">{{ statusLabel(ind.status) }}</span>
+                  </span>
+                </div>
+                <button type="button" class="btn ghost" (click)="closeFinding()">Fechar</button>
+              </div>
+
+              <div class="tabs" role="tablist">
+                <button type="button" role="tab" [class.on]="tab() === 'resumo'" (click)="tab.set('resumo')">Resumo</button>
+                <button type="button" role="tab" [class.on]="tab() === 'afetados'" (click)="openAffected()">
+                  Afetados
+                  @if (ind.status === 'Exposed' || ind.status === 'Mitigated') { <span class="n">{{ ind.affectedObjectCount }}</span> }
+                </button>
+                <button type="button" role="tab" [class.on]="tab() === 'evidencia'" (click)="tab.set('evidencia')">Evidência</button>
+              </div>
+
+              <!-- ---------- Resumo: problema, impacto e primeira ação ---------- -->
+              @if (tab() === 'resumo') {
+                <div class="tabpane">
+                  @if (reading(); as r) {
+                    <p class="lead">{{ r.means }}</p>
+                    <p class="caveat"><b>O que isso não significa:</b> {{ r.doesNotMean }}</p>
+                  } @else {
+                    <p class="lead">{{ ind.evidence }}</p>
+                  }
+                  <div class="kv">
+                    <span class="k">Primeira ação</span>
+                    <span class="v">{{ ind.recommendation }}</span>
+                  </div>
+                  @if (ind.notEvaluatedReason) {
+                    <div class="kv">
+                      <span class="k">Por que não foi avaliado</span>
+                      <span class="v">{{ ind.notEvaluatedReason }}</span>
+                    </div>
+                  }
+                </div>
+              }
+
+              <!-- ---------- Afetados: tabela paginada e pesquisável NO SERVIDOR ---------- -->
+              @if (tab() === 'afetados') {
+                <div class="tabpane">
+                  @if (affectedLoading()) {
+                    <p class="pulse">Carregando objetos afetados…</p>
+                  } @else if (affectedError()) {
+                    <div class="state err inline">
+                      <b>{{ affectedError() }}</b>
+                      <button type="button" class="btn ghost" (click)="loadAffected()">Tentar novamente</button>
+                    </div>
+                  } @else {
+                    @if (affected(); as af) {
+                    @if (notice(); as msg) {
+                      <p class="notice" [class.warn]="af.state === 'Partial'">{{ msg }}</p>
+                    }
+
+                    @if (hasTable()) {
+                      <div class="af-tools">
+                        <input
+                          type="search"
+                          class="af-search"
+                          placeholder="Buscar por nome, conta ou identificador…"
+                          [value]="search()"
+                          (input)="onSearch($event)"
+                          (keyup.enter)="loadAffected()" />
+                        <button type="button" class="btn ghost" (click)="loadAffected()">Buscar</button>
+                        <span class="af-count">
+                          {{ af.matchCount }} de {{ af.totalPreserved }} objeto(s)
+                          @if (search()) { <span class="l">· filtrado no servidor</span> }
+                        </span>
+                      </div>
+
+                      @if (af.items.length === 0) {
+                        <p class="empty-line">Nenhum objeto corresponde à busca. Ajuste os termos ou limpe o filtro.</p>
+                      } @else {
+                        <div class="tbl-wrap">
+                          <table class="tbl af">
+                            <thead>
+                              <tr><th>Objeto</th><th>Tipo</th><th>Papéis</th><th>Por que está aqui</th></tr>
+                            </thead>
+                            <tbody>
+                              @for (o of af.items; track o.externalId) {
+                                <tr>
+                                  <td class="af-id">
+                                    <span class="nm">{{ affectedLabel(o) }}</span>
+                                    @if (isUnnamed(o)) {
+                                      <span class="mono muted">identificador do objeto · a fonte não devolveu nome</span>
+                                    } @else if (o.userPrincipalName && o.displayName) {
+                                      <span class="mono">{{ o.userPrincipalName }}</span>
+                                    }
+                                  </td>
+                                  <td><span class="kind" [class]="o.kind">{{ affectedKindLabel(o.kind) }}</span></td>
+                                  <td class="af-roles">{{ o.roles.length ? o.roles.join(' · ') : '—' }}</td>
+                                  <td class="af-why">{{ o.detail || '—' }}</td>
+                                </tr>
+                              }
+                            </tbody>
+                          </table>
+                        </div>
+
+                        @if (pages() > 1) {
+                          <div class="pager">
+                            <button type="button" class="btn ghost" [disabled]="af.page <= 1" (click)="goPage(af.page - 1)">Anterior</button>
+                            <span class="p-of">Página {{ af.page }} de {{ pages() }}</span>
+                            <button type="button" class="btn ghost" [disabled]="af.page >= pages()" (click)="goPage(af.page + 1)">Próxima</button>
+                          </div>
+                        }
+                      }
+                      }
+                    }
+                  }
+                </div>
+              }
+
+              <!-- ---------- Evidência: fonte, data, critério e limitações ---------- -->
+              @if (tab() === 'evidencia') {
+                <div class="tabpane">
+                  <div class="kv"><span class="k">Evidência da regra</span><span class="v">{{ ind.evidence }}</span></div>
+                  @if (reading(); as r) {
+                    <div class="kv"><span class="k">Critério</span><span class="v">{{ r.criterion }}</span></div>
+                  }
+                  <div class="kv"><span class="k">Fonte</span><span class="v">{{ sourceTypeLabel(ind.sourceType) }} · {{ a.source }}</span></div>
+                  <div class="kv"><span class="k">Data da coleta</span><span class="v">{{ ind.collectedAt | date: 'dd/MM/yyyy HH:mm' }}</span></div>
+                  <div class="kv">
+                    <span class="k">Detalhe dos afetados</span>
+                    <span class="v">
+                      @if (!ind.hasAffectedDetail) {
+                        Não preservado nesta avaliação.
+                      } @else if (ind.affectedDetailComplete) {
+                        Preservado e completo para o conjunto que produziu a contagem.
+                      } @else {
+                        Preservado, porém incompleto.
+                      }
+                      @if (ind.affectedDetailLimitation) { {{ ind.affectedDetailLimitation }} }
+                    </span>
+                  </div>
+                  <div class="kv tech">
+                    <span class="k">NIST / MITRE</span>
+                    <span class="v mono">
+                      {{ ind.nistCodes.join(', ') || '—' }}
+                      @if (ind.mitreTechniques.length) { · {{ ind.mitreTechniques.join(' · ') }} }
+                    </span>
+                  </div>
+                  <div class="kv tech">
+                    <span class="k">Catálogo / fórmula</span>
+                    <span class="v mono">{{ a.catalogVersion }} · {{ a.scoreFormulaVersion }}</span>
+                  </div>
+                </div>
+              }
+            </div>
+          }
 
           <app-identity-risk-panel [projection]="riskProjection()" />
 
@@ -377,6 +544,67 @@ import { KnightService } from '../services/knight.service';
       .state.err { border-color: rgba(255, 45, 111, 0.4); } .state.err b { color: #ffe3ee; }
       @keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
       @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+      /* ---- [AEGIS-MVP-PRODUCT-02] Lista compacta de achados + detalhe em abas ---- */
+      .findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+      .finding { width: 100%; display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center;
+        text-align: left; cursor: pointer; background: rgba(122, 145, 190, 0.04); border: 1px solid var(--line);
+        border-radius: 11px; padding: 11px 14px; color: var(--text); font-family: var(--sans); }
+      .finding:hover { border-color: rgba(38, 224, 255, 0.35); }
+      .finding.open { border-color: var(--cyan); background: rgba(38, 224, 255, 0.06); }
+      .finding .f-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+      .finding .tt { font-size: 13.5px; }
+      .finding .code { font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: 0.05em; }
+      .finding .f-tags { display: flex; gap: 8px; align-items: center; }
+      .finding .f-affected { display: flex; flex-direction: column; align-items: flex-end; min-width: 76px; }
+      .finding .f-affected b { font-family: var(--mono); font-size: 16px; color: var(--text); }
+      .finding .f-affected .l { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
+      .detail { margin-top: 16px; }
+      .d-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+      .d-head h3 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
+      .d-meta { font-family: var(--mono); font-size: 11px; color: var(--muted); display: flex; gap: 8px;
+        align-items: center; flex-wrap: wrap; }
+      .tabs { display: flex; gap: 6px; margin: 14px 0 0; border-bottom: 1px solid var(--line); }
+      .tabs button { cursor: pointer; background: none; border: none; border-bottom: 2px solid transparent;
+        color: var(--muted); font-family: var(--mono); font-size: 12px; padding: 8px 12px; }
+      .tabs button.on { color: var(--cyan); border-bottom-color: var(--cyan); }
+      .tabs .n { font-size: 10px; margin-left: 6px; opacity: 0.8; }
+      .tabpane { padding: 16px 2px 4px; }
+      .tabpane .lead { margin: 0 0 10px; font-size: 13.5px; line-height: 1.6; color: var(--text); }
+      .tabpane .caveat { margin: 0 0 14px; font-size: 12.5px; line-height: 1.6; color: var(--muted);
+        border-left: 2px solid var(--amber); padding: 8px 12px; background: rgba(255, 176, 32, 0.05);
+        border-radius: 0 8px 8px 0; }
+      .tabpane .caveat b { color: var(--amber); }
+      .kv { display: grid; grid-template-columns: 190px 1fr; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+      .kv .k { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      .kv .v { font-size: 13px; line-height: 1.55; color: var(--text); }
+      .kv.tech .v { font-size: 11.5px; color: var(--muted); }
+      .notice { margin: 0 0 14px; font-size: 12.5px; line-height: 1.6; color: var(--muted);
+        border-left: 2px solid var(--line); padding: 8px 12px; }
+      .notice.warn { border-left-color: var(--amber); color: var(--text); background: rgba(255, 176, 32, 0.05); }
+      .af-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+      .af-search { flex: 1 1 260px; min-width: 200px; background: rgba(122, 145, 190, 0.06); border: 1px solid var(--line);
+        border-radius: 9px; padding: 8px 12px; color: var(--text); font-family: var(--sans); font-size: 13px; }
+      .af-count { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+      .tbl.af td { vertical-align: top; }
+      .af-id .nm { display: block; font-size: 13px; }
+      .af-id .mono { display: block; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+      .af-roles, .af-why { font-size: 12px; color: var(--muted); line-height: 1.5; }
+      .kind { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 999px;
+        border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+      .kind.ServicePrincipal { color: var(--amber); border-color: rgba(255, 176, 32, 0.4); }
+      .kind.Guest { color: var(--cyan); border-color: rgba(38, 224, 255, 0.35); }
+      .empty-line { font-size: 13px; color: var(--muted); margin: 10px 0; }
+      .pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 12px; }
+      .p-of { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+      .state.inline { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+
+      @media (max-width: 900px) {
+        .finding { grid-template-columns: 1fr; gap: 8px; }
+        .finding .f-affected { align-items: flex-start; }
+        .kv { grid-template-columns: 1fr; gap: 4px; }
+      }
+
       @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } .btn { transition: none; } }
     `,
   ],
@@ -384,6 +612,8 @@ import { KnightService } from '../services/knight.service';
 export class AegisKnightComponent implements OnInit {
   private readonly knight = inject(KnightService);
   private readonly identityRisk = inject(IdentityRiskService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   readonly assessment = signal<KnightAssessment | null>(null);
   readonly sources = signal<KnightSources | null>(null);
@@ -402,6 +632,9 @@ export class AegisKnightComponent implements OnInit {
   protected readonly capabilityOutcomeLabel = capabilityOutcomeLabel;
   protected readonly capabilityLabel = capabilityLabel;
   protected readonly isProblemState = isProblemState;
+  protected readonly affectedKindLabel = affectedKindLabel;
+  protected readonly affectedLabel = affectedLabel;
+  protected readonly isUnnamed = isUnnamed;
 
   readonly badgeState = computed(() => connectionStateOf(this.assessment()));
   readonly badgeLabel = computed(() => connectionBadgeLabel(this.badgeState()));
@@ -439,6 +672,113 @@ export class AegisKnightComponent implements OnInit {
 
 
 
+  // ---- [AEGIS-MVP-PRODUCT-02] Detalhe de UM achado: resumo · afetados · evidência ----------------
+  // A lista de afetados NUNCA é carregada junto da tela: ela é buscada sob demanda, paginada e pesquisada no
+  // SERVIDOR. Abrir um achado é leitura pura — não dispara coleta na fonte.
+
+  readonly selected = signal<string | null>(null);
+  readonly tab = signal<'resumo' | 'afetados' | 'evidencia'>('resumo');
+  readonly affected = signal<KnightAffectedObjects | null>(null);
+  readonly affectedLoading = signal(false);
+  readonly affectedError = signal<string | null>(null);
+  readonly search = signal('');
+
+  readonly selectedIndicator = computed<KnightIndicator | null>(() => {
+    const id = this.selected();
+    if (!id) return null;
+    return this.assessment()?.indicators.find((i) => i.indicatorId === id) ?? null;
+  });
+
+  readonly reading = computed<FindingReading | null>(() => {
+    const id = this.selected();
+    return id ? findingReading(id) : null;
+  });
+
+  readonly notice = computed(() => {
+    const page = this.affected();
+    return page ? affectedNotice(page) : null;
+  });
+
+  readonly hasTable = computed(() => {
+    const page = this.affected();
+    return page ? hasAffectedTable(page) : false;
+  });
+
+  readonly pages = computed(() => {
+    const page = this.affected();
+    return page ? totalPages(page) : 1;
+  });
+
+  /** Abre um achado (ou fecha, se já estava aberto). O detalhe começa pelo RESUMO, nunca pela tabela. */
+  selectFinding(indicatorId: string): void {
+    if (this.selected() === indicatorId) {
+      this.closeFinding();
+      return;
+    }
+    this.selected.set(indicatorId);
+    this.tab.set('resumo');
+    this.search.set('');
+    this.affected.set(null);
+    this.affectedError.set(null);
+    this.syncQueryParam(indicatorId);
+  }
+
+  closeFinding(): void {
+    this.selected.set(null);
+    this.affected.set(null);
+    this.syncQueryParam(null);
+  }
+
+  /** Troca para a aba de afetados, carregando a primeira página se ainda não houver dados. */
+  openAffected(): void {
+    this.tab.set('afetados');
+    if (!this.affected() && !this.affectedLoading()) this.loadAffected(1);
+  }
+
+  onSearch(event: Event): void {
+    this.search.set((event.target as HTMLInputElement).value);
+  }
+
+  goPage(page: number): void {
+    this.loadAffected(page);
+  }
+
+  /**
+   * Busca a página de afetados do achado aberto, SEMPRE vinculada à avaliação exibida — é o que impede
+   * apresentar a coleta de hoje como prova de um veredito de ontem.
+   */
+  loadAffected(page = 1): void {
+    const runId = this.assessment()?.id;
+    const indicatorId = this.selected();
+    if (!runId || !indicatorId) return;
+
+    this.affectedLoading.set(true);
+    this.affectedError.set(null);
+    this.knight.getAffected(runId, indicatorId, page, this.PAGE_SIZE, this.search()).subscribe({
+      next: (p) => {
+        this.affected.set(p);
+        this.affectedLoading.set(false);
+      },
+      error: (e: Error) => {
+        // Preserva a página anterior visível: um erro de rede não pode virar "nenhum afetado".
+        this.affectedError.set(e.message);
+        this.affectedLoading.set(false);
+      },
+    });
+  }
+
+  private readonly PAGE_SIZE = 25;
+
+  /** Mantém o achado aberto no endereço — é assim que a Central de Prioridades aponta para cá. */
+  private syncQueryParam(indicatorId: string | null): void {
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { finding: indicatorId },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
   ngOnInit(): void {
     // Somente LEITURA ao abrir — fontes + último assessment. NÃO executa análise automaticamente.
     this.reload();
@@ -456,6 +796,7 @@ export class AegisKnightComponent implements OnInit {
       next: (a) => {
         this.assessment.set(a);
         this.loading.set(false);
+        this.applyDeepLink(a);
       },
       error: (e: Error) => {
         this.error.set(e.message);
@@ -476,6 +817,18 @@ export class AegisKnightComponent implements OnInit {
         /* seção secundária: preserva a projeção anterior em vez de exibir zeros */
       },
     });
+  }
+
+  /**
+   * A Central de Prioridades aponta para um achado específico (?finding=AK-ENTRA-002). O achado só é aberto
+   * se EXISTIR na avaliação carregada — um identificador desconhecido é ignorado em silêncio, jamais vira
+   * uma tela de detalhe vazia.
+   */
+  private applyDeepLink(a: KnightAssessment | null): void {
+    const wanted = this.route.snapshot.queryParamMap.get('finding');
+    if (!wanted || !a?.indicators.some((i) => i.indicatorId === wanted)) return;
+    this.selected.set(wanted);
+    this.tab.set('resumo');
   }
 
   clearError(): void {
@@ -499,6 +852,11 @@ export class AegisKnightComponent implements OnInit {
       next: (a) => {
         this.assessment.set(a);
         this.running.set(false);
+        // O detalhe carregado pertencia à avaliação ANTERIOR: descartá-lo é o que impede exibir a lista de
+        // uma coleta ao lado do veredito de outra.
+        this.affected.set(null);
+        this.affectedError.set(null);
+        if (this.selected() && !a.indicators.some((i) => i.indicatorId === this.selected())) this.closeFinding();
         // A coleta acabou de reescrever o snapshot compartilhado — relê a MESMA fotografia (sem novo Graph).
         this.reloadRisk();
       },

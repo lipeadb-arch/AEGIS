@@ -4,6 +4,7 @@ import { AgentStateService } from '../services/agent-state.service';
 import { PriorityService } from '../services/priority.service';
 import { PriorityWorkspace } from '../models/priority.models';
 import { postureLabel } from '../models/workspace.models';
+import { scoreDisplay, severityLabel, statusLabel } from '../models/knight.models';
 import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-exposure.models';
 
 /**
@@ -249,6 +250,103 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-ex
           </div>
         </div>
 
+        <!-- ---------- [AEGIS-MVP-PRODUCT-02] Fila de achados de identidade (AEGIS KNIGHT) ---------- -->
+        <div class="queue">
+          <div class="queue-head">
+            <div>
+              <h2>Achados de identidade</h2>
+              <p class="queue-sub">
+                Vereditos do <strong>AEGIS KNIGHT</strong> sobre a postura de identidade — régua e score
+                próprios, <strong>não somados</strong> à postura NIST nem às vulnerabilidades. Aqui aparecem os
+                achados <strong>expostos</strong>; abrir um deles leva à mesma avaliação, com os objetos que
+                sustentam o resultado.
+              </p>
+            </div>
+            <a class="linknav" routerLink="/knight">Ver avaliação →</a>
+          </div>
+          <div class="panel">
+            @if (!knight()!.runId) {
+              <div class="state empty">
+                <p class="muted">
+                  Nenhuma avaliação de identidade executada ainda. Abra o <strong>AEGIS KNIGHT</strong> para
+                  executar uma avaliação — ausência de avaliação não é ausência de risco.
+                </p>
+              </div>
+            } @else {
+              <div class="knight-bar">
+                <span class="kb-item">
+                  <span class="kb-k">Origem</span>
+                  <span class="kb-v" [class.demo]="knight()!.isDemo">
+                    {{ knight()!.isDemo ? 'Demonstração (dados sintéticos)' : knight()!.sourceLabel }}
+                  </span>
+                </span>
+                <span class="kb-item">
+                  <span class="kb-k">Score KNIGHT</span>
+                  <span class="kb-v">{{ knightScore() }}<span class="kb-s"> · escala própria</span></span>
+                </span>
+                <span class="kb-item">
+                  <span class="kb-k">Cobertura</span>
+                  <span class="kb-v">{{ num(knight()!.coverage) }}%</span>
+                </span>
+                <span class="kb-item">
+                  <span class="kb-k">Coleta</span>
+                  <span class="kb-v">{{ fmtDate(knight()!.collectedAt) }}</span>
+                </span>
+              </div>
+
+              @if (knight()!.top.length === 0) {
+                <div class="state empty">
+                  <p class="muted">
+                    Nenhum achado de identidade exposto nesta avaliação.
+                    @if (knight()!.notEvaluatedCount > 0) {
+                      {{ knight()!.notEvaluatedCount }} indicador(es) seguem <strong>não avaliados</strong> —
+                      isso reduz a cobertura e não é o mesmo que conformidade.
+                    }
+                  </p>
+                </div>
+              } @else {
+                <table class="grid-table">
+                  <thead>
+                    <tr>
+                      <th>Achado</th>
+                      <th class="c-tier">Severidade</th>
+                      <th class="c-state">Situação</th>
+                      <th class="c-cvss">Afetados</th>
+                      <th class="c-when">Coleta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (f of knight()!.top; track f.indicatorId) {
+                      <tr class="row">
+                        <td>
+                          <a class="title link" [routerLink]="['/knight']" [queryParams]="{ finding: f.indicatorId }">
+                            {{ f.title }}
+                          </a>
+                          <span class="meta mono">{{ f.indicatorId }}</span>
+                          <span class="rem">{{ f.evidence }}</span>
+                        </td>
+                        <td class="c-tier"><span class="badge sev" [class]="f.severity">{{ sev(f.severity) }}</span></td>
+                        <td class="c-state"><span class="badge">{{ st(f.status) }}</span></td>
+                        <td class="c-cvss">
+                          <strong>{{ f.affectedObjectCount }}</strong>
+                          @if (f.hasAffectedDetail) {
+                            <a class="meta link" [routerLink]="['/knight']" [queryParams]="{ finding: f.indicatorId }">
+                              ver afetados
+                            </a>
+                          } @else {
+                            <span class="meta dim">detalhe não preservado</span>
+                          }
+                        </td>
+                        <td class="c-when"><span class="meta">{{ fmtDate(f.collectedAt) }}</span></td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              }
+            }
+          </div>
+        </div>
+
         <p class="foot-note">
           Fatos vêm das fontes de cada fila; a IA apenas explica, correlaciona e recomenda — não altera score,
           CVE, exploit, lifecycle, finding, evidência ou estado de remediação.
@@ -287,6 +385,17 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-ex
       .collect-v.muted { font-family: inherit; }
 
       .queue { display: flex; flex-direction: column; gap: 0.5rem; }
+      /* [AEGIS-MVP-PRODUCT-02] Barra de contexto da avaliação KNIGHT: origem, score PRÓPRIO e cobertura. */
+      .knight-bar { display: flex; gap: 1.4rem; flex-wrap: wrap; padding: 0.55rem 0.7rem 0.75rem; }
+      .kb-item { display: flex; flex-direction: column; gap: 0.1rem; }
+      .kb-k { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.09em; opacity: 0.55; }
+      .kb-v { font-size: 0.86rem; }
+      .kb-v.demo { color: #ffb020; }
+      .kb-s { font-size: 0.68rem; opacity: 0.55; }
+      .badge.sev.Critical { border-color: #ff6b8a; color: #ff6b8a; }
+      .badge.sev.High { border-color: #ffb020; color: #ffb020; }
+      a.link { color: var(--c); text-decoration: none; }
+      a.link:hover { text-decoration: underline; }
       .queue-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; }
       .queue-sub { margin: 0.2rem 0 0; max-width: 78ch; opacity: 0.68; font-size: 0.8rem; }
       .linknav { color: var(--c); text-decoration: none; font-size: 0.8rem; white-space: nowrap; border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); border-radius: 5px; padding: 0.35rem 0.7rem; }
@@ -343,6 +452,18 @@ export class PrioritiesComponent {
   protected readonly posture = computed(() => this.data()?.posture ?? null);
   protected readonly exposures = computed(() => this.data()?.configurationExposures ?? null);
   protected readonly vulns = computed(() => this.data()?.vulnerabilities ?? null);
+  /**
+   * [AEGIS-MVP-PRODUCT-02] Fila de achados de identidade. A Central apenas EXIBE o que a autoridade KNIGHT já
+   * decidiu — severidade, veredito, evidência e contagem não são recalculados aqui, e o score KNIGHT não é
+   * combinado com postura ou vulnerabilidades.
+   */
+  protected readonly knight = computed(() => this.data()?.identityFindings ?? null);
+
+  /** Score do KNIGHT para exibição: "—" quando null (sem avaliação), nunca "0". */
+  protected readonly knightScore = computed(() => scoreDisplay(this.knight()?.score ?? null));
+
+  protected readonly sev = severityLabel;
+  protected readonly st = statusLabel;
 
   protected readonly postureText = computed(() => postureLabel(this.posture()?.percentage ?? null));
 
