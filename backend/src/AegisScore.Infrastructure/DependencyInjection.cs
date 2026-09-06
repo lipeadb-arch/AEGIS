@@ -236,6 +236,10 @@ public static class DependencyInjection
         // [AEGIS-MVP-PRIORITIES-01] Central de Prioridades: leitura COMPOSTA (postura + exposições + vulnerabilidades).
         // Scoped: apenas orquestra as três queries acima, que compartilham o mesmo DbContext scoped da requisição.
         services.AddScoped<IPriorityWorkspaceQuery, PriorityWorkspaceQuery>();
+        // [AEGIS-MVP-PRODUCT-01] Tela inicial: leitura COMPOSTA por DIMENSÃO (ambiente observado, postura
+        // avaliada, risco de negócio, identidade e saúde das fontes). Scoped pelo mesmo motivo da Central de
+        // Prioridades: só orquestra queries que compartilham o DbContext scoped da requisição.
+        services.AddScoped<IDashboardOverviewQuery, DashboardOverviewQuery>();
         // Janela de frescor do sinal (TTL) usada pela auditoria de obsolescência do dashboard. TimeProvider
         // é o relógio injetável do .NET — mantém a regra de TTL testável sem congelar o sistema todo.
         services.Configure<ScoringOptions>(config.GetSection(ScoringOptions.SectionName));
@@ -256,6 +260,12 @@ public static class DependencyInjection
         // nos pacotes de conector (ex.: AddMicrosoftConnectors → SharePointProvider); adicionar uma fonte
         // nova não toca aqui. Singleton sobre providers singletons — mesmo idioma do IConnectorRegistry.
         services.AddSingleton<IDocumentIntegrationFactory, DocumentIntegrationFactory>();
+
+        // [AEGIS-MVP-PRODUCT-01] Gate do modo demonstrativo da ingestão documental. DESLIGADO por padrão: sem
+        // esta chave, um provedor que se declara simulado não é resolvível pela fábrica e a sincronização
+        // corporativa responde honestamente que não está disponível. A configuração é da INSTÂNCIA, não do
+        // tenant — não existe caminho pelo qual um cliente ligue simulação para si.
+        services.Configure<DocumentIntegrationOptions>(config.GetSection(DocumentIntegrationOptions.SectionName));
 
         // Pure scoring logic (stateless).
         services.AddSingleton<MaturityScoringService>();

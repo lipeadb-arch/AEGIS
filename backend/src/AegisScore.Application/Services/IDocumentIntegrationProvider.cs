@@ -37,6 +37,15 @@ public interface IDocumentIntegrationProvider
     ConnectorProvider Provider { get; }
 
     /// <summary>
+    /// [AEGIS-MVP-PRODUCT-01] Esta estratégia SINTETIZA documentos em vez de ler a fonte real? Um provedor
+    /// simulado produz conteúdo que atravessa o mesmo pipeline (extração, IA, teto documental) e acabaria
+    /// apresentado ao cliente como política CORPORATIVA dele. Por isso a fábrica o esconde do caminho
+    /// operacional a menos que o modo demonstrativo esteja explicitamente ligado — a honestidade é imposta
+    /// no BACKEND, não por um aviso na tela. O padrão é <c>false</c>: um provedor real não declara nada.
+    /// </summary>
+    bool IsSimulated => false;
+
+    /// <summary>
     /// Puxa da fonte externa os documentos de política/governança do tenant. Contrato: NÃO lança por
     /// "nada novo" (devolve vazio); só falha em erro real de transporte/credencial. Idempotência e
     /// deduplicação são responsabilidade do chamador (worker de ingestão), que descarta o que já ingeriu.
@@ -60,4 +69,35 @@ public interface IDocumentIntegrationFactory
     /// registra e ignora, sem quebrar os demais tenants.
     /// </summary>
     IDocumentIntegrationProvider? GetProvider(ConnectorProvider provider);
+
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-01] O que a ingestão documental REALMENTE consegue fazer neste ambiente — a
+    /// resposta honesta para a interface, que até aqui anunciava "sincronize suas políticas corporativas"
+    /// tendo por trás apenas um provedor simulado.
+    /// </summary>
+    DocumentIntegrationAvailability GetAvailability();
+}
+
+/// <summary>
+/// [AEGIS-MVP-PRODUCT-01] Disponibilidade REAL da ingestão documental por integração corporativa.
+/// </summary>
+/// <param name="HasOperationalProvider">Existe ao menos uma fonte real capaz de puxar documentos.</param>
+/// <param name="SimulatedModeEnabled">O modo demonstrativo está explicitamente ligado nesta instância.</param>
+/// <param name="AvailableProviders">Fornecedores efetivamente resolvíveis agora (já respeitando o gate).</param>
+public sealed record DocumentIntegrationAvailability(
+    bool HasOperationalProvider,
+    bool SimulatedModeEnabled,
+    IReadOnlyList<string> AvailableProviders);
+
+/// <summary>
+/// [AEGIS-MVP-PRODUCT-01] Chave ÚNICA que libera provedores documentais SIMULADOS. Desligada por padrão:
+/// numa instalação normal a sincronização corporativa simplesmente NÃO está disponível, e a interface diz
+/// isso — em vez de entregar políticas fictícias como se fossem do cliente.
+/// </summary>
+public sealed class DocumentIntegrationOptions
+{
+    public const string SectionName = "DocumentIntegration";
+
+    /// <summary>Ligar SOMENTE em demonstração explícita. Em produção permanece <c>false</c>.</summary>
+    public bool AllowSimulatedProviders { get; set; }
 }

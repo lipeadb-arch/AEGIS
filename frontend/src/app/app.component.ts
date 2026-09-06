@@ -70,20 +70,16 @@ import { AuthService } from './services/auth.service';
         </svg>
       </a>
 
+      <!-- [AEGIS-MVP-PRODUCT-01] Navegação organizada por INTENÇÃO, não por framework. Antes o menu misturava
+           dashboard, HUD, histórico, seis Funções NIST permanentes e páginas operacionais no mesmo nível — e
+           duas entradas ("Dashboard" e "Aegis Score HUD") disputavam o papel de tela inicial.
+           Agora: Visão geral · Prioridades · Ambiente · Identidades · Governança e controles · Relatórios ·
+           Configurações. As seis Funções vivem DENTRO de "Controles NIST", e nenhuma rota foi removida —
+           todas seguem acessíveis por link direto. -->
       <nav class="side-nav">
         <a class="nav-item home" routerLink="/dashboard" routerLinkActive="active">
           <span class="ic" aria-hidden="true">▦</span>
-          <span class="lb">Dashboard</span>
-        </a>
-
-        <a class="nav-item" routerLink="/aegis-score" routerLinkActive="active">
-          <span class="ic" aria-hidden="true">◈</span>
-          <span class="lb">Aegis Score HUD</span>
-        </a>
-
-        <a class="nav-item" routerLink="/history" routerLinkActive="active">
-          <span class="ic" aria-hidden="true">◷</span>
-          <span class="lb">Histórico de Postura</span>
+          <span class="lb">Visão geral</span>
         </a>
 
         <a class="nav-item" routerLink="/priorities" routerLinkActive="active">
@@ -91,54 +87,48 @@ import { AuthService } from './services/auth.service';
           <span class="lb">Prioridades</span>
         </a>
 
-        <a class="nav-item" routerLink="/exposures" routerLinkActive="active">
-          <span class="ic" aria-hidden="true">◇</span>
-          <span class="lb">Exposições</span>
-        </a>
-
-        <a class="nav-item" routerLink="/vulnerabilities" routerLinkActive="active">
-          <span class="ic" aria-hidden="true">⚠</span>
-          <span class="lb">Vulnerabilidades</span>
-        </a>
-
-        <p class="nav-group">Funções · NIST CSF 2.0</p>
-
-        <!-- Todas as 6 Funções NIST CSF 2.0 têm tela. -->
-        <a class="nav-item" routerLink="/governance" routerLinkActive="active">
-          <span class="dot" aria-hidden="true"></span><span class="lb">Govern</span><span class="code">GV</span>
-        </a>
+        <p class="nav-group">Ambiente</p>
         <a class="nav-item" routerLink="/assets" routerLinkActive="active">
-          <span class="dot" aria-hidden="true"></span><span class="lb">Identify</span><span class="code">ID</span>
+          <span class="dot" aria-hidden="true"></span><span class="lb">Ativos</span>
         </a>
-        <a class="nav-item" routerLink="/protect" routerLinkActive="active">
-          <span class="dot" aria-hidden="true"></span><span class="lb">Protect</span><span class="code">PR</span>
+        <a class="nav-item" routerLink="/vulnerabilities" routerLinkActive="active">
+          <span class="dot" aria-hidden="true"></span><span class="lb">Vulnerabilidades</span>
         </a>
-        <a class="nav-item" routerLink="/detect" routerLinkActive="active">
-          <span class="dot" aria-hidden="true"></span><span class="lb">Detect</span><span class="code">DE</span>
-        </a>
-        <a class="nav-item" routerLink="/respond" routerLinkActive="active">
-          <span class="dot" aria-hidden="true"></span><span class="lb">Respond</span><span class="code">RS</span>
-        </a>
-        <a class="nav-item" routerLink="/recover" routerLinkActive="active">
-          <span class="dot" aria-hidden="true"></span><span class="lb">Recover</span><span class="code">RC</span>
+        <a class="nav-item" routerLink="/exposures" routerLinkActive="active">
+          <span class="dot" aria-hidden="true"></span><span class="lb">Configurações expostas</span>
         </a>
 
-        <p class="nav-group">AEGIS KNIGHT</p>
+        <p class="nav-group">Identidades</p>
         <a class="nav-item" routerLink="/identity" routerLinkActive="active">
-          <span class="dot" aria-hidden="true"></span><span class="lb">AEGIS KNIGHT</span><span class="code">AK</span>
+          <span class="dot" aria-hidden="true"></span><span class="lb">AEGIS KNIGHT</span>
         </a>
 
-        <!-- Referência externa: separada das Funções NIST porque NÃO é uma tela do produto — é a fonte
-             normativa. Sem routerLink/routerLinkActive de propósito (é um href externo, não uma rota);
-             rel="noopener noreferrer" é obrigatório com target="_blank" (anti tab-nabbing). -->
-        <p class="nav-group">Configuração</p>
+        <p class="nav-group">Governança e controles</p>
+        <!-- Uma entrada para as SEIS Funções NIST: a navegação por Função é interna a esta tela. -->
+        <a class="nav-item" routerLink="/controls" routerLinkActive="active">
+          <span class="dot" aria-hidden="true"></span><span class="lb">Controles NIST</span>
+        </a>
+        <a class="nav-item" routerLink="/governance" routerLinkActive="active">
+          <span class="dot" aria-hidden="true"></span><span class="lb">Evidências e documentos</span>
+        </a>
+
+        <p class="nav-group">Relatórios</p>
+        <!-- Fotografias PUBLICADAS (comparação e exportação PDF/CSV) — distintas da leitura atual das telas. -->
+        <a class="nav-item" routerLink="/history" routerLinkActive="active">
+          <span class="dot" aria-hidden="true"></span><span class="lb">Histórico e publicação</span>
+        </a>
+        <a class="nav-item" routerLink="/aegis-score" routerLinkActive="active">
+          <span class="dot" aria-hidden="true"></span><span class="lb">Tendência de postura</span>
+        </a>
+
+        <p class="nav-group">Configurações</p>
         <a class="nav-item" routerLink="/settings" routerLinkActive="active">
-          <span class="dot" aria-hidden="true"></span>
-          <span class="lb">Configurações</span>
-          <span class="code">CFG</span>
+          <span class="dot" aria-hidden="true"></span><span class="lb">Configurações</span>
         </a>
 
-        <p class="nav-group">Referência</p>
+        <!-- Referência externa: separada porque NÃO é uma tela do produto — é a fonte normativa. Sem
+             routerLink/routerLinkActive de propósito (é um href externo, não uma rota); rel="noopener
+             noreferrer" é obrigatório com target="_blank" (anti tab-nabbing). -->
         <a
           class="nav-item external"
           href="https://www.nist.gov/cyberframework"

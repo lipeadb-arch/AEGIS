@@ -9,6 +9,7 @@ import { PostureHistoryComponent } from './pages/posture-history.component';
 import { PostureExposuresComponent } from './pages/posture-exposures.component';
 import { VulnerabilitiesComponent } from './pages/vulnerabilities.component';
 import { PrioritiesComponent } from './pages/priorities.component';
+import { ControlsHubComponent } from './pages/controls-hub.component';
 import { DetectDashboardComponent } from './pages/detect-dashboard.component';
 import { RespondDashboardComponent } from './pages/respond-dashboard.component';
 import { RecoverDashboardComponent } from './pages/recover-dashboard.component';
@@ -26,8 +27,14 @@ export const routes: Routes = [
   { path: 'login', component: LoginComponent, title: 'Aegis · Entrar' },
 
   { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
-  { path: 'dashboard', component: ExecutiveDashboardComponent, canActivate: [authGuard], title: 'Aegis · Dashboard Executivo' },
+  { path: 'dashboard', component: ExecutiveDashboardComponent, canActivate: [authGuard], title: 'Aegis · Visão geral' },
+  // [AEGIS-MVP-PRODUCT-01] Tendência de postura: o conteúdo ÚTIL do antigo "HUD" continua aqui, agora sob
+  // Relatórios. A rota é a MESMA — nenhum link antigo quebra —, mas ela deixou de ser uma segunda entrada
+  // ambígua de dashboard no menu principal.
   { path: 'aegis-score', component: AegisDashboardComponent, canActivate: [authGuard], title: 'Aegis · Tendência de Postura' },
+  // [AEGIS-MVP-PRODUCT-01] Governança e controles: porta ÚNICA das seis Funções NIST. A navegação por Função
+  // passou a ser INTERNA a esta tela; as rotas de cada Função seguem existindo e acessíveis por link direto.
+  { path: 'controls', component: ControlsHubComponent, canActivate: [authGuard], title: 'Aegis · Governança e controles' },
   { path: 'assets', component: AssetInventoryComponent, canActivate: [authGuard], title: 'Aegis · Inventário de Ativos' },
   { path: 'governance', component: DocumentHubComponent, canActivate: [authGuard], title: 'Aegis · Central de Documentos (Govern)' },
   { path: 'protect', component: ProtectDashboardComponent, canActivate: [authGuard], title: 'Aegis · Protect (PR)' },

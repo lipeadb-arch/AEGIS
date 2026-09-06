@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Queries;
 using AegisScore.Application.Scoring;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -20,14 +21,39 @@ public class DashboardController : ControllerBase
     private readonly ITenantContext _tenant;
     private readonly MaturityScoringService _maturity;
     private readonly IcrScoringService _icr;
+    private readonly IDashboardOverviewQuery _overview;
 
-    public DashboardController(AegisScoreDbContext db, ITenantContext tenant, MaturityScoringService maturity, IcrScoringService icr)
+    public DashboardController(
+        AegisScoreDbContext db,
+        ITenantContext tenant,
+        MaturityScoringService maturity,
+        IcrScoringService icr,
+        IDashboardOverviewQuery overview)
     {
         _db = db;
         _tenant = tenant;
         _maturity = maturity;
         _icr = icr;
+        _overview = overview;
     }
+
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-01] Tela inicial (Visão geral) — read model COMPOSTO por DIMENSÃO INDEPENDENTE:
+    /// o que já foi observado no ambiente, quanto foi efetivamente avaliado, o que merece atenção agora, a
+    /// postura consultiva de identidade e a saúde/recência das fontes. Cada dimensão carrega o PRÓPRIO estado
+    /// (sem fonte / nunca coletado / parcial / disponível) e a própria origem.
+    ///
+    /// Substitui o uso de <see cref="Executive"/> como fonte única da tela inicial: aquele fluxo mede
+    /// maturidade CMMI e registro de riscos — dimensões legítimas, porém DISTINTAS da postura por controle.
+    /// A ausência de maturidade/ICR NÃO pode esconder ativos, exposições, vulnerabilidades ou identidade já
+    /// coletados, e nenhuma dimensão é combinada com outra num score novo.
+    ///
+    /// Somente leitura: não aciona coleta externa, não aciona IA e não escreve estado. Tenant IMPLÍCITO.
+    /// </summary>
+    [HttpGet("overview")]
+    [ProducesResponseType(typeof(DashboardOverviewDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<DashboardOverviewDto>> Overview(CancellationToken ct)
+        => Ok(await _overview.GetAsync(ct));
 
     [HttpGet("executive")]
     public async Task<ActionResult<ExecutiveDashboardDto>> Executive(CancellationToken ct)

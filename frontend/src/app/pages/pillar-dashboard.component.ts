@@ -42,25 +42,35 @@ import { AegisScoreService } from '../services/aegis-score.service';
           <span class="pulse">Carregando a matriz de conformidade…</span>
         </div>
       } @else if (error()) {
+        <!-- Mensagem OPERACIONAL: o cliente não deve ser mandado conferir endereço de API nem console. -->
         <div class="panel state err">
-          <b>Não foi possível carregar a postura deste pilar.</b>
-          <span>Verifique se a API está no ar em <code>{{ apiBase }}</code> e recarregue.</span>
+          <b>Não foi possível carregar a postura desta função.</b>
+          <span>O serviço não respondeu agora. Recarregue a página em alguns instantes.</span>
         </div>
       } @else {
-        <!-- HUD de resposta a incidente: só nas Funções com linha do tempo (DE/RS/RC). -->
+        <!-- HUD de resposta a incidente: só nas Funções com linha do tempo (DE/RS/RC).
+             [AEGIS-MVP-PRODUCT-01] Sem NENHUM tempo medido, dois cartões grandes e vazios dominavam o topo
+             de três páginas seguidas. Agora eles só ocupam esse espaço quando há medição; sem ela, resta
+             uma linha discreta que continua dizendo a verdade — não medido ≠ zero. -->
         @if (meta().showsResponseMetrics) {
-          <div class="hud">
-            <div class="hud-card" [class.void]="view().mttdMinutes === null">
-              <span class="hud-k">MTTD</span>
-              <span class="hud-v">{{ mttd() }}</span>
-              <span class="hud-l">Tempo médio de detecção</span>
+          @if (hasResponseMetrics()) {
+            <div class="hud">
+              <div class="hud-card" [class.void]="view().mttdMinutes === null">
+                <span class="hud-k">MTTD</span>
+                <span class="hud-v">{{ mttd() }}</span>
+                <span class="hud-l">Tempo médio de detecção</span>
+              </div>
+              <div class="hud-card" [class.void]="view().mttrMinutes === null">
+                <span class="hud-k">MTTR</span>
+                <span class="hud-v">{{ mttr() }}</span>
+                <span class="hud-l">Tempo médio de resposta</span>
+              </div>
             </div>
-            <div class="hud-card" [class.void]="view().mttrMinutes === null">
-              <span class="hud-k">MTTR</span>
-              <span class="hud-v">{{ mttr() }}</span>
-              <span class="hud-l">Tempo médio de resposta</span>
-            </div>
-          </div>
+          } @else {
+            <p class="hud-none">
+              Tempo médio de detecção e de resposta ainda não medidos nesta função.
+            </p>
+          }
         }
 
         <div class="grid">
@@ -200,6 +210,13 @@ import { AegisScoreService } from '../services/aegis-score.service';
       }
       /* Sem medição: o card se apaga e mostra "—". Nunca um zero — zero minutos seria uma detecção
          instantânea, o oposto de "ninguém mediu". */
+      /* Linha discreta que substitui os dois cartões vazios (ver o comentário no template). */
+      .hud-none {
+        margin: 0 0 18px;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--muted);
+      }
       .hud-card.void {
         border-left-color: var(--line);
         opacity: 0.7;
@@ -445,6 +462,11 @@ export class PillarDashboardComponent implements OnInit {
   readonly view = computed(() => buildPillarView(this.meta(), this.controls()));
 
   /** MTTD/MTTR do pilar já formatados para o HUD ("18 min", "2h 30m", "—" sem medição). */
+  /** Há ALGUMA medição de tempo de resposta? Governa a apresentação (cartões × linha discreta). */
+  readonly hasResponseMetrics = computed(
+    () => this.view().mttdMinutes !== null || this.view().mttrMinutes !== null,
+  );
+
   readonly mttd = computed(() => formatDuration(this.view().mttdMinutes));
   readonly mttr = computed(() => formatDuration(this.view().mttrMinutes));
 

@@ -9,6 +9,7 @@ import {
   AiAnalysisStatus,
   DOCUMENT_TYPES,
   DocumentDisplayState,
+  DocumentIntegrationAvailability,
   GovernCoverage,
   GovernanceDocument,
   GovernanceDocumentType,
@@ -88,7 +89,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
           <span class="pulse">Carregando a postura de governança…</span>
         } @else if (scoringError()) {
           <p class="score-err">
-            Não foi possível carregar a postura de governança. Verifique a API em <code>{{ apiBase }}</code>.
+            Não foi possível carregar a postura de governança agora. Recarregue a página em alguns instantes.
           </p>
         } @else {
           <div class="gs-grid">
@@ -139,31 +140,53 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       <app-aegis-pillar-checklist pillar="GV" heading="Pendências de Governança" />
 
       <!-- ============ 2) INGESTÃO — Integração Corporativa ============ -->
+      <!-- [AEGIS-MVP-PRODUCT-01] A tela anunciava a sincronização de políticas corporativas tendo por trás
+           apenas um provedor SIMULADO, que ingeria documentos fictícios sob o nome do cliente. Agora ela
+           mostra a disponibilidade REAL que o servidor reporta: sem fonte, o botão não existe — e o upload
+           manual, que é real, segue como o caminho de governança. -->
       <section class="panel integration">
         <p class="eyebrow">Integração Corporativa</p>
-        <div class="int-row">
-          <p class="int-copy">
-            Puxe as políticas das fontes corporativas conectadas (SharePoint, Google Workspace…) para
-            leitura automática pela IA — sem upload manual.
-          </p>
-          <button
-            type="button"
-            class="btn primary sync-btn"
-            (click)="triggerSync()"
-            [disabled]="syncState() === 'loading'"
-          >
-            @if (syncState() === 'loading') {
-              <span class="spin"></span> Sincronizando…
-            } @else {
-              Sincronizar Políticas Corporativas
-            }
-          </button>
-        </div>
 
-        @if (syncState() === 'done') {
-          <p class="int-ok">✓ {{ syncMessage() }}</p>
-        } @else if (syncState() === 'error') {
-          <p class="int-err">{{ syncMessage() }}</p>
+        @if (integration(); as avail) {
+          @if (avail.availableProviders.length > 0) {
+            <div class="int-row">
+              <p class="int-copy">
+                @if (avail.hasOperationalProvider) {
+                  Puxe as políticas das fontes corporativas conectadas para leitura automática pela IA —
+                  sem upload manual.
+                } @else {
+                  <span class="int-demo">Modo demonstrativo.</span> As políticas sincronizadas aqui são de
+                  exemplo, não são do seu ambiente, e servem apenas para demonstrar o fluxo de leitura.
+                }
+              </p>
+              <button
+                type="button"
+                class="btn primary sync-btn"
+                (click)="triggerSync()"
+                [disabled]="syncState() === 'loading'"
+              >
+                @if (syncState() === 'loading') {
+                  <span class="spin"></span> Sincronizando…
+                } @else {
+                  Sincronizar Políticas Corporativas
+                }
+              </button>
+            </div>
+
+            @if (syncState() === 'done') {
+              <p class="int-ok">✓ {{ syncMessage() }}</p>
+            } @else if (syncState() === 'error') {
+              <p class="int-err">{{ syncMessage() }}</p>
+            }
+          } @else {
+            <p class="int-copy">
+              A sincronização automática de políticas <span class="int-demo">ainda não está disponível</span> neste ambiente.
+              Envie os documentos de governança pelo upload abaixo — eles seguem o mesmo fluxo de leitura
+              e mapeamento.
+            </p>
+          }
+        } @else {
+          <p class="int-copy">Verificando as fontes documentais disponíveis…</p>
         }
       </section>
 
@@ -241,8 +264,8 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       <!-- ---- Estado de erro ---- -->
       @if (loadError()) {
         <div class="notice">
-          <b>Falha ao carregar os documentos.</b> A API em <code>{{ apiBase }}</code> não respondeu —
-          confira o endereço e o <code>tenantId</code>. O console traz o erro completo.
+          <b>Não foi possível carregar os documentos.</b> O serviço não respondeu agora — a lista fica
+          vazia de propósito, para não apresentar um acervo desatualizado.
         </div>
       }
 
@@ -407,8 +430,8 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       .cov-metric { display: flex; flex-direction: column; gap: 4px; }
       .cov-k { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
       .cov-v { font-family: var(--display); font-weight: 700; font-size: 22px; color: var(--text); }
-      .cov-v.ok { color: var(--cyan); }
-      .cov-v.warn { color: var(--amber); }
+      .cov-v.ok { color: var(--cyan) }
+      .cov-v.warn { color: var(--amber) }
 
       /* ---- 2) Integração Corporativa ---- */
       .integration { padding: 18px 20px; margin-bottom: 18px; }
@@ -416,10 +439,12 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       .int-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
       .int-copy { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.55; max-width: 560px; }
       .sync-btn { display: inline-flex; align-items: center; gap: 9px; white-space: nowrap; }
-      .spin { width: 13px; height: 13px; border: 2px solid rgba(5, 7, 15, 0.35); border-top-color: #05070f; border-radius: 50%; animation: hub-spin 0.7s linear infinite; }
+      .spin { width: 13px; height: 13px; border: 2px solid rgba(5,7,15,.35); border-top-color: #05070f; border-radius: 50%; animation: hub-spin .7s linear infinite; }
       @keyframes hub-spin { to { transform: rotate(360deg); } }
-      .int-ok { font-family: var(--mono); font-size: 12px; color: var(--cyan); margin: 12px 0 0; }
-      .int-err { font-family: var(--mono); font-size: 12px; color: var(--red); margin: 12px 0 0; }
+      .int-ok, .int-err { font-family: var(--mono); font-size: 12px; margin: 12px 0 0; }
+      .int-ok { color: var(--cyan); }
+      .int-err { color: var(--red); }
+      .int-demo { color: var(--amber); font-weight: 600; }
 
       .uploader { padding: 18px 20px; margin-bottom: 18px; }
       .uploader .eyebrow { margin-bottom: 14px; }
@@ -465,7 +490,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       .map-count { font-family: var(--display); font-weight: 700; font-size: 13px; color: var(--text); }
 
       .ai-status { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; padding: 4px 10px; border-radius: 999px; border: 1px solid currentColor; }
-      /* Spinner discreto ao lado do status ATIVO (Na fila / Analisando). Herda a cor do status (currentColor). */
+      /* Spinner do status ATIVO (Na fila / Analisando); herda a cor via currentColor. */
       .ai-spin {
         width: 9px; height: 9px; flex: none; border-radius: 50%;
         border: 1.5px solid currentColor; border-top-color: transparent;
@@ -556,6 +581,8 @@ export class DocumentHubComponent implements OnInit {
   readonly govPostureState = signal<'loading' | 'loaded' | 'notFound' | 'error'>('loading');
 
   // ---- Integração corporativa (sync sob demanda) ----
+  /** Disponibilidade REAL reportada pelo servidor; `null` enquanto a leitura não chega. */
+  integration = signal<DocumentIntegrationAvailability | null>(null);
   syncState = signal<SyncState>('idle');
   syncMessage = signal<string | null>(null);
 
@@ -604,6 +631,7 @@ export class DocumentHubComponent implements OnInit {
   protected readonly apiBase = environment.apiBase;
 
   ngOnInit(): void {
+    this.loadIntegrationAvailability();
     this.loadGovernPosture();
     this.loadWorkspacePosture();
     this.loadCoverage();
@@ -645,6 +673,18 @@ export class DocumentHubComponent implements OnInit {
     });
   }
 
+  /**
+   * [AEGIS-MVP-PRODUCT-01] Disponibilidade REAL da ingestão documental. Falhar aqui NÃO libera o botão: sem
+   * resposta, a tela fica no estado de verificação — prometer sincronização que o servidor vai recusar é
+   * exatamente o que este pacote veio corrigir.
+   */
+  private loadIntegrationAvailability(): void {
+    this.svc.documentIntegration().subscribe({
+      next: (a) => this.integration.set(a),
+      error: (err) => console.warn('Disponibilidade da integração documental indisponível:', err),
+    });
+  }
+
   /** Dispara a sincronização das fontes corporativas. 202 = agendado; a ingestão roda em background. */
   triggerSync(): void {
     if (this.syncState() === 'loading') return;
@@ -665,7 +705,12 @@ export class DocumentHubComponent implements OnInit {
       error: (err) => {
         console.error('Falha ao sincronizar as políticas corporativas:', err);
         this.syncState.set('error');
-        this.syncMessage.set('Não foi possível agendar a sincronização. Verifique a API e tente novamente.');
+        // 409 = o servidor recusou porque NÃO há fonte documental — mensagem operacional, não técnica.
+        this.syncMessage.set(
+          err?.status === 409
+            ? 'A sincronização automática não está disponível neste ambiente. Use o upload abaixo.'
+            : 'Não foi possível agendar a sincronização agora. Tente novamente em alguns instantes.',
+        );
       },
     });
   }
@@ -801,7 +846,7 @@ export class DocumentHubComponent implements OnInit {
         ? err.error
         : 'Formato não suportado. Envie PDF, TXT ou DOCX.';
     }
-    return 'Não foi possível enviar o documento. Verifique a API e tente novamente.';
+    return 'Não foi possível enviar o documento agora. Tente novamente em alguns instantes.';
   }
 
   onFileSelected(event: Event): void {

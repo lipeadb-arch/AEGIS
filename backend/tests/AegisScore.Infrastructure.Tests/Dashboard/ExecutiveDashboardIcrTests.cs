@@ -1,5 +1,6 @@
 using AegisScore.Api.Contracts;
 using AegisScore.Api.Controllers;
+using AegisScore.Application.Queries;
 using AegisScore.Application.Scoring;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -104,8 +105,17 @@ public sealed class ExecutiveDashboardIcrTests : IDisposable
 
     /// <summary>
     /// O controller instanciado direto: as dependências são serviços puros (<see cref="MaturityScoringService"/>,
-    /// <see cref="IcrScoringService"/>) e o mesmo tenant ambiente do DbContext (fail-closed, isolado).
+    /// <see cref="IcrScoringService"/>) e o mesmo tenant ambiente do DbContext (fail-closed, isolado). A leitura
+    /// composta da tela inicial entra como stub que FALHA se chamada — estes testes exercitam só o /executive, e
+    /// um stub silencioso esconderia uma chamada acidental à outra superfície.
     /// </summary>
     private static DashboardController ControllerFor(AegisScoreDbContext db) =>
-        new(db, new SystemTenantContext(TenantId), new MaturityScoringService(), new IcrScoringService());
+        new(db, new SystemTenantContext(TenantId), new MaturityScoringService(), new IcrScoringService(),
+            new UnusedOverviewQuery());
+
+    private sealed class UnusedOverviewQuery : IDashboardOverviewQuery
+    {
+        public Task<DashboardOverviewDto> GetAsync(CancellationToken ct = default) =>
+            throw new InvalidOperationException("A tela inicial composta não participa destes testes do /executive.");
+    }
 }

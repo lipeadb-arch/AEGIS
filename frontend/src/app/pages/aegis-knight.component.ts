@@ -7,6 +7,7 @@ import {
   KnightAssessment,
   KnightSourceType,
   KnightSources,
+  capabilityLabel,
   capabilityOutcomeLabel,
   categoryLabel,
   connectionBadgeLabel,
@@ -75,7 +76,7 @@ import { KnightService } from '../services/knight.service';
       } @else if (error() && !assessment()) {
         <div class="panel state err">
           <b>{{ error() }}</b>
-          <span>Verifique se a API está no ar em <code>{{ apiBase }}</code> e tente novamente.</span>
+          <span>O serviço não respondeu agora. Tente novamente em alguns instantes.</span>
           <button type="button" class="btn ghost" (click)="reload()">Tentar novamente</button>
         </div>
       } @else {
@@ -116,7 +117,7 @@ import { KnightService } from '../services/knight.service';
               <h4>Limitações de coleta</h4>
               <ul>
                 @for (c of limitations(); track c.capability) {
-                  <li><b>{{ c.capability }}</b> — {{ capabilityOutcomeLabel(c.outcome) }}@if (c.detail) { · {{ c.detail }} }</li>
+                  <li><b>{{ capabilityLabel(c.capability) }}</b> — {{ capabilityOutcomeLabel(c.outcome) }}@if (c.detail) { · {{ c.detail }} }</li>
                 }
               </ul>
             </div>
@@ -129,7 +130,14 @@ import { KnightService } from '../services/knight.service';
               } @else {
                 <div class="no-score"><span class="dash">—</span><span class="l">sem avaliação</span></div>
               }
-              <p class="score-note">Score AEGIS KNIGHT — distinto do AEGIS Score geral.</p>
+              <!-- [AEGIS-MVP-PRODUCT-01] O número sozinho não se lê: a ESCALA e a COBERTURA vêm junto dele, e
+                   a frase abaixo resume, em linguagem clara, o que a avaliação de fato encontrou — sem
+                   inventar lista de afetados e sem misturar este score com o AEGIS Score geral. -->
+              <p class="score-note">
+                Escala 0–100 · cobertura {{ a.coverage }}% dos indicadores do catálogo.
+                Score do AEGIS KNIGHT, distinto do AEGIS Score geral.
+              </p>
+              <p class="score-lead">{{ summaryLine(a) }}</p>
 
               <div class="meta">
                 <div class="mrow"><span class="k">Cobertura</span><span class="v">{{ a.coverage }}%</span></div>
@@ -308,7 +316,9 @@ import { KnightService } from '../services/knight.service';
       .no-score { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 24px 0; }
       .no-score .dash { font-family: var(--display); font-size: 44px; color: var(--muted); }
       .no-score .l { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; }
-      .score-note { margin: 0; font-family: var(--mono); font-size: 10.5px; color: var(--muted); text-align: center; }
+      .score-note { margin: 0; font-family: var(--mono); font-size: 10.5px; color: var(--muted); text-align: center; line-height: 1.5; }
+      /* Leitura em uma frase — o que a avaliação encontrou, antes das contagens. */
+      .score-lead { margin: 10px 0 0; font-family: var(--sans); font-size: 12.5px; line-height: 1.55; color: var(--text); text-align: center; }
       .meta { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 12px; }
       .mrow { display: flex; justify-content: space-between; gap: 10px; font-family: var(--mono); font-size: 11.5px; }
       .mrow .k { color: var(--muted); } .mrow .v { color: var(--text); } .mrow .v.mono { color: var(--cyan); }
@@ -390,12 +400,30 @@ export class AegisKnightComponent implements OnInit {
   protected readonly sourceTypeLabel = sourceTypeLabel;
   protected readonly sourceStateLabel = sourceStateLabel;
   protected readonly capabilityOutcomeLabel = capabilityOutcomeLabel;
+  protected readonly capabilityLabel = capabilityLabel;
   protected readonly isProblemState = isProblemState;
 
   readonly badgeState = computed(() => connectionStateOf(this.assessment()));
   readonly badgeLabel = computed(() => connectionBadgeLabel(this.badgeState()));
   readonly sortedIndicators = computed(() => sortIndicatorsByRisk(this.assessment()?.indicators ?? []));
   readonly limitations = computed(() => problemCapabilities(this.assessment()?.capabilities ?? []));
+
+  /**
+   * [AEGIS-MVP-PRODUCT-01] Uma frase que resume o que a avaliação ENCONTROU, derivada só das contagens que o
+   * backend já apurou. Não inventa lista de afetados, não estima nada e nunca transforma "não avaliado" em
+   * "conforme" — quando não há indicador avaliado, a frase diz exatamente isso.
+   */
+  summaryLine(a: KnightAssessment): string {
+    const c = a.counts;
+    const avaliados = c.passed + c.exposed + c.mitigated;
+    if (avaliados === 0) {
+      return 'Nenhum indicador de identidade pôde ser avaliado nesta coleta.';
+    }
+    const partes = [`${c.exposed} exposto(s)`, `${c.passed} conforme(s)`];
+    if (c.mitigated > 0) partes.push(`${c.mitigated} mitigado(s)`);
+    const pendentes = c.notEvaluated > 0 ? ` ${c.notEvaluated} seguem não avaliados.` : '';
+    return `${avaliados} indicador(es) avaliados: ${partes.join(', ')}.${pendentes}`;
+  }
   readonly busy = computed(() => this.running() || this.loading());
   readonly entraConfigured = computed(
     () => this.sources()?.realSources.some((s) => s.source === 'MicrosoftEntraId' && s.configured) ?? false,
