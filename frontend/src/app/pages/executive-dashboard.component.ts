@@ -7,6 +7,7 @@ import {
   DashboardMetric,
   DashboardOverview,
   hasReading,
+  metricFreshness,
   identityCapabilityLabel,
   identityOutcomeLabel,
   stateLabel,
@@ -116,7 +117,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
                 } @else {
                   <span class="m-v is-na">—</span>
                 }
-                <span class="m-state">{{ stateLabel(m.metric.state) }}</span>
+                <span class="m-state" [class.is-stale]="m.fresh.stale">{{ m.fresh.label }}</span>
                 <span class="m-src">{{ m.metric.sourceLabel }}</span>
               </a>
             }
@@ -726,6 +727,10 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
       .metric.is-partial .m-state {
         color: var(--amber);
       }
+      /* Leitura antiga: mesma cor de atenção da lista de fontes — a etiqueta já diz "desatualizada". */
+      .m-state.is-stale {
+        color: var(--amber);
+      }
       .m-src {
         font-family: var(--mono);
         font-size: 10px;
@@ -1020,13 +1025,17 @@ export class ExecutiveDashboardComponent implements OnInit {
     const d = this.data();
     if (!d) return [];
     const e = d.environment;
+    // A etiqueta de cada cartão nasce de `metricFreshness`, não do estado cru: `Available` prova que EXISTE
+    // leitura, nunca que ela é recente. Sem `observedAt` o cartão diz que a data é desconhecida; com data
+    // antiga, diz que está desatualizada — pelo mesmo limiar que a lista de fontes usa.
+    const at = d.generatedAt;
     return [
       { key: 'assets', label: 'Ativos', metric: e.assets, link: '/assets' },
       { key: 'exposures', label: 'Configurações expostas', metric: e.configurationExposures, link: '/exposures' },
       { key: 'vulns', label: 'Vulnerabilidades', metric: e.vulnerabilities, link: '/vulnerabilities' },
       { key: 'affected', label: 'Ativos afetados', metric: e.affectedAssets, link: '/vulnerabilities' },
       { key: 'identity', label: 'Identidades', metric: e.identity, link: '/identity' },
-    ];
+    ].map((m) => ({ ...m, fresh: metricFreshness(m.metric, at) }));
   });
 
   /** Explicações agrupadas das métricas sem leitura — o vazio explicado uma vez, não em cada cartão. */

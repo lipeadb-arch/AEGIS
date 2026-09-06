@@ -13,7 +13,7 @@ import { VulnerabilityGroup, VulnerabilitySummary } from './vulnerability.models
 import { ConnectorHealthSummary, EvidenceCoverageSummary, WorkspaceOverall, WorkspacePosture } from './workspace.models';
 
 /** Estado de UMA dimensão — decide se o painel mostra número, estado vazio, parcialidade ou "sem fonte". */
-export type DashboardSignalState = 'NoSource' | 'NeverCollected' | 'Partial' | 'Available';
+export type DashboardSignalState = 'NoSource' | 'NeverCollected' | 'Partial' | 'Available' | 'Undetermined';
 
 /** Uma métrica com a PROVENIÊNCIA junto. `value` é nulo em `NoSource`/`NeverCollected` — jamais 0 por ausência. */
 export interface DashboardMetric {
@@ -129,18 +129,82 @@ export function hasReading(m: DashboardMetric | DashboardIdentity): boolean {
   return m.state === 'Available' || m.state === 'Partial';
 }
 
-/** Rótulo curto do estado, para a etiqueta ao lado do número (ou no lugar dele). */
+/**
+ * Rótulo curto do ESTADO — deliberadamente sem afirmar recência. `Available` significa "existe leitura",
+ * não "a leitura é de agora": um snapshot de três semanas atrás também chega como `Available`. Quem precisa
+ * falar de frescor usa `metricFreshness`, que só afirma data quando existe data.
+ */
 export function stateLabel(state: DashboardSignalState): string {
   switch (state) {
     case 'Available':
-      return 'Leitura atual';
+      return 'Leitura disponível';
     case 'Partial':
       return 'Leitura parcial';
     case 'NeverCollected':
       return 'Ainda não coletado';
+    case 'Undetermined':
+      return 'Coleta não comprovada';
     default:
       return 'Sem fonte conectada';
   }
+}
+
+/**
+ * Mesmo critério de desatualização que o servidor aplica à saúde das fontes
+ * (`DashboardOverviewDto.StaleAfterDays`). Duplicado aqui como CONSTANTE nomeada para que a etiqueta do
+ * cartão e a lista de fontes envelheçam juntas — não é um limiar novo.
+ */
+export const STALE_AFTER_DAYS = 7;
+
+/** O que a tela pode AFIRMAR sobre a idade de uma leitura. */
+export interface MetricFreshness {
+  /** Etiqueta exibida no lugar do antigo rótulo de estado. */
+  label: string;
+  /** A leitura passou do limiar de desatualização — só pode ser `true` quando há data. */
+  stale: boolean;
+  /** Existe instante de observação comprovado nesta métrica. */
+  dated: boolean;
+}
+
+function formatDay(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+/**
+ * Recência HONESTA de um cartão. O defeito corrigido: `Available` era rotulado "Leitura atual" — mas
+ * disponibilidade não comprova frescor, e um dado antigo passava por atual.
+ *
+ * A idade é medida contra o `generatedAt` da PRÓPRIA leitura composta (relógio do servidor), não contra o
+ * relógio do navegador, para que a etiqueta não mude de sentido em uma máquina com data errada. Sem
+ * `observedAt` a função NÃO inventa data nem afirma atualidade: diz que a leitura existe e que a data de
+ * coleta não é conhecida. Nada aqui altera valores, score ou estado de conector.
+ */
+export function metricFreshness(
+  m: Pick<DashboardMetric, 'state' | 'observedAt'>,
+  generatedAt: string,
+): MetricFreshness {
+  if (m.state !== 'Available' && m.state !== 'Partial')
+    return { label: stateLabel(m.state), stale: false, dated: false };
+
+  const prefix = m.state === 'Partial' ? 'Leitura parcial' : 'Leitura';
+
+  if (!m.observedAt)
+    return { label: `${prefix} · sem data de coleta`, stale: false, dated: false };
+
+  const observed = new Date(m.observedAt).getTime();
+  const reference = new Date(generatedAt).getTime();
+  const days = Math.floor((reference - observed) / 86_400_000);
+  const stale = Number.isFinite(days) && days >= STALE_AFTER_DAYS;
+
+  return {
+    label: stale
+      ? `${prefix} de ${formatDay(m.observedAt)} · desatualizada (${days} dias)`
+      : `${prefix} de ${formatDay(m.observedAt)}`,
+    stale,
+    dated: true,
+  };
 }
 
 /** Motivo, em linguagem operacional, de uma capacidade de identidade não ter sido entregue pela fonte. */

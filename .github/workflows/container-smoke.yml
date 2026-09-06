@@ -72,7 +72,10 @@ jobs:
       #     [AEGIS-MVP-PRODUCT-01] Inclui a tela inicial e a honestidade documental: a COMPOSIÇÃO por dimensão
       #     independente da Visão geral (DashboardOverviewQueryTests, SQLite — ambiente observado NÃO some por
       #     falta de maturidade legada, e ausência de coleta é null, nunca zero) e o gate do provedor documental
-      #     SIMULADO (DocumentIntegrationFactoryTests + SimulatedDocumentProviderGuardTests).
+      #     SIMULADO (DocumentIntegrationFactoryTests + SimulatedDocumentProviderGuardTests). A revisão do Codex
+      #     acrescentou a distinção de INVENTÁRIO a DashboardOverviewQueryTests (inventário vazio não prova
+      #     ausência de coleta): a classe já consta no filtro, então os 2 casos novos executam aqui de fato — a
+      #     contagem deste passo sobe de 286 para 288.
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
@@ -252,6 +255,12 @@ jobs:
       # `IdentityEvidencePostgresTests.IdentityRisk_SchemaV2_RoundTrip_V1Compatibility_And_NoScoreWrite_OnRealPostgres`
       # foi acrescentado à classe `IdentityEvidencePostgresTests`, que JÁ consta no filtro abaixo — por isso ele
       # executa de fato neste job (a contagem sobe de 20 para 21).
+      # [AEGIS-MVP-PRODUCT-01] `DashboardOverviewPostgresTests` acrescenta a validação INTEGRADA da leitura
+      # composta da tela inicial: a query roda com as DEPENDÊNCIAS REAIS (postura do workspace, exposições de
+      # configuração, vulnerabilidades e Evidence Fabric de identidade) sobre o PostgreSQL descartável deste job,
+      # provando que cada consulta TRADUZ de fato, que um tenant com evidência operacional e SEM maturidade
+      # legada recebe os dados corretos, que inventário vazio não vira "nunca coletado" e que nada de um tenant
+      # aparece no outro. Sem migration nova. A classe é NOVA: sem esta linha ela não executaria (falso verde).
       # ⚠️ Este filtro é POR CLASSE e NENHUM job roda a suíte completa: uma classe PostgreSQL nova que não seja
       # adicionada AQUI nunca executa e o check fica verde assim mesmo (falso verde). Confira SEMPRE a contagem
       # de testes no log, não só conclusion=success.
@@ -263,4 +272,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests"

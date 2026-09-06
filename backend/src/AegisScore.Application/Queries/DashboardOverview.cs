@@ -39,6 +39,14 @@ public enum DashboardSignalState
 
     /// <summary>Há dado válido e a fonte respondeu por inteiro na última coleta.</summary>
     Available = 3,
+
+    /// <summary>
+    /// A dimensão não tem número E o modelo NÃO comprova o que aconteceu com a coleta. Distinto de
+    /// <see cref="NeverCollected"/>, que AFIRMA que nada foi coletado: aqui a fonte existe e já sincronizou,
+    /// mas o modelo não registra o resultado de uma coleta sem achados — então "zero" e "nunca coletado"
+    /// seriam ambos afirmações não provadas. A tela diz apenas o que está comprovado.
+    /// </summary>
+    Undetermined = 4,
 }
 
 /// <summary>

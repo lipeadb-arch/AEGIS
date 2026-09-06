@@ -92,7 +92,8 @@ public sealed class DashboardOverviewQuery : IDashboardOverviewQuery
         // ---- Identidade: ÚLTIMO snapshot da Evidence Fabric (sem nova aquisição, sem Graph) ----
         var identity = await _identity.GetLatestProjectionAsync(ct);
 
-        var environment = await BuildEnvironmentAsync(exposures.Summary, vulnerabilities.Summary, identity, ct);
+        var environment = await BuildEnvironmentAsync(
+            exposures.Summary, vulnerabilities.Summary, identity, workspace.Connectors, ct);
         var businessRisk = await BuildBusinessRiskAsync(ct);
 
         return new DashboardOverviewDto(
@@ -122,22 +123,10 @@ public sealed class DashboardOverviewQuery : IDashboardOverviewQuery
         PostureExposureSummaryDto exposures,
         VulnerabilitySummaryDto vulnerabilities,
         IdentityEvidenceProjection identity,
+        ConnectorHealthSummaryDto connectors,
         CancellationToken ct)
     {
-        // Ativos: COUNT no banco — o inventário NUNCA é materializado para ser contado. Nasce de descoberta
-        // contínua/seed, e "nenhum ativo" é indistinguível de "nunca coletado": zero vira NeverCollected.
-        //
-        // ⚠️ Sem instante de observação aqui de propósito. O agregado sobre a data do ativo (MAX/ORDER BY em
-        // DateTimeOffset) NÃO é suportado pelo provider SQLite da suíte — a mesma limitação já registrada no
-        // AEGIS_STATE §22.7 —, e resolvê-la carregando as datas contradiria a regra de não materializar o
-        // inventário. A recência das fontes vive, com autoridade, no bloco de saúde das fontes.
-        var activeAssets = await _db.Assets.AsNoTracking().CountAsync(a => a.IsActive, ct);
-
-        var assets = activeAssets > 0
-            ? new DashboardMetricDto(DashboardSignalState.Available, activeAssets, "Inventário de ativos")
-            : new DashboardMetricDto(
-                DashboardSignalState.NeverCollected, null, "Inventário de ativos", null,
-                "Nenhum ativo descoberto ainda — o inventário aparece após a primeira coleta do ambiente.");
+        var assets = await BuildAssetsMetricAsync(connectors, ct);
 
         // Exposições de configuração: o resumo já distingue "nunca coletado" por LastCollectedAt nulo.
         var exposuresCollected = exposures.LastCollectedAt is not null;
@@ -187,6 +176,80 @@ public sealed class DashboardOverviewQuery : IDashboardOverviewQuery
 
         return new DashboardEnvironmentDto(
             assets, configurationExposures, vulnerabilityMetric, affectedAssets, identityMetric);
+    }
+
+    /// <summary>
+    /// Capacidades de conector cuja ingestão PODE criar/vincular ativos no inventário (CMDB, exposição do
+    /// Defender, EDR e scanner de vulnerabilidade). É a única evidência que o modelo guarda sobre a coleta de
+    /// inventário: os ativos não têm registro próprio de execução de coleta.
+    /// </summary>
+    private static readonly string[] InventoryCapabilities =
+    [
+        nameof(ConnectorCapability.Cmdb),
+        nameof(ConnectorCapability.DefenderExposure),
+        nameof(ConnectorCapability.Edr),
+        nameof(ConnectorCapability.VulnerabilityScanner),
+    ];
+
+    /// <summary>
+    /// Métrica de ativos. Inventário VAZIO não prova ausência de coleta — foi exatamente esse o defeito
+    /// corrigido aqui: "zero ativos" virava <c>NeverCollected</c>, uma AFIRMAÇÃO sobre a coleta que o modelo
+    /// não sustenta. As quatro situações são agora distintas, e cada uma diz apenas o que está comprovado:
+    ///
+    ///   • há ativo ativo                        → <c>Available</c> com a contagem;
+    ///   • há inventário, sem ativo ATIVO        → <c>Available</c> com 0 — leitura REAL (desativado ≠ deletado);
+    ///   • sem inventário e sem fonte capaz      → <c>NoSource</c>;
+    ///   • sem inventário, fonte nunca sincronizou → <c>NeverCollected</c> (provado pelo conector);
+    ///   • sem inventário, fonte JÁ sincronizou  → <c>Undetermined</c> — a sincronização aconteceu, mas o
+    ///     modelo não registra o resultado de uma coleta de inventário sem achados. Afirmar "coletado sem
+    ///     ativos" seria inventar sucesso; afirmar "nunca coletado" contradiria o próprio conector.
+    ///
+    /// Tudo por AGREGADO: <c>COUNT</c> no banco (o segundo só quando o primeiro é zero) e a projeção de
+    /// conectores que a autoridade do workspace JÁ produziu — nenhuma lista de ativos é materializada.
+    ///
+    /// ⚠️ Sem instante de observação aqui de propósito. O agregado sobre a data do ativo (MAX/ORDER BY em
+    /// DateTimeOffset) NÃO é suportado pelo provider SQLite da suíte — a mesma limitação já registrada no
+    /// AEGIS_STATE §22.7 —, e resolvê-la carregando as datas contradiria a regra de não materializar o
+    /// inventário. A recência das fontes vive, com autoridade, no bloco de saúde das fontes.
+    /// </summary>
+    private async Task<DashboardMetricDto> BuildAssetsMetricAsync(
+        ConnectorHealthSummaryDto connectors, CancellationToken ct)
+    {
+        const string source = "Inventário de ativos";
+
+        var activeAssets = await _db.Assets.AsNoTracking().CountAsync(a => a.IsActive, ct);
+        if (activeAssets > 0)
+            return new DashboardMetricDto(DashboardSignalState.Available, activeAssets, source);
+
+        // Zero ATIVOS ainda pode ser um inventário conhecido: ativo desativado é preservado no histórico.
+        var knownAssets = await _db.Assets.AsNoTracking().CountAsync(ct);
+        if (knownAssets > 0)
+            return new DashboardMetricDto(
+                DashboardSignalState.Available, 0, source, null,
+                $"Inventário conhecido com {knownAssets} registro(s), nenhum deles ativo na leitura atual — " +
+                "ativos desativados são preservados no histórico.");
+
+        // Inventário vazio: o que se pode AFIRMAR depende do que as fontes de inventário provam.
+        var inventorySources = connectors.Items
+            .Where(i => InventoryCapabilities.Contains(i.Capability, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        if (inventorySources.Count == 0)
+            return new DashboardMetricDto(
+                DashboardSignalState.NoSource, null, source, null,
+                "Nenhum ativo cadastrado e nenhuma fonte de inventário conectada. O inventário também aceita " +
+                "cadastro manual.");
+
+        if (!inventorySources.Any(i => i.EverSynced))
+            return new DashboardMetricDto(
+                DashboardSignalState.NeverCollected, null, source, null,
+                "Fonte de inventário conectada, porém nenhuma sincronização foi concluída até agora.");
+
+        return new DashboardMetricDto(
+            DashboardSignalState.Undetermined, null, source, null,
+            "Nenhum ativo registrado. As fontes de inventário já sincronizaram, mas o AEGIS não guarda o " +
+            "resultado de uma coleta de inventário sem achados — não é possível afirmar aqui que o ambiente " +
+            "não tem ativos. Confira as fontes conectadas.");
     }
 
     // ---------------------------------------------------------------------------------------------

@@ -91,7 +91,9 @@ public sealed class DashboardOverviewQueryTests : IDisposable
             identity: NoIdentitySource()).GetAsync();
 
         overview.Environment.Assets.Value.Should().BeNull();
-        overview.Environment.Assets.State.Should().Be(DashboardSignalState.NeverCollected);
+        overview.Environment.Assets.State.Should().Be(DashboardSignalState.NoSource,
+            "sem ativo E sem fonte de inventário conectada, o que está provado é a ausência de fonte — " +
+            "'nunca coletado' seria uma afirmação sobre uma coleta que ninguém tentou");
         overview.Environment.ConfigurationExposures.Value.Should().BeNull(
             "'0 exposições' leria como 'nenhum problema' num ambiente que nunca foi lido");
         overview.Environment.Vulnerabilities.Value.Should().BeNull();
@@ -102,6 +104,49 @@ public sealed class DashboardOverviewQueryTests : IDisposable
         overview.Environment.ConfigurationExposures.SourceLabel.Should().NotBeNullOrWhiteSpace();
         overview.Environment.ConfigurationExposures.Note.Should().NotBeNullOrWhiteSpace(
             "o estado vazio explica por que está vazio");
+    }
+
+    [Fact]
+    public async Task InventarioVazio_ComFonteJaSincronizada_NaoViraNuncaColetado()
+    {
+        await using var db = NewContext();
+
+        // A fonte de inventário CONCLUIU uma sincronização e mesmo assim não há ativo. O modelo não registra o
+        // resultado de uma coleta de inventário sem achados: nem "nunca coletado" (contradiz o conector) nem
+        // "0 ativos" (inventaria sucesso) podem ser afirmados. Estado próprio, mensagem só do que foi provado.
+        var overview = await QueryFor(db, connectors: new ConnectorHealthSummaryDto(
+            Configured: 1, Enabled: 1, Disabled: 0, Healthy: 1, Degraded: 0, Failed: 0, NeverSynced: 0,
+            LastSyncAt: Now.AddHours(-2),
+            Items: new[]
+            {
+                new ConnectorHealthItemDto(Guid.NewGuid(), "Defender", "Microsoft", "VulnerabilityScanner",
+                    "Healthy", Now.AddHours(-2), true, true),
+            })).GetAsync();
+
+        overview.Environment.Assets.State.Should().Be(DashboardSignalState.Undetermined);
+        overview.Environment.Assets.Value.Should().BeNull("um número aqui seria afirmação sem prova");
+        overview.Environment.Assets.Note.Should().NotBeNullOrWhiteSpace(
+            "a tela precisa dizer por que não pode afirmar nada sobre o inventário");
+    }
+
+    [Fact]
+    public async Task InventarioConhecidoSemAtivoAtivo_MostraZeroComoLeituraReal()
+    {
+        await using (var seed = NewContext())
+        {
+            var retired = NewAsset("Notebook devolvido");
+            retired.IsActive = false;
+            seed.Assets.Add(retired);
+            await seed.SaveChangesAsync();
+        }
+
+        await using var db = NewContext();
+        var overview = await QueryFor(db).GetAsync();
+
+        // Desativado ≠ deletado: existe inventário, e "nenhum ativo ATIVO" é uma leitura — não uma ausência.
+        overview.Environment.Assets.State.Should().Be(DashboardSignalState.Available);
+        overview.Environment.Assets.Value.Should().Be(0);
+        overview.Environment.Assets.Note.Should().Contain("1 registro");
     }
 
     [Fact]
