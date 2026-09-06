@@ -18,6 +18,7 @@ using AegisScore.Infrastructure.Tests.Documents;   // PostgresProbe
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -93,9 +94,16 @@ public sealed class KnightAffectedObjectsPostgresTests
             body.AffectedObjectCount.Should().Be(12);
             body.TotalPreserved.Should().Be(12);
             body.Items.Should().HaveCount(5, "a paginação acontece NO BANCO, não no navegador");
-            body.Items.Should().Contain(i => i.Kind == nameof(KnightAffectedObjectKind.ServicePrincipal),
+
+            // Tipo explícito e nome ausente são propriedades do CONJUNTO — a primeira página de 5 não é o
+            // lugar de procurá-las (a ordenação é por nome, e os dois casos ficam fora dela).
+            var completa = await controller.GetAffected(runId, "AK-ENTRA-002", 1, 100, null);
+            var todos = completa.Result.Should().BeOfType<OkObjectResult>().Which.Value
+                .Should().BeOfType<KnightAffectedObjectsDto>().Which;
+            todos.Items.Should().HaveCount(12);
+            todos.Items.Should().Contain(i => i.Kind == nameof(KnightAffectedObjectKind.ServicePrincipal),
                 "um membro de papel privilegiado pode ser uma APLICAÇÃO — o tipo viaja explícito");
-            body.Items.Should().Contain(i => i.DisplayName == null,
+            todos.Items.Should().Contain(i => i.DisplayName == null,
                 "nome ausente na fonte permanece ausente — a tela mostra o identificador, não um rótulo inventado");
 
             // Busca no servidor, traduzida pelo Npgsql (ILIKE/LIKE) — não um filtro em memória.
@@ -151,26 +159,48 @@ public sealed class KnightAffectedObjectsPostgresTests
             action.Result.Should().BeOfType<NotFoundResult>();
         }
 
-        // E o BANCO recusa um objeto afetado cujo tenant divirja do resultado do indicador — a FK composta
-        // (IndicatorResultId, TenantId) é o que impede a corrupção relacional que o query filter só esconderia.
+        // DUAS defesas, provadas separadamente. A primeira é da APLICAÇÃO: o guard de escrita do DbContext
+        // recusa a gravação multi-tenant antes mesmo de chegar ao banco.
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
         {
-            var indicator = await db.KnightIndicatorResults.IgnoreQueryFilters()
+            var indicatorA = await db.KnightIndicatorResults.IgnoreQueryFilters()
                 .FirstAsync(i => i.RunId == runA && i.IndicatorId == "AK-ENTRA-002");
 
             db.KnightAffectedObjects.Add(new KnightAffectedObject
             {
                 TenantId = tenantB,                    // tenant DIVERGENTE do indicador (que é do tenant A)
                 RunId = runA,
-                IndicatorResultId = indicator.Id,
+                IndicatorResultId = indicatorA.Id,
                 IndicatorId = "AK-ENTRA-002",
                 ExternalId = "intruso-01",
                 Kind = KnightAffectedObjectKind.User,
             });
 
             var gravar = async () => await db.SaveChangesAsync();
-            await gravar.Should().ThrowAsync<DbUpdateException>(
-                "o próprio banco precisa recusar um afetado de tenant divergente");
+            await gravar.Should().ThrowAsync<TenantSecurityException>(
+                "a escrita cross-tenant é recusada fail-closed antes de tocar o banco");
+        }
+
+        // A segunda é do BANCO. Um INSERT CRU não passa pelo guard da aplicação — é exatamente por isso que a
+        // FK composta (IndicatorResultId, TenantId) existe: sem ela, um caminho que contornasse o DbContext
+        // criaria uma linha de tenant divergente que o query filter apenas ESCONDERIA, sem impedir.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+        {
+            var indicatorA = await db.KnightIndicatorResults.IgnoreQueryFilters()
+                .FirstAsync(i => i.RunId == runA && i.IndicatorId == "AK-ENTRA-002");
+
+            var sql = @"INSERT INTO ""KnightAffectedObjects""
+                        (""Id"", ""TenantId"", ""RunId"", ""IndicatorResultId"", ""IndicatorId"", ""ExternalId"",
+                         ""Kind"", ""Roles"", ""CreatedAt"")
+                        VALUES ({0}, {1}, {2}, {3}, 'AK-ENTRA-002', 'intruso-02', 0, '[]'::jsonb, now())";
+
+            var inserirCru = async () => await db.Database.ExecuteSqlRawAsync(
+                sql, Guid.NewGuid(), tenantB, runA, indicatorA.Id);
+
+            var erro = (await inserirCru.Should().ThrowAsync<DbUpdateException>(
+                "o próprio banco precisa recusar um afetado de tenant divergente")).Which;
+            erro.InnerException.Should().BeOfType<PostgresException>()
+                .Which.SqlState.Should().Be(PostgresErrorCodes.ForeignKeyViolation);
         }
     }
 
