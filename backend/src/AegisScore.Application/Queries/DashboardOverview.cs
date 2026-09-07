@@ -25,7 +25,15 @@ namespace AegisScore.Application.Queries;
 /// <summary>
 /// Estado de UMA dimensão da tela inicial — a distinção que decide se um painel pode aparecer com números.
 /// Cada painel exige a própria evidência: nenhum deles herda o estado de outro.
+///
+/// [AEGIS-MVP-PRODUCT-02] Serializado como STRING ("Available"), não como ordinal. A API não tem conversor
+/// global de enums, então sem esta anotação o campo saía como número e a tela — que compara com o NOME do
+/// estado — caía no ramo padrão e mostrava "Sem fonte conectada" para toda métrica. O smoke visual do Dia 1
+/// não pegou isso porque foi feito contra um mock que já devolvia nomes; é exatamente o limite que aquele
+/// relatório declarou. Anotação CONTIDA a este enum, no mesmo idioma de EdrCoverageStatus/OsLifecycleStatus —
+/// a serialização global da API permanece inalterada.
 /// </summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
 public enum DashboardSignalState
 {
     /// <summary>Não há fonte capaz de produzir essa dimensão (nenhum conector/registro aplicável).</summary>

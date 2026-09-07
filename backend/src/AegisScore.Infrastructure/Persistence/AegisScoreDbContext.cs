@@ -122,6 +122,7 @@ public class AegisScoreDbContext : DbContext
     // Assessment de processos e do ledger do AEGIS Score geral).
     public DbSet<KnightAssessmentRun> KnightAssessmentRuns => Set<KnightAssessmentRun>();
     public DbSet<KnightIndicatorResult> KnightIndicatorResults => Set<KnightIndicatorResult>();
+    public DbSet<KnightAffectedObject> KnightAffectedObjects => Set<KnightAffectedObject>();
 
     // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidência de identidade NORMALIZADA e compartilhada (uma aquisição real do
     // Entra ID → KNIGHT + projeção NIST + dashboard + relatórios). Snapshot ATUAL por (tenant, conector), sem PII.
@@ -182,6 +183,9 @@ public class AegisScoreDbContext : DbContext
         b.Entity<KnightIndicatorResult>().Property(x => x.NistCodes)
             .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
         b.Entity<KnightIndicatorResult>().Property(x => x.MitreTechniques)
+            .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
+        // [AEGIS-MVP-PRODUCT-02] Papéis do objeto afetado → jsonb (mesmo idioma das listas acima).
+        b.Entity<KnightAffectedObject>().Property(x => x.Roles)
             .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
 
         // Computed properties — never persisted.
@@ -944,6 +948,31 @@ public class AegisScoreDbContext : DbContext
             // índice é tenant-leading e cobre o carregamento por (tenant, execução), substituindo o antigo
             // índice não-único (TenantId, RunId).
             e.HasIndex(x => new { x.TenantId, x.RunId, x.IndicatorId }).IsUnique();
+
+            // [AEGIS-MVP-PRODUCT-02] Chave alternativa composta (Id, TenantId) como alvo da FK dos objetos
+            // afetados — o próprio banco recusa um afetado cujo tenant divirja do resultado (mesmo idioma da
+            // FK entre execução e indicador). Os objetos NÃO existem sem o resultado → Cascade.
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            e.HasMany(x => x.AffectedObjects).WithOne(a => a.IndicatorResult)
+                .HasForeignKey(a => new { a.IndicatorResultId, a.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // [AEGIS-MVP-PRODUCT-02] Objetos que sustentam um achado: tenant-owned, sempre vinculados à execução
+        // que os observou. O índice é tenant-leading e cobre a leitura por (tenant, execução, achado) — a
+        // paginação e a busca acontecem NO BANCO, nunca carregando a lista inteira para filtrar depois.
+        b.Entity<KnightAffectedObject>(e =>
+        {
+            e.Property(x => x.IndicatorId).HasMaxLength(40).IsRequired();
+            e.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.DisplayName).HasMaxLength(300);
+            e.Property(x => x.UserPrincipalName).HasMaxLength(320);
+            e.Property(x => x.Detail).HasMaxLength(1000);
+            e.HasIndex(x => new { x.TenantId, x.RunId, x.IndicatorId });
+            // Um objeto aparece UMA vez por achado de uma execução — a dedupe do coletor vira invariante de
+            // banco, de modo que lista e contagem não podem divergir por duplicata.
+            e.HasIndex(x => new { x.TenantId, x.IndicatorResultId, x.ExternalId }).IsUnique();
         });
 
         // ============================================================
@@ -1064,6 +1093,7 @@ public class AegisScoreDbContext : DbContext
         // AEGIS KNIGHT — execução e resultados são ITenantOwned (fail-closed, como o restante do modelo).
         b.Entity<KnightAssessmentRun>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<KnightIndicatorResult>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<KnightAffectedObject>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidência de identidade é ITenantOwned (fail-closed): um tenant jamais lê,
         // projeta ou altera a evidência de outro. Stamping do TenantId no insert é automático (SaveChanges guard).
         b.Entity<IdentityEvidenceSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

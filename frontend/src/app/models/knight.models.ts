@@ -88,6 +88,16 @@ export interface KnightIndicator {
   collectedAt: string; // ISO 8601
   sourceType: KnightSourceType;
   notEvaluatedReason: string | null;
+  /**
+   * [AEGIS-MVP-PRODUCT-02] `true` quando ESTA avaliação preservou os objetos que sustentam o veredito — é o
+   * que autoriza a aba "Afetados". `false` numa avaliação anterior à preservação, que continua válida e NÃO
+   * é retropreenchida com a coleta de hoje.
+   */
+  hasAffectedDetail: boolean;
+  /** `true` quando a lista preservada cobre todo o conjunto que produziu a contagem. */
+  affectedDetailComplete: boolean;
+  /** O que a coleta não conseguiu enumerar no detalhe, quando aplicável. */
+  affectedDetailLimitation: string | null;
 }
 
 export interface KnightCounts {
@@ -294,4 +304,252 @@ export function capabilityLabel(capability: string): string {
 /** Capacidades com problema (não coletadas) — o que a UI mostra como limitação de cobertura. */
 export function problemCapabilities(caps: KnightCapability[]): KnightCapability[] {
   return caps.filter((c) => c.outcome !== 'Collected');
+}
+
+// ============================================================================
+//  [AEGIS-MVP-PRODUCT-02] Objetos AFETADOS de um achado
+// ============================================================================
+// A tela precisa levar o analista de "78 objetos privilegiados" a "quais são, e por que cada um entrou".
+// Três coisas que estas funções existem para não deixar a UI quebrar:
+//   1. lista ≠ acusação — o conjunto é material de REVISÃO, não uma ordem de remover pessoas;
+//   2. lista ≠ censo de pessoas — um membro de papel privilegiado pode ser aplicação ou grupo;
+//   3. nome ausente não se inventa — sem nome, mostra-se o identificador e declara-se a limitação.
+
+/** Natureza do objeto afetado. Nunca presumir pessoa: aplicação e grupo têm ações diferentes. */
+export type KnightAffectedObjectKind = 'User' | 'Guest' | 'ServicePrincipal' | 'Group' | 'Device' | 'Unknown';
+
+/**
+ * Estado do DETALHE de um achado numa avaliação:
+ *  • `OutOfScope`   — este achado não preserva objetos nesta entrega;
+ *  • `NotPreserved` — a avaliação é ANTERIOR à preservação (histórico válido, jamais retropreenchido);
+ *  • `Available`    — detalhe preservado e completo (inclusive o conjunto VAZIO de um achado conforme);
+ *  • `Partial`      — preservado, porém declaradamente incompleto.
+ */
+export type KnightAffectedDetailState = 'OutOfScope' | 'NotPreserved' | 'Available' | 'Partial';
+
+export interface KnightAffectedObject {
+  externalId: string;
+  kind: KnightAffectedObjectKind;
+  displayName: string | null;
+  userPrincipalName: string | null;
+  roles: string[];
+  detail: string | null;
+}
+
+/** Página de afetados de UM achado de UMA avaliação (paginada e pesquisada no servidor). */
+export interface KnightAffectedObjects {
+  runId: string;
+  indicatorId: string;
+  state: KnightAffectedDetailState;
+  /** Contagem do veredito — a MESMA unidade e regra de dedupe da lista. */
+  affectedObjectCount: number;
+  totalPreserved: number;
+  /** Objetos que satisfazem a busca (igual a `totalPreserved` sem busca). */
+  matchCount: number;
+  page: number;
+  pageSize: number;
+  items: KnightAffectedObject[];
+  limitation: string | null;
+  collectedAt: string | null;
+}
+
+const AFFECTED_KIND_LABEL: Record<KnightAffectedObjectKind, string> = {
+  User: 'Usuário',
+  Guest: 'Convidado',
+  ServicePrincipal: 'Aplicação',
+  Group: 'Grupo',
+  Device: 'Dispositivo',
+  Unknown: 'Tipo não identificado',
+};
+
+export function affectedKindLabel(kind: KnightAffectedObjectKind): string {
+  return AFFECTED_KIND_LABEL[kind] ?? 'Tipo não identificado';
+}
+
+/** `true` quando a fonte não devolveu nome nem UPN — a tela mostra o identificador e explica por quê. */
+export function isUnnamed(o: KnightAffectedObject): boolean {
+  return !o.displayName && !o.userPrincipalName;
+}
+
+/** Rótulo do objeto: nome, senão UPN, senão o identificador da fonte. NUNCA um nome inventado. */
+export function affectedLabel(o: KnightAffectedObject): string {
+  return o.displayName || o.userPrincipalName || o.externalId;
+}
+
+/** Total de páginas do conjunto atualmente listado (busca aplicada), mínimo 1. */
+export function totalPages(p: KnightAffectedObjects): number {
+  return Math.max(1, Math.ceil(p.matchCount / Math.max(1, p.pageSize)));
+}
+
+/**
+ * A frase que a aba "Afetados" mostra quando NÃO há uma tabela para exibir — ou o alerta que acompanha uma
+ * tabela incompleta. Retorna `null` quando a lista está completa e não há nada a ressalvar.
+ */
+export function affectedNotice(p: KnightAffectedObjects): string | null {
+  switch (p.state) {
+    case 'OutOfScope':
+      return 'Este achado ainda não preserva a lista de objetos afetados. O número ao lado vem da regra ' +
+        'determinística; o detalhe nominal chega em uma próxima entrega.';
+    case 'NotPreserved':
+      return 'Esta avaliação é anterior à preservação de detalhe. O resultado continua válido, mas os objetos ' +
+        'daquela coleta não foram guardados — e a lista de hoje não serve de prova para um resultado de ontem. ' +
+        'Execute uma nova avaliação para obter o detalhe.';
+    case 'Partial':
+      return p.limitation ??
+        'A coleta não conseguiu enumerar todos os objetos deste achado — a lista abaixo é parcial.';
+    default:
+      return p.limitation;
+  }
+}
+
+/** `true` quando existe tabela para mostrar (mesmo vazia por busca sem resultado). */
+export function hasAffectedTable(p: KnightAffectedObjects): boolean {
+  return p.state === 'Available' || p.state === 'Partial';
+}
+
+/**
+ * Leitura HONESTA de um achado: o que o número significa, o que ele NÃO significa e qual é o critério da
+ * regra. Corrige, sem fabricar conclusão, as quatro confusões que a revisão apontou — quantidade de
+ * privilegiados não é quantidade de acessos desnecessários; o teto é parâmetro do AEGIS e não exigência do
+ * NIST; registro de MFA não comprova imposição; atividade desconhecida não comprova inatividade.
+ *
+ * Devolve `null` para um achado sem leitura específica — a tela então mostra só a evidência do backend, sem
+ * inventar interpretação.
+ */
+export interface FindingReading {
+  /** O que o achado afirma, no limite do que a coleta provou. */
+  means: string;
+  /** O que ele explicitamente NÃO afirma. */
+  doesNotMean: string;
+  /** O critério da regra que produziu o veredito. */
+  criterion: string;
+}
+
+const FINDING_READING: Record<string, FindingReading> = {
+  'AK-ENTRA-002': {
+    means:
+      'Estes são os objetos que hoje têm algum papel privilegiado no diretório — pessoas, aplicações e ' +
+      'grupos, juntos. É o conjunto que merece revisão de acesso.',
+    doesNotMean:
+      'Não significa que todos esses acessos sejam desnecessários, nem que alguém deva ser removido: o AEGIS ' +
+      'não sabe quem precisa de qual papel. A decisão é da revisão humana.',
+    criterion:
+      'A regra compara o total de objetos privilegiados com um teto de menor privilégio. Esse teto é um ' +
+      'parâmetro do AEGIS — o NIST recomenda menor privilégio, mas não fixa um número.',
+  },
+  'AK-ENTRA-001': {
+    means:
+      'Estas contas privilegiadas não aparecem com nenhum método capaz de MFA no relatório de registro do ' +
+      'diretório.',
+    doesNotMean:
+      'Não significa que o acesso delas esteja necessariamente sem segundo fator: registro e capacidade de ' +
+      'MFA não comprovam a imposição efetiva por política. A verificação da política é um passo à parte.',
+    criterion:
+      'Cruzamento entre os membros de papéis privilegiados e o relatório agregado de registro de métodos de ' +
+      'autenticação. Conta ausente do relatório NÃO é contada como sem MFA.',
+  },
+  'AK-ENTRA-004': {
+    means:
+      'Estes convidados não registraram acesso dentro da janela da regra — acesso de terceiro que ninguém ' +
+      'está usando é superfície esquecida.',
+    doesNotMean:
+      'Atividade desconhecida não é inatividade comprovada: parte destes convidados pode simplesmente não ' +
+      'ter registro de acesso disponível. O detalhe de cada linha diz qual é o caso.',
+    criterion:
+      'Convidados sem sinal de acesso dentro da janela de dias definida pela regra do AEGIS, considerando a ' +
+      'data de criação quando não há acesso registrado.',
+  },
+};
+
+export function findingReading(indicatorId: string): FindingReading | null {
+  return FINDING_READING[indicatorId] ?? null;
+}
+
+/* ============================================================================================
+ * [AEGIS-MVP-PRODUCT-02] Camada de APRESENTAÇÃO dos achados — compartilhada por KNIGHT e Prioridades.
+ *
+ * Motivo: o texto literal do catálogo diz "sem MFA efetivo", mas a fonte observa REGISTRO/capacidade de
+ * método — a ressalva escondida na aba de evidência não conserta um título que afirma mais forte do que a
+ * coleta prova. As funções abaixo são o ÚNICO lugar onde esse texto é escrito, para que a lista do KNIGHT e
+ * a Central de Prioridades nunca digam coisas diferentes sobre o mesmo achado.
+ *
+ * O que elas NÃO fazem: não recalculam veredito, não reordenam, não tocam fórmula nem score, e não
+ * reescrevem o texto gravado na avaliação — este continua visível, literal e identificado como tal, na aba
+ * de evidência. São derivadas apenas de campos estruturados (`status`, `affectedObjectCount`), jamais de
+ * parsing do texto histórico.
+ * ============================================================================================ */
+
+/** O mínimo que uma superfície precisa expor para ser apresentada — satisfeito por KnightIndicator e por PriorityKnightFinding. */
+export interface FindingLike {
+  indicatorId: string;
+  title: string;
+  status: KnightIndicatorStatus;
+  affectedObjectCount: number;
+  evidence: string;
+}
+
+/** Títulos claros para os achados com detalhe preservado; os demais mantêm o título do catálogo. */
+const FINDING_TITLE: Record<string, string> = {
+  'AK-ENTRA-001': 'Contas privilegiadas sem método de MFA registrado no diretório',
+  'AK-ENTRA-002': 'Objetos privilegiados sujeitos a revisão de acesso',
+  'AK-ENTRA-004': 'Convidados sinalizados por atividade desconhecida',
+};
+
+/** Título do achado na lista e na Central. Um achado sem título revisado mantém o do catálogo, sem invenção. */
+export function findingTitle(f: FindingLike): string {
+  return FINDING_TITLE[f.indicatorId] ?? f.title;
+}
+
+/**
+ * A SITUAÇÃO em uma linha, no limite do que a coleta provou. Quando não há redação revisada para o achado,
+ * devolve a evidência gravada — nunca uma frase inventada.
+ */
+export function findingSituation(f: FindingLike): string {
+  const n = f.affectedObjectCount;
+  const exposto = f.status === 'Exposed' || f.status === 'Mitigated';
+
+  switch (f.indicatorId) {
+    case 'AK-ENTRA-001':
+      return exposto
+        ? `${n} conta(s) privilegiada(s) sem nenhum método capaz de MFA no relatório de registro do ` +
+          'diretório. Registro não comprova imposição por política.'
+        : 'Nenhuma conta privilegiada aparece sem método capaz de MFA no relatório de registro. Isso não ' +
+          'comprova imposição por política.';
+    case 'AK-ENTRA-002':
+      return exposto
+        ? `${n} objeto(s) com papel privilegiado — acima do teto de menor privilégio parametrizado no ` +
+          'AEGIS. É o conjunto sujeito a revisão, não uma lista de acessos desnecessários.'
+        : 'Os objetos com papel privilegiado estão dentro do teto de menor privilégio parametrizado no ' +
+          'AEGIS. O teto é parâmetro do AEGIS, não um número exigido pelo NIST.';
+    case 'AK-ENTRA-004':
+      return exposto
+        ? `${n} convidado(s) sem sinal de acesso dentro da janela da regra. Atividade desconhecida não ` +
+          'comprova desuso — o detalhe de cada linha diz qual é o caso.'
+        : 'Nenhum convidado ficou sem sinal de acesso dentro da janela da regra.';
+    default:
+      return f.evidence;
+  }
+}
+
+/* ============================================================================================
+ * [AEGIS-MVP-PRODUCT-02] Guarda de CONTEXTO das leituras de afetados.
+ *
+ * O detalhe carrega por avaliação × indicador × página × busca. Uma resposta lenta de um contexto anterior
+ * não pode preencher o contexto atual: seria apresentar objetos de um achado (ou de uma busca) como resposta
+ * de outro. A chave abaixo identifica o pedido; a comparação decide quem pode escrever no estado.
+ * ============================================================================================ */
+
+/** Identidade de UM pedido de afetados. Busca vazia e ausente são o mesmo pedido. */
+export function affectedRequestKey(
+  runId: string,
+  indicatorId: string,
+  page: number,
+  search: string | null,
+): string {
+  return [runId, indicatorId, String(page), (search ?? '').trim()].join('|');
+}
+
+/** `true` somente quando a resposta pertence ao pedido que está aberto agora. */
+export function isCurrentAffectedResponse(current: string, responded: string): boolean {
+  return current === responded;
 }

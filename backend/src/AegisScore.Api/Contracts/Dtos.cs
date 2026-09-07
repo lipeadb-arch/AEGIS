@@ -704,7 +704,57 @@ public record KnightIndicatorDto(
     string Recommendation,
     DateTimeOffset CollectedAt,
     string SourceType,
-    string? NotEvaluatedReason);
+    string? NotEvaluatedReason,
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-02] TRUE quando ESTA execução preservou os objetos que sustentam o veredito. A tela
+    /// usa isto para oferecer (ou não) a aba "Afetados": uma execução anterior à preservação declara a
+    /// ausência, em vez de exibir a coleta atual como prova de um resultado antigo.
+    /// </summary>
+    bool HasAffectedDetail,
+    /// <summary>TRUE quando a lista preservada cobre todo o conjunto que produziu a contagem.</summary>
+    bool AffectedDetailComplete,
+    /// <summary>O que a coleta não conseguiu enumerar no detalhe (sanitizado), quando aplicável.</summary>
+    string? AffectedDetailLimitation);
+
+// ---- [AEGIS-MVP-PRODUCT-02] Objetos AFETADOS de um achado -----------------------------------------------
+
+/// <summary>
+/// UM objeto que sustenta um achado. O TIPO é explícito porque um membro de papel privilegiado pode ser
+/// aplicação ou grupo — a tela não pode sugerir "exigir MFA" de algo que não é pessoa. Nome e UPN são
+/// ANULÁVEIS: quando a fonte não os devolve, permanecem nulos e a tela mostra o identificador com a
+/// limitação declarada, jamais um nome inventado.
+/// </summary>
+public record KnightAffectedObjectDto(
+    string ExternalId,
+    string Kind,
+    string? DisplayName,
+    string? UserPrincipalName,
+    IReadOnlyList<string> Roles,
+    string? Detail);
+
+/// <summary>
+/// Página de objetos afetados de UM achado de UMA execução — paginada e pesquisada NO SERVIDOR. O vínculo
+/// com <paramref name="RunId"/> é parte da prova: a lista pertence àquela avaliação, e não ao presente.
+/// </summary>
+/// <param name="State">
+/// "OutOfScope" (o achado não preserva detalhe), "NotPreserved" (execução anterior à preservação — não
+/// retropreenchida), "Available" (completo) ou "Partial" (preservado e declaradamente incompleto).
+/// </param>
+/// <param name="AffectedObjectCount">Contagem VERBATIM do veredito — mesma unidade e regra de dedupe da lista.</param>
+/// <param name="TotalPreserved">Objetos efetivamente preservados.</param>
+/// <param name="MatchCount">Objetos que satisfazem a busca (igual a TotalPreserved sem busca).</param>
+public record KnightAffectedObjectsDto(
+    Guid RunId,
+    string IndicatorId,
+    string State,
+    int AffectedObjectCount,
+    int TotalPreserved,
+    int MatchCount,
+    int Page,
+    int PageSize,
+    IReadOnlyList<KnightAffectedObjectDto> Items,
+    string? Limitation,
+    DateTimeOffset? CollectedAt);
 
 /// <summary>Estado por capacidade da fonte (o que foi coletado e o que faltou) — cobertura/limitações na UI.</summary>
 public record KnightCapabilityDto(string Capability, string Outcome, string? Detail);

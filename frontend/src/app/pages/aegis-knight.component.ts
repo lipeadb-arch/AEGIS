@@ -1,10 +1,11 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { environment } from '../../environments/environment';
 import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
 import {
   KnightAssessment,
+  KnightIndicator,
   KnightSourceType,
   KnightSources,
   capabilityLabel,
@@ -12,6 +13,8 @@ import {
   categoryLabel,
   connectionBadgeLabel,
   connectionStateOf,
+  findingSituation,
+  findingTitle,
   isProblemState,
   problemCapabilities,
   severityLabel,
@@ -21,6 +24,7 @@ import {
   statusLabel,
 } from '../models/knight.models';
 import { IdentityRiskPanelComponent } from '../components/identity/identity-risk-panel.component';
+import { KnightFindingDetailComponent } from '../components/knight/finding-detail.component';
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
 import { IdentityRiskService } from '../services/identity-risk.service';
 import { KnightService } from '../services/knight.service';
@@ -37,7 +41,7 @@ import { KnightService } from '../services/knight.service';
 @Component({
   selector: 'app-aegis-knight',
   standalone: true,
-  imports: [ScoreGaugeComponent, DatePipe, RouterLink, IdentityRiskPanelComponent],
+  imports: [ScoreGaugeComponent, DatePipe, RouterLink, IdentityRiskPanelComponent, KnightFindingDetailComponent],
   template: `
     <section class="knight">
       <p class="eyebrow">AEGIS KNIGHT · Postura de Identidade e Exposição · Multicoletor</p>
@@ -88,6 +92,22 @@ import { KnightService } from '../services/knight.service';
         }
 
         @if (assessment(); as a) {
+          @if (pinnedRun()) {
+            <div class="banner pinned">
+              <span>
+                Avaliação <b>aberta por link</b> e fixada no endereço — pode não ser a mais recente. Os
+                achados e os afetados abaixo pertencem a <b>esta</b> coleta.
+              </span>
+              <button type="button" class="btn ghost" (click)="openLatest()">Ver a mais recente</button>
+            </div>
+          }
+          @if (findingNotice(); as fmsg) {
+            <div class="banner err">
+              <span>{{ fmsg }}</span>
+              <button type="button" class="btn ghost" (click)="clearFindingNotice()">Fechar</button>
+            </div>
+          }
+
           <!-- Linha de fonte + estado da coleta: distingue Demo de coleta real, sempre. -->
           <div class="source-line" [class.problem]="isProblemState(a.sourceState)">
             <span class="src-tag" [class.demo]="a.isDemo">{{ sourceTypeLabel(a.sourceType) }}</span>
@@ -156,42 +176,48 @@ import { KnightService } from '../services/knight.service';
 
             <div class="panel list">
               <div class="hd">
-                <h3>Indicadores</h3>
-                <span class="hint">Veredito por regras determinísticas · expostos no topo</span>
+                <h3>Achados</h3>
+                <span class="hint">Veredito por regras determinísticas · expostos no topo · abra um achado para ver quem sustenta o resultado</span>
               </div>
-              <div class="tbl-wrap">
-                <table class="tbl">
-                  <thead>
-                    <tr>
-                      <th>Indicador</th><th>Categoria</th><th>Severidade</th><th>Status</th>
-                      <th>Evidência</th><th class="num">Afetados</th><th>NIST / MITRE</th><th>Recomendação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    @for (ind of sortedIndicators(); track ind.indicatorId) {
-                      <tr>
-                        <td><span class="code">{{ ind.indicatorId }}</span><span class="tt">{{ ind.title }}</span></td>
-                        <td>{{ categoryLabel(ind.category) }}</td>
-                        <td><span class="sev" [class]="ind.severity">{{ severityLabel(ind.severity) }}</span></td>
-                        <td><span class="st" [class]="ind.status">{{ statusLabel(ind.status) }}</span></td>
-                        <td class="ev">
-                          {{ ind.evidence }}
-                          @if (ind.notEvaluatedReason) { <span class="ne-reason">Motivo: {{ ind.notEvaluatedReason }}</span> }
-                        </td>
-                        <td class="num">{{ ind.affectedObjectCount }}</td>
-                        <td class="map">
-                          <span class="nist">{{ ind.nistCodes.join(', ') || '—' }}</span>
-                          <span class="mitre">{{ ind.mitreTechniques.length ? ind.mitreTechniques.join(' · ') : '—' }}</span>
-                        </td>
-                        <td class="rec">{{ ind.recommendation }}</td>
-                      </tr>
-                    }
-                  </tbody>
-                </table>
-              </div>
+              <ul class="findings">
+                @for (ind of sortedIndicators(); track ind.indicatorId) {
+                  <li>
+                    <button
+                      type="button"
+                      class="finding"
+                      [class.open]="selected() === ind.indicatorId"
+                      (click)="selectFinding(ind.indicatorId)"
+                      [attr.aria-expanded]="selected() === ind.indicatorId">
+                      <span class="f-title">
+                        <span class="tt">{{ findingTitle(ind) }}</span>
+                        <span class="sit">{{ findingSituation(ind) }}</span>
+                        <span class="code">{{ ind.indicatorId }}</span>
+                      </span>
+                      <span class="f-tags">
+                        <span class="sev" [class]="ind.severity">{{ severityLabel(ind.severity) }}</span>
+                        <span class="st" [class]="ind.status">{{ statusLabel(ind.status) }}</span>
+                      </span>
+                      <span class="f-affected">
+                        @if (ind.status === 'Exposed' || ind.status === 'Mitigated') {
+                          <b>{{ ind.affectedObjectCount }}</b><span class="l">afetado(s)</span>
+                        } @else {
+                          <span class="l">—</span>
+                        }
+                      </span>
+                    </button>
+                  </li>
+                }
+              </ul>
             </div>
           </div>
 
+          <!-- Detalhe de UM achado (componente dedicado): resumo · afetados · evidência. -->
+          @if (selectedIndicator(); as ind) {
+            <app-knight-finding-detail [assessment]="a" [indicator]="ind" (closed)="closeFinding()" />
+          }
+
+          <!-- [AEGIS-MVP-PRODUCT-02] O painel abaixo lê o snapshot ATUAL da Evidence Fabric e diz isso por
+               conta própria — ele NÃO pertence à avaliação aberta acima. -->
           <app-identity-risk-panel [projection]="riskProjection()" />
 
           <div class="panel ai">
@@ -234,6 +260,20 @@ import { KnightService } from '../services/knight.service';
             }
           </div>
         } @else {
+          @if (linkNotice(); as msg) {
+            <!-- [AEGIS-MVP-PRODUCT-02] O endereço indicava uma avaliação específica que NÃO pôde ser aberta.
+                 Cair para a última seria o pior desfecho: o link diria uma coisa e a tela mostraria outra. -->
+            <div class="panel state err">
+              <b>{{ msg }}</b>
+              <span>
+                O AEGIS não substitui a avaliação pedida pela mais recente — os resultados são de coletas
+                diferentes e não se substituem.
+              </span>
+              <button type="button" class="btn ghost" (click)="openLatest()">
+                Abrir a avaliação mais recente
+              </button>
+            </div>
+          } @else {
           <div class="panel state empty">
             <b>Nenhuma avaliação executada ainda.</b>
             <span>
@@ -265,6 +305,7 @@ import { KnightService } from '../services/knight.service';
               }
             </div>
           </div>
+          }
         }
       }
     </section>
@@ -291,6 +332,7 @@ import { KnightService } from '../services/knight.service';
 
       .source-line { font-family: var(--mono); font-size: 11.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
       .source-line b { color: var(--text); }
+      .banner.pinned b { color: var(--cyan); }
       .source-line.problem b { color: var(--amber); }
       .src-tag { font-weight: 700; letter-spacing: 0.06em; color: var(--cyan); border: 1px solid rgba(38, 224, 255, 0.4); border-radius: 6px; padding: 2px 8px; }
       .src-tag.demo { color: var(--amber); border-color: rgba(255, 176, 32, 0.4); }
@@ -333,18 +375,6 @@ import { KnightService } from '../services/knight.service';
       .list .hd, .ai .hd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
       .list h3, .ai h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); }
       .list .hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-      .tbl-wrap { overflow-x: auto; }
-      .tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
-      .tbl th { text-align: left; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-      .tbl th.num, .tbl td.num { text-align: right; }
-      .tbl td { padding: 10px; border-bottom: 1px solid rgba(122, 145, 190, 0.12); color: var(--text); vertical-align: top; }
-      .tbl .code { display: block; font-family: var(--mono); font-size: 11px; color: var(--cyan); }
-      .tbl .tt { display: block; font-size: 11.5px; color: var(--text); max-width: 220px; }
-      .tbl .ev { max-width: 260px; color: var(--muted); }
-      .tbl .ev .ne-reason { display: block; margin-top: 3px; font-size: 10.5px; color: var(--amber); }
-      .tbl .rec { max-width: 240px; color: var(--muted); }
-      .tbl .map { font-family: var(--mono); font-size: 10.5px; }
-      .tbl .map .nist { display: block; color: var(--text); } .tbl .map .mitre { display: block; color: var(--muted); margin-top: 2px; }
       .sev { font-family: var(--mono); font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
       .sev.Critical { color: var(--red); background: rgba(255, 45, 111, 0.12); }
       .sev.High { color: #ff9a3d; background: rgba(255, 154, 61, 0.12); }
@@ -371,12 +401,30 @@ import { KnightService } from '../services/knight.service';
 
       .state { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
       .state b { color: var(--text); font-size: 14px; }
-      .state span { font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.5; }
+      .state span, .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.5; }
       .empty-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
-      .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: 0.08em; animation: pulse 1.4s ease-in-out infinite; }
+      .pulse { letter-spacing: 0.08em; animation: pulse 1.4s ease-in-out infinite; }
       .state.err { border-color: rgba(255, 45, 111, 0.4); } .state.err b { color: #ffe3ee; }
       @keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
       @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+      /* [AEGIS-MVP-PRODUCT-02] Lista compacta de achados (o detalhe tem componente e estilo próprios). */
+      .findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+      .finding { width: 100%; display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center; text-align: left; cursor: pointer; background: rgba(122, 145, 190, 0.04); border: 1px solid var(--line); border-radius: 11px; padding: 11px 14px; color: var(--text); font-family: var(--sans); }
+      .finding:hover { border-color: rgba(38, 224, 255, 0.35); }
+      .finding.open { border-color: var(--cyan); background: rgba(38, 224, 255, 0.06); }
+      .finding .f-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+      .finding .tt { font-size: 13.5px; }
+      .finding .sit { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+      .banner.pinned { border: 1px solid rgba(38, 224, 255, 0.4); color: var(--text); }
+      .finding .f-tags { display: flex; gap: 8px; align-items: center; }
+      .finding .f-affected { display: flex; flex-direction: column; align-items: flex-end; min-width: 76px; }
+      .finding .f-affected b { font-family: var(--mono); font-size: 16px; }
+      .finding .code, .finding .f-affected .l { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+      @media (max-width: 900px) {
+        .finding { grid-template-columns: 1fr; gap: 8px; }
+        .finding .f-affected { align-items: flex-start; }
+      }
+
       @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } .btn { transition: none; } }
     `,
   ],
@@ -384,6 +432,8 @@ import { KnightService } from '../services/knight.service';
 export class AegisKnightComponent implements OnInit {
   private readonly knight = inject(KnightService);
   private readonly identityRisk = inject(IdentityRiskService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   readonly assessment = signal<KnightAssessment | null>(null);
   readonly sources = signal<KnightSources | null>(null);
@@ -402,6 +452,8 @@ export class AegisKnightComponent implements OnInit {
   protected readonly capabilityOutcomeLabel = capabilityOutcomeLabel;
   protected readonly capabilityLabel = capabilityLabel;
   protected readonly isProblemState = isProblemState;
+  protected readonly findingTitle = findingTitle;
+  protected readonly findingSituation = findingSituation;
 
   readonly badgeState = computed(() => connectionStateOf(this.assessment()));
   readonly badgeLabel = computed(() => connectionBadgeLabel(this.badgeState()));
@@ -439,27 +491,111 @@ export class AegisKnightComponent implements OnInit {
 
 
 
+  // ---- [AEGIS-MVP-PRODUCT-02] Seleção do achado -------------------------------------------------
+  // O estado do DETALHE (aba, página, busca, erro) vive no componente dedicado. A página só decide QUAL
+  // achado está aberto — e mantém isso no endereço, que é como a Central de Prioridades aponta para cá.
+
+  readonly selected = signal<string | null>(null);
+
+  /**
+   * Avaliação FIXADA pelo endereço (`?run=`). Quando presente, a tela carrega exatamente essa avaliação — a
+   * Central de Prioridades aponta para um resultado específico, e abrir outro com o mesmo link seria
+   * apresentar a coleta de hoje como prova do resultado de ontem.
+   */
+  readonly pinnedRun = signal<string | null>(null);
+  /** Estado explícito de um link que não pôde ser honrado (avaliação inexistente ou inacessível). */
+  readonly linkNotice = signal<string | null>(null);
+  /** Estado explícito de um achado pedido pelo link que não existe na avaliação carregada. */
+  readonly findingNotice = signal<string | null>(null);
+
+  readonly selectedIndicator = computed<KnightIndicator | null>(() => {
+    const id = this.selected();
+    if (!id) return null;
+    return this.assessment()?.indicators.find((i) => i.indicatorId === id) ?? null;
+  });
+
+  /** Abre um achado (ou fecha, se já estava aberto). */
+  selectFinding(indicatorId: string): void {
+    if (this.selected() === indicatorId) {
+      this.closeFinding();
+      return;
+    }
+    this.selected.set(indicatorId);
+    this.syncQueryParam(indicatorId);
+  }
+
+  closeFinding(): void {
+    this.selected.set(null);
+    this.syncQueryParam(null);
+  }
+
+  /**
+   * Mantém achado E avaliação no endereço — é assim que a Central de Prioridades aponta para cá. O `run`
+   * viaja junto para que recarregar, compartilhar ou voltar traga exatamente o mesmo resultado.
+   */
+  private syncQueryParam(indicatorId: string | null): void {
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { finding: indicatorId, run: this.pinnedRun() },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
+  /** Solta a fixação e volta à navegação sem avaliação indicada (aí sim, a mais recente). */
+  openLatest(): void {
+    this.pinnedRun.set(null);
+    this.linkNotice.set(null);
+    this.findingNotice.set(null);
+    this.selected.set(null);
+    void this.router
+      .navigate([], { relativeTo: this.route, queryParams: { finding: null, run: null }, replaceUrl: true })
+      .then(() => this.reload());
+  }
+
+  clearFindingNotice(): void {
+    this.findingNotice.set(null);
+  }
+
   ngOnInit(): void {
     // Somente LEITURA ao abrir — fontes + último assessment. NÃO executa análise automaticamente.
     this.reload();
   }
 
-  /** Recarrega fontes + último assessment (read-only). */
+  /**
+   * Recarrega fontes + a avaliação a exibir (read-only). Com `?run=` no endereço, carrega EXATAMENTE aquela
+   * avaliação; sem ele, a mais recente. Uma avaliação indicada e indisponível produz estado explícito — cair
+   * para a mais recente deixaria a URL apontando para uma coleta e a tela mostrando outra.
+   */
   reload(): void {
+    const requested = this.route.snapshot.queryParamMap.get('run');
+    this.pinnedRun.set(requested);
+    this.linkNotice.set(null);
+    this.findingNotice.set(null);
+
     this.loading.set(true);
     this.error.set(null);
     this.knight.getSources().subscribe({
       next: (s) => this.sources.set(s),
       error: () => this.sources.set(null), // fontes é secundário; não bloqueia a tela
     });
-    this.knight.getLatest().subscribe({
+
+    const wanted$ = requested ? this.knight.getById(requested) : this.knight.getLatest();
+    wanted$.subscribe({
       next: (a) => {
         this.assessment.set(a);
         this.loading.set(false);
+        this.applyDeepLink(a);
       },
       error: (e: Error) => {
-        this.error.set(e.message);
         this.loading.set(false);
+        if (requested) {
+          this.assessment.set(null);
+          this.selected.set(null);
+          this.linkNotice.set('A avaliação indicada no endereço não está disponível para este tenant.');
+          return;
+        }
+        this.error.set(e.message);
       },
     });
     this.reloadRisk();
@@ -476,6 +612,26 @@ export class AegisKnightComponent implements OnInit {
         /* seção secundária: preserva a projeção anterior em vez de exibir zeros */
       },
     });
+  }
+
+  /**
+   * A Central de Prioridades aponta para um achado específico (?finding=AK-ENTRA-002). O achado só é aberto
+   * se EXISTIR na avaliação carregada — um identificador desconhecido é ignorado em silêncio, jamais vira
+   * uma tela de detalhe vazia.
+   */
+  private applyDeepLink(a: KnightAssessment | null): void {
+    const wanted = this.route.snapshot.queryParamMap.get('finding');
+    if (!wanted) return;
+    if (!a?.indicators.some((i) => i.indicatorId === wanted)) {
+      // Silenciar aqui seria abrir a tela como se o link não existisse. O achado pedido pode não ter sido
+      // avaliado nesta coleta — a tela diz isso, em vez de abrir outro achado ou nenhum.
+      this.selected.set(null);
+      this.findingNotice.set(
+        `O achado ${wanted} não faz parte desta avaliação. Ele pode não ter sido avaliado nesta coleta.`,
+      );
+      return;
+    }
+    this.selected.set(wanted);
   }
 
   clearError(): void {
@@ -499,6 +655,16 @@ export class AegisKnightComponent implements OnInit {
       next: (a) => {
         this.assessment.set(a);
         this.running.set(false);
+        this.linkNotice.set(null);
+        this.findingNotice.set(null);
+        // A tela passou a mostrar OUTRA avaliação: o endereço muda junto, explicitamente. Deixar `?run=`
+        // apontando para a coleta anterior enquanto a tela mostra a nova é exatamente a divergência que
+        // esta correção existe para impedir. O achado aberto só sobrevive se existir na avaliação nova.
+        this.pinnedRun.set(a.id);
+        const aberto = this.selected();
+        const mantem = aberto && a.indicators.some((i) => i.indicatorId === aberto) ? aberto : null;
+        this.selected.set(mantem);
+        this.syncQueryParam(mantem);
         // A coleta acabou de reescrever o snapshot compartilhado — relê a MESMA fotografia (sem novo Graph).
         this.reloadRisk();
       },

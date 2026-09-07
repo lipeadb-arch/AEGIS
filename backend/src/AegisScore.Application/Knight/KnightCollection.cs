@@ -202,8 +202,19 @@ public sealed record KnightCollectionResult(
     /// [AEGIS-MVP-MICROSOFT-COVERAGE-03] Postura AGREGADA de registro de métodos de autenticação, derivada do
     /// MESMO relatório agregado já autorizado (sem chamadas por usuário e sem permissão nova).
     /// </summary>
-    AegisScore.Application.Identity.IdentityAuthenticationPosture? AuthenticationPosture = null)
+    AegisScore.Application.Identity.IdentityAuthenticationPosture? AuthenticationPosture = null,
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-02] Objetos que SUSTENTAM os achados, preservados pela MESMA coleta que produziu as
+    /// contagens — nunca uma segunda aquisição. Opcional: uma fonte que não os produz deixa vazio, e a tela
+    /// declara a ausência em vez de inventar uma lista. Estes objetos NÃO entram no snapshot agregado da
+    /// Evidence Fabric (que segue sem PII): quem os persiste é a superfície dedicada do assessment.
+    /// </summary>
+    IReadOnlyList<KnightAffectedObjectEvidence>? AffectedObjects = null)
 {
+    /// <summary>Conjuntos de objetos afetados desta coleta — vazio quando a fonte não preserva detalhe.</summary>
+    public IReadOnlyList<KnightAffectedObjectEvidence> AffectedObjectSets =>
+        AffectedObjects ?? Array.Empty<KnightAffectedObjectEvidence>();
+
     public static KnightCollectionResult NotConfigured(KnightSourceType source, string label) => new(
         source, KnightSourceState.NotConfigured, label, KnightFactSet.Empty,
         Array.Empty<KnightCapabilityStatus>(), DateTimeOffset.UtcNow, "Fonte não configurada.");

@@ -20,7 +20,16 @@ public sealed record KnightIndicatorView(
     string Recommendation,
     DateTimeOffset CollectedAt,
     KnightSourceType SourceType,
-    string? NotEvaluatedReason);
+    string? NotEvaluatedReason,
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-02] TRUE quando ESTA execução preservou os objetos que sustentam o veredito. FALSE
+    /// numa execução anterior à preservação — que permanece válida e NÃO é retropreenchida com dados atuais.
+    /// </summary>
+    bool HasAffectedDetail = false,
+    /// <summary>TRUE quando a lista preservada cobre todo o conjunto que produziu a contagem.</summary>
+    bool AffectedDetailComplete = false,
+    /// <summary>O que a coleta não conseguiu enumerar no detalhe (sanitizado), quando aplicável.</summary>
+    string? AffectedDetailLimitation = null);
 
 /// <summary>
 /// Um assessment KNIGHT completo, na visão de leitura da aplicação: a execução, a FONTE e seu estado, os
@@ -91,4 +100,14 @@ public interface IAegisKnightAssessmentService
 
     /// <summary>Disponibilidade das fontes para o tenant (Demo sempre; reais conforme configuração).</summary>
     Task<KnightSourcesStatus> GetSourcesStatusAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-02] Objetos que sustentam UM achado de UMA execução, paginados e pesquisados NO
+    /// SERVIDOR. Restrito ao tenant do contexto: uma execução de outro tenant é indistinguível de inexistente
+    /// (<c>null</c>). A lista é sempre a da execução pedida — nunca a coleta atual reapresentada como prova de
+    /// um veredito antigo. Somente leitura: NÃO dispara coleta na fonte.
+    /// </summary>
+    /// <returns><c>null</c> quando a execução ou o achado não existem neste tenant.</returns>
+    Task<KnightAffectedObjectsPage?> GetAffectedObjectsAsync(
+        Guid runId, string indicatorId, int page, int pageSize, string? search, CancellationToken ct = default);
 }

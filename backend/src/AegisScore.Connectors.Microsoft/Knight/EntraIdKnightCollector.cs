@@ -145,21 +145,25 @@ public sealed class EntraIdKnightCollector : IKnightCollector
 
         var obs = new List<KnightObservation>();
         var caps = new List<KnightCapabilityStatus>();
+        // [AEGIS-MVP-PRODUCT-02] Objetos que sustentam os achados, preservados pela MESMA coleta. Uma
+        // capacidade que falhe simplesmente não contribui conjunto — a tela declara a ausência de detalhe em
+        // vez de mostrar uma lista de outra coleta.
+        var affected = new List<KnightAffectedObjectEvidence>();
         var privileged = new PrivilegedAccumulator();
         var authPostureBox = new AuthenticationPostureBox();
 
         await RunCapabilityAsync(KnightCapability.PrivilegedRoleInventory,
             new[] { KnightSignalKey.PrivilegedAccountsTotal, KnightSignalKey.PrivilegedAccountsWithMailbox,
                     KnightSignalKey.StalePrivilegedAccounts, KnightSignalKey.ExternalMembersInPrivilegedRoles },
-            () => CollectPrivilegedRolesAsync(token, cfg, privileged, obs, now, ct), obs, caps);
+            () => CollectPrivilegedRolesAsync(token, cfg, privileged, obs, affected, now, ct), obs, caps);
 
         await RunCapabilityAsync(KnightCapability.MfaRegistration,
             new[] { KnightSignalKey.MfaRegistrationCoveragePercent, KnightSignalKey.PrivilegedAccountsWithoutMfa },
-            () => CollectMfaRegistrationAsync(token, cfg, privileged, obs, authPostureBox, ct), obs, caps);
+            () => CollectMfaRegistrationAsync(token, cfg, privileged, obs, affected, authPostureBox, ct), obs, caps);
 
         await RunCapabilityAsync(KnightCapability.GuestAccounts,
             new[] { KnightSignalKey.InactiveGuestAccounts },
-            () => CollectGuestsAsync(token, cfg, obs, now, ct), obs, caps);
+            () => CollectGuestsAsync(token, cfg, obs, affected, now, ct), obs, caps);
 
         await RunCapabilityAsync(KnightCapability.ConditionalAccessPolicies,
             new[] { KnightSignalKey.LegacyAuthenticationBlocked, KnightSignalKey.AdminMfaPolicyEnforced },
@@ -200,7 +204,7 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         var runState = DeriveState(caps);
         return new KnightCollectionResult(
             Source, runState, Label, facts, caps, now, DescribeState(runState),
-            identityRisk, authPostureBox.Value);
+            identityRisk, authPostureBox.Value, affected);
     }
 
     private async Task RunCapabilityAsync(
@@ -259,7 +263,7 @@ public sealed class EntraIdKnightCollector : IKnightCollector
 
     private async Task CollectPrivilegedRolesAsync(
         string token, KnightEntraIdConfiguration cfg, PrivilegedAccumulator acc, List<KnightObservation> obs,
-        DateTimeOffset now, CancellationToken ct)
+        List<KnightAffectedObjectEvidence> affected, DateTimeOffset now, CancellationToken ct)
     {
         var members = new Dictionary<string, MemberInfo>(StringComparer.OrdinalIgnoreCase);
 
@@ -267,24 +271,60 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         {
             var roleId = Str(role, "id");
             if (string.IsNullOrEmpty(roleId)) continue;
-            var url = $"directoryRoles/{roleId}/members?$select=id,userType,signInActivity";
+            var roleName = Str(role, "displayName");
+            // [AEGIS-MVP-PRODUCT-02] O $select ganhou displayName/userPrincipalName na MESMA consulta já
+            // autorizada por Directory.Read.All — nenhuma chamada por usuário e nenhuma permissão nova. São
+            // campos que o próprio endpoint de membros devolve; para objetos que não são pessoa (aplicação,
+            // grupo) o UPN simplesmente não vem, e isso é declarado em vez de preenchido.
+            var url = $"directoryRoles/{roleId}/members?$select=id,userType,signInActivity,displayName,userPrincipalName";
             await foreach (var m in _graph.GetPagedAsync(token, cfg, url, ct))
             {
                 var id = Str(m, "id");
                 if (string.IsNullOrEmpty(id)) continue;
-                members[id] = new MemberInfo(ClassifyMember(m), Str(m, "userType"), LastSignIn(m));
+
+                // Deduplicação por ID do objeto — a MESMA regra que produz a contagem. Um objeto em vários
+                // papéis é UM afetado, com os papéis acumulados (nunca uma linha por papel).
+                if (members.TryGetValue(id, out var existing))
+                {
+                    if (!string.IsNullOrWhiteSpace(roleName) && !existing.Roles.Contains(roleName!))
+                        existing.Roles.Add(roleName!);
+                    continue;
+                }
+
+                var roles = new List<string>();
+                if (!string.IsNullOrWhiteSpace(roleName)) roles.Add(roleName!);
+                members[id] = new MemberInfo(
+                    ClassifyMember(m), Str(m, "userType"), LastSignIn(m),
+                    Str(m, "displayName"), Str(m, "userPrincipalName"), roles);
             }
         }
 
         acc.Collected = true;
         acc.PrivilegedUsers = members
             .Where(kv => kv.Value.Kind == MemberKind.User)
-            .Select(kv => new PrivilegedUser(kv.Key, kv.Value.LastSignIn))
+            .Select(kv => new PrivilegedUser(
+                kv.Key, kv.Value.LastSignIn, kv.Value.DisplayName, kv.Value.UserPrincipalName,
+                kv.Value.Roles.ToList(),
+                string.Equals(kv.Value.UserType, "Guest", StringComparison.OrdinalIgnoreCase)))
             .ToList();
         acc.AllMembersClassifiable = members.Values.All(v => v.Kind is MemberKind.User or MemberKind.ServicePrincipal);
 
         var total = members.Count;
         var external = members.Values.Count(v => string.Equals(v.UserType, "Guest", StringComparison.OrdinalIgnoreCase));
+
+        // Objetos que sustentam AK-ENTRA-002. O conjunto é o MESMO que produziu `total` — a lista não pode
+        // divergir da contagem, e "ter papel privilegiado" não é acusação: é material de revisão.
+        var unnamed = members.Values.Count(v => string.IsNullOrWhiteSpace(v.DisplayName));
+        affected.Add(new KnightAffectedObjectEvidence(
+            KnightSignalKey.PrivilegedAccountsTotal,
+            members.Select(kv => new KnightAffectedObjectFact(
+                kv.Key, KindOf(kv.Value), kv.Value.DisplayName, kv.Value.UserPrincipalName,
+                kv.Value.Roles.OrderBy(r => r, StringComparer.OrdinalIgnoreCase).ToList(),
+                DescribePrivileged(kv.Value))).ToList(),
+            IsComplete: true,
+            Limitation: unnamed > 0
+                ? $"{unnamed} objeto(s) sem nome de exibição devolvido pelo diretório — identificados pelo ID do objeto."
+                : null));
 
         obs.Add(KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsTotal, total));
         obs.Add(KnightObservation.OfCount(KnightSignalKey.ExternalMembersInPrivilegedRoles, external));
@@ -320,7 +360,7 @@ public sealed class EntraIdKnightCollector : IKnightCollector
     /// </summary>
     private async Task CollectMfaRegistrationAsync(
         string token, KnightEntraIdConfiguration cfg, PrivilegedAccumulator acc, List<KnightObservation> obs,
-        AuthenticationPostureBox authBox, CancellationToken ct)
+        List<KnightAffectedObjectEvidence> affected, AuthenticationPostureBox authBox, CancellationToken ct)
     {
         var total = 0;
         var mfaCapable = 0;
@@ -403,23 +443,89 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         }
         else
         {
-            var privWithout = acc.PrivilegedUsers.Count(u => noMfaIds.Contains(u.Id));
-            obs.Add(KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsWithoutMfa, privWithout));
+            var flagged = acc.PrivilegedUsers.Where(u => noMfaIds.Contains(u.Id)).ToList();
+            obs.Add(KnightObservation.OfCount(KnightSignalKey.PrivilegedAccountsWithoutMfa, flagged.Count));
+
+            // Objetos que sustentam AK-ENTRA-001 — o MESMO subconjunto que produziu a contagem. O detalhe diz
+            // o que o relatório de fato prova ("nenhum método capaz de MFA registrado"), sem afirmar que a
+            // exigência de MFA está desligada para a conta: registro/capacidade não comprova imposição.
+            affected.Add(new KnightAffectedObjectEvidence(
+                KnightSignalKey.PrivilegedAccountsWithoutMfa,
+                flagged.Select(u => new KnightAffectedObjectFact(
+                    u.Id,
+                    u.IsGuest ? KnightAffectedObjectKind.Guest : KnightAffectedObjectKind.User,
+                    u.DisplayName, u.UserPrincipalName, u.Roles,
+                    "Sem método capaz de MFA registrado no relatório de registro do diretório.")).ToList(),
+                IsComplete: true));
         }
     }
 
     private async Task CollectGuestsAsync(
-        string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs, DateTimeOffset now, CancellationToken ct)
+        string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs,
+        List<KnightAffectedObjectEvidence> affected, DateTimeOffset now, CancellationToken ct)
     {
         var cutoff = now.AddDays(-KnightCatalog.InactiveGuestWindowDays);
-        var inactive = 0;
-        var url = "users?$filter=userType eq 'Guest'&$select=id,signInActivity,createdDateTime&$top=999";
+        var flagged = new List<KnightAffectedObjectFact>();
+        var unknownActivity = 0;
+        var url = "users?$filter=userType eq 'Guest'&$select=id,signInActivity,createdDateTime,displayName,userPrincipalName&$top=999";
         await foreach (var g in _graph.GetPagedAsync(token, cfg, url, ct))
         {
-            var last = LastSignIn(g) ?? Date(g, "createdDateTime");
-            if (last is null || last < cutoff) inactive++;
+            var signIn = LastSignIn(g);
+            var last = signIn ?? Date(g, "createdDateTime");
+            if (last is not null && last >= cutoff) continue;
+
+            var id = Str(g, "id");
+            if (string.IsNullOrEmpty(id)) continue;
+
+            // ATIVIDADE DESCONHECIDA NÃO É INATIVIDADE COMPROVADA. A regra sinaliza os dois casos (é a regra
+            // do AEGIS), mas o detalhe diz qual é qual — sem transformar ausência de sinal em prova de desuso.
+            string detail;
+            if (signIn is not null)
+                detail = $"Último acesso registrado em {signIn:dd/MM/yyyy} — anterior à janela de {KnightCatalog.InactiveGuestWindowDays} dias.";
+            else if (last is not null)
+            {
+                unknownActivity++;
+                detail = $"Sem registro de acesso; convite criado em {last:dd/MM/yyyy}. Atividade desconhecida não comprova desuso.";
+            }
+            else
+            {
+                unknownActivity++;
+                detail = "Sem registro de acesso nem data de criação devolvidos pela fonte — atividade desconhecida, não inatividade comprovada.";
+            }
+
+            flagged.Add(new KnightAffectedObjectFact(
+                id, KnightAffectedObjectKind.Guest, Str(g, "displayName"), Str(g, "userPrincipalName"),
+                Roles: null, Detail: detail));
         }
-        obs.Add(KnightObservation.OfCount(KnightSignalKey.InactiveGuestAccounts, inactive));
+
+        obs.Add(KnightObservation.OfCount(KnightSignalKey.InactiveGuestAccounts, flagged.Count));
+
+        // Objetos que sustentam AK-ENTRA-004 — mesmo conjunto, mesma regra, mesma contagem.
+        affected.Add(new KnightAffectedObjectEvidence(
+            KnightSignalKey.InactiveGuestAccounts, flagged, IsComplete: true,
+            Limitation: unknownActivity > 0
+                ? $"{unknownActivity} convidado(s) sinalizado(s) por ATIVIDADE DESCONHECIDA (sem registro de acesso), " +
+                  "o que não é o mesmo que inatividade comprovada."
+                : null));
+    }
+
+    /// <summary>
+    /// O que colocou este objeto na lista de privilegiados: o fato observável (papéis, tipo de objeto), nunca
+    /// um juízo sobre a necessidade do acesso — quem decide isso é a revisão humana.
+    /// </summary>
+    private static string DescribePrivileged(MemberInfo m)
+    {
+        var roles = m.Roles.Count > 0
+            ? $"Papel(is): {string.Join(", ", m.Roles.OrderBy(r => r, StringComparer.OrdinalIgnoreCase))}."
+            : "Papel privilegiado atribuído (nome do papel não devolvido pela fonte).";
+
+        return KindOf(m) switch
+        {
+            KnightAffectedObjectKind.ServicePrincipal => roles + " Identidade de aplicação — não é uma pessoa.",
+            KnightAffectedObjectKind.Guest => roles + " Conta de convidado com papel privilegiado.",
+            KnightAffectedObjectKind.Unknown => roles + " Tipo de objeto não reconhecido na resposta da fonte.",
+            _ => roles,
+        };
     }
 
     private async Task CollectConditionalAccessAsync(
@@ -808,8 +914,20 @@ public sealed class EntraIdKnightCollector : IKnightCollector
     };
 
     private enum MemberKind { User, ServicePrincipal, Other }
-    private sealed record MemberInfo(MemberKind Kind, string? UserType, DateTimeOffset? LastSignIn);
-    private sealed record PrivilegedUser(string Id, DateTimeOffset? LastSignIn);
+
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-02] Um membro de papel privilegiado como o diretório o devolveu. Guarda também
+    /// nome/UPN e os PAPÉIS acumulados (um mesmo objeto costuma ter mais de um) — o suficiente para o analista
+    /// reconhecer o objeto sem uma segunda consulta por usuário. Nome/UPN podem ser nulos: nem todo tipo de
+    /// objeto os tem, e a ausência é declarada, nunca preenchida.
+    /// </summary>
+    private sealed record MemberInfo(
+        MemberKind Kind, string? UserType, DateTimeOffset? LastSignIn,
+        string? DisplayName, string? UserPrincipalName, List<string> Roles);
+
+    private sealed record PrivilegedUser(
+        string Id, DateTimeOffset? LastSignIn, string? DisplayName, string? UserPrincipalName,
+        IReadOnlyList<string> Roles, bool IsGuest);
 
     private sealed class PrivilegedAccumulator
     {
@@ -817,6 +935,16 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         public IReadOnlyList<PrivilegedUser> PrivilegedUsers = Array.Empty<PrivilegedUser>();
         public bool AllMembersClassifiable = true;
     }
+
+    /// <summary>Traduz a classificação do diretório para a natureza EXPLÍCITA do objeto afetado.</summary>
+    private static KnightAffectedObjectKind KindOf(MemberInfo m) => m.Kind switch
+    {
+        MemberKind.ServicePrincipal => KnightAffectedObjectKind.ServicePrincipal,
+        MemberKind.User => string.Equals(m.UserType, "Guest", StringComparison.OrdinalIgnoreCase)
+            ? KnightAffectedObjectKind.Guest
+            : KnightAffectedObjectKind.User,
+        _ => KnightAffectedObjectKind.Unknown,
+    };
 
     private static MemberKind ClassifyMember(JsonElement m)
     {

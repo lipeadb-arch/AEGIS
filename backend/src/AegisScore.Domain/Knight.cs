@@ -258,4 +258,100 @@ public class KnightIndicatorResult : Entity, ITenantOwned
 
     /// <summary>Instante da coleta do snapshot que originou este resultado.</summary>
     public DateTimeOffset CollectedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    // ---- [AEGIS-MVP-PRODUCT-02] Detalhe dos objetos afetados -------------------------------------
+    // Três colunas ADITIVAS com default seguro (false/null): execuções anteriores permanecem exatamente como
+    // foram gravadas e passam a se declarar "sem detalhe preservado" — nunca retropreenchidas com o presente.
+
+    /// <summary>
+    /// TRUE quando esta execução preservou os objetos que sustentam o veredito. FALSE distingue duas coisas
+    /// que a UI não pode confundir: o indicador está fora do escopo de detalhe, ou a execução é anterior à
+    /// preservação. Em ambos os casos a tela declara a ausência em vez de mostrar uma lista de outra coleta.
+    /// </summary>
+    public bool HasAffectedDetail { get; set; }
+
+    /// <summary>
+    /// TRUE quando a lista preservada cobre TODO o conjunto que produziu <see cref="AffectedObjectCount"/>.
+    /// FALSE quando a coleta não conseguiu enumerar tudo — lista parcial declarada, nunca lista truncada
+    /// apresentada como completa.
+    /// </summary>
+    public bool AffectedDetailComplete { get; set; }
+
+    /// <summary>O que a coleta não conseguiu enumerar/ler no detalhe (sanitizado, sem segredo).</summary>
+    public string? AffectedDetailLimitation { get; set; }
+
+    /// <summary>Objetos que sustentam este veredito. Vazio quando não há detalhe preservado.</summary>
+    public ICollection<KnightAffectedObject> AffectedObjects { get; set; } = new List<KnightAffectedObject>();
+}
+
+/// <summary>
+/// [AEGIS-MVP-PRODUCT-02] UM objeto que sustenta o veredito de um indicador KNIGHT — tenant-owned e SEMPRE
+/// vinculado à execução que o observou. Superfície DELIBERADAMENTE separada dos contratos agregados: o
+/// resultado do indicador continua sem PII, e o detalhe nominal vive aqui, com leitura própria.
+///
+/// Invariantes que esta entidade existe para sustentar:
+///   • a lista pertence a UMA execução — nunca se mostra a lista de hoje como prova de um veredito de ontem;
+///   • execuções anteriores à preservação NÃO são retropreenchidas (ficam sem filhos, e a UI declara isso);
+///   • o TIPO do objeto é explícito — membro de papel privilegiado pode ser aplicação ou grupo, não pessoa;
+///   • nome/UPN são ANULÁVEIS: ausentes na fonte, permanecem ausentes aqui.
+/// </summary>
+public class KnightAffectedObject : Entity, ITenantOwned
+{
+    /// <summary>Carimbado no SaveChanges (fail-closed) — nunca confiar em valor vindo do cliente.</summary>
+    public Guid TenantId { get; set; }
+
+    /// <summary>Execução que observou o objeto — o vínculo que impede apresentar o presente como passado.</summary>
+    public Guid RunId { get; set; }
+
+    /// <summary>Resultado do indicador ao qual o objeto pertence (o pai relacional).</summary>
+    public Guid IndicatorResultId { get; set; }
+    public KnightIndicatorResult? IndicatorResult { get; set; }
+
+    /// <summary>ID do indicador denormalizado (ex.: "AK-ENTRA-002") — leitura por achado sem join extra.</summary>
+    public string IndicatorId { get; set; } = "";
+
+    /// <summary>Identificador do objeto NA FONTE (object id do diretório). Chave de deduplicação.</summary>
+    public string ExternalId { get; set; } = "";
+
+    /// <summary>Natureza do objeto — jamais presumida como pessoa.</summary>
+    public KnightAffectedObjectKind Kind { get; set; } = KnightAffectedObjectKind.Unknown;
+
+    /// <summary>Nome de exibição, SOMENTE quando a fonte o devolveu. <c>null</c> nunca vira texto inventado.</summary>
+    public string? DisplayName { get; set; }
+
+    /// <summary>UPN/e-mail principal, SOMENTE quando aplicável ao tipo e devolvido pela fonte.</summary>
+    public string? UserPrincipalName { get; set; }
+
+    /// <summary>Papéis associados ao objeto quando a coleta os conhece (jsonb).</summary>
+    public List<string> Roles { get; set; } = new();
+
+    /// <summary>O fato que sustenta a inclusão — constatação da coleta, nunca conclusão sobre a pessoa.</summary>
+    public string? Detail { get; set; }
+}
+
+/// <summary>
+/// [AEGIS-MVP-PRODUCT-02] Natureza do objeto afetado. Deliberadamente NÃO colapsa tudo em "usuário": um
+/// membro de papel privilegiado pode ser uma aplicação (service principal) ou um grupo, e tratar isso como
+/// pessoa levaria a UI a sugerir ações impossíveis (ex.: "exigir MFA") sobre um objeto que não autentica com
+/// MFA. Autoridade ÚNICA do tipo — a Application reusa este enum em vez de manter um espelho que sairia do ar.
+/// </summary>
+public enum KnightAffectedObjectKind
+{
+    /// <summary>Conta de usuário interna do diretório.</summary>
+    User = 0,
+
+    /// <summary>Conta de convidado/externa (userType = Guest ou equivalente na fonte).</summary>
+    Guest = 1,
+
+    /// <summary>Identidade de aplicação/serviço (service principal, managed identity…). Não é uma pessoa.</summary>
+    ServicePrincipal = 2,
+
+    /// <summary>Grupo cujo pertencimento concede o acesso (o acesso é herdado pelos membros).</summary>
+    Group = 3,
+
+    /// <summary>Dispositivo do diretório.</summary>
+    Device = 4,
+
+    /// <summary>A fonte devolveu o objeto sem tipo reconhecível — declarado desconhecido, nunca "usuário".</summary>
+    Unknown = 5,
 }

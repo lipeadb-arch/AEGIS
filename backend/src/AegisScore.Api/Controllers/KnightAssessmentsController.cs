@@ -96,6 +96,47 @@ public class KnightAssessmentsController : ControllerBase
         return assessment is null ? NotFound() : Ok(ToDto(assessment));
     }
 
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-02] Objetos que sustentam UM achado de UMA avaliação — paginados e pesquisados NO
+    /// SERVIDOR (o navegador nunca recebe a lista inteira para filtrar depois). Somente leitura: abrir o
+    /// detalhe NÃO dispara coleta na fonte.
+    ///
+    /// Autorização e isolamento vêm do mesmo lugar de toda leitura de evidência do KNIGHT: autenticação
+    /// obrigatória no controller e tenant IMPLÍCITO (claim + Global Query Filter fail-closed). Uma avaliação
+    /// de outro tenant é indistinguível de inexistente — 404, nunca uma pista de que existe.
+    /// </summary>
+    /// <response code="200">Página de afetados (pode ser vazia com detalhe ausente — ver state).</response>
+    /// <response code="401">Tenant não resolvido no contexto.</response>
+    /// <response code="404">Avaliação ou achado inexistentes neste tenant.</response>
+    [HttpGet("{runId:guid}/indicators/{indicatorId}/affected")]
+    public async Task<ActionResult<KnightAffectedObjectsDto>> GetAffected(
+        Guid runId, string indicatorId,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = KnightAffectedObjectsPage.DefaultPageSize,
+        [FromQuery] string? search = null,
+        CancellationToken ct = default)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+
+        var result = await _service.GetAffectedObjectsAsync(runId, indicatorId, page, pageSize, search, ct);
+        if (result is null) return NotFound();
+
+        return Ok(new KnightAffectedObjectsDto(
+            result.RunId,
+            result.IndicatorId,
+            result.State.ToString(),
+            result.AffectedObjectCount,
+            result.TotalPreserved,
+            result.MatchCount,
+            result.Page,
+            result.PageSize,
+            result.Items.Select(o => new KnightAffectedObjectDto(
+                o.ExternalId, o.Kind.ToString(), o.DisplayName, o.UserPrincipalName, o.Roles, o.Detail)).ToList(),
+            result.Limitation,
+            result.CollectedAt));
+    }
+
     // ---- Mapeamento ----------------------------------------------------------------------------------
 
     private static bool TryParseSource(string source, out KnightSourceType sourceType)
@@ -147,7 +188,10 @@ public class KnightAssessmentsController : ControllerBase
         i.Recommendation,
         i.CollectedAt,
         i.SourceType.ToString(),
-        i.NotEvaluatedReason);
+        i.NotEvaluatedReason,
+        i.HasAffectedDetail,
+        i.AffectedDetailComplete,
+        i.AffectedDetailLimitation);
 
     private static KnightAdvisoryDto ToDto(KnightAdvisory ad) => new(
         ad.ExecutiveSummary,

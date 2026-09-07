@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Application.Knight;
@@ -51,8 +52,76 @@ public sealed class DemoKnightCollector : IKnightCollector
             facts,
             capabilities,
             DateTimeOffset.UtcNow,
-            $"Cenário sintético (domínio {DemoDomain}); nunca consultou Microsoft Graph, AD local ou Okta.");
+            $"Cenário sintético (domínio {DemoDomain}); nunca consultou Microsoft Graph, AD local ou Okta.",
+            AffectedObjects: BuildAffectedObjects());
 
         return Task.FromResult(result);
+    }
+
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-02] Objetos SINTÉTICOS que sustentam os três achados com detalhe nesta entrega. As
+    /// listas têm exatamente o tamanho das contagens acima (12 privilegiados, 2 sem MFA, 3 convidados) — a
+    /// demonstração não pode ensinar uma incoerência que a coleta real não tem. Tudo em
+    /// <c>demo.example.com</c>: nenhum nome, domínio ou empresa reais.
+    ///
+    /// O cenário inclui de propósito um objeto SEM nome de exibição e uma identidade de APLICAÇÃO entre os
+    /// privilegiados: são os dois casos que a tela precisa saber apresentar sem inventar pessoa.
+    /// </summary>
+    private static IReadOnlyList<KnightAffectedObjectEvidence> BuildAffectedObjects()
+    {
+        const string admin = "Administrador Global";
+        const string helpdesk = "Administrador de Suporte";
+        const string exchange = "Administrador do Exchange";
+
+        KnightAffectedObjectFact User(int n, string nome, string papel, string? detalhe = null) =>
+            new($"demo-user-{n:00}", KnightAffectedObjectKind.User, nome, $"{nome.Split(' ')[0].ToLowerInvariant()}.{n:00}@{DemoDomain}",
+                new[] { papel }, detalhe ?? $"Papel(is): {papel}.");
+
+        var privilegiados = new List<KnightAffectedObjectFact>
+        {
+            User(1, "Ana Prado", admin),
+            User(2, "Bruno Lima", admin),
+            User(3, "Carla Dias", helpdesk),
+            User(4, "Diego Souza", helpdesk),
+            User(5, "Elisa Faria", exchange),
+            User(6, "Fabio Nunes", helpdesk),
+            User(7, "Gabriela Reis", exchange),
+            User(8, "Heitor Cunha", helpdesk),
+            User(9, "Ines Barros", admin),
+            User(10, "Joao Peixoto", helpdesk),
+            // Identidade de APLICAÇÃO: aparece na contagem de objetos privilegiados e não é uma pessoa —
+            // "exigir MFA" não se aplica a ela.
+            new("demo-app-01", KnightAffectedObjectKind.ServicePrincipal, "Integração de inventário (demo)", null,
+                new[] { helpdesk }, $"Papel(is): {helpdesk}. Identidade de aplicação — não é uma pessoa."),
+            // Objeto sem nome devolvido pela fonte: identificado pelo ID, com a limitação declarada.
+            new("demo-obj-12", KnightAffectedObjectKind.Unknown, null, null,
+                new[] { helpdesk }, $"Papel(is): {helpdesk}. Tipo de objeto não reconhecido na resposta da fonte."),
+        };
+
+        var semMfa = new List<KnightAffectedObjectFact>
+        {
+            privilegiados[2] with { Detail = "Sem método capaz de MFA registrado no relatório de registro do diretório." },
+            privilegiados[7] with { Detail = "Sem método capaz de MFA registrado no relatório de registro do diretório." },
+        };
+
+        var convidados = new List<KnightAffectedObjectFact>
+        {
+            new("demo-guest-01", KnightAffectedObjectKind.Guest, "Marina Alves (fornecedor)", $"marina.alves@parceiro.{DemoDomain}",
+                null, "Último acesso registrado em 02/06/2026 — anterior à janela de 30 dias."),
+            new("demo-guest-02", KnightAffectedObjectKind.Guest, "Rafael Antunes (auditoria)", $"rafael.antunes@parceiro.{DemoDomain}",
+                null, "Sem registro de acesso; convite criado em 11/04/2026. Atividade desconhecida não comprova desuso."),
+            new("demo-guest-03", KnightAffectedObjectKind.Guest, null, $"convidado.03@parceiro.{DemoDomain}",
+                null, "Sem registro de acesso nem nome devolvido pela fonte — atividade desconhecida, não inatividade comprovada."),
+        };
+
+        return new[]
+        {
+            new KnightAffectedObjectEvidence(KnightSignalKey.PrivilegedAccountsTotal, privilegiados, IsComplete: true,
+                Limitation: "1 objeto sem nome de exibição devolvido pela fonte — identificado pelo ID do objeto."),
+            new KnightAffectedObjectEvidence(KnightSignalKey.PrivilegedAccountsWithoutMfa, semMfa, IsComplete: true),
+            new KnightAffectedObjectEvidence(KnightSignalKey.InactiveGuestAccounts, convidados, IsComplete: true,
+                Limitation: "2 convidado(s) sinalizado(s) por ATIVIDADE DESCONHECIDA (sem registro de acesso), " +
+                            "o que não é o mesmo que inatividade comprovada."),
+        };
     }
 }
