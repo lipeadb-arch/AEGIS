@@ -94,10 +94,9 @@ public sealed class RemediationService : IRemediationService
             Version = 1,
         };
 
-        plan.Events.Add(NewEvent(plan, actor, ActionPlanEventKind.Created, now, null, ActionPlanStatus.Aberto,
-            $"Ação criada a partir do achado {indicatorId} da avaliação {command.RunId:D}."));
-
         _db.ActionPlans.Add(plan);
+        AddEvent(plan, actor, ActionPlanEventKind.Created, now, null, ActionPlanStatus.Aberto,
+            $"Ação criada a partir do achado {indicatorId} da avaliação {command.RunId:D}.");
         await _db.SaveChangesAsync(ct);
 
         return await GetAsync(plan.Id, ct);
@@ -186,8 +185,8 @@ public sealed class RemediationService : IRemediationService
         }
 
         if (changes.Count > 0)
-            plan.Events.Add(NewEvent(plan, actor, ActionPlanEventKind.Edited, now, null, null,
-                "Campos alterados: " + string.Join(", ", changes) + "."));
+            AddEvent(plan, actor, ActionPlanEventKind.Edited, now, null, null,
+                "Campos alterados: " + string.Join(", ", changes) + ".");
 
         if (command.Status is { } target && target != plan.Status)
             ApplyTransition(plan, target, actor, now, note: null);
@@ -218,8 +217,8 @@ public sealed class RemediationService : IRemediationService
         plan.ExecutionEvidenceRef = Trim(command.EvidenceReference, MaxTextLength);
         plan.ExecutedAt = now;
 
-        plan.Events.Add(NewEvent(plan, actor, ActionPlanEventKind.ExecutionRecorded, now, null, null,
-            "Execução relatada. Relato não comprova correção — a validação é um ato à parte."));
+        AddEvent(plan, actor, ActionPlanEventKind.ExecutionRecorded, now, null, null,
+            "Execução relatada. Relato não comprova correção — a validação é um ato à parte.");
 
         // A execução leva a ação para "Aguardando validação", nunca direto para concluída.
         if (plan.Status != ActionPlanStatus.AguardandoValidacao)
@@ -314,9 +313,9 @@ public sealed class RemediationService : IRemediationService
             };
         }
 
-        plan.Validations.Add(validation);
-        plan.Events.Add(NewEvent(plan, actor, ActionPlanEventKind.ValidationRecorded, now, null, null,
-            $"{RemediationReading.MethodLabel(validation.Method)} — {RemediationReading.OutcomeLabel(validation.Outcome)}."));
+        _db.ActionPlanValidations.Add(validation);
+        AddEvent(plan, actor, ActionPlanEventKind.ValidationRecorded, now, null, null,
+            $"{RemediationReading.MethodLabel(validation.Method)} — {RemediationReading.OutcomeLabel(validation.Outcome)}.");
 
         // A validação NÃO conclui a ação por conta própria: encerrar é decisão de gestão, registrada como
         // transição explícita. O que ela faz é dar (ou negar) a base para essa decisão.
@@ -382,7 +381,7 @@ public sealed class RemediationService : IRemediationService
     }
 
     /// <summary>Aplica uma transição PERMITIDA e registra a mudança na trilha. Transição impossível é recusada.</summary>
-    private static void ApplyTransition(
+    private void ApplyTransition(
         ActionPlan plan, ActionPlanStatus target, RemediationActor actor, DateTimeOffset now, string? note)
     {
         if (!RemediationReading.IsAllowedTransition(plan.Status, target))
@@ -393,12 +392,23 @@ public sealed class RemediationService : IRemediationService
         var from = plan.Status;
         plan.Status = target;
         plan.CompletedAt = target == ActionPlanStatus.Concluido ? now : null;
-        plan.Events.Add(NewEvent(plan, actor, ActionPlanEventKind.StatusChanged, now, from, target, note));
+        AddEvent(plan, actor, ActionPlanEventKind.StatusChanged, now, from, target, note);
     }
 
-    private static ActionPlanEvent NewEvent(
+    /// <summary>
+    /// Acrescenta uma entrada à trilha registrando-a EXPLICITAMENTE no DbSet, e não pela coleção de navegação
+    /// do plano.
+    ///
+    /// Não é estilo: o <see cref="Entity"/> já nasce com <c>Id</c> preenchido, e o EF, ao descobrir por
+    /// DetectChanges uma entidade nova dentro da navegação de um agregado JÁ RASTREADO, decide o estado pela
+    /// chave — com a chave preenchida, ele a marca como <c>Modified</c>. O guard de escrita multi-tenant então
+    /// procura a linha correspondente no banco, não a encontra (ela nunca existiu) e recusa a gravação inteira,
+    /// fail-closed. Registrar no DbSet fixa o estado <c>Added</c> antes de qualquer detecção.
+    /// </summary>
+    private void AddEvent(
         ActionPlan plan, RemediationActor actor, ActionPlanEventKind kind, DateTimeOffset at,
-        ActionPlanStatus? from, ActionPlanStatus? to, string? note) => new()
+        ActionPlanStatus? from, ActionPlanStatus? to, string? note) =>
+        _db.ActionPlanEvents.Add(new ActionPlanEvent
         {
             ActionPlanId = plan.Id,
             Kind = kind,
@@ -408,7 +418,7 @@ public sealed class RemediationService : IRemediationService
             FromStatus = from,
             ToStatus = to,
             Note = note,
-        };
+        });
 
     /// <summary>
     /// Reúne os fatos de UMA avaliação para o indicador pedido. Tudo passa pelo query filter fail-closed: uma
@@ -434,6 +444,20 @@ public sealed class RemediationService : IRemediationService
 
         var collectedAt = indicator?.CollectedAt ?? run.CompletedAt ?? run.StartedAt;
 
+        // O conjunto é utilizável para comparação em DUAS situações, e a segunda é fácil de esquecer:
+        //   • a coleta preservou a lista INTEIRA que produziu a contagem; ou
+        //   • o achado, dentro do escopo de detalhe, não sinalizou objeto algum — o conjunto VAZIO é a
+        //     resposta completa, e é exatamente ele que permite dizer que os objetos da origem saíram.
+        // Tratar o segundo caso como "sem detalhe" faria a melhora mais limpa possível (de N para zero) ser
+        // a única que o produto não conseguiria sustentar pelos conjuntos.
+        var emptySetIsComplete = indicator is { AffectedObjectCount: 0 }
+            && KnightAffectedObjectScope.IsInScope(indicatorId)
+            && indicator is not null
+            && KnightIndicatorEvidence.IsConclusiveVerdict(indicator.Status);
+
+        var detailComplete = indicator is { HasAffectedDetail: true, AffectedDetailComplete: true }
+            || emptySetIsComplete;
+
         var ids = Array.Empty<string>();
         if (indicator is { HasAffectedDetail: true, AffectedDetailComplete: true })
         {
@@ -448,7 +472,7 @@ public sealed class RemediationService : IRemediationService
             IndicatorFound: indicator is not null,
             Status: indicator?.Status ?? KnightIndicatorStatus.NotEvaluated,
             AffectedCount: indicator?.AffectedObjectCount ?? 0,
-            DetailComplete: indicator is { HasAffectedDetail: true, AffectedDetailComplete: true },
+            DetailComplete: detailComplete,
             AffectedExternalIds: ids,
             Capabilities: KnightCapabilitiesJson.Deserialize(run.CapabilitiesJson));
     }

@@ -28,6 +28,9 @@ import { KnightFindingDetailComponent } from '../components/knight/finding-detai
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
 import { IdentityRiskService } from '../services/identity-risk.service';
 import { KnightService } from '../services/knight.service';
+import { ActionPlan, activePlanFor } from '../models/remediation.models';
+import { RemediationService } from '../services/remediation.service';
+import { PostureHistoryService } from '../services/posture-history.service';
 
 /**
  * AegisKnightComponent — SMART. Tela MULTICOLETOR do AEGIS KNIGHT.
@@ -59,6 +62,13 @@ import { KnightService } from '../services/knight.service';
         </div>
         <div class="actions">
           <a class="btn ghost" routerLink="/history">Histórico auditável</a>
+          <!-- [AEGIS-MVP-PRODUCT-03] Publica EXATAMENTE a avaliação aberta. Sem o runId, o servidor
+               congelaria a mais recente — e o relatório sairia de uma coleta diferente da que está na tela. -->
+          @if (assessment(); as pub) {
+            <button type="button" class="btn real" (click)="publishReport(pub.id)" [disabled]="publishing()">
+              {{ publishing() ? 'Publicando…' : 'Publicar relatório desta avaliação' }}
+            </button>
+          }
           <button type="button" class="btn run" (click)="runDemo()" [disabled]="busy()">
             {{ running() ? 'Executando…' : 'Executar avaliação demo' }}
           </button>
@@ -88,6 +98,13 @@ import { KnightService } from '../services/knight.service';
           <div class="banner err">
             <span>{{ error() }}</span>
             <button type="button" class="btn ghost" (click)="clearError()">Fechar</button>
+          </div>
+        }
+
+        @if (publishNotice(); as pmsg) {
+          <div class="banner pinned">
+            <span>{{ pmsg }}</span>
+            <a class="btn ghost" routerLink="/history">Abrir histórico</a>
           </div>
         }
 
@@ -213,7 +230,12 @@ import { KnightService } from '../services/knight.service';
 
           <!-- Detalhe de UM achado (componente dedicado): resumo · afetados · evidência. -->
           @if (selectedIndicator(); as ind) {
-            <app-knight-finding-detail [assessment]="a" [indicator]="ind" (closed)="closeFinding()" />
+            <app-knight-finding-detail
+              [assessment]="a"
+              [indicator]="ind"
+              [activePlan]="activePlan()"
+              (closed)="closeFinding()"
+              (planChanged)="onPlanChanged()" />
           }
 
           <!-- [AEGIS-MVP-PRODUCT-02] O painel abaixo lê o snapshot ATUAL da Evidence Fabric e diz isso por
@@ -406,7 +428,14 @@ import { KnightService } from '../services/knight.service';
       .pulse { letter-spacing: 0.08em; animation: pulse 1.4s ease-in-out infinite; }
       .state.err { border-color: rgba(255, 45, 111, 0.4); } .state.err b { color: #ffe3ee; }
       @keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
-      @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+      /* [AEGIS-MVP-PRODUCT-03] Em 1024 px a coluna de 300 px espremia a lista de achados: título, situação,
+         severidade, veredito e contagem disputavam o que sobrava. Ausência de rolagem horizontal não bastava —
+         a leitura ficava comprimida. A partir de 1100 px o resumo/score e a lista passam a EMPILHAR, e cada um
+         usa a largura inteira. */
+      @media (max-width: 1100px) {
+        .grid { grid-template-columns: 1fr; }
+        .summary { max-width: 100%; }
+      }
       /* [AEGIS-MVP-PRODUCT-02] Lista compacta de achados (o detalhe tem componente e estilo próprios). */
       .findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
       .finding { width: 100%; display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center; text-align: left; cursor: pointer; background: rgba(122, 145, 190, 0.04); border: 1px solid var(--line); border-radius: 11px; padding: 11px 14px; color: var(--text); font-family: var(--sans); }
@@ -431,6 +460,8 @@ import { KnightService } from '../services/knight.service';
 })
 export class AegisKnightComponent implements OnInit {
   private readonly knight = inject(KnightService);
+  private readonly remediation = inject(RemediationService);
+  private readonly history = inject(PostureHistoryService);
   private readonly identityRisk = inject(IdentityRiskService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
@@ -488,6 +519,58 @@ export class AegisKnightComponent implements OnInit {
   // Lê o snapshot JÁ persistido pela Evidence Fabric: a MESMA fotografia que o KNIGHT avalia, sem uma
   // segunda consulta ao Microsoft Graph.
   readonly riskProjection = signal<IdentityEvidenceProjection | null>(null);
+
+  // ---- [AEGIS-MVP-PRODUCT-03] Ações de remediação -----------------------------------------------
+  // UMA leitura da lista de ações ATIVAS serve à página inteira: o detalhe do achado aberto pergunta a ela
+  // se já existe ação, em vez de cada achado disparar a própria consulta. É também a MESMA autoridade que a
+  // Central de Prioridades usa, de modo que os dois lugares não podem discordar sobre "existe ação ativa?".
+
+  readonly activePlans = signal<ActionPlan[]>([]);
+  readonly publishing = signal(false);
+  readonly publishNotice = signal<string | null>(null);
+
+  /** Ação ATIVA do achado aberto, se houver. */
+  readonly activePlan = computed<ActionPlan | null>(() => {
+    const id = this.selected();
+    return id ? activePlanFor(this.activePlans(), id) : null;
+  });
+
+  /** Relê as ações ativas. Falha aqui NÃO bloqueia a tela: o detalhe apenas deixa de oferecer o atalho. */
+  private reloadPlans(): void {
+    this.remediation.list(undefined, true).subscribe({
+      next: (plans) => this.activePlans.set(plans),
+      error: () => {
+        /* seção secundária: preserva a lista anterior em vez de fingir que não há ação alguma */
+      },
+    });
+  }
+
+  onPlanChanged(): void {
+    this.reloadPlans();
+  }
+
+  /**
+   * Publica o relatório da avaliação ABERTA — nunca "a mais recente". O identificador viaja explicitamente
+   * para o servidor, que recusa (409) se a avaliação não existir, em vez de silenciosamente congelar outra.
+   */
+  publishReport(runId: string): void {
+    this.publishing.set(true);
+    this.publishNotice.set(null);
+    this.error.set(null);
+    this.history.publish({ type: 'Knight', runId }).subscribe({
+      next: (d) => {
+        this.publishing.set(false);
+        this.publishNotice.set(
+          `Relatório publicado a partir desta avaliação (${d.summary.id}). O conteúdo foi congelado: ` +
+            'reexportá-lo depois traz exatamente o que foi publicado agora.',
+        );
+      },
+      error: (e: Error) => {
+        this.publishing.set(false);
+        this.error.set(e.message);
+      },
+    });
+  }
 
 
 
@@ -599,6 +682,7 @@ export class AegisKnightComponent implements OnInit {
       },
     });
     this.reloadRisk();
+    this.reloadPlans();
   }
 
   /**
