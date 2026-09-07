@@ -512,7 +512,7 @@ public sealed class RemediationService : IRemediationService
             p.Status,
             p.IsOverdue,
             p.IsActive,
-            RemediationReading.NextStep(p.Status, p.IsOverdue, validations.Count > 0),
+            RemediationReading.NextStep(p.Status, p.IsOverdue, validations.FirstOrDefault()?.Outcome),
             p.ExecutionNotes,
             p.ExecutionEvidenceRef,
             p.ExecutedAt,

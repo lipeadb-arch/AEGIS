@@ -126,9 +126,14 @@ public static class PostureSnapshotPdfWriter
         {
             ("Cliente", string.IsNullOrWhiteSpace(s.ClientName) ? "Não registrado nesta fotografia" : s.ClientName!),
             ("Instrumento", s.Type == PostureSnapshotType.Knight ? "AEGIS KNIGHT" : "AEGIS Score / NIST CSF"),
-            ("Data da coleta (UTC)", Stamp(s.DataRecency)),
+            // A data da AVALIAÇÃO e a da PUBLICAÇÃO são distintas e ficam lado a lado: sem isso, um relatório
+            // emitido semanas depois pareceria descrever o ambiente de hoje.
+            (s.Type == PostureSnapshotType.Knight ? "Data da avaliação (UTC)" : "Recência dos dados (UTC)", Stamp(s.DataRecency)),
             ("Data da publicação (UTC)", s.CapturedAt.ToUniversalTime().ToString("dd/MM/yyyy HH:mm:ss 'UTC'", Pt)),
-            ("Score", ScoreText(s.Score)),
+            // O score do KNIGHT é uma nota em escala PRÓPRIA (0–100), não uma porcentagem de conformidade:
+            // imprimi-lo com "%" convidaria a lê-lo como o AEGIS Score/NIST, que é justamente o que este
+            // relatório separa.
+            ("Score", ScoreText(s.Score, s.Type)),
             ("Cobertura", Percent(s.Coverage)),
             ("Itens avaliados", s.EvaluatedItems.ToString(Pt)),
             ("Itens elegíveis", s.EligibleItems.ToString(Pt)),
@@ -520,9 +525,14 @@ public static class PostureSnapshotPdfWriter
             // A BASE é o que separa "estes objetos foram corrigidos" de "a quantidade caiu": só a comparação
             // dos conjuntos preservados sustenta a primeira afirmação.
             var basePar = row.Cells[4];
-            var bp = basePar.AddParagraph(a.ComparedBySets
-                ? "Comparação dos conjuntos preservados nas duas coletas."
-                : "Comparação de QUANTIDADE (os conjuntos não estavam preservados nos dois lados) — não identifica quais objetos foram corrigidos.");
+            // A base segue o MÉTODO, não só a completude dos conjuntos: descrever uma atestação humana como
+            // "comparação de quantidade" afirmaria uma comparação que nunca existiu.
+            var baseText = a.ValidationMethod == ActionPlanValidationMethod.HumanEvidence
+                ? "Registro humano com evidência referenciada. O AEGIS não verificou o ambiente para este registro."
+                : a.ComparedBySets
+                    ? "Comparação dos conjuntos preservados nas duas coletas."
+                    : "Comparação de QUANTIDADE (os conjuntos não estavam preservados nos dois lados) — não identifica quais objetos foram corrigidos.";
+            var bp = basePar.AddParagraph(baseText);
             bp.Format.Font.Size = 7;
             if (!string.IsNullOrWhiteSpace(a.ValidationRationale))
             {
@@ -736,7 +746,9 @@ public static class PostureSnapshotPdfWriter
 
     // ---- Texto pt-BR determinístico ------------------------------------------------------------------
 
-    private static string ScoreText(double? score) => score is null ? "Não avaliado" : Percent(score.Value);
+    private static string ScoreText(double? score, PostureSnapshotType type) => score is null
+        ? "Não avaliado"
+        : type == PostureSnapshotType.Knight ? $"{Num(score.Value)} / 100" : Percent(score.Value);
     private static string Percent(double value) => Num(value) + "%";
     private static string Num(double value) => value.ToString("0.#", Pt);
 

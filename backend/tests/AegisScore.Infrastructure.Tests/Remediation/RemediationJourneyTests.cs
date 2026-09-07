@@ -14,6 +14,7 @@ using AegisScore.Domain;
 using AegisScore.Infrastructure.Knight;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Posture;
+using AegisScore.Infrastructure.Posture.Export;
 using AegisScore.Infrastructure.Remediation;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
@@ -363,6 +364,50 @@ public sealed class RemediationJourneyTests : IDisposable
         v.Rationale.Should().Contain("não verificou o ambiente");
     }
 
+    [Fact]
+    public async Task ProximaProvidencia_SegueODESFECHO_ENaoAMeraExistenciaDeUmaValidacao()
+    {
+        await using var db = NewContext(TenantA);
+        var origem = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var nova = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 0, at: T0.AddDays(7));
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(origem.Id, "AK-ENTRA-001"), Actor);
+        var executado = await svc.RecordExecutionAsync(
+            p!.Id, new RecordExecutionCommand(p.Version, "MFA registrado.", null), Actor);
+        executado!.NextStep.Should().Contain("validar com uma nova avaliação",
+            "sem validação, a providência é obter a comprovação");
+
+        var validado = await svc.ValidateAsync(
+            executado.Id, new ValidateActionPlanCommand(executado.Version, nova.Id, null, null), Actor);
+
+        validado!.LatestValidation!.Outcome.Should().Be(ActionPlanValidationOutcome.ExposureCleared);
+        validado.NextStep.Should().Contain("Encerrar a ação",
+            "a providência de quem JÁ comprovou a melhora é encerrar");
+        validado.NextStep.Should().NotContain("não comprovou",
+            "derivar a frase da mera EXISTÊNCIA de uma validação faria a tela negar, logo abaixo, a " +
+            "comprovação que ela mesma acabou de exibir");
+    }
+
+    [Fact]
+    public async Task ProximaProvidencia_DeEvidenciaInsuficiente_MandaObterEvidenciaAdequada()
+    {
+        await using var db = NewContext(TenantA);
+        var anterior = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 0, at: T0.AddDays(-7));
+        var origem = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(origem.Id, "AK-ENTRA-001"), Actor);
+        var executado = await svc.RecordExecutionAsync(
+            p!.Id, new RecordExecutionCommand(p.Version, "MFA registrado.", null), Actor);
+        var validado = await svc.ValidateAsync(
+            executado!.Id, new ValidateActionPlanCommand(executado.Version, anterior.Id, null, null), Actor);
+
+        validado!.LatestValidation!.Outcome.Should().Be(ActionPlanValidationOutcome.EvidenceInsufficient);
+        validado.NextStep.Should().Contain("evidência adequada");
+        validado.NextStep.Should().NotContain("Encerrar a ação", "não há o que encerrar sem comprovação");
+    }
+
     // ================================================================================================
     // (5) Publicação: a avaliação PEDIDA, sem troca silenciosa
     // ================================================================================================
@@ -446,6 +491,57 @@ public sealed class RemediationJourneyTests : IDisposable
 
         relido!.ActionItems!.Single().Status.Should().Be(nameof(ActionPlanStatus.Aberto),
             "injetar o estado ATUAL num relatório histórico seria mudar um documento já emitido");
+    }
+
+    [Fact]
+    public async Task RelatorioExecutivo_NaoApresentaAtestacaoHumanaComoComparacao_ENaoImprimeOScoreKnightComoPorcentagem()
+    {
+        await using var db = NewContext(TenantA);
+        var run = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(run.Id, "AK-ENTRA-001"), Actor);
+        var executado = await svc.RecordExecutionAsync(
+            p!.Id, new RecordExecutionCommand(p.Version, "Feito.", null), Actor);
+        await svc.ValidateAsync(
+            executado!.Id, new ValidateActionPlanCommand(executado.Version, null, "ATA-2026-09", null), Actor);
+
+        var publicado = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, run.Id);
+        var snapshot = await db.PostureSnapshots.AsNoTracking()
+            .Include(s => s.Indicators).Include(s => s.ActionItems)
+            .FirstAsync(s => s.Id == publicado.Summary.Id);
+
+        var texto = Deaccent(ExtractPdfText(PostureSnapshotPdfWriter.Write(snapshot)));
+
+        // A extração do PDF lê a TABELA linha a linha, então uma célula de várias linhas aparece intercalada
+        // com as vizinhas: a asserção usa fragmentos que sobrevivem à quebra, não a frase inteira.
+        texto.Should().Contain("Registro humano com evidencia",
+            "a BASE da conclusão segue o método: uma atestação humana nunca foi uma comparação");
+        texto.Should().Contain("Atestacao humana (nao e", "o desfecho carrega o próprio limite no rótulo");
+        texto.Should().NotContain("Comparacao de QUANTIDADE",
+            "descrever uma atestação como comparação de quantidade afirmaria uma comparação que não existiu");
+
+        var score = snapshot.Score!.Value.ToString("0.#", System.Globalization.CultureInfo.GetCultureInfo("pt-BR"));
+        texto.Should().Contain($"{score} / 100",
+            "o score do KNIGHT é nota em escala PRÓPRIA — imprimi-lo com '%' convidaria a lê-lo como o AEGIS Score/NIST");
+    }
+
+    /// <summary>Extração textual do PDF — a MESMA abordagem (PdfPig) da suíte de exportação já existente.</summary>
+    private static string ExtractPdfText(byte[] bytes)
+    {
+        using var pdf = UglyToad.PdfPig.PdfDocument.Open(bytes);
+        return string.Join(" ", pdf.GetPages().Select(x => string.Join(" ", x.GetWords().Select(w => w.Text))));
+    }
+
+    /// <summary>Remove acentos: a extração quebra a acentuação, e a asserção é sobre o CONTEÚDO.</summary>
+    private static string Deaccent(string text)
+    {
+        var normalized = text.Normalize(System.Text.NormalizationForm.FormD);
+        var sb = new System.Text.StringBuilder(normalized.Length);
+        foreach (var c in normalized)
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark)
+                sb.Append(c);
+        return sb.ToString();
     }
 
     // ================================================================================================

@@ -83,7 +83,7 @@ jobs:
       #     recente, congelamento das ações no snapshot, isolamento por tenant, autorização das mutações por
       #     reflexão, compatibilidade do plano legado de risco e do hash de snapshot legado, e a serialização
       #     efetiva dos contratos novos com as opções REAIS do MVC. A classe é NOVA: sem esta linha ela não
-      #     executaria e o check ficaria verde do mesmo jeito. A contagem deste passo sobe de 307 para 334.
+      #     executaria e o check ficaria verde do mesmo jeito. A contagem deste passo sobe de 307 para 337.
       #     [AEGIS-MVP-PRODUCT-02] Entra KnightAffectedObjectTests (SQLite): os OBJETOS que sustentam um achado
       #     do KNIGHT — contagem × lista na mesma unidade e dedupe, avaliação anterior à preservação que se
       #     declara sem detalhe (nunca retropreenchida), campo ausente que permanece ausente, coleta parcial

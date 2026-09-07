@@ -121,7 +121,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 DueDate = p.DueDate,
                 Status = p.Status,
                 WasOverdue = overdue,
-                NextStep = RemediationReading.NextStep(p.Status, overdue, p.Validations.Count > 0),
+                NextStep = RemediationReading.NextStep(p.Status, overdue, latest?.Outcome),
                 ValidationMethod = latest?.Method,
                 ValidationOutcome = latest?.Outcome,
                 ValidatedAt = latest?.DecidedAt,

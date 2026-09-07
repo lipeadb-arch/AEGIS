@@ -14,10 +14,19 @@ namespace AegisScore.Application.Remediation;
 public static class RemediationReading
 {
     /// <summary>
-    /// A PRÓXIMA PROVIDÊNCIA, derivada da etapa e do prazo. Atraso é dito junto com a etapa, e não no lugar
-    /// dela: saber que está atrasado sem saber onde parou não ajuda ninguém a destravar o trabalho.
+    /// A PRÓXIMA PROVIDÊNCIA, derivada da etapa, do prazo e do DESFECHO da última validação.
+    ///
+    /// Atraso é dito junto com a etapa, e não no lugar dela: saber que está atrasado sem saber onde o trabalho
+    /// parou não ajuda ninguém a destravá-lo.
+    ///
+    /// O desfecho entra aqui porque "existe validação" não diz nada sozinho: uma nova coleta que ENCERROU a
+    /// exposição e uma que não comprovou nada levam a providências opostas. Derivar a frase só da presença de
+    /// uma validação faria a tela negar, logo abaixo, a comprovação que ela mesma acabou de exibir.
     /// </summary>
-    public static string NextStep(ActionPlanStatus status, bool isOverdue, bool hasValidation) => status switch
+    public static string NextStep(
+        ActionPlanStatus status,
+        bool isOverdue,
+        ActionPlanValidationOutcome? latestOutcome = null) => status switch
     {
         ActionPlanStatus.Aberto => isOverdue
             ? "Atrasada e ainda não iniciada — confirmar responsável e repactuar o prazo."
@@ -25,12 +34,27 @@ public static class RemediationReading
         ActionPlanStatus.EmAndamento => isOverdue
             ? "Em andamento e fora do prazo — repactuar a data e registrar o que já foi feito."
             : "Concluir a execução e registrar o que foi feito.",
-        ActionPlanStatus.AguardandoValidacao => hasValidation
-            ? "Execução relatada; a última validação não comprovou a correção — reavaliar ou executar nova coleta."
-            : "Execução relatada — validar com uma nova avaliação ou registrar evidência de comprovação.",
+        ActionPlanStatus.AguardandoValidacao => AwaitingStep(latestOutcome),
         ActionPlanStatus.Concluido => "Encerrada. Nenhuma providência pendente.",
         ActionPlanStatus.Vencido => "Etapa legada 'vencida' — reabrir e repactuar prazo para retomar o acompanhamento.",
         _ => "Sem providência definida.",
+    };
+
+    /// <summary>A providência de quem já relatou execução — decidida pelo que a última validação sustentou.</summary>
+    private static string AwaitingStep(ActionPlanValidationOutcome? outcome) => outcome switch
+    {
+        null => "Execução relatada — validar com uma nova avaliação ou registrar evidência de comprovação.",
+        ActionPlanValidationOutcome.ExposureCleared =>
+            "Melhora comprovada por nova coleta: o achado deixou de estar exposto. Encerrar a ação.",
+        ActionPlanValidationOutcome.ReductionObserved =>
+            "Redução comprovada por nova coleta, porém o achado continua exposto. Encerrar esta ação e abrir um " +
+            "novo ciclo para o que restou.",
+        ActionPlanValidationOutcome.HumanAttested =>
+            "Atestação humana registrada — o AEGIS não verificou o ambiente. Encerrar a ação assumindo isso, ou " +
+            "comprovar tecnicamente com uma nova coleta.",
+        ActionPlanValidationOutcome.NoChangeObserved =>
+            "A nova coleta não mostrou melhora neste achado — retomar a execução antes de encerrar.",
+        _ => "A última validação não comprovou a correção — apresentar evidência adequada ou executar nova coleta.",
     };
 
     /// <summary>Rótulo pt-BR da etapa operacional (o relatório e a tela usam o mesmo).</summary>
