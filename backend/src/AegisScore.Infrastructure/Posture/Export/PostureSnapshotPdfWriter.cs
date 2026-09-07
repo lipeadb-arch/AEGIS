@@ -525,14 +525,7 @@ public static class PostureSnapshotPdfWriter
             // A BASE é o que separa "estes objetos foram corrigidos" de "a quantidade caiu": só a comparação
             // dos conjuntos preservados sustenta a primeira afirmação.
             var basePar = row.Cells[4];
-            // A base segue o MÉTODO, não só a completude dos conjuntos: descrever uma atestação humana como
-            // "comparação de quantidade" afirmaria uma comparação que nunca existiu.
-            var baseText = a.ValidationMethod == ActionPlanValidationMethod.HumanEvidence
-                ? "Registro humano com evidência referenciada. O AEGIS não verificou o ambiente para este registro."
-                : a.ComparedBySets
-                    ? "Comparação dos conjuntos preservados nas duas coletas."
-                    : "Comparação de QUANTIDADE (os conjuntos não estavam preservados nos dois lados) — não identifica quais objetos foram corrigidos.";
-            var bp = basePar.AddParagraph(baseText);
+            var bp = basePar.AddParagraph(ValidationBasisText(a.ValidationMethod, a.ComparedBySets));
             bp.Format.Font.Size = 7;
             if (!string.IsNullOrWhiteSpace(a.ValidationRationale))
             {
@@ -746,9 +739,26 @@ public static class PostureSnapshotPdfWriter
 
     // ---- Texto pt-BR determinístico ------------------------------------------------------------------
 
-    private static string ScoreText(double? score, PostureSnapshotType type) => score is null
+    /// <summary>
+    /// O score como o relatório o imprime. O KNIGHT usa nota em escala PRÓPRIA (0–100): imprimi-lo com "%"
+    /// convidaria a lê-lo como o AEGIS Score/NIST — que é justamente o que este relatório separa. Score ausente
+    /// é "Não avaliado", nunca 0%.
+    /// </summary>
+    public static string ScoreText(double? score, PostureSnapshotType type) => score is null
         ? "Não avaliado"
         : type == PostureSnapshotType.Knight ? $"{Num(score.Value)} / 100" : Percent(score.Value);
+
+    /// <summary>
+    /// A BASE da conclusão de uma validação congelada. Segue o MÉTODO antes da completude dos conjuntos:
+    /// descrever uma atestação humana como "comparação de quantidade" afirmaria uma comparação que nunca
+    /// existiu. Só a comparação dos CONJUNTOS preservados sustenta "estes objetos foram corrigidos".
+    /// </summary>
+    public static string ValidationBasisText(ActionPlanValidationMethod? method, bool comparedBySets) =>
+        method == ActionPlanValidationMethod.HumanEvidence
+            ? "Registro humano com evidência referenciada. O AEGIS não verificou o ambiente para este registro."
+            : comparedBySets
+                ? "Comparação dos conjuntos preservados nas duas coletas."
+                : "Comparação de QUANTIDADE (os conjuntos não estavam preservados nos dois lados) — não identifica quais objetos foram corrigidos.";
     private static string Percent(double value) => Num(value) + "%";
     private static string Num(double value) => value.ToString("0.#", Pt);
 

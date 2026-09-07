@@ -511,19 +511,34 @@ public sealed class RemediationJourneyTests : IDisposable
             .Include(s => s.Indicators).Include(s => s.ActionItems)
             .FirstAsync(s => s.Id == publicado.Summary.Id);
 
+        var congelada = snapshot.ActionItems.Single();
+        congelada.ValidationMethod.Should().Be(ActionPlanValidationMethod.HumanEvidence);
+
+        // As duas invariantes são de TEXTO, e é nas funções que o compõem que elas se testam. A extração de um
+        // PDF INTERCALA as colunas de uma tabela, e o recorte muda com a fonte instalada — asserção sobre o
+        // dump de glifos passa no Windows e falha no Linux do CI sem que nada de real tenha mudado.
+        PostureSnapshotPdfWriter.ValidationBasisText(congelada.ValidationMethod, congelada.ComparedBySets)
+            .Should().Be("Registro humano com evidência referenciada. O AEGIS não verificou o ambiente para este registro.",
+                "a BASE da conclusão segue o MÉTODO: uma atestação humana nunca foi uma comparação");
+        PostureSnapshotPdfWriter.ValidationBasisText(congelada.ValidationMethod, congelada.ComparedBySets)
+            .Should().NotContain("QUANTIDADE",
+                "descrever uma atestação como comparação de quantidade afirmaria uma comparação que não existiu");
+
+        PostureSnapshotPdfWriter.ScoreText(snapshot.Score, PostureSnapshotType.Knight)
+            .Should().EndWith(" / 100",
+                "o score do KNIGHT é nota em escala PRÓPRIA — imprimi-lo com '%' convidaria a lê-lo como o AEGIS Score/NIST");
+        PostureSnapshotPdfWriter.ScoreText(66.7, PostureSnapshotType.AegisScoreNist)
+            .Should().EndWith("%", "o AEGIS Score/NIST continua sendo percentual — os instrumentos não se misturam");
+        PostureSnapshotPdfWriter.ScoreText(null, PostureSnapshotType.Knight)
+            .Should().Be("Não avaliado", "score ausente nunca vira 0");
+
+        // O PDF em si é renderizado e verificado no que é ESTÁVEL: texto de PARÁGRAFO (que não intercala
+        // colunas) e a ausência de qualquer identidade nominal.
         var texto = Deaccent(ExtractPdfText(PostureSnapshotPdfWriter.Write(snapshot)));
-
-        // A extração do PDF lê a TABELA linha a linha, então uma célula de várias linhas aparece intercalada
-        // com as vizinhas: a asserção usa fragmentos que sobrevivem à quebra, não a frase inteira.
-        texto.Should().Contain("Registro humano com evidencia",
-            "a BASE da conclusão segue o método: uma atestação humana nunca foi uma comparação");
-        texto.Should().Contain("Atestacao humana (nao e", "o desfecho carrega o próprio limite no rótulo");
-        texto.Should().NotContain("Comparacao de QUANTIDADE",
-            "descrever uma atestação como comparação de quantidade afirmaria uma comparação que não existiu");
-
-        var score = snapshot.Score!.Value.ToString("0.#", System.Globalization.CultureInfo.GetCultureInfo("pt-BR"));
-        texto.Should().Contain($"{score} / 100",
-            "o score do KNIGHT é nota em escala PRÓPRIA — imprimi-lo com '%' convidaria a lê-lo como o AEGIS Score/NIST");
+        texto.Should().Contain("Este relatorio nao apresenta tendencia entre avaliacoes",
+            "o relatório declara que não infere tendência — parágrafo, não célula de tabela");
+        texto.Should().NotContain("demo.example.com",
+            "o PDF executivo circula por e-mail; a lista nominal fica no produto, sob autorização");
     }
 
     /// <summary>Extração textual do PDF — a MESMA abordagem (PdfPig) da suíte de exportação já existente.</summary>
