@@ -685,7 +685,10 @@ public class DevController : ControllerBase
 
         var riskIds = await db.Risks.IgnoreQueryFilters()
             .Where(r => r.TenantId == DemoTenantId).Select(r => r.Id).ToListAsync(ct);
-        db.ActionPlans.RemoveRange(await db.ActionPlans.IgnoreQueryFilters().Where(a => riskIds.Contains(a.RiskId)).ToListAsync(ct));
+        // [AEGIS-MVP-PRODUCT-03] O escopo do wipe passou a ser o TENANT, não só os planos ligados a risco: uma
+        // ação nascida de um achado do KNIGHT tem RiskId nulo e sobreviveria a um re-seed, reaparecendo órfã
+        // sobre uma avaliação que já não existe. Trilha e validações cascateiam com o plano.
+        db.ActionPlans.RemoveRange(await db.ActionPlans.IgnoreQueryFilters().Where(a => a.TenantId == DemoTenantId).ToListAsync(ct));
         db.RiskEvaluations.RemoveRange(await db.RiskEvaluations.IgnoreQueryFilters().Where(e => riskIds.Contains(e.RiskId)).ToListAsync(ct));
 
         // EvidenceSignal / Evidence têm o mesmo DemoTenantId fixo mas nenhum FK/cascade — se não

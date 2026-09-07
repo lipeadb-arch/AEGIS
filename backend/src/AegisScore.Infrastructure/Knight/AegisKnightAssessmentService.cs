@@ -387,18 +387,13 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             DeserializeAdvisory(run.AdvisoryJson), run.AdvisoryFromAi);
     }
 
-    private IReadOnlyList<KnightCapabilityStatus> DeserializeCapabilities(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return Array.Empty<KnightCapabilityStatus>();
-        try
-        {
-            return JsonSerializer.Deserialize<List<KnightCapabilityStatus>>(json, Json) ?? new();
-        }
-        catch (JsonException)
-        {
-            return Array.Empty<KnightCapabilityStatus>();
-        }
-    }
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-03] Delega à autoridade ÚNICA de leitura das capacidades. A validação de remediação
+    /// lê o MESMO JSON para decidir suficiência de evidência: duas desserializações independentes divergiriam,
+    /// e a divergência apareceria como "capacidade ausente" — bloqueando uma comprovação legítima.
+    /// </summary>
+    private static IReadOnlyList<KnightCapabilityStatus> DeserializeCapabilities(string? json) =>
+        KnightCapabilitiesJson.Deserialize(json);
 
     private KnightAdvisory? DeserializeAdvisory(string? json)
     {

@@ -820,4 +820,106 @@ public record KnightAssessmentDto(
 /// (<paramref name="Source"/>: "entra"/"google"/"demo"). NUNCA fornece score/cobertura/contagens/vereditos — o
 /// servidor constrói a fotografia exclusivamente pelas autoridades atuais do domínio.
 /// </summary>
-public record PublishPostureSnapshotRequest(string Type, string? Source);
+/// <param name="RunId">
+/// [AEGIS-MVP-PRODUCT-03] Avaliação KNIGHT EXATA a publicar. Quando presente, o servidor congela AQUELA
+/// execução — nunca a mais recente. Ausente, o comportamento existente é preservado (a última do tenant,
+/// opcionalmente da fonte indicada).
+/// </param>
+public record PublishPostureSnapshotRequest(string Type, string? Source, Guid? RunId = null);
+
+// ---- [AEGIS-MVP-PRODUCT-03] Planos de ação de um achado do AEGIS KNIGHT -------------------------------
+// Enums viajam como NOME (nunca ordinal) — o mesmo idioma dos demais contratos de leitura. A superfície é
+// tenant-scoped e nenhum TenantId trafega.
+
+/// <summary>Uma entrada da trilha de auditoria de uma ação.</summary>
+public record ActionPlanEventDto(
+    string Kind,
+    DateTimeOffset At,
+    string ActorName,
+    string? FromStatus,
+    string? ToStatus,
+    string? Note);
+
+/// <summary>
+/// Uma validação registrada. <paramref name="Method"/> e <paramref name="Outcome"/> viajam separados de
+/// propósito: é a combinação dos dois que diz se houve COMPROVAÇÃO técnica ou apenas uma atestação.
+/// </summary>
+public record ActionPlanValidationDto(
+    string Method,
+    string Outcome,
+    Guid? ValidationRunId,
+    string? EvidenceReference,
+    int? ObservedBefore,
+    int? ObservedAfter,
+    int? ObjectsNoLongerPresent,
+    bool ComparedBySets,
+    string Rationale,
+    DateTimeOffset DecidedAt,
+    string DecidedByName);
+
+/// <summary>
+/// Uma ação de remediação. <paramref name="Status"/> é a etapa OPERACIONAL; <paramref name="IsOverdue"/>
+/// deriva do PRAZO e não sobrescreve a etapa; <paramref name="LatestValidation"/> é o resultado observado no
+/// achado. As três coisas são distintas e a tela nunca pode colapsá-las num "resolvido".
+/// </summary>
+public record ActionPlanDto(
+    Guid Id,
+    string? KnightIndicatorId,
+    Guid? OriginRunId,
+    int? OriginAffectedCount,
+    string Title,
+    string? ProposedAction,
+    string? ResponsiblePerson,
+    string? ResponsibleArea,
+    DateOnly? DueDate,
+    string Status,
+    bool IsOverdue,
+    bool IsActive,
+    string NextStep,
+    string? ExecutionNotes,
+    string? ExecutionEvidenceRef,
+    DateTimeOffset? ExecutedAt,
+    DateTimeOffset? CompletedAt,
+    DateTimeOffset CreatedAt,
+    /// <summary>Versão lida — devolvida na próxima escrita para detectar atualização conflitante.</summary>
+    int Version,
+    ActionPlanValidationDto? LatestValidation,
+    IReadOnlyList<ActionPlanValidationDto> Validations,
+    IReadOnlyList<ActionPlanEventDto> Events);
+
+/// <summary>Criação de uma ação a partir de um achado — não exige risco nem processo de negócio.</summary>
+public record CreateActionPlanRequest(
+    Guid RunId,
+    string IndicatorId,
+    string Title,
+    string? ProposedAction,
+    string? ResponsiblePerson,
+    string? ResponsibleArea,
+    DateOnly? DueDate);
+
+/// <summary>Edição de campos e/ou avanço de etapa. Campos ausentes permanecem como estão.</summary>
+public record UpdateActionPlanRequest(
+    int ExpectedVersion,
+    string? Title,
+    string? ProposedAction,
+    string? ResponsiblePerson,
+    string? ResponsibleArea,
+    DateOnly? DueDate,
+    string? Status);
+
+/// <summary>Registro da EXECUÇÃO relatada. Não comprova correção — a validação é um ato à parte.</summary>
+public record RecordActionPlanExecutionRequest(
+    int ExpectedVersion,
+    string Notes,
+    string? EvidenceReference);
+
+/// <summary>
+/// Pedido de VALIDAÇÃO. Com <paramref name="ValidationRunId"/> o servidor compara e DECIDE o desfecho; o
+/// cliente jamais escolhe "resolvido". Sem ela, exige-se <paramref name="EvidenceReference"/> e registra-se
+/// uma atestação humana, sempre identificada como tal.
+/// </summary>
+public record ValidateActionPlanRequest(
+    int ExpectedVersion,
+    Guid? ValidationRunId,
+    string? EvidenceReference,
+    string? Note);

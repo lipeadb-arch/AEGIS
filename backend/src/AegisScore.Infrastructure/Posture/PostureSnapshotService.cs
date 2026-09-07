@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Posture;
+using AegisScore.Application.Remediation;
 using AegisScore.Application.Scoring;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -45,7 +46,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
     // ---- Publicação ----------------------------------------------------------------------------------
 
     public async Task<PostureSnapshotDetailDto> PublishAsync(
-        PostureSnapshotType type, KnightSourceType? source, CancellationToken ct = default)
+        PostureSnapshotType type, KnightSourceType? source, Guid? runId = null, CancellationToken ct = default)
     {
         var tenantId = _tenant.TenantId
             ?? throw new TenantSecurityException("Publicação de fotografia sem tenant resolvido no contexto (fail-closed).");
@@ -53,15 +54,27 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         var snapshot = type switch
         {
             PostureSnapshotType.AegisScoreNist => await BuildAegisSnapshotAsync(ct),
-            PostureSnapshotType.Knight => await BuildKnightSnapshotAsync(source, ct),
+            PostureSnapshotType.Knight => await BuildKnightSnapshotAsync(source, runId, ct),
             _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Tipo de fotografia desconhecido."),
         };
+
+        // [AEGIS-MVP-PRODUCT-03] Cliente CONGELADO na publicação. O relatório é derivado exclusivamente da
+        // fotografia: buscar o nome do cliente no momento da exportação faria um relatório histórico mudar de
+        // cabeçalho depois de emitido.
+        snapshot.ClientName = await _db.Tenants.AsNoTracking()
+            .Where(t => t.Id == tenantId).Select(t => t.Name).FirstOrDefaultAsync(ct);
+
+        // [AEGIS-MVP-PRODUCT-03] Ações CONGELADAS. Só entram as que endereçam achados presentes NESTA
+        // fotografia — uma ação de um indicador que a avaliação congelada nem avaliou não tem o que ilustrar.
+        if (type == PostureSnapshotType.Knight)
+            await FreezeActionItemsAsync(snapshot, ct);
 
         // Tenant ambiente VALIDADO atribuído ao agregado ANTES do hash (o hash cobre o TenantId). O stamping
         // fail-closed do DbContext reconfirma no SaveChanges; jamais se aceita TenantId vindo do cliente.
         snapshot.TenantId = tenantId;
         foreach (var c in snapshot.Controls) c.TenantId = tenantId;
         foreach (var i in snapshot.Indicators) i.TenantId = tenantId;
+        foreach (var a in snapshot.ActionItems) a.TenantId = tenantId;
 
         // Hash determinístico do conteúdo — re-derivável da linha para detectar adulteração.
         snapshot.ContentHash = PostureSnapshotHasher.Compute(snapshot);
@@ -70,6 +83,54 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         await _db.SaveChangesAsync(ct);
 
         return ToDetail(snapshot);
+    }
+
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-03] Congela, no instante da publicação, as ações que endereçam os achados desta
+    /// fotografia — com a etapa, o atraso APURADO então e a validação mais recente de cada uma.
+    ///
+    /// É o que impede o defeito mais fácil de cometer aqui: ler os planos ao EXPORTAR faria um relatório
+    /// publicado em março mostrar, em junho, o estado de junho — sob o mesmo hash e a mesma data de captura.
+    /// </summary>
+    private async Task FreezeActionItemsAsync(PostureSnapshot snapshot, CancellationToken ct)
+    {
+        var indicatorIds = snapshot.Indicators.Select(i => i.IndicatorId).ToHashSet(StringComparer.Ordinal);
+        if (indicatorIds.Count == 0) return;
+
+        var plans = await _db.ActionPlans.AsNoTracking()
+            .Include(p => p.Validations)
+            .Where(p => p.KnightIndicatorId != null)
+            .ToListAsync(ct);
+
+        foreach (var p in plans
+            .Where(p => indicatorIds.Contains(p.KnightIndicatorId!))
+            .OrderBy(p => p.KnightIndicatorId, StringComparer.Ordinal).ThenBy(p => p.CreatedAt))
+        {
+            // A validação MAIS RECENTE é a que o relatório apresenta; as anteriores continuam no produto.
+            var latest = p.Validations.OrderByDescending(v => v.DecidedAt).ThenByDescending(v => v.Id).FirstOrDefault();
+            var overdue = p.IsOverdue;
+
+            snapshot.ActionItems.Add(new PostureSnapshotActionItem
+            {
+                ActionPlanId = p.Id,
+                IndicatorId = p.KnightIndicatorId!,
+                Title = p.Title ?? "",
+                ProposedAction = p.Description,
+                ResponsiblePerson = p.ResponsiblePerson,
+                ResponsibleArea = p.ResponsibleArea,
+                DueDate = p.DueDate,
+                Status = p.Status,
+                WasOverdue = overdue,
+                NextStep = RemediationReading.NextStep(p.Status, overdue, p.Validations.Count > 0),
+                ValidationMethod = latest?.Method,
+                ValidationOutcome = latest?.Outcome,
+                ValidatedAt = latest?.DecidedAt,
+                ObservedBefore = latest?.ObservedBefore,
+                ObservedAfter = latest?.ObservedAfter,
+                ComparedBySets = latest?.ComparedBySets ?? false,
+                ValidationRationale = latest?.Rationale,
+            });
+        }
     }
 
     /// <summary>
@@ -303,32 +364,59 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         return result;
     }
 
-    /// <summary>Congela o ÚLTIMO assessment KNIGHT do tenant (opcionalmente da fonte indicada) numa fotografia imutável.</summary>
-    private async Task<PostureSnapshot> BuildKnightSnapshotAsync(KnightSourceType? source, CancellationToken ct)
+    /// <summary>
+    /// Congela um assessment KNIGHT do tenant numa fotografia imutável.
+    ///
+    /// [AEGIS-MVP-PRODUCT-03] Com <paramref name="runId"/>, congela EXATAMENTE aquela execução. O
+    /// comportamento anterior — "a mais recente da fonte" — permanece para quem publica sem indicar execução,
+    /// mas deixou de ser o desfecho de quem PEDIU uma execução específica: publicar a avaliação aberta por
+    /// link e receber a fotografia de outra coleta seria a mesma substituição silenciosa que a tela do KNIGHT
+    /// já se recusa a fazer. Execução inexistente (ou de outro tenant) NÃO cai para a mais recente: recusa.
+    /// </summary>
+    private async Task<PostureSnapshot> BuildKnightSnapshotAsync(
+        KnightSourceType? source, Guid? runId, CancellationToken ct)
     {
-        var candidatesQuery = _db.KnightAssessmentRuns.AsNoTracking()
-            .Where(r => r.Status == KnightRunStatus.Completed);
-        if (source is { } s)
-            candidatesQuery = candidatesQuery.Where(r => r.SourceType == s);
-
-        // Ordenação por instante do lado do cliente: o SQLite dos testes não traduz ORDER BY de DateTimeOffset;
-        // o conjunto por tenant é pequeno (execuções de assessment), então materializar id+StartedAt e escolher
-        // o mais recente em memória é barato e portável. Depois carrega SÓ a execução escolhida com indicadores.
-        var candidates = await candidatesQuery.Select(r => new { r.Id, r.StartedAt }).ToListAsync(ct);
-        var latestId = candidates
-            .OrderByDescending(c => c.StartedAt).ThenByDescending(c => c.Id)
-            .Select(c => (Guid?)c.Id).FirstOrDefault();
-
-        if (latestId is null)
+        Guid? chosenId;
+        if (runId is { } requested)
         {
-            var scope = source is { } s2 ? $" da fonte {s2}" : "";
-            throw new PostureSnapshotNotAvailableException(
-                $"Não há assessment KNIGHT concluído{scope} para publicar. Execute um assessment antes de publicar a fotografia.");
+            // A execução pedida precisa existir NESTE tenant (query filter fail-closed) e estar concluída.
+            chosenId = await _db.KnightAssessmentRuns.AsNoTracking()
+                .Where(r => r.Id == requested && r.Status == KnightRunStatus.Completed)
+                .Select(r => (Guid?)r.Id)
+                .FirstOrDefaultAsync(ct);
+
+            if (chosenId is null)
+                throw new PostureSnapshotNotAvailableException(
+                    "A avaliação indicada para publicação não existe neste cliente ou não foi concluída. " +
+                    "O AEGIS não publica a avaliação mais recente no lugar da que foi pedida — são coletas " +
+                    "diferentes e não se substituem.");
+        }
+        else
+        {
+            var candidatesQuery = _db.KnightAssessmentRuns.AsNoTracking()
+                .Where(r => r.Status == KnightRunStatus.Completed);
+            if (source is { } s)
+                candidatesQuery = candidatesQuery.Where(r => r.SourceType == s);
+
+            // Ordenação por instante do lado do cliente: o SQLite dos testes não traduz ORDER BY de DateTimeOffset;
+            // o conjunto por tenant é pequeno (execuções de assessment), então materializar id+StartedAt e escolher
+            // o mais recente em memória é barato e portável. Depois carrega SÓ a execução escolhida com indicadores.
+            var candidates = await candidatesQuery.Select(r => new { r.Id, r.StartedAt }).ToListAsync(ct);
+            chosenId = candidates
+                .OrderByDescending(c => c.StartedAt).ThenByDescending(c => c.Id)
+                .Select(c => (Guid?)c.Id).FirstOrDefault();
+
+            if (chosenId is null)
+            {
+                var scope = source is { } s2 ? $" da fonte {s2}" : "";
+                throw new PostureSnapshotNotAvailableException(
+                    $"Não há assessment KNIGHT concluído{scope} para publicar. Execute um assessment antes de publicar a fotografia.");
+            }
         }
 
         var run = await _db.KnightAssessmentRuns.AsNoTracking()
             .Include(r => r.Indicators)
-            .FirstAsync(r => r.Id == latestId.Value, ct);
+            .FirstAsync(r => r.Id == chosenId.Value, ct);
 
         // Peso avaliado/elegível pela fórmula do KNIGHT (severidade → peso), coerente com knight-score-v1.
         double achievedWeighted = 0, evaluatedWeight = 0, eligibleWeight = 0;
@@ -372,6 +460,12 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             ErrorCount = run.ErrorCount,
             NotApplicableCount = run.NotApplicableCount,
             DataRecency = dataRecency,
+            // [AEGIS-MVP-PRODUCT-03] A execução EXATA fica registrada na fotografia — é o vínculo que permite
+            // ao relatório dizer "esta é a avaliação X", e à publicação por link ser verificável depois.
+            SourceRunId = run.Id,
+            // [AEGIS-MVP-PRODUCT-03] Limitações de coleta CONGELADAS: o resumo executivo precisa dizer o que a
+            // coleta não viu, e essa lista muda a cada nova coleta.
+            CollectionLimitations = BuildCollectionLimitations(run.CapabilitiesJson),
         };
 
         foreach (var i in run.Indicators)
@@ -394,6 +488,20 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
 
         return snapshot;
     }
+
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-03] Traduz o estado por capacidade da execução numa lista LEGÍVEL de limitações de
+    /// coleta — só as que NÃO foram coletadas. Uma coleta íntegra produz lista vazia (e o hash das fotografias
+    /// já publicadas permanece intacto, porque a extensão canônica só é escrita quando há conteúdo).
+    /// </summary>
+    private static List<string> BuildCollectionLimitations(string? capabilitiesJson) =>
+        KnightCapabilitiesJson.Deserialize(capabilitiesJson)
+            .Where(c => KnightIndicatorEvidence.IsFailedOutcome(c.Outcome))
+            .OrderBy(c => c.Capability)
+            .Select(c => string.IsNullOrWhiteSpace(c.Detail)
+                ? $"{c.Capability}: {c.Outcome}"
+                : $"{c.Capability}: {c.Outcome} — {SanitizeTitle(c.Detail)}")
+            .ToList();
 
     // ---- Leitura -------------------------------------------------------------------------------------
 
@@ -443,6 +551,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         await _db.PostureSnapshots.AsNoTracking()
             .Include(s => s.Controls)
             .Include(s => s.Indicators)
+            .Include(s => s.ActionItems)
             .FirstOrDefaultAsync(s => s.Id == id, ct);
 
     // ---- Mapeamento ----------------------------------------------------------------------------------
@@ -526,7 +635,9 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         s.ErrorCount,
         s.NotApplicableCount,
         s.DataRecency,
-        s.ContentHash);
+        s.ContentHash,
+        s.ClientName,
+        s.SourceRunId);
 
     private static PostureSnapshotDetailDto ToDetail(PostureSnapshot s)
     {
@@ -545,8 +656,21 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 i.Evidence, i.AffectedObjectCount, i.NistCodes, i.MitreTechniques, i.SourceType.ToString(), i.CollectedAt))
             .ToList();
 
+        // [AEGIS-MVP-PRODUCT-03] Ações CONGELADAS, ordenadas por achado — enums viajam como NOME, como no
+        // restante dos contratos de leitura (um ordinal cairia no ramo padrão da tela).
+        var actions = s.ActionItems
+            .OrderBy(a => a.IndicatorId, StringComparer.Ordinal).ThenBy(a => a.CreatedAt)
+            .Select(a => new PostureSnapshotActionItemDto(
+                a.ActionPlanId, a.IndicatorId, a.Title, a.ProposedAction,
+                a.ResponsiblePerson, a.ResponsibleArea, a.DueDate,
+                a.Status.ToString(), a.WasOverdue, a.NextStep,
+                a.ValidationMethod?.ToString(), a.ValidationOutcome?.ToString(), a.ValidatedAt,
+                a.ObservedBefore, a.ObservedAfter, a.ComparedBySets, a.ValidationRationale))
+            .ToList();
+
         return new PostureSnapshotDetailDto(
-            ToSummary(s), s.AchievedPoints, s.PossiblePoints, s.EligiblePoints, controls, indicators);
+            ToSummary(s), s.AchievedPoints, s.PossiblePoints, s.EligiblePoints, controls, indicators,
+            s.CollectionLimitations.ToList(), actions);
     }
 
     /// <summary>Projeção leve de um sinal (com a capability do seu conector) para reconstruir a proveniência decisiva.</summary>

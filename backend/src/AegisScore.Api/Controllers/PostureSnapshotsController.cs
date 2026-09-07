@@ -34,8 +34,11 @@ public class PostureSnapshotsController : ControllerBase
     }
 
     /// <summary>
-    /// Publica uma fotografia da postura ATUAL. O corpo só indica o instrumento (e a fonte KNIGHT, opcional);
-    /// o servidor constrói a fotografia pelas autoridades do domínio — nunca por números vindos do cliente.
+    /// Publica uma fotografia da postura ATUAL. O corpo só indica o instrumento (e, para KNIGHT, a fonte ou a
+    /// avaliação exata); o servidor constrói a fotografia pelas autoridades do domínio — nunca por números
+    /// vindos do cliente. [AEGIS-MVP-PRODUCT-03] Informando <c>runId</c>, publica-se AQUELA avaliação: publicar
+    /// a avaliação aberta por link e receber a fotografia de outra coleta seria a substituição silenciosa que a
+    /// tela do KNIGHT já se recusa a fazer.
     /// Publicar cria um registro PERMANENTE e imutável: exige papel tenant-scoped <c>Manager</c> ou
     /// <c>TenantAdmin</c> (um Analyst pode LER o histórico, mas não publicar). Não amplia autoridade de plataforma.
     /// </summary>
@@ -64,7 +67,10 @@ public class PostureSnapshotsController : ControllerBase
 
         try
         {
-            var detail = await _service.PublishAsync(type, source, ct);
+            // [AEGIS-MVP-PRODUCT-03] Com runId, publica EXATAMENTE aquela avaliação. Sem ele, o comportamento
+            // existente (a mais recente, opcionalmente da fonte) é preservado. Uma avaliação pedida e
+            // indisponível vira 409 — jamais a substituição silenciosa pela mais recente.
+            var detail = await _service.PublishAsync(type, source, request.RunId, ct);
             return CreatedAtAction(nameof(GetById), new { id = detail.Summary.Id }, detail);
         }
         catch (PostureSnapshotNotAvailableException ex)

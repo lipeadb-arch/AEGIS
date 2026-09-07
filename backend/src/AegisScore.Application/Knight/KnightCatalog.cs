@@ -202,16 +202,26 @@ public static class KnightCatalog
             }),
 
         new KnightIndicatorDefinition(
-            "AK-ENTRA-004", "1", "Contas de convidado inativas além da janela definida",
+            // [AEGIS-MVP-PRODUCT-03] O título dizia "inativas". A regra só observa AUSÊNCIA DE SINAL de acesso
+            // na janela — que pode ser desuso real ou simplesmente falta de registro disponível. O critério e o
+            // limiar são os MESMOS (a versão do catálogo não muda); só a afirmação foi trazida de volta ao que
+            // a coleta prova. Avaliações já gravadas mantêm o texto original, exibido como literal do histórico.
+            "AK-ENTRA-004", "1", "Contas de convidado sem sinal de acesso na janela definida",
             KnightIndicatorCategory.GuestAccess, SeverityLevel.Medium, SharedSources,
             new[] { "PR.AA-01", "GV.RR-02" }, Array.Empty<string>(),
-            "Revisar e desativar contas de convidado sem uso além da janela; automatizar a expiração de acesso de terceiros.",
-            $"Número de convidados inativos há mais de {InactiveGuestWindowDays} dias.",
+            // [AEGIS-MVP-PRODUCT-03] A primeira ação deixou de começar por "desativar". A regra observa AUSÊNCIA
+            // DE SINAL de acesso, que não é o mesmo que desuso comprovado: desativar antes de confirmar troca
+            // um risco por uma interrupção de serviço, com base numa inatividade que a coleta não provou.
+            "Confirmar com a área responsável se o acesso de cada convidado ainda é necessário e desativar somente os que forem confirmados como dispensáveis; automatizar a expiração do acesso de terceiros.",
+            $"Número de convidados sem sinal de acesso registrado nos últimos {InactiveGuestWindowDays} dias.",
             f =>
             {
                 if (!TryCount(f, KnightSignalKey.InactiveGuestAccounts, out var n, out var ne)) return ne;
                 return n > 0
-                    ? Exposed($"{n} convidado(s) inativo(s) há mais de {InactiveGuestWindowDays} dias — acesso de terceiros esquecido.", (int)n)
+                    // "Acesso de terceiros esquecido" afirmava desuso a partir de ausência de registro. O texto
+                    // gravado passa a dizer o que a regra REALMENTE observou; as avaliações já gravadas mantêm o
+                    // texto original, que continua exibido como literal do histórico.
+                    ? Exposed($"{n} convidado(s) sem sinal de acesso registrado nos últimos {InactiveGuestWindowDays} dias.", (int)n)
                     : Passed($"Nenhum convidado inativo além de {InactiveGuestWindowDays} dias.");
             }),
 

@@ -116,12 +116,101 @@ public class PostureSnapshot : Entity, ITenantOwned
     /// </summary>
     public string ContentHash { get; set; } = "";
 
+    // ---- [AEGIS-MVP-PRODUCT-03] Contexto CONGELADO do relatório ----
+    // Tudo aqui é ADITIVO e ANULÁVEL/VAZIO nas fotografias antigas, que permanecem legíveis e com o hash
+    // preservado (a representação canônica só cresce quando há conteúdo novo a cobrir). O relatório é
+    // derivado EXCLUSIVAMENTE da fotografia: se o nome do cliente, as limitações de coleta ou as ações
+    // vivessem só no estado operacional, reexportar um relatório histórico traria o presente disfarçado
+    // de passado.
+
+    /// <summary>
+    /// Avaliação KNIGHT EXATA que foi congelada. Existe para que publicar a avaliação aberta por link não
+    /// vire, em silêncio, a publicação da mais recente. Nula em fotografias AEGIS Score/NIST e nas KNIGHT
+    /// publicadas antes desta entrega.
+    /// </summary>
+    public Guid? SourceRunId { get; set; }
+
+    /// <summary>Nome do cliente no instante da publicação — o relatório não vai buscar o nome de hoje.</summary>
+    public string? ClientName { get; set; }
+
+    /// <summary>
+    /// Limitações de COLETA declaradas pela avaliação congelada (capacidade + desfecho, texto sanitizado).
+    /// Congeladas porque o resumo executivo precisa dizer o que a coleta NÃO viu — e essa lista muda a cada
+    /// nova coleta.
+    /// </summary>
+    public List<string> CollectionLimitations { get; set; } = new();
+
     // ---- Filhos: exatamente um conjunto por tipo (o outro fica vazio) ----
     /// <summary>Controles NIST congelados (apenas em fotografias AEGIS Score/NIST).</summary>
     public ICollection<PostureSnapshotControl> Controls { get; set; } = new List<PostureSnapshotControl>();
 
     /// <summary>Indicadores KNIGHT congelados (apenas em fotografias KNIGHT).</summary>
     public ICollection<PostureSnapshotIndicator> Indicators { get; set; } = new List<PostureSnapshotIndicator>();
+
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-03] Ações CONGELADAS no instante da publicação. Uma fotografia antiga continua
+    /// mostrando as ações como estavam então: injetar o estado atual dos planos num relatório histórico
+    /// faria o documento assinado mudar de conteúdo depois de emitido.
+    /// </summary>
+    public ICollection<PostureSnapshotActionItem> ActionItems { get; set; } = new List<PostureSnapshotActionItem>();
+}
+
+/// <summary>
+/// [AEGIS-MVP-PRODUCT-03] UMA ação CONGELADA dentro de uma fotografia — tenant-owned. Copia do plano apenas
+/// o que o relatório precisa dizer, em linguagem de gestão, e SEPARA deliberadamente três coisas que não
+/// podem ser confundidas: a etapa do plano, o resultado observado no achado e o método de validação.
+/// </summary>
+public class PostureSnapshotActionItem : Entity, ITenantOwned
+{
+    /// <summary>Carimbado no SaveChanges (fail-closed) — nunca confiar em valor vindo do cliente.</summary>
+    public Guid TenantId { get; set; }
+
+    public Guid SnapshotId { get; set; }
+    public PostureSnapshot? Snapshot { get; set; }
+
+    /// <summary>Plano de origem — rastreabilidade para quem tiver acesso ao detalhe no produto.</summary>
+    public Guid ActionPlanId { get; set; }
+
+    /// <summary>Achado que a ação endereça (ex.: "AK-ENTRA-001").</summary>
+    public string IndicatorId { get; set; } = "";
+
+    public string Title { get; set; } = "";
+
+    /// <summary>A ação proposta, como estava redigida no instante da publicação.</summary>
+    public string? ProposedAction { get; set; }
+
+    public string? ResponsiblePerson { get; set; }
+    public string? ResponsibleArea { get; set; }
+    public DateOnly? DueDate { get; set; }
+
+    /// <summary>Etapa operacional congelada.</summary>
+    public ActionPlanStatus Status { get; set; }
+
+    /// <summary>Atraso APURADO na publicação (o prazo é o critério; a etapa não é sobrescrita).</summary>
+    public bool WasOverdue { get; set; }
+
+    /// <summary>A próxima providência, derivada da etapa e do prazo no instante da publicação.</summary>
+    public string NextStep { get; set; } = "";
+
+    // ---- Validação congelada (nula quando ainda não houve validação alguma) ----
+
+    /// <summary>Método da validação mais recente no instante da publicação.</summary>
+    public ActionPlanValidationMethod? ValidationMethod { get; set; }
+
+    /// <summary>Desfecho da validação mais recente no instante da publicação.</summary>
+    public ActionPlanValidationOutcome? ValidationOutcome { get; set; }
+
+    public DateTimeOffset? ValidatedAt { get; set; }
+
+    /// <summary>Quantidade afetada observada na origem e na evidência — a base da leitura de melhora.</summary>
+    public int? ObservedBefore { get; set; }
+    public int? ObservedAfter { get; set; }
+
+    /// <summary>TRUE quando a conclusão se apoiou nos CONJUNTOS preservados, não apenas em totais.</summary>
+    public bool ComparedBySets { get; set; }
+
+    /// <summary>Justificativa determinística do desfecho, congelada com ele.</summary>
+    public string? ValidationRationale { get; set; }
 }
 
 /// <summary>

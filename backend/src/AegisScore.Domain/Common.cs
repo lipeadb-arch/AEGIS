@@ -130,7 +130,28 @@ public enum RiskLevel { Baixo = 0, Medio = 1, Alto = 2, Critico = 3 }
 
 public enum RiskTreatmentType { Aceitar = 0, Mitigar = 1, Transferir = 2, Evitar = 3 }
 
-public enum ActionPlanStatus { Aberto = 0, EmAndamento = 1, Concluido = 2, Vencido = 3 }
+/// <summary>
+/// Etapa OPERACIONAL de um plano de ação. Os valores 0..3 são os originais e permanecem intocados — os
+/// planos legados continuam a se ler exatamente como foram gravados.
+///
+/// [AEGIS-MVP-PRODUCT-03] <see cref="AguardandoValidacao"/> é a etapa que faltava entre "executei" e
+/// "resolvido": marcar como executado NÃO comprova correção, e sem esta etapa o fluxo empurraria o
+/// operador direto para <see cref="Concluido"/>, transformando um relato em prova.
+///
+/// <see cref="Vencido"/> é PRESERVADO por compatibilidade, mas NÃO é uma etapa do fluxo novo: atraso é
+/// propriedade do PRAZO (<c>ActionPlan.IsOverdue</c>), e sobrescrever a etapa operacional com "vencido"
+/// apagaria a informação de onde o trabalho realmente parou.
+/// </summary>
+public enum ActionPlanStatus
+{
+    Aberto = 0,
+    EmAndamento = 1,
+    Concluido = 2,
+    /// <summary>Legado: atraso hoje é derivado do prazo, não uma etapa. Nunca atribuído pelo fluxo novo.</summary>
+    Vencido = 3,
+    /// <summary>Execução relatada, aguardando comprovação por evidência — não é conclusão.</summary>
+    AguardandoValidacao = 4,
+}
 
 public enum SnapshotLevel { Overall = 0, Function = 1, Category = 2, Subcategory = 3, Scope = 4 }
 

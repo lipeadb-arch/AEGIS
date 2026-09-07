@@ -8,6 +8,7 @@ using AegisScore.Application.Advisories;
 using AegisScore.Application.Identity;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Posture;
+using AegisScore.Application.Remediation;
 using AegisScore.Application.Posture.Export;
 using AegisScore.Application.Queries;
 using AegisScore.Application.RiskAssessment;
@@ -22,6 +23,7 @@ using AegisScore.Infrastructure.Identity;
 using AegisScore.Infrastructure.Knight;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Posture;
+using AegisScore.Infrastructure.Remediation;
 using AegisScore.Infrastructure.Posture.Export;
 using AegisScore.Infrastructure.Queries;
 using AegisScore.Infrastructure.Reference;
@@ -210,6 +212,12 @@ public static class DependencyInjection
         // [AEGIS-AUD-034] Exportação executiva da fotografia (PDF/CSV) — abstração pequena e focada. Carrega a
         // fotografia pelo Global Query Filter fail-closed, reverifica o ContentHash e renderiza. Somente leitura.
         services.AddScoped<IPostureSnapshotExporter, PostureSnapshotExporter>();
+
+        // [AEGIS-MVP-PRODUCT-03] Jornada de remediação de um achado do KNIGHT (criar ação → responsável/prazo →
+        // execução → validação com evidência). Scoped: usa o DbContext (Global Query Filter + stamping
+        // fail-closed). NÃO escreve score, veredito, cobertura, ledger nem fotografia — concluir uma ação não
+        // torna um achado conforme.
+        services.AddScoped<IRemediationService, RemediationService>();
 
         // Superfície de ingestão passiva de telemetria (webhook EDR/SIEM) — o CHAMADOR do EvaluateAsync.
         // Orquestração fina: normaliza o sinal, resolve o tenant e delega ao motor (fonte Telemetry).

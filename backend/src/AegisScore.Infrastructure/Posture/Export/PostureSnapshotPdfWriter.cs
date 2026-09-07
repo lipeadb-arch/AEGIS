@@ -7,6 +7,8 @@ using MigraDoc.DocumentObjectModel;
 using MigraDoc.DocumentObjectModel.Tables;
 using MigraDoc.Rendering;
 using PdfSharp.Fonts;
+using AegisScore.Application.Knight;
+using AegisScore.Application.Remediation;
 using AegisScore.Domain;
 
 namespace AegisScore.Infrastructure.Posture.Export;
@@ -117,23 +119,39 @@ public static class PostureSnapshotPdfWriter
         table.AddColumn(Unit.FromCentimeter(3.4));
         table.AddColumn(Unit.FromCentimeter(5.1));
 
+        // [AEGIS-MVP-PRODUCT-03] Cliente, avaliação e as TRÊS datas que não podem ser confundidas: quando os
+        // dados foram COLETADOS, quando o relatório foi PUBLICADO e (na seção de validações) quando cada
+        // comprovação foi decidida. Tudo vem CONGELADO da fotografia — nada é lido do estado atual.
         var pairs = new List<(string K, string V)>
         {
+            ("Cliente", string.IsNullOrWhiteSpace(s.ClientName) ? "Não registrado nesta fotografia" : s.ClientName!),
             ("Instrumento", s.Type == PostureSnapshotType.Knight ? "AEGIS KNIGHT" : "AEGIS Score / NIST CSF"),
-            ("Data da fotografia (UTC)", s.CapturedAt.ToUniversalTime().ToString("dd/MM/yyyy HH:mm:ss 'UTC'", Pt)),
+            ("Data da coleta (UTC)", Stamp(s.DataRecency)),
+            ("Data da publicação (UTC)", s.CapturedAt.ToUniversalTime().ToString("dd/MM/yyyy HH:mm:ss 'UTC'", Pt)),
             ("Score", ScoreText(s.Score)),
             ("Cobertura", Percent(s.Coverage)),
             ("Itens avaliados", s.EvaluatedItems.ToString(Pt)),
             ("Itens elegíveis", s.EligibleItems.ToString(Pt)),
-            ("Pontos obtidos", s.AchievedPoints.ToString(Pt)),
-            ("Pontos possíveis", $"{s.PossiblePoints.ToString(Pt)} (elegível {s.EligiblePoints.ToString(Pt)})"),
-            ("Versão da fórmula", s.FormulaVersion),
-            ("Versão do catálogo", s.CatalogVersion),
-            ("Versão do schema", s.SchemaVersion),
-            ("Recência dos dados", s.DataRecency is { } dr ? dr.ToUniversalTime().ToString("dd/MM/yyyy HH:mm:ss 'UTC'", Pt) : "—"),
         };
-        if (s.Type == PostureSnapshotType.Knight && !string.IsNullOrWhiteSpace(s.SourceLabel))
-            pairs.Insert(1, ("Fonte KNIGHT", s.SourceLabel!));
+        if (s.Type == PostureSnapshotType.Knight)
+        {
+            if (!string.IsNullOrWhiteSpace(s.SourceLabel))
+                pairs.Insert(2, ("Fonte", s.SourceLabel!));
+            pairs.Add(("Avaliação de origem", s.SourceRunId is { } rid
+                ? rid.ToString("D")
+                : "Não registrada (fotografia anterior a este formato)"));
+        }
+        else
+        {
+            // AEGIS Score/NIST não ganhou apêndice técnico nesta entrega: as versões continuam onde sempre
+            // estiveram, no bloco de metadados, para não retirar informação do relatório existente.
+            pairs.Add(("Pontos obtidos", s.AchievedPoints.ToString(Pt)));
+            pairs.Add(("Pontos possíveis", $"{s.PossiblePoints.ToString(Pt)} (elegível {s.EligiblePoints.ToString(Pt)})"));
+            pairs.Add(("Versão da fórmula", s.FormulaVersion));
+            pairs.Add(("Versão do catálogo", s.CatalogVersion));
+            pairs.Add(("Versão do schema", s.SchemaVersion));
+            pairs.Add(("Recência dos dados", Stamp(s.DataRecency)));
+        }
 
         for (var i = 0; i < pairs.Count; i += 2)
         {
@@ -150,12 +168,13 @@ public static class PostureSnapshotPdfWriter
         counts.AddText(CountsLine(s));
 
         // Snapshot ID e hash completos (largura total, monoespaçado visual por rótulo).
-        AddIdAndHash(section, "Snapshot ID", s.Id.ToString("D"));
+        AddIdAndHash(section, "Relatório (identificador)", s.Id.ToString("D"));
         AddIdAndHash(section, "Hash SHA-256", s.ContentHash);
 
         var note = section.AddParagraph(
             "Relatório derivado exclusivamente de uma fotografia imutável (append-only) da postura. Os números " +
-            "refletem o instante da captura; \"não avaliado\" é sempre distinto de \"não conforme\" e de 0%.");
+            "refletem o instante da coleta indicada acima; \"não avaliado\" é sempre distinto de \"não conforme\" e de 0%. " +
+            "O score do AEGIS KNIGHT e o AEGIS Score/NIST são instrumentos DISTINTOS e nunca são somados ou comparados entre si.");
         note.Format.Font.Size = 7.5;
         note.Format.Font.Color = Muted;
         note.Format.Font.Italic = true;
@@ -196,12 +215,18 @@ public static class PostureSnapshotPdfWriter
         {
             var source = string.IsNullOrWhiteSpace(s.SourceLabel) ? "não informada" : s.SourceLabel!;
             p.AddText(
-                $"No instante da captura, o assessment do AEGIS KNIGHT (fonte {source}) apresentava " +
-                $"{(s.Score is null ? "score não avaliado" : $"score {Num(s.Score.Value)}")} e cobertura de {Percent(s.Coverage)} " +
-                $"sobre {s.EligibleItems} indicadores aplicáveis. Dos {s.EvaluatedItems} avaliados: " +
+                $"Na coleta de {Stamp(s.DataRecency)}, a avaliação de identidade do AEGIS KNIGHT (fonte {source}) " +
+                $"apresentava {(s.Score is null ? "score não avaliado" : $"score {Num(s.Score.Value)} em 100")} e cobertura de " +
+                $"{Percent(s.Coverage)} sobre {s.EligibleItems} indicadores aplicáveis. Dos {s.EvaluatedItems} avaliados: " +
                 $"{s.CompliantCount} conformes, {s.NonCompliantCount} expostos e {s.MitigatedCount} mitigados; " +
                 $"{s.NotEvaluatedCount} não avaliados e {s.ErrorCount} com erro de coleta. " +
-                "O veredito de cada indicador é determinístico (regras), sem decisão por IA.");
+                "O veredito de cada indicador é determinístico (regras), sem decisão por inteligência artificial. " +
+                "Este score usa escala própria do AEGIS KNIGHT e não se soma nem se compara ao AEGIS Score/NIST.");
+
+            // [AEGIS-MVP-PRODUCT-03] As LIMITAÇÕES fazem parte do resumo executivo: um score alto sobre uma
+            // coleta que não enxergou metade do ambiente não é uma boa notícia, e o relatório precisa dizer isso
+            // antes dos achados — não numa nota de rodapé técnica.
+            AddLimitations(section, s);
         }
         else
         {
@@ -319,14 +344,223 @@ public static class PostureSnapshotPdfWriter
 
     private static void AddKnightBody(Section section, PostureSnapshot s)
     {
-        Heading(section, "Resumo por estado e severidade");
+        // [AEGIS-MVP-PRODUCT-03] Ordem do CORPO PRINCIPAL, em linguagem de gestão: o que foi encontrado, o que
+        // está sendo feito a respeito e o que ficou efetivamente comprovado. O detalhe técnico (tabela de
+        // indicadores, mapeamentos, versões) vai para o APÊNDICE, depois — quem decide não lê tabela primeiro.
+        AddKnightFindings(section, s);
+        AddKnightActions(section, s);
+        AddKnightValidations(section, s);
+        AddKnightAppendix(section, s);
+    }
+
+    /// <summary>
+    /// Principais achados em linguagem de gestão: o que significa, qual o alcance e o que NÃO se pode concluir.
+    /// Deliberadamente SEM lista nominal de identidades — um PDF executivo circula por e-mail, e o detalhe
+    /// nominal continua acessível, sob autorização, dentro do produto.
+    /// </summary>
+    private static void AddKnightFindings(Section section, PostureSnapshot s)
+    {
+        Heading(section, "Principais achados");
+
+        var exposed = s.Indicators
+            .Where(i => i.Status is KnightIndicatorStatus.Exposed or KnightIndicatorStatus.Mitigated)
+            .OrderBy(i => (int)i.Severity).ThenBy(i => i.IndicatorId, StringComparer.Ordinal)
+            .ToList();
+
+        if (exposed.Count == 0)
+        {
+            var none = section.AddParagraph(
+                "Nenhum achado exposto nesta avaliação. Isso não é o mesmo que ausência de risco: indicadores " +
+                "não avaliados reduzem a cobertura e aparecem no apêndice técnico.");
+            none.Format.Font.Size = 9;
+            none.Format.SpaceAfter = Unit.FromMillimeter(3);
+            return;
+        }
+
+        foreach (var i in exposed)
+        {
+            var n = KnightFindingNarratives.For(i.IndicatorId, i.Title, i.Status, i.AffectedObjectCount, i.Evidence);
+
+            var t = section.AddParagraph();
+            t.Format.SpaceBefore = Unit.FromMillimeter(2.4);
+            t.Format.Font.Size = 9.5;
+            t.Format.KeepWithNext = true;
+            t.AddFormattedText(n.Title, TextFormat.Bold);
+            t.AddText($"   ({i.IndicatorId} · severidade {SeverityText(i.Severity)} · {KnightStatusText(i.Status)})");
+
+            Body(section, n.Impact);
+            Body(section, "Alcance observado: " + n.Reach, bold: true);
+            if (n.Caveat is { } c) Body(section, "O que este achado não afirma: " + c, muted: true);
+            Body(section, "Primeira providência: " + KnightFindingNarratives.FirstAction(i.IndicatorId, ""), muted: true);
+        }
+    }
+
+    /// <summary>
+    /// Ações CONGELADAS na publicação: responsável, prazo, situação e próxima providência. Ler os planos ao
+    /// exportar faria um relatório antigo mostrar o estado de hoje — é justamente o que não pode acontecer.
+    /// </summary>
+    private static void AddKnightActions(Section section, PostureSnapshot s)
+    {
+        Heading(section, "Ações de remediação");
+
+        if (s.ActionItems.Count == 0)
+        {
+            var none = section.AddParagraph(
+                "Nenhuma ação de remediação registrada até a publicação deste relatório.");
+            none.Format.Font.Size = 9;
+            none.Format.Font.Color = Muted;
+            none.Format.SpaceAfter = Unit.FromMillimeter(3);
+            return;
+        }
+
+        var table = section.AddTable();
+        StyleTable(table);
+        table.AddColumn(Unit.FromCentimeter(4.3)); // Ação (+ achado)
+        table.AddColumn(Unit.FromCentimeter(3.0)); // Responsável / área
+        table.AddColumn(Unit.FromCentimeter(2.2)); // Prazo
+        table.AddColumn(Unit.FromCentimeter(2.6)); // Situação
+        table.AddColumn(Unit.FromCentimeter(4.9)); // Próxima providência
+        HeaderRow(table, "Ação", "Responsável / área", "Prazo", "Situação", "Próxima providência");
+
+        var zebra = false;
+        foreach (var a in s.ActionItems
+            .OrderBy(a => a.IndicatorId, StringComparer.Ordinal).ThenBy(a => a.Title, StringComparer.Ordinal))
+        {
+            var row = table.AddRow();
+            if (zebra) ShadeRow(row);
+            zebra = !zebra;
+
+            var cell = row.Cells[0];
+            var tp = cell.AddParagraph(a.Title);
+            tp.Format.Font.Bold = true;
+            tp.Format.Font.Size = 7.8;
+            var idp = cell.AddParagraph("achado " + a.IndicatorId);
+            idp.Format.Font.Size = 6.5;
+            idp.Format.Font.Color = Muted;
+
+            Cell(row, 1, Join(a.ResponsiblePerson, a.ResponsibleArea));
+            Cell(row, 2, a.DueDate is { } d ? d.ToString("dd/MM/yyyy", Pt) : "sem prazo");
+
+            // Atraso é dito JUNTO com a etapa, não no lugar dela: substituir "Em andamento" por "Vencida"
+            // apagaria a informação de onde o trabalho realmente parou.
+            var situacao = RemediationReading.StatusLabel(a.Status) + (a.WasOverdue ? " · em atraso" : "");
+            Cell(row, 3, situacao, color: a.WasOverdue ? new Color(150, 30, 50) : (Color?)null);
+            Cell(row, 4, a.NextStep);
+        }
+    }
+
+    /// <summary>
+    /// Validações realizadas e a melhora EFETIVAMENTE comprovada. A seção separa, sem eufemismo, três coisas:
+    /// o que uma nova coleta comprovou, o que apenas foi atestado por uma pessoa e o que não pôde ser
+    /// comprovado. Um encerramento administrativo nunca entra na primeira categoria.
+    /// </summary>
+    private static void AddKnightValidations(Section section, PostureSnapshot s)
+    {
+        Heading(section, "Validações e melhora comprovada");
+
+        var validated = s.ActionItems.Where(a => a.ValidationOutcome is not null).ToList();
+        if (validated.Count == 0)
+        {
+            var none = section.AddParagraph(
+                "Nenhuma validação registrada até a publicação deste relatório. Ações marcadas como executadas " +
+                "permanecem sem comprovação: relatar a execução não demonstra que a exposição foi corrigida.");
+            none.Format.Font.Size = 9;
+            none.Format.Font.Color = Muted;
+            none.Format.SpaceAfter = Unit.FromMillimeter(3);
+            return;
+        }
+
+        var proven = validated.Count(a =>
+            a.ValidationMethod is { } m && a.ValidationOutcome is { } o && RemediationReading.IsTechnicallyProven(m, o));
+        var attested = validated.Count(a => a.ValidationMethod == ActionPlanValidationMethod.HumanEvidence);
+        var inconclusive = validated.Count(a => a.ValidationOutcome == ActionPlanValidationOutcome.EvidenceInsufficient);
+
+        Body(section,
+            $"Das {validated.Count} ação(ões) com validação registrada, {proven} teve(tiveram) melhora comprovada " +
+            $"por nova coleta compatível, {attested} foi(foram) atestada(s) por uma pessoa com evidência " +
+            $"referenciada (o AEGIS não verificou o ambiente nesses casos) e {inconclusive} não pôde(puderam) ser " +
+            "comprovada(s) pela evidência apresentada.");
+
+        var table = section.AddTable();
+        StyleTable(table);
+        table.AddColumn(Unit.FromCentimeter(3.6)); // Ação / achado
+        table.AddColumn(Unit.FromCentimeter(3.2)); // Método
+        table.AddColumn(Unit.FromCentimeter(3.4)); // Resultado observado
+        table.AddColumn(Unit.FromCentimeter(2.3)); // Data da validação
+        table.AddColumn(Unit.FromCentimeter(4.5)); // Base da conclusão
+        HeaderRow(table, "Ação", "Método de validação", "Resultado no achado", "Data da validação (UTC)", "Base da conclusão");
+
+        var zebra = false;
+        foreach (var a in validated
+            .OrderBy(a => a.IndicatorId, StringComparer.Ordinal).ThenBy(a => a.Title, StringComparer.Ordinal))
+        {
+            var row = table.AddRow();
+            if (zebra) ShadeRow(row);
+            zebra = !zebra;
+
+            var cell = row.Cells[0];
+            var tp = cell.AddParagraph(a.Title);
+            tp.Format.Font.Bold = true;
+            tp.Format.Font.Size = 7.8;
+            var idp = cell.AddParagraph("achado " + a.IndicatorId);
+            idp.Format.Font.Size = 6.5;
+            idp.Format.Font.Color = Muted;
+
+            Cell(row, 1, a.ValidationMethod is { } m ? RemediationReading.MethodLabel(m) : "—");
+
+            var outcomeText = a.ValidationOutcome is { } o ? RemediationReading.OutcomeLabel(o) : "—";
+            var quantidade = a.ObservedBefore is { } b && a.ObservedAfter is { } af
+                ? $" ({b} para {af} afetado(s))"
+                : "";
+            Cell(row, 2, outcomeText + quantidade,
+                color: a.ValidationOutcome == ActionPlanValidationOutcome.ExposureCleared ? new Color(20, 100, 60) : (Color?)null);
+
+            Cell(row, 3, Stamp(a.ValidatedAt));
+
+            // A BASE é o que separa "estes objetos foram corrigidos" de "a quantidade caiu": só a comparação
+            // dos conjuntos preservados sustenta a primeira afirmação.
+            var basePar = row.Cells[4];
+            var bp = basePar.AddParagraph(a.ComparedBySets
+                ? "Comparação dos conjuntos preservados nas duas coletas."
+                : "Comparação de QUANTIDADE (os conjuntos não estavam preservados nos dois lados) — não identifica quais objetos foram corrigidos.");
+            bp.Format.Font.Size = 7;
+            if (!string.IsNullOrWhiteSpace(a.ValidationRationale))
+            {
+                var rp = basePar.AddParagraph(a.ValidationRationale!);
+                rp.Format.Font.Size = 6.5;
+                rp.Format.Font.Color = Muted;
+            }
+        }
+
+        Body(section,
+            "Este relatório não apresenta tendência entre avaliações: uma comparação só é válida entre coletas " +
+            "da mesma fonte, com as mesmas regras e em ordem temporal — e essa verificação é feita por ação, na " +
+            "coluna acima, não por uma linha de evolução do score.", muted: true);
+    }
+
+    /// <summary>Apêndice TÉCNICO: critérios, versões e o detalhe indicador a indicador.</summary>
+    private static void AddKnightAppendix(Section section, PostureSnapshot s)
+    {
+        Heading(section, "Apêndice técnico — critérios e referências");
+
+        var criteria = section.AddParagraph();
+        criteria.Format.Font.Size = 8;
+        criteria.Format.SpaceAfter = Unit.FromMillimeter(2);
+        criteria.AddFormattedText("Critérios: ", TextFormat.Bold);
+        criteria.AddText(
+            "vereditos determinísticos por regras do catálogo, sem decisão por inteligência artificial. " +
+            "Um indicador não avaliado reduz a cobertura e nunca é convertido em conforme. A quantidade afetada " +
+            "é a contagem da regra, deduplicada pelo identificador do objeto na fonte. " +
+            $"Catálogo {s.CatalogVersion} · fórmula {s.FormulaVersion} · schema {s.SchemaVersion} · " +
+            $"família semântica {s.SemanticFamily}.");
+
         var status = section.AddParagraph();
-        status.Format.Font.Size = 9;
+        status.Format.Font.Size = 8.5;
         status.AddFormattedText("Por estado:  ", TextFormat.Bold);
         status.AddText(CountsLine(s));
 
         var sev = section.AddParagraph();
-        sev.Format.Font.Size = 9;
+        sev.Format.Font.Size = 8.5;
         sev.Format.SpaceAfter = Unit.FromMillimeter(2);
         sev.AddFormattedText("Por severidade:  ", TextFormat.Bold);
         sev.AddText(SeverityLine(s.Indicators));
@@ -443,6 +677,61 @@ public static class PostureSnapshotPdfWriter
         footer.AddPageField();
         footer.AddText(" de ");
         footer.AddNumPagesField();
+    }
+
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-03] As LIMITAÇÕES congeladas da coleta, logo depois do resumo executivo. Uma coleta
+    /// íntegra produz lista vazia e a seção diz isso — silêncio seria lido como "viu tudo".
+    /// </summary>
+    private static void AddLimitations(Section section, PostureSnapshot s)
+    {
+        var p = section.AddParagraph();
+        p.Format.Font.Size = 8.5;
+        p.Format.SpaceAfter = Unit.FromMillimeter(3);
+        p.AddFormattedText("Limitações da coleta:  ", TextFormat.Bold);
+
+        if (s.CollectionLimitations.Count == 0)
+        {
+            p.AddText(
+                "nenhuma limitação declarada por esta coleta. Cobertura abaixo de 100% continua significando " +
+                "indicadores sem veredito, e esses não são conformidade.");
+            return;
+        }
+
+        p.AddText(
+            $"{s.CollectionLimitations.Count} capacidade(s) da fonte não foram coletadas nesta avaliação. " +
+            "Os indicadores que dependem delas ficam sem veredito — o que reduz a cobertura e NÃO significa conformidade:");
+
+        foreach (var l in s.CollectionLimitations)
+        {
+            var li = section.AddParagraph("•  " + l);
+            li.Format.Font.Size = 8;
+            li.Format.Font.Color = Muted;
+            li.Format.LeftIndent = Unit.FromMillimeter(4);
+        }
+
+        section.AddParagraph().Format.SpaceAfter = Unit.FromMillimeter(2);
+    }
+
+    /// <summary>Parágrafo de corpo do relatório — o texto de gestão, com as variações de ênfase usadas aqui.</summary>
+    private static void Body(Section section, string text, bool bold = false, bool muted = false)
+    {
+        var p = section.AddParagraph(text);
+        p.Format.Font.Size = 8.8;
+        p.Format.Font.Bold = bold;
+        if (muted) p.Format.Font.Color = Muted;
+        p.Format.SpaceAfter = Unit.FromMillimeter(1.4);
+    }
+
+    /// <summary>Instante UTC formatado, ou um travessão quando ausente — jamais uma data inventada.</summary>
+    private static string Stamp(DateTimeOffset? at) =>
+        at is { } v ? v.ToUniversalTime().ToString("dd/MM/yyyy HH:mm 'UTC'", Pt) : "—";
+
+    /// <summary>Junta pessoa e área do responsável; ausência permanece ausente, sem rótulo inventado.</summary>
+    private static string Join(string? person, string? area)
+    {
+        var parts = new[] { person, area }.Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+        return parts.Length == 0 ? "não designado" : string.Join(" · ", parts);
     }
 
     // ---- Texto pt-BR determinístico ------------------------------------------------------------------
