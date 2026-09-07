@@ -1,5 +1,6 @@
 import { DatePipe } from '@angular/common';
-import { Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, input, output, signal } from '@angular/core';
+import { Subscription } from 'rxjs';
 import {
   FindingReading,
   KnightAffectedObject,
@@ -9,8 +10,12 @@ import {
   affectedKindLabel,
   affectedLabel,
   affectedNotice,
+  affectedRequestKey,
   categoryLabel,
   findingReading,
+  findingSituation,
+  findingTitle,
+  isCurrentAffectedResponse,
   hasAffectedTable,
   isUnnamed,
   severityLabel,
@@ -42,7 +47,7 @@ import { KnightService } from '../../services/knight.service';
     <div class="panel detail">
       <div class="d-head">
         <div>
-          <h3>{{ indicator().title }}</h3>
+          <h3>{{ findingTitle(indicator()) }}</h3>
           <span class="d-meta">
             <span class="code">{{ indicator().indicatorId }}</span> ·
             {{ categoryLabel(indicator().category) }} ·
@@ -66,11 +71,10 @@ import { KnightService } from '../../services/knight.service';
 
       @if (tab() === 'resumo') {
         <div class="tabpane">
+          <p class="lead">{{ findingSituation(indicator()) }}</p>
           @if (reading(); as r) {
-            <p class="lead">{{ r.means }}</p>
+            <p class="lead soft">{{ r.means }}</p>
             <p class="caveat"><b>O que isso não significa:</b> {{ r.doesNotMean }}</p>
-          } @else {
-            <p class="lead">{{ indicator().evidence }}</p>
           }
           <div class="kv"><span class="k">Primeira ação</span><span class="v">{{ indicator().recommendation }}</span></div>
           @if (indicator().notEvaluatedReason) {
@@ -91,6 +95,25 @@ import { KnightService } from '../../services/knight.service';
               <b>{{ error() }}</b>
               <button type="button" class="btn ghost" (click)="load()">Tentar novamente</button>
             </div>
+            @if (affected(); as af) {
+              <p class="notice warn">
+                A lista abaixo e a pagina <b>carregada antes da falha</b>, com os mesmos filtros. Nao e a
+                resposta do pedido que falhou.
+              </p>
+              <div class="stale">
+                <table class="tbl">
+                  <thead><tr><th>Objeto</th><th>Tipo</th></tr></thead>
+                  <tbody>
+                    @for (o of af.items; track o.externalId) {
+                      <tr>
+                        <td class="af-id"><span class="nm">{{ affectedLabel(o) }}</span></td>
+                        <td><span class="kind" [class]="o.kind">{{ affectedKindLabel(o.kind) }}</span></td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            }
           } @else {
             @if (affected(); as af) {
               @if (notice(); as msg) {
@@ -153,7 +176,12 @@ import { KnightService } from '../../services/knight.service';
 
       @if (tab() === 'evidencia') {
         <div class="tabpane">
-          <div class="kv"><span class="k">Evidência da regra</span><span class="v">{{ indicator().evidence }}</span></div>
+          <!-- Texto LITERAL gravado na avaliacao. Não é reescrito pela camada de apresentação: um snapshot
+               antigo continua legível exatamente como foi registrado. -->
+          <div class="kv">
+            <span class="k">Texto registrado na avaliação</span>
+            <span class="v literal">{{ indicator().evidence }}</span>
+          </div>
           @if (reading(); as r) {
             <div class="kv"><span class="k">Critério</span><span class="v">{{ r.criterion }}</span></div>
           }
@@ -216,6 +244,8 @@ import { KnightService } from '../../services/knight.service';
       .tabs .n { font-size: 10px; margin-left: 6px; opacity: 0.8; }
       .tabpane { padding: 16px 2px 4px; }
       .lead { margin: 0 0 10px; font-size: 13.5px; line-height: 1.6; color: var(--text); }
+      .lead.soft, .kv .v.literal { color: var(--muted); }
+      .stale { opacity: 0.6; }
       .caveat, .notice { margin: 0 0 14px; font-size: 12.5px; line-height: 1.6; color: var(--muted); padding: 8px 12px; border-left: 2px solid var(--line); border-radius: 0 8px 8px 0; }
       .caveat, .notice.warn { border-left-color: var(--amber); background: rgba(255, 176, 32, 0.05); }
       .caveat b { color: var(--amber); }
@@ -256,6 +286,8 @@ export class KnightFindingDetailComponent {
   protected readonly affectedKindLabel = affectedKindLabel;
   protected readonly affectedLabel = affectedLabel;
   protected readonly isUnnamed = isUnnamed;
+  protected readonly findingTitle = findingTitle;
+  protected readonly findingSituation = findingSituation;
 
   readonly tab = signal<'resumo' | 'afetados' | 'evidencia'>('resumo');
   readonly affected = signal<KnightAffectedObjects | null>(null);
@@ -265,17 +297,41 @@ export class KnightFindingDetailComponent {
 
   private readonly PAGE_SIZE = 25;
 
+  /**
+   * Chave do pedido ABERTO agora (avaliação × indicador × página × busca). Uma resposta só pode escrever no
+   * estado se corresponder a esta chave — limpar signals não basta, porque a requisição anterior continua
+   * viva e chegaria depois preenchendo o contexto novo com objetos velhos.
+   */
+  private requestKey: string | null = null;
+  /** Assinatura em voo: cancelada (abortando o HTTP) sempre que o contexto ou o pedido muda. */
+  private inFlight: Subscription | null = null;
+  /** Termo da última página efetivamente carregada, para não exibi-la como resposta de outra busca. */
+  private loadedTerm: string | null = null;
+
   constructor() {
-    // Trocar de achado (ou de avaliação) DESCARTA a lista carregada: exibir a lista de um achado ao lado do
-    // veredito de outro seria a pior forma de mentir com dados verdadeiros.
+    // Trocar de achado (ou de avaliação) DESCARTA a lista carregada E CANCELA a leitura em voo: exibir a
+    // lista de um achado ao lado do veredito de outro seria a pior forma de mentir com dados verdadeiros.
     effect(() => {
       this.indicator();
       this.assessment();
+      this.cancelInFlight();
       this.tab.set('resumo');
       this.search.set('');
       this.affected.set(null);
       this.error.set(null);
+      this.loading.set(false);
+      this.loadedTerm = null;
     });
+
+    // Destruir o componente também cancela: nenhuma resposta chega a um detalhe que já não existe.
+    inject(DestroyRef).onDestroy(() => this.cancelInFlight());
+  }
+
+  /** Aborta a leitura em voo e invalida sua chave — o que chegar depois disso é descartado. */
+  private cancelInFlight(): void {
+    this.inFlight?.unsubscribe();
+    this.inFlight = null;
+    this.requestKey = null;
   }
 
   readonly reading = computed<FindingReading | null>(() => findingReading(this.indicator().indicatorId));
@@ -303,21 +359,40 @@ export class KnightFindingDetailComponent {
 
   /** Busca a página do achado aberto, sempre vinculada à avaliação exibida. Leitura pura: não coleta nada. */
   load(page = 1): void {
+    const runId = this.assessment().id;
+    const indicatorId = this.indicator().indicatorId;
+    const term = this.search();
+    const key = affectedRequestKey(runId, indicatorId, page, term);
+
+    // Um pedido novo invalida o anterior antes de começar — inclusive quando só a busca mudou.
+    this.cancelInFlight();
+    this.requestKey = key;
+
+    // A página exibida deixa de valer se a BUSCA mudou: resultado da busca anterior não é resposta da nova.
+    if (this.loadedTerm !== null && this.loadedTerm !== term.trim()) {
+      this.affected.set(null);
+      this.loadedTerm = null;
+    }
+
     this.loading.set(true);
     this.error.set(null);
-    this.knight
-      .getAffected(this.assessment().id, this.indicator().indicatorId, page, this.PAGE_SIZE, this.search())
-      .subscribe({
-        next: (p) => {
-          this.affected.set(p);
-          this.loading.set(false);
-        },
-        error: (e: Error) => {
-          // Preserva a página anterior: erro de rede não pode virar "nenhum afetado".
-          this.error.set(e.message);
-          this.loading.set(false);
-        },
-      });
+    this.inFlight = this.knight.getAffected(runId, indicatorId, page, this.PAGE_SIZE, term).subscribe({
+      next: (p) => {
+        if (!isCurrentAffectedResponse(this.requestKey ?? '', key)) return;
+        this.affected.set(p);
+        this.loadedTerm = term.trim();
+        this.loading.set(false);
+        this.inFlight = null;
+      },
+      error: (e: Error) => {
+        if (!isCurrentAffectedResponse(this.requestKey ?? '', key)) return;
+        // Preserva a página anterior — quando ela é do MESMO contexto e dos mesmos filtros, e identificada
+        // como tal na tela. Erro de rede não pode virar "nenhum afetado".
+        this.error.set(e.message);
+        this.loading.set(false);
+        this.inFlight = null;
+      },
+    });
   }
 
   /** Reexportado para o template — o objeto afetado é sempre lido pelo modelo, nunca formatado ad hoc. */

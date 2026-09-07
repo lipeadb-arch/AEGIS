@@ -464,3 +464,92 @@ const FINDING_READING: Record<string, FindingReading> = {
 export function findingReading(indicatorId: string): FindingReading | null {
   return FINDING_READING[indicatorId] ?? null;
 }
+
+/* ============================================================================================
+ * [AEGIS-MVP-PRODUCT-02] Camada de APRESENTAÇÃO dos achados — compartilhada por KNIGHT e Prioridades.
+ *
+ * Motivo: o texto literal do catálogo diz "sem MFA efetivo", mas a fonte observa REGISTRO/capacidade de
+ * método — a ressalva escondida na aba de evidência não conserta um título que afirma mais forte do que a
+ * coleta prova. As funções abaixo são o ÚNICO lugar onde esse texto é escrito, para que a lista do KNIGHT e
+ * a Central de Prioridades nunca digam coisas diferentes sobre o mesmo achado.
+ *
+ * O que elas NÃO fazem: não recalculam veredito, não reordenam, não tocam fórmula nem score, e não
+ * reescrevem o texto gravado na avaliação — este continua visível, literal e identificado como tal, na aba
+ * de evidência. São derivadas apenas de campos estruturados (`status`, `affectedObjectCount`), jamais de
+ * parsing do texto histórico.
+ * ============================================================================================ */
+
+/** O mínimo que uma superfície precisa expor para ser apresentada — satisfeito por KnightIndicator e por PriorityKnightFinding. */
+export interface FindingLike {
+  indicatorId: string;
+  title: string;
+  status: KnightIndicatorStatus;
+  affectedObjectCount: number;
+  evidence: string;
+}
+
+/** Títulos claros para os achados com detalhe preservado; os demais mantêm o título do catálogo. */
+const FINDING_TITLE: Record<string, string> = {
+  'AK-ENTRA-001': 'Contas privilegiadas sem método de MFA registrado no diretório',
+  'AK-ENTRA-002': 'Objetos privilegiados sujeitos a revisão de acesso',
+  'AK-ENTRA-004': 'Convidados sinalizados por atividade desconhecida',
+};
+
+/** Título do achado na lista e na Central. Um achado sem título revisado mantém o do catálogo, sem invenção. */
+export function findingTitle(f: FindingLike): string {
+  return FINDING_TITLE[f.indicatorId] ?? f.title;
+}
+
+/**
+ * A SITUAÇÃO em uma linha, no limite do que a coleta provou. Quando não há redação revisada para o achado,
+ * devolve a evidência gravada — nunca uma frase inventada.
+ */
+export function findingSituation(f: FindingLike): string {
+  const n = f.affectedObjectCount;
+  const exposto = f.status === 'Exposed' || f.status === 'Mitigated';
+
+  switch (f.indicatorId) {
+    case 'AK-ENTRA-001':
+      return exposto
+        ? `${n} conta(s) privilegiada(s) sem nenhum método capaz de MFA no relatório de registro do ` +
+          'diretório. Registro não comprova imposição por política.'
+        : 'Nenhuma conta privilegiada aparece sem método capaz de MFA no relatório de registro. Isso não ' +
+          'comprova imposição por política.';
+    case 'AK-ENTRA-002':
+      return exposto
+        ? `${n} objeto(s) com papel privilegiado — acima do teto de menor privilégio parametrizado no ` +
+          'AEGIS. É o conjunto sujeito a revisão, não uma lista de acessos desnecessários.'
+        : 'Os objetos com papel privilegiado estão dentro do teto de menor privilégio parametrizado no ' +
+          'AEGIS. O teto é parâmetro do AEGIS, não um número exigido pelo NIST.';
+    case 'AK-ENTRA-004':
+      return exposto
+        ? `${n} convidado(s) sem sinal de acesso dentro da janela da regra. Atividade desconhecida não ` +
+          'comprova desuso — o detalhe de cada linha diz qual é o caso.'
+        : 'Nenhum convidado ficou sem sinal de acesso dentro da janela da regra.';
+    default:
+      return f.evidence;
+  }
+}
+
+/* ============================================================================================
+ * [AEGIS-MVP-PRODUCT-02] Guarda de CONTEXTO das leituras de afetados.
+ *
+ * O detalhe carrega por avaliação × indicador × página × busca. Uma resposta lenta de um contexto anterior
+ * não pode preencher o contexto atual: seria apresentar objetos de um achado (ou de uma busca) como resposta
+ * de outro. A chave abaixo identifica o pedido; a comparação decide quem pode escrever no estado.
+ * ============================================================================================ */
+
+/** Identidade de UM pedido de afetados. Busca vazia e ausente são o mesmo pedido. */
+export function affectedRequestKey(
+  runId: string,
+  indicatorId: string,
+  page: number,
+  search: string | null,
+): string {
+  return [runId, indicatorId, String(page), (search ?? '').trim()].join('|');
+}
+
+/** `true` somente quando a resposta pertence ao pedido que está aberto agora. */
+export function isCurrentAffectedResponse(current: string, responded: string): boolean {
+  return current === responded;
+}

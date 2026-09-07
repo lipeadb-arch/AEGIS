@@ -4,7 +4,13 @@ import { AgentStateService } from '../services/agent-state.service';
 import { PriorityService } from '../services/priority.service';
 import { PriorityWorkspace } from '../models/priority.models';
 import { postureLabel } from '../models/workspace.models';
-import { scoreDisplay, severityLabel, statusLabel } from '../models/knight.models';
+import {
+  findingSituation,
+  findingTitle,
+  scoreDisplay,
+  severityLabel,
+  statusLabel,
+} from '../models/knight.models';
 import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-exposure.models';
 
 /**
@@ -262,7 +268,9 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-ex
                 sustentam o resultado.
               </p>
             </div>
-            <a class="linknav" routerLink="/identity">Ver avaliação →</a>
+            <a class="linknav" [routerLink]="['/identity']" [queryParams]="{ run: knight()!.runId }">
+              Ver avaliação →
+            </a>
           </div>
           <div class="panel">
             @if (!knight()!.runId) {
@@ -319,18 +327,26 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-ex
                     @for (f of knight()!.top; track f.indicatorId) {
                       <tr class="row">
                         <td>
-                          <a class="title link" [routerLink]="['/identity']" [queryParams]="{ finding: f.indicatorId }">
-                            {{ f.title }}
+                          <!-- [AEGIS-MVP-PRODUCT-02] O parametro run viaja junto: sem ele, o clique abriria o mesmo
+                               indicador da avaliação MAIS RECENTE, que pode não ser a que produziu esta linha. -->
+                          <a
+                            class="title link"
+                            [routerLink]="['/identity']"
+                            [queryParams]="{ finding: f.indicatorId, run: knight()!.runId }">
+                            {{ findingTitle(f) }}
                           </a>
                           <span class="meta mono">{{ f.indicatorId }}</span>
-                          <span class="rem">{{ f.evidence }}</span>
+                          <span class="rem">{{ findingSituation(f) }}</span>
                         </td>
                         <td class="c-tier"><span class="badge sev" [class]="f.severity">{{ sev(f.severity) }}</span></td>
                         <td class="c-state"><span class="badge">{{ st(f.status) }}</span></td>
                         <td class="c-cvss">
                           <strong>{{ f.affectedObjectCount }}</strong>
                           @if (f.hasAffectedDetail) {
-                            <a class="meta link" [routerLink]="['/identity']" [queryParams]="{ finding: f.indicatorId }">
+                            <a
+                              class="meta link"
+                              [routerLink]="['/identity']"
+                              [queryParams]="{ finding: f.indicatorId, run: knight()!.runId }">
                               ver afetados
                             </a>
                           } @else {
@@ -458,6 +474,10 @@ export class PrioritiesComponent {
    * combinado com postura ou vulnerabilidades.
    */
   protected readonly knight = computed(() => this.data()?.identityFindings ?? null);
+  // Mesma camada de apresentação da tela do KNIGHT: as duas superfícies não podem chamar o mesmo achado por
+  // nomes diferentes, nem uma afirmar mais forte do que a outra sobre a mesma coleta.
+  protected readonly findingTitle = findingTitle;
+  protected readonly findingSituation = findingSituation;
 
   /** Score do KNIGHT para exibição: "—" quando null (sem avaliação), nunca "0". */
   protected readonly knightScore = computed(() => scoreDisplay(this.knight()?.score ?? null));

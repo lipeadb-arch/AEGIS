@@ -13,6 +13,8 @@ import {
   categoryLabel,
   connectionBadgeLabel,
   connectionStateOf,
+  findingSituation,
+  findingTitle,
   isProblemState,
   problemCapabilities,
   severityLabel,
@@ -90,6 +92,22 @@ import { KnightService } from '../services/knight.service';
         }
 
         @if (assessment(); as a) {
+          @if (pinnedRun()) {
+            <div class="banner pinned">
+              <span>
+                Avaliação <b>aberta por link</b> e fixada no endereço — pode não ser a mais recente. Os
+                achados e os afetados abaixo pertencem a <b>esta</b> coleta.
+              </span>
+              <button type="button" class="btn ghost" (click)="openLatest()">Ver a mais recente</button>
+            </div>
+          }
+          @if (findingNotice(); as fmsg) {
+            <div class="banner err">
+              <span>{{ fmsg }}</span>
+              <button type="button" class="btn ghost" (click)="clearFindingNotice()">Fechar</button>
+            </div>
+          }
+
           <!-- Linha de fonte + estado da coleta: distingue Demo de coleta real, sempre. -->
           <div class="source-line" [class.problem]="isProblemState(a.sourceState)">
             <span class="src-tag" [class.demo]="a.isDemo">{{ sourceTypeLabel(a.sourceType) }}</span>
@@ -171,7 +189,8 @@ import { KnightService } from '../services/knight.service';
                       (click)="selectFinding(ind.indicatorId)"
                       [attr.aria-expanded]="selected() === ind.indicatorId">
                       <span class="f-title">
-                        <span class="tt">{{ ind.title }}</span>
+                        <span class="tt">{{ findingTitle(ind) }}</span>
+                        <span class="sit">{{ findingSituation(ind) }}</span>
                         <span class="code">{{ ind.indicatorId }}</span>
                       </span>
                       <span class="f-tags">
@@ -197,6 +216,8 @@ import { KnightService } from '../services/knight.service';
             <app-knight-finding-detail [assessment]="a" [indicator]="ind" (closed)="closeFinding()" />
           }
 
+          <!-- [AEGIS-MVP-PRODUCT-02] O painel abaixo lê o snapshot ATUAL da Evidence Fabric e diz isso por
+               conta própria — ele NÃO pertence à avaliação aberta acima. -->
           <app-identity-risk-panel [projection]="riskProjection()" />
 
           <div class="panel ai">
@@ -239,6 +260,20 @@ import { KnightService } from '../services/knight.service';
             }
           </div>
         } @else {
+          @if (linkNotice(); as msg) {
+            <!-- [AEGIS-MVP-PRODUCT-02] O endereço indicava uma avaliação específica que NÃO pôde ser aberta.
+                 Cair para a última seria o pior desfecho: o link diria uma coisa e a tela mostraria outra. -->
+            <div class="panel state err">
+              <b>{{ msg }}</b>
+              <span>
+                O AEGIS não substitui a avaliação pedida pela mais recente — os resultados são de coletas
+                diferentes e não se substituem.
+              </span>
+              <button type="button" class="btn ghost" (click)="openLatest()">
+                Abrir a avaliação mais recente
+              </button>
+            </div>
+          } @else {
           <div class="panel state empty">
             <b>Nenhuma avaliação executada ainda.</b>
             <span>
@@ -270,6 +305,7 @@ import { KnightService } from '../services/knight.service';
               }
             </div>
           </div>
+          }
         }
       }
     </section>
@@ -296,6 +332,7 @@ import { KnightService } from '../services/knight.service';
 
       .source-line { font-family: var(--mono); font-size: 11.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
       .source-line b { color: var(--text); }
+      .banner.pinned b { color: var(--cyan); }
       .source-line.problem b { color: var(--amber); }
       .src-tag { font-weight: 700; letter-spacing: 0.06em; color: var(--cyan); border: 1px solid rgba(38, 224, 255, 0.4); border-radius: 6px; padding: 2px 8px; }
       .src-tag.demo { color: var(--amber); border-color: rgba(255, 176, 32, 0.4); }
@@ -364,9 +401,9 @@ import { KnightService } from '../services/knight.service';
 
       .state { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
       .state b { color: var(--text); font-size: 14px; }
-      .state span { font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.5; }
+      .state span, .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); line-height: 1.5; }
       .empty-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
-      .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: 0.08em; animation: pulse 1.4s ease-in-out infinite; }
+      .pulse { letter-spacing: 0.08em; animation: pulse 1.4s ease-in-out infinite; }
       .state.err { border-color: rgba(255, 45, 111, 0.4); } .state.err b { color: #ffe3ee; }
       @keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
       @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
@@ -377,6 +414,8 @@ import { KnightService } from '../services/knight.service';
       .finding.open { border-color: var(--cyan); background: rgba(38, 224, 255, 0.06); }
       .finding .f-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
       .finding .tt { font-size: 13.5px; }
+      .finding .sit { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+      .banner.pinned { border: 1px solid rgba(38, 224, 255, 0.4); color: var(--text); }
       .finding .f-tags { display: flex; gap: 8px; align-items: center; }
       .finding .f-affected { display: flex; flex-direction: column; align-items: flex-end; min-width: 76px; }
       .finding .f-affected b { font-family: var(--mono); font-size: 16px; }
@@ -413,6 +452,8 @@ export class AegisKnightComponent implements OnInit {
   protected readonly capabilityOutcomeLabel = capabilityOutcomeLabel;
   protected readonly capabilityLabel = capabilityLabel;
   protected readonly isProblemState = isProblemState;
+  protected readonly findingTitle = findingTitle;
+  protected readonly findingSituation = findingSituation;
 
   readonly badgeState = computed(() => connectionStateOf(this.assessment()));
   readonly badgeLabel = computed(() => connectionBadgeLabel(this.badgeState()));
@@ -456,6 +497,17 @@ export class AegisKnightComponent implements OnInit {
 
   readonly selected = signal<string | null>(null);
 
+  /**
+   * Avaliação FIXADA pelo endereço (`?run=`). Quando presente, a tela carrega exatamente essa avaliação — a
+   * Central de Prioridades aponta para um resultado específico, e abrir outro com o mesmo link seria
+   * apresentar a coleta de hoje como prova do resultado de ontem.
+   */
+  readonly pinnedRun = signal<string | null>(null);
+  /** Estado explícito de um link que não pôde ser honrado (avaliação inexistente ou inacessível). */
+  readonly linkNotice = signal<string | null>(null);
+  /** Estado explícito de um achado pedido pelo link que não existe na avaliação carregada. */
+  readonly findingNotice = signal<string | null>(null);
+
   readonly selectedIndicator = computed<KnightIndicator | null>(() => {
     const id = this.selected();
     if (!id) return null;
@@ -477,14 +529,32 @@ export class AegisKnightComponent implements OnInit {
     this.syncQueryParam(null);
   }
 
-  /** Mantém o achado aberto no endereço — é assim que a Central de Prioridades aponta para cá. */
+  /**
+   * Mantém achado E avaliação no endereço — é assim que a Central de Prioridades aponta para cá. O `run`
+   * viaja junto para que recarregar, compartilhar ou voltar traga exatamente o mesmo resultado.
+   */
   private syncQueryParam(indicatorId: string | null): void {
     void this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { finding: indicatorId },
+      queryParams: { finding: indicatorId, run: this.pinnedRun() },
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
+  }
+
+  /** Solta a fixação e volta à navegação sem avaliação indicada (aí sim, a mais recente). */
+  openLatest(): void {
+    this.pinnedRun.set(null);
+    this.linkNotice.set(null);
+    this.findingNotice.set(null);
+    this.selected.set(null);
+    void this.router
+      .navigate([], { relativeTo: this.route, queryParams: { finding: null, run: null }, replaceUrl: true })
+      .then(() => this.reload());
+  }
+
+  clearFindingNotice(): void {
+    this.findingNotice.set(null);
   }
 
   ngOnInit(): void {
@@ -492,23 +562,40 @@ export class AegisKnightComponent implements OnInit {
     this.reload();
   }
 
-  /** Recarrega fontes + último assessment (read-only). */
+  /**
+   * Recarrega fontes + a avaliação a exibir (read-only). Com `?run=` no endereço, carrega EXATAMENTE aquela
+   * avaliação; sem ele, a mais recente. Uma avaliação indicada e indisponível produz estado explícito — cair
+   * para a mais recente deixaria a URL apontando para uma coleta e a tela mostrando outra.
+   */
   reload(): void {
+    const requested = this.route.snapshot.queryParamMap.get('run');
+    this.pinnedRun.set(requested);
+    this.linkNotice.set(null);
+    this.findingNotice.set(null);
+
     this.loading.set(true);
     this.error.set(null);
     this.knight.getSources().subscribe({
       next: (s) => this.sources.set(s),
       error: () => this.sources.set(null), // fontes é secundário; não bloqueia a tela
     });
-    this.knight.getLatest().subscribe({
+
+    const wanted$ = requested ? this.knight.getById(requested) : this.knight.getLatest();
+    wanted$.subscribe({
       next: (a) => {
         this.assessment.set(a);
         this.loading.set(false);
         this.applyDeepLink(a);
       },
       error: (e: Error) => {
-        this.error.set(e.message);
         this.loading.set(false);
+        if (requested) {
+          this.assessment.set(null);
+          this.selected.set(null);
+          this.linkNotice.set('A avaliação indicada no endereço não está disponível para este tenant.');
+          return;
+        }
+        this.error.set(e.message);
       },
     });
     this.reloadRisk();
@@ -534,7 +621,16 @@ export class AegisKnightComponent implements OnInit {
    */
   private applyDeepLink(a: KnightAssessment | null): void {
     const wanted = this.route.snapshot.queryParamMap.get('finding');
-    if (!wanted || !a?.indicators.some((i) => i.indicatorId === wanted)) return;
+    if (!wanted) return;
+    if (!a?.indicators.some((i) => i.indicatorId === wanted)) {
+      // Silenciar aqui seria abrir a tela como se o link não existisse. O achado pedido pode não ter sido
+      // avaliado nesta coleta — a tela diz isso, em vez de abrir outro achado ou nenhum.
+      this.selected.set(null);
+      this.findingNotice.set(
+        `O achado ${wanted} não faz parte desta avaliação. Ele pode não ter sido avaliado nesta coleta.`,
+      );
+      return;
+    }
     this.selected.set(wanted);
   }
 
@@ -559,9 +655,16 @@ export class AegisKnightComponent implements OnInit {
       next: (a) => {
         this.assessment.set(a);
         this.running.set(false);
-        // O achado aberto pode não existir na avaliação nova; o detalhe em si se descarta sozinho, porque
-        // está vinculado à avaliação exibida.
-        if (this.selected() && !a.indicators.some((i) => i.indicatorId === this.selected())) this.closeFinding();
+        this.linkNotice.set(null);
+        this.findingNotice.set(null);
+        // A tela passou a mostrar OUTRA avaliação: o endereço muda junto, explicitamente. Deixar `?run=`
+        // apontando para a coleta anterior enquanto a tela mostra a nova é exatamente a divergência que
+        // esta correção existe para impedir. O achado aberto só sobrevive se existir na avaliação nova.
+        this.pinnedRun.set(a.id);
+        const aberto = this.selected();
+        const mantem = aberto && a.indicators.some((i) => i.indicatorId === aberto) ? aberto : null;
+        this.selected.set(mantem);
+        this.syncQueryParam(mantem);
         // A coleta acabou de reescrever o snapshot compartilhado — relê a MESMA fotografia (sem novo Graph).
         this.reloadRisk();
       },

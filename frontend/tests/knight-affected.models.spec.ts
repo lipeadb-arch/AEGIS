@@ -17,7 +17,11 @@ import {
   affectedKindLabel,
   affectedLabel,
   affectedNotice,
+  affectedRequestKey,
   findingReading,
+  findingSituation,
+  findingTitle,
+  isCurrentAffectedResponse,
   hasAffectedTable,
   isUnnamed,
   totalPages,
@@ -167,6 +171,87 @@ test('atividade desconhecida não comprova inatividade', () => {
 
 test('achado sem leitura específica não recebe interpretação inventada', () => {
   eq(findingReading('AK-ENTRA-003'), null, 'sem leitura própria, a tela mostra só a evidência do backend');
+});
+
+// ================================================================================================
+// [AEGIS-MVP-PRODUCT-02 · correção dirigida] Linguagem PRINCIPAL compartilhada entre KNIGHT e Prioridades.
+// A ressalva escondida no detalhe não conserta um título que afirma mais forte do que a coleta prova.
+// ================================================================================================
+
+const achado = (indicatorId: string, status: string, n: number, evidence: string) =>
+  ({ indicatorId, title: 'titulo do catalogo', status, affectedObjectCount: n, evidence }) as never;
+
+test('o título principal não afirma "MFA efetivo" — a fonte observa registro/capacidade', () => {
+  const f = achado('AK-ENTRA-001', 'Exposed', 3, '3 de 12 conta(s) privilegiada(s) sem MFA efetivo.');
+  ok(!/MFA efetivo/i.test(findingTitle(f)), `título ainda afirma imposição: "${findingTitle(f)}"`);
+  ok(/registrado/i.test(findingTitle(f)), 'o título precisa falar de REGISTRO de método');
+  ok(!/MFA efetivo/i.test(findingSituation(f)), 'a situação também não pode afirmar imposição');
+  ok(/não comprova imposição/i.test(findingSituation(f)), 'a ressalva vem junto da afirmação, não escondida');
+});
+
+test('privilegiados são conjunto sujeito a revisão, não acusação de acesso desnecessário', () => {
+  const f = achado('AK-ENTRA-002', 'Exposed', 78, '78 contas privilegiadas excedem o teto...');
+  ok(/revisão/i.test(findingTitle(f)), `título deve falar em revisão: "${findingTitle(f)}"`);
+  ok(/não uma lista de acessos desnecess/i.test(findingSituation(f)),
+    `a única menção a acesso desnecessário é para NEGAR a leitura: "${findingSituation(f)}"`);
+  ok(/AEGIS/i.test(findingSituation(f)), 'o teto precisa aparecer como parâmetro do AEGIS');
+});
+
+test('o teto de menor privilégio não é apresentado como exigência do NIST', () => {
+  const f = achado('AK-ENTRA-002', 'Passed', 0, 'dentro do teto');
+  ok(/parâmetro do AEGIS|parametrizado no\s+AEGIS/i.test(findingSituation(f)),
+    `o parâmetro é do AEGIS: "${findingSituation(f)}"`);
+});
+
+test('convidados são sinalizados por atividade desconhecida, não por inatividade comprovada', () => {
+  const f = achado('AK-ENTRA-004', 'Exposed', 5, '5 convidado(s) inativo(s) há mais de 90 dias...');
+  ok(/desconhecida/i.test(findingTitle(f)), `título: "${findingTitle(f)}"`);
+  ok(/não\s+comprova desuso/i.test(findingSituation(f)), `situação: "${findingSituation(f)}"`);
+});
+
+test('achado sem redação revisada mantém título e evidência do backend, sem invenção', () => {
+  const f = achado('AK-ENTRA-003', 'Exposed', 2, 'texto literal gravado na avaliação');
+  eq(findingTitle(f), 'titulo do catalogo', 'sem redação própria, o título do catálogo é preservado');
+  eq(findingSituation(f), 'texto literal gravado na avaliação', 'a evidência gravada é usada literalmente');
+});
+
+// ================================================================================================
+// [AEGIS-MVP-PRODUCT-02 · correção dirigida] Guarda de contexto das leituras de afetados: uma resposta
+// atrasada de A não pode preencher B.
+// ================================================================================================
+
+const A = 'run-a';
+const B = 'run-b';
+
+test('resposta atrasada da avaliação A não pertence ao contexto da avaliação B', () => {
+  const pedidoA = affectedRequestKey(A, 'AK-ENTRA-002', 1, null);
+  const pedidoB = affectedRequestKey(B, 'AK-ENTRA-002', 1, null);
+  ok(!isCurrentAffectedResponse(pedidoB, pedidoA),
+    'a lista de A jamais pode escrever no detalhe aberto em B');
+  ok(isCurrentAffectedResponse(pedidoB, pedidoB), 'a resposta do próprio pedido é aceita');
+});
+
+test('trocar de indicador na mesma avaliação também invalida a resposta anterior', () => {
+  const antes = affectedRequestKey(A, 'AK-ENTRA-002', 1, null);
+  const agora = affectedRequestKey(A, 'AK-ENTRA-004', 1, null);
+  ok(!isCurrentAffectedResponse(agora, antes), 'objetos de um achado não sustentam o veredito de outro');
+});
+
+test('resposta da busca anterior não é resposta da busca nova', () => {
+  const antes = affectedRequestKey(A, 'AK-ENTRA-002', 1, 'ana');
+  const agora = affectedRequestKey(A, 'AK-ENTRA-002', 1, 'bruno');
+  ok(!isCurrentAffectedResponse(agora, antes), 'o resultado de "ana" não pode aparecer como resposta de "bruno"');
+});
+
+test('trocar de página invalida a resposta da página anterior', () => {
+  const p1 = affectedRequestKey(A, 'AK-ENTRA-002', 1, null);
+  const p2 = affectedRequestKey(A, 'AK-ENTRA-002', 2, null);
+  ok(!isCurrentAffectedResponse(p2, p1), 'página 1 não é resposta do pedido da página 2');
+});
+
+test('busca ausente e busca em branco são o MESMO pedido', () => {
+  eq(affectedRequestKey(A, 'AK-ENTRA-002', 1, null), affectedRequestKey(A, 'AK-ENTRA-002', 1, '   '),
+    'espaço em branco não cria um contexto diferente');
 });
 
 console.log(`\n${count - failures}/${count} testes passaram (knight-affected.models).`);

@@ -292,6 +292,46 @@ public sealed class DashboardOverviewQueryTests : IDisposable
                 IdentityControlEvidenceState.CollectedButInsufficient, "Telemetria presente, evidência insuficiente."),
         });
 
+    // ================================================================================================
+    // [AEGIS-MVP-PRODUCT-02] Serialização do estado de dimensão, com as opções REAIS da API.
+    //
+    // Program.cs chama AddControllers() sem configurar JSON, então o MVC serializa com
+    // JsonSerializerDefaults.Web e SEM conversor global de enums. Foi exatamente esse detalhe que fez o
+    // estado viajar como ORDINAL no Dia 1, enquanto o frontend compara com o NOME. Reproduzir aqui as mesmas
+    // opções — sem subir pipeline HTTP nenhum — é o que impede a regressão voltar em silêncio.
+    // ================================================================================================
+
+    /// <summary>As opções que o MVC usa quando AddControllers() não recebe configuração de JSON.</summary>
+    private static readonly System.Text.Json.JsonSerializerOptions ApiJson =
+        new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    [Theory]
+    [InlineData(DashboardSignalState.NoSource, "NoSource")]
+    [InlineData(DashboardSignalState.NeverCollected, "NeverCollected")]
+    [InlineData(DashboardSignalState.Partial, "Partial")]
+    [InlineData(DashboardSignalState.Available, "Available")]
+    [InlineData(DashboardSignalState.Undetermined, "Undetermined")]
+    public void EstadoDaDimensao_ViajaComoNome_NasOpcoesReaisDaApi(DashboardSignalState state, string esperado)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(state, ApiJson);
+
+        json.Should().Be($"\"{esperado}\"",
+            "o frontend compara com o NOME do estado; um ordinal cai no ramo padrão e mostra 'sem fonte' " +
+            "para toda métrica — foi o defeito do Dia 1");
+    }
+
+    [Fact]
+    public void MetricaDaTelaInicial_SerializadaPelaApi_TrazEstadoTextual()
+    {
+        var metric = new DashboardMetricDto(DashboardSignalState.Available, 42, "fonte");
+
+        var json = System.Text.Json.JsonSerializer.Serialize(metric, ApiJson);
+
+        json.Should().Contain("\"state\":\"Available\"",
+            "o campo precisa sair textual dentro do DTO composto, não só quando o enum é serializado sozinho");
+        json.Should().NotContain("\"state\":3", "ordinal é justamente o que a tela não sabe ler");
+    }
+
     private sealed class FakePosture : IWorkspacePostureQuery
     {
         private readonly ConnectorHealthSummaryDto _connectors;

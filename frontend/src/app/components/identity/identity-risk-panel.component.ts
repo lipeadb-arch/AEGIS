@@ -40,8 +40,14 @@ import {
   <section class="panel risk" aria-labelledby="identity-risk-title">
     <div class="hd">
       <h3 id="identity-risk-title">Risco de identidade</h3>
-      <span class="hint">Microsoft Entra ID Protection · consultivo</span>
+      <span class="hint">Microsoft Entra ID Protection · consultivo · leitura ATUAL do snapshot</span>
     </div>
+
+    <!-- [AEGIS-MVP-PRODUCT-02] Fronteira explícita: esta seção é a fotografia de HOJE, não a avaliação
+         histórica que a tela possa ter aberto acima. Ler uma como prova da outra é o erro que isto evita. -->
+    <p class="now-line">
+      Leitura <b>ATUAL</b> do snapshot de identidade — não pertence a nenhuma avaliação KNIGHT aberta acima.
+    </p>
 
     <p class="risk-lead">{{ message() }}</p>
 
@@ -164,6 +170,8 @@ import {
 :host { display: block; margin-top: 16px; }
 .panel { border: 1px solid var(--line); border-radius: 14px; background: rgba(122, 145, 190, 0.03); padding: 18px; }
 .hd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.now-line { font-family: var(--mono); font-size: 11px; color: var(--muted); margin: 0 0 10px; }
+.now-line b { color: var(--cyan); }
 .hd h3 { margin: 0; font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--text); }
 .hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 p { margin: 0 0 4px; font-family: var(--mono); font-size: 11px; line-height: 1.55; color: var(--muted); }
