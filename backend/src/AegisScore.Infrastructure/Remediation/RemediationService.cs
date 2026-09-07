@@ -452,7 +452,6 @@ public sealed class RemediationService : IRemediationService
         // a única que o produto não conseguiria sustentar pelos conjuntos.
         var emptySetIsComplete = indicator is { AffectedObjectCount: 0 }
             && KnightAffectedObjectScope.IsInScope(indicatorId)
-            && indicator is not null
             && KnightIndicatorEvidence.IsConclusiveVerdict(indicator.Status);
 
         var detailComplete = indicator is { HasAffectedDetail: true, AffectedDetailComplete: true }
