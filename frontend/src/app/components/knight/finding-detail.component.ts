@@ -24,6 +24,14 @@ import {
   totalPages,
 } from '../../models/knight.models';
 import { KnightService } from '../../services/knight.service';
+import {
+  ActionPlan,
+  PinnedPlanState,
+  actionResult,
+  actionSituation,
+  originLabel,
+} from '../../models/remediation.models';
+import { KnightActionPlanComponent } from './action-plan.component';
 
 /**
  * [AEGIS-MVP-PRODUCT-02] Detalhe de UM achado do AEGIS KNIGHT, em três abas:
@@ -42,7 +50,7 @@ import { KnightService } from '../../services/knight.service';
 @Component({
   selector: 'app-knight-finding-detail',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, KnightActionPlanComponent],
   template: `
     <div class="panel detail">
       <div class="d-head">
@@ -67,6 +75,12 @@ import { KnightService } from '../../services/knight.service';
           }
         </button>
         <button type="button" role="tab" [class.on]="tab() === 'evidencia'" (click)="tab.set('evidencia')">Evidência</button>
+        <!-- [AEGIS-MVP-PRODUCT-03] O plano vive numa aba própria para não empurrar o Resumo para baixo; o
+             Resumo mantém o ponto de ENTRADA (criar/abrir), que é onde o analista decide agir. -->
+        <button type="button" role="tab" [class.on]="tab() === 'plano'" (click)="tab.set('plano')">
+          Plano de ação
+          @if (plan()) { <span class="n">1</span> } @else if (pending()) { <span class="n">…</span> }
+        </button>
       </div>
 
       @if (tab() === 'resumo') {
@@ -77,6 +91,41 @@ import { KnightService } from '../../services/knight.service';
             <p class="caveat"><b>O que isso não significa:</b> {{ r.doesNotMean }}</p>
           }
           <div class="kv"><span class="k">Primeira ação</span><span class="v">{{ indicator().recommendation }}</span></div>
+
+          <!-- [AEGIS-MVP-PRODUCT-03] Entrada da jornada. Com ação ativa, ABRE a existente; sem ela, cria uma
+               nova. Nunca oferece "criar" ao lado de uma ação que já está em curso para o mesmo achado. -->
+          <div class="kv plan-entry">
+            <span class="k">Plano de ação</span>
+            <span class="v">
+              <!-- Enquanto o endereço nomeia uma ação que ainda não está disponível, esta entrada NÃO propõe
+                   criar outra: um link para uma ação existente não é convite para abrir um segundo ciclo. -->
+              @if (pending()) {
+                <span class="mono">Abrindo a ação indicada pelo link…</span>
+              } @else if (unavailable()) {
+                <span class="mono warn">{{ unavailable() }}</span>
+                <button type="button" class="btn ghost" (click)="tab.set('plano')">Ver o que houve</button>
+              } @else {
+                @if (plan(); as ap) {
+                  <span>{{ ap.title }}</span>
+                  <span class="mono">{{ origin(ap) }}</span>
+                  <span class="mono">{{ situation(ap) }} · {{ result(ap) }}</span>
+                  <!-- Uma ação ENCERRADA apontada por um link não some porque outro ciclo começou: a tela
+                       mostra a ação pedida E diz que existe outra ativa, com o caminho para ela. -->
+                  @if (otherActive(); as ativa) {
+                    <span class="mono warn">
+                      Esta é a ação indicada pelo link ({{ situation(ap) }}). Existe outra ação ATIVA para o
+                      mesmo achado: {{ ativa.title }}.
+                    </span>
+                  }
+                  <button type="button" class="btn ghost" (click)="tab.set('plano')">Abrir plano</button>
+                } @else {
+                  <span class="mono">Nenhuma ação ativa para este achado.</span>
+                  <button type="button" class="btn ghost" (click)="tab.set('plano')">Criar plano de ação</button>
+                }
+              }
+            </span>
+          </div>
+
           @if (indicator().notEvaluatedReason) {
             <div class="kv">
               <span class="k">Por que não foi avaliado</span>
@@ -174,6 +223,45 @@ import { KnightService } from '../../services/knight.service';
         </div>
       }
 
+      @if (tab() === 'plano') {
+        <div class="tabpane">
+          <!-- [AEGIS-MVP-PRODUCT-03] O endereço nomeia uma ação: enquanto ela não estiver disponível, este
+               painel fica VAZIO e explicado. Renderizar o plano de ação aqui exibiria a ação ativa — ou, pior,
+               o formulário de CRIAÇÃO — no lugar da ação que alguém veio conferir. -->
+          @if (pending()) {
+            <p class="notice">Abrindo a ação indicada pelo endereço…</p>
+          } @else if (unavailable()) {
+            <p class="notice warn">{{ unavailable() }}</p>
+            <div class="plan-recover">
+              <button type="button" class="btn ghost" (click)="planRetry.emit()">Tentar de novo</button>
+              <button type="button" class="btn ghost" (click)="planRelease.emit()">
+                Ver a ação ativa deste achado
+              </button>
+            </div>
+            <p class="notice">
+              Enquanto esta ação não abrir, o painel permanece vazio de propósito: mostrar outra ação aqui
+              responderia a pergunta errada.
+            </p>
+          } @else {
+            @if (otherActive(); as ativa) {
+              <p class="notice warn">
+                A ação aberta abaixo é a <b>indicada pelo link</b>, com a própria execução e o próprio
+                histórico. Ela não é a ação em curso: existe outro ciclo ATIVO para este achado
+                (<b>{{ ativa.title }}</b>). Substituir uma pela outra aqui apagaria o registro que alguém veio
+                conferir.
+              </p>
+            }
+            <app-knight-action-plan
+              [indicatorId]="indicator().indicatorId"
+              [affectedCount]="indicator().affectedObjectCount"
+              [originRunId]="planOriginRunId()"
+              [currentRunId]="assessment().id"
+              [existing]="plan()"
+              (changed)="planChanged.emit($event)" />
+          }
+        </div>
+      }
+
       @if (tab() === 'evidencia') {
         <div class="tabpane">
           <!-- Texto LITERAL gravado na avaliacao. Não é reescrito pela camada de apresentação: um snapshot
@@ -250,6 +338,7 @@ import { KnightService } from '../../services/knight.service';
       .caveat, .notice.warn { border-left-color: var(--amber); background: rgba(255, 176, 32, 0.05); }
       .caveat b { color: var(--amber); }
       .notice.warn { color: var(--text); }
+      .plan-recover { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
       .kv { display: grid; grid-template-columns: 190px 1fr; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
       .kv .k { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
       .kv .v { font-size: 13px; line-height: 1.55; color: var(--text); }
@@ -267,6 +356,9 @@ import { KnightService } from '../../services/knight.service';
       .state.inline { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
       .state.err b { color: #ff5c8a; }
       .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+      .kv.plan-entry .v { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+      .kv.plan-entry .mono { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+      .kv.plan-entry .mono.warn { color: var(--amber); line-height: 1.5; }
       @media (max-width: 900px) { .kv { grid-template-columns: 1fr; gap: 4px; } }
     `,
   ],
@@ -277,7 +369,33 @@ export class KnightFindingDetailComponent {
   /** Avaliação à qual o achado pertence — o vínculo que impede mostrar o presente como prova do passado. */
   readonly assessment = input.required<KnightAssessment>();
   readonly indicator = input.required<KnightIndicator>();
+  /**
+   * [AEGIS-MVP-PRODUCT-03] Ação ATIVA deste achado, quando existe. Vem da página (uma única leitura da lista
+   * de ações) em vez de uma consulta por achado — evita N chamadas e mantém uma autoridade só sobre "existe
+   * ação ativa?", compartilhada com a Central de Prioridades.
+   */
+  readonly activePlan = input<ActionPlan | null>(null);
+  /**
+   * A ação EM FOCO. Em geral é a própria ação ativa; quando um link identifica um PLANO específico, é
+   * aquele — inclusive encerrado. Trocá-lo silenciosamente pela ação ativa mostraria a alguém que veio
+   * conferir um encerramento um trabalho diferente com a mesma aparência de resposta.
+   */
+  readonly plan = input<ActionPlan | null>(null);
+  /**
+   * O ESTADO da ação nomeada pelo endereço. Chega junto de `plan` porque `plan` sozinho não distingue "não
+   * há ação para este achado" (que autoriza criar uma) de "a ação pedida ainda não abriu" (que não autoriza
+   * nada). Sem esta entrada, o painel voltaria a preencher o vazio com a ação ativa ou com o formulário.
+   */
+  readonly planState = input<PinnedPlanState>({ kind: 'livre' });
+  /** Abrir já na aba do plano — usado quando o endereço identifica a ação, não só o achado. */
+  readonly focusPlan = input(false);
   readonly closed = output<void>();
+  /** Emite quando o plano muda, para a página recarregar o mapa de ações ativas. */
+  readonly planChanged = output<ActionPlan>();
+  /** A pessoa pediu nova tentativa de abrir a ação indicada. */
+  readonly planRetry = output<void>();
+  /** A pessoa ABANDONOU explicitamente a ação indicada e aceitou voltar à ação ativa do achado. */
+  readonly planRelease = output<void>();
 
   protected readonly categoryLabel = categoryLabel;
   protected readonly severityLabel = severityLabel;
@@ -288,8 +406,34 @@ export class KnightFindingDetailComponent {
   protected readonly isUnnamed = isUnnamed;
   protected readonly findingTitle = findingTitle;
   protected readonly findingSituation = findingSituation;
+  protected readonly situation = actionSituation;
+  protected readonly result = actionResult;
+  protected readonly origin = originLabel;
 
-  readonly tab = signal<'resumo' | 'afetados' | 'evidencia'>('resumo');
+  /** A ação nomeada pelo endereço ainda está sendo lida — o painel espera, vazio e explicado. */
+  readonly pending = computed(() => this.planState().kind === 'carregando');
+
+  /** Por que a ação nomeada não pôde ser aberta — nulo quando não há impedimento. */
+  readonly unavailable = computed<string | null>(() => {
+    const e = this.planState();
+    return e.kind === 'indisponivel' ? e.reason : null;
+  });
+
+  /** A ação ativa, quando ela NÃO é a que está em foco — o segundo ciclo que a tela não pode esconder. */
+  readonly otherActive = computed<ActionPlan | null>(() => {
+    const foco = this.plan();
+    const ativa = this.activePlan();
+    return foco && ativa && ativa.id !== foco.id ? ativa : null;
+  });
+
+  /**
+   * A avaliação de ORIGEM de um plano novo é a que está aberta na tela — é o resultado que o analista está
+   * olhando quando decide agir. Um plano já existente conserva a sua própria origem, que não é reescrita
+   * quando o analista abre uma coleta mais nova.
+   */
+  readonly planOriginRunId = computed(() => this.plan()?.originRunId ?? this.assessment().id);
+
+  readonly tab = signal<'resumo' | 'afetados' | 'evidencia' | 'plano'>('resumo');
   readonly affected = signal<KnightAffectedObjects | null>(null);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
@@ -315,7 +459,7 @@ export class KnightFindingDetailComponent {
       this.indicator();
       this.assessment();
       this.cancelInFlight();
-      this.tab.set('resumo');
+      this.tab.set(this.focusPlan() ? 'plano' : 'resumo');
       this.search.set('');
       this.affected.set(null);
       this.error.set(null);

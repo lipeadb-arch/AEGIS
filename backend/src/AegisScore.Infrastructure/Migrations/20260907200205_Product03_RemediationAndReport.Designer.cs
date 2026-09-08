@@ -3,6 +3,7 @@ using System;
 using AegisScore.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AegisScore.Infrastructure.Migrations
 {
     [DbContext(typeof(AegisScoreDbContext))]
-    partial class AegisScoreDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260907200205_Product03_RemediationAndReport")]
+    partial class Product03_RemediationAndReport
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2728,22 +2731,10 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Property<Guid>("ActionPlanId")
                         .HasColumnType("uuid");
 
-                    b.Property<DateTimeOffset?>("ApplicableValidatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int?>("ApplicableValidationMethod")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("ApplicableValidationOutcome")
-                        .HasColumnType("integer");
-
                     b.Property<bool>("ComparedBySets")
                         .HasColumnType("boolean");
 
                     b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTimeOffset?>("CycleStartedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateOnly?>("DueDate")
@@ -2806,9 +2797,6 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Property<DateTimeOffset?>("ValidatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<bool?>("ValidationAppliesToCurrentCycle")
-                        .HasColumnType("boolean");
-
                     b.Property<string>("ValidationEvidenceReference")
                         .HasColumnType("text");
 
@@ -2826,9 +2814,6 @@ namespace AegisScore.Infrastructure.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<bool>("WasOverdue")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool?>("WasReopened")
                         .HasColumnType("boolean");
 
                     b.HasKey("Id");

@@ -28,6 +28,17 @@ import { KnightFindingDetailComponent } from '../components/knight/finding-detai
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
 import { IdentityRiskService } from '../services/identity-risk.service';
 import { KnightService } from '../services/knight.service';
+import {
+  ActionPlan,
+  KnightOriginMode,
+  KnightOriginSource,
+  PinnedPlanState,
+  activePlanFor,
+  pinnedPlanRejection,
+  planForPanel,
+} from '../models/remediation.models';
+import { RemediationService } from '../services/remediation.service';
+import { PostureHistoryService } from '../services/posture-history.service';
 
 /**
  * AegisKnightComponent — SMART. Tela MULTICOLETOR do AEGIS KNIGHT.
@@ -59,6 +70,13 @@ import { KnightService } from '../services/knight.service';
         </div>
         <div class="actions">
           <a class="btn ghost" routerLink="/history">Histórico auditável</a>
+          <!-- [AEGIS-MVP-PRODUCT-03] Publica EXATAMENTE a avaliação aberta. Sem o runId, o servidor
+               congelaria a mais recente — e o relatório sairia de uma coleta diferente da que está na tela. -->
+          @if (assessment(); as pub) {
+            <button type="button" class="btn real" (click)="publishReport(pub.id)" [disabled]="publishing()">
+              {{ publishing() ? 'Publicando…' : 'Publicar relatório desta avaliação' }}
+            </button>
+          }
           <button type="button" class="btn run" (click)="runDemo()" [disabled]="busy()">
             {{ running() ? 'Executando…' : 'Executar avaliação demo' }}
           </button>
@@ -91,6 +109,13 @@ import { KnightService } from '../services/knight.service';
           </div>
         }
 
+        @if (publishNotice(); as pmsg) {
+          <div class="banner pinned">
+            <span>{{ pmsg }}</span>
+            <a class="btn ghost" routerLink="/history">Abrir histórico</a>
+          </div>
+        }
+
         @if (assessment(); as a) {
           @if (pinnedRun()) {
             <div class="banner pinned">
@@ -105,6 +130,19 @@ import { KnightService } from '../services/knight.service';
             <div class="banner err">
               <span>{{ fmsg }}</span>
               <button type="button" class="btn ghost" (click)="clearFindingNotice()">Fechar</button>
+            </div>
+          }
+          <!-- [AEGIS-MVP-PRODUCT-03] Um link que identifica a AÇÃO e não pôde ser honrado vira estado
+               explícito. Abrir o plano ativo no lugar dela seria mostrar outro trabalho a quem veio conferir
+               um encerramento específico — e um aviso ao lado do substituto não desfaz a substituição. Por
+               isso a saída é oferecida como ESCOLHA: enquanto ninguém a toma, o endereço continua mandando. -->
+          @if (planUnavailable(); as plmsg) {
+            <div class="banner err">
+              <span>{{ plmsg }}</span>
+              <button type="button" class="btn ghost" (click)="retryPinnedPlan()">Tentar de novo</button>
+              <button type="button" class="btn ghost" (click)="dropPinnedPlan()">
+                Ver a ação ativa deste achado
+              </button>
             </div>
           }
 
@@ -213,7 +251,17 @@ import { KnightService } from '../services/knight.service';
 
           <!-- Detalhe de UM achado (componente dedicado): resumo · afetados · evidência. -->
           @if (selectedIndicator(); as ind) {
-            <app-knight-finding-detail [assessment]="a" [indicator]="ind" (closed)="closeFinding()" />
+            <app-knight-finding-detail
+              [assessment]="a"
+              [indicator]="ind"
+              [activePlan]="activePlan()"
+              [plan]="focusedPlan()"
+              [planState]="pinned()"
+              [focusPlan]="pinned().kind !== 'livre'"
+              (closed)="closeFinding()"
+              (planChanged)="onPlanChanged()"
+              (planRetry)="retryPinnedPlan()"
+              (planRelease)="dropPinnedPlan()" />
           }
 
           <!-- [AEGIS-MVP-PRODUCT-02] O painel abaixo lê o snapshot ATUAL da Evidence Fabric e diz isso por
@@ -406,7 +454,14 @@ import { KnightService } from '../services/knight.service';
       .pulse { letter-spacing: 0.08em; animation: pulse 1.4s ease-in-out infinite; }
       .state.err { border-color: rgba(255, 45, 111, 0.4); } .state.err b { color: #ffe3ee; }
       @keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
-      @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+      /* [AEGIS-MVP-PRODUCT-03] Em 1024 px a coluna de 300 px espremia a lista de achados: título, situação,
+         severidade, veredito e contagem disputavam o que sobrava. Ausência de rolagem horizontal não bastava —
+         a leitura ficava comprimida. A partir de 1100 px o resumo/score e a lista passam a EMPILHAR, e cada um
+         usa a largura inteira. */
+      @media (max-width: 1100px) {
+        .grid { grid-template-columns: 1fr; }
+        .summary { max-width: 100%; }
+      }
       /* [AEGIS-MVP-PRODUCT-02] Lista compacta de achados (o detalhe tem componente e estilo próprios). */
       .findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
       .finding { width: 100%; display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center; text-align: left; cursor: pointer; background: rgba(122, 145, 190, 0.04); border: 1px solid var(--line); border-radius: 11px; padding: 11px 14px; color: var(--text); font-family: var(--sans); }
@@ -431,6 +486,8 @@ import { KnightService } from '../services/knight.service';
 })
 export class AegisKnightComponent implements OnInit {
   private readonly knight = inject(KnightService);
+  private readonly remediation = inject(RemediationService);
+  private readonly history = inject(PostureHistoryService);
   private readonly identityRisk = inject(IdentityRiskService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
@@ -489,6 +546,178 @@ export class AegisKnightComponent implements OnInit {
   // segunda consulta ao Microsoft Graph.
   readonly riskProjection = signal<IdentityEvidenceProjection | null>(null);
 
+  // ---- [AEGIS-MVP-PRODUCT-03] Ações de remediação -----------------------------------------------
+  // UMA leitura da lista de ações ATIVAS serve à página inteira: o detalhe do achado aberto pergunta a ela
+  // se já existe ação, em vez de cada achado disparar a própria consulta. É também a MESMA autoridade que a
+  // Central de Prioridades usa, de modo que os dois lugares não podem discordar sobre "existe ação ativa?".
+
+  readonly activePlans = signal<ActionPlan[]>([]);
+  readonly publishing = signal(false);
+  readonly publishNotice = signal<string | null>(null);
+
+  /**
+   * A PROCEDÊNCIA da avaliação exibida. Ela entra na leitura das ações porque o indicador sozinho não
+   * identifica o problema: "AK-ENTRA-001 na demonstração" e "AK-ENTRA-001 na coleta real do diretório" são
+   * dois problemas distintos, e misturá-los faria uma ação de treinamento aparecer como trabalho real em
+   * curso — além de bloquear a criação da ação real.
+   */
+  readonly originSource = computed<KnightOriginSource | null>(
+    () => (this.assessment()?.sourceType as KnightOriginSource | undefined) ?? null,
+  );
+  readonly originMode = computed<KnightOriginMode | null>(() => {
+    const a = this.assessment();
+    return a ? (a.isDemo ? 'Demo' : 'Live') : null;
+  });
+
+  /** Ação ATIVA do achado aberto, NESTA procedência, se houver. */
+  readonly activePlan = computed<ActionPlan | null>(() => {
+    const id = this.selected();
+    return id ? activePlanFor(this.activePlans(), id, this.originSource(), this.originMode()) : null;
+  });
+
+  /**
+   * O estado da ação identificada pelo endereço (`?plan=`). É UM estado, e não um par "id + plano lido",
+   * porque a diferença entre "ainda lendo", "não pôde ser aberta" e "não há ação indicada" muda o que a tela
+   * pode mostrar — e um par de signals não consegue distingui-las: nos dois primeiros casos o plano é nulo,
+   * e nulo, aqui, também significa "crie uma ação".
+   */
+  readonly pinned = signal<PinnedPlanState>({ kind: 'livre' });
+
+  /** O identificador que o endereço carrega — vazio quando a navegação não nomeia ação alguma. */
+  readonly pinnedPlanId = computed<string | null>(() => {
+    const e = this.pinned();
+    return e.kind === 'livre' ? null : e.id;
+  });
+
+  /** Motivo, em palavras, de a ação indicada não poder ser aberta — nulo quando não há impedimento. */
+  readonly planUnavailable = computed<string | null>(() => {
+    const e = this.pinned();
+    return e.kind === 'indisponivel' ? e.reason : null;
+  });
+
+  /**
+   * A ação que o painel deve mostrar.
+   *
+   * Com o endereço nomeando uma ação, é AQUELA — e somente ela. Enquanto está sendo lida, ou quando não pôde
+   * ser aberta, NADA ocupa o painel: cair para a ação ativa mostraria outro trabalho, com a mesma aparência
+   * de resposta, a quem veio conferir um encerramento específico. Uma ação ENCERRADA legitimamente indicada
+   * continua sendo a certa mesmo havendo outro ciclo ativo.
+   */
+  readonly focusedPlan = computed<ActionPlan | null>(() => planForPanel(this.pinned(), this.activePlan()));
+
+  /**
+   * Relê as ações ativas DESTA procedência. Falha aqui NÃO bloqueia a tela: o detalhe apenas deixa de
+   * oferecer o atalho. Sem avaliação carregada não há procedência — e sem procedência a leitura seria a
+   * mistura que esta correção existe para impedir.
+   */
+  private reloadPlans(): void {
+    const fonte = this.originSource();
+    const modo = this.originMode();
+    if (!fonte || !modo) return;
+    this.remediation.list({ activeOnly: true, sourceType: fonte, mode: modo }).subscribe({
+      next: (plans) => this.activePlans.set(plans),
+      error: () => {
+        /* seção secundária: preserva a lista anterior em vez de fingir que não há ação alguma */
+      },
+    });
+  }
+
+  /**
+   * O CONTEXTO a que uma leitura de ação pertence: a ação pedida, o achado aberto, a avaliação exibida e a
+   * procedência dela. A chave é COMPLETA de propósito — comparar só o identificador da ação deixaria uma
+   * resposta atrasada preencher o painel depois de a tela já ter trocado de avaliação (demonstração para
+   * coleta real, por exemplo), que é exatamente o contexto em que o mesmo indicador significa outro problema.
+   */
+  private planContext(id: string): string {
+    return [
+      id,
+      this.selected() ?? '',
+      this.assessment()?.id ?? '',
+      this.originSource() ?? '',
+      this.originMode() ?? '',
+    ].join('|');
+  }
+
+  /**
+   * Relê a ação identificada pelo endereço. Enquanto a leitura corre, o estado é `carregando` — e o painel
+   * fica vazio, não preenchido pela ação ativa. Uma ação inexistente, inacessível, de OUTRO achado ou de
+   * OUTRA procedência produz `indisponivel`: estado explícito, com saída oferecida à pessoa. Nunca a
+   * substituição silenciosa.
+   */
+  private reloadPinnedPlan(): void {
+    const id = this.pinnedPlanId();
+    if (!id) return;
+
+    const contexto = this.planContext(id);
+    this.pinned.set({ kind: 'carregando', id });
+    this.remediation.get(id).subscribe({
+      next: (p) => {
+        // O endereço, o achado ou a procedência mudaram enquanto a leitura estava em voo: esta resposta
+        // pertence a outra tela e não escreve nesta.
+        if (contexto !== this.planContext(id)) return;
+        const recusa = pinnedPlanRejection(p, this.selected(), this.originSource(), this.originMode());
+        this.pinned.set(
+          recusa ? { kind: 'indisponivel', id, reason: recusa } : { kind: 'carregada', id, plan: p },
+        );
+      },
+      error: (e: Error) => {
+        if (contexto !== this.planContext(id)) return;
+        this.pinned.set({
+          kind: 'indisponivel',
+          id,
+          reason: `A ação indicada no endereço não pôde ser aberta. ${e.message}`,
+        });
+      },
+    });
+  }
+
+  /** Tenta de novo a leitura da ação indicada — decisão da pessoa, jamais automática. */
+  retryPinnedPlan(): void {
+    if (this.pinnedPlanId()) this.reloadPinnedPlan();
+  }
+
+  /**
+   * ABANDONA explicitamente a ação indicada pelo endereço e volta à navegação comum do achado, na qual a
+   * ação ATIVA pode ocupar o painel. É a única porta pela qual a substituição acontece — e ela é aberta por
+   * quem está olhando, que assim sabe que passou a ver outra coisa.
+   */
+  dropPinnedPlan(): void {
+    this.pinned.set({ kind: 'livre' });
+    this.syncQueryParam(this.selected());
+  }
+
+  /**
+   * Uma escrita já enviada não é desfeita porque o painel fechou: o servidor a recebeu. O que a tela faz é
+   * RELER — a lista de ações e, quando há uma ação em foco, ela própria.
+   */
+  onPlanChanged(): void {
+    this.reloadPlans();
+    if (this.pinnedPlanId()) this.reloadPinnedPlan();
+  }
+
+  /**
+   * Publica o relatório da avaliação ABERTA — nunca "a mais recente". O identificador viaja explicitamente
+   * para o servidor, que recusa (409) se a avaliação não existir, em vez de silenciosamente congelar outra.
+   */
+  publishReport(runId: string): void {
+    this.publishing.set(true);
+    this.publishNotice.set(null);
+    this.error.set(null);
+    this.history.publish({ type: 'Knight', runId }).subscribe({
+      next: (d) => {
+        this.publishing.set(false);
+        this.publishNotice.set(
+          `Relatório publicado a partir desta avaliação (${d.summary.id}). O conteúdo foi congelado: ` +
+            'reexportá-lo depois traz exatamente o que foi publicado agora.',
+        );
+      },
+      error: (e: Error) => {
+        this.publishing.set(false);
+        this.error.set(e.message);
+      },
+    });
+  }
+
 
 
   // ---- [AEGIS-MVP-PRODUCT-02] Seleção do achado -------------------------------------------------
@@ -520,12 +749,19 @@ export class AegisKnightComponent implements OnInit {
       this.closeFinding();
       return;
     }
+    // Escolher outro achado ABANDONA a ação fixada pelo endereço: ela pertencia ao achado anterior, e
+    // arrastá-la para cá exibiria a ação de um problema ao lado do veredito de outro.
+    this.pinned.set({ kind: 'livre' });
     this.selected.set(indicatorId);
     this.syncQueryParam(indicatorId);
+    // Relê ao abrir: uma escrita enviada de um painel que foi fechado já está gravada, e a fila precisa
+    // mostrar o estado do servidor, não o que estava em memória antes.
+    this.reloadPlans();
   }
 
   closeFinding(): void {
     this.selected.set(null);
+    this.pinned.set({ kind: 'livre' });
     this.syncQueryParam(null);
   }
 
@@ -536,7 +772,7 @@ export class AegisKnightComponent implements OnInit {
   private syncQueryParam(indicatorId: string | null): void {
     void this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { finding: indicatorId, run: this.pinnedRun() },
+      queryParams: { finding: indicatorId, run: this.pinnedRun(), plan: this.pinnedPlanId() },
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
@@ -548,8 +784,13 @@ export class AegisKnightComponent implements OnInit {
     this.linkNotice.set(null);
     this.findingNotice.set(null);
     this.selected.set(null);
+    this.pinned.set({ kind: 'livre' });
     void this.router
-      .navigate([], { relativeTo: this.route, queryParams: { finding: null, run: null }, replaceUrl: true })
+      .navigate([], {
+        relativeTo: this.route,
+        queryParams: { finding: null, run: null, plan: null },
+        replaceUrl: true,
+      })
       .then(() => this.reload());
   }
 
@@ -570,6 +811,11 @@ export class AegisKnightComponent implements OnInit {
   reload(): void {
     const requested = this.route.snapshot.queryParamMap.get('run');
     this.pinnedRun.set(requested);
+    const pedida = this.route.snapshot.queryParamMap.get('plan');
+    // O endereço nomeia uma ação: o painel já nasce COMPROMETIDO com ela. Começar em `livre` deixaria a ação
+    // ativa aparecer no intervalo entre abrir a tela e a leitura responder — uma substituição de milissegundos
+    // é uma substituição.
+    this.pinned.set(pedida ? { kind: 'carregando', id: pedida } : { kind: 'livre' });
     this.linkNotice.set(null);
     this.findingNotice.set(null);
 
@@ -586,6 +832,9 @@ export class AegisKnightComponent implements OnInit {
         this.assessment.set(a);
         this.loading.set(false);
         this.applyDeepLink(a);
+        // Só agora a PROCEDÊNCIA é conhecida — ler a fila antes traria ações de outra fonte/modo.
+        this.reloadPlans();
+        this.reloadPinnedPlan();
       },
       error: (e: Error) => {
         this.loading.set(false);
@@ -626,6 +875,7 @@ export class AegisKnightComponent implements OnInit {
       // Silenciar aqui seria abrir a tela como se o link não existisse. O achado pedido pode não ter sido
       // avaliado nesta coleta — a tela diz isso, em vez de abrir outro achado ou nenhum.
       this.selected.set(null);
+      this.pinned.set({ kind: 'livre' });
       this.findingNotice.set(
         `O achado ${wanted} não faz parte desta avaliação. Ele pode não ter sido avaliado nesta coleta.`,
       );
@@ -661,10 +911,13 @@ export class AegisKnightComponent implements OnInit {
         // apontando para a coleta anterior enquanto a tela mostra a nova é exatamente a divergência que
         // esta correção existe para impedir. O achado aberto só sobrevive se existir na avaliação nova.
         this.pinnedRun.set(a.id);
+        this.pinned.set({ kind: 'livre' });
         const aberto = this.selected();
         const mantem = aberto && a.indicators.some((i) => i.indicatorId === aberto) ? aberto : null;
         this.selected.set(mantem);
         this.syncQueryParam(mantem);
+        // A procedência pode ter mudado (demo -> coleta real): a fila de ações é relida sob a nova.
+        this.reloadPlans();
         // A coleta acabou de reescrever o snapshot compartilhado — relê a MESMA fotografia (sem novo Graph).
         this.reloadRisk();
       },

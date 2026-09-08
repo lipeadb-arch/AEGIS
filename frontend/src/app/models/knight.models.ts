@@ -449,9 +449,12 @@ const FINDING_READING: Record<string, FindingReading> = {
       'autenticação. Conta ausente do relatório NÃO é contada como sem MFA.',
   },
   'AK-ENTRA-004': {
+    // [AEGIS-MVP-PRODUCT-03] A frase "acesso de terceiro que ninguém está usando" afirmava DESUSO a partir da
+    // ausência de registro — exatamente o que a regra não observa. O que a coleta viu é a falta de sinal de
+    // acesso na janela; o resto é conclusão que só a área responsável pode dar.
     means:
-      'Estes convidados não registraram acesso dentro da janela da regra — acesso de terceiro que ninguém ' +
-      'está usando é superfície esquecida.',
+      'Estes convidados não registraram acesso dentro da janela da regra. Um acesso de terceiro cuja ' +
+      'necessidade ninguém confirmou permanece válido até que alguém o revise.',
     doesNotMean:
       'Atividade desconhecida não é inatividade comprovada: parte destes convidados pode simplesmente não ' +
       'ter registro de acesso disponível. O detalhe de cada linha diz qual é o caso.',

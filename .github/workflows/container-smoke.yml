@@ -76,6 +76,23 @@ jobs:
       #     acrescentou a distinção de INVENTÁRIO a DashboardOverviewQueryTests (inventário vazio não prova
       #     ausência de coleta): a classe já consta no filtro, então os 2 casos novos executam aqui de fato — a
       #     contagem deste passo sobe de 286 para 288.
+      #     [AEGIS-MVP-PRODUCT-03] Entra RemediationJourneyTests (SQLite): a JORNADA de remediação — duplicação
+      #     por clique repetido e reabertura de ciclo, transições do fluxo mínimo, atraso derivado do PRAZO,
+      #     origem × validação como referências separadas, evidência que NÃO comprova correção (ordem temporal,
+      #     fonte, regras e suficiência POR INDICADOR), publicação da avaliação PEDIDA sem troca pela mais
+      #     recente, congelamento das ações no snapshot, isolamento por tenant, autorização das mutações por
+      #     reflexão, compatibilidade do plano legado de risco e do hash de snapshot legado, e a serialização
+      #     efetiva dos contratos novos com as opções REAIS do MVC. A correção dirigida acrescentou a BASE do
+      #     encerramento (execução relatada + validação aplicável AO CICLO), a reabertura que repactua o ciclo
+      #     sem reaproveitar comprovação antiga, a ressalva de CAUSALIDADE quando a coleta antecede o relato de
+      #     execução, a separação por fonte/modo (demonstração × coleta real sob o mesmo indicador), o relatório
+      #     real que exclui ação de demonstração e a proveniência congelada impressa no PDF. A segunda correção
+      #     acrescentou a APLICABILIDADE AO CICLO congelada na fotografia: uma ação reaberta sem comprovação
+      #     nova sai do total de melhora comprovada e é identificada como registro histórico, a coleta anterior
+      #     ao relato permanece como observação fora daquela comprovação, a validação do ciclo em curso continua
+      #     contando, e uma fotografia ANTERIOR à distinção não recebe aplicabilidade inventada. A classe é
+      #     NOVA: sem esta linha ela não executaria e o check ficaria verde do mesmo jeito. A contagem deste
+      #     passo sobe de 307 para 353 (medida localmente com este MESMO filtro).
       #     [AEGIS-MVP-PRODUCT-02] Entra KnightAffectedObjectTests (SQLite): os OBJETOS que sustentam um achado
       #     do KNIGHT — contagem × lista na mesma unidade e dedupe, avaliação anterior à preservação que se
       #     declara sem detalhe (nunca retropreenchida), campo ausente que permanece ausente, coleta parcial
@@ -84,7 +101,7 @@ jobs:
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
@@ -269,6 +286,20 @@ jobs:
       # ⚠️ Este filtro é POR CLASSE e NENHUM job roda a suíte completa: uma classe PostgreSQL nova que não seja
       # adicionada AQUI nunca executa e o check fica verde assim mesmo (falso verde). Confira SEMPRE a contagem
       # de testes no log, não só conclusion=success.
+      # [AEGIS-MVP-PRODUCT-03] Entra RemediationPostgresTests: prova que a migration Product03 aplica sobre o
+      # histórico, que o ÍNDICE PARCIAL único barra no BANCO uma segunda ação ATIVA para o mesmo achado (a
+      # corrida que a checagem em código deixaria passar) e libera a origem quando a ação é encerrada, que as
+      # FKs COMPOSTAS (ActionPlanId, TenantId) fazem o banco recusar trilha/validação de tenant divergente, e
+      # que o relatório publicado permanece CONSISTENTE ao ser reexportado (as ações ficam congeladas; alterar
+      # um plano depois não muda o PDF). Inclui a jornada ponta a ponta e a verificação de que o PDF executivo
+      # NÃO leva lista nominal de identidades. A correção dirigida acrescentou a prova de que o índice violado é
+      # o UX_ActionPlans_ActiveByFinding (e não "qualquer chave duplicada"), a convivência de demonstração e
+      # coleta real sob o MESMO indicador, e a repactuação de prazo/responsável com conflito de versão recusado.
+      # A segunda correção acrescentou a migration Product03_FrozenCycleApplicability (colunas anuláveis novas)
+      # ao mesmo MigrateAsync e a verificação de que a aplicabilidade congelada atravessa o PostgreSQL real.
+      # A contagem deste passo permanece 33 — a prova nova entrou em fatos existentes, e não como fatos novos.
+      # CONFIRME no log deste job, porque a bateria PostgreSQL não roda na máquina de desenvolvimento
+      # (credencial local inacessível, sem Docker).
       # [AEGIS-MVP-PRODUCT-02] Entra KnightAffectedObjectsPostgresTests: prova que a migration dos objetos
       # afetados APLICA sobre o histórico, que a FK composta (IndicatorResultId, TenantId) faz o próprio banco
       # recusar um afetado de tenant divergente, que a paginação/busca traduzem no Npgsql e que a Central de
@@ -281,4 +312,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests"

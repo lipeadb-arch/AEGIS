@@ -29,9 +29,13 @@ public sealed class PostureSnapshotExporter : IPostureSnapshotExporter
         Guid snapshotId, PostureExportFormat format, CancellationToken ct = default)
     {
         // Leitura tenant-scoped (query filter fail-closed) com os itens congelados. AsNoTracking: exportar não escreve.
+        // [AEGIS-MVP-PRODUCT-03] As AÇÕES congeladas fazem parte do conteúdo assinado: carregá-las aqui é o
+        // que permite reverificar o hash e renderizar o relatório a partir da MESMA fonte — nunca do estado
+        // atual dos planos, que teria mudado desde a publicação.
         var snapshot = await _db.PostureSnapshots.AsNoTracking()
             .Include(s => s.Controls)
             .Include(s => s.Indicators)
+            .Include(s => s.ActionItems)
             .FirstOrDefaultAsync(s => s.Id == snapshotId, ct);
 
         if (snapshot is null)

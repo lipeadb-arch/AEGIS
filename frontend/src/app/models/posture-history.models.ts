@@ -63,6 +63,56 @@ export interface PostureSnapshotSummary {
   notApplicableCount: number;
   dataRecency: string | null;
   contentHash: string;
+  /**
+   * [AEGIS-MVP-PRODUCT-03] Cliente CONGELADO na publicação — `null` nas fotografias anteriores a este
+   * formato, que continuam legíveis e com o hash preservado.
+   */
+  clientName: string | null;
+  /** [AEGIS-MVP-PRODUCT-03] Avaliação KNIGHT EXATA congelada; `null` em AEGIS Score e no histórico antigo. */
+  sourceRunId: string | null;
+}
+
+/**
+ * [AEGIS-MVP-PRODUCT-03] Uma ação CONGELADA na fotografia. Etapa do plano, resultado observado no achado e
+ * método de validação viajam SEPARADOS — o relatório não pode colapsá-los num "resolvido".
+ */
+export interface PostureSnapshotActionItem {
+  actionPlanId: string;
+  indicatorId: string;
+  title: string;
+  proposedAction: string | null;
+  responsiblePerson: string | null;
+  responsibleArea: string | null;
+  dueDate: string | null;
+  status: string;
+  wasOverdue: boolean;
+  nextStep: string;
+  validationMethod: string | null;
+  validationOutcome: string | null;
+  validatedAt: string | null;
+  observedBefore: number | null;
+  observedAfter: number | null;
+  comparedBySets: boolean;
+  validationRationale: string | null;
+  /**
+   * Início do ciclo vigente da ação no instante da publicação. É também o DISCRIMINADOR: ausente nas
+   * fotografias publicadas antes desta distinção, que por isso não podem afirmar nada sobre aplicabilidade.
+   */
+  cycleStartedAt?: string | null;
+  /** A ação já havia sido REABERTA quando o relatório foi publicado. */
+  wasReopened?: boolean | null;
+  /**
+   * A validação congelada acima fala pelo ciclo vigente? `false` a identifica como registro HISTÓRICO — ela
+   * permanece no relatório, mas não comprova o trabalho em curso. Nulo quando não há validação alguma, ou
+   * quando a fotografia é anterior à distinção: ausência de informação não vira inaplicabilidade.
+   */
+  validationAppliesToCurrentCycle?: boolean | null;
+  /** Método da validação APLICÁVEL ao ciclo vigente — nulo quando o ciclo não tem nenhuma. */
+  applicableValidationMethod?: string | null;
+  /** Desfecho aplicável ao ciclo vigente: o único que responde pelo trabalho em curso. */
+  applicableValidationOutcome?: string | null;
+  /** Quando a validação aplicável ao ciclo foi decidida. */
+  applicableValidatedAt?: string | null;
 }
 
 export interface PostureSnapshotDetail {
@@ -72,6 +122,10 @@ export interface PostureSnapshotDetail {
   eligiblePoints: number;
   controls: PostureSnapshotControl[];
   indicators: PostureSnapshotIndicator[];
+  /** [AEGIS-MVP-PRODUCT-03] Limitações de COLETA congeladas — o que a avaliação não conseguiu ver. */
+  collectionLimitations?: string[] | null;
+  /** [AEGIS-MVP-PRODUCT-03] Ações congeladas no instante da publicação (nunca o estado atual dos planos). */
+  actionItems?: PostureSnapshotActionItem[] | null;
 }
 
 export interface PostureItemChange {
@@ -113,6 +167,11 @@ export interface PostureComparisonResult {
 export interface PublishPostureSnapshotRequest {
   type: PostureSnapshotType;
   source?: string | null;
+  /**
+   * [AEGIS-MVP-PRODUCT-03] Avaliação KNIGHT EXATA a publicar. Sem ela o servidor congela a mais
+   * recente — o que faria o relatório sair de uma coleta diferente da que está aberta na tela.
+   */
+  runId?: string;
 }
 
 // ---- Apresentação (pt-BR) -----------------------------------------------------------------------

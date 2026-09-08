@@ -116,12 +116,169 @@ public class PostureSnapshot : Entity, ITenantOwned
     /// </summary>
     public string ContentHash { get; set; } = "";
 
+    // ---- [AEGIS-MVP-PRODUCT-03] Contexto CONGELADO do relatório ----
+    // Tudo aqui é ADITIVO e ANULÁVEL/VAZIO nas fotografias antigas, que permanecem legíveis e com o hash
+    // preservado (a representação canônica só cresce quando há conteúdo novo a cobrir). O relatório é
+    // derivado EXCLUSIVAMENTE da fotografia: se o nome do cliente, as limitações de coleta ou as ações
+    // vivessem só no estado operacional, reexportar um relatório histórico traria o presente disfarçado
+    // de passado.
+
+    /// <summary>
+    /// Avaliação KNIGHT EXATA que foi congelada. Existe para que publicar a avaliação aberta por link não
+    /// vire, em silêncio, a publicação da mais recente. Nula em fotografias AEGIS Score/NIST e nas KNIGHT
+    /// publicadas antes desta entrega.
+    /// </summary>
+    public Guid? SourceRunId { get; set; }
+
+    /// <summary>Nome do cliente no instante da publicação — o relatório não vai buscar o nome de hoje.</summary>
+    public string? ClientName { get; set; }
+
+    /// <summary>
+    /// Limitações de COLETA declaradas pela avaliação congelada (capacidade + desfecho, texto sanitizado).
+    /// Congeladas porque o resumo executivo precisa dizer o que a coleta NÃO viu — e essa lista muda a cada
+    /// nova coleta.
+    /// </summary>
+    public List<string> CollectionLimitations { get; set; } = new();
+
     // ---- Filhos: exatamente um conjunto por tipo (o outro fica vazio) ----
     /// <summary>Controles NIST congelados (apenas em fotografias AEGIS Score/NIST).</summary>
     public ICollection<PostureSnapshotControl> Controls { get; set; } = new List<PostureSnapshotControl>();
 
     /// <summary>Indicadores KNIGHT congelados (apenas em fotografias KNIGHT).</summary>
     public ICollection<PostureSnapshotIndicator> Indicators { get; set; } = new List<PostureSnapshotIndicator>();
+
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-03] Ações CONGELADAS no instante da publicação. Uma fotografia antiga continua
+    /// mostrando as ações como estavam então: injetar o estado atual dos planos num relatório histórico
+    /// faria o documento assinado mudar de conteúdo depois de emitido.
+    /// </summary>
+    public ICollection<PostureSnapshotActionItem> ActionItems { get; set; } = new List<PostureSnapshotActionItem>();
+}
+
+/// <summary>
+/// [AEGIS-MVP-PRODUCT-03] UMA ação CONGELADA dentro de uma fotografia — tenant-owned. Copia do plano apenas
+/// o que o relatório precisa dizer, em linguagem de gestão, e SEPARA deliberadamente três coisas que não
+/// podem ser confundidas: a etapa do plano, o resultado observado no achado e o método de validação.
+/// </summary>
+public class PostureSnapshotActionItem : Entity, ITenantOwned
+{
+    /// <summary>Carimbado no SaveChanges (fail-closed) — nunca confiar em valor vindo do cliente.</summary>
+    public Guid TenantId { get; set; }
+
+    public Guid SnapshotId { get; set; }
+    public PostureSnapshot? Snapshot { get; set; }
+
+    /// <summary>Plano de origem — rastreabilidade para quem tiver acesso ao detalhe no produto.</summary>
+    public Guid ActionPlanId { get; set; }
+
+    /// <summary>Achado que a ação endereça (ex.: "AK-ENTRA-001").</summary>
+    public string IndicatorId { get; set; } = "";
+
+    /// <summary>
+    /// Avaliação que ORIGINOU a ação, congelada com ela. Sem esta referência, o relatório mostraria "antes:
+    /// 12 / depois: 8" sem dizer de qual coleta veio o 12 — e quem lesse teria de consultar dados que podem
+    /// ter mudado desde a publicação, o que é exatamente o que uma fotografia existe para evitar.
+    /// </summary>
+    public Guid? OriginRunId { get; set; }
+
+    public string Title { get; set; } = "";
+
+    /// <summary>A ação proposta, como estava redigida no instante da publicação.</summary>
+    public string? ProposedAction { get; set; }
+
+    public string? ResponsiblePerson { get; set; }
+    public string? ResponsibleArea { get; set; }
+    public DateOnly? DueDate { get; set; }
+
+    /// <summary>Etapa operacional congelada.</summary>
+    public ActionPlanStatus Status { get; set; }
+
+    /// <summary>Atraso APURADO na publicação (o prazo é o critério; a etapa não é sobrescrita).</summary>
+    public bool WasOverdue { get; set; }
+
+    /// <summary>A próxima providência, derivada da etapa e do prazo no instante da publicação.</summary>
+    public string NextStep { get; set; } = "";
+
+    // ---- Validação congelada (nula quando ainda não houve validação alguma) ----
+
+    /// <summary>Método da validação mais recente no instante da publicação.</summary>
+    public ActionPlanValidationMethod? ValidationMethod { get; set; }
+
+    /// <summary>Desfecho da validação mais recente no instante da publicação.</summary>
+    public ActionPlanValidationOutcome? ValidationOutcome { get; set; }
+
+    public DateTimeOffset? ValidatedAt { get; set; }
+
+    /// <summary>Quantidade afetada observada na origem e na evidência — a base da leitura de melhora.</summary>
+    public int? ObservedBefore { get; set; }
+    public int? ObservedAfter { get; set; }
+
+    /// <summary>TRUE quando a conclusão se apoiou nos CONJUNTOS preservados, não apenas em totais.</summary>
+    public bool ComparedBySets { get; set; }
+
+    /// <summary>Justificativa determinística do desfecho, congelada com ele.</summary>
+    public string? ValidationRationale { get; set; }
+
+    /// <summary>
+    /// Avaliação usada como EVIDÊNCIA da validação congelada — a outra metade da proveniência. Nula quando a
+    /// validação foi humana (aí a referência abaixo é que identifica a prova apresentada).
+    /// </summary>
+    public Guid? ValidationRunId { get; set; }
+
+    /// <summary>
+    /// Referência da evidência HUMANA (chamado, ata, documento), preservada para que o registro continue
+    /// identificável depois. Guardar só "atestação humana" tornaria a decisão irrastreável no papel.
+    /// </summary>
+    public string? ValidationEvidenceReference { get; set; }
+
+    /// <summary>Instante da COLETA usada como evidência — a data que distingue prova de coincidência.</summary>
+    public DateTimeOffset? EvidenceCollectedAt { get; set; }
+
+    /// <summary>
+    /// A evidência antecede o relato de execução: o relatório precisa dizer isso, senão apresentaria como
+    /// consequência do trabalho uma melhora que pode ter tido outra causa.
+    /// </summary>
+    public bool PrecedesReportedExecution { get; set; }
+
+    // ---- [AEGIS-MVP-PRODUCT-03] Aplicabilidade CONGELADA ao ciclo vigente ----
+    //
+    // Sem estes campos o relatório não conseguia distinguir dois casos que se parecem: uma ação com melhora
+    // comprovada AGORA e uma ação REABERTA que só tem a comprovação do ciclo anterior. Os dois congelavam a
+    // mesma validação e entravam no mesmo total de "melhora comprovada" — e a diferença entre eles não podia
+    // ser recuperada na exportação sem consultar o plano vivo, que é justamente o que a fotografia dispensa.
+    //
+    // Todos são ANULÁVEIS de propósito: `null` significa "esta fotografia não congelou a distinção", que é o
+    // caso de tudo o que foi publicado antes desta correção. Ausência de informação histórica NÃO é lida como
+    // "não se aplica ao ciclo" — inventar aplicabilidade sobre um silêncio seria pior do que não dizer nada.
+
+    /// <summary>Início do ciclo vigente da ação no instante da publicação.</summary>
+    public DateTimeOffset? CycleStartedAt { get; set; }
+
+    /// <summary>
+    /// A ação já havia sido REABERTA quando o relatório foi publicado — o ciclo em curso não é o primeiro.
+    /// Congelado porque a comparação que o revela (início do ciclo × criação da ação) precisa de um dado que
+    /// a fotografia não guarda, e refazê-la na exportação leria o plano de hoje.
+    /// </summary>
+    public bool? WasReopened { get; set; }
+
+    /// <summary>
+    /// A validação congelada acima (a mais recente) fala pelo CICLO VIGENTE? <c>false</c> a identifica como
+    /// registro histórico: ela continua verdadeira e continua no relatório, mas não comprova este trabalho.
+    /// <c>null</c> quando não havia validação alguma — ou quando a fotografia é anterior a esta distinção.
+    /// </summary>
+    public bool? ValidationAppliesToCurrentCycle { get; set; }
+
+    /// <summary>Método da validação APLICÁVEL ao ciclo vigente — nulo quando o ciclo não tem nenhuma.</summary>
+    public ActionPlanValidationMethod? ApplicableValidationMethod { get; set; }
+
+    /// <summary>
+    /// Desfecho da validação aplicável ao ciclo vigente. É ESTE — e não o da validação mais recente — que
+    /// pode ser somado à melhora comprovada do relatório.
+    /// </summary>
+    public ActionPlanValidationOutcome? ApplicableValidationOutcome { get; set; }
+
+    /// <summary>Quando a validação aplicável ao ciclo foi decidida — a data que torna a afirmação conferível.</summary>
+    public DateTimeOffset? ApplicableValidatedAt { get; set; }
 }
 
 /// <summary>

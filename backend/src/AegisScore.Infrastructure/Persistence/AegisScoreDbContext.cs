@@ -133,6 +133,12 @@ public class AegisScoreDbContext : DbContext
     public DbSet<PostureSnapshot> PostureSnapshots => Set<PostureSnapshot>();
     public DbSet<PostureSnapshotControl> PostureSnapshotControls => Set<PostureSnapshotControl>();
     public DbSet<PostureSnapshotIndicator> PostureSnapshotIndicators => Set<PostureSnapshotIndicator>();
+    /// <summary>[AEGIS-MVP-PRODUCT-03] Ações CONGELADAS numa fotografia — o relatório histórico não lê o presente.</summary>
+    public DbSet<PostureSnapshotActionItem> PostureSnapshotActionItems => Set<PostureSnapshotActionItem>();
+    /// <summary>[AEGIS-MVP-PRODUCT-03] Trilha de auditoria de um plano de ação.</summary>
+    public DbSet<ActionPlanEvent> ActionPlanEvents => Set<ActionPlanEvent>();
+    /// <summary>[AEGIS-MVP-PRODUCT-03] Validações registradas de um plano de ação.</summary>
+    public DbSet<ActionPlanValidation> ActionPlanValidations => Set<ActionPlanValidation>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -633,6 +639,65 @@ public class AegisScoreDbContext : DbContext
         b.Entity<RiskEvaluation>().HasIndex(x => new { x.TenantId, x.RiskId });
         b.Entity<ActionPlan>().HasIndex(x => new { x.TenantId, x.RiskId });
 
+        // [AEGIS-MVP-PRODUCT-03] Ação de ACHADO: origem KNIGHT explícita, concorrência otimista e filhos
+        // (trilha e validações) por FK COMPOSTA tenant-safe. A duplicação por clique repetido é barrada no
+        // serviço e REFORÇADA por um índice único PARCIAL criado na migration (só o PostgreSQL o suporta):
+        // enquanto houver ação ATIVA para o mesmo (tenant, indicador), uma segunda inserção é recusada pelo
+        // próprio banco — e uma ação encerrada libera a origem para um novo ciclo.
+        b.Entity<ActionPlan>(e =>
+        {
+            e.Property(x => x.Title).HasMaxLength(200);
+            e.Property(x => x.KnightIndicatorId).HasMaxLength(40);
+            e.Property(x => x.ExecutionNotes).HasMaxLength(2000);
+            e.Property(x => x.ExecutionEvidenceRef).HasMaxLength(2000);
+            // Token de CONCORRÊNCIA: a corrida que passa pela checagem explícita de versão é pega aqui, pelo
+            // WHERE do UPDATE. Sem ele, duas escritas simultâneas com a mesma versão lida sobreviveriam as duas.
+            e.Property(x => x.Version).IsConcurrencyToken();
+            e.HasIndex(x => new { x.TenantId, x.OriginSourceType, x.OriginMode, x.KnightIndicatorId, x.Status });
+            // Invariante de BANCO contra a duplicação por clique repetido: no máximo UMA ação ATIVA por
+            // (tenant, FONTE, MODO, achado). O índice é PARCIAL — restrito aos status ativos (0 Aberto,
+            // 1 Em andamento, 4 Aguardando validação) e às ações de achado —, então uma ação concluída LIBERA
+            // a origem para um novo ciclo quando o problema reaparece, e os planos legados (indicador nulo)
+            // ficam fora. Mesmo idioma do índice parcial único já usado na fila durável de sincronização.
+            //
+            // A fonte e o modo estão na chave porque o indicador SOZINHO não identifica o problema: sem eles,
+            // uma ação nascida do cenário de DEMONSTRAÇÃO ocuparia a origem e impediria, no próprio banco, a
+            // criação da ação real para o mesmo achado.
+            e.HasIndex(x => new { x.TenantId, x.OriginSourceType, x.OriginMode, x.KnightIndicatorId })
+                .IsUnique()
+                .HasDatabaseName("UX_ActionPlans_ActiveByFinding")
+                .HasFilter("\"KnightIndicatorId\" IS NOT NULL AND \"Status\" IN (0, 1, 4)");
+
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            e.HasMany(x => x.Events).WithOne(v => v.ActionPlan)
+                .HasForeignKey(v => new { v.ActionPlanId, v.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.Validations).WithOne(v => v.ActionPlan)
+                .HasForeignKey(v => new { v.ActionPlanId, v.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<ActionPlanEvent>(e =>
+        {
+            e.Property(x => x.ActorName).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Note).HasMaxLength(1000);
+            e.HasIndex(x => new { x.TenantId, x.ActionPlanId, x.At });
+        });
+
+        b.Entity<ActionPlanValidation>(e =>
+        {
+            e.Property(x => x.IndicatorId).HasMaxLength(40).IsRequired();
+            // A coleta usada como evidência é indexada junto com o plano: é por ela que se decide se a
+            // validação fala pelo ciclo atual, e a leitura acontece toda vez que uma ação é apresentada.
+            e.HasIndex(x => new { x.TenantId, x.ActionPlanId, x.EvidenceCollectedAt });
+            e.Property(x => x.EvidenceReference).HasMaxLength(2000);
+            e.Property(x => x.Rationale).HasMaxLength(2000).IsRequired();
+            e.Property(x => x.DecidedByName).HasMaxLength(200).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.ActionPlanId, x.DecidedAt });
+        });
+
         // Aegis Score — um ÚNICO estado por tenant × subcategoria (o índice único garante que o
         // "Group By de soma" nunca conte linhas duplicadas). FK para o catálogo global SEM coleção
         // inversa (o catálogo imutável não referencia dados de tenant); Restrict impede que um
@@ -1004,6 +1069,34 @@ public class AegisScoreDbContext : DbContext
                 .HasForeignKey(i => new { i.SnapshotId, i.TenantId })
                 .HasPrincipalKey(x => new { x.Id, x.TenantId })
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // [AEGIS-MVP-PRODUCT-03] Contexto congelado do relatório. As limitações vão para jsonb com default
+            // de lista VAZIA: "coleta íntegra" é [], nunca NULL — e as fotografias antigas leem [] sem
+            // retropreenchimento algum.
+            e.Property(x => x.ClientName).HasMaxLength(200);
+            e.Property(x => x.CollectionLimitations)
+                .HasConversion(stringList, stringListCmp)
+                .HasColumnType("jsonb")
+                .HasDefaultValue(new List<string>())
+                .IsRequired();
+            e.HasMany(x => x.ActionItems).WithOne(a => a.Snapshot)
+                .HasForeignKey(a => new { a.SnapshotId, a.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // [AEGIS-MVP-PRODUCT-03] Ação CONGELADA numa fotografia: tenant-owned, filha por FK COMPOSTA
+        // (SnapshotId, TenantId) — o banco recusa um item de tenant divergente, e não apenas o esconde.
+        b.Entity<PostureSnapshotActionItem>(e =>
+        {
+            e.Property(x => x.IndicatorId).HasMaxLength(40).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(200).IsRequired();
+            e.Property(x => x.ProposedAction).HasMaxLength(2000);
+            e.Property(x => x.ResponsiblePerson).HasMaxLength(200);
+            e.Property(x => x.ResponsibleArea).HasMaxLength(200);
+            e.Property(x => x.NextStep).HasMaxLength(500).IsRequired();
+            e.Property(x => x.ValidationRationale).HasMaxLength(2000);
+            e.HasIndex(x => new { x.TenantId, x.SnapshotId });
         });
 
         // Controle NIST congelado: tenant-owned. Referências de evidência sanitizadas → jsonb (idioma das listas
@@ -1065,6 +1158,10 @@ public class AegisScoreDbContext : DbContext
         // They now filter on their own denormalized TenantId, independent of the Risk filter.
         b.Entity<RiskEvaluation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<ActionPlan>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-MVP-PRODUCT-03] Trilha e validações filtram pelo PRÓPRIO TenantId denormalizado, como os
+        // demais filhos — não dependem apenas da rota pelo plano.
+        b.Entity<ActionPlanEvent>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<ActionPlanValidation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<GovernanceDocument>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<DocumentControlMapping>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<SubcategoryCoverage>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
@@ -1102,6 +1199,7 @@ public class AegisScoreDbContext : DbContext
         b.Entity<PostureSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<PostureSnapshotControl>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<PostureSnapshotIndicator>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<PostureSnapshotActionItem>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
     }
 
     // [AEGIS-AUD-008] Todos os quatro pontos de entrada públicos de SaveChanges são interceptados

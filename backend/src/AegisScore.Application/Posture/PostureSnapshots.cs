@@ -76,7 +76,57 @@ public sealed record PostureSnapshotSummaryDto(
     int ErrorCount,
     int NotApplicableCount,
     DateTimeOffset? DataRecency,
-    string ContentHash);
+    string ContentHash,
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-03] Cliente CONGELADO na publicação — o relatório não vai buscar o nome de hoje.
+    /// Nulo nas fotografias publicadas antes desta entrega.
+    /// </summary>
+    string? ClientName = null,
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-03] Avaliação KNIGHT EXATA congelada. Nula em fotografias AEGIS Score/NIST e nas
+    /// KNIGHT anteriores a esta entrega — nesse caso a fotografia não sabe dizer qual execução a originou.
+    /// </summary>
+    Guid? SourceRunId = null);
+
+/// <summary>
+/// [AEGIS-MVP-PRODUCT-03] Uma ação CONGELADA na fotografia. Estado do plano, resultado observado no achado e
+/// método de validação viajam SEPARADOS — colapsá-los num "resolvido" é exatamente o que o relatório não pode
+/// fazer. Enums viajam como NOME.
+/// </summary>
+public sealed record PostureSnapshotActionItemDto(
+    Guid ActionPlanId,
+    string IndicatorId,
+    string Title,
+    string? ProposedAction,
+    string? ResponsiblePerson,
+    string? ResponsibleArea,
+    DateOnly? DueDate,
+    string Status,
+    bool WasOverdue,
+    string NextStep,
+    string? ValidationMethod,
+    string? ValidationOutcome,
+    DateTimeOffset? ValidatedAt,
+    int? ObservedBefore,
+    int? ObservedAfter,
+    bool ComparedBySets,
+    string? ValidationRationale,
+    /// <summary>Início do ciclo vigente da ação no instante da publicação. Nulo nas fotografias anteriores.</summary>
+    DateTimeOffset? CycleStartedAt = null,
+    /// <summary>A ação já havia sido REABERTA quando o relatório foi publicado.</summary>
+    bool? WasReopened = null,
+    /// <summary>
+    /// A validação acima fala pelo ciclo vigente? <c>false</c> a identifica como registro HISTÓRICO — ela
+    /// permanece no relatório, mas não comprova o trabalho em curso. <c>null</c> quando não há validação, ou
+    /// quando a fotografia é anterior a esta distinção: ausência de informação não vira inaplicabilidade.
+    /// </summary>
+    bool? ValidationAppliesToCurrentCycle = null,
+    /// <summary>Método da validação APLICÁVEL ao ciclo vigente — nulo quando o ciclo não tem nenhuma.</summary>
+    string? ApplicableValidationMethod = null,
+    /// <summary>Desfecho aplicável ao ciclo vigente: o único que pode ser somado à melhora comprovada.</summary>
+    string? ApplicableValidationOutcome = null,
+    /// <summary>Quando a validação aplicável ao ciclo foi decidida.</summary>
+    DateTimeOffset? ApplicableValidatedAt = null);
 
 /// <summary>Detalhe completo de uma fotografia — resumo + agregados crus + itens congelados (controles OU indicadores).</summary>
 public sealed record PostureSnapshotDetailDto(
@@ -85,7 +135,11 @@ public sealed record PostureSnapshotDetailDto(
     int PossiblePoints,
     int EligiblePoints,
     IReadOnlyList<PostureSnapshotControlDto> Controls,
-    IReadOnlyList<PostureSnapshotIndicatorDto> Indicators);
+    IReadOnlyList<PostureSnapshotIndicatorDto> Indicators,
+    /// <summary>[AEGIS-MVP-PRODUCT-03] Limitações de COLETA congeladas — o que a avaliação não conseguiu ver.</summary>
+    IReadOnlyList<string>? CollectionLimitations = null,
+    /// <summary>[AEGIS-MVP-PRODUCT-03] Ações congeladas no instante da publicação.</summary>
+    IReadOnlyList<PostureSnapshotActionItemDto>? ActionItems = null);
 
 /// <summary>Uma mudança de um item (controle/indicador) entre duas fotografias.</summary>
 public sealed record PostureItemChangeDto(string Code, string Title, string PreviousStatus, string CurrentStatus);
@@ -144,11 +198,20 @@ public sealed class PostureSnapshotNotAvailableException : Exception
 public interface IPostureSnapshotService
 {
     /// <summary>
-    /// Publica uma fotografia da postura ATUAL do tipo indicado. Para KNIGHT, congela o ÚLTIMO assessment do
-    /// tenant (opcionalmente da <paramref name="source"/> indicada). Lança <see cref="PostureSnapshotNotAvailableException"/>
-    /// quando não há postura a fotografar. O cliente NÃO fornece score/cobertura/contagens.
+    /// Publica uma fotografia da postura ATUAL do tipo indicado.
+    ///
+    /// Para KNIGHT: com <paramref name="runId"/>, congela EXATAMENTE aquela execução — é o que impede que
+    /// publicar a avaliação aberta por link vire, em silêncio, a publicação da mais recente (os dois
+    /// resultados vêm de coletas diferentes e não se substituem). Sem <paramref name="runId"/>, o
+    /// comportamento existente é preservado: congela o ÚLTIMO assessment do tenant, opcionalmente da
+    /// <paramref name="source"/> indicada.
+    ///
+    /// Lança <see cref="PostureSnapshotNotAvailableException"/> quando não há postura a fotografar — inclusive
+    /// quando a execução pedida não existe neste tenant, caso em que NÃO se cai para a mais recente. O cliente
+    /// NUNCA fornece score/cobertura/contagens.
     /// </summary>
-    Task<PostureSnapshotDetailDto> PublishAsync(PostureSnapshotType type, KnightSourceType? source, CancellationToken ct = default);
+    Task<PostureSnapshotDetailDto> PublishAsync(
+        PostureSnapshotType type, KnightSourceType? source, Guid? runId = null, CancellationToken ct = default);
 
     /// <summary>Lista as fotografias do tenant (mais recentes primeiro), opcionalmente filtradas por tipo.</summary>
     Task<IReadOnlyList<PostureSnapshotSummaryDto>> ListAsync(PostureSnapshotType? type, CancellationToken ct = default);

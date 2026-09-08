@@ -3,6 +3,7 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { environment } from '../../environments/environment';
 import { AuthService } from '../services/auth.service';
 import { PostureHistoryService } from '../services/posture-history.service';
+import { KnightFrozenReportComponent } from '../components/knight/frozen-report.component';
 import {
   PostureComparisonResult,
   PostureExportFormat,
@@ -30,7 +31,7 @@ import {
 @Component({
   selector: 'app-posture-history',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, KnightFrozenReportComponent],
   template: `
     <section class="hist">
       <p class="eyebrow">AEGIS · Histórico Auditável de Postura · Registros de postura imutáveis</p>
@@ -208,6 +209,15 @@ import {
                   @let d = detail()!;
                   <div class="meta">
                     <div class="mrow"><span class="k">Tipo</span><span class="v">{{ snapshotTypeLabel(d.summary.type) }}</span></div>
+                    <!-- [AEGIS-MVP-PRODUCT-03] Cliente e avaliação de origem vêm CONGELADOS na fotografia: o
+                         relatório não busca o nome de hoje nem adivinha de qual coleta ele saiu. -->
+                    <div class="mrow">
+                      <span class="k">Cliente</span>
+                      <span class="v">{{ d.summary.clientName || 'não registrado nesta fotografia' }}</span>
+                    </div>
+                    @if (d.summary.sourceRunId) {
+                      <div class="mrow"><span class="k">Avaliação</span><span class="v mono">{{ d.summary.sourceRunId }}</span></div>
+                    }
                     @if (d.summary.sourceLabel) { <div class="mrow"><span class="k">Fonte</span><span class="v">{{ d.summary.sourceLabel }}</span></div> }
                     <div class="mrow"><span class="k">Fórmula</span><span class="v mono">{{ d.summary.formulaVersion }}</span></div>
                     <div class="mrow"><span class="k">Catálogo</span><span class="v mono">{{ d.summary.catalogVersion }}</span></div>
@@ -258,6 +268,13 @@ import {
                         </tbody>
                       </table>
                     </div>
+                  }
+
+                  <!-- [AEGIS-MVP-PRODUCT-03] O que ficou CONGELADO nesta publicação (limitações da coleta,
+                       ações e validações). Componente próprio: é um bloco com tese própria — "isto é o
+                       passado e não muda mais" — e não divide o orçamento de CSS desta página. -->
+                  @if (d.summary.type === 'Knight') {
+                    <app-knight-frozen-report [snapshot]="d" />
                   }
 
                   @if (d.indicators.length) {
@@ -472,6 +489,9 @@ export class PostureHistoryComponent implements OnInit {
   publish(type: PostureSnapshotType): void {
     this.publishing.set(true);
     this.publishError.set(null);
+    // Publicação a partir do histórico segue sem runId: aqui o usuário pede explicitamente "a postura
+    // atual". Quem quer publicar UMA avaliação específica faz isso na tela do AEGIS KNIGHT, onde a
+    // avaliação aberta é inequívoca.
     this.svc.publish({ type }).subscribe({
       next: (d) => {
         this.publishing.set(false);

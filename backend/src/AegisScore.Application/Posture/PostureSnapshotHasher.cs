@@ -26,6 +26,20 @@ public static class PostureSnapshotHasher
     /// <summary>Prefixo versionado da representação canônica — muda junto com o algoritmo, isolando o histórico.</summary>
     private const string CanonicalVersion = "posture-hash-v2";
 
+    /// <summary>
+    /// [AEGIS-MVP-PRODUCT-03] Marcador da EXTENSÃO aditiva (contexto do relatório + ações congeladas). Ele
+    /// abre um bloco que só existe quando há conteúdo novo a cobrir, então o hash das fotografias já
+    /// publicadas permanece exatamente o mesmo e elas continuam exportáveis.
+    /// </summary>
+    /// <remarks>
+    /// O marcador permanece <c>v1</c> mesmo tendo a extensão ganhado campos durante o próprio pacote — inclusive
+    /// na correção que acrescentou a aplicabilidade ao ciclo: nenhuma fotografia com extensão existe fora deste
+    /// repositório (as migrations que criam as colunas ainda não foram aplicadas em ambiente algum), então não
+    /// há hash publicado a preservar dentro do bloco. O que precisa ser preservado — e é — são os hashes das
+    /// fotografias ANTERIORES à extensão, que não escrevem o bloco.
+    /// </remarks>
+    private const string ExtensionVersion = "posture-hash-ext-report-v1";
+
     /// <summary>Computa o hash SHA-256 (hex minúsculo, 64 chars) do conteúdo canônico da fotografia.</summary>
     public static string Compute(PostureSnapshot s)
     {
@@ -114,6 +128,74 @@ public static class PostureSnapshotHasher
             foreach (var t in mitre) w.Str(t);
         }
 
+        // ---- [AEGIS-MVP-PRODUCT-03] Extensão do conteúdo publicado, ADITIVA e COMPATÍVEL --------------
+        //
+        // O contexto do relatório (cliente, avaliação de origem, limitações de coleta) e as AÇÕES congeladas
+        // fazem parte do conteúdo assinado: se ficassem de fora, alterá-los não seria detectável e o hash
+        // deixaria de proteger o que o PDF de fato mostra.
+        //
+        // A extensão só é ESCRITA quando existe conteúdo. Isso não é um atalho: uma fotografia sem contexto
+        // extra e sem ações é, semanticamente, a mesma coisa que uma fotografia anterior a esta entrega — e
+        // é o que preserva o hash das fotografias JÁ PUBLICADAS, que continuam verificáveis. Um bloco
+        // sempre-presente-com-zeros mudaria a representação canônica de todo o histórico e faria a
+        // exportação de fotografias antigas falhar por "integridade divergente".
+        var actions = s.ActionItems.OrderBy(a => a.ActionPlanId).ToList();
+        var limitations = s.CollectionLimitations.OrderBy(x => x, StringComparer.Ordinal).ToList();
+        var hasExtension = s.SourceRunId is not null
+            || !string.IsNullOrEmpty(s.ClientName)
+            || limitations.Count > 0
+            || actions.Count > 0;
+
+        if (hasExtension)
+        {
+            w.Str(ExtensionVersion)
+             .Str(s.SourceRunId?.ToString("D"))   // Guid? — null é distinto de qualquer identificador
+             .Str(s.ClientName);
+
+            w.Int(limitations.Count);
+            foreach (var l in limitations) w.Str(l);
+
+            w.Int(actions.Count);
+            foreach (var a in actions)
+            {
+                w.Str(a.ActionPlanId.ToString("D"))
+                 .Str(a.IndicatorId)
+                 .Str(a.OriginRunId?.ToString("D"))   // proveniência: a coleta que originou a ação
+                 .Str(a.Title)
+                 .Str(a.ProposedAction)
+                 .Str(a.ResponsiblePerson)
+                 .Str(a.ResponsibleArea)
+                 .Str(a.DueDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))
+                 .Enum(a.Status)
+                 .Bool(a.WasOverdue)
+                 .Str(a.NextStep)
+                 .EnumN(a.ValidationMethod)
+                 .EnumN(a.ValidationOutcome)
+                 .Inst(a.ValidatedAt)
+                 .Dbl(a.ObservedBefore)
+                 .Dbl(a.ObservedAfter)
+                 .Bool(a.ComparedBySets)
+                 .Str(a.ValidationRationale)
+                 // Proveniência da VALIDAÇÃO: a coleta usada como evidência, a referência humana e a data
+                 // dessa coleta. É o que permite ao leitor entender de onde veio a conclusão — e, por isso
+                 // mesmo, precisa estar sob o hash: se ficasse de fora, trocar a evidência citada não seria
+                 // detectável e o hash deixaria de proteger o que o PDF de fato afirma.
+                 .Str(a.ValidationRunId?.ToString("D"))
+                 .Str(a.ValidationEvidenceReference)
+                 .Inst(a.EvidenceCollectedAt)
+                 .Bool(a.PrecedesReportedExecution)
+                 // APLICABILIDADE ao ciclo vigente: é o que separa, no relatório, uma melhora comprovada
+                 // agora de uma comprovação herdada de um ciclo já encerrado. Fora do hash, trocar esse
+                 // discriminador converteria um registro histórico em prova atual sem deixar rastro.
+                 .Inst(a.CycleStartedAt)
+                 .BoolN(a.WasReopened)
+                 .BoolN(a.ValidationAppliesToCurrentCycle)
+                 .EnumN(a.ApplicableValidationMethod)
+                 .EnumN(a.ApplicableValidationOutcome)
+                 .Inst(a.ApplicableValidatedAt);
+            }
+        }
+
         return w.ToString();
     }
 
@@ -145,6 +227,13 @@ public static class PostureSnapshotHasher
         }
 
         public CanonicalWriter Bool(bool v) { _sb.Append('B').Append(v ? '1' : '0').Append(';'); return this; }
+
+        /// <summary>Booleano ANULÁVEL — <c>null</c> ("não se sabe") é distinto tanto de verdadeiro quanto de falso.</summary>
+        public CanonicalWriter BoolN(bool? v)
+        {
+            _sb.Append(v is null ? "Bn;" : v.Value ? "B1;" : "B0;");
+            return this;
+        }
 
         /// <summary>Instante UTC TRUNCADO a microssegundos (precisão do PostgreSQL), como contagem de ticks.</summary>
         public CanonicalWriter Inst(DateTimeOffset? v)

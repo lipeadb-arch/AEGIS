@@ -12,6 +12,16 @@ import {
   statusLabel,
 } from '../models/knight.models';
 import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-exposure.models';
+import {
+  ActionPlan,
+  KnightOriginMode,
+  KnightOriginSource,
+  actionResult,
+  actionSituation,
+  activePlanFor,
+  originLabel,
+} from '../models/remediation.models';
+import { RemediationService } from '../services/remediation.service';
 
 /**
  * [AEGIS-MVP-PRIORITIES-01] Central de Prioridades — visão operacional que REÚNE, sem combinar num único
@@ -113,6 +123,88 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-ex
           </div>
         </div>
 
+        <!-- ---------- [AEGIS-MVP-PRODUCT-03] Sub-abas da Central ----------
+             Achados e planos são leituras da MESMA central, não duas entradas de menu: acrescentar "Planos de
+             ação" à navegação principal separaria o problema do trabalho que o endereça. -->
+        <div class="subtabs" role="tablist">
+          <button type="button" role="tab" [class.on]="tab() === 'achados'" (click)="tab.set('achados')">
+            Achados
+          </button>
+          <button type="button" role="tab" [class.on]="tab() === 'planos'" (click)="tab.set('planos')">
+            Planos de ação
+            @if (plans().length) { <span class="n">{{ plans().length }}</span> }
+          </button>
+        </div>
+
+        @if (tab() === 'planos') {
+          <div class="queue">
+            <div class="queue-head">
+              <div>
+                <h2>Planos de ação</h2>
+                <p class="queue-sub">
+                  Ações nascidas de achados de identidade. <strong>A etapa do plano e o resultado no achado
+                  são coisas distintas</strong>: encerrar uma ação é uma decisão de gestão sobre o trabalho;
+                  o que aconteceu com a exposição só uma validação com evidência pode dizer.
+                </p>
+              </div>
+            </div>
+            <div class="panel">
+              @if (plansError(); as pe) {
+                <div class="state error"><p class="err">⚠ {{ pe }}</p></div>
+              } @else if (plans().length === 0) {
+                <div class="state empty">
+                  <p class="muted">
+                    Nenhum plano de ação registrado. Abra um achado de identidade abaixo e crie a primeira ação.
+                  </p>
+                </div>
+              } @else {
+                <table class="grid-table">
+                  <thead>
+                    <tr>
+                      <th>Ação</th>
+                      <th class="c-tier">Origem</th>
+                      <th class="c-tier">Responsável</th>
+                      <th class="c-when">Prazo</th>
+                      <th class="c-state">Situação do plano</th>
+                      <th>Resultado no achado</th>
+                      <th class="c-when">Próxima providência</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (p of plans(); track p.id) {
+                      <tr class="row">
+                        <td>
+                          <!-- [AEGIS-MVP-PRODUCT-03] O link identifica O PLANO, não apenas o achado. Sem o
+                               identificador da ação, abrir a linha de uma ação ENCERRADA levaria ao ciclo
+                               ATIVO do mesmo indicador — outro trabalho, com a mesma aparência de resposta. -->
+                          <a
+                            class="title link"
+                            [routerLink]="['/identity']"
+                            [queryParams]="{ finding: p.knightIndicatorId, run: p.originRunId, plan: p.id }">
+                            {{ p.title }}
+                          </a>
+                          <span class="meta mono">{{ p.knightIndicatorId }}</span>
+                        </td>
+                        <td class="c-tier">
+                          <span class="meta" [class.demo]="p.originMode === 'Demo'">{{ origin(p) }}</span>
+                        </td>
+                        <td class="c-tier">{{ p.responsiblePerson || '—' }}</td>
+                        <td class="c-when">
+                          <span class="meta" [class.late]="p.isOverdue">{{ p.dueDate || 'sem prazo' }}</span>
+                        </td>
+                        <td class="c-state"><span class="badge" [class.bad]="p.isOverdue">{{ situation(p) }}</span></td>
+                        <td><span class="meta">{{ result(p) }}</span></td>
+                        <td class="c-when"><span class="meta">{{ p.nextStep }}</span></td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              }
+            </div>
+          </div>
+        }
+
+        @if (tab() === 'achados') {
         <!-- ---------- Fila de exposições de configuração ---------- -->
         <div class="queue">
           <div class="queue-head">
@@ -353,7 +445,17 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-ex
                             <span class="meta dim">detalhe não preservado</span>
                           }
                         </td>
-                        <td class="c-when"><span class="meta">{{ fmtDate(f.collectedAt) }}</span></td>
+                        <td class="c-when">
+                          <span class="meta">{{ fmtDate(f.collectedAt) }}</span>
+                          <!-- [AEGIS-MVP-PRODUCT-03] Com ação ativa, ABRE a existente; sem ela, cria. O link
+                               leva à MESMA avaliação do achado, com a origem preservada. -->
+                          <a
+                            class="meta link"
+                            [routerLink]="['/identity']"
+                            [queryParams]="{ finding: f.indicatorId, run: knight()!.runId }">
+                            {{ planFor(f.indicatorId) ? 'Abrir plano' : 'Criar plano de ação' }}
+                          </a>
+                        </td>
                       </tr>
                     }
                   </tbody>
@@ -362,6 +464,8 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-ex
             }
           </div>
         </div>
+
+        }
 
         <p class="foot-note">
           Fatos vêm das fontes de cada fila; a IA apenas explica, correlaciona e recomenda — não altera score,
@@ -401,6 +505,12 @@ import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-ex
       .collect-v.muted { font-family: inherit; }
 
       .queue { display: flex; flex-direction: column; gap: 0.5rem; }
+      .subtabs { display: flex; gap: 0.4rem; border-bottom: 1px solid color-mix(in srgb, var(--c) 18%, transparent); }
+      .subtabs button { cursor: pointer; background: none; border: none; border-bottom: 2px solid transparent; color: inherit; opacity: 0.6; font: inherit; font-size: 0.85rem; padding: 0.45rem 0.85rem; }
+      .subtabs button.on { opacity: 1; color: var(--c); border-bottom-color: var(--c); }
+      .subtabs .n { font-size: 0.68rem; margin-left: 0.35rem; opacity: 0.75; }
+      .meta.late { color: #ff6b8a; }
+      .meta.demo { color: #ffb020; opacity: 0.95; }
       /* [AEGIS-MVP-PRODUCT-02] Barra de contexto da avaliação KNIGHT: origem, score PRÓPRIO e cobertura. */
       .knight-bar { display: flex; gap: 1.4rem; flex-wrap: wrap; padding: 0.55rem 0.7rem 0.75rem; }
       .kb-item { display: flex; flex-direction: column; gap: 0.1rem; }
@@ -461,6 +571,36 @@ export class PrioritiesComponent {
   private readonly api = inject(PriorityService);
   private readonly agent = inject(AgentStateService);
 
+  private readonly remediation = inject(RemediationService);
+
+  /** Sub-aba ativa: os achados (as três filas) ou os planos que os endereçam. */
+  protected readonly tab = signal<'achados' | 'planos'>('achados');
+
+  /**
+   * Planos de ação do tenant. Uma leitura ÚNICA serve às duas sub-abas e ao botão de cada achado — a mesma
+   * autoridade que a tela do KNIGHT usa, de modo que os dois lugares não discordem sobre "existe ação ativa?".
+   */
+  protected readonly plans = signal<ActionPlan[]>([]);
+  protected readonly plansError = signal<string | null>(null);
+
+  protected readonly situation = actionSituation;
+  protected readonly result = actionResult;
+  protected readonly origin = originLabel;
+
+  /** Ação ATIVA de um achado — decide entre "Criar plano de ação" e "Abrir plano". */
+  /**
+   * A ação ATIVA de um achado NESTA procedência. A fonte e o modo da avaliação exibida entram na busca
+   * porque o indicador sozinho não identifica o problema: sem esse recorte, uma ação nascida do cenário de
+   * demonstração responderia por um achado real — e ainda bloquearia a criação da ação real.
+   */
+  protected planFor(indicatorId: string): ActionPlan | null {
+    const k = this.knight();
+    if (!k) return null;
+    const fonte = (k.sourceType as KnightOriginSource | null) ?? null;
+    const modo: KnightOriginMode | null = k.isDemo ? 'Demo' : fonte ? 'Live' : null;
+    return activePlanFor(this.plans(), indicatorId, fonte, modo);
+  }
+
   protected readonly data = signal<PriorityWorkspace | null>(null);
   protected readonly loading = signal(false);
   protected readonly error = signal<string | null>(null);
@@ -511,6 +651,7 @@ export class PrioritiesComponent {
   protected load(): void {
     this.loading.set(true);
     this.error.set(null);
+    this.loadPlans();
     this.api.get().subscribe({
       next: (workspace) => {
         this.data.set(workspace);
@@ -521,6 +662,18 @@ export class PrioritiesComponent {
         this.error.set(err.message);
         this.loading.set(false);
       },
+    });
+  }
+
+  /**
+   * Lê os planos. Uma falha aqui NÃO derruba a Central: as filas de achados continuam válidas, e a sub-aba de
+   * planos mostra o erro em vez de uma lista vazia que se leria como "não há ação alguma".
+   */
+  private loadPlans(): void {
+    this.plansError.set(null);
+    this.remediation.list({}).subscribe({
+      next: (plans) => this.plans.set(plans),
+      error: (err: Error) => this.plansError.set(err.message),
     });
   }
 
