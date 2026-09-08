@@ -97,23 +97,43 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         var indicatorIds = snapshot.Indicators.Select(i => i.IndicatorId).ToHashSet(StringComparer.Ordinal);
         if (indicatorIds.Count == 0) return;
 
+        // [AEGIS-MVP-PRODUCT-03] A PROCEDÊNCIA da avaliação congelada decide quais ações pertencem a este
+        // relatório. Filtrar só pelo indicador deixaria uma ação nascida do cenário de DEMONSTRAÇÃO entrar no
+        // relatório de uma coleta REAL — apresentada, no PDF, exatamente como trabalho real sobre o cliente.
+        var origin = snapshot.SourceRunId is not { } sourceRunId
+            ? null
+            : await _db.KnightAssessmentRuns.AsNoTracking()
+                .Where(r => r.Id == sourceRunId)
+                .Select(r => new { r.SourceType, r.Mode })
+                .FirstOrDefaultAsync(ct);
+        if (origin is null) return;
+
         var plans = await _db.ActionPlans.AsNoTracking()
             .Include(p => p.Validations)
-            .Where(p => p.KnightIndicatorId != null)
+            .Where(p => p.KnightIndicatorId != null
+                        && p.OriginSourceType == origin.SourceType
+                        && p.OriginMode == origin.Mode)
             .ToListAsync(ct);
 
         foreach (var p in plans
             .Where(p => indicatorIds.Contains(p.KnightIndicatorId!))
             .OrderBy(p => p.KnightIndicatorId, StringComparer.Ordinal).ThenBy(p => p.CreatedAt))
         {
-            // A validação MAIS RECENTE é a que o relatório apresenta; as anteriores continuam no produto.
+            // A validação MAIS RECENTE é a que o relatório apresenta; as anteriores continuam no produto. A
+            // providência, porém, segue a validação APLICÁVEL ao ciclo atual: uma ação reaberta não pode
+            // levar ao PDF a comprovação do ciclo que já foi encerrado como se ainda valesse.
             var latest = p.Validations.OrderByDescending(v => v.DecidedAt).ThenByDescending(v => v.Id).FirstOrDefault();
+            var cycleStart = RemediationReading.CycleStartOf(p);
+            var applicable = p.Validations
+                .OrderByDescending(v => v.DecidedAt).ThenByDescending(v => v.Id)
+                .FirstOrDefault(v => RemediationReading.IsApplicableToCurrentCycle(v, cycleStart, p.ExecutedAt));
             var overdue = p.IsOverdue;
 
             snapshot.ActionItems.Add(new PostureSnapshotActionItem
             {
                 ActionPlanId = p.Id,
                 IndicatorId = p.KnightIndicatorId!,
+                OriginRunId = p.OriginRunId,
                 Title = p.Title ?? "",
                 ProposedAction = p.Description,
                 ResponsiblePerson = p.ResponsiblePerson,
@@ -121,7 +141,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 DueDate = p.DueDate,
                 Status = p.Status,
                 WasOverdue = overdue,
-                NextStep = RemediationReading.NextStep(p.Status, overdue, latest?.Outcome),
+                NextStep = RemediationReading.NextStep(
+                    p.Status, overdue, applicable?.Outcome, latest?.Outcome),
                 ValidationMethod = latest?.Method,
                 ValidationOutcome = latest?.Outcome,
                 ValidatedAt = latest?.DecidedAt,
@@ -129,6 +150,10 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 ObservedAfter = latest?.ObservedAfter,
                 ComparedBySets = latest?.ComparedBySets ?? false,
                 ValidationRationale = latest?.Rationale,
+                ValidationRunId = latest?.ValidationRunId,
+                ValidationEvidenceReference = latest?.EvidenceReference,
+                EvidenceCollectedAt = latest?.EvidenceCollectedAt,
+                PrecedesReportedExecution = latest?.PrecedesReportedExecution ?? false,
             });
         }
     }

@@ -101,6 +101,26 @@ public class ActionPlan : Entity, ITenantOwned
     /// <summary>Quantidade afetada observada NA ORIGEM — o ponto de partida contra o qual a melhora é medida.</summary>
     public int? OriginAffectedCount { get; set; }
 
+    /// <summary>
+    /// FONTE da avaliação de origem (Demo/MicrosoftEntraId/GoogleWorkspace). Registrada porque o indicador
+    /// SOZINHO não identifica o problema: "AK-ENTRA-001 no cenário de demonstração" e "AK-ENTRA-001 na coleta
+    /// real do diretório" são dois problemas distintos, e tratá-los como um só faria uma ação de treinamento
+    /// bloquear a ação real, aparecer nas telas como se fosse real e entrar no relatório de uma coleta real.
+    /// Nula nos planos legados de risco.
+    /// </summary>
+    public KnightSourceType? OriginSourceType { get; set; }
+
+    /// <summary>Demo ou Live — o mesmo eixo da fonte visto pelo outro lado, guardado explicitamente.</summary>
+    public KnightAssessmentMode? OriginMode { get; set; }
+
+    /// <summary>
+    /// Início do CICLO vigente de trabalho. Nasce com a ação e é REPACTUADO quando uma ação encerrada é
+    /// reaberta. É o que impede uma validação antiga de continuar autorizando a conclusão do ciclo novo: a
+    /// história inteira permanece gravada, mas só o que aconteceu DEPOIS deste instante fala pelo ciclo atual.
+    /// Nulo nos planos legados, que caem para <see cref="Entity.CreatedAt"/>.
+    /// </summary>
+    public DateTimeOffset? CycleStartedAt { get; set; }
+
     // ---- [AEGIS-MVP-PRODUCT-03] Execução relatada ---------------------------------------------------
     // "Marcar como executado" é RELATO, não prova. Fica registrado como relato, com autor e data, e a
     // comprovação acontece em ActionPlanValidation.

@@ -192,11 +192,26 @@ public sealed class RemediationPostgresTests
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
         {
             var inserirParalela = async () => await db.Database.ExecuteSqlRawAsync(
-                InsertPlanSql, Guid.NewGuid(), tenant, "AK-ENTRA-001", (int)ActionPlanStatus.Aberto);
+                InsertPlanSql, Guid.NewGuid(), tenant, "AK-ENTRA-001", (int)ActionPlanStatus.Aberto,
+                (int)KnightSourceType.Demo, (int)KnightAssessmentMode.Demo);
 
-            (await inserirParalela.Should().ThrowAsync<PostgresException>(
-                "o próprio banco precisa recusar uma segunda ação ATIVA para o mesmo achado"))
-                .Which.SqlState.Should().Be(PostgresErrorCodes.UniqueViolation);
+            var violacao = (await inserirParalela.Should().ThrowAsync<PostgresException>(
+                "o próprio banco precisa recusar uma segunda ação ATIVA para o mesmo achado")).Which;
+            violacao.SqlState.Should().Be(PostgresErrorCodes.UniqueViolation);
+            violacao.ConstraintName.Should().Be("UX_ActionPlans_ActiveByFinding",
+                "é ESTE índice que o serviço traduz em conflito de negócio — nenhum outro");
+        }
+
+        // Uma ação de PROCEDÊNCIA diferente (coleta real) para o MESMO achado convive com a de demonstração:
+        // a chave inclui fonte e modo justamente para que um treino não ocupe a origem do trabalho real.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var inserirReal = async () => await db.Database.ExecuteSqlRawAsync(
+                InsertPlanSql, Guid.NewGuid(), tenant, "AK-ENTRA-001", (int)ActionPlanStatus.Aberto,
+                (int)KnightSourceType.MicrosoftEntraId, (int)KnightAssessmentMode.Live);
+
+            await inserirReal.Should().NotThrowAsync(
+                "demonstração e coleta real são dois problemas distintos sob o mesmo identificador de achado");
         }
 
         // Encerrada a primeira, a origem fica livre: o problema pode reaparecer e merecer um ciclo novo.
@@ -204,10 +219,13 @@ public sealed class RemediationPostgresTests
         {
             var svc = RemediationFor(db, tenant);
             var atual = await svc.GetAsync(planoId);
-            var andamento = await svc.UpdateAsync(planoId,
-                new UpdateActionPlanCommand(atual!.Version, null, null, null, null, null, ActionPlanStatus.AguardandoValidacao), Actor);
+            // Encerrar exige BASE registrada: relato de execução e uma decisão de validação sobre ele.
+            var executado = await svc.RecordExecutionAsync(planoId,
+                new RecordExecutionCommand(atual!.Version, "MFA registrado.", null), Actor);
+            var validado = await svc.ValidateAsync(planoId,
+                new ValidateActionPlanCommand(executado!.Version, null, "CHAMADO-77", null), Actor);
             await svc.UpdateAsync(planoId,
-                new UpdateActionPlanCommand(andamento!.Version, null, null, null, null, null, ActionPlanStatus.Concluido), Actor);
+                new UpdateActionPlanCommand(validado!.Version, null, null, null, null, null, ActionPlanStatus.Concluido), Actor);
 
             var novoCiclo = await svc.CreateForFindingAsync(
                 new CreateFindingActionPlanCommand(runId, "AK-ENTRA-001", "Segundo ciclo", null, null, null, null), Actor);
@@ -329,12 +347,131 @@ public sealed class RemediationPostgresTests
         }
     }
 
+    // ---- (5) A corrida do banco vira conflito de NEGÓCIO — e só ela ------------------------------
+
+    [Fact]
+    public async Task CriacaoCONCORRENTE_ViraConflitoTratado_SemMascararOutrosErrosDoBanco()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+
+        var tenant = Guid.NewGuid();
+        await MigrateAndSeedAsync(opt, tenant, "Cliente Corrida");
+
+        Guid runId;
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+            runId = (await RunAsync(db, tenant, withoutMfa: 2, at: T0)).Id;
+
+        // A linha concorrente é inserida por FORA do serviço — é exatamente o que uma segunda requisição
+        // simultânea faria depois de passar pela checagem em memória.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+            await db.Database.ExecuteSqlRawAsync(
+                InsertPlanSql, Guid.NewGuid(), tenant, "AK-ENTRA-001", (int)ActionPlanStatus.Aberto,
+                (int)KnightSourceType.Demo, (int)KnightAssessmentMode.Demo);
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var criar = async () => await RemediationFor(db, tenant).CreateForFindingAsync(
+                new CreateFindingActionPlanCommand(runId, "AK-ENTRA-001", "Ação", null, null, null, null), Actor);
+
+            // A checagem em memória já encontra a linha e recusa antes do banco — que é o caminho normal.
+            await criar.Should().ThrowAsync<ActionPlanConflictException>(
+                "o produto responde 409 com a ação existente, não 500");
+        }
+
+        // E a tradução é do índice ESPECÍFICO, não de "qualquer chave duplicada": outra unicidade violada
+        // continua sendo o erro que é, em vez de virar uma mensagem de negócio plausível e falsa.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+        {
+            var slug = "dup-" + Guid.NewGuid().ToString("N");
+            db.Tenants.Add(new Tenant { Id = Guid.NewGuid(), Name = "X", Slug = slug, Status = TenantStatus.Active });
+            await db.SaveChangesAsync();
+
+            db.Tenants.Add(new Tenant { Id = Guid.NewGuid(), Name = "Y", Slug = slug, Status = TenantStatus.Active });
+            var outraUnicidade = async () => await db.SaveChangesAsync();
+
+            (await outraUnicidade.Should().ThrowAsync<DbUpdateException>())
+                .Which.Should().NotBeOfType<ActionPlanConflictException>();
+        }
+    }
+
+    // ---- (6) Repactuar prazo e responsável, com conflito de versão tratado -------------------------
+
+    [Fact]
+    public async Task RepactuarPrazoEResponsavel_NaoRecriaAAcao_EConflitoDeVersaoERecusado()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+
+        var tenant = Guid.NewGuid();
+        await MigrateAndSeedAsync(opt, tenant, "Cliente Edição");
+
+        Guid runId, planoId;
+        int versaoAntiga;
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+            runId = (await RunAsync(db, tenant, withoutMfa: 2, at: T0)).Id;
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var criada = await RemediationFor(db, tenant).CreateForFindingAsync(
+                new CreateFindingActionPlanCommand(
+                    runId, "AK-ENTRA-001", "Registrar segundo fator", "Proposta original.",
+                    "Equipe de Identidade", "TI", new DateOnly(2026, 10, 15)),
+                Actor);
+            planoId = criada!.Id;
+            versaoAntiga = criada.Version;
+        }
+
+        // Repactuação: a MESMA ação muda de responsável e de prazo, sem recriar nada.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var svc = RemediationFor(db, tenant);
+            var editada = await svc.UpdateAsync(
+                planoId,
+                new UpdateActionPlanCommand(versaoAntiga, null, null, "Ana Souza", "Segurança",
+                    new DateOnly(2026, 11, 30), null),
+                Actor);
+
+            editada!.Id.Should().Be(planoId, "repactuar prazo não pode nascer uma ação nova");
+            editada.ResponsiblePerson.Should().Be("Ana Souza");
+            editada.DueDate.Should().Be(new DateOnly(2026, 11, 30));
+            editada.OriginRunId.Should().Be(runId, "a origem permanece a mesma");
+            editada.Version.Should().BeGreaterThan(versaoAntiga);
+            editada.Events.Should().Contain(e => e.Kind == ActionPlanEventKind.Edited,
+                "a trilha registra quem mudou o quê");
+        }
+
+        // A tela que ficou aberta com a versão antiga recebe 409 em vez de sobrescrever o trabalho alheio.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var telaVelha = async () => await RemediationFor(db, tenant).UpdateAsync(
+                planoId,
+                new UpdateActionPlanCommand(versaoAntiga, null, null, "Sobrescrito", null, null, null),
+                Actor);
+
+            await telaVelha.Should().ThrowAsync<ActionPlanConflictException>();
+        }
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+            (await RemediationFor(db, tenant).GetAsync(planoId))!.ResponsiblePerson
+                .Should().Be("Ana Souza", "a escrita recusada não deixou rastro");
+    }
+
     // ---- Helpers ----------------------------------------------------------------------------------
 
+    /// <summary>
+    /// INSERT cru de uma ação de achado, COM a procedência. Ela precisa estar aqui: o índice único parcial é
+    /// por (tenant, fonte, modo, achado), e um insert sem fonte/modo cairia num outro ponto do espaço de
+    /// chaves — passaria, e o teste "provaria" uma unicidade que não foi exercida.
+    /// </summary>
     private const string InsertPlanSql =
         @"INSERT INTO ""ActionPlans""
-          (""Id"", ""TenantId"", ""Treatment"", ""Status"", ""KnightIndicatorId"", ""Version"", ""CreatedAt"")
-          VALUES ({0}, {1}, 1, {3}, {2}, 1, now())";
+          (""Id"", ""TenantId"", ""Treatment"", ""Status"", ""KnightIndicatorId"",
+           ""OriginSourceType"", ""OriginMode"", ""Version"", ""CreatedAt"")
+          VALUES ({0}, {1}, 1, {3}, {2}, {4}, {5}, 1, now())";
 
     private static async Task MigrateAndSeedAsync(
         DbContextOptions<AegisScoreDbContext> opt, Guid tenant, string name)

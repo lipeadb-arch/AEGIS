@@ -31,6 +31,12 @@ public static class PostureSnapshotHasher
     /// abre um bloco que só existe quando há conteúdo novo a cobrir, então o hash das fotografias já
     /// publicadas permanece exatamente o mesmo e elas continuam exportáveis.
     /// </summary>
+    /// <remarks>
+    /// O marcador permanece <c>v1</c> mesmo tendo a extensão ganhado campos durante o próprio pacote: nenhuma
+    /// fotografia com extensão existe fora deste repositório (a migration que cria as colunas ainda não foi
+    /// aplicada em ambiente algum), então não há hash publicado a preservar dentro do bloco. O que precisa ser
+    /// preservado — e é — são os hashes das fotografias ANTERIORES à extensão, que não escrevem o bloco.
+    /// </remarks>
     private const string ExtensionVersion = "posture-hash-ext-report-v1";
 
     /// <summary>Computa o hash SHA-256 (hex minúsculo, 64 chars) do conteúdo canônico da fotografia.</summary>
@@ -153,6 +159,7 @@ public static class PostureSnapshotHasher
             {
                 w.Str(a.ActionPlanId.ToString("D"))
                  .Str(a.IndicatorId)
+                 .Str(a.OriginRunId?.ToString("D"))   // proveniência: a coleta que originou a ação
                  .Str(a.Title)
                  .Str(a.ProposedAction)
                  .Str(a.ResponsiblePerson)
@@ -167,7 +174,15 @@ public static class PostureSnapshotHasher
                  .Dbl(a.ObservedBefore)
                  .Dbl(a.ObservedAfter)
                  .Bool(a.ComparedBySets)
-                 .Str(a.ValidationRationale);
+                 .Str(a.ValidationRationale)
+                 // Proveniência da VALIDAÇÃO: a coleta usada como evidência, a referência humana e a data
+                 // dessa coleta. É o que permite ao leitor entender de onde veio a conclusão — e, por isso
+                 // mesmo, precisa estar sob o hash: se ficasse de fora, trocar a evidência citada não seria
+                 // detectável e o hash deixaria de proteger o que o PDF de fato afirma.
+                 .Str(a.ValidationRunId?.ToString("D"))
+                 .Str(a.ValidationEvidenceReference)
+                 .Inst(a.EvidenceCollectedAt)
+                 .Bool(a.PrecedesReportedExecution);
             }
         }
 

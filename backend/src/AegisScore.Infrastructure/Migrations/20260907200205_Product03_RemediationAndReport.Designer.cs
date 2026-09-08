@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AegisScore.Infrastructure.Migrations
 {
     [DbContext(typeof(AegisScoreDbContext))]
-    [Migration("20260907144711_Product03_RemediationAndReport")]
+    [Migration("20260907200205_Product03_RemediationAndReport")]
     partial class Product03_RemediationAndReport
     {
         /// <inheritdoc />
@@ -35,6 +35,9 @@ namespace AegisScore.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("CycleStartedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Description")
@@ -64,8 +67,14 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Property<int?>("OriginAffectedCount")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("OriginMode")
+                        .HasColumnType("integer");
+
                     b.Property<Guid?>("OriginRunId")
                         .HasColumnType("uuid");
+
+                    b.Property<int?>("OriginSourceType")
+                        .HasColumnType("integer");
 
                     b.Property<string>("ResponsibleArea")
                         .HasColumnType("text");
@@ -103,14 +112,14 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.HasIndex("RiskId");
 
-                    b.HasIndex("TenantId", "KnightIndicatorId")
+                    b.HasIndex("TenantId", "RiskId");
+
+                    b.HasIndex("TenantId", "OriginSourceType", "OriginMode", "KnightIndicatorId")
                         .IsUnique()
                         .HasDatabaseName("UX_ActionPlans_ActiveByFinding")
                         .HasFilter("\"KnightIndicatorId\" IS NOT NULL AND \"Status\" IN (0, 1, 4)");
 
-                    b.HasIndex("TenantId", "RiskId");
-
-                    b.HasIndex("TenantId", "KnightIndicatorId", "Status");
+                    b.HasIndex("TenantId", "OriginSourceType", "OriginMode", "KnightIndicatorId", "Status");
 
                     b.ToTable("ActionPlans");
                 });
@@ -192,6 +201,9 @@ namespace AegisScore.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<DateTimeOffset?>("EvidenceCollectedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("EvidenceReference")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
@@ -216,6 +228,9 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Property<int>("Outcome")
                         .HasColumnType("integer");
 
+                    b.Property<bool>("PrecedesReportedExecution")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("Rationale")
                         .IsRequired()
                         .HasMaxLength(2000)
@@ -235,6 +250,8 @@ namespace AegisScore.Infrastructure.Migrations
                     b.HasIndex("ActionPlanId", "TenantId");
 
                     b.HasIndex("TenantId", "ActionPlanId", "DecidedAt");
+
+                    b.HasIndex("TenantId", "ActionPlanId", "EvidenceCollectedAt");
 
                     b.ToTable("ActionPlanValidations");
                 });
@@ -2723,6 +2740,9 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Property<DateOnly?>("DueDate")
                         .HasColumnType("date");
 
+                    b.Property<DateTimeOffset?>("EvidenceCollectedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("IndicatorId")
                         .IsRequired()
                         .HasMaxLength(40)
@@ -2738,6 +2758,12 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.Property<int?>("ObservedBefore")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("OriginRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("PrecedesReportedExecution")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("ProposedAction")
                         .HasMaxLength(2000)
@@ -2771,6 +2797,9 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Property<DateTimeOffset?>("ValidatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("ValidationEvidenceReference")
+                        .HasColumnType("text");
+
                     b.Property<int?>("ValidationMethod")
                         .HasColumnType("integer");
 
@@ -2780,6 +2809,9 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Property<string>("ValidationRationale")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
+
+                    b.Property<Guid?>("ValidationRunId")
+                        .HasColumnType("uuid");
 
                     b.Property<bool>("WasOverdue")
                         .HasColumnType("boolean");

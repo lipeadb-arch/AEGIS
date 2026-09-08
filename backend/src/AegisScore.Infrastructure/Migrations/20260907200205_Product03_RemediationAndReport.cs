@@ -44,6 +44,12 @@ namespace AegisScore.Infrastructure.Migrations
                 oldType: "uuid");
 
             migrationBuilder.AddColumn<DateTimeOffset>(
+                name: "CycleStartedAt",
+                table: "ActionPlans",
+                type: "timestamp with time zone",
+                nullable: true);
+
+            migrationBuilder.AddColumn<DateTimeOffset>(
                 name: "ExecutedAt",
                 table: "ActionPlans",
                 type: "timestamp with time zone",
@@ -76,10 +82,22 @@ namespace AegisScore.Infrastructure.Migrations
                 type: "integer",
                 nullable: true);
 
+            migrationBuilder.AddColumn<int>(
+                name: "OriginMode",
+                table: "ActionPlans",
+                type: "integer",
+                nullable: true);
+
             migrationBuilder.AddColumn<Guid>(
                 name: "OriginRunId",
                 table: "ActionPlans",
                 type: "uuid",
+                nullable: true);
+
+            migrationBuilder.AddColumn<int>(
+                name: "OriginSourceType",
+                table: "ActionPlans",
+                type: "integer",
                 nullable: true);
 
             migrationBuilder.AddColumn<string>(
@@ -141,6 +159,8 @@ namespace AegisScore.Infrastructure.Migrations
                     Outcome = table.Column<int>(type: "integer", nullable: false),
                     ValidationRunId = table.Column<Guid>(type: "uuid", nullable: true),
                     EvidenceReference = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
+                    EvidenceCollectedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    PrecedesReportedExecution = table.Column<bool>(type: "boolean", nullable: false),
                     ObservedBefore = table.Column<int>(type: "integer", nullable: true),
                     ObservedAfter = table.Column<int>(type: "integer", nullable: true),
                     ObjectsNoLongerPresent = table.Column<int>(type: "integer", nullable: true),
@@ -172,6 +192,7 @@ namespace AegisScore.Infrastructure.Migrations
                     SnapshotId = table.Column<Guid>(type: "uuid", nullable: false),
                     ActionPlanId = table.Column<Guid>(type: "uuid", nullable: false),
                     IndicatorId = table.Column<string>(type: "character varying(40)", maxLength: 40, nullable: false),
+                    OriginRunId = table.Column<Guid>(type: "uuid", nullable: true),
                     Title = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
                     ProposedAction = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
                     ResponsiblePerson = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: true),
@@ -187,6 +208,10 @@ namespace AegisScore.Infrastructure.Migrations
                     ObservedAfter = table.Column<int>(type: "integer", nullable: true),
                     ComparedBySets = table.Column<bool>(type: "boolean", nullable: false),
                     ValidationRationale = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
+                    ValidationRunId = table.Column<Guid>(type: "uuid", nullable: true),
+                    ValidationEvidenceReference = table.Column<string>(type: "text", nullable: true),
+                    EvidenceCollectedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    PrecedesReportedExecution = table.Column<bool>(type: "boolean", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true)
                 },
@@ -202,14 +227,14 @@ namespace AegisScore.Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_ActionPlans_TenantId_KnightIndicatorId_Status",
+                name: "IX_ActionPlans_TenantId_OriginSourceType_OriginMode_KnightIndi~",
                 table: "ActionPlans",
-                columns: new[] { "TenantId", "KnightIndicatorId", "Status" });
+                columns: new[] { "TenantId", "OriginSourceType", "OriginMode", "KnightIndicatorId", "Status" });
 
             migrationBuilder.CreateIndex(
                 name: "UX_ActionPlans_ActiveByFinding",
                 table: "ActionPlans",
-                columns: new[] { "TenantId", "KnightIndicatorId" },
+                columns: new[] { "TenantId", "OriginSourceType", "OriginMode", "KnightIndicatorId" },
                 unique: true,
                 filter: "\"KnightIndicatorId\" IS NOT NULL AND \"Status\" IN (0, 1, 4)");
 
@@ -232,6 +257,11 @@ namespace AegisScore.Infrastructure.Migrations
                 name: "IX_ActionPlanValidations_TenantId_ActionPlanId_DecidedAt",
                 table: "ActionPlanValidations",
                 columns: new[] { "TenantId", "ActionPlanId", "DecidedAt" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ActionPlanValidations_TenantId_ActionPlanId_EvidenceCollect~",
+                table: "ActionPlanValidations",
+                columns: new[] { "TenantId", "ActionPlanId", "EvidenceCollectedAt" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_PostureSnapshotActionItems_SnapshotId_TenantId",
@@ -272,7 +302,7 @@ namespace AegisScore.Infrastructure.Migrations
                 table: "ActionPlans");
 
             migrationBuilder.DropIndex(
-                name: "IX_ActionPlans_TenantId_KnightIndicatorId_Status",
+                name: "IX_ActionPlans_TenantId_OriginSourceType_OriginMode_KnightIndi~",
                 table: "ActionPlans");
 
             migrationBuilder.DropIndex(
@@ -290,6 +320,10 @@ namespace AegisScore.Infrastructure.Migrations
             migrationBuilder.DropColumn(
                 name: "SourceRunId",
                 table: "PostureSnapshots");
+
+            migrationBuilder.DropColumn(
+                name: "CycleStartedAt",
+                table: "ActionPlans");
 
             migrationBuilder.DropColumn(
                 name: "ExecutedAt",
@@ -312,7 +346,15 @@ namespace AegisScore.Infrastructure.Migrations
                 table: "ActionPlans");
 
             migrationBuilder.DropColumn(
+                name: "OriginMode",
+                table: "ActionPlans");
+
+            migrationBuilder.DropColumn(
                 name: "OriginRunId",
+                table: "ActionPlans");
+
+            migrationBuilder.DropColumn(
+                name: "OriginSourceType",
                 table: "ActionPlans");
 
             migrationBuilder.DropColumn(

@@ -42,14 +42,39 @@ public class RemediationController : ControllerBase
     /// <summary>Ações de achado do tenant (mais recentes primeiro), com filtro por achado e por atividade.</summary>
     /// <response code="200">Lista (possivelmente vazia).</response>
     /// <response code="401">Tenant não resolvido no contexto.</response>
+    /// <param name="sourceType">
+    /// Fonte de ORIGEM (Demo/MicrosoftEntraId/GoogleWorkspace). A tela passa a fonte da avaliação que está
+    /// exibindo: sem esse recorte, uma ação nascida do cenário de DEMONSTRAÇÃO apareceria ao lado de achados
+    /// de uma coleta real com a mesma aparência de trabalho real em curso.
+    /// </param>
+    /// <param name="mode">Modo de origem (Demo/Live) — o mesmo eixo, explícito.</param>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ActionPlanDto>>> List(
-        [FromQuery] string? indicatorId, [FromQuery] bool activeOnly = false, CancellationToken ct = default)
+        [FromQuery] string? indicatorId, [FromQuery] bool activeOnly = false,
+        [FromQuery] string? sourceType = null, [FromQuery] string? mode = null,
+        CancellationToken ct = default)
     {
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
 
-        var plans = await _service.ListAsync(new ActionPlanFilter(indicatorId, activeOnly), ct);
+        KnightSourceType? source = null;
+        if (!string.IsNullOrWhiteSpace(sourceType))
+        {
+            if (!Enum.TryParse<KnightSourceType>(sourceType, ignoreCase: true, out var parsedSource))
+                return BadRequest($"Fonte desconhecida: '{sourceType}'.");
+            source = parsedSource;
+        }
+
+        KnightAssessmentMode? parsedMode = null;
+        if (!string.IsNullOrWhiteSpace(mode))
+        {
+            if (!Enum.TryParse<KnightAssessmentMode>(mode, ignoreCase: true, out var m))
+                return BadRequest($"Modo desconhecido: '{mode}'.");
+            parsedMode = m;
+        }
+
+        var plans = await _service.ListAsync(
+            new ActionPlanFilter(indicatorId, activeOnly, source, parsedMode), ct);
         return Ok(plans.Select(ToDto).ToList());
     }
 
@@ -218,6 +243,8 @@ public class RemediationController : ControllerBase
         p.KnightIndicatorId,
         p.OriginRunId,
         p.OriginAffectedCount,
+        p.OriginSourceType?.ToString(),
+        p.OriginMode?.ToString(),
         p.Title,
         p.ProposedAction,
         p.ResponsiblePerson,
@@ -232,8 +259,12 @@ public class RemediationController : ControllerBase
         p.ExecutedAt,
         p.CompletedAt,
         p.CreatedAt,
+        p.CycleStartedAt,
         p.Version,
         p.LatestValidation is null ? null : ToDto(p.LatestValidation),
+        p.ApplicableValidation is null ? null : ToDto(p.ApplicableValidation),
+        p.AllowedTransitions.Select(t => t.ToString()).ToList(),
+        p.ClosureBlockedReason,
         p.Validations.Select(ToDto).ToList(),
         p.Events.Select(e => new ActionPlanEventDto(
             e.Kind.ToString(), e.At, e.ActorName, e.FromStatus?.ToString(), e.ToStatus?.ToString(), e.Note)).ToList());
@@ -243,6 +274,9 @@ public class RemediationController : ControllerBase
         v.Outcome.ToString(),
         v.ValidationRunId,
         v.EvidenceReference,
+        v.EvidenceCollectedAt,
+        v.PrecedesReportedExecution,
+        v.AppliesToCurrentCycle,
         v.ObservedBefore,
         v.ObservedAfter,
         v.ObjectsNoLongerPresent,

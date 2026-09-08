@@ -146,6 +146,20 @@ public class ActionPlanValidation : Entity, ITenantOwned
     /// <summary>Referência da evidência humana (chamado, documento, registro), sanitizada. Nula na comparação automática.</summary>
     public string? EvidenceReference { get; set; }
 
+    /// <summary>
+    /// Instante da COLETA usada como evidência — não o instante em que alguém clicou em validar. É por ele
+    /// que se decide se a evidência descreve o mundo DEPOIS do trabalho relatado. Nulo na atestação humana.
+    /// </summary>
+    public DateTimeOffset? EvidenceCollectedAt { get; set; }
+
+    /// <summary>
+    /// <c>true</c> quando a coleta usada como evidência é ANTERIOR ao relato de execução desta ação. A
+    /// observação continua verdadeira — a exposição pode de fato ter caído —, mas ela não pode ser atribuída
+    /// a um trabalho que ainda não tinha sido relatado. Uma validação assim fica registrada e NÃO autoriza a
+    /// conclusão do ciclo: correlação no tempo não é causalidade.
+    /// </summary>
+    public bool PrecedesReportedExecution { get; set; }
+
     /// <summary>Quantidade afetada na avaliação de ORIGEM — o ponto de partida. Nula quando não aplicável.</summary>
     public int? ObservedBefore { get; set; }
 

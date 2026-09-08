@@ -174,6 +174,13 @@ public class PostureSnapshotActionItem : Entity, ITenantOwned
     /// <summary>Achado que a ação endereça (ex.: "AK-ENTRA-001").</summary>
     public string IndicatorId { get; set; } = "";
 
+    /// <summary>
+    /// Avaliação que ORIGINOU a ação, congelada com ela. Sem esta referência, o relatório mostraria "antes:
+    /// 12 / depois: 8" sem dizer de qual coleta veio o 12 — e quem lesse teria de consultar dados que podem
+    /// ter mudado desde a publicação, o que é exatamente o que uma fotografia existe para evitar.
+    /// </summary>
+    public Guid? OriginRunId { get; set; }
+
     public string Title { get; set; } = "";
 
     /// <summary>A ação proposta, como estava redigida no instante da publicação.</summary>
@@ -211,6 +218,27 @@ public class PostureSnapshotActionItem : Entity, ITenantOwned
 
     /// <summary>Justificativa determinística do desfecho, congelada com ele.</summary>
     public string? ValidationRationale { get; set; }
+
+    /// <summary>
+    /// Avaliação usada como EVIDÊNCIA da validação congelada — a outra metade da proveniência. Nula quando a
+    /// validação foi humana (aí a referência abaixo é que identifica a prova apresentada).
+    /// </summary>
+    public Guid? ValidationRunId { get; set; }
+
+    /// <summary>
+    /// Referência da evidência HUMANA (chamado, ata, documento), preservada para que o registro continue
+    /// identificável depois. Guardar só "atestação humana" tornaria a decisão irrastreável no papel.
+    /// </summary>
+    public string? ValidationEvidenceReference { get; set; }
+
+    /// <summary>Instante da COLETA usada como evidência — a data que distingue prova de coincidência.</summary>
+    public DateTimeOffset? EvidenceCollectedAt { get; set; }
+
+    /// <summary>
+    /// A evidência antecede o relato de execução: o relatório precisa dizer isso, senão apresentaria como
+    /// consequência do trabalho uma melhora que pode ter tido outra causa.
+    /// </summary>
+    public bool PrecedesReportedExecution { get; set; }
 }
 
 /// <summary>

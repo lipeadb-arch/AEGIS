@@ -849,6 +849,12 @@ public record ActionPlanValidationDto(
     string Outcome,
     Guid? ValidationRunId,
     string? EvidenceReference,
+    /// <summary>Instante da COLETA usada como evidência — nulo na atestação humana.</summary>
+    DateTimeOffset? EvidenceCollectedAt,
+    /// <summary>A coleta antecede o relato de execução: a mudança não é atribuível a esta ação.</summary>
+    bool PrecedesReportedExecution,
+    /// <summary>Esta validação fala pelo ciclo ATUAL — e só ela pode sustentar o encerramento.</summary>
+    bool AppliesToCurrentCycle,
     int? ObservedBefore,
     int? ObservedAfter,
     int? ObjectsNoLongerPresent,
@@ -867,6 +873,10 @@ public record ActionPlanDto(
     string? KnightIndicatorId,
     Guid? OriginRunId,
     int? OriginAffectedCount,
+    /// <summary>Fonte da avaliação de origem — parte da identidade do problema, junto com o indicador.</summary>
+    string? OriginSourceType,
+    /// <summary>Demo ou coleta real: uma ação de demonstração jamais responde por um achado real.</summary>
+    string? OriginMode,
     string Title,
     string? ProposedAction,
     string? ResponsiblePerson,
@@ -881,9 +891,17 @@ public record ActionPlanDto(
     DateTimeOffset? ExecutedAt,
     DateTimeOffset? CompletedAt,
     DateTimeOffset CreatedAt,
+    /// <summary>Início do ciclo vigente — repactuado na reabertura.</summary>
+    DateTimeOffset CycleStartedAt,
     /// <summary>Versão lida — devolvida na próxima escrita para detectar atualização conflitante.</summary>
     int Version,
     ActionPlanValidationDto? LatestValidation,
+    /// <summary>A validação que fala pelo ciclo ATUAL — distinta da mais recente numa ação reaberta.</summary>
+    ActionPlanValidationDto? ApplicableValidation,
+    /// <summary>Etapas alcançáveis daqui, JÁ considerando o que o ciclo tem registrado. A tela oferece só estas.</summary>
+    IReadOnlyList<string> AllowedTransitions,
+    /// <summary>Por que encerrar ainda não está disponível — nulo quando está.</summary>
+    string? ClosureBlockedReason,
     IReadOnlyList<ActionPlanValidationDto> Validations,
     IReadOnlyList<ActionPlanEventDto> Events);
 

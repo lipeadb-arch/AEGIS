@@ -653,13 +653,17 @@ public class AegisScoreDbContext : DbContext
             // Token de CONCORRÊNCIA: a corrida que passa pela checagem explícita de versão é pega aqui, pelo
             // WHERE do UPDATE. Sem ele, duas escritas simultâneas com a mesma versão lida sobreviveriam as duas.
             e.Property(x => x.Version).IsConcurrencyToken();
-            e.HasIndex(x => new { x.TenantId, x.KnightIndicatorId, x.Status });
+            e.HasIndex(x => new { x.TenantId, x.OriginSourceType, x.OriginMode, x.KnightIndicatorId, x.Status });
             // Invariante de BANCO contra a duplicação por clique repetido: no máximo UMA ação ATIVA por
-            // (tenant, achado). O índice é PARCIAL — restrito aos status ativos (0 Aberto, 1 Em andamento,
-            // 4 Aguardando validação) e às ações de achado —, então uma ação concluída LIBERA a origem para
-            // um novo ciclo quando o problema reaparece, e os planos legados (indicador nulo) ficam fora.
-            // Mesmo idioma do índice parcial único já usado na fila durável de sincronização.
-            e.HasIndex(x => new { x.TenantId, x.KnightIndicatorId })
+            // (tenant, FONTE, MODO, achado). O índice é PARCIAL — restrito aos status ativos (0 Aberto,
+            // 1 Em andamento, 4 Aguardando validação) e às ações de achado —, então uma ação concluída LIBERA
+            // a origem para um novo ciclo quando o problema reaparece, e os planos legados (indicador nulo)
+            // ficam fora. Mesmo idioma do índice parcial único já usado na fila durável de sincronização.
+            //
+            // A fonte e o modo estão na chave porque o indicador SOZINHO não identifica o problema: sem eles,
+            // uma ação nascida do cenário de DEMONSTRAÇÃO ocuparia a origem e impediria, no próprio banco, a
+            // criação da ação real para o mesmo achado.
+            e.HasIndex(x => new { x.TenantId, x.OriginSourceType, x.OriginMode, x.KnightIndicatorId })
                 .IsUnique()
                 .HasDatabaseName("UX_ActionPlans_ActiveByFinding")
                 .HasFilter("\"KnightIndicatorId\" IS NOT NULL AND \"Status\" IN (0, 1, 4)");
@@ -685,6 +689,9 @@ public class AegisScoreDbContext : DbContext
         b.Entity<ActionPlanValidation>(e =>
         {
             e.Property(x => x.IndicatorId).HasMaxLength(40).IsRequired();
+            // A coleta usada como evidência é indexada junto com o plano: é por ela que se decide se a
+            // validação fala pelo ciclo atual, e a leitura acontece toda vez que uma ação é apresentada.
+            e.HasIndex(x => new { x.TenantId, x.ActionPlanId, x.EvidenceCollectedAt });
             e.Property(x => x.EvidenceReference).HasMaxLength(2000);
             e.Property(x => x.Rationale).HasMaxLength(2000).IsRequired();
             e.Property(x => x.DecidedByName).HasMaxLength(200).IsRequired();

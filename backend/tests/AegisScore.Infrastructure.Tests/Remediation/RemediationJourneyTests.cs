@@ -93,15 +93,16 @@ public sealed class RemediationJourneyTests : IDisposable
         var svc = RemediationFor(db, TenantA);
 
         var primeira = await svc.CreateForFindingAsync(Create(run.Id, "AK-ENTRA-001"), Actor);
-        var emAndamento = await svc.UpdateAsync(primeira!.Id, Status(primeira.Version, ActionPlanStatus.EmAndamento), Actor);
-        var aguardando = await svc.UpdateAsync(emAndamento!.Id, Status(emAndamento.Version, ActionPlanStatus.AguardandoValidacao), Actor);
-        var concluida = await svc.UpdateAsync(aguardando!.Id, Status(aguardando.Version, ActionPlanStatus.Concluido), Actor);
-        concluida!.IsActive.Should().BeFalse();
+        // O encerramento percorre a jornada INTEIRA: relato de execução e validação sobre esta execução. A
+        // versão anterior deste teste subia a etapa por cliques — e era justamente o atalho que o pacote
+        // existe para fechar.
+        var concluida = await ConcluirComBaseAsync(svc, primeira!, "MFA registrado nas contas listadas.");
+        concluida.IsActive.Should().BeFalse();
 
         var segundoCiclo = await svc.CreateForFindingAsync(Create(run.Id, "AK-ENTRA-001"), Actor);
 
         segundoCiclo.Should().NotBeNull("um problema que reaparece merece um ciclo novo, não a reabertura forçada");
-        segundoCiclo!.Id.Should().NotBe(primeira.Id);
+        segundoCiclo!.Id.Should().NotBe(primeira!.Id);
         (await svc.ListAsync(new ActionPlanFilter("AK-ENTRA-001"))).Should().HaveCount(2);
     }
 
@@ -701,14 +702,19 @@ public sealed class RemediationJourneyTests : IDisposable
         var validacao = new ActionPlanValidationDto(
             nameof(ActionPlanValidationMethod.NewAssessment),
             nameof(ActionPlanValidationOutcome.ReductionObserved),
-            Guid.NewGuid(), null, 3, 1, 2, true, "razão", T0, "Analista");
+            Guid.NewGuid(), null, T0, PrecedesReportedExecution: false, AppliesToCurrentCycle: true,
+            3, 1, 2, true, "razão", T0, "Analista");
 
         var dto = new ActionPlanDto(
-            Guid.NewGuid(), "AK-ENTRA-001", Guid.NewGuid(), 3, "Título", null, null, null,
+            Guid.NewGuid(), "AK-ENTRA-001", Guid.NewGuid(), 3,
+            nameof(KnightSourceType.MicrosoftEntraId), nameof(KnightAssessmentMode.Live),
+            "Título", null, null, null,
             new DateOnly(2026, 10, 1),
             nameof(ActionPlanStatus.AguardandoValidacao), IsOverdue: false, IsActive: true,
-            "Próxima providência", null, null, null, null, T0, 2,
-            validacao, new[] { validacao },
+            "Próxima providência", null, null, null, null, T0, T0, 2,
+            validacao, validacao,
+            new[] { nameof(ActionPlanStatus.EmAndamento), nameof(ActionPlanStatus.Concluido) },
+            null, new[] { validacao },
             new[] { new ActionPlanEventDto(nameof(ActionPlanEventKind.StatusChanged), T0, "Analista",
                 nameof(ActionPlanStatus.Aberto), nameof(ActionPlanStatus.EmAndamento), null) });
 
@@ -720,6 +726,13 @@ public sealed class RemediationJourneyTests : IDisposable
         json.Should().Contain("\"kind\":\"StatusChanged\"");
         json.Should().NotContain("\"status\":4", "ordinal é justamente o que a tela não sabe ler");
         json.Should().Contain("\"dueDate\":\"2026-10-01\"", "o prazo é uma data, não um instante com fuso");
+
+        // A PROCEDÊNCIA e as transições também viajam por NOME: é o que a tela usa para não misturar ação de
+        // demonstração com ação real, e para oferecer só as etapas que o servidor aceitaria.
+        json.Should().Contain("\"originSourceType\":\"MicrosoftEntraId\"");
+        json.Should().Contain("\"originMode\":\"Live\"");
+        json.Should().Contain("\"allowedTransitions\":[\"EmAndamento\",\"Concluido\"]");
+        json.Should().Contain("\"appliesToCurrentCycle\":true");
     }
 
     [Fact]
@@ -737,6 +750,361 @@ public sealed class RemediationJourneyTests : IDisposable
         json.Should().Contain("\"collectionLimitations\"");
     }
 
+    // ================================================================================================
+    // (9) [correção dirigida] Conclusão com BASE REGISTRADA
+    // ================================================================================================
+    // A versão anterior deste pacote permitia Aberto -> Aguardando validação -> Concluído por cliques de
+    // etapa: a jornada inteira podia ser encenada sem que ninguém descrevesse trabalho algum nem apresentasse
+    // evidência. Estes testes fecham esse caminho e as suas variações.
+
+    [Fact]
+    public async Task AguardarValidacao_SemExecucaoRELATADA_ERecusado_PorqueFabricariaAExecucao()
+    {
+        await using var db = NewContext(TenantA);
+        var run = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var svc = RemediationFor(db, TenantA);
+        var p = await svc.CreateForFindingAsync(Create(run.Id, "AK-ENTRA-001"), Actor);
+
+        var pular = async () => await svc.UpdateAsync(
+            p!.Id, Status(p.Version, ActionPlanStatus.AguardandoValidacao), Actor);
+
+        await pular.Should().ThrowAsync<ActionPlanValidationException>(
+            "aguardar validação pressupõe execução RELATADA — chegar lá por um clique afirmaria um trabalho " +
+            "que ninguém descreveu");
+
+        (await svc.GetAsync(p!.Id))!.AllowedTransitions.Should()
+            .NotContain(ActionPlanStatus.AguardandoValidacao, "a tela não pode oferecer o que o servidor recusa");
+    }
+
+    [Fact]
+    public async Task ConcluirPorSEQUENCIA_DeEtapas_ERecusado_ExigeExecucaoEValidacao()
+    {
+        await using var db = NewContext(TenantA);
+        var run = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(run.Id, "AK-ENTRA-001"), Actor);
+        var andamento = await svc.UpdateAsync(p!.Id, Status(p.Version, ActionPlanStatus.EmAndamento), Actor);
+
+        var atalho = async () => await svc.UpdateAsync(
+            andamento!.Id, Status(andamento.Version, ActionPlanStatus.Concluido), Actor);
+        await atalho.Should().ThrowAsync<ActionPlanValidationException>();
+
+        // Com execução relatada, ainda falta a decisão de validação — e a recusa DIZ o que falta.
+        var executado = await svc.RecordExecutionAsync(
+            andamento!.Id, new RecordExecutionCommand(andamento.Version, "MFA registrado.", null), Actor);
+        executado!.ClosureBlockedReason.Should().Contain("decisão de validação");
+        executado.AllowedTransitions.Should().NotContain(ActionPlanStatus.Concluido);
+
+        var semValidacao = async () => await svc.UpdateAsync(
+            executado.Id, Status(executado.Version, ActionPlanStatus.Concluido), Actor);
+        await semValidacao.Should().ThrowAsync<ActionPlanValidationException>(
+            "relatar execução não comprova nada — encerrar exige a decisão de validação sobre ela");
+    }
+
+    [Fact]
+    public async Task ValidacaoQueNaoCOMPROVA_NaoAutorizaEncerrar_ESemAtalhoAdministrativo()
+    {
+        await using var db = NewContext(TenantA);
+        var origem = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(origem.Id, "AK-ENTRA-001"), Actor);
+        var executado = await svc.RecordExecutionAsync(
+            p!.Id, new RecordExecutionCommand(p.Version, "Ajuste aplicado.", null), Actor);
+
+        // Nova coleta SEM melhora, POSTERIOR ao relato: fala por esta execução e não sustenta encerrar.
+        var semMelhora = await RunAsync(
+            db, TenantA, privileged: 12, withoutMfa: 2, at: DateTimeOffset.UtcNow.AddMinutes(5));
+        var validado = await svc.ValidateAsync(
+            executado!.Id, new ValidateActionPlanCommand(executado.Version, semMelhora.Id, null, null), Actor);
+
+        validado!.LatestValidation!.Outcome.Should().Be(ActionPlanValidationOutcome.NoChangeObserved);
+        validado.ApplicableValidation.Should().NotBeNull("ela fala por esta execução — só não sustenta encerrar");
+        validado.ClosureBlockedReason.Should().Contain("não sustenta o encerramento");
+        validado.AllowedTransitions.Should().NotContain(ActionPlanStatus.Concluido);
+
+        var encerrar = async () => await svc.UpdateAsync(
+            validado.Id, Status(validado.Version, ActionPlanStatus.Concluido), Actor);
+        await encerrar.Should().ThrowAsync<ActionPlanValidationException>(
+            "sem melhora não há encerramento com base — e não existe atalho administrativo para contorná-lo");
+
+        // A saída honesta continua aberta: voltar para a execução.
+        validado.AllowedTransitions.Should().Contain(ActionPlanStatus.EmAndamento);
+    }
+
+    [Fact]
+    public async Task ColetaANTERIOR_AoRelatoDeExecucao_NaoAtribuiCausalidade_NemAutorizaEncerrar()
+    {
+        await using var db = NewContext(TenantA);
+        var origem = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        // Posterior à ORIGEM, porém anterior ao relato de execução (que ocorre no relógio real, agora).
+        var noMeio = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 0, at: T0.AddHours(1));
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(origem.Id, "AK-ENTRA-001"), Actor);
+        var executado = await svc.RecordExecutionAsync(
+            p!.Id, new RecordExecutionCommand(p.Version, "MFA registrado.", null), Actor);
+
+        var validado = await svc.ValidateAsync(
+            executado!.Id, new ValidateActionPlanCommand(executado.Version, noMeio.Id, null, null), Actor);
+
+        // A OBSERVAÇÃO permanece verdadeira — a exposição de fato deixou de ser sinalizada.
+        validado!.LatestValidation!.Outcome.Should().Be(ActionPlanValidationOutcome.ExposureCleared);
+        validado.LatestValidation.PrecedesReportedExecution.Should().BeTrue();
+        validado.LatestValidation.Rationale.Should().Contain("não pode ser atribuído a este trabalho");
+
+        // Mas ela NÃO fala por esta execução: correlação temporal invertida não é causalidade.
+        validado.LatestValidation.AppliesToCurrentCycle.Should().BeFalse();
+        validado.ApplicableValidation.Should().BeNull();
+        validado.AllowedTransitions.Should().NotContain(ActionPlanStatus.Concluido);
+
+        var encerrar = async () => await svc.UpdateAsync(
+            validado.Id, Status(validado.Version, ActionPlanStatus.Concluido), Actor);
+        await encerrar.Should().ThrowAsync<ActionPlanValidationException>();
+    }
+
+    [Fact]
+    public async Task ValidacaoANTIGA_NaoAutorizaOCicloNOVO_NemAposReabertura_NemAposNovaExecucao()
+    {
+        await using var db = NewContext(TenantA);
+        var origem = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(origem.Id, "AK-ENTRA-001"), Actor);
+        var concluida = await ConcluirComBaseAsync(svc, p!, "Primeira execução.");
+        concluida.Validations.Should().HaveCount(1);
+
+        // ---- Reabertura: o problema voltou. A comprovação do ciclo anterior permanece no histórico...
+        var reaberta = await svc.UpdateAsync(
+            concluida.Id, Status(concluida.Version, ActionPlanStatus.EmAndamento), Actor);
+
+        reaberta!.Validations.Should().HaveCount(1, "reabrir NÃO apaga o que aconteceu");
+        reaberta.ApplicableValidation.Should().BeNull("...mas ela julgou um ciclo que já foi encerrado");
+        reaberta.CycleStartedAt.Should().BeOnOrAfter(concluida.CycleStartedAt, "o ciclo foi repactuado");
+
+        // ---- ...e uma nova execução exige uma nova comprovação.
+        var reexecutada = await svc.RecordExecutionAsync(
+            reaberta.Id, new RecordExecutionCommand(reaberta.Version, "Segunda execução.", null), Actor);
+
+        reexecutada!.Status.Should().Be(ActionPlanStatus.AguardandoValidacao);
+        reexecutada.ApplicableValidation.Should().BeNull(
+            "a validação antiga não pode continuar autorizando automaticamente a conclusão");
+        reexecutada.AllowedTransitions.Should().NotContain(ActionPlanStatus.Concluido);
+        reexecutada.NextStep.Should().Contain("não fala por esta execução");
+
+        var encerrarDeNovo = async () => await svc.UpdateAsync(
+            reexecutada.Id, Status(reexecutada.Version, ActionPlanStatus.Concluido), Actor);
+        await encerrarDeNovo.Should().ThrowAsync<ActionPlanValidationException>();
+
+        // Uma validação NOVA sobre a segunda execução reabre o encerramento.
+        var revalidada = await svc.ValidateAsync(
+            reexecutada.Id, new ValidateActionPlanCommand(reexecutada.Version, null, "CHAMADO-9999", null), Actor);
+        revalidada!.ApplicableValidation.Should().NotBeNull();
+        revalidada.Validations.Should().HaveCount(2, "o histórico inteiro é preservado");
+        (await svc.UpdateAsync(revalidada.Id, Status(revalidada.Version, ActionPlanStatus.Concluido), Actor))!
+            .Status.Should().Be(ActionPlanStatus.Concluido);
+    }
+
+    [Fact]
+    public async Task AtestacaoHumana_EncerraOCiclo_MasNuncaContaComoComprovacaoTecnica()
+    {
+        await using var db = NewContext(TenantA);
+        var run = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(run.Id, "AK-ENTRA-001"), Actor);
+        var concluida = await ConcluirComBaseAsync(svc, p!, "Tratado fora do AEGIS.");
+
+        concluida.Status.Should().Be(ActionPlanStatus.Concluido);
+        var v = concluida.LatestValidation!;
+        RemediationReading.IsTechnicallyProven(v.Method, v.Outcome).Should().BeFalse(
+            "encerrar sobre a palavra de alguém é decisão legítima — e continua sendo atestação, não prova");
+        v.Rationale.Should().Contain("não verificou o ambiente");
+    }
+
+    [Fact]
+    public void ReducaoObservada_NaoSeConfundeComExposicaoEncerrada_NemNoQueAutorizaEncerrar()
+    {
+        RemediationReading.SupportsClosure(ActionPlanValidationOutcome.ReductionObserved).Should().BeTrue();
+        RemediationReading.SupportsClosure(ActionPlanValidationOutcome.ExposureCleared).Should().BeTrue();
+        RemediationReading.SupportsClosure(ActionPlanValidationOutcome.NoChangeObserved).Should().BeFalse();
+        RemediationReading.SupportsClosure(ActionPlanValidationOutcome.EvidenceInsufficient).Should().BeFalse();
+
+        // Os dois autorizam encerrar, mas dizem coisas DIFERENTES — e é a frase que impede a leitura errada.
+        RemediationReading.OutcomeLabel(ActionPlanValidationOutcome.ReductionObserved)
+            .Should().Contain("ainda exposto");
+        RemediationReading.OutcomeLabel(ActionPlanValidationOutcome.ExposureCleared)
+            .Should().NotContain("ainda exposto");
+    }
+
+    // ================================================================================================
+    // (10) [correção dirigida] Separação de ORIGEM: demonstração não responde por coleta real
+    // ================================================================================================
+
+    [Fact]
+    public async Task AcaoDeDEMONSTRACAO_NaoBloqueiaAcaoREAL_DoMesmoIndicador()
+    {
+        await using var db = NewContext(TenantA);
+        var demo = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var real = await RealRunAsync(db, TenantA, affected: 5, at: T0.AddDays(1));
+        var svc = RemediationFor(db, TenantA);
+
+        var acaoDemo = await svc.CreateForFindingAsync(Create(demo.Id, "AK-ENTRA-001"), Actor);
+        acaoDemo.Should().NotBeNull();
+
+        var acaoReal = await svc.CreateForFindingAsync(Create(real, "AK-ENTRA-001"), Actor);
+
+        acaoReal.Should().NotBeNull(
+            "o indicador SOZINHO não identifica o problema: um treino não pode ocupar a origem do real");
+        acaoReal!.Id.Should().NotBe(acaoDemo!.Id);
+        acaoReal.OriginSourceType.Should().Be(KnightSourceType.MicrosoftEntraId);
+        acaoReal.OriginMode.Should().Be(KnightAssessmentMode.Live);
+
+        // E a repetição DENTRO de cada procedência continua barrada.
+        var segundoCliqueReal = async () => await svc.CreateForFindingAsync(Create(real, "AK-ENTRA-001"), Actor);
+        await segundoCliqueReal.Should().ThrowAsync<ActionPlanConflictException>();
+    }
+
+    [Fact]
+    public async Task ListaPorFONTE_NaoMisturaAcaoDeDemonstracaoComAchadoReal()
+    {
+        await using var db = NewContext(TenantA);
+        var demo = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var real = await RealRunAsync(db, TenantA, affected: 5, at: T0.AddDays(1));
+        var svc = RemediationFor(db, TenantA);
+
+        var acaoDemo = await svc.CreateForFindingAsync(Create(demo.Id, "AK-ENTRA-001"), Actor);
+        var acaoReal = await svc.CreateForFindingAsync(Create(real, "AK-ENTRA-001"), Actor);
+
+        var noReal = await svc.ListAsync(new ActionPlanFilter(
+            SourceType: KnightSourceType.MicrosoftEntraId, Mode: KnightAssessmentMode.Live));
+        var noDemo = await svc.ListAsync(new ActionPlanFilter(
+            SourceType: KnightSourceType.Demo, Mode: KnightAssessmentMode.Demo));
+
+        noReal.Select(x => x.Id).Should().Equal(acaoReal!.Id);
+        noDemo.Select(x => x.Id).Should().Equal(acaoDemo!.Id);
+        (await svc.ListAsync(new ActionPlanFilter())).Should().HaveCount(2, "sem recorte, o produto mostra as duas");
+    }
+
+    [Fact]
+    public async Task RelatorioREAL_ExcluiAcaoDeDemonstracao_EPreservaAProveniencia()
+    {
+        await using var db = NewContext(TenantA);
+        var demo = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var real = await RealRunAsync(db, TenantA, affected: 5, at: T0.AddDays(1));
+        var svc = RemediationFor(db, TenantA);
+
+        await svc.CreateForFindingAsync(Create(demo.Id, "AK-ENTRA-001"), Actor);
+        var acaoReal = await svc.CreateForFindingAsync(Create(real, "AK-ENTRA-001"), Actor);
+        var executada = await svc.RecordExecutionAsync(
+            acaoReal!.Id, new RecordExecutionCommand(acaoReal.Version, "MFA registrado.", null), Actor);
+        await svc.ValidateAsync(
+            executada!.Id, new ValidateActionPlanCommand(executada.Version, null, "CHAMADO-4321", null), Actor);
+
+        await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, real);
+
+        var snapshot = (await db.PostureSnapshots.AsNoTracking()
+                .Include(x => x.ActionItems).Include(x => x.Indicators).ToListAsync())
+            .OrderByDescending(x => x.CapturedAt).First();
+
+        snapshot.ActionItems.Should().HaveCount(1,
+            "uma ação de demonstração no relatório de uma coleta real seria apresentada como trabalho real");
+        var item = snapshot.ActionItems.Single();
+        item.ActionPlanId.Should().Be(acaoReal.Id);
+
+        // Proveniência CONGELADA: origem e evidência humana continuam identificáveis no papel, sem depender
+        // de consultar dados que podem mudar depois da publicação.
+        item.OriginRunId.Should().Be(real);
+        item.ValidationEvidenceReference.Should().Be("CHAMADO-4321");
+        item.ValidationMethod.Should().Be(ActionPlanValidationMethod.HumanEvidence);
+
+        PostureSnapshotHasher.Verify(snapshot).Should().BeTrue("a proveniência entra no conteúdo assinado");
+    }
+
+    [Fact]
+    public async Task ProvenienciaDaValidacaoAutomatica_ECongelada_ComAAvaliacaoDeEvidencia()
+    {
+        await using var db = NewContext(TenantA);
+        var origem = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(origem.Id, "AK-ENTRA-001"), Actor);
+        var executado = await svc.RecordExecutionAsync(
+            p!.Id, new RecordExecutionCommand(p.Version, "MFA registrado.", null), Actor);
+
+        // Coleta POSTERIOR ao relato de execução: é a que comprova.
+        var nova = await RunAsync(
+            db, TenantA, privileged: 12, withoutMfa: 0, at: DateTimeOffset.UtcNow.AddMinutes(5));
+        var validado = await svc.ValidateAsync(
+            executado!.Id, new ValidateActionPlanCommand(executado.Version, nova.Id, null, null), Actor);
+
+        validado!.ApplicableValidation.Should().NotBeNull("a evidência é posterior ao trabalho relatado");
+        await svc.UpdateAsync(validado.Id, Status(validado.Version, ActionPlanStatus.Concluido), Actor);
+
+        await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, nova.Id);
+        var snapshot = (await db.PostureSnapshots.AsNoTracking().Include(x => x.ActionItems).ToListAsync())
+            .OrderByDescending(x => x.CapturedAt).First();
+
+        var item = snapshot.ActionItems.Single();
+        item.OriginRunId.Should().Be(origem.Id, "de onde veio o 'antes'");
+        item.ValidationRunId.Should().Be(nova.Id, "de onde veio o 'depois' — e são referências DISTINTAS");
+        item.EvidenceCollectedAt.Should().NotBeNull();
+        item.PrecedesReportedExecution.Should().BeFalse();
+
+        PostureSnapshotPdfWriter.ProvenanceText(item).Should()
+            .Contain("origem").And.Contain("evidência", "o PDF precisa dizer o que comparou com o quê");
+    }
+
+    [Fact]
+    public async Task RelatorioPUBLICADO_ImprimeAProvenienciaCongelada_EARessalvaDeCausalidade()
+    {
+        await using var db = NewContext(TenantA);
+        var origem = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        // Posterior à ORIGEM, porém ANTERIOR ao relato de execução (que ocorre no relógio real, agora).
+        var noMeio = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 0, at: T0.AddHours(1));
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(origem.Id, "AK-ENTRA-001"), Actor);
+        var executado = await svc.RecordExecutionAsync(
+            p!.Id, new RecordExecutionCommand(p.Version, "MFA registrado.", null), Actor);
+        await svc.ValidateAsync(
+            executado!.Id, new ValidateActionPlanCommand(executado.Version, noMeio.Id, null, null), Actor);
+
+        var publicado = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, origem.Id);
+        var snapshot = await db.PostureSnapshots.AsNoTracking()
+            .Include(x => x.Indicators).Include(x => x.ActionItems)
+            .FirstAsync(x => x.Id == publicado.Summary.Id);
+
+        var item = snapshot.ActionItems.Single();
+
+        // PROVENIÊNCIA CONGELADA: as duas avaliações e o instante da coleta ficam NO relatório. Guardar só o
+        // resultado numérico obrigaria a consultar depois dados que podem ter mudado — que é exatamente o que
+        // uma fotografia auditável existe para dispensar.
+        item.OriginRunId.Should().Be(origem.Id);
+        item.ValidationRunId.Should().Be(noMeio.Id);
+        item.EvidenceCollectedAt.Should().NotBeNull();
+        item.PrecedesReportedExecution.Should().BeTrue();
+
+        var prov = PostureSnapshotPdfWriter.ProvenanceText(item)!;
+        prov.Should().Contain("origem " + origem.Id.ToString("D")[..8])
+            .And.Contain("evidência " + noMeio.Id.ToString("D")[..8])
+            .And.Contain("coletada em", "sem o instante da coleta a ordem temporal não é verificável no papel");
+
+        PostureSnapshotPdfWriter.CausalityCaveatText.Should()
+            .Contain("ANTERIOR ao relato de execução").And.Contain("não é atribuível",
+                "o relatório precisa dizer que a melhora observada não é atribuída a esta ação");
+
+        // E o PDF REAL é renderizado. A asserção é por PALAVRAS distintivas: a extração de glifos intercala
+        // as colunas de uma tabela, e cobrar uma frase inteira quebraria no CI sem que nada tivesse mudado.
+        var texto = Deaccent(ExtractPdfText(PostureSnapshotPdfWriter.Write(snapshot)));
+        texto.Should().Contain("ANTERIOR", "a ressalva de causalidade é impressa, não omitida");
+        texto.Should().Contain(origem.Id.ToString("D")[..8], "a avaliação de origem é identificável no papel");
+        texto.Should().Contain(noMeio.Id.ToString("D")[..8], "a avaliação usada como evidência também");
+
+        PostureSnapshotHasher.Verify(snapshot).Should().BeTrue("a proveniência entra no conteúdo assinado");
+    }
+
     // ---- Helpers ----------------------------------------------------------------------------------
 
     private static readonly RemediationActor Actor = new(Guid.Parse("cccccccc-5555-5555-5555-555555555555"), "Analista");
@@ -747,12 +1115,75 @@ public sealed class RemediationJourneyTests : IDisposable
     private static UpdateActionPlanCommand Status(int version, ActionPlanStatus status) =>
         new(version, null, null, null, null, null, status);
 
+    /// <summary>
+    /// Encerra uma ação pelo caminho LEGÍTIMO: relata a execução e registra uma atestação humana com
+    /// evidência referenciada sobre ESSA execução. É o mínimo que o servidor aceita — e o teste que precisa
+    /// de uma ação encerrada usa isto em vez de empurrar a etapa, que é o atalho recusado.
+    /// </summary>
+    private static async Task<ActionPlanView> ConcluirComBaseAsync(
+        IRemediationService svc, ActionPlanView plano, string relato)
+    {
+        var executado = await svc.RecordExecutionAsync(
+            plano.Id, new RecordExecutionCommand(plano.Version, relato, null), Actor);
+        var validado = await svc.ValidateAsync(
+            executado!.Id, new ValidateActionPlanCommand(executado.Version, null, "CHAMADO-1234", null), Actor);
+        var concluida = await svc.UpdateAsync(
+            validado!.Id, Status(validado.Version, ActionPlanStatus.Concluido), Actor);
+        return concluida!;
+    }
+
     private static KnightCapabilityStatus[] Collected(params KnightCapability[] capabilities) =>
         capabilities.Select(c => new KnightCapabilityStatus(c, KnightCapabilityOutcome.Collected)).ToArray();
 
     private AegisScoreDbContext NewContext(Guid? tenantId) =>
         new(new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(_connection).Options,
             new SystemTenantContext(tenantId));
+
+    /// <summary>
+    /// Grava uma execução de coleta REAL (Entra/Live) diretamente, com o mesmo catálogo das demais. Não há
+    /// coletor real neste ambiente de teste, e simular um não acrescentaria nada ao que está sob prova: o que
+    /// importa é existir uma avaliação cuja PROCEDÊNCIA seja diferente da demonstração.
+    /// </summary>
+    private static async Task<Guid> RealRunAsync(
+        AegisScoreDbContext db, Guid tenantId, int affected, DateTimeOffset at)
+    {
+        var run = new KnightAssessmentRun
+        {
+            TenantId = tenantId,
+            Mode = KnightAssessmentMode.Live,
+            SourceType = KnightSourceType.MicrosoftEntraId,
+            SourceState = KnightSourceState.Completed,
+            Source = "Microsoft Entra ID",
+            Status = KnightRunStatus.Completed,
+            CatalogVersion = KnightCatalog.Version,
+            StartedAt = at,
+            CompletedAt = at,
+            Score = 60,
+            Coverage = 100,
+            ScoreFormulaVersion = "knight-score-v1",
+            ExposedCount = 1,
+            CapabilitiesJson = System.Text.Json.JsonSerializer.Serialize(
+                Collected(KnightCapability.PrivilegedRoleInventory, KnightCapability.MfaRegistration),
+                KnightCapabilitiesJson.Options),
+        };
+        run.Indicators.Add(new KnightIndicatorResult
+        {
+            TenantId = tenantId,
+            IndicatorId = "AK-ENTRA-001",
+            Title = "Contas privilegiadas sem MFA",
+            Category = KnightIndicatorCategory.PrivilegedAccess,
+            Severity = SeverityLevel.Critical,
+            Status = KnightIndicatorStatus.Exposed,
+            AffectedObjectCount = affected,
+            Evidence = affected + " conta(s) privilegiada(s) sem metodo de MFA registrado.",
+            SourceType = KnightSourceType.MicrosoftEntraId,
+            CollectedAt = at,
+        });
+
+        db.KnightAssessmentRuns.Add(run);
+        await db.SaveChangesAsync();
+        return run.Id;
+    }
 
     private static IRemediationService RemediationFor(AegisScoreDbContext db, Guid tenantId) =>
         new RemediationService(db, new SystemTenantContext(tenantId), TimeProvider.System);

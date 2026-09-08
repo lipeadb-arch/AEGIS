@@ -62,19 +62,23 @@ public sealed class RemediationService : IRemediationService
             throw new ActionPlanValidationException("O título da ação é obrigatório.");
 
         // O achado precisa existir NA AVALIAÇÃO indicada — não na mais recente. Vincular a ação ao achado de
-        // hoje enquanto o usuário olha o resultado de ontem seria trocar a origem em silêncio.
+        // hoje enquanto o usuário olha o resultado de ontem seria trocar a origem em silêncio. A FONTE e o
+        // MODO da avaliação viajam junto: eles fazem parte da identidade do problema, não são decoração.
         var finding = await _db.KnightIndicatorResults.AsNoTracking()
             .Where(i => i.RunId == command.RunId && i.IndicatorId == indicatorId)
-            .Select(i => new { i.AffectedObjectCount })
+            .Join(_db.KnightAssessmentRuns.AsNoTracking(), i => i.RunId, r => r.Id,
+                (i, r) => new { i.AffectedObjectCount, r.SourceType, r.Mode })
             .FirstOrDefaultAsync(ct);
         if (finding is null) return null;
 
-        // Duplicidade por clique repetido: enquanto houver ação ATIVA para o mesmo achado, abre-se a
-        // existente. Uma ação encerrada libera a origem — o problema pode reaparecer e merecer novo ciclo.
-        var active = await FindActiveAsync(indicatorId, ct);
+        // Duplicidade por clique repetido: enquanto houver ação ATIVA para a mesma ORIGEM — tenant, fonte,
+        // modo e achado —, abre-se a existente. Uma ação encerrada libera a origem: o problema pode
+        // reaparecer e merecer novo ciclo.
+        var active = await FindActiveAsync(indicatorId, finding.SourceType, finding.Mode, ct);
         if (active is not null)
             throw new ActionPlanConflictException(
-                "Já existe uma ação ativa para este achado. Abra a ação existente em vez de criar outra.", active);
+                "Já existe uma ação ativa para este achado nesta fonte. Abra a ação existente em vez de criar outra.",
+                active);
 
         var now = _clock.GetUtcNow();
         var plan = new ActionPlan
@@ -90,14 +94,18 @@ public sealed class RemediationService : IRemediationService
             Status = ActionPlanStatus.Aberto,
             KnightIndicatorId = indicatorId,
             OriginRunId = command.RunId,
+            OriginSourceType = finding.SourceType,
+            OriginMode = finding.Mode,
             OriginAffectedCount = finding.AffectedObjectCount,
+            CycleStartedAt = now,
             Version = 1,
         };
 
         _db.ActionPlans.Add(plan);
         AddEvent(plan, actor, ActionPlanEventKind.Created, now, null, ActionPlanStatus.Aberto,
-            $"Ação criada a partir do achado {indicatorId} da avaliação {command.RunId:D}.");
-        await _db.SaveChangesAsync(ct);
+            $"Ação criada a partir do achado {indicatorId} da avaliação {command.RunId:D} " +
+            $"({DescribeOrigin(finding.SourceType, finding.Mode)}).");
+        await SaveWithConcurrencyGuardAsync(ct);
 
         return await GetAsync(plan.Id, ct);
     }
@@ -119,6 +127,14 @@ public sealed class RemediationService : IRemediationService
         var indicatorId = (filter.IndicatorId ?? "").Trim();
         if (indicatorId.Length > 0)
             query = query.Where(p => p.KnightIndicatorId == indicatorId);
+
+        // Fonte e modo restringem a lista à MESMA procedência do que a tela está exibindo. Sem isso, a ação
+        // criada sobre o cenário de demonstração apareceria na Central de Prioridades ao lado dos achados de
+        // uma coleta real, com exatamente a mesma aparência de trabalho real em curso.
+        if (filter.SourceType is { } sourceType)
+            query = query.Where(p => p.OriginSourceType == sourceType);
+        if (filter.Mode is { } mode)
+            query = query.Where(p => p.OriginMode == mode);
 
         if (filter.ActiveOnly)
             query = query.Where(p =>
@@ -220,7 +236,9 @@ public sealed class RemediationService : IRemediationService
         AddEvent(plan, actor, ActionPlanEventKind.ExecutionRecorded, now, null, null,
             "Execução relatada. Relato não comprova correção — a validação é um ato à parte.");
 
-        // A execução leva a ação para "Aguardando validação", nunca direto para concluída.
+        // Um NOVO relato de execução recomeça a comprovação: as validações anteriores passam a descrever um
+        // trabalho que não é este. Elas continuam na trilha; apenas deixam de autorizar o encerramento — e a
+        // base recalculada abaixo já reflete isso, porque a aplicabilidade é medida contra ExecutedAt.
         if (plan.Status != ActionPlanStatus.AguardandoValidacao)
             ApplyTransition(plan, ActionPlanStatus.AguardandoValidacao, actor, now,
                 "Execução relatada — aguardando comprovação.");
@@ -259,7 +277,9 @@ public sealed class RemediationService : IRemediationService
                 throw new ActionPlanValidationException(
                     "A avaliação indicada como evidência não existe neste cliente.");
 
-            var verdict = KnightValidationEvaluator.Evaluate(indicatorId, origin, evidence);
+            // O relato de execução entra na conta: uma coleta ANTERIOR a ele pode mostrar mudança real no
+            // ambiente, mas não mudança produzida por este trabalho.
+            var verdict = KnightValidationEvaluator.Evaluate(indicatorId, origin, evidence, plan.ExecutedAt);
 
             validation = new ActionPlanValidation
             {
@@ -269,6 +289,8 @@ public sealed class RemediationService : IRemediationService
                 Outcome = verdict.Outcome,
                 ValidationRunId = runId,          // referência de EVIDÊNCIA — distinta da avaliação de origem
                 EvidenceReference = null,
+                EvidenceCollectedAt = evidence.CollectedAt,
+                PrecedesReportedExecution = verdict.PrecedesReportedExecution,
                 ObservedBefore = verdict.ObservedBefore,
                 ObservedAfter = verdict.ObservedAfter,
                 ObjectsNoLongerPresent = verdict.ObjectsNoLongerPresent,
@@ -298,6 +320,8 @@ public sealed class RemediationService : IRemediationService
                 Outcome = ActionPlanValidationOutcome.HumanAttested,
                 ValidationRunId = null,
                 EvidenceReference = reference,
+                EvidenceCollectedAt = null,          // não há coleta: é a palavra de alguém, e é dito assim
+                PrecedesReportedExecution = false,
                 ObservedBefore = plan.OriginAffectedCount,
                 ObservedAfter = null,
                 ObjectsNoLongerPresent = null,
@@ -319,8 +343,10 @@ public sealed class RemediationService : IRemediationService
 
         // A validação NÃO conclui a ação por conta própria: encerrar é decisão de gestão, registrada como
         // transição explícita. O que ela faz é dar (ou negar) a base para essa decisão.
-        if (plan.Status == ActionPlanStatus.Aberto)
-            ApplyTransition(plan, ActionPlanStatus.AguardandoValidacao, actor, now, "Validação registrada.");
+        //
+        // E NÃO move a etapa. "Aguardando validação" quer dizer "execução relatada, aguardando comprovação";
+        // levar para lá uma ação que ninguém executou FABRICARIA a execução — a tela passaria a afirmar um
+        // trabalho que não foi descrito por pessoa alguma.
 
         plan.Version++;
         plan.UpdatedAt = now;
@@ -333,11 +359,18 @@ public sealed class RemediationService : IRemediationService
     private Guid EnsureTenant() => _tenant.TenantId
         ?? throw new TenantSecurityException("Operação de remediação sem tenant resolvido no contexto (fail-closed).");
 
-    /// <summary>Ação ATIVA já existente para o mesmo achado, se houver (o que impede a duplicação por clique).</summary>
-    private async Task<Guid?> FindActiveAsync(string indicatorId, CancellationToken ct)
+    /// <summary>
+    /// Ação ATIVA já existente para a mesma ORIGEM — tenant (implícito), fonte, modo e achado. O indicador
+    /// sozinho NÃO identifica o problema: "AK-ENTRA-001 na demonstração" e "AK-ENTRA-001 na coleta real do
+    /// diretório" são dois problemas, e tratá-los como um faria a ação de treinamento bloquear a ação real.
+    /// </summary>
+    private async Task<Guid?> FindActiveAsync(
+        string indicatorId, KnightSourceType sourceType, KnightAssessmentMode mode, CancellationToken ct)
     {
         var existing = await _db.ActionPlans.AsNoTracking()
             .Where(p => p.KnightIndicatorId == indicatorId
+                        && p.OriginSourceType == sourceType
+                        && p.OriginMode == mode
                         && (p.Status == ActionPlanStatus.Aberto
                             || p.Status == ActionPlanStatus.EmAndamento
                             || p.Status == ActionPlanStatus.AguardandoValidacao))
@@ -345,6 +378,12 @@ public sealed class RemediationService : IRemediationService
             .FirstOrDefaultAsync(ct);
         return existing;
     }
+
+    /// <summary>Descrição curta da procedência, para a trilha dizer de qual coleta a ação nasceu.</summary>
+    private static string DescribeOrigin(KnightSourceType source, KnightAssessmentMode mode) =>
+        mode == KnightAssessmentMode.Demo
+            ? $"fonte {source}, cenário de DEMONSTRAÇÃO"
+            : $"fonte {source}, coleta real";
 
     /// <summary>
     /// Carrega a ação para escrita e valida a versão que o cliente leu. Versão divergente = alguém escreveu
@@ -365,7 +404,17 @@ public sealed class RemediationService : IRemediationService
         return plan;
     }
 
-    /// <summary>Converte a corrida vencida pelo token de concorrência do EF no MESMO 409 da checagem explícita.</summary>
+    /// <summary>
+    /// Converte em 409 as DUAS corridas que o banco decide, e só elas:
+    ///
+    ///   • o token de concorrência do EF perdido — alguém gravou entre a leitura e o UPDATE;
+    ///   • a violação do índice único PARCIAL de ação ativa por achado — duas criações (ou uma criação e uma
+    ///     reabertura) passaram juntas pela checagem em memória e o banco desempatou.
+    ///
+    /// A segunda é reconhecida pelo NOME do índice, não por "erro de chave duplicada" em geral. Traduzir
+    /// qualquer 23505 em "já existe ação ativa" mentiria sobre qualquer outra unicidade violada e esconderia
+    /// um defeito real atrás de uma mensagem de negócio plausível.
+    /// </summary>
     private async Task SaveWithConcurrencyGuardAsync(CancellationToken ct)
     {
         try
@@ -378,21 +427,72 @@ public sealed class RemediationService : IRemediationService
                 "Esta ação foi alterada por outra pessoa enquanto a sua gravação estava em curso. " +
                 "Recarregue para ver a versão atual antes de gravar.");
         }
+        catch (DbUpdateException ex) when (IsActiveFindingIndexViolation(ex))
+        {
+            throw new ActionPlanConflictException(
+                "Outra pessoa acabou de abrir (ou reabrir) uma ação para este mesmo achado nesta fonte. " +
+                "Recarregue a lista e trabalhe na ação existente.");
+        }
     }
 
-    /// <summary>Aplica uma transição PERMITIDA e registra a mudança na trilha. Transição impossível é recusada.</summary>
+    /// <summary>
+    /// A exceção é a violação do índice <c>UX_ActionPlans_ActiveByFinding</c>? A checagem olha o NOME da
+    /// restrição no texto do erro do provedor — o suficiente para não confundir esta invariante com nenhuma
+    /// outra, e sem acoplar a Infrastructure ao tipo de exceção do Npgsql.
+    /// </summary>
+    private static bool IsActiveFindingIndexViolation(DbUpdateException ex)
+    {
+        for (Exception? e = ex; e is not null; e = e.InnerException)
+            if (e.Message.Contains(ActiveFindingIndexName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
+
+    /// <summary>Nome do índice único parcial de ação ativa por achado — o mesmo declarado no DbContext.</summary>
+    internal const string ActiveFindingIndexName = "UX_ActionPlans_ActiveByFinding";
+
+    /// <summary>
+    /// Aplica uma transição PERMITIDA e registra a mudança na trilha. A permissão é decidida contra o que o
+    /// CICLO tem registrado, não contra a mera sequência de etapas: sem esse teste, dois cliques levariam
+    /// qualquer ação de "aberta" a "concluída" sem que ninguém tivesse descrito o que foi feito nem
+    /// apresentado evidência alguma — e o relatório sairia dizendo que o ciclo foi encerrado.
+    ///
+    /// Reabrir uma ação encerrada REPACTUA o ciclo: a partir daí, a comprovação do ciclo anterior não
+    /// autoriza mais nada. Ela permanece inteira no histórico — reabrir não apaga o que aconteceu.
+    /// </summary>
     private void ApplyTransition(
         ActionPlan plan, ActionPlanStatus target, RemediationActor actor, DateTimeOffset now, string? note)
     {
-        if (!RemediationReading.IsAllowedTransition(plan.Status, target))
+        var basis = RemediationReading.BasisFor(plan, plan.Validations);
+        if (!RemediationReading.IsAllowedTransition(plan.Status, target, basis))
+        {
+            var reason = target == ActionPlanStatus.Concluido
+                ? RemediationReading.ClosureBlockedReason(plan.Status, basis)
+                : null;
             throw new ActionPlanValidationException(
                 $"Transição não permitida: de '{RemediationReading.StatusLabel(plan.Status)}' para " +
-                $"'{RemediationReading.StatusLabel(target)}'.");
+                $"'{RemediationReading.StatusLabel(target)}'." +
+                (reason is null
+                    ? target == ActionPlanStatus.AguardandoValidacao
+                        ? " Aguardar validação pressupõe execução relatada — registre o que foi feito em vez " +
+                          "de apenas avançar a etapa."
+                        : ""
+                    : " " + reason));
+        }
 
         var from = plan.Status;
+        var reopening = from == ActionPlanStatus.Concluido && target != ActionPlanStatus.Concluido;
+
         plan.Status = target;
         plan.CompletedAt = target == ActionPlanStatus.Concluido ? now : null;
-        AddEvent(plan, actor, ActionPlanEventKind.StatusChanged, now, from, target, note);
+        if (reopening) plan.CycleStartedAt = now;
+
+        AddEvent(plan, actor, ActionPlanEventKind.StatusChanged, now, from, target,
+            reopening
+                ? (note is null ? "" : note + " ") +
+                  "Ação reaberta: novo ciclo. A validação do ciclo anterior permanece no histórico e deixa de " +
+                  "autorizar o encerramento — é preciso executar e comprovar de novo."
+                : note);
     }
 
     /// <summary>
@@ -483,15 +583,34 @@ public sealed class RemediationService : IRemediationService
         return v.Length <= max ? v : v[..max];
     }
 
+    /// <summary>
+    /// Compõe a visão de leitura. Duas coisas que ela apresenta SEPARADAS de propósito: a validação mais
+    /// recente (o histórico) e a validação APLICÁVEL ao ciclo atual (o que sustenta a decisão de hoje). Uma
+    /// ação reaberta tem as duas, e são diferentes — colapsá-las faria a tela reciclar uma comprovação velha.
+    /// </summary>
     private static ActionPlanView ToView(ActionPlan p)
     {
-        var validations = p.Validations
+        var cycleStart = RemediationReading.CycleStartOf(p);
+        var ordered = p.Validations
             .OrderByDescending(v => v.DecidedAt).ThenByDescending(v => v.Id)
-            .Select(v => new ActionPlanValidationView(
-                v.Method, v.Outcome, v.ValidationRunId, v.EvidenceReference,
-                v.ObservedBefore, v.ObservedAfter, v.ObjectsNoLongerPresent, v.ComparedBySets,
-                v.Rationale, v.DecidedAt, v.DecidedByName))
             .ToList();
+
+        var applicableEntity = ordered
+            .FirstOrDefault(v => RemediationReading.IsApplicableToCurrentCycle(v, cycleStart, p.ExecutedAt));
+
+        ActionPlanValidationView ToValidationView(ActionPlanValidation v) => new(
+            v.Method, v.Outcome, v.ValidationRunId, v.EvidenceReference,
+            v.EvidenceCollectedAt, v.PrecedesReportedExecution,
+            AppliesToCurrentCycle: RemediationReading.IsApplicableToCurrentCycle(v, cycleStart, p.ExecutedAt),
+            v.ObservedBefore, v.ObservedAfter, v.ObjectsNoLongerPresent, v.ComparedBySets,
+            v.Rationale, v.DecidedAt, v.DecidedByName);
+
+        var validations = ordered.Select(ToValidationView).ToList();
+        var applicable = applicableEntity is null ? null : ToValidationView(applicableEntity);
+
+        var basis = new RemediationReading.ActionPlanCycleBasis(
+            HasExecutionInCurrentCycle: p.ExecutedAt is { } e && e >= cycleStart,
+            ApplicableOutcome: applicableEntity?.Outcome);
 
         var events = p.Events
             .OrderBy(e => e.At).ThenBy(e => e.Id)
@@ -503,6 +622,8 @@ public sealed class RemediationService : IRemediationService
             p.KnightIndicatorId,
             p.OriginRunId,
             p.OriginAffectedCount,
+            p.OriginSourceType,
+            p.OriginMode,
             p.Title ?? "",
             p.Description,
             p.ResponsiblePerson,
@@ -511,14 +632,19 @@ public sealed class RemediationService : IRemediationService
             p.Status,
             p.IsOverdue,
             p.IsActive,
-            RemediationReading.NextStep(p.Status, p.IsOverdue, validations.FirstOrDefault()?.Outcome),
+            RemediationReading.NextStep(
+                p.Status, p.IsOverdue, applicableEntity?.Outcome, ordered.FirstOrDefault()?.Outcome),
             p.ExecutionNotes,
             p.ExecutionEvidenceRef,
             p.ExecutedAt,
             p.CompletedAt,
             p.CreatedAt,
+            cycleStart,
             p.Version,
             validations.FirstOrDefault(),
+            applicable,
+            RemediationReading.AllowedTransitions(p.Status, basis),
+            RemediationReading.ClosureBlockedReason(p.Status, basis),
             validations,
             events);
     }

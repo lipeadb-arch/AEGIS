@@ -40,6 +40,12 @@ public sealed record ActionPlanValidationView(
     ActionPlanValidationOutcome Outcome,
     Guid? ValidationRunId,
     string? EvidenceReference,
+    /// <summary>Instante da COLETA usada como evidência (nulo na atestação humana).</summary>
+    DateTimeOffset? EvidenceCollectedAt,
+    /// <summary>A coleta antecede o relato de execução — a mudança não é atribuível a este trabalho.</summary>
+    bool PrecedesReportedExecution,
+    /// <summary>Esta validação fala pelo CICLO ATUAL da ação (e por isso pode autorizar o encerramento)?</summary>
+    bool AppliesToCurrentCycle,
     int? ObservedBefore,
     int? ObservedAfter,
     int? ObjectsNoLongerPresent,
@@ -58,6 +64,10 @@ public sealed record ActionPlanView(
     string? KnightIndicatorId,
     Guid? OriginRunId,
     int? OriginAffectedCount,
+    /// <summary>Fonte da avaliação de origem — parte da IDENTIDADE do problema, junto com o indicador.</summary>
+    KnightSourceType? OriginSourceType,
+    /// <summary>Demo ou coleta real. Uma ação de demonstração jamais responde por um achado real.</summary>
+    KnightAssessmentMode? OriginMode,
     string Title,
     string? ProposedAction,
     string? ResponsiblePerson,
@@ -72,9 +82,21 @@ public sealed record ActionPlanView(
     DateTimeOffset? ExecutedAt,
     DateTimeOffset? CompletedAt,
     DateTimeOffset CreatedAt,
+    /// <summary>Início do ciclo vigente — repactuado na reabertura, e a fronteira do que ainda vale.</summary>
+    DateTimeOffset CycleStartedAt,
     /// <summary>Versão lida — devolvida na próxima escrita para detectar atualização conflitante.</summary>
     int Version,
     ActionPlanValidationView? LatestValidation,
+    /// <summary>
+    /// A validação que fala pelo ciclo ATUAL, quando há. Deliberadamente separada de
+    /// <paramref name="LatestValidation"/>: a mais recente pode ser de um ciclo já encerrado, e apresentá-la
+    /// como base da conclusão de hoje seria reciclar uma comprovação velha.
+    /// </summary>
+    ActionPlanValidationView? ApplicableValidation,
+    /// <summary>Etapas alcançáveis a partir da atual, JÁ considerando o que o ciclo tem registrado.</summary>
+    IReadOnlyList<ActionPlanStatus> AllowedTransitions,
+    /// <summary>Por que encerrar ainda não está disponível — nulo quando está.</summary>
+    string? ClosureBlockedReason,
     IReadOnlyList<ActionPlanValidationView> Validations,
     IReadOnlyList<ActionPlanEventView> Events);
 
@@ -120,7 +142,17 @@ public sealed record ValidateActionPlanCommand(
 /// <summary>Filtro de leitura da lista de ações do tenant.</summary>
 /// <param name="IndicatorId">Restringe a um achado; nulo traz todos.</param>
 /// <param name="ActiveOnly">Somente ações ativas (Aberto/Em andamento/Aguardando validação).</param>
-public sealed record ActionPlanFilter(string? IndicatorId = null, bool ActiveOnly = false);
+/// <param name="SourceType">
+/// Restringe à FONTE de origem. A tela do KNIGHT e a Central de Prioridades passam a fonte da avaliação que
+/// estão exibindo: sem isso, uma ação nascida do cenário de DEMONSTRAÇÃO apareceria ao lado de achados de uma
+/// coleta real, com a mesma aparência de ação real.
+/// </param>
+/// <param name="Mode">Restringe ao modo (Demo/Live) — o mesmo eixo, explícito.</param>
+public sealed record ActionPlanFilter(
+    string? IndicatorId = null,
+    bool ActiveOnly = false,
+    KnightSourceType? SourceType = null,
+    KnightAssessmentMode? Mode = null);
 
 /// <summary>
 /// Conflito de escrita: já existe ação ATIVA para a mesma origem, ou a versão enviada não é a vigente. Nos

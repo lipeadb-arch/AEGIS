@@ -44,13 +44,18 @@ public sealed record KnightRunEvidence(
     IReadOnlyList<KnightCapabilityStatus> Capabilities);
 
 /// <summary>Veredito da comparação: o desfecho, o que sustenta a conclusão e o que foi observado dos dois lados.</summary>
+/// <param name="PrecedesReportedExecution">
+/// <c>true</c> quando a coleta apresentada é ANTERIOR ao relato de execução. O que ela observou continua
+/// verdadeiro; o que não se sustenta é atribuir a mudança àquele trabalho.
+/// </param>
 public sealed record KnightValidationVerdict(
     ActionPlanValidationOutcome Outcome,
     string Rationale,
     int? ObservedBefore,
     int? ObservedAfter,
     int? ObjectsNoLongerPresent,
-    bool ComparedBySets);
+    bool ComparedBySets,
+    bool PrecedesReportedExecution = false);
 
 /// <summary>Comparação DETERMINÍSTICA entre a avaliação de origem e a apresentada como evidência.</summary>
 public static class KnightValidationEvaluator
@@ -60,8 +65,15 @@ public static class KnightValidationEvaluator
     /// Toda recusa produz <see cref="ActionPlanValidationOutcome.EvidenceInsufficient"/> com o motivo explícito —
     /// nunca um desfecho neutro que a tela pudesse ler como "não piorou, então melhorou".
     /// </summary>
+    /// <param name="reportedExecutionAt">
+    /// Instante do relato de execução da ação, quando houver. Uma coleta ANTERIOR a ele descreve um ambiente
+    /// que ainda não tinha recebido o trabalho relatado: a melhora pode ser real e ter outra causa. O veredito
+    /// mantém a observação e MARCA a impossibilidade de atribuí-la à execução — inventar a causalidade seria
+    /// o mesmo erro de somar números de coletas incomparáveis, só que mais difícil de perceber.
+    /// </param>
     public static KnightValidationVerdict Evaluate(
-        string indicatorId, KnightRunEvidence origin, KnightRunEvidence evidence)
+        string indicatorId, KnightRunEvidence origin, KnightRunEvidence evidence,
+        DateTimeOffset? reportedExecutionAt = null)
     {
         // (0) A mesma avaliação não pode comprovar a si mesma.
         if (origin.RunId == evidence.RunId)
@@ -128,11 +140,11 @@ public static class KnightValidationEvaluator
             var extra = setsUsable
                 ? $" Os {leftTheSet} objeto(s) da lista de origem não aparecem mais no conjunto preservado da nova coleta."
                 : " A conclusão se apoia no veredito da regra; o detalhe dos objetos não estava preservado nos dois lados.";
-            return new KnightValidationVerdict(
+            return Caveat(new KnightValidationVerdict(
                 ActionPlanValidationOutcome.ExposureCleared,
                 $"A nova avaliação, {Describe(evidence)}, não sinaliza mais este achado (antes: {before} " +
                 $"objeto(s) afetado(s)).{extra}",
-                before, after, leftTheSet, setsUsable);
+                before, after, leftTheSet, setsUsable), evidence, reportedExecutionAt);
         }
 
         // (8) Redução observada — nunca "resolvido". O achado continua exposto.
@@ -141,19 +153,39 @@ public static class KnightValidationEvaluator
             var extra = setsUsable
                 ? $" {leftTheSet} objeto(s) da lista de origem não constam mais do conjunto preservado; os demais permanecem."
                 : " Sem as duas listas completas, é possível afirmar a variação da QUANTIDADE, não quais objetos foram corrigidos.";
-            return new KnightValidationVerdict(
+            return Caveat(new KnightValidationVerdict(
                 ActionPlanValidationOutcome.ReductionObserved,
                 $"A quantidade afetada caiu de {before} para {after} na avaliação de {Describe(evidence)}, mas o " +
                 $"achado continua exposto.{extra}",
-                before, after, leftTheSet, setsUsable);
+                before, after, leftTheSet, setsUsable), evidence, reportedExecutionAt);
         }
 
         var direcao = after > before ? "subiu" : "permaneceu";
-        return new KnightValidationVerdict(
+        return Caveat(new KnightValidationVerdict(
             ActionPlanValidationOutcome.NoChangeObserved,
             $"A quantidade afetada {direcao} em {after} na avaliação de {Describe(evidence)} (antes: {before}). " +
             "A nova coleta não mostra melhora neste achado.",
-            before, after, leftTheSet, setsUsable);
+            before, after, leftTheSet, setsUsable), evidence, reportedExecutionAt);
+    }
+
+    /// <summary>
+    /// Acrescenta a ressalva de CAUSALIDADE quando a coleta antecede o relato de execução. Não muda o
+    /// desfecho — o que foi observado foi observado —, e não é cosmética: o sinalizador que ela liga é o que
+    /// impede essa validação de autorizar o encerramento do ciclo.
+    /// </summary>
+    private static KnightValidationVerdict Caveat(
+        KnightValidationVerdict verdict, KnightRunEvidence evidence, DateTimeOffset? reportedExecutionAt)
+    {
+        if (reportedExecutionAt is not { } executed || evidence.CollectedAt >= executed) return verdict;
+
+        return verdict with
+        {
+            PrecedesReportedExecution = true,
+            Rationale = verdict.Rationale +
+                " ATENÇÃO: esta coleta é ANTERIOR ao relato de execução desta ação. O que ela observou " +
+                "continua valendo, mas não pode ser atribuído a este trabalho — para comprovar a correção, " +
+                "execute uma coleta posterior à execução relatada.",
+        };
     }
 
     private static KnightValidationVerdict Insufficient(string rationale) =>

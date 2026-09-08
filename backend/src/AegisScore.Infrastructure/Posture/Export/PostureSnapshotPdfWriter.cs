@@ -527,6 +527,26 @@ public static class PostureSnapshotPdfWriter
             var basePar = row.Cells[4];
             var bp = basePar.AddParagraph(ValidationBasisText(a.ValidationMethod, a.ComparedBySets));
             bp.Format.Font.Size = 7;
+
+            // PROVENIÊNCIA congelada: de qual coleta veio o "antes" e de qual veio o "depois" (ou, na
+            // atestação humana, qual foi a evidência apresentada). Sem isso, o número compara duas coisas que
+            // o leitor não consegue identificar — e identificá-las depois exigiria consultar dados que já
+            // podem ter mudado, que é justamente o que uma fotografia existe para dispensar.
+            var prov = ProvenanceText(a);
+            if (prov is not null)
+            {
+                var pp = basePar.AddParagraph(prov);
+                pp.Format.Font.Size = 6.5;
+                pp.Format.Font.Color = Muted;
+            }
+
+            if (a.PrecedesReportedExecution)
+            {
+                var wp = basePar.AddParagraph(CausalityCaveatText);
+                wp.Format.Font.Size = 6.5;
+                wp.Format.Font.Color = new Color(150, 30, 50);
+            }
+
             if (!string.IsNullOrWhiteSpace(a.ValidationRationale))
             {
                 var rp = basePar.AddParagraph(a.ValidationRationale!);
@@ -747,6 +767,37 @@ public static class PostureSnapshotPdfWriter
     public static string ScoreText(double? score, PostureSnapshotType type) => score is null
         ? "Não avaliado"
         : type == PostureSnapshotType.Knight ? $"{Num(score.Value)} / 100" : Percent(score.Value);
+
+    /// <summary>
+    /// Ressalva de CAUSALIDADE: a coleta usada como evidência antecede o relato de execução. O relatório diz
+    /// isso em vermelho porque a alternativa — omitir — apresentaria como resultado do trabalho uma melhora
+    /// que pode ter tido qualquer outra causa.
+    /// </summary>
+    public const string CausalityCaveatText =
+        "A coleta usada como evidência é ANTERIOR ao relato de execução: a mudança observada não é atribuível " +
+        "a esta ação.";
+
+    /// <summary>
+    /// A PROVENIÊNCIA congelada de uma validação, em uma linha: de qual avaliação veio o ponto de partida, de
+    /// qual veio a evidência e — na atestação humana — qual foi o registro apresentado. Devolve <c>null</c>
+    /// quando não há nada a citar (o relatório não imprime um rótulo vazio). Os identificadores são impressos
+    /// pelos 8 primeiros caracteres, o bastante para localizar a coleta no produto sem ocupar a coluna.
+    /// </summary>
+    public static string? ProvenanceText(PostureSnapshotActionItem a)
+    {
+        var partes = new List<string>(3);
+        if (a.OriginRunId is { } origin) partes.Add("origem " + Short(origin));
+        if (a.ValidationRunId is { } evidence) partes.Add("evidência " + Short(evidence));
+        if (a.EvidenceCollectedAt is { } collected)
+            partes.Add("coletada em " + collected.ToUniversalTime().ToString("dd/MM/yyyy HH:mm 'UTC'", Pt));
+        if (!string.IsNullOrWhiteSpace(a.ValidationEvidenceReference))
+            partes.Add("registro: " + a.ValidationEvidenceReference);
+
+        return partes.Count == 0 ? null : "Avaliações — " + string.Join(" · ", partes) + ".";
+    }
+
+    /// <summary>Os 8 primeiros caracteres de um identificador: localiza a coleta sem estourar a coluna.</summary>
+    private static string Short(Guid id) => id.ToString("D")[..8];
 
     /// <summary>
     /// A BASE da conclusão de uma validação congelada. Segue o MÉTODO antes da completude dos conjuntos:
