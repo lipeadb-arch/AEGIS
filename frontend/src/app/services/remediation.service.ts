@@ -5,10 +5,24 @@ import { environment } from '../../environments/environment';
 import {
   ActionPlan,
   CreateActionPlanRequest,
+  KnightOriginMode,
+  KnightOriginSource,
   RecordExecutionRequest,
   UpdateActionPlanRequest,
   ValidateActionPlanRequest,
 } from '../models/remediation.models';
+
+/**
+ * Recorte de uma leitura da fila de ações. `sourceType`/`mode` são a PROCEDÊNCIA: sem eles, uma ação nascida
+ * do cenário de demonstração viria junto com os achados de uma coleta real, com a mesma aparência de
+ * trabalho real em curso.
+ */
+export interface ActionPlanQuery {
+  indicatorId?: string | null;
+  activeOnly?: boolean;
+  sourceType?: KnightOriginSource | null;
+  mode?: KnightOriginMode | null;
+}
 
 /**
  * [AEGIS-MVP-PRODUCT-03] Cliente da jornada de remediação (`/api/v1/remediation/action-plans`).
@@ -39,10 +53,12 @@ export class RemediationService {
   private readonly WRITE_TIMEOUT_MS = 30_000;
 
   /** Ações de achado do tenant. `activeOnly` traz só as que ocupam a origem (Aberta/Em andamento/Aguardando). */
-  list(indicatorId?: string, activeOnly = false): Observable<ActionPlan[]> {
+  list(query: ActionPlanQuery = {}): Observable<ActionPlan[]> {
     let params = new HttpParams();
-    if (indicatorId) params = params.set('indicatorId', indicatorId);
-    if (activeOnly) params = params.set('activeOnly', 'true');
+    if (query.indicatorId) params = params.set('indicatorId', query.indicatorId);
+    if (query.activeOnly) params = params.set('activeOnly', 'true');
+    if (query.sourceType) params = params.set('sourceType', query.sourceType);
+    if (query.mode) params = params.set('mode', query.mode);
     return this.http.get<ActionPlan[]>(this.base, { params }).pipe(
       timeout(this.READ_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível carregar os planos de ação.')),

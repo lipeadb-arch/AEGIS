@@ -14,9 +14,12 @@ import {
 import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-exposure.models';
 import {
   ActionPlan,
+  KnightOriginMode,
+  KnightOriginSource,
   actionResult,
   actionSituation,
   activePlanFor,
+  originLabel,
 } from '../models/remediation.models';
 import { RemediationService } from '../services/remediation.service';
 
@@ -159,6 +162,7 @@ import { RemediationService } from '../services/remediation.service';
                   <thead>
                     <tr>
                       <th>Ação</th>
+                      <th class="c-tier">Origem</th>
                       <th class="c-tier">Responsável</th>
                       <th class="c-when">Prazo</th>
                       <th class="c-state">Situação do plano</th>
@@ -170,13 +174,19 @@ import { RemediationService } from '../services/remediation.service';
                     @for (p of plans(); track p.id) {
                       <tr class="row">
                         <td>
+                          <!-- [AEGIS-MVP-PRODUCT-03] O link identifica O PLANO, não apenas o achado. Sem o
+                               identificador da ação, abrir a linha de uma ação ENCERRADA levaria ao ciclo
+                               ATIVO do mesmo indicador — outro trabalho, com a mesma aparência de resposta. -->
                           <a
                             class="title link"
                             [routerLink]="['/identity']"
-                            [queryParams]="{ finding: p.knightIndicatorId, run: p.originRunId }">
+                            [queryParams]="{ finding: p.knightIndicatorId, run: p.originRunId, plan: p.id }">
                             {{ p.title }}
                           </a>
                           <span class="meta mono">{{ p.knightIndicatorId }}</span>
+                        </td>
+                        <td class="c-tier">
+                          <span class="meta" [class.demo]="p.originMode === 'Demo'">{{ origin(p) }}</span>
                         </td>
                         <td class="c-tier">{{ p.responsiblePerson || '—' }}</td>
                         <td class="c-when">
@@ -500,6 +510,7 @@ import { RemediationService } from '../services/remediation.service';
       .subtabs button.on { opacity: 1; color: var(--c); border-bottom-color: var(--c); }
       .subtabs .n { font-size: 0.68rem; margin-left: 0.35rem; opacity: 0.75; }
       .meta.late { color: #ff6b8a; }
+      .meta.demo { color: #ffb020; opacity: 0.95; }
       /* [AEGIS-MVP-PRODUCT-02] Barra de contexto da avaliação KNIGHT: origem, score PRÓPRIO e cobertura. */
       .knight-bar { display: flex; gap: 1.4rem; flex-wrap: wrap; padding: 0.55rem 0.7rem 0.75rem; }
       .kb-item { display: flex; flex-direction: column; gap: 0.1rem; }
@@ -574,10 +585,20 @@ export class PrioritiesComponent {
 
   protected readonly situation = actionSituation;
   protected readonly result = actionResult;
+  protected readonly origin = originLabel;
 
   /** Ação ATIVA de um achado — decide entre "Criar plano de ação" e "Abrir plano". */
+  /**
+   * A ação ATIVA de um achado NESTA procedência. A fonte e o modo da avaliação exibida entram na busca
+   * porque o indicador sozinho não identifica o problema: sem esse recorte, uma ação nascida do cenário de
+   * demonstração responderia por um achado real — e ainda bloquearia a criação da ação real.
+   */
   protected planFor(indicatorId: string): ActionPlan | null {
-    return activePlanFor(this.plans(), indicatorId);
+    const k = this.knight();
+    if (!k) return null;
+    const fonte = (k.sourceType as KnightOriginSource | null) ?? null;
+    const modo: KnightOriginMode | null = k.isDemo ? 'Demo' : fonte ? 'Live' : null;
+    return activePlanFor(this.plans(), indicatorId, fonte, modo);
   }
 
   protected readonly data = signal<PriorityWorkspace | null>(null);
@@ -650,7 +671,7 @@ export class PrioritiesComponent {
    */
   private loadPlans(): void {
     this.plansError.set(null);
-    this.remediation.list().subscribe({
+    this.remediation.list({}).subscribe({
       next: (plans) => this.plans.set(plans),
       error: (err: Error) => this.plansError.set(err.message),
     });

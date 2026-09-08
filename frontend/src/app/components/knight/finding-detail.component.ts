@@ -24,7 +24,7 @@ import {
   totalPages,
 } from '../../models/knight.models';
 import { KnightService } from '../../services/knight.service';
-import { ActionPlan, actionResult, actionSituation } from '../../models/remediation.models';
+import { ActionPlan, actionResult, actionSituation, originLabel } from '../../models/remediation.models';
 import { KnightActionPlanComponent } from './action-plan.component';
 
 /**
@@ -73,7 +73,7 @@ import { KnightActionPlanComponent } from './action-plan.component';
              Resumo mantém o ponto de ENTRADA (criar/abrir), que é onde o analista decide agir. -->
         <button type="button" role="tab" [class.on]="tab() === 'plano'" (click)="tab.set('plano')">
           Plano de ação
-          @if (activePlan()) { <span class="n">1</span> }
+          @if (plan()) { <span class="n">1</span> }
         </button>
       </div>
 
@@ -91,9 +91,18 @@ import { KnightActionPlanComponent } from './action-plan.component';
           <div class="kv plan-entry">
             <span class="k">Plano de ação</span>
             <span class="v">
-              @if (activePlan(); as ap) {
+              @if (plan(); as ap) {
                 <span>{{ ap.title }}</span>
+                <span class="mono">{{ origin(ap) }}</span>
                 <span class="mono">{{ situation(ap) }} · {{ result(ap) }}</span>
+                <!-- Uma ação ENCERRADA apontada por um link não some porque outro ciclo começou: a tela
+                     mostra a ação pedida E diz que existe outra ativa, com o caminho para ela. -->
+                @if (otherActive(); as ativa) {
+                  <span class="mono warn">
+                    Esta é a ação indicada pelo link ({{ situation(ap) }}). Existe outra ação ATIVA para o
+                    mesmo achado: {{ ativa.title }}.
+                  </span>
+                }
                 <button type="button" class="btn ghost" (click)="tab.set('plano')">Abrir plano</button>
               } @else {
                 <span class="mono">Nenhuma ação ativa para este achado.</span>
@@ -201,12 +210,20 @@ import { KnightActionPlanComponent } from './action-plan.component';
 
       @if (tab() === 'plano') {
         <div class="tabpane">
+          @if (otherActive(); as ativa) {
+            <p class="notice warn">
+              A ação aberta abaixo é a <b>indicada pelo link</b>, com a própria execução e o próprio
+              histórico. Ela não é a ação em curso: existe outro ciclo ATIVO para este achado
+              (<b>{{ ativa.title }}</b>). Substituir uma pela outra aqui apagaria o registro que alguém veio
+              conferir.
+            </p>
+          }
           <app-knight-action-plan
             [indicatorId]="indicator().indicatorId"
             [affectedCount]="indicator().affectedObjectCount"
             [originRunId]="planOriginRunId()"
             [currentRunId]="assessment().id"
-            [existing]="activePlan()"
+            [existing]="plan()"
             (changed)="planChanged.emit($event)" />
         </div>
       }
@@ -306,6 +323,7 @@ import { KnightActionPlanComponent } from './action-plan.component';
       .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); }
       .kv.plan-entry .v { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
       .kv.plan-entry .mono { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+      .kv.plan-entry .mono.warn { color: var(--amber); line-height: 1.5; }
       @media (max-width: 900px) { .kv { grid-template-columns: 1fr; gap: 4px; } }
     `,
   ],
@@ -322,6 +340,14 @@ export class KnightFindingDetailComponent {
    * ação ativa?", compartilhada com a Central de Prioridades.
    */
   readonly activePlan = input<ActionPlan | null>(null);
+  /**
+   * A ação EM FOCO. Em geral é a própria ação ativa; quando um link identifica um PLANO específico, é
+   * aquele — inclusive encerrado. Trocá-lo silenciosamente pela ação ativa mostraria a alguém que veio
+   * conferir um encerramento um trabalho diferente com a mesma aparência de resposta.
+   */
+  readonly plan = input<ActionPlan | null>(null);
+  /** Abrir já na aba do plano — usado quando o endereço identifica a ação, não só o achado. */
+  readonly focusPlan = input(false);
   readonly closed = output<void>();
   /** Emite quando o plano muda, para a página recarregar o mapa de ações ativas. */
   readonly planChanged = output<ActionPlan>();
@@ -337,13 +363,21 @@ export class KnightFindingDetailComponent {
   protected readonly findingSituation = findingSituation;
   protected readonly situation = actionSituation;
   protected readonly result = actionResult;
+  protected readonly origin = originLabel;
+
+  /** A ação ativa, quando ela NÃO é a que está em foco — o segundo ciclo que a tela não pode esconder. */
+  readonly otherActive = computed<ActionPlan | null>(() => {
+    const foco = this.plan();
+    const ativa = this.activePlan();
+    return foco && ativa && ativa.id !== foco.id ? ativa : null;
+  });
 
   /**
    * A avaliação de ORIGEM de um plano novo é a que está aberta na tela — é o resultado que o analista está
    * olhando quando decide agir. Um plano já existente conserva a sua própria origem, que não é reescrita
    * quando o analista abre uma coleta mais nova.
    */
-  readonly planOriginRunId = computed(() => this.activePlan()?.originRunId ?? this.assessment().id);
+  readonly planOriginRunId = computed(() => this.plan()?.originRunId ?? this.assessment().id);
 
   readonly tab = signal<'resumo' | 'afetados' | 'evidencia' | 'plano'>('resumo');
   readonly affected = signal<KnightAffectedObjects | null>(null);
@@ -371,7 +405,7 @@ export class KnightFindingDetailComponent {
       this.indicator();
       this.assessment();
       this.cancelInFlight();
-      this.tab.set('resumo');
+      this.tab.set(this.focusPlan() ? 'plano' : 'resumo');
       this.search.set('');
       this.affected.set(null);
       this.error.set(null);

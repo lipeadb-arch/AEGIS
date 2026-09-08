@@ -48,6 +48,12 @@ export interface ActionPlanValidation {
   /** Avaliação usada como EVIDÊNCIA — distinta da avaliação de ORIGEM do plano. */
   validationRunId: string | null;
   evidenceReference: string | null;
+  /** Instante da COLETA usada como evidência — nulo na atestação humana. */
+  evidenceCollectedAt: string | null;
+  /** A coleta antecede o relato de execução: a mudança observada não é atribuível a esta ação. */
+  precedesReportedExecution: boolean;
+  /** Esta validação fala pelo CICLO ATUAL — só ela pode sustentar o encerramento. */
+  appliesToCurrentCycle: boolean;
   observedBefore: number | null;
   observedAfter: number | null;
   objectsNoLongerPresent: number | null;
@@ -58,12 +64,22 @@ export interface ActionPlanValidation {
   decidedByName: string;
 }
 
+/** Fonte concreta da coleta — o mesmo eixo que o KNIGHT usa. */
+export type KnightOriginSource = 'Demo' | 'MicrosoftEntraId' | 'GoogleWorkspace';
+
+/** Demonstração ou coleta real. */
+export type KnightOriginMode = 'Demo' | 'Live';
+
 export interface ActionPlan {
   id: string;
   knightIndicatorId: string | null;
   /** Avaliação que ORIGINOU a ação. */
   originRunId: string | null;
   originAffectedCount: number | null;
+  /** Fonte da avaliação de origem — parte da IDENTIDADE do problema, junto com o indicador. */
+  originSourceType: KnightOriginSource | null;
+  /** Demo ou coleta real: uma ação de demonstração jamais responde por um achado real. */
+  originMode: KnightOriginMode | null;
   title: string;
   proposedAction: string | null;
   responsiblePerson: string | null;
@@ -78,9 +94,24 @@ export interface ActionPlan {
   executedAt: string | null;
   completedAt: string | null;
   createdAt: string;
+  /** Início do ciclo vigente — repactuado quando uma ação encerrada é reaberta. */
+  cycleStartedAt: string;
   /** Versão lida — devolvida na próxima escrita para detectar atualização conflitante. */
   version: number;
   latestValidation: ActionPlanValidation | null;
+  /**
+   * A validação que fala pelo ciclo ATUAL. Numa ação reaberta ela é DIFERENTE de `latestValidation`, e é
+   * essa diferença que impede a tela de reciclar uma comprovação de um ciclo já encerrado.
+   */
+  applicableValidation: ActionPlanValidation | null;
+  /**
+   * Etapas alcançáveis daqui, decididas pelo SERVIDOR a partir do que o ciclo tem registrado. A tela oferece
+   * exatamente estas: espelhar a regra no cliente faria os dois divergirem, e a pessoa veria um botão que a
+   * gravação depois recusaria.
+   */
+  allowedTransitions: ActionPlanStatus[];
+  /** Por que encerrar ainda não está disponível — nulo quando está. */
+  closureBlockedReason: string | null;
   validations: ActionPlanValidation[];
   events: ActionPlanEvent[];
 }
@@ -175,7 +206,13 @@ export function isTechnicallyProven(v: ActionPlanValidation | null): boolean {
   return (
     !!v &&
     v.method === 'NewAssessment' &&
-    (v.outcome === 'ExposureCleared' || v.outcome === 'ReductionObserved')
+    (v.outcome === 'ExposureCleared' || v.outcome === 'ReductionObserved') &&
+    // A comprovação precisa falar por ESTE ciclo: numa ação reaberta, a coleta que fechou o ciclo anterior
+    // continua verdadeira e continua no histórico, mas não comprova o trabalho que está em curso agora.
+    v.appliesToCurrentCycle &&
+    // E precisa ser POSTERIOR ao trabalho relatado: uma coleta anterior pode ter observado a melhora, mas
+    // atribuí-la a esta ação seria inventar a causa a partir da coincidência no tempo.
+    !v.precedesReportedExecution
   );
 }
 
@@ -193,7 +230,10 @@ export function actionSituation(p: ActionPlan): string {
  * resposta é explicitamente "ainda não comprovado", jamais silêncio (que se lê como "está tudo bem").
  */
 export function actionResult(p: ActionPlan): string {
-  const v = p.latestValidation;
+  // A validação do CICLO ATUAL é a que responde pelo trabalho em curso. Cair na mais recente sem dizer que
+  // ela é de outro ciclo faria uma ação reaberta exibir a comprovação que encerrou o ciclo ANTERIOR como se
+  // fosse resultado do esforço de agora.
+  const v = p.applicableValidation ?? p.latestValidation;
   if (!v) {
     return p.status === 'Concluido'
       ? 'Encerrada sem validação registrada — a correção não foi comprovada pelo AEGIS.'
@@ -203,7 +243,31 @@ export function actionResult(p: ActionPlan): string {
     v.observedBefore !== null && v.observedAfter !== null
       ? ` (${v.observedBefore} → ${v.observedAfter} afetado(s))`
       : '';
-  return `${outcomeLabel(v.outcome)}${quantidade}`;
+  // A ressalva de CAUSALIDADE viaja junto do resultado: uma coleta anterior ao trabalho relatado pode ter
+  // observado a melhora, mas não a produziu — e apresentar as duas coisas juntas seria inventar a causa.
+  const causal = v.precedesReportedExecution
+    ? ' — coleta anterior ao relato de execução: não atribuível a esta ação'
+    : '';
+  const ciclo = v.appliesToCurrentCycle
+    ? ''
+    : ' — validação de um ciclo anterior desta ação: não responde pelo trabalho em curso';
+  return `${outcomeLabel(v.outcome)}${quantidade}${causal}${ciclo}`;
+}
+
+/**
+ * O ALCANCE de uma validação registrada. O histórico preserva tudo o que foi decidido — inclusive o que já
+ * não autoriza nada — e cada linha precisa dizer por si mesma até onde vale, senão a lista inteira se lê
+ * como um conjunto de comprovações vigentes.
+ */
+export function validationScope(v: ActionPlanValidation): string {
+  if (!v.appliesToCurrentCycle) {
+    return 'Ciclo anterior desta ação — permanece no histórico, mas não sustenta o encerramento do ciclo atual.';
+  }
+  if (v.precedesReportedExecution) {
+    return 'A coleta usada é ANTERIOR ao relato de execução — o que ela observou continua valendo, mas não é ' +
+      'atribuível a este trabalho.';
+  }
+  return 'Vale para o ciclo atual desta ação.';
 }
 
 /**
@@ -220,25 +284,49 @@ export function validationBasis(v: ActionPlanValidation): string {
         'afirmar quais objetos foram corrigidos.';
 }
 
-/** A ação ATIVA de um achado, se houver — é ela que decide entre "Criar plano" e "Abrir plano". */
-export function activePlanFor(plans: ActionPlan[], indicatorId: string): ActionPlan | null {
-  return plans.find((p) => p.isActive && p.knightIndicatorId === indicatorId) ?? null;
+/**
+ * A ação ATIVA de um achado, se houver — é ela que decide entre "Criar plano" e "Abrir plano".
+ *
+ * A PROCEDÊNCIA entra na busca porque o indicador sozinho não identifica o problema: "AK-ENTRA-001 no
+ * cenário de demonstração" e "AK-ENTRA-001 na coleta real do diretório" são dois problemas distintos.
+ * Ignorá-la faria uma ação de treinamento responder por um achado real — e bloquear a criação da ação real.
+ */
+export function activePlanFor(
+  plans: ActionPlan[],
+  indicatorId: string,
+  sourceType: KnightOriginSource | null,
+  mode: KnightOriginMode | null,
+): ActionPlan | null {
+  return (
+    plans.find(
+      (p) =>
+        p.isActive &&
+        p.knightIndicatorId === indicatorId &&
+        p.originSourceType === sourceType &&
+        p.originMode === mode,
+    ) ?? null
+  );
 }
 
-/** Etapas para as quais a ação pode avançar/voltar a partir da atual (espelha a regra do servidor). */
-export function allowedTransitions(from: ActionPlanStatus): ActionPlanStatus[] {
-  switch (from) {
-    case 'Aberto':
-      return ['EmAndamento', 'AguardandoValidacao'];
-    case 'EmAndamento':
-      return ['Aberto', 'AguardandoValidacao'];
-    case 'AguardandoValidacao':
-      return ['EmAndamento', 'Concluido'];
-    case 'Concluido':
-      return ['EmAndamento'];
-    case 'Vencido':
-      return ['Aberto', 'EmAndamento'];
-  }
+/** Procedência da ação em uma linha — o que distingue um treino de trabalho real sobre o cliente. */
+export function originLabel(p: ActionPlan): string {
+  if (!p.originSourceType) return 'Origem não registrada';
+  const fonte =
+    p.originSourceType === 'MicrosoftEntraId'
+      ? 'Microsoft Entra ID'
+      : p.originSourceType === 'GoogleWorkspace'
+        ? 'Google Workspace'
+        : 'Provedor de demonstração';
+  return p.originMode === 'Demo' ? `${fonte} · cenário de demonstração` : `${fonte} · coleta real`;
+}
+
+/**
+ * A pessoa pode ALTERAR planos de ação? Espelha `[Authorize(Roles = "Manager,TenantAdmin")]` das mutações.
+ * É gate de APRESENTAÇÃO apenas: esconder um botão não protege nada, e o servidor continua sendo a
+ * autoridade — mas oferecer um controle que responderá 403 é enganar quem clica.
+ */
+export function canManageActionPlans(role: string | null): boolean {
+  return role === 'Manager' || role === 'TenantAdmin';
 }
 
 /**

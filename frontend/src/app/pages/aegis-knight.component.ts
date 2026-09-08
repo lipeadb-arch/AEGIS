@@ -28,7 +28,12 @@ import { KnightFindingDetailComponent } from '../components/knight/finding-detai
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
 import { IdentityRiskService } from '../services/identity-risk.service';
 import { KnightService } from '../services/knight.service';
-import { ActionPlan, activePlanFor } from '../models/remediation.models';
+import {
+  ActionPlan,
+  KnightOriginMode,
+  KnightOriginSource,
+  activePlanFor,
+} from '../models/remediation.models';
 import { RemediationService } from '../services/remediation.service';
 import { PostureHistoryService } from '../services/posture-history.service';
 
@@ -122,6 +127,15 @@ import { PostureHistoryService } from '../services/posture-history.service';
             <div class="banner err">
               <span>{{ fmsg }}</span>
               <button type="button" class="btn ghost" (click)="clearFindingNotice()">Fechar</button>
+            </div>
+          }
+          <!-- [AEGIS-MVP-PRODUCT-03] Um link que identifica a AÇÃO e não pôde ser honrado vira estado
+               explícito. Abrir o plano ativo no lugar dela seria mostrar outro trabalho a quem veio conferir
+               um encerramento específico. -->
+          @if (planNotice(); as plmsg) {
+            <div class="banner err">
+              <span>{{ plmsg }}</span>
+              <button type="button" class="btn ghost" (click)="planNotice.set(null)">Fechar</button>
             </div>
           }
 
@@ -234,6 +248,8 @@ import { PostureHistoryService } from '../services/posture-history.service';
               [assessment]="a"
               [indicator]="ind"
               [activePlan]="activePlan()"
+              [plan]="focusedPlan()"
+              [focusPlan]="!!pinnedPlan()"
               (closed)="closeFinding()"
               (planChanged)="onPlanChanged()" />
           }
@@ -529,15 +545,49 @@ export class AegisKnightComponent implements OnInit {
   readonly publishing = signal(false);
   readonly publishNotice = signal<string | null>(null);
 
-  /** Ação ATIVA do achado aberto, se houver. */
-  readonly activePlan = computed<ActionPlan | null>(() => {
-    const id = this.selected();
-    return id ? activePlanFor(this.activePlans(), id) : null;
+  /**
+   * A PROCEDÊNCIA da avaliação exibida. Ela entra na leitura das ações porque o indicador sozinho não
+   * identifica o problema: "AK-ENTRA-001 na demonstração" e "AK-ENTRA-001 na coleta real do diretório" são
+   * dois problemas distintos, e misturá-los faria uma ação de treinamento aparecer como trabalho real em
+   * curso — além de bloquear a criação da ação real.
+   */
+  readonly originSource = computed<KnightOriginSource | null>(
+    () => (this.assessment()?.sourceType as KnightOriginSource | undefined) ?? null,
+  );
+  readonly originMode = computed<KnightOriginMode | null>(() => {
+    const a = this.assessment();
+    return a ? (a.isDemo ? 'Demo' : 'Live') : null;
   });
 
-  /** Relê as ações ativas. Falha aqui NÃO bloqueia a tela: o detalhe apenas deixa de oferecer o atalho. */
+  /** Ação ATIVA do achado aberto, NESTA procedência, se houver. */
+  readonly activePlan = computed<ActionPlan | null>(() => {
+    const id = this.selected();
+    return id ? activePlanFor(this.activePlans(), id, this.originSource(), this.originMode()) : null;
+  });
+
+  /** Ação identificada pelo endereço (`?plan=`), quando pertence ao achado aberto. */
+  readonly pinnedPlanId = signal<string | null>(null);
+  readonly pinnedPlan = signal<ActionPlan | null>(null);
+  /** Estado explícito de um link de AÇÃO que não pôde ser honrado. */
+  readonly planNotice = signal<string | null>(null);
+
+  /**
+   * A ação que o painel deve mostrar: a apontada pelo link, quando há uma; senão, a ativa. Uma ação
+   * ENCERRADA continua sendo a ação certa a exibir mesmo havendo outro ciclo ativo — quem abriu o link veio
+   * conferir aquele encerramento, não o trabalho que começou depois.
+   */
+  readonly focusedPlan = computed<ActionPlan | null>(() => this.pinnedPlan() ?? this.activePlan());
+
+  /**
+   * Relê as ações ativas DESTA procedência. Falha aqui NÃO bloqueia a tela: o detalhe apenas deixa de
+   * oferecer o atalho. Sem avaliação carregada não há procedência — e sem procedência a leitura seria a
+   * mistura que esta correção existe para impedir.
+   */
   private reloadPlans(): void {
-    this.remediation.list(undefined, true).subscribe({
+    const fonte = this.originSource();
+    const modo = this.originMode();
+    if (!fonte || !modo) return;
+    this.remediation.list({ activeOnly: true, sourceType: fonte, mode: modo }).subscribe({
       next: (plans) => this.activePlans.set(plans),
       error: () => {
         /* seção secundária: preserva a lista anterior em vez de fingir que não há ação alguma */
@@ -545,8 +595,44 @@ export class AegisKnightComponent implements OnInit {
     });
   }
 
+  /**
+   * Relê a ação identificada pelo endereço. Uma ação inexistente, de outro tenant ou de OUTRO achado produz
+   * estado explícito — nunca a substituição silenciosa pela ação ativa.
+   */
+  private reloadPinnedPlan(): void {
+    const id = this.pinnedPlanId();
+    if (!id) {
+      this.pinnedPlan.set(null);
+      return;
+    }
+    this.remediation.get(id).subscribe({
+      next: (p) => {
+        if (this.pinnedPlanId() !== id) return; // o endereço mudou enquanto a leitura estava em voo
+        if (p.knightIndicatorId && p.knightIndicatorId !== this.selected()) {
+          this.pinnedPlan.set(null);
+          this.planNotice.set(
+            `A ação indicada no endereço pertence ao achado ${p.knightIndicatorId}, não ao achado aberto.`,
+          );
+          return;
+        }
+        this.planNotice.set(null);
+        this.pinnedPlan.set(p);
+      },
+      error: (e: Error) => {
+        if (this.pinnedPlanId() !== id) return;
+        this.pinnedPlan.set(null);
+        this.planNotice.set(`A ação indicada no endereço não pôde ser aberta. ${e.message}`);
+      },
+    });
+  }
+
+  /**
+   * Uma escrita já enviada não é desfeita porque o painel fechou: o servidor a recebeu. O que a tela faz é
+   * RELER — a lista de ações e, quando há uma ação em foco, ela própria.
+   */
   onPlanChanged(): void {
     this.reloadPlans();
+    this.reloadPinnedPlan();
   }
 
   /**
@@ -603,12 +689,23 @@ export class AegisKnightComponent implements OnInit {
       this.closeFinding();
       return;
     }
+    // Escolher outro achado ABANDONA a ação fixada pelo endereço: ela pertencia ao achado anterior, e
+    // arrastá-la para cá exibiria a ação de um problema ao lado do veredito de outro.
+    this.pinnedPlanId.set(null);
+    this.pinnedPlan.set(null);
+    this.planNotice.set(null);
     this.selected.set(indicatorId);
     this.syncQueryParam(indicatorId);
+    // Relê ao abrir: uma escrita enviada de um painel que foi fechado já está gravada, e a fila precisa
+    // mostrar o estado do servidor, não o que estava em memória antes.
+    this.reloadPlans();
   }
 
   closeFinding(): void {
     this.selected.set(null);
+    this.pinnedPlanId.set(null);
+    this.pinnedPlan.set(null);
+    this.planNotice.set(null);
     this.syncQueryParam(null);
   }
 
@@ -619,7 +716,7 @@ export class AegisKnightComponent implements OnInit {
   private syncQueryParam(indicatorId: string | null): void {
     void this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { finding: indicatorId, run: this.pinnedRun() },
+      queryParams: { finding: indicatorId, run: this.pinnedRun(), plan: this.pinnedPlanId() },
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
@@ -631,8 +728,15 @@ export class AegisKnightComponent implements OnInit {
     this.linkNotice.set(null);
     this.findingNotice.set(null);
     this.selected.set(null);
+    this.pinnedPlanId.set(null);
+    this.pinnedPlan.set(null);
+    this.planNotice.set(null);
     void this.router
-      .navigate([], { relativeTo: this.route, queryParams: { finding: null, run: null }, replaceUrl: true })
+      .navigate([], {
+        relativeTo: this.route,
+        queryParams: { finding: null, run: null, plan: null },
+        replaceUrl: true,
+      })
       .then(() => this.reload());
   }
 
@@ -653,8 +757,11 @@ export class AegisKnightComponent implements OnInit {
   reload(): void {
     const requested = this.route.snapshot.queryParamMap.get('run');
     this.pinnedRun.set(requested);
+    this.pinnedPlanId.set(this.route.snapshot.queryParamMap.get('plan'));
+    this.pinnedPlan.set(null);
     this.linkNotice.set(null);
     this.findingNotice.set(null);
+    this.planNotice.set(null);
 
     this.loading.set(true);
     this.error.set(null);
@@ -669,6 +776,9 @@ export class AegisKnightComponent implements OnInit {
         this.assessment.set(a);
         this.loading.set(false);
         this.applyDeepLink(a);
+        // Só agora a PROCEDÊNCIA é conhecida — ler a fila antes traria ações de outra fonte/modo.
+        this.reloadPlans();
+        this.reloadPinnedPlan();
       },
       error: (e: Error) => {
         this.loading.set(false);
@@ -682,7 +792,6 @@ export class AegisKnightComponent implements OnInit {
       },
     });
     this.reloadRisk();
-    this.reloadPlans();
   }
 
   /**
@@ -710,6 +819,7 @@ export class AegisKnightComponent implements OnInit {
       // Silenciar aqui seria abrir a tela como se o link não existisse. O achado pedido pode não ter sido
       // avaliado nesta coleta — a tela diz isso, em vez de abrir outro achado ou nenhum.
       this.selected.set(null);
+      this.pinnedPlanId.set(null);
       this.findingNotice.set(
         `O achado ${wanted} não faz parte desta avaliação. Ele pode não ter sido avaliado nesta coleta.`,
       );
@@ -745,10 +855,15 @@ export class AegisKnightComponent implements OnInit {
         // apontando para a coleta anterior enquanto a tela mostra a nova é exatamente a divergência que
         // esta correção existe para impedir. O achado aberto só sobrevive se existir na avaliação nova.
         this.pinnedRun.set(a.id);
+        this.pinnedPlanId.set(null);
+        this.pinnedPlan.set(null);
+        this.planNotice.set(null);
         const aberto = this.selected();
         const mantem = aberto && a.indicators.some((i) => i.indicatorId === aberto) ? aberto : null;
         this.selected.set(mantem);
         this.syncQueryParam(mantem);
+        // A procedência pode ter mudado (demo -> coleta real): a fila de ações é relida sob a nova.
+        this.reloadPlans();
         // A coleta acabou de reescrever o snapshot compartilhado — relê a MESMA fotografia (sem novo Graph).
         this.reloadRisk();
       },
