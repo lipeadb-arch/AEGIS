@@ -173,6 +173,14 @@ internal sealed class PostgresProbe : IAsyncDisposable
     public DbContextOptions<AegisScoreDbContext> DbOptions() =>
         new DbContextOptionsBuilder<AegisScoreDbContext>().UseNpgsql(_dbConn).Options;
 
+    /// <summary>
+    /// Connection string do banco DESCARTÁVEL criado por esta sonda. Existe porque o harness de integração
+    /// HTTP e a prova de atualização de schema precisam entregar o MESMO banco a processos que não recebem
+    /// <see cref="DbContextOptions{TContext}"/>: o host real da API (por configuração) e o
+    /// <c>AegisScore.DbMigrator</c> (por variável de ambiente).
+    /// </summary>
+    public string ConnectionString => _dbConn;
+
     public static async Task<PostgresProbe?> TryCreateAsync()
     {
         var baseConn = Environment.GetEnvironmentVariable("AEGIS_TEST_PG");
