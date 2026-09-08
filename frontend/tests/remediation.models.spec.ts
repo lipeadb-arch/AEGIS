@@ -22,6 +22,7 @@
 import {
   ActionPlan,
   ActionPlanValidation,
+  PinnedPlanState,
   actionResult,
   actionSituation,
   actionStatusLabel,
@@ -30,6 +31,9 @@ import {
   isTechnicallyProven,
   originLabel,
   outcomeLabel,
+  panelAllowsCreation,
+  pinnedPlanRejection,
+  planForPanel,
   seededProposal,
   validationBasis,
   validationScope,
@@ -338,7 +342,76 @@ test('só Manager e TenantAdmin recebem os controles de escrita', () => {
   ok(!canManageActionPlans(null), 'sem papel resolvido, nenhum controle de escrita é oferecido');
 });
 
-// ---- (9) Proposta semeada: orienta confirmar antes de desativar ---------------------------------
+// ---- (9) Link de PLANO: a ação indicada não é substituída por outra ----------------------------
+//
+// O defeito que estes testes fecham não aparece em nenhum print: entre pedir uma ação pelo endereço e
+// recebê-la, o painel exibia a ação ATIVA do achado — e a exibia de novo quando a pedida não podia ser
+// aberta. Quem seguiu o link para conferir um encerramento via outro trabalho, com a mesma aparência de
+// resposta. Um aviso ao lado não desfaz isso: o que impede a substituição é o painel ficar VAZIO.
+
+test('enquanto a ação indicada carrega, nenhuma outra ocupa o painel', () => {
+  const ativa = plan({ id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' });
+  const estado: PinnedPlanState = { kind: 'carregando', id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' };
+  eq(planForPanel(estado, ativa), null, 'a ação ativa não preenche a espera pela ação pedida');
+  ok(!panelAllowsCreation(estado), 'e o vazio da espera não é convite para criar uma segunda ação');
+});
+
+test('ação indicada e indisponível deixa o painel vazio, nunca substituído', () => {
+  const ativa = plan({ id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' });
+  const estado: PinnedPlanState = {
+    kind: 'indisponivel',
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    reason: 'não pôde ser aberta',
+  };
+  eq(planForPanel(estado, ativa), null, 'existir outra ação ativa não torna o erro invisível');
+  ok(!panelAllowsCreation(estado), 'e muito menos vira uma tela de criação');
+});
+
+test('sem ação no endereço, a ação ativa ocupa o painel e a criação é oferecida', () => {
+  const ativa = plan();
+  eq(planForPanel({ kind: 'livre' }, ativa), ativa, 'navegação comum continua abrindo a ação em curso');
+  eq(planForPanel({ kind: 'livre' }, null), null, 'sem ação ativa, o achado ainda pode receber uma');
+  ok(panelAllowsCreation({ kind: 'livre' }), 'é aqui — e só aqui — que criar faz sentido');
+});
+
+test('a ação carregada ocupa o painel mesmo estando encerrada', () => {
+  const encerrada = plan({ id: 'cccccccc-cccc-cccc-cccc-cccccccccccc', status: 'Concluido', isActive: false });
+  const ativa = plan({ id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' });
+  eq(
+    planForPanel({ kind: 'carregada', id: encerrada.id, plan: encerrada }, ativa),
+    encerrada,
+    'quem veio conferir um encerramento vê o encerramento, não o ciclo que começou depois',
+  );
+});
+
+test('uma ação de OUTRO achado é recusada, não exibida sob o cabeçalho errado', () => {
+  const outra = plan({ knightIndicatorId: 'AK-ENTRA-004' });
+  const motivo = pinnedPlanRejection(outra, 'AK-ENTRA-001', 'MicrosoftEntraId', 'Live');
+  ok(!!motivo, 'a ação de um problema não aparece ao lado do veredito de outro');
+  contains(motivo!, 'AK-ENTRA-004', 'e o motivo diz a qual achado ela pertence');
+});
+
+test('uma ação de OUTRA procedência é recusada mesmo com o indicador igual', () => {
+  const demo = plan({ originSourceType: 'Demo', originMode: 'Demo' });
+  const motivo = pinnedPlanRejection(demo, 'AK-ENTRA-001', 'MicrosoftEntraId', 'Live');
+  ok(!!motivo, 'ação de demonstração não responde por um achado de coleta real');
+  contains(motivo!, 'demonstração', 'e o motivo diz de onde ela veio');
+  eq(
+    pinnedPlanRejection(demo, 'AK-ENTRA-001', 'Demo', 'Demo'),
+    null,
+    'sob a procedência dela, a mesma ação é legítima',
+  );
+});
+
+test('ação sem procedência registrada não é adotada por uma coleta real', () => {
+  const legada = plan({ originSourceType: null, originMode: null });
+  ok(
+    !!pinnedPlanRejection(legada, 'AK-ENTRA-001', 'MicrosoftEntraId', 'Live'),
+    'ausência de origem não autoriza assumir a origem da avaliação aberta',
+  );
+});
+
+// ---- (10) Proposta semeada: orienta confirmar antes de desativar --------------------------------
 
 test('a proposta de convidados manda CONFIRMAR a necessidade antes de desativar', () => {
   const texto = seededProposal('AK-ENTRA-004', 3);

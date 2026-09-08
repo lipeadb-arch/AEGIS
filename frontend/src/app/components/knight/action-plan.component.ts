@@ -595,11 +595,16 @@ export class KnightActionPlanComponent {
   }
 
   /**
-   * O CONTEXTO ao qual uma resposta pertence: achado aberto × ação em foco. Uma resposta que chega depois de
-   * o contexto ter mudado não pinta nada — mas continua avisando a página, porque a escrita ACONTECEU.
+   * O CONTEXTO COMPLETO ao qual uma resposta pertence: achado aberto × ação em foco × avaliação de ORIGEM ×
+   * avaliação exibida. Uma resposta que chega depois de o contexto ter mudado não pinta nada — mas continua
+   * avisando a página, porque a escrita ACONTECEU.
+   *
+   * As duas avaliações entram na chave porque o par (achado, ação) sobrevive a uma troca de coleta — e,
+   * trocada a coleta, a mesma ação passa a ser lida sob outro cabeçalho, com outra candidata a evidência de
+   * validação. Pintar aqui a resposta da coleta anterior devolveria à tela um estado que já não é o dela.
    */
   private contextKey(): string {
-    return `${this.indicatorId()} ${this.plan()?.id ?? ''}`;
+    return [this.indicatorId(), this.plan()?.id ?? '', this.originRunId(), this.currentRunId()].join('|');
   }
 
   /** Executa uma escrita e adota a resposta como estado local, se ainda for deste contexto. */

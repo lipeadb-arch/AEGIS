@@ -308,6 +308,81 @@ export function activePlanFor(
   );
 }
 
+/**
+ * [AEGIS-MVP-PRODUCT-03] O ESTADO do painel de ação quando o endereço identifica um plano (`?plan=<id>`).
+ *
+ * Ele existe porque `ActionPlan | null` não consegue dizer a verdade neste ponto: `null` já significa "não
+ * há ação para este achado — crie uma". Enquanto a ação indicada está sendo lida, ou quando ela não pôde ser
+ * aberta, o painel NÃO está livre para propor a criação de outra nem para exibir a ação ativa: quem seguiu o
+ * link veio conferir AQUELA ação, e substituí-la por outra com a mesma aparência de resposta é o defeito que
+ * este tipo existe para tornar impossível.
+ *
+ *   • `livre`        — o endereço não nomeia ação alguma; a ação ATIVA do achado pode ocupar o painel;
+ *   • `carregando`   — o endereço nomeia uma ação e ela ainda está sendo lida; nada ocupa o painel;
+ *   • `carregada`    — a ação nomeada foi lida E confere com o contexto aberto; é ela, e só ela;
+ *   • `indisponivel` — a ação nomeada não pôde ser aberta (inexistente, de outro achado ou de outra
+ *     procedência); o painel diz isso e oferece uma saída EXPLÍCITA, sem trocar o contexto sozinho.
+ */
+export type PinnedPlanState =
+  | { kind: 'livre' }
+  | { kind: 'carregando'; id: string }
+  | { kind: 'carregada'; id: string; plan: ActionPlan }
+  | { kind: 'indisponivel'; id: string; reason: string };
+
+/**
+ * Por que a ação lida pelo endereço NÃO pode ocupar o painel aberto — `null` quando pode.
+ *
+ * O tenant já é garantido pelo servidor; o que ele não decide é se aquela ação pertence ao que está na tela.
+ * Duas recusas, pelo mesmo motivo de fundo — a ação apareceria sob um cabeçalho que não é o dela:
+ *
+ *   • outro ACHADO: a ação de um problema ao lado do veredito de outro;
+ *   • outra PROCEDÊNCIA: uma ação nascida do cenário de demonstração exibida sob uma coleta real (ou o
+ *     inverso). O indicador coincide; o problema, não.
+ */
+export function pinnedPlanRejection(
+  plan: ActionPlan,
+  indicatorId: string | null,
+  sourceType: KnightOriginSource | null,
+  mode: KnightOriginMode | null,
+): string | null {
+  if (plan.knightIndicatorId !== indicatorId) {
+    return (
+      `A ação indicada no endereço pertence ao achado ${plan.knightIndicatorId ?? 'não identificado'}, ` +
+      'não ao achado aberto.'
+    );
+  }
+  if (plan.originSourceType !== sourceType || plan.originMode !== mode) {
+    return (
+      `A ação indicada no endereço nasceu de outra procedência (${originLabel(plan)}) e não responde pelo ` +
+      'achado desta avaliação.'
+    );
+  }
+  return null;
+}
+
+/**
+ * QUEM ocupa o painel de ação, dado o estado do endereço e a ação ativa do achado.
+ *
+ * É a autoridade única sobre a substituição — e ela responde `null` nos dois estados intermediários de
+ * propósito: enquanto a ação indicada carrega, e quando ela não pôde ser aberta, NADA a substitui. A ação
+ * ativa só ocupa o painel quando o endereço não nomeia ação alguma; a partir daí, quem troca de contexto é
+ * a pessoa, explicitamente.
+ */
+export function planForPanel(state: PinnedPlanState, active: ActionPlan | null): ActionPlan | null {
+  if (state.kind === 'carregada') return state.plan;
+  if (state.kind === 'livre') return active;
+  return null;
+}
+
+/**
+ * O painel pode oferecer a CRIAÇÃO de uma ação? Só na navegação livre. Um endereço que aponta para uma ação
+ * existente não é convite para abrir um segundo ciclo — e, enquanto ela não abre, o vazio no painel não
+ * significa "não há ação para este achado".
+ */
+export function panelAllowsCreation(state: PinnedPlanState): boolean {
+  return state.kind === 'livre';
+}
+
 /** Procedência da ação em uma linha — o que distingue um treino de trabalho real sobre o cliente. */
 export function originLabel(p: ActionPlan): string {
   if (!p.originSourceType) return 'Origem não registrada';
