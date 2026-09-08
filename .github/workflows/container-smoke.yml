@@ -234,7 +234,9 @@ jobs:
   # NÃO é a suíte PostgreSQL geral.
   migrations-pg:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 20 min (era 15): a jornada HTTP sobe o host da API e prepara o banco pelo migrator real. Mede-se ~4 min
+    # localmente para as 41; a folga existe para o runner do CI, não para esconder lentidão.
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:18
@@ -300,6 +302,24 @@ jobs:
       # A contagem deste passo permanece 33 — a prova nova entrou em fatos existentes, e não como fatos novos.
       # CONFIRME no log deste job, porque a bateria PostgreSQL não roda na máquina de desenvolvimento
       # (credencial local inacessível, sem Docker).
+      # [AEGIS-MVP-PRE-ADM-01] Entram DUAS classes NOVAS, e ambas PRECISAM estar no filtro (ver o aviso acima):
+      #   • RemediationJourneyHttpTests — a JORNADA atravessando o PIPELINE HTTP REAL. Sobe o host da API
+      #     (Program.cs, ambiente Testing) com WebApplicationFactory sobre um PostgreSQL descartável preparado
+      #     pelo AegisScore.DbMigrator DE VERDADE, e exercita roteamento, model binding, LOGIN por credencial
+      #     com emissão/validação do JWT local (segredo sintético gerado em runtime), FallbackPolicy,
+      #     [Authorize(Roles=…)], TenantConsistencyMiddleware e o Global Query Filter alimentado pela claim:
+      #     sem token/token forjado/sem X-Tenant/X-Tenant malformado/divergente; Analyst lê e não muta,
+      #     Manager e TenantAdmin executam; jornada coleta → afetados → plano → execução → validação →
+      #     conclusão, com conflito de VERSÃO e encerramento SEM BASE recusados; reabertura que não reaproveita
+      #     a comprovação antiga; acesso cruzado que não revela nem altera; demonstração × coleta real como
+      #     problemas distintos; publicação da avaliação PEDIDA e fotografia estável (reexportação idêntica,
+      #     hash reverificado) depois de o plano vivo mudar. A ÚNICA substituição é a FRONTEIRA EXTERNA de
+      #     coleta do Entra (fixture no lugar do Microsoft Graph) + workers de fundo + relógio controlado.
+      #   • DatabaseUpgradePostgresTests — ATUALIZAÇÃO de banco EXISTENTE: migra até a migration ANTERIOR às
+      #     três desta linha (DevicePosture_MicrosoftIntune), insere dados legados por SQL cru, aplica a
+      #     sequência com o migrator real e verifica preservação, ausência de detalhe/aplicabilidade
+      #     inventados no histórico, prontidão (--verify-only) e reexecução idempotente.
+      # A contagem deste passo sobe de 33 para 41 (medida localmente com este MESMO filtro, contra PostgreSQL 18).
       # [AEGIS-MVP-PRODUCT-02] Entra KnightAffectedObjectsPostgresTests: prova que a migration dos objetos
       # afetados APLICA sobre o histórico, que a FK composta (IndicatorResultId, TenantId) faz o próprio banco
       # recusar um afetado de tenant divergente, que a paginação/busca traduzem no Npgsql e que a Central de
@@ -312,4 +332,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests"
