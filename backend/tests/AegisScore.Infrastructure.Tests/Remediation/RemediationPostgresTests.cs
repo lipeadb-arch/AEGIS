@@ -283,10 +283,14 @@ public sealed class RemediationPostgresTests
                 .Which.SqlState.Should().Be(PostgresErrorCodes.ForeignKeyViolation);
 
             var validacaoCruzada = async () => await db.Database.ExecuteSqlRawAsync(
+                // PrecedesReportedExecution entra explicitamente: a coluna e NOT NULL sem default, e omiti-la
+                // faria o banco recusar por NOT NULL (23502) ANTES de chegar a FK — o teste passaria a
+                // "provar" uma restricao que nao chegou a ser exercida.
                 @"INSERT INTO ""ActionPlanValidations""
                   (""Id"", ""TenantId"", ""ActionPlanId"", ""IndicatorId"", ""Method"", ""Outcome"",
-                   ""ComparedBySets"", ""Rationale"", ""DecidedAt"", ""DecidedByName"", ""CreatedAt"")
-                  VALUES ({0}, {1}, {2}, 'AK-ENTRA-001', 0, 0, false, 'forjada', now(), 'intruso', now())",
+                   ""PrecedesReportedExecution"", ""ComparedBySets"", ""Rationale"", ""DecidedAt"",
+                   ""DecidedByName"", ""CreatedAt"")
+                  VALUES ({0}, {1}, {2}, 'AK-ENTRA-001', 0, 0, false, false, 'forjada', now(), 'intruso', now())",
                 Guid.NewGuid(), tenantB, planoA);
 
             (await validacaoCruzada.Should().ThrowAsync<PostgresException>())
