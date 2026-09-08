@@ -32,10 +32,11 @@ public static class PostureSnapshotHasher
     /// publicadas permanece exatamente o mesmo e elas continuam exportáveis.
     /// </summary>
     /// <remarks>
-    /// O marcador permanece <c>v1</c> mesmo tendo a extensão ganhado campos durante o próprio pacote: nenhuma
-    /// fotografia com extensão existe fora deste repositório (a migration que cria as colunas ainda não foi
-    /// aplicada em ambiente algum), então não há hash publicado a preservar dentro do bloco. O que precisa ser
-    /// preservado — e é — são os hashes das fotografias ANTERIORES à extensão, que não escrevem o bloco.
+    /// O marcador permanece <c>v1</c> mesmo tendo a extensão ganhado campos durante o próprio pacote — inclusive
+    /// na correção que acrescentou a aplicabilidade ao ciclo: nenhuma fotografia com extensão existe fora deste
+    /// repositório (as migrations que criam as colunas ainda não foram aplicadas em ambiente algum), então não
+    /// há hash publicado a preservar dentro do bloco. O que precisa ser preservado — e é — são os hashes das
+    /// fotografias ANTERIORES à extensão, que não escrevem o bloco.
     /// </remarks>
     private const string ExtensionVersion = "posture-hash-ext-report-v1";
 
@@ -182,7 +183,16 @@ public static class PostureSnapshotHasher
                  .Str(a.ValidationRunId?.ToString("D"))
                  .Str(a.ValidationEvidenceReference)
                  .Inst(a.EvidenceCollectedAt)
-                 .Bool(a.PrecedesReportedExecution);
+                 .Bool(a.PrecedesReportedExecution)
+                 // APLICABILIDADE ao ciclo vigente: é o que separa, no relatório, uma melhora comprovada
+                 // agora de uma comprovação herdada de um ciclo já encerrado. Fora do hash, trocar esse
+                 // discriminador converteria um registro histórico em prova atual sem deixar rastro.
+                 .Inst(a.CycleStartedAt)
+                 .BoolN(a.WasReopened)
+                 .BoolN(a.ValidationAppliesToCurrentCycle)
+                 .EnumN(a.ApplicableValidationMethod)
+                 .EnumN(a.ApplicableValidationOutcome)
+                 .Inst(a.ApplicableValidatedAt);
             }
         }
 
@@ -217,6 +227,13 @@ public static class PostureSnapshotHasher
         }
 
         public CanonicalWriter Bool(bool v) { _sb.Append('B').Append(v ? '1' : '0').Append(';'); return this; }
+
+        /// <summary>Booleano ANULÁVEL — <c>null</c> ("não se sabe") é distinto tanto de verdadeiro quanto de falso.</summary>
+        public CanonicalWriter BoolN(bool? v)
+        {
+            _sb.Append(v is null ? "Bn;" : v.Value ? "B1;" : "B0;");
+            return this;
+        }
 
         /// <summary>Instante UTC TRUNCADO a microssegundos (precisão do PostgreSQL), como contagem de ticks.</summary>
         public CanonicalWriter Inst(DateTimeOffset? v)

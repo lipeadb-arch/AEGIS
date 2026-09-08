@@ -97,8 +97,11 @@ public sealed class RemediationPostgresTests
         }
 
         // --- nova evidência ---------------------------------------------------------------------------
+        // A coleta que COMPROVA precisa ser posterior ao relato de execução, e o relato acontece no relógio
+        // real. Uma data fixa relativa a T0 alcança o presente e converte, de um dia para o outro, esta
+        // evidência em "coleta anterior ao trabalho" — o teste passaria a falhar sem que nada tivesse mudado.
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
-            runNova = (await RunAsync(db, tenant, withoutMfa: 0, at: T0.AddDays(10))).Id;
+            runNova = (await RunAsync(db, tenant, withoutMfa: 0, at: DateTimeOffset.UtcNow.AddMinutes(5))).Id;
 
         // --- decisão de validação ---------------------------------------------------------------------
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
@@ -134,6 +137,15 @@ public sealed class RemediationPostgresTests
             acao.Status.Should().Be(nameof(ActionPlanStatus.Concluido));
             acao.ValidationOutcome.Should().Be(nameof(ActionPlanValidationOutcome.ExposureCleared));
             acao.ComparedBySets.Should().BeTrue();
+
+            // A APLICABILIDADE ao ciclo atravessa o PostgreSQL real: colunas anuláveis novas (booleano e
+            // enums) precisam voltar com o valor que foi gravado — e é essa distinção que impede o relatório
+            // de somar a comprovação de um ciclo encerrado ao total do ciclo em curso.
+            acao.CycleStartedAt.Should().NotBeNull();
+            acao.WasReopened.Should().BeFalse("esta ação nunca foi reaberta");
+            acao.ValidationAppliesToCurrentCycle.Should().BeTrue();
+            acao.ApplicableValidationOutcome.Should().Be(nameof(ActionPlanValidationOutcome.ExposureCleared));
+            acao.ApplicableValidationMethod.Should().Be(nameof(ActionPlanValidationMethod.NewAssessment));
         }
 
         // --- exportação: o hash confere e o conteúdo é o CONGELADO ------------------------------------

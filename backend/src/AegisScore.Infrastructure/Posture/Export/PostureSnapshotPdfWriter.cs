@@ -228,6 +228,12 @@ public static class PostureSnapshotPdfWriter
                 "O veredito de cada indicador é determinístico (regras), sem decisão por inteligência artificial. " +
                 "Este score usa escala própria do AEGIS KNIGHT e não se soma nem se compara ao AEGIS Score/NIST.");
 
+            // [AEGIS-MVP-PRODUCT-03] O estado do TRABALHO também pertence ao resumo executivo, e pertence
+            // com a distinção que a seção de validações faz mais adiante: uma comprovação herdada de um ciclo
+            // já encerrado não é resposta para o ciclo em curso. Sem esta frase, o executivo leria "ações com
+            // validação registrada" e concluiria que o trabalho de agora está comprovado.
+            AddActionsSummaryLine(section, s);
+
             // [AEGIS-MVP-PRODUCT-03] As LIMITAÇÕES fazem parte do resumo executivo: um score alto sobre uma
             // coleta que não enxergou metade do ambiente não é uma boa notícia, e o relatório precisa dizer isso
             // antes dos achados — não numa nota de rodapé técnica.
@@ -244,6 +250,36 @@ public static class PostureSnapshotPdfWriter
                 $"confundidos com não conformidade). Pontuação: {s.AchievedPoints} de {s.PossiblePoints} pontos avaliados " +
                 $"({s.EligiblePoints} elegíveis). Vereditos determinísticos por telemetria e análise documental.");
         }
+    }
+
+    /// <summary>
+    /// Uma linha de resumo executivo sobre as ações congeladas, contada pelo CICLO VIGENTE de cada uma.
+    ///
+    /// Só é escrita quando a fotografia congelou a aplicabilidade ao ciclo (<see cref="FreezesCycle"/>).
+    /// Fotografias anteriores a essa distinção não sabem dizer se a validação que carregam fala pelo ciclo em
+    /// curso — e afirmar que fala, ou que não fala, seria inventar a informação que falta.
+    /// </summary>
+    private static void AddActionsSummaryLine(Section section, PostureSnapshot s)
+    {
+        if (s.ActionItems.Count == 0 || !FreezesCycle(s)) return;
+
+        var comprovadas = s.ActionItems.Count(a =>
+            a.ApplicableValidationMethod is { } m && a.ApplicableValidationOutcome is { } o
+            && RemediationReading.IsTechnicallyProven(m, o));
+        var historicas = s.ActionItems.Count(a =>
+            a.ValidationAppliesToCurrentCycle == false && a.ApplicableValidationOutcome is null);
+
+        var texto = $"Havia {s.ActionItems.Count} ação(ões) de remediação registrada(s) para estes achados, " +
+                    $"das quais {comprovadas} com melhora comprovada por nova coleta NO CICLO EM CURSO.";
+        if (historicas > 0)
+        {
+            texto += $" Outras {historicas} carregam apenas validação de um ciclo anterior (a ação foi retomada " +
+                     "depois dela): esse registro permanece verdadeiro, mas não comprova o trabalho em curso.";
+        }
+
+        var p = section.AddParagraph(texto);
+        p.Format.Font.Size = 9;
+        p.Format.SpaceAfter = Unit.FromMillimeter(3);
     }
 
     // ---- Corpo AEGIS Score / NIST --------------------------------------------------------------------
@@ -443,6 +479,16 @@ public static class PostureSnapshotPdfWriter
             idp.Format.Font.Size = 6.5;
             idp.Format.Font.Color = Muted;
 
+            // Uma ação RETOMADA sem comprovação aplicável precisa dizer isso na própria linha: a coluna de
+            // situação mostraria "Em andamento" e a de validação exibiria o desfecho positivo do ciclo
+            // anterior, e quem lesse as duas juntas concluiria que o trabalho em curso já está comprovado.
+            if (a.WasReopened == true && a.ApplicableValidationOutcome is null)
+            {
+                var rp = cell.AddParagraph(ReopenedWithoutProofText(a.CycleStartedAt));
+                rp.Format.Font.Size = 6.5;
+                rp.Format.Font.Color = new Color(150, 30, 50);
+            }
+
             Cell(row, 1, Join(a.ResponsiblePerson, a.ResponsibleArea));
             Cell(row, 2, a.DueDate is { } d ? d.ToString("dd/MM/yyyy", Pt) : "sem prazo");
 
@@ -475,16 +521,52 @@ public static class PostureSnapshotPdfWriter
             return;
         }
 
-        var proven = validated.Count(a =>
-            a.ValidationMethod is { } m && a.ValidationOutcome is { } o && RemediationReading.IsTechnicallyProven(m, o));
-        var attested = validated.Count(a => a.ValidationMethod == ActionPlanValidationMethod.HumanEvidence);
-        var inconclusive = validated.Count(a => a.ValidationOutcome == ActionPlanValidationOutcome.EvidenceInsufficient);
+        // A contagem segue a validação APLICÁVEL ao ciclo vigente — não a mais recente. Somar a comprovação
+        // de um ciclo já encerrado ao total de hoje é o defeito que esta correção fecha: uma ação validada,
+        // encerrada e depois REABERTA sem nova coleta apareceria como "melhora comprovada" no relatório do
+        // ciclo em curso. Fotografias anteriores a esta distinção não sabem responder, e nesse caso o texto
+        // volta a falar apenas do que está registrado, sem atribuir o registro a ciclo algum.
+        if (FreezesCycle(s))
+        {
+            var noCiclo = validated.Where(a => a.ApplicableValidationOutcome is not null).ToList();
+            var proven = noCiclo.Count(a =>
+                RemediationReading.IsTechnicallyProven(
+                    a.ApplicableValidationMethod ?? ActionPlanValidationMethod.NewAssessment,
+                    a.ApplicableValidationOutcome!.Value));
+            var attested = noCiclo.Count(a => a.ApplicableValidationMethod == ActionPlanValidationMethod.HumanEvidence);
+            var inconclusive = noCiclo.Count(a =>
+                a.ApplicableValidationOutcome == ActionPlanValidationOutcome.EvidenceInsufficient);
+            var historicas = validated.Count(a =>
+                a.ValidationAppliesToCurrentCycle == false && a.ApplicableValidationOutcome is null);
 
-        Body(section,
-            $"Das {validated.Count} ação(ões) com validação registrada, {proven} teve(tiveram) melhora comprovada " +
-            $"por nova coleta compatível, {attested} foi(foram) atestada(s) por uma pessoa com evidência " +
-            $"referenciada (o AEGIS não verificou o ambiente nesses casos) e {inconclusive} não pôde(puderam) ser " +
-            "comprovada(s) pela evidência apresentada.");
+            Body(section,
+                $"Das {validated.Count} ação(ões) com validação registrada, {noCiclo.Count} tem(têm) validação que " +
+                $"fala pelo CICLO EM CURSO: {proven} com melhora comprovada por nova coleta compatível, " +
+                $"{attested} atestada(s) por uma pessoa com evidência referenciada (o AEGIS não verificou o " +
+                $"ambiente nesses casos) e {inconclusive} sem comprovação pela evidência apresentada.");
+
+            if (historicas > 0)
+            {
+                Body(section,
+                    $"Outras {historicas} ação(ões) trazem apenas validação de um CICLO ANTERIOR — a ação foi " +
+                    "retomada depois dela. Esse registro continua verdadeiro e permanece na tabela abaixo, " +
+                    "identificado, mas está FORA do total de comprovação do ciclo em curso: nada foi comprovado " +
+                    "ainda sobre o trabalho que está sendo feito agora.");
+            }
+        }
+        else
+        {
+            var proven = validated.Count(a =>
+                a.ValidationMethod is { } m && a.ValidationOutcome is { } o && RemediationReading.IsTechnicallyProven(m, o));
+            var attested = validated.Count(a => a.ValidationMethod == ActionPlanValidationMethod.HumanEvidence);
+            var inconclusive = validated.Count(a => a.ValidationOutcome == ActionPlanValidationOutcome.EvidenceInsufficient);
+
+            Body(section,
+                $"Das {validated.Count} ação(ões) com validação registrada, {proven} teve(tiveram) melhora comprovada " +
+                $"por nova coleta compatível, {attested} foi(foram) atestada(s) por uma pessoa com evidência " +
+                $"referenciada (o AEGIS não verificou o ambiente nesses casos) e {inconclusive} não pôde(puderam) ser " +
+                "comprovada(s) pela evidência apresentada.");
+        }
 
         var table = section.AddTable();
         StyleTable(table);
@@ -545,6 +627,27 @@ public static class PostureSnapshotPdfWriter
                 var wp = basePar.AddParagraph(CausalityCaveatText);
                 wp.Format.Font.Size = 6.5;
                 wp.Format.Font.Color = new Color(150, 30, 50);
+            }
+
+            // A validação exibida nesta linha é registro HISTÓRICO: a linha continua, porque o que ela
+            // observou aconteceu, mas o leitor precisa saber que ela não responde pelo ciclo em curso.
+            if (a.ValidationAppliesToCurrentCycle == false)
+            {
+                var hp = basePar.AddParagraph(HistoricalValidationText);
+                hp.Format.Font.Size = 6.5;
+                hp.Format.Font.Color = new Color(150, 30, 50);
+
+                // Quando o ciclo em curso TEM a sua própria validação (mais antiga que esta, que por algum
+                // motivo não se aplica), o relatório diz qual é — senão a linha inteira se leria como
+                // "nada foi comprovado neste ciclo", que é uma afirmação diferente.
+                if (a.ApplicableValidationOutcome is { } aplicavel)
+                {
+                    var ap = basePar.AddParagraph(
+                        "Comprovação do ciclo em curso: " + RemediationReading.OutcomeLabel(aplicavel) +
+                        (a.ApplicableValidatedAt is { } quando ? " em " + Stamp(quando) : "") + ".");
+                    ap.Format.Font.Size = 6.5;
+                    ap.Format.Font.Color = Muted;
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(a.ValidationRationale))
@@ -773,6 +876,24 @@ public static class PostureSnapshotPdfWriter
     /// isso em vermelho porque a alternativa — omitir — apresentaria como resultado do trabalho uma melhora
     /// que pode ter tido qualquer outra causa.
     /// </summary>
+    /// <summary>
+    /// A fotografia congelou a APLICABILIDADE ao ciclo? Fotografias publicadas antes desta correção não
+    /// congelaram, e delas não se pode afirmar nem que a validação vale para o ciclo em curso nem que não
+    /// vale. O discriminador é o início do ciclo: ele passou a ser gravado com as ações, e a sua ausência
+    /// identifica a fotografia antiga sem exigir uma coluna de "versão" separada.
+    /// </summary>
+    public static bool FreezesCycle(PostureSnapshot s) => s.ActionItems.Any(a => a.CycleStartedAt is not null);
+
+    /// <summary>Texto que identifica uma validação como registro de um ciclo já encerrado.</summary>
+    public const string HistoricalValidationText =
+        "Validação de um CICLO ANTERIOR desta ação: a ação foi retomada depois dela. O registro permanece " +
+        "verdadeiro, mas está fora da comprovação do ciclo em curso.";
+
+    /// <summary>Texto da ação retomada que ainda não tem comprovação aplicável ao ciclo em curso.</summary>
+    public static string ReopenedWithoutProofText(DateTimeOffset? cycleStartedAt) =>
+        "ação REABERTA" + (cycleStartedAt is { } inicio ? " em " + Stamp(inicio) : "") +
+        " — sem comprovação aplicável a este ciclo";
+
     public const string CausalityCaveatText =
         "A coleta usada como evidência é ANTERIOR ao relato de execução: a mudança observada não é atribuível " +
         "a esta ação.";

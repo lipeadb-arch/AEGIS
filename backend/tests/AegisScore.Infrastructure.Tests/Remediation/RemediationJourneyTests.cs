@@ -370,7 +370,11 @@ public sealed class RemediationJourneyTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         var origem = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
-        var nova = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 0, at: T0.AddDays(7));
+        // A coleta que COMPROVA precisa ser posterior ao relato de execução — e o relato acontece no relógio
+        // real. Ancorá-la em T0 + 7 dias fazia a data fixa alcançar o presente e a mesma coleta passar, de um
+        // dia para o outro, de "posterior ao trabalho" a "anterior a ele", derrubando o teste sem que nada
+        // no produto tivesse mudado.
+        var nova = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 0, at: DateTimeOffset.UtcNow.AddMinutes(5));
         var svc = RemediationFor(db, TenantA);
 
         var p = await svc.CreateForFindingAsync(Create(origem.Id, "AK-ENTRA-001"), Actor);
@@ -1103,6 +1107,158 @@ public sealed class RemediationJourneyTests : IDisposable
         texto.Should().Contain(noMeio.Id.ToString("D")[..8], "a avaliação usada como evidência também");
 
         PostureSnapshotHasher.Verify(snapshot).Should().BeTrue("a proveniência entra no conteúdo assinado");
+    }
+
+    [Fact]
+    public async Task AcaoREABERTA_SemNovaComprovacao_NaoContaNoTotalDoCicloAtual()
+    {
+        await using var db = NewContext(TenantA);
+        var origem = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(origem.Id, "AK-ENTRA-001"), Actor);
+        var executado = await svc.RecordExecutionAsync(
+            p!.Id, new RecordExecutionCommand(p.Version, "MFA registrado nas contas administrativas.", null), Actor);
+
+        // Coleta POSTERIOR ao relato: comprova de verdade, e o ciclo é encerrado sobre ela.
+        var nova = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 0, at: DateTimeOffset.UtcNow.AddMinutes(5));
+        var validado = await svc.ValidateAsync(
+            executado!.Id, new ValidateActionPlanCommand(executado.Version, nova.Id, null, null), Actor);
+        var concluida = await svc.UpdateAsync(
+            validado!.Id, Status(validado.Version, ActionPlanStatus.Concluido), Actor);
+
+        // O problema volta: a ação é REABERTA e nada de novo é comprovado. A partir daqui, a validação que
+        // fechou o ciclo anterior continua verdadeira — e deixa de responder pelo trabalho em curso.
+        var reaberta = await svc.UpdateAsync(
+            concluida!.Id, Status(concluida.Version, ActionPlanStatus.EmAndamento), Actor);
+        reaberta!.ApplicableValidation.Should().BeNull("o novo ciclo não tem comprovação alguma");
+
+        var publicado = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, origem.Id);
+        var snapshot = await db.PostureSnapshots.AsNoTracking()
+            .Include(x => x.Indicators).Include(x => x.ActionItems)
+            .FirstAsync(x => x.Id == publicado.Summary.Id);
+        var item = snapshot.ActionItems.Single();
+
+        // O registro histórico permanece congelado — apagá-lo seria esconder o que de fato aconteceu.
+        item.ValidationOutcome.Should().Be(ActionPlanValidationOutcome.ExposureCleared);
+
+        // ...mas identificado como histórico, e FORA da comprovação do ciclo em curso.
+        item.WasReopened.Should().BeTrue("a retomada de uma ação encerrada está na trilha");
+        item.ValidationAppliesToCurrentCycle.Should().BeFalse();
+        item.ApplicableValidationOutcome.Should().BeNull("o ciclo atual não tem validação que fale por ele");
+        item.ApplicableValidationMethod.Should().BeNull();
+        item.CycleStartedAt.Should().NotBeNull("sem o ciclo congelado a distinção não é recuperável depois");
+
+        // O PDF REAL diz isso em palavras — por PALAVRAS distintivas, porque a extração intercala colunas.
+        var texto = Deaccent(ExtractPdfText(PostureSnapshotPdfWriter.Write(snapshot)));
+        texto.Should().Contain("REABERTA", "a linha da ação precisa dizer que o trabalho foi retomado");
+        texto.Should().Contain("ANTERIOR", "e que a validação exibida pertence a um ciclo anterior");
+        texto.Should().Contain("CURSO", "o total de comprovação é declarado como sendo do ciclo em curso");
+
+        PostureSnapshotHasher.Verify(snapshot).Should()
+            .BeTrue("a aplicabilidade ao ciclo entra no conteúdo assinado");
+    }
+
+    [Fact]
+    public async Task ValidacaoDoCicloATUAL_ContinuaContandoComoComprovacao()
+    {
+        await using var db = NewContext(TenantA);
+        var origem = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(origem.Id, "AK-ENTRA-001"), Actor);
+        var executado = await svc.RecordExecutionAsync(
+            p!.Id, new RecordExecutionCommand(p.Version, "MFA registrado.", null), Actor);
+        var nova = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 0, at: DateTimeOffset.UtcNow.AddMinutes(5));
+        await svc.ValidateAsync(
+            executado!.Id, new ValidateActionPlanCommand(executado.Version, nova.Id, null, null), Actor);
+
+        var publicado = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, origem.Id);
+        var snapshot = await db.PostureSnapshots.AsNoTracking()
+            .Include(x => x.Indicators).Include(x => x.ActionItems)
+            .FirstAsync(x => x.Id == publicado.Summary.Id);
+        var item = snapshot.ActionItems.Single();
+
+        // A correção não pode ter tornado toda comprovação suspeita: a validação desta execução conta.
+        item.WasReopened.Should().BeFalse();
+        item.ValidationAppliesToCurrentCycle.Should().BeTrue();
+        item.ApplicableValidationOutcome.Should().Be(ActionPlanValidationOutcome.ExposureCleared);
+        item.ApplicableValidationMethod.Should().Be(ActionPlanValidationMethod.NewAssessment);
+        item.ApplicableValidatedAt.Should().NotBeNull();
+
+        var texto = Deaccent(ExtractPdfText(PostureSnapshotPdfWriter.Write(snapshot)));
+        texto.Should().NotContain("REABERTA", "esta ação nunca foi retomada");
+        texto.Should().Contain("CURSO", "e a comprovação declarada é a do ciclo em curso");
+
+        PostureSnapshotHasher.Verify(snapshot).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ColetaANTERIOR_AoRelato_FicaForaDaComprovacaoDaquelaExecucao()
+    {
+        await using var db = NewContext(TenantA);
+        var origem = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 2, at: T0);
+        // Posterior à origem, ANTERIOR ao relato de execução: observou a melhora, mas não a produziu.
+        var noMeio = await RunAsync(db, TenantA, privileged: 12, withoutMfa: 0, at: T0.AddHours(1));
+        var svc = RemediationFor(db, TenantA);
+
+        var p = await svc.CreateForFindingAsync(Create(origem.Id, "AK-ENTRA-001"), Actor);
+        var executado = await svc.RecordExecutionAsync(
+            p!.Id, new RecordExecutionCommand(p.Version, "MFA registrado.", null), Actor);
+        await svc.ValidateAsync(
+            executado!.Id, new ValidateActionPlanCommand(executado.Version, noMeio.Id, null, null), Actor);
+
+        var publicado = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, origem.Id);
+        var snapshot = await db.PostureSnapshots.AsNoTracking()
+            .Include(x => x.Indicators).Include(x => x.ActionItems)
+            .FirstAsync(x => x.Id == publicado.Summary.Id);
+        var item = snapshot.ActionItems.Single();
+
+        // A MUDANÇA observada permanece no relatório: ela aconteceu no ambiente, e omiti-la seria apagar um
+        // dado verdadeiro. O que não acontece é atribuí-la a esta execução.
+        item.ValidationOutcome.Should().NotBeNull("o que a coleta observou continua registrado");
+        item.PrecedesReportedExecution.Should().BeTrue();
+        item.ApplicableValidationOutcome.Should()
+            .BeNull("uma coleta anterior ao trabalho relatado não comprova aquele trabalho");
+        item.ValidationAppliesToCurrentCycle.Should().BeFalse();
+        item.WasReopened.Should().BeFalse("não houve reabertura — o problema aqui é de causalidade, não de ciclo");
+
+        PostureSnapshotHasher.Verify(snapshot).Should().BeTrue();
+    }
+
+    [Fact]
+    public void FotografiaANTERIOR_ADistincao_NaoRecebeAplicabilidadeInventada()
+    {
+        // Uma fotografia publicada antes desta correção não congelou o ciclo. O relatório NÃO pode preencher
+        // esse silêncio: nem afirmando que a validação vale para o ciclo em curso, nem afirmando o contrário.
+        var antiga = new PostureSnapshot
+        {
+            Type = PostureSnapshotType.Knight,
+            SchemaVersion = "posture-snapshot-v1",
+            FormulaVersion = "knight-score-v1",
+            CatalogVersion = KnightCatalog.Version,
+            SemanticFamily = "knight:Demo",
+            CapturedAt = T0,
+        };
+        antiga.ActionItems.Add(new PostureSnapshotActionItem
+        {
+            ActionPlanId = Guid.NewGuid(),
+            IndicatorId = "AK-ENTRA-001",
+            Title = "Registrar segundo fator",
+            Status = ActionPlanStatus.Concluido,
+            NextStep = "Encerrada. Nenhuma providência pendente.",
+            ValidationMethod = ActionPlanValidationMethod.NewAssessment,
+            ValidationOutcome = ActionPlanValidationOutcome.ExposureCleared,
+            ValidatedAt = T0,
+        });
+
+        PostureSnapshotPdfWriter.FreezesCycle(antiga).Should()
+            .BeFalse("sem o ciclo congelado, a fotografia não sabe responder pela aplicabilidade");
+
+        var texto = Deaccent(ExtractPdfText(PostureSnapshotPdfWriter.Write(antiga)));
+        texto.Should().NotContain("REABERTA", "nada na fotografia antiga autoriza afirmar uma reabertura");
+        texto.Should().NotContain("CICLO EM CURSO", "nem atribuir a validação ao ciclo em curso");
+        texto.Should().Contain("validacao registrada", "o que ela sabe dizer, continua dizendo");
     }
 
     // ---- Helpers ----------------------------------------------------------------------------------

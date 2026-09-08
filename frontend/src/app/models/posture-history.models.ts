@@ -94,6 +94,25 @@ export interface PostureSnapshotActionItem {
   observedAfter: number | null;
   comparedBySets: boolean;
   validationRationale: string | null;
+  /**
+   * Início do ciclo vigente da ação no instante da publicação. É também o DISCRIMINADOR: ausente nas
+   * fotografias publicadas antes desta distinção, que por isso não podem afirmar nada sobre aplicabilidade.
+   */
+  cycleStartedAt?: string | null;
+  /** A ação já havia sido REABERTA quando o relatório foi publicado. */
+  wasReopened?: boolean | null;
+  /**
+   * A validação congelada acima fala pelo ciclo vigente? `false` a identifica como registro HISTÓRICO — ela
+   * permanece no relatório, mas não comprova o trabalho em curso. Nulo quando não há validação alguma, ou
+   * quando a fotografia é anterior à distinção: ausência de informação não vira inaplicabilidade.
+   */
+  validationAppliesToCurrentCycle?: boolean | null;
+  /** Método da validação APLICÁVEL ao ciclo vigente — nulo quando o ciclo não tem nenhuma. */
+  applicableValidationMethod?: string | null;
+  /** Desfecho aplicável ao ciclo vigente: o único que responde pelo trabalho em curso. */
+  applicableValidationOutcome?: string | null;
+  /** Quando a validação aplicável ao ciclo foi decidida. */
+  applicableValidatedAt?: string | null;
 }
 
 export interface PostureSnapshotDetail {

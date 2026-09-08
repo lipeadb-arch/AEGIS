@@ -239,6 +239,46 @@ public class PostureSnapshotActionItem : Entity, ITenantOwned
     /// consequência do trabalho uma melhora que pode ter tido outra causa.
     /// </summary>
     public bool PrecedesReportedExecution { get; set; }
+
+    // ---- [AEGIS-MVP-PRODUCT-03] Aplicabilidade CONGELADA ao ciclo vigente ----
+    //
+    // Sem estes campos o relatório não conseguia distinguir dois casos que se parecem: uma ação com melhora
+    // comprovada AGORA e uma ação REABERTA que só tem a comprovação do ciclo anterior. Os dois congelavam a
+    // mesma validação e entravam no mesmo total de "melhora comprovada" — e a diferença entre eles não podia
+    // ser recuperada na exportação sem consultar o plano vivo, que é justamente o que a fotografia dispensa.
+    //
+    // Todos são ANULÁVEIS de propósito: `null` significa "esta fotografia não congelou a distinção", que é o
+    // caso de tudo o que foi publicado antes desta correção. Ausência de informação histórica NÃO é lida como
+    // "não se aplica ao ciclo" — inventar aplicabilidade sobre um silêncio seria pior do que não dizer nada.
+
+    /// <summary>Início do ciclo vigente da ação no instante da publicação.</summary>
+    public DateTimeOffset? CycleStartedAt { get; set; }
+
+    /// <summary>
+    /// A ação já havia sido REABERTA quando o relatório foi publicado — o ciclo em curso não é o primeiro.
+    /// Congelado porque a comparação que o revela (início do ciclo × criação da ação) precisa de um dado que
+    /// a fotografia não guarda, e refazê-la na exportação leria o plano de hoje.
+    /// </summary>
+    public bool? WasReopened { get; set; }
+
+    /// <summary>
+    /// A validação congelada acima (a mais recente) fala pelo CICLO VIGENTE? <c>false</c> a identifica como
+    /// registro histórico: ela continua verdadeira e continua no relatório, mas não comprova este trabalho.
+    /// <c>null</c> quando não havia validação alguma — ou quando a fotografia é anterior a esta distinção.
+    /// </summary>
+    public bool? ValidationAppliesToCurrentCycle { get; set; }
+
+    /// <summary>Método da validação APLICÁVEL ao ciclo vigente — nulo quando o ciclo não tem nenhuma.</summary>
+    public ActionPlanValidationMethod? ApplicableValidationMethod { get; set; }
+
+    /// <summary>
+    /// Desfecho da validação aplicável ao ciclo vigente. É ESTE — e não o da validação mais recente — que
+    /// pode ser somado à melhora comprovada do relatório.
+    /// </summary>
+    public ActionPlanValidationOutcome? ApplicableValidationOutcome { get; set; }
+
+    /// <summary>Quando a validação aplicável ao ciclo foi decidida — a data que torna a afirmação conferível.</summary>
+    public DateTimeOffset? ApplicableValidatedAt { get; set; }
 }
 
 /// <summary>

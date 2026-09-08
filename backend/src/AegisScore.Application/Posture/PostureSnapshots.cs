@@ -110,7 +110,23 @@ public sealed record PostureSnapshotActionItemDto(
     int? ObservedBefore,
     int? ObservedAfter,
     bool ComparedBySets,
-    string? ValidationRationale);
+    string? ValidationRationale,
+    /// <summary>Início do ciclo vigente da ação no instante da publicação. Nulo nas fotografias anteriores.</summary>
+    DateTimeOffset? CycleStartedAt = null,
+    /// <summary>A ação já havia sido REABERTA quando o relatório foi publicado.</summary>
+    bool? WasReopened = null,
+    /// <summary>
+    /// A validação acima fala pelo ciclo vigente? <c>false</c> a identifica como registro HISTÓRICO — ela
+    /// permanece no relatório, mas não comprova o trabalho em curso. <c>null</c> quando não há validação, ou
+    /// quando a fotografia é anterior a esta distinção: ausência de informação não vira inaplicabilidade.
+    /// </summary>
+    bool? ValidationAppliesToCurrentCycle = null,
+    /// <summary>Método da validação APLICÁVEL ao ciclo vigente — nulo quando o ciclo não tem nenhuma.</summary>
+    string? ApplicableValidationMethod = null,
+    /// <summary>Desfecho aplicável ao ciclo vigente: o único que pode ser somado à melhora comprovada.</summary>
+    string? ApplicableValidationOutcome = null,
+    /// <summary>Quando a validação aplicável ao ciclo foi decidida.</summary>
+    DateTimeOffset? ApplicableValidatedAt = null);
 
 /// <summary>Detalhe completo de uma fotografia — resumo + agregados crus + itens congelados (controles OU indicadores).</summary>
 public sealed record PostureSnapshotDetailDto(

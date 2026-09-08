@@ -110,6 +110,10 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
 
         var plans = await _db.ActionPlans.AsNoTracking()
             .Include(p => p.Validations)
+            // A TRILHA entra porque a reabertura é um FATO registrado nela — e é o único lugar em que ela
+            // está registrada como fato. Deduzi-la comparando o início do ciclo com a criação da ação
+            // dependeria de uma folga arbitrária de relógio para não confundir os dois instantes.
+            .Include(p => p.Events)
             .Where(p => p.KnightIndicatorId != null
                         && p.OriginSourceType == origin.SourceType
                         && p.OriginMode == origin.Mode)
@@ -128,6 +132,17 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 .OrderByDescending(v => v.DecidedAt).ThenByDescending(v => v.Id)
                 .FirstOrDefault(v => RemediationReading.IsApplicableToCurrentCycle(v, cycleStart, p.ExecutedAt));
             var overdue = p.IsOverdue;
+
+            // A APLICABILIDADE é congelada aqui porque só aqui ela pode ser calculada: refazê-la na exportação
+            // exigiria o plano vivo — com o ciclo de hoje — e o relatório deixaria de ser uma fotografia.
+            // Congelar apenas a validação mais recente fazia uma ação REABERTA sem comprovação nova entrar no
+            // relatório indistinguível de uma ação comprovada agora.
+            //
+            // A reabertura é lida da TRILHA: uma transição que SAIU de "Concluído" é, por definição, a
+            // retomada de uma ação encerrada. É um fato registrado, não uma inferência sobre relógios.
+            var reopened = p.Events.Any(e => e.Kind == ActionPlanEventKind.StatusChanged
+                                             && e.FromStatus == ActionPlanStatus.Concluido
+                                             && e.ToStatus != ActionPlanStatus.Concluido);
 
             snapshot.ActionItems.Add(new PostureSnapshotActionItem
             {
@@ -154,6 +169,18 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 ValidationEvidenceReference = latest?.EvidenceReference,
                 EvidenceCollectedAt = latest?.EvidenceCollectedAt,
                 PrecedesReportedExecution = latest?.PrecedesReportedExecution ?? false,
+
+                // O ciclo vigente e a aplicabilidade da validação congelada — o que separa "comprovado agora"
+                // de "comprovado no ciclo anterior". Sem validação alguma, a aplicabilidade é NULA: dizer
+                // `false` afirmaria uma inaplicabilidade que ninguém decidiu.
+                CycleStartedAt = cycleStart,
+                WasReopened = reopened,
+                ValidationAppliesToCurrentCycle = latest is null
+                    ? null
+                    : applicable is not null && applicable.Id == latest.Id,
+                ApplicableValidationMethod = applicable?.Method,
+                ApplicableValidationOutcome = applicable?.Outcome,
+                ApplicableValidatedAt = applicable?.DecidedAt,
             });
         }
     }
@@ -690,7 +717,10 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 a.ResponsiblePerson, a.ResponsibleArea, a.DueDate,
                 a.Status.ToString(), a.WasOverdue, a.NextStep,
                 a.ValidationMethod?.ToString(), a.ValidationOutcome?.ToString(), a.ValidatedAt,
-                a.ObservedBefore, a.ObservedAfter, a.ComparedBySets, a.ValidationRationale))
+                a.ObservedBefore, a.ObservedAfter, a.ComparedBySets, a.ValidationRationale,
+                a.CycleStartedAt, a.WasReopened, a.ValidationAppliesToCurrentCycle,
+                a.ApplicableValidationMethod?.ToString(), a.ApplicableValidationOutcome?.ToString(),
+                a.ApplicableValidatedAt))
             .ToList();
 
         return new PostureSnapshotDetailDto(
