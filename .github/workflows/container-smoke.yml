@@ -82,8 +82,13 @@ jobs:
       #     fonte, regras e suficiência POR INDICADOR), publicação da avaliação PEDIDA sem troca pela mais
       #     recente, congelamento das ações no snapshot, isolamento por tenant, autorização das mutações por
       #     reflexão, compatibilidade do plano legado de risco e do hash de snapshot legado, e a serialização
-      #     efetiva dos contratos novos com as opções REAIS do MVC. A classe é NOVA: sem esta linha ela não
-      #     executaria e o check ficaria verde do mesmo jeito. A contagem deste passo sobe de 307 para 337.
+      #     efetiva dos contratos novos com as opções REAIS do MVC. A correção dirigida acrescentou a BASE do
+      #     encerramento (execução relatada + validação aplicável AO CICLO), a reabertura que repactua o ciclo
+      #     sem reaproveitar comprovação antiga, a ressalva de CAUSALIDADE quando a coleta antecede o relato de
+      #     execução, a separação por fonte/modo (demonstração × coleta real sob o mesmo indicador), o relatório
+      #     real que exclui ação de demonstração e a proveniência congelada impressa no PDF. A classe é NOVA:
+      #     sem esta linha ela não executaria e o check ficaria verde do mesmo jeito. A contagem deste passo
+      #     sobe de 307 para 349 (medida localmente com este MESMO filtro).
       #     [AEGIS-MVP-PRODUCT-02] Entra KnightAffectedObjectTests (SQLite): os OBJETOS que sustentam um achado
       #     do KNIGHT — contagem × lista na mesma unidade e dedupe, avaliação anterior à preservação que se
       #     declara sem detalhe (nunca retropreenchida), campo ausente que permanece ausente, coleta parcial
@@ -283,7 +288,11 @@ jobs:
       # FKs COMPOSTAS (ActionPlanId, TenantId) fazem o banco recusar trilha/validação de tenant divergente, e
       # que o relatório publicado permanece CONSISTENTE ao ser reexportado (as ações ficam congeladas; alterar
       # um plano depois não muda o PDF). Inclui a jornada ponta a ponta e a verificação de que o PDF executivo
-      # NÃO leva lista nominal de identidades. A contagem deste passo sobe de 27 para 31.
+      # NÃO leva lista nominal de identidades. A correção dirigida acrescentou a prova de que o índice violado é
+      # o UX_ActionPlans_ActiveByFinding (e não "qualquer chave duplicada"), a convivência de demonstração e
+      # coleta real sob o MESMO indicador, e a repactuação de prazo/responsável com conflito de versão recusado.
+      # A contagem deste passo sobe de 27 para 33 — CONFIRME no log deste job, porque a bateria PostgreSQL não
+      # roda na máquina de desenvolvimento (credencial local inacessível, sem Docker).
       # [AEGIS-MVP-PRODUCT-02] Entra KnightAffectedObjectsPostgresTests: prova que a migration dos objetos
       # afetados APLICA sobre o histórico, que a FK composta (IndicatorResultId, TenantId) faz o próprio banco
       # recusar um afetado de tenant divergente, que a paginação/busca traduzem no Npgsql e que a Central de
