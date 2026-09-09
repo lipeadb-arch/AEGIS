@@ -105,10 +105,11 @@ jobs:
       #     unificam, convidado B2B que não funde por e-mail, retry idempotente × coleta nova com o mesmo
       #     conteúdo, reapresentação INCOMPATÍVEL recusada sem alteração parcial, conjunto não coletado que
       #     continua desconhecido, falha que preserva a última evidência válida, coleta atrasada que não
-      #     regride entidade/vínculo/snapshot/saúde do conector, empate temporal determinístico, avaliação
+      #     regride entidade/vínculo/snapshot/saúde do conector, parcialidade atrasada que não rebaixa o
+      #     último dado válido, empate temporal determinístico, avaliação
       #     lendo a aquisição persistida com UMA coleta, Demo fora do ADM, envelopes v1/v2 legíveis e
       #     tradução de tipos total. A classe é NOVA: sem esta linha ela não executaria e o check ficaria
-      #     verde do mesmo jeito. A contagem deste passo sobe de 353 para 373 (medida localmente com este
+      #     verde do mesmo jeito. A contagem deste passo sobe de 353 para 374 (medida localmente com este
       #     MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >

@@ -726,6 +726,54 @@ public sealed class IdentityAcquisitionTests : IDisposable
     }
 
     /// <summary>
+    /// PARCIALIDADE fora de ordem. Uma coleta parcial PRODUZ dados — e por isso é a que mais facilmente
+    /// substituiria a evidência boa se a gravação não comparasse instantes. Chegando atrasada, ela é
+    /// registrada como aquisição própria, com o seu desfecho e a sua limitação, e não rebaixa o último dado
+    /// válido nem a completude já comprovada.
+    /// </summary>
+    [Fact]
+    public async Task ColetaParcialAtrasada_NaoRebaixaOUltimoDadoValido()
+    {
+        await SeedConnectorAsync(TenantA);
+        await using var db = NewContext(TenantA);
+
+        await ColetarAsync(db, Cenario.Padrao() with { Em = Instante(24) });
+
+        var parcial = await ColetarAsync(db, Cenario.Padrao() with
+        {
+            Em = Instante(2),
+            Estado = KnightSourceState.PartialCollection,
+            ConvidadosNegados = true,
+            Privilegiados = Cenario.Padrao().Privilegiados.Take(1).ToList(),
+            SemMfa = Array.Empty<string>(),
+        });
+
+        parcial.State.Should().Be(KnightSourceState.PartialCollection);
+        parcial.Sets.Single(s => s.Set == IdentityObservationSet.InactiveGuest)
+            .Outcome.Should().Be(IdentityObservationSetOutcome.InsufficientPermission,
+                "resultado parcial não prova a ausência dos objetos que não vieram");
+
+        var snapshot = await db.IdentityEvidenceSnapshots.AsNoTracking().SingleAsync();
+        snapshot.DataState.Should().Be(KnightSourceState.Completed,
+            "uma parcialidade ATRASADA não rebaixa a completude já comprovada");
+        snapshot.LastCollectionAt.Should().Be(Instante(24));
+        IdentityEvidenceFactsJson.Deserialize(snapshot.FactsJson).Observations
+            .Single(o => o.Key == KnightSignalKey.PrivilegedAccountsTotal).Count.Should().Be(3,
+                "os fatos preservados continuam sendo os da coleta completa mais recente");
+
+        var conector = await db.Connectors.AsNoTracking().SingleAsync();
+        conector.LastStatus.Should().Be(ConnectorStatus.Healthy,
+            "a integração não passa a degradada por causa de uma tentativa antiga");
+
+        // A parcial continua sendo evidência: ela existe, é identificável e diz o que conseguiu ler.
+        var registro = await new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA))
+            .ReadAsync(parcial.AcquisitionId);
+        registro!.AcquiredAt.Should().Be(Instante(2));
+        registro.Sets.Single(s => s.Set == IdentityObservationSet.PrivilegedRoleMember)
+            .Objects.Should().HaveCount(1, "a aquisição parcial preserva o que ELA observou");
+    }
+
+    /// <summary>
     /// Empate temporal exato: duas aquisições com o MESMO instante e conteúdos diferentes. O vencedor é
     /// decidido pela ordem ordinal do identificador da aquisição — arbitrário de propósito, mas igual em
     /// qualquer ordem de chegada. Aplicado nos dois sentidos, o estado final é o mesmo.
