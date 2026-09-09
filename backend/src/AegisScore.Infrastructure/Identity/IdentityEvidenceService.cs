@@ -78,7 +78,13 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
             ?? throw new TenantSecurityException("Aquisição de evidência de identidade sem tenant resolvido no contexto (fail-closed).");
 
         // O conector é a autoridade da fonte + o alvo da FK tenant-safe + onde a saúde/última sync é registrada.
-        var connector = await _db.Connectors
+        //
+        // SEM RASTREAMENTO de propósito. Esta leitura acontece ANTES da coleta e ANTES da seção crítica, e
+        // serve apenas para decidir se há o que coletar. Se ela ficasse rastreada, a instância carregada aqui
+        // seria devolvida mais tarde, dentro da transação, com os valores de AGORA — e a comparação temporal
+        // da saúde do conector estaria sendo feita contra um estado já vencido, que é exatamente a corrida
+        // que a seção crítica existe para eliminar. Lá dentro o conector é lido de novo, para atualização.
+        var connector = await _db.Connectors.AsNoTracking()
             .FirstOrDefaultAsync(c => c.Provider == ConnectorProvider.Microsoft && c.Capability == ConnectorCapability.IdentityPosture, ct);
 
         if (connector is null)
@@ -110,6 +116,12 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
         // ao Graph — o que preserva "uma aquisição lógica = uma coleta".
         var origin = new IdentityAcquisitionOrigin(
             connector.Id, KnightSourceType.MicrosoftEntraId, directoryNamespace, result.SourceLabel);
+
+        // HORÁRIO DE AQUISIÇÃO = quando o AEGIS concluiu ESTA coleta. <c>CollectedAt</c> é carimbado pelo
+        // coletor com o NOSSO relógio ao terminar de ler o diretório; não é um "as of" da Microsoft — o Graph
+        // não devolve nenhum. Por isso o horário OBSERVADO da aquisição permanece nulo (ver a fronteira de
+        // compatibilidade): copiar um no outro atribuiria ao fornecedor uma informação que ele não deu.
+        // É este instante, e só ele, que ordena as projeções de estado atual.
         var acquiredAt = result.CollectedAt == default ? DateTimeOffset.UtcNow : result.CollectedAt;
         var request = IdentityKnightBoundary.ToAcquisition(Guid.NewGuid(), origin, result, acquiredAt);
 
@@ -165,11 +177,25 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
     private async Task<(IdentityAcquisitionRecord Record, IdentityEvidenceSnapshotView View)> PersistAsync(
         Guid connectorId, IdentityAcquisitionRequest request, KnightCollectionResult result, CancellationToken ct)
     {
-        for (var attempt = 0; attempt < 3; attempt++)
+        for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
+            ct.ThrowIfCancellationRequested();
+
             try
             {
+                await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+                // A SEÇÃO CRÍTICA começa ANTES da primeira leitura que informa uma decisão. Todas as
+                // comparações de recência abaixo (entidade, vínculo, snapshot, saúde) são LER → DECIDIR →
+                // GRAVAR: sem a trava, duas transações leem a MESMA versão antiga, ambas se julgam mais
+                // recentes e a última a gravar vence — sem deadlock e sem violação de unicidade para
+                // denunciar o erro.
+                await _acquisitions.LockOriginAsync(request.Origin, ct);
+
+                // Leitura DENTRO da seção crítica. Nada lido antes dela pode informar a decisão de recência.
                 var connector = await _db.Connectors.FirstAsync(c => c.Id == connectorId, ct);
+                await _db.Entry(connector).ReloadAsync(ct);
+
                 await _acquisitions.PrepareAsync(request, ct);
                 var view = await StageSnapshotAsync(connector, result, ct);
                 await _db.SaveChangesAsync(ct);
@@ -178,55 +204,111 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
                     ?? throw new InvalidOperationException(
                         $"A aquisição de identidade {request.AcquisitionId} não pôde ser relida após a gravação.");
 
+                await tx.CommitAsync(ct);
                 return (record, view);
             }
-            catch (DbUpdateException ex) when (attempt < 2 && IsNaturalKeyRace(ex))
+            catch (Exception ex) when (attempt < MaxAttempts - 1 && IsRecoverableWriteRace(ex))
             {
-                // Outra coleta criou o MESMO vínculo entre a resolução e a gravação. Descartar o rastreamento e
-                // reaplicar é seguro porque a aquisição mantém o mesmo identificador: a reaplicação é o retry
-                // idempotente que o modelo já prevê, e não uma segunda coleta.
-                _db.ChangeTracker.Clear();
+                // Outra coleta tocou as MESMAS linhas entre a resolução e a gravação. A transação já foi
+                // desfeita pelo descarte; reaplicar é seguro porque a aquisição mantém o MESMO identificador
+                // e o MESMO conteúdo — é o retry idempotente que o modelo já prevê, e não uma segunda coleta.
+                DetachWriteScope();
                 _log?.LogInformation(
-                    "Corrida de unicidade ao gravar a aquisição de identidade {AcquisitionId}; reaplicando sobre o estado recarregado.",
+                    "Corrida de gravação na aquisição de identidade {AcquisitionId}; reaplicando sobre o estado recarregado.",
                     request.AcquisitionId);
             }
         }
 
         throw new InvalidOperationException(
-            "A gravação da aquisição de identidade não se recuperou da corrida de unicidade.");
+            "A gravação da aquisição de identidade não se recuperou da corrida de escrita concorrente.");
+    }
+
+    private const int MaxAttempts = 4;
+
+    /// <summary>
+    /// Desfaz o rastreamento APENAS do que esta operação tocou, para que a reaplicação leia estado realmente
+    /// recarregado. Deliberadamente não é <c>ChangeTracker.Clear()</c>: o contexto é COMPARTILHADO com quem
+    /// chamou, e descartar tudo apagaria alterações alheias pendentes — um efeito colateral silencioso muito
+    /// pior do que a corrida que estamos tratando.
+    /// </summary>
+    private void DetachWriteScope()
+    {
+        foreach (var entry in _db.ChangeTracker.Entries().ToList())
+        {
+            if (entry.Entity is IdentityAcquisition or IdentityEntity or IdentitySourceLink
+                or IdentityEntityObservation or IdentityObservationSetState or IdentityEvidenceSnapshot
+                or ConnectorConfig)
+            {
+                entry.State = EntityState.Detached;
+            }
+        }
     }
 
     /// <summary>
-    /// Corrida esperada na chave NATURAL do ADM (vínculo de origem, observação ou estado de conjunto).
-    /// Qualquer outra <see cref="DbUpdateException"/> sobe: mascarar erro de gravação como sucesso é
-    /// exatamente o que produziria evidência silenciosamente incompleta.
+    /// Corrida ESPERADA entre duas gravações concorrentes do mesmo diretório, em duas formas:
+    ///   • violação da chave NATURAL do ADM — outra coleta criou o vínculo/observação primeiro;
+    ///   • DEADLOCK ou falha de serialização — o PostgreSQL abortou uma das transações para desempatar.
+    ///
+    /// Nos dois casos a resposta certa é reaplicar a MESMA aquisição sobre o estado recarregado, e não
+    /// desistir: a operação é idempotente por construção. Qualquer outra falha de gravação SOBE — mascarar
+    /// erro como sucesso é exatamente o que produziria evidência silenciosamente incompleta.
     /// </summary>
-    private static bool IsNaturalKeyRace(DbUpdateException ex)
+    private static bool IsRecoverableWriteRace(Exception exception)
     {
-        if (ex.InnerException is PostgresException pg)
-            return pg.SqlState == PostgresErrorCodes.UniqueViolation
-                && pg.ConstraintName is "UX_IdentitySourceLink_Natural"
-                    or "UX_IdentityEntityObservation_Natural"
-                    or "UX_IdentityObservationSetState_Natural";
+        // O provedor embrulha falhas transitórias; a causa real pode estar a mais de um nível de profundidade.
+        for (var ex = exception; ex is not null; ex = ex.InnerException)
+        {
+            if (ex is PostgresException pg)
+                return pg.SqlState is PostgresErrorCodes.DeadlockDetected
+                        or PostgresErrorCodes.SerializationFailure
+                    || (pg.SqlState == PostgresErrorCodes.UniqueViolation
+                        && pg.ConstraintName is "UX_IdentitySourceLink_Natural"
+                            or "UX_IdentityEntityObservation_Natural"
+                            or "UX_IdentityObservationSetState_Natural"
+                            // O snapshot agregado entra no MESMO SaveChanges, e a chave natural dele
+                            // (tenant, conector) também pode ser disputada por duas coletas simultâneas.
+                            or "UX_IdentityEvidenceSnapshot_Natural"
+                            // Retry CONCORRENTE do MESMO identificador de aquisição: as duas tentativas
+                            // inserem a mesma linha. Reaplicar encontra a aquisição já gravada e converge
+                            // pelo caminho idempotente — jamais a reclassifica como aquisição nova.
+                            or "PK_IdentityAcquisitions");
 
-        var inner = ex.InnerException;
-        return inner is not null
-            && inner.GetType().Name == "SqliteException"
-            && inner.Message.Contains("UNIQUE constraint failed", StringComparison.OrdinalIgnoreCase)
-            && (inner.Message.Contains("IdentitySourceLink", StringComparison.OrdinalIgnoreCase)
-                || inner.Message.Contains("IdentityEntityObservation", StringComparison.OrdinalIgnoreCase)
-                || inner.Message.Contains("IdentityObservationSetState", StringComparison.OrdinalIgnoreCase));
+            if (ex.GetType().Name == "SqliteException"
+                && ex.Message.Contains("UNIQUE constraint failed", StringComparison.OrdinalIgnoreCase)
+                && (ex.Message.Contains("IdentitySourceLink", StringComparison.OrdinalIgnoreCase)
+                    || ex.Message.Contains("IdentityEntityObservation", StringComparison.OrdinalIgnoreCase)
+                    || ex.Message.Contains("IdentityObservationSetState", StringComparison.OrdinalIgnoreCase)
+                    || ex.Message.Contains("IdentityEvidenceSnapshot", StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
     /// Prepara o snapshot agregado da Evidence Fabric SEM salvar (o <c>SaveChanges</c> é do chamador, junto com
-    /// a aquisição). A degradação continua segura: uma coleta que falhe registra a tentativa e preserva
-    /// intactos os dados, o instante e a completude da última evidência válida.
+    /// a aquisição). Duas garantias diferentes convivem aqui:
+    ///
+    ///   • DEGRADAÇÃO SEGURA — uma coleta que falhe registra a tentativa e preserva intactos os dados, o
+    ///     instante e a completude da última evidência válida.
+    ///   • SEM REGRESSÃO TEMPORAL — uma coleta ATRASADA (concluída depois, mas observada antes) não substitui
+    ///     dados mais recentes, não se apresenta como "última tentativa" e não rebaixa a saúde do conector.
+    ///     Ela continua sendo gravada como AQUISIÇÃO — evidência histórica não se perde —, mas não redefine o
+    ///     presente. As três projeções têm relógios próprios porque significam coisas diferentes: último dado
+    ///     VÁLIDO, última TENTATIVA e saúde da integração.
+    ///
+    /// A comparação só é confiável porque a leitura acontece dentro da seção crítica aberta em
+    /// <c>PersistAsync</c>: fora dela, duas transações leriam a mesma versão antiga e a ordem de gravação
+    /// decidiria o vencedor.
     /// </summary>
     private async Task<IdentityEvidenceSnapshotView> StageSnapshotAsync(
         ConnectorConfig connector, KnightCollectionResult result, CancellationToken ct)
     {
         var producedData = result.State is KnightSourceState.Completed or KnightSourceState.PartialCollection;
+
+        // Instante em que o AEGIS concluiu a COLETA (relógio nosso, carimbado pelo coletor ao terminar). Não é
+        // horário do fornecedor: o Graph não devolve um "as of", e inventá-lo a partir daqui atribuiria à
+        // Microsoft uma informação que ela não deu. É este instante que ordena as projeções.
         var now = result.CollectedAt == default ? DateTimeOffset.UtcNow : result.CollectedAt;
 
         // Envelope v2: observações ORDENADAS (fingerprint estável) + agregados do pacote de risco. Escrito
@@ -266,14 +348,21 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
         }
         else
         {
-            // A última tentativa SEMPRE é registrada (é onde a degradação aparece).
-            snapshot.LastAttemptState = result.State;
-            snapshot.LastAttemptAt = now;
-            snapshot.LastAttemptDetail = result.Detail;
-            snapshot.Source = result.SourceLabel;
-            snapshot.SchemaVersion = SchemaVersion;
+            // ÚLTIMA TENTATIVA (é onde a degradação aparece). Só é reescrita por uma tentativa que não seja
+            // anterior à registrada: uma coleta atrasada não é "a última tentativa" só por ter terminado
+            // depois, e apresentá-la como tal esconderia a tentativa mais recente de quem vai agir.
+            if (now >= snapshot.LastAttemptAt)
+            {
+                snapshot.LastAttemptState = result.State;
+                snapshot.LastAttemptAt = now;
+                snapshot.LastAttemptDetail = result.Detail;
+                snapshot.Source = result.SourceLabel;
+                snapshot.SchemaVersion = SchemaVersion;
+            }
 
-            if (producedData)
+            // ÚLTIMO DADO VÁLIDO. Relógio PRÓPRIO: um sucesso atrasado não substitui um sucesso mais recente,
+            // mesmo que a tentativa mais recente tenha falhado — são perguntas diferentes.
+            if (producedData && (snapshot.LastCollectionAt is null || now >= snapshot.LastCollectionAt))
             {
                 snapshot.DataState = result.State;
                 snapshot.LastCollectionAt = now;
@@ -285,19 +374,23 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
                 }
                 snapshot.UpdatedAt = now;
             }
-            // FALHA: preserva DataState/Facts/Capabilities/LastCollectionAt (última evidência válida) — só a
-            // degradação foi registrada acima.
+            // FALHA (ou coleta atrasada): preserva DataState/Facts/Capabilities/LastCollectionAt — a última
+            // evidência válida continua sendo a última evidência válida.
         }
 
-        // Saúde do conector atualizada UMA vez por operação. Falha total com evidência anterior = Degraded
-        // (ainda servimos a última evidência válida); falha total sem evidência = Failed.
-        connector.LastSyncAt = now;
-        connector.LastStatus = result.State switch
+        // SAÚDE da integração. Mesmo critério temporal: uma tentativa antiga concluindo tarde não rebaixa
+        // (nem promove) o estado do conector. Falha total com evidência anterior = Degraded (ainda servimos a
+        // última evidência válida); falha total sem evidência = Failed.
+        if (connector.LastSyncAt is null || now >= connector.LastSyncAt)
         {
-            KnightSourceState.Completed => ConnectorStatus.Healthy,
-            KnightSourceState.PartialCollection => ConnectorStatus.Degraded,
-            _ => hadPriorData ? ConnectorStatus.Degraded : ConnectorStatus.Failed,
-        };
+            connector.LastSyncAt = now;
+            connector.LastStatus = result.State switch
+            {
+                KnightSourceState.Completed => ConnectorStatus.Healthy,
+                KnightSourceState.PartialCollection => ConnectorStatus.Degraded,
+                _ => hadPriorData ? ConnectorStatus.Degraded : ConnectorStatus.Failed,
+            };
+        }
 
         return ToView(connector.TenantId, snapshot);
     }
