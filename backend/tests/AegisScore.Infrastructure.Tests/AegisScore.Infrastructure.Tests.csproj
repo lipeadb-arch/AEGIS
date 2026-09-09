@@ -23,6 +23,11 @@
          provê na mesma linha 10.0.x. Os tipos usados nos testes de fail-open/host seguem disponíveis. -->
     <!-- SQLite in-memory: banco relacional real e efêmero para exercitar o FrameworkSeeder ponta a
          ponta (EnsureCreated + SaveChanges) sem PostgreSQL. Alinhado ao EF Core 10. -->
+    <!-- [AEGIS-MVP-PRE-ADM-01] Harness de integração HTTP REAL: sobe o host da API (Program.cs) em memória com
+         TestServer, exercitando roteamento, model binding, autenticação JWT, autorização, middleware de tenant,
+         serviços e persistência reais. É o que faltava — RemediationPostgresTests declarava explicitamente esse
+         limite ("sem harness de integração HTTP o pipeline HTTP e a autenticação JWT NÃO são executados"). -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
     <!-- 2.1.11 é o PISO exigido por EF Core Sqlite 10.0.10 (que depende de SQLitePCLRaw.core 2.1.11);
          manter 2.1.10 dispara NU1605. Fixado no piso de propósito: o SQLitePCLRaw tem linha de versão
