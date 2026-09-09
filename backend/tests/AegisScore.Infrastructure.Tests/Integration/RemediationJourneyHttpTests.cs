@@ -5,7 +5,11 @@ using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using AegisScore.Application.Abstractions;
+using AegisScore.Domain;
+using AegisScore.Infrastructure.Persistence;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -480,6 +484,80 @@ public sealed class RemediationJourneyHttpTests : IClassFixture<AegisApiFixture>
         var soDemo = await GetOkAsync(manager, "/api/v1/remediation/action-plans?sourceType=Demo");
         soDemo.EnumerateArray().Select(a => a.GetProperty("id").GetGuid())
             .Should().BeEquivalentTo(new[] { acaoDemo.GetProperty("id").GetGuid() });
+    }
+
+    // ---- (8) [AEGIS-ADM-01] O ADM no caminho real de aquisição e consumo -----------------------------
+
+    /// <summary>
+    /// A avaliação disparada por HTTP é sustentada por uma AQUISIÇÃO efetivamente gravada, e é possível dizer
+    /// qual foi. A mesma conta observada em DOIS conjuntos resolve para UMA identidade canônica. E a coleta
+    /// acontece UMA vez: abrir a avaliação, a lista de afetados e a fotografia publicada não dispara nenhuma
+    /// consulta nova ao diretório.
+    /// </summary>
+    [Fact]
+    public async Task Avaliacao_PorHttp_EhSustentadaPorUmaAquisicaoGravada_ComUmaUnicaColeta()
+    {
+        if (_api is null) return;
+        var t0 = _api.OpenTimeWindow();
+        var t = await _api.SeedTenantAsync("Cliente ADM");
+        await ConfigurarConectorEntraAsync(t);
+        using var manager = _api.As(t.Manager);
+
+        var antes = _api.Entra.Calls;
+        var run = await ColetarAsync(t.Manager, semMfa: 3, em: t0.AddHours(1));
+        (_api.Entra.Calls - antes).Should().Be(1,
+            "uma aquisição lógica é UMA coleta: a Evidence Fabric e o avaliador consomem a mesma");
+
+        await using var db = new AegisScoreDbContext(_api.DbOptions(), new SystemTenantContext(t.Id));
+
+        // 1) A avaliação sabe qual coleta a sustentou, e essa coleta existe.
+        var execucao = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == run);
+        execucao.IdentityAcquisitionId.Should().NotBeNull(
+            "a avaliação registra a procedência da evidência que consumiu");
+
+        var aquisicao = await db.IdentityAcquisitions.AsNoTracking()
+            .SingleAsync(a => a.Id == execucao.IdentityAcquisitionId!.Value);
+        aquisicao.State.Should().Be(KnightSourceState.Completed);
+        aquisicao.DirectoryNamespace.Should().NotBeNullOrWhiteSpace(
+            "a origem vem da configuração efetivamente resolvida, e não de um rótulo escolhido pela tela");
+        aquisicao.NormalizationVersion.Should().NotBeNullOrWhiteSpace();
+        aquisicao.ObservedAt.Should().BeNull(
+            "a fonte informou apenas o instante da coleta; um horário de fornecedor não é inventado");
+
+        // 2) A MESMA conta aparece nos dois conjuntos e resolve para UMA identidade canônica.
+        var idExterno = ScriptedIdentityCollector.ExternalIdOf(1);
+        var vinculos = await db.IdentitySourceLinks.AsNoTracking()
+            .Where(l => l.ExternalId == idExterno).ToListAsync();
+        vinculos.Should().ContainSingle("um objeto do diretório tem UM vínculo com a origem");
+
+        var observacoes = await db.IdentityEntityObservations.AsNoTracking()
+            .Where(o => o.AcquisitionId == aquisicao.Id && o.ExternalId == idExterno).ToListAsync();
+        observacoes.Select(o => o.Set).Should().BeEquivalentTo(new[]
+        {
+            IdentityObservationSet.PrivilegedRoleMember,
+            IdentityObservationSet.PrivilegedWithoutRegisteredMfaCapability,
+        }, "a conta privilegiada sem método capaz de MFA registrado está nos dois conjuntos");
+        observacoes.Select(o => o.IdentityEntityId).Distinct().Should().ContainSingle(
+            "as duas observações apontam para a MESMA entidade canônica");
+
+        // 3) A completude é por conjunto, e ambos foram efetivamente coletados nesta fixture.
+        var conjuntos = await db.IdentityObservationSetStates.AsNoTracking()
+            .Where(s => s.AcquisitionId == aquisicao.Id).ToListAsync();
+        conjuntos.Should().Contain(s => s.Set == IdentityObservationSet.PrivilegedRoleMember
+                                     && s.Outcome == IdentityObservationSetOutcome.Collected
+                                     && s.IsComplete);
+
+        // 4) LEITURA não coleta: abrir a avaliação, os afetados e a fotografia não toca o diretório.
+        var depoisDaColeta = _api.Entra.Calls;
+        await GetOkAsync(manager, $"/api/v1/knight/assessments/{run}");
+        await GetOkAsync(manager, $"/api/v1/knight/assessments/{run}/indicators/{Indicator}/affected");
+        await PostOkAsync(manager, "/api/v1/posture/snapshots",
+            AegisApiHarness.JsonBody(new { type = "knight", source = (string?)null, runId = run }),
+            HttpStatusCode.Created);
+        await GetOkAsync(manager, "/api/v1/posture/snapshots");
+
+        _api.Entra.Calls.Should().Be(depoisDaColeta,
+            "abrir avaliação, afetados e fotografia não dispara consulta nova ao diretório");
     }
 
     // ---- Apoio ---------------------------------------------------------------------------------------

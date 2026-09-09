@@ -98,10 +98,22 @@ jobs:
       #     declara sem detalhe (nunca retropreenchida), campo ausente que permanece ausente, coleta parcial
       #     declarada, isolamento por tenant e paginação/busca no servidor. Sem esta linha a classe NÃO roda e
       #     o check ficaria verde do mesmo jeito. A contagem deste passo sobe de 288 para 301.
+      #     [AEGIS-ADM-01] Entra IdentityAcquisitionTests (SQLite): o ADM por identidade no caminho REAL de
+      #     aquisição e consumo — mesma conta em dois conjuntos com UMA entidade e DUAS observações de
+      #     conteúdo PRÓPRIO (e independentes da ordem em que a coleta devolve os conjuntos), renomeação que
+      #     preserva a identidade sem reescrever a evidência, homônimos e namespaces distintos que não se
+      #     unificam, convidado B2B que não funde por e-mail, retry idempotente × coleta nova com o mesmo
+      #     conteúdo, reapresentação INCOMPATÍVEL recusada sem alteração parcial, conjunto não coletado que
+      #     continua desconhecido, falha que preserva a última evidência válida, coleta atrasada que não
+      #     regride entidade/vínculo/snapshot/saúde do conector, empate temporal determinístico, avaliação
+      #     lendo a aquisição persistida com UMA coleta, Demo fora do ADM, envelopes v1/v2 legíveis e
+      #     tradução de tipos total. A classe é NOVA: sem esta linha ela não executaria e o check ficaria
+      #     verde do mesmo jeito. A contagem deste passo sobe de 353 para 373 (medida localmente com este
+      #     MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
@@ -324,6 +336,16 @@ jobs:
       # afetados APLICA sobre o histórico, que a FK composta (IndicatorResultId, TenantId) faz o próprio banco
       # recusar um afetado de tenant divergente, que a paginação/busca traduzem no Npgsql e que a Central de
       # Prioridades aponta para a MESMA avaliação do KNIGHT. A contagem deste passo sobe de 24 para 27.
+      # [AEGIS-ADM-01] Entra IdentityAcquisitionPostgresTests: o que SÓ o banco real prova sobre o ADM de
+      # identidade — a migration aplica; o índice UX_IdentitySourceLink_Natural e as FKs COMPOSTAS
+      # tenant-safe recusam de verdade; um tenant estrangeiro não lê, não vincula e não escreve; seis coletas
+      # SIMULTÂNEAS do mesmo diretório não duplicam identidade E terminam com o estado atual sustentado pela
+      # aquisição MAIS RECENTE (não pela que gravou por último); duas atualizações concorrentes de entidades
+      # JÁ EXISTENTES mantêm a mais recente; uma escrita ANTIGA parada na trava do conector e liberada depois
+      # da nova grava por último sem regredir entidade, vínculo, snapshot nem saúde; e o retry CONCORRENTE do
+      # mesmo identificador de aquisição converge sem duplicar. A classe é NOVA: sem esta linha ela não
+      # executaria e o check ficaria verde do mesmo jeito. A contagem deste passo sobe de 41 para 48 (medida
+      # localmente com este MESMO filtro, em Release, contra PostgreSQL 18 descartável).
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
@@ -332,4 +354,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests"
