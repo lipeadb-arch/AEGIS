@@ -250,7 +250,7 @@ public sealed class IdentityEvidenceServiceTests : IDisposable
     {
         var registry = new KnightCollectorRegistry(new[] { collector });
         var config = new FakeConfigProvider(new KnightEntraIdConfiguration("tenant", "client", Secret));
-        return new IdentityEvidenceService(db, registry, config, new SystemTenantContext(tenantId));
+        return new IdentityEvidenceService(db, registry, config, new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, new SystemTenantContext(tenantId)), new SystemTenantContext(tenantId));
     }
 
     private async Task SeedConnectorAsync(Guid tenantId, bool enabled)

@@ -71,15 +71,21 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         // 1+2) COLETA → fatos normalizados + estado + capacidades. Fonte real sem configuração NÃO executa e NÃO
         //       cai para Demo; o coletor NUNCA devolve dados sintéticos numa falha real.
         KnightCollectionResult result;
+        Guid? identityAcquisitionId = null;
         if (source == KnightSourceType.MicrosoftEntraId)
         {
             // [AEGIS-MVP-EVIDENCE-FABRIC-01] Converge na Evidence Fabric: UMA aquisição real do Entra ID, que
             // persiste o snapshot NORMALIZADO compartilhado; o KNIGHT avalia os MESMOS fatos. Sem segundo cliente
             // Graph nem consulta duplicada. Conector não configurado/desabilitado/sem credencial → não executa.
+            //
+            // [AEGIS-ADM-01] O resultado agora vem RECONSTRUÍDO da aquisição PERSISTIDA do ADM, e a execução
+            // guarda qual aquisição a sustentou. Nenhuma regra deste avaliador muda: ele continua recebendo o
+            // mesmo contrato, com os mesmos fatos tipados — só que lidos da evidência gravada.
             var acquisition = await _identityEvidence.CollectAsync(ct);
             if (acquisition.CollectionResult is null)
                 throw new KnightSourceNotConfiguredException(source);
             result = acquisition.CollectionResult;
+            identityAcquisitionId = acquisition.AcquisitionId;
         }
         else
         {
@@ -117,6 +123,10 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             ErrorCount = score.ErrorCount,
             NotApplicableCount = score.NotApplicableCount,
             CapabilitiesJson = JsonSerializer.Serialize(result.Capabilities, Json),
+            // [AEGIS-ADM-01] Procedência da evidência: qual aquisição sustentou este veredito. Fica null nas
+            // fontes que ainda não passam pelo ADM (Demo, Google Workspace) — e as execuções ANTERIORES a este
+            // pacote permanecem null, nunca retropreenchidas com a coleta de hoje.
+            IdentityAcquisitionId = identityAcquisitionId,
         };
 
         // [AEGIS-MVP-PRODUCT-02] Objetos afetados preservados por SINAL pela mesma coleta — indexados pelo

@@ -430,6 +430,7 @@ public sealed class IdentityRiskEvidenceFabricTests : IDisposable
             db,
             new KnightCollectorRegistry(new[] { collector }),
             new FakeConfigProvider(new KnightEntraIdConfiguration("tenant", "client", Secret)),
+            new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, new SystemTenantContext(tenantId)),
             new SystemTenantContext(tenantId));
 
     private async Task SeedConnectorAsync(Guid tenantId)

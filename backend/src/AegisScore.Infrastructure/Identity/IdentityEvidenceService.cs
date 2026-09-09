@@ -8,8 +8,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Identity;
+using AegisScore.Application.Identity.Adm;
 using AegisScore.Application.Knight;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -35,10 +37,10 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
     /// ([AEGIS-MVP-MICROSOFT-COVERAGE-03]) acrescenta ao <c>FactsJson</c> os agregados de risco de identidade e
     /// de métodos de autenticação, envelopando as observações do v1 em vez de substituí-las.
     /// </summary>
-    public const string SchemaVersion = "aegis-identity-evidence-v2";
+    public const string SchemaVersion = IdentityEvidenceFactsJson.CurrentSchemaVersion;
 
     /// <summary>Schema ANTERIOR — snapshots gravados assim continuam sendo lidos sem migration nem reescrita.</summary>
-    public const string LegacySchemaVersion = "aegis-identity-evidence-v1";
+    public const string LegacySchemaVersion = IdentityEvidenceFactsJson.LegacySchemaVersion;
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -50,6 +52,7 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
     private readonly AegisScoreDbContext _db;
     private readonly IKnightCollectorRegistry _registry;
     private readonly IKnightSourceConfigurationProvider _config;
+    private readonly IIdentityAcquisitionStore _acquisitions;
     private readonly ITenantContext _tenant;
     private readonly ILogger<IdentityEvidenceService>? _log;
 
@@ -57,12 +60,14 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
         AegisScoreDbContext db,
         IKnightCollectorRegistry registry,
         IKnightSourceConfigurationProvider config,
+        IIdentityAcquisitionStore acquisitions,
         ITenantContext tenant,
         ILogger<IdentityEvidenceService>? log = null)
     {
         _db = db;
         _registry = registry;
         _config = config;
+        _acquisitions = acquisitions;
         _tenant = tenant;
         _log = log;
     }
@@ -85,15 +90,38 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
 
         // Valida a presença de material de autenticação (segredo decifrável e completo) sem devolvê-lo nunca.
         var configuration = await _config.ResolveAsync(tenantId, KnightSourceType.MicrosoftEntraId, ct);
-        if (configuration is not KnightEntraIdConfiguration)
+        if (configuration is not KnightEntraIdConfiguration entra)
+            return new IdentityEvidenceAcquisition(IdentityEvidenceConnectorState.MissingCredential, null, await LoadViewAsync(connector.Id, ct));
+
+        // [AEGIS-ADM-01] O NAMESPACE do diretório vem da configuração EFETIVAMENTE resolvida — é ele que
+        // delimita o espaço de identificadores dos objetos observados. Sem ele não é possível dizer a QUE
+        // diretório um identificador pertence, e dois diretórios distintos acabariam unificados. Uma
+        // configuração sem esse dado é material de autenticação incompleto, e a coleta nem começa.
+        var directoryNamespace = (entra.AzureTenantId ?? "").Trim();
+        if (directoryNamespace.Length == 0)
             return new IdentityEvidenceAcquisition(IdentityEvidenceConnectorState.MissingCredential, null, await LoadViewAsync(connector.Id, ct));
 
         // UMA aquisição real (o coletor do KNIGHT normaliza em fatos tipados; NUNCA cai para dados sintéticos).
         var collector = _registry.Resolve(KnightSourceType.MicrosoftEntraId);
         var result = await collector.CollectAsync(new KnightCollectionContext(tenantId, configuration), ct);
 
-        var view = await PersistAsync(connector, result, ct);
-        return new IdentityEvidenceAcquisition(IdentityEvidenceConnectorState.Configured, result, view);
+        // [AEGIS-ADM-01] A coleta vira uma AQUISIÇÃO canônica. O identificador é gerado UMA vez e sobrevive às
+        // tentativas de gravação: uma corrida de unicidade reaplica a MESMA aquisição, sem uma segunda consulta
+        // ao Graph — o que preserva "uma aquisição lógica = uma coleta".
+        var origin = new IdentityAcquisitionOrigin(
+            connector.Id, KnightSourceType.MicrosoftEntraId, directoryNamespace, result.SourceLabel);
+        var acquiredAt = result.CollectedAt == default ? DateTimeOffset.UtcNow : result.CollectedAt;
+        var request = IdentityKnightBoundary.ToAcquisition(Guid.NewGuid(), origin, result, acquiredAt);
+
+        var (record, view) = await PersistAsync(connector.Id, request, result, ct);
+
+        // O consumidor recebe o resultado RECONSTRUÍDO a partir da aquisição PERSISTIDA — não o objeto
+        // transitório que saiu do coletor. É o que faz "a avaliação leu a evidência gravada" ser verificável.
+        return new IdentityEvidenceAcquisition(
+            IdentityEvidenceConnectorState.Configured,
+            IdentityKnightBoundary.ToCollectionResult(record),
+            view,
+            record.AcquisitionId);
     }
 
     public async Task<IdentityEvidenceProjection> GetLatestProjectionAsync(CancellationToken ct = default)
@@ -125,7 +153,77 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
 
     // ---- Persistência degradation-safe ----------------------------------------------------------
 
-    private async Task<IdentityEvidenceSnapshotView> PersistAsync(
+    /// <summary>
+    /// [AEGIS-ADM-01] Grava a AQUISIÇÃO do ADM e o snapshot agregado no MESMO <c>SaveChanges</c>, e só então
+    /// relê a aquisição do banco. A atomicidade não é zelo: se o snapshot fosse gravado e a aquisição não,
+    /// existiria uma avaliação aparentemente sustentada por um registro inexistente.
+    ///
+    /// Uma corrida de unicidade (duas coletas simultâneas criando o MESMO vínculo de origem) é recuperada
+    /// reaplicando a MESMA aquisição sobre o estado recarregado — sem uma segunda consulta ao Graph, porque a
+    /// coleta já aconteceu e seu resultado está em memória.
+    /// </summary>
+    private async Task<(IdentityAcquisitionRecord Record, IdentityEvidenceSnapshotView View)> PersistAsync(
+        Guid connectorId, IdentityAcquisitionRequest request, KnightCollectionResult result, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                var connector = await _db.Connectors.FirstAsync(c => c.Id == connectorId, ct);
+                await _acquisitions.PrepareAsync(request, ct);
+                var view = await StageSnapshotAsync(connector, result, ct);
+                await _db.SaveChangesAsync(ct);
+
+                var record = await _acquisitions.ReadAsync(request.AcquisitionId, ct)
+                    ?? throw new InvalidOperationException(
+                        $"A aquisição de identidade {request.AcquisitionId} não pôde ser relida após a gravação.");
+
+                return (record, view);
+            }
+            catch (DbUpdateException ex) when (attempt < 2 && IsNaturalKeyRace(ex))
+            {
+                // Outra coleta criou o MESMO vínculo entre a resolução e a gravação. Descartar o rastreamento e
+                // reaplicar é seguro porque a aquisição mantém o mesmo identificador: a reaplicação é o retry
+                // idempotente que o modelo já prevê, e não uma segunda coleta.
+                _db.ChangeTracker.Clear();
+                _log?.LogInformation(
+                    "Corrida de unicidade ao gravar a aquisição de identidade {AcquisitionId}; reaplicando sobre o estado recarregado.",
+                    request.AcquisitionId);
+            }
+        }
+
+        throw new InvalidOperationException(
+            "A gravação da aquisição de identidade não se recuperou da corrida de unicidade.");
+    }
+
+    /// <summary>
+    /// Corrida esperada na chave NATURAL do ADM (vínculo de origem, observação ou estado de conjunto).
+    /// Qualquer outra <see cref="DbUpdateException"/> sobe: mascarar erro de gravação como sucesso é
+    /// exatamente o que produziria evidência silenciosamente incompleta.
+    /// </summary>
+    private static bool IsNaturalKeyRace(DbUpdateException ex)
+    {
+        if (ex.InnerException is PostgresException pg)
+            return pg.SqlState == PostgresErrorCodes.UniqueViolation
+                && pg.ConstraintName is "UX_IdentitySourceLink_Natural"
+                    or "UX_IdentityEntityObservation_Natural"
+                    or "UX_IdentityObservationSetState_Natural";
+
+        var inner = ex.InnerException;
+        return inner is not null
+            && inner.GetType().Name == "SqliteException"
+            && inner.Message.Contains("UNIQUE constraint failed", StringComparison.OrdinalIgnoreCase)
+            && (inner.Message.Contains("IdentitySourceLink", StringComparison.OrdinalIgnoreCase)
+                || inner.Message.Contains("IdentityEntityObservation", StringComparison.OrdinalIgnoreCase)
+                || inner.Message.Contains("IdentityObservationSetState", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Prepara o snapshot agregado da Evidence Fabric SEM salvar (o <c>SaveChanges</c> é do chamador, junto com
+    /// a aquisição). A degradação continua segura: uma coleta que falhe registra a tentativa e preserva
+    /// intactos os dados, o instante e a completude da última evidência válida.
+    /// </summary>
+    private async Task<IdentityEvidenceSnapshotView> StageSnapshotAsync(
         ConnectorConfig connector, KnightCollectionResult result, CancellationToken ct)
     {
         var producedData = result.State is KnightSourceState.Completed or KnightSourceState.PartialCollection;
@@ -133,12 +231,8 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
 
         // Envelope v2: observações ORDENADAS (fingerprint estável) + agregados do pacote de risco. Escrito
         // como OBJETO — a leitura reconhece o array nu do v1 pela forma da raiz.
-        var envelope = new IdentityEvidenceFacts(
-            SchemaVersion,
-            result.Facts.All.OrderBy(o => (int)o.Key).ToList(),
-            result.IdentityRisk,
-            result.AuthenticationPosture);
-        var factsJson = JsonSerializer.Serialize(envelope, Json);
+        var factsJson = IdentityEvidenceFactsJson.Serialize(
+            result.Facts.All, result.IdentityRisk, result.AuthenticationPosture);
         var capsJson = JsonSerializer.Serialize(result.Capabilities, Json);
         var fingerprint = Fingerprint(factsJson, capsJson, result.State);
 
@@ -205,7 +299,6 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
             _ => hadPriorData ? ConnectorStatus.Degraded : ConnectorStatus.Failed,
         };
 
-        await _db.SaveChangesAsync(ct);
         return ToView(connector.TenantId, snapshot);
     }
 
@@ -240,33 +333,13 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
     }
 
     /// <summary>
-    /// Lê o <c>FactsJson</c> em QUALQUER das duas versões do schema. Raiz ARRAY ⇒ v1 (só observações, sem
-    /// agregados — e sem inventar zeros para eles); raiz OBJETO ⇒ v2 (envelope completo). Um JSON ilegível
-    /// degrada para "sem fatos", nunca para números falsos.
+    /// Lê o <c>FactsJson</c> em QUALQUER das versões do schema, delegando à AUTORIDADE ÚNICA compartilhada com
+    /// a aquisição do ADM (<see cref="IdentityEvidenceFactsJson"/>). Snapshot e aquisição guardam o MESMO
+    /// envelope: duas desserializações independentes divergiriam no primeiro ajuste de nomenclatura, e a
+    /// divergência apareceria como fato ausente — ou seja, cobertura perdida sem causa real.
     /// </summary>
-    internal IdentityEvidenceFacts DeserializeFacts(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return EmptyFacts;
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.ValueKind == JsonValueKind.Array)
-            {
-                var legacy = JsonSerializer.Deserialize<List<KnightObservation>>(json, Json) ?? new List<KnightObservation>();
-                return new IdentityEvidenceFacts(LegacySchemaVersion, legacy, null, null);
-            }
-
-            return JsonSerializer.Deserialize<IdentityEvidenceFacts>(json, Json) ?? EmptyFacts;
-        }
-        catch (JsonException ex)
-        {
-            _log?.LogWarning(ex, "FactsJson do snapshot de identidade ilegível; retornando sem fatos.");
-            return EmptyFacts;
-        }
-    }
-
-    private static readonly IdentityEvidenceFacts EmptyFacts =
-        new(SchemaVersion, Array.Empty<KnightObservation>(), null, null);
+    internal IdentityEvidenceFacts DeserializeFacts(string? json) =>
+        IdentityEvidenceFactsJson.Deserialize(json);
 
     private IReadOnlyList<KnightCapabilityStatus> DeserializeCapabilities(string? json)
     {

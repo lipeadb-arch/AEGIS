@@ -537,7 +537,7 @@ public sealed class RemediationPostgresTests
         var registry = new KnightCollectorRegistry(new[] { (IKnightCollector)new StubCollector(result) });
         var tenant = new SystemTenantContext(tenantId);
         var config = new DemoOnlyConfigProvider();
-        var evidence = new AegisScore.Infrastructure.Identity.IdentityEvidenceService(db, registry, config, tenant);
+        var evidence = new AegisScore.Infrastructure.Identity.IdentityEvidenceService(db, registry, config, new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, tenant), tenant);
         return new AegisKnightAssessmentService(db, registry, config, new NoAdvisoryGenerator(), evidence, tenant)
             .RunDemoAssessmentAsync();
     }
