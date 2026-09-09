@@ -90,7 +90,15 @@ public sealed record IdentityEvidenceFacts(
 public sealed record IdentityEvidenceAcquisition(
     IdentityEvidenceConnectorState ConnectorState,
     KnightCollectionResult? CollectionResult,
-    IdentityEvidenceSnapshotView? Snapshot);
+    IdentityEvidenceSnapshotView? Snapshot,
+    /// <summary>
+    /// [AEGIS-ADM-01] A AQUISIÇÃO do ADM registrada por esta operação — o identificador que permite dizer
+    /// depois qual coleta sustentou uma avaliação. Quando presente, <see cref="CollectionResult"/> foi
+    /// RECONSTRUÍDO a partir dela (e não do resultado transitório da coleta): sem aquisição gravada não há
+    /// resultado, e portanto não há avaliação aparentemente sustentada por um registro inexistente.
+    /// <c>null</c> quando não houve coleta (conector ausente/desabilitado/sem credencial).
+    /// </summary>
+    Guid? AcquisitionId = null);
 
 /// <summary>
 /// Serviço de aplicação COMPARTILHADO da Evidence Fabric de identidade. É o ÚNICO ponto que faz a aquisição

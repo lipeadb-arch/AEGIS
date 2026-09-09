@@ -207,6 +207,21 @@ public class KnightAssessmentRun : Entity, ITenantOwned
     /// </summary>
     public bool AdvisoryFromAi { get; set; }
 
+    /// <summary>
+    /// [AEGIS-ADM-01] A AQUISIÇÃO do ADM que efetivamente sustentou esta avaliação — a resposta para "qual
+    /// coleta produziu este veredito?".
+    ///
+    /// ANULÁVEL por duas razões distintas, e a leitura precisa saber diferenciá-las: avaliações ANTERIORES a
+    /// este pacote nunca tiveram aquisição registrada (e não são retropreenchidas com a coleta de hoje, o que
+    /// seria apresentar o presente como prova do passado); e fontes que não passam pelo ADM nesta entrega
+    /// (Demo, Google Workspace) seguem sem aquisição, por compatibilidade explícita.
+    ///
+    /// Deliberadamente SEM chave estrangeira: a evidência de uma origem desaparece quando o conector é
+    /// removido (cascata), e uma FK obrigaria a escolher entre travar a remoção do conector ou destruir o
+    /// histórico de avaliações. Nenhuma das duas é aceitável — a avaliação é congelada e sobrevive à origem.
+    /// </summary>
+    public Guid? IdentityAcquisitionId { get; set; }
+
     public ICollection<KnightIndicatorResult> Indicators { get; set; } = new List<KnightIndicatorResult>();
 }
 
