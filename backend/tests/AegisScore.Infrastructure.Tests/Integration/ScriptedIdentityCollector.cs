@@ -40,9 +40,18 @@ internal sealed class ScriptedIdentityCollector : IKnightCollector
     public void Observe(int privilegedTotal, int withoutMfa, DateTimeOffset collectedAt) =>
         _scenario = new Scenario(privilegedTotal, withoutMfa, collectedAt);
 
+    /// <summary>
+    /// Quantas vezes a FRONTEIRA externa foi efetivamente exercida. É o número que prova "uma aquisição
+    /// lógica = uma coleta" e que abrir telas/relatórios não dispara consulta nova ao diretório.
+    /// </summary>
+    public int Calls => _calls;
+
+    private int _calls;
+
     public Task<KnightCollectionResult> CollectAsync(
         KnightCollectionContext context, CancellationToken ct = default)
     {
+        Interlocked.Increment(ref _calls);
         var scenario = _scenario;
 
         var facts = new KnightFactSet(new[]
@@ -54,14 +63,16 @@ internal sealed class ScriptedIdentityCollector : IKnightCollector
         // Os objetos preservados têm EXATAMENTE o tamanho da contagem: a comparação por conjuntos só é lícita
         // quando os dois lados estão completos, e uma lista menor que o número exibido ensinaria uma
         // incoerência que a coleta real não tem.
-        var objetos = Enumerable.Range(1, scenario.WithoutMfa)
-            .Select(i => new KnightAffectedObjectFact(
-                $"sintetico-conta-{i:00}",
-                KnightAffectedObjectKind.User,
-                $"Conta sintética {i:00}",
-                $"conta{i:00}@demo.example.com",
-                new[] { "Administrador Global" },
-                "Sem método capaz de MFA no relatório de registro do diretório sintético."))
+        //
+        // [AEGIS-ADM-01] Os dois conjuntos são emitidos, e os sinalizados são um SUBCONJUNTO dos
+        // privilegiados — os mesmos identificadores. É a forma real do diretório: a conta que aparece sem
+        // método capaz de MFA registrado é uma das que têm papel privilegiado, e não um objeto à parte.
+        var privilegiados = Enumerable.Range(1, scenario.PrivilegedTotal).Select(Conta).ToList();
+        var semMfa = privilegiados.Take(scenario.WithoutMfa)
+            .Select(o => o with
+            {
+                Detail = "Sem método capaz de MFA no relatório de registro do diretório sintético.",
+            })
             .ToList();
 
         var result = new KnightCollectionResult(
@@ -79,11 +90,27 @@ internal sealed class ScriptedIdentityCollector : IKnightCollector
             AffectedObjects: new[]
             {
                 new KnightAffectedObjectEvidence(
-                    KnightSignalKey.PrivilegedAccountsWithoutMfa, objetos, IsComplete: true),
+                    KnightSignalKey.PrivilegedAccountsTotal, privilegiados, IsComplete: true),
+                new KnightAffectedObjectEvidence(
+                    KnightSignalKey.PrivilegedAccountsWithoutMfa, semMfa, IsComplete: true),
             });
 
         return Task.FromResult(result);
     }
+
+    /// <summary>
+    /// Identificador ESTÁVEL entre coletas — é ele, e não o nome, que faz duas observações apontarem para a
+    /// mesma identidade canônica. O nome existe só para a tela do analista.
+    /// </summary>
+    public static string ExternalIdOf(int i) => $"sintetico-conta-{i:00}";
+
+    private static KnightAffectedObjectFact Conta(int i) => new(
+        ExternalIdOf(i),
+        KnightAffectedObjectKind.User,
+        $"Conta sintética {i:00}",
+        $"conta{i:00}@demo.example.com",
+        new[] { "Administrador Global" },
+        "Objeto com papel privilegiado no diretório sintético.");
 
     private sealed record Scenario(int PrivilegedTotal, int WithoutMfa, DateTimeOffset? CollectedAt);
 }

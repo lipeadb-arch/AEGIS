@@ -49,13 +49,26 @@ public sealed class DatabaseUpgradePostgresTests
     /// <summary>A última migration ANTERIOR ao pacote — o ponto de partida de um ambiente desatualizado.</summary>
     private const string PontoAnterior = "20260904131931_DevicePosture_MicrosoftIntune";
 
-    /// <summary>A sequência de atualização exata que o procedimento operacional precisa aplicar.</summary>
-    private static readonly string[] Pendentes =
+    /// <summary>
+    /// O MARCO HISTÓRICO desta prova: as três migrations Product02/Product03 que nunca foram aplicadas a um
+    /// ambiente real. Continuam sendo o que este teste garante que atravessa sem perder nem inventar nada — e
+    /// permanecem as PRIMEIRAS da fila, na ordem exata do procedimento operacional.
+    /// </summary>
+    private static readonly string[] MarcoHistorico =
     {
         "20260906153231_Product02_KnightAffectedObjects",
         "20260907200205_Product03_RemediationAndReport",
         "20260908120427_Product03_FrozenCycleApplicability",
     };
+
+    /// <summary>
+    /// [AEGIS-ADM-01] A sequência CUMULATIVA que o procedimento precisa aplicar hoje: o marco histórico mais o
+    /// que veio depois. A lista cresce a cada pacote que acrescenta schema; o que NÃO pode mudar é a
+    /// verificação de preservação — a razão de este teste existir é provar que dado antigo sobrevive, não
+    /// apenas que o migrator termina com código zero.
+    /// </summary>
+    private static readonly string[] Pendentes =
+        MarcoHistorico.Concat(new[] { "20260909031324_Adm01_IdentityDataModel" }).ToArray();
 
     private readonly ITestOutputHelper _output;
 
@@ -85,8 +98,13 @@ public sealed class DatabaseUpgradePostgresTests
             var aplicadas = (await db.Database.GetAppliedMigrationsAsync()).ToList();
             aplicadas.Should().Contain(PontoAnterior);
             aplicadas.Should().NotContain(Pendentes, "o ponto de partida é um ambiente ainda NÃO atualizado");
-            (await db.Database.GetPendingMigrationsAsync()).Should().BeEquivalentTo(Pendentes,
-                "a lista pendente é exatamente o que o procedimento de atualização vai aplicar");
+
+            var pendentes = (await db.Database.GetPendingMigrationsAsync()).ToList();
+            pendentes.Should().BeEquivalentTo(Pendentes, options => options.WithStrictOrdering(),
+                "a lista pendente é exatamente, e nesta ordem, o que o procedimento de atualização vai aplicar");
+            pendentes.Take(MarcoHistorico.Length).Should().Equal(MarcoHistorico,
+                "o marco histórico Product02/Product03 continua sendo a PRIMEIRA coisa que um ambiente "
+                + "desatualizado aplica — os pacotes seguintes se empilham depois dele, nunca no lugar dele");
 
             await SemearLegadoAsync(db, tenantId, runId, indicatorResultId, snapshotId, riskId, legacyPlanId, hashLegado);
         }
@@ -132,6 +150,19 @@ public sealed class DatabaseUpgradePostgresTests
             indicador.AffectedDetailLimitation.Should().BeNull("campo ausente permanece ausente");
             (await db.KnightAffectedObjects.AsNoTracking().CountAsync()).Should()
                 .Be(0, "nada é retropreenchido com a coleta de hoje — isso seria apresentar o presente como prova do passado");
+
+            // [AEGIS-ADM-01] A avaliação legada não passa a ter procedência de coleta. Ela é anterior ao ADM:
+            // carimbá-la com a aquisição de hoje seria apresentar o presente como prova do passado.
+            var runLegado = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == runId);
+            runLegado.IdentityAcquisitionId.Should().BeNull(
+                "uma avaliação anterior ao ADM não sabe de qual coleta nasceu, e não é retropreenchida");
+            (await db.IdentityAcquisitions.AsNoTracking().CountAsync()).Should()
+                .Be(0, "a migração cria estrutura, não evidência: nenhuma aquisição é inventada");
+            (await db.IdentityEntities.AsNoTracking().CountAsync()).Should()
+                .Be(0, "nenhuma identidade canônica nasce de uma migração de schema");
+            (await db.IdentitySourceLinks.AsNoTracking().CountAsync()).Should().Be(0);
+            (await db.IdentityEntityObservations.AsNoTracking().CountAsync()).Should().Be(0);
+            (await db.IdentityObservationSetStates.AsNoTracking().CountAsync()).Should().Be(0);
 
             var foto = await db.PostureSnapshots.AsNoTracking().SingleAsync(s => s.Id == snapshotId);
             foto.SourceRunId.Should().BeNull(
@@ -189,7 +220,8 @@ public sealed class DatabaseUpgradePostgresTests
 
         _output.WriteLine(
             $"Atualização verificada: {PontoAnterior} -> {string.Join(" -> ", Pendentes)} " +
-            "(migrator real, dados legados preservados, reexecução idempotente).");
+            $"(marco histórico preservado: {string.Join(" -> ", MarcoHistorico)}; " +
+            "migrator real, dados legados preservados, reexecução idempotente).");
     }
 
     /// <summary>

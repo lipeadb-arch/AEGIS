@@ -280,7 +280,7 @@ public sealed class DashboardOverviewPostgresTests
             new WorkspacePostureQuery(db, ctx),
             new PostureExposureQuery(db, ctx, StaticExposureLanguageCatalog.Empty),
             new VulnerabilityQuery(db, ctx),
-            new IdentityEvidenceService(db, new KnightCollectorRegistry(new[] { new ThrowingCollector() }), new FixedConfig(), ctx),
+            new IdentityEvidenceService(db, new KnightCollectorRegistry(new[] { new ThrowingCollector() }), new FixedConfig(), new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, ctx), ctx),
             new MaturityScoringService(),
             new IcrScoringService(),
             new FixedClock(Now));
@@ -365,7 +365,7 @@ public sealed class DashboardOverviewPostgresTests
         {
             var ctx = new SystemTenantContext(tenant);
             var registry = new KnightCollectorRegistry(new[] { new FixedCollector(PartialCollection()) });
-            await new IdentityEvidenceService(db, registry, new FixedConfig(), ctx).CollectAsync();
+            await new IdentityEvidenceService(db, registry, new FixedConfig(), new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, ctx), ctx).CollectAsync();
         }
 
         await using (var assert = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
