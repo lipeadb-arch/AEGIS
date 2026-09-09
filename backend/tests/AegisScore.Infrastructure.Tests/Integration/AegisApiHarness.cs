@@ -124,35 +124,68 @@ internal sealed class AegisApiHarness : IAsyncDisposable
 
         try
         {
-            // 1) O banco é preparado pelo MIGRATOR REAL — o mesmo binário da implantação, com migrations,
-            //    seed do catálogo NIST/regras e verificação final. A API só CONSTATA a prontidão no boot.
-            var exit = await RunMigratorAsync(pg.ConnectionString);
-            if (exit != AegisScore.DbMigrator.MigratorExitCode.Success)
-                throw new InvalidOperationException(
-                    $"AegisScore.DbMigrator não preparou o banco descartável (exit={exit}). " +
-                    "Sem preparação aprovada a API se recusa a subir — e é isso que ela deve fazer.");
+            // A preparação do banco E a construção do host acontecem sob o MESMO portão. Não é zelo
+            // excessivo: `WebApplication.CreateBuilder` adiciona `AddEnvironmentVariables()` DEPOIS da
+            // configuração do host, então uma variável de ambiente VENCE o `UseSetting`. Enquanto outra
+            // classe de teste roda o migrator (que define ConnectionStrings__AegisScore por alguns
+            // segundos), um host construído em paralelo apontaria para o banco DELA.
+            await MigratorGate.WaitAsync();
+            try
+            {
+                // 1) O banco é preparado pelo MIGRATOR REAL — o mesmo binário da implantação, com
+                //    migrations, seed do catálogo NIST/regras e verificação final. A API só CONSTATA a
+                //    prontidão no boot.
+                var exit = await RunMigratorUnguardedAsync(pg.ConnectionString, Array.Empty<string>());
+                if (exit != AegisScore.DbMigrator.MigratorExitCode.Success)
+                    throw new InvalidOperationException(
+                        $"AegisScore.DbMigrator não preparou o banco descartável (exit={exit}). " +
+                        "Sem preparação aprovada a API se recusa a subir — e é isso que ela deve fazer.");
 
-            // 2) Segredos 100% sintéticos, existentes apenas nesta execução. A chave de assinatura é gerada
-            //    agora: nenhum segredo versionado, nenhum valor previsível.
-            var signingKey = Convert.ToBase64String(
-                System.Security.Cryptography.RandomNumberGenerator.GetBytes(48));
-            var anchor = new DateTimeOffset(DateTime.UtcNow.AddDays(-30).Date, TimeSpan.Zero).AddHours(9);
-            var clock = new FakeTimeProvider(anchor);
-            var entra = new ScriptedIdentityCollector();
+                // 2) Segredos 100% sintéticos, existentes apenas nesta execução. A chave de assinatura é
+                //    gerada agora: nenhum segredo versionado, nenhum valor previsível.
+                var signingKey = Convert.ToBase64String(
+                    System.Security.Cryptography.RandomNumberGenerator.GetBytes(48));
+                var anchor = new DateTimeOffset(DateTime.UtcNow.AddDays(-30).Date, TimeSpan.Zero).AddHours(9);
+                var clock = new FakeTimeProvider(anchor);
+                var entra = new ScriptedIdentityCollector();
 
-            var factory = new AegisWebApplicationFactory(pg.ConnectionString, signingKey, clock, entra);
+                var factory = new AegisWebApplicationFactory(pg.ConnectionString, signingKey, clock, entra);
 
-            // Força a construção do host AGORA: o bloco de arranque do Program.cs (SchemaReadinessGuard) roda
-            // aqui, então uma preparação de banco incompleta falha no lugar certo, e não dentro de um teste.
-            _ = factory.Services;
+                // Força a construção do host AGORA: o bloco de arranque do Program.cs
+                // (SchemaReadinessGuard) roda aqui, então uma preparação de banco incompleta falha no lugar
+                // certo, e não dentro de um teste.
+                EnsureBoundTo(factory, pg.ConnectionString);
 
-            return new AegisApiHarness(pg, factory, clock, entra, anchor);
+                return new AegisApiHarness(pg, factory, clock, entra, anchor);
+            }
+            finally
+            {
+                MigratorGate.Release();
+            }
         }
         catch
         {
             await pg.DisposeAsync();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Constrói o host e CONFERE que ele ficou ligado ao banco descartável desta instância. Um host apontado
+    /// para outro banco produziria falhas que parecem defeito de produto e não são — melhor falhar aqui, com
+    /// a causa dita.
+    /// </summary>
+    private static void EnsureBoundTo(WebApplicationFactory<Program> factory, string expected)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AegisScoreDbContext>();
+        var atual = new Npgsql.NpgsqlConnectionStringBuilder(db.Database.GetConnectionString()).Database;
+        var esperado = new Npgsql.NpgsqlConnectionStringBuilder(expected).Database;
+        if (!string.Equals(atual, esperado, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"O host da API subiu ligado ao banco '{atual}', e não ao descartável '{esperado}' desta " +
+                "execução. A configuração do harness foi sobreposta — investigar antes de confiar em qualquer " +
+                "resultado desta bateria.");
     }
 
     // ---- Clientes HTTP -----------------------------------------------------------------------------
@@ -277,6 +310,22 @@ internal sealed class AegisApiHarness : IAsyncDisposable
     public static async Task<int> RunMigratorAsync(string connectionString, params string[] args)
     {
         await MigratorGate.WaitAsync();
+        try
+        {
+            return await RunMigratorUnguardedAsync(connectionString, args);
+        }
+        finally
+        {
+            MigratorGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// O migrator em si. Só pode ser chamado com o <see cref="MigratorGate"/> JÁ adquirido: ele muda
+    /// variáveis de ambiente, que são estado global do processo.
+    /// </summary>
+    private static async Task<int> RunMigratorUnguardedAsync(string connectionString, string[] args)
+    {
         var previousConnection = Environment.GetEnvironmentVariable("ConnectionStrings__AegisScore");
         var previousEnvironment = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT");
         var previousBootstrap = Environment.GetEnvironmentVariable("Bootstrap__Enabled");
@@ -294,7 +343,6 @@ internal sealed class AegisApiHarness : IAsyncDisposable
             Environment.SetEnvironmentVariable("ConnectionStrings__AegisScore", previousConnection);
             Environment.SetEnvironmentVariable("DOTNET_ENVIRONMENT", previousEnvironment);
             Environment.SetEnvironmentVariable("Bootstrap__Enabled", previousBootstrap);
-            MigratorGate.Release();
         }
     }
 
