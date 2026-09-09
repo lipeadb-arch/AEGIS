@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Advisories;
 using AegisScore.Application.Identity;
+using AegisScore.Application.Identity.Adm;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Posture;
 using AegisScore.Application.Remediation;
@@ -202,6 +203,11 @@ public static class DependencyInjection
         // (reusa o coletor do KNIGHT + transporte/credencial existentes) e de persistência do snapshot normalizado.
         // KNIGHT (assessment) e a rota de postura NIST convergem para cá — uma aquisição por operação lógica.
         services.AddScoped<IIdentityEvidenceService, IdentityEvidenceService>();
+
+        // [AEGIS-ADM-01] ADM de identidade: reconciliação da aquisição, das entidades canônicas e dos vínculos
+        // de origem. Scoped e sobre o MESMO DbContext do serviço de evidência — é o que permite que a aquisição
+        // e o snapshot agregado entrem no mesmo SaveChanges, sem avaliação sustentada por registro inexistente.
+        services.AddScoped<IIdentityAcquisitionStore, IdentityAcquisitionStore>();
 
         // [AEGIS-AUD-035/036/037] Fotografia AUDITÁVEL de postura — publicação controlada (o servidor constrói
         // pela autoridade do domínio: aegis-score-v1 sobre o ledger e o último assessment knight-score-v1),

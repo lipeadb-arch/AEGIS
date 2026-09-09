@@ -128,6 +128,15 @@ public class AegisScoreDbContext : DbContext
     // Entra ID → KNIGHT + projeção NIST + dashboard + relatórios). Snapshot ATUAL por (tenant, conector), sem PII.
     public DbSet<IdentityEvidenceSnapshot> IdentityEvidenceSnapshots => Set<IdentityEvidenceSnapshot>();
 
+    // [AEGIS-ADM-01] AEGIS Data Model — recorte de identidade. A AQUISIÇÃO é a evidência identificável da
+    // coleta; a ENTIDADE é a projeção do estado atual; o VÍNCULO amarra a entidade à origem real; a OBSERVAÇÃO
+    // é o objeto como foi observado; o ESTADO POR CONJUNTO carrega a completude. Ver IdentityDataModel.cs.
+    public DbSet<IdentityAcquisition> IdentityAcquisitions => Set<IdentityAcquisition>();
+    public DbSet<IdentityEntity> IdentityEntities => Set<IdentityEntity>();
+    public DbSet<IdentitySourceLink> IdentitySourceLinks => Set<IdentitySourceLink>();
+    public DbSet<IdentityEntityObservation> IdentityEntityObservations => Set<IdentityEntityObservation>();
+    public DbSet<IdentityObservationSetState> IdentityObservationSetStates => Set<IdentityObservationSetState>();
+
     // [AEGIS-AUD-035/036/037] Fotografia AUDITÁVEL e IMUTÁVEL de postura (histórico compartilhado AEGIS
     // Score/NIST e KNIGHT). Append-only: sem update/delete (reforçado por gatilho no PostgreSQL — ver migration).
     public DbSet<PostureSnapshot> PostureSnapshots => Set<PostureSnapshot>();
@@ -192,6 +201,10 @@ public class AegisScoreDbContext : DbContext
             .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
         // [AEGIS-MVP-PRODUCT-02] Papéis do objeto afetado → jsonb (mesmo idioma das listas acima).
         b.Entity<KnightAffectedObject>().Property(x => x.Roles)
+            .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
+        // [AEGIS-ADM-01] Papéis COMO OBSERVADOS pela aquisição → jsonb (mesmo idioma). Note que estes são a
+        // evidência daquele momento, e não o cadastro atual — por isso vivem na observação, não na entidade.
+        b.Entity<IdentityEntityObservation>().Property(x => x.RolesObserved)
             .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
 
         // Computed properties — never persisted.
@@ -476,6 +489,122 @@ public class AegisScoreDbContext : DbContext
                 .HasForeignKey(x => new { x.ConnectorConfigId, x.TenantId })
                 .HasPrincipalKey(c => new { c.Id, c.TenantId })
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ============================================================
+        //  [AEGIS-ADM-01] AEGIS Data Model — recorte de identidade
+        // ============================================================
+
+        // AQUISIÇÃO: a evidência identificável de UMA coleta. Não há chave natural única — cada coleta é uma
+        // linha nova, inclusive quando observa exatamente o mesmo conteúdo (o ContentFingerprint RECONHECE a
+        // repetição, e deliberadamente não a deduplica). A FK COMPOSTA tenant-safe ao conector faz o banco
+        // recusar aquisição de conector inexistente ou de OUTRO tenant; a chave alternativa (Id, TenantId) é o
+        // alvo das FKs dos filhos, no mesmo idioma já usado por KnightAssessmentRun e PostureSnapshot.
+        b.Entity<IdentityAcquisition>(e =>
+        {
+            e.Property(x => x.DirectoryNamespace).HasMaxLength(200).IsRequired();
+            e.Property(x => x.SourceLabel).HasMaxLength(200).IsRequired();
+            e.Property(x => x.SchemaVersion).HasMaxLength(60).IsRequired();
+            e.Property(x => x.NormalizationVersion).HasMaxLength(60).IsRequired();
+            e.Property(x => x.Detail).HasMaxLength(1000);
+            e.Property(x => x.ContentFingerprint).HasMaxLength(64);
+            e.Property(x => x.Provider).HasConversion<int>();
+            e.Property(x => x.State).HasConversion<int>();
+            e.Property(x => x.FactsJson).HasColumnType("jsonb").IsRequired();
+            e.Property(x => x.CapabilitiesJson).HasColumnType("jsonb").IsRequired();
+            e.Ignore(x => x.ProducedData);
+
+            // Leitura "última aquisição desta origem": seek por tenant + conector, ordenado por instante.
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.AcquiredAt });
+            // Leitura por DIRETÓRIO — o eixo que separa duas origens configuradas no mesmo tenant.
+            e.HasIndex(x => new { x.TenantId, x.DirectoryNamespace, x.AcquiredAt });
+
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            e.HasOne<ConnectorConfig>()
+                .WithMany()
+                .HasForeignKey(x => new { x.ConnectorConfigId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasMany(x => x.Sets).WithOne(s => s.Acquisition)
+                .HasForeignKey(s => new { s.AcquisitionId, s.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasMany(x => x.Observations).WithOne(o => o.Acquisition)
+                .HasForeignKey(o => new { o.AcquisitionId, o.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ENTIDADE canônica: a PROJEÇÃO do estado atual. Sobrevive à remoção do conector de propósito — o que
+        // desaparece com a integração é a EVIDÊNCIA (aquisições e observações), não o que já se sabe sobre a
+        // identidade. Sem índice único: a unicidade da identidade é imposta no VÍNCULO, que é onde ela existe.
+        b.Entity<IdentityEntity>(e =>
+        {
+            e.Property(x => x.DisplayName).HasMaxLength(300);
+            e.Property(x => x.UserPrincipalName).HasMaxLength(320);
+            e.Property(x => x.Kind).HasConversion<int>();
+            e.HasIndex(x => new { x.TenantId, x.LastObservedAt });
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            e.HasMany(x => x.SourceLinks).WithOne(l => l.IdentityEntity)
+                .HasForeignKey(l => new { l.IdentityEntityId, l.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // VÍNCULO com a origem: aqui mora a IDENTIDADE. O índice ÚNICO (TenantId, DirectoryNamespace,
+        // ExternalId) é a invariante de BANCO que carrega as três regras de unificação do pacote:
+        //   • o mesmo objeto em dois conjuntos resolve para a MESMA entidade;
+        //   • o mesmo identificador em OUTRO diretório resolve para uma entidade DIFERENTE (é o que impede
+        //     que trocar a configuração reaproveite os vínculos do diretório anterior);
+        //   • nome/UPN não participam da chave — homônimos e convidados B2B nunca são fundidos.
+        // ConnectorConfigId é PROVENIÊNCIA da última observação e NÃO tem FK: remover a integração não pode
+        // apagar o que já se sabe sobre as identidades, e o vínculo continua dizendo de onde ele veio.
+        b.Entity<IdentitySourceLink>(e =>
+        {
+            e.Property(x => x.DirectoryNamespace).HasMaxLength(200).IsRequired();
+            e.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Provider).HasConversion<int>();
+            e.HasIndex(x => new { x.TenantId, x.DirectoryNamespace, x.ExternalId })
+                .IsUnique()
+                .HasDatabaseName("UX_IdentitySourceLink_Natural");
+            e.HasIndex(x => new { x.TenantId, x.IdentityEntityId });
+        });
+
+        // OBSERVAÇÃO: a evidência do objeto NAQUELA aquisição. Índice único (tenant, aquisição, entidade,
+        // conjunto) — a mesma aquisição não registra o mesmo objeto duas vezes no mesmo conjunto, e é isso que
+        // torna o retry idempotente no BANCO, não apenas no código. O MESMO objeto em DOIS conjuntos produz
+        // duas linhas, por construção.
+        b.Entity<IdentityEntityObservation>(e =>
+        {
+            e.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.DisplayNameObserved).HasMaxLength(300);
+            e.Property(x => x.UserPrincipalNameObserved).HasMaxLength(320);
+            e.Property(x => x.Detail).HasMaxLength(1000);
+            e.Property(x => x.Kind).HasConversion<int>();
+            e.Property(x => x.Set).HasConversion<int>();
+            e.HasIndex(x => new { x.TenantId, x.AcquisitionId, x.IdentityEntityId, x.Set })
+                .IsUnique()
+                .HasDatabaseName("UX_IdentityEntityObservation_Natural");
+            e.HasIndex(x => new { x.TenantId, x.IdentityEntityId, x.ObservedAt });
+
+            e.HasOne(x => x.IdentityEntity).WithMany()
+                .HasForeignKey(x => new { x.IdentityEntityId, x.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // COMPLETUDE por conjunto: um estado por (aquisição, conjunto). É a linha que impede a leitura ambígua
+        // de uma lista vazia — "o conjunto está vazio" e "o conjunto não pôde ser lido" deixam de ser iguais.
+        b.Entity<IdentityObservationSetState>(e =>
+        {
+            e.Property(x => x.Set).HasConversion<int>();
+            e.Property(x => x.Outcome).HasConversion<int>();
+            e.Property(x => x.Limitation).HasMaxLength(1000);
+            e.HasIndex(x => new { x.TenantId, x.AcquisitionId, x.Set })
+                .IsUnique()
+                .HasDatabaseName("UX_IdentityObservationSetState_Natural");
         });
 
         // Conector: UM registro por (tenant, provedor, capacidade) — a chave NATURAL da configuração.
@@ -1194,6 +1323,14 @@ public class AegisScoreDbContext : DbContext
         // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidência de identidade é ITenantOwned (fail-closed): um tenant jamais lê,
         // projeta ou altera a evidência de outro. Stamping do TenantId no insert é automático (SaveChanges guard).
         b.Entity<IdentityEvidenceSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-ADM-01] ADM de identidade — aquisição, entidade, vínculo, observação e completude são todos
+        // ITenantOwned (fail-closed). Um tenant estrangeiro não lê a aquisição de outro, não resolve os
+        // vínculos de outro e, pelo guard de escrita + FKs compostas, também não escreve neles.
+        b.Entity<IdentityAcquisition>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<IdentityEntity>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<IdentitySourceLink>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<IdentityEntityObservation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<IdentityObservationSetState>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         // Fotografia auditável de postura — pai e filhos são ITenantOwned (fail-closed): um tenant jamais lê,
         // consulta ou compara a fotografia de outro.
         b.Entity<PostureSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
