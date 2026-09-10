@@ -128,33 +128,16 @@ public sealed class DashboardOverviewQuery : IDashboardOverviewQuery
     {
         var assets = await BuildAssetsMetricAsync(connectors, ct);
 
-        // Exposições de configuração: o resumo já distingue "nunca coletado" por LastCollectedAt nulo.
-        var exposuresCollected = exposures.LastCollectedAt is not null;
-        var configurationExposures = exposuresCollected
-            ? new DashboardMetricDto(
-                DashboardSignalState.Available, exposures.TotalOpen, exposures.SourceLabel, exposures.LastCollectedAt)
-            : new DashboardMetricDto(
-                DashboardSignalState.NeverCollected, null, exposures.SourceLabel, null,
-                "Ainda não coletado — nenhuma leitura de configuração foi feita neste ambiente.");
+        // [AEGIS-LANGUAGE-STATES-01] Recomendações de postura e vulnerabilidades pela MESMA derivação que o
+        // contexto do Auditor usa (CollectionReadings): "sem fonte" × "fonte sem coleta" × "última leitura com
+        // tentativa recente falha" × "escopo parcial" chegam distintos, e ausência continua sendo nulo, nunca zero.
+        var configurationExposures = CollectionReadings.PostureRecommendations(exposures);
 
-        // Vulnerabilidades: NeverCollected é um campo EXPLÍCITO do resumo — respeitado sem reinterpretação.
-        var vulnerabilitySource = vulnerabilities.Sources.Count > 0
-            ? string.Join(" · ", vulnerabilities.Sources.Select(s => s.Provider).Distinct())
-            : "Gestão de vulnerabilidades";
+        var vulnerabilityMetric = CollectionReadings.Vulnerabilities(vulnerabilities, vulnerabilities.DistinctCvesOpen);
 
-        var vulnerabilityMetric = vulnerabilities.NeverCollected
-            ? new DashboardMetricDto(
-                DashboardSignalState.NeverCollected, null, vulnerabilitySource, null,
-                "Ainda não coletado — nenhuma varredura de vulnerabilidades chegou a este ambiente.")
-            : new DashboardMetricDto(
-                DashboardSignalState.Available, vulnerabilities.DistinctCvesOpen, vulnerabilitySource,
-                vulnerabilities.LastCollectedAt);
-
-        var affectedAssets = vulnerabilities.NeverCollected
-            ? new DashboardMetricDto(DashboardSignalState.NeverCollected, null, vulnerabilitySource)
-            : new DashboardMetricDto(
-                DashboardSignalState.Available, vulnerabilities.AffectedAssetsOpen, vulnerabilitySource,
-                vulnerabilities.LastCollectedAt);
+        // A nota de escopo/falha já acompanha a métrica de vulnerabilidades; repeti-la aqui duplicaria o aviso.
+        var affectedAssets = CollectionReadings.Vulnerabilities(
+            vulnerabilities, vulnerabilities.AffectedAssetsOpen, withNote: false);
 
         // Identidade: a contagem exibida é de capacidades ENTREGUES, não de usuários (o snapshot é agregado
         // e sem PII). O estado vem do estado de coleta da Evidence Fabric, preservado sem reinterpretação.

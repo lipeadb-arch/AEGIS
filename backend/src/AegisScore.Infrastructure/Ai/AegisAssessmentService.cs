@@ -214,7 +214,9 @@ public sealed class AegisAssessmentService : IAiAssessmentService
         const string system =
             "You are a CISO advisor. Write a concise executive 'Plano Diretor de Segurança' section in " +
             "Brazilian Portuguese: current maturity by process, top risks, control weaknesses and " +
-            "improvement opportunities — in business language, not technical jargon. Markdown.";
+            "improvement opportunities — in business language, not technical jargon. Markdown. " +
+            "Use ONLY facts present in the user message; for any section without data write " +
+            "\"não há dados suficientes\". Never invent maturity levels, risks, impact, criticality or scores.";
         var user = $"Cliente: {request.ClientName}. Assessment: {request.AssessmentId}.";
         return await CompleteTextAsync(system, user, ct);
     }
@@ -241,10 +243,14 @@ public sealed class AegisAssessmentService : IAiAssessmentService
     {
         const string system =
             "You are a senior SOC/MSSP remediation advisor specialized in NIST CSF 2.0. Given ONE " +
-            "subcategory code, write a remediation advisory the client's IT team can execute to raise " +
-            "their Secure Score for that control. Reply in Brazilian Portuguese. Provide a short actionable " +
-            "title, a 'documentedRisk' explaining WHY the gap matters (business/risk language), and a " +
-            "numbered, technical 'technicalSteps' the IT team follows. " +
+            "subcategory code, write a remediation advisory the client's IT team can execute to implement AND " +
+            "evidence that subcategory's outcome, so the AEGIS assessment can re-evaluate it. The AEGIS Score " +
+            "(NIST CSF controls) and the Microsoft Secure Score are DIFFERENT scales: never promise a Secure Score " +
+            "change. Cover the FULL outcome of the subcategory — a single example (e.g. MFA for administrators) is " +
+            "not the whole control. Reply in Brazilian Portuguese. Provide a short actionable title, a " +
+            "'documentedRisk' explaining WHY the gap matters in general terms (you have NO tenant data: do not " +
+            "invent observed threats, impact, criticality or effectiveness), and a numbered, technical " +
+            "'technicalSteps' the IT team follows, ending with the evidence to collect. " +
             "Respond ONLY with JSON: {\"title\":\"..\",\"documentedRisk\":\"..\",\"technicalSteps\":\"..\"}.";
         var user = $"SUBCATEGORY: {request.SubcategoryCode}";
 
@@ -292,16 +298,39 @@ public sealed class AegisAssessmentService : IAiAssessmentService
         "seria preciso coletar — não preencha lacunas com suposição.\n" +
         "• O score oficial, os pontos e a cobertura são DETERMINÍSTICOS: reporte os valores do contexto, " +
         "nunca recalcule por conta própria.\n\n" +
-        "EXPOSIÇÕES DE CONFIGURAÇÃO (campo TopExposures do contexto, quando houver — modelo Microsoft Secure Score):\n" +
-        "• São RECOMENDAÇÕES DE POSTURA da fonte — NÃO são CVEs nem vulnerabilidades de ativo. Nunca invente CVE, " +
-        "ativo afetado ou evidência.\n" +
+        // [AEGIS-LANGUAGE-STATES-01] Mesmo vocabulário das telas: três escalas distintas e o estado de leitura das
+        // fontes. Sem isso, a IA atribuía ao Secure Score resultados de controles NIST e lia lista vazia como zero.
+        "ESCALAS DISTINTAS (nunca misture nem converta uma na outra):\n" +
+        "• ScoreState/ScorePercentage/CoveragePercentage do contexto são do AEGIS Score: pontos obtidos nos controles " +
+        "NIST CSF AVALIADOS; a cobertura é a fração de controles elegíveis que foi avaliada. NÃO é o Microsoft Secure " +
+        "Score, NÃO é o score do AEGIS KNIGHT (escala própria de identidade), NÃO é probabilidade de incidente e NÃO é " +
+        "nível de maturidade.\n" +
+        "• O Microsoft Secure Score é o índice DA FONTE Microsoft e só aparece nas recomendações de postura. Resultado " +
+        "de controle NIST não é resultado do Secure Score, e vice-versa.\n\n" +
+        "ESTADO DAS FONTES (campo SourceReadings do contexto):\n" +
+        "• State NoSource = integração não configurada; NeverCollected = configurada, sem coleta concluída; Available = " +
+        "existe leitura. Value nulo NÃO é zero. Lista vazia em TopExposures/TopVulnerabilities com a fonte em NoSource " +
+        "ou NeverCollected significa AUSÊNCIA DE COLETA — nunca \"nenhum problema\".\n" +
+        "• Note carrega ressalvas (tentativa recente falha: o dado é a última leitura disponível; escopo parcial: nem " +
+        "todas as fontes foram coletadas). Ao usar o número, repita a ressalva.\n\n" +
+        "RECOMENDAÇÕES DE POSTURA (campo TopExposures do contexto, quando houver — fonte: Microsoft Secure Score):\n" +
+        "• São RECOMENDAÇÕES da fonte. O gap é a DIFERENÇA DE PONTOS que a fonte ainda não credita: sozinho, ele NÃO " +
+        "comprova configuração insegura, exposição de ativo, vulnerabilidade ou CVE. Uma configuração insegura PODE " +
+        "constituir vulnerabilidade — afirme isso só com evidência no contexto. Nunca invente CVE, ativo afetado ou evidência.\n" +
+        "• O campo Threats lista as ameaças que a recomendação VISA MITIGAR segundo a fonte — não são ameaças observadas " +
+        "no ambiente.\n" +
+        "• Recomendação que deixou de constar como pendente NÃO é correção validada: indica só que a fonte deixou de " +
+        "apontar diferença de pontos.\n" +
         "• Os campos PERSISTIDOS (rank, gap, score, estado) e o AEGIS Score determinístico são AUTORITATIVOS; sua " +
         "resposta é CONSULTIVA.\n" +
-        "• Você PODE explicar o impacto, correlacionar as exposições com lacunas NIST e a postura existente, e " +
-        "sugerir uma SEQUÊNCIA de remediação (do menor rank / maior gap para o restante).\n" +
-        "• Você NÃO abre, fecha ou aceita exposição; NÃO altera rank, gap, score, severidade ou estado; NÃO muda o " +
+        "• Você PODE explicar por que a recomendação costuma importar, correlacioná-la com lacunas NIST e a postura " +
+        "existente, e sugerir uma SEQUÊNCIA de revisão (do menor rank / maior gap para o restante).\n" +
+        "• Você NÃO abre, fecha ou aceita recomendação; NÃO altera rank, gap, score, severidade ou estado; NÃO muda o " +
         "estado de um controle; e NÃO transforma uma recomendação Microsoft em conformidade NIST automaticamente.\n\n" +
-        "VULNERABILIDADES (campo TopVulnerabilities do contexto, quando houver — CVEs de ATIVOS, multicloud, ex.: Microsoft Defender, Google Cloud VM Manager):\n" +
+        "VULNERABILIDADES (campo TopVulnerabilities do contexto, quando houver — vulnerabilidades de ATIVOS, multicloud, ex.: Microsoft Defender, Google Cloud VM Manager):\n" +
+        "• Distinga vulnerabilidade IDENTIFICADA pela fonte, severidade TÉCNICA (CVSS/EPSS), exploit CONHECIDO, alerta " +
+        "associado e comprometimento CONFIRMADO — só os dois primeiros vêm neste campo. CVSS não é risco de negócio, e " +
+        "nem toda vulnerabilidade tem CVE.\n" +
         "• Cada item é um GRUPO de vulnerabilidade: UM CVE observado em VÁRIOS ativos. O campo AffectedAssetCount é o " +
         "ALCANCE (quantos ativos), NÃO uma linha por ativo — nunca trate o mesmo CVE como itens separados por ativo. O " +
         "grupo traz FATOS DA FONTE (CVE, severidade, CVSS, EPSS, ExploitStatus), o título CLARO já derivado e as FONTES " +
@@ -338,13 +367,16 @@ public sealed class AegisAssessmentService : IAiAssessmentService
     private static string ScopeFocus(AuditorScope scope) => scope switch
     {
         AuditorScope.Global =>
-            "ESCOPO: GLOBAL. Aja como gerador de relatórios executivos do Secure Score atual: sintetize a " +
-            "postura por Função NIST, destaque as maiores lacunas por risco e recomende prioridades para o board. " +
-            "Linguagem de negócio, não jargão técnico.",
+            "ESCOPO: GLOBAL. Aja como gerador de relatórios executivos da postura AEGIS atual: sintetize o AEGIS " +
+            "Score e a cobertura por Função NIST, destaque as maiores lacunas de controle e o estado das fontes, e " +
+            "recomende prioridades para o board. Linguagem de negócio, não jargão técnico — sem apresentar score " +
+            "como probabilidade de incidente.",
         AuditorScope.Protect =>
-            "ESCOPO: PROTECT (PR). Audite APENAS controles de proteção (PR.AA, PR.DS, PR.PS, PR.IR). Exija " +
-            "métricas concretas: MFA privilegiado (meta 100%), Conditional Access, criptografia de endpoint (≥95%), " +
-            "hardening CIS (≥80%) e zero patch crítico pendente. Privilégio sem MFA é falha crítica.",
+            "ESCOPO: PROTECT (PR). Audite APENAS controles de proteção (PR.AA, PR.DS, PR.PS, PR.IR). PR.AA cobre o " +
+            "ciclo de vida de identidades e credenciais de usuários, serviços e dispositivos — MFA de contas " +
+            "privilegiadas é UM exemplo, não o controle inteiro. Peça métricas concretas quando o contexto não as " +
+            "trouxer: MFA privilegiado, Conditional Access, criptografia de endpoint, hardening e patches críticos " +
+            "pendentes. Privilégio sem MFA é falha crítica.",
         AuditorScope.Detect =>
             "ESCOPO: DETECT (DE). Foque em DE.AE e DE.CM: cobertura de logs críticos (≥95%), ativos críticos " +
             "monitorados, taxa de falso-positivo, cobertura MITRE ATT&CK e detecção de ataques simulados. Ponto cego " +

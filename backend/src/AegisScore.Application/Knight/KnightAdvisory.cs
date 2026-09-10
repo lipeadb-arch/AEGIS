@@ -105,11 +105,14 @@ public static class KnightAdvisoryFallback
         var scoreText = input.Score is { } sc
             ? sc.ToString("0", System.Globalization.CultureInfo.InvariantCulture)
             : "indisponível (nenhum indicador avaliado)";
+        // [AEGIS-LANGUAGE-STATES-01] Mesmo vocabulário das telas: o score é o do KNIGHT (escala própria), a
+        // cobertura é a fração de indicadores avaliados, e "exposto" é o veredito da regra — sem afirmar mais.
         var summary =
-            $"Interpretação determinística (fallback, sem IA). Postura KNIGHT: score {scoreText}, "
-            + $"cobertura {input.Coverage.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)}%. "
-            + $"{exposed} exposição(ões), {mitigated} mitigada(s) e {passed} conforme(s) "
-            + $"entre {indicators.Count} indicador(es). Priorize os itens expostos de maior severidade.";
+            $"Interpretação determinística (fallback, sem IA). Score KNIGHT (escala própria): {scoreText}; "
+            + $"cobertura de {input.Coverage.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)}% dos indicadores aplicáveis. "
+            + $"{exposed} indicador(es) com veredito exposto, {mitigated} mitigado(s) e {passed} conforme(s) "
+            + $"entre {indicators.Count} indicador(es). Priorize os expostos de maior severidade; indicadores não "
+            + "avaliados permanecem desconhecidos, não conformes.";
 
         var priorityRisks = ranked
             .Take(3)
@@ -154,7 +157,7 @@ public static class KnightAdvisoryFallback
                 var shared = exposed[a].NistCodes.Intersect(exposed[b].NistCodes, StringComparer.Ordinal).ToList();
                 if (shared.Count == 0) continue;
                 correlations.Add(new KnightCorrelation(
-                    $"Exposições relacionadas pelo(s) controle(s) NIST {string.Join(", ", shared)} — tratar em conjunto amplia o efeito da correção.",
+                    $"Achados relacionados pelo(s) controle(s) NIST {string.Join(", ", shared)} — podem ser revisados em conjunto.",
                     new[] { exposed[a].IndicatorId, exposed[b].IndicatorId }));
             }
         }

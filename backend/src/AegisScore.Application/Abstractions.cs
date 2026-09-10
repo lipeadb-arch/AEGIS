@@ -112,7 +112,19 @@ public sealed record AuditorTenantContext(
     IReadOnlyList<AuditorVulnerability>? TopVulnerabilities = null,
     // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (regras do SIEM × MITRE), CONSULTIVA e LIMITADA. Só
     // agregados + técnicas priorizadas — nunca nome/texto de regra, credencial ou payload. Opcional/default null.
-    AuditorDetectionCoverage? DetectionCoverage = null);
+    AuditorDetectionCoverage? DetectionCoverage = null,
+    // [AEGIS-LANGUAGE-STATES-01] Estado de LEITURA de cada fonte (sem fonte / sem coleta / disponível, com a
+    // ressalva de falha recente ou escopo parcial). Sem isto, uma lista vazia de exposições ou vulnerabilidades
+    // chegava à IA igual a "coletado sem achados". Opcional/default null.
+    IReadOnlyList<AuditorSourceReading>? SourceReadings = null);
+
+/// <summary>
+/// [AEGIS-LANGUAGE-STATES-01] O que se pode afirmar sobre a leitura de UMA fonte — mesma derivação da Visão
+/// geral (<c>CollectionReadings</c>). <paramref name="Value"/> é nulo quando não há leitura (nunca 0 por
+/// ausência); <paramref name="Note"/> carrega a ressalva de falha recente ou de escopo parcial.
+/// </summary>
+public sealed record AuditorSourceReading(
+    string Dimension, string Source, string State, long? Value, DateTimeOffset? LastCollectedAt, string? Note);
 
 /// <summary>
 /// [AEGIS-MVP-VULN-01] Uma vulnerabilidade (exposição ativo×CVE) para o contexto do Auditor — FATO DA FONTE,

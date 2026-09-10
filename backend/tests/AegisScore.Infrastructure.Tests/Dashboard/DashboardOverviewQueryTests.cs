@@ -211,7 +211,87 @@ public sealed class DashboardOverviewQueryTests : IDisposable
         overview.Sources.Items[0].StaleDays.Should().Be(DashboardOverviewDto.StaleAfterDays + 3);
     }
 
+    // ---- [AEGIS-LANGUAGE-STATES-01] Estados de informação das fontes ------------------------------------
+    //
+    // O defeito: "sem integração" e "integração configurada sem coleta" chegavam iguais (NeverCollected), e
+    // uma leitura antiga depois de uma tentativa FALHA chegava como leitura íntegra, sem ressalva. O mesmo
+    // valia para vulnerabilidades com parte das fontes ainda sem coleta: o número parecia cobrir o ambiente.
+
+    [Fact]
+    public async Task RecomendacoesDePostura_SemFonte_E_FonteSemColeta_SaoEstadosDistintos()
+    {
+        await using var db = NewContext();
+
+        var semFonte = await QueryFor(db, exposures: ExposuresWith(ExposureSummary(0, null))).GetAsync();
+        semFonte.Environment.ConfigurationExposures.State.Should().Be(DashboardSignalState.NoSource);
+        semFonte.Environment.ConfigurationExposures.Value.Should().BeNull();
+
+        var semColeta = await QueryFor(db, exposures: ExposuresWith(
+            ExposureSummary(0, null) with { SourceConfigured = true, LastAttemptStatus = "Unknown" })).GetAsync();
+        semColeta.Environment.ConfigurationExposures.State.Should().Be(DashboardSignalState.NeverCollected);
+        semColeta.Environment.ConfigurationExposures.Value.Should().BeNull("configurado sem coleta não é zero");
+
+        var primeiraFalhou = await QueryFor(db, exposures: ExposuresWith(
+            ExposureSummary(0, null) with { SourceConfigured = true, LastAttemptStatus = "Failed" })).GetAsync();
+        primeiraFalhou.Environment.ConfigurationExposures.State.Should().Be(DashboardSignalState.NeverCollected);
+        primeiraFalhou.Environment.ConfigurationExposures.Value.Should().BeNull(
+            "uma falha antes de qualquer leitura continua sendo ausência de dado — nunca 0");
+        primeiraFalhou.Environment.ConfigurationExposures.Note.Should().NotBe(
+            semColeta.Environment.ConfigurationExposures.Note, "a falha precisa ser dita, não confundida com espera");
+    }
+
+    [Fact]
+    public async Task RecomendacoesDePostura_TentativaRecenteFalha_PreservaUltimaLeitura_ComRessalva()
+    {
+        await using var db = NewContext();
+        var lastRead = Now.AddDays(-2);
+
+        var overview = await QueryFor(db, exposures: ExposuresWith(
+            ExposureSummary(7, lastRead) with { SourceConfigured = true, LastAttemptStatus = "Failed" })).GetAsync();
+
+        var metric = overview.Environment.ConfigurationExposures;
+        metric.State.Should().Be(DashboardSignalState.Available, "o dado anterior válido não pode sumir por uma falha");
+        metric.Value.Should().Be(7);
+        metric.ObservedAt.Should().Be(lastRead, "a data exibida é a da última leitura, não a da tentativa");
+        metric.Note.Should().NotBeNullOrWhiteSpace("a falha recente acompanha o número");
+
+        var saudavel = await QueryFor(db, exposures: ExposuresWith(
+            ExposureSummary(7, lastRead) with { SourceConfigured = true, LastAttemptStatus = "Healthy" })).GetAsync();
+        saudavel.Environment.ConfigurationExposures.Note.Should().BeNull("leitura íntegra não carrega ressalva");
+    }
+
+    [Fact]
+    public async Task Vulnerabilidades_ParteDasFontesSemColeta_NumeroTemRessalvaDeEscopo_E_SemFonteEhNoSource()
+    {
+        await using var db = NewContext();
+
+        var semFonte = await QueryFor(db, vulnerabilities: NeverCollectedVulnerabilities()).GetAsync();
+        semFonte.Environment.Vulnerabilities.State.Should().Be(DashboardSignalState.NoSource,
+            "nenhum scanner configurado: a ausência é de FONTE, não de coleta");
+
+        var sources = new[]
+        {
+            new VulnerabilitySourceDto(Guid.NewGuid(), "Microsoft", "Defender", Now.AddHours(-3), "Healthy"),
+            new VulnerabilitySourceDto(Guid.NewGuid(), "Google", "VM Manager", null, "Unknown"),
+        };
+        var parcial = new VulnerabilityOverviewDto(
+            new VulnerabilitySummaryDto(0, 0, 0, 0, Array.Empty<VulnerabilitySeverityCountDto>(), sources,
+                Now.AddHours(-3), NeverCollected: false),
+            Array.Empty<VulnerabilityGroupDto>(), 0, 1, 4);
+
+        var overview = await QueryFor(db, vulnerabilities: parcial).GetAsync();
+
+        overview.Environment.Vulnerabilities.State.Should().Be(DashboardSignalState.Available);
+        overview.Environment.Vulnerabilities.Value.Should().Be(0, "zero APURADO nas fontes coletadas é leitura real");
+        overview.Environment.Vulnerabilities.Note.Should().Contain("1 fonte(s)",
+            "um zero de coleta parcial precisa da ressalva de escopo — não é o ambiente inteiro");
+        overview.Environment.AffectedAssets.Note.Should().BeNull("a ressalva não se repete em cada cartão");
+    }
+
     // ---- infraestrutura do teste ----------------------------------------------------
+
+    private static PostureExposureListDto ExposuresWith(PostureExposureSummaryDto summary) =>
+        new(summary, Array.Empty<PostureExposureItemDto>(), summary.TotalOpen, 1, 4);
 
     private static readonly DateTimeOffset Now = new(2026, 9, 5, 12, 0, 0, TimeSpan.Zero);
 
