@@ -7,20 +7,26 @@ import {
   PostureExposureItem,
   PostureExposureList,
   PostureExposureStateFilter,
+  RECOMMENDATION_NO_LONGER_PENDING_HINT,
   actionTypePt,
   categoryPt,
   impactPt,
+  recommendationLifecyclePt,
+  recommendationReading,
+  sourceStatePt,
   tierPt,
 } from '../models/posture-exposure.models';
 
 /**
- * [AEGIS-MVP-POSTURE-02] Exposições de CONFIGURAÇÃO (postura) — o primeiro vertical cloud-first funcional.
- * Consome a superfície somente leitura `GET /api/v1/posture/exposures`: Secure Score real mais recente,
- * exposições abertas, agrupamento por categoria e a tabela priorizada (rank da fonte, depois maior gap).
+ * [AEGIS-MVP-POSTURE-02] RECOMENDAÇÕES DE POSTURA — fonte: Microsoft Secure Score. A rota (`/exposures`), o
+ * componente e os contratos `PostureExposure*` mantêm o nome técnico; a apresentação não fala mais em
+ * "exposições de configuração" porque a diferença de pontos da fonte não comprova, sozinha, exposição.
+ * Consome `GET /api/v1/posture/exposures`: índice da fonte mais recente, recomendações pendentes,
+ * agrupamento por categoria e a tabela na ordem da fonte (rank, depois maior diferença de pontos).
  *
- * Honestidade do produto: fonte SEMPRE identificada ("Microsoft Secure Score"); ausência de dados vira
- * "Ainda não coletado" (NUNCA 0); estados loading/vazio/erro/retry explícitos; ZERO fallback demonstrativo.
- * NÃO são CVEs/vulnerabilidades de ativo — são "recomendações de postura".
+ * [AEGIS-LANGUAGE-STATES-01] Estados: sem integração · sem coleta · primeira tentativa falhou · leitura
+ * disponível (com aviso quando a tentativa mais recente falhou) · filtro sem correspondência · zero apurado.
+ * Ausência de dados NUNCA vira 0; ZERO fallback demonstrativo.
  */
 @Component({
   selector: 'app-posture-exposures',
@@ -30,16 +36,24 @@ import {
     <section class="page">
       <header class="page-head">
         <div>
-          <h1>Exposições de configuração</h1>
+          <h1>Recomendações de postura</h1>
           <p class="sub">
-            Lacunas de postura detectadas por coleta real. Fonte:
-            <strong>{{ sourceLabel() }}</strong>. São recomendações de postura — não vulnerabilidades ou CVEs
-            de ativos.
+            Recomendações de configuração coletadas do <strong>{{ sourceLabel() }}</strong>. Cada item mostra a
+            diferença entre os pontos obtidos e o máximo da recomendação, segundo a fonte — isso, sozinho, não
+            comprova configuração insegura, exposição de ativo ou vulnerabilidade. O índice da fonte não é o
+            AEGIS Score.
           </p>
         </div>
         <div class="head-actions">
-          <button type="button" class="primary" (click)="analyzeWithAi()" [disabled]="loading() || !!error()">
-            Analisar exposições com IA
+          <!-- Sem leitura, uma análise pressuporia evidência que não existe: o botão só vale com dados. -->
+          <button
+            type="button"
+            class="primary"
+            (click)="analyzeWithAi()"
+            [disabled]="loading() || !!error() || !reading().hasData"
+            [title]="reading().hasData ? '' : 'Disponível depois da primeira coleta da fonte'"
+          >
+            Analisar recomendações com IA
           </button>
           <button type="button" class="ghost" (click)="reload()" [disabled]="loading()">
             {{ loading() ? 'Carregando…' : 'Atualizar' }}
@@ -47,33 +61,51 @@ import {
         </div>
       </header>
 
+      @if (!loading() && !error() && reading().hasData && reading().notice) {
+        <p class="notice warn" role="status">{{ reading().notice }}</p>
+      }
+
       <!-- ---------- Resumo ---------- -->
+      <!-- [AEGIS-LANGUAGE-STATES-01] Sem leitura as contagens ficam "—" (nunca 0) e o motivo é dito pelo estado. -->
       <div class="cards">
         <div class="card">
-          <span class="card-label">Secure Score geral</span>
+          <span class="card-label">Microsoft Secure Score · índice da fonte</span>
           @if (summary()?.latestSecureScorePercent != null) {
             <span class="card-value">{{ pct(summary()!.latestSecureScorePercent!) }}</span>
-            <span class="card-meta">coletado {{ fmtDate(summary()?.latestSecureScoreAt) }}</span>
+            <span class="card-meta">coletado {{ fmtDate(summary()?.latestSecureScoreAt) }} · não é o AEGIS Score</span>
+          } @else if (reading().hasData) {
+            <span class="card-value muted">Não informado</span>
+            <span class="card-meta">a fonte não entregou o índice geral nesta leitura</span>
           } @else {
-            <span class="card-value muted">Ainda não coletado</span>
-            <span class="card-meta">configure em Integrações e clique em Coletar</span>
+            <span class="card-value muted">{{ readingLabel() }}</span>
+            <span class="card-meta">sem leitura da fonte</span>
           }
         </div>
         <div class="card">
-          <span class="card-label">Exposições abertas</span>
-          <span class="card-value">{{ summary()?.totalOpen ?? '—' }}</span>
-          <span class="card-meta">{{ summary()?.totalResolved ?? 0 }} resolvida(s)</span>
+          <span class="card-label">Recomendações pendentes</span>
+          @if (reading().hasData) {
+            <span class="card-value">{{ summary()!.totalOpen }}</span>
+            <span class="card-meta" [title]="noLongerPendingHint">
+              {{ summary()!.totalResolved }} sem pendência na fonte
+            </span>
+          } @else {
+            <span class="card-value muted">—</span>
+            <span class="card-meta">{{ readingLabel() }}</span>
+          }
         </div>
         <div class="card">
           <span class="card-label">Última coleta</span>
           @if (summary()?.lastCollectedAt) {
             <span class="card-value sm">{{ fmtDate(summary()?.lastCollectedAt) }}</span>
+            @if (reading().lastAttemptFailed) {
+              <span class="card-meta warn-text">tentativa mais recente falhou</span>
+            }
           } @else {
-            <span class="card-value sm muted">Ainda não coletado</span>
+            <span class="card-value sm muted">{{ readingLabel() }}</span>
           }
         </div>
         <div class="card wide">
-          <span class="card-label">Por categoria (abertas)</span>
+          <span class="card-label">Pendentes por categoria</span>
           @if ((summary()?.openByCategory?.length ?? 0) > 0) {
             <div class="cats">
               @for (c of summary()!.openByCategory; track c.category) {
@@ -87,8 +119,10 @@ import {
                 </button>
               }
             </div>
+          } @else if (reading().hasData) {
+            <span class="card-meta">Nenhuma recomendação pendente na última leitura.</span>
           } @else {
-            <span class="card-meta">Sem exposições abertas por categoria.</span>
+            <span class="card-meta">Sem leitura da fonte.</span>
           }
         </div>
       </div>
@@ -124,33 +158,45 @@ import {
       <!-- ---------- Tabela ---------- -->
       <div class="panel">
         @if (loading()) {
-          <p class="muted">Carregando exposições…</p>
+          <p class="muted">Carregando recomendações…</p>
         } @else if (error()) {
+          <!-- Falha ao LER o AEGIS: nada é exibido como se fosse a leitura atual; a tentativa pode ser refeita. -->
           <div class="state error">
-            <p class="err">⚠ {{ error() }}</p>
+            <p class="err">⚠ Não foi possível carregar as recomendações agora. {{ error() }}</p>
             <button type="button" class="ghost" (click)="retry()">Tentar novamente</button>
           </div>
-        } @else if (!hasEverCollected()) {
+        } @else if (!reading().hasData) {
           <div class="state empty">
+            <p class="muted">{{ reading().notice }}</p>
             <p class="muted">
-              Ainda não coletado. Configure o <strong>{{ sourceLabel() }}</strong> em
-              <strong>Configurações → Integrações</strong> e use <strong>Coletar</strong> para atualizar score e
-              exposições.
+              @if (reading().state === 'NotConfigured') {
+                Um administrador do ambiente pode configurar o <strong>{{ sourceLabel() }}</strong> em
+                <strong>Configurações → Integrações</strong> e usar <strong>Coletar</strong>.
+              } @else {
+                Confira a integração em <strong>Configurações → Integrações</strong> e use <strong>Coletar</strong>.
+              }
             </p>
           </div>
         } @else if (items().length === 0) {
           <div class="state empty">
-            <p class="muted">Nenhuma exposição para o filtro atual.</p>
+            @if (filtersActive()) {
+              <p class="muted">Nenhuma recomendação corresponde aos filtros atuais.</p>
+            } @else {
+              <p class="muted">
+                Nenhuma recomendação pendente na última coleta da fonte. Isso reflete a pontuação da fonte, não uma
+                validação independente das configurações.
+              </p>
+            }
           </div>
         } @else {
           <table class="grid-table">
             <thead>
               <tr>
-                <th class="c-rank">Rank</th>
+                <th class="c-rank" title="Ordem sugerida pela própria fonte">Ordem (fonte)</th>
                 <th>Recomendação</th>
-                <th class="c-score">Score</th>
-                <th class="c-gap">Gap</th>
-                <th class="c-tier">Tier</th>
+                <th class="c-score" title="Pontos obtidos / máximo da recomendação, segundo a fonte">Pontos (fonte)</th>
+                <th class="c-gap" title="Pontos que a fonte ainda não credita nesta recomendação">Diferença</th>
+                <th class="c-tier">Nível (fonte)</th>
                 <th class="c-exp" aria-label="Detalhes"></th>
               </tr>
             </thead>
@@ -163,7 +209,7 @@ import {
                     <span class="meta">
                       {{ x.service || '—' }} · {{ cat(x.category) || '—' }} · {{ reachUnknown }}
                       @if (x.lifecycleState === 'Resolved') {
-                        <span class="badge ok">Resolvida</span>
+                        <span class="badge ok" [title]="noLongerPendingHint">{{ lifecycle(x.lifecycleState) }}</span>
                       }
                       @if (x.languageCoverage === 'SourceOnly') {
                         <span
@@ -172,8 +218,8 @@ import {
                           >Descrição da fonte</span
                         >
                       }
-                      @if (x.sourceState && x.sourceState !== 'Default') {
-                        <span class="badge src" title="Estado informado pela fonte (metadado)">{{ x.sourceState }}</span>
+                      @if (sourceState(x.sourceState); as st) {
+                        <span class="badge src" title="Estado declarado na fonte (metadado do Secure Score, não do AEGIS)">{{ st }}</span>
                       }
                     </span>
                     @if (x.whyItMatters) {
@@ -197,7 +243,7 @@ import {
                     <td colspan="6">
                       <div class="details">
                         @if (x.plainSummary) {
-                          <div class="det"><span class="det-label">O que precisa de atenção</span><p>{{ x.plainSummary }}</p></div>
+                          <div class="det"><span class="det-label">O que a recomendação pede</span><p>{{ x.plainSummary }}</p></div>
                         }
                         @if (x.whyItMatters) {
                           <div class="det"><span class="det-label">Por que importa</span><p>{{ x.whyItMatters }}</p></div>
@@ -216,28 +262,31 @@ import {
                           </div>
                         }
                         <div class="det-grid">
-                          <div><span class="det-label">Custo</span><span>{{ impact(x.implementationCost) || '—' }}</span></div>
-                          <div><span class="det-label">Impacto ao usuário</span><span>{{ impact(x.userImpact) || '—' }}</span></div>
+                          <div><span class="det-label">Custo de implementação (fonte)</span><span>{{ impact(x.implementationCost) || '—' }}</span></div>
+                          <div><span class="det-label">Impacto ao usuário (fonte)</span><span>{{ impact(x.userImpact) || '—' }}</span></div>
                           <div><span class="det-label">Tipo de ação</span><span>{{ actionType(x.actionType) || '—' }}</span></div>
-                          <div><span class="det-label">Controle (fonte)</span><span class="mono">{{ x.externalId }}</span></div>
+                          <div><span class="det-label">Identificador (fonte)</span><span class="mono">{{ x.externalId }}</span></div>
                         </div>
                         @if (x.sourceTitle && x.sourceTitle !== x.displayTitle) {
                           <div class="det"><span class="det-label">Título original (fonte)</span><p class="meta">{{ x.sourceTitle }}</p></div>
                         }
                         @if (x.threats.length > 0) {
+                          <!-- Ameaças que a recomendação PRETENDE mitigar, segundo a fonte — não ameaças observadas. -->
                           <div class="det">
-                            <span class="det-label">Ameaças</span>
+                            <span class="det-label">Ameaças que a recomendação visa mitigar (segundo a fonte)</span>
                             <div class="threats">
                               @for (t of x.threats; track t) {
                                 <span class="threat">{{ t }}</span>
                               }
                             </div>
+                            <p class="meta">Não são ameaças observadas neste ambiente.</p>
                           </div>
                         }
                         <p class="seen">
-                          Vista de {{ fmtDate(x.firstSeenAt) }} até {{ fmtDate(x.lastSeenAt) }}
+                          Pendente na fonte desde {{ fmtDate(x.firstSeenAt) }} · última leitura como pendente em
+                          {{ fmtDate(x.lastSeenAt) }}
                           @if (x.resolvedAt) {
-                            · resolvida em {{ fmtDate(x.resolvedAt) }}
+                            · deixou de constar como pendente em {{ fmtDate(x.resolvedAt) }}
                           }
                         </p>
                       </div>
@@ -293,6 +342,21 @@ import {
       .muted {
         opacity: 0.65;
         font-size: 0.85rem;
+      }
+      .notice {
+        margin: 0;
+        padding: 0.55rem 0.8rem;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        line-height: 1.4;
+      }
+      .notice.warn,
+      .warn-text {
+        color: #f5a524;
+      }
+      .notice.warn {
+        background: color-mix(in srgb, #f5a524 9%, transparent);
+        border: 1px solid color-mix(in srgb, #f5a524 30%, transparent);
       }
       .err {
         color: #ff6b8a;
@@ -605,9 +669,11 @@ export class PostureExposuresComponent {
   private readonly api = inject(PostureExposureService);
   private readonly agent = inject(AgentStateService);
 
+  // [AEGIS-LANGUAGE-STATES-01] "Resolved" do coletor = a fonte deixou de apontar diferença de pontos numa coleta
+  // completa. Não é correção validada — por isso "Sem pendência na fonte", e não "Resolvidas".
   protected readonly stateOptions: { value: PostureExposureStateFilter; label: string }[] = [
-    { value: 'open', label: 'Abertas' },
-    { value: 'resolved', label: 'Resolvidas' },
+    { value: 'open', label: 'Pendentes' },
+    { value: 'resolved', label: 'Sem pendência na fonte' },
     { value: 'all', label: 'Todas' },
   ];
 
@@ -641,13 +707,32 @@ export class PostureExposuresComponent {
   protected readonly sourceLabel = computed(() => this.summary()?.sourceLabel ?? 'Microsoft Secure Score');
 
   /**
-   * "Já coletou alguma vez?" — separa o estado de onboarding (nunca coletado → "Ainda não coletado") do
-   * estado "coletado mas sem exposição para o filtro". Deriva do resumo, que reflete o tenant inteiro.
+   * [AEGIS-LANGUAGE-STATES-01] O que a tela pode AFIRMAR sobre a leitura: sem integração × sem coleta × primeira
+   * tentativa falhou × leitura disponível (com aviso quando a tentativa mais recente falhou). Deriva do resumo,
+   * que reflete o tenant inteiro — nunca da página filtrada.
    */
-  protected readonly hasEverCollected = computed(() => {
-    const s = this.summary();
-    return !!s && (s.lastCollectedAt != null || s.totalOpen > 0 || s.totalResolved > 0);
+  protected readonly reading = computed(() => recommendationReading(this.summary()));
+
+  /** Rótulo curto do estado sem leitura, para os cartões. */
+  protected readonly readingLabel = computed(() => {
+    switch (this.reading().state) {
+      case 'NotConfigured':
+        return 'Sem integração';
+      case 'FailedBeforeFirstCollection':
+        return 'Coleta falhou';
+      default:
+        return 'Ainda não coletado';
+    }
   });
+
+  /** Algum filtro além do padrão? Decide entre "nada no filtro" e "nada pendente na fonte". */
+  protected readonly filtersActive = computed(
+    () => this.stateFilter() !== 'open' || !!this.categoryFilter() || this.search().trim() !== '',
+  );
+
+  protected readonly lifecycle = recommendationLifecyclePt;
+  protected readonly sourceState = sourceStatePt;
+  protected readonly noLongerPendingHint = RECOMMENDATION_NO_LONGER_PENDING_HINT;
 
   constructor() {
     this.load();
@@ -730,14 +815,16 @@ export class PostureExposuresComponent {
 
   /**
    * Reutiliza o Auditor Virtual GLOBAL, semeando uma pergunta contextual. O backend já inclui as principais
-   * exposições abertas no contexto tenant-scoped (máx. 8) e sabe que rank/gap/score/estado são AUTORITATIVOS e
+   * recomendações pendentes no contexto tenant-scoped (máx. 8), com o estado de leitura da fonte, e sabe que rank/gap/score/estado são AUTORITATIVOS e
    * a resposta é CONSULTIVA. A IA não abre/fecha/altera finding — só explica, correlaciona e prioriza.
    */
   protected analyzeWithAi(): void {
     this.agent.requestAudit(
-      'Analise as exposições de configuração abertas do Microsoft Secure Score: explique o impacto das ' +
-        'principais lacunas, correlacione-as com as lacunas do NIST CSF e a postura atual, e sugira uma ' +
-        'sequência de remediação priorizada. Deixe claro o que é fato da fonte, inferência e recomendação.',
+      'Analise as recomendações de postura pendentes do Microsoft Secure Score: explique por que as principais ' +
+        'costumam importar, relacione-as com as lacunas dos controles NIST CSF avaliados pelo AEGIS e sugira uma ' +
+        'sequência de revisão. Trate a diferença de pontos como informação da fonte — não como configuração ' +
+        'insegura, exposição de ativo ou vulnerabilidade confirmada — e as ameaças listadas como as que a ' +
+        'recomendação visa mitigar, não como ameaças observadas. Separe fato da fonte, inferência e recomendação.',
     );
   }
 

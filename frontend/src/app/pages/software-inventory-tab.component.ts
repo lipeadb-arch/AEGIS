@@ -7,6 +7,8 @@ import {
   SoftwareObservationStateFilter,
   SoftwareProductListItem,
   softwareCollectionStatePt,
+  softwareLifecyclePt,
+  softwareReading,
 } from '../models/software-inventory.models';
 
 /** Estado de PAGINAÇÃO dos ativos relacionados a UM produto, expandido sob demanda. */
@@ -19,7 +21,8 @@ interface AssetState {
 }
 
 /**
- * [AEGIS-MVP-MICROSOFT-COVERAGE-01] Aba "Software exposto" — inventário de software observado pelo Microsoft
+ * [AEGIS-MVP-MICROSOFT-COVERAGE-01] Aba "Inventário de software" (antes rotulada "Software exposto": produto
+ * instalado não é, por si, software exposto) — inventário de software observado pelo Microsoft
  * Defender (produto vendor+nome), correlacionado aos ativos já conhecidos pelo AEGIS. Consome
  * `GET /api/v1/software-inventory`: lista PRIORIZADA por exploit público/alerta ativo/fraquezas, com expansão
  * sob demanda dos ativos relacionados (sem N+1 inicial).
@@ -35,24 +38,36 @@ interface AssetState {
   imports: [FormsModule],
   template: `
     <section class="sw-page">
+      @if (!loading() && !error() && reading().hasData && reading().notice) {
+        <p class="notice warn" role="status">{{ reading().notice }}</p>
+      }
+
       <!-- ---------- Resumo ---------- -->
+      <!-- [AEGIS-LANGUAGE-STATES-01] Sem leitura as contagens ficam "—" (nunca 0). Fraquezas, exploit e alerta são
+           informações DA FONTE sobre o produto — cada uma com o próprio significado, nenhuma é comprometimento. -->
       <div class="cards">
         <div class="card">
           <span class="card-label">Produtos observados</span>
-          <span class="card-value">{{ summary()?.totalProducts ?? '—' }}</span>
-          <span class="card-meta">{{ summary()?.exposedInstallations ?? 0 }} instalação(ões) aberta(s)</span>
+          <span class="card-value">{{ reading().hasData ? summary()!.totalProducts : '—' }}</span>
+          <span class="card-meta">
+            @if (reading().hasData) {
+              {{ summary()!.exposedInstallations }} instalação(ões) observada(s) na última leitura
+            } @else {
+              sem leitura da fonte
+            }
+          </span>
         </div>
         <div class="card">
-          <span class="card-label">Com fraquezas conhecidas</span>
-          <span class="card-value">{{ summary()?.productsWithWeaknesses ?? '—' }}</span>
+          <span class="card-label">Com vulnerabilidades conhecidas (fonte)</span>
+          <span class="card-value">{{ reading().hasData ? summary()!.productsWithWeaknesses : '—' }}</span>
         </div>
         <div class="card">
-          <span class="card-label">Com exploit público</span>
-          <span class="card-value warn">{{ summary()?.productsWithPublicExploit ?? '—' }}</span>
+          <span class="card-label">Com exploit público informado</span>
+          <span class="card-value warn">{{ reading().hasData ? summary()!.productsWithPublicExploit : '—' }}</span>
         </div>
         <div class="card">
-          <span class="card-label">Com alerta ativo</span>
-          <span class="card-value bad">{{ summary()?.productsWithActiveAlert ?? '—' }}</span>
+          <span class="card-label">Com alerta associado (fonte)</span>
+          <span class="card-value bad">{{ reading().hasData ? summary()!.productsWithActiveAlert : '—' }}</span>
         </div>
         <div class="card wide">
           <span class="card-label">Última coleta</span>
@@ -85,8 +100,8 @@ interface AssetState {
           }
         </div>
         <button type="button" class="chip-btn" [class.active]="exploitOnly()" (click)="toggleExploit()">Com exploit público</button>
-        <button type="button" class="chip-btn" [class.active]="alertOnly()" (click)="toggleAlert()">Com alerta ativo</button>
-        <button type="button" class="chip-btn" [class.active]="weaknessOnly()" (click)="toggleWeakness()">Com fraquezas</button>
+        <button type="button" class="chip-btn" [class.active]="alertOnly()" (click)="toggleAlert()">Com alerta associado</button>
+        <button type="button" class="chip-btn" [class.active]="weaknessOnly()" (click)="toggleWeakness()">Com vulnerabilidades conhecidas</button>
         <input
           class="search"
           type="search"
@@ -106,18 +121,22 @@ interface AssetState {
             <p class="err">⚠ {{ error() }}</p>
             <button type="button" class="ghost" (click)="retry()">Tentar novamente</button>
           </div>
-        } @else if (summary()?.neverCollected) {
+        } @else if (!reading().hasData) {
           <div class="state empty">
+            <p class="muted">{{ reading().notice }}</p>
             <p class="muted">
-              Ainda não coletado. O conector <strong>Microsoft Defender Vulnerability Management</strong> também
-              coleta exposição de software quando a permissão de aplicativo <strong>Software.Read.All</strong>
-              estiver disponível — confira o estado em <strong>Configurações → Integrações</strong> e use
-              <strong>Sincronizar agora</strong>.
+              O conector <strong>Microsoft Defender Vulnerability Management</strong> também coleta o inventário de
+              software quando a permissão de aplicativo <strong>Software.Read.All</strong> estiver disponível —
+              confira o estado em <strong>Configurações → Integrações</strong> e use <strong>Sincronizar agora</strong>.
             </p>
           </div>
         } @else if (items().length === 0) {
           <div class="state empty">
-            <p class="muted">Nenhum produto de software para o filtro atual.</p>
+            @if (filtersActive()) {
+              <p class="muted">Nenhum produto de software corresponde aos filtros atuais.</p>
+            } @else {
+              <p class="muted">Nenhum produto de software observado na última leitura da fonte.</p>
+            }
           </div>
         } @else {
           <table class="grid-table">
@@ -125,8 +144,8 @@ interface AssetState {
               <tr>
                 <th>Produto</th>
                 <th class="c-dev">Dispositivos</th>
-                <th>Fraquezas</th>
-                <th>Exploit / Alerta</th>
+                <th>Vulnerabilidades conhecidas</th>
+                <th>Exploit / Alerta (fonte)</th>
                 <th>Primeira ação</th>
                 <th>Fonte</th>
                 <th class="c-exp" aria-label="Detalhes"></th>
@@ -138,7 +157,9 @@ interface AssetState {
                   <td>
                     <strong class="title">{{ p.name }}</strong>
                     @if (p.effectiveState === 'Resolved') {
-                      <span class="badge ok">Resolvido</span>
+                      <span class="badge ok" title="A fonte deixou de observar instalações deste produto. Não é validação de remoção.">
+                        {{ lifecycle(p.effectiveState) }}
+                      </span>
                     }
                     <span class="meta mono">{{ p.vendor }}</span>
                   </td>
@@ -148,9 +169,9 @@ interface AssetState {
                   </td>
                   <td>
                     @if (p.weaknessesCount > 0) {
-                      <span class="badge warn">{{ p.weaknessesCount }} fraqueza(s)</span>
+                      <span class="badge warn">{{ p.weaknessesCount }} vulnerabilidade(s)</span>
                     } @else {
-                      <span class="dim">Nenhuma</span>
+                      <span class="dim">Nenhuma informada</span>
                     }
                   </td>
                   <td class="c-exploit">
@@ -158,7 +179,7 @@ interface AssetState {
                       <span class="badge bad">Exploit público</span>
                     }
                     @if (p.activeAlert) {
-                      <span class="badge bad">Alerta ativo</span>
+                      <span class="badge bad" title="Alerta ativo associado ao produto pela fonte — não é comprometimento confirmado">Alerta associado</span>
                     }
                     @if (!p.publicExploit && !p.activeAlert) {
                       <span class="dim">—</span>
@@ -182,7 +203,7 @@ interface AssetState {
                       <div class="details">
                         <div class="det-grid">
                           <div><span class="det-label">Vendor</span><span class="mono">{{ p.vendor }}</span></div>
-                          <div><span class="det-label">Impacto</span><span>{{ p.impactScore != null ? num(p.impactScore) : '—' }}</span></div>
+                          <div><span class="det-label">Índice de impacto (fonte)</span><span>{{ p.impactScore != null ? num(p.impactScore) : '—' }}</span></div>
                           <div><span class="det-label">Primeira observação</span><span>{{ fmtDate(p.firstSeenAt) }}</span></div>
                           <div><span class="det-label">Última observação</span><span>{{ fmtDate(p.lastSeenAt) }}</span></div>
                         </div>
@@ -204,7 +225,7 @@ interface AssetState {
                                   <span class="obs-life">crít. {{ a.criticality }} · {{ a.subType || '—' }}</span>
                                   <span class="obs-prod">{{ a.version ? 'v' + a.version : 'versão não informada' }}</span>
                                   <span class="badge src" [class.res]="a.effectiveState === 'Resolved'">
-                                    {{ a.effectiveState === 'Open' ? 'Instalado' : 'Removido' }}
+                                    {{ lifecycle(a.effectiveState) }}
                                   </span>
                                 </div>
                               } @empty {
@@ -332,15 +353,19 @@ interface AssetState {
       }
       button.sm { padding: 0.25rem 0.6rem; font-size: 0.74rem; }
       button:disabled { opacity: 0.5; cursor: not-allowed; }
+      .notice { margin: 0; padding: 0.55rem 0.8rem; border-radius: 6px; font-size: 0.8rem; line-height: 1.4; }
+      .notice.warn { color: #f5a524; background: color-mix(in srgb, #f5a524 9%, transparent); border: 1px solid color-mix(in srgb, #f5a524 30%, transparent); }
     `,
   ],
 })
 export class SoftwareInventoryTabComponent {
   private readonly api = inject(SoftwareInventoryService);
 
+  // [AEGIS-LANGUAGE-STATES-01] "Resolved" do coletor = a fonte deixou de observar a instalação. Não comprova
+  // remoção validada — por isso "Não mais observados", e não "Removidos".
   protected readonly stateOptions: { value: SoftwareObservationStateFilter; label: string }[] = [
-    { value: 'open', label: 'Instalados' },
-    { value: 'resolved', label: 'Removidos' },
+    { value: 'open', label: 'Observados' },
+    { value: 'resolved', label: 'Não mais observados' },
     { value: 'all', label: 'Todos' },
   ];
 
@@ -371,6 +396,18 @@ export class SoftwareInventoryTabComponent {
   });
 
   protected readonly statePt = softwareCollectionStatePt;
+  protected readonly lifecycle = softwareLifecyclePt;
+
+  /** [AEGIS-LANGUAGE-STATES-01] Sem leitura × leitura (com ressalva de parcial / tentativa recente sem sucesso). */
+  protected readonly reading = computed(() => softwareReading(this.summary()));
+  protected readonly filtersActive = computed(
+    () =>
+      this.stateFilter() !== 'open' ||
+      this.exploitOnly() ||
+      this.alertOnly() ||
+      this.weaknessOnly() ||
+      this.searchTerm().trim() !== '',
+  );
 
   constructor() {
     this.load();

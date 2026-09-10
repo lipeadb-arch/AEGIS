@@ -23,7 +23,7 @@
   <!-- Faixa superior: KPIs -->
   <section class="cards">
     <article class="card ok hero">
-      <div class="k">Score Atual</div>
+      <div class="k">AEGIS Score atual</div>
       <div class="v">
         @if (currentScore(); as s) {
           @if (s.percentage === null) {
@@ -73,7 +73,7 @@
       aria-label="Gráfico de linha da tendência de postura de segurança dos últimos dias"
     >
       @if (loading()) {
-        <span class="trend-chart__status">Carregando telemetria…</span>
+        <span class="trend-chart__status">Carregando a série do AEGIS Score…</span>
       } @else if (trend().length === 0) {
         <span class="trend-chart__status">Sem snapshots no período</span>
       } @else {

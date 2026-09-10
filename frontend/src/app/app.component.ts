@@ -95,7 +95,9 @@ import { AuthService } from './services/auth.service';
           <span class="dot" aria-hidden="true"></span><span class="lb">Vulnerabilidades</span>
         </a>
         <a class="nav-item" routerLink="/exposures" routerLinkActive="active">
-          <span class="dot" aria-hidden="true"></span><span class="lb">Configurações expostas</span>
+          <!-- [AEGIS-LANGUAGE-STATES-01] Recomendações do Microsoft Secure Score: diferença de pontos da fonte não
+               comprova, sozinha, configuração exposta. A rota /exposures é mantida (links antigos seguem válidos). -->
+          <span class="dot" aria-hidden="true"></span><span class="lb">Recomendações de postura</span>
         </a>
 
         <p class="nav-group">Identidades</p>

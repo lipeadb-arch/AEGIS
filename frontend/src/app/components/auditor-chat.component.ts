@@ -232,7 +232,7 @@ export class AuditorChatComponent {
   readonly analyzingLabel = computed(() => {
     const s = this.currentScope();
     return s === 'GLOBAL'
-      ? 'Analisando a Postura Global do Secure Score...'
+      ? 'Analisando a postura geral do AEGIS…'
       : `Analisando Telemetria e Controles do Pilar ${s}...`;
   });
 

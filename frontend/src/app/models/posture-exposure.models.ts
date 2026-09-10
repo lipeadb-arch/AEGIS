@@ -1,9 +1,10 @@
 /**
- * [AEGIS-MVP-POSTURE-02] Contratos da tela de Exposições de CONFIGURAÇÃO (postura) — modelo do Microsoft
- * Secure Score. Espelham os DTOs do backend (`AegisScore.Application/Queries/PostureExposures.cs`).
+ * [AEGIS-MVP-POSTURE-02] Contratos da tela de RECOMENDAÇÕES DE POSTURA — fonte: Microsoft Secure Score.
+ * Espelham os DTOs do backend (`AegisScore.Application/Queries/PostureExposures.cs`). Os nomes técnicos
+ * (`PostureExposure*`, rota `/exposures`) são contrato e ficam; a APRESENTAÇÃO é "Recomendações de postura".
  *
- * ⚠️ NÃO são vulnerabilidades/CVEs de ativos: são "recomendações de postura" / "exposições de configuração".
- * Nenhum TenantId trafega — o tenant é resolvido no servidor pela claim do JWT.
+ * ⚠️ NÃO são vulnerabilidades/CVEs de ativos, e a diferença de pontos da fonte não comprova sozinha configuração
+ * insegura nem exposição de ativo. Nenhum TenantId trafega — o tenant é resolvido no servidor pela claim do JWT.
  */
 
 /** Uma exposição de configuração projetada para a tela (sem segredo, sem actionUrl, sem PII). */
@@ -88,6 +89,112 @@ export const actionTypePt = (v: string | null): string | null => translate(ACTIO
 /** Alcance por ativo NÃO é informado pelo Secure Score — mostre isto honestamente, nunca invente contagem. */
 export const EXPOSURE_REACH_UNKNOWN = 'Alcance por ativo não informado pela fonte';
 
+// ---- [AEGIS-LANGUAGE-STATES-01] Vocabulário e estados de informação das RECOMENDAÇÕES DE POSTURA ----
+// A superfície é baseada nas recomendações do Microsoft Secure Score. O que a fonte comprova é a DIFERENÇA DE
+// PONTOS de cada recomendação — não, por si só, configuração insegura, exposição de ativo ou vulnerabilidade.
+
+/** Nome consistente da superfície (navegação, títulos, filas e cartões). */
+export const POSTURE_RECOMMENDATIONS_LABEL = 'Recomendações de postura';
+
+/** O que "sem pendência na fonte" significa — e o que não significa. */
+export const RECOMMENDATION_NO_LONGER_PENDING_HINT =
+  'A fonte deixou de apontar diferença de pontos para esta recomendação numa coleta completa. Isso não é ' +
+  'validação independente da correção.';
+
+/** Estado do ciclo de vida AEGIS de uma recomendação, na semântica real do coletor. */
+export function recommendationLifecyclePt(state: string): string {
+  return state === 'Resolved' ? 'Sem pendência na fonte' : 'Pendente';
+}
+
+const SOURCE_STATE_PT: Record<string, string> = {
+  ignored: 'Ignorada na fonte',
+  thirdparty: 'Atendida por terceiro (declarado na fonte)',
+  reviewed: 'Revisada na fonte',
+  'risk accepted': 'Risco aceito na fonte',
+  riskaccepted: 'Risco aceito na fonte',
+  planned: 'Planejada na fonte',
+};
+
+/**
+ * Estado declarado na FONTE (metadado do Secure Score, não do AEGIS). `Default` não vira selo; valor
+ * desconhecido passa como está, identificado como da fonte — nunca é traduzido por suposição.
+ */
+export function sourceStatePt(state: string | null): string | null {
+  if (!state || state.trim() === '' || state.trim().toLowerCase() === 'default') return null;
+  return SOURCE_STATE_PT[state.trim().toLowerCase()] ?? `Estado na fonte: ${state.trim()}`;
+}
+
+/** Situação de LEITURA das recomendações — decide cartões, vazio e aviso. */
+export type RecommendationReadingState =
+  | 'NotConfigured'
+  | 'NeverCollected'
+  | 'FailedBeforeFirstCollection'
+  | 'Available';
+
+export interface RecommendationReading {
+  state: RecommendationReadingState;
+  /** Existe leitura com números? Só então contagens podem aparecer (inclusive 0). */
+  hasData: boolean;
+  /** A tentativa MAIS RECENTE falhou — com dados, eles são a última leitura disponível. */
+  lastAttemptFailed: boolean;
+  /** Frase para o estado vazio ou o aviso que acompanha os números; `null` quando nada a ressalvar. */
+  notice: string | null;
+}
+
+/**
+ * Deriva o que a tela pode afirmar a partir do resumo. `null`/ausência NUNCA vira zero: sem leitura, as
+ * contagens ficam "—" e o motivo é dito (sem integração, sem coleta, primeira tentativa falhou). Com leitura e
+ * tentativa recente falha, os dados anteriores continuam visíveis COM o aviso.
+ */
+export function recommendationReading(s: PostureExposureSummary | null | undefined): RecommendationReading {
+  if (!s) return { state: 'NeverCollected', hasData: false, lastAttemptFailed: false, notice: null };
+  const failed = s.lastAttemptStatus === 'Failed';
+  const hasData = s.lastCollectedAt != null || s.totalOpen > 0 || s.totalResolved > 0;
+  // Contrato anterior (sem sourceConfigured): trata como configurado — nunca afirma "sem integração" sem prova.
+  const configured = s.sourceConfigured ?? true;
+
+  if (hasData) {
+    return {
+      state: 'Available',
+      hasData: true,
+      lastAttemptFailed: failed,
+      notice: failed
+        ? `A tentativa mais recente de coleta falhou. Os números abaixo são a última leitura disponível` +
+          (s.lastCollectedAt ? ` (${formatStamp(s.lastCollectedAt)}).` : '.')
+        : s.lastCollectedAt
+          ? null
+          : 'Há recomendações registradas, mas a data da última coleta não é conhecida.',
+    };
+  }
+  if (!configured) {
+    return {
+      state: 'NotConfigured',
+      hasData: false,
+      lastAttemptFailed: false,
+      notice: 'Nenhuma integração com o Microsoft Secure Score está configurada neste ambiente.',
+    };
+  }
+  if (failed) {
+    return {
+      state: 'FailedBeforeFirstCollection',
+      hasData: false,
+      lastAttemptFailed: true,
+      notice: 'A integração está configurada, mas a tentativa mais recente de coleta falhou antes de qualquer leitura.',
+    };
+  }
+  return {
+    state: 'NeverCollected',
+    hasData: false,
+    lastAttemptFailed: false,
+    notice: 'A integração está configurada, mas nenhuma coleta foi concluída ainda.',
+  };
+}
+
+function formatStamp(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString('pt-BR');
+}
+
 /** Contagem de exposições ABERTAS por categoria (distribuição do resumo). */
 export interface PostureExposureCategoryCount {
   category: string;
@@ -102,9 +209,13 @@ export interface PostureExposureSummary {
   openByCategory: PostureExposureCategoryCount[];
   /** null = "Ainda não coletado" (NUNCA 0). */
   lastCollectedAt: string | null;
-  /** Secure Score geral mais recente coletado; null quando ainda não há coleta. */
+  /** Índice geral do Microsoft Secure Score (índice DA FONTE, não o AEGIS Score); null sem coleta. */
   latestSecureScorePercent: number | null;
   latestSecureScoreAt: string | null;
+  /** [AEGIS-LANGUAGE-STATES-01] Existe integração Microsoft Secure Score configurada no ambiente? */
+  sourceConfigured?: boolean;
+  /** Desfecho da tentativa MAIS RECENTE (Healthy/Degraded/Failed/Syncing/Unknown); null sem integração. */
+  lastAttemptStatus?: string | null;
 }
 
 /** Página de exposições + resumo. `total` é a contagem FILTRADA (para paginação). */

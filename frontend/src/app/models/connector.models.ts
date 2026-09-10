@@ -225,7 +225,7 @@ export const PROVIDERS: ProviderSpec[] = [
     capability: 'SecureScore',
     capabilityValue: 0,
     infoNote:
-      'Coleta REAL somente leitura do Microsoft Secure Score (client credentials). “Testar” valida autenticação e leitura ($top=1); “Coletar” atualiza o Secure Score e as exposições de configuração. O destino é o Microsoft Graph oficial — não há URL configurável. Veja os achados em Exposições.',
+      'Coleta REAL somente leitura do Microsoft Secure Score (client credentials). “Testar” valida autenticação e leitura ($top=1); “Coletar” atualiza o índice do Secure Score e as recomendações de postura. O destino é o Microsoft Graph oficial — não há URL configurável. Veja o resultado em Recomendações de postura.',
     appPermissions: ['SecurityEvents.Read.All'],
     fields: [
       { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
@@ -242,8 +242,8 @@ export const PROVIDERS: ProviderSpec[] = [
     capability: 'VulnerabilityScanner',
     capabilityValue: 8,
     infoNote:
-      'Coleta REAL somente leitura de vulnerabilidades associadas a ativos (máquinas × CVEs). “Testar” valida a autenticação e as permissões; “Sincronizar” atualiza ativos, CVEs e exposições — numa ÚNICA aquisição (mesmo token/inventário de máquinas). O destino é a API oficial do Defender — não há URL configurável. Exige licença/capacidade compatível, máquinas onboardadas e consentimento administrativo. Veja os achados em Vulnerabilidades. [AEGIS-MVP-MICROSOFT-COVERAGE-01] O MESMO conector também coleta o inventário de software instalado (produtos, versões e exposição por dispositivo) quando a permissão Software.Read.All estiver disponível — veja a aba “Software exposto”, dentro de Vulnerabilidades; a ausência dessa permissão degrada só essa dimensão, sem afetar máquinas/vulnerabilidades.',
-    appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All', 'Software.Read.All (opcional — habilita a aba Software exposto)'],
+      'Coleta REAL somente leitura de vulnerabilidades associadas a ativos (máquinas × CVEs). “Testar” valida a autenticação e as permissões; “Sincronizar” atualiza ativos e vulnerabilidades — numa ÚNICA aquisição (mesmo token/inventário de máquinas). O destino é a API oficial do Defender — não há URL configurável. Exige licença/capacidade compatível, máquinas onboardadas e consentimento administrativo. Veja os achados em Vulnerabilidades. [AEGIS-MVP-MICROSOFT-COVERAGE-01] O MESMO conector também coleta o inventário de software instalado (produtos, versões e dispositivos observados) quando a permissão Software.Read.All estiver disponível — veja a aba “Inventário de software”, dentro de Vulnerabilidades; a ausência dessa permissão degrada só essa dimensão, sem afetar máquinas/vulnerabilidades.',
+    appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All', 'Software.Read.All (opcional — habilita a aba Inventário de software)'],
     fields: [
       { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
       { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
@@ -259,7 +259,7 @@ export const PROVIDERS: ProviderSpec[] = [
     capability: 'VulnerabilityScanner',
     capabilityValue: 8,
     infoNote:
-      'Coleta REAL somente leitura de vulnerabilidades por instância de VM (recurso × CVE) via VM Manager / OS Config Vulnerability Reports. “Testar” valida autenticação e leitura (pageSize=1); “Sincronizar” atualiza ativos, CVEs e exposições. O destino é a API oficial osconfig.googleapis.com — não há URL configurável. Pré-requisitos: habilitar a API OS Config, ativar o VM Manager e ter o agente OS Config com inventário de SO nas VMs. A API direta do VM Manager/OS Config não exige o nível Premium do Security Command Center; permanecem aplicáveis os pré-requisitos, quotas e eventuais custos dos recursos Google Cloud utilizados. Service account SEM domain-wide delegation (a leitura efetiva vem do papel IAM). Veja os achados em Vulnerabilidades.',
+      'Coleta REAL somente leitura de vulnerabilidades por instância de VM (recurso × CVE) via VM Manager / OS Config Vulnerability Reports. “Testar” valida autenticação e leitura (pageSize=1); “Sincronizar” atualiza ativos e vulnerabilidades. O destino é a API oficial osconfig.googleapis.com — não há URL configurável. Pré-requisitos: habilitar a API OS Config, ativar o VM Manager e ter o agente OS Config com inventário de SO nas VMs. A API direta do VM Manager/OS Config não exige o nível Premium do Security Command Center; permanecem aplicáveis os pré-requisitos, quotas e eventuais custos dos recursos Google Cloud utilizados. Service account SEM domain-wide delegation (a leitura efetiva vem do papel IAM). Veja os achados em Vulnerabilidades.',
     appPermissions: ['roles/osconfig.vulnerabilityReportViewer (osconfig.vulnerabilityReports.list)'],
     fields: [
       { key: 'projectId', label: 'Project ID', secret: false, placeholder: 'meu-projeto-123' },
@@ -531,7 +531,7 @@ export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
     provider: 'Microsoft',
     providerValue: 0,
     label: 'Microsoft 365 · Secure Score',
-    description: 'Sinais e exposições de configuração do Secure Score (Microsoft Graph).',
+    description: 'Índice e recomendações de postura do Microsoft Secure Score (Microsoft Graph).',
     needsWorkspaceId: false,
     appPermissions: ['SecurityEvents.Read.All'],
   },
@@ -556,7 +556,7 @@ export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
     providerValue: 0,
     label: 'Microsoft Defender Vulnerability Management',
     description:
-      'Vulnerabilidades associadas a ativos (máquinas × CVEs), somente leitura. O mesmo conector também coleta exposição de software (aba “Software exposto”, em Vulnerabilidades) quando Software.Read.All estiver disponível.',
+      'Vulnerabilidades associadas a ativos (máquinas × CVEs), somente leitura. O mesmo conector também coleta o inventário de software (aba “Inventário de software”, em Vulnerabilidades) quando Software.Read.All estiver disponível.',
     needsWorkspaceId: false,
     appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All', 'Software.Read.All (opcional)'],
   },

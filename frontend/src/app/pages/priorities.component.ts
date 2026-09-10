@@ -11,7 +11,15 @@ import {
   severityLabel,
   statusLabel,
 } from '../models/knight.models';
-import { EXPOSURE_REACH_UNKNOWN, categoryPt, tierPt } from '../models/posture-exposure.models';
+import {
+  EXPOSURE_REACH_UNKNOWN,
+  POSTURE_RECOMMENDATIONS_LABEL,
+  categoryPt,
+  recommendationLifecyclePt,
+  recommendationReading,
+  tierPt,
+} from '../models/posture-exposure.models';
+import { vulnerabilityReading } from '../models/vulnerability.models';
 import {
   ActionPlan,
   KnightOriginMode,
@@ -25,10 +33,10 @@ import { RemediationService } from '../services/remediation.service';
 
 /**
  * [AEGIS-MVP-PRIORITIES-01] Central de Prioridades — visão operacional que REÚNE, sem combinar num único
- * score, a postura NIST atual, a fila de exposições de configuração e a fila de vulnerabilidades em ativos.
- * Consome a superfície somente leitura `GET /api/v1/priorities` (read model composto).
+ * score, o AEGIS Score (controles NIST), a fila de recomendações de postura (Microsoft Secure Score) e a fila de
+ * vulnerabilidades em ativos. Consome a superfície somente leitura `GET /api/v1/priorities` (read model composto).
  *
- * Invariante metodológica: postura (cobertura/maturidade), exposições de configuração (lacunas de fonte) e
+ * Invariante metodológica: postura (cobertura de controles), recomendações de postura (diferença de pontos da fonte) e
  * vulnerabilidades (fraquezas em ativos) são dimensões DISTINTAS — apresentadas em DUAS FILAS separadas, cada
  * uma com a ordenação determinística já testada no backend. Provider-neutral: cada fila mostra a própria fonte
  * real. A IA é consultiva (reutiliza o Auditor Virtual) — não cria/altera score, CVE, exploit, lifecycle,
@@ -45,16 +53,24 @@ import { RemediationService } from '../services/remediation.service';
         <div>
           <h1>Central de Prioridades</h1>
           <p class="sub">
-            Postura, exposições de configuração e vulnerabilidades são dimensões <strong>relacionadas, porém
-            distintas</strong> — cobertura de postura, lacunas de configuração e fraquezas observadas em ativos.
-            Elas <strong>não formam um único score</strong>: cada fila mantém a própria ordem e a própria fonte.
+            AEGIS Score (controles NIST CSF avaliados), recomendações de postura do Microsoft Secure Score,
+            vulnerabilidades identificadas em ativos e achados de identidade do AEGIS KNIGHT são dimensões
+            <strong>relacionadas, porém distintas</strong>. Elas <strong>não formam um único score</strong> nem uma
+            prioridade de risco calculada: cada fila mantém a própria ordem e a própria fonte.
           </p>
           @if (data()) {
             <p class="freshness">Leitura de {{ fmtDate(data()!.generatedAt) }}</p>
           }
         </div>
         <div class="head-actions">
-          <button type="button" class="primary" (click)="analyzeWithAi()" [disabled]="loading() || !!error()">
+          <!-- Sem nenhuma leitura, uma análise pressuporia evidência que não existe. -->
+          <button
+            type="button"
+            class="primary"
+            (click)="analyzeWithAi()"
+            [disabled]="loading() || !!error() || !hasAnyReading()"
+            [title]="hasAnyReading() ? '' : 'Disponível quando houver ao menos uma leitura ou avaliação'"
+          >
             Analisar prioridades com IA
           </button>
           <button type="button" class="ghost" (click)="reload()" [disabled]="loading()">
@@ -75,48 +91,69 @@ import { RemediationService } from '../services/remediation.service';
       } @else if (data()) {
         <!-- ---------- Resumo (indicadores existentes, sem novo cálculo) ---------- -->
         <div class="cards">
+          <!-- [AEGIS-LANGUAGE-STATES-01] Sem leitura, os cartões mostram "—" e o estado — nunca 0. -->
           <div class="card">
-            <span class="card-label">Postura NIST</span>
+            <span class="card-label">AEGIS Score · NIST CSF</span>
             <span class="card-value" [class.muted]="posture()!.percentage === null">
               {{ postureText() }}
             </span>
             <span class="card-meta">
-              cobertura {{ num(posture()!.coveragePercentage) }}% ·
-              {{ posture()!.evaluationState === 'Evaluated' ? 'avaliado' : 'não avaliado' }}
+              {{ posture()!.evaluationState === 'Evaluated' ? 'avaliado' : 'não avaliado' }} · cobertura
+              {{ num(posture()!.coveragePercentage) }}% dos controles elegíveis
             </span>
           </div>
           <div class="card">
-            <span class="card-label">Exposições de configuração</span>
-            <span class="card-value">{{ exposures()!.summary.totalOpen }}</span>
-            <span class="card-meta">abertas · fonte: {{ exposures()!.summary.sourceLabel }}</span>
+            <span class="card-label">{{ recommendationsLabel }}</span>
+            @if (exposureReading().hasData) {
+              <span class="card-value">{{ exposures()!.summary.totalOpen }}</span>
+              <span class="card-meta">pendentes · fonte: {{ exposures()!.summary.sourceLabel }}</span>
+            } @else {
+              <span class="card-value muted">—</span>
+              <span class="card-meta">{{ readingShort(exposureReading().state) }} · {{ exposures()!.summary.sourceLabel }}</span>
+            }
           </div>
           <div class="card">
             <span class="card-label">Vulnerabilidades</span>
-            <span class="card-value">{{ vulns()!.summary.totalOpen }}</span>
-            <span class="card-meta">abertas · {{ vulns()!.summary.distinctCvesOpen }} CVE(s) distinto(s)</span>
+            @if (vulnReading().hasData) {
+              <span class="card-value">{{ vulns()!.summary.distinctCvesOpen }}</span>
+              <span class="card-meta">
+                problema(s) distinto(s) em aberto · {{ vulns()!.summary.totalOpen }} ocorrência(s) em ativos
+              </span>
+            } @else {
+              <span class="card-value muted">—</span>
+              <span class="card-meta">{{ readingShort(vulnReading().state) }}</span>
+            }
           </div>
           <div class="card">
             <span class="card-label">Ativos afetados</span>
-            <span class="card-value">{{ vulns()!.summary.affectedAssetsOpen }}</span>
-            <span class="card-meta">por vulnerabilidades abertas</span>
+            @if (vulnReading().hasData) {
+              <span class="card-value">{{ vulns()!.summary.affectedAssetsOpen }}</span>
+              <span class="card-meta">com vulnerabilidade em aberto</span>
+            } @else {
+              <span class="card-value muted">—</span>
+              <span class="card-meta">{{ readingShort(vulnReading().state) }}</span>
+            }
           </div>
           <div class="card wide">
             <span class="card-label">Coleta das fontes</span>
             <div class="collect">
               <span class="collect-row">
-                <span class="collect-k">Exposições</span>
-                @if (exposuresEverCollected()) {
-                  <span class="collect-v">{{ fmtDate(exposures()!.summary.lastCollectedAt) }}</span>
+                <span class="collect-k">{{ recommendationsLabel }}</span>
+                @if (exposures()!.summary.lastCollectedAt) {
+                  <span class="collect-v" [class.warn-text]="exposureReading().lastAttemptFailed">
+                    {{ fmtDate(exposures()!.summary.lastCollectedAt) }}
+                    @if (exposureReading().lastAttemptFailed) { · tentativa recente falhou }
+                  </span>
                 } @else {
-                  <span class="collect-v muted">Ainda não coletado</span>
+                  <span class="collect-v muted">{{ readingShort(exposureReading().state) }}</span>
                 }
               </span>
               <span class="collect-row">
-                <span class="collect-k">Ativos e CVEs</span>
-                @if (!vulns()!.summary.neverCollected) {
+                <span class="collect-k">Vulnerabilidades</span>
+                @if (vulnReading().hasData && vulns()!.summary.lastCollectedAt) {
                   <span class="collect-v">{{ fmtDate(vulns()!.summary.lastCollectedAt) }}</span>
                 } @else {
-                  <span class="collect-v muted">Ainda não coletado</span>
+                  <span class="collect-v muted">{{ readingShort(vulnReading().state) }}</span>
                 }
               </span>
             </div>
@@ -205,40 +242,44 @@ import { RemediationService } from '../services/remediation.service';
         }
 
         @if (tab() === 'achados') {
-        <!-- ---------- Fila de exposições de configuração ---------- -->
+        <!-- ---------- Fila de recomendações de postura (Microsoft Secure Score) ---------- -->
         <div class="queue">
           <div class="queue-head">
             <div>
-              <h2>Exposições de configuração</h2>
+              <h2>{{ recommendationsLabel }}</h2>
               <p class="queue-sub">
-                Lacunas de postura priorizadas pela fonte (rank, depois maior gap). Fonte:
-                <strong>{{ exposures()!.summary.sourceLabel }}</strong>.
+                Recomendações pendentes na ordem da própria fonte (rank, depois maior diferença de pontos). Fonte:
+                <strong>{{ exposures()!.summary.sourceLabel }}</strong>. A diferença de pontos não comprova, sozinha,
+                configuração insegura nem exposição de ativo.
               </p>
             </div>
             <a class="linknav" routerLink="/exposures">Ver todas →</a>
           </div>
+          @if (exposureReading().hasData && exposureReading().notice) {
+            <p class="notice warn" role="status">{{ exposureReading().notice }}</p>
+          }
           <div class="panel">
-            @if (!exposuresEverCollected()) {
+            @if (!exposureReading().hasData) {
               <div class="state empty">
-                <p class="muted">
-                  Ainda não coletado. Configure <strong>{{ exposures()!.summary.sourceLabel }}</strong> em
-                  <strong>Configurações → Integrações</strong> e execute uma coleta.
-                </p>
+                <p class="muted">{{ exposureReading().notice }}</p>
               </div>
             } @else if (exposures()!.top.length === 0) {
               <div class="state empty">
-                <p class="muted">Nenhuma exposição de configuração aberta. Coletado sem achados abertos.</p>
+                <p class="muted">
+                  Nenhuma recomendação pendente na última coleta da fonte — pontuação da fonte, não validação
+                  independente das configurações.
+                </p>
               </div>
             } @else {
               <table class="grid-table">
                 <thead>
                   <tr>
-                    <th class="c-rank">Rank</th>
+                    <th class="c-rank">Ordem (fonte)</th>
                     <th>Recomendação</th>
-                    <th class="c-gap">Gap</th>
-                    <th class="c-tier">Tier</th>
+                    <th class="c-gap" title="Pontos que a fonte ainda não credita">Diferença</th>
+                    <th class="c-tier">Nível (fonte)</th>
                     <th class="c-state">Estado</th>
-                    <th class="c-when">Observado</th>
+                    <th class="c-when">Pendente na fonte</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -259,7 +300,7 @@ import { RemediationService } from '../services/remediation.service';
                       <td class="c-tier">{{ tier(x.tier) || '—' }}</td>
                       <td class="c-state">
                         <span class="badge" [class.ok]="x.lifecycleState === 'Resolved'">
-                          {{ x.lifecycleState === 'Resolved' ? 'Resolvida' : 'Aberta' }}
+                          {{ recommendationLifecycle(x.lifecycleState) }}
                         </span>
                       </td>
                       <td class="c-when">
@@ -280,7 +321,8 @@ import { RemediationService } from '../services/remediation.service';
             <div>
               <h2>Vulnerabilidades em ativos</h2>
               <p class="queue-sub">
-                Exposições ativo×CVE priorizadas por fato da fonte e criticidade do ativo.
+                Vulnerabilidades identificadas pelas fontes, agrupadas por problema e ordenadas por exploit informado,
+                severidade técnica (CVSS/EPSS) e criticidade cadastrada do ativo — não é risco de negócio calculado.
                 @if (vulns()!.summary.sources.length > 0) {
                   Fontes: <strong>{{ sourceNames() }}</strong>.
                 }
@@ -288,17 +330,17 @@ import { RemediationService } from '../services/remediation.service';
             </div>
             <a class="linknav" routerLink="/vulnerabilities">Ver todas →</a>
           </div>
+          @if (vulnReading().hasData && vulnReading().notice) {
+            <p class="notice warn" role="status">{{ vulnReading().notice }}</p>
+          }
           <div class="panel">
-            @if (vulns()!.summary.neverCollected) {
+            @if (!vulnReading().hasData) {
               <div class="state empty">
-                <p class="muted">
-                  Ainda não coletado. Configure um scanner de vulnerabilidades em
-                  <strong>Configurações → Integrações</strong> e execute uma coleta para trazer ativos e CVEs.
-                </p>
+                <p class="muted">{{ vulnReading().notice }}</p>
               </div>
             } @else if (vulns()!.top.length === 0) {
               <div class="state empty">
-                <p class="muted">Nenhuma vulnerabilidade aberta. Coletado sem achados abertos.</p>
+                <p class="muted">Nenhuma vulnerabilidade aberta na última leitura das fontes.</p>
               </div>
             } @else {
               <table class="grid-table">
@@ -307,7 +349,7 @@ import { RemediationService } from '../services/remediation.service';
                     <th>Problema</th>
                     <th>Por que importa</th>
                     <th class="c-cvss">Alcance</th>
-                    <th>Exploit</th>
+                    <th>Exploit (fonte)</th>
                     <th>Fontes</th>
                   </tr>
                 </thead>
@@ -355,9 +397,9 @@ import { RemediationService } from '../services/remediation.service';
               <h2>Achados de identidade</h2>
               <p class="queue-sub">
                 Vereditos do <strong>AEGIS KNIGHT</strong> sobre a postura de identidade — régua e score
-                próprios, <strong>não somados</strong> à postura NIST nem às vulnerabilidades. Aqui aparecem os
-                achados <strong>expostos</strong>; abrir um deles leva à mesma avaliação, com os objetos que
-                sustentam o resultado.
+                próprios, <strong>não somados</strong> ao AEGIS Score nem às vulnerabilidades. Aqui aparecem os
+                indicadores com veredito <strong>Exposto</strong> (a regra encontrou a condição na coleta); abrir um
+                deles leva à mesma avaliação, com os objetos que sustentam o resultado.
               </p>
             </div>
             <a class="linknav" [routerLink]="['/identity']" [queryParams]="{ run: knight()!.runId }">
@@ -385,7 +427,7 @@ import { RemediationService } from '../services/remediation.service';
                   <span class="kb-v">{{ knightScore() }}<span class="kb-s"> · escala própria</span></span>
                 </span>
                 <span class="kb-item">
-                  <span class="kb-k">Cobertura</span>
+                  <span class="kb-k">Cobertura (indicadores avaliados)</span>
                   <span class="kb-v">{{ num(knight()!.coverage) }}%</span>
                 </span>
                 <span class="kb-item">
@@ -556,6 +598,9 @@ import { RemediationService } from '../services/remediation.service';
       .sev-low { color: #26e0ff; }
       .sev-desconhecida { color: #9aa7c7; }
 
+      .notice { margin: 0; padding: 0.5rem 0.75rem; border-radius: 6px; font-size: 0.78rem; line-height: 1.4; }
+      .notice.warn, .warn-text { color: #f5a524; }
+      .notice.warn { background: color-mix(in srgb, #f5a524 9%, transparent); border: 1px solid color-mix(in srgb, #f5a524 30%, transparent); }
       .foot-note { margin: 0.2rem 0 0; font-size: 0.74rem; opacity: 0.55; max-width: 90ch; line-height: 1.4; }
 
       button.primary, button.ghost { color: inherit; border-radius: 5px; font: inherit; cursor: pointer; }
@@ -627,11 +672,38 @@ export class PrioritiesComponent {
 
   protected readonly postureText = computed(() => postureLabel(this.posture()?.percentage ?? null));
 
-  /** Distingue o onboarding (nunca coletado) de "coletado sem exposição aberta" — deriva do resumo do tenant. */
-  protected readonly exposuresEverCollected = computed(() => {
-    const s = this.exposures()?.summary;
-    return !!s && (s.lastCollectedAt != null || s.totalOpen > 0 || s.totalResolved > 0);
-  });
+  /**
+   * [AEGIS-LANGUAGE-STATES-01] O que a Central pode afirmar sobre cada fonte — a MESMA derivação das telas de
+   * Recomendações de postura e Vulnerabilidades (e do backend): sem integração × sem coleta × leitura
+   * disponível, com a ressalva de falha recente ou de escopo parcial junto dos números.
+   */
+  protected readonly exposureReading = computed(() => recommendationReading(this.exposures()?.summary));
+  protected readonly vulnReading = computed(() => vulnerabilityReading(this.vulns()?.summary));
+
+  /** Há alguma leitura ou avaliação que sustente uma análise? Sem nenhuma, a IA não é oferecida. */
+  protected readonly hasAnyReading = computed(
+    () =>
+      this.exposureReading().hasData ||
+      this.vulnReading().hasData ||
+      this.posture()?.evaluationState === 'Evaluated' ||
+      !!this.knight()?.runId,
+  );
+
+  protected readonly recommendationsLabel = POSTURE_RECOMMENDATIONS_LABEL;
+  protected readonly recommendationLifecycle = recommendationLifecyclePt;
+
+  /** Rótulo curto de um estado sem leitura, para cartões e linha de coleta. */
+  protected readonly readingShort = (state: string): string => {
+    switch (state) {
+      case 'NotConfigured':
+      case 'NoSource':
+        return 'Sem integração';
+      case 'FailedBeforeFirstCollection':
+        return 'Coleta falhou';
+      default:
+        return 'Ainda não coletado';
+    }
+  };
 
   /** Fontes distintas de vulnerabilidade configuradas (provider-neutral: nomes reais, não hardcoded). */
   protected readonly sourceNames = computed(() =>
@@ -692,10 +764,13 @@ export class PrioritiesComponent {
    */
   protected analyzeWithAi(): void {
     this.agent.requestAudit(
-      'Analise em conjunto a postura NIST, as exposições de configuração abertas e as vulnerabilidades dos ' +
-        'ativos. Explique as relações entre elas e proponha uma sequência de investigação e remediação. ' +
-        'Preserve separadamente fatos das fontes, inferências e recomendações. Não crie nem altere score, ' +
-        'CVE, exploit, lifecycle, finding, evidência ou estado de remediação.',
+      'Analise em conjunto o AEGIS Score (controles NIST CSF avaliados), as recomendações de postura pendentes ' +
+        'do Microsoft Secure Score e as vulnerabilidades identificadas nos ativos. Aponte relações apenas quando ' +
+        'houver evidência no contexto e proponha uma sequência de investigação e remediação. Não combine as ' +
+        'escalas, não trate diferença de pontos como exposição confirmada nem CVSS como risco de negócio, e diga ' +
+        'quando uma fonte não tiver leitura. Preserve separadamente fatos das fontes, inferências e ' +
+        'recomendações. Não crie nem altere score, CVE, exploit, lifecycle, finding, evidência ou estado de ' +
+        'remediação.',
     );
   }
 

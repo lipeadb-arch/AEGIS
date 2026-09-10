@@ -15,6 +15,7 @@ import {
 } from '../models/dashboard-overview.models';
 import { ComplianceHistoryPoint, buildGapBalance, trendToSparkline } from '../models/scoring.models';
 import { environmentStage } from '../models/workspace.models';
+import { POSTURE_RECOMMENDATIONS_LABEL } from '../models/posture-exposure.models';
 import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
 import { EnvironmentFirstComponent } from '../components/environment-first.component';
 import { DashboardService } from '../services/dashboard.service';
@@ -146,6 +147,11 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           <div class="grid two">
             <div class="panel">
               <app-posture-summary [posture]="d.posture" label="AEGIS Score" />
+              <!-- [AEGIS-LANGUAGE-STATES-01] Três escalas convivem no produto; esta é só uma delas. -->
+              <p class="scale-note">
+                Pontos obtidos nos controles NIST CSF avaliados pelo AEGIS. Não é o Microsoft Secure Score, nem o
+                score do AEGIS KNIGHT, nem probabilidade de incidente.
+              </p>
               <!-- Tendência só sob postura AVALIADA: uma curva ao lado de "Não avaliado" afirmaria evolução
                    de um score que não existe. -->
               @if (d.posture.evaluationState === 'Evaluated' && trend().length > 1) {
@@ -164,8 +170,8 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
 
             <div class="panel">
               <div class="hd">
-                <h3>Cobertura por natureza da prova</h3>
-                <span class="hint">cobertura não é conformidade</span>
+                <h3>Controles avaliados por natureza da prova</h3>
+                <span class="hint">avaliados / elegíveis · cobertura não é conformidade</span>
               </div>
               <ul class="coverage">
                 @for (c of coverage(); track c.label) {
@@ -190,15 +196,15 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           <div class="grid two">
             <div class="panel">
               <div class="hd">
-                <h3>Exposições de configuração</h3>
-                <span class="hint">{{ d.configurationExposures.summary.sourceLabel }}</span>
+                <h3>{{ recommendationsLabel }}</h3>
+                <span class="hint">pendentes · {{ d.configurationExposures.summary.sourceLabel }}</span>
               </div>
               @if (d.configurationExposures.top.length > 0) {
                 <ul class="queue">
                   @for (e of d.configurationExposures.top; track e.id) {
                     <li>
                       <span class="q-t">{{ e.displayTitle || e.title }}</span>
-                      <span class="q-m">{{ e.plainSummary || e.category || 'Configuração exposta' }}</span>
+                      <span class="q-m">{{ e.plainSummary || e.category || 'Pendente na fonte' }}</span>
                     </li>
                   }
                 </ul>
@@ -341,7 +347,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
             @if (d.businessRisk.riskRegisterState === 'Available') {
               <div class="cards">
                 <app-exposure-card
-                  label="Processos críticos expostos"
+                  label="Processos críticos com risco alto ou crítico"
                   [value]="d.businessRisk.criticalProcessesExposed ?? 0"
                   tone="danger"
                 />
@@ -960,6 +966,13 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
       .ts-delta.down {
         color: var(--red);
       }
+      .scale-note {
+        margin: 8px 2px 0;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
       .ts-meta em {
         font-style: normal;
         font-family: var(--mono);
@@ -1017,6 +1030,7 @@ export class ExecutiveDashboardComponent implements OnInit {
   });
 
   // Expostos ao template.
+  protected readonly recommendationsLabel = POSTURE_RECOMMENDATIONS_LABEL;
   protected readonly hasReading = hasReading;
   protected readonly stateLabel = stateLabel;
   protected readonly identityCapabilityLabel = identityCapabilityLabel;
@@ -1033,10 +1047,18 @@ export class ExecutiveDashboardComponent implements OnInit {
     // antiga, diz que está desatualizada — pelo mesmo limiar que a lista de fontes usa.
     const at = d.generatedAt;
     return [
+      // [AEGIS-LANGUAGE-STATES-01] A unidade de cada número dita junto dele: "recomendações pendentes" é diferença
+      // de pontos da fonte (Microsoft Secure Score), não configuração exposta comprovada.
       { key: 'assets', label: 'Ativos', metric: e.assets, link: '/assets' , unit: null },
-      { key: 'exposures', label: 'Configurações expostas', metric: e.configurationExposures, link: '/exposures' , unit: null },
-      { key: 'vulns', label: 'Vulnerabilidades', metric: e.vulnerabilities, link: '/vulnerabilities' , unit: null },
-      { key: 'affected', label: 'Ativos afetados', metric: e.affectedAssets, link: '/vulnerabilities' , unit: null },
+      {
+        key: 'exposures',
+        label: POSTURE_RECOMMENDATIONS_LABEL,
+        metric: e.configurationExposures,
+        link: '/exposures',
+        unit: 'pendentes na fonte',
+      },
+      { key: 'vulns', label: 'Vulnerabilidades', metric: e.vulnerabilities, link: '/vulnerabilities' , unit: 'problemas distintos em aberto' },
+      { key: 'affected', label: 'Ativos afetados', metric: e.affectedAssets, link: '/vulnerabilities' , unit: 'com vulnerabilidade em aberto' },
       // A quantidade aqui é de CAPACIDADES de identidade coletadas (o snapshot é agregado e sem PII) — não é
       // o número de contas do diretório. O rótulo e a unidade dizem isso, em vez de deixar o número mentir.
       {
@@ -1128,12 +1150,21 @@ export class ExecutiveDashboardComponent implements OnInit {
     );
   });
 
-  /** Fila vazia de exposições: "nunca coletado" ≠ "coletado sem achados" — a diferença muda a decisão. */
-  readonly exposureEmptyText = computed(() =>
-    this.data()?.environment.configurationExposures.state === 'NeverCollected'
-      ? 'Ainda não coletado — nenhuma leitura de configuração foi feita neste ambiente.'
-      : 'Nenhuma exposição de configuração aberta na última leitura.',
-  );
+  /**
+   * Fila vazia de recomendações: "sem integração" ≠ "sem coleta" ≠ "coletado sem pendência" — a diferença muda
+   * a decisão. Zero pendências é pontuação da fonte, não validação independente das configurações.
+   */
+  readonly exposureEmptyText = computed(() => {
+    const m = this.data()?.environment.configurationExposures;
+    switch (m?.state) {
+      case 'NoSource':
+        return 'Nenhuma integração com o Microsoft Secure Score configurada neste ambiente.';
+      case 'NeverCollected':
+        return m.note ?? 'Integração configurada; nenhuma coleta concluída ainda.';
+      default:
+        return 'Nenhuma recomendação pendente na última coleta da fonte.';
+    }
+  });
 
   /** Vazio de identidade: "sem fonte" e "fonte conectada sem coleta" pedem ações diferentes. */
   readonly identityEmptyText = computed(() =>
@@ -1142,11 +1173,18 @@ export class ExecutiveDashboardComponent implements OnInit {
       : 'Fonte de identidade conectada, ainda sem coleta concluída.',
   );
 
-  readonly vulnerabilityEmptyText = computed(() =>
-    this.data()?.environment.vulnerabilities.state === 'NeverCollected'
-      ? 'Ainda não coletado — nenhuma varredura de vulnerabilidades chegou a este ambiente.'
-      : 'Nenhuma vulnerabilidade aberta na última leitura.',
-  );
+  readonly vulnerabilityEmptyText = computed(() => {
+    const m = this.data()?.environment.vulnerabilities;
+    switch (m?.state) {
+      case 'NoSource':
+        return 'Nenhuma fonte de vulnerabilidades configurada neste ambiente.';
+      case 'NeverCollected':
+        return m.note ?? 'Fonte de vulnerabilidades configurada; nenhuma coleta concluída ainda.';
+      default:
+        // Com escopo parcial, a nota da métrica (bloco "O que já foi observado") já diz que o zero não é o todo.
+        return 'Nenhuma vulnerabilidade aberta na última leitura das fontes.';
+    }
+  });
 
   ngOnInit(): void {
     this.load();
