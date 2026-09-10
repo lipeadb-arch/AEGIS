@@ -37,11 +37,13 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
 {
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
+    private readonly TimeProvider _clock;
 
-    public IdentityAcquisitionStore(AegisScoreDbContext db, ITenantContext tenant)
+    public IdentityAcquisitionStore(AegisScoreDbContext db, ITenantContext tenant, TimeProvider clock)
     {
         _db = db;
         _tenant = tenant;
+        _clock = clock;
     }
 
     /// <inheritdoc />
@@ -129,6 +131,12 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
             // histórico e as avaliações citam. A pergunta é feita à consolidação do mês (uma coluna, não uma
             // lista de identificadores removidos) e AQUI, dentro da seção crítica da origem, para que a
             // resposta não seja uma foto vencida da decisão da retenção.
+            // [AEGIS-ADM-02] PRIMEIRO a janela de ADMISSÃO, que não depende de nenhuma linha existir. A
+            // fronteira por mês (logo abaixo) mora na consolidação, e a consolidação expira com os 12 meses:
+            // sem um piso temporal bastaria esperar a linha mensal vencer para uma coleta já removida voltar
+            // a entrar por aqui. As duas recusas dizem coisas diferentes e não se substituem.
+            RecusarForaDaAdmissao(request.AcquisitionId, acquiredAt);
+
             await RecusarSeVarridaAsync(request, ns, acquiredAt, ct);
 
             acquisition = new IdentityAcquisition
@@ -475,15 +483,40 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
     }
 
     /// <summary>
+    /// [AEGIS-ADM-02] Recusa a CRIAÇÃO de uma aquisição cujo instante está FORA da janela de admissão — o
+    /// fecho temporal do repovoamento silencioso.
+    ///
+    /// Duas perguntas diferentes, e é por isso que são dois métodos. A fronteira por mês responde "o expurgo
+    /// daqui já passou deste instante?" e vale enquanto a consolidação do mês existir. Esta responde "este
+    /// instante ainda pode ser admitido?" e continua valendo depois que a consolidação expira — que é
+    /// justamente quando a outra deixa de alcançar.
+    ///
+    /// ⚠️ Ela NÃO afirma que este identificador já foi registrado ou removido: é uma recusa sobre o TEMPO
+    /// declarado. E o instante declarado não é ajustado para caber na janela em nenhuma hipótese — reescrever
+    /// o horário de uma coleta para fazê-la parecer recente falsifica a evidência que o registro preserva.
+    ///
+    /// O relógio é o INJETADO, e não <c>DateTimeOffset.UtcNow</c>: o piso precisa ser observável nos testes
+    /// sem esperar doze meses passarem.
+    /// </summary>
+    private void RecusarForaDaAdmissao(Guid acquisitionId, DateTimeOffset acquiredAt)
+    {
+        var piso = IdentityAdmRetentionPolicy.AdmissionFloor(_clock.GetUtcNow());
+
+        if (acquiredAt < piso)
+            throw new IdentityAcquisitionOutsideAdmissionWindowException(acquisitionId, acquiredAt, piso);
+    }
+
+    /// <summary>
     /// [AEGIS-ADM-02] Recusa a CRIAÇÃO de uma aquisição cujo instante a retenção já varreu naquele mês.
     ///
     /// A fronteira mora na consolidação mensal — <c>RetentionSweptThroughAt</c> — porque ela é BOUNDED (uma
     /// linha por mês e por origem) e responde exatamente à pergunta certa: "o expurgo daqui já passou deste
     /// instante?". Guardar os identificadores removidos responderia a mesma coisa e cresceria para sempre.
     ///
-    /// Passados os 12 meses a consolidação também expira e, com ela, a fronteira: uma coleta tão antiga volta
-    /// a ser aceita e sai na varredura seguinte, porque continua vencida. É um limite declarado, não um furo
-    /// silencioso.
+    /// Passados os 12 meses a consolidação também expira e, com ela, a fronteira — e é aí que a janela de
+    /// ADMISSÃO assume: um instante anterior ao começo do mês mais antigo retido não é aceito por
+    /// <see cref="RecusarForaDaAdmissao"/>, sem precisar guardar nada por aquisição. As duas juntas fecham o
+    /// caminho de criação em toda a linha do tempo.
     /// </summary>
     private async Task RecusarSeVarridaAsync(
         IdentityAcquisitionRequest request, string ns, DateTimeOffset acquiredAt, CancellationToken ct)

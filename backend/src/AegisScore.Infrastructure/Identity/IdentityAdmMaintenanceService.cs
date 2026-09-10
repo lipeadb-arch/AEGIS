@@ -350,6 +350,11 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
     /// ATRASADA sem depender da ordem de chegada — e, como o cálculo é determinístico, duas passadas em
     /// qualquer ordem convergem para o mesmo resultado.
     ///
+    /// As CONTAGENS do mês são acumuladas, e não recalculadas: cada coleta entra uma vez, quando aparece pela
+    /// primeira vez aqui, e a marca dessa entrada mora na própria aquisição. É o que torna esta rotina
+    /// idempotente e, ao mesmo tempo, imune ao desaparecimento da evidência — inclusive quando ele vem da
+    /// CASCATA da exclusão do conector, que não passa pela retenção e não se contabiliza em lugar nenhum.
+    ///
     /// A regra de NÃO-REGRESSÃO não é uma comparação de contagens. Um mês consolidado com dez aquisições cujos
     /// originais foram removidos passaria a recalcular "uma", e uma guarda por contagem descartaria a coleta
     /// atrasada legítima só porque 1 &lt; 10 — perdendo justamente a evidência mais recente do mês. O que
@@ -399,13 +404,17 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
             var trocou = AplicarFotografia(rollup, mes.Snapshot);
             AplicarUltimaTentativa(rollup, mes.LastAttempt);
 
-            // CONTAGENS conservadas: sobreviventes + as que a retenção já removeu. Recontar apenas as linhas
-            // presentes faria o passado encolher a cada expurgo; somar as novas sobre o total anterior
-            // contaria a mesma aquisição outra vez em cada manutenção. A soma das duas parcelas não muda
-            // quando uma aquisição migra de "presente" para "removida" — e é essa invariante que torna a
-            // reconsolidação idempotente mesmo depois do expurgo.
-            rollup.AcquisitionCount = mes.SurvivingCount + rollup.RetiredAcquisitionCount;
-            rollup.DataProducingCount = mes.SurvivingDataProducingCount + rollup.RetiredDataProducingCount;
+            // CONTAGENS ACUMULADAS: entra o que ainda NÃO tinha entrado, e nada mais. Recontar as linhas
+            // presentes faria o passado encolher toda vez que a evidência sumisse; somar as presentes ao
+            // total anterior contaria a mesma coleta outra vez a cada manutenção.
+            //
+            // ⚠️ A parcela "removidas pela retenção" NÃO entra nesta soma, e é por isso que ela sobrevive à
+            // CASCATA. Um total definido como "sobreviventes + removidas pela retenção" pressupõe que toda
+            // ausência foi expurgo nosso — e a exclusão do conector leva as aquisições embora sem passar por
+            // aqui. Bastava excluir o conector, reconectar o mesmo namespace (a origem deixa de ser órfã) e
+            // reconsolidar para o mês histórico desabar. Somar só o inédito não depende da causa da ausência.
+            rollup.AcquisitionCount += mes.NewCount;
+            rollup.DataProducingCount += mes.NewDataProducingCount;
 
             rollup.IsProvisional = mes.Month == mesCorrente;
             rollup.ConsolidatedAt = now;
@@ -419,10 +428,41 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
 
         await db.SaveChangesAsync(ct);
 
+        // A MARCA de contabilização, gravada DEPOIS de os totais estarem salvos e DENTRO da mesma transação.
+        // O que acabou de entrar na conta não entra de novo na próxima passada; o que chegar depois desta
+        // linha continua sem marca, e entra quando chegar — inclusive se chegar ATRASADO. Uma falha em
+        // qualquer ponto desfaz as duas coisas juntas, e nunca a marca sem o total.
+        await MarcarContabilizadasAsync(db, dir, primeiroMes, ultimoMes, now, ct);
+
         if (trocaramDeFotografia.Count > 0)
             await SubstituirConjuntosAsync(db, trocaramDeFotografia, ct);
 
         return (porMes, escritos);
+    }
+
+    /// <summary>
+    /// Marca como CONTABILIZADAS as aquisições da janela que ainda não tinham entrado em nenhum total mensal.
+    ///
+    /// Uma única instrução por passada (não uma por mês, nem uma por linha), e ela só alcança o que tem a
+    /// marca vazia — reexecutar a manutenção sem coleta nova não escreve nada. É uma marca, e não uma cópia:
+    /// não guarda valor nenhum da coleta e desaparece junto com a linha, por retenção ou por cascata.
+    /// </summary>
+    private static Task<int> MarcarContabilizadasAsync(
+        AegisScoreDbContext db,
+        IdentityAdmDirectoryKey dir,
+        DateOnly primeiroMes,
+        DateOnly ultimoMes,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        var inicio = IdentityAdmRetentionPolicy.StartOf(primeiroMes).UtcDateTime;
+        var fim = IdentityAdmRetentionPolicy.EndOf(ultimoMes).UtcDateTime;
+
+        return db.IdentityAcquisitions
+            .Where(a => a.Provider == dir.Provider && a.DirectoryNamespace == dir.DirectoryNamespace
+                        && a.AcquiredAtUtc >= inicio && a.AcquiredAtUtc < fim
+                        && a.MonthlyRollupAccountedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.MonthlyRollupAccountedAt, now), ct);
     }
 
     /// <summary>
@@ -560,9 +600,10 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
                             && a.AcquiredAtUtc >= inicio && a.AcquiredAtUtc < fim)
                 .GroupBy(a => 1)
                 .Select(g => new MesAgregado(
-                    g.Count(),
-                    g.Count(a => a.State == KnightSourceState.Completed
-                                 || a.State == KnightSourceState.PartialCollection),
+                    g.Count(a => a.MonthlyRollupAccountedAt == null),
+                    g.Count(a => a.MonthlyRollupAccountedAt == null
+                                 && (a.State == KnightSourceState.Completed
+                                     || a.State == KnightSourceState.PartialCollection)),
                     g.Max(a => (DateTime?)a.AcquiredAtUtc),
                     g.Max(a => a.State == KnightSourceState.Completed
                                || a.State == KnightSourceState.PartialCollection
@@ -604,7 +645,7 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
                 : null;
 
             resultado.Add(new MesCalculado(
-                mes, agregado.Count, agregado.DataProducingCount, snapshot, ultima));
+                mes, agregado.NewCount, agregado.NewDataProducingCount, snapshot, ultima));
         }
 
         return resultado;
@@ -736,8 +777,11 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
     /// <summary>
     /// Contabiliza no MÊS a aquisição que saiu por inteiro, e avança a fronteira do que a retenção já varreu.
     ///
-    /// Os dois registros existem por motivos diferentes. As contagens conservam o denominador histórico do mês
-    /// (a linha não existe mais e não pode ser recontada). A fronteira é a memória BOUNDED que impede o
+    /// Nenhum dos dois é o denominador do mês: esse é ACUMULADO e não se mexe aqui — a coleta removida já
+    /// tinha entrado nele, e continua contada. O contador de removidas é ATIVIDADE DE RETENÇÃO: diz quantas
+    /// coletas ESTE pacote expurgou, e por isso não é alimentado por ausências de outra causa (a cascata da
+    /// exclusão do conector não passa por aqui, e chamá-la de expurgo afirmaria uma causa que ninguém
+    /// apurou). A fronteira é a memória BOUNDED que impede o
     /// repovoamento silencioso: sem ela, reapresentar o identificador removido cairia no caminho de criação e
     /// recriaria a evidência expurgada — e guardar a lista de identificadores removidos cresceria para sempre,
     /// que é o oposto do propósito de uma retenção.
@@ -970,9 +1014,18 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
     /// <summary>Projeção da origem para a paginação no banco — tipo NOMEADO porque o UNION exige.</summary>
     private sealed record OrigemLinha(Guid TenantId, KnightSourceType Provider, string DirectoryNamespace);
 
-    /// <summary>O que o banco agrega de um mês: as contagens e os instantes máximos (todas e com dados).</summary>
+    /// <summary>
+    /// O que o banco agrega de um mês: as contagens do que AINDA NÃO FOI CONTABILIZADO e os instantes máximos
+    /// (de todas as coletas, e das que produziram dados).
+    ///
+    /// As contagens são do INÉDITO de propósito. Somar o que está presente ao total anterior contaria de novo
+    /// o que já entrou; substituir o total pelo que está presente faria o mês encolher toda vez que a
+    /// evidência saísse — por retenção ou pela cascata da exclusão do conector. Já os instantes máximos olham
+    /// TODAS as linhas presentes: a fotografia do mês é escolhida entre o que existe, não entre o que é
+    /// novidade.
+    /// </summary>
     private sealed record MesAgregado(
-        int Count, int DataProducingCount, DateTime? LastAt, DateTime? LastDataProducingAt)
+        int NewCount, int NewDataProducingCount, DateTime? LastAt, DateTime? LastDataProducingAt)
     {
         public static readonly MesAgregado Vazio = new(0, 0, null, null);
     }
@@ -1001,13 +1054,13 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
     }
 
     /// <summary>
-    /// Um mês já apurado: as contagens das linhas SOBREVIVENTES (as removidas ficam contadas na própria
-    /// consolidação) e as candidatas a fotografia e a última tentativa.
+    /// Um mês já apurado: quantas coletas dele ainda NÃO tinham entrado no total (o que esta passada tem a
+    /// acrescentar) e as candidatas a fotografia e a última tentativa.
     /// </summary>
     private sealed record MesCalculado(
         DateOnly Month,
-        int SurvivingCount,
-        int SurvivingDataProducingCount,
+        int NewCount,
+        int NewDataProducingCount,
         AquisicaoResumo? Snapshot,
         AquisicaoResumo? LastAttempt);
 }

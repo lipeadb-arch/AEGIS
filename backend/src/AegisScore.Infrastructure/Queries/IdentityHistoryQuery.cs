@@ -68,6 +68,8 @@ public sealed class IdentityHistoryQuery : IIdentityHistoryQuery
 
         if (consolidacoes.Count == 0) return vazio;
 
+        var detalhes = await DetalheDasFotografiasAsync(consolidacoes, ct);
+
         var meses = MesesEntre(de, ate);
 
         var origens = consolidacoes
@@ -77,10 +79,42 @@ public sealed class IdentityHistoryQuery : IIdentityHistoryQuery
             .Select(g => new IdentityHistoryDirectoryDto(
                 g.Key.Provider.ToString(),
                 g.Key.DirectoryNamespace,
-                Serie(g.ToDictionary(r => r.Month), meses, mesCorrente)))
+                Serie(g.ToDictionary(r => r.Month), meses, mesCorrente, detalhes)))
             .ToList();
 
         return vazio with { Directories = origens };
+    }
+
+    /// <summary>
+    /// O estado do detalhe de CADA fotografia exibida, numa consulta só e limitada às aquisições que a série
+    /// realmente cita — no máximo uma por mês e por origem.
+    ///
+    /// É apurado na PRÓPRIA aquisição de referência porque o marcador de retenção do mês não responde a esta
+    /// pergunta: ele registra que o expurgo passou pelo mês, o que é compatível tanto com uma fotografia
+    /// íntegra (a coleta removida era outra, mais antiga) quanto com uma fotografia que perdeu só o detalhe
+    /// sem que nada tenha saído por inteiro.
+    ///
+    /// A chave presente no dicionário significa "a linha existe"; o valor, "quando o detalhe dela expirou".
+    /// A ausência da chave é a única coisa que este método afirma sobre o que sumiu — a CAUSA é decidida
+    /// depois, e só quando há prova dela. Nada aqui escreve, consolida ou recompõe detalhe nenhum.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<Guid, DateTimeOffset?>> DetalheDasFotografiasAsync(
+        IReadOnlyList<IdentityMonthlyRollup> consolidacoes, CancellationToken ct)
+    {
+        var ids = consolidacoes
+            .Where(r => r.SnapshotAcquisitionId is not null)
+            .Select(r => r.SnapshotAcquisitionId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (ids.Count == 0) return new Dictionary<Guid, DateTimeOffset?>();
+
+        var linhas = await _db.IdentityAcquisitions.AsNoTracking()
+            .Where(a => ids.Contains(a.Id))
+            .Select(a => new { a.Id, a.DetailRetiredAt })
+            .ToListAsync(ct);
+
+        return linhas.ToDictionary(l => l.Id, l => l.DetailRetiredAt);
     }
 
     /// <summary>
@@ -90,7 +124,8 @@ public sealed class IdentityHistoryQuery : IIdentityHistoryQuery
     private static IReadOnlyList<IdentityHistoryMonthDto> Serie(
         IReadOnlyDictionary<DateOnly, IdentityMonthlyRollup> porMes,
         IReadOnlyList<DateOnly> meses,
-        DateOnly mesCorrente)
+        DateOnly mesCorrente,
+        IReadOnlyDictionary<Guid, DateTimeOffset?> detalhes)
     {
         var serie = new List<IdentityHistoryMonthDto>(meses.Count);
         IdentityMonthlyRollup? anterior = null;
@@ -98,7 +133,7 @@ public sealed class IdentityHistoryQuery : IIdentityHistoryQuery
         foreach (var mes in meses)
         {
             porMes.TryGetValue(mes, out var r);
-            serie.Add(Mes(mes, r, anterior, mesCorrente));
+            serie.Add(Mes(mes, r, anterior, mesCorrente, detalhes));
 
             // O elo de comparação é o último mês COM DADOS. Um mês sem coleta no meio não deve fazer a
             // comparabilidade se perder para sempre — ele apenas não é o termo de comparação.
@@ -109,7 +144,11 @@ public sealed class IdentityHistoryQuery : IIdentityHistoryQuery
     }
 
     private static IdentityHistoryMonthDto Mes(
-        DateOnly mes, IdentityMonthlyRollup? r, IdentityMonthlyRollup? anterior, DateOnly mesCorrente)
+        DateOnly mes,
+        IdentityMonthlyRollup? r,
+        IdentityMonthlyRollup? anterior,
+        DateOnly mesCorrente,
+        IReadOnlyDictionary<Guid, DateTimeOffset?> detalhes)
     {
         var rotulo = mes.ToString("yyyy-MM", CultureInfo.InvariantCulture);
         var provisorio = mes == mesCorrente;
@@ -119,7 +158,8 @@ public sealed class IdentityHistoryQuery : IIdentityHistoryQuery
             // Sem linha ≠ sem coleta. A manutenção pode simplesmente ainda não ter passado por aqui, e dizer
             // "sem dados" nesse caso seria uma afirmação sobre o ambiente do cliente que ninguém apurou.
             return new IdentityHistoryMonthDto(
-                rotulo, IdentityHistoryMonthState.NotConsolidated, provisorio, 0, 0, 0, null, null, null,
+                rotulo, IdentityHistoryMonthState.NotConsolidated, provisorio, 0, 0, 0,
+                IdentityHistoryDetailAvailability.NoSnapshot, null, null, null, null,
                 Array.Empty<IdentityHistorySetDto>(), false,
                 "Mês ainda não consolidado — a ausência de valores aqui não afirma ausência de coleta.",
                 null, null);
@@ -172,20 +212,85 @@ public sealed class IdentityHistoryQuery : IIdentityHistoryQuery
             .ToList();
 
         // DETALHE EXPIRADO ≠ conjunto vazio ≠ ausência na origem. Os valores acima são os APURADOS na coleta e
-        // continuam sendo apresentados como tais; o que a nota declara é que a lista de objetos por trás deles
-        // já não existe. Sem essa distinção, um mês com detalhe expurgado seria indistinguível de um mês em que
-        // a coleta olhou e não encontrou nada.
-        var notaRetencao = r.RetentionSweptThroughAt is { } varridoAte
-            ? $"Detalhe operacional deste mês EXPIRADO POR RETENÇÃO (varrido até "
-              + $"{varridoAte.ToUniversalTime():yyyy-MM-dd}): os números e a completude são os apurados na "
-              + "coleta, mas a lista de objetos observados não está mais disponível."
-            : null;
+        // continuam sendo apresentados como tais em TODOS os casos; o que as notas declaram é o que aconteceu
+        // com a evidência por trás deles. Sem essa distinção, um mês com detalhe expurgado seria
+        // indistinguível de um mês em que a coleta olhou e não encontrou nada.
+        var disponibilidade = Disponibilidade(r, detalhes);
 
         return new IdentityHistoryMonthDto(
             rotulo, estado, provisorio, r.AcquisitionCount, r.DataProducingCount,
-            r.RetiredAcquisitionCount, notaRetencao, snapshot, tentativa,
-            conjuntos, comparavel, ressalva, r.ConsolidatedAt, r.ConsolidationVersion);
+            r.RetiredAcquisitionCount, disponibilidade, NotaDoMes(r), NotaDaFotografia(r, disponibilidade),
+            snapshot, tentativa, conjuntos, comparavel, ressalva, r.ConsolidatedAt, r.ConsolidationVersion);
     }
+
+    /// <summary>
+    /// O que aconteceu com o detalhe da coleta que originou a FOTOGRAFIA exibida — apurado nela, e não
+    /// deduzido do marcador do mês.
+    ///
+    /// A linha ausente é o caso delicado: sumir não diz por quê. Só a fronteira varrida DESTE mês, alcançando
+    /// o instante DAQUELA coleta, prova que foi a retenção. Fora disso a ausência fica declarada como de
+    /// causa desconhecida — a origem pode ter sido excluída e levado a evidência por cascata, e atribuir isso
+    /// ao expurgo seria afirmar uma causa que ninguém apurou.
+    /// </summary>
+    private static IdentityHistoryDetailAvailability Disponibilidade(
+        IdentityMonthlyRollup r, IReadOnlyDictionary<Guid, DateTimeOffset?> detalhes)
+    {
+        if (r.SnapshotAcquisitionId is not { } fotografia)
+            return IdentityHistoryDetailAvailability.NoSnapshot;
+
+        if (detalhes.TryGetValue(fotografia, out var expiradoEm))
+            return expiradoEm is null
+                ? IdentityHistoryDetailAvailability.Available
+                : IdentityHistoryDetailAvailability.DetailRetired;
+
+        return r.RetentionSweptThroughAt is { } varridoAte
+               && r.SnapshotAcquiredAt is { } fotografiaEm
+               && fotografiaEm <= varridoAte
+            ? IdentityHistoryDetailAvailability.RemovedByRetention
+            : IdentityHistoryDetailAvailability.Unavailable;
+    }
+
+    /// <summary>
+    /// Atividade de RETENÇÃO no mês — quantas coletas o expurgo levou, e até onde ele varreu. É afirmação
+    /// sobre o mês e nada além dele: um mês com coletas removidas pode continuar exibindo uma fotografia
+    /// íntegra, e um mês sem nenhuma remoção pode exibir uma fotografia que perdeu só o detalhe.
+    /// </summary>
+    private static string? NotaDoMes(IdentityMonthlyRollup r) =>
+        r.RetiredAcquisitionCount <= 0
+            ? null
+            : $"Retenção já aplicada neste mês: {r.RetiredAcquisitionCount} de {r.AcquisitionCount} "
+              + "coleta(s) registrada(s) removida(s) por vencimento"
+              + (r.RetentionSweptThroughAt is { } ate
+                  ? $" (varrido até {ate.ToUniversalTime():yyyy-MM-dd})"
+                  : "")
+              + ". É atividade de retenção NO MÊS, e não afirmação sobre a fotografia exibida.";
+
+    /// <summary>O que dizer sobre a fotografia quando o detalhe dela não está mais disponível.</summary>
+    private static string? NotaDaFotografia(
+        IdentityMonthlyRollup r, IdentityHistoryDetailAvailability disponibilidade) =>
+        disponibilidade switch
+        {
+            IdentityHistoryDetailAvailability.DetailRetired =>
+                "Detalhe operacional da coleta que originou esta fotografia EXPIRADO POR RETENÇÃO: os números "
+                + "e a completude continuam sendo os apurados por ela, mas a lista de objetos observados não "
+                + "está mais disponível. A coleta em si permanece registrada.",
+
+            IdentityHistoryDetailAvailability.RemovedByRetention =>
+                "A coleta que originou esta fotografia foi REMOVIDA POR RETENÇÃO"
+                + (r.RetentionSweptThroughAt is { } ate
+                    ? $" (o expurgo deste mês varreu até {ate.ToUniversalTime():yyyy-MM-dd})"
+                    : "")
+                + ": os números e a completude preservados aqui são os que ela apurou, e a lista de objetos "
+                + "observados não está mais disponível.",
+
+            IdentityHistoryDetailAvailability.Unavailable =>
+                "A coleta que originou esta fotografia não está mais registrada, e a retenção deste mês NÃO "
+                + "responde por essa ausência — a origem pode ter sido excluída, levando a evidência junto. "
+                + "Os números e a completude preservados aqui são os que ela apurou; a causa da ausência não "
+                + "é conhecida e não é atribuída ao expurgo.",
+
+            _ => null,
+        };
 
     /// <summary>
     /// Quando comparar dois meses induziria a erro. Uma mudança de versão de schema ou de normalização é uma

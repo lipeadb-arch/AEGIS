@@ -35,6 +35,41 @@ public sealed record IdentityHistoryRangeRequest(DateOnly? FromMonth = null, Dat
 public enum IdentityHistoryMonthState { NotConsolidated = 0, NoCollection = 1, NoData = 2, Collected = 3 }
 
 /// <summary>
+/// O que se sabe sobre o DETALHE da coleta que originou a fotografia EXIBIDA — e só sobre ela.
+///
+/// Três perguntas que este pacote precisa manter separadas, e que um único marcador de mês fazia colapsar:
+///
+///   • ATIVIDADE DE RETENÇÃO NO MÊS — "a retenção já removeu coletas deste mês". Diz respeito ao mês, e não
+///     necessariamente à fotografia: uma coleta antiga pode ter saído enquanto a fotografia, mais recente,
+///     continua íntegra.
+///   • DISPONIBILIDADE DO DETALHE DA FOTOGRAFIA — o que este enum responde. Uma aquisição PROTEGIDA perde só
+///     o detalhe (a linha fica, e o marcador de remoção integral do mês nem se move); uma aquisição pode ter
+///     saído por inteiro; e pode ter sumido por um motivo que não é a retenção — a exclusão do conector leva
+///     a evidência por cascata, e atribuir isso ao expurgo seria afirmar uma causa que ninguém apurou.
+///   • VALORES E COMPLETUDE — os APURADOS na coleta, que não mudam em nenhum destes casos.
+/// </summary>
+public enum IdentityHistoryDetailAvailability
+{
+    /// <summary>Não há fotografia neste mês (não consolidado, sem coleta, ou nenhuma coleta produziu dados).</summary>
+    NoSnapshot = 0,
+
+    /// <summary>A coleta da fotografia continua registrada, com o detalhe observado disponível.</summary>
+    Available = 1,
+
+    /// <summary>A coleta continua registrada, e a RETENÇÃO expirou o detalhe dela (a lista de objetos saiu).</summary>
+    DetailRetired = 2,
+
+    /// <summary>A coleta saiu por INTEIRO, e a fronteira varrida deste mês responde por essa remoção.</summary>
+    RemovedByRetention = 3,
+
+    /// <summary>
+    /// A coleta não está mais registrada e a retenção NÃO responde por isso — a origem pode ter sido excluída
+    /// e levado a evidência por cascata. Causa DESCONHECIDA, declarada como tal em vez de atribuída.
+    /// </summary>
+    Unavailable = 4,
+}
+
+/// <summary>
 /// A série do tenant. Os limites de retenção viajam junto para que a leitura saiba POR QUE a série termina
 /// onde termina — sem eles, um mês ausente por prazo parece um mês sem coleta.
 /// </summary>
@@ -70,10 +105,19 @@ public sealed record IdentityHistoryDirectoryDto(
 /// Quantas das coletas contadas acima já saíram por retenção. É o que separa "este mês teve três coletas" de
 /// "temos três coletas deste mês guardadas" — duas afirmações diferentes que um número só faria colapsar.
 /// </param>
+/// <param name="SnapshotDetail">
+/// Disponibilidade do detalhe da coleta que originou a FOTOGRAFIA exibida — apurada nela, e não deduzida da
+/// atividade de retenção do mês. Os valores e a completude acima continuam sendo os APURADOS na coleta em
+/// todos os casos.
+/// </param>
+/// <param name="MonthRetentionNote">
+/// Atividade de RETENÇÃO neste mês (quantas coletas o expurgo removeu, e até que instante ele varreu).
+/// <c>null</c> = a retenção ainda não removeu nada aqui. É afirmação sobre o MÊS, e não sobre a fotografia.
+/// </param>
 /// <param name="DetailRetentionNote">
-/// Presente quando o DETALHE OPERACIONAL deste mês já foi alcançado pela retenção. Os valores e a completude
-/// exibidos continuam sendo os APURADOS na coleta; o que não existe mais é a lista de objetos por trás deles.
-/// <c>null</c> significa que a retenção ainda não passou por este mês.
+/// O que <paramref name="SnapshotDetail"/> diz, em texto, quando o detalhe da fotografia NÃO está disponível.
+/// Nomeia a causa apenas quando ela é conhecida; quando não é, diz que não é. <c>null</c> quando o detalhe
+/// está disponível ou quando não há fotografia.
 /// </param>
 /// <param name="Comparable">
 /// FALSE quando comparar este mês com o anterior da série induziria a erro: mês sem dados, ou mudança de
@@ -87,6 +131,8 @@ public sealed record IdentityHistoryMonthDto(
     int AcquisitionCount,
     int DataProducingCount,
     int RetiredAcquisitionCount,
+    IdentityHistoryDetailAvailability SnapshotDetail,
+    string? MonthRetentionNote,
     string? DetailRetentionNote,
     IdentityHistoryProvenanceDto? Snapshot,
     IdentityHistoryAttemptDto? LastAttempt,

@@ -76,6 +76,22 @@ public static class IdentityAdmRetentionPolicy
     /// <summary>O mesmo corte na forma da chave de varredura — o valor efetivamente comparado no banco.</summary>
     public static DateTime DetailCutoffKey(DateTimeOffset now) => DetailCutoff(now).UtcDateTime;
 
+    /// <summary>
+    /// PISO da janela de ADMISSÃO: o instante mais antigo que uma aquisição INÉDITA pode declarar para ser
+    /// aceita — o começo do mês mais antigo ainda retido.
+    ///
+    /// Existe porque a recusa de repovoamento silencioso mora na consolidação do mês
+    /// (<c>IdentityMonthlyRollup.RetentionSweptThroughAt</c>), e a consolidação EXPIRA com a janela de 12
+    /// meses. Sem um piso, bastava esperar a linha mensal vencer para uma coleta já removida voltar a ser
+    /// aceita pelo caminho de criação. A alternativa — guardar para sempre os identificadores expurgados —
+    /// seria um registro de deduplicação sem limite, exatamente o que uma retenção existe para não ter.
+    ///
+    /// O piso é a MESMA fronteira que a consolidação já usa, e não um número novo: abaixo dele não há mês a
+    /// consolidar (a coleta nunca entraria no histórico) e a varredura seguinte a removeria de qualquer
+    /// forma. Aceitá-la seria escrever evidência com prazo vencido no ato do registro.
+    /// </summary>
+    public static DateTimeOffset AdmissionFloor(DateTimeOffset now) => StartOf(OldestRetainedMonth(now));
+
     /// <summary>Os meses retidos, do mais ANTIGO ao corrente — a ordem em que a série é lida.</summary>
     public static IReadOnlyList<DateOnly> RetainedWindow(DateTimeOffset now)
     {
@@ -122,8 +138,10 @@ public sealed class IdentityAcquisitionDetailRetiredException : InvalidOperation
 /// (<c>IdentityMonthlyRollup.RetentionSweptThroughAt</c>), e não uma lista de identificadores removidos: uma
 /// lista dessas cresceria para sempre, que é o oposto do propósito de uma retenção.
 ///
-/// LIMITE declarado: passados os 12 meses, a consolidação do mês também expira, e com ela a fronteira. Uma
-/// coleta tão antiga voltaria a ser aceita — e sairia na varredura seguinte, porque continua vencida.
+/// Ela vale DENTRO da janela de 12 meses, que é onde a linha mensal existe. Passado esse prazo a consolidação
+/// expira e leva a fronteira junto — e é a janela de ADMISSÃO
+/// (<see cref="IdentityAcquisitionOutsideAdmissionWindowException"/>) que fecha o caminho a partir dali, sem
+/// precisar guardar nada por aquisição.
 /// </summary>
 public sealed class IdentityAcquisitionRetentionSweptException : InvalidOperationException
 {
@@ -145,6 +163,47 @@ public sealed class IdentityAcquisitionRetentionSweptException : InvalidOperatio
     public DateTimeOffset AcquiredAt { get; }
     public DateOnly Month { get; }
     public DateTimeOffset SweptThrough { get; }
+}
+
+/// <summary>
+/// Recusa de registrar uma aquisição INÉDITA cujo instante está FORA da janela de admissão — anterior ao
+/// começo do mês mais antigo ainda retido.
+///
+/// É o fecho temporal do repovoamento silencioso, e ele é necessário porque a outra recusa
+/// (<see cref="IdentityAcquisitionRetentionSweptException"/>) depende de uma fronteira que expira com a
+/// consolidação do mês. Sem este piso bastava esperar a linha mensal vencer para uma coleta removida voltar a
+/// entrar pelo caminho de criação.
+///
+/// ⚠️ SEMÂNTICA, e é diferente da outra: "a janela de admissão está fechada para este instante" NÃO afirma
+/// que ESTE identificador já foi registrado, processado ou removido antes. É uma recusa sobre o TEMPO
+/// declarado, não sobre a identidade da coleta — e o texto abaixo diz isso de propósito, para que ninguém
+/// leia a recusa como prova de duplicidade.
+///
+/// A recusa acontece ANTES de qualquer escrita, e o instante declarado JAMAIS é ajustado para caber na
+/// janela: reescrever o horário de uma coleta para fazê-la parecer recente é falsificar a evidência que o
+/// registro existe para preservar.
+/// </summary>
+public sealed class IdentityAcquisitionOutsideAdmissionWindowException : InvalidOperationException
+{
+    public IdentityAcquisitionOutsideAdmissionWindowException(
+        Guid acquisitionId, DateTimeOffset acquiredAt, DateTimeOffset floor)
+        : base($"A aquisição de identidade {acquisitionId}, de {acquiredAt.ToUniversalTime():O}, está FORA da "
+               + $"janela de admissão do ADM (o piso é {floor.ToUniversalTime():O}, o começo do mês mais "
+               + "antigo ainda retido). Uma coleta anterior a esse piso não tem mês a consolidar e sairia na "
+               + "varredura seguinte por vencimento — aceitá-la escreveria evidência já vencida e reabriria o "
+               + "caminho de repovoamento das coletas que a retenção removeu. Esta recusa é sobre o INSTANTE "
+               + "declarado e não afirma que este identificador já havia sido registrado ou removido. Uma "
+               + "coleta nova é uma aquisição NOVA, com instante e identificador próprios — e o instante não "
+               + "deve ser ajustado para caber na janela.")
+    {
+        AcquisitionId = acquisitionId;
+        AcquiredAt = acquiredAt;
+        AdmissionFloor = floor;
+    }
+
+    public Guid AcquisitionId { get; }
+    public DateTimeOffset AcquiredAt { get; }
+    public DateTimeOffset AdmissionFloor { get; }
 }
 
 /// <summary>

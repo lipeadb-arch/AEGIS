@@ -61,13 +61,21 @@ public class IdentityMonthlyRollup : Entity, ITenantOwned
 
     // ---- Quantas coletas houve no mês (o denominador honesto do que se está olhando) ----
     //
-    // ⚠️ SEMÂNTICA HISTÓRICA, e não "quantas linhas sobraram". Depois que a retenção remove as aquisições
-    // vencidas do mês, contar as sobreviventes faria o passado ENCOLHER sozinho: um mês com dez coletas
-    // passaria a exibir uma, e a série sugeriria uma queda de atividade que nunca houve. O número abaixo é
-    // mantido como (sobreviventes + já removidas pela retenção) — as removidas ficam contadas em
-    // <see cref="RetiredAcquisitionCount"/>, e a soma não muda quando uma migra de um lado para o outro.
-    // É também por isso que uma reconsolidação não incrementa nada: ela recontabiliza as duas parcelas, em
-    // vez de somar de novo o que já estava somado.
+    // ⚠️ SEMÂNTICA HISTÓRICA, e não "quantas linhas sobraram". Depois que a evidência do mês sai do banco,
+    // contar as sobreviventes faria o passado ENCOLHER sozinho: um mês com dez coletas passaria a exibir uma,
+    // e a série sugeriria uma queda de atividade que nunca houve.
+    //
+    // O número abaixo é ACUMULADO, nunca recalculado: cada aquisição entra nele UMA vez — quando aparece pela
+    // primeira vez numa consolidação — e a marca dessa contabilização mora na própria aquisição
+    // (<c>IdentityAcquisition.MonthlyRollupAccountedAt</c>). É isso que faz a reconsolidação ser idempotente
+    // (o que já entrou não entra de novo) e absorver a coleta ATRASADA (ela ainda não tinha entrado).
+    //
+    // ⚠️ E é isso que separa DUAS ausências que uma soma de parcelas confundia. A retenção deste pacote se
+    // contabiliza a si mesma em <see cref="RetiredAcquisitionCount"/>; a CASCATA de exclusão do conector leva
+    // as aquisições embora sem contabilizar nada. Um total definido como "sobreviventes + removidas pela
+    // retenção" desabaria justamente no segundo caso — bastava excluir o conector, reconectar o mesmo
+    // namespace e reconsolidar para o mês histórico encolher. Um total acumulado não desaba, e continua
+    // incorporando o que a reconexão trouxer.
 
     /// <summary>Aquisições registradas neste mês, tenham produzido dados ou não. Zero = mês sem coleta.</summary>
     public int AcquisitionCount { get; set; }
@@ -76,13 +84,14 @@ public class IdentityMonthlyRollup : Entity, ITenantOwned
     public int DataProducingCount { get; set; }
 
     /// <summary>
-    /// Quantas das aquisições contadas acima já foram REMOVIDAS por inteiro pela retenção. É a parcela que
-    /// não pode mais ser recontada a partir das linhas, e existe para que o histórico do mês não dependa da
-    /// existência da evidência operacional que o originou.
+    /// Quantas das aquisições contadas acima a RETENÇÃO removeu por inteiro. É atividade de retenção, e não o
+    /// denominador: conta só o que ESTE pacote expurgou, e por isso NÃO cresce quando a evidência some por
+    /// outro motivo (a cascata da exclusão do conector, por exemplo). Atribuir a ela toda ausência afirmaria
+    /// uma causa que ninguém apurou.
     /// </summary>
     public int RetiredAcquisitionCount { get; set; }
 
-    /// <summary>Quantas das removidas haviam produzido dados — a mesma conservação aplicada ao outro contador.</summary>
+    /// <summary>Quantas das removidas PELA RETENÇÃO haviam produzido dados — o mesmo recorte de causa.</summary>
     public int RetiredDataProducingCount { get; set; }
 
     /// <summary>

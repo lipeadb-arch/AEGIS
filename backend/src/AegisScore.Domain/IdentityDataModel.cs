@@ -228,6 +228,24 @@ public class IdentityAcquisition : Entity, ITenantOwned
     /// </summary>
     public DateTimeOffset? DetailRetiredAt { get; set; }
 
+    /// <summary>
+    /// [AEGIS-ADM-02] Instante da consolidação que JÁ CONTABILIZOU esta aquisição no mês dela. <c>null</c> =
+    /// ainda não contada em lugar nenhum.
+    ///
+    /// Existe porque o denominador histórico do mês não pode ser recalculado a partir das linhas que restam.
+    /// As aquisições desaparecem por DOIS motivos diferentes — a retenção deste pacote (que se contabiliza a
+    /// si mesma) e a CASCATA de exclusão do conector, que leva a evidência embora sem avisar ninguém. Recontar
+    /// os sobreviventes faria o passado encolher no segundo caso; somar os sobreviventes ao total anterior
+    /// contaria a mesma coleta outra vez a cada manutenção.
+    ///
+    /// Esta marca resolve as duas coisas com uma pergunta só: "esta linha já entrou na conta?". O que a
+    /// consolidação soma é apenas o que ainda não entrou — uma vez, na ordem em que chegar, inclusive quando
+    /// chega ATRASADA. E o que já saiu do banco não volta a ser somado, porque não há linha para perguntar.
+    ///
+    /// É uma marca, e não uma cópia: não guarda valor nenhum da coleta, e some junto com ela.
+    /// </summary>
+    public DateTimeOffset? MonthlyRollupAccountedAt { get; set; }
+
     /// <summary>True quando esta aquisição produziu dados legíveis (completos ou declaradamente parciais).</summary>
     public bool ProducedData => State is KnightSourceState.Completed or KnightSourceState.PartialCollection;
 }
