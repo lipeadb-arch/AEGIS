@@ -1390,8 +1390,9 @@ public sealed class RemediationJourneyTests : IDisposable
         var registry = new KnightCollectorRegistry(new[] { collector });
         var tenant = new SystemTenantContext(tenantId);
         var config = new DemoOnlyConfigProvider();
-        var evidence = new AegisScore.Infrastructure.Identity.IdentityEvidenceService(db, registry, config, new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, tenant), tenant);
-        return new AegisKnightAssessmentService(db, registry, config, new NoAdvisoryGenerator(), evidence, tenant);
+        var aquisicoes = new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, tenant);
+        var evidence = new AegisScore.Infrastructure.Identity.IdentityEvidenceService(db, registry, config, aquisicoes, tenant);
+        return new AegisKnightAssessmentService(db, registry, config, new NoAdvisoryGenerator(), evidence, aquisicoes, tenant);
     }
 
     private sealed class StubCollector : IKnightCollector

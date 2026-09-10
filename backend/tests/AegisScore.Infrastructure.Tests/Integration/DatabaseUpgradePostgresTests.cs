@@ -68,7 +68,13 @@ public sealed class DatabaseUpgradePostgresTests
     /// apenas que o migrator termina com código zero.
     /// </summary>
     private static readonly string[] Pendentes =
-        MarcoHistorico.Concat(new[] { "20260909031324_Adm01_IdentityDataModel" }).ToArray();
+        MarcoHistorico.Concat(new[]
+        {
+            "20260909031324_Adm01_IdentityDataModel",
+            // [AEGIS-ADM-02] Histórico mensal e retenção: acrescenta as duas tabelas de consolidação, a coluna
+            // do detalhe expirado e a chave de varredura por instante (com backfill do que já estava gravado).
+            "20260910013200_Adm02_IdentityMonthlyHistoryRetention",
+        }).ToArray();
 
     private readonly ITestOutputHelper _output;
 

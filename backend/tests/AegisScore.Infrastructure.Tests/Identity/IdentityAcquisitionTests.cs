@@ -431,9 +431,10 @@ public sealed class IdentityAcquisitionTests : IDisposable
         var tenant = new SystemTenantContext(TenantA);
         var registry = new KnightCollectorRegistry(new IKnightCollector[] { new DemoKnightCollector() });
         var config = new ConfigSintetica(DiretorioA);
-        var evidence = new IdentityEvidenceService(db, registry, config, new IdentityAcquisitionStore(db, tenant), tenant);
+        var aquisicoes = new IdentityAcquisitionStore(db, tenant);
+        var evidence = new IdentityEvidenceService(db, registry, config, aquisicoes, tenant);
         var service = new AegisKnightAssessmentService(
-            db, registry, config, new SemNarrativa(), evidence, tenant);
+            db, registry, config, new SemNarrativa(), evidence, aquisicoes, tenant);
 
         var assessment = await service.RunDemoAssessmentAsync();
 
@@ -936,8 +937,9 @@ public sealed class IdentityAcquisitionTests : IDisposable
         var tenant = new SystemTenantContext(TenantA);
         var registry = new KnightCollectorRegistry(new IKnightCollector[] { collector });
         var config = new ConfigSintetica(collector.Cenario.Namespace);
-        var evidence = new IdentityEvidenceService(db, registry, config, new IdentityAcquisitionStore(db, tenant), tenant);
-        return await new AegisKnightAssessmentService(db, registry, config, new SemNarrativa(), evidence, tenant)
+        var aquisicoes = new IdentityAcquisitionStore(db, tenant);
+        var evidence = new IdentityEvidenceService(db, registry, config, aquisicoes, tenant);
+        return await new AegisKnightAssessmentService(db, registry, config, new SemNarrativa(), evidence, aquisicoes, tenant)
             .RunAssessmentAsync(KnightSourceType.MicrosoftEntraId);
     }
 
