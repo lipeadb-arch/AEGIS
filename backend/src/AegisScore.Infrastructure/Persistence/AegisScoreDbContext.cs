@@ -137,6 +137,12 @@ public class AegisScoreDbContext : DbContext
     public DbSet<IdentityEntityObservation> IdentityEntityObservations => Set<IdentityEntityObservation>();
     public DbSet<IdentityObservationSetState> IdentityObservationSetStates => Set<IdentityObservationSetState>();
 
+    // [AEGIS-ADM-02] Histórico MENSAL do ADM: uma consolidação por (tenant, provedor, namespace, mês UTC), com
+    // os valores POR CONJUNTO da fotografia daquele mês. Guarda a própria cópia agregada da proveniência — é o
+    // que a faz sobreviver à retenção do detalhe (90 dias) dentro da janela de 12 meses.
+    public DbSet<IdentityMonthlyRollup> IdentityMonthlyRollups => Set<IdentityMonthlyRollup>();
+    public DbSet<IdentityMonthlyRollupSet> IdentityMonthlyRollupSets => Set<IdentityMonthlyRollupSet>();
+
     // [AEGIS-AUD-035/036/037] Fotografia AUDITÁVEL e IMUTÁVEL de postura (histórico compartilhado AEGIS
     // Score/NIST e KNIGHT). Append-only: sem update/delete (reforçado por gatilho no PostgreSQL — ver migration).
     public DbSet<PostureSnapshot> PostureSnapshots => Set<PostureSnapshot>();
@@ -518,6 +524,12 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.AcquiredAt });
             // Leitura por DIRETÓRIO — o eixo que separa duas origens configuradas no mesmo tenant.
             e.HasIndex(x => new { x.TenantId, x.DirectoryNamespace, x.AcquiredAt });
+            // [AEGIS-ADM-02] Varredura por JANELA de tempo (consolidação mensal e corte de retenção): as duas
+            // percorrem um intervalo dentro de um diretório, e é por isso que a chave DERIVADA entra no índice
+            // em vez do DateTimeOffset — o intervalo vira um seek com range, não uma leitura da origem inteira
+            // seguida de descarte. A ordenação total desta chave é o que permite pedir ao banco "a última
+            // coleta deste mês" em vez de trazer o mês para a memória.
+            e.HasIndex(x => new { x.TenantId, x.DirectoryNamespace, x.AcquiredAtUtc });
 
             e.HasAlternateKey(x => new { x.Id, x.TenantId });
             e.HasOne<ConnectorConfig>()
@@ -605,6 +617,55 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.AcquisitionId, x.Set })
                 .IsUnique()
                 .HasDatabaseName("UX_IdentityObservationSetState_Natural");
+        });
+
+        // ============================================================
+        //  [AEGIS-ADM-02] Histórico mensal do ADM de identidade
+        // ============================================================
+
+        // CONSOLIDAÇÃO MENSAL: UMA linha por (tenant, provedor, namespace, mês). O índice único NOMEADO torna a
+        // reconsolidação idempotente uma invariante de BANCO, e não uma promessa do read-then-write — duas
+        // passadas simultâneas da manutenção não podem produzir dois "abril" para o mesmo diretório.
+        //
+        // SEM FK para IdentityAcquisitions, de propósito: a aquisição tem prazo de retenção PRÓPRIO (90 dias
+        // para o detalhe, remoção integral quando nada mais a referencia), e uma FK obrigaria a escolher entre
+        // travar a retenção e destruir o histórico de 12 meses. A consolidação já carrega tudo de que precisa.
+        b.Entity<IdentityMonthlyRollup>(e =>
+        {
+            e.Property(x => x.DirectoryNamespace).HasMaxLength(200).IsRequired();
+            e.Property(x => x.SnapshotSourceLabel).HasMaxLength(200);
+            e.Property(x => x.SnapshotSchemaVersion).HasMaxLength(60);
+            e.Property(x => x.SnapshotNormalizationVersion).HasMaxLength(60);
+            e.Property(x => x.LastAttemptDetail).HasMaxLength(1000);
+            e.Property(x => x.ConsolidationVersion).HasMaxLength(60).IsRequired();
+            e.Property(x => x.Provider).HasConversion<int>();
+            e.Property(x => x.SnapshotState).HasConversion<int?>();
+            e.Property(x => x.LastAttemptState).HasConversion<int?>();
+            e.Ignore(x => x.HasData);
+
+            e.HasIndex(x => new { x.TenantId, x.Provider, x.DirectoryNamespace, x.Month })
+                .IsUnique()
+                .HasDatabaseName("UX_IdentityMonthlyRollup_Natural");
+            // Leitura da série e expurgo por janela: os dois percorrem (tenant, mês).
+            e.HasIndex(x => new { x.TenantId, x.Month });
+
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            e.HasMany(x => x.Sets).WithOne(s => s.Rollup)
+                .HasForeignKey(s => new { s.RollupId, s.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // VALORES POR CONJUNTO da fotografia do mês: um estado por (consolidação, conjunto). A completude viaja
+        // junto porque, sem ela, um mês parcial e um mês completo com o mesmo número seriam indistinguíveis.
+        b.Entity<IdentityMonthlyRollupSet>(e =>
+        {
+            e.Property(x => x.Set).HasConversion<int>();
+            e.Property(x => x.Outcome).HasConversion<int>();
+            e.Property(x => x.Limitation).HasMaxLength(1000);
+            e.HasIndex(x => new { x.TenantId, x.RollupId, x.Set })
+                .IsUnique()
+                .HasDatabaseName("UX_IdentityMonthlyRollupSet_Natural");
         });
 
         // Conector: UM registro por (tenant, provedor, capacidade) — a chave NATURAL da configuração.
@@ -1331,6 +1392,8 @@ public class AegisScoreDbContext : DbContext
         b.Entity<IdentitySourceLink>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<IdentityEntityObservation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<IdentityObservationSetState>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<IdentityMonthlyRollup>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<IdentityMonthlyRollupSet>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         // Fotografia auditável de postura — pai e filhos são ITenantOwned (fail-closed): um tenant jamais lê,
         // consulta ou compara a fotografia de outro.
         b.Entity<PostureSnapshot>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

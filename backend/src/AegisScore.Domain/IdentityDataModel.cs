@@ -167,6 +167,25 @@ public class IdentityAcquisition : Entity, ITenantOwned
     public DateTimeOffset AcquiredAt { get; set; }
 
     /// <summary>
+    /// [AEGIS-ADM-02] O MESMO instante de <see cref="AcquiredAt"/>, em UTC e sem deslocamento — chave de
+    /// VARREDURA, derivada e nunca informada por quem chama.
+    ///
+    /// Existe porque as duas varreduras deste pacote (a janela de 12 meses da consolidação e o corte de 90
+    /// dias da retenção) precisam FILTRAR, AGRUPAR e ORDENAR por tempo dentro do banco, e
+    /// <see cref="DateTimeOffset"/> não é comparável nem ordenável no provedor relacional da bateria de
+    /// testes. Sem ela, os dois caminhos teriam de trazer a origem inteira para a memória e descartar quase
+    /// tudo — exatamente o que um pacote de retenção não pode fazer.
+    ///
+    /// É um <see cref="DateTime"/> COMPLETO, e não o dia: a ordenação total é o que permite pedir ao banco
+    /// "a última coleta deste mês" em vez de ler o mês inteiro, e o que permite o corte de 90 dias ser
+    /// exato no instante em vez de arredondado para o dia.
+    ///
+    /// É DERIVADA, não uma segunda verdade: só o store a escreve, junto com <see cref="AcquiredAt"/>, a
+    /// partir do mesmo instante normalizado. Nenhuma decisão de recência do ADM-01 a consulta.
+    /// </summary>
+    public DateTime AcquiredAtUtc { get; set; }
+
+    /// <summary>
     /// Instante OBSERVADO segundo a própria fonte, quando ela o fornece. <c>null</c> é a resposta honesta
     /// quando só se conhece o horário da coleta — jamais preenchido com <see cref="AcquiredAt"/>.
     /// </summary>
@@ -198,6 +217,16 @@ public class IdentityAcquisition : Entity, ITenantOwned
 
     /// <summary>Objetos observados nesta aquisição.</summary>
     public ICollection<IdentityEntityObservation> Observations { get; set; } = new List<IdentityEntityObservation>();
+
+    /// <summary>
+    /// [AEGIS-ADM-02] Instante em que o DETALHE desta aquisição (as observações) foi removido pela retenção
+    /// operacional. <c>null</c> significa "o detalhe é o que sempre foi"; preenchido significa
+    /// <b>detalhe expirado por retenção</b> — que é coisa diferente de "não havia objetos".
+    ///
+    /// A contagem e a completude ORIGINAIS continuam em <see cref="Sets"/>: expirar o detalhe não reescreve o
+    /// que a coleta apurou. É essa separação que impede uma lista vazia de virar prova de ausência.
+    /// </summary>
+    public DateTimeOffset? DetailRetiredAt { get; set; }
 
     /// <summary>True quando esta aquisição produziu dados legíveis (completos ou declaradamente parciais).</summary>
     public bool ProducedData => State is KnightSourceState.Completed or KnightSourceState.PartialCollection;

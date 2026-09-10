@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Identity;
+using AegisScore.Application.Identity.Adm;
 using AegisScore.Application.Knight;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -39,6 +40,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
     private readonly IKnightSourceConfigurationProvider _config;
     private readonly IKnightAdvisoryGenerator _advisory;
     private readonly IIdentityEvidenceService _identityEvidence;
+    private readonly IIdentityAcquisitionStore _identityAcquisitions;
     private readonly ITenantContext _tenant;
     private readonly ILogger<AegisKnightAssessmentService>? _log;
 
@@ -48,6 +50,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         IKnightSourceConfigurationProvider config,
         IKnightAdvisoryGenerator advisory,
         IIdentityEvidenceService identityEvidence,
+        IIdentityAcquisitionStore identityAcquisitions,
         ITenantContext tenant,
         ILogger<AegisKnightAssessmentService>? log = null)
     {
@@ -56,6 +59,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         _config = config;
         _advisory = advisory;
         _identityEvidence = identityEvidence;
+        _identityAcquisitions = identityAcquisitions;
         _tenant = tenant;
         _log = log;
     }
@@ -171,8 +175,49 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         }
 
         // 6) Persiste o veredito DETERMINÍSTICO ANTES da IA (durável já em Running).
+        //
+        // [AEGIS-ADM-02] Quando a execução CITA uma aquisição do ADM, a citação e a fixação daquela aquisição
+        // entram na MESMA transação: a retenção operacional pode estar decidindo, agora, se aquela linha é
+        // removível. Perguntar "ela ainda existe?" antes da transação seria uma foto vencida — a resposta
+        // valeria até o instante seguinte. A trava COMPARTILHADA conflita com a EXCLUSIVA que a retenção toma
+        // sobre os candidatos: um dos dois espera, e o que passa enxerga o estado já decidido.
         _db.KnightAssessmentRuns.Add(run);
-        await _db.SaveChangesAsync(ct);
+
+        if (identityAcquisitionId is { } citada)
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+            var fixada = await _identityAcquisitions.PinForReferenceAsync(citada, ct);
+
+            if (!fixada.Exists)
+                throw new InvalidOperationException(
+                    $"A aquisição de identidade {citada} não está mais disponível para ser citada por esta "
+                    + "avaliação. Gravar a execução assim produziria um veredito apontando para uma coleta "
+                    + "inexistente — o oposto do que a procedência existe para garantir.");
+
+            if (fixada.DetailRetiredAt is { } expiradoEm)
+            {
+                // [AEGIS-ADM-02] A linha está lá e está TRAVADA (a retenção não a remove por baixo desta
+                // transação), mas o detalhe observado já expirou. Citar assim é legítimo — o cabeçalho, os
+                // fatos agregados e a completude por conjunto continuam sustentando o veredito, e os objetos
+                // afetados desta execução são congelados aqui mesmo, em KnightAffectedObjects, que nenhuma
+                // retenção alcança. O que não pode acontecer é isso passar em silêncio: "a linha existe" e "a
+                // evidência está íntegra" são afirmações diferentes.
+                _log?.LogWarning(
+                    "Execução do KNIGHT cita a aquisição de identidade {Aquisicao}, cujo detalhe operacional "
+                    + "expirou por retenção em {ExpiradoEm}. O veredito segue reproduzível pelos fatos e pela "
+                    + "completude por conjunto, e os objetos afetados ficam congelados nesta execução — mas a "
+                    + "lista de objetos daquela coleta não é mais recuperável a partir dela.",
+                    citada, expiradoEm);
+            }
+
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+        else
+        {
+            await _db.SaveChangesAsync(ct);
+        }
 
         // 7) IA CONSULTIVA (uma chamada, fora da transação) — nunca altera vereditos; falha → fallback.
         var advisoryResult = await GenerateAdvisorySafeAsync(BuildAdvisoryInput(run, score, evaluated, result), ct);

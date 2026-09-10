@@ -288,6 +288,12 @@ public static class IdentityKnightBoundary
     ///
     /// Os objetos vêm com os atributos OBSERVADOS naquela aquisição, não com o cadastro atual: reprojetar uma
     /// aquisição antiga não pode apresentar o presente como prova do passado.
+    ///
+    /// [AEGIS-ADM-02] E quando o DETALHE expirou por retenção, a lista vazia é declarada como tal: o conjunto
+    /// deixa de se apresentar completo e a limitação diz o que aconteceu. Sem isso, "as observações foram
+    /// removidas por prazo" e "a coleta não encontrou ninguém" chegariam ao avaliador com a mesma cara — e a
+    /// segunda é uma afirmação sobre o ambiente do cliente que ninguém fez. As CONTAGENS não mudam: elas vivem
+    /// no envelope de fatos, que a retenção preserva, e por isso o veredito reprojetado continua o mesmo.
     /// </summary>
     public static KnightCollectionResult ToCollectionResult(IdentityAcquisitionRecord record)
     {
@@ -296,15 +302,23 @@ public static class IdentityKnightBoundary
 
         var affected = record.Sets
             .Where(s => s.Outcome is IdentityObservationSetOutcome.Collected or IdentityObservationSetOutcome.Partial)
-            .Select(s => new KnightAffectedObjectEvidence(
-                SignalBySet[s.Set],
-                s.Objects
-                    .Select(o => new KnightAffectedObjectFact(
-                        o.ExternalId, ToKnightKind(o.Kind), o.DisplayNameObserved, o.UserPrincipalNameObserved,
-                        o.RolesObserved, o.Detail))
-                    .ToList(),
-                s.IsComplete,
-                s.Limitation))
+            .Select(s =>
+            {
+                // Só perde detalhe quem TINHA detalhe. Um conjunto que preservou zero objetos continua
+                // devolvendo zero objetos pelo mesmo motivo de sempre — e marcá-lo incompleto por causa de uma
+                // retenção que não lhe tirou nada seria inventar uma limitação.
+                var perdeuDetalhe = record.DetailRetiredAt is not null && s.PreservedCount > 0;
+
+                return new KnightAffectedObjectEvidence(
+                    SignalBySet[s.Set],
+                    s.Objects
+                        .Select(o => new KnightAffectedObjectFact(
+                            o.ExternalId, ToKnightKind(o.Kind), o.DisplayNameObserved, o.UserPrincipalNameObserved,
+                            o.RolesObserved, o.Detail))
+                        .ToList(),
+                    s.IsComplete && !perdeuDetalhe,
+                    perdeuDetalhe ? DetalheExpirado(record.DetailRetiredAt!.Value, s) : s.Limitation);
+            })
             .ToList();
 
         return new KnightCollectionResult(
@@ -318,5 +332,21 @@ public static class IdentityKnightBoundary
             facts.IdentityRisk,
             facts.AuthenticationPosture,
             affected);
+    }
+
+    /// <summary>
+    /// [AEGIS-ADM-02] O texto que impede uma lista vazia de passar por ausência. Diz as TRÊS coisas que
+    /// precisam continuar distinguíveis: quanto a coleta apurou, quanto ela preservou e que o detalhe de hoje
+    /// já não é o de então. A limitação original é preservada à frente — ela continua verdadeira.
+    /// </summary>
+    private static string DetalheExpirado(DateTimeOffset retiredAt, IdentityObservedSetRecord set)
+    {
+        var expirado =
+            $"Detalhe expirado por retenção operacional em {retiredAt.ToUniversalTime():yyyy-MM-dd}: a coleta "
+            + $"apurou {set.ObservedCount} objeto(s) e preservou {set.PreservedCount}, que não estão mais "
+            + "disponíveis. A contagem e a completude originais permanecem registradas; a ausência de lista "
+            + "aqui NÃO significa que o conjunto estivesse vazio.";
+
+        return string.IsNullOrWhiteSpace(set.Limitation) ? expirado : $"{set.Limitation} {expirado}";
     }
 }
