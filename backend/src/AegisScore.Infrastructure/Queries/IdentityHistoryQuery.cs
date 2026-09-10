@@ -227,10 +227,11 @@ public sealed class IdentityHistoryQuery : IIdentityHistoryQuery
     /// O que aconteceu com o detalhe da coleta que originou a FOTOGRAFIA exibida — apurado nela, e não
     /// deduzido do marcador do mês.
     ///
-    /// A linha ausente é o caso delicado: sumir não diz por quê. Só a fronteira varrida DESTE mês, alcançando
-    /// o instante DAQUELA coleta, prova que foi a retenção. Fora disso a ausência fica declarada como de
-    /// causa desconhecida — a origem pode ter sido excluída e levado a evidência por cascata, e atribuir isso
-    /// ao expurgo seria afirmar uma causa que ninguém apurou.
+    /// A linha ausente é o caso delicado: sumir não diz por quê. Só o COMPROVANTE específico gravado pela
+    /// retenção, com o identificador DESTA fotografia, prova que foi ela. A fronteira varrida do mês não serve:
+    /// ela avança por outras coletas enquanto uma fotografia protegida é pulada, e uma cascata posterior que
+    /// levasse essa fotografia seria atribuída ao expurgo só pela comparação das datas. Sem o comprovante, a
+    /// ausência fica declarada como de causa desconhecida.
     /// </summary>
     private static IdentityHistoryDetailAvailability Disponibilidade(
         IdentityMonthlyRollup r, IReadOnlyDictionary<Guid, DateTimeOffset?> detalhes)
@@ -243,9 +244,7 @@ public sealed class IdentityHistoryQuery : IIdentityHistoryQuery
                 ? IdentityHistoryDetailAvailability.Available
                 : IdentityHistoryDetailAvailability.DetailRetired;
 
-        return r.RetentionSweptThroughAt is { } varridoAte
-               && r.SnapshotAcquiredAt is { } fotografiaEm
-               && fotografiaEm <= varridoAte
+        return r.RetentionRemovedSnapshotAcquisitionId == fotografia
             ? IdentityHistoryDetailAvailability.RemovedByRetention
             : IdentityHistoryDetailAvailability.Unavailable;
     }
@@ -277,15 +276,15 @@ public sealed class IdentityHistoryQuery : IIdentityHistoryQuery
 
             IdentityHistoryDetailAvailability.RemovedByRetention =>
                 "A coleta que originou esta fotografia foi REMOVIDA POR RETENÇÃO"
-                + (r.RetentionSweptThroughAt is { } ate
-                    ? $" (o expurgo deste mês varreu até {ate.ToUniversalTime():yyyy-MM-dd})"
+                + (r.RetentionRemovedSnapshotAt is { } removidaEm
+                    ? $" em {removidaEm.ToUniversalTime():yyyy-MM-dd}"
                     : "")
                 + ": os números e a completude preservados aqui são os que ela apurou, e a lista de objetos "
                 + "observados não está mais disponível.",
 
             IdentityHistoryDetailAvailability.Unavailable =>
-                "A coleta que originou esta fotografia não está mais registrada, e a retenção deste mês NÃO "
-                + "responde por essa ausência — a origem pode ter sido excluída, levando a evidência junto. "
+                "A coleta que originou esta fotografia não está mais registrada, e não há comprovante de que a "
+                + "retenção a tenha removido — a origem pode ter sido excluída, levando a evidência junto. "
                 + "Os números e a completude preservados aqui são os que ela apurou; a causa da ausência não "
                 + "é conhecida e não é atribuída ao expurgo.",
 

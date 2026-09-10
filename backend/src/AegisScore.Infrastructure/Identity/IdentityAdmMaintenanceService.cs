@@ -536,6 +536,10 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
 
         rollup.SnapshotAcquisitionId = candidata.Id;
         rollup.SnapshotAcquiredAt = candidata.AcquiredAt;
+        // O comprovante de remoção pertence à fotografia ANTERIOR: não se aplica à nova. (A leitura também
+        // confere o identificador; limpar aqui só evita guardar uma prova que já não descreve nada exibido.)
+        rollup.RetentionRemovedSnapshotAcquisitionId = null;
+        rollup.RetentionRemovedSnapshotAt = null;
         rollup.SnapshotObservedAt = candidata.ObservedAt;
         rollup.SnapshotConnectorConfigId = candidata.ConnectorConfigId;
         rollup.SnapshotSourceLabel = candidata.SourceLabel;
@@ -749,7 +753,7 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
             db.IdentityAcquisitions.Remove(vencida);   // cascata remove os estados por conjunto
             removidas++;
 
-            RegistrarRemocaoNoMes(rollups, mes, candidata);
+            RegistrarRemocaoNoMes(rollups, mes, candidata, now);
         }
 
         // Consolidações fora da janela de 12 meses. Entidades canônicas e vínculos NÃO entram em nenhuma
@@ -785,9 +789,15 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
     /// repovoamento silencioso: sem ela, reapresentar o identificador removido cairia no caminho de criação e
     /// recriaria a evidência expurgada — e guardar a lista de identificadores removidos cresceria para sempre,
     /// que é o oposto do propósito de uma retenção.
+    ///
+    /// Quando a removida é a própria FOTOGRAFIA do mês, grava também o comprovante específico dessa remoção
+    /// (o identificador dela) — no mesmo SaveChanges, e portanto na mesma transação do DELETE. É a única
+    /// prova que a leitura aceita para dizer "removida por retenção": a fronteira não prova nada sobre um
+    /// identificador, porque avança por outras coletas enquanto uma fotografia protegida é pulada.
     /// </summary>
     private static void RegistrarRemocaoNoMes(
-        Dictionary<DateOnly, IdentityMonthlyRollup> rollups, DateOnly mes, CandidataResumo candidata)
+        Dictionary<DateOnly, IdentityMonthlyRollup> rollups, DateOnly mes, CandidataResumo candidata,
+        DateTimeOffset now)
     {
         // Mês fora da janela de 12 meses não tem consolidação (ela sai nesta mesma passada): não há onde
         // registrar, e também não há histórico a proteger ali. Limite declarado, não furo silencioso.
@@ -798,6 +808,12 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
 
         if (rollup.RetentionSweptThroughAt is null || candidata.AcquiredAt > rollup.RetentionSweptThroughAt)
             rollup.RetentionSweptThroughAt = candidata.AcquiredAt;
+
+        if (candidata.Id == rollup.SnapshotAcquisitionId)
+        {
+            rollup.RetentionRemovedSnapshotAcquisitionId = candidata.Id;
+            rollup.RetentionRemovedSnapshotAt = now;
+        }
     }
 
     /// <summary>

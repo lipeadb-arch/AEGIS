@@ -1211,6 +1211,62 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
         abril.AcquisitionCount.Should().Be(1, "e o que o mês apurou continua declarado");
     }
 
+    /// <summary>
+    /// O comprovante de remoção pela retenção é da FOTOGRAFIA que foi removida, e não do mês. Quando uma coleta
+    /// atrasada mais recente assume o mês, a remoção da anterior não passa a descrever a nova: se a nova sumir
+    /// depois por cascata, a causa é desconhecida — e não "removida por retenção".
+    /// </summary>
+    [Fact]
+    public async Task TrocaDeFotografia_NaoHerdaOComprovanteDeRemocaoDaAnterior()
+    {
+        await SemearAsync(TenantA, _conectorA);
+
+        var anterior = await GravarAsync(TenantA, _conectorA, DiretorioA, Em(2, 10), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+        await GravarAsync(TenantA, _conectorA, DiretorioA, Agora.AddDays(-1), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+
+        await ManterAsync(consolidar: true, remover: true);
+
+        var fevereiro = new DateOnly(2026, 2, 1);
+        var removida = await MesAsync(TenantA, fevereiro);
+        removida.SnapshotAcquisitionId.Should().Be(anterior);
+        removida.RetentionRemovedSnapshotAcquisitionId.Should().Be(anterior,
+            "a retenção removeu a própria fotografia, e gravou isso junto com a remoção");
+        removida.RetentionRemovedSnapshotAt.Should().Be(Agora);
+
+        var comprovada = (await LerHistoricoAsync(TenantA)).Directories.Single()
+            .Months.Single(m => m.Month == "2026-02");
+        comprovada.SnapshotDetail.Should().Be(IdentityHistoryDetailAvailability.RemovedByRetention);
+        comprovada.DetailRetentionNote.Should().Contain("REMOVIDA POR RETENÇÃO");
+
+        // Uma atrasada MAIS RECENTE assume o mês.
+        var nova = await GravarAsync(TenantA, _conectorA, DiretorioA, Em(2, 25), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1", "obj-2"));
+        await ManterAsync(consolidar: true, remover: false);
+
+        var trocada = await MesAsync(TenantA, fevereiro);
+        trocada.SnapshotAcquisitionId.Should().Be(nova);
+        trocada.RetentionRemovedSnapshotAcquisitionId.Should().BeNull(
+            "o comprovante descrevia a fotografia anterior, e não se aplica à nova");
+        trocada.RetentionRemovedSnapshotAt.Should().BeNull();
+
+        (await LerHistoricoAsync(TenantA)).Directories.Single().Months.Single(m => m.Month == "2026-02")
+            .SnapshotDetail.Should().Be(IdentityHistoryDetailAvailability.Available);
+
+        // A nova some por CASCATA: nada prova que foi a retenção.
+        await ExcluirConectorAsync(TenantA, _conectorA);
+
+        var mes = (await LerHistoricoAsync(TenantA)).Directories.Single()
+            .Months.Single(m => m.Month == "2026-02");
+        mes.SnapshotDetail.Should().Be(IdentityHistoryDetailAvailability.Unavailable);
+        mes.DetailRetentionNote.Should().Contain("não é conhecida");
+        mes.DetailRetentionNote.Should().NotContain("REMOVIDA POR RETENÇÃO");
+        mes.MonthRetentionNote.Should().Contain("1 de 2", "a remoção da anterior segue sendo atividade do MÊS");
+        mes.AcquisitionCount.Should().Be(2);
+        mes.Sets.Single().ObservedCount.Should().Be(2, "os valores apurados são os da fotografia nova");
+    }
+
     // ---- (18) A janela de ADMISSÃO, depois que a consolidação do mês expira ---------------------------
 
     /// <summary>

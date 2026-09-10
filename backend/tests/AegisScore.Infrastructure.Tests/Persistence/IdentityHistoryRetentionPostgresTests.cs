@@ -5,9 +5,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Application.Identity.Adm;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Queries;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Identity;
 using AegisScore.Infrastructure.Persistence;
+using AegisScore.Infrastructure.Queries;
 using AegisScore.Infrastructure.Tests.Documents;   // PostgresProbe
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
@@ -634,7 +636,94 @@ public sealed class IdentityHistoryRetentionPostgresTests
             "reexecutar a manutenção não conta a mesma coleta outra vez");
     }
 
+    // ---- (8) Causa da remoção da fotografia: só com comprovante -----------------------------------------
+
+    /// <summary>
+    /// A fronteira varrida do mês não prova a remoção de um identificador. Aqui ela avança pela tentativa
+    /// falha do dia 15 enquanto a fotografia do dia 5, PROTEGIDA por uma avaliação, é pulada — e fica com
+    /// instante anterior à fronteira. Quando a exclusão do conector leva essa fotografia pela cascata real do
+    /// PostgreSQL, a comparação das datas a apresentaria como "removida por retenção". A causa só é afirmada
+    /// com o comprovante gravado pela própria remoção; sem ele, a ausência é de causa desconhecida.
+    /// </summary>
+    [Fact]
+    public async Task FotografiaProtegida_RemovidaDepoisPorCascata_NaoEAtribuidaARetencao()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var opt = pg.DbOptions();
+
+        var tenant = Guid.NewGuid();
+        var conector = Guid.NewGuid();
+        await MigrarESemearAsync(opt, tenant, conector);
+
+        // Mesmo mês, já além dos 90 dias: coleta válida (a fotografia) e, depois dela, uma tentativa falha.
+        var fotografia = await GravarAsync(opt, tenant, conector, DiretorioA, Instante(-102),
+            KnightSourceState.Completed, Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+        var tentativa = await GravarAsync(opt, tenant, conector, DiretorioA, Instante(-92),
+            KnightSourceState.Unavailable,
+            IdentityObservedSet.NotCollected(IdentityObservationSet.PrivilegedRoleMember,
+                IdentityObservationSetOutcome.Unavailable, "Fonte indisponível na coleta sintética."));
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            db.KnightAssessmentRuns.Add(NovaExecucao(fotografia));   // a avaliação que PROTEGE a fotografia
+            await db.SaveChangesAsync();
+        }
+
+        await ManterAsync(opt, consolidar: true, remover: true);
+
+        var mes = IdentityAdmRetentionPolicy.MonthOf(Instante(-102));
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            (await db.IdentityAcquisitions.AnyAsync(a => a.Id == fotografia)).Should().BeTrue(
+                "a fotografia é citada por uma avaliação — perde só o detalhe");
+            (await db.IdentityAcquisitions.AnyAsync(a => a.Id == tentativa)).Should().BeFalse(
+                "a tentativa falha não sustenta nada e saiu por inteiro");
+        }
+
+        var varrido = await LerMesAsync(opt, tenant, mes);
+        varrido.SnapshotAcquisitionId.Should().Be(fotografia);
+        varrido.RetentionSweptThroughAt.Should().Be(Instante(-92),
+            "a fronteira avançou pela tentativa — e passou do instante da fotografia, que foi PULADA");
+        varrido.RetentionRemovedSnapshotAcquisitionId.Should().BeNull(
+            "a retenção não removeu a fotografia, e por isso não há comprovante dessa remoção");
+
+        var antes = await LerHistoricoAsync(opt, tenant, mes);
+        antes.SnapshotDetail.Should().Be(IdentityHistoryDetailAvailability.DetailRetired);
+        antes.MonthRetentionNote.Should().Contain("1 de 2");
+
+        // A exclusão da integração, pelo caminho que já existe: a FK em cascata do banco leva a fotografia.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            db.Connectors.Remove(await db.Connectors.SingleAsync(c => c.Id == conector));
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+            (await db.IdentityAcquisitions.CountAsync()).Should().Be(0, "a cascata levou a fotografia protegida");
+
+        var depois = await LerHistoricoAsync(opt, tenant, mes);
+        depois.SnapshotDetail.Should().Be(IdentityHistoryDetailAvailability.Unavailable,
+            "a fotografia saiu pela cascata, e a fronteira do mês não prova o contrário");
+        depois.DetailRetentionNote.Should().Contain("não é conhecida");
+        depois.DetailRetentionNote.Should().NotContain("REMOVIDA POR RETENÇÃO");
+        depois.MonthRetentionNote.Should().Contain("1 de 2", "a atividade de retenção NO MÊS continua real");
+        depois.AcquisitionCount.Should().Be(2, "as contagens acumuladas não se mexem");
+        depois.Sets.Single().ObservedCount.Should().Be(1, "e os valores apurados continuam os da fotografia");
+        depois.Snapshot!.AcquisitionId.Should().Be(fotografia);
+    }
+
     // ---- Infraestrutura ------------------------------------------------------------------------------
+
+    private static async Task<IdentityHistoryMonthDto> LerHistoricoAsync(
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, DateOnly mes)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        var historico = await new IdentityHistoryQuery(db, new SystemTenantContext(tenant), new FakeTimeProvider(Agora))
+            .GetAsync(new IdentityHistoryRangeRequest());
+        var rotulo = mes.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
+        return historico.Directories.Single().Months.Single(m => m.Month == rotulo);
+    }
 
     private static async Task<IdentityMonthlyRollup> LerMesAsync(
         DbContextOptions<AegisScoreDbContext> opt, Guid tenant, DateOnly mes)

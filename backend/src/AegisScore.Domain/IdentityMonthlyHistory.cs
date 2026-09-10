@@ -105,6 +105,22 @@ public class IdentityMonthlyRollup : Entity, ITenantOwned
     /// </summary>
     public DateTimeOffset? RetentionSweptThroughAt { get; set; }
 
+    /// <summary>
+    /// COMPROVANTE específico de que a retenção removeu por inteiro a aquisição da FOTOGRAFIA deste mês —
+    /// gravado na mesma transação da remoção, e só por ela. <c>null</c> = não há prova (nunca houve essa
+    /// remoção, ou a ausência veio de outra causa, como a cascata da exclusão do conector).
+    ///
+    /// A fronteira acima NÃO serve de prova: ela avança por outras coletas enquanto uma fotografia PROTEGIDA é
+    /// pulada, e uma cascata posterior que leve essa fotografia seria atribuída ao expurgo só pela comparação
+    /// das datas. O comprovante guarda o IDENTIFICADOR removido, e a leitura só o aceita se ele for o da
+    /// fotografia exibida — quando a fotografia muda, a remoção da anterior não se aplica à nova. É um par
+    /// de colunas por mês, e não um registro de identificadores removidos.
+    /// </summary>
+    public Guid? RetentionRemovedSnapshotAcquisitionId { get; set; }
+
+    /// <summary>Instante da remoção comprovada acima (o "agora" da passada de retenção que a executou).</summary>
+    public DateTimeOffset? RetentionRemovedSnapshotAt { get; set; }
+
     // ---- FOTOGRAFIA do mês: a ÚLTIMA aquisição que produziu dados -----------------------------------
 
     /// <summary>

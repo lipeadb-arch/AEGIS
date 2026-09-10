@@ -134,6 +134,8 @@ jobs:
       #     replay recusado pela janela de ADMISSÃO depois de a consolidação do mês expirar, sem repovoar
       #     projeção alguma; e os limites exatos dessa janela, com a coleta atrasada de dentro dela aceita.
       #     A contagem deste passo sobe de 400 para 404 (medida localmente com este MESMO filtro, em Release).
+      #     A correção da CAUSA da remoção da fotografia acrescentou 1 caso na mesma classe (troca de
+      #     fotografia que não herda o comprovante de remoção da anterior): 404 para 405.
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
@@ -391,6 +393,10 @@ jobs:
       # reconexão do mesmo namespace que acrescenta a coleta nova uma única vez. Some-se a migration ADITIVA
       # da marca de contabilização, que entra na sequência cumulativa de DatabaseUpgradePostgresTests. A
       # contagem deste passo sobe de 56 para 57 (mesma medição local, contra PostgreSQL 18 descartável).
+      # A correção da CAUSA da remoção da fotografia acrescentou 1 caso na mesma classe: a fotografia
+      # PROTEGIDA, pulada pela retenção enquanto a fronteira avança, e removida depois pela cascata REAL da
+      # exclusão do conector não é atribuída à retenção. A migration aditiva do comprovante entra na sequência
+      # cumulativa de DatabaseUpgradePostgresTests (mesmo caso, sem teste novo ali). 57 para 58.
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
