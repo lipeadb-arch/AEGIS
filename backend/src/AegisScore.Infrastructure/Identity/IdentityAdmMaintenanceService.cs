@@ -105,7 +105,7 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
             try
             {
                 (relatorio, esgotouLote) = await ProcessDirectoryAsync(
-                    dir, now, window, detailCutoff, oldestMonth, request, ct);
+                    dir, proxima.OrphanRollups, now, window, detailCutoff, oldestMonth, request, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -234,6 +234,7 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
 
     private async Task<(IdentityAdmDirectoryReport Report, bool BatchExhausted)> ProcessDirectoryAsync(
         IdentityAdmDirectoryKey dir,
+        bool orfa,
         DateTimeOffset now,
         IReadOnlyList<DateOnly> window,
         DateTimeOffset detailCutoff,
@@ -242,6 +243,15 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
         CancellationToken ct)
     {
         await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(dir.TenantId));
+
+        // ORIGEM ÓRFÃ: não tem uma única aquisição (o conector foi desconectado e a cascata levou as coletas
+        // embora, por exemplo). Só restam as consolidações, e a única coisa a fazer com elas é deixar as
+        // vencidas expirarem — até a origem sumir por completo da varredura.
+        //
+        // Consolidar uma origem sem aquisições CRIARIA doze meses vazios, e eles nasceriam sempre dentro da
+        // janela: a origem morta ficaria se reconstruindo para sempre, que é o oposto do que a retenção
+        // existe para fazer. "Mês sem coleta" é uma afirmação sobre uma origem viva.
+        if (orfa) return await ExpirarConsolidacoesOrfasAsync(db, dir, oldestMonth, request, ct);
 
         if (request.Simulate)
             return await SimulateAsync(db, dir, window, detailCutoff, oldestMonth, request, ct);
@@ -287,6 +297,50 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
             retencao.Report.Protected.Count, retencao.Report.RollupsRemoved);
 
         return (retencao.Report with { MonthsConsolidated = mesesEscritos }, retencao.BatchExhausted);
+    }
+
+    /// <summary>
+    /// O que fazer com uma origem que só existe como consolidação: expirar o que passou dos 12 meses, e nada
+    /// mais. Sem candidatas a examinar (não há aquisições) e sem consolidar (não há o que consolidar).
+    /// </summary>
+    private static async Task<(IdentityAdmDirectoryReport Report, bool BatchExhausted)>
+        ExpirarConsolidacoesOrfasAsync(
+            AegisScoreDbContext db,
+            IdentityAdmDirectoryKey dir,
+            DateOnly oldestMonth,
+            IdentityAdmMaintenanceRequest request,
+            CancellationToken ct)
+    {
+        if (request.Simulate || !request.Remove)
+        {
+            var fora = await db.IdentityMonthlyRollups.AsNoTracking()
+                .CountAsync(r => r.Provider == dir.Provider && r.DirectoryNamespace == dir.DirectoryNamespace
+                                 && r.Month < oldestMonth, ct);
+
+            return (new IdentityAdmDirectoryReport(
+                dir, 0, request.Simulate ? fora : 0, 0, 0, 0, 0, 0,
+                Array.Empty<IdentityAdmProtectedAcquisition>()), false);
+        }
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockDirectoryAsync(db, dir, ct);
+
+        var vencidas = await db.IdentityMonthlyRollups
+            .Where(r => r.Provider == dir.Provider && r.DirectoryNamespace == dir.DirectoryNamespace
+                        && r.Month < oldestMonth)
+            .ToListAsync(ct);
+
+        if (vencidas.Count > 0)
+        {
+            db.IdentityMonthlyRollups.RemoveRange(vencidas);   // cascata remove os conjuntos
+            await db.SaveChangesAsync(ct);
+        }
+
+        await tx.CommitAsync(ct);
+
+        return (new IdentityAdmDirectoryReport(
+            dir, 0, vencidas.Count, 0, 0, 0, 0, 0,
+            Array.Empty<IdentityAdmProtectedAcquisition>()), false);
     }
 
     // ---- Consolidação mensal -------------------------------------------------------------------------

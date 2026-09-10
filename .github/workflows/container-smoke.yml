@@ -122,9 +122,11 @@ jobs:
       #     expurgo do detalhe; replay recusado tanto por detalhe expirado quanto por remoção INTEGRAL, pela
       #     fronteira gravada no mês; origem com falha isolada das demais; cancelamento gracioso; retomada por
       #     cursor visitando cada origem uma única vez; lote de aquisições drenado em passadas sucessivas;
-      #     simulação que não escreve; isolamento por tenant e leitura que não dispara expurgo. A classe é
+      #     simulação que não escreve; origem sem nenhuma aquisição que continua varrida e só expira o que
+      #     passou dos 12 meses (sem se reconstruir com doze meses vazios); isolamento por tenant e leitura
+      #     que não dispara expurgo. A classe é
       #     NOVA: sem esta linha ela não executaria e o check ficaria verde do mesmo jeito. A contagem deste
-      #     passo sobe de 374 para 399 (medida localmente com este MESMO filtro, em Release).
+      #     passo sobe de 374 para 400 (medida localmente com este MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj

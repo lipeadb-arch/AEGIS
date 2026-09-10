@@ -992,6 +992,52 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
         (await db.KnightAffectedObjects.CountAsync(o => o.RunId == runId)).Should().Be(afetados);
     }
 
+    /// <summary>
+    /// Uma origem que ficou SEM NENHUMA aquisição — o conector foi desconectado e a cascata levou as coletas
+    /// embora — ainda tem consolidações penduradas. Ela precisa continuar sendo VISITADA, senão as linhas
+    /// mensais vencidas dela nunca expirariam: crescimento silencioso exatamente onde a retenção deveria agir.
+    ///
+    /// E não pode ser CONSOLIDADA: doze meses vazios nasceriam sempre dentro da janela, e a origem morta
+    /// ficaria se reconstruindo para sempre. "Mês sem coleta" é uma afirmação sobre uma origem viva.
+    /// </summary>
+    [Fact]
+    public async Task OrigemSemAquisicoes_ContinuaVarrida_ESoExpiraOQuePassouDosDozeMeses()
+    {
+        await SemearAsync(TenantA, _conectorA);
+
+        var maisAntigo = IdentityAdmRetentionPolicy.OldestRetainedMonth(Agora);
+
+        await using (var db = NewContext(TenantA))
+        {
+            foreach (var mes in new[] { maisAntigo.AddMonths(-1), maisAntigo })
+            {
+                db.IdentityMonthlyRollups.Add(new IdentityMonthlyRollup
+                {
+                    Provider = KnightSourceType.MicrosoftEntraId,
+                    DirectoryNamespace = "dir-abandonado",
+                    Month = mes,
+                    ConsolidatedAt = Agora.AddDays(-30),
+                    ConsolidationVersion = IdentityAdmRetentionPolicy.ConsolidationVersion,
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+
+        var relatorio = await ManterAsync(consolidar: true, remover: true);
+
+        var orfa = relatorio.Directories.Should().ContainSingle(
+            d => d.Directory.DirectoryNamespace == "dir-abandonado").Subject;
+        orfa.RollupsRemoved.Should().Be(1, "só a consolidação fora dos 12 meses sai");
+        orfa.MonthsConsolidated.Should().Be(0, "não há o que consolidar numa origem sem coletas");
+
+        await using var assert = NewContext(TenantA);
+        (await assert.IdentityMonthlyRollups.CountAsync(r => r.DirectoryNamespace == "dir-abandonado"))
+            .Should().Be(1, "a origem morta não se reconstrói com doze meses vazios a cada passada");
+        (await assert.IdentityMonthlyRollups.AnyAsync(
+            r => r.DirectoryNamespace == "dir-abandonado" && r.Month == maisAntigo)).Should().BeTrue(
+            "o mês mais antigo AINDA retido não é o primeiro a sair");
+    }
+
     // ---- Infraestrutura do teste ---------------------------------------------------------------------
 
     private static DateTimeOffset Em(int mes, int dia) => new(2026, mes, dia, 9, 0, 0, TimeSpan.Zero);
