@@ -272,7 +272,7 @@ public sealed class KnightAffectedObjectsPostgresTests
         var registry = new KnightCollectorRegistry(new[] { new DemoKnightCollector() });
         var tenant = new SystemTenantContext(tenantId);
         var config = new DemoOnlyConfigProvider();
-        var aquisicoes = new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, tenant);
+        var aquisicoes = new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, tenant, TimeProvider.System);
         var evidence = new IdentityEvidenceService(db, registry, config, aquisicoes, tenant);
         return new AegisKnightAssessmentService(db, registry, config, new NoAdvisoryGenerator(), evidence, aquisicoes, tenant);
     }

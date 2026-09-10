@@ -271,7 +271,7 @@ public sealed class KnightAssessmentTests : IDisposable
         // persistência do snapshot passam pelo mesmo serviço que a rota de postura usa (sem duplicar coleta).
         var registry = new KnightCollectorRegistry(collectors);
         var tenant = new SystemTenantContext(tenantId);
-        var aquisicoes = new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, tenant);
+        var aquisicoes = new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, tenant, TimeProvider.System);
         var evidence = new AegisScore.Infrastructure.Identity.IdentityEvidenceService(db, registry, config, aquisicoes, tenant);
         return new AegisKnightAssessmentService(
             db, registry, config, new KnightAdvisoryGenerator(llm), evidence, aquisicoes, tenant);

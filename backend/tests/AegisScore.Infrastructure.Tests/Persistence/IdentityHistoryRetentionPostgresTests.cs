@@ -42,6 +42,13 @@ public sealed class IdentityHistoryRetentionPostgresTests
 
     private static readonly DateTimeOffset Agora = new(2026, 6, 15, 10, 0, 0, TimeSpan.Zero);
 
+    /// <summary>
+    /// [AEGIS-ADM-02] Relógio CONTROLÁVEL do store. A janela de ADMISSÃO do ADM (o piso temporal que recusa
+    /// uma coleta anterior ao mês mais antigo retido) é calculada a partir dele — usar o relógio do sistema
+    /// aqui faria estes casos passarem ou falharem conforme a data em que a bateria rodasse.
+    /// </summary>
+    private static readonly TimeProvider Relogio = new FakeTimeProvider(Agora);
+
     private readonly ITestOutputHelper _output;
 
     public IdentityHistoryRetentionPostgresTests(ITestOutputHelper output) => _output = output;
@@ -250,7 +257,7 @@ public sealed class IdentityHistoryRetentionPostgresTests
         // A "avaliação": transação aberta, aquisição FIXADA, execução ainda não gravada.
         await using var avaliacao = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
         await using var tx = await avaliacao.Database.BeginTransactionAsync();
-        var store = new IdentityAcquisitionStore(avaliacao, new SystemTenantContext(tenant));
+        var store = new IdentityAcquisitionStore(avaliacao, new SystemTenantContext(tenant), Relogio);
         var fixada = await store.PinForReferenceAsync(vencida);
         fixada.Exists.Should().BeTrue("a aquisição existe e foi fixada");
         fixada.DetailAvailable.Should().BeTrue("neste instante o detalhe dela ainda está íntegro");
@@ -375,7 +382,7 @@ public sealed class IdentityHistoryRetentionPostgresTests
         (await assert.IdentityEntities.CountAsync()).Should().Be(3);
         (await assert.IdentitySourceLinks.CountAsync()).Should().Be(3);
 
-        var store = new IdentityAcquisitionStore(assert, new SystemTenantContext(tenant));
+        var store = new IdentityAcquisitionStore(assert, new SystemTenantContext(tenant), Relogio);
         var replay = async () => await store.PrepareAsync(Pedido(
             conector, DiretorioA, citada, vencidaEm.AddHours(2), KnightSourceState.Completed,
             new[] { Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1", "obj-2", "obj-3") }));
@@ -501,7 +508,7 @@ public sealed class IdentityHistoryRetentionPostgresTests
         var atrasada = Guid.NewGuid();
         await using var coleta = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
         await using var txColeta = await coleta.Database.BeginTransactionAsync();
-        var storeColeta = new IdentityAcquisitionStore(coleta, new SystemTenantContext(tenant));
+        var storeColeta = new IdentityAcquisitionStore(coleta, new SystemTenantContext(tenant), Relogio);
         await storeColeta.LockOriginAsync(new IdentityAcquisitionOrigin(
             conector, KnightSourceType.MicrosoftEntraId, DiretorioA, "Diretório sintético"));
         await storeColeta.PrepareAsync(Pedido(
@@ -537,7 +544,105 @@ public sealed class IdentityHistoryRetentionPostgresTests
             "identidades canônicas não saem por retenção — ausência numa população não é exclusão");
     }
 
+    // ---- (9) Exclusão em CASCATA da origem, e reconexão do mesmo namespace ---------------------------
+
+    /// <summary>
+    /// A cascata é do BANCO: a FK composta tenant-safe de <c>IdentityAcquisitions</c> para o conector é
+    /// <c>ON DELETE CASCADE</c>, e é o PostgreSQL — não o EF, que nem carregou as linhas — quem leva a
+    /// evidência embora quando a integração é excluída. Por isso este caso só prova o que promete aqui.
+    ///
+    /// O que ele protege: um mês cujo total fosse "sobreviventes + removidas pela retenção" desabaria neste
+    /// exato ponto, porque as duas parcelas vão a zero de uma vez e a retenção não contabilizou nada — ela
+    /// não passou por aqui. Excluir a fonte não é o mesmo que nunca ter coletado, e a reconexão do MESMO
+    /// namespace tem de acrescentar o que é novo sem ressuscitar nem recontar o que já estava contado.
+    /// </summary>
+    [Fact]
+    public async Task ExclusaoEmCascataDoConector_EReconexaoDoMesmoNamespace_ConservamOTotalDoMes()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var opt = pg.DbOptions();
+
+        var tenant = Guid.NewGuid();
+        var conector = Guid.NewGuid();
+        await MigrarESemearAsync(opt, tenant, conector);
+
+        await GravarAsync(opt, tenant, conector, DiretorioA, Instante(-100), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+        await GravarAsync(opt, tenant, conector, DiretorioA, Instante(-99), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1", "obj-2"));
+        var fotografia = await GravarAsync(opt, tenant, conector, DiretorioA, Instante(-98),
+            KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1", "obj-2", "obj-3"));
+
+        await ManterAsync(opt, consolidar: true, remover: false);
+
+        var mes = IdentityAdmRetentionPolicy.MonthOf(Instante(-98));
+        (await LerMesAsync(opt, tenant, mes)).AcquisitionCount.Should().Be(3);
+
+        // A exclusão da integração, pelo caminho que já existe. Nada aqui carrega as aquisições: quem as
+        // remove é a FK do banco.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            db.Connectors.Remove(await db.Connectors.SingleAsync(c => c.Id == conector));
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            (await db.IdentityAcquisitions.CountAsync()).Should().Be(0,
+                "a cascata do PostgreSQL levou toda a evidência da origem");
+            (await db.IdentityEntityObservations.CountAsync()).Should().Be(0);
+        }
+
+        var orfao = await LerMesAsync(opt, tenant, mes);
+        orfao.AcquisitionCount.Should().Be(3, "o mês teve três coletas, e excluir a fonte não desfaz isso");
+        orfao.RetiredAcquisitionCount.Should().Be(0,
+            "nenhuma saiu por RETENÇÃO — contabilizar a cascata como expurgo afirmaria uma causa não apurada");
+        orfao.SnapshotConnectorConfigId.Should().Be(conector,
+            "a proveniência é uma cópia da consolidação, e não um ponteiro para uma linha que já não existe");
+
+        // RECONEXÃO do mesmo namespace por outro conector: a origem deixa de ser órfã.
+        var reconectado = Guid.NewGuid();
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            db.Connectors.Add(new ConnectorConfig
+            {
+                Id = reconectado, TenantId = tenant,
+                Provider = ConnectorProvider.Microsoft, Capability = ConnectorCapability.IdentityPosture,
+                DisplayName = "Microsoft Entra ID · AEGIS KNIGHT (reconectado)",
+                AuthType = ConnectorAuthType.OAuthClientCredentials,
+                Enabled = true, EncryptedSettings = "{\"clientSecret\":\"s\"}",
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Uma coleta do MESMO mês, ANTERIOR à fotografia preservada: acrescenta ao total e não derruba nada.
+        await GravarAsync(opt, tenant, reconectado, DiretorioA, Instante(-99).AddHours(1),
+            KnightSourceState.Completed, Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+
+        await ManterAsync(opt, consolidar: true, remover: false);
+
+        var reconsolidado = await LerMesAsync(opt, tenant, mes);
+        reconsolidado.AcquisitionCount.Should().Be(4, "a coleta nova é um fato do mês, somada às três de antes");
+        reconsolidado.SnapshotAcquisitionId.Should().Be(fotografia,
+            "quem chega ANTES da fotografia preservada não a substitui — ausência não é argumento de recência");
+        reconsolidado.Sets.Single().ObservedCount.Should().Be(3, "e os conjuntos preservados são os dela");
+
+        await ManterAsync(opt, consolidar: true, remover: false);
+        (await LerMesAsync(opt, tenant, mes)).AcquisitionCount.Should().Be(4,
+            "reexecutar a manutenção não conta a mesma coleta outra vez");
+    }
+
     // ---- Infraestrutura ------------------------------------------------------------------------------
+
+    private static async Task<IdentityMonthlyRollup> LerMesAsync(
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, DateOnly mes)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        return await db.IdentityMonthlyRollups.AsNoTracking().Include(r => r.Sets)
+            .SingleAsync(r => r.Month == mes);
+    }
 
     private static DateTimeOffset Instante(int dias) => Agora.AddDays(dias);
 
@@ -717,7 +822,7 @@ public sealed class IdentityHistoryRetentionPostgresTests
     {
         var id = Guid.NewGuid();
         await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(tenant));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(tenant), Relogio);
 
         await using var tx = await db.Database.BeginTransactionAsync();
         await store.LockOriginAsync(

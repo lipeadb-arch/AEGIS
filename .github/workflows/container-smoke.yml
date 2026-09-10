@@ -127,6 +127,13 @@ jobs:
       #     que não dispara expurgo. A classe é
       #     NOVA: sem esta linha ela não executaria e o check ficaria verde do mesmo jeito. A contagem deste
       #     passo sobe de 374 para 400 (medida localmente com este MESMO filtro, em Release).
+      #     As três correções dirigidas finais acrescentaram 4 casos NAS CLASSES QUE JÁ CONSTAM DESTE FILTRO
+      #     (nenhuma classe nova): exclusão do conector que não encolhe o mês e reconexão que incorpora a
+      #     coleta nova uma única vez; disponibilidade do detalhe apurada NA FOTOGRAFIA (detalhe expurgado ×
+      #     remoção integral × ausência por exclusão da origem × fotografia íntegra em mês com expurgo);
+      #     replay recusado pela janela de ADMISSÃO depois de a consolidação do mês expirar, sem repovoar
+      #     projeção alguma; e os limites exatos dessa janela, com a coleta atrasada de dentro dela aceita.
+      #     A contagem deste passo sobe de 400 para 404 (medida localmente com este MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
@@ -378,6 +385,12 @@ jobs:
       # removida. A classe é NOVA: sem esta linha ela não executaria e o check ficaria verde do mesmo jeito. A
       # contagem deste passo sobe de 48 para 56 (medida localmente com este MESMO filtro, em Release, contra
       # PostgreSQL 18 descartável).
+      # A correção final acrescentou 1 caso NA CLASSE QUE JÁ CONSTA DESTE FILTRO: a CASCATA real da exclusão
+      # do conector (a FK ON DELETE CASCADE do PostgreSQL leva a evidência sem que o EF carregue linha
+      # nenhuma), o mês que não encolhe por isso, a ausência NÃO contabilizada como expurgo de retenção e a
+      # reconexão do mesmo namespace que acrescenta a coleta nova uma única vez. Some-se a migration ADITIVA
+      # da marca de contabilização, que entra na sequência cumulativa de DatabaseUpgradePostgresTests. A
+      # contagem deste passo sobe de 56 para 57 (mesma medição local, contra PostgreSQL 18 descartável).
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'

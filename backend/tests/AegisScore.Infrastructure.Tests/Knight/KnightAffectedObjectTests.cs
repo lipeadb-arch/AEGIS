@@ -347,7 +347,7 @@ public sealed class KnightAffectedObjectTests : IDisposable
         var registry = new KnightCollectorRegistry(new[] { collector ?? new DemoKnightCollector() });
         var tenant = new SystemTenantContext(tenantId);
         var config = new DemoOnlyConfigProvider();
-        var aquisicoes = new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, tenant);
+        var aquisicoes = new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, tenant, TimeProvider.System);
         var evidence = new AegisScore.Infrastructure.Identity.IdentityEvidenceService(db, registry, config, aquisicoes, tenant);
         return new AegisKnightAssessmentService(
             db, registry, config, new NoAdvisoryGenerator(), evidence, aquisicoes, tenant);

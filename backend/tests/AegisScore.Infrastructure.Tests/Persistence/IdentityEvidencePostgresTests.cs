@@ -47,7 +47,7 @@ public sealed class IdentityEvidencePostgresTests
         await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
         var registry = new KnightCollectorRegistry(new[] { new FixedCollector(result) });
         var config = new FixedConfig();
-        await new IdentityEvidenceService(db, registry, config, new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, new SystemTenantContext(tenant)), new SystemTenantContext(tenant)).CollectAsync();
+        await new IdentityEvidenceService(db, registry, config, new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, new SystemTenantContext(tenant), TimeProvider.System), new SystemTenantContext(tenant)).CollectAsync();
     }
 
     [Fact]
@@ -286,7 +286,7 @@ public sealed class IdentityEvidencePostgresTests
     {
         await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
         var registry = new KnightCollectorRegistry(new[] { new FixedCollector(Completed()) });
-        return await new IdentityEvidenceService(db, registry, new FixedConfig(), new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, new SystemTenantContext(tenant)), new SystemTenantContext(tenant))
+        return await new IdentityEvidenceService(db, registry, new FixedConfig(), new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, new SystemTenantContext(tenant), TimeProvider.System), new SystemTenantContext(tenant))
             .GetLatestProjectionAsync();
     }
 

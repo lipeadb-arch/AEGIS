@@ -12,6 +12,7 @@ using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Tests.Documents;   // PostgresProbe
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using Xunit;
 using Xunit.Abstractions;
@@ -125,7 +126,7 @@ public sealed class IdentityAcquisitionPostgresTests
         // LEITURA: para Beta, a aquisição de Alfa simplesmente não existe.
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(beta)))
         {
-            var store = new IdentityAcquisitionStore(db, new SystemTenantContext(beta));
+            var store = new IdentityAcquisitionStore(db, new SystemTenantContext(beta), Relogio);
             (await store.ReadAsync(aquisicaoAlfa)).Should().BeNull(
                 "a aquisição de outro ambiente é indistinguível de inexistente");
             (await db.IdentityEntities.CountAsync()).Should().Be(0);
@@ -461,6 +462,14 @@ public sealed class IdentityAcquisitionPostgresTests
 
     // ---- Infraestrutura ------------------------------------------------------------------------------
 
+    /// <summary>
+    /// [AEGIS-ADM-02] Relógio CONTROLÁVEL do store. A janela de ADMISSÃO do ADM (o piso temporal que recusa
+    /// uma coleta anterior ao mês mais antigo retido) é calculada a partir dele — usar o relógio do sistema
+    /// aqui faria estes casos passarem ou falharem conforme a data em que a bateria rodasse.
+    /// </summary>
+    private static readonly TimeProvider Relogio =
+        new FakeTimeProvider(new DateTimeOffset(2026, 4, 1, 8, 0, 0, TimeSpan.Zero));
+
     private static DateTimeOffset Instante(int horas) =>
         new DateTimeOffset(2026, 4, 1, 8, 0, 0, TimeSpan.Zero).AddHours(horas);
 
@@ -520,7 +529,7 @@ public sealed class IdentityAcquisitionPostgresTests
         Guid acquisitionId, IReadOnlyList<IdentityObservedObject> objetos, DateTimeOffset em)
     {
         await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(tenant));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(tenant), Relogio);
 
         // A MESMA unidade de trabalho do caminho de produção: transação, trava da origem e só então as
         // leituras que informam decisões. Escrever sem a trava aqui tornaria o teste mais tolerante do que o
@@ -547,7 +556,7 @@ public sealed class IdentityAcquisitionPostgresTests
             db,
             new AegisScore.Infrastructure.Knight.KnightCollectorRegistry(new IKnightCollector[] { coletor }),
             new ConfigSintetica(DiretorioA),
-            new IdentityAcquisitionStore(db, contexto),
+            new IdentityAcquisitionStore(db, contexto, Relogio),
             contexto);
 
         var resultado = await service.CollectAsync();

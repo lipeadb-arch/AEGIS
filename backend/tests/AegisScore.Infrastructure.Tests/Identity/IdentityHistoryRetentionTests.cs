@@ -44,6 +44,13 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
     /// <summary>Referência de "agora" para todos os casos: meio de junho, longe de qualquer virada de mês.</summary>
     private static readonly DateTimeOffset Agora = new(2026, 6, 15, 10, 0, 0, TimeSpan.Zero);
 
+    /// <summary>
+    /// [AEGIS-ADM-02] Relógio CONTROLÁVEL do store. A janela de ADMISSÃO do ADM (o piso temporal que recusa
+    /// uma coleta anterior ao mês mais antigo retido) é calculada a partir dele — usar o relógio do sistema
+    /// aqui faria estes casos passarem ou falharem conforme a data em que a bateria rodasse.
+    /// </summary>
+    private static readonly TimeProvider Relogio = new FakeTimeProvider(Agora);
+
     private readonly SqliteConnection _connection;
     private readonly Guid _conectorA = Guid.NewGuid();
     private readonly Guid _conectorB = Guid.NewGuid();
@@ -454,7 +461,7 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
         await ManterAsync(consolidar: true, remover: true);
 
         await using var db = NewContext(TenantA);
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio);
 
         var expirada = (await store.ReadAsync(comDetalhe))!;
         expirada.DetailRetiredAt.Should().NotBeNull();
@@ -493,7 +500,7 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
         await ManterAsync(consolidar: true, remover: true);
 
         await using var db = NewContext(TenantA);
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio);
 
         var replay = async () => await store.PrepareAsync(
             Pedido(_conectorA, DiretorioA, citada, vencidaEm, KnightSourceState.Completed,
@@ -799,12 +806,17 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
         comAtrasada.Sets.Single().ObservedCount.Should().Be(1);
         comAtrasada.AcquisitionCount.Should().Be(4, "e é um fato novo do mês, somado às três já contadas");
 
-        // O histórico DIZ que o detalhe daquele mês expirou — e continua exibindo os valores apurados.
+        // O histórico separa as duas coisas. A ATIVIDADE de retenção no mês é real (três coletas saíram); a
+        // fotografia exibida, porém, é a atrasada — que continua aqui, íntegra. Apresentá-la como "detalhe
+        // expirado" só porque o expurgo passou pelo mês seria afirmar sobre ela algo que não aconteceu.
         var mes = (await LerHistoricoAsync(TenantA)).Directories.Single()
             .Months.Single(m => m.Month == "2026-02");
         mes.AcquisitionCount.Should().Be(4);
         mes.RetiredAcquisitionCount.Should().Be(3);
-        mes.DetailRetentionNote.Should().Contain("EXPIRADO POR RETENÇÃO");
+        mes.MonthRetentionNote.Should().Contain("3 de 4", "a atividade de retenção NO MÊS continua declarada");
+        mes.SnapshotDetail.Should().Be(IdentityHistoryDetailAvailability.Available,
+            "a fotografia é a coleta atrasada, que continua registrada e com o detalhe íntegro");
+        mes.DetailRetentionNote.Should().BeNull("não há o que ressalvar sobre uma fotografia preservada");
         mes.State.Should().Be(IdentityHistoryMonthState.Collected);
     }
 
@@ -862,7 +874,7 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
         await using var db = NewContext(TenantA);
         (await db.IdentityAcquisitions.AnyAsync(a => a.Id == removida)).Should().BeFalse();
 
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio);
 
         var replay = async () => await store.PrepareAsync(
             Pedido(_conectorA, DiretorioA, removida, Em(2, 10), KnightSourceState.Completed,
@@ -976,7 +988,7 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
         await ManterAsync(consolidar: true, remover: true);
 
         await using var db = NewContext(TenantA);
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio);
 
         var fixada = await store.PinForReferenceAsync(citada);
         fixada.Exists.Should().BeTrue("a fixação continua impedindo a remoção integral da linha");
@@ -1036,6 +1048,284 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
         (await assert.IdentityMonthlyRollups.AnyAsync(
             r => r.DirectoryNamespace == "dir-abandonado" && r.Month == maisAntigo)).Should().BeTrue(
             "o mês mais antigo AINDA retido não é o primeiro a sair");
+    }
+
+    // ---- (16) Exclusão da origem, reconexão e o denominador do mês -----------------------------------
+
+    /// <summary>
+    /// A cascata da exclusão do conector leva as aquisições embora sem passar pela retenção — e um mês cujo
+    /// total fosse definido como "sobreviventes + removidas pela retenção" desabaria exatamente aqui: as duas
+    /// parcelas iriam a zero, e o passado exibiria menos coletas do que houve.
+    ///
+    /// Excluir a fonte não é o mesmo que nunca ter coletado. O total do mês é ACUMULADO — cada coleta entra
+    /// uma vez, quando aparece pela primeira vez — e por isso não depende nem da existência da linha nem da
+    /// CAUSA do desaparecimento. Reconectar o mesmo namespace e coletar de novo acrescenta o que é novo, uma
+    /// única vez, sem ressuscitar nem recontar o que já estava contado.
+    /// </summary>
+    [Fact]
+    public async Task ExclusaoDoConector_NaoEncolheOHistorico_EAReconexaoIncorporaANovaColetaUmaVez()
+    {
+        await SemearAsync(TenantA, _conectorA);
+
+        await GravarAsync(TenantA, _conectorA, DiretorioA, Em(2, 3), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+        await GravarAsync(TenantA, _conectorA, DiretorioA, Em(2, 10), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+        var fotografia = await GravarAsync(TenantA, _conectorA, DiretorioA, Em(2, 20), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1", "obj-2"));
+
+        await ManterAsync(consolidar: true, remover: false);
+
+        var fevereiro = new DateOnly(2026, 2, 1);
+        (await MesAsync(TenantA, fevereiro)).AcquisitionCount.Should().Be(3);
+
+        // A exclusão do conector, pelo comportamento que já existe: a FK em cascata leva a evidência junto.
+        await ExcluirConectorAsync(TenantA, _conectorA);
+        (await ContagensAsync(TenantA)).Aquisicoes.Should().Be(0, "a cascata levou TODA a evidência da origem");
+
+        var orfao = await MesAsync(TenantA, fevereiro);
+        orfao.AcquisitionCount.Should().Be(3, "o mês teve três coletas, e a exclusão da fonte não desfaz isso");
+        orfao.RetiredAcquisitionCount.Should().Be(0,
+            "e nenhuma delas saiu por RETENÇÃO — chamar a cascata de expurgo afirmaria uma causa não apurada");
+        orfao.RetentionSweptThroughAt.Should().BeNull();
+
+        // RECONEXÃO do MESMO namespace, com outro conector: a origem deixa de ser órfã e volta a coletar.
+        var reconectado = Guid.NewGuid();
+        await SemearConectorAsync(TenantA, reconectado, ConnectorCapability.IdentityPosture);
+        await GravarAsync(TenantA, reconectado, DiretorioA, Agora.AddDays(-1), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1", "obj-2"));
+
+        await ManterAsync(consolidar: true, remover: false);
+
+        var reconsolidado = await MesAsync(TenantA, fevereiro);
+        reconsolidado.AcquisitionCount.Should().Be(3, "fevereiro não recebeu coleta nova: continua com três");
+        reconsolidado.SnapshotAcquisitionId.Should().Be(fotografia, "a fotografia preservada não cai por ausência");
+        reconsolidado.Sets.Single().ObservedCount.Should().Be(2, "nem os conjuntos que ela guardou");
+        reconsolidado.SnapshotSchemaVersion.Should().Be(IdentityKnightBoundary.SchemaVersion,
+            "a proveniência gravada é a da coleta que originou a fotografia");
+
+        await ManterAsync(consolidar: true, remover: false);
+        (await MesAsync(TenantA, fevereiro)).AcquisitionCount.Should().Be(3, "reexecutar não muda nada");
+
+        // Uma coleta NOVA de fevereiro, depois da reconexão: entra uma vez, e a fotografia passa a ser dela.
+        var depoisDaReconexao = await GravarAsync(
+            TenantA, reconectado, DiretorioA, Em(2, 25), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+
+        await ManterAsync(consolidar: true, remover: false);
+        var comNova = await MesAsync(TenantA, fevereiro);
+        comNova.AcquisitionCount.Should().Be(4, "quatro coletas houve em fevereiro, contando a que veio depois");
+        comNova.SnapshotAcquisitionId.Should().Be(depoisDaReconexao, "e ela é comprovadamente a mais recente");
+
+        await ManterAsync(consolidar: true, remover: false);
+        (await MesAsync(TenantA, fevereiro)).AcquisitionCount.Should().Be(4,
+            "a mesma coleta não entra duas vezes na conta");
+    }
+
+    // ---- (17) A disponibilidade do detalhe é apurada NA FOTOGRAFIA ------------------------------------
+
+    /// <summary>
+    /// O marcador de retenção do MÊS não responde pela fotografia exibida, e as quatro situações abaixo
+    /// divergem justamente onde ele erraria:
+    ///
+    ///   • mês com uma coleta PROTEGIDA que perdeu só o detalhe — o marcador de remoção integral nem se move;
+    ///   • mês cuja fotografia saiu por INTEIRO — aí sim o expurgo responde por ela;
+    ///   • mês cuja fotografia sumiu por EXCLUSÃO DA ORIGEM — a retenção não tem nada a ver com isso, e
+    ///     atribuir a ela seria afirmar uma causa que ninguém apurou;
+    ///   • mês com outras coletas removidas e a fotografia ÍNTEGRA — o marcador está aceso e não significa
+    ///     nada sobre o que está sendo exibido.
+    ///
+    /// Em todos, os valores e a completude continuam sendo os APURADOS na coleta.
+    /// </summary>
+    [Fact]
+    public async Task DisponibilidadeDoDetalhe_EApuradaNaFotografia_ENaoNoMarcadorDoMes()
+    {
+        await SemearAsync(TenantA, _conectorA);
+        await SemearConectorAsync(TenantA, _conectorB, ConnectorCapability.ConfigAnalyzer);
+
+        // Janeiro: uma coleta só, CITADA por uma avaliação — fica, e perde apenas o detalhe.
+        var citada = await GravarAsync(TenantA, _conectorA, DiretorioA, Em(1, 10), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+        await SemearAvaliacaoCongeladaAsync(TenantA, citada);
+
+        // Fevereiro: duas coletas, nenhuma referenciada — as duas saem, inclusive a fotografia do mês.
+        await GravarAsync(TenantA, _conectorA, DiretorioA, Em(2, 5), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+        await GravarAsync(TenantA, _conectorA, DiretorioA, Em(2, 20), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+
+        // Março: a de 5/3 está vencida; a de 25/3 está DENTRO dos 90 dias e é a fotografia do mês.
+        await GravarAsync(TenantA, _conectorA, DiretorioA, Em(3, 5), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+        var integra = await GravarAsync(TenantA, _conectorA, DiretorioA, Em(3, 25), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1", "obj-2"));
+
+        // Abril, em OUTRA origem: dentro dos 90 dias, e portanto fora de qualquer expurgo.
+        await GravarAsync(TenantA, _conectorB, DiretorioB, Em(4, 10), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-9"));
+
+        await ManterAsync(consolidar: true, remover: true);
+
+        var origemA = (await LerHistoricoAsync(TenantA)).Directories
+            .Single(d => d.DirectoryNamespace == DiretorioA);
+
+        var janeiro = origemA.Months.Single(m => m.Month == "2026-01");
+        janeiro.SnapshotDetail.Should().Be(IdentityHistoryDetailAvailability.DetailRetired);
+        janeiro.DetailRetentionNote.Should().Contain("EXPIRADO POR RETENÇÃO");
+        janeiro.DetailRetentionNote.Should().Contain("permanece registrada");
+        janeiro.MonthRetentionNote.Should().BeNull(
+            "nada saiu por inteiro em janeiro — o marcador de remoção integral do mês não se move por expurgo "
+            + "de detalhe, e é por isso que ele não podia responder pela fotografia");
+        janeiro.AcquisitionCount.Should().Be(1);
+
+        var fevereiro = origemA.Months.Single(m => m.Month == "2026-02");
+        fevereiro.SnapshotDetail.Should().Be(IdentityHistoryDetailAvailability.RemovedByRetention);
+        fevereiro.DetailRetentionNote.Should().Contain("REMOVIDA POR RETENÇÃO");
+        fevereiro.MonthRetentionNote.Should().Contain("2 de 2");
+        fevereiro.AcquisitionCount.Should().Be(2, "o denominador do mês é o histórico, e ele não encolheu");
+
+        var marco = origemA.Months.Single(m => m.Month == "2026-03");
+        marco.SnapshotDetail.Should().Be(IdentityHistoryDetailAvailability.Available,
+            "a coleta removida foi a antiga; a fotografia é a de 25/3, que continua íntegra");
+        marco.DetailRetentionNote.Should().BeNull();
+        marco.MonthRetentionNote.Should().Contain("1 de 2", "a atividade de retenção do mês é real, e é do MÊS");
+        marco.Snapshot!.AcquisitionId.Should().Be(integra);
+        marco.Sets.Single().ObservedCount.Should().Be(2);
+
+        (await LerHistoricoAsync(TenantA)).Directories
+            .Single(d => d.DirectoryNamespace == DiretorioB)
+            .Months.Single(m => m.Month == "2026-04")
+            .SnapshotDetail.Should().Be(IdentityHistoryDetailAvailability.Available);
+
+        // A origem B é EXCLUÍDA: a fotografia de abril some por cascata, e não por vencimento.
+        await ExcluirConectorAsync(TenantA, _conectorB);
+
+        var abril = (await LerHistoricoAsync(TenantA)).Directories
+            .Single(d => d.DirectoryNamespace == DiretorioB)
+            .Months.Single(m => m.Month == "2026-04");
+
+        abril.SnapshotDetail.Should().Be(IdentityHistoryDetailAvailability.Unavailable);
+        abril.DetailRetentionNote.Should().Contain("não é conhecida");
+        abril.DetailRetentionNote.Should().NotContain("EXPIRADO POR RETENÇÃO");
+        abril.MonthRetentionNote.Should().BeNull("a retenção não passou por aqui, e não responde por essa ausência");
+        abril.AcquisitionCount.Should().Be(1, "e o que o mês apurou continua declarado");
+    }
+
+    // ---- (18) A janela de ADMISSÃO, depois que a consolidação do mês expira ---------------------------
+
+    /// <summary>
+    /// A fronteira que recusa o replay mora na consolidação do mês — e a consolidação EXPIRA com os 12 meses.
+    /// Bastava esperar a linha mensal vencer para uma coleta removida voltar a entrar pelo caminho de criação
+    /// como se fosse novidade.
+    ///
+    /// O fecho é uma janela de ADMISSÃO temporal, calculada no relógio: abaixo do começo do mês mais antigo
+    /// retido nada é aceito. Não é um registro de identificadores expurgados (que cresceria para sempre), e a
+    /// recusa NÃO afirma que aquele identificador já havia sido processado — ela é sobre o instante declarado.
+    /// </summary>
+    [Fact]
+    public async Task ReplayDepoisDeAConsolidacaoExpirar_ERecusadoPelaAdmissao_SemRepovoarProjecoes()
+    {
+        await SemearAsync(TenantA, _conectorA);
+
+        // "Então": um passado em que a coleta de abril/2025 ainda era admissível e ainda tinha mês consolidado.
+        var entao = new DateTimeOffset(2025, 8, 15, 10, 0, 0, TimeSpan.Zero);
+        var emAbril = new DateTimeOffset(2025, 4, 10, 9, 0, 0, TimeSpan.Zero);
+
+        var removida = await GravarEmAsync(entao, TenantA, _conectorA, DiretorioA, emAbril,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+        await GravarEmAsync(entao, TenantA, _conectorA, DiretorioA, entao.AddDays(-1),
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"));
+
+        await ManterAsync(new IdentityAdmMaintenanceRequest(Now: entao, Consolidate: true, Remove: true));
+
+        await using (var db = NewContext(TenantA))
+        {
+            (await db.IdentityAcquisitions.AnyAsync(a => a.Id == removida)).Should().BeFalse();
+            (await db.IdentityMonthlyRollups.SingleAsync(r => r.Month == new DateOnly(2025, 4, 1)))
+                .RetentionSweptThroughAt.Should().Be(emAbril, "é a fronteira que recusa o replay HOJE");
+        }
+
+        // O tempo passa: abril/2025 sai da janela de 12 meses, e a consolidação dele — com a fronteira — some.
+        await ManterAsync(consolidar: true, remover: true);
+
+        await using var depois = NewContext(TenantA);
+        (await depois.IdentityMonthlyRollups.AnyAsync(r => r.Month == new DateOnly(2025, 4, 1)))
+            .Should().BeFalse("a consolidação expirou, e com ela a única memória por mês daquele expurgo");
+
+        var entidadesAntes = await depois.IdentityEntities.AsNoTracking()
+            .Select(e => new { e.Id, e.CurrentAcquisitionId }).ToListAsync();
+
+        var store = new IdentityAcquisitionStore(depois, new SystemTenantContext(TenantA), Relogio);
+
+        var replay = async () => await store.PrepareAsync(
+            Pedido(_conectorA, DiretorioA, removida, emAbril, KnightSourceState.Completed,
+                new[] { Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1") }));
+
+        var recusa = (await replay.Should().ThrowAsync<IdentityAcquisitionOutsideAdmissionWindowException>())
+            .Which;
+        recusa.AcquisitionId.Should().Be(removida);
+        recusa.AdmissionFloor.Should().Be(new DateTimeOffset(2025, 7, 1, 0, 0, 0, TimeSpan.Zero));
+        recusa.Message.Should().Contain("não afirma que este identificador já havia sido registrado",
+            "janela fechada é uma afirmação sobre o TEMPO, e não prova que esta coleta já passou por aqui");
+
+        depois.ChangeTracker.Clear();
+        (await depois.IdentityAcquisitions.AnyAsync(a => a.Id == removida)).Should().BeFalse(
+            "a recusa acontece ANTES de qualquer escrita");
+        (await depois.IdentityEntityObservations.CountAsync(o => o.AcquisitionId == removida)).Should().Be(0);
+
+        var entidadesDepois = await depois.IdentityEntities.AsNoTracking()
+            .Select(e => new { e.Id, e.CurrentAcquisitionId }).ToListAsync();
+        entidadesDepois.Should().BeEquivalentTo(entidadesAntes,
+            "nem a projeção do cadastro atual pode se mexer por causa de uma tentativa recusada");
+    }
+
+    /// <summary>
+    /// Os limites da janela de admissão, exatos e nos dois sentidos: o piso é aceito, um milissegundo antes
+    /// dele não é, e uma coleta ATRASADA dentro da janela continua entrando — inclusive vencida, porque
+    /// "vencida" é assunto da retenção e não da admissão.
+    ///
+    /// O instante declarado JAMAIS é ajustado para caber na janela: a recusa preserva o horário apresentado,
+    /// que é o que a evidência existe para registrar.
+    /// </summary>
+    [Fact]
+    public async Task JanelaDeAdmissao_TemPisoExato_EAceitaAColetaAtrasadaDentroDela()
+    {
+        await SemearAsync(TenantA, _conectorA);
+
+        var piso = IdentityAdmRetentionPolicy.AdmissionFloor(Agora);
+        piso.Should().Be(new DateTimeOffset(2025, 7, 1, 0, 0, 0, TimeSpan.Zero));
+
+        await using var db = NewContext(TenantA);
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio);
+
+        var abaixo = Guid.NewGuid();
+        var forcar = async () => await store.PrepareAsync(
+            Pedido(_conectorA, DiretorioA, abaixo, piso.AddMilliseconds(-1), KnightSourceState.Completed,
+                new[] { Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1") }));
+
+        (await forcar.Should().ThrowAsync<IdentityAcquisitionOutsideAdmissionWindowException>())
+            .Which.AcquiredAt.Should().Be(piso.AddMilliseconds(-1),
+                "o instante recusado é o APRESENTADO — nada é reescrito para fazer a coleta parecer recente");
+
+        db.ChangeTracker.Clear();
+        (await db.IdentityAcquisitions.AnyAsync(a => a.Id == abaixo)).Should().BeFalse();
+
+        // No piso EXATO: aceita. A janela é fechada por baixo, e não "quase".
+        await store.PrepareAsync(
+            Pedido(_conectorA, DiretorioA, Guid.NewGuid(), piso, KnightSourceState.Completed,
+                new[] { Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1") }));
+        await db.SaveChangesAsync();
+
+        // ATRASADA e já vencida pelos 90 dias, mas DENTRO da janela: entra, e é consolidada no mês dela.
+        var atrasada = await GravarAsync(TenantA, _conectorA, DiretorioA,
+            new DateTimeOffset(2025, 9, 10, 9, 0, 0, TimeSpan.Zero), KnightSourceState.Completed,
+            Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1", "obj-2"));
+
+        await ManterAsync(consolidar: true, remover: false);
+
+        var setembro = await MesAsync(TenantA, new DateOnly(2025, 9, 1));
+        setembro.SnapshotAcquisitionId.Should().Be(atrasada);
+        setembro.AcquisitionCount.Should().Be(1, "a coleta atrasada é um fato do mês dela, e entra uma vez");
     }
 
     // ---- Infraestrutura do teste ---------------------------------------------------------------------
@@ -1194,6 +1484,34 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
         return (run.Id, 1, hash);
     }
 
+    /// <summary>
+    /// Exclui o conector pelo comportamento que já existe — a FK em cascata leva a evidência de identidade
+    /// junto. É o desaparecimento que NÃO passa pela retenção, e é por isso que ele precisa estar aqui.
+    /// </summary>
+    private async Task ExcluirConectorAsync(Guid tenantId, Guid connectorId)
+    {
+        await using var db = NewContext(tenantId);
+        var conector = await db.Connectors.SingleAsync(c => c.Id == connectorId);
+        db.Connectors.Remove(conector);
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>O mesmo registro, com o RELÓGIO da admissão fixado em outro instante.</summary>
+    private async Task<Guid> GravarEmAsync(
+        DateTimeOffset relogio, Guid tenantId, Guid connectorId, string ns, DateTimeOffset em,
+        IdentityObservedSet conjunto)
+    {
+        var id = Guid.NewGuid();
+        await using var db = NewContext(tenantId);
+        var store = new IdentityAcquisitionStore(
+            db, new SystemTenantContext(tenantId), new FakeTimeProvider(relogio));
+
+        await store.PrepareAsync(Pedido(
+            connectorId, ns, id, em, KnightSourceState.Completed, new[] { conjunto }));
+        await db.SaveChangesAsync();
+        return id;
+    }
+
     /// <summary>Grava UMA aquisição pela porta real do ADM e devolve o identificador dela.</summary>
     private async Task<Guid> GravarAsync(
         Guid tenantId, Guid connectorId, string ns, DateTimeOffset em, KnightSourceState state,
@@ -1206,7 +1524,7 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
         IdentityObservedSet conjunto)
     {
         await using var db = NewContext(tenantId);
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(tenantId));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(tenantId), Relogio);
         await store.PrepareAsync(Pedido(connectorId, ns, id, em, state, new[] { conjunto }));
         await db.SaveChangesAsync();
     }
@@ -1217,7 +1535,7 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
     {
         var id = Guid.NewGuid();
         await using var db = NewContext(tenantId);
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(tenantId));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(tenantId), Relogio);
         await store.PrepareAsync(Pedido(connectorId, ns, id, em, state, conjuntos, normalizacao));
         await db.SaveChangesAsync();
         return id;

@@ -74,6 +74,9 @@ public sealed class DatabaseUpgradePostgresTests
             // [AEGIS-ADM-02] Histórico mensal e retenção: acrescenta as duas tabelas de consolidação, a coluna
             // do detalhe expirado e a chave de varredura por instante (com backfill do que já estava gravado).
             "20260910013200_Adm02_IdentityMonthlyHistoryRetention",
+            // [AEGIS-ADM-02] A marca de contabilização mensal da aquisição: aditiva, anulável e SEM backfill —
+            // nulo já significa "ainda não entrou em nenhum total", que é a verdade de toda linha existente.
+            "20260910110703_Adm02_MonthlyRollupAccounting",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;
