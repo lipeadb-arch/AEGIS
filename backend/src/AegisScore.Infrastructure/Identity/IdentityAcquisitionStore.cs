@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -39,11 +37,13 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
 {
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
+    private readonly TimeProvider _clock;
 
-    public IdentityAcquisitionStore(AegisScoreDbContext db, ITenantContext tenant)
+    public IdentityAcquisitionStore(AegisScoreDbContext db, ITenantContext tenant, TimeProvider clock)
     {
         _db = db;
         _tenant = tenant;
+        _clock = clock;
     }
 
     /// <inheritdoc />
@@ -76,7 +76,8 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
         //    (tenant, namespace) — o escopo em que vivem as entidades canônicas e os vínculos, e que pode ser
         //    disputado por conectores diferentes apontados para o MESMO diretório.
         await _db.Database.ExecuteSqlRawAsync(
-            "SELECT pg_advisory_xact_lock({0})", new object[] { AdvisoryKey(tenantId, ns) }, ct);
+            "SELECT pg_advisory_xact_lock({0})",
+            new object[] { IdentityDirectoryLock.AdvisoryKey(tenantId, ns) }, ct);
 
         // 2) CONECTOR. Trava de LINHA sobre a configuração — o escopo do snapshot agregado, da última
         //    tentativa e da saúde da integração. Sempre DEPOIS da trava do diretório: a ordem fixa é o que
@@ -124,6 +125,20 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
 
         if (acquisition is null)
         {
+            // [AEGIS-ADM-02] A linha NÃO existe — e isso tem duas leituras opostas: coleta nova, ou
+            // reapresentação de uma aquisição que a retenção já removeu por inteiro. Seguir sem distinguir
+            // repovoaria em silêncio uma evidência deliberadamente expurgada, com o MESMO identificador que o
+            // histórico e as avaliações citam. A pergunta é feita à consolidação do mês (uma coluna, não uma
+            // lista de identificadores removidos) e AQUI, dentro da seção crítica da origem, para que a
+            // resposta não seja uma foto vencida da decisão da retenção.
+            // [AEGIS-ADM-02] PRIMEIRO a janela de ADMISSÃO, que não depende de nenhuma linha existir. A
+            // fronteira por mês (logo abaixo) mora na consolidação, e a consolidação expira com os 12 meses:
+            // sem um piso temporal bastaria esperar a linha mensal vencer para uma coleta já removida voltar
+            // a entrar por aqui. As duas recusas dizem coisas diferentes e não se substituem.
+            RecusarForaDaAdmissao(request.AcquisitionId, acquiredAt);
+
+            await RecusarSeVarridaAsync(request, ns, acquiredAt, ct);
+
             acquisition = new IdentityAcquisition
             {
                 Id = request.AcquisitionId,
@@ -134,6 +149,9 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
                 SchemaVersion = request.SchemaVersion,
                 NormalizationVersion = request.NormalizationVersion,
                 AcquiredAt = acquiredAt,
+                // [AEGIS-ADM-02] Chave de varredura DERIVADA do mesmo instante normalizado — escrita aqui, e
+                // só aqui, para que não exista caminho pelo qual ela discorde de AcquiredAt.
+                AcquiredAtUtc = acquiredAt.UtcDateTime,
                 ObservedAt = request.ObservedAt is { } o ? IdentityAcquisitionContent.NormalizeInstant(o) : null,
                 State = request.State,
                 Detail = request.Detail,
@@ -145,6 +163,14 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
         }
         else
         {
+            // [AEGIS-ADM-02] DETALHE EXPIRADO: a retenção removeu as observações desta aquisição de propósito.
+            // Seguir daqui recriaria justamente o que foi expurgado — e o registro passaria a exibir um detalhe
+            // "íntegro" reconstruído depois, que ninguém poderia distinguir do original. Recusa ANTES de
+            // qualquer escrita, e antes até da comparação de conteúdo: o problema não é o que mudou, é que este
+            // caminho não pode ser percorrido.
+            if (acquisition.DetailRetiredAt is { } retiredAt)
+                throw new IdentityAcquisitionDetailRetiredException(request.AcquisitionId, retiredAt);
+
             // Uma avaliação já pode citar esta aquisição. Aceitar conteúdo novo sob o mesmo identificador
             // faria a prova de uma avaliação publicada mudar depois de publicada.
             var divergencias = Divergencias(acquisition, request, ns, fingerprint);
@@ -406,7 +432,105 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
             acquisition.FactsJson,
             acquisition.CapabilitiesJson,
             acquisition.ContentFingerprint,
-            sets);
+            sets,
+            // [AEGIS-ADM-02] Sem este campo, os objetos vazios acima seriam lidos como "a coleta não achou
+            // ninguém" — e detalhe expirado por retenção viraria evidência de ausência.
+            acquisition.DetailRetiredAt);
+    }
+
+    /// <inheritdoc />
+    public async Task<IdentityAcquisitionPin> PinForReferenceAsync(
+        Guid acquisitionId, CancellationToken ct = default)
+    {
+        var tenantId = _tenant.TenantId
+            ?? throw new TenantSecurityException(
+                "Fixação de aquisição de identidade sem tenant resolvido no contexto (fail-closed).");
+
+        if (!_db.Database.IsNpgsql())
+        {
+            // SQLite (bateria relacional) serializa escritores na própria conexão: a existência lida aqui não
+            // pode mudar sob os pés de ninguém. Declarado em vez de silenciado — a proteção REAL é a do
+            // PostgreSQL, e é lá que ela é exercitada.
+            var linha = await _db.IdentityAcquisitions.AsNoTracking()
+                .Where(a => a.Id == acquisitionId)
+                .Select(a => new { a.DetailRetiredAt })
+                .FirstOrDefaultAsync(ct);
+
+            return linha is null ? IdentityAcquisitionPin.Missing : new(true, linha.DetailRetiredAt);
+        }
+
+        if (_db.Database.CurrentTransaction is null)
+            throw new InvalidOperationException(
+                "A fixação da aquisição citada exige uma transação aberta: fora dela o autocommit liberaria a "
+                + "trava antes de a citação ser gravada, e a proteção contra a retenção concorrente deixaria "
+                + "de existir.");
+
+        // FOR SHARE, e não FOR UPDATE: várias avaliações podem citar a MESMA aquisição ao mesmo tempo sem
+        // conflito entre si. O que precisa esperar é a RETENÇÃO, que toma a trava exclusiva sobre a linha.
+        // O filtro por tenant é explícito porque isto é SQL cru — o Global Query Filter não alcança daqui.
+        //
+        // A projeção traz DetailRetiredAt junto da trava, e não numa segunda consulta: perguntar "existe?" e
+        // "o detalhe está íntegro?" em dois momentos deixaria uma janela entre as respostas — a mesma janela
+        // que esta trava existe para fechar.
+        var travada = await _db.Database
+            .SqlQueryRaw<DateTimeOffset?>(
+                "SELECT \"DetailRetiredAt\" AS \"Value\" FROM \"IdentityAcquisitions\" "
+                + "WHERE \"Id\" = {0} AND \"TenantId\" = {1} FOR SHARE",
+                acquisitionId, tenantId)
+            .ToListAsync(ct);
+
+        return travada.Count == 0 ? IdentityAcquisitionPin.Missing : new(true, travada[0]);
+    }
+
+    /// <summary>
+    /// [AEGIS-ADM-02] Recusa a CRIAÇÃO de uma aquisição cujo instante está FORA da janela de admissão — o
+    /// fecho temporal do repovoamento silencioso.
+    ///
+    /// Duas perguntas diferentes, e é por isso que são dois métodos. A fronteira por mês responde "o expurgo
+    /// daqui já passou deste instante?" e vale enquanto a consolidação do mês existir. Esta responde "este
+    /// instante ainda pode ser admitido?" e continua valendo depois que a consolidação expira — que é
+    /// justamente quando a outra deixa de alcançar.
+    ///
+    /// ⚠️ Ela NÃO afirma que este identificador já foi registrado ou removido: é uma recusa sobre o TEMPO
+    /// declarado. E o instante declarado não é ajustado para caber na janela em nenhuma hipótese — reescrever
+    /// o horário de uma coleta para fazê-la parecer recente falsifica a evidência que o registro preserva.
+    ///
+    /// O relógio é o INJETADO, e não <c>DateTimeOffset.UtcNow</c>: o piso precisa ser observável nos testes
+    /// sem esperar doze meses passarem.
+    /// </summary>
+    private void RecusarForaDaAdmissao(Guid acquisitionId, DateTimeOffset acquiredAt)
+    {
+        var piso = IdentityAdmRetentionPolicy.AdmissionFloor(_clock.GetUtcNow());
+
+        if (acquiredAt < piso)
+            throw new IdentityAcquisitionOutsideAdmissionWindowException(acquisitionId, acquiredAt, piso);
+    }
+
+    /// <summary>
+    /// [AEGIS-ADM-02] Recusa a CRIAÇÃO de uma aquisição cujo instante a retenção já varreu naquele mês.
+    ///
+    /// A fronteira mora na consolidação mensal — <c>RetentionSweptThroughAt</c> — porque ela é BOUNDED (uma
+    /// linha por mês e por origem) e responde exatamente à pergunta certa: "o expurgo daqui já passou deste
+    /// instante?". Guardar os identificadores removidos responderia a mesma coisa e cresceria para sempre.
+    ///
+    /// Passados os 12 meses a consolidação também expira e, com ela, a fronteira — e é aí que a janela de
+    /// ADMISSÃO assume: um instante anterior ao começo do mês mais antigo retido não é aceito por
+    /// <see cref="RecusarForaDaAdmissao"/>, sem precisar guardar nada por aquisição. As duas juntas fecham o
+    /// caminho de criação em toda a linha do tempo.
+    /// </summary>
+    private async Task RecusarSeVarridaAsync(
+        IdentityAcquisitionRequest request, string ns, DateTimeOffset acquiredAt, CancellationToken ct)
+    {
+        var mes = IdentityAdmRetentionPolicy.MonthOf(acquiredAt);
+
+        var varridoAte = await _db.IdentityMonthlyRollups.AsNoTracking()
+            .Where(r => r.Provider == request.Origin.Provider && r.DirectoryNamespace == ns && r.Month == mes)
+            .Select(r => r.RetentionSweptThroughAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (varridoAte is { } fronteira && acquiredAt <= fronteira)
+            throw new IdentityAcquisitionRetentionSweptException(
+                request.AcquisitionId, acquiredAt, mes, fronteira);
     }
 
     // ---- Helpers -------------------------------------------------------------------------------------
@@ -514,14 +638,4 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
     private static string? Join(string? a, string? b) =>
         string.Join(" ", new[] { a, b }.Where(x => !string.IsNullOrWhiteSpace(x))) is { Length: > 0 } s ? s : null;
 
-    /// <summary>
-    /// Chave da trava consultiva do diretório: 64 bits DERIVADOS de (tenant, namespace) por SHA-256. Não é o
-    /// hash de string do .NET de propósito — aquele é aleatorizado por processo, e duas instâncias da API
-    /// escolheriam travas diferentes para o mesmo diretório, ou seja, nenhuma trava.
-    /// </summary>
-    private static long AdvisoryKey(Guid tenantId, string directoryNamespace)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"aegis-adm-identity|{tenantId:D}|{directoryNamespace}"));
-        return BitConverter.ToInt64(bytes, 0);
-    }
 }

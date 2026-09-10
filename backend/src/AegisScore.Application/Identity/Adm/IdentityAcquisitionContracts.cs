@@ -187,6 +187,12 @@ public sealed record IdentityAcquisitionRequest(
 /// e não pelo objeto que entrou: é assim que "a avaliação leu a aquisição persistida" deixa de ser promessa e
 /// vira uma propriedade verificável do caminho.
 /// </summary>
+/// <param name="DetailRetiredAt">
+/// [AEGIS-ADM-02] Instante em que o DETALHE (as observações) foi removido pela retenção operacional; <c>null</c>
+/// quando o detalhe é o que sempre foi. Quem lê PRECISA deste campo: sem ele, uma lista de objetos vazia seria
+/// indistinguível de "a coleta não encontrou ninguém", e detalhe expirado passaria por evidência íntegra.
+/// As contagens e a completude originais continuam nos conjuntos, intactas.
+/// </param>
 public sealed record IdentityAcquisitionRecord(
     Guid AcquisitionId,
     Guid TenantId,
@@ -200,7 +206,8 @@ public sealed record IdentityAcquisitionRecord(
     string FactsJson,
     string CapabilitiesJson,
     string ContentFingerprint,
-    IReadOnlyList<IdentityObservedSetRecord> Sets);
+    IReadOnlyList<IdentityObservedSetRecord> Sets,
+    DateTimeOffset? DetailRetiredAt = null);
 
 /// <summary>Um conjunto como foi persistido, com os objetos preservados e a entidade canônica de cada um.</summary>
 public sealed record IdentityObservedSetRecord(

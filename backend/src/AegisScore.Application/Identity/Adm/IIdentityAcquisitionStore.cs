@@ -56,4 +56,25 @@ public interface IIdentityAcquisitionStore
     /// que a resposta correta é indistinguível de "não existe".
     /// </summary>
     Task<IdentityAcquisitionRecord?> ReadAsync(Guid acquisitionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-ADM-02] FIXA a aquisição que está prestes a ser CITADA por uma avaliação, dentro da transação em
+    /// que a citação será gravada.
+    ///
+    /// Por que uma trava, e não um simples <c>SELECT</c>: "esta aquisição ainda existe?" respondido ANTES da
+    /// transação é uma foto vencida — a retenção pode remover a linha entre a resposta e o <c>INSERT</c> da
+    /// execução, e o resultado seria uma avaliação apontando para uma coleta que não está mais lá. A trava
+    /// COMPARTILHADA aqui conflita com a trava EXCLUSIVA que a retenção toma sobre os candidatos: quem chegar
+    /// depois espera e enxerga o estado já decidido, em vez de os dois decidirem sobre a mesma foto antiga.
+    ///
+    /// A resposta NÃO é um booleano de propósito. "A linha existe" e "o detalhe observado continua disponível"
+    /// são perguntas diferentes, e colapsá-las faria uma avaliação citar como íntegra uma coleta cujo detalhe
+    /// a retenção já expirou. Citar uma aquisição de detalhe expirado é legítimo — o cabeçalho, os fatos e a
+    /// completude por conjunto continuam lá, e a fixação segue impedindo a remoção integral da linha —, mas
+    /// quem cita precisa poder saber disso. Ver <see cref="IdentityAcquisitionPin"/>.
+    ///
+    /// Exige transação aberta pelo mesmo motivo de <see cref="LockOriginAsync"/>: fora dela o autocommit
+    /// liberaria a trava imediatamente, e a seção crítica deixaria de existir.
+    /// </summary>
+    Task<IdentityAcquisitionPin> PinForReferenceAsync(Guid acquisitionId, CancellationToken ct = default);
 }

@@ -111,10 +111,35 @@ jobs:
       #     tradução de tipos total. A classe é NOVA: sem esta linha ela não executaria e o check ficaria
       #     verde do mesmo jeito. A contagem deste passo sobe de 353 para 374 (medida localmente com este
       #     MESMO filtro, em Release).
+      #     [AEGIS-ADM-02] Entra IdentityHistoryRetentionTests (SQLite): o histórico MENSAL e a retenção
+      #     operacional do ADM — fotografia do mês × última tentativa em separado; "sem coleta" × "coletou e
+      #     não achou ninguém" × "detalhe expirado por retenção"; parcial que permanece parcial; corte dos 90
+      #     dias EXATO no instante e virada de mês em UTC; reconsolidação idempotente ANTES e DEPOIS do
+      #     expurgo, com contagens conservadas (sobreviventes + removidas) e coleta atrasada mais recente
+      #     assumindo o mês mesmo sozinha contra três; empate de instante desempatado por identificador;
+      #     remoção recusada sem consolidação na mesma passada (no serviço E na configuração); referência do
+      #     cadastro atual (entidade canônica / vínculo de origem) impedindo remoção integral sem impedir o
+      #     expurgo do detalhe; replay recusado tanto por detalhe expirado quanto por remoção INTEGRAL, pela
+      #     fronteira gravada no mês; origem com falha isolada das demais; cancelamento gracioso; retomada por
+      #     cursor visitando cada origem uma única vez; lote de aquisições drenado em passadas sucessivas;
+      #     simulação que não escreve; origem sem nenhuma aquisição que continua varrida e só expira o que
+      #     passou dos 12 meses (sem se reconstruir com doze meses vazios); isolamento por tenant e leitura
+      #     que não dispara expurgo. A classe é
+      #     NOVA: sem esta linha ela não executaria e o check ficaria verde do mesmo jeito. A contagem deste
+      #     passo sobe de 374 para 400 (medida localmente com este MESMO filtro, em Release).
+      #     As três correções dirigidas finais acrescentaram 4 casos NAS CLASSES QUE JÁ CONSTAM DESTE FILTRO
+      #     (nenhuma classe nova): exclusão do conector que não encolhe o mês e reconexão que incorpora a
+      #     coleta nova uma única vez; disponibilidade do detalhe apurada NA FOTOGRAFIA (detalhe expurgado ×
+      #     remoção integral × ausência por exclusão da origem × fotografia íntegra em mês com expurgo);
+      #     replay recusado pela janela de ADMISSÃO depois de a consolidação do mês expirar, sem repovoar
+      #     projeção alguma; e os limites exatos dessa janela, com a coleta atrasada de dentro dela aceita.
+      #     A contagem deste passo sobe de 400 para 404 (medida localmente com este MESMO filtro, em Release).
+      #     A correção da CAUSA da remoção da fotografia acrescentou 1 caso na mesma classe (troca de
+      #     fotografia que não herda o comprovante de remoção da anterior): 404 para 405.
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
@@ -347,6 +372,31 @@ jobs:
       # mesmo identificador de aquisição converge sem duplicar. A classe é NOVA: sem esta linha ela não
       # executaria e o check ficaria verde do mesmo jeito. A contagem deste passo sobe de 41 para 48 (medida
       # localmente com este MESMO filtro, em Release, contra PostgreSQL 18 descartável).
+      # [AEGIS-ADM-02] Entra IdentityHistoryRetentionPostgresTests: o que SÓ o banco real prova sobre o
+      # histórico mensal e a retenção — a migration aplica sobre um ambiente que JÁ tem aquisições do ADM-01 e
+      # o backfill deriva a chave de varredura do instante gravado (inclusive numa linha colada na virada do
+      # dia UTC), sem inventar detalhe expirado; UX_IdentityMonthlyRollup_Natural e a FK COMPOSTA
+      # (RollupId, TenantId) recusam de verdade e a cascata leva os conjuntos; um tenant estrangeiro não lê
+      # consolidação alheia; a retenção BLOQUEIA de fato na trava exclusiva quando uma avaliação acabou de
+      # fixar a aquisição citada (interleaving montado, não sorteado — se não bloqueasse, o teste falharia ao
+      # construir o cenário); duas manutenções simultâneas na mesma origem convergem sem duplicar o mês; a
+      # consolidação sobrevive ao expurgo e o replay é recusado nos DOIS caminhos (detalhe expirado e remoção
+      # integral); remoção sem consolidação é recusada e uma FALHA de consolidação injetada no banco (gatilho)
+      # impede a remoção correspondente — removido o gatilho, a mesma passada faz o que deveria; e uma coleta
+      # ATRASADA concorrente, gravada sob a trava do diretório, PARTICIPA da consolidação antes de ser
+      # removida. A classe é NOVA: sem esta linha ela não executaria e o check ficaria verde do mesmo jeito. A
+      # contagem deste passo sobe de 48 para 56 (medida localmente com este MESMO filtro, em Release, contra
+      # PostgreSQL 18 descartável).
+      # A correção final acrescentou 1 caso NA CLASSE QUE JÁ CONSTA DESTE FILTRO: a CASCATA real da exclusão
+      # do conector (a FK ON DELETE CASCADE do PostgreSQL leva a evidência sem que o EF carregue linha
+      # nenhuma), o mês que não encolhe por isso, a ausência NÃO contabilizada como expurgo de retenção e a
+      # reconexão do mesmo namespace que acrescenta a coleta nova uma única vez. Some-se a migration ADITIVA
+      # da marca de contabilização, que entra na sequência cumulativa de DatabaseUpgradePostgresTests. A
+      # contagem deste passo sobe de 56 para 57 (mesma medição local, contra PostgreSQL 18 descartável).
+      # A correção da CAUSA da remoção da fotografia acrescentou 1 caso na mesma classe: a fotografia
+      # PROTEGIDA, pulada pela retenção enquanto a fronteira avança, e removida depois pela cascata REAL da
+      # exclusão do conector não é atribuída à retenção. A migration aditiva do comprovante entra na sequência
+      # cumulativa de DatabaseUpgradePostgresTests (mesmo caso, sem teste novo ali). 57 para 58.
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
@@ -355,4 +405,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests"

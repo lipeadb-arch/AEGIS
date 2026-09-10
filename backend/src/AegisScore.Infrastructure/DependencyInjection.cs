@@ -209,6 +209,16 @@ public static class DependencyInjection
         // e o snapshot agregado entrem no mesmo SaveChanges, sem avaliação sustentada por registro inexistente.
         services.AddScoped<IIdentityAcquisitionStore, IdentityAcquisitionStore>();
 
+        // [AEGIS-ADM-02] Histórico mensal e retenção operacional do ADM. A MANUTENÇÃO é scoped porque depende
+        // do DbContextOptions (scoped por AddDbContext) — ela constrói os contextos à mão, tenant a tenant,
+        // como os workers, e por isso NÃO recebe o DbContext da requisição. A leitura da série é scoped como
+        // qualquer query tenant-scoped. A REMOÇÃO automática nasce desligada nas opções: expurgo tem de ser
+        // uma decisão declarada, nunca efeito colateral de subir a aplicação.
+        services.Configure<IdentityAdmMaintenanceOptions>(
+            config.GetSection(IdentityAdmMaintenanceOptions.SectionName));
+        services.AddScoped<IIdentityAdmMaintenanceService, IdentityAdmMaintenanceService>();
+        services.AddScoped<IIdentityHistoryQuery, IdentityHistoryQuery>();
+
         // [AEGIS-AUD-035/036/037] Fotografia AUDITÁVEL de postura — publicação controlada (o servidor constrói
         // pela autoridade do domínio: aegis-score-v1 sobre o ledger e o último assessment knight-score-v1),
         // leitura por tenant e comparação compatível. Scoped: usa o DbContext (Global Query Filter + stamping

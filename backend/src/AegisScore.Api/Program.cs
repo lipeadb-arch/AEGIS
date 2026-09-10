@@ -176,6 +176,11 @@ builder.Services.AddHostedService<PolicyIngestionWorker>();
 // Aegis Score: worker que grava a foto agregada diária por tenant (série do gráfico de tendência).
 builder.Services.AddHostedService<AegisScoreSnapshotWorker>();
 
+// [AEGIS-ADM-02] ADM de identidade: worker que consolida os meses do histórico e — SOMENTE quando
+// IdentityAdm:Maintenance:RemovalEnabled=true — aplica a retenção operacional. A consolidação é aditiva e
+// segura; a remoção nasce desligada, para que expurgo seja sempre uma decisão declarada.
+builder.Services.AddHostedService<IdentityAdmMaintenanceWorker>();
+
 // [Homologação em container] Atrás do proxy HTTPS da hospedagem: honra X-Forwarded-Proto/For para que
 // Request.Scheme reflita https (cookie Secure do refresh e HttpsRedirection corretos) e o IP do cliente
 // seja o real (rate limiting por IP). O proxy da hospedagem tem IP dinâmico e desconhecido de antemão;

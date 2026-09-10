@@ -68,7 +68,19 @@ public sealed class DatabaseUpgradePostgresTests
     /// apenas que o migrator termina com código zero.
     /// </summary>
     private static readonly string[] Pendentes =
-        MarcoHistorico.Concat(new[] { "20260909031324_Adm01_IdentityDataModel" }).ToArray();
+        MarcoHistorico.Concat(new[]
+        {
+            "20260909031324_Adm01_IdentityDataModel",
+            // [AEGIS-ADM-02] Histórico mensal e retenção: acrescenta as duas tabelas de consolidação, a coluna
+            // do detalhe expirado e a chave de varredura por instante (com backfill do que já estava gravado).
+            "20260910013200_Adm02_IdentityMonthlyHistoryRetention",
+            // [AEGIS-ADM-02] A marca de contabilização mensal da aquisição: aditiva, anulável e SEM backfill —
+            // nulo já significa "ainda não entrou em nenhum total", que é a verdade de toda linha existente.
+            "20260910110703_Adm02_MonthlyRollupAccounting",
+            // [AEGIS-ADM-02] O comprovante de remoção da fotografia pela retenção: aditivo, anulável e SEM
+            // backfill — a causa de uma ausência antiga não é provável a posteriori, e nulo é "sem comprovante".
+            "20260910221714_Adm02_SnapshotRetentionRemovalProof",
+        }).ToArray();
 
     private readonly ITestOutputHelper _output;
 

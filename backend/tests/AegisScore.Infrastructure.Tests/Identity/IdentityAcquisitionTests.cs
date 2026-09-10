@@ -14,6 +14,7 @@ using AegisScore.Infrastructure.Persistence;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AegisScore.Infrastructure.Tests.Identity;
@@ -209,7 +210,7 @@ public sealed class IdentityAcquisitionTests : IDisposable
         await SeedConnectorAsync(TenantA);
         await using var db = NewContext(TenantA);
 
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio);
         var connectorId = await db.Connectors.Select(c => c.Id).SingleAsync();
         var t0 = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero);
 
@@ -286,7 +287,7 @@ public sealed class IdentityAcquisitionTests : IDisposable
             "uma coleta que falhou não tem conjunto algum comprovado");
         falha.Sets.Should().OnlyContain(s => s.Objects.Count == 0);
 
-        var anterior = await new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA))
+        var anterior = await new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio)
             .ReadAsync(boa.AcquisitionId);
         anterior.Should().NotBeNull("a evidência anterior continua identificada como anterior, e íntegra");
         anterior!.Sets.Single(s => s.Set == IdentityObservationSet.PrivilegedRoleMember)
@@ -325,7 +326,7 @@ public sealed class IdentityAcquisitionTests : IDisposable
             "uma coleta atrasada não sobrescreve silenciosamente o estado atual mais recente");
         entidade.CurrentAsOf.Should().Be(t0.AddDays(2));
 
-        var registro = await new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA))
+        var registro = await new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio)
             .ReadAsync(atrasada.AcquisitionId);
         registro!.Sets.SelectMany(s => s.Objects).Should()
             .Contain(o => o.DisplayNameObserved == "Ana Nome Antigo",
@@ -431,9 +432,10 @@ public sealed class IdentityAcquisitionTests : IDisposable
         var tenant = new SystemTenantContext(TenantA);
         var registry = new KnightCollectorRegistry(new IKnightCollector[] { new DemoKnightCollector() });
         var config = new ConfigSintetica(DiretorioA);
-        var evidence = new IdentityEvidenceService(db, registry, config, new IdentityAcquisitionStore(db, tenant), tenant);
+        var aquisicoes = new IdentityAcquisitionStore(db, tenant, Relogio);
+        var evidence = new IdentityEvidenceService(db, registry, config, aquisicoes, tenant);
         var service = new AegisKnightAssessmentService(
-            db, registry, config, new SemNarrativa(), evidence, tenant);
+            db, registry, config, new SemNarrativa(), evidence, aquisicoes, tenant);
 
         var assessment = await service.RunDemoAssessmentAsync();
 
@@ -530,7 +532,7 @@ public sealed class IdentityAcquisitionTests : IDisposable
         var invertida = PedidoComConjuntos(
             Guid.NewGuid(), connectorId, DiretorioB, Instante(0), Conjuntos().Reverse().ToList());
 
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio);
         await store.PrepareAsync(invertida);
         await db.SaveChangesAsync();
 
@@ -569,7 +571,7 @@ public sealed class IdentityAcquisitionTests : IDisposable
         await SeedConnectorAsync(TenantA);
         await using var db = NewContext(TenantA);
 
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio);
         var connectorId = await db.Connectors.Select(c => c.Id).SingleAsync();
         var id = Guid.NewGuid();
         var original = Pedido(id, connectorId, Cenario.Padrao() with { Em = Instante(0) });
@@ -685,7 +687,7 @@ public sealed class IdentityAcquisitionTests : IDisposable
         conector.LastStatus.Should().Be(ConnectorStatus.Healthy);
 
         // A evidência atrasada existe, é identificável e é lida como o que é: um registro do passado.
-        var registro = await new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA))
+        var registro = await new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio)
             .ReadAsync(atrasada.AcquisitionId);
         registro!.AcquiredAt.Should().Be(Instante(0));
         registro.Sets.SelectMany(s => s.Objects).Should()
@@ -719,7 +721,7 @@ public sealed class IdentityAcquisitionTests : IDisposable
         conector.LastSyncAt.Should().Be(Instante(24));
 
         // A falha continua REGISTRADA — ela não é apagada, apenas não redefine o presente.
-        var registro = await new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA))
+        var registro = await new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio)
             .ReadAsync(falhaAntiga.AcquisitionId);
         registro!.State.Should().Be(KnightSourceState.AuthenticationFailure);
         registro.AcquiredAt.Should().Be(Instante(1));
@@ -766,7 +768,7 @@ public sealed class IdentityAcquisitionTests : IDisposable
             "a integração não passa a degradada por causa de uma tentativa antiga");
 
         // A parcial continua sendo evidência: ela existe, é identificável e diz o que conseguiu ler.
-        var registro = await new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA))
+        var registro = await new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio)
             .ReadAsync(parcial.AcquisitionId);
         registro!.AcquiredAt.Should().Be(Instante(2));
         registro.Sets.Single(s => s.Set == IdentityObservationSet.PrivilegedRoleMember)
@@ -784,7 +786,7 @@ public sealed class IdentityAcquisitionTests : IDisposable
         await SeedConnectorAsync(TenantA);
         await using var db = NewContext(TenantA);
 
-        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA));
+        var store = new IdentityAcquisitionStore(db, new SystemTenantContext(TenantA), Relogio);
         var connectorId = await db.Connectors.Select(c => c.Id).SingleAsync();
 
         // Cada rodada usa o SEU par de identificadores: reutilizar os mesmos seria reapresentar uma
@@ -836,6 +838,14 @@ public sealed class IdentityAcquisitionTests : IDisposable
     }
 
     // ---- Apoio das regressões ------------------------------------------------------------------------
+
+    /// <summary>
+    /// [AEGIS-ADM-02] Relógio CONTROLÁVEL do store. A janela de ADMISSÃO do ADM (o piso temporal que recusa
+    /// uma coleta anterior ao mês mais antigo retido) é calculada a partir dele — usar o relógio do sistema
+    /// aqui faria estes casos passarem ou falharem conforme a data em que a bateria rodasse.
+    /// </summary>
+    private static readonly TimeProvider Relogio =
+        new FakeTimeProvider(new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero));
 
     private static DateTimeOffset Instante(int horas) =>
         new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero).AddHours(horas);
@@ -922,12 +932,12 @@ public sealed class IdentityAcquisitionTests : IDisposable
             db,
             new KnightCollectorRegistry(new IKnightCollector[] { new ContandoColetor(cenario) }),
             new ConfigSintetica(cenario.Namespace),
-            new IdentityAcquisitionStore(db, tenant),
+            new IdentityAcquisitionStore(db, tenant, Relogio),
             tenant);
 
         var acquisition = await service.CollectAsync();
         acquisition.AcquisitionId.Should().NotBeNull();
-        return await new IdentityAcquisitionStore(db, tenant).ReadAsync(acquisition.AcquisitionId!.Value)
+        return await new IdentityAcquisitionStore(db, tenant, Relogio).ReadAsync(acquisition.AcquisitionId!.Value)
             ?? throw new InvalidOperationException("A aquisição não foi persistida.");
     }
 
@@ -936,8 +946,9 @@ public sealed class IdentityAcquisitionTests : IDisposable
         var tenant = new SystemTenantContext(TenantA);
         var registry = new KnightCollectorRegistry(new IKnightCollector[] { collector });
         var config = new ConfigSintetica(collector.Cenario.Namespace);
-        var evidence = new IdentityEvidenceService(db, registry, config, new IdentityAcquisitionStore(db, tenant), tenant);
-        return await new AegisKnightAssessmentService(db, registry, config, new SemNarrativa(), evidence, tenant)
+        var aquisicoes = new IdentityAcquisitionStore(db, tenant, Relogio);
+        var evidence = new IdentityEvidenceService(db, registry, config, aquisicoes, tenant);
+        return await new AegisKnightAssessmentService(db, registry, config, new SemNarrativa(), evidence, aquisicoes, tenant)
             .RunAssessmentAsync(KnightSourceType.MicrosoftEntraId);
     }
 
