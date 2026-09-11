@@ -40,11 +40,12 @@ import {
       <header class="topbar">
         <div class="brand">
           <span class="mark">Inventário <b>de Ativos</b></span>
-          <span class="sub">NIST CSF 2.0 · Identify (ID.AM) · Inventário Contínuo</span>
+          <span class="sub">NIST CSF 2.0 · Identify (ID.AM) · ativos cadastrados e descobertos por integrações</span>
         </div>
         <div class="client">
           <span class="label">Ativos</span>
-          <span class="name">{{ total() }}</span>
+          <!-- Sem resposta do inventário (carregando ou falha) o total é desconhecido: "—", nunca 0. -->
+          <span class="name">{{ loaded() ? total() : '—' }}</span>
         </div>
       </header>
 
@@ -178,7 +179,7 @@ import {
               <th>Ativo</th>
               <th>Categoria</th>
               <th class="num">Crit.</th>
-              <th>Risco Associado</th>
+              <th title="Nível de risco registrado para o ativo no AEGIS — estimativa, não probabilidade de incidente nem vulnerabilidade confirmada">Risco registrado</th>
               <th>Responsável</th>
               <th>Origem</th>
               <th>Visto por último</th>
@@ -222,8 +223,12 @@ import {
                 <td colspan="8">
                   @if (loading()) {
                     Carregando inventário…
+                  } @else if (loadError()) {
+                    Inventário indisponível no momento — veja o aviso acima.
+                  } @else if (hasAnyFilter()) {
+                    Nenhum ativo corresponde aos filtros atuais.
                   } @else {
-                    Nenhum ativo encontrado com os filtros atuais.
+                    Nenhum ativo no inventário deste ambiente. Cadastre manualmente ou conecte uma integração.
                   }
                 </td>
               </tr>
@@ -235,7 +240,11 @@ import {
       <!-- ---- Paginação ---- -->
       <footer class="pager">
         <span class="info">
-          Página {{ page() }} de {{ totalPages() || 1 }} · {{ total() }} ativos
+          @if (loaded()) {
+            Página {{ page() }} de {{ totalPages() || 1 }} · {{ total() }} ativos
+          } @else {
+            Total indisponível
+          }
         </span>
         <div class="pg-ctl">
           <label class="ctl">
@@ -401,6 +410,8 @@ export class AssetInventoryComponent implements OnInit {
   pageSize = signal(25);
   loading = signal(false);
   loadError = signal(false);
+  /** Há uma resposta VÁLIDA do inventário para os filtros atuais? Sem ela, total e contagem ficam "—". */
+  loaded = signal(false);
 
   // ---- Filtros ----
   selectedCategories = signal<Set<AssetCategory>>(new Set());
@@ -485,12 +496,14 @@ export class AssetInventoryComponent implements OnInit {
           this.totalPages.set(res.totalPages);
           this.loading.set(false);
           this.loadError.set(false);
+          this.loaded.set(true);
         },
         error: (err) => {
           console.error('Falha ao carregar o inventário de ativos:', err);
           this.rows.set([]);
           this.loading.set(false);
           this.loadError.set(true);
+          this.loaded.set(false);
         },
       });
   }

@@ -165,7 +165,7 @@ import {
               </div>
               <div class="dates">
                 <span>Criado: {{ u.createdAt | date: 'dd/MM/yy' }}</span>
-                <span>Último acesso: {{ u.lastLoginAt ? (u.lastLoginAt | date: 'dd/MM/yy HH:mm') : 'Nunca' }}</span>
+                <span>Último acesso: {{ u.lastLoginAt ? (u.lastLoginAt | date: 'dd/MM/yy HH:mm') : 'Não registrado' }}</span>
               </div>
             </div>
 

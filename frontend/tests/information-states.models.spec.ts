@@ -134,6 +134,17 @@ test('zero apurado numa coleta íntegra é leitura real, sem aviso', () => {
   eq(r.notice, null, 'coleta íntegra não carrega ressalva');
 });
 
+test('coleta com restrições (Degraded) mantém os números e traz a ressalva — sem afirmar população parcial', () => {
+  const r = recommendationReading(
+    recSummary({ sourceConfigured: true, lastAttemptStatus: 'Degraded', lastCollectedAt: '2026-09-10T08:00:00Z', totalOpen: 4 }),
+  );
+  eq(r.state, 'Available', 'dado disponível continua disponível');
+  assert(r.hasData, 'os números continuam visíveis');
+  assert(r.lastAttemptDegraded && !r.lastAttemptFailed, 'restrição é sinalizada e não é falha');
+  assert(!!r.notice && r.notice.includes('restrições'), 'a ressalva do backend chega à tela');
+  assert(!/parcia/i.test(r.notice!), 'Degraded não é apresentado como coleta parcial das recomendações');
+});
+
 test('contrato antigo sem sourceConfigured não afirma "sem integração"', () => {
   const legacy = recSummary({});
   delete legacy.sourceConfigured;
@@ -176,6 +187,28 @@ test('coleta parcial entre fontes: zero vem com ressalva de escopo', () => {
   assert(!!r.notice && r.notice.includes('1 fonte(s)'), 'o zero parcial não pode virar conclusão sobre o ambiente inteiro');
 });
 
+test('falha antes da primeira leitura é dita — e é distinta de "ainda sem coleta"', () => {
+  const src = (status: string) => ({ connectorConfigId: 'a', provider: 'Microsoft', displayName: 'Defender', lastSyncAt: null, status });
+  const failedFirst = vulnerabilityReading(vulnSummary({ sources: [src('Failed')] }));
+  const waiting = vulnerabilityReading(vulnSummary({ sources: [src('Unknown')] }));
+  eq(failedFirst.state, 'NeverCollected', 'sem leitura');
+  assert(!failedFirst.hasData, 'falha antes da primeira leitura não vira 0');
+  assert(!!failedFirst.notice && failedFirst.notice.includes('falhou'), 'a causa conhecida aparece');
+  assert(failedFirst.notice !== waiting.notice, 'falha e espera não são a mesma frase');
+});
+
+test('fonte com coleta concluída sob restrições: números mantidos, ressalva neutra', () => {
+  const r = vulnerabilityReading(
+    vulnSummary({
+      neverCollected: false,
+      lastCollectedAt: '2026-09-10T09:00:00Z',
+      sources: [{ connectorConfigId: 'a', provider: 'Microsoft', displayName: 'Defender', lastSyncAt: '2026-09-10T09:00:00Z', status: 'Degraded' }],
+    }),
+  );
+  assert(r.hasData, 'dados disponíveis continuam visíveis');
+  assert(!!r.notice && r.notice.includes('restrições'), 'a restrição é dita');
+});
+
 test('ciclo de vida "Resolved" = não mais reportada', () => {
   eq(vulnerabilityLifecyclePt('Resolved'), 'Não mais reportada', 'não é correção validada');
 });
@@ -183,9 +216,10 @@ test('ciclo de vida "Resolved" = não mais reportada', () => {
 // ---- Inventário de software --------------------------------------------------------------------
 console.log('softwareReading');
 
-test('coleta parcial é piso, e tentativa sem sucesso preserva os dados com aviso', () => {
+test('coleta parcial é contagem parcial dos observados, e tentativa sem sucesso preserva os dados com aviso', () => {
   const partial = softwareReading(swSummary({ neverCollected: false, sources: [swSource({ collectionState: 'Partial', lastAttemptState: 'Partial' })] }));
-  assert(partial.hasData && !!partial.notice && partial.notice.includes('piso'), 'parcial não é o inventário inteiro');
+  assert(partial.hasData && !!partial.notice && partial.notice.includes('contagem parcial'), 'parcial não é o inventário inteiro');
+  assert(!partial.notice!.includes('piso'), 'não sugere limite inferior do inventário atual');
 
   const stale = softwareReading(swSummary({ neverCollected: false, sources: [swSource({ lastAttemptState: 'Unavailable' })] }));
   assert(stale.hasData, 'dados preservados continuam visíveis');

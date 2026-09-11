@@ -120,8 +120,10 @@ export interface SoftwareReading {
 const SUCCESSFUL_ATTEMPT = new Set(['Available', 'Partial']);
 
 /**
- * O que a aba pode afirmar sobre a leitura de software. Coleta PARCIAL é piso (não o ambiente inteiro) e uma
- * tentativa recente sem sucesso não esconde os dados preservados — ambos viram aviso junto dos números.
+ * O que a aba pode afirmar sobre a leitura de software. Coleta PARCIAL é contagem parcial dos itens observados
+ * (não o inventário inteiro — e, como as observações podem vir de momentos diferentes, também não é limite
+ * inferior do inventário atual) e uma tentativa recente sem sucesso não esconde os dados preservados — ambos
+ * viram aviso junto dos números.
  */
 export function softwareReading(s: SoftwareInventorySummary | null | undefined): SoftwareReading {
   if (!s) return { hasData: false, notice: null };
@@ -141,7 +143,7 @@ export function softwareReading(s: SoftwareInventorySummary | null | undefined):
 
   const notes: string[] = [];
   if (s.sources.some((x) => x.collectionState === 'Partial'))
-    notes.push('Coleta parcial: as contagens são um piso do que a fonte entregou, não o inventário inteiro.');
+    notes.push('Coleta parcial: os números são uma contagem parcial dos itens observados pela fonte, não o inventário inteiro.');
   const stale = s.sources.filter((x) => x.lastCollectionAt && x.lastAttemptState && !SUCCESSFUL_ATTEMPT.has(x.lastAttemptState));
   if (stale.length > 0)
     notes.push('A tentativa mais recente de coleta não teve sucesso; os números são a última leitura disponível.');

@@ -137,6 +137,11 @@ export interface RecommendationReading {
   hasData: boolean;
   /** A tentativa MAIS RECENTE falhou — com dados, eles são a última leitura disponível. */
   lastAttemptFailed: boolean;
+  /**
+   * A coleta mais recente concluiu com restrições (`Degraded`). Na semântica do executor isso NÃO significa
+   * recomendações parciais — a completude delas é independente —, só que a coleta registrou restrições.
+   */
+  lastAttemptDegraded: boolean;
   /** Frase para o estado vazio ou o aviso que acompanha os números; `null` quando nada a ressalvar. */
   notice: string | null;
 }
@@ -147,23 +152,30 @@ export interface RecommendationReading {
  * tentativa recente falha, os dados anteriores continuam visíveis COM o aviso.
  */
 export function recommendationReading(s: PostureExposureSummary | null | undefined): RecommendationReading {
-  if (!s) return { state: 'NeverCollected', hasData: false, lastAttemptFailed: false, notice: null };
+  if (!s) return { state: 'NeverCollected', hasData: false, lastAttemptFailed: false, lastAttemptDegraded: false, notice: null };
   const failed = s.lastAttemptStatus === 'Failed';
+  const degraded = s.lastAttemptStatus === 'Degraded';
   const hasData = s.lastCollectedAt != null || s.totalOpen > 0 || s.totalResolved > 0;
   // Contrato anterior (sem sourceConfigured): trata como configurado — nunca afirma "sem integração" sem prova.
   const configured = s.sourceConfigured ?? true;
 
   if (hasData) {
+    // Mesma precedência do backend (CollectionReadings.PostureRecommendations): falha > restrições > data
+    // desconhecida. Nenhuma delas esconde os números.
     return {
       state: 'Available',
       hasData: true,
       lastAttemptFailed: failed,
+      lastAttemptDegraded: degraded,
       notice: failed
         ? `A tentativa mais recente de coleta falhou. Os números abaixo são a última leitura disponível` +
           (s.lastCollectedAt ? ` (${formatStamp(s.lastCollectedAt)}).` : '.')
-        : s.lastCollectedAt
-          ? null
-          : 'Há recomendações registradas, mas a data da última coleta não é conhecida.',
+        : degraded
+          ? 'A coleta mais recente terminou com restrições registradas pela integração. Os números abaixo são os ' +
+            'que ela entregou; confira o detalhe em Integrações.'
+          : s.lastCollectedAt
+            ? null
+            : 'Há recomendações registradas, mas a data da última coleta não é conhecida.',
     };
   }
   if (!configured) {
@@ -171,6 +183,7 @@ export function recommendationReading(s: PostureExposureSummary | null | undefin
       state: 'NotConfigured',
       hasData: false,
       lastAttemptFailed: false,
+      lastAttemptDegraded: false,
       notice: 'Nenhuma integração com o Microsoft Secure Score está configurada neste ambiente.',
     };
   }
@@ -179,6 +192,7 @@ export function recommendationReading(s: PostureExposureSummary | null | undefin
       state: 'FailedBeforeFirstCollection',
       hasData: false,
       lastAttemptFailed: true,
+      lastAttemptDegraded: false,
       notice: 'A integração está configurada, mas a tentativa mais recente de coleta falhou antes de qualquer leitura.',
     };
   }
@@ -186,6 +200,7 @@ export function recommendationReading(s: PostureExposureSummary | null | undefin
     state: 'NeverCollected',
     hasData: false,
     lastAttemptFailed: false,
+    lastAttemptDegraded: false,
     notice: 'A integração está configurada, mas nenhuma coleta foi concluída ainda.',
   };
 }

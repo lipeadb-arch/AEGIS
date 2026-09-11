@@ -140,9 +140,11 @@ import { RemediationService } from '../services/remediation.service';
               <span class="collect-row">
                 <span class="collect-k">{{ recommendationsLabel }}</span>
                 @if (exposures()!.summary.lastCollectedAt) {
-                  <span class="collect-v" [class.warn-text]="exposureReading().lastAttemptFailed">
+                  <span class="collect-v"
+                    [class.warn-text]="exposureReading().lastAttemptFailed || exposureReading().lastAttemptDegraded">
                     {{ fmtDate(exposures()!.summary.lastCollectedAt) }}
                     @if (exposureReading().lastAttemptFailed) { · tentativa recente falhou }
+                    @else if (exposureReading().lastAttemptDegraded) { · coleta recente com restrições }
                   </span>
                 } @else {
                   <span class="collect-v muted">{{ readingShort(exposureReading().state) }}</span>

@@ -107,7 +107,7 @@ import {
           </p>
           <div class="links">
             <a routerLink="/assets" class="link">Ativos</a>
-            <a routerLink="/exposures" class="link">Exposições</a>
+            <a routerLink="/exposures" class="link">Recomendações de postura</a>
             <a routerLink="/vulnerabilities" class="link">Vulnerabilidades</a>
           </div>
         }
@@ -128,7 +128,7 @@ import {
             ({{ connectors().healthy }}/{{ connectors().enabled }} operacionais) é um eixo à parte.
           </p>
           <div class="links">
-            <a routerLink="/exposures" class="link">Exposições</a>
+            <a routerLink="/exposures" class="link">Recomendações de postura</a>
             <a routerLink="/vulnerabilities" class="link">Vulnerabilidades</a>
             <a routerLink="/assets" class="link">Ativos</a>
           </div>

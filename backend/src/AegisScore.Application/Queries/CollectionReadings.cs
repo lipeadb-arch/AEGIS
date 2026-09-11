@@ -59,7 +59,9 @@ public static class CollectionReadings
         if (failed)
             note = "A tentativa mais recente de coleta falhou; o número é a última leitura disponível.";
         else if (string.Equals(s.LastAttemptStatus, DegradedStatus, StringComparison.OrdinalIgnoreCase))
-            note = "A coleta mais recente terminou com restrições; confira a fonte em Integrações.";
+            // Semântica do executor: Degraded aqui NÃO significa recomendações parciais (a completude delas é
+            // independente) — só que a coleta registrou restrições. O número é o que ela entregou.
+            note = "A coleta mais recente terminou com restrições; confira o detalhe em Integrações.";
 
         return new DashboardMetricDto(
             DashboardSignalState.Available, s.TotalOpen, s.SourceLabel, s.LastCollectedAt, note);
@@ -74,11 +76,13 @@ public static class CollectionReadings
     /// <summary>
     /// Leitura de vulnerabilidades com o <paramref name="value"/> escolhido pelo chamador (problemas distintos
     /// ou ativos afetados). <c>NeverCollected</c> do resumo é respeitado sem reinterpretação; a única distinção
-    /// acrescentada é "sem fonte" × "fonte sem coleta", e as ressalvas de falha e de escopo parcial.
+    /// acrescentada é "sem fonte" × "fonte sem coleta" (com a falha antes da primeira leitura dita, quando é a
+    /// causa conhecida), e as ressalvas de falha, de coleta com restrições e de escopo parcial.
     /// </summary>
     public static DashboardMetricDto Vulnerabilities(VulnerabilitySummaryDto s, int value, bool withNote = true)
     {
         var source = VulnerabilitySourceLabel(s);
+        var failed = s.Sources.Count(x => string.Equals(x.Status, FailedStatus, StringComparison.OrdinalIgnoreCase));
 
         if (s.NeverCollected)
         {
@@ -89,16 +93,25 @@ public static class CollectionReadings
 
             return new DashboardMetricDto(
                 DashboardSignalState.NeverCollected, null, source, null,
-                withNote ? "Fonte de vulnerabilidades configurada, porém nenhuma coleta concluída ainda." : null);
+                !withNote ? null
+                : failed > 0
+                    ? "Fonte de vulnerabilidades configurada, mas a tentativa mais recente de coleta falhou antes de qualquer leitura."
+                    : "Fonte de vulnerabilidades configurada, porém nenhuma coleta concluída ainda.");
         }
 
         var notes = new List<string>();
-        var failed = s.Sources.Count(x => string.Equals(x.Status, FailedStatus, StringComparison.OrdinalIgnoreCase));
         var pending = s.Sources.Count(x => x.LastSyncAt is null);
+        // Degraded no executor pode vir de QUALQUER dimensão do conector (vulnerabilidades incompletas, registros
+        // inválidos ou, no Defender, só o inventário de software): a nota diz "restrições", sem afirmar população
+        // parcial das vulnerabilidades.
+        var degraded = s.Sources.Count(x => x.LastSyncAt is not null
+            && string.Equals(x.Status, DegradedStatus, StringComparison.OrdinalIgnoreCase));
         if (pending > 0)
             notes.Add($"{pending} fonte(s) configurada(s) ainda sem coleta — os números cobrem só as fontes já coletadas.");
         if (failed > 0)
             notes.Add($"A tentativa mais recente de {failed} fonte(s) falhou; os números são a última leitura disponível.");
+        if (degraded > 0)
+            notes.Add($"A coleta mais recente de {degraded} fonte(s) terminou com restrições; confira o detalhe em Integrações.");
 
         return new DashboardMetricDto(
             DashboardSignalState.Available, value, source, s.LastCollectedAt,

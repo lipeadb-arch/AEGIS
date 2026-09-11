@@ -146,7 +146,7 @@ import { KnightActionPlanComponent } from './action-plan.component';
             </div>
             @if (affected(); as af) {
               <p class="notice warn">
-                A lista abaixo e a pagina <b>carregada antes da falha</b>, com os mesmos filtros. Nao e a
+                A lista abaixo é a página <b>carregada antes da falha</b>, com os mesmos filtros. Não é a
                 resposta do pedido que falhou.
               </p>
               <div class="stale">

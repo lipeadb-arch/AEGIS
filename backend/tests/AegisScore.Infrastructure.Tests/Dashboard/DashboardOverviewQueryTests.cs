@@ -288,6 +288,57 @@ public sealed class DashboardOverviewQueryTests : IDisposable
         overview.Environment.AffectedAssets.Note.Should().BeNull("a ressalva não se repete em cada cartão");
     }
 
+    [Fact]
+    public async Task RecomendacoesDePostura_ColetaComRestricoes_PreservaNumero_ComRessalvaNeutra()
+    {
+        await using var db = NewContext();
+        var lastRead = Now.AddHours(-1);
+
+        var overview = await QueryFor(db, exposures: ExposuresWith(
+            ExposureSummary(4, lastRead) with { SourceConfigured = true, LastAttemptStatus = "Degraded" })).GetAsync();
+
+        var metric = overview.Environment.ConfigurationExposures;
+        metric.State.Should().Be(DashboardSignalState.Available);
+        metric.Value.Should().Be(4, "restrição na coleta não esconde o dado entregue");
+        metric.Note.Should().Contain("restrições");
+        metric.Note.Should().NotContainEquivalentOf("parcia",
+            "Degraded no executor não significa recomendações parciais — a completude delas é independente");
+    }
+
+    [Fact]
+    public async Task Vulnerabilidades_FalhaAntesDaPrimeiraLeitura_CausaChegaAoDashboard_E_AoContexto()
+    {
+        await using var db = NewContext();
+
+        VulnerabilityOverviewDto Never(string status) => new(
+            new VulnerabilitySummaryDto(0, 0, 0, 0, Array.Empty<VulnerabilitySeverityCountDto>(),
+                new[] { new VulnerabilitySourceDto(Guid.NewGuid(), "Microsoft", "Defender", null, status) },
+                null, NeverCollected: true),
+            Array.Empty<VulnerabilityGroupDto>(), 0, 1, 4);
+
+        var falhou = (await QueryFor(db, vulnerabilities: Never("Failed")).GetAsync()).Environment.Vulnerabilities;
+        var aguardando = (await QueryFor(db, vulnerabilities: Never("Unknown")).GetAsync()).Environment.Vulnerabilities;
+
+        falhou.State.Should().Be(DashboardSignalState.NeverCollected);
+        falhou.Value.Should().BeNull("falha antes de qualquer leitura continua sendo ausência de dado — nunca 0");
+        falhou.Note.Should().Contain("falhou", "a causa conhecida não pode desaparecer");
+        falhou.Note.Should().NotBe(aguardando.Note, "falha e espera não são o mesmo estado informado");
+
+        // O contexto do Auditor usa a MESMA derivação (CollectionReadings) — a IA recebe a mesma causa.
+        var paraIa = CollectionReadings.Vulnerabilities(Never("Failed").Summary, 0);
+        paraIa.Note.Should().Be(falhou.Note);
+
+        // Coleta concluída sob restrições: número mantido, ressalva neutra.
+        var restrita = new VulnerabilityOverviewDto(
+            new VulnerabilitySummaryDto(2, 0, 2, 1, Array.Empty<VulnerabilitySeverityCountDto>(),
+                new[] { new VulnerabilitySourceDto(Guid.NewGuid(), "Microsoft", "Defender", Now.AddHours(-2), "Degraded") },
+                Now.AddHours(-2), NeverCollected: false),
+            Array.Empty<VulnerabilityGroupDto>(), 0, 1, 4);
+        var comRestricao = (await QueryFor(db, vulnerabilities: restrita).GetAsync()).Environment.Vulnerabilities;
+        comRestricao.Value.Should().Be(2);
+        comRestricao.Note.Should().Contain("restrições");
+    }
+
     // ---- infraestrutura do teste ----------------------------------------------------
 
     private static PostureExposureListDto ExposuresWith(PostureExposureSummaryDto summary) =>

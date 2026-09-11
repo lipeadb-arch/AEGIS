@@ -99,6 +99,8 @@ import {
             <span class="card-value sm">{{ fmtDate(summary()?.lastCollectedAt) }}</span>
             @if (reading().lastAttemptFailed) {
               <span class="card-meta warn-text">tentativa mais recente falhou</span>
+            } @else if (reading().lastAttemptDegraded) {
+              <span class="card-meta warn-text">coleta mais recente com restrições</span>
             }
           } @else {
             <span class="card-value sm muted">{{ readingLabel() }}</span>

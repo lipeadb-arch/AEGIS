@@ -192,13 +192,14 @@ import { PostureHistoryService } from '../services/posture-history.service';
                    a frase abaixo resume, em linguagem clara, o que a avaliação de fato encontrou — sem
                    inventar lista de afetados e sem misturar este score com o AEGIS Score geral. -->
               <p class="score-note">
-                Escala 0–100 · cobertura {{ a.coverage }}% dos indicadores do catálogo.
-                Score do AEGIS KNIGHT, distinto do AEGIS Score geral.
+                Escala 0–100 · cobertura {{ a.coverage }}% = indicadores aplicáveis que puderam ser avaliados
+                (os não aplicáveis ficam fora). Cobertura não é conformidade. Score do AEGIS KNIGHT, distinto do
+                AEGIS Score geral.
               </p>
               <p class="score-lead">{{ summaryLine(a) }}</p>
 
               <div class="meta">
-                <div class="mrow"><span class="k">Cobertura</span><span class="v">{{ a.coverage }}%</span></div>
+                <div class="mrow"><span class="k">Cobertura (avaliados / aplicáveis)</span><span class="v">{{ a.coverage }}%</span></div>
                 <div class="mrow"><span class="k">Catálogo</span><span class="v mono">{{ a.catalogVersion }}</span></div>
                 <div class="mrow"><span class="k">Fórmula</span><span class="v mono">{{ a.scoreFormulaVersion }}</span></div>
               </div>
