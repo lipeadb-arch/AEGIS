@@ -33,8 +33,9 @@ namespace AegisScore.Infrastructure.Tests.Connectors;
 /// <summary>
 /// [AEGIS-ENTITY-RESOLUTION-01] Resolução de dispositivos entre fontes pelo CAMINHO REAL: conectores reais do
 /// Defender e do Intune sobre HTTP SINTÉTICO (URLs oficiais, sem rede, sem credencial real) → executor de ingestão →
-/// autoridade única de resolução → banco descartável (SQLite) → leitura (query + controller). Nenhum caso aqui testa o
-/// resolvedor isolado: cada fato passa pelo parser do conector, pela persistência e pela consulta.
+/// autoridade única de resolução → banco descartável (SQLite) → leitura (query + controller). Os casos passam pelo
+/// parser do conector, pela persistência e pela consulta; a única exceção declarada é o grupo "Contrato da autoridade",
+/// que chama a autoridade diretamente para provar que a regra das repetições também vale no contrato dela.
 ///
 /// Cenário SINTÉTICO: tenants, diretórios e identificadores são GUIDs inventados; nomes em demo.example.com.
 /// </summary>
@@ -435,14 +436,29 @@ public sealed class DeviceResolutionTests : IDisposable
         m1.ConflictKind.Should().Be(AssetBindingConflictKind.IdentifierChanged);
         m1.DirectoryDeviceId.Should().Be(DevX, "o vínculo estabelecido permanece");
         m1.ConflictDirectoryDeviceId.Should().Be(DevY, "a observação contraditória fica registrada para análise");
+        m1.ConflictDirectoryNamespace.Should().Be(DirA, "o diretório da observação é registrado — aqui, o mesmo do vínculo");
         await using (var db = NewContext(TenantA))
         {
             (await db.AssetStrongIdentifiers.CountAsync()).Should().Be(1, "nenhuma chave é criada a partir da contradição");
             (await db.Assets.CountAsync()).Should().Be(1);
         }
         (await Summary(assetId)).CrossSourceState.Should().Be(AssetCrossSourceStates.Conflict);
+        var current = (await Sources(assetId))!.Sources.Single(s => s.SourceLabel == DefenderLabel);
+        current.ResolutionExplanation.Should().Contain("nada foi movido");
+        current.ResolutionLabel.Should().Be("Conflito: identificador mudou", "mesmo diretório: só o identificador mudou");
+
+        // Linha de conflito LEGADA (gravada antes da DeviceResolution02): o diretório daquela observação não foi guardado.
+        // A leitura não o inventa nem afirma que só o identificador mudou.
+        await using (var db = NewContext(TenantA))
+        {
+            var legacy = await db.AssetSourceBindings.SingleAsync(b => b.ConnectorConfigId == defender && b.ExternalId == "m-1");
+            legacy.ConflictDirectoryNamespace = null;
+            await db.SaveChangesAsync();
+        }
         (await Sources(assetId))!.Sources.Single(s => s.SourceLabel == DefenderLabel)
-            .ResolutionExplanation.Should().Contain("nada foi movido");
+            .ResolutionLabel.Should().Be("Conflito: vínculo de diretório mudou");
+        var legacyDiag = (await Sources(assetId, "TenantAdmin"))!.Sources.Single(s => s.SourceLabel == DefenderLabel).Diagnostics!;
+        (legacyDiag.ConflictDirectoryNamespace, legacyDiag.ConflictDirectoryDeviceId).Should().Be((null, DevY));
 
         _src.DefenderMachines = Page(SyntheticDeviceSources.Machine("m-1", "pc-01.demo.example.com", Q(DevX)));
         await Sync(defender);
@@ -671,6 +687,334 @@ public sealed class DeviceResolutionTests : IDisposable
         view.DeviceSummary.TotalDevices.Should().Be(2, "os agregados atuais do Intune continuam intactos");
     }
 
+    // ================= Repetição do mesmo registro na mesma coleta (fronteira dos conectores) ======================
+
+    [Fact]
+    public async Task EquivalentDuplicatesAcrossPages_AreOneObservation_AndLinkNormally()
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner, DirA);
+        var intune = Seed(TenantA, ConnectorCapability.ConfigAnalyzer, DirA);
+        var machine = SyntheticDeviceSources.Machine("m-1", "pc-01.demo.example.com", Q(DevX));
+        _src.DefenderMachines = Page(machine);
+        _src.DefenderMachinesPage2 = Page(machine);
+        var device = SyntheticDeviceSources.Device("dev-1", Q(DevX));
+        _src.IntuneDevices = Page(device);
+        _src.IntuneDevicesPage2 = Page(device);
+
+        var d = await Sync(defender);
+        var i = await Sync(intune);
+
+        d.Vulnerabilities!.WasComplete.Should().BeTrue("repetição equivalente não é divergência");
+        d.Vulnerabilities.InvalidMachines.Should().Be(0);
+        d.Vulnerabilities.Resolution!.ContradictoryIdentifiers.Should().Be(0);
+        i.DeviceResolution!.ContradictoryIdentifiers.Should().Be(0);
+        i.DeviceResolution.Conflicts.Should().Be(0);
+        await using var db = NewContext(TenantA);
+        (await db.Assets.CountAsync()).Should().Be(1);
+        (await db.AssetStrongIdentifiers.CountAsync()).Should().Be(1);
+        (await db.AssetSourceBindings.ToListAsync()).Should().HaveCount(2, "uma observação por registro, não uma por repetição")
+            .And.OnlyContain(b => b.ResolutionState == AssetBindingResolutionState.Linked);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DefenderSameMachineWithTwoDirectoryIds_InEitherPageOrder_NeverUnites_AndEndsIdentically(bool reversed)
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner, DirA);
+        var intune = Seed(TenantA, ConnectorCapability.ConfigAnalyzer, DirA);
+        _src.IntuneDevices = Page(
+            SyntheticDeviceSources.Device("dev-x", Q(DevX)),
+            SyntheticDeviceSources.Device("dev-y", Q(DevY)));
+        await Sync(intune);
+        var assetX = (await Binding(intune, "dev-x")).AssetId;
+        var assetY = (await Binding(intune, "dev-y")).AssetId;
+        _src.DefenderMachines = Page(SyntheticDeviceSources.Machine("m-9", "pc-09.demo.example.com", null));
+        await Sync(defender);
+
+        // O MESMO registro (m-1) chega em duas páginas, com X numa e Y na outra; m-9 some desta coleta.
+        var withX = SyntheticDeviceSources.Machine("m-1", "pc-01.demo.example.com", Q(DevX));
+        var withY = SyntheticDeviceSources.Machine("m-1", "pc-01.demo.example.com", Q(DevY));
+        _src.DefenderMachines = Page(reversed ? withY : withX);
+        _src.DefenderMachinesPage2 = Page(reversed ? withX : withY);
+        _src.DefenderRelations = Page(SyntheticDeviceSources.Relation("m-1"));
+        _src.DefenderCves = SyntheticDeviceSources.CveCatalog;
+        var d = await Sync(defender);
+
+        d.Vulnerabilities!.WasComplete.Should().BeFalse("repetição divergente torna a coleta incompleta");
+        d.Vulnerabilities.InvalidMachines.Should().Be(1, "conta-se o registro divergente, não cada repetição");
+        d.Vulnerabilities.Resolution!.ContradictoryIdentifiers.Should().Be(1);
+        d.Vulnerabilities.Resolution.KeysEstablished.Should().Be(0);
+        d.Vulnerabilities.Resolution.DeactivationApplied.Should().BeFalse();
+
+        var m1 = await Binding(defender, "m-1");
+        m1.AssetId.Should().NotBe(assetX, "a primeira observação não estabelece associação").And.NotBe(assetY);
+        m1.ResolutionState.Should().Be(AssetBindingResolutionState.Conflict);
+        m1.ConflictKind.Should().Be(AssetBindingConflictKind.ContradictoryObservation);
+        m1.DirectoryIdStatus.Should().Be(DirectoryIdentifierStatus.Contradictory);
+        m1.DirectoryDeviceId.Should().BeNull();
+        m1.ConflictObservedDeviceIds.Should().Be(DevX + "," + DevY, "os dois valores ficam para explicar, em ordem estável");
+        (await Binding(defender, "m-9")).IsActive.Should().BeTrue("coleta incompleta não desativa o ausente");
+        await using (var db = NewContext(TenantA))
+        {
+            (await db.AssetStrongIdentifiers.CountAsync()).Should().Be(2, "nenhuma chave nasce da contradição");
+            (await db.AssetThreatExposures.SingleAsync()).AssetId.Should().Be(m1.AssetId,
+                "a vulnerabilidade da máquina continua utilizável, no ativo do próprio registro");
+        }
+        (await Summary(m1.AssetId)).CrossSourceState.Should().Be(AssetCrossSourceStates.Conflict);
+        (await Summary(assetX)).CrossSourceState.Should().Be(AssetCrossSourceStates.IdentifierOnly);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IntuneSameDeviceWithTwoDirectoryIds_InEitherPageOrder_NeverUnites_AndEndsIdentically(bool reversed)
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner, DirA);
+        var intune = Seed(TenantA, ConnectorCapability.ConfigAnalyzer, DirA);
+        _src.DefenderMachines = Page(
+            SyntheticDeviceSources.Machine("m-x", "pc-x.demo.example.com", Q(DevX)),
+            SyntheticDeviceSources.Machine("m-y", "pc-y.demo.example.com", Q(DevY)));
+        await Sync(defender);
+        var assetX = (await Binding(defender, "m-x")).AssetId;
+        var assetY = (await Binding(defender, "m-y")).AssetId;
+        _src.IntuneDevices = Page(SyntheticDeviceSources.Device("dev-3", null));
+        await Sync(intune);
+
+        var withX = SyntheticDeviceSources.Device("dev-1", Q(DevX));
+        var withY = SyntheticDeviceSources.Device("dev-1", Q(DevY));
+        _src.IntuneDevices = Page(reversed ? withY : withX);
+        _src.IntuneDevicesPage2 = Page(reversed ? withX : withY);
+        var i = await Sync(intune);
+
+        i.DeviceResolution!.ContradictoryIdentifiers.Should().Be(1);
+        i.DeviceResolution.KeysEstablished.Should().Be(0);
+        i.DeviceResolution.DeactivationApplied.Should().BeFalse("a repetição torna a passada incompleta");
+        var dev1 = await Binding(intune, "dev-1");
+        dev1.AssetId.Should().NotBe(assetX).And.NotBe(assetY);
+        dev1.ResolutionState.Should().Be(AssetBindingResolutionState.Conflict);
+        dev1.ConflictKind.Should().Be(AssetBindingConflictKind.ContradictoryObservation);
+        dev1.ConflictObservedDeviceIds.Should().Be(DevX + "," + DevY);
+        dev1.SourceCompliance.Should().Be(DeviceComplianceBucket.Compliant, "os fatos não contraditórios seguem utilizáveis");
+        (await Binding(intune, "dev-3")).IsActive.Should().BeTrue();
+        await using var db = NewContext(TenantA);
+        (await db.AssetStrongIdentifiers.CountAsync()).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ContradictionWithAnEstablishedLink_KeepsTheLink_DeclaresIt_AndClearsWhenConsistentAgain()
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner, DirA);
+        var intune = Seed(TenantA, ConnectorCapability.ConfigAnalyzer, DirA);
+        _src.DefenderMachines = Page(SyntheticDeviceSources.Machine("m-1", "pc-01.demo.example.com", Q(DevX)));
+        _src.IntuneDevices = Page(SyntheticDeviceSources.Device("dev-1", Q(DevX)));
+        await Sync(defender);
+        await Sync(intune);
+        var assetId = (await Binding(defender, "m-1")).AssetId;
+
+        _src.DefenderMachines = Page(SyntheticDeviceSources.Machine("m-1", "pc-01.demo.example.com", Q(DevX)));
+        _src.DefenderMachinesPage2 = Page(SyntheticDeviceSources.Machine("m-1", "pc-01.demo.example.com", Q(DevY)));
+        _src.DefenderRelations = Page(SyntheticDeviceSources.Relation("m-1"));
+        _src.DefenderCves = SyntheticDeviceSources.CveCatalog;
+        await Sync(defender);
+
+        var m1 = await Binding(defender, "m-1");
+        m1.AssetId.Should().Be(assetId, "o vínculo anterior é preservado");
+        m1.IsActive.Should().BeTrue();
+        m1.DirectoryNamespace.Should().Be(DirA);
+        m1.DirectoryDeviceId.Should().Be(DevX);
+        m1.ResolutionState.Should().Be(AssetBindingResolutionState.Conflict);
+        m1.ConflictKind.Should().Be(AssetBindingConflictKind.ContradictoryObservation);
+        m1.ConflictObservedDeviceIds.Should().Be(DevX + "," + DevY);
+        (await Binding(intune, "dev-1")).ResolutionState.Should().Be(AssetBindingResolutionState.Linked);
+        await using (var db = NewContext(TenantA))
+        {
+            (await db.AssetThreatExposures.SingleAsync()).AssetId.Should().Be(assetId, "evidência não contraditória segue no ativo");
+            (await db.AssetStrongIdentifiers.CountAsync()).Should().Be(1);
+            (await db.Assets.CountAsync()).Should().Be(1, "nada é apagado nem duplicado");
+        }
+
+        var analyst = (await Sources(assetId))!;
+        analyst.CrossSourceState.Should().Be(AssetCrossSourceStates.Conflict);
+        var record = analyst.Sources.Single(s => s.SourceLabel == DefenderLabel);
+        record.ResolutionLabel.Should().Be("Conflito: identificadores contraditórios na mesma coleta");
+        record.ResolutionExplanation.Should().Contain("o vínculo estabelecido antes foi mantido");
+        record.IdentifierStatusLabel.Should().Be("Contraditório na mesma coleta (não usado)");
+        JsonSerializer.Serialize(analyst).Should().NotContain(DevY, "valores contraditórios só no diagnóstico restrito");
+        var diag = (await Sources(assetId, "TenantAdmin"))!.Sources.Single(s => s.SourceLabel == DefenderLabel).Diagnostics!;
+        diag.ConflictObservedDeviceIds.Should().Equal(DevX, DevY);
+        diag.DirectoryDeviceId.Should().Be(DevX);
+
+        _src.DefenderMachinesPage2 = null;
+        await Sync(defender);
+        var back = await Binding(defender, "m-1");
+        back.ResolutionState.Should().Be(AssetBindingResolutionState.Linked);
+        back.ConflictObservedDeviceIds.Should().BeNull();
+        back.ConflictKind.Should().Be(AssetBindingConflictKind.None);
+    }
+
+    [Fact]
+    public async Task ExternalIdsOutsideTheContract_AreRejected_NeverTruncatedIntoOneRecord_AndNeverDeactivateByIncompleteness()
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner, DirA);
+        var intune = Seed(TenantA, ConnectorCapability.ConfigAnalyzer, DirA);
+        _src.DefenderMachines = Page(SyntheticDeviceSources.Machine("m-keep", "keep.demo.example.com", Q(DevX)));
+        _src.IntuneDevices = Page(SyntheticDeviceSources.Device("dev-keep", Q(DevX)));
+        await Sync(defender);
+        await Sync(intune);
+
+        // Dois ids que só diferem DEPOIS do limite: truncados, virariam o mesmo registro.
+        var longA = new string('a', DeviceSourceObservations.MaxExternalIdLength) + "1";
+        var longB = new string('a', DeviceSourceObservations.MaxExternalIdLength) + "2";
+        _src.DefenderMachines = Page(
+            SyntheticDeviceSources.Machine(longA, "a.demo.example.com", Q(DevY)),
+            SyntheticDeviceSources.Machine(" m-pad", "pad.demo.example.com", null));
+        _src.IntuneDevices = Page(
+            SyntheticDeviceSources.Device(longA, Q(DevY)),
+            SyntheticDeviceSources.Device(longB, null));
+        var d = await Sync(defender);
+        var i = await Sync(intune);
+
+        d.Vulnerabilities!.InvalidMachines.Should().Be(2, "id acima do contrato e id com espaço na borda são recusados");
+        d.Vulnerabilities.WasComplete.Should().BeFalse();
+        i.DeviceResolution!.Observed.Should().Be(0);
+        i.DeviceResolution.DeactivationApplied.Should().BeFalse();
+        var bindings = await Bindings(TenantA);
+        bindings.Should().HaveCount(2, "nenhum registro nasce de id recusado")
+            .And.OnlyContain(b => b.IsActive, "coleta incompleta não desativa os ausentes");
+        bindings.Should().NotContain(b => b.ExternalId.StartsWith("aaaa") || b.ExternalId.Contains("m-pad"));
+    }
+
+    // ================= Mudança de diretório: o par observado fica separado do vínculo ==============================
+
+    [Fact]
+    public async Task DirectoryChangeOnly_PreservesTheObservedDirectory_ApartFromTheEstablishedLink()
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner, DirA);
+        _src.DefenderMachines = Page(SyntheticDeviceSources.Machine("m-1", "pc-01.demo.example.com", Q(DevX)));
+        await Sync(defender);
+        var assetId = (await Binding(defender, "m-1")).AssetId;
+
+        SetDirectory(defender, DirB);
+        var d = await Sync(defender);
+
+        d.Vulnerabilities!.Resolution!.Conflicts.Should().Be(1);
+        var m1 = await Binding(defender, "m-1");
+        m1.AssetId.Should().Be(assetId);
+        m1.ConflictKind.Should().Be(AssetBindingConflictKind.DirectoryChanged);
+        (m1.DirectoryNamespace, m1.DirectoryDeviceId).Should().Be((DirA, DevX), "o vínculo estabelecido fica");
+        (m1.ConflictDirectoryNamespace, m1.ConflictDirectoryDeviceId).Should().Be((DirB, DevX),
+            "o par observado — com o diretório B — fica registrado à parte");
+        await using (var db = NewContext(TenantA))
+            (await db.AssetStrongIdentifiers.SingleAsync()).DirectoryNamespace.Should().Be(DirA, "nenhuma chave nova");
+
+        var analyst = (await Sources(assetId))!;
+        var record = analyst.Sources.Single();
+        record.ResolutionLabel.Should().Be("Conflito: diretório de origem mudou");
+        record.ResolutionExplanation.Should().Contain("outro diretório de origem");
+        foreach (var technical in new[] { DirB, DevX })
+        {
+            JsonSerializer.Serialize(analyst).Should().NotContain(technical);
+            JsonSerializer.Serialize(await Summary(assetId)).Should().NotContain(technical);
+        }
+        var diag = (await Sources(assetId, "TenantAdmin"))!.Sources.Single().Diagnostics!;
+        (diag.DirectoryNamespace, diag.DirectoryDeviceId).Should().Be((DirA, DevX));
+        (diag.ConflictDirectoryNamespace, diag.ConflictDirectoryDeviceId).Should().Be((DirB, DevX));
+    }
+
+    [Fact]
+    public async Task DirectoryAndIdentifierChange_PreservesTheObservedPair()
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner, DirA);
+        _src.DefenderMachines = Page(SyntheticDeviceSources.Machine("m-1", "pc-01.demo.example.com", Q(DevX)));
+        await Sync(defender);
+        var assetId = (await Binding(defender, "m-1")).AssetId;
+
+        SetDirectory(defender, DirB);
+        _src.DefenderMachines = Page(SyntheticDeviceSources.Machine("m-1", "pc-01.demo.example.com", Q(DevY)));
+        await Sync(defender);
+
+        var m1 = await Binding(defender, "m-1");
+        m1.AssetId.Should().Be(assetId);
+        m1.ConflictKind.Should().Be(AssetBindingConflictKind.DirectoryAndIdentifierChanged);
+        (m1.DirectoryNamespace, m1.DirectoryDeviceId).Should().Be((DirA, DevX));
+        (m1.ConflictDirectoryNamespace, m1.ConflictDirectoryDeviceId).Should().Be((DirB, DevY));
+        (await Sources(assetId))!.Sources.Single().ResolutionLabel.Should().Be("Conflito: diretório e identificador mudaram");
+    }
+
+    // ================= Marca de precedência da fonte ===============================================================
+
+    [Fact]
+    public async Task OrdinaryConnectorUpdates_NeverClearOrRegressTheSnapshotWatermark()
+    {
+        var intune = Seed(TenantA, ConnectorCapability.ConfigAnalyzer, DirA);
+        // Contexto que carregou o conector ANTES da coleta e só grava DEPOIS — como um carimbo de status atrasado.
+        await using var early = NewContext(TenantA);
+        var stale = await early.Connectors.SingleAsync(c => c.Id == intune);
+        stale.DeviceSnapshotWatermark.Should().BeNull("nenhuma fotografia publicada ainda");
+
+        _src.IntuneDevices = Page(SyntheticDeviceSources.Device("dev-1", Q(DevX)));
+        await Sync(intune);
+        var published = await Watermark(intune);
+        published.Should().NotBeNull();
+
+        stale.DisplayName = "Microsoft Intune · Dispositivos (renomeado, sintético)";
+        stale.LastStatus = ConnectorStatus.Degraded;
+        await early.SaveChangesAsync();
+        (await Watermark(intune)).Should().Be(published, "o change tracker só grava as colunas alteradas");
+
+        SetDirectory(intune, DirA);   // reconfiguração da credencial
+        (await Watermark(intune)).Should().Be(published);
+
+        await Sync(intune);
+        (await Watermark(intune)).Should().BeAfter(published!.Value, "a marca só avança com uma fotografia mais recente");
+    }
+
+    private async Task<DateTimeOffset?> Watermark(Guid connectorId)
+    {
+        await using var db = NewContext(TenantA);
+        return (await db.Connectors.AsNoTracking().SingleAsync(c => c.Id == connectorId)).DeviceSnapshotWatermark;
+    }
+
+    // ================= Contrato da autoridade de resolução ========================================================
+    // Único grupo que chama a autoridade diretamente: prova que a regra das repetições vale no CONTRATO, também para
+    // um chamador que não passe pela fronteira dos conectores — sem regra divergente.
+
+    [Fact]
+    public async Task ResolverContract_RepeatedObservations_AreCombinedIndependentlyOfOrder_AndOutOfContractIdsAreRejected()
+    {
+        var x = new DeviceSourceObservation("dev-1", DeviceDirectoryIdentifiers.ParseDeviceId(DevX), null, "Windows",
+            DateTimeOffset.Parse("2026-09-10T08:00:00Z"), DeviceComplianceBucket.Compliant, DeviceEncryptionBucket.Encrypted);
+        var y = x with
+        {
+            DirectoryDeviceId = DeviceDirectoryIdentifiers.ParseDeviceId(DevY),
+            SourceLastSeenAt = DateTimeOffset.Parse("2026-09-10T09:00:00Z"),
+        };
+        DeviceSourceObservations.Consolidate(new[] { x, y }).Single()
+            .Should().Be(DeviceSourceObservations.Consolidate(new[] { y, x }).Single());
+        DeviceSourceObservations.Consolidate(new[] { x, y, x }).Single()
+            .Should().Be(DeviceSourceObservations.Consolidate(new[] { x, x, y }).Single());
+        DeviceSourceObservations.Consolidate(new[] { x, x }).Single().Should().Be(x, "repetição equivalente não muda nada");
+        DeviceDirectoryIdentifiers.Merge(x.DirectoryDeviceId, DirectoryDeviceIdObservation.NotProvided).Status
+            .Should().Be(DirectoryIdentifierStatus.Contradictory, "valor e ausência também divergem");
+
+        var tooLong = x with { ExternalId = new string('d', DeviceSourceObservations.MaxExternalIdLength + 1) };
+        foreach (var (tenant, input) in new[] { (TenantA, new[] { x, y, tooLong }), (TenantB, new[] { tooLong, y, x }) })
+        {
+            var connector = Seed(tenant, ConnectorCapability.ConfigAnalyzer, DirA);
+            await using var db = NewContext(tenant);
+            var result = await new DeviceIdentityResolver(db).ReconcileSnapshotAsync(
+                connector, IntuneLabel, DirA, input, completeSnapshot: true, DateTimeOffset.UtcNow, CancellationToken.None);
+            result.RejectedObservations.Should().Be(1);
+            result.DeactivationApplied.Should().BeFalse("id recusado torna a passada incompleta");
+            result.ContradictoryIdentifiers.Should().Be(1);
+            var b = await Binding(connector, "dev-1", tenant);
+            b.ResolutionState.Should().Be(AssetBindingResolutionState.Conflict);
+            b.ConflictObservedDeviceIds.Should().Be(DevX + "," + DevY);
+            b.SourceLastSeenAt.Should().Be(y.SourceLastSeenAt, "os demais fatos seguem uma ordem total, não a de chegada");
+        }
+    }
+
     // ================= Normalizador (autoridade única) ===========================================================
 
     [Theory]
@@ -696,6 +1040,15 @@ public sealed class DeviceResolutionTests : IDisposable
         DeviceDirectoryIdentifiers.NormalizeNamespace("contoso-sintetico.onmicrosoft.com").Should().BeNull();
         DeviceDirectoryIdentifiers.NormalizeNamespace(null).Should().BeNull();
         DeviceDirectoryIdentifiers.NormalizeNamespace(DirA.ToUpperInvariant()).Should().Be(DirA);
+    }
+
+    /// <summary>Troca o diretório (tenant do Entra) da credencial da integração — como uma reconfiguração real.</summary>
+    private void SetDirectory(Guid connectorId, string directory)
+    {
+        using var db = NewContext(TenantA);
+        var c = db.Connectors.Single(x => x.Id == connectorId);
+        c.EncryptedSettings = SyntheticDeviceSources.Connector(TenantA, c.Capability, directory).EncryptedSettings;
+        db.SaveChanges();
     }
 
     private Guid SeedLegacyAsset(Guid defenderConnector, string externalId)
@@ -742,6 +1095,11 @@ internal sealed class SyntheticDeviceSources
     private const string TokenJson = """{"access_token":"fake-access-token","expires_in":3600,"token_type":"Bearer"}""";
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-09-10T12:00:00Z");
 
+    // Cada coleta do Intune começa num instante DIFERENTE (e crescente), como na vida real: é esse instante que marca a
+    // fotografia e define a precedência entre passadas do mesmo conector. Um relógio parado faria duas fotografias
+    // diferentes parecerem a mesma. Estático: instâncias diferentes (ex.: uma por rodada) também avançam.
+    private static int _syncs;
+
     public const string CveCatalog =
         """{"value":[{"id":"CVE-2024-7256","name":"CVE-2024-7256","severity":"High","cvssV3":8}]}""";
     private const string SoftwareCatalog =
@@ -755,6 +1113,21 @@ internal sealed class SyntheticDeviceSources
     public string DefenderInstalls { get; set; } = Page();
     public string IntuneDevices { get; set; } = Page();
     public Func<HttpRequestMessage, (HttpStatusCode, string)>? IntuneRoute { get; set; }
+
+    // Segunda página REAL (via @odata.nextLink na origem oficial): quando definida, a primeira resposta aponta para
+    // ela — é assim que se prova que o resultado não depende da ordem das páginas.
+    public string? DefenderMachinesPage2 { get; set; }
+    public string? IntuneDevicesPage2 { get; set; }
+
+    private const string DefenderMachinesNext = "https://api.security.microsoft.com/api/machines?$skiptoken=p2";
+    private const string IntuneDevicesNext = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$skiptoken=p2";
+
+    private static string WithNextLink(string page, string next) => page[..^1] + ",\"@odata.nextLink\":\"" + next + "\"}";
+
+    private static (HttpStatusCode, string) Paged(HttpRequestMessage req, string first, string? second, string next) =>
+        second is null ? (HttpStatusCode.OK, first)
+        : req.RequestUri!.Query.Contains("skiptoken") ? (HttpStatusCode.OK, second)
+        : (HttpStatusCode.OK, WithNextLink(first, next));
 
     public void DefenderWithVulnerabilityAndSoftware(string machineJson)
     {
@@ -790,7 +1163,8 @@ internal sealed class SyntheticDeviceSources
         var registry = new Registry(
             new MicrosoftDefenderVulnerabilityConnector(new DefenderApiClient(new HttpClient(DefenderHandler())), new Passthrough()),
             new MicrosoftIntuneDevicePostureConnector(
-                new EntraGraphClient(new HttpClient(IntuneHandler())), new Passthrough(), new FakeTimeProvider(Now)));
+                new EntraGraphClient(new HttpClient(IntuneHandler())), new Passthrough(),
+                new FakeTimeProvider(Now.AddSeconds(Interlocked.Increment(ref _syncs)))));
         var executor = new EvidenceIngestionExecutor(
             options, new NistSignalMapper(new AegisScoreDbContext(options, new SystemTenantContext(null))),
             new Payload(), registry, NullLogger<EvidenceIngestionExecutor>.Instance, NullLogger<ControlStateWriter>.Instance);
@@ -843,7 +1217,7 @@ internal sealed class SyntheticDeviceSources
         if (p.Contains("SoftwareInventoryByMachine")) return (HttpStatusCode.OK, DefenderInstalls);
         if (p.Contains("machinesVulnerabilities")) return (HttpStatusCode.OK, DefenderRelations);
         if (p.Contains("/api/vulnerabilities")) return (HttpStatusCode.OK, DefenderCves);
-        if (p.Contains("/api/machines")) return (HttpStatusCode.OK, DefenderMachines);
+        if (p.Contains("/api/machines")) return Paged(req, DefenderMachines, DefenderMachinesPage2, DefenderMachinesNext);
         if (p == "/api/Software") return (HttpStatusCode.OK, DefenderSoftware);
         return (HttpStatusCode.NotFound, "{}");
     });
@@ -854,7 +1228,8 @@ internal sealed class SyntheticDeviceSources
         if (url.Contains("/oauth2/v2.0/token")) return (HttpStatusCode.OK, TokenJson);
         if (url.Contains("deviceCompliancePolicies") || url.Contains("deviceConfigurations"))
             return (HttpStatusCode.OK, Page());
-        if (url.Contains("managedDevices")) return IntuneRoute?.Invoke(req) ?? (HttpStatusCode.OK, IntuneDevices);
+        if (url.Contains("managedDevices"))
+            return IntuneRoute?.Invoke(req) ?? Paged(req, IntuneDevices, IntuneDevicesPage2, IntuneDevicesNext);
         return (HttpStatusCode.NotFound, """{"error":{"code":"notFound"}}""");
     });
 

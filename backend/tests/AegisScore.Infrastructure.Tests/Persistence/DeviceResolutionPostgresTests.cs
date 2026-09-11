@@ -262,7 +262,277 @@ public sealed class DeviceResolutionPostgresTests
         }
     }
 
+    // ---- Ciclo de vida sob concorrência: intercalações FORÇADAS por barreiras ------------------------------------
+    // Cada caso para uma passada num ponto exato (checkpoint da autoridade de resolução), executa a outra por inteiro
+    // — ou prova, pelo pg_stat_activity, que ela está BLOQUEADA numa trava — e só então libera a primeira. Nada
+    // depende de sorte de agendamento.
+
+    private static readonly DateTimeOffset T0 = DateTimeOffset.Parse("2026-09-11T10:00:00Z");
+
+    [Fact]
+    public async Task OlderPassPausedAfterPresence_NeverDeactivatesWhatANewerPassObserved_AndALatePassPublishesNothing()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+        var tenant = Guid.NewGuid();
+        var (_, intune) = await SeedTenantAsync(opt, tenant);
+        var (d1, d2, d3) = (Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+        await IntunePassAsync(opt, tenant, intune, T0, null, ("dev-1", d1), ("dev-2", d2), ("dev-3", d3));
+
+        // A (fotografia t1: só dev-1) publica a presença e para ANTES da ausência.
+        using var barrier = new Barrier(DeviceIdentityResolver.CheckpointPresenceCommitted);
+        var a = Task.Run(() => IntunePassAsync(opt, tenant, intune, T0.AddMinutes(1), barrier.Hook, ("dev-1", d1)));
+        await barrier.Reached.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // B (fotografia t2, MAIS RECENTE: dev-1 e dev-2) roda inteira no meio. A marca tem fração ABAIXO do
+        // microssegundo de propósito: o timestamptz a trunca, e a precedência/ausência dependem da igualdade exata
+        // entre a marca em memória e a lida do banco (DeviceSnapshotMarker.Normalize).
+        var t2 = T0.AddMinutes(2).AddTicks(7);
+        var published = DeviceSnapshotMarker.Normalize(t2);
+        var b = await IntunePassAsync(opt, tenant, intune, t2, null, ("dev-1", d1), ("dev-2", d2));
+        b.BindingsDeactivated.Should().Be(1, "dev-3 saiu da fotografia completa mais recente");
+
+        barrier.Release();
+        var late = await a.WaitAsync(TimeSpan.FromSeconds(30));
+        late.Superseded.Should().BeTrue("a passada anterior foi superada antes de publicar a ausência");
+        late.DeactivationApplied.Should().BeFalse();
+        late.BindingsDeactivated.Should().Be(0);
+
+        await AssertIntuneStateAsync(opt, tenant, intune, published,
+            active: new[] { "dev-1", "dev-2" }, inactive: new[] { "dev-3" });
+
+        // Uma passada ainda mais atrasada (t1,5 < t2) chega depois de tudo: não publica nada, nem reativa dev-3.
+        var older = await IntunePassAsync(opt, tenant, intune, T0.AddSeconds(90), null,
+            ("dev-1", d1), ("dev-2", d2), ("dev-3", d3));
+        older.Superseded.Should().BeTrue();
+        older.BindingsCreated.Should().Be(0);
+        await AssertIntuneStateAsync(opt, tenant, intune, published,
+            active: new[] { "dev-1", "dev-2" }, inactive: new[] { "dev-3" });
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        (await db.Connectors.SingleAsync(c => c.Id == intune)).DeviceSnapshotWatermark.Should().Be(published);
+        (await db.AssetStrongIdentifiers.CountAsync()).Should().Be(3);
+    }
+
+    [Fact]
+    public async Task PresenceArrivingWhileAbsenceHoldsTheSourceLock_WaitsForIt_AndIsNeverUndone()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+        var tenant = Guid.NewGuid();
+        var (_, intune) = await SeedTenantAsync(opt, tenant);
+        var (d1, d2) = (Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+        await IntunePassAsync(opt, tenant, intune, T0, null, ("dev-1", d1), ("dev-2", d2));
+
+        // A (t1: só dev-1) entra na ausência — trava da fonte adquirida, precedência conferida — e para ANTES do UPDATE.
+        using var barrier = new Barrier(DeviceIdentityResolver.CheckpointAbsenceLocked);
+        var a = Task.Run(() => IntunePassAsync(opt, tenant, intune, T0.AddMinutes(1), barrier.Hook, ("dev-1", d1)));
+        await barrier.Reached.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // B (t2: dev-1 e dev-2) chega exatamente nessa janela e fica BLOQUEADA na trava da fonte.
+        var t2 = T0.AddMinutes(2);
+        var b = Task.Run(() => IntunePassAsync(opt, tenant, intune, t2, null, ("dev-1", d1), ("dev-2", d2)));
+        await WaitUntilBlockedOnLockAsync(opt, "pg_advisory_xact_lock");
+        b.IsCompleted.Should().BeFalse("a presença nova não intercala entre a seleção e o UPDATE da ausência");
+
+        barrier.Release();
+        var absent = await a.WaitAsync(TimeSpan.FromSeconds(30));
+        var present = await b.WaitAsync(TimeSpan.FromSeconds(30));
+        absent.DeactivationApplied.Should().BeTrue();
+        absent.BindingsDeactivated.Should().Be(1, "na fotografia t1, dev-2 estava ausente");
+        present.BindingsDeactivated.Should().Be(0);
+
+        await AssertIntuneStateAsync(opt, tenant, intune, t2, active: new[] { "dev-1", "dev-2" }, inactive: Array.Empty<string>());
+    }
+
+    [Fact]
+    public async Task CrossSourceRecomputeOfTheSameAsset_IsSerialized_AndReflectsTheLastBindingChange()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+        var tenant = Guid.NewGuid();
+        var (defender, intune) = await SeedTenantAsync(opt, tenant);
+        var device = Guid.NewGuid().ToString("D");
+        await DefenderPassAsync(opt, tenant, defender, T0, null, new[] { ("m-1", device) }, Array.Empty<string>());
+        await IntunePassAsync(opt, tenant, intune, T0, null, ("dev-1", device));
+        Guid assetId;
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            assetId = (await db.Assets.SingleAsync()).Id;
+            (await db.AssetSourceBindings.CountAsync(x => x.AssetId == assetId && x.IsActive)).Should().Be(2);
+        }
+
+        // Intune: fotografia completa SEM o dispositivo. Para no recálculo com a linha do ativo travada, depois de ler
+        // os bindings — nesse instante o do Defender ainda está ativo, então ela vai gravar "ativo".
+        using var barrier = new Barrier(DeviceIdentityResolver.CheckpointRecomputeLocked);
+        var i = Task.Run(() => IntunePassAsync(opt, tenant, intune, T0.AddMinutes(1), barrier.Hook));
+        await barrier.Reached.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // Defender: fotografia completa também sem ele — desativa o próprio binding e fica BLOQUEADO no recálculo.
+        var d = Task.Run(() => DefenderPassAsync(opt, tenant, defender, T0.AddMinutes(1), null,
+            Array.Empty<(string, string)>(), Array.Empty<string>()));
+        await WaitUntilBlockedOnLockAsync(opt, "FOR NO KEY UPDATE");
+        d.IsCompleted.Should().BeFalse("o recálculo do mesmo ativo por outra fonte espera a trava da linha");
+
+        barrier.Release();
+        await i.WaitAsync(TimeSpan.FromSeconds(30));
+        var defenderResult = await d.WaitAsync(TimeSpan.FromSeconds(30));
+        defenderResult.BindingsDeactivated.Should().Be(1);
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            (await db.AssetSourceBindings.ToListAsync()).Should().HaveCount(2).And.OnlyContain(x => !x.IsActive);
+            (await db.Assets.SingleAsync()).IsActive.Should().BeFalse(
+                "o último recálculo releu os bindings depois da trava e viu as duas fontes ausentes");
+            (await db.AssetStrongIdentifiers.SingleAsync()).AssetId.Should().Be(assetId, "ausência não é exclusão da chave");
+        }
+    }
+
+    [Fact]
+    public async Task SameDefenderConnector_OlderPassPausedAfterResolution_StopsPublishing_AndNeverUndoesTheNewerSnapshot()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+        var tenant = Guid.NewGuid();
+        var (defender, _) = await SeedTenantAsync(opt, tenant);
+        var (x, y) = (Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+        var both = new[] { ("m-1", x), ("m-2", y) };
+        await DefenderPassAsync(opt, tenant, defender, T0, null, both, new[] { "m-1", "m-2" });
+
+        // A (t1: as duas máquinas, com vulnerabilidade) resolve os dispositivos e para ANTES dos lotes de exposição.
+        using var barrier = new Barrier(DeviceIdentityResolver.CheckpointPresenceCommitted);
+        var a = Task.Run(() => DefenderPassAsync(opt, tenant, defender, T0.AddMinutes(1), barrier.Hook, both, new[] { "m-1", "m-2" }));
+        await barrier.Reached.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // B (t2, MAIS RECENTE: só m-1) roda inteira: m-2 sai, a vulnerabilidade de m-2 é resolvida.
+        var t2 = T0.AddMinutes(2);
+        var b = await DefenderPassAsync(opt, tenant, defender, t2, null, new[] { ("m-1", x) }, new[] { "m-1" });
+        b.BindingsDeactivated.Should().Be(1);
+        b.ObservationsResolved.Should().Be(1);
+
+        barrier.Release();
+        var late = await a.WaitAsync(TimeSpan.FromSeconds(30));
+        late.Resolution!.Superseded.Should().BeTrue();
+        late.ObservationsOpened.Should().Be(0);
+        late.ObservationsReopened.Should().Be(0, "a passada atrasada não reabre o que a mais nova resolveu");
+        late.ObservationsResolved.Should().Be(0, "nem resolve o que a mais nova observou");
+        late.BindingsDeactivated.Should().Be(0);
+
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        var bindings = (await db.AssetSourceBindings.ToListAsync()).ToDictionary(z => z.ExternalId);
+        bindings["m-1"].IsActive.Should().BeTrue();
+        bindings["m-1"].LastObservedAt.Should().Be(t2);
+        bindings["m-2"].IsActive.Should().BeFalse();
+        (await db.Assets.SingleAsync(z => z.Id == bindings["m-1"].AssetId)).IsActive.Should().BeTrue();
+        (await db.Assets.SingleAsync(z => z.Id == bindings["m-2"].AssetId)).IsActive.Should().BeFalse();
+        var observations = await db.AssetThreatObservations.Include(o => o.AssetThreatExposure).ToListAsync();
+        var m1 = observations.Single(o => o.AssetThreatExposure!.AssetId == bindings["m-1"].AssetId);
+        var m2 = observations.Single(o => o.AssetThreatExposure!.AssetId == bindings["m-2"].AssetId);
+        m1.LifecycleState.Should().Be(ObservationLifecycle.Open);
+        m1.LastSeenAt.Should().Be(t2, "LastSeenAt nunca regride para a fotografia anterior");
+        m2.LifecycleState.Should().Be(ObservationLifecycle.Resolved);
+    }
+
     // ---- apoio --------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Barreira de UM checkpoint: avisa quando a passada chega nele e a segura até ser liberada. Descartável: se uma
+    /// asserção falhar antes do <see cref="Release"/>, o <c>using</c> a libera antes de o banco descartável ser
+    /// removido — a passada pausada nunca fica segurando trava/transação até o timeout.
+    /// </summary>
+    private sealed class Barrier : IDisposable
+    {
+        private readonly string _at;
+        private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Barrier(string at) => _at = at;
+        public Task Reached => _reached.Task;
+        public void Release() => _release.TrySetResult();
+        public void Dispose() => Release();
+
+        public async Task Hook(string checkpoint, CancellationToken ct)
+        {
+            if (checkpoint != _at) return;
+            _reached.TrySetResult();
+            await _release.Task.WaitAsync(TimeSpan.FromSeconds(60), ct);
+        }
+    }
+
+    /// <summary>
+    /// Espera — pela condição observada no próprio PostgreSQL, não por um intervalo fixo — até uma sessão deste banco
+    /// estar BLOQUEADA numa trava executando a consulta indicada (a da trava da fonte ou a da linha do ativo). É o que
+    /// prova que a intercalação pretendida aconteceu; sem a trava no código, a espera falha por timeout.
+    /// </summary>
+    private static async Task WaitUntilBlockedOnLockAsync(DbContextOptions<AegisScoreDbContext> opt, string queryFragment)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(null));
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            var waiting = await db.Database.SqlQueryRaw<int>(
+                "SELECT count(*)::int AS \"Value\" FROM pg_stat_activity " +
+                "WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE {0}",
+                "%" + queryFragment + "%").SingleAsync();
+            if (waiting > 0) return;
+            await Task.Delay(25);
+        }
+        throw new TimeoutException(
+            $"Nenhuma sessão ficou bloqueada em '{queryFragment}' — a intercalação não foi forçada.");
+    }
+
+    private static async Task<DeviceResolutionSyncResult> IntunePassAsync(
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, Guid connector, DateTimeOffset snapshotAt,
+        Func<string, CancellationToken, Task>? checkpoint, params (string Id, string DeviceId)[] devices)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        var observations = devices.Select(d => new DeviceSourceObservation(
+            d.Id, DeviceDirectoryIdentifiers.ParseDeviceId(d.DeviceId), null, "Windows", null,
+            DeviceComplianceBucket.Compliant, DeviceEncryptionBucket.Encrypted)).ToList();
+        return await new DeviceIdentityResolver(db) { Checkpoint = checkpoint }.ReconcileSnapshotAsync(
+            connector, "Microsoft Intune", DirA, observations, completeSnapshot: true, snapshotAt, CancellationToken.None);
+    }
+
+    private static async Task<VulnerabilitySyncResult> DefenderPassAsync(
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, Guid connector, DateTimeOffset collectedAt,
+        Func<string, CancellationToken, Task>? checkpoint, (string Id, string DeviceId)[] machines, string[] vulnerable)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        var collection = new VulnerabilityCollection(
+            machines.Select(m => new VulnerabilityMachine(m.Id, m.Id + ".demo.example.com", "Windows11", null,
+                DeviceDirectoryIdentifiers.ParseDeviceId(m.DeviceId))).ToList(),
+            Array.Empty<VulnerabilityCve>(),
+            vulnerable.Select(m => new MachineCveRelation(m, "CVE-2024-7256", "chrome", "google", "1.0", null, "High")).ToList(),
+            IsComplete: true, 0, 0, 0, "Microsoft Defender Vulnerability Management", DirA, collectedAt);
+        return await new VulnerabilityReconciler(db) { Checkpoint = checkpoint }
+            .ReconcileAsync(connector, collection, CancellationToken.None);
+    }
+
+    private static async Task AssertIntuneStateAsync(
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, Guid connector, DateTimeOffset latest,
+        string[] active, string[] inactive)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        var bindings = await db.AssetSourceBindings.Where(x => x.ConnectorConfigId == connector).ToListAsync();
+        var assets = await db.Assets.ToDictionaryAsync(a => a.Id);
+        foreach (var id in active)
+        {
+            var b = bindings.Single(x => x.ExternalId == id);
+            b.IsActive.Should().BeTrue(id + " foi observado pela fotografia mais recente");
+            b.LastObservedAt.Should().Be(latest, id + ": a presença mais recente nunca é substituída pela anterior");
+            assets[b.AssetId].IsActive.Should().BeTrue(id);
+        }
+        foreach (var id in inactive)
+        {
+            var b = bindings.Single(x => x.ExternalId == id);
+            b.IsActive.Should().BeFalse(id);
+            b.ResolvedAt.Should().Be(latest, id + ": desativado pela fotografia mais recente");
+            assets[b.AssetId].IsActive.Should().BeFalse(id);
+        }
+    }
 
     private static async Task<(Guid Defender, Guid Intune)> SeedTenantAsync(
         DbContextOptions<AegisScoreDbContext> opt, Guid tenant, bool migrate = true)

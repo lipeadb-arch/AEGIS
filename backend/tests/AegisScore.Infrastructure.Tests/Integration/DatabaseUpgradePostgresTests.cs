@@ -84,6 +84,10 @@ public sealed class DatabaseUpgradePostgresTests
             // aditivas (anuláveis ou default 0 = "não avaliado") em bindings e ativos, SEM backfill — nenhum
             // identificador de diretório é inventado para bindings legados.
             "20260911041013_DeviceResolution01_StrongIdentifiers",
+            // [AEGIS-ENTITY-RESOLUTION-01] Precedência entre passadas (marca da fotografia por conector) e proveniência
+            // do conflito (diretório da observação contraditória, valores contraditórios da mesma coleta): três
+            // colunas anuláveis, SEM backfill — conflitos anteriores ficam sem diretório registrado, nada é inventado.
+            "20260911141553_DeviceResolution02_LifecycleAndConflictProvenance",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;
