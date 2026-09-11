@@ -9,14 +9,21 @@ namespace AegisScore.Domain;
 // (AssetThreatExposure) das FONTES que os observam. Um Asset pode ter vários bindings (Defender, Google,
 // AWS…); uma exposição ativo×CVE pode ter várias observações. O identificador do provedor (ex.: machineId
 // do Defender) vive SOMENTE no binding — nunca em Asset.ExternalRef, que continua sendo o vínculo CMDB/legado.
-// A correlação automática entre IDs de provedores distintos NÃO faz parte desta entrega: a estrutura apenas
-// PERMITE que múltiplos bindings/observações apontem, no futuro, para o mesmo Asset/exposição.
+// [AEGIS-ENTITY-RESOLUTION-01] A resolução entre fontes passou a existir, e SÓ por vínculo forte: o binding
+// preserva o identificador de dispositivo no diretório informado pela fonte e o estado da resolução; a chave
+// forte → ativo vive em AssetStrongIdentifier. Nome, hostname ou IP nunca unificam.
 
 /// <summary>
 /// Vínculo de um <see cref="Asset"/> a UMA fonte de descoberta (um <see cref="ConnectorConfig"/>): guarda o
-/// identificador externo do dispositivo NAQUELA fonte (ex.: machineId do Defender) e os metadados OBSERVADOS.
-/// A chave natural é <c>(TenantId, ConnectorConfigId, ExternalId)</c> — índice único que torna o upsert idempotente
-/// uma invariante de banco. NUNCA persiste IP, aadDeviceId, usuário ou payload bruto.
+/// identificador externo do dispositivo NAQUELA fonte (ex.: machineId do Defender, id do managedDevice do Intune)
+/// e os metadados OBSERVADOS. A chave natural é <c>(TenantId, ConnectorConfigId, ExternalId)</c> — índice único
+/// que torna o upsert idempotente uma invariante de banco.
+///
+/// [AEGIS-ENTITY-RESOLUTION-01] FINALIDADE DELIMITADA: persiste também o identificador de dispositivo no diretório
+/// (aadDeviceId/azureADDeviceId) e o namespace do diretório de origem, EXCLUSIVAMENTE para resolver o mesmo
+/// dispositivo entre fontes. Esses valores são dados internos de resolução — não entram em log, resposta de IA,
+/// relatório ou listagem pública (só no diagnóstico restrito). Continua NUNCA persistindo IP, usuário, e-mail,
+/// número de série ou payload bruto.
 /// </summary>
 public class AssetSourceBinding : Entity, ITenantOwned
 {
@@ -53,6 +60,54 @@ public class AssetSourceBinding : Entity, ITenantOwned
 
     /// <summary>Instante em que o binding foi desativado (sumiu de uma coleta completa da fonte); null enquanto ativo.</summary>
     public DateTimeOffset? ResolvedAt { get; set; }
+
+    // ---- [AEGIS-ENTITY-RESOLUTION-01] Resolução entre fontes por vínculo forte --------------------------------
+
+    /// <summary>Rótulo legível da fonte que produziu o binding (ex.: "Microsoft Intune"). Nulo em bindings legados.</summary>
+    public string? SourceLabel { get; set; }
+
+    /// <summary>
+    /// Namespace do diretório de origem CONFIRMADO pela integração (tenant do Entra da credencial efetiva, GUID
+    /// normalizado). Nulo = não confirmado, ou binding legado. Nunca deduzido de hostname, e-mail ou do tenant AEGIS.
+    /// </summary>
+    public string? DirectoryNamespace { get; set; }
+
+    /// <summary>
+    /// Identificador de dispositivo no diretório ESTABELECIDO para este binding (GUID normalizado). Uma vez
+    /// estabelecido, uma observação contraditória NÃO o substitui: ela vira conflito
+    /// (<see cref="ConflictDirectoryDeviceId"/>) e o binding permanece no ativo original.
+    /// </summary>
+    public string? DirectoryDeviceId { get; set; }
+
+    /// <summary>O que a última observação disse sobre o identificador de diretório (informado, ausente, inválido).</summary>
+    public DirectoryIdentifierStatus DirectoryIdStatus { get; set; } = DirectoryIdentifierStatus.NotEvaluated;
+
+    /// <summary>Estado da resolução entre fontes deste binding.</summary>
+    public AssetBindingResolutionState ResolutionState { get; set; } = AssetBindingResolutionState.NotEvaluated;
+
+    /// <summary>Natureza da contradição, quando <see cref="ResolutionState"/> é Conflict.</summary>
+    public AssetBindingConflictKind ConflictKind { get; set; } = AssetBindingConflictKind.None;
+
+    /// <summary>Identificador de diretório OBSERVADO que contradiz o vínculo (referência de análise; dado interno).</summary>
+    public string? ConflictDirectoryDeviceId { get; set; }
+
+    /// <summary>Outro ativo envolvido na contradição (ex.: o que já detém a chave), quando houver.</summary>
+    public Guid? ConflictAssetId { get; set; }
+
+    /// <summary>Instante em que o binding foi vinculado pela chave forte pela primeira vez.</summary>
+    public DateTimeOffset? LinkedAt { get; set; }
+
+    /// <summary>Instante da última avaliação de resolução deste binding.</summary>
+    public DateTimeOffset? ResolutionEvaluatedAt { get; set; }
+
+    /// <summary>
+    /// Conformidade COMO INFORMADA pela fonte de gestão de dispositivos (ex.: Intune), na última observação.
+    /// Informação da fonte — não é veredito de segurança do AEGIS. Nulo quando a fonte não a fornece.
+    /// </summary>
+    public DeviceComplianceBucket? SourceCompliance { get; set; }
+
+    /// <summary>Criptografia COMO INFORMADA pela fonte, na última observação. Nulo quando a fonte não a fornece.</summary>
+    public DeviceEncryptionBucket? SourceEncryption { get; set; }
 }
 
 /// <summary>

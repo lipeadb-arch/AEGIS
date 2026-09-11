@@ -34,10 +34,12 @@ public sealed class DevicePostureQuery : IDevicePostureQuery
     /// <summary>Permissão de aplicativo da dimensão de estado efetivo dos dispositivos.</summary>
     private const string ManagedDevicesPermission = "DeviceManagementManagedDevices.Read.All";
 
+    // [AEGIS-ENTITY-RESOLUTION-01] Sem registro por dispositivo desta fonte, a lacuna continua declarada — mas a
+    // causa mudou: o identificador de diretório agora é preservado; falta a leitura por dispositivo acontecer.
     private const string CorrelationGapExplanation =
-        "Os dispositivos observados aqui ainda não são unidos automaticamente aos ativos descobertos por outras " +
-        "fontes: o AEGIS não preserva, do outro lado, um identificador estável compartilhado. A união por nome, " +
-        "endereço ou semelhança não é feita — seria adivinhação, não correlação.";
+        "Ainda não há registro por dispositivo desta fonte: a vinculação aos ativos de outras fontes acontece na " +
+        "próxima leitura da dimensão de dispositivos, e somente pelo identificador de dispositivo do Microsoft Entra, " +
+        "no mesmo diretório. A união por nome, endereço ou semelhança não é feita — seria adivinhação, não correlação.";
 
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
@@ -141,6 +143,9 @@ public sealed class DevicePostureQuery : IDevicePostureQuery
             ? DevicePostureViewState.Data
             : DevicePostureViewState.NeverSynced;
 
+        var correlation = await CorrelationAsync(
+            snapshot.ConnectorConfigId, hasDeviceData ? snapshot.DevicesWithDirectoryId : null, ct);
+
         return new DevicePostureViewDto(
             State: state,
             Source: snapshot.Source,
@@ -151,12 +156,51 @@ public sealed class DevicePostureQuery : IDevicePostureQuery
             DeviceSummary: deviceSummary,
             Policies: policies,
             DeviceGroups: deviceGroups,
-            Correlation: new DevicePostureCorrelationDto(
-                DeterministicCorrelationAvailable: false,
-                DevicesWithDirectoryId: hasDeviceData ? snapshot.DevicesWithDirectoryId : null,
-                Explanation: CorrelationGapExplanation),
+            Correlation: correlation,
             AffectsScore: false,
             ScoreDisclaimer: ScoreDisclaimer);
+    }
+
+    /// <summary>
+    /// [AEGIS-ENTITY-RESOLUTION-01] Estado REAL da vinculação dos dispositivos desta fonte, a partir dos registros por
+    /// dispositivo presentes na última leitura. Três grupos que não se confundem: vinculado a OUTRA fonte pelo
+    /// identificador de diretório; sem evidência para vincular; em conflito preservado.
+    /// </summary>
+    private async Task<DevicePostureCorrelationDto> CorrelationAsync(
+        Guid connectorId, int? devicesWithDirectoryId, CancellationToken ct)
+    {
+        var active = _db.AssetSourceBindings.AsNoTracking()
+            .Where(b => b.ConnectorConfigId == connectorId && b.IsActive);
+        var observed = await active.CountAsync(ct);
+        if (observed == 0)
+            return new DevicePostureCorrelationDto(false, devicesWithDirectoryId, CorrelationGapExplanation);
+
+        var linkedAcross = await active
+            .Where(b => b.ResolutionState == AssetBindingResolutionState.Linked)
+            .CountAsync(b => _db.AssetSourceBindings.Any(o =>
+                o.AssetId == b.AssetId && o.ConnectorConfigId != connectorId
+                && o.IsActive && o.ResolutionState == AssetBindingResolutionState.Linked), ct);
+        var withoutLink = await active.CountAsync(b =>
+            b.ResolutionState == AssetBindingResolutionState.NoIdentifier
+            || b.ResolutionState == AssetBindingResolutionState.InvalidIdentifier
+            || b.ResolutionState == AssetBindingResolutionState.DirectoryUnconfirmed, ct);
+        var conflicts = await active.CountAsync(b => b.ResolutionState == AssetBindingResolutionState.Conflict, ct);
+
+        var explanation =
+            $"{observed} dispositivo(s) desta fonte têm registro por dispositivo: {linkedAcross} vinculado(s) a " +
+            "registro de outra fonte pelo identificador de dispositivo do Microsoft Entra, no mesmo diretório; " +
+            $"{withoutLink} sem identificador válido para vínculo (o que não significa que sejam outros dispositivos); " +
+            $"{conflicts} com conflito preservado para análise. Nome, endereço ou semelhança nunca unem ativos, e o " +
+            "vínculo confirma a associação dos registros — não a segurança do dispositivo.";
+
+        return new DevicePostureCorrelationDto(
+            DeterministicCorrelationAvailable: true,
+            DevicesWithDirectoryId: devicesWithDirectoryId,
+            Explanation: explanation,
+            DevicesObserved: observed,
+            DevicesLinkedAcrossSources: linkedAcross,
+            DevicesWithoutLink: withoutLink,
+            DevicesInConflict: conflicts);
     }
 
     // ---- Projeção de dimensões ------------------------------------------------------------------------

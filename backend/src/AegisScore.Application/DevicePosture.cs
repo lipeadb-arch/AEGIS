@@ -76,11 +76,21 @@ public sealed record DevicePostureDeviceDimension(
     int TotalDevices,
     /// <summary>Janela (dias) usada para classificar um dispositivo como obsoleto por falta de sincronização.</summary>
     int StaleThresholdDays,
-    /// <summary>Dispositivos que trazem um id de dispositivo de diretório na fonte — FATO de correlação, sem o valor.</summary>
+    /// <summary>
+    /// Dispositivos que trazem um identificador de dispositivo de diretório VÁLIDO na fonte (normalizado pela
+    /// autoridade única <see cref="DeviceDirectoryIdentifiers"/> — GUID vazio/placeholder não conta).
+    /// </summary>
     int DevicesWithDirectoryId,
     int InvalidDevices,
     /// <summary>Detalhe SANITIZADO (ex.: menção a DeviceManagementManagedDevices.Read.All). Nunca token/URL/payload.</summary>
-    string? Detail = null)
+    string? Detail = null,
+    /// <summary>
+    /// [AEGIS-ENTITY-RESOLUTION-01] Observações MÍNIMAS por dispositivo, da MESMA leitura que produziu os grupos
+    /// (id na fonte, identificador de diretório validado, SO, conformidade, criptografia, última sincronização).
+    /// <c>null</c> = o coletor não as fornece — nesse caso nada é reconciliado por dispositivo (e nada é
+    /// desativado por "ausência"). Nunca nome, usuário, e-mail, número de série, IMEI, telefone ou MAC.
+    /// </summary>
+    IReadOnlyList<DeviceSourceObservation>? Observations = null)
 {
     public bool IsComplete => State == DevicePostureDimensionState.Available;
 
@@ -103,7 +113,12 @@ public sealed record DevicePostureDeviceDimension(
 public sealed record DevicePostureSnapshot(
     string Source,
     DevicePostureConfigurationDimension Configuration,
-    DevicePostureDeviceDimension Devices)
+    DevicePostureDeviceDimension Devices,
+    /// <summary>
+    /// [AEGIS-ENTITY-RESOLUTION-01] Namespace do diretório de origem CONFIRMADO pela credencial efetiva da
+    /// integração (GUID normalizado). Nulo = não confirmado: nenhum dispositivo é vinculado entre fontes.
+    /// </summary>
+    string? DirectoryNamespace = null)
 {
     /// <summary>Só uma sincronização com AS DUAS dimensões completas é "plenamente operacional".</summary>
     public bool IsComplete => Configuration.IsComplete && Devices.IsComplete;

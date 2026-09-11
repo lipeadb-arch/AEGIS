@@ -427,7 +427,10 @@ public record AssetDto(
     Guid Id, string Name, string Category, string? SubType, string? Description,
     int Criticality, string? OwnerName, string? ExternalRef, Guid? BusinessProcessId,
     string DiscoverySource, DateTimeOffset? LastSeenAt, bool IsActive,
-    double? RiskScore, string? RiskLevel, DateTimeOffset? RiskScoredAt, DateTimeOffset CreatedAt);
+    double? RiskScore, string? RiskLevel, DateTimeOffset? RiskScoredAt, DateTimeOffset CreatedAt,
+    // [AEGIS-ENTITY-RESOLUTION-01] Aditivos: nome provisório (fonte que não coleta nome) e resumo das fontes/vínculo.
+    bool NameIsPlaceholder = false,
+    AegisScore.Application.Queries.AssetSourceSummaryDto? Sources = null);
 
 /// <summary>Filtros combinados da grid tática (NIST). Ligados por AND; categorias por OR entre si.</summary>
 public class AssetQuery

@@ -456,6 +456,28 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             }
         }
 
+        // [AEGIS-ENTITY-RESOLUTION-01] Observações POR DISPOSITIVO da MESMA leitura da dimensão de dispositivos,
+        // resolvidas pela autoridade ÚNICA (a mesma das máquinas do Defender). Só roda quando a dimensão produziu
+        // inventário E o coletor forneceu observações por dispositivo: falha/permissão ausente preserva os
+        // bindings e a última evidência válida (nada é desativado por ausência). Contexto NOVO, sob o tenant
+        // proprietário. Falha NÃO é mascarada: carimba Failed e propaga, como as demais reconciliações.
+        DeviceResolutionSyncResult? deviceResolution = null;
+        if (devicePosture is { Devices: { HasInventory: true, Observations: not null } })
+        {
+            try
+            {
+                deviceResolution = await ReconcileDeviceObservationsAsync(config.TenantId, config.Id, devicePosture, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex,
+                    "Resolução dos dispositivos observados pelo conector {ConnectorId} falhou; conector marcado como Failed.",
+                    config.Id);
+                await TryStampFailedAsync(config.Id, config.TenantId, ct);
+                throw;
+            }
+        }
+
         // [AEGIS-AUD-019] Projeta a evidência coletada no ledger (recompute GLOBAL from-newest). Semântica
         // coerente com o push: falha na projeção NÃO é mascarada — carimba Failed e propaga como 500. Uma
         // nova coleta (mesmo sync) refaz o recompute sobre a evidência mais nova.
@@ -473,7 +495,30 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         }
 
         return new PullIngestionResult(
-            persisted, 0, skipped, status, vulnResult, siem, detectionCoverage, softwareResult, devicePostureResult);
+            persisted, 0, skipped, status, vulnResult, siem, detectionCoverage, softwareResult, devicePostureResult,
+            deviceResolution);
+    }
+
+    // ---- Resolução dos dispositivos de fontes de gestão (AEGIS-ENTITY-RESOLUTION-01) ------------------
+
+    /// <summary>
+    /// Resolve as observações por dispositivo de uma fonte de GESTÃO (Intune) pela autoridade única
+    /// (<see cref="DeviceIdentityResolver"/>), sob o tenant proprietário. A desativação por ausência exige a
+    /// dimensão de DISPOSITIVOS completa (não o status geral do conector, nem a dimensão de políticas) E a lista
+    /// íntegra — uma observação por dispositivo contado. Teto, página falha, registro inválido ou id repetido
+    /// tornam a passada parcial: só fatos positivos são gravados.
+    /// </summary>
+    private async Task<DeviceResolutionSyncResult> ReconcileDeviceObservationsAsync(
+        Guid tenantId, Guid connectorId, AppDevicePosture posture, CancellationToken ct)
+    {
+        var devices = posture.Devices;
+        var observations = devices.Observations!;
+        var complete = devices.IsComplete && observations.Count == devices.TotalDevices;
+
+        await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
+        var resolver = new DeviceIdentityResolver(db, _log);
+        return await resolver.ReconcileSnapshotAsync(
+            connectorId, posture.Source, posture.DirectoryNamespace, observations, complete, DateTimeOffset.UtcNow, ct);
     }
 
     // ---- Reconciliação de inventário de software (AEGIS-MVP-MICROSOFT-COVERAGE-01) -----------------

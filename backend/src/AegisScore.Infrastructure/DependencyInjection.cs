@@ -254,6 +254,8 @@ public static class DependencyInjection
         services.AddScoped<IDetectionCoverageQuery, DetectionCoverageQuery>();
         // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Leitura tenant-scoped do inventário/exposição de software, CONSULTIVA.
         services.AddScoped<ISoftwareInventoryQuery, SoftwareInventoryQuery>();
+        // [AEGIS-ENTITY-RESOLUTION-01] Fontes de um ativo e o vínculo entre elas (somente leitura, tenant-scoped).
+        services.AddScoped<IAssetSourceQuery, AssetSourceQuery>();
         // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Leitura tenant-scoped da postura de configuração/conformidade de
         // dispositivos (consultiva). Somente leitura — nenhuma escrita de score/evidência passa por aqui.
         services.AddScoped<IDevicePostureQuery, DevicePostureQuery>();

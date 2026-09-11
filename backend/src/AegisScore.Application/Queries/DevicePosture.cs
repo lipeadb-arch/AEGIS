@@ -134,12 +134,20 @@ public sealed record DeviceGroupDto(
     int DeviceCount);
 
 /// <summary>
-/// Estado da CORRELAÇÃO com os ativos já inventariados por outras fontes. Enquanto não houver um identificador
-/// estável preservado dos DOIS lados, a correlação determinística é impossível — e o AEGIS registra a lacuna em
-/// vez de unir ativos por nome, IP ou heurística.
+/// Estado da CORRELAÇÃO com os ativos já inventariados por outras fontes. [AEGIS-ENTITY-RESOLUTION-01] Com
+/// observações por dispositivo registradas, a vinculação é determinística e SÓ pelo identificador de dispositivo do
+/// Entra no mesmo diretório; sem elas, o AEGIS registra a lacuna em vez de unir ativos por nome, IP ou heurística.
 /// </summary>
 public sealed record DevicePostureCorrelationDto(
     bool DeterministicCorrelationAvailable,
-    /// <summary>Dispositivos que trazem um id de dispositivo de diretório na fonte (o valor NÃO é preservado).</summary>
+    /// <summary>Dispositivos que trazem um identificador de dispositivo de diretório VÁLIDO na fonte.</summary>
     int? DevicesWithDirectoryId,
-    string Explanation);
+    string Explanation,
+    /// <summary>Dispositivos desta fonte com registro por dispositivo presente na última leitura.</summary>
+    int? DevicesObserved = null,
+    /// <summary>Desses, quantos estão vinculados a registro de OUTRA fonte pelo identificador de diretório.</summary>
+    int? DevicesLinkedAcrossSources = null,
+    /// <summary>Desses, quantos não trouxeram identificador válido (ou diretório não confirmado) — ainda não vinculáveis.</summary>
+    int? DevicesWithoutLink = null,
+    /// <summary>Desses, quantos têm contradição preservada para análise.</summary>
+    int? DevicesInConflict = null);
