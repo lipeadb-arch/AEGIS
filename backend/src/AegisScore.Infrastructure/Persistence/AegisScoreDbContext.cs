@@ -109,6 +109,8 @@ public class AegisScoreDbContext : DbContext
     // [AEGIS-MVP-VULN-01] Fundação multicloud: vínculo Asset↔fonte e observação por fonte da exposição consolidada.
     public DbSet<AssetSourceBinding> AssetSourceBindings => Set<AssetSourceBinding>();
     public DbSet<AssetThreatObservation> AssetThreatObservations => Set<AssetThreatObservation>();
+    // [AEGIS-ENTITY-RESOLUTION-01] Chave forte (tenant, diretório, tipo, valor) → ativo canônico.
+    public DbSet<AssetStrongIdentifier> AssetStrongIdentifiers => Set<AssetStrongIdentifier>();
     // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Inventário de software: produto consolidado, binding por fonte, instalação
     // por ativo (com versão) e o snapshot agregado de estado/última tentativa/KPIs por conector.
     public DbSet<SoftwareProduct> SoftwareProducts => Set<SoftwareProduct>();
@@ -1027,6 +1029,44 @@ public class AegisScoreDbContext : DbContext
                 .HasDatabaseName("UX_AssetSourceBinding_Natural");
             e.HasIndex(x => new { x.TenantId, x.AssetId });
             e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId });
+
+            // [AEGIS-ENTITY-RESOLUTION-01] Colunas ADITIVAS de resolução (anuláveis ou com default 0 = NotEvaluated/
+            // None): bindings legados não ganham identificador inventado. Tamanhos fixos = invariante de banco.
+            e.Property(x => x.SourceLabel).HasMaxLength(200);
+            e.Property(x => x.DirectoryNamespace).HasMaxLength(64);
+            e.Property(x => x.DirectoryDeviceId).HasMaxLength(64);
+            e.Property(x => x.ConflictDirectoryDeviceId).HasMaxLength(64);
+            // Proveniência do conflito (aditivas, anuláveis): diretório da observação contraditória e os valores
+            // contraditórios da mesma coleta (até 5 GUIDs de 36 caracteres + separadores).
+            e.Property(x => x.ConflictDirectoryNamespace).HasMaxLength(64);
+            e.Property(x => x.ConflictObservedDeviceIds).HasMaxLength(200);
+        });
+
+        // [AEGIS-ENTITY-RESOLUTION-01] Chave FORTE de dispositivo no diretório → ativo canônico. Os dois índices
+        // únicos NOMEADOS são as invariantes que a resolução exige do banco (e as ÚNICAS violações que o resolvedor
+        // reconhece como corrida recuperável): uma chave aponta para um ativo; um ativo não carrega dois
+        // dispositivos do mesmo diretório. FK composta tenant-safe, Restrict (a chave é histórico da resolução).
+        // O CHECK recusa no próprio banco o GUID vazio e tipos não suportados.
+        b.Entity<AssetStrongIdentifier>(e =>
+        {
+            e.Property(x => x.DirectoryNamespace).HasMaxLength(64).IsRequired();
+            e.Property(x => x.IdentifierValue).HasMaxLength(64).IsRequired();
+            e.Property(x => x.EstablishedBySource).HasMaxLength(200).IsRequired();
+            e.HasOne(x => x.Asset).WithMany()
+                .HasForeignKey(x => new { x.AssetId, x.TenantId })
+                .HasPrincipalKey(a => new { a.Id, a.TenantId })
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_AssetStrongIdentifiers_Assets_Asset_Tenant");
+            e.HasIndex(x => new { x.TenantId, x.DirectoryNamespace, x.IdentifierType, x.IdentifierValue })
+                .IsUnique()
+                .HasDatabaseName("UX_AssetStrongIdentifier_Natural");
+            e.HasIndex(x => new { x.TenantId, x.AssetId, x.DirectoryNamespace, x.IdentifierType })
+                .IsUnique()
+                .HasDatabaseName("UX_AssetStrongIdentifier_AssetScope");
+            e.ToTable(t => t.HasCheckConstraint(
+                "CK_AssetStrongIdentifiers_Valid",
+                "\"IdentifierType\" IN (1) AND \"IdentifierValue\" <> '00000000-0000-0000-0000-000000000000' " +
+                "AND \"IdentifierValue\" <> '' AND \"DirectoryNamespace\" <> ''"));
         });
 
         // [AEGIS-MVP-VULN-01] Observação de UMA fonte sobre uma exposição CONSOLIDADA ativo×CVE. Chave natural
@@ -1371,6 +1411,8 @@ public class AegisScoreDbContext : DbContext
         // enxerga bindings/observações de outro. Stamping do TenantId no insert é automático (SaveChanges guard).
         b.Entity<AssetSourceBinding>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<AssetThreatObservation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-ENTITY-RESOLUTION-01] Chave forte é ITenantOwned (fail-closed): um tenant nunca resolve contra a de outro.
+        b.Entity<AssetStrongIdentifier>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<SoftwareProduct>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<SoftwareProductSourceBinding>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<SoftwareInstallation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

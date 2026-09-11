@@ -5,9 +5,16 @@ import {
   ASSET_CATEGORIES,
   AssetCategory,
   AssetDto,
+  AssetSources,
   RISK_LEVELS,
   RiskLevel,
   categoryLabel,
+  conflictObservation,
+  contradictoryObservedIds,
+  crossSourceTone,
+  joinSourceFacts,
+  recordResolutionTone,
+  sourcesCell,
 } from '../models/asset.models';
 import { NIST_FUNCTION_DESCRIPTIONS } from '../models/nist-glossary';
 import { riskColor } from '../lib/scales';
@@ -182,15 +189,20 @@ import {
               <th title="Nível de risco registrado para o ativo no AEGIS — estimativa, não probabilidade de incidente nem vulnerabilidade confirmada">Risco registrado</th>
               <th>Responsável</th>
               <th>Origem</th>
+              <th title="Fontes que observaram o ativo e o vínculo entre seus registros — clique na linha para ver o detalhe">Fontes · vínculo</th>
               <th>Visto por último</th>
               <th class="num">Status</th>
             </tr>
           </thead>
           <tbody>
             @for (a of rows(); track a.id) {
-              <tr>
+              <tr class="asset-row" [class.open]="expanded() === a.id" (click)="toggleSources(a.id)"
+                  [attr.aria-expanded]="expanded() === a.id" title="Ver as fontes que observaram este ativo">
                 <td>
                   <div class="asset-name">{{ a.name }}</div>
+                  @if (a.nameIsPlaceholder) {
+                    <div class="asset-sub">nome não coletado pela fonte</div>
+                  }
                   @if (a.subType) {
                     <div class="asset-sub">{{ a.subType }}</div>
                   }
@@ -213,14 +225,118 @@ import {
                 </td>
                 <td>{{ a.ownerName || '—' }}</td>
                 <td><span class="src">{{ a.discoverySource }}</span></td>
+                <td>
+                  @let cell = sourcesCell(a.sources);
+                  <div class="xs-cell">
+                    <span class="xs-srcs">{{ cell.text }}</span>
+                    @if (cell.badge) {
+                      <span class="xs-badge tone-{{ cell.tone }}" [attr.title]="cell.title">{{ cell.badge }}</span>
+                    }
+                  </div>
+                </td>
                 <td class="dim">{{ a.lastSeenAt ? (a.lastSeenAt | date: 'dd/MM/yy HH:mm') : '—' }}</td>
                 <td class="num">
                   <span class="status" [class.off]="!a.isActive">{{ a.isActive ? 'Ativo' : 'Inativo' }}</span>
                 </td>
               </tr>
+              @if (expanded() === a.id) {
+                <tr class="detail-row">
+                  <td colspan="9">
+                    @switch (detailState()) {
+                      @case ('loading') { <span class="idw-pulse">Carregando as fontes deste ativo…</span> }
+                      @case ('error') {
+                        <div class="idw-err">
+                          <span>Não foi possível carregar as fontes deste ativo agora — nada é exibido, para que a falha não pareça ausência de fonte.</span>
+                          <button type="button" class="retry-sm" (click)="loadSources(a.id)">Tentar novamente</button>
+                        </div>
+                      }
+                      @case ('loaded') {
+                        @let d = detail()!;
+                        <div class="xs-detail">
+                          <div class="xs-head">
+                            <span class="xs-badge tone-{{ tone(d.crossSourceState) }}">{{ d.crossSourceLabel }}</span>
+                            <p>{{ d.explanation }}</p>
+                          </div>
+                          @if (d.sources.length > 0) {
+                            <ul class="xs-list">
+                              @for (s of d.sources; track $index) {
+                                <li [class.off]="!s.isActive">
+                                  <div class="xs-title">
+                                    <b>{{ s.sourceLabel }}</b>
+                                    <span class="xs-presence">
+                                      {{ s.presenceLabel }}
+                                      @if (s.noLongerObservedSince) { desde {{ s.noLongerObservedSince | date: 'dd/MM/yy HH:mm' }} }
+                                    </span>
+                                  </div>
+                                  <div class="xs-meta">
+                                    Última observação pelo AEGIS: {{ s.lastObservedAt | date: 'dd/MM/yy HH:mm' }} ·
+                                    Última atividade informada pela fonte:
+                                    {{ s.sourceLastSeenAt ? (s.sourceLastSeenAt | date: 'dd/MM/yy HH:mm') : 'não informada' }}
+                                  </div>
+                                  @if (s.observedName || s.platform) {
+                                    <div class="xs-meta">
+                                      Na fonte: {{ s.observedName || 'nome não coletado' }}
+                                      @if (s.platform) { · {{ s.platform }} }
+                                    </div>
+                                  }
+                                  @if (s.sourceComplianceLabel || s.sourceEncryptionLabel) {
+                                    <div class="xs-meta">
+                                      Informação da fonte (não é veredito do AEGIS):
+                                      {{ joinFacts(s.sourceComplianceLabel, s.sourceEncryptionLabel) }}
+                                    </div>
+                                  }
+                                  <div class="xs-link">
+                                    <span class="xs-badge tone-{{ recordTone(s.resolutionState) }}">{{ s.resolutionLabel }}</span>
+                                    <span>{{ s.resolutionExplanation }}</span>
+                                  </div>
+                                  @if (s.relatedAssetName) {
+                                    <div class="xs-meta">Ativo envolvido na contradição: {{ s.relatedAssetName }}</div>
+                                  }
+                                  @if (s.diagnostics; as diag) {
+                                    <details class="xs-diag">
+                                      <summary>Diagnóstico técnico</summary>
+                                      <div>Id na fonte: <code>{{ diag.externalId }}</code></div>
+                                      <div>Diretório de origem: <code>{{ diag.directoryNamespace ?? 'não confirmado' }}</code></div>
+                                      <div>
+                                        Identificador de dispositivo (Entra): <code>{{ diag.directoryDeviceId ?? '—' }}</code>
+                                        · {{ s.identifierStatusLabel }}
+                                      </div>
+                                      @if (conflictPair(diag); as pair) {
+                                        <div>
+                                          Observação que contradiz o vínculo: diretório
+                                          @if (pair.directoryRecorded) { <code>{{ pair.directory }}</code> } @else { {{ pair.directory }} }
+                                          · identificador <code>{{ pair.identifier }}</code>
+                                        </div>
+                                      }
+                                      @if (contradictoryIds(diag); as ids) {
+                                        @if (ids.length) {
+                                          <div>
+                                            Identificadores contraditórios na mesma coleta:
+                                            @for (v of ids; track v) { <code>{{ v }}</code> }
+                                          </div>
+                                        }
+                                      }
+                                    </details>
+                                  }
+                                </li>
+                              }
+                            </ul>
+                            @if (d.truncated) {
+                              <p class="xs-note">Exibindo {{ d.sources.length }} de {{ d.sourceRecords }} registros de fonte.</p>
+                            }
+                          }
+                          <p class="xs-note">{{ d.linkMeaning }}</p>
+                          <p class="xs-note">{{ d.directoryNote }}</p>
+                          <p class="xs-note">{{ d.curatedNote }}</p>
+                        </div>
+                      }
+                    }
+                  </td>
+                </tr>
+              }
             } @empty {
               <tr class="empty">
-                <td colspan="8">
+                <td colspan="9">
                   @if (loading()) {
                     Carregando inventário…
                   } @else if (loadError()) {
@@ -361,6 +477,31 @@ import {
       .risk-dot { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 10px 1px currentColor; }
       .risk-none { font-family: var(--mono); font-size: 11.5px; color: var(--muted); opacity: 0.7; }
 
+      /* [AEGIS-ENTITY-RESOLUTION-01] Fontes · vínculo (coluna) e detalhe das fontes (linha expandida). */
+      tr.asset-row { cursor: pointer; }
+      table.asset-table tbody tr.asset-row.open td { background: rgba(38, 224, 255, 0.05); }
+      .xs-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+      .xs-srcs { font-family: var(--mono); font-size: 11px; color: var(--text); }
+      .xs-badge { display: inline-block; font-family: var(--mono); font-size: 10.5px; line-height: 1.4; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); max-width: 260px; }
+      .xs-badge.tone-ok { color: var(--cyan); border-color: rgba(38, 224, 255, 0.45); }
+      .xs-badge.tone-info { color: var(--cyan-2); border-color: rgba(38, 224, 255, 0.25); }
+      .xs-badge.tone-warn { color: var(--amber); border-color: rgba(255, 176, 32, 0.5); }
+      .xs-badge.tone-muted { color: var(--muted); }
+      table.asset-table tbody tr.detail-row td { background: var(--panel-2); padding: 16px 18px; cursor: default; }
+      .xs-detail { display: flex; flex-direction: column; gap: 10px; }
+      .xs-head { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+      .xs-head p { margin: 0; font-size: 13px; line-height: 1.55; max-width: 900px; }
+      .xs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+      .xs-list li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+      .xs-list li.off { opacity: 0.78; }
+      .xs-title { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+      .xs-presence { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+      .xs-meta { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 4px; }
+      .xs-link { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-top: 6px; font-size: 12.5px; line-height: 1.5; }
+      .xs-diag { margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+      .xs-diag code { color: var(--text); background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 4px; }
+      .xs-note { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--muted); max-width: 900px; }
+
       .status { font-family: var(--mono); font-size: 11px; color: var(--cyan); }
       .status.off { color: var(--muted); }
       tr.empty td { text-align: center; color: var(--muted); font-family: var(--mono); font-size: 12px; padding: 30px; }
@@ -443,6 +584,42 @@ export class AssetInventoryComponent implements OnInit {
 
   private searchTimer?: ReturnType<typeof setTimeout>;
 
+  // ---- [AEGIS-ENTITY-RESOLUTION-01] Fontes do ativo: detalhe SOB DEMANDA (uma linha por vez, nunca N+1) ----
+  expanded = signal<string | null>(null);
+  detailState = signal<'loading' | 'loaded' | 'error'>('loading');
+  detail = signal<AssetSources | null>(null);
+  protected readonly sourcesCell = sourcesCell;
+  protected readonly tone = crossSourceTone;
+  protected readonly recordTone = recordResolutionTone;
+  protected readonly joinFacts = joinSourceFacts;
+  protected readonly conflictPair = conflictObservation;
+  protected readonly contradictoryIds = contradictoryObservedIds;
+
+  toggleSources(assetId: string): void {
+    if (this.expanded() === assetId) {
+      this.expanded.set(null);
+      return;
+    }
+    this.expanded.set(assetId);
+    this.loadSources(assetId);
+  }
+
+  loadSources(assetId: string): void {
+    this.detail.set(null);
+    this.detailState.set('loading');
+    this.svc.sources(assetId).subscribe({
+      next: (d) => {
+        if (this.expanded() !== assetId) return;   // resposta de uma linha que já foi fechada
+        this.detail.set(d);
+        this.detailState.set('loaded');
+      },
+      error: () => {
+        if (this.expanded() !== assetId) return;
+        this.detailState.set('error');
+      },
+    });
+  }
+
   ngOnInit(): void {
     this.load();
     this.loadWorkspacePosture();
@@ -479,6 +656,7 @@ export class AssetInventoryComponent implements OnInit {
 
   private load(): void {
     this.loading.set(true);
+    this.expanded.set(null);
     this.svc
       .list({
         category: [...this.selectedCategories()],

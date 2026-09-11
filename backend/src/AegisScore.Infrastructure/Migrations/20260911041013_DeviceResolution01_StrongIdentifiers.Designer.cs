@@ -3,6 +3,7 @@ using System;
 using AegisScore.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AegisScore.Infrastructure.Migrations
 {
     [DbContext(typeof(AegisScoreDbContext))]
-    partial class AegisScoreDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260911041013_DeviceResolution01_StrongIdentifiers")]
+    partial class DeviceResolution01_StrongIdentifiers
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -597,16 +600,8 @@ namespace AegisScore.Infrastructure.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
-                    b.Property<string>("ConflictDirectoryNamespace")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
                     b.Property<int>("ConflictKind")
                         .HasColumnType("integer");
-
-                    b.Property<string>("ConflictObservedDeviceIds")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
 
                     b.Property<Guid>("ConnectorConfigId")
                         .HasColumnType("uuid");
@@ -1043,9 +1038,6 @@ namespace AegisScore.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTimeOffset?>("DeviceSnapshotWatermark")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("DisplayName")

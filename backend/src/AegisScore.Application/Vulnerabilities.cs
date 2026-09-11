@@ -10,19 +10,25 @@ namespace AegisScore.Application.Abstractions;
 // Espelha o idioma de IPostureFindingConnector/PostureFindingCollection: o ADAPTADOR normaliza a resposta da
 // fonte no vocabulário PROVIDER-NEUTRAL do AEGIS e o EvidenceIngestionExecutor a reconcilia (o adaptador NUNCA
 // escreve no banco). Vulnerabilidades são FATOS OPERACIONAIS/DE EXPOSIÇÃO: não geram EvidenceSignal, veredito
-// NIST nem pontos — não tocam o AEGIS Score. Campos sensíveis (IP, aadDeviceId, resposta bruta, PII) NÃO existem
-// neste contrato de propósito.
+// NIST nem pontos — não tocam o AEGIS Score. Campos sensíveis (IP, resposta bruta, PII) NÃO existem neste contrato
+// de propósito. [AEGIS-ENTITY-RESOLUTION-01] O identificador de dispositivo no diretório (aadDeviceId) passou a
+// trafegar — validado — com a finalidade DELIMITADA de resolver o mesmo dispositivo entre fontes.
 
 /// <summary>
 /// Uma MÁQUINA (dispositivo onboardado) normalizada pelo coletor. Só os campos permitidos e necessários à
-/// reconciliação/inventário — nunca IP, aadDeviceId, usuário ou payload bruto.
+/// reconciliação/inventário/resolução — nunca IP, usuário ou payload bruto.
 /// </summary>
 /// <param name="MachineId">Id ÚNICO e estável do dispositivo na fonte (compõe a chave externa do ativo).</param>
+/// <param name="DirectoryDeviceId">
+/// [AEGIS-ENTITY-RESOLUTION-01] Identificador de dispositivo do Microsoft Entra (aadDeviceId) já validado. Nulo
+/// (coletor anterior) equivale a "não informado". Ausência/invalidez NÃO invalida a máquina.
+/// </param>
 public sealed record VulnerabilityMachine(
     string MachineId,
     string? ComputerDnsName,
     string? OsPlatform,
-    DateTimeOffset? LastSeen);
+    DateTimeOffset? LastSeen,
+    DirectoryDeviceIdObservation? DirectoryDeviceId = null);
 
 /// <summary>
 /// Metadado GLOBAL e consultável de um CVE (catálogo público) — fato da fonte, somente leitura. O AEGIS nunca
@@ -72,7 +78,18 @@ public sealed record VulnerabilityCollection(
     int InvalidMachines,
     int InvalidCves,
     int InvalidRelations,
-    string SourceLabel);
+    string SourceLabel,
+    /// <summary>
+    /// [AEGIS-ENTITY-RESOLUTION-01] Namespace do diretório de origem CONFIRMADO pela credencial efetiva da integração
+    /// (GUID normalizado). Nulo = não confirmado: nenhuma máquina desta coleta é vinculada entre fontes.
+    /// </summary>
+    string? DirectoryNamespace = null,
+    /// <summary>
+    /// [AEGIS-ENTITY-RESOLUTION-01] Instante em que a coleta COMEÇOU a ler as máquinas — a marca de precedência da
+    /// fotografia: entre duas passadas do mesmo conector, a de marca mais recente prevalece e a atrasada não anula
+    /// o que ela publicou. Nulo (coleções montadas fora do conector) = instante da reconciliação.
+    /// </summary>
+    DateTimeOffset? CollectedAt = null);
 
 /// <summary>
 /// Capacidade COMPLEMENTAR a <see cref="IEvidenceConnector"/>: um conector que produz VULNERABILIDADES associadas
@@ -108,4 +125,6 @@ public sealed record VulnerabilitySyncResult(
     bool WasComplete,
     int InvalidMachines,
     int InvalidCves,
-    int InvalidRelations);
+    int InvalidRelations,
+    /// <summary>[AEGIS-ENTITY-RESOLUTION-01] Contagens da resolução entre fontes das máquinas desta coleta.</summary>
+    DeviceResolutionSyncResult? Resolution = null);

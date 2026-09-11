@@ -77,6 +77,9 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         _writerLog = writerLog;
     }
 
+    /// <summary>SOMENTE para testes: barreira repassada ao reconciliador de software (ver <see cref="SoftwareInventoryReconciler"/>).</summary>
+    internal Func<string, CancellationToken, Task>? Checkpoint { get; init; }
+
     public async Task<PushIngestionResult> IngestPushAsync(
         AuthenticatedConnector connector, EvidenceBatch batch, CancellationToken ct)
     {
@@ -214,6 +217,10 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // por conectores ICombinedVulnerabilityConnector (mesma aquisição/token/máquinas de Vulnerabilities). NUNCA
         // vira EvidenceSignal, NUNCA mapeia NIST e NUNCA toca o score — fato operacional/de exposição consultivo.
         SoftwareInventoryCollection? softwareInventory = null;
+        // [AEGIS-ENTITY-RESOLUTION-01] Marca ÚNICA da aquisição combinada: a dimensão de dispositivos/vulnerabilidades a
+        // publica como marca da fonte, e a de software publica SOB ela — as duas dimensões da mesma leitura têm a mesma
+        // precedência. Nula fora da aquisição combinada.
+        DateTimeOffset? acquisitionMarker = null;
         // [AEGIS-MVP-SIEM] Postura operacional de SIEM PROVIDER-NEUTRAL (fato consultivo). Aditiva: o adaptador de
         // SIEM (Microsoft Sentinel, Google SecOps, …) não emite sinais de score e produz apenas esta fotografia.
         // Coletada na MESMA try/catch — NÃO vira EvidenceSignal, NÃO é reconciliada no banco e NÃO toca o AEGIS Score.
@@ -255,7 +262,10 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             if (adapter is ICombinedVulnerabilityConnector combinedVulnConnector)
             {
                 var combinedVuln = await combinedVulnConnector.CollectVulnerabilitiesAndSoftwareAsync(config, ct);
-                vulnerabilities = combinedVuln.Vulnerabilities;
+                // A marca é o início da aquisição informado pelo conector (ou, sem ele, o início desta sincronização) —
+                // fixada AQUI e entregue às duas dimensões; nunca o instante de uma fase posterior nem o da reconciliação.
+                acquisitionMarker = DeviceSnapshotMarker.Normalize(combinedVuln.Vulnerabilities.CollectedAt ?? now);
+                vulnerabilities = combinedVuln.Vulnerabilities with { CollectedAt = acquisitionMarker };
                 softwareInventory = combinedVuln.SoftwareInventory;
             }
             else if (adapter is IVulnerabilityFindingConnector vulnConnector)
@@ -396,13 +406,16 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // para as mesmas máquinas (nunca cria Asset por conta própria). Falha NÃO é mascarada: carimba Failed e
         // propaga — mas uma coleta já classificada como falha (InsufficientPermission/Unsupported/Unavailable) NÃO
         // lança aqui (o reconciliador só REGISTRA a tentativa e preserva os dados anteriores). NUNCA cria
-        // EvidenceSignal nem toca o AEGIS Score.
+        // EvidenceSignal nem toca o AEGIS Score. [AEGIS-ENTITY-RESOLUTION-01] A precedência NÃO é decidida aqui por
+        // uma leitura única de "superada": outra aquisição pode ser publicada depois dela. O reconciliador confere a
+        // marca da aquisição no banco, sob a trava da fonte, a CADA escrita (lotes, ausência, recálculo e resumo).
         SoftwareInventorySyncResult? softwareResult = null;
         if (softwareInventory is not null)
         {
             try
             {
-                softwareResult = await ReconcileSoftwareInventoryAsync(config.TenantId, config.Id, softwareInventory, ct);
+                softwareResult = await ReconcileSoftwareInventoryAsync(
+                    config.TenantId, config.Id, softwareInventory, acquisitionMarker, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -456,6 +469,28 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
             }
         }
 
+        // [AEGIS-ENTITY-RESOLUTION-01] Observações POR DISPOSITIVO da MESMA leitura da dimensão de dispositivos,
+        // resolvidas pela autoridade ÚNICA (a mesma das máquinas do Defender). Só roda quando a dimensão produziu
+        // inventário E o coletor forneceu observações por dispositivo: falha/permissão ausente preserva os
+        // bindings e a última evidência válida (nada é desativado por ausência). Contexto NOVO, sob o tenant
+        // proprietário. Falha NÃO é mascarada: carimba Failed e propaga, como as demais reconciliações.
+        DeviceResolutionSyncResult? deviceResolution = null;
+        if (devicePosture is { Devices: { HasInventory: true, Observations: not null } })
+        {
+            try
+            {
+                deviceResolution = await ReconcileDeviceObservationsAsync(config.TenantId, config.Id, devicePosture, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex,
+                    "Resolução dos dispositivos observados pelo conector {ConnectorId} falhou; conector marcado como Failed.",
+                    config.Id);
+                await TryStampFailedAsync(config.Id, config.TenantId, ct);
+                throw;
+            }
+        }
+
         // [AEGIS-AUD-019] Projeta a evidência coletada no ledger (recompute GLOBAL from-newest). Semântica
         // coerente com o push: falha na projeção NÃO é mascarada — carimba Failed e propaga como 500. Uma
         // nova coleta (mesmo sync) refaz o recompute sobre a evidência mais nova.
@@ -473,7 +508,32 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         }
 
         return new PullIngestionResult(
-            persisted, 0, skipped, status, vulnResult, siem, detectionCoverage, softwareResult, devicePostureResult);
+            persisted, 0, skipped, status, vulnResult, siem, detectionCoverage, softwareResult, devicePostureResult,
+            deviceResolution);
+    }
+
+    // ---- Resolução dos dispositivos de fontes de gestão (AEGIS-ENTITY-RESOLUTION-01) ------------------
+
+    /// <summary>
+    /// Resolve as observações por dispositivo de uma fonte de GESTÃO (Intune) pela autoridade única
+    /// (<see cref="DeviceIdentityResolver"/>), sob o tenant proprietário. A desativação por ausência exige a
+    /// dimensão de DISPOSITIVOS completa (não o status geral do conector, nem a dimensão de políticas) E a lista
+    /// íntegra — uma observação por dispositivo contado. Teto, página falha, registro inválido ou id repetido
+    /// tornam a passada parcial: só fatos positivos são gravados.
+    /// </summary>
+    private async Task<DeviceResolutionSyncResult> ReconcileDeviceObservationsAsync(
+        Guid tenantId, Guid connectorId, AppDevicePosture posture, CancellationToken ct)
+    {
+        var devices = posture.Devices;
+        var observations = devices.Observations!;
+        var complete = devices.IsComplete && observations.Count == devices.TotalDevices;
+
+        // A marca da fotografia é o instante em que a COLETA começou (não o da reconciliação): entre duas passadas do
+        // mesmo conector, a fotografia mais recente prevalece — uma passada atrasada não anula o que ela publicou.
+        await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
+        var resolver = new DeviceIdentityResolver(db, _log);
+        return await resolver.ReconcileSnapshotAsync(
+            connectorId, posture.Source, posture.DirectoryNamespace, observations, complete, devices.AttemptedAt, ct);
     }
 
     // ---- Reconciliação de inventário de software (AEGIS-MVP-MICROSOFT-COVERAGE-01) -----------------
@@ -483,13 +543,15 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
     /// (<see cref="SystemTenantContext"/>): contexto NOVO (isolado do change tracker dos sinais/vulnerabilidades) +
     /// query filter fail-closed + stamping. A lógica de upsert/colapso/resolução vive no
     /// <see cref="SoftwareInventoryReconciler"/>; o adaptador nunca escreve no banco. NÃO cria EvidenceSignal.
+    /// <paramref name="acquisitionMarker"/> é a marca da aquisição combinada a que a coleta pertence.
     /// </summary>
     private async Task<SoftwareInventorySyncResult> ReconcileSoftwareInventoryAsync(
-        Guid tenantId, Guid connectorId, SoftwareInventoryCollection collection, CancellationToken ct)
+        Guid tenantId, Guid connectorId, SoftwareInventoryCollection collection, DateTimeOffset? acquisitionMarker,
+        CancellationToken ct)
     {
         await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
-        var reconciler = new SoftwareInventoryReconciler(db, _log);
-        return await reconciler.ReconcileAsync(connectorId, collection, ct);
+        var reconciler = new SoftwareInventoryReconciler(db, _log) { Checkpoint = Checkpoint };
+        return await reconciler.ReconcileAsync(connectorId, collection, acquisitionMarker, ct);
     }
 
     // ---- Reconciliação da postura de dispositivos (AEGIS-MVP-MICROSOFT-COVERAGE-02) ---------------

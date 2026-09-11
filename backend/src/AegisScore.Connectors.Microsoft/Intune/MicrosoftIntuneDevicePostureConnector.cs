@@ -41,9 +41,14 @@ namespace AegisScore.Connectors.Microsoft.Intune;
 /// ciclo de vida (teste/ativação/sincronização) — <see cref="CollectAsync"/> NUNCA emite um único
 /// <see cref="EvidenceSignal"/>. Nada aqui mapeia NIST, altera <c>TenantControlState</c> ou gera pontos.
 ///
-/// PRIVACIDADE: os dispositivos são normalizados em GRUPOS agregados. Nenhum identificador de dispositivo,
-/// nome, usuário, e-mail, número de série, IMEI, telefone ou MAC é lido, persistido ou registrado em log — o
-/// <c>$select</c> já limita o que trafega, e o parser só reconhece os campos da allowlist.
+/// PRIVACIDADE: os dispositivos são normalizados em GRUPOS agregados e — [AEGIS-ENTITY-RESOLUTION-01] — em
+/// observações MÍNIMAS por dispositivo, da MESMA leitura: o <c>id</c> do managedDevice (identificador do registro NO
+/// Intune) e o <c>azureADDeviceId</c> (documentação oficial do recurso managedDevice: "The unique identifier for the
+/// Azure Active Directory device" — o deviceId do Entra, NÃO o id do objeto de diretório), com a finalidade
+/// DELIMITADA de resolver o mesmo dispositivo entre fontes, mais SO, conformidade, criptografia e última
+/// sincronização como INFORMAÇÃO DA FONTE (nunca veredito de segurança). Nenhum nome, usuário, e-mail, número de
+/// série, IMEI, telefone ou MAC é lido, persistido ou registrado em log — o <c>$select</c> já limita o que trafega,
+/// e o parser só reconhece os campos da allowlist. Nenhuma consulta por dispositivo: a listagem já traz os campos.
 /// </summary>
 public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, IDevicePostureCollector
 {
@@ -64,7 +69,10 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
     private const string CompliancePoliciesUrl = "deviceManagement/deviceCompliancePolicies";
     private const string DeviceConfigurationsUrl = "deviceManagement/deviceConfigurations";
 
-    /// <summary>$select MINIMIZANTE: só o que a postura precisa. Nada de UPN, nome, serial, IMEI, telefone ou MAC.</summary>
+    /// <summary>
+    /// $select MINIMIZANTE: só o que a postura e a resolução entre fontes precisam (<c>id</c> e <c>azureADDeviceId</c>
+    /// servem à resolução). Nada de UPN, nome, serial, IMEI, telefone ou MAC.
+    /// </summary>
     private const string ManagedDevicesSelectUrl =
         "deviceManagement/managedDevices?$select=id,azureADDeviceId,complianceState,lastSyncDateTime,operatingSystem,isEncrypted";
     private const string ManagedDevicesUrl = "deviceManagement/managedDevices";
@@ -86,7 +94,6 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
 
     private const int MaxDisplayNameLength = 200;
     private const int MaxOperatingSystemLength = 60;
-
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     private readonly IEntraGraphClient _graph;
@@ -209,7 +216,10 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
 
         var configuration = await CollectConfigurationAsync(token, creds, attemptedAt, ct);
         var devices = await CollectDevicesAsync(token, creds, attemptedAt, ct);
-        return new AppDevicePosture(SourceLabel, configuration, devices);
+        // [AEGIS-ENTITY-RESOLUTION-01] Namespace do diretório = tenant do Entra da credencial EFETIVA (quem emitiu o
+        // token que leu estes dispositivos). Valor não-GUID (ex.: um domínio) ⇒ diretório não confirmado ⇒ sem vínculo.
+        return new AppDevicePosture(SourceLabel, configuration, devices,
+            DeviceDirectoryIdentifiers.NormalizeNamespace(creds.AzureTenantId));
     }
 
     // ---- Dimensão 1: postura configurada -------------------------------------------------------------
@@ -431,13 +441,16 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
 
         return new DevicePostureDeviceDimension(
             state, attemptedAt, groups, read.Total, StaleThresholdDays,
-            read.WithDirectoryId, read.Invalid, read.Detail);
+            read.WithDirectoryId, read.Invalid, read.Detail, read.Observations);
     }
 
     private async Task<DeviceRead> ReadDevicesAsync(
         string token, IMicrosoftGraphCredentials creds, string url, CancellationToken ct)
     {
         var groups = new Dictionary<DeviceGroupKey, int>();
+        // [AEGIS-ENTITY-RESOLUTION-01] Observações mínimas por dispositivo — da MESMA página, sem nova consulta.
+        var observations = new List<DeviceSourceObservation>();
+        var observationIndex = new Dictionary<string, int>(StringComparer.Ordinal);
         var total = 0;
         var invalid = 0;
         var withDirectoryId = 0;
@@ -457,20 +470,29 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
                     break;
                 }
 
-                if (item.ValueKind != JsonValueKind.Object || string.IsNullOrWhiteSpace(StrOf(item, "id")))
+                var id = item.ValueKind == JsonValueKind.Object ? StrOf(item, "id") : null;
+                // [AEGIS-ENTITY-RESOLUTION-01] O id do managedDevice é a chave natural do registro: aceito EXATAMENTE
+                // como veio ou o registro é inválido (a dimensão vira parcial). Nunca aparado nem truncado — dois ids
+                // distintos jamais podem passar a representar o mesmo registro.
+                if (!DeviceSourceObservations.IsExternalIdWithinContract(id))
                 {
                     invalid++;
                     continue;
                 }
 
                 total++;
-                if (!string.IsNullOrWhiteSpace(StrOf(item, "azureADDeviceId"))) withDirectoryId++;
+                // Conta só identificadores VÁLIDOS (autoridade única): o GUID vazio que o Intune devolve para
+                // dispositivo não registrado não é "id de diretório".
+                var directoryDeviceId = DirectoryDeviceIdOf(item);
+                if (directoryDeviceId.IsValid) withDirectoryId++;
+
+                var operatingSystem = StrOf(item, "operatingSystem");
+                var compliance = ComplianceOf(StrOf(item, "complianceState"));
+                var encryption = EncryptionOf(item);
+                var lastSync = DateOf(item, "lastSyncDateTime");
 
                 var key = new DeviceGroupKey(
-                    NormalizeOs(StrOf(item, "operatingSystem")),
-                    ComplianceOf(StrOf(item, "complianceState")),
-                    EncryptionOf(item),
-                    ActivityOf(DateOf(item, "lastSyncDateTime"), now));
+                    NormalizeOs(operatingSystem), compliance, encryption, ActivityOf(lastSync, now));
 
                 // Teto de cardinalidade: o excedente é colapsado num grupo "Outros" do MESMO recorte de estado —
                 // a contagem total continua exata e a dimensão vira piso (o detalhamento por SO é que é parcial).
@@ -481,6 +503,26 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
                 }
 
                 groups[key] = groups.TryGetValue(key, out var n) ? n + 1 : 1;
+
+                // Um id REPETIDO não gera segunda observação: as repetições são COMBINADAS pela regra única
+                // (DeviceSourceObservations.Merge) — identificadores divergentes viram contradição, nunca "o primeiro
+                // visto", e o resultado independe da ordem das páginas. A divergência entre contagem e observações
+                // impede, no executor, qualquer desativação por ausência nesta passada.
+                var observation = new DeviceSourceObservation(
+                    id!,
+                    directoryDeviceId,
+                    DisplayName: null,
+                    SubType: Trim(operatingSystem, MaxOperatingSystemLength),
+                    SourceLastSeenAt: lastSync,
+                    Compliance: compliance,
+                    Encryption: encryption);
+                if (observationIndex.TryGetValue(id!, out var at))
+                    observations[at] = DeviceSourceObservations.Merge(observations[at], observation);
+                else
+                {
+                    observationIndex[id!] = observations.Count;
+                    observations.Add(observation);
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -492,14 +534,27 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
             var state = ClassifyDimension(ex);
             var reason = Describe(ex, "dispositivos gerenciados");
             if (total == 0)
-                return new DeviceRead(groups, 0, invalid, 0, truncated, state, reason);
+                return new DeviceRead(groups, 0, invalid, 0, truncated, state, reason, observations);
 
             // Falha numa página INTERMEDIÁRIA: preserva o que já foi contado e marca piso — nunca zera.
             truncated = true;
             detail = Join(detail, reason);
         }
 
-        return new DeviceRead(groups, total, invalid, withDirectoryId, truncated, null, detail);
+        return new DeviceRead(groups, total, invalid, withDirectoryId, truncated, null, detail, observations);
+    }
+
+    /// <summary>
+    /// [AEGIS-ENTITY-RESOLUTION-01] <c>azureADDeviceId</c> → estado validado pela autoridade única. Ausente/nulo =
+    /// não informado; string = validada (GUID vazio/placeholder recusado); outro tipo JSON = inválido.
+    /// </summary>
+    internal static DirectoryDeviceIdObservation DirectoryDeviceIdOf(JsonElement item)
+    {
+        if (!item.TryGetProperty("azureADDeviceId", out var v) || v.ValueKind == JsonValueKind.Null)
+            return DirectoryDeviceIdObservation.NotProvided;
+        return v.ValueKind == JsonValueKind.String
+            ? DeviceDirectoryIdentifiers.ParseDeviceId(v.GetString())
+            : DirectoryDeviceIdObservation.Invalid;
     }
 
     private sealed record DeviceRead(
@@ -509,7 +564,8 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
         int WithDirectoryId,
         bool Truncated,
         DevicePostureDimensionState? HardFailure,
-        string? Detail);
+        string? Detail,
+        List<DeviceSourceObservation> Observations);
 
     private readonly record struct DeviceGroupKey(
         string Os, DeviceComplianceBucket Compliance, DeviceEncryptionBucket Encryption, DeviceActivityBucket Activity);

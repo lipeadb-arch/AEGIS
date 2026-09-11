@@ -1,7 +1,7 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { AssetDto, AssetQuery, PagedResult } from '../models/asset.models';
+import { AssetDto, AssetQuery, AssetSources, PagedResult } from '../models/asset.models';
 import { environment } from '../../environments/environment';
 
 @Injectable({ providedIn: 'root' })
@@ -25,5 +25,13 @@ export class AssetService {
       params,
       headers: { Accept: 'application/json' },
     });
+  }
+
+  /** [AEGIS-ENTITY-RESOLUTION-01] GET /api/v1/assets/{id}/sources — fontes do ativo e o vínculo entre elas. */
+  sources(assetId: string): Observable<AssetSources> {
+    return this.http.get<AssetSources>(
+      `${environment.apiBase}/api/v1/assets/${encodeURIComponent(assetId)}/sources`,
+      { headers: { Accept: 'application/json' } },
+    );
   }
 }

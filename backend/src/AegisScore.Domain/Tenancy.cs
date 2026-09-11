@@ -66,6 +66,13 @@ public class Asset : Entity, ITenantOwned
     public DateTimeOffset? LastSeenAt { get; set; }  // heartbeat da descoberta contínua
     public bool IsActive { get; set; } = true;       // desativado ≠ deletado (histórico preservado)
 
+    /// <summary>
+    /// [AEGIS-ENTITY-RESOLUTION-01] Origem do <see cref="Name"/>. Só um nome <see cref="AssetNameOrigin.Placeholder"/>
+    /// (fonte que não coleta nome) pode ser substituído pelo primeiro nome observado por outra fonte; qualquer outro
+    /// (curado, manual, legado) nunca é sobrescrito pela resolução.
+    /// </summary>
+    public AssetNameOrigin NameOrigin { get; set; } = AssetNameOrigin.Unspecified;
+
     // ---- Risco calculado pela IA (nulo até o motor rodar) ----
     public double? RiskScore { get; set; }           // 0–100 (mesma escala do IcrScore)
     public RiskLevel? RiskLevel { get; set; }        // banda derivada — reusa o enum existente

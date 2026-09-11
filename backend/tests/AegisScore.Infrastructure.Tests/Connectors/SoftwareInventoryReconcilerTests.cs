@@ -204,6 +204,88 @@ public sealed class SoftwareInventoryReconcilerTests : IDisposable
         snapshot.LastAttemptState.Should().Be(failure, "a tentativa MAIS RECENTE é registrada honestamente");
     }
 
+    // ---- [AEGIS-ENTITY-RESOLUTION-01] Precedência pela marca da aquisição combinada ------------------------------
+
+    private const string SyntheticVendor = "fornecedor-sintetico";
+
+    /// <summary>Simula a dimensão de dispositivos da MESMA aquisição publicando a marca da fonte.</summary>
+    private async Task PublishMarkerAsync(Guid connectorId, DateTimeOffset marker)
+    {
+        await using var db = NewContext(Tenant);
+        await db.Connectors.Where(c => c.Id == connectorId)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.DeviceSnapshotWatermark, (DateTimeOffset?)DeviceSnapshotMarker.Normalize(marker)));
+    }
+
+    private async Task<SoftwareInventorySyncResult> ReconcileAt(Guid connectorId, SoftwareInventoryCollection c, DateTimeOffset marker)
+    {
+        await using var db = NewContext(Tenant);
+        return await new SoftwareInventoryReconciler(db).ReconcileAsync(connectorId, c, marker, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Reconcile_WithAcquisitionMarker_StampsTheMarker_AndResolvesByIt()
+    {
+        var t1 = DateTimeOffset.Parse("2026-09-11T10:00:00Z").AddTicks(7);   // fração abaixo do µs: normalizada
+        var t2 = t1.AddMinutes(5);
+        var editor = Product(SyntheticVendor + "-_-editor", SyntheticVendor, "editor");
+        await PublishMarkerAsync(_connA, t1);
+        await ReconcileAt(_connA, Coll(SoftwareInventoryCollectionState.Available, new[] { editor }, new[] { Install("m1", SyntheticVendor, "editor") }), t1);
+        await PublishMarkerAsync(_connA, t2);
+        var second = await ReconcileAt(_connA, Coll(SoftwareInventoryCollectionState.Available, Array.Empty<SoftwareProductFact>(), Array.Empty<MachineSoftwareInstallation>()), t2);
+
+        second.Superseded.Should().BeFalse();
+        second.InstallationsResolved.Should().Be(1);
+        await using var db = NewContext(Tenant);
+        var install = await db.SoftwareInstallations.SingleAsync();
+        install.FirstSeenAt.Should().Be(DeviceSnapshotMarker.Normalize(t1), "os instantes gravados são a marca da aquisição, nunca o relógio da reconciliação");
+        install.LastSeenAt.Should().Be(DeviceSnapshotMarker.Normalize(t1));
+        install.LifecycleState.Should().Be(ObservationLifecycle.Resolved);
+        install.ResolvedAt.Should().Be(DeviceSnapshotMarker.Normalize(t2));
+        var snapshot = await db.SoftwareInventorySnapshots.SingleAsync();
+        snapshot.LastCollectionAt.Should().Be(DeviceSnapshotMarker.Normalize(t2));
+        snapshot.LastAttemptAt.Should().Be(DeviceSnapshotMarker.Normalize(t2));
+    }
+
+    [Fact]
+    public async Task Reconcile_WithSupersededMarker_PublishesNothing_NotEvenAFailedAttempt()
+    {
+        var t1 = DateTimeOffset.Parse("2026-09-11T10:00:00Z");
+        var t2 = t1.AddMinutes(5);
+        var id = SyntheticVendor + "-_-editor";
+
+        // A aquisição MAIS RECENTE (t2) já publicou dispositivos e software.
+        await PublishMarkerAsync(_connA, t2);
+        await ReconcileAt(_connA, Coll(SoftwareInventoryCollectionState.Available,
+            new[] { Product(id, SyntheticVendor, "editor", weaknesses: 5) }, new[] { Install("m1", SyntheticVendor, "editor", "2.0") }), t2);
+
+        // A atrasada (t1 < t2) chega com outra leitura completa e, depois, com uma falha classificada.
+        var late = await ReconcileAt(_connA, Coll(SoftwareInventoryCollectionState.Available,
+            new[] { Product(id, SyntheticVendor, "editor", weaknesses: 1), Product(SyntheticVendor + "-_-outro", SyntheticVendor, "outro") },
+            new[] { Install("m1", SyntheticVendor, "editor", "1.0") }), t1);
+        var lateFailure = await ReconcileAt(_connA, Coll(SoftwareInventoryCollectionState.Unavailable,
+            Array.Empty<SoftwareProductFact>(), Array.Empty<MachineSoftwareInstallation>()), t1);
+
+        late.Superseded.Should().BeTrue();
+        late.ProductsUpserted.Should().Be(0);
+        late.InstallationsOpened.Should().Be(0);
+        late.InstallationsResolved.Should().Be(0);
+        lateFailure.Superseded.Should().BeTrue();
+
+        await using var db = NewContext(Tenant);
+        (await db.SoftwareProducts.SingleAsync()).WeaknessesCount.Should().Be(5, "nenhum produto novo e nenhum fato regride");
+        var binding = await db.SoftwareProductSourceBindings.SingleAsync();
+        binding.Weaknesses.Should().Be(5);
+        binding.LastObservedAt.Should().Be(t2);
+        var install = await db.SoftwareInstallations.SingleAsync();
+        install.Version.Should().Be("2.0");
+        install.LifecycleState.Should().Be(ObservationLifecycle.Open, "a ausência da atrasada não resolve a presença da mais recente");
+        install.LastSeenAt.Should().Be(t2);
+        var snapshot = await db.SoftwareInventorySnapshots.SingleAsync();
+        snapshot.LastAttemptState.Should().Be(SoftwareInventoryCollectionState.Available, "a falha atrasada não vira a tentativa atual");
+        snapshot.LastAttemptAt.Should().Be(t2);
+        snapshot.LastCollectionAt.Should().Be(t2);
+    }
+
     [Fact]
     public async Task Reconcile_NeverFabricatesEmptyValidCollection_OnUnavailable()
     {

@@ -101,6 +101,11 @@ export interface DevicePostureCorrelation {
   deterministicCorrelationAvailable: boolean;
   devicesWithDirectoryId: number | null;
   explanation: string;
+  /** [AEGIS-ENTITY-RESOLUTION-01] Contagens reais do vínculo por identificador de diretório (quando há registro por dispositivo). */
+  devicesObserved?: number | null;
+  devicesLinkedAcrossSources?: number | null;
+  devicesWithoutLink?: number | null;
+  devicesInConflict?: number | null;
 }
 
 export interface DevicePostureView {

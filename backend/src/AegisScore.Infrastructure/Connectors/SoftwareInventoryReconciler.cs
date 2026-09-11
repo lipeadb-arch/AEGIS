@@ -24,6 +24,16 @@ namespace AegisScore.Infrastructure.Connectors;
 /// sincronização (chamado DEPOIS de <c>ReconcileVulnerabilitiesAsync</c> no executor) — nunca cria Asset por conta
 /// própria; uma instalação cujo dispositivo não tem binding ativo do MESMO conector é tratada como órfã (inválida).
 ///
+/// PRECEDÊNCIA [AEGIS-ENTITY-RESOLUTION-01]. Na aquisição COMBINADA (máquinas, vulnerabilidades e software numa só
+/// leitura da fonte), o executor entrega a MARCA dessa aquisição — a mesma que a dimensão de dispositivos publicou como
+/// marca da fonte (<see cref="ConnectorConfig.DeviceSnapshotWatermark"/>). Com ela, cada escrita desta dimensão (lotes
+/// de produtos/bindings, lotes de instalações, ausência, recálculo dos produtos e resumo) passa pela MESMA coordenação
+/// da fonte (<see cref="DeviceIdentityResolver.RunIfCurrentAsync"/>): numa transação, sob a trava da fonte e só se a
+/// marca ainda for a publicada. Uma aquisição superada para no primeiro passo recusado — não publica nem reabre
+/// instalações, não resolve as da mais recente, não regride fatos de binding e não sobrescreve o resumo. Os instantes
+/// gravados são a própria marca, nunca um horário novo da reconciliação. Sem a marca (chamada direta, fora da aquisição
+/// combinada), o comportamento anterior é mantido.
+///
 /// NUNCA cria EvidenceSignal, NUNCA toca TenantControlState/score/NIST, NUNCA persiste payload bruto/hostname.
 /// </summary>
 public sealed class SoftwareInventoryReconciler
@@ -35,6 +45,13 @@ public sealed class SoftwareInventoryReconciler
     private const int InstallationBatchSize = 500;
     private const int ProductBatchSize = 250;
 
+    // Pontos de observação para testes de intercalação (barreiras). Sem efeito quando Checkpoint é nulo. Só o da
+    // ausência fica DENTRO da trava da fonte; os demais ficam entre passos, sem transação aberta.
+    internal const string CheckpointStarted = "software-started";
+    internal const string CheckpointBatchCommitted = "software-batch-committed";
+    internal const string CheckpointBeforeAbsence = "software-before-absence";
+    internal const string CheckpointAbsenceLocked = "software-absence-locked";
+
     private readonly AegisScoreDbContext _db;
     private readonly ILogger? _log;
 
@@ -44,14 +61,27 @@ public sealed class SoftwareInventoryReconciler
         _log = log;
     }
 
+    /// <summary>SOMENTE para testes: barreira chamada nos pontos <c>Checkpoint*</c>.</summary>
+    internal Func<string, CancellationToken, Task>? Checkpoint { get; init; }
+
+    /// <summary>Reconciliação sem marca de aquisição: comportamento anterior, sem coordenação com a fonte.</summary>
+    public Task<SoftwareInventorySyncResult> ReconcileAsync(
+        Guid connectorId, SoftwareInventoryCollection incoming, CancellationToken ct) =>
+        ReconcileAsync(connectorId, incoming, acquisitionMarker: null, ct);
+
+    /// <summary>
+    /// Reconcilia a dimensão de software. <paramref name="acquisitionMarker"/> é a marca da aquisição COMBINADA a que
+    /// esta coleta pertence (a publicada pela dimensão de dispositivos da mesma aquisição): com ela, a publicação só
+    /// acontece enquanto essa aquisição for a mais recente da fonte, e todos os instantes gravados são essa marca.
+    /// </summary>
     public async Task<SoftwareInventorySyncResult> ReconcileAsync(
-        Guid connectorId, SoftwareInventoryCollection incoming, CancellationToken ct)
+        Guid connectorId, SoftwareInventoryCollection incoming, DateTimeOffset? acquisitionMarker, CancellationToken ct)
     {
         for (var attempt = 0; attempt < 2; attempt++)
         {
             try
             {
-                return await ReconcileAttemptAsync(connectorId, incoming, ct);
+                return await ReconcileAttemptAsync(connectorId, incoming, acquisitionMarker, ct);
             }
             catch (DbUpdateException ex) when (attempt == 0 && IsExpectedTenantRace(ex))
             {
@@ -67,9 +97,40 @@ public sealed class SoftwareInventoryReconciler
     }
 
     private async Task<SoftwareInventorySyncResult> ReconcileAttemptAsync(
-        Guid connectorId, SoftwareInventoryCollection incoming, CancellationToken ct)
+        Guid connectorId, SoftwareInventoryCollection incoming, DateTimeOffset? acquisitionMarker, CancellationToken ct)
     {
-        var now = DateTimeOffset.UtcNow;
+        // Com a marca, a coordenação é a MESMA da fonte (trava + marca publicada), da autoridade de resolução. A marca é
+        // a referência da aquisição original: nunca é comparada com o instante de outra fase (ex.: AttemptedAt do
+        // software), nem substituída por um horário novo que faria uma leitura antiga parecer atual.
+        var gate = acquisitionMarker is null ? null : new DeviceIdentityResolver(_db, _log);
+        var now = acquisitionMarker is { } marker ? DeviceSnapshotMarker.Normalize(marker) : DateTimeOffset.UtcNow;
+
+        var productsUpserted = 0;
+        var productsCreated = 0;
+        var bindingsDeactivated = 0;
+        var installationsOpened = 0;
+        var installationsReopened = 0;
+        var installationsResolved = 0;
+        var orphanInstallations = 0;
+        var superseded = false;
+
+        SoftwareInventorySyncResult Result() => new(
+            incoming.State, productsUpserted, productsCreated, bindingsDeactivated,
+            installationsOpened, installationsReopened, installationsResolved,
+            incoming.State == SoftwareInventoryCollectionState.Available,
+            incoming.InvalidProducts, incoming.InvalidInstallations, superseded);
+
+        SoftwareInventorySyncResult Stop()
+        {
+            superseded = true;
+            _db.ChangeTracker.Clear();
+            _log?.LogInformation(
+                "Inventário de software do conector {ConnectorId} superado por uma aquisição mais recente da fonte — publicação interrompida; nada do que a mais recente publicou foi alterado.",
+                connectorId);
+            return Result();
+        }
+
+        await HitAsync(CheckpointStarted, ct);
 
         // (0) Falha CLASSIFICADA sem nenhum dado utilizável: NUNCA sobrescreve produtos/instalações já persistidos —
         // só registra a tentativa e preserva o estado/dados anteriores. Espelha o branch 1 do DetectionCoverageReconciler.
@@ -77,11 +138,12 @@ public sealed class SoftwareInventoryReconciler
             or SoftwareInventoryCollectionState.Unsupported
             or SoftwareInventoryCollectionState.Unavailable)
         {
-            await StampAttemptOnlyAsync(connectorId, incoming, now, ct);
+            if (!await PublishAsync(gate, connectorId, now, c => StampAttemptOnlyAsync(connectorId, incoming, now, c), ct))
+                return Stop();
             _log?.LogInformation(
                 "Inventário de software do conector {ConnectorId}: tentativa {State} registrada (dados preservados).",
                 connectorId, incoming.State);
-            return new SoftwareInventorySyncResult(incoming.State, 0, 0, 0, 0, 0, 0, false, incoming.InvalidProducts, incoming.InvalidInstallations);
+            return Result();
         }
 
         // (1) Produtos: upsert idempotente por (Tenant, Conector, ExternalProductId) — chave do BINDING de fonte.
@@ -95,75 +157,80 @@ public sealed class SoftwareInventoryReconciler
 
         var externalIdToProductId = new Dictionary<string, Guid>(StringComparer.Ordinal);
         var naturalKeyToProductId = new Dictionary<(string VendorKey, string NameKey), Guid>();
-        var productsCreated = 0;
         var seenExternalIds = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var batch in incoming.Products.Chunk(ProductBatchSize))
         {
-            // Filtra por VENDOR (superset — pode trazer produtos do mesmo vendor com outro nome); o par EXATO
-            // (VendorKey, NameKey) é resolvido pela chave da dictionary abaixo, não pela query. `.Contains` numa
-            // tupla não é traduzível de forma portátil por todos os provedores EF, e o superset já é pequeno
-            // (ProductBatchSize é limitado).
-            var vendorKeysInBatch = batch.Select(p => NormalizeKey(p.Vendor)).Distinct().ToList();
-            var existingProducts = await _db.SoftwareProducts
-                .Where(sp => vendorKeysInBatch.Contains(sp.VendorKey))
-                .ToListAsync(ct);
-            var productByKey = existingProducts
-                .GroupBy(p => (p.VendorKey, p.NameKey))
-                .ToDictionary(g => g.Key, g => g.First());
-
-            foreach (var fact in batch)
+            var current = await PublishAsync(gate, connectorId, now, async batchCt =>
             {
-                seenExternalIds.Add(fact.ExternalProductId);
-                var vendor = fact.Vendor ?? "";
-                var name = fact.Name ?? "";
-                var natKey = (VendorKey: NormalizeKey(vendor), NameKey: NormalizeKey(name));
+                // Filtra por VENDOR (superset — pode trazer produtos do mesmo vendor com outro nome); o par EXATO
+                // (VendorKey, NameKey) é resolvido pela chave da dictionary abaixo, não pela query. `.Contains` numa
+                // tupla não é traduzível de forma portátil por todos os provedores EF, e o superset já é pequeno
+                // (ProductBatchSize é limitado).
+                var vendorKeysInBatch = batch.Select(p => NormalizeKey(p.Vendor)).Distinct().ToList();
+                var existingProducts = await _db.SoftwareProducts
+                    .Where(sp => vendorKeysInBatch.Contains(sp.VendorKey))
+                    .ToListAsync(batchCt);
+                var productByKey = existingProducts
+                    .GroupBy(p => (p.VendorKey, p.NameKey))
+                    .ToDictionary(g => g.Key, g => g.First());
 
-                if (!productByKey.TryGetValue(natKey, out var product))
+                foreach (var fact in batch)
                 {
-                    product = new SoftwareProduct
+                    seenExternalIds.Add(fact.ExternalProductId);
+                    var vendor = fact.Vendor ?? "";
+                    var name = fact.Name ?? "";
+                    var natKey = (VendorKey: NormalizeKey(vendor), NameKey: NormalizeKey(name));
+
+                    if (!productByKey.TryGetValue(natKey, out var product))
                     {
-                        Vendor = TrimTo(vendor, 200) ?? "",
-                        Name = TrimTo(name, 300) ?? "",
-                        VendorKey = TrimTo(natKey.VendorKey, 200) ?? "",
-                        NameKey = TrimTo(natKey.NameKey, 300) ?? "",
-                        IsActive = true,
-                        FirstSeenAt = now,
-                        LastSeenAt = now,
-                    };
-                    _db.SoftwareProducts.Add(product);
-                    productByKey[natKey] = product;
-                    productsCreated++;
-                }
-                else
-                {
-                    product.LastSeenAt = now;
-                }
-
-                if (bindingByExternalId.TryGetValue(fact.ExternalProductId, out var binding))
-                {
-                    binding.SoftwareProductId = product.Id;
-                    ApplyBindingFacts(binding, fact, now);
-                }
-                else
-                {
-                    binding = new SoftwareProductSourceBinding
+                        product = new SoftwareProduct
+                        {
+                            Vendor = TrimTo(vendor, 200) ?? "",
+                            Name = TrimTo(name, 300) ?? "",
+                            VendorKey = TrimTo(natKey.VendorKey, 200) ?? "",
+                            NameKey = TrimTo(natKey.NameKey, 300) ?? "",
+                            IsActive = true,
+                            FirstSeenAt = now,
+                            LastSeenAt = now,
+                        };
+                        _db.SoftwareProducts.Add(product);
+                        productByKey[natKey] = product;
+                        productsCreated++;
+                    }
+                    else if (product.LastSeenAt < now)
                     {
-                        SoftwareProductId = product.Id,
-                        ConnectorConfigId = connectorId,
-                        ExternalProductId = fact.ExternalProductId,
-                        FirstObservedAt = now,
-                    };
-                    ApplyBindingFacts(binding, fact, now);
-                    _db.SoftwareProductSourceBindings.Add(binding);
-                    bindingByExternalId[fact.ExternalProductId] = binding;
+                        // O produto é compartilhado entre fontes: a marca de uma aquisição nunca o faz regredir.
+                        product.LastSeenAt = now;
+                    }
+
+                    if (bindingByExternalId.TryGetValue(fact.ExternalProductId, out var binding))
+                    {
+                        binding.SoftwareProductId = product.Id;
+                        ApplyBindingFacts(binding, fact, now);
+                    }
+                    else
+                    {
+                        binding = new SoftwareProductSourceBinding
+                        {
+                            SoftwareProductId = product.Id,
+                            ConnectorConfigId = connectorId,
+                            ExternalProductId = fact.ExternalProductId,
+                            FirstObservedAt = now,
+                        };
+                        ApplyBindingFacts(binding, fact, now);
+                        _db.SoftwareProductSourceBindings.Add(binding);
+                        bindingByExternalId[fact.ExternalProductId] = binding;
+                    }
+
+                    naturalKeyToProductId[natKey] = product.Id;
+                    externalIdToProductId[fact.ExternalProductId] = product.Id;
                 }
 
-                naturalKeyToProductId[natKey] = product.Id;
-                externalIdToProductId[fact.ExternalProductId] = product.Id;
-            }
-
-            await _db.SaveChangesAsync(ct);
+                await _db.SaveChangesAsync(batchCt);
+                productsUpserted += batch.Length;
+            }, ct);
+            if (!current) return Stop();
         }
         _db.ChangeTracker.Clear();
 
@@ -180,10 +247,6 @@ public sealed class SoftwareInventoryReconciler
             foreach (var row in rows) assetBindings[row.ExternalId] = row.AssetId;
         }
 
-        var installationsOpened = 0;
-        var installationsReopened = 0;
-        var orphanInstallations = 0;
-
         foreach (var machineGroup in incoming.Installations.GroupBy(i => i.MachineId, StringComparer.Ordinal))
         {
             if (!assetBindings.TryGetValue(machineGroup.Key, out var assetId)) { orphanInstallations += machineGroup.Count(); continue; }
@@ -198,94 +261,124 @@ public sealed class SoftwareInventoryReconciler
                     .ToList();
                 if (productIdsInBatch.Count == 0) continue;
 
-                var existingInstalls = await _db.SoftwareInstallations
-                    .Where(si => si.ConnectorConfigId == connectorId && si.AssetId == assetId && productIdsInBatch.Contains(si.SoftwareProductId))
-                    .ToListAsync(ct);
-                var installByKey = existingInstalls
-                    .GroupBy(si => (si.SoftwareProductId, si.Version), (k, g) => (k, First: g.First()))
-                    .ToDictionary(x => x.k, x => x.First);
-
-                foreach (var fact in batch)
+                // Cada lote é publicado só enquanto esta aquisição for a mais recente: uma superada nunca reabre o que a
+                // mais nova resolveu, nem regride LastSeenAt.
+                var current = await PublishAsync(gate, connectorId, now, async batchCt =>
                 {
-                    if (!naturalKeyToProductId.TryGetValue((NormalizeKey(fact.Vendor), NormalizeKey(fact.Name)), out var productId))
-                    { orphanInstallations++; continue; }
+                    var existingInstalls = await _db.SoftwareInstallations
+                        .Where(si => si.ConnectorConfigId == connectorId && si.AssetId == assetId && productIdsInBatch.Contains(si.SoftwareProductId))
+                        .ToListAsync(batchCt);
+                    var installByKey = existingInstalls
+                        .GroupBy(si => (si.SoftwareProductId, si.Version), (k, g) => (k, First: g.First()))
+                        .ToDictionary(x => x.k, x => x.First);
 
-                    var version = fact.Version ?? "";
-                    var key = (productId, version);
-                    if (installByKey.TryGetValue(key, out var existing))
+                    foreach (var fact in batch)
                     {
-                        existing.LastSeenAt = now;
-                        if (existing.LifecycleState == ObservationLifecycle.Resolved) installationsReopened++;
-                        existing.LifecycleState = ObservationLifecycle.Open;
-                        existing.ResolvedAt = null;
-                    }
-                    else
-                    {
-                        var created = new SoftwareInstallation
+                        if (!naturalKeyToProductId.TryGetValue((NormalizeKey(fact.Vendor), NormalizeKey(fact.Name)), out var productId))
+                        { orphanInstallations++; continue; }
+
+                        var version = fact.Version ?? "";
+                        var key = (productId, version);
+                        if (installByKey.TryGetValue(key, out var existing))
                         {
-                            SoftwareProductId = productId,
-                            AssetId = assetId,
-                            ConnectorConfigId = connectorId,
-                            Version = TrimTo(version, 100) ?? "",
-                            LifecycleState = ObservationLifecycle.Open,
-                            FirstSeenAt = now,
-                            LastSeenAt = now,
-                        };
-                        _db.SoftwareInstallations.Add(created);
-                        installByKey[key] = created;
-                        installationsOpened++;
+                            existing.LastSeenAt = now;
+                            if (existing.LifecycleState == ObservationLifecycle.Resolved) installationsReopened++;
+                            existing.LifecycleState = ObservationLifecycle.Open;
+                            existing.ResolvedAt = null;
+                        }
+                        else
+                        {
+                            var created = new SoftwareInstallation
+                            {
+                                SoftwareProductId = productId,
+                                AssetId = assetId,
+                                ConnectorConfigId = connectorId,
+                                Version = TrimTo(version, 100) ?? "",
+                                LifecycleState = ObservationLifecycle.Open,
+                                FirstSeenAt = now,
+                                LastSeenAt = now,
+                            };
+                            _db.SoftwareInstallations.Add(created);
+                            installByKey[key] = created;
+                            installationsOpened++;
+                        }
                     }
-                }
 
-                await _db.SaveChangesAsync(ct);
+                    await _db.SaveChangesAsync(batchCt);
+                }, ct);
                 _db.ChangeTracker.Clear();
+                if (!current) return Stop();
+                await HitAsync(CheckpointBatchCommitted, ct);
             }
         }
 
-        // (3) FAIL-CLOSED: resolução/desativação por omissão só em coleta COMPLETA (Available) — nunca em Partial.
-        var installationsResolved = 0;
-        var bindingsDeactivated = 0;
+        // (3) FAIL-CLOSED: resolução/desativação por omissão só em coleta COMPLETA (Available) — nunca em Partial. Com a
+        // marca, seleção e UPDATE acontecem na MESMA transação, sob a trava da fonte, e só se esta aquisição ainda for a
+        // mais recente: toda instalação que não carrega ESTA marca foi vista só por aquisições anteriores (uma mais nova
+        // teria movido a marca da fonte) — nunca a presença de uma aquisição mais recente.
         if (incoming.State == SoftwareInventoryCollectionState.Available)
         {
-            installationsResolved = await _db.SoftwareInstallations
-                .Where(si => si.ConnectorConfigId == connectorId && si.LifecycleState != ObservationLifecycle.Resolved && si.LastSeenAt != now)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(si => si.LifecycleState, ObservationLifecycle.Resolved)
-                    .SetProperty(si => si.ResolvedAt, now), ct);
-
-            var staleBindingIds = await _db.SoftwareProductSourceBindings
-                .Where(b => b.ConnectorConfigId == connectorId && b.IsActive && !seenExternalIds.Contains(b.ExternalProductId))
-                .Select(b => b.Id)
-                .ToListAsync(ct);
-            if (staleBindingIds.Count > 0)
+            await HitAsync(CheckpointBeforeAbsence, ct);
+            var current = await PublishAsync(gate, connectorId, now, async absenceCt =>
             {
-                bindingsDeactivated = await _db.SoftwareProductSourceBindings
-                    .Where(b => staleBindingIds.Contains(b.Id))
+                await HitAsync(CheckpointAbsenceLocked, absenceCt);
+                installationsResolved = await _db.SoftwareInstallations
+                    .Where(si => si.ConnectorConfigId == connectorId && si.LifecycleState != ObservationLifecycle.Resolved && si.LastSeenAt != now)
                     .ExecuteUpdateAsync(s => s
-                        .SetProperty(b => b.IsActive, false)
-                        .SetProperty(b => b.ResolvedAt, now), ct);
-            }
+                        .SetProperty(si => si.LifecycleState, ObservationLifecycle.Resolved)
+                        .SetProperty(si => si.ResolvedAt, now), absenceCt);
+
+                var staleBindingIds = await _db.SoftwareProductSourceBindings
+                    .Where(b => b.ConnectorConfigId == connectorId && b.IsActive && !seenExternalIds.Contains(b.ExternalProductId))
+                    .Select(b => b.Id)
+                    .ToListAsync(absenceCt);
+                if (staleBindingIds.Count > 0)
+                {
+                    bindingsDeactivated = await _db.SoftwareProductSourceBindings
+                        .Where(b => staleBindingIds.Contains(b.Id))
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(b => b.IsActive, false)
+                            .SetProperty(b => b.ResolvedAt, now), absenceCt);
+                }
+            }, ct);
+            if (!current) return Stop();
         }
         _db.ChangeTracker.Clear();
 
         // (4) Recompute agregado dos produtos TOCADOS (produtos criados/atualizados nesta coleta + os desativados
         // acima), a partir dos bindings ATIVOS de TODAS as fontes — mesmo idioma do RecomputeAssetsBatchedAsync.
         var touchedProductIds = new HashSet<Guid>(naturalKeyToProductId.Values);
-        await RecomputeProductsBatchedAsync(touchedProductIds, ct);
+        if (!await RecomputeProductsBatchedAsync(gate, connectorId, now, touchedProductIds, ct)) return Stop();
 
-        // (5) Snapshot agregado do conector: cache de KPIs + estado/última tentativa/última coleta.
-        await UpsertSnapshotAsync(connectorId, incoming, now, ct);
+        // (5) Snapshot agregado do conector: cache de KPIs + estado/última tentativa/última coleta — só pela aquisição
+        // que ainda é a mais recente.
+        if (!await PublishAsync(gate, connectorId, now, c => UpsertSnapshotAsync(connectorId, incoming, now, c), ct))
+            return Stop();
 
         if (orphanInstallations > 0)
             _log?.LogInformation(
                 "Inventário de software do conector {ConnectorId}: {Orphans} instalação(ões) órfã(s) (produto/máquina fora da fotografia) ignorada(s).",
                 connectorId, orphanInstallations);
 
-        var wasComplete = incoming.State == SoftwareInventoryCollectionState.Available;
-        return new SoftwareInventorySyncResult(
-            incoming.State, incoming.Products.Count, productsCreated, bindingsDeactivated,
-            installationsOpened, installationsReopened, installationsResolved, wasComplete,
-            incoming.InvalidProducts, incoming.InvalidInstallations);
+        return Result();
+    }
+
+    /// <summary>
+    /// Publica UM passo desta dimensão. Sem marca de aquisição (<paramref name="gate"/> nulo), executa direto, como
+    /// antes. Com ela, delega à coordenação da fonte já usada por dispositivos e vulnerabilidades
+    /// (<see cref="DeviceIdentityResolver.RunIfCurrentAsync"/>): transação, trava da fonte e marca ainda publicada — senão
+    /// devolve <c>false</c> sem executar. A trava vale só pela duração do passo; nenhuma chamada HTTP acontece aqui.
+    /// </summary>
+    private static async Task<bool> PublishAsync(
+        DeviceIdentityResolver? gate, Guid connectorId, DateTimeOffset marker,
+        Func<CancellationToken, Task> work, CancellationToken ct)
+    {
+        if (gate is null)
+        {
+            await work(ct);
+            return true;
+        }
+        return await gate.RunIfCurrentAsync(connectorId, marker, work, ct);
     }
 
     private static void ApplyBindingFacts(SoftwareProductSourceBinding b, SoftwareProductFact fact, DateTimeOffset now)
@@ -302,39 +395,46 @@ public sealed class SoftwareInventoryReconciler
         b.ResolvedAt = null;
     }
 
-    private async Task RecomputeProductsBatchedAsync(HashSet<Guid> productIds, CancellationToken ct)
+    /// <summary>Devolve <c>false</c> se a aquisição foi superada no meio do recálculo (os lotes seguintes não rodam).</summary>
+    private async Task<bool> RecomputeProductsBatchedAsync(
+        DeviceIdentityResolver? gate, Guid connectorId, DateTimeOffset marker, HashSet<Guid> productIds, CancellationToken ct)
     {
-        if (productIds.Count == 0) return;
+        if (productIds.Count == 0) return true;
 
         foreach (var idBatch in productIds.Chunk(ProductBatchSize))
         {
-            var products = await _db.SoftwareProducts.Where(p => idBatch.Contains(p.Id)).ToListAsync(ct);
-            var activeBindings = await _db.SoftwareProductSourceBindings.AsNoTracking()
-                .Where(b => idBatch.Contains(b.SoftwareProductId) && b.IsActive)
-                .ToListAsync(ct);
-            var bindingsByProduct = activeBindings.GroupBy(b => b.SoftwareProductId).ToDictionary(g => g.Key, g => g.ToList());
-
-            foreach (var product in products)
+            var current = await PublishAsync(gate, connectorId, marker, async batchCt =>
             {
-                var hasActive = bindingsByProduct.TryGetValue(product.Id, out var found) && found.Count > 0;
-                product.IsActive = hasActive;
-                if (hasActive)
-                {
-                    var bs = found!;
-                    product.WeaknessesCount = bs.Max(b => b.Weaknesses);
-                    product.HasPublicExploit = bs.Any(b => b.PublicExploit);
-                    product.HasActiveAlert = bs.Any(b => b.ActiveAlert);
-                    product.ExposedMachinesCount = bs.Max(b => b.ExposedMachines);
-                    var impactScores = bs.Where(b => b.ImpactScore.HasValue).Select(b => b.ImpactScore!.Value).ToList();
-                    product.ImpactScore = impactScores.Count > 0 ? impactScores.Max() : null;
-                    var lastSeen = bs.Max(b => b.LastObservedAt);
-                    if (product.LastSeenAt < lastSeen) product.LastSeenAt = lastSeen;
-                }
-            }
+                var products = await _db.SoftwareProducts.Where(p => idBatch.Contains(p.Id)).ToListAsync(batchCt);
+                var activeBindings = await _db.SoftwareProductSourceBindings.AsNoTracking()
+                    .Where(b => idBatch.Contains(b.SoftwareProductId) && b.IsActive)
+                    .ToListAsync(batchCt);
+                var bindingsByProduct = activeBindings.GroupBy(b => b.SoftwareProductId).ToDictionary(g => g.Key, g => g.ToList());
 
-            await _db.SaveChangesAsync(ct);
+                foreach (var product in products)
+                {
+                    var hasActive = bindingsByProduct.TryGetValue(product.Id, out var found) && found.Count > 0;
+                    product.IsActive = hasActive;
+                    if (hasActive)
+                    {
+                        var bs = found!;
+                        product.WeaknessesCount = bs.Max(b => b.Weaknesses);
+                        product.HasPublicExploit = bs.Any(b => b.PublicExploit);
+                        product.HasActiveAlert = bs.Any(b => b.ActiveAlert);
+                        product.ExposedMachinesCount = bs.Max(b => b.ExposedMachines);
+                        var impactScores = bs.Where(b => b.ImpactScore.HasValue).Select(b => b.ImpactScore!.Value).ToList();
+                        product.ImpactScore = impactScores.Count > 0 ? impactScores.Max() : null;
+                        var lastSeen = bs.Max(b => b.LastObservedAt);
+                        if (product.LastSeenAt < lastSeen) product.LastSeenAt = lastSeen;
+                    }
+                }
+
+                await _db.SaveChangesAsync(batchCt);
+            }, ct);
             _db.ChangeTracker.Clear();
+            if (!current) return false;
         }
+        return true;
     }
 
     // ---- Snapshot agregado (estado/última tentativa/KPIs) — idioma DetectionCoverageReconciler -----------------
@@ -427,6 +527,9 @@ public sealed class SoftwareInventoryReconciler
         snapshot.LastAttemptDetail = TrimTo(incoming.Detail, 1000);
         await _db.SaveChangesAsync(ct);
     }
+
+    private Task HitAsync(string checkpoint, CancellationToken ct) =>
+        Checkpoint is null ? Task.CompletedTask : Checkpoint(checkpoint, ct);
 
     private static string NormalizeKey(string? s) => (s ?? "").Trim().ToLowerInvariant();
 

@@ -74,7 +74,10 @@ public sealed record PullIngestionResult(
     // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Postura de configuração/conformidade de dispositivos — aditiva (default
     // null), preenchida só por conectores IDevicePostureCollector. Carrega o estado de CADA dimensão (políticas,
     // atribuição e dispositivos) separadamente: uma dimensão bloqueada por permissão nunca aparece como zero.
-    DevicePostureSyncResult? DevicePosture = null);
+    DevicePostureSyncResult? DevicePosture = null,
+    // [AEGIS-ENTITY-RESOLUTION-01] Resolução entre fontes dos dispositivos observados por fontes de GESTÃO (Intune),
+    // pela mesma autoridade usada pelas máquinas do Defender. Aditiva (default null).
+    DeviceResolutionSyncResult? DeviceResolution = null);
 
 // ---- [AEGIS-MVP-SIEM] Postura operacional de SIEM — PROVIDER-NEUTRAL (somente leitura) ----
 

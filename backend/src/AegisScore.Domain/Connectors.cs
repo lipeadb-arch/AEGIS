@@ -30,6 +30,14 @@ public class ConnectorConfig : Entity, ITenantOwned
     /// conectores pull (OAuth/API-key nas EncryptedSettings) não têm chave de ingestão.
     /// </summary>
     public string? IngestionKeyHash { get; set; }
+
+    /// <summary>
+    /// [AEGIS-ENTITY-RESOLUTION-01] Marca da fotografia de dispositivos MAIS RECENTE que esta fonte já publicou
+    /// (instante em que a coleta começou). Define a precedência entre passadas do MESMO conector: uma passada com
+    /// marca anterior a esta chegou atrasada e não publica presença, ausência nem estado consolidado — nunca anula o
+    /// que uma fotografia mais nova já afirmou. Só é lida/escrita sob a trava de ciclo de vida da fonte.
+    /// </summary>
+    public DateTimeOffset? DeviceSnapshotWatermark { get; set; }
 }
 
 /// <summary>A normalized fact collected from a connector and mapped to NIST subcategories.</summary>
