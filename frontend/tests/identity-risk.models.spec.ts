@@ -307,7 +307,8 @@ test('a visão inicial não expõe nomes crus de enum', () => {
 
 test('o AEGIS não afirma ter confirmado comprometimento', () => {
   const label = stateSlices(states({ confirmedCompromised: 1 })).find((s) => s.key === 'confirmedCompromised')!.label;
-  assert(/Marcadas como potencialmente comprometidas/.test(label), 'a marcação é atribuída à fonte, não ao AEGIS');
+  assert(/no Entra ID \(registro da fonte\)/.test(label), 'a confirmação é atribuída à fonte, não ao AEGIS');
+  assert(!/potencialmente/i.test(label), 'uma confirmação registrada na fonte não é atenuada para "potencial"');
   assert(!/AEGIS confirmou|confirmado pelo AEGIS/i.test(label), 'o AEGIS não reivindica a confirmação');
 });
 

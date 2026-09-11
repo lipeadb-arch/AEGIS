@@ -43,9 +43,13 @@ public sealed class GenerateAdvisoryHandlerTests : IDisposable
         var dto = await handler.HandleAsync(new GenerateAdvisoryCommand("PR.AA-01"));
 
         dto.SubcategoryCode.Should().Be("PR.AA-01");
-        dto.Title.Should().Contain("MFA", "o Stub redige texto canned ancorado no código do controle");
+        // [AEGIS-LANGUAGE-STATES-01] O canned é ancorado no ESCOPO do controle (identidades e credenciais de
+        // usuários, serviços e dispositivos). MFA de contas privilegiadas é um passo, não o controle inteiro — a
+        // redação anterior ("Impor MFA em todas as contas privilegiadas") reduzia PR.AA-01 a esse exemplo.
+        dto.Title.Should().Contain("identidades e credenciais", "o Stub redige texto canned ancorado no controle");
         dto.DocumentedRisk.Should().NotBeNullOrWhiteSpace();
-        dto.TechnicalSteps.Should().Contain("Conditional Access");
+        dto.TechnicalSteps.Should().Contain("Conditional Access").And.Contain("aplicações",
+            "o passo a passo cobre também identidades de serviço, não só as pessoas administradoras");
 
         // Persistido de verdade: uma linha no ledger de advisories do tenant.
         await using var verify = NewContext(TenantA);

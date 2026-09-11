@@ -20,7 +20,7 @@ import { FederatedLoginService } from '../services/federated-login.service';
     <div class="login-wrap">
       <div class="login-card">
         <h1 class="title">AEGIS</h1>
-        <p class="sub">Acesso ao painel de maturidade cibernética</p>
+        <p class="sub">Acesso ao painel de postura e evidências de segurança</p>
 
         @if (selection(); as sel) {
           <!-- [AEGIS-AUD-012] Seleção explícita de ambiente: vários acessos sem último tenant válido. -->

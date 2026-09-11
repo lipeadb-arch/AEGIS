@@ -136,10 +136,18 @@ jobs:
       #     A contagem deste passo sobe de 400 para 404 (medida localmente com este MESMO filtro, em Release).
       #     A correção da CAUSA da remoção da fotografia acrescentou 1 caso na mesma classe (troca de
       #     fotografia que não herda o comprovante de remoção da anterior): 404 para 405.
+      #     [AEGIS-LANGUAGE-STATES-01] Estados de informação e linguagem. DashboardOverviewQueryTests (JÁ no filtro)
+      #     ganhou 3 casos — sem fonte × fonte sem coleta × primeira tentativa falha, última leitura preservada com
+      #     ressalva após falha recente, e zero de coleta parcial com ressalva de escopo: 405 para 408. Entram TRÊS
+      #     classes que já existiam e NUNCA rodavam no CI, porque o pacote as alterou: PostureExposureReconcilerTests
+      #     (estado da fonte no resumo e SourceReadings do contexto da IA), AegisAssessmentServiceTests (escalas
+      #     distintas e estado das fontes no prompt) e GenerateAdvisoryHandlerTests (canned de PR.AA-01 ancorado no
+      #     controle inteiro). Sem estas linhas elas não executariam e o check ficaria verde do mesmo jeito. A
+      #     contagem deste passo sobe de 408 para 437 (medida localmente com este MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
@@ -397,6 +405,8 @@ jobs:
       # PROTEGIDA, pulada pela retenção enquanto a fronteira avança, e removida depois pela cascata REAL da
       # exclusão do conector não é atribuída à retenção. A migration aditiva do comprovante entra na sequência
       # cumulativa de DatabaseUpgradePostgresTests (mesmo caso, sem teste novo ali). 57 para 58.
+      # [AEGIS-LANGUAGE-STATES-01] DashboardOverviewPostgresTests: o tenant sem conector passa a NoSource (antes
+      # NeverCollected) — ausência de fonte não é coleta pendente. Nenhum caso novo: a contagem permanece 58.
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'

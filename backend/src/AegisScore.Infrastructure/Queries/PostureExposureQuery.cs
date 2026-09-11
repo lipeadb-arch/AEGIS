@@ -63,13 +63,19 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
         // mas sem exposições, quando tudo foi resolvido, ou quando uma nova coleta não trouxe novo gap.
         var connector = await _db.Connectors.AsNoTracking()
             .Where(c => c.Provider == ConnectorProvider.Microsoft && c.Capability == ConnectorCapability.SecureScore)
-            .Select(c => new { c.Id, c.LastSyncAt })
+            .Select(c => new { c.Id, c.LastSyncAt, c.LastStatus })
             .FirstOrDefaultAsync(ct);
 
         var score = connector is null
             ? ((double?)null, (DateTimeOffset?)null)
             : await LatestSecureScoreAsync(connector.Id, ct);
-        var summary = BuildSummary(all, connector?.LastSyncAt, score);
+        var summary = BuildSummary(all, connector?.LastSyncAt, score) with
+        {
+            // [AEGIS-LANGUAGE-STATES-01] Estado da FONTE junto do resumo: "não configurado" × "configurado sem
+            // coleta" × "última leitura disponível com tentativa recente falha" deixam de chegar iguais à tela.
+            SourceConfigured = connector is not null,
+            LastAttemptStatus = connector?.LastStatus.ToString(),
+        };
 
         // Filtro da LISTA por ESTADO/CATEGORIA/SERVIÇO (o resumo reflete o tenant inteiro). A BUSCA por texto NÃO
         // entra aqui: [AEGIS-MVP-LANGUAGE-02] ela precisa enxergar a LINGUAGEM CLARA (DisplayTitle/PlainSummary),
@@ -183,13 +189,16 @@ public sealed class PostureExposureQuery : IPostureExposureQuery
         {
             // [AEGIS-MVP-LANGUAGE-02] SourceOnly: MOLDURA genérica em pt-BR — NUNCA finge tradução oficial. O título e a
             // remediação ORIGINAIS sanitizados permanecem nos detalhes como referência da fonte.
+            // [AEGIS-LANGUAGE-STATES-01] A moldura diz só o que a fonte comprova: há pontos da recomendação ainda não
+            // obtidos. Diferença de pontuação NÃO é, sozinha, configuração insegura confirmada nem exposição de ativo,
+            // e as ameaças listadas são as que a recomendação visa mitigar — não ameaças observadas no ambiente.
             var categoryPt = ExposureVocabulary.CategoryPt(r.Category);
             var serviceLabel = string.IsNullOrWhiteSpace(r.Service) ? "um serviço" : r.Service!.Trim();
             displayTitle = $"Revisar configuração de {categoryPt ?? "segurança"} em {serviceLabel}";
-            plainSummary = "A fonte identificou uma configuração que reduz a postura de segurança deste serviço.";
+            plainSummary = "A fonte indica pontos ainda não obtidos nesta recomendação de configuração para este serviço.";
             whyItMatters = threats.Count > 0
-                ? $"Relacionada a: {string.Join(", ", threats)}."
-                : "Pode facilitar ataques se não for revisada e corrigida.";
+                ? $"Segundo a fonte, a recomendação visa mitigar: {string.Join(", ", threats)}."
+                : "A fonte recomenda revisar esta configuração; o efeito no ambiente depende de validação.";
             firstAction = "Revise a configuração indicada pela fonte, valide o impacto em um grupo controlado e então aplique a correção.";
         }
 

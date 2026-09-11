@@ -7,7 +7,8 @@ namespace AegisScore.Api.Controllers;
 /// <summary>
 /// [AEGIS-MVP-MICROSOFT-COVERAGE-01] IDENTIFY (ID.AM) — leitura do INVENTÁRIO/EXPOSIÇÃO DE SOFTWARE (produto
 /// consolidado vendor+nome, correlacionado a ativos via instalação). Superfície DEDICADA e somente leitura — a
-/// tela consome esta rota como a aba "Software exposto" da área de Vulnerabilidades, sem novo item de menu.
+/// tela consome esta rota como a aba "Inventário de software" da área de Vulnerabilidades, sem novo item de menu
+/// ([AEGIS-LANGUAGE-STATES-01] antes rotulada "Software exposto": produto instalado não é, por si, exposição).
 ///
 /// Tenant 100% implícito: o Global Query Filter escopa toda leitura ao tenant do JWT. A coleta/reconciliação
 /// (escrita) é do pipeline de conectores; aqui nunca se cria/altera produto/instalação. Software Inventory é

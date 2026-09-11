@@ -365,6 +365,58 @@ public sealed class PostureExposureReconcilerTests : IDisposable
         rB.Items.Should().OnlyContain(i => i.ExternalId == "b-only");
     }
 
+    // ---- [AEGIS-LANGUAGE-STATES-01] Estado da FONTE no resumo e no contexto da IA -------------------
+
+    [Fact]
+    public async Task Query_SourceState_SeparatesNotConfigured_NeverCollected_AndFailedAttemptWithPreservedData()
+    {
+        var query = () => new PostureExposureQuery(NewContext(TenantA), new SystemTenantContext(TenantA), StaticExposureLanguageCatalog.Empty);
+
+        var none = await query().GetAsync(new PostureExposureFilter());
+        none.Summary.SourceConfigured.Should().BeFalse("sem conector, a integração não está configurada");
+        none.Summary.LastAttemptStatus.Should().BeNull();
+
+        // Coleta válida anterior + tentativa MAIS RECENTE falha: o executor carimba Failed sem apagar LastSyncAt.
+        var lastRead = DateTimeOffset.UtcNow.AddDays(-1);
+        var conn = await SeedSecureScoreConnectorAsync(TenantA, lastRead);
+        await ReconcileAsync(TenantA, conn, Collection(true, Finding("c1", 5, 10, 1)));
+        await using (var db = NewContext(TenantA))
+        {
+            var cfg = await db.Connectors.SingleAsync(c => c.Id == conn);
+            cfg.LastStatus = ConnectorStatus.Failed;
+            await db.SaveChangesAsync();
+        }
+
+        var failed = await query().GetAsync(new PostureExposureFilter());
+        failed.Summary.SourceConfigured.Should().BeTrue();
+        failed.Summary.LastAttemptStatus.Should().Be("Failed");
+        failed.Summary.LastCollectedAt.Should().BeCloseTo(lastRead, TimeSpan.FromSeconds(2),
+            "a falha recente não apaga a última leitura válida");
+        failed.Summary.TotalOpen.Should().Be(1, "os dados anteriores continuam visíveis");
+    }
+
+    [Fact]
+    public async Task AuditorContext_SourceReadings_NoSourceAndNeverCollected_AreNotZero()
+    {
+        var tc = new SystemTenantContext(TenantA);
+        AuditorContextBuilder Builder() => new(
+            NewContext(TenantA),
+            new WorkspacePostureQuery(NewContext(TenantA), tc),
+            new PostureExposureQuery(NewContext(TenantA), tc, StaticExposureLanguageCatalog.Empty),
+            new VulnerabilityQuery(NewContext(TenantA), tc),
+            new AegisScore.Infrastructure.Queries.DetectionCoverageQuery(NewContext(TenantA), tc, new FakeMitreCatalog()));
+
+        var semFonte = await Builder().BuildAsync();
+        semFonte.SourceReadings.Should().NotBeNull();
+        semFonte.SourceReadings!.Should().OnlyContain(r => r.State == "NoSource" && r.Value == null,
+            "sem integração a IA recebe AUSÊNCIA de fonte — nunca uma lista vazia que leria como zero");
+
+        await SeedSecureScoreConnectorAsync(TenantA, lastSyncAt: null);
+        var semColeta = await Builder().BuildAsync();
+        semColeta.SourceReadings![0].State.Should().Be("NeverCollected");
+        semColeta.SourceReadings![0].Value.Should().BeNull();
+    }
+
     // ---- 13) Contexto da IA contém somente os campos permitidos -----------------------------------
 
     [Fact]

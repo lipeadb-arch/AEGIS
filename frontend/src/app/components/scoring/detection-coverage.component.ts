@@ -22,7 +22,7 @@ import {
     <section class="dc">
       <header class="dc-head">
         <p class="eyebrow">SIEM · MITRE ATT&CK</p>
-        <h2>Cobertura de detecção</h2>
+        <h2>Cobertura de regras de detecção</h2>
         <p class="lede">
           Mostra como as regras do SIEM estão mapeadas ao MITRE ATT&amp;CK. Regras configuradas ajudam a
           enxergar a capacidade de detecção, mas não comprovam eficácia e não alteram o AEGIS Score.

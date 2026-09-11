@@ -173,14 +173,16 @@ public sealed class StubAssessmentService : IAiAssessmentService
         return Task.FromResult(plans);
     }
 
+    // [AEGIS-LANGUAGE-STATES-01] O texto canned afirmava maturidade e riscos ("política formalizada", "GV.SC
+    // incipiente") sem ter lido dado nenhum do ambiente — o fallback não pode preencher lacunas com conclusão.
     public Task<string> GenerateExecutiveReportAsync(ExecutiveReportRequest request, CancellationToken ct)
         => Task.FromResult(
             "# Plano Diretor de Segurança (Simulado)\n\n" +
             $"Cliente: **{request.ClientName}**.\n\n" +
-            "> Conteúdo gerado pelo motor de IA **simulado** (StubAssessmentService), sem chamada a LLM.\n\n" +
-            "## Maturidade atual\nControles de governança parcialmente estabelecidos; política formalizada, " +
-            "porém supervisão (GV.OV) e gestão de terceiros (GV.SC) ainda incipientes.\n\n" +
-            "## Principais riscos\nLacunas em oversight e na cadeia de suprimentos.\n");
+            "> Conteúdo gerado pelo motor de IA **simulado** (StubAssessmentService), sem chamada a LLM e **sem " +
+            "análise dos dados deste ambiente**.\n\n" +
+            "## Maturidade atual\nNão há dados suficientes neste modo simulado.\n\n" +
+            "## Principais riscos\nNão há dados suficientes neste modo simulado.\n");
 
     public Task<IReadOnlyList<NormalizedSignal>> NormalizeSignalsAsync(RawSignalBatch batch, CancellationToken ct)
         => Task.FromResult<IReadOnlyList<NormalizedSignal>>(Array.Empty<NormalizedSignal>());
@@ -216,7 +218,7 @@ public sealed class StubAssessmentService : IAiAssessmentService
     /// <summary>Foco canned por escopo (usado na resposta COPILOT simulada).</summary>
     private static string ScopeFocus(AuditorScope scope) => scope switch
     {
-        AuditorScope.Global => "a visão executiva do Secure Score: priorize as Funções com mais controles NonCompliant.",
+        AuditorScope.Global => "a visão executiva do AEGIS Score (controles NIST CSF avaliados): priorize as Funções com mais controles não conformes.",
         AuditorScope.Protect => "PR.AA/PR.DS: confirme MFA privilegiado (100%) e criptografia de endpoint (≥95%).",
         AuditorScope.Detect => "DE.AE/DE.CM: verifique cobertura de logs críticos (≥95%) e ativos críticos monitorados.",
         AuditorScope.Respond => "RS.MA/RS.MI: valide MTTA (≤30 min), MTTR (≤120 min) e isolamento automatizado.",
@@ -254,15 +256,18 @@ public sealed class StubAssessmentService : IAiAssessmentService
     /// <summary>Advisories canned por código de controle (foco no Protect — a Fase 1). Fallback: <see cref="FallbackAdvisory"/>.</summary>
     private static readonly Dictionary<string, AdvisoryDraft> AdvisoryBank = new()
     {
+        // [AEGIS-LANGUAGE-STATES-01] PR.AA-01 é o ciclo de vida de identidades e credenciais de usuários, serviços
+        // e dispositivos. O texto anterior reduzia o controle inteiro a "MFA para administradores" — um exemplo.
         ["PR.AA-01"] = new AdvisoryDraft(
-            "Impor MFA em todas as contas privilegiadas via Conditional Access",
-            "Contas administrativas sem MFA são o vetor nº 1 de comprometimento de identidade: uma única " +
-            "credencial privilegiada vazada concede movimento lateral e escalonamento imediatos, sem barreira adicional.",
-            "1. No Entra ID, crie uma política de Conditional Access mirando o grupo de contas privilegiadas.\n" +
-            "2. Exija 'Grant access → Require multifactor authentication'.\n" +
-            "3. Publique em modo Report-only, valide os sign-ins e então mude para On (Enforce).\n" +
-            "4. Bloqueie a autenticação legada (POP/IMAP/SMTP), que ignora o MFA.\n" +
-            "5. Evidencie 100% de cobertura no relatório de métodos de autenticação."),
+            "Controlar o ciclo de vida de identidades e credenciais",
+            "[Simulado] Identidades e credenciais sem ciclo de vida controlado — contas sem responsável, credenciais " +
+            "de aplicações que ninguém revisa, acesso privilegiado sem segundo fator — permitem acesso indevido " +
+            "difícil de perceber. O efeito concreto neste ambiente depende da avaliação dos dados coletados.",
+            "1. Inventarie as identidades de usuários, serviços/aplicações e dispositivos, cada uma com responsável.\n" +
+            "2. Defina e registre criação, alteração e remoção (entrada, mudança de função e saída).\n" +
+            "3. Exija MFA, começando pelas contas privilegiadas (Conditional Access em Report-only, depois On).\n" +
+            "4. Revise e rotacione credenciais de aplicações e contas de serviço; remova as sem uso comprovado.\n" +
+            "5. Guarde as revisões e o relatório de métodos de autenticação como evidência para a reavaliação."),
         ["PR.DS-01"] = new AdvisoryDraft(
             "Cifrar dados em repouso nos endpoints e eliminar tráfego em claro",
             "Endpoints sem criptografia de disco e tráfego não cifrado expõem dados sensíveis a exfiltração " +
@@ -290,15 +295,17 @@ public sealed class StubAssessmentService : IAiAssessmentService
     };
 
     /// <summary>Recomendação genérica para um controle fora do banco canned — ancorada no próprio código.</summary>
+    // [AEGIS-LANGUAGE-STATES-01] O fallback atribuía ao Microsoft Secure Score o resultado de um controle NIST
+    // ("reduz o Secure Score") e afirmava exposição sem evidência. São escalas distintas.
     private static AdvisoryDraft FallbackAdvisory(string code) => new(
         $"Fechar a lacuna do controle {code}",
-        $"[Simulado] O controle {code} está não-conforme no ledger do tenant. A ausência de evidência técnica " +
-        "deste controle mantém uma lacuna de postura que reduz o Secure Score e eleva a exposição associada.",
+        $"[Simulado] O controle {code} está não conforme na avaliação AEGIS deste ambiente. Enquanto a evidência " +
+        "exigida não for apresentada, a lacuna permanece aberta; o efeito concreto no ambiente depende de avaliação.",
         $"[Simulado · configure Ai:ApiKey para texto real] Recomendação para {code}:\n" +
         "1. Identifique a evidência técnica exigida pela subcategoria NIST.\n" +
         "2. Implemente/ajuste o controle na plataforma correspondente.\n" +
-        "3. Colete a telemetria que comprove a implementação efetiva.\n" +
-        "4. Reavalie o controle no Aegis Score para elevar o score.");
+        "3. Colete a telemetria ou o documento que comprove a implementação efetiva.\n" +
+        "4. Reavalie o controle no AEGIS com a nova evidência.");
 
     // ---- helpers ----
 

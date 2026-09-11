@@ -44,8 +44,9 @@ export const routes: Routes = [
   { path: 'history', component: PostureHistoryComponent, canActivate: [authGuard], title: 'Aegis · Histórico de Postura' },
   // [AEGIS-MVP-PRIORITIES-01] Central operacional de prioridades — compõe postura + exposições + vulnerabilidades.
   { path: 'priorities', component: PrioritiesComponent, canActivate: [authGuard], title: 'Aegis · Central de Prioridades' },
-  // [AEGIS-MVP-POSTURE-02] Exposições de configuração (postura cloud-first) — Microsoft Secure Score real.
-  { path: 'exposures', component: PostureExposuresComponent, canActivate: [authGuard], title: 'Aegis · Exposições de Configuração' },
+  // [AEGIS-MVP-POSTURE-02] Recomendações de postura — fonte: Microsoft Secure Score. [AEGIS-LANGUAGE-STATES-01] O
+  // caminho /exposures é contrato (links e favoritos); só o nome apresentado mudou.
+  { path: 'exposures', component: PostureExposuresComponent, canActivate: [authGuard], title: 'Aegis · Recomendações de postura' },
   // [AEGIS-MVP-VULN-01] Vulnerabilidades (ativo×CVE) multicloud — Microsoft Defender como primeira fonte.
   { path: 'vulnerabilities', component: VulnerabilitiesComponent, canActivate: [authGuard], title: 'Aegis · Vulnerabilidades' },
   { path: 'detect', component: DetectDashboardComponent, canActivate: [authGuard], title: 'Aegis · Detect (DE)' },

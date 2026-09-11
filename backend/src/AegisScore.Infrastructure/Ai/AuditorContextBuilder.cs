@@ -150,6 +150,16 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
                     .ToList())
             : null;
 
+        // [AEGIS-LANGUAGE-STATES-01] Estado de LEITURA das fontes pela MESMA derivação da Visão geral: sem isto,
+        // TopExposures/TopVulnerabilities vazios chegavam à IA iguais a "coletado sem achados".
+        var sourceReadings = new[]
+        {
+            ToReading(CollectionReadings.PostureRecommendationsLabel + " pendentes",
+                CollectionReadings.PostureRecommendations(exposurePage.Summary)),
+            ToReading("Vulnerabilidades em aberto (problemas distintos)",
+                CollectionReadings.Vulnerabilities(vulnOverview.Summary, vulnOverview.Summary.DistinctCvesOpen)),
+        };
+
         // Recomendações pendentes derivadas das lacunas (curtas, sem inventar): "código: o que falta".
         var recommendations = topGaps
             .Select(g => string.IsNullOrWhiteSpace(g.Reason) ? g.SubcategoryCode : $"{g.SubcategoryCode}: {g.Reason}")
@@ -172,8 +182,12 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
             recommendations,
             topExposures,
             topVulnerabilities,
-            detectionCoverage);
+            detectionCoverage,
+            sourceReadings);
     }
+
+    private static AuditorSourceReading ToReading(string dimension, DashboardMetricDto m) =>
+        new(dimension, m.SourceLabel, m.State.ToString(), m.Value, m.ObservedAt, m.Note);
 
     private static string Truncate(string? s, int max)
     {

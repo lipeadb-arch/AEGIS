@@ -98,6 +98,42 @@ public sealed class AegisAssessmentServiceTests
         llm.LastUserPrompt.Should().Contain("GV.SC-01", "a lacuna do tenant precisa chegar ao modelo como fato");
     }
 
+    // [AEGIS-LANGUAGE-STATES-01] A IA recebe o ESTADO de leitura das fontes e a regra das escalas distintas: sem
+    // isso, uma lista vazia de recomendações chegava igual a "coletado sem achados", e o foco GLOBAL mandava
+    // relatar "o Secure Score atual" com números que eram do AEGIS Score (controles NIST).
+    [Fact]
+    public async Task ChatAsync_ContextoLevaEstadoDasFontes_E_PromptSeparaAsEscalas()
+    {
+        var llm = new CapturingLlmClient(RouterJson("COPILOT", "ok", null));
+        var sut = CreateService(llm);
+        var context = new AuditorTenantContext(
+            ScoreState: "Evaluated", ScorePercentage: 62.5, CoveragePercentage: 80,
+            CompliantControls: 10, NonCompliantControls: 3, MitigatedControls: 1, NotEvaluatedControls: 5,
+            LatestEvidenceAt: null,
+            Functions: Array.Empty<AuditorFunctionPosture>(),
+            TopGaps: Array.Empty<AuditorControlGap>(),
+            RecentEvidence: Array.Empty<AuditorDocumentEvidence>(),
+            Connectors: new AuditorConnectorContext(1, 1, 0, 0, 0, 1, null),
+            PendingRecommendations: Array.Empty<string>(),
+            SourceReadings: new[]
+            {
+                new AuditorSourceReading("Recomendações de postura pendentes", "Microsoft Secure Score",
+                    "NeverCollected", null, null, "Fonte configurada; nenhuma coleta concluída ainda."),
+            });
+
+        await sut.ChatAsync(
+            new AuditorChatRequest(AuditorScope.Global, Array.Empty<AuditorMessage>(), "resuma", context),
+            CancellationToken.None);
+
+        llm.LastUserPrompt.Should().Contain("\"state\":\"NeverCollected\"",
+            "o estado de coleta chega como fato, e não como lista vazia");
+        llm.LastUserPrompt.Should().Contain("\"value\":null", "ausência de leitura não vira zero no contexto");
+        llm.LastSystemPrompt.Should().Contain("AUSÊNCIA DE COLETA");
+        llm.LastSystemPrompt.Should().Contain("NÃO é o Microsoft Secure");
+        llm.LastSystemPrompt.Should().NotContain("relatórios executivos do Secure Score",
+            "o foco global é a postura AEGIS; o Secure Score é índice da fonte");
+    }
+
     // ---- Modo demonstrativo: contexto de laboratório sintético (SÓ ExternalDemo) ----
 
     [Fact]

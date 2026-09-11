@@ -61,7 +61,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
           <span class="sub">NIST CSF 2.0 · Govern (GV)</span>
         </div>
         <div class="client">
-          <span class="label">Cobertura GV</span>
+          <span class="label" title="Categorias GV com documentação que cita a execução do controle — cobertura documental, não conformidade">Cobertura documental GV</span>
           <span class="name">
             @if (coverage(); as cov) {
               {{ cov.coveredPct }}%
@@ -383,8 +383,12 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
                 <td colspan="7">
                   @if (loading()) {
                     Carregando documentos…
+                  } @else if (loadError()) {
+                    Documentos indisponíveis no momento — veja o aviso acima.
+                  } @else if (typeFilter() || statusFilter()) {
+                    Nenhum documento corresponde aos filtros atuais.
                   } @else {
-                    Nenhum documento ingerido ainda. Sincronize as fontes ou envie o primeiro acima.
+                    Nenhum documento ingerido ainda. Envie o primeiro acima.
                   }
                 </td>
               </tr>

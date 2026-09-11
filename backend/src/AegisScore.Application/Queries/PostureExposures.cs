@@ -94,10 +94,20 @@ public sealed record PostureExposureItemDto(
 public sealed record PostureExposureCategoryCountDto(string Category, int Open);
 
 /// <summary>
-/// Resumo da postura de exposição do tenant. <see cref="LastCollectedAt"/> é a última coleta observada
-/// (null = "Ainda não coletado", NUNCA 0). <see cref="LatestSecureScorePercent"/> é o Secure Score geral
-/// mais recente coletado (do sinal <c>secureScore.overall</c>) — null quando ainda não há coleta.
+/// Resumo das recomendações de postura do tenant. <see cref="LastCollectedAt"/> é a última coleta observada
+/// (null = "Ainda não coletado", NUNCA 0). <see cref="LatestSecureScorePercent"/> é o índice geral do Microsoft
+/// Secure Score mais recente coletado (do sinal <c>secureScore.overall</c>) — é o índice DA FONTE, não o AEGIS
+/// Score — e fica null quando ainda não há coleta.
 /// </summary>
+/// <param name="SourceConfigured">
+/// [AEGIS-LANGUAGE-STATES-01] Existe conector Microsoft/SecureScore neste tenant? Separa "integração não
+/// configurada" de "configurada e ainda não coletada" — sem isso as duas situações chegavam iguais (tudo nulo).
+/// </param>
+/// <param name="LastAttemptStatus">
+/// Desfecho da tentativa MAIS RECENTE do conector (<c>Healthy</c>/<c>Degraded</c>/<c>Failed</c>/<c>Syncing</c>/
+/// <c>Unknown</c>); null sem conector. Uma tentativa falha NÃO apaga <see cref="LastCollectedAt"/>: os números
+/// continuam sendo a última leitura válida, e a tela precisa dizer que a tentativa seguinte falhou.
+/// </param>
 public sealed record PostureExposureSummaryDto(
     string SourceLabel,
     int TotalOpen,
@@ -105,7 +115,9 @@ public sealed record PostureExposureSummaryDto(
     IReadOnlyList<PostureExposureCategoryCountDto> OpenByCategory,
     DateTimeOffset? LastCollectedAt,
     double? LatestSecureScorePercent,
-    DateTimeOffset? LatestSecureScoreAt);
+    DateTimeOffset? LatestSecureScoreAt,
+    bool SourceConfigured = false,
+    string? LastAttemptStatus = null);
 
 /// <summary>Página de exposições + resumo. <see cref="Total"/> é a contagem FILTRADA (para paginação).</summary>
 public sealed record PostureExposureListDto(

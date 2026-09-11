@@ -60,7 +60,7 @@ import {
       <div class="counts kpis">
         <div class="count fail" [class.hot]="(usersCap()?.hasData ?? false) && (risk()?.riskyUsers?.active ?? 0) > 0">
           <span class="n">{{ countDisplay(usersCap(), risk()?.riskyUsers?.active) }}</span>
-          <span class="l">Usuários que exigem investigação</span>
+          <span class="l">Usuários com risco em aberto (segundo a fonte)</span>
         </div>
         <div class="count">
           <span class="n">{{ countDisplay(usersCap(), risk()?.riskyUsers?.highRiskActive) }}</span>
@@ -68,7 +68,7 @@ import {
         </div>
         <div class="count">
           <span class="n">{{ countDisplay(usersCap(), risk()?.riskyUsers?.states?.confirmedCompromised) }}</span>
-          <span class="l">A Microsoft marcou como potencialmente comprometidas</span>
+          <span class="l">Confirmadas como comprometidas no Entra ID (registro da fonte)</span>
         </div>
         <div class="count">
           <span class="n">{{ countDisplay(detectionsCap(), risk()?.detections?.active) }}</span>

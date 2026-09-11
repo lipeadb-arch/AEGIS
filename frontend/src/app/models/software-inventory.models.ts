@@ -1,5 +1,5 @@
 /**
- * [AEGIS-MVP-MICROSOFT-COVERAGE-01] Contratos da aba "Software exposto" (inventário/exposição de software).
+ * [AEGIS-MVP-MICROSOFT-COVERAGE-01] Contratos da aba "Inventário de software" (antes rotulada "Software exposto").
  * Espelham os DTOs do backend (`AegisScore.Application/Queries/SoftwareInventory.cs`).
  *
  * A UNIDADE é o PRODUTO consolidado (vendor + nome, SEM versão); os ativos relacionados (com a versão observada)
@@ -99,6 +99,58 @@ export interface SoftwareInventoryQueryParams {
   assetId?: string;
   page?: number;
   pageSize?: number;
+}
+
+// ---- [AEGIS-LANGUAGE-STATES-01] Estados de informação e ciclo de vida do inventário de software ----
+// Produto instalado ou observado NÃO é, por si, "software exposto": fraquezas, exploit público e alerta são
+// informações da fonte que acompanham o produto, cada uma com o próprio significado.
+
+/** Ciclo de vida do produto/instalação: "Resolved" do coletor = não mais observado pela fonte. */
+export function softwareLifecyclePt(state: string): string {
+  return state === 'Resolved' ? 'Não mais observado' : 'Observado';
+}
+
+export interface SoftwareReading {
+  /** Existe leitura com números? Só então contagens podem aparecer (inclusive 0). */
+  hasData: boolean;
+  /** Estado vazio explicado, ou a ressalva (parcial / última tentativa sem sucesso) que acompanha os números. */
+  notice: string | null;
+}
+
+const SUCCESSFUL_ATTEMPT = new Set(['Available', 'Partial']);
+
+/**
+ * O que a aba pode afirmar sobre a leitura de software. Coleta PARCIAL é contagem parcial dos itens observados
+ * (não o inventário inteiro — e, como as observações podem vir de momentos diferentes, também não é limite
+ * inferior do inventário atual) e uma tentativa recente sem sucesso não esconde os dados preservados — ambos
+ * viram aviso junto dos números.
+ */
+export function softwareReading(s: SoftwareInventorySummary | null | undefined): SoftwareReading {
+  if (!s) return { hasData: false, notice: null };
+
+  if (s.neverCollected) {
+    if (s.sources.length === 0)
+      return { hasData: false, notice: 'Nenhuma fonte Microsoft Defender está configurada neste ambiente.' };
+    const blocked = s.sources.find((x) => x.lastAttemptState && !SUCCESSFUL_ATTEMPT.has(x.lastAttemptState)
+      && x.lastAttemptState !== 'NeverCollected');
+    return {
+      hasData: false,
+      notice: blocked
+        ? `A fonte está configurada, mas a tentativa mais recente não trouxe software: ${softwareCollectionStatePt(blocked.lastAttemptState).toLowerCase()}.`
+        : 'A fonte está configurada, mas nenhuma coleta de software foi concluída ainda.',
+    };
+  }
+
+  const notes: string[] = [];
+  if (s.sources.some((x) => x.collectionState === 'Partial'))
+    notes.push('Coleta parcial: os números são uma contagem parcial dos itens observados pela fonte, não o inventário inteiro.');
+  const stale = s.sources.filter((x) => x.lastCollectionAt && x.lastAttemptState && !SUCCESSFUL_ATTEMPT.has(x.lastAttemptState));
+  if (stale.length > 0)
+    notes.push('A tentativa mais recente de coleta não teve sucesso; os números são a última leitura disponível.');
+  const pending = s.sources.filter((x) => !x.lastCollectionAt).length;
+  if (pending > 0)
+    notes.push(`${pending} fonte(s) ainda sem coleta de software — os números cobrem apenas as fontes já coletadas.`);
+  return { hasData: true, notice: notes.length ? notes.join(' ') : null };
 }
 
 /** Estados de coleta da dimensão de software — pt-BR (mesmo vocabulário do backend, sem zero sintético). */

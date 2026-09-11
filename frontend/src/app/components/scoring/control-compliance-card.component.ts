@@ -156,10 +156,11 @@ type AdvisoryUiState =
                 </section>
               }
 
-              <!-- Mapeamento de Ameaças: o que esta falha abre. -->
+              <!-- [AEGIS-LANGUAGE-STATES-01] Ameaças que o controle ajuda a MITIGAR (referência do catálogo) — não
+                   ameaças observadas neste ambiente. -->
               @if (c.threatLandscape.length > 0) {
                 <section class="sec">
-                  <span class="k">Mapeamento de Ameaças</span>
+                  <span class="k">Ameaças que o controle ajuda a mitigar · referência, não ameaça observada</span>
                   <ul class="threats">
                     @for (t of c.threatLandscape; track t) {
                       <li class="threat">{{ t }}</li>

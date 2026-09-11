@@ -155,7 +155,8 @@ export interface IdentityEvidenceProjection {
 
 // ---- Linguagem operacional ---------------------------------------------------------------------
 // Nomes crus de enum (confirmedCompromised, atRisk…) NÃO aparecem na visão inicial. E em nenhum lugar o
-// AEGIS afirma ter confirmado um comprometimento — quem marcou foi a Microsoft.
+// AEGIS afirma ter confirmado um comprometimento: `confirmedCompromised` é um REGISTRO da fonte (confirmação
+// feita no Entra ID), apresentado como tal — nem atenuado para "potencial", nem atribuído ao AEGIS.
 
 const OUTCOME_LABEL: Record<IdentityRiskOutcome, string> = {
   Collected: 'Coletado',
@@ -346,10 +347,10 @@ export function levelSlices(levels: IdentityRiskLevels | null): { key: string; l
 export function stateSlices(states: IdentityRiskStates | null): { key: string; label: string; count: number }[] {
   if (!states) return [];
   const all = [
-    { key: 'atRisk', label: 'Exigem investigação', count: states.atRisk },
-    { key: 'confirmedCompromised', label: 'Marcadas como potencialmente comprometidas', count: states.confirmedCompromised },
-    { key: 'remediated', label: 'Corrigidas', count: states.remediated },
-    { key: 'dismissed', label: 'Descartadas pela equipe', count: states.dismissed },
+    { key: 'atRisk', label: 'Em risco, segundo a fonte', count: states.atRisk },
+    { key: 'confirmedCompromised', label: 'Confirmadas como comprometidas no Entra ID (registro da fonte)', count: states.confirmedCompromised },
+    { key: 'remediated', label: 'Remediadas na fonte', count: states.remediated },
+    { key: 'dismissed', label: 'Risco descartado na fonte', count: states.dismissed },
     { key: 'confirmedSafe', label: 'Confirmadas seguras', count: states.confirmedSafe },
     { key: 'none', label: 'Sem estado de risco', count: states.none },
     { key: 'unknown', label: 'Estado desconhecido', count: states.unknown },

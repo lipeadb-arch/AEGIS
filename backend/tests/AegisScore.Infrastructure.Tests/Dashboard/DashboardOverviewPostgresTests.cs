@@ -147,9 +147,11 @@ public sealed class DashboardOverviewPostgresTests
 
             overview.ClientName.Should().Be("Outro Cliente");
             overview.Environment.Assets.Value.Should().Be(1, "apenas o próprio ativo — jamais os 2 do tenant A");
-            overview.Environment.ConfigurationExposures.State.Should().Be(DashboardSignalState.NeverCollected);
+            // [AEGIS-LANGUAGE-STATES-01] O tenant B não tem conector algum: o que está provado é a AUSÊNCIA de
+            // fonte, não uma coleta pendente. Antes os dois casos chegavam iguais (NeverCollected).
+            overview.Environment.ConfigurationExposures.State.Should().Be(DashboardSignalState.NoSource);
             overview.Environment.ConfigurationExposures.Value.Should().BeNull("sem coleta o valor é nulo, nunca 0");
-            overview.Environment.Vulnerabilities.State.Should().Be(DashboardSignalState.NeverCollected);
+            overview.Environment.Vulnerabilities.State.Should().Be(DashboardSignalState.NoSource);
             overview.Environment.Vulnerabilities.Value.Should().BeNull();
             overview.Environment.Identity.State.Should().Be(DashboardSignalState.NoSource);
             overview.Sources.Items.Should().BeEmpty("os conectores do tenant A não podem aparecer aqui");
