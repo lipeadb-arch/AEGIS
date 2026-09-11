@@ -319,10 +319,9 @@ import {
             }
           </div>
 
-          <!-- ---- Lacuna de correlação (registrada, nunca estimada) ---- -->
-          @if (!view()!.correlation.deterministicCorrelationAvailable) {
-            <div class="notice">{{ view()!.correlation.explanation }}</div>
-          }
+          <!-- ---- Correlação com outras fontes: lacuna registrada (nunca estimada) ou contagens REAIS do vínculo por
+               identificador de diretório [AEGIS-ENTITY-RESOLUTION-01]. O texto vem do backend (autoridade única). ---- -->
+          <div class="notice">{{ view()!.correlation.explanation }}</div>
 
           <footer class="dp-foot">
             <span>Fonte: {{ view()!.source }}</span>
