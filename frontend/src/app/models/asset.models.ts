@@ -58,8 +58,39 @@ export interface AssetSourceDiagnostics {
   directoryNamespace: string | null;
   directoryDeviceId: string | null;
   conflictDirectoryDeviceId: string | null;
+  /** Diretório da observação contraditória — separado do vínculo estabelecido; nulo = não registrado. */
+  conflictDirectoryNamespace: string | null;
+  /** Identificadores contraditórios trazidos pela MESMA coleta para o registro (vazio fora dessa situação). */
+  conflictObservedDeviceIds: string[];
   linkedAt: string | null;
   resolutionEvaluatedAt: string | null;
+}
+
+/** Par (diretório, identificador) da observação que contradiz o vínculo — mostrado à parte do vínculo estabelecido. */
+export interface ConflictObservation {
+  /** Diretório observado; "não registrado" quando o conflito é anterior ao registro do diretório (nada é inventado). */
+  directory: string;
+  directoryRecorded: boolean;
+  identifier: string;
+}
+
+/**
+ * Observação conflitante do diagnóstico restrito, ou nulo quando não há par observado (inclui a contradição na mesma
+ * coleta, que traz a LISTA de identificadores e não um par). Diagnóstico ausente (papel sem acesso) = nulo.
+ */
+export function conflictObservation(diag: AssetSourceDiagnostics | null | undefined): ConflictObservation | null {
+  if (!diag?.conflictDirectoryDeviceId) return null;
+  const recorded = !!diag.conflictDirectoryNamespace;
+  return {
+    directory: recorded ? diag.conflictDirectoryNamespace! : 'não registrado',
+    directoryRecorded: recorded,
+    identifier: diag.conflictDirectoryDeviceId,
+  };
+}
+
+/** Identificadores contraditórios da mesma coleta; vazio quando não há (ou quando a API antiga não envia o campo). */
+export function contradictoryObservedIds(diag: AssetSourceDiagnostics | null | undefined): string[] {
+  return diag?.conflictObservedDeviceIds ?? [];
 }
 
 export interface AssetSourceRecord {

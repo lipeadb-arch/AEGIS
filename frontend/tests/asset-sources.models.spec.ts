@@ -6,8 +6,11 @@
  * vínculo não é segurança; e fontes desconhecidas não recebem nome inventado. Compiladas por `tsc`, executadas por `node`.
  */
 import {
+  AssetSourceDiagnostics,
   AssetSourceSummary,
   LINK_MEANING_SHORT,
+  conflictObservation,
+  contradictoryObservedIds,
   crossSourceTone,
   joinSourceFacts,
   recordResolutionTone,
@@ -111,6 +114,48 @@ test('nomes curtos só para fontes conhecidas; o resto passa como veio', () => {
 test('fatos da fonte ignoram ausentes', () => {
   eq(joinSourceFacts('Conforme, segundo a fonte', null, undefined, ' '), 'Conforme, segundo a fonte', 'só o que existe');
   eq(joinSourceFacts(null, null), '', 'nada a dizer');
+});
+
+function diag(over: Partial<AssetSourceDiagnostics>): AssetSourceDiagnostics {
+  return {
+    externalId: 'maq-sintetica-01',
+    directoryNamespace: 'dir-a',
+    directoryDeviceId: 'id-x',
+    conflictDirectoryDeviceId: null,
+    conflictDirectoryNamespace: null,
+    conflictObservedDeviceIds: [],
+    linkedAt: null,
+    resolutionEvaluatedAt: null,
+    ...over,
+  };
+}
+
+test('conflito: o par observado (diretório, identificador) aparece à parte do vínculo estabelecido', () => {
+  const changedDir = conflictObservation(diag({ conflictDirectoryNamespace: 'dir-b', conflictDirectoryDeviceId: 'id-x' }));
+  eq(changedDir!.directory, 'dir-b', 'diretório observado, não o do vínculo');
+  eq(changedDir!.identifier, 'id-x', 'identificador observado');
+  eq(changedDir!.directoryRecorded, true, 'diretório registrado');
+  const both = conflictObservation(diag({ conflictDirectoryNamespace: 'dir-b', conflictDirectoryDeviceId: 'id-y' }));
+  eq(`${both!.directory}|${both!.identifier}`, 'dir-b|id-y', 'diretório e identificador mudaram: o par inteiro');
+});
+
+test('conflito legado: diretório não registrado é dito como tal, nunca herdado do vínculo', () => {
+  const legacy = conflictObservation(diag({ conflictDirectoryNamespace: null, conflictDirectoryDeviceId: 'id-y' }));
+  eq(legacy!.directory, 'não registrado', 'não inventa o diretório da observação');
+  eq(legacy!.directoryRecorded, false, 'marcado como não registrado');
+  eq(legacy!.directory === 'dir-a', false, 'o diretório do vínculo não é reaproveitado');
+});
+
+test('contradição na mesma coleta: lista de identificadores, sem par inventado; sem diagnóstico, nada', () => {
+  const d = diag({ conflictDirectoryNamespace: 'dir-a', conflictObservedDeviceIds: ['id-x', 'id-y'] });
+  eq(conflictObservation(d), null, 'contradição não vira par observado');
+  eq(contradictoryObservedIds(d).join(','), 'id-x,id-y', 'os dois valores, na ordem do backend');
+  eq(conflictObservation(diag({})), null, 'sem conflito, sem par');
+  eq(contradictoryObservedIds(diag({})).length, 0, 'sem contradição, lista vazia');
+  eq(conflictObservation(null), null, 'papel sem diagnóstico: nada');
+  eq(contradictoryObservedIds(undefined).length, 0, 'papel sem diagnóstico: nada');
+  const oldApi = { ...diag({}), conflictObservedDeviceIds: undefined } as unknown as AssetSourceDiagnostics;
+  eq(contradictoryObservedIds(oldApi).length, 0, 'campo ausente não quebra a tela');
 });
 
 console.log(`\n${count - failures}/${count} testes de lógica do frontend (asset-sources) aprovados.`);

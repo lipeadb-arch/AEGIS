@@ -9,6 +9,8 @@ import {
   RISK_LEVELS,
   RiskLevel,
   categoryLabel,
+  conflictObservation,
+  contradictoryObservedIds,
   crossSourceTone,
   joinSourceFacts,
   recordResolutionTone,
@@ -299,8 +301,20 @@ import {
                                         Identificador de dispositivo (Entra): <code>{{ diag.directoryDeviceId ?? '—' }}</code>
                                         · {{ s.identifierStatusLabel }}
                                       </div>
-                                      @if (diag.conflictDirectoryDeviceId) {
-                                        <div>Identificador contraditório observado: <code>{{ diag.conflictDirectoryDeviceId }}</code></div>
+                                      @if (conflictPair(diag); as pair) {
+                                        <div>
+                                          Observação que contradiz o vínculo: diretório
+                                          @if (pair.directoryRecorded) { <code>{{ pair.directory }}</code> } @else { {{ pair.directory }} }
+                                          · identificador <code>{{ pair.identifier }}</code>
+                                        </div>
+                                      }
+                                      @if (contradictoryIds(diag); as ids) {
+                                        @if (ids.length) {
+                                          <div>
+                                            Identificadores contraditórios na mesma coleta:
+                                            @for (v of ids; track v) { <code>{{ v }}</code> }
+                                          </div>
+                                        }
                                       }
                                     </details>
                                   }
@@ -578,6 +592,8 @@ export class AssetInventoryComponent implements OnInit {
   protected readonly tone = crossSourceTone;
   protected readonly recordTone = recordResolutionTone;
   protected readonly joinFacts = joinSourceFacts;
+  protected readonly conflictPair = conflictObservation;
+  protected readonly contradictoryIds = contradictoryObservedIds;
 
   toggleSources(assetId: string): void {
     if (this.expanded() === assetId) {
