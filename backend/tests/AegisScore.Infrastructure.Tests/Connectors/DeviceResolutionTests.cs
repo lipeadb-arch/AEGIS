@@ -1114,6 +1114,9 @@ internal sealed class SyntheticDeviceSources
     public string IntuneDevices { get; set; } = Page();
     public Func<HttpRequestMessage, (HttpStatusCode, string)>? IntuneRoute { get; set; }
 
+    /// <summary>Rota PRIORITÁRIA do Defender (ex.: 403 numa só dimensão); devolver null segue o roteamento normal.</summary>
+    public Func<HttpRequestMessage, (HttpStatusCode, string)?>? DefenderRoute { get; set; }
+
     // Segunda página REAL (via @odata.nextLink na origem oficial): quando definida, a primeira resposta aponta para
     // ela — é assim que se prova que o resultado não depende da ordem das páginas.
     public string? DefenderMachinesPage2 { get; set; }
@@ -1153,8 +1156,10 @@ internal sealed class SyntheticDeviceSources
         EncryptedSettings = "{\"tenantId\":\"" + directory + "\",\"clientId\":\"app-sintetico\",\"clientSecret\":\"segredo-sintetico\"}",
     };
 
+    /// <param name="checkpoint">Barreira opcional repassada ao executor (pontos do reconciliador de software).</param>
     public async Task<PullIngestionResult> SyncAsync(
-        DbContextOptions<AegisScoreDbContext> options, Guid tenant, Guid connectorId)
+        DbContextOptions<AegisScoreDbContext> options, Guid tenant, Guid connectorId,
+        Func<string, CancellationToken, Task>? checkpoint = null)
     {
         ConnectorConfig config;
         await using (var db = new AegisScoreDbContext(options, new SystemTenantContext(tenant)))
@@ -1167,7 +1172,10 @@ internal sealed class SyntheticDeviceSources
                 new FakeTimeProvider(Now.AddSeconds(Interlocked.Increment(ref _syncs)))));
         var executor = new EvidenceIngestionExecutor(
             options, new NistSignalMapper(new AegisScoreDbContext(options, new SystemTenantContext(null))),
-            new Payload(), registry, NullLogger<EvidenceIngestionExecutor>.Instance, NullLogger<ControlStateWriter>.Instance);
+            new Payload(), registry, NullLogger<EvidenceIngestionExecutor>.Instance, NullLogger<ControlStateWriter>.Instance)
+        {
+            Checkpoint = checkpoint,
+        };
         return (await executor.CollectPullAsync(config, CancellationToken.None))!;
     }
 
@@ -1205,6 +1213,16 @@ internal sealed class SyntheticDeviceSources
     public static string Install(string machineId) =>
         "{\"deviceId\":" + Q(machineId) + ",\"softwareVendor\":\"google\",\"softwareName\":\"chrome\",\"softwareVersion\":\"1.0\"}";
 
+    /// <summary>Instalação de SoftwareInventoryByMachine com fornecedor/produto/versão escolhidos pelo teste.</summary>
+    public static string Install(string machineId, string vendor, string name, string version) =>
+        "{\"deviceId\":" + Q(machineId) + ",\"softwareVendor\":" + Q(vendor) + ",\"softwareName\":" + Q(name) +
+        ",\"softwareVersion\":" + Q(version) + "}";
+
+    /// <summary>Produto de /api/Software com todos os campos do contrato oficial.</summary>
+    public static string Product(string id, string vendor, string name, int weaknesses) =>
+        "{\"id\":" + Q(id) + ",\"name\":" + Q(name) + ",\"vendor\":" + Q(vendor) + ",\"weaknesses\":" + weaknesses +
+        ",\"publicExploit\":false,\"activeAlert\":false,\"exposedMachines\":1,\"impactScore\":1.5}";
+
     // ---- Transporte sintético -------------------------------------------------------------------------------------
 
     private static bool IsToken(HttpRequestMessage req) =>
@@ -1213,6 +1231,7 @@ internal sealed class SyntheticDeviceSources
     private HttpMessageHandler DefenderHandler() => new Stub(req =>
     {
         if (IsToken(req)) return (HttpStatusCode.OK, TokenJson);
+        if (DefenderRoute?.Invoke(req) is { } routed) return routed;
         var p = req.RequestUri!.AbsolutePath;
         if (p.Contains("SoftwareInventoryByMachine")) return (HttpStatusCode.OK, DefenderInstalls);
         if (p.Contains("machinesVulnerabilities")) return (HttpStatusCode.OK, DefenderRelations);

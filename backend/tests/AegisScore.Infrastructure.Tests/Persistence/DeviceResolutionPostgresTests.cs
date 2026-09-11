@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Api.Contracts;
@@ -435,6 +437,375 @@ public sealed class DeviceResolutionPostgresTests
         m1.LastSeenAt.Should().Be(t2, "LastSeenAt nunca regride para a fotografia anterior");
         m2.LifecycleState.Should().Be(ObservationLifecycle.Resolved);
     }
+
+    // ---- Precedência na dimensão de SOFTWARE da aquisição combinada ----------------------------------------------
+    // O Defender lê máquinas, vulnerabilidades e software numa MESMA aquisição, com uma só marca. Tudo passa pelo
+    // executor e pelo conector reais sobre HTTP sintético. As barreiras param a aquisição A no reconciliador de software
+    // — entre passos, sem transação aberta, ou dentro da trava da fonte na ausência —, executam a B inteira e só então
+    // liberam A. Dado inventado: fornecedor e produtos sintéticos, domínios demo.example.com.
+
+    private const string SoftwareVendor = "fornecedor-sintetico";
+    private const string EditorId = SoftwareVendor + "-_-editor";
+    private const string ViewerId = SoftwareVendor + "-_-visualizador";
+
+    [Fact]
+    public async Task Software_LateAcquisitionReachingSoftwareAfterANewerOnePublished_ChangesNoProductInstallationFactOrSummary()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+        var tenant = Guid.NewGuid();
+        var (defender, _) = await SeedTenantAsync(opt, tenant);
+        var machines = TwoMachines();
+
+        // A (aquisição mais ANTIGA): editor com 1 fraqueza em m-1 (1.0) e visualizador em m-2 (2.0).
+        var a = Acquisition(machines, new[] { (EditorId, "editor", 1), (ViewerId, "visualizador", 0) },
+            new[] { ("m-1", "editor", "1.0"), ("m-2", "visualizador", "2.0") });
+        // B (MAIS RECENTE): o editor foi atualizado para 1.1 e passou a 5 fraquezas; o visualizador saiu.
+        var b = Acquisition(machines, new[] { (EditorId, "editor", 5) }, new[] { ("m-1", "editor", "1.1") });
+
+        // A adquire, publica dispositivos e vulnerabilidades (era a mais recente) e para na ENTRADA do software.
+        using var barrier = new Barrier(SoftwareInventoryReconciler.CheckpointStarted);
+        var late = Task.Run(() => a.SyncAsync(opt, tenant, defender, barrier.Hook));
+        await barrier.Reached.WaitAsync(TimeSpan.FromSeconds(30));
+        var markerA = await WatermarkAsync(opt, tenant, defender);
+
+        // B roda inteira e publica a aquisição nova, software incluído.
+        (await b.SyncAsync(opt, tenant, defender)).SoftwareInventory!.Superseded.Should().BeFalse();
+        var published = await SoftwareStateAsync(opt, tenant, defender);
+        var markerB = published.Watermark;
+        markerB.Should().BeAfter(markerA, "B começou a adquirir depois de A");
+
+        barrier.Release();
+        var result = (await late.WaitAsync(TimeSpan.FromSeconds(30))).SoftwareInventory!;
+        result.Superseded.Should().BeTrue("A chegou à etapa de software depois de B publicar uma aquisição mais nova");
+        result.ProductsUpserted.Should().Be(0);
+        result.ProductsCreated.Should().Be(0, "o visualizador de A não é criado");
+        result.InstallationsOpened.Should().Be(0);
+        result.InstallationsReopened.Should().Be(0);
+        result.InstallationsResolved.Should().Be(0, "sem a precedência, A resolveria a instalação 1.1 que só B viu");
+        result.BindingsDeactivated.Should().Be(0);
+
+        var final = await SoftwareStateAsync(opt, tenant, defender);
+        Fingerprint(final).Should().Equal(Fingerprint(published), "A não altera nada do que B publicou");
+        final.Watermark.Should().Be(markerB);
+        final.Products.Keys.Should().BeEquivalentTo(new[] { "editor" }, "o visualizador de A nunca foi publicado");
+        final.Products["editor"].WeaknessesCount.Should().Be(5);
+        final.Bindings.Keys.Should().BeEquivalentTo(new[] { EditorId });
+        final.Bindings[EditorId].Weaknesses.Should().Be(5, "os fatos do binding não regridem para os de A");
+        final.Bindings[EditorId].LastObservedAt.Should().Be(markerB, "o software carrega a marca da SUA aquisição");
+        final.Installations.Keys.Should().BeEquivalentTo(new[] { "m-1|editor|1.1" });
+        final.Installations["m-1|editor|1.1"].LifecycleState.Should().Be(ObservationLifecycle.Open);
+        final.Installations["m-1|editor|1.1"].LastSeenAt.Should().Be(markerB);
+        final.Snapshot.CollectionState.Should().Be(SoftwareInventoryCollectionState.Available);
+        final.Snapshot.LastCollectionAt.Should().Be(markerB, "o resumo continua sendo a leitura de B");
+        final.Snapshot.LastAttemptAt.Should().Be(markerB);
+        final.Snapshot.TotalProducts.Should().Be(1);
+        final.Snapshot.ExposedInstallations.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Software_OlderAcquisitionSupersededBetweenInstallationBatches_NeverReopensNorResolvesWhatTheNewerPublished()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+        var tenant = Guid.NewGuid();
+        var (defender, _) = await SeedTenantAsync(opt, tenant);
+        var machines = TwoMachines();
+        var products = new[] { (EditorId, "editor", 1), (ViewerId, "visualizador", 0) };
+        var both = new[] { ("m-1", "editor", "1.0"), ("m-2", "visualizador", "2.0") };
+        await Acquisition(machines, products, both).SyncAsync(opt, tenant, defender);   // base completa
+
+        // A (repete a base) publica os produtos e o lote de m-1 e para ENTRE lotes, antes do lote de m-2.
+        using var barrier = new Barrier(SoftwareInventoryReconciler.CheckpointBatchCommitted);
+        var late = Task.Run(() => Acquisition(machines, products, both).SyncAsync(opt, tenant, defender, barrier.Hook));
+        await barrier.Reached.WaitAsync(TimeSpan.FromSeconds(30));
+        var markerA = await WatermarkAsync(opt, tenant, defender);
+        (await SoftwareStateAsync(opt, tenant, defender)).Installations["m-1|editor|1.0"].LastSeenAt
+            .Should().Be(markerA, "o lote de m-1 foi publicado enquanto A era a aquisição mais recente");
+
+        // B (MAIS RECENTE, completa): o visualizador foi desinstalado de m-2 e saiu do catálogo.
+        var newer = (await Acquisition(machines, new[] { (EditorId, "editor", 1) }, new[] { ("m-1", "editor", "1.0") })
+            .SyncAsync(opt, tenant, defender)).SoftwareInventory!;
+        newer.InstallationsResolved.Should().Be(1, "B resolve o visualizador de m-2");
+        newer.BindingsDeactivated.Should().Be(1);
+        var published = await SoftwareStateAsync(opt, tenant, defender);
+        var markerB = published.Watermark;
+
+        barrier.Release();
+        var result = (await late.WaitAsync(TimeSpan.FromSeconds(30))).SoftwareInventory!;
+        result.Superseded.Should().BeTrue("B foi publicada entre dois lotes de A");
+        result.InstallationsReopened.Should().Be(0, "o lote de m-2 de A reabriria o que B resolveu");
+        result.InstallationsResolved.Should().Be(0, "a ausência de A resolveria a presença que B publicou em m-1");
+        result.BindingsDeactivated.Should().Be(0);
+
+        var final = await SoftwareStateAsync(opt, tenant, defender);
+        Fingerprint(final).Should().Equal(Fingerprint(published), "A não desfaz nada do que B publicou");
+        final.Installations["m-1|editor|1.0"].LifecycleState.Should().Be(ObservationLifecycle.Open);
+        final.Installations["m-1|editor|1.0"].LastSeenAt.Should().Be(markerB, "LastSeenAt nunca regride para a marca de A");
+        final.Installations["m-2|visualizador|2.0"].LifecycleState.Should().Be(ObservationLifecycle.Resolved);
+        final.Installations["m-2|visualizador|2.0"].ResolvedAt.Should().Be(markerB);
+        final.Bindings[EditorId].IsActive.Should().BeTrue();
+        final.Bindings[EditorId].LastObservedAt.Should().Be(markerB);
+        final.Bindings[ViewerId].IsActive.Should().BeFalse("B desativou o binding do produto que saiu");
+        final.Bindings[ViewerId].ResolvedAt.Should().Be(markerB);
+        final.Snapshot.LastCollectionAt.Should().Be(markerB);
+        final.Snapshot.TotalProducts.Should().Be(1);
+        final.Snapshot.ExposedInstallations.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Software_OlderAcquisitionSupersededJustBeforeAbsence_NeverResolvesTheNewerPresence()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+        var tenant = Guid.NewGuid();
+        var (defender, _) = await SeedTenantAsync(opt, tenant);
+        var machines = TwoMachines();
+        var products = new[] { (EditorId, "editor", 1), (ViewerId, "visualizador", 0) };
+        var both = new[] { ("m-1", "editor", "1.0"), ("m-2", "visualizador", "2.0") };
+        await Acquisition(machines, products, both).SyncAsync(opt, tenant, defender);   // base completa
+
+        // A (completa, sem o visualizador em m-2) publica toda a presença e para IMEDIATAMENTE antes da ausência.
+        using var barrier = new Barrier(SoftwareInventoryReconciler.CheckpointBeforeAbsence);
+        var late = Task.Run(() => Acquisition(machines, products, new[] { ("m-1", "editor", "1.0") })
+            .SyncAsync(opt, tenant, defender, barrier.Hook));
+        await barrier.Reached.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // B (MAIS RECENTE, completa) vê as duas instalações.
+        (await Acquisition(machines, products, both).SyncAsync(opt, tenant, defender))
+            .SoftwareInventory!.InstallationsResolved.Should().Be(0);
+        var published = await SoftwareStateAsync(opt, tenant, defender);
+        var markerB = published.Watermark;
+
+        barrier.Release();
+        var result = (await late.WaitAsync(TimeSpan.FromSeconds(30))).SoftwareInventory!;
+        result.Superseded.Should().BeTrue();
+        result.InstallationsResolved.Should().Be(0,
+            "sem a precedência, a ausência de A (tudo o que não tem a marca de A) resolveria as DUAS instalações que B acabou de ver");
+        result.BindingsDeactivated.Should().Be(0);
+
+        var final = await SoftwareStateAsync(opt, tenant, defender);
+        Fingerprint(final).Should().Equal(Fingerprint(published));
+        foreach (var key in new[] { "m-1|editor|1.0", "m-2|visualizador|2.0" })
+        {
+            final.Installations[key].LifecycleState.Should().Be(ObservationLifecycle.Open, key);
+            final.Installations[key].LastSeenAt.Should().Be(markerB, key);
+        }
+        final.Snapshot.LastCollectionAt.Should().Be(markerB);
+        final.Snapshot.ExposedInstallations.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Software_AbsenceHoldingTheSourceLock_TheNewerAcquisitionWaits_AndThenPrevails()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+        var tenant = Guid.NewGuid();
+        var (defender, _) = await SeedTenantAsync(opt, tenant);
+        var machines = TwoMachines();
+        var products = new[] { (EditorId, "editor", 1), (ViewerId, "visualizador", 0) };
+        var both = new[] { ("m-1", "editor", "1.0"), ("m-2", "visualizador", "2.0") };
+        await Acquisition(machines, products, both).SyncAsync(opt, tenant, defender);   // base completa
+
+        // A (completa, sem o visualizador em m-2) entra na ausência — trava da fonte adquirida, marca conferida — e
+        // para ANTES do UPDATE.
+        using var barrier = new Barrier(SoftwareInventoryReconciler.CheckpointAbsenceLocked);
+        var a = Task.Run(() => Acquisition(machines, products, new[] { ("m-1", "editor", "1.0") })
+            .SyncAsync(opt, tenant, defender, barrier.Hook));
+        await barrier.Reached.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // B (MAIS RECENTE, com as duas instalações) chega nessa janela e fica BLOQUEADA na trava da fonte: não publica
+        // nada entre a conferência da marca e o UPDATE da ausência de A.
+        var b = Task.Run(() => Acquisition(machines, products, both).SyncAsync(opt, tenant, defender));
+        await WaitUntilBlockedOnLockAsync(opt, "pg_advisory_xact_lock");
+        b.IsCompleted.Should().BeFalse("a aquisição nova espera a ausência em curso terminar");
+
+        barrier.Release();
+        var absent = (await a.WaitAsync(TimeSpan.FromSeconds(30))).SoftwareInventory!;
+        var present = (await b.WaitAsync(TimeSpan.FromSeconds(30))).SoftwareInventory!;
+        absent.InstallationsResolved.Should().Be(1, "na leitura de A, ainda a mais recente, o visualizador estava ausente");
+        present.Superseded.Should().BeFalse();
+        present.InstallationsReopened.Should().Be(1, "a leitura MAIS NOVA volta a ver o visualizador");
+
+        var final = await SoftwareStateAsync(opt, tenant, defender);
+        foreach (var key in new[] { "m-1|editor|1.0", "m-2|visualizador|2.0" })
+        {
+            final.Installations[key].LifecycleState.Should().Be(ObservationLifecycle.Open, key);
+            final.Installations[key].LastSeenAt.Should().Be(final.Watermark, key + ": a aquisição mais nova prevalece");
+            final.Installations[key].ResolvedAt.Should().BeNull(key);
+        }
+        final.Snapshot.LastCollectionAt.Should().Be(final.Watermark);
+        final.Snapshot.ExposedInstallations.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Software_FailureInTheNewerAcquisition_PreservesThePreviousSoftware_WhileVulnerabilitiesArePublished()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+        var tenant = Guid.NewGuid();
+        var (defender, _) = await SeedTenantAsync(opt, tenant);
+        var machines = TwoMachines();
+        var products = new[] { (EditorId, "editor", 1), (ViewerId, "visualizador", 0) };
+        var both = new[] { ("m-1", "editor", "1.0"), ("m-2", "visualizador", "2.0") };
+        await Acquisition(machines, products, both, "m-1").SyncAsync(opt, tenant, defender);
+        var baseMarker = await WatermarkAsync(opt, tenant, defender);
+        var before = await SoftwareStateAsync(opt, tenant, defender);
+
+        // Aquisição nova: software recusado (403) nos dois endpoints; vulnerabilidades completas.
+        var failing = Acquisition(machines, products, both, "m-1");
+        failing.DefenderRoute = Forbidden(p => p == "/api/Software" || p.Contains("SoftwareInventoryByMachine"));
+        var result = await failing.SyncAsync(opt, tenant, defender);
+        var newMarker = await WatermarkAsync(opt, tenant, defender);
+        newMarker.Should().BeAfter(baseMarker);
+
+        result.Status.Should().Be(ConnectorStatus.Degraded);
+        result.Vulnerabilities!.WasComplete.Should().BeTrue("a falha do software não invalida vulnerabilidades");
+        result.SoftwareInventory!.State.Should().Be(SoftwareInventoryCollectionState.InsufficientPermission);
+        result.SoftwareInventory.Superseded.Should().BeFalse();
+        (await VulnerabilityObservationAsync(opt, tenant, defender, "m-1")).LastSeenAt
+            .Should().Be(newMarker, "a vulnerabilidade da aquisição nova foi publicada");
+
+        var after = await SoftwareStateAsync(opt, tenant, defender);
+        after.Installations.Keys.Should().BeEquivalentTo(before.Installations.Keys);
+        after.Installations.Values.Should().OnlyContain(i =>
+            i.LifecycleState == ObservationLifecycle.Open && i.LastSeenAt == baseMarker,
+            "a falha preserva os dados válidos anteriores e não resolve nada");
+        after.Bindings.Values.Should().OnlyContain(x => x.IsActive && x.LastObservedAt == baseMarker);
+        after.Snapshot.CollectionState.Should().Be(SoftwareInventoryCollectionState.Available);
+        after.Snapshot.LastCollectionAt.Should().Be(baseMarker, "os dados armazenados continuam sendo os da base");
+        after.Snapshot.TotalProducts.Should().Be(before.Snapshot.TotalProducts);
+        after.Snapshot.ExposedInstallations.Should().Be(2);
+        after.Snapshot.LastAttemptState.Should().Be(SoftwareInventoryCollectionState.InsufficientPermission);
+        after.Snapshot.LastAttemptAt.Should().Be(newMarker, "a tentativa registrada é a da aquisição nova, pela sua marca");
+    }
+
+    [Fact]
+    public async Task Software_CompleteWhileVulnerabilitiesArePartial_IsPublished_AndThePartialDimensionResolvesNothing()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+        var tenant = Guid.NewGuid();
+        var (defender, _) = await SeedTenantAsync(opt, tenant);
+        var machines = TwoMachines();
+        var products = new[] { (EditorId, "editor", 1), (ViewerId, "visualizador", 0) };
+        await Acquisition(machines, products,
+            new[] { ("m-1", "editor", "1.0"), ("m-2", "visualizador", "2.0") }, "m-1").SyncAsync(opt, tenant, defender);
+        var baseMarker = await WatermarkAsync(opt, tenant, defender);
+
+        // Aquisição nova: relações de vulnerabilidade recusadas (403) → dimensão parcial; software completo, e o
+        // visualizador foi desinstalado de m-2.
+        var partial = Acquisition(machines, products, new[] { ("m-1", "editor", "1.0") }, "m-1");
+        partial.DefenderRoute = Forbidden(p => p.Contains("machinesVulnerabilities"));
+        var result = await partial.SyncAsync(opt, tenant, defender);
+        var newMarker = await WatermarkAsync(opt, tenant, defender);
+        newMarker.Should().BeAfter(baseMarker);
+
+        result.Vulnerabilities!.WasComplete.Should().BeFalse();
+        result.SoftwareInventory!.State.Should().Be(SoftwareInventoryCollectionState.Available);
+        result.SoftwareInventory.Superseded.Should().BeFalse();
+        result.SoftwareInventory.InstallationsResolved.Should().Be(1, "a dimensão de software é completa e independente");
+
+        var observation = await VulnerabilityObservationAsync(opt, tenant, defender, "m-1");
+        observation.LifecycleState.Should().Be(ObservationLifecycle.Open, "a leitura parcial de vulnerabilidades não resolve por omissão");
+        observation.LastSeenAt.Should().Be(baseMarker);
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+            (await db.AssetSourceBindings.Where(x => x.ConnectorConfigId == defender).ToListAsync())
+                .Should().HaveCount(2).And.OnlyContain(x => x.IsActive && x.LastObservedAt == newMarker);
+
+        var after = await SoftwareStateAsync(opt, tenant, defender);
+        after.Installations["m-1|editor|1.0"].LifecycleState.Should().Be(ObservationLifecycle.Open);
+        after.Installations["m-1|editor|1.0"].LastSeenAt.Should().Be(newMarker);
+        after.Installations["m-2|visualizador|2.0"].LifecycleState.Should().Be(ObservationLifecycle.Resolved);
+        after.Installations["m-2|visualizador|2.0"].ResolvedAt.Should().Be(newMarker);
+        after.Snapshot.LastCollectionAt.Should().Be(newMarker);
+        after.Snapshot.ExposedInstallations.Should().Be(1);
+    }
+
+    private static (string Id, string DeviceId)[] TwoMachines() =>
+        new[] { ("m-1", Guid.NewGuid().ToString("D")), ("m-2", Guid.NewGuid().ToString("D")) };
+
+    /// <summary>Uma aquisição do Defender (máquinas, vulnerabilidades e software) no formato oficial das fontes.</summary>
+    private static SyntheticDeviceSources Acquisition(
+        (string Id, string DeviceId)[] machines, (string Id, string Name, int Weaknesses)[] products,
+        (string Machine, string Name, string Version)[] installs, params string[] vulnerable) => new()
+    {
+        DefenderMachines = SyntheticDeviceSources.Page(machines
+            .Select(m => SyntheticDeviceSources.Machine(m.Id, m.Id + ".demo.example.com", SyntheticDeviceSources.Q(m.DeviceId)))
+            .ToArray()),
+        DefenderRelations = SyntheticDeviceSources.Page(vulnerable.Select(m => SyntheticDeviceSources.Relation(m)).ToArray()),
+        DefenderCves = SyntheticDeviceSources.CveCatalog,
+        DefenderSoftware = SyntheticDeviceSources.Page(products
+            .Select(p => SyntheticDeviceSources.Product(p.Id, SoftwareVendor, p.Name, p.Weaknesses)).ToArray()),
+        DefenderInstalls = SyntheticDeviceSources.Page(installs
+            .Select(i => SyntheticDeviceSources.Install(i.Machine, SoftwareVendor, i.Name, i.Version)).ToArray()),
+    };
+
+    private static Func<HttpRequestMessage, (HttpStatusCode, string)?> Forbidden(Func<string, bool> path) =>
+        req => path(req.RequestUri!.AbsolutePath) ? (HttpStatusCode.Forbidden, "{}") : null;
+
+    private static async Task<DateTimeOffset> WatermarkAsync(DbContextOptions<AegisScoreDbContext> opt, Guid tenant, Guid connector)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        return (await db.Connectors.AsNoTracking().SingleAsync(c => c.Id == connector)).DeviceSnapshotWatermark!.Value;
+    }
+
+    private static async Task<AssetThreatObservation> VulnerabilityObservationAsync(
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, Guid defender, string machineId)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        var assetId = (await db.AssetSourceBindings.AsNoTracking()
+            .SingleAsync(x => x.ConnectorConfigId == defender && x.ExternalId == machineId)).AssetId;
+        return await db.AssetThreatObservations.AsNoTracking()
+            .SingleAsync(o => o.ConnectorConfigId == defender && o.AssetThreatExposure!.AssetId == assetId);
+    }
+
+    /// <summary>Estado publicado da dimensão de software de UM conector: produtos, bindings, instalações e resumo.</summary>
+    private sealed record SoftwareState(
+        DateTimeOffset Watermark,
+        Dictionary<string, SoftwareProduct> Products,                  // por nome normalizado
+        Dictionary<string, SoftwareProductSourceBinding> Bindings,     // por id do produto na fonte
+        Dictionary<string, SoftwareInstallation> Installations,        // "máquina|produto|versão"
+        SoftwareInventorySnapshot Snapshot);
+
+    private static async Task<SoftwareState> SoftwareStateAsync(
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, Guid defender)
+    {
+        await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        var watermark = (await db.Connectors.AsNoTracking().SingleAsync(c => c.Id == defender)).DeviceSnapshotWatermark!.Value;
+        var machineByAsset = await db.AssetSourceBindings.AsNoTracking()
+            .Where(x => x.ConnectorConfigId == defender)
+            .ToDictionaryAsync(x => x.AssetId, x => x.ExternalId);
+        var products = await db.SoftwareProducts.AsNoTracking().ToDictionaryAsync(p => p.Id);
+        var bindings = await db.SoftwareProductSourceBindings.AsNoTracking()
+            .Where(x => x.ConnectorConfigId == defender)
+            .ToDictionaryAsync(x => x.ExternalProductId);
+        var installations = (await db.SoftwareInstallations.AsNoTracking()
+                .Where(i => i.ConnectorConfigId == defender).ToListAsync())
+            .ToDictionary(i => $"{machineByAsset[i.AssetId]}|{products[i.SoftwareProductId].NameKey}|{i.Version}");
+        var snapshot = await db.SoftwareInventorySnapshots.AsNoTracking().SingleAsync(s => s.ConnectorConfigId == defender);
+        return new SoftwareState(
+            watermark, products.Values.ToDictionary(p => p.NameKey), bindings, installations, snapshot);
+    }
+
+    /// <summary>Todos os fatos publicados que uma aquisição superada poderia alterar, numa forma comparável.</summary>
+    private static List<string> Fingerprint(SoftwareState s) =>
+        s.Products.Values.OrderBy(p => p.NameKey, StringComparer.Ordinal)
+            .Select(p => $"produto {p.NameKey} ativo={p.IsActive} fraquezas={p.WeaknessesCount} expostas={p.ExposedMachinesCount} visto={p.LastSeenAt:O}")
+            .Concat(s.Bindings.Values.OrderBy(x => x.ExternalProductId, StringComparer.Ordinal)
+                .Select(x => $"binding {x.ExternalProductId} ativo={x.IsActive} fraquezas={x.Weaknesses} observado={x.LastObservedAt:O} resolvido={x.ResolvedAt:O}"))
+            .Concat(s.Installations.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => $"instalação {kv.Key} {kv.Value.LifecycleState} visto={kv.Value.LastSeenAt:O} resolvido={kv.Value.ResolvedAt:O}"))
+            .Append($"resumo {s.Snapshot.CollectionState} coleta={s.Snapshot.LastCollectionAt:O} " +
+                $"tentativa={s.Snapshot.LastAttemptState}@{s.Snapshot.LastAttemptAt:O} produtos={s.Snapshot.TotalProducts} " +
+                $"fracos={s.Snapshot.ProductsWithWeaknesses} expostas={s.Snapshot.ExposedInstallations}")
+            .ToList();
 
     // ---- apoio --------------------------------------------------------------------------------------------------
 

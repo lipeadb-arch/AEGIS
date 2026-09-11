@@ -160,10 +160,13 @@ jobs:
       #     do PR #71 (contradição na mesma coleta pelos conectores, contrato do id externo, proveniência do diretório
       #     conflitante e preservação da marca de fotografia) levam DeviceResolutionTests a 37 casos e o passo a 539
       #     (medido localmente com este MESMO filtro, em Release); nenhuma classe nova, o filtro é o mesmo.
+      #     A precedência na dimensão de software (PR #71) acrescenta 2 casos a SoftwareInventoryReconcilerTests e
+      #     inclui EvidenceIngestionTests (23 casos): o executor foi alterado pelo pacote e essa classe nunca rodava no
+      #     CI. O passo vai a 564 (539 + 2 + 23, somando as classes medidas localmente; conferido no log do CI).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~EvidenceIngestionTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
@@ -436,7 +439,10 @@ jobs:
       # PR #71 acrescentam a DeviceResolutionPostgresTests quatro casos com barreiras determinísticas (passada antiga
       # pausada após a presença, presença durante a ausência, recálculo entre fontes do mesmo ativo e duas passadas do
       # mesmo Defender) e a migration DeviceResolution02 à sequência cumulativa: o passo vai a 65 (medido localmente
-      # com este MESMO filtro, em Release, contra PostgreSQL 18 descartável).
+      # com este MESMO filtro, em Release, contra PostgreSQL 18 descartável). A precedência na dimensão de software
+      # acrescenta seis casos à MESMA classe, pelo executor combinado real (aquisição tardia, superada entre lotes,
+      # superada antes da ausência, ausência segurando a trava da fonte e independência das duas dimensões em falha
+      # e em parcialidade): o passo vai a 71; nenhuma classe nova, o filtro é o mesmo.
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
