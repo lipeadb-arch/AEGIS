@@ -106,4 +106,10 @@ public sealed record SoftwareInventorySyncResult(
     int InstallationsResolved,
     bool WasComplete,
     int InvalidProducts,
-    int InvalidInstallations);
+    int InvalidInstallations,
+    /// <summary>
+    /// [AEGIS-ENTITY-RESOLUTION-01] A aquisição combinada foi SUPERADA por uma mais recente do mesmo conector antes de
+    /// terminar de publicar esta dimensão: parou no primeiro passo recusado (as contagens acima são só o que chegou a
+    /// ser publicado enquanto ela era a mais recente) e nada do que a mais nova publicou foi alterado.
+    /// </summary>
+    bool Superseded = false);
