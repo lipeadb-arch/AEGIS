@@ -80,6 +80,10 @@ public sealed class DatabaseUpgradePostgresTests
             // [AEGIS-ADM-02] O comprovante de remoção da fotografia pela retenção: aditivo, anulável e SEM
             // backfill — a causa de uma ausência antiga não é provável a posteriori, e nulo é "sem comprovante".
             "20260910221714_Adm02_SnapshotRetentionRemovalProof",
+            // [AEGIS-ENTITY-RESOLUTION-01] Resolução de dispositivos entre fontes: tabela da chave forte + colunas
+            // aditivas (anuláveis ou default 0 = "não avaliado") em bindings e ativos, SEM backfill — nenhum
+            // identificador de diretório é inventado para bindings legados.
+            "20260911041013_DeviceResolution01_StrongIdentifiers",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

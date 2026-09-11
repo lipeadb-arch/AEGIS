@@ -144,10 +144,23 @@ jobs:
       #     distintas e estado das fontes no prompt) e GenerateAdvisoryHandlerTests (canned de PR.AA-01 ancorado no
       #     controle inteiro). Sem estas linhas elas não executariam e o check ficaria verde do mesmo jeito. A
       #     contagem deste passo sobe de 408 para 437 (medida localmente com este MESMO filtro, em Release).
+      #     [AEGIS-ENTITY-RESOLUTION-01] Resolução de dispositivos entre fontes por vínculo forte. Entra a classe NOVA
+      #     DeviceResolutionTests (SQLite): conectores REAIS do Defender e do Intune sobre HTTP sintético → executor →
+      #     autoridade única de resolução → persistência → leitura (query + controller) — mesmo diretório/identificador
+      #     nas duas fontes = um ativo e dois bindings, as duas ordens e a reexecução com o identificador canônico
+      #     preservado, diretórios/tenants diferentes e hostname igual sem união, identificador ausente/vazio/inválido/
+      #     placeholder sem união (e sem invalidar a máquina), diretório não confirmado, identificador informado depois,
+      #     contradição que não move o binding, duplicidade legada preservada como conflito, atributos curados
+      #     preservados, falha/parcial/desaparecimento em uma só fonte, fatos da fonte sem score e identificadores só no
+      #     diagnóstico do administrador. Entram também TRÊS classes que já existiam e nunca rodavam no CI, porque o
+      #     pacote alterou o código delas: VulnerabilityReconcilerTests e SoftwareInventoryReconcilerTests (o
+      #     reconciliador passou a delegar ativos/bindings à autoridade única) e MicrosoftDefenderVulnerabilityConnectorTests
+      #     (o parser de máquinas passou a ler aadDeviceId). A contagem deste passo sobe de 439 para 528 (26 da classe
+      #     nova + 63 das três existentes; medida localmente com este MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
@@ -407,6 +420,16 @@ jobs:
       # cumulativa de DatabaseUpgradePostgresTests (mesmo caso, sem teste novo ali). 57 para 58.
       # [AEGIS-LANGUAGE-STATES-01] DashboardOverviewPostgresTests: o tenant sem conector passa a NoSource (antes
       # NeverCollected) — ausência de fonte não é coleta pendente. Nenhum caso novo: a contagem permanece 58.
+      # [AEGIS-ENTITY-RESOLUTION-01] Entra a classe NOVA DeviceResolutionPostgresTests: a migration ADITIVA da
+      # resolução de dispositivos aplica sobre um banco LEGADO (bindings anteriores ficam "não avaliados", nenhum
+      # identificador inventado) e a coleta real estabelece a chave no ativo legado preservando os atributos curados;
+      # UX_AssetStrongIdentifier_Natural, UX_AssetStrongIdentifier_AssetScope, a FK composta tenant-safe e o CHECK do
+      # GUID vazio recusam de verdade (SQL cru); Defender e Intune chegam CONCORRENTES pelo executor real com os
+      # conectores reais sobre HTTP sintético, nas duas ordens e com a mesma fonte em paralelo, sem duplicar chave nem
+      # ativo; e a listagem consolidada real (ordenação/ILike do Npgsql) mostra cada dispositivo uma vez, isolada por
+      # tenant. A migration nova também entra na sequência cumulativa de DatabaseUpgradePostgresTests (mesmo caso).
+      # A classe é NOVA: sem esta linha ela não executaria. A contagem deste passo sobe de 58 para 61 (medida
+      # localmente com este MESMO filtro, em Release, contra PostgreSQL 18 descartável).
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
@@ -415,4 +438,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~DeviceResolutionPostgresTests"

@@ -71,9 +71,9 @@ public sealed class IntuneDevicePostureCollectorTests
 
     private const string ManagedDevicesJson = """
     {"value":[
-      {"id":"dev-1","azureADDeviceId":"aad-1","complianceState":"compliant","operatingSystem":"Windows",
+      {"id":"dev-1","azureADDeviceId":"6f1c2a3b-4d5e-4f60-8a71-92b3c4d5e6f7","complianceState":"compliant","operatingSystem":"Windows",
        "lastSyncDateTime":"2026-09-03T12:00:00Z","isEncrypted":true},
-      {"id":"dev-2","azureADDeviceId":"aad-2","complianceState":"noncompliant","operatingSystem":"Windows",
+      {"id":"dev-2","azureADDeviceId":"7a2d3b4c-5e6f-4a71-9b82-a3c4d5e6f708","complianceState":"noncompliant","operatingSystem":"Windows",
        "lastSyncDateTime":"2026-09-03T12:00:00Z","isEncrypted":false},
       {"id":"dev-3","complianceState":"inGracePeriod","operatingSystem":"iOS",
        "lastSyncDateTime":"2026-01-01T12:00:00Z","isEncrypted":true},
@@ -443,11 +443,13 @@ public sealed class IntuneDevicePostureCollectorTests
             if (url.Contains("managedDevices"))
                 // A fonte devolve PII mesmo que o $select peça só o mínimo — o parser não pode aproveitá-la.
                 return (HttpStatusCode.OK, """
-                  {"value":[{"id":"d1","complianceState":"compliant","operatingSystem":"Windows",
+                  {"value":[{"id":"dev-pii-1","azureADDeviceId":"8b3e4c5d-6f70-4b82-8c93-b4d5e6f70819",
+                    "complianceState":"compliant","operatingSystem":"Windows",
                     "lastSyncDateTime":"2026-09-03T12:00:00Z","isEncrypted":true,
                     "userPrincipalName":"alice@demo.example.com","userDisplayName":"Alice",
                     "emailAddress":"alice@demo.example.com","serialNumber":"SN-12345","imei":"IMEI-9",
-                    "phoneNumber":"+550000000000","wiFiMacAddress":"AA:BB:CC:DD:EE:FF","deviceName":"NOTE-ALICE"}]}
+                    "phoneNumber":"+550000000000","wiFiMacAddress":"AA:BB:CC:DD:EE:FF","deviceName":"NOTE-ALICE",
+                    "userId":"user-object-1","lastIpAddress":"10.0.0.7"}]}
                   """);
             return (HttpStatusCode.NotFound, "{}");
         });
@@ -458,9 +460,21 @@ public sealed class IntuneDevicePostureCollectorTests
         foreach (var forbidden in new[]
                  {
                      "alice", "Alice", "SN-12345", "IMEI-9", "+550000000000", "AA:BB:CC:DD:EE:FF",
-                     "NOTE-ALICE", "aad-1", "d1", "NAO DEVE SER PERSISTIDO", ClientSecret, "fake-access-token",
+                     "NOTE-ALICE", "user-object-1", "10.0.0.7", "NAO DEVE SER PERSISTIDO", ClientSecret,
+                     "fake-access-token",
                  })
             serialized.Should().NotContain(forbidden, $"a fotografia nunca carrega '{forbidden}'");
+
+        // [AEGIS-ENTITY-RESOLUTION-01] FRONTEIRA NOVA E DELIMITADA: o id do registro no Intune e o identificador de
+        // dispositivo do Entra trafegam SÓ na observação por dispositivo — e em nenhum outro lugar da fotografia
+        // (grupos, agregados, detalhe). Nenhum nome, usuário, IP ou atributo pessoal os acompanha.
+        var observation = snapshot.Devices.Observations.Should().ContainSingle().Subject;
+        observation.ExternalId.Should().Be("dev-pii-1");
+        observation.DirectoryDeviceId.Value.Should().Be("8b3e4c5d-6f70-4b82-8c93-b4d5e6f70819");
+        observation.DisplayName.Should().BeNull("o nome do dispositivo não é coletado nem para a resolução");
+        var withoutObservations = System.Text.Json.JsonSerializer.Serialize(
+            snapshot with { Devices = snapshot.Devices with { Observations = null } });
+        withoutObservations.Should().NotContain("dev-pii-1").And.NotContain("8b3e4c5d-6f70-4b82-8c93-b4d5e6f70819");
     }
 
     [Fact]
