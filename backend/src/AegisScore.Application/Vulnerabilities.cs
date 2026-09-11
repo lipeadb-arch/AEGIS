@@ -83,7 +83,13 @@ public sealed record VulnerabilityCollection(
     /// [AEGIS-ENTITY-RESOLUTION-01] Namespace do diretório de origem CONFIRMADO pela credencial efetiva da integração
     /// (GUID normalizado). Nulo = não confirmado: nenhuma máquina desta coleta é vinculada entre fontes.
     /// </summary>
-    string? DirectoryNamespace = null);
+    string? DirectoryNamespace = null,
+    /// <summary>
+    /// [AEGIS-ENTITY-RESOLUTION-01] Instante em que a coleta COMEÇOU a ler as máquinas — a marca de precedência da
+    /// fotografia: entre duas passadas do mesmo conector, a de marca mais recente prevalece e a atrasada não anula
+    /// o que ela publicou. Nulo (coleções montadas fora do conector) = instante da reconciliação.
+    /// </summary>
+    DateTimeOffset? CollectedAt = null);
 
 /// <summary>
 /// Capacidade COMPLEMENTAR a <see cref="IEvidenceConnector"/>: um conector que produz VULNERABILIDADES associadas

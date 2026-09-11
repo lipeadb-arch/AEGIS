@@ -126,7 +126,10 @@ public sealed class AssetSourceQuery : IAssetSourceQuery
         AssetSourceBinding b, IReadOnlyDictionary<Guid, string> names,
         IReadOnlyDictionary<Guid, string> related, bool includeDiagnostics)
     {
-        var (label, explanation) = AssetCrossSourceNarrative.ForBinding(b.ResolutionState, b.ConflictKind, b.DirectoryIdStatus);
+        var (label, explanation) = AssetCrossSourceNarrative.ForBinding(
+            b.ResolutionState, b.ConflictKind, b.DirectoryIdStatus,
+            observedDirectoryRecorded: b.ConflictDirectoryNamespace is not null,
+            hasEstablishedLink: b.DirectoryDeviceId is not null);
         var relatedName = b.ConflictAssetId is { } rid && related.TryGetValue(rid, out var n) ? n : null;
         return new AssetSourceRecordDto(
             SourceLabel: Label(b.SourceLabel, b.ConnectorConfigId, names),
@@ -153,6 +156,10 @@ public sealed class AssetSourceQuery : IAssetSourceQuery
             Diagnostics: includeDiagnostics
                 ? new AssetSourceDiagnosticsDto(
                     b.ExternalId, b.DirectoryNamespace, b.DirectoryDeviceId, b.ConflictDirectoryDeviceId,
+                    b.ConflictDirectoryNamespace,
+                    string.IsNullOrEmpty(b.ConflictObservedDeviceIds)
+                        ? Array.Empty<string>()
+                        : b.ConflictObservedDeviceIds.Split(',', StringSplitOptions.RemoveEmptyEntries),
                     b.LinkedAt, b.ResolutionEvaluatedAt)
                 : null);
     }

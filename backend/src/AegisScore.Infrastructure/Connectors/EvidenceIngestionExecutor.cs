@@ -515,10 +515,12 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         var observations = devices.Observations!;
         var complete = devices.IsComplete && observations.Count == devices.TotalDevices;
 
+        // A marca da fotografia é o instante em que a COLETA começou (não o da reconciliação): entre duas passadas do
+        // mesmo conector, a fotografia mais recente prevalece — uma passada atrasada não anula o que ela publicou.
         await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
         var resolver = new DeviceIdentityResolver(db, _log);
         return await resolver.ReconcileSnapshotAsync(
-            connectorId, posture.Source, posture.DirectoryNamespace, observations, complete, DateTimeOffset.UtcNow, ct);
+            connectorId, posture.Source, posture.DirectoryNamespace, observations, complete, devices.AttemptedAt, ct);
     }
 
     // ---- Reconciliação de inventário de software (AEGIS-MVP-MICROSOFT-COVERAGE-01) -----------------

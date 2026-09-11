@@ -94,8 +94,6 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
 
     private const int MaxDisplayNameLength = 200;
     private const int MaxOperatingSystemLength = 60;
-    private const int MaxExternalIdLength = 200;
-
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     private readonly IEntraGraphClient _graph;
@@ -452,7 +450,7 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
         var groups = new Dictionary<DeviceGroupKey, int>();
         // [AEGIS-ENTITY-RESOLUTION-01] Observações mínimas por dispositivo — da MESMA página, sem nova consulta.
         var observations = new List<DeviceSourceObservation>();
-        var seenIds = new HashSet<string>(StringComparer.Ordinal);
+        var observationIndex = new Dictionary<string, int>(StringComparer.Ordinal);
         var total = 0;
         var invalid = 0;
         var withDirectoryId = 0;
@@ -473,7 +471,10 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
                 }
 
                 var id = item.ValueKind == JsonValueKind.Object ? StrOf(item, "id") : null;
-                if (string.IsNullOrWhiteSpace(id))
+                // [AEGIS-ENTITY-RESOLUTION-01] O id do managedDevice é a chave natural do registro: aceito EXATAMENTE
+                // como veio ou o registro é inválido (a dimensão vira parcial). Nunca aparado nem truncado — dois ids
+                // distintos jamais podem passar a representar o mesmo registro.
+                if (!DeviceSourceObservations.IsExternalIdWithinContract(id))
                 {
                     invalid++;
                     continue;
@@ -503,18 +504,25 @@ public sealed class MicrosoftIntuneDevicePostureConnector : IEvidenceConnector, 
 
                 groups[key] = groups.TryGetValue(key, out var n) ? n + 1 : 1;
 
-                // Um id REPETIDO não gera segunda observação — e a divergência entre contagem e observações impede,
-                // no executor, qualquer desativação por ausência nesta passada.
-                var externalId = Trim(id, MaxExternalIdLength)!;
-                if (seenIds.Add(externalId))
-                    observations.Add(new DeviceSourceObservation(
-                        externalId,
-                        directoryDeviceId,
-                        DisplayName: null,
-                        SubType: Trim(operatingSystem, MaxOperatingSystemLength),
-                        SourceLastSeenAt: lastSync,
-                        Compliance: compliance,
-                        Encryption: encryption));
+                // Um id REPETIDO não gera segunda observação: as repetições são COMBINADAS pela regra única
+                // (DeviceSourceObservations.Merge) — identificadores divergentes viram contradição, nunca "o primeiro
+                // visto", e o resultado independe da ordem das páginas. A divergência entre contagem e observações
+                // impede, no executor, qualquer desativação por ausência nesta passada.
+                var observation = new DeviceSourceObservation(
+                    id!,
+                    directoryDeviceId,
+                    DisplayName: null,
+                    SubType: Trim(operatingSystem, MaxOperatingSystemLength),
+                    SourceLastSeenAt: lastSync,
+                    Compliance: compliance,
+                    Encryption: encryption);
+                if (observationIndex.TryGetValue(id!, out var at))
+                    observations[at] = DeviceSourceObservations.Merge(observations[at], observation);
+                else
+                {
+                    observationIndex[id!] = observations.Count;
+                    observations.Add(observation);
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

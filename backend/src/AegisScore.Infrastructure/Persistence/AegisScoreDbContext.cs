@@ -1036,6 +1036,10 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.DirectoryNamespace).HasMaxLength(64);
             e.Property(x => x.DirectoryDeviceId).HasMaxLength(64);
             e.Property(x => x.ConflictDirectoryDeviceId).HasMaxLength(64);
+            // Proveniência do conflito (aditivas, anuláveis): diretório da observação contraditória e os valores
+            // contraditórios da mesma coleta (até 5 GUIDs de 36 caracteres + separadores).
+            e.Property(x => x.ConflictDirectoryNamespace).HasMaxLength(64);
+            e.Property(x => x.ConflictObservedDeviceIds).HasMaxLength(200);
         });
 
         // [AEGIS-ENTITY-RESOLUTION-01] Chave FORTE de dispositivo no diretório → ativo canônico. Os dois índices

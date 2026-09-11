@@ -49,12 +49,20 @@ public sealed record AssetSourceSummaryDto(
     string CrossSourceLabel,
     DateTimeOffset? LastObservedAt);
 
-/// <summary>Detalhe técnico de UM registro — só no diagnóstico. Dado interno de resolução.</summary>
+/// <summary>
+/// Detalhe técnico de UM registro — só no diagnóstico. Dado interno de resolução. O vínculo ESTABELECIDO
+/// (<see cref="DirectoryNamespace"/>, <see cref="DirectoryDeviceId"/>) e o par OBSERVADO que o contradisse
+/// (<see cref="ConflictDirectoryNamespace"/>, <see cref="ConflictDirectoryDeviceId"/>) vêm separados.
+/// </summary>
 public sealed record AssetSourceDiagnosticsDto(
     string ExternalId,
     string? DirectoryNamespace,
     string? DirectoryDeviceId,
     string? ConflictDirectoryDeviceId,
+    /// <summary>Diretório da observação contraditória; nulo quando não registrado (conflito anterior à coluna).</summary>
+    string? ConflictDirectoryNamespace,
+    /// <summary>Identificadores válidos e distintos que a mesma coleta trouxe para o registro, quando se contradisseram.</summary>
+    IReadOnlyList<string> ConflictObservedDeviceIds,
     DateTimeOffset? LinkedAt,
     DateTimeOffset? ResolutionEvaluatedAt);
 
@@ -197,9 +205,14 @@ public static class AssetCrossSourceNarrative
         _ => "Ativo sem registro de fonte integrada (cadastro manual ou importado): não há registros a vincular.",
     };
 
-    /// <summary>Rótulo e explicação de UM registro de fonte.</summary>
+    /// <summary>
+    /// Rótulo e explicação de UM registro de fonte. <paramref name="observedDirectoryRecorded"/>: o diretório da
+    /// observação contraditória foi registrado (falso só em conflitos gravados antes dessa coluna — nada é
+    /// presumido sobre eles). <paramref name="hasEstablishedLink"/>: o registro tem vínculo estabelecido antes.
+    /// </summary>
     public static (string Label, string Explanation) ForBinding(
-        AssetBindingResolutionState state, AssetBindingConflictKind kind, DirectoryIdentifierStatus lastStatus) =>
+        AssetBindingResolutionState state, AssetBindingConflictKind kind, DirectoryIdentifierStatus lastStatus,
+        bool observedDirectoryRecorded = true, bool hasEstablishedLink = false) =>
         state switch
         {
             AssetBindingResolutionState.Linked => ("Vinculado pelo identificador de diretório",
@@ -219,9 +232,26 @@ public static class AssetCrossSourceNarrative
                 "integração. Sem o diretório, a união não é feita."),
             AssetBindingResolutionState.Conflict => kind switch
             {
+                AssetBindingConflictKind.IdentifierChanged when !observedDirectoryRecorded => ("Conflito: vínculo de diretório mudou",
+                    "A fonte passou a informar outro vínculo de diretório para o mesmo registro. Este conflito foi " +
+                    "registrado antes de o AEGIS guardar o diretório da observação, então não é possível dizer se mudou " +
+                    "o diretório, o identificador ou ambos. O registro continua neste ativo e nada foi movido até a análise."),
                 AssetBindingConflictKind.IdentifierChanged => ("Conflito: identificador mudou",
-                    "A fonte passou a informar outro identificador de dispositivo para o mesmo registro. O registro " +
-                    "continua neste ativo e nada foi movido até a análise."),
+                    "A fonte passou a informar outro identificador de dispositivo para o mesmo registro, no mesmo " +
+                    "diretório de origem. O registro continua neste ativo e nada foi movido até a análise."),
+                AssetBindingConflictKind.DirectoryChanged => ("Conflito: diretório de origem mudou",
+                    "A fonte passou a informar este registro com o mesmo identificador de dispositivo, mas em outro " +
+                    "diretório de origem. O vínculo estabelecido no diretório anterior foi mantido e nada foi movido até a análise."),
+                AssetBindingConflictKind.DirectoryAndIdentifierChanged => ("Conflito: diretório e identificador mudaram",
+                    "A fonte passou a informar outro diretório de origem e outro identificador de dispositivo para o " +
+                    "mesmo registro. O vínculo estabelecido foi mantido e nada foi movido até a análise."),
+                AssetBindingConflictKind.ContradictoryObservation => ("Conflito: identificadores contraditórios na mesma coleta",
+                    "A mesma coleta da fonte trouxe identificadores de dispositivo diferentes para este registro. Nenhum " +
+                    "deles foi usado para vincular ou confirmar o vínculo" +
+                    (hasEstablishedLink
+                        ? "; o vínculo estabelecido antes foi mantido."
+                        : "; o registro segue sem vínculo entre fontes.") +
+                    " As demais informações do registro continuam valendo."),
                 AssetBindingConflictKind.IdentifierHeldByOtherAsset => ("Conflito: identificador já pertence a outro ativo",
                     "O identificador informado já está vinculado a outro ativo existente. Os dois ativos foram " +
                     "preservados — nenhum foi escolhido, fundido ou apagado (duplicidade entre ativos já existentes)."),
@@ -239,6 +269,7 @@ public static class AssetCrossSourceNarrative
         DirectoryIdentifierStatus.Provided => "Informado pela fonte",
         DirectoryIdentifierStatus.NotProvided => "Não informado pela fonte",
         DirectoryIdentifierStatus.Invalid => "Inválido (recusado)",
+        DirectoryIdentifierStatus.Contradictory => "Contraditório na mesma coleta (não usado)",
         _ => "Não avaliado",
     };
 

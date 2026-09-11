@@ -61,6 +61,13 @@ public enum DirectoryIdentifierStatus
 
     /// <summary>A fonte informou um valor que não é um identificador válido (formato, GUID vazio, placeholder).</summary>
     Invalid = 3,
+
+    /// <summary>
+    /// A MESMA coleta trouxe o mesmo registro da fonte mais de uma vez, com identificadores de diretório
+    /// DIFERENTES (ex.: X numa página e Y em outra; ou X e ausente/inválido). Nenhum deles é usado para vincular
+    /// nem para confirmar vínculo — escolher "o primeiro" dependeria da ordem das páginas.
+    /// </summary>
+    Contradictory = 4,
 }
 
 /// <summary>Estado de resolução entre fontes de UM binding.</summary>
@@ -91,8 +98,10 @@ public enum AssetBindingConflictKind
     None = 0,
 
     /// <summary>
-    /// O identificador de diretório informado pela fonte MUDOU em relação ao vínculo já estabelecido. O binding
-    /// permanece no ativo original (nunca movido silenciosamente) até análise.
+    /// O identificador de diretório informado pela fonte MUDOU em relação ao vínculo já estabelecido, no MESMO
+    /// diretório. O binding permanece no ativo original (nunca movido silenciosamente) até análise. Conflitos
+    /// gravados antes de <see cref="DirectoryChanged"/> existir também usam este valor — sem o diretório da
+    /// observação registrado, nada é presumido sobre qual dos dois campos mudou.
     /// </summary>
     IdentifierChanged = 1,
 
@@ -104,6 +113,22 @@ public enum AssetBindingConflictKind
 
     /// <summary>O ativo deste binding já está vinculado a OUTRO dispositivo do mesmo diretório.</summary>
     AssetHeldByOtherIdentifier = 3,
+
+    /// <summary>
+    /// A fonte passou a informar o MESMO identificador de dispositivo em OUTRO diretório de origem. O vínculo
+    /// estabelecido (diretório anterior) permanece; o par observado fica registrado à parte para análise.
+    /// </summary>
+    DirectoryChanged = 4,
+
+    /// <summary>Diretório de origem E identificador de dispositivo mudaram em relação ao vínculo estabelecido.</summary>
+    DirectoryAndIdentifierChanged = 5,
+
+    /// <summary>
+    /// A mesma coleta trouxe identificadores contraditórios para o mesmo registro da fonte
+    /// (<see cref="DirectoryIdentifierStatus.Contradictory"/>). Nenhum foi usado para vincular ou confirmar; um
+    /// vínculo estabelecido antes é mantido, e as demais informações do registro seguem utilizáveis.
+    /// </summary>
+    ContradictoryObservation = 6,
 }
 
 /// <summary>

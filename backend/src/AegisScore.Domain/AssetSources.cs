@@ -91,6 +91,21 @@ public class AssetSourceBinding : Entity, ITenantOwned
     /// <summary>Identificador de diretório OBSERVADO que contradiz o vínculo (referência de análise; dado interno).</summary>
     public string? ConflictDirectoryDeviceId { get; set; }
 
+    /// <summary>
+    /// Diretório de origem da observação que causou o conflito — o par (<see cref="ConflictDirectoryNamespace"/>,
+    /// <see cref="ConflictDirectoryDeviceId"/>) fica SEPARADO do vínculo estabelecido
+    /// (<see cref="DirectoryNamespace"/>, <see cref="DirectoryDeviceId"/>). Nulo em conflitos gravados antes desta
+    /// coluna: o diretório daquela observação não foi registrado e não é inventado. Dado interno (diagnóstico).
+    /// </summary>
+    public string? ConflictDirectoryNamespace { get; set; }
+
+    /// <summary>
+    /// Identificadores VÁLIDOS e distintos que a mesma coleta trouxe para este registro quando eles se contradisseram
+    /// (<see cref="AssetBindingConflictKind.ContradictoryObservation"/>): ordenados e separados por vírgula, no
+    /// máximo <c>5</c>. Vazio quando a contradição foi entre um valor e ausência/invalidez. Dado interno (diagnóstico).
+    /// </summary>
+    public string? ConflictObservedDeviceIds { get; set; }
+
     /// <summary>Outro ativo envolvido na contradição (ex.: o que já detém a chave), quando houver.</summary>
     public Guid? ConflictAssetId { get; set; }
 
