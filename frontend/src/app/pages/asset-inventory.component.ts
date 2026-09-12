@@ -24,7 +24,11 @@ import { ControlComplianceCardComponent } from '../components/scoring/control-co
 import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
 import { CrossSourceSituationsComponent } from '../components/cross-source/cross-source-situations.component';
 import { DevicePriorityComponent } from '../components/device-priority/device-priority.component';
-import { DevicePriorityCriticalityChange, applyDeclaredCriticality } from '../models/device-priority.models';
+import {
+  DevicePriorityCriticalityChange,
+  applyDeclaredCriticality,
+  inventoryPageStep,
+} from '../models/device-priority.models';
 import { AegisScoreService } from '../services/aegis-score.service';
 import { ScoringService } from '../services/scoring.service';
 import { FunctionPosture, functionOf } from '../models/workspace.models';
@@ -674,7 +678,12 @@ export class AssetInventoryComponent implements OnInit {
     });
   }
 
-  private load(): void {
+  /** Só a resposta da ÚLTIMA leitura pedida é aplicada — filtro, página ou releitura depois de uma declaração. */
+  private listSeq = 0;
+
+  /** @param pageCorrected esta leitura já é a da última página válida (uma correção só, nunca um laço). */
+  private load(pageCorrected = false): void {
+    const seq = ++this.listSeq;
     this.loading.set(true);
     this.expanded.set(null);
     this.svc
@@ -689,6 +698,15 @@ export class AssetInventoryComponent implements OnInit {
       })
       .subscribe({
         next: (res) => {
+          if (seq !== this.listSeq) return;   // resposta tardia de um filtro, página ou releitura anterior
+          const step = inventoryPageStep(this.page(), res.totalPages, pageCorrected);
+          if (step.kind === 'reread') {
+            // A página pedida deixou de existir (o ativo declarado saiu do filtro): a última válida, com os mesmos filtros.
+            this.page.set(step.page);
+            this.load(true);
+            return;
+          }
+          this.page.set(step.page);
           this.rows.set(res.items);
           this.total.set(res.totalCount);
           this.totalPages.set(res.totalPages);
@@ -697,6 +715,7 @@ export class AssetInventoryComponent implements OnInit {
           this.loaded.set(true);
         },
         error: (err) => {
+          if (seq !== this.listSeq) return;
           console.error('Falha ao carregar o inventário de ativos:', err);
           this.rows.set([]);
           this.loading.set(false);

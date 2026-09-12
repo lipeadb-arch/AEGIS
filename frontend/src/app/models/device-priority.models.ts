@@ -461,3 +461,40 @@ export function pageAfterRefresh(l: Pick<DevicePriorityList, 'items' | 'total' |
   const last = Math.max(1, Math.ceil(l.total / l.pageSize));
   return last < l.page ? last : null;
 }
+
+/**
+ * Nota do detalhe aberto na Central quando, depois da releitura, o dispositivo não está mais na lista exibida: com o filtro
+ * de faixa vazio, ele SAIU do filtro; com outros itens, pode ter mudado de faixa ou de posição. Nula quando a linha continua
+ * visível ou quando não há detalhe aberto. O detalhe continua aberto nos dois casos — a existência dele não depende da linha.
+ */
+export function detailOutsideListNote(
+  l: Pick<DevicePriorityList, 'items' | 'total' | 'bandFilter'> | null,
+  expandedId: string | null,
+): string | null {
+  if (!expandedId || !l || l.items.some((i) => i.assetId === expandedId)) return null;
+  const filter = l.bandFilter ? DEVICE_PRIORITY_BAND_FILTERS.find((f) => f.value === l.bandFilter)?.label : null;
+  if (filter && l.total === 0)
+    return (
+      `Após a atualização, este dispositivo saiu do filtro "${filter}", que ficou sem dispositivos. A prioridade atualizada ` +
+      'está no detalhe abaixo, que continua aberto.'
+    );
+  if (filter)
+    return (
+      `Após a atualização, este dispositivo não está mais nesta página do filtro "${filter}" (mudou de faixa ou de posição). ` +
+      'A prioridade atualizada está no detalhe abaixo, que continua aberto.'
+    );
+  return 'Após a atualização, este dispositivo não está mais nesta página da fila (nova posição ou faixa); o detalhe continua aberto.';
+}
+
+export type InventoryPageStep = { kind: 'apply'; page: number } | { kind: 'reread'; page: number };
+
+/**
+ * Inventário relido depois de uma declaração: se a página pedida deixou de existir (o ativo saiu do filtro), relê a última
+ * página válida UMA vez, com os mesmos filtros; sem resultados, normaliza para a página 1 e aplica o vazio verdadeiro. Uma
+ * segunda resposta ainda fora do total é aplicada como veio — nunca um laço de releituras.
+ */
+export function inventoryPageStep(requestedPage: number, totalPages: number, alreadyCorrected: boolean): InventoryPageStep {
+  if (totalPages <= 0) return { kind: 'apply', page: 1 };
+  if (requestedPage > totalPages && !alreadyCorrected) return { kind: 'reread', page: totalPages };
+  return { kind: 'apply', page: requestedPage };
+}

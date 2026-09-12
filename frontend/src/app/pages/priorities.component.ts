@@ -47,6 +47,7 @@ import {
   devicePriorityRangeText,
   devicePrioritySummaryText,
   pageAfterRefresh,
+  detailOutsideListNote,
   dispositionText,
   tieText,
 } from '../models/device-priority.models';
@@ -527,7 +528,7 @@ import {
                           @if (it.caveats.length) { <span class="meta warn-text">{{ it.caveats.length }} ressalva(s)</span> }
                         </td>
                         <td>
-                          <button type="button" class="ghost xs-open" (click)="toggleDp(it.assetId)"
+                          <button type="button" class="ghost xs-open" (click)="toggleDp(it.assetId, it.assetName)"
                             [attr.aria-expanded]="dpExpanded() === it.assetId">
                             {{ dpExpanded() === it.assetId ? 'Fechar' : 'Detalhe' }}
                           </button>
@@ -542,14 +543,21 @@ import {
                   <button type="button" class="ghost" (click)="goDp(dl.page - 1)" [disabled]="dl.page <= 1">‹ Anterior</button>
                   <button type="button" class="ghost" (click)="goDp(dl.page + 1)" [disabled]="dl.page * dl.pageSize >= dl.total">Próxima ›</button>
                 </div>
-                @if (dpExpanded(); as id) {
-                  <div class="xs-detail-panel">
-                    @if (dpExpandedOffPage()) {
-                      <p class="meta" role="status">Após a atualização, este dispositivo não está mais nesta página da fila (nova posição ou faixa); o detalhe continua aberto.</p>
-                    }
-                    <app-device-priority [assetId]="id" (criticalityDeclared)="onDeviceCriticalityDeclared()" />
+              }
+              <!-- O detalhe NÃO depende da linha da tabela: quando a releitura esvazia o filtro (o dispositivo mudou de
+                   faixa), a lista mostra o vazio, e o detalhe continua aberto com a confirmação e a prioridade atualizada.
+                   Fora do ramo tabela/vazio, a instância é preservada — sem nova leitura nem nova declaração. -->
+              @if (dpExpanded(); as id) {
+                <div class="xs-detail-panel">
+                  <div class="dp-detail-head">
+                    <p class="meta">Detalhe de <strong>{{ dpExpandedName() }}</strong></p>
+                    <button type="button" class="ghost xs-open dp-detail-close" (click)="closeDp()">Fechar detalhe</button>
                   </div>
-                }
+                  @if (dpDetailNote(); as note) {
+                    <p class="meta" role="status">{{ note }}</p>
+                  }
+                  <app-device-priority [assetId]="id" (criticalityDeclared)="onDeviceCriticalityDeclared()" />
+                </div>
               }
               @if (dpDispositions(); as dt) {
                 <p class="meta xs-policy">Casos fora da fila por disposição registrada (evidência preservada): {{ dt }}.</p>
@@ -959,6 +967,7 @@ import {
       .dp-why { min-width: 26rem; }
       .dp-why .xs-rem { max-width: none; }
       .dp-why .meta.mono { white-space: normal; overflow-wrap: anywhere; font-size: 0.72rem; }
+      .dp-detail-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; margin-bottom: 0.35rem; }
 
       @media (max-width: 720px) { .card.wide { grid-column: span 1; } }
     `,
@@ -1090,12 +1099,10 @@ export class PrioritiesComponent {
 
   protected readonly dpRefreshing = signal(false);
   protected readonly dpRefreshError = signal<string | null>(null);
-  /** O detalhe aberto não está na página exibida (a atualização mudou a posição ou a faixa dele). */
-  protected readonly dpExpandedOffPage = computed(() => {
-    const id = this.dpExpanded();
-    const l = this.dp();
-    return !!id && !!l && !l.items.some((i) => i.assetId === id);
-  });
+  /** Nome do dispositivo do detalhe aberto — guardado na abertura, porque a linha pode sair da lista depois da releitura. */
+  protected readonly dpExpandedName = signal<string | null>(null);
+  /** Por que o detalhe aberto não está na lista exibida (saiu do filtro ou mudou de página); nula com a linha visível. */
+  protected readonly dpDetailNote = computed(() => detailOutsideListNote(this.dp(), this.dpExpanded()));
   /** Só a resposta da ÚLTIMA leitura pedida é aplicada — filtro, página ou atualização depois de uma declaração. */
   private dpSeq = 0;
 
@@ -1160,8 +1167,16 @@ export class PrioritiesComponent {
     this.loadDevicePriority();
   }
 
-  protected toggleDp(assetId: string): void {
-    this.dpExpanded.set(this.dpExpanded() === assetId ? null : assetId);
+  protected toggleDp(assetId: string, name: string): void {
+    const open = this.dpExpanded() !== assetId;
+    this.dpExpanded.set(open ? assetId : null);
+    this.dpExpandedName.set(open ? name : null);
+  }
+
+  /** Fecha o detalhe mesmo quando a linha dele já não está na tabela (filtro esvaziado). Não relê nada. */
+  protected closeDp(): void {
+    this.dpExpanded.set(null);
+    this.dpExpandedName.set(null);
   }
 
   // ---- [AEGIS-CROSS-SOURCE-01] Situações identificadas entre fontes (leitura própria, separada das filas) ----
