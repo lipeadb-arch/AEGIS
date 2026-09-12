@@ -171,6 +171,33 @@ public static class DevicePriorityPolicy
         if (c != 0) return c;
         return (b.Cvss ?? -1).CompareTo(a.Cvss ?? -1);
     }
+
+    /// <summary>
+    /// A faixa FINAL de um caso como expressão traduzível para SQL, GERADA da tabela de decisão e de <see cref="FinalBand"/> —
+    /// a ordenação no banco usa a mesma definição do avaliador, inclusive a saturação em P1 (casos de faixas base diferentes
+    /// que o agravante leva à mesma faixa final e que só o exploit e a severidade desempatam). Severidade não informada →
+    /// <paramref name="unknownBand"/> (depois de todas as faixas).
+    /// </summary>
+    public static Expression<Func<T, int>> BandExpression<T>(
+        Expression<Func<T, int>> severityOrder, Expression<Func<T, int>> exploitOrder, bool aggravated, int unknownBand)
+    {
+        var p = severityOrder.Parameters[0];
+        var s = severityOrder.Body;
+        var e = new ParameterSwap(exploitOrder.Parameters[0], p).Visit(exploitOrder.Body)!;
+        Expression body = Expression.Constant(unknownBand);
+        for (var sev = DevicePrioritySeverity.Low; sev >= DevicePrioritySeverity.Critical; sev--)
+            for (var exp = DevicePriorityExploit.NotInformed; exp >= DevicePriorityExploit.Verified; exp--)
+                body = Expression.Condition(
+                    Expression.AndAlso(Expression.Equal(s, Expression.Constant(sev)), Expression.Equal(e, Expression.Constant(exp))),
+                    Expression.Constant(FinalBand(BaseBand(sev, exp)!.Value, aggravated)),
+                    body);
+        return Expression.Lambda<Func<T, int>>(body, p);
+    }
+
+    private sealed class ParameterSwap(ParameterExpression from, Expression to) : ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node) => node == from ? to : base.VisitParameter(node);
+    }
 }
 
 /// <summary>Chave de ordenação de um caso (ou do caso determinante de um dispositivo).</summary>
@@ -226,8 +253,17 @@ public static class DevicePriorityStatuses
     /// <summary>Todos os casos atribuíveis em aberto têm disposição humana registrada — fora da fila, evidência preservada.</summary>
     public const string AllDisposed = "allDisposed";
 
-    /// <summary>Nenhuma vulnerabilidade em aberto atribuível nas evidências elegíveis.</summary>
+    /// <summary>
+    /// Nenhuma vulnerabilidade em aberto atribuível, e a ausência é CONCLUSIVA: a aquisição completa mais recente (ou a
+    /// última completa publicada, com ressalva da tentativa que falhou) observou o dispositivo.
+    /// </summary>
     public const string NoOpenCases = "noOpenCases";
+
+    /// <summary>
+    /// Nenhum caso publicado nesta leitura, mas a publicação não permite concluir ausência (parcial, não concluída, desfecho
+    /// não registrado ou registro não reconfirmado). Nunca "nada a tratar".
+    /// </summary>
+    public const string AbsenceNotVerified = "absenceNotVerified";
 
     /// <summary>O ativo não tem registro da fonte de vulnerabilidades — fora do escopo desta avaliação.</summary>
     public const string NoSourceRecord = "noSourceRecord";
@@ -239,7 +275,11 @@ public static class DevicePriorityDeviceContexts
     /// <summary>Ao menos uma situação entre fontes IDENTIFICADA (associação comprovada) — um único agravante.</summary>
     public const string Gap = "gap";
 
-    /// <summary>O Intune informa conforme E com criptografia, com associação comprovada.</summary>
+    /// <summary>
+    /// Com associação comprovada, o Intune informa fatos em que NENHUMA condição das regras está presente (conformidade que
+    /// não é "não conforme" — conforme ou em período de carência — e criptografia). O estado informado é preservado em
+    /// <see cref="DevicePriorityAssessment.DeviceReport"/>; "não corresponde à regra" não é "conforme".
+    /// </summary>
     public const string NoGapInformed = "noGapInformed";
 
     /// <summary>Uma condição informada ausente; a outra sem informação determinada.</summary>
@@ -261,6 +301,38 @@ public static class DevicePriorityCriticalityStates
     public const string NotConfirmed = "notConfirmed";
     /// <summary>Há declaração, mas o valor cadastrado atual difere do declarado — a proveniência não o cobre.</summary>
     public const string Diverged = "diverged";
+}
+
+/// <summary>
+/// O que a fonte NÃO reporta pode ser dado como ausente? Distinto da contagem de casos publicados e do estado da
+/// atribuição (códigos estáveis) — a mesma completude da autoridade de correlação.
+/// </summary>
+public static class DevicePriorityAbsenceStates
+{
+    /// <summary>Aquisição mais recente completa, com o dispositivo reconfirmado nela.</summary>
+    public const string Conclusive = "conclusive";
+
+    /// <summary>Conclusiva na última aquisição completa publicada; a tentativa mais recente de coleta falhou.</summary>
+    public const string ConclusiveAttemptFailed = "conclusiveAttemptFailed";
+
+    /// <summary>A publicação não permite concluir ausência (parcial, não concluída, desfecho não registrado, não reconfirmado).</summary>
+    public const string NotVerifiable = "notVerifiable";
+
+    /// <summary>Sem atribuição utilizável (sem registro da fonte, registro não atual, atribuição ambígua) ou sem leitura.</summary>
+    public const string NotApplicable = "notApplicable";
+}
+
+/// <summary>
+/// Estado de conformidade e de criptografia EFETIVAMENTE informado pelo Intune nos registros elegíveis que sustentam a
+/// conclusão das regras — para a narrativa não deduzir "conforme" de "não corresponde à condição da regra".
+/// </summary>
+public sealed record DevicePriorityDeviceReport(
+    IReadOnlyList<DeviceComplianceBucket> Compliance, IReadOnlyList<DeviceEncryptionBucket> Encryption)
+{
+    public static DevicePriorityDeviceReport None { get; } =
+        new(Array.Empty<DeviceComplianceBucket>(), Array.Empty<DeviceEncryptionBucket>());
+
+    public bool GracePeriod => Compliance.Contains(DeviceComplianceBucket.InGracePeriod);
 }
 
 public sealed record DevicePriorityAssessment(
@@ -286,10 +358,18 @@ public sealed record DevicePriorityAssessment(
     IReadOnlyDictionary<ExposureStatus, int> Dispositions,
     /// <summary>Marcas de aquisição elegíveis por conector usável (as mesmas que a correlação usa).</summary>
     IReadOnlyDictionary<Guid, IReadOnlyList<DateTimeOffset>> EligibleMarkers,
-    IReadOnlyList<string> Reasons)
+    IReadOnlyList<string> Reasons,
+    /// <summary>Completude para concluir ausência (<see cref="DevicePriorityAbsenceStates"/>) — independe da contagem.</summary>
+    string AbsenceState,
+    /// <summary>Marca da aquisição completa que sustenta a ausência (quando conclusiva).</summary>
+    DateTimeOffset? AbsenceAt,
+    IReadOnlyList<string> AbsenceReasons,
+    DevicePriorityDeviceReport DeviceReport)
 {
     public int PrioritizableCases => CasesByBand.Values.Sum();
     public int DispositionCases => Dispositions.Values.Sum();
+    /// <summary>Casos em aberto armazenados nas aquisições elegíveis (priorizáveis, sem severidade e com disposição) — o fato.</summary>
+    public int StoredOpenCases => PrioritizableCases + InsufficientCases + DispositionCases;
     public int OpenOutOfPolicy => Source.Evidence.Sum(e => e.OpenOutOfPolicy);
     public int NoLongerReported => Source.Evidence.Sum(e => e.NoLongerReported);
 }
@@ -304,7 +384,8 @@ public static class DevicePriorityEvaluator
     {
         var correlation = CrossSourceCorrelationEvaluator.Evaluate(f.Correlation, policy, now);
         var source = CrossSourceCorrelationEvaluator.AssessVulnerabilitySource(f.Correlation, policy, now);
-        var (context, situations) = DeviceContext(correlation);
+        var (context, situations, report) = DeviceContext(correlation);
+        var (absence, absenceAt) = Absence(source);
         var (critState, critAggravates) = Criticality(f.Criticality);
         var gap = context == DevicePriorityDeviceContexts.Gap;
         var aggravated = gap || critAggravates;
@@ -373,6 +454,12 @@ public static class DevicePriorityEvaluator
             reasons.Add($"As vulnerabilidades em aberto deste dispositivo foram observadas antes da política temporal " +
                 $"({policy.MaxEvidenceAgeDays} dia(s)) e não sustentam prioridade atual.");
         }
+        else if (absence == DevicePriorityAbsenceStates.NotVerifiable)
+        {
+            // Nenhum caso publicado NÃO é ausência: a publicação não permite concluir (mesma regra da correlação).
+            status = DevicePriorityStatuses.AbsenceNotVerified;
+            reasons.AddRange(source.AbsenceReasons);
+        }
         else
             status = DevicePriorityStatuses.NoOpenCases;
 
@@ -382,29 +469,82 @@ public static class DevicePriorityEvaluator
             DeviceContext: context, IdentifiedSituations: situations,
             CriticalityState: critState, CriticalityAggravates: critAggravates, Aggravated: aggravated && best is not null,
             CasesByBand: byBand, InsufficientCases: insufficientCases, Dispositions: dispositions,
-            EligibleMarkers: markers, Reasons: reasons);
+            EligibleMarkers: markers, Reasons: reasons,
+            AbsenceState: absence, AbsenceAt: absenceAt, AbsenceReasons: source.AbsenceReasons, DeviceReport: report);
+    }
+
+    /// <summary>Completude da fonte de vulnerabilidades NESTE dispositivo, pela autoridade de correlação.</summary>
+    private static (string State, DateTimeOffset? At) Absence(CrossSourceVulnerabilitySource s)
+    {
+        if (s.State != CrossSourceVulnerabilitySourceStates.Attributable) return (DevicePriorityAbsenceStates.NotApplicable, null);
+        if (!s.AbsenceConclusive) return (DevicePriorityAbsenceStates.NotVerifiable, null);
+        return (s.Evidence.Any(e => e.Connector.LatestAttemptFailed)
+                ? DevicePriorityAbsenceStates.ConclusiveAttemptFailed
+                : DevicePriorityAbsenceStates.Conclusive,
+            s.Evidence.Select(e => e.Connector.Watermark).Max());
+    }
+
+    /// <summary>
+    /// Completude da leitura INTEIRA (Central): a mesma regra por fonte — só aquisição publicada completa sustenta que os
+    /// dispositivos fora da fila não têm vulnerabilidade em aberto. Distinta da contagem de candidatos.
+    /// </summary>
+    public static (string State, string? Note) SourceAbsence(IEnumerable<CrossSourceConnectorFacts> connectors)
+    {
+        var vuln = connectors.Where(c => c.Role == CrossSourceRole.Vulnerabilities)
+            .OrderBy(c => c.ConnectorName, StringComparer.Ordinal).ThenBy(c => c.ConnectorId).ToList();
+        if (vuln.Count == 0 || vuln.All(c => c.Watermark is null)) return (DevicePriorityAbsenceStates.NotApplicable, null);
+        var gaps = vuln
+            .Select(c => c.Watermark is not { } w
+                ? $"{c.Label} ({c.ConnectorName}): ainda não publicou uma leitura por dispositivo."
+                : CrossSourceCorrelationEvaluator.AcquisitionIncompleteness(c) is { } why
+                    ? $"{why} Aquisição de {CrossSourceCorrelationEvaluator.Utc(w)}."
+                    : null)
+            .OfType<string>()
+            .ToList();
+        if (gaps.Count > 0)
+            return (DevicePriorityAbsenceStates.NotVerifiable,
+                "A leitura atual não permite concluir ausência de vulnerabilidades em aberto nos dispositivos fora desta fila: " +
+                string.Join(" ", gaps) + " Os casos publicados continuam valendo como fato, com ressalvas.");
+        var failed = vuln.Where(c => c.LatestAttemptFailed).ToList();
+        if (failed.Count > 0)
+            return (DevicePriorityAbsenceStates.ConclusiveAttemptFailed,
+                "A tentativa mais recente de coleta do Microsoft Defender falhou; a leitura usa a última aquisição completa " +
+                $"publicada ({string.Join(", ", failed.Select(c => CrossSourceCorrelationEvaluator.Utc(c.Watermark!.Value)))}).");
+        return (DevicePriorityAbsenceStates.Conclusive, null);
     }
 
     /// <summary>
     /// Contexto de gestão do dispositivo pelas SITUAÇÕES já avaliadas: qualquer situação identificada é UM agravante (as
     /// duas regras são coexistências no mesmo dispositivo — duas situações não viram dois bônus). Contradição, conflito,
-    /// associação não comprovada ou fonte ausente não agravam e não atenuam.
+    /// associação não comprovada ou fonte ausente não agravam e não atenuam. Quando as regras NÃO se formam pelo lado do
+    /// dispositivo, guarda o estado que o Intune efetivamente informou (ex.: período de carência não é "conforme").
     /// </summary>
-    private static (string Context, IReadOnlyList<CrossSourceRuleAssessment> Situations) DeviceContext(CrossSourceAssetAssessment a)
+    private static (string Context, IReadOnlyList<CrossSourceRuleAssessment> Situations, DevicePriorityDeviceReport Report)
+        DeviceContext(CrossSourceAssetAssessment a)
     {
         var identified = a.Rules.Where(r => r.State == CrossSourceStates.Identified).ToList();
-        if (identified.Count > 0) return (DevicePriorityDeviceContexts.Gap, identified);
+        var none = DevicePriorityDeviceReport.None;
+        if (identified.Count > 0) return (DevicePriorityDeviceContexts.Gap, identified, none);
         if (a.Rules.Any(r => r.State == CrossSourceStates.ContradictoryEvidence))
-            return (DevicePriorityDeviceContexts.Contradictory, identified);
-        if (a.Rules.Any(r => r.State == CrossSourceStates.LinkConflict)) return (DevicePriorityDeviceContexts.Conflict, identified);
+            return (DevicePriorityDeviceContexts.Contradictory, identified, none);
+        if (a.Rules.Any(r => r.State == CrossSourceStates.LinkConflict)) return (DevicePriorityDeviceContexts.Conflict, identified, none);
         if (a.Association.State == CrossSourceAssociationStates.SourceMissing
             && a.Records.All(r => r.Connector.Role != CrossSourceRole.DeviceManagement))
-            return (DevicePriorityDeviceContexts.NoManagementSource, identified);
+            return (DevicePriorityDeviceContexts.NoManagementSource, identified, none);
         bool DeviceAbsent(CrossSourceRuleAssessment r) =>
             r.State == CrossSourceStates.NotIdentified && r.SupportingDeviceRecords.Count > 0;
-        if (a.Rules.All(DeviceAbsent)) return (DevicePriorityDeviceContexts.NoGapInformed, identified);
-        if (a.Rules.Any(DeviceAbsent)) return (DevicePriorityDeviceContexts.Partial, identified);
-        return (DevicePriorityDeviceContexts.Unknown, identified);
+        IEnumerable<CrossSourceBindingFacts> Supporting(CrossSourceDeviceCondition c) => a.Rules
+            .Where(r => r.Rule.Condition == c && DeviceAbsent(r))
+            .SelectMany(r => r.SupportingDeviceRecords)
+            .Select(r => r.Binding);
+        var report = new DevicePriorityDeviceReport(
+            Supporting(CrossSourceDeviceCondition.Noncompliant).Select(b => b.Compliance).OfType<DeviceComplianceBucket>()
+                .Distinct().OrderBy(x => x).ToList(),
+            Supporting(CrossSourceDeviceCondition.NotEncrypted).Select(b => b.Encryption).OfType<DeviceEncryptionBucket>()
+                .Distinct().OrderBy(x => x).ToList());
+        if (a.Rules.All(DeviceAbsent)) return (DevicePriorityDeviceContexts.NoGapInformed, identified, report);
+        if (a.Rules.Any(DeviceAbsent)) return (DevicePriorityDeviceContexts.Partial, identified, report);
+        return (DevicePriorityDeviceContexts.Unknown, identified, none);
     }
 
     /// <summary>Criticidade só é informação declarada com proveniência E igual ao valor cadastrado atual.</summary>
@@ -445,7 +585,10 @@ public static class DevicePriorityNarrative
     {
         DevicePriorityStatuses.Prioritized => BandLabel(DevicePriorityBands.Of(a.Band!.Value)),
         DevicePriorityStatuses.AllDisposed => "Fora da fila · disposição registrada",
-        DevicePriorityStatuses.NoOpenCases => "Sem vulnerabilidade em aberto atribuível",
+        DevicePriorityStatuses.NoOpenCases => a.AbsenceState == DevicePriorityAbsenceStates.ConclusiveAttemptFailed
+            ? "Sem vulnerabilidade em aberto na última aquisição completa publicada"
+            : "Sem vulnerabilidade em aberto na aquisição completa mais recente",
+        DevicePriorityStatuses.AbsenceNotVerified => "Sem caso publicado · ausência não verificável",
         DevicePriorityStatuses.NoSourceRecord => "Fora do escopo · sem registro do Microsoft Defender",
         _ => BandLabel(DevicePriorityBands.Insufficient),
     };
@@ -530,7 +673,7 @@ public static class DevicePriorityNarrative
     {
         DevicePriorityDeviceContexts.Gap =>
             "Situação entre fontes identificada: " + string.Join(" e ", a.IdentifiedSituations.Select(r => ConditionText(r.Rule.Condition))),
-        DevicePriorityDeviceContexts.NoGapInformed => "O Intune informa o dispositivo como conforme e com criptografia",
+        DevicePriorityDeviceContexts.NoGapInformed => NoGapLabel(a.DeviceReport),
         DevicePriorityDeviceContexts.Partial => "Uma condição informada ausente pelo Intune; a outra sem informação determinada",
         DevicePriorityDeviceContexts.Contradictory => "Registros do Intune contraditórios — contexto não utilizado",
         DevicePriorityDeviceContexts.Conflict => "Vínculo em conflito — contexto do Intune não utilizado",
@@ -540,6 +683,46 @@ public static class DevicePriorityNarrative
 
     private static string ConditionText(CrossSourceDeviceCondition c) =>
         c == CrossSourceDeviceCondition.Noncompliant ? "dispositivo não conforme segundo o Intune" : "dispositivo sem criptografia segundo o Intune";
+
+    /// <summary>
+    /// Nenhuma condição das regras presente, com o estado INFORMADO pela fonte — "não corresponde à condição não conforme"
+    /// não vira "conforme": período de carência é dito como tal.
+    /// </summary>
+    private static string NoGapLabel(DevicePriorityDeviceReport r)
+    {
+        var compliance = r.Compliance switch
+        {
+            [DeviceComplianceBucket.Compliant] => "como conforme",
+            [DeviceComplianceBucket.InGracePeriod] => "em período de carência de conformidade",
+            _ => "com estados de conformidade diferentes entre registros (" +
+                 string.Join("; ", r.Compliance.Select(c => AssetCrossSourceNarrative.ComplianceLabel(c))) + ")",
+        };
+        return $"O Intune informa o dispositivo {compliance} e com criptografia" +
+            (r.GracePeriod ? " — carência não é conformidade" : "");
+    }
+
+    public const string GracePeriodNote =
+        "Período de carência, segundo a fonte: o dispositivo não atende a política e está dentro do prazo concedido por ela. " +
+        "Não é conformidade, e a regra XS-DEF-INT-NONCOMPLIANT v1 só considera o estado \"não conforme\" informado pelo " +
+        "Intune — por isso não há situação entre fontes nem agravante.";
+
+    /// <summary>Completude da fonte de vulnerabilidades neste dispositivo, dita com a data da aquisição que a sustenta.</summary>
+    public static string? AbsenceLabel(DevicePriorityAssessment a)
+    {
+        var at = a.AbsenceAt is { } w ? $" ({CrossSourceCorrelationEvaluator.Utc(w)})" : "";
+        return a.AbsenceState switch
+        {
+            DevicePriorityAbsenceStates.Conclusive =>
+                $"A aquisição mais recente do Microsoft Defender{at} foi completa e observou este dispositivo: o que ela não " +
+                "reporta não está em aberto na fonte.",
+            DevicePriorityAbsenceStates.ConclusiveAttemptFailed =>
+                $"A última aquisição completa publicada do Microsoft Defender{at} observou este dispositivo; a tentativa mais " +
+                "recente de coleta falhou, e a conclusão vale para essa aquisição.",
+            DevicePriorityAbsenceStates.NotVerifiable =>
+                "A ausência de outras vulnerabilidades em aberto não pode ser concluída: " + string.Join(" ", a.AbsenceReasons),
+            _ => null,
+        };
+    }
 
     public static IReadOnlyList<string> Aggravators(DevicePriorityAssessment a)
     {
@@ -556,7 +739,27 @@ public static class DevicePriorityNarrative
     public static string PositionReason(DevicePriorityAssessment a, DevicePriorityCaseFacts? determining)
     {
         if (a.Status != DevicePriorityStatuses.Prioritized || a.Best is not { } b)
-            return a.Reasons.Count > 0 ? string.Join(" ", a.Reasons) : StatusBandLabel(a) + ".";
+        {
+            var at = a.AbsenceAt is { } w ? $" ({CrossSourceCorrelationEvaluator.Utc(w)})" : "";
+            return a.Status switch
+            {
+                DevicePriorityStatuses.AllDisposed =>
+                    $"Fora da fila: os {a.DispositionCases} caso(s) em aberto atribuível(is) têm disposição registrada; a " +
+                    "evidência é preservada." + (a.AbsenceState == DevicePriorityAbsenceStates.NotVerifiable
+                        ? " A aquisição mais recente não permite concluir que não haja outros: " + string.Join(" ", a.AbsenceReasons)
+                        : ""),
+                DevicePriorityStatuses.NoOpenCases => a.AbsenceState == DevicePriorityAbsenceStates.ConclusiveAttemptFailed
+                    ? $"A última aquisição completa publicada do Microsoft Defender{at} observou este dispositivo e não reporta " +
+                      "vulnerabilidade em aberto atribuível. A tentativa mais recente de coleta falhou; a ausência vale para " +
+                      "essa aquisição."
+                    : $"A aquisição completa mais recente do Microsoft Defender{at} observou este dispositivo e não reporta " +
+                      "vulnerabilidade em aberto atribuível.",
+                DevicePriorityStatuses.AbsenceNotVerified =>
+                    "Nenhuma vulnerabilidade em aberto está publicada para este dispositivo nesta leitura, e a ausência não " +
+                    "pode ser concluída: " + string.Join(" ", a.Reasons),
+                _ => a.Reasons.Count > 0 ? string.Join(" ", a.Reasons) : StatusBandLabel(a) + ".",
+            };
+        }
         var cve = determining?.CveId ?? "a CVE determinante";
         var text = $"{BandLabel(DevicePriorityBands.Of(b.Band))}: determinada por {cve} — severidade técnica " +
             $"{SeverityPhrase(b.SeverityOrder, b.Cvss)} e {ExploitLabel(b.ExploitOrder)}";
@@ -602,10 +805,21 @@ public static class DevicePriorityNarrative
                     text += " Confirmar a criticidade do ativo, se ela for conhecida.";
                 return text;
             case DevicePriorityStatuses.AllDisposed:
-                return "Nada na fila: os casos em aberto têm disposição registrada. Revise as disposições quando houver nova coleta.";
+                return "Nada na fila: os casos em aberto têm disposição registrada. Revise as disposições quando houver nova coleta." +
+                    (a.AbsenceState == DevicePriorityAbsenceStates.NotVerifiable
+                        ? " A aquisição mais recente não permite concluir que não haja outras vulnerabilidades em aberto neste " +
+                          "dispositivo; confirme numa aquisição completa do Microsoft Defender."
+                        : "");
             case DevicePriorityStatuses.NoOpenCases:
-                return "Nada a tratar por esta política agora. Ausência de vulnerabilidade reportada não comprova que o " +
-                    "dispositivo esteja seguro.";
+                return a.AbsenceState == DevicePriorityAbsenceStates.ConclusiveAttemptFailed
+                    ? "Nada a tratar por esta política na última aquisição completa publicada. A tentativa mais recente de " +
+                      "coleta falhou: verifique a coleta do Microsoft Defender em Integrações. Ausência de vulnerabilidade " +
+                      "reportada não comprova que o dispositivo esteja seguro."
+                    : "Nada a tratar por esta política na aquisição completa mais recente. Ausência de vulnerabilidade " +
+                      "reportada não comprova que o dispositivo esteja seguro.";
+            case DevicePriorityStatuses.AbsenceNotVerified:
+                return "Não é possível concluir ausência agora: aguarde uma aquisição completa do Microsoft Defender ou verifique " +
+                    "a coleta em Integrações. Sem ela, nenhum caso publicado não significa nada a tratar.";
             case DevicePriorityStatuses.NoSourceRecord:
                 return "Integre ou verifique a fonte de vulnerabilidades para este dispositivo em Integrações.";
         }
@@ -623,6 +837,9 @@ public static class DevicePriorityNarrative
     public static IReadOnlyList<string> CouldChange(DevicePriorityAssessment a)
     {
         var list = new List<string>();
+        if (a.Status == DevicePriorityStatuses.AbsenceNotVerified)
+            list.Add("Uma aquisição completa do Microsoft Defender que observe este dispositivo permitiria concluir a ausência " +
+                "ou publicaria as vulnerabilidades dele.");
         if (a.Status == DevicePriorityStatuses.Insufficient && a.InsufficientCases > 0)
             list.Add("CVSS ou severidade informados pela fonte para as CVEs sem severidade tornariam esses casos priorizáveis.");
         if (a.Status != DevicePriorityStatuses.Prioritized || a.Best is not { } b) return list;
@@ -635,6 +852,9 @@ public static class DevicePriorityNarrative
             if (a.DeviceContext is not DevicePriorityDeviceContexts.NoGapInformed)
                 list.Add("Não conformidade ou falta de criptografia informada pelo Intune, com associação comprovada " +
                     "(situação entre fontes identificada), anteciparia uma faixa.");
+            else if (a.DeviceReport.GracePeriod)
+                list.Add("Se o período de carência terminar sem conformidade e o Intune passar a informar o dispositivo como " +
+                    "não conforme, a situação entre fontes seria identificada e anteciparia uma faixa.");
         }
         if (a.Aggravated && b.Band > 1)
             list.Add("Outro agravante não mudaria a faixa: a política antecipa no máximo uma faixa.");
@@ -675,17 +895,29 @@ public static class DevicePriorityNarrative
 
         // Evidência: as aquisições elegíveis, com o estado de cada uma.
         var markers = a.EligibleMarkers.Values.SelectMany(m => m).Distinct().OrderBy(m => m).ToList();
-        list.Add(new DevicePriorityFactorDto(
-            "evidence", "Vulnerabilidades em aberto observadas",
-            markers.Count == 0
-                ? "Nenhuma aquisição elegível"
-                : $"{a.PrioritizableCases + a.InsufficientCases} caso(s) atribuível(is), " +
-                  CrossSourceCorrelationEvaluator.DateSpan(markers),
-            markers.Count == 0 ? DevicePriorityFactorKinds.Unknown : DevicePriorityFactorKinds.SourceFact,
-            VulnerabilitiesSource, markers.Count == 0 ? null : markers[^1], "Aquisição do AEGIS",
-            prioritized ? DevicePriorityEffects.Basis : DevicePriorityEffects.None,
-            vulnerabilities is null ? null : CrossSourceNarrative.AcquisitionLabel(
-                CrossSourceCorrelationEvaluator.AcquisitionState(markers.Count == 0 ? default : markers[^1], vulnerabilities.Connector))));
+        if (markers.Count > 0)
+            list.Add(new DevicePriorityFactorDto(
+                "evidence", "Vulnerabilidades em aberto observadas",
+                $"{a.PrioritizableCases + a.InsufficientCases} caso(s) atribuível(is), " + CrossSourceCorrelationEvaluator.DateSpan(markers),
+                DevicePriorityFactorKinds.SourceFact, VulnerabilitiesSource, markers[^1], "Aquisição do AEGIS",
+                prioritized ? DevicePriorityEffects.Basis : DevicePriorityEffects.None,
+                vulnerabilities is null ? null : CrossSourceNarrative.AcquisitionLabel(
+                    CrossSourceCorrelationEvaluator.AcquisitionState(markers[^1], vulnerabilities.Connector))));
+        else
+        {
+            // Sem observação em aberto elegível: o que isso significa depende da COMPLETUDE, não da contagem zero.
+            var conclusive = a.AbsenceState is DevicePriorityAbsenceStates.Conclusive or DevicePriorityAbsenceStates.ConclusiveAttemptFailed;
+            list.Add(new DevicePriorityFactorDto(
+                "evidence", "Vulnerabilidades em aberto observadas",
+                conclusive && a.AbsenceAt is { } at
+                    ? $"Nenhuma em aberto na aquisição completa de {CrossSourceCorrelationEvaluator.Utc(at)}"
+                    : a.AbsenceState == DevicePriorityAbsenceStates.NotVerifiable
+                        ? "Nenhum caso publicado nesta leitura — ausência não verificável"
+                        : "Nenhuma aquisição elegível",
+                conclusive ? DevicePriorityFactorKinds.SourceFact : DevicePriorityFactorKinds.Unknown,
+                VulnerabilitiesSource, conclusive ? a.AbsenceAt : null, conclusive ? "Aquisição do AEGIS" : null,
+                DevicePriorityEffects.None, AbsenceLabel(a)));
+        }
 
         if (prioritized && a.Best is { } b)
         {
@@ -758,7 +990,9 @@ public static class DevicePriorityNarrative
             gap
                 ? "Coexistência identificada pela regra versionada no mesmo dispositivo; não prova ausência de EDR nem que a " +
                   "CVE seja explorável. Duas situações no mesmo dispositivo contam como UM agravante."
-                : a.Correlation.Association.Text));
+                : a.DeviceReport.GracePeriod
+                    ? GracePeriodNote + " " + a.Correlation.Association.Text
+                    : a.Correlation.Association.Text));
         return list;
     }
 
@@ -944,7 +1178,12 @@ public sealed record AssetDevicePriorityDto(
     IReadOnlyList<DevicePriorityDispositionDto> Dispositions,
     int NoLongerReported,
     int ExcludedOutOfPolicy,
-    DevicePriorityCasePageDto? Cases);
+    DevicePriorityCasePageDto? Cases,
+    /// <summary>Completude para concluir ausência (<see cref="DevicePriorityAbsenceStates"/>) — distinta da contagem.</summary>
+    string AbsenceState,
+    string? AbsenceLabel,
+    /// <summary>Casos em aberto armazenados nas aquisições elegíveis (unidade: casos ativo × CVE) — o fato, sem conclusão.</summary>
+    int StoredOpenCases);
 
 /// <summary>UM dispositivo na fila da Central — aponta o caso que determinou a posição.</summary>
 public sealed record DevicePriorityItemDto(
@@ -999,7 +1238,13 @@ public sealed record DevicePrioritySummaryDto(
     IReadOnlyList<DevicePriorityDispositionDto> Dispositions,
     /// <summary>Integrações de vulnerabilidades de outros provedores, fora do escopo desta versão.</summary>
     int OutOfScopeSources,
-    string? OutOfScopeNote);
+    string? OutOfScopeNote,
+    /// <summary>
+    /// Suficiência da coleta para concluir AUSÊNCIA fora da fila (<see cref="DevicePriorityAbsenceStates"/>) — distinta de
+    /// <see cref="CandidateAssets"/>: zero candidatos com publicação parcial ou não concluída não é "nada a tratar".
+    /// </summary>
+    string AbsenceState,
+    string? AbsenceNote);
 
 public sealed record DevicePriorityListDto(
     DateTimeOffset EvaluatedAt,

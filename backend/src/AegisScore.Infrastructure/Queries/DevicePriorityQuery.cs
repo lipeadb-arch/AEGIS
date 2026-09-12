@@ -229,6 +229,7 @@ public sealed class DevicePriorityQuery : IDevicePriorityQuery
                     .ToListAsync(ct))
                 .Select(r => new KeyValuePair<ExposureStatus, int>(r.Status, r.Count)));
 
+            var (absence, absenceNote) = DevicePriorityEvaluator.SourceAbsence(connectors.Values);
             var summary = new DevicePrioritySummaryDto(
                 ReadingState: reading,
                 ReadingNote: note,
@@ -243,7 +244,9 @@ public sealed class DevicePriorityQuery : IDevicePriorityQuery
                 OutOfScopeSources: outOfScope,
                 OutOfScopeNote: outOfScope == 0 ? null
                     : $"{outOfScope} integração(ões) de vulnerabilidades de outros provedores estão configuradas e não são " +
-                      "avaliadas por esta versão da política (a atribuição por dispositivo só existe para o Microsoft Defender).");
+                      "avaliadas por esta versão da política (a atribuição por dispositivo só existe para o Microsoft Defender).",
+                AbsenceState: absence,
+                AbsenceNote: absenceNote);
 
             return new DevicePriorityListDto(
                 EvaluatedAt: now,
@@ -320,7 +323,10 @@ public sealed class DevicePriorityQuery : IDevicePriorityQuery
                 Dispositions: Dispositions(a.Dispositions),
                 NoLongerReported: a.NoLongerReported,
                 ExcludedOutOfPolicy: a.OpenOutOfPolicy,
-                Cases: a.EligibleMarkers.Count == 0 ? null : cases.Page);
+                Cases: a.EligibleMarkers.Count == 0 ? null : cases.Page,
+                AbsenceState: a.AbsenceState,
+                AbsenceLabel: DevicePriorityNarrative.AbsenceLabel(a),
+                StoredOpenCases: a.StoredOpenCases);
         }, ct);
     }
 
@@ -409,14 +415,12 @@ public sealed class DevicePriorityQuery : IDevicePriorityQuery
                 Array.Empty<(DevicePriorityCaseFacts, DevicePriorityCaseDto)>());
 
         var total = await keys.CountAsync(ct);
-        // Ordem da política no banco: faixa (mesma forma equivalente da tabela; sem severidade por último), exploit,
-        // severidade, CVSS maior primeiro — o agravante é do dispositivo inteiro e não muda a ordem entre seus casos —,
-        // e o identificador da CVE só para estabilidade (empate real).
+        // Ordem no banco = a chave FINAL do avaliador (DevicePriorityPolicy.Compare): faixa FINAL — gerada da própria tabela
+        // e de FinalBand com o agravante do dispositivo; a saturação em P1 junta faixas base diferentes, que o exploit e a
+        // severidade desempatam —, exploit, severidade, CVSS maior primeiro, e o identificador da CVE só para
+        // estabilidade (empate real). O primeiro caso é, por construção, o determinante (a.Best).
         var pageKeys = await keys
-            .OrderBy(k => k.SeverityOrder >= DevicePrioritySeverity.Unknown ? NoBand
-                : k.SeverityOrder + k.ExploitOrder <= 2 ? 1
-                : k.SeverityOrder + k.ExploitOrder >= 5 ? 4
-                : k.SeverityOrder + k.ExploitOrder - 1)
+            .OrderBy(DevicePriorityPolicy.BandExpression<CaseKey>(k => k.SeverityOrder, k => k.ExploitOrder, a.Aggravated, NoBand))
             .ThenBy(k => k.ExploitOrder)
             .ThenBy(k => k.SeverityOrder)
             .ThenByDescending(k => k.Cvss ?? -1)
