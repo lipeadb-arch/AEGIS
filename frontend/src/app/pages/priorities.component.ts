@@ -37,6 +37,9 @@ import {
   CrossSourceFilter,
   CrossSourceSituationList,
   CrossSourceState,
+  CrossSourceSituationItem,
+  acquisitionSpanText,
+  evidenceBasisLabel,
   crossSourceListView,
   crossSourceStateTone,
   crossSourceSummaryText,
@@ -449,7 +452,8 @@ import {
                       <th>Regra</th>
                       <th>Identificadas</th>
                       <th>com ressalvas</th>
-                      <th>Nenhuma condição</th>
+                      <th>Combinação não identificada</th>
+                      <th>com ressalvas</th>
                       <th>Evidência insuficiente</th>
                       <th>Vínculo em conflito</th>
                       <th>Registros contraditórios</th>
@@ -465,6 +469,7 @@ import {
                         <td>{{ t.identified }}</td>
                         <td>{{ t.identifiedWithCaveats }}</td>
                         <td>{{ t.notIdentified }}</td>
+                        <td>{{ t.notIdentifiedWithCaveats }}</td>
                         <td>{{ t.insufficientEvidence }}</td>
                         <td>{{ t.linkConflict }}</td>
                         <td>{{ t.contradictoryEvidence }}</td>
@@ -488,7 +493,8 @@ import {
                 </select>
               </div>
 
-              @if (xsView().kind === 'zero' || xsView().kind === 'filterEmpty') {
+              @if (xsEmpty()) {
+                <!-- Zero conclusivo, inconclusivo ou misto (e o recorte do teto) vêm dos totais por estado. -->
                 <div class="state empty"><p class="muted">{{ xsText() }}</p></div>
               } @else {
                 <table class="grid-table">
@@ -498,7 +504,7 @@ import {
                       <th>Regra</th>
                       <th>Situação</th>
                       <th>CVEs (distintas)</th>
-                      <th class="c-when">Evidências</th>
+                      <th class="c-when">Aquisições</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -523,8 +529,9 @@ import {
                           <span class="meta mono">{{ cvePreview(it) }}</span>
                         </td>
                         <td class="c-when">
-                          <span class="meta">Defender: {{ it.vulnerabilitiesAcquiredAt ? fmtDate(it.vulnerabilitiesAcquiredAt) : '—' }}</span>
-                          <span class="meta">Intune: {{ it.deviceManagementAcquiredAt ? fmtDate(it.deviceManagementAcquiredAt) : '—' }}</span>
+                          <span class="meta xs-basis">{{ basisLabel(it.evidenceBasis) }}</span>
+                          <span class="meta">Defender: {{ spanText(it.vulnerabilityAcquisitions, it.evidenceBasis) }}</span>
+                          <span class="meta">Intune: {{ spanText(it.deviceManagementAcquisitions, it.evidenceBasis) }}</span>
                         </td>
                         <td>
                           <button type="button" class="ghost xs-open" (click)="toggleXs(it.assetId + '|' + it.ruleCode)"
@@ -913,6 +920,14 @@ export class PrioritiesComponent {
     const v = this.xsView();
     return 'text' in v ? v.text : '';
   });
+  protected readonly xsEmpty = computed(() =>
+    ['zeroConclusive', 'zeroInconclusive', 'zeroMixed', 'filterEmpty'].includes(this.xsView().kind));
+  protected readonly basisLabel = evidenceBasisLabel;
+  protected spanText(
+    span: CrossSourceSituationItem['vulnerabilityAcquisitions'], basis: CrossSourceSituationItem['evidenceBasis'],
+  ): string {
+    return acquisitionSpanText(span, (d) => this.fmtDate(d), basis);
+  }
   protected readonly xsSummary = computed(() => (this.xs() ? crossSourceSummaryText(this.xs()!.summary) : ''));
   protected readonly xsTruncation = computed(() => (this.xs() ? truncationNote(this.xs()!.summary) : null));
   protected readonly xsRange = computed(() => {

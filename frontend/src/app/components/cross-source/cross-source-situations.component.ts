@@ -5,6 +5,7 @@ import {
   AssetCrossSource,
   CROSS_SOURCE_HEADING,
   acquisitionTone,
+  associationTone,
   crossSourceStateTone,
   cvePageText,
 } from '../../models/cross-source.models';
@@ -43,6 +44,12 @@ import { severityPt } from '../../models/vulnerability.models';
         @case ('loaded') {
           @let d = data()!;
           <p class="xsc-scope">{{ d.scope }}</p>
+          <!-- A associação é a CONCLUSÃO da avaliação neste ativo (comprovada, não comprovada, em conflito, fonte
+               ausente) — nunca presumida. O critério aparece separado, como requisito. -->
+          <div class="xsc-assoc">
+            <span class="xsc-badge tone-{{ assocTone(d.association.state) }}">{{ d.association.label }}</span>
+            <span class="xsc-assoc-text">{{ d.association.text }}</span>
+          </div>
 
           @for (r of d.rules; track r.ruleCode) {
             <article class="xsc-rule tone-{{ tone(r.state) }}">
@@ -83,7 +90,7 @@ import { severityPt } from '../../models/vulnerability.models';
 
           <div class="xsc-block">
             <span class="xsc-k">Evidências de cada fonte</span>
-            <p class="xsc-note">{{ d.associationReason }}</p>
+            <p class="xsc-note">{{ d.associationCriterion }}</p>
             @if (d.evidence.length === 0) {
               <p class="xsc-note">Este ativo não tem registro das fontes usadas por estas regras.</p>
             } @else {
@@ -207,6 +214,8 @@ import { severityPt } from '../../models/vulnerability.models';
       .xsc-k { text-transform: uppercase; letter-spacing: 0.08em; }
       .xsc-note { margin: 0; max-width: 900px; line-height: 1.5; display: block; }
       .xsc-scope { margin: 0; font-size: 12.5px; line-height: 1.55; max-width: 900px; }
+      .xsc-assoc { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 12px; line-height: 1.5; max-width: 900px; }
+      .xsc-assoc-text { flex: 1 1 320px; }
       .xsc-err { display: flex; flex-direction: column; gap: 8px; font-family: var(--mono, monospace); font-size: 12px; color: var(--muted, #9aa7c7); }
       .xsc-retry { align-self: flex-start; cursor: pointer; font-family: var(--mono, monospace); font-size: 11px; color: var(--cyan, #26e0ff); background: rgba(38,224,255,0.06); border: 1px solid rgba(38,224,255,0.35); border-radius: 8px; padding: 5px 12px; }
       .xsc-rule { border: 1px solid var(--line, rgba(255,255,255,0.15)); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
@@ -256,6 +265,7 @@ export class CrossSourceSituationsComponent implements OnChanges {
 
   protected readonly tone = crossSourceStateTone;
   protected readonly acqTone = acquisitionTone;
+  protected readonly assocTone = associationTone;
   protected readonly cvePageText = cvePageText;
   protected readonly sev = severityPt;
 

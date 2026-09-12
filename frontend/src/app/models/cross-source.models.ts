@@ -101,6 +101,25 @@ export interface CrossSourceCvePage {
   noLongerReported: number;
 }
 
+export type CrossSourceAssociationState = 'proven' | 'notProven' | 'conflict' | 'sourceMissing';
+
+/** Conclusão da AVALIAÇÃO sobre a associação dos registros das duas fontes neste ativo (texto do backend). */
+export interface CrossSourceAssociation {
+  state: CrossSourceAssociationState;
+  label: string;
+  text: string;
+}
+
+/** O que representam as datas de um resultado: sustentam a conclusão, só estão disponíveis, ou nenhuma participa. */
+export type CrossSourceEvidenceBasis = 'supporting' | 'available' | 'none';
+
+/** Aquisições de UMA fonte que participam: intervalo e quantidade — nunca só a mais recente. */
+export interface CrossSourceAcquisitionSpan {
+  first: string;
+  last: string;
+  acquisitions: number;
+}
+
 export interface AssetCrossSource {
   assetId: string;
   assetName: string;
@@ -109,7 +128,10 @@ export interface AssetCrossSource {
   evaluatedAt: string;
   heading: string;
   scope: string;
-  associationReason: string;
+  /** O REQUISITO da associação (critério) — igual para todo ativo, nunca uma afirmação sobre ele. */
+  associationCriterion: string;
+  /** A CONCLUSÃO da avaliação sobre a associação neste ativo. */
+  association: CrossSourceAssociation;
   policy: CrossSourcePolicy;
   rules: CrossSourceRuleResult[];
   evidence: CrossSourceEvidenceRecord[];
@@ -123,6 +145,7 @@ export interface CrossSourceRuleTally {
   identified: number;
   identifiedWithCaveats: number;
   notIdentified: number;
+  notIdentifiedWithCaveats: number;
   insufficientEvidence: number;
   linkConflict: number;
   contradictoryEvidence: number;
@@ -154,8 +177,9 @@ export interface CrossSourceSituationItem {
   cvePreview: string[];
   cvePreviewTruncated: boolean;
   caveats: CrossSourceNote[];
-  vulnerabilitiesAcquiredAt: string | null;
-  deviceManagementAcquiredAt: string | null;
+  evidenceBasis: CrossSourceEvidenceBasis;
+  vulnerabilityAcquisitions: CrossSourceAcquisitionSpan | null;
+  deviceManagementAcquisitions: CrossSourceAcquisitionSpan | null;
 }
 
 export interface CrossSourceSituationList {
@@ -210,7 +234,8 @@ export const CROSS_SOURCE_STATE_FILTERS: ReadonlyArray<{ value: CrossSourceState
   { value: 'linkConflict', label: 'Vínculo em conflito' },
   { value: 'contradictoryEvidence', label: 'Registros contraditórios' },
   { value: 'insufficientEvidence', label: 'Evidência insuficiente' },
-  { value: 'notIdentified', label: 'Nenhuma condição' },
+  // A regra é uma conjunção: uma condição pode estar presente e a outra não. O rótulo descreve a COMBINAÇÃO.
+  { value: 'notIdentified', label: 'Combinação não identificada' },
 ];
 
 /** "1 CVE" / "n CVEs"; sem contagem (sem evidência usável) = "—", nunca 0. */
@@ -242,13 +267,62 @@ export type CrossSourceListView =
   | { kind: 'noSource'; text: string }
   | { kind: 'neverCollected'; text: string }
   | { kind: 'noPopulation'; text: string }
-  | { kind: 'zero'; text: string }
+  /** Todas as avaliações concluíram que a combinação não se formou. */
+  | { kind: 'zeroConclusive'; text: string; limited: boolean }
+  /** Nenhuma avaliação verificou a combinação (insuficiente, conflito, contradição): o zero NÃO é conclusivo. */
+  | { kind: 'zeroInconclusive'; text: string; limited: boolean }
+  /** Parte concluída sem a combinação, parte inconclusiva — as duas são ditas. */
+  | { kind: 'zeroMixed'; text: string; limited: boolean }
   | { kind: 'filterEmpty'; text: string }
   | { kind: 'items' };
 
+/** Totais de AVALIAÇÕES (unidade: ativo × regra), somados das contagens por regra do backend — nada é inferido. */
+export interface CrossSourceEvaluationTotals {
+  evaluations: number;
+  identified: number;
+  notIdentified: number;
+  insufficientEvidence: number;
+  linkConflict: number;
+  contradictoryEvidence: number;
+  /** Avaliações sem conclusão (insuficiente, conflito, contradição): não verificaram a combinação. */
+  inconclusive: number;
+}
+
+export function crossSourceEvaluationTotals(s: CrossSourceSituationSummary): CrossSourceEvaluationTotals {
+  const sum = (f: (t: CrossSourceRuleTally) => number) => s.byRule.reduce((acc, t) => acc + f(t), 0);
+  const identified = sum((t) => t.identified);
+  const notIdentified = sum((t) => t.notIdentified);
+  const insufficientEvidence = sum((t) => t.insufficientEvidence);
+  const linkConflict = sum((t) => t.linkConflict);
+  const contradictoryEvidence = sum((t) => t.contradictoryEvidence);
+  const inconclusive = insufficientEvidence + linkConflict + contradictoryEvidence;
+  return {
+    evaluations: identified + notIdentified + inconclusive,
+    identified, notIdentified, insufficientEvidence, linkConflict, contradictoryEvidence, inconclusive,
+  };
+}
+
+function countText(n: number, one: string, many: string): string {
+  return n === 1 ? `1 ${one}` : `${n} ${many}`;
+}
+
+function joinPt(parts: string[]): string {
+  return parts.length <= 1 ? parts.join('') : `${parts.slice(0, -1).join(', ')} e ${parts[parts.length - 1]}`;
+}
+
+/** "2 com evidência insuficiente e 1 com vínculo em conflito" — só as categorias presentes. */
+export function inconclusiveBreakdown(t: CrossSourceEvaluationTotals): string {
+  const parts: string[] = [];
+  if (t.insufficientEvidence) parts.push(`${t.insufficientEvidence} com evidência insuficiente`);
+  if (t.linkConflict) parts.push(`${t.linkConflict} com vínculo em conflito`);
+  if (t.contradictoryEvidence) parts.push(`${t.contradictoryEvidence} com registros contraditórios`);
+  return joinPt(parts);
+}
+
 /**
  * O que a lista da Central pode afirmar — com os estados de linguagem do produto: carregando, falha, sem fonte, sem
- * leitura, população vazia (zero apurado de ativos avaliáveis), zero apurado de situações e filtro sem correspondência.
+ * leitura, população vazia, filtro sem correspondência e, sem situação identificada, TRÊS zeros distintos pelos totais
+ * por estado: conclusivo, inconclusivo e misto — cada um declarando o recorte quando o teto de avaliação foi atingido.
  */
 export function crossSourceListView(
   list: CrossSourceSituationList | null,
@@ -271,20 +345,57 @@ export function crossSourceListView(
   if (list.items.length > 0) return { kind: 'items' };
   const filtered = list.stateFilter !== 'identified' || !!list.ruleFilter;
   if (filtered) return { kind: 'filterEmpty', text: 'Nenhuma situação corresponde ao filtro selecionado.' };
+  const t = crossSourceEvaluationTotals(s);
+  if (t.identified > 0) return { kind: 'filterEmpty', text: 'Nenhuma situação nesta página.' };
+
+  const limited = s.evaluationTruncated;
+  const cut = limited
+    ? ` Recorte limitado: avaliados ${s.assetsEvaluated} de ${s.assetsWithBothSources} ativos com registros das duas ` +
+      'fontes (teto por leitura); os demais não foram avaliados.'
+    : '';
+  const evaluations = `${countText(t.evaluations, 'avaliação', 'avaliações')} (ativo × regra)`;
+  if (t.evaluations === 0 || t.notIdentified === 0)
+    return {
+      kind: 'zeroInconclusive',
+      limited,
+      text:
+        (t.evaluations === 0
+          ? 'Nenhuma avaliação (ativo × regra) foi concluída nesta leitura.'
+          : `Nenhuma combinação pôde ser verificada: das ${evaluations}, ${inconclusiveBreakdown(t)}.`) +
+        ' Não foi demonstrada a ausência das situações — o zero desta leitura não é conclusivo.' + cut,
+    };
+  if (t.inconclusive > 0)
+    return {
+      kind: 'zeroMixed',
+      limited,
+      text:
+        'Nenhuma situação identificada nas avaliações concluídas: em ' +
+        `${countText(t.notIdentified, 'avaliação', 'avaliações')} a combinação não se formou; ` +
+        (t.inconclusive === 1 ? 'outra não pôde ser verificada' : `outras ${t.inconclusive} não puderam ser verificadas`) +
+        ` (${inconclusiveBreakdown(t)}). Isso não comprova que os dispositivos estejam seguros.` + cut,
+    };
   return {
-    kind: 'zero',
+    kind: 'zeroConclusive',
+    limited,
     text:
-      `Nenhuma situação identificada entre fontes nos ${s.assetsEvaluated} ativo(s) avaliados. ` +
-      'Isso não comprova que os dispositivos estejam seguros — só que as duas condições não coexistem nas evidências elegíveis.',
+      `Nenhuma situação identificada: nas ${evaluations} de ` +
+      `${countText(s.assetsEvaluated, 'ativo avaliado', 'ativos avaliados')}, a combinação das duas condições não se ` +
+      'formou nas evidências elegíveis. Isso não comprova que os dispositivos estejam seguros — cada condição isolada ' +
+      'continua nas telas de cada fonte.' + cut,
   };
 }
 
-/** Resumo com UNIDADES explícitas: situações (ativo × regra) e ativos. */
+/** Resumo com UNIDADES explícitas: situações (ativo × regra), ativos e avaliações ainda inconclusivas. */
 export function crossSourceSummaryText(s: CrossSourceSituationSummary): string {
   const situations = s.situationsIdentified === 1 ? '1 situação identificada' : `${s.situationsIdentified} situações identificadas`;
   const assets = s.assetsWithSituations === 1 ? '1 ativo' : `${s.assetsWithSituations} ativos`;
   const pop = s.assetsWithBothSources === 1 ? '1 ativo' : `${s.assetsWithBothSources} ativos`;
-  return `${situations} em ${assets} · ${pop} com registros das duas fontes`;
+  const t = crossSourceEvaluationTotals(s);
+  const pending = t.inconclusive > 0
+    ? ` · ${countText(t.inconclusive, 'avaliação inconclusiva', 'avaliações inconclusivas')} (ativo × regra)`
+    : '';
+  const cut = s.evaluationTruncated ? ' · recorte parcial (teto de avaliação)' : '';
+  return `${situations} em ${assets} · ${pop} com registros das duas fontes${pending}${cut}`;
 }
 
 /** Teto atingido: os totais são parciais e isso é dito. */
@@ -313,4 +424,35 @@ export function cvePageText(p: CrossSourceCvePage | null | undefined): string {
   if (!p) return 'Sem evidência de vulnerabilidade elegível.';
   if (p.total === 0) return 'Nenhuma CVE em aberto nas evidências elegíveis.';
   return pageRangeText(p.total, p.page, p.pageSize, p.total === 1 ? 'CVE distinta' : 'CVEs distintas');
+}
+
+/** Associação comprovada é neutra-positiva (identidade, não segurança); conflito é aviso; o resto é neutro. */
+export function associationTone(state: CrossSourceAssociationState | string): CrossSourceTone {
+  return state === 'proven' ? 'ok' : state === 'conflict' ? 'warn' : 'muted';
+}
+
+/** Rótulo do que as datas de um item representam. */
+export function evidenceBasisLabel(basis: CrossSourceEvidenceBasis | string): string {
+  switch (basis) {
+    case 'supporting':
+      return 'Aquisições que sustentam a conclusão';
+    case 'available':
+      return 'Aquisições disponíveis — sem conclusão combinada';
+    default:
+      return 'Nenhuma evidência elegível participa';
+  }
+}
+
+/**
+ * Aquisições de UMA fonte: uma data quando há uma aquisição; intervalo e quantidade quando há mais — nunca reduzido à
+ * mais recente. Sem aquisição: a fonte não sustenta a conclusão (base "supporting") ou não há evidência ("—").
+ */
+export function acquisitionSpanText(
+  span: CrossSourceAcquisitionSpan | null | undefined,
+  fmt: (iso: string) => string,
+  basis?: CrossSourceEvidenceBasis | string,
+): string {
+  if (!span) return basis === 'supporting' ? 'não sustenta esta conclusão' : '—';
+  if (span.acquisitions <= 1) return fmt(span.last);
+  return `${fmt(span.first)} → ${fmt(span.last)} (${span.acquisitions} aquisições)`;
 }
