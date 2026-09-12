@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { AssetDto, AssetQuery, AssetSources, PagedResult } from '../models/asset.models';
+import { AssetCrossSource } from '../models/cross-source.models';
 import { environment } from '../../environments/environment';
 
 @Injectable({ providedIn: 'root' })
@@ -25,6 +26,18 @@ export class AssetService {
       params,
       headers: { Accept: 'application/json' },
     });
+  }
+
+  /**
+   * [AEGIS-CROSS-SOURCE-01] GET /api/v1/assets/{id}/correlations — situações identificadas entre fontes do ativo,
+   * com as evidências de cada fonte e as CVEs que as sustentam (paginadas).
+   */
+  correlations(assetId: string, cvePage = 1, cvePageSize = 10): Observable<AssetCrossSource> {
+    const params = new HttpParams().set('cvePage', cvePage).set('cvePageSize', cvePageSize);
+    return this.http.get<AssetCrossSource>(
+      `${environment.apiBase}/api/v1/assets/${encodeURIComponent(assetId)}/correlations`,
+      { params, headers: { Accept: 'application/json' } },
+    );
   }
 
   /** [AEGIS-ENTITY-RESOLUTION-01] GET /api/v1/assets/{id}/sources — fontes do ativo e o vínculo entre elas. */
