@@ -32,6 +32,26 @@ import {
 import { RemediationService } from '../services/remediation.service';
 import { CrossSourceSituationsComponent } from '../components/cross-source/cross-source-situations.component';
 import {
+  DevicePriorityComponent,
+  DevicePriorityPolicyComponent,
+} from '../components/device-priority/device-priority.component';
+import {
+  DEVICE_PRIORITY_BAND_FILTERS,
+  DevicePriorityBand,
+  DevicePriorityFilter,
+  DevicePriorityList,
+  bandCountsText,
+  bandTone,
+  casesText,
+  devicePriorityListView,
+  devicePriorityRangeText,
+  devicePrioritySummaryText,
+  pageAfterRefresh,
+  detailOutsideListNote,
+  dispositionText,
+  tieText,
+} from '../models/device-priority.models';
+import {
   CROSS_SOURCE_HEADING,
   CROSS_SOURCE_STATE_FILTERS,
   CrossSourceFilter,
@@ -65,7 +85,7 @@ import {
 @Component({
   selector: 'app-priorities',
   standalone: true,
-  imports: [RouterLink, CrossSourceSituationsComponent],
+  imports: [RouterLink, CrossSourceSituationsComponent, DevicePriorityComponent, DevicePriorityPolicyComponent],
   template: `
     <section class="page">
       <header class="page-head">
@@ -74,8 +94,9 @@ import {
           <p class="sub">
             AEGIS Score (controles NIST CSF avaliados), recomendações de postura do Microsoft Secure Score,
             vulnerabilidades identificadas em ativos e achados de identidade do AEGIS KNIGHT são dimensões
-            <strong>relacionadas, porém distintas</strong>. Elas <strong>não formam um único score</strong> nem uma
-            prioridade de risco calculada: cada fila mantém a própria ordem e a própria fonte.
+            <strong>relacionadas, porém distintas</strong>. Elas <strong>não formam um único score</strong>: cada fila
+            mantém a própria ordem e a própria fonte. A prioridade de tratamento vale só para vulnerabilidades em
+            dispositivos — não é uma ordem universal entre identidades, documentação e dispositivos.
           </p>
           @if (data()) {
             <p class="freshness">Leitura de {{ fmtDate(data()!.generatedAt) }}</p>
@@ -407,6 +428,142 @@ import {
                   }
                 </tbody>
               </table>
+            }
+          </div>
+        </div>
+
+        <!-- ---------- [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento — vulnerabilidades em dispositivos ----------
+             Leitura PRÓPRIA (carga, falha e filtros independentes): uma falha aqui não derruba a Central e não é lida como
+             "nenhuma prioridade". Um item por dispositivo, apontando o caso que determinou a posição. -->
+        <div class="queue">
+          <div class="queue-head">
+            <div>
+              <h2>Prioridade de tratamento · vulnerabilidades em dispositivos</h2>
+              <p class="queue-sub">
+                Um item por dispositivo, na ordem da política determinística e versionada do AEGIS: severidade técnica e
+                exploit informados pela fonte, antecipados no máximo uma faixa por contexto comprovado (criticidade
+                declarada ou situação entre fontes identificada). <strong>Não é avaliação completa dos riscos do
+                ambiente nem probabilidade de incidente</strong>, e não altera scores nem as outras filas.
+              </p>
+            </div>
+          </div>
+          @if (dp(); as dl) {
+            @if (dl.summary.truncationNote) {
+              <p class="notice warn" role="status">{{ dl.summary.truncationNote }}</p>
+            }
+            @if (dl.summary.outOfScopeNote) {
+              <p class="notice warn" role="status">{{ dl.summary.outOfScopeNote }}</p>
+            }
+            <!-- Completude da coleta, distinta da contagem: com casos na fila, diz se a ausência fora dela é conclusiva. -->
+            @if (dl.summary.absenceNote && dl.summary.candidateAssets > 0) {
+              <p class="notice warn" role="status">{{ dl.summary.absenceNote }}</p>
+            }
+          }
+          @if (dpRefreshError(); as e) {
+            <div class="notice warn" role="alert">
+              {{ e }}
+              <button type="button" class="ghost" (click)="loadDevicePriority({ background: true })">Tentar novamente</button>
+            </div>
+          }
+          <div class="panel">
+            @if (dpView().kind === 'loading') {
+              <p class="muted">Calculando a prioridade de tratamento…</p>
+            } @else if (dpView().kind === 'error') {
+              <div class="state error">
+                <p class="err">⚠ {{ dpText() }}</p>
+                <button type="button" class="ghost" (click)="loadDevicePriority()">Tentar novamente</button>
+              </div>
+            } @else if (dpView().kind === 'noSource' || dpView().kind === 'neverCollected' || dpView().kind === 'noCandidates'
+                || dpView().kind === 'noCandidatesUnverified') {
+              <div class="state empty"><p class="muted">{{ dpText() }}</p></div>
+            } @else {
+              @let dl = dp()!;
+              <p class="xs-summary">{{ dpSummary() }}</p>
+              <div class="xs-filters" role="group" aria-label="Filtrar por faixa">
+                @for (f of dpBands; track f.label) {
+                  <button type="button" class="xs-chip" [class.on]="dpFilter().band === f.value"
+                    [attr.aria-pressed]="dpFilter().band === f.value" (click)="setDpBand(f.value)">{{ f.label }}</button>
+                }
+              </div>
+              @if (dpView().kind === 'onlyInsufficient' || dpView().kind === 'filterEmpty') {
+                <div class="state empty"><p class="muted">{{ dpText() }}</p></div>
+              } @else {
+                <table class="grid-table dp-table">
+                  <thead>
+                    <tr>
+                      <th class="c-rank">#</th>
+                      <th>Dispositivo</th>
+                      <th>Prioridade de tratamento</th>
+                      <th>Por que nesta posição</th>
+                      <th>Contexto</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (it of dl.items; track it.assetId) {
+                      <tr class="row">
+                        <td class="c-rank">{{ it.position }}</td>
+                        <td>
+                          <strong class="title">{{ it.assetName }}</strong>
+                          @if (it.nameIsPlaceholder) { <span class="meta">nome não coletado pela fonte</span> }
+                          <span class="meta">{{ cases(it.prioritizableCases) }} · {{ bandCounts(it.casesByBand) }}</span>
+                          @if (it.insufficientCases > 0) { <span class="meta">{{ it.insufficientCases }} sem severidade informada</span> }
+                          @if (it.dispositionCases > 0) { <span class="meta">{{ it.dispositionCases }} com disposição registrada (fora da fila)</span> }
+                        </td>
+                        <td class="dp-band">
+                          <span class="badge dp-{{ dpTone(it.band) }}">{{ it.bandLabel }}</span>
+                          @if (tie(it.tiedAssets); as t) { <span class="meta dp-tie">{{ t }}</span> }
+                        </td>
+                        <td class="dp-why">
+                          @if (it.determiningCase; as c) {
+                            <span class="meta mono">{{ c.cveId }} · {{ c.severityLabel }} · {{ c.exploitLabel }}</span>
+                          }
+                          <span class="xs-rem">{{ it.positionReason }}</span>
+                          <span class="xs-rem"><em>Próxima ação:</em> {{ it.nextAction }}</span>
+                        </td>
+                        <td class="dp-ctx">
+                          <span class="meta">{{ it.deviceContextLabel }}</span>
+                          <span class="meta">{{ it.criticalityLabel }}</span>
+                          <span class="meta">{{ it.informationLabel }}</span>
+                          @if (it.caveats.length) { <span class="meta warn-text">{{ it.caveats.length }} ressalva(s)</span> }
+                        </td>
+                        <td>
+                          <button type="button" class="ghost xs-open" (click)="toggleDp(it.assetId, it.assetName)"
+                            [attr.aria-expanded]="dpExpanded() === it.assetId">
+                            {{ dpExpanded() === it.assetId ? 'Fechar' : 'Detalhe' }}
+                          </button>
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+                <div class="xs-pager">
+                  <span class="meta">{{ dpRange() }}</span>
+                  @if (dpRefreshing()) { <span class="meta" role="status">Atualizando a fila…</span> }
+                  <button type="button" class="ghost" (click)="goDp(dl.page - 1)" [disabled]="dl.page <= 1">‹ Anterior</button>
+                  <button type="button" class="ghost" (click)="goDp(dl.page + 1)" [disabled]="dl.page * dl.pageSize >= dl.total">Próxima ›</button>
+                </div>
+              }
+              <!-- O detalhe NÃO depende da linha da tabela: quando a releitura esvazia o filtro (o dispositivo mudou de
+                   faixa), a lista mostra o vazio, e o detalhe continua aberto com a confirmação e a prioridade atualizada.
+                   Fora do ramo tabela/vazio, a instância é preservada — sem nova leitura nem nova declaração. -->
+              @if (dpExpanded(); as id) {
+                <div class="xs-detail-panel">
+                  <div class="dp-detail-head">
+                    <p class="meta">Detalhe de <strong>{{ dpExpandedName() }}</strong></p>
+                    <button type="button" class="ghost xs-open dp-detail-close" (click)="closeDp()">Fechar detalhe</button>
+                  </div>
+                  @if (dpDetailNote(); as note) {
+                    <p class="meta" role="status">{{ note }}</p>
+                  }
+                  <app-device-priority [assetId]="id" (criticalityDeclared)="onDeviceCriticalityDeclared()" />
+                </div>
+              }
+              @if (dpDispositions(); as dt) {
+                <p class="meta xs-policy">Casos fora da fila por disposição registrada (evidência preservada): {{ dt }}.</p>
+              }
+              <div class="xs-policy"><app-device-priority-policy [policy]="dl.policy" /></div>
+              <p class="meta xs-policy">{{ dl.scope }} Calculado em {{ fmtDate(dl.evaluatedAt) }}.</p>
             }
           </div>
         </div>
@@ -799,6 +956,19 @@ import {
       .xs-cves .meta { white-space: normal; overflow-wrap: anywhere; }
       .xs-detail-panel { margin: 0.7rem 0.4rem 0; padding-top: 0.4rem; border-top: 1px solid color-mix(in srgb, var(--c) 18%, transparent); }
 
+      /* [AEGIS-RISK-PRIORITIZATION-01] Fila de prioridade de tratamento: faixas por tom (nunca "ok" = seguro). */
+      .badge.dp-attention { color: #ff3d9a; }
+      .badge.dp-warn { color: #f5a524; }
+      .badge.dp-info { color: var(--c); }
+      .dp-band .badge { display: inline-block; white-space: normal; max-width: 13rem; line-height: 1.35; }
+      .dp-tie { white-space: normal; max-width: 16rem; margin-top: 0.25rem; }
+      .dp-ctx { width: 17rem; }
+      .dp-ctx .meta { white-space: normal; margin-bottom: 0.15rem; }
+      .dp-why { min-width: 26rem; }
+      .dp-why .xs-rem { max-width: none; }
+      .dp-why .meta.mono { white-space: normal; overflow-wrap: anywhere; font-size: 0.72rem; }
+      .dp-detail-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; margin-bottom: 0.35rem; }
+
       @media (max-width: 720px) { .card.wide { grid-column: span 1; } }
     `,
   ],
@@ -907,6 +1077,108 @@ export class PrioritiesComponent {
   protected readonly tier = tierPt;
   protected readonly reachUnknown = EXPOSURE_REACH_UNKNOWN;
 
+  // ---- [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento em dispositivos (leitura própria, separada das filas) ----
+  protected readonly dpBands = DEVICE_PRIORITY_BAND_FILTERS;
+  protected readonly dp = signal<DevicePriorityList | null>(null);
+  protected readonly dpLoading = signal(false);
+  protected readonly dpError = signal<string | null>(null);
+  protected readonly dpFilter = signal<DevicePriorityFilter>({ band: null, page: 1, pageSize: 10 });
+  protected readonly dpExpanded = signal<string | null>(null);
+  protected readonly dpView = computed(() => devicePriorityListView(this.dp(), this.dpLoading(), this.dpError()));
+  protected readonly dpText = computed(() => {
+    const v = this.dpView();
+    return 'text' in v ? v.text : '';
+  });
+  protected readonly dpSummary = computed(() => (this.dp() ? devicePrioritySummaryText(this.dp()!.summary) : ''));
+  protected readonly dpRange = computed(() => (this.dp() ? devicePriorityRangeText(this.dp()!) : ''));
+  protected readonly dpDispositions = computed(() => (this.dp() ? dispositionText(this.dp()!.summary.dispositions) : null));
+  protected readonly dpTone = bandTone;
+  protected readonly bandCounts = bandCountsText;
+  protected readonly cases = casesText;
+  protected readonly tie = tieText;
+
+  protected readonly dpRefreshing = signal(false);
+  protected readonly dpRefreshError = signal<string | null>(null);
+  /** Nome do dispositivo do detalhe aberto — guardado na abertura, porque a linha pode sair da lista depois da releitura. */
+  protected readonly dpExpandedName = signal<string | null>(null);
+  /** Por que o detalhe aberto não está na lista exibida (saiu do filtro ou mudou de página); nula com a linha visível. */
+  protected readonly dpDetailNote = computed(() => detailOutsideListNote(this.dp(), this.dpExpanded()));
+  /** Só a resposta da ÚLTIMA leitura pedida é aplicada — filtro, página ou atualização depois de uma declaração. */
+  private dpSeq = 0;
+
+  /**
+   * @param opts.background releitura sem apagar a fila nem fechar o detalhe (depois de uma declaração confirmada): a
+   * tabela antiga fica visível com "Atualizando…", e uma falha diz que a fila pode estar desatualizada.
+   */
+  protected loadDevicePriority(opts: { background?: boolean } = {}): void {
+    const seq = ++this.dpSeq;
+    if (opts.background) {
+      this.dpRefreshing.set(true);
+    } else {
+      this.dpLoading.set(true);
+      this.dpExpanded.set(null);
+    }
+    this.dpError.set(null);
+    this.dpRefreshError.set(null);
+    this.api.devices(this.dpFilter()).subscribe({
+      next: (list) => {
+        if (seq !== this.dpSeq) return;   // resposta tardia de um filtro ou página anterior
+        const page = opts.background ? pageAfterRefresh(list) : null;
+        if (page !== null) {
+          // A página ficou vazia porque a ordem ou a faixa mudou: uma correção para a última página válida.
+          this.dpFilter.update((f) => ({ ...f, page }));
+          this.loadDevicePriority(opts);
+          return;
+        }
+        this.dp.set(list);
+        this.dpLoading.set(false);
+        this.dpRefreshing.set(false);
+      },
+      error: (err: Error) => {
+        if (seq !== this.dpSeq) return;
+        this.dpLoading.set(false);
+        this.dpRefreshing.set(false);
+        if (opts.background && this.dp()) {
+          this.dpRefreshError.set(
+            'A declaração foi registrada, mas a fila não pôde ser atualizada agora — posição, faixas e totais exibidos ' +
+              'podem estar desatualizados.',
+          );
+          return;
+        }
+        this.dp.set(null);
+        this.dpError.set(err.message);
+      },
+    });
+  }
+
+  /** Declaração CONFIRMADA pelo servidor no detalhe aberto: a fila é relida preservando filtro, página e detalhe. */
+  protected onDeviceCriticalityDeclared(): void {
+    this.loadDevicePriority({ background: true });
+  }
+
+  protected setDpBand(band: DevicePriorityBand | null): void {
+    this.dpFilter.update((f) => ({ ...f, band, page: 1 }));
+    this.loadDevicePriority();
+  }
+
+  protected goDp(page: number): void {
+    if (page < 1) return;
+    this.dpFilter.update((f) => ({ ...f, page }));
+    this.loadDevicePriority();
+  }
+
+  protected toggleDp(assetId: string, name: string): void {
+    const open = this.dpExpanded() !== assetId;
+    this.dpExpanded.set(open ? assetId : null);
+    this.dpExpandedName.set(open ? name : null);
+  }
+
+  /** Fecha o detalhe mesmo quando a linha dele já não está na tabela (filtro esvaziado). Não relê nada. */
+  protected closeDp(): void {
+    this.dpExpanded.set(null);
+    this.dpExpandedName.set(null);
+  }
+
   // ---- [AEGIS-CROSS-SOURCE-01] Situações identificadas entre fontes (leitura própria, separada das filas) ----
   protected readonly xsHeading = CROSS_SOURCE_HEADING;
   protected readonly xsStates = CROSS_SOURCE_STATE_FILTERS;
@@ -988,6 +1260,7 @@ export class PrioritiesComponent {
     this.loading.set(true);
     this.error.set(null);
     this.loadPlans();
+    this.loadDevicePriority();
     this.loadCrossSource();
     this.api.get().subscribe({
       next: (workspace) => {

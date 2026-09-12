@@ -179,10 +179,24 @@ jobs:
       #     negativas (tentativa falha e publicação mais recente não concluída), defasagem sobre TODAS as evidências
       #     participantes (CVE anterior preservada + CVE e Intune recentes) e o intervalo de aquisições na Central. O
       #     passo vai de 579 a 588 (medido localmente com este MESMO filtro, em Release); o filtro não muda.
+      #     [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento em dispositivos. Entra a classe NOVA DevicePriorityTests
+      #     (SQLite): conectores REAIS do Defender e do Intune sobre HTTP sintético → executor → resolução → consulta →
+      #     controllers (Central e detalhe do ativo) — prioridade contextual com empate real declarado, mais fontes que não
+      #     elevam, vulnerabilidade grave sem Intune, criticidade padrão × declarada com proveniência (autor do token, só
+      #     Manager/TenantAdmin, nunca rebaixa, divergência não confirmada), exploit ≠ exploração ativa, marca sem origem
+      #     ignorada, EPSS fora da decisão, AV:N sem falsa exposição, precedência fixa do CVSS, agravantes sem dupla contagem,
+      #     parcial/falha/publicação interrompida com ressalvas, evidência antiga não priorizada, conflito e contradição sem
+      #     agravar, disposições humanas e "não mais reportada" fora da fila com evidência preservada, isolamento, paginação
+      #     com o candidato prioritário fora da primeira página alfabética, recorte declarado e a tabela da política/tradução
+      #     da classificação. CrossSourceCorrelationTests (já no filtro) cobre a autoridade de correlação refatorada. A classe
+      #     é NOVA: sem esta linha ela não executaria. O passo vai de 588 a 601 (medido localmente com este MESMO filtro).
+      #     Revisão dirigida (mesmo PR): +4 casos em DevicePriorityTests (ordem pela chave FINAL com saturação em P1, as 12
+      #     combinações da tabela com e sem agravante, ausência só com completude suficiente e período de carência ≠
+      #     conforme). Filtro inalterado; o passo vai de 601 a 605.
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~EvidenceIngestionTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests|FullyQualifiedName~CrossSourceCorrelationTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~EvidenceIngestionTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests|FullyQualifiedName~CrossSourceCorrelationTests|FullyQualifiedName~DevicePriorityTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
@@ -468,6 +482,16 @@ jobs:
       # A migration nova também entra na sequência cumulativa de DatabaseUpgradePostgresTests (mesmo caso). A classe é
       # NOVA: sem esta linha ela não executaria. O passo vai de 71 a 74 (medido localmente com este MESMO filtro, em
       # Release, contra PostgreSQL 18 descartável).
+      # [AEGIS-RISK-PRIORITIZATION-01] Entra a classe NOVA DevicePriorityPostgresTests: a migration aditiva
+      # RiskPrioritization01_AssetCriticalityDeclaration aplica sobre um ativo LEGADO sem inventar declaração (criticidade
+      # cadastrada preservada e "não confirmada"); a classificação da CVE, a seleção de candidatos pelo limite superior da
+      # faixa (GROUP BY + MIN), o agrupamento por (ativo, conector, marca, classificação) e a paginação dos casos TRADUZEM no
+      # Npgsql com isolamento por tenant; e a leitura é COERENTE durante a ingestão — pausada no meio da publicação (a CVE
+      # não publicada nunca entra) e concluída no meio da leitura (REPEATABLE READ). A migration nova também entra na
+      # sequência cumulativa de DatabaseUpgradePostgresTests (mesmo caso). A classe é NOVA: sem esta linha ela não
+      # executaria. O passo vai de 74 a 77 (medido localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
+      # Revisão dirigida (mesmo PR): +1 caso em DevicePriorityPostgresTests (ordem dos casos pela chave FINAL e completude
+      # da ausência traduzidas no Npgsql). Filtro inalterado; o passo vai de 77 a 78.
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
@@ -476,4 +500,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~DeviceResolutionPostgresTests|FullyQualifiedName~CrossSourceCorrelationPostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~DeviceResolutionPostgresTests|FullyQualifiedName~CrossSourceCorrelationPostgresTests|FullyQualifiedName~DevicePriorityPostgresTests"

@@ -92,6 +92,9 @@ public sealed class DatabaseUpgradePostgresTests
             // aditiva com default 0 = "não registrado", SEM backfill — o desfecho das fotografias já publicadas não foi
             // guardado e não é inventado; a próxima passada de cada fonte o registra.
             "20260912001829_CrossSource01_DeviceSnapshotOutcome",
+            // [AEGIS-RISK-PRIORITIZATION-01] Proveniência da criticidade DECLARADA do ativo: cinco colunas anuláveis, SEM
+            // backfill — nenhum ativo existente (inclusive os criados com o padrão 1) ganha declaração inventada.
+            "20260912132148_RiskPrioritization01_AssetCriticalityDeclaration",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

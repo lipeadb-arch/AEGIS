@@ -53,7 +53,28 @@ public class Asset : Entity, ITenantOwned
     public AssetCategory Category { get; set; } = AssetCategory.Hardware;  // vertical NIST (mandatório)
     public string? SubType { get; set; }             // granularidade livre: "server", "saas", "identity"
     public string? Description { get; set; }
-    public int Criticality { get; set; } = 1;        // 1–4 (declarado pelo negócio)
+    public int Criticality { get; set; } = 1;        // 1–4 (valor cadastrado; ver a proveniência abaixo)
+
+    // ---- [AEGIS-RISK-PRIORITIZATION-01] Proveniência da criticidade DECLARADA ----
+    // O resolvedor cria ativos com Criticality = 1 (valor padrão do modelo) e os ativos legados não registram quem
+    // definiu o valor: nenhum dos dois é "criticidade baixa confirmada". Só uma declaração com autor e data transforma
+    // o valor em informação declarada. Nulo = sem proveniência (nenhum backfill inventa uma).
+
+    /// <summary>Valor declarado (1–4). Só vale como declarado enquanto for igual a <see cref="Criticality"/>.</summary>
+    public int? CriticalityDeclaredValue { get; set; }
+
+    /// <summary>Instante da declaração (relógio do servidor).</summary>
+    public DateTimeOffset? CriticalityDeclaredAt { get; set; }
+
+    /// <summary>Conta que declarou, quando resolvida do token.</summary>
+    public Guid? CriticalityDeclaredByAccountId { get; set; }
+
+    /// <summary>Nome de exibição de quem declarou, como o token o apresentou (vazio quando ausente).</summary>
+    public string? CriticalityDeclaredByName { get; set; }
+
+    /// <summary>Justificativa curta e sanitizada informada na declaração (opcional).</summary>
+    public string? CriticalityDeclarationNote { get; set; }
+
     public string? OwnerName { get; set; }
     public string? ExternalRef { get; set; }         // id no CMDB / chave de upsert do conector
 

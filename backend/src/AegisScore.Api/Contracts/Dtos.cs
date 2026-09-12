@@ -430,7 +430,13 @@ public record AssetDto(
     double? RiskScore, string? RiskLevel, DateTimeOffset? RiskScoredAt, DateTimeOffset CreatedAt,
     // [AEGIS-ENTITY-RESOLUTION-01] Aditivos: nome provisório (fonte que não coleta nome) e resumo das fontes/vínculo.
     bool NameIsPlaceholder = false,
-    AegisScore.Application.Queries.AssetSourceSummaryDto? Sources = null);
+    AegisScore.Application.Queries.AssetSourceSummaryDto? Sources = null,
+    // [AEGIS-RISK-PRIORITIZATION-01] Aditivo: a criticidade cadastrada tem proveniência (declarada com autor e data)?
+    // Sem ela — inclusive o padrão 1 do resolvedor — o valor é "criticidade não confirmada", nunca "baixa".
+    bool CriticalityConfirmed = false);
+
+/// <summary>[AEGIS-RISK-PRIORITIZATION-01] Declaração de criticidade (1–4) com justificativa opcional. O autor vem do token.</summary>
+public sealed record DeclareAssetCriticalityRequest(int Criticality, string? Note);
 
 /// <summary>Filtros combinados da grid tática (NIST). Ligados por AND; categorias por OR entre si.</summary>
 public class AssetQuery

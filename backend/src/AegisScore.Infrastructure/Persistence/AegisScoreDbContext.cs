@@ -694,6 +694,9 @@ public class AegisScoreDbContext : DbContext
             e.Property(a => a.Name).HasMaxLength(200).IsRequired();
             e.Property(a => a.SubType).HasMaxLength(100);
             e.Property(a => a.ExternalRef).HasMaxLength(200);
+            // [AEGIS-RISK-PRIORITIZATION-01] Proveniência da criticidade declarada: colunas anuláveis, sem backfill.
+            e.Property(a => a.CriticalityDeclaredByName).HasMaxLength(200);
+            e.Property(a => a.CriticalityDeclarationNote).HasMaxLength(500);
             // Category e RiskLevel são persistidos como integer (default Npgsql) — sem config extra.
 
             // Grid tática: índices tenant-leading para os filtros NIST combinados.

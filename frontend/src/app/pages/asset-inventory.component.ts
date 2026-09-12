@@ -23,6 +23,12 @@ import { PostureSummaryComponent } from '../components/scoring/posture-summary.c
 import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
 import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
 import { CrossSourceSituationsComponent } from '../components/cross-source/cross-source-situations.component';
+import { DevicePriorityComponent } from '../components/device-priority/device-priority.component';
+import {
+  DevicePriorityCriticalityChange,
+  applyDeclaredCriticality,
+  inventoryPageStep,
+} from '../models/device-priority.models';
 import { AegisScoreService } from '../services/aegis-score.service';
 import { ScoringService } from '../services/scoring.service';
 import { FunctionPosture, functionOf } from '../models/workspace.models';
@@ -45,6 +51,7 @@ import {
   imports: [
     DatePipe, PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent,
     CrossSourceSituationsComponent,
+    DevicePriorityComponent,
   ],
   template: `
     <div class="app">
@@ -182,6 +189,10 @@ import {
         </div>
       }
 
+      @if (inventoryNotice(); as n) {
+        <div class="notice" role="status">{{ n }}</div>
+      }
+
       <!-- ---- Tabela ---- -->
       <section class="panel table-wrap">
         <table class="asset-table">
@@ -212,7 +223,12 @@ import {
                   }
                 </td>
                 <td><span class="cat">{{ label(a.category) }}</span></td>
-                <td class="num"><span class="crit crit-{{ a.criticality }}">{{ a.criticality }}</span></td>
+                <td class="num">
+                  <!-- [AEGIS-RISK-PRIORITIZATION-01] Sem declaração com autor e data (inclui o padrão 1), o valor não é criticidade confirmada. -->
+                  <span class="crit crit-{{ a.criticality }}"
+                    [attr.title]="a.criticalityConfirmed ? 'Criticidade declarada com proveniência' : 'Criticidade não confirmada — valor cadastrado sem proveniência'">{{ a.criticality }}</span>
+                  @if (!a.criticalityConfirmed) { <div class="asset-sub">não confirmada</div> }
+                </td>
                 <td>
                   @if (a.riskLevel) {
                     <span
@@ -335,6 +351,8 @@ import {
                         </div>
                       }
                     }
+                    <!-- [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento: carga e falha próprias; usa as situações abaixo como contexto. -->
+                    <app-device-priority [assetId]="a.id" (criticalityDeclared)="onCriticalityDeclared($event)" />
                     <!-- [AEGIS-CROSS-SOURCE-01] Situações entre fontes: carga e falha próprias, independentes das fontes acima. -->
                     <app-cross-source-situations [assetId]="a.id" />
                   </td>
@@ -660,7 +678,12 @@ export class AssetInventoryComponent implements OnInit {
     });
   }
 
-  private load(): void {
+  /** Só a resposta da ÚLTIMA leitura pedida é aplicada — filtro, página ou releitura depois de uma declaração. */
+  private listSeq = 0;
+
+  /** @param pageCorrected esta leitura já é a da última página válida (uma correção só, nunca um laço). */
+  private load(pageCorrected = false): void {
+    const seq = ++this.listSeq;
     this.loading.set(true);
     this.expanded.set(null);
     this.svc
@@ -675,6 +698,15 @@ export class AssetInventoryComponent implements OnInit {
       })
       .subscribe({
         next: (res) => {
+          if (seq !== this.listSeq) return;   // resposta tardia de um filtro, página ou releitura anterior
+          const step = inventoryPageStep(this.page(), res.totalPages, pageCorrected);
+          if (step.kind === 'reread') {
+            // A página pedida deixou de existir (o ativo declarado saiu do filtro): a última válida, com os mesmos filtros.
+            this.page.set(step.page);
+            this.load(true);
+            return;
+          }
+          this.page.set(step.page);
           this.rows.set(res.items);
           this.total.set(res.totalCount);
           this.totalPages.set(res.totalPages);
@@ -683,6 +715,7 @@ export class AssetInventoryComponent implements OnInit {
           this.loaded.set(true);
         },
         error: (err) => {
+          if (seq !== this.listSeq) return;
           console.error('Falha ao carregar o inventário de ativos:', err);
           this.rows.set([]);
           this.loading.set(false);
@@ -695,7 +728,28 @@ export class AssetInventoryComponent implements OnInit {
   /** Filtros reiniciam a paginação para a página 1 e recarregam. */
   private reload(): void {
     this.page.set(1);
+    this.inventoryNotice.set(null);
     this.load();
+  }
+
+  // ---- [AEGIS-RISK-PRIORITIZATION-01] Declaração de criticidade confirmada no detalhe ----
+  inventoryNotice = signal<string | null>(null);
+
+  /**
+   * A linha reflete a criticidade CONFIRMADA pelo servidor sem recarregar a página. Se um filtro de criticidade ativo
+   * deixar de corresponder, a lista é relida com os mesmos filtros e página — e isso é dito, em vez de o ativo sumir.
+   */
+  onCriticalityDeclared(change: DevicePriorityCriticalityChange): void {
+    const row = this.rows().find((r) => r.id === change.assetId);
+    this.rows.set(applyDeclaredCriticality(this.rows(), change));
+    const filter = this.criticality();
+    if (filter !== null && change.criticality.storedValue !== filter) {
+      this.inventoryNotice.set(
+        `Criticidade registrada para ${row?.name ?? 'o ativo'} (${change.criticality.label}). Ele não corresponde mais ao ` +
+          `filtro de criticidade ${filter} e saiu desta lista.`,
+      );
+      this.load();
+    }
   }
 
   toggleCategory(c: AssetCategory): void {
