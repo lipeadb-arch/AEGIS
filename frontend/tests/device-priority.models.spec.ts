@@ -8,14 +8,18 @@
  */
 import {
   DEVICE_PRIORITY_BAND_FILTERS,
+  DevicePriorityCriticality,
   DevicePriorityList,
   DevicePrioritySummary,
+  applyDeclaredCriticality,
   bandCountsText,
   bandShort,
   bandTone,
   canDeclareCriticality,
   casePageText,
   casesText,
+  declarationErrorText,
+  declarationSavedNotRefreshedText,
   devicePriorityListView,
   devicePriorityRangeText,
   devicePrioritySummaryText,
@@ -23,6 +27,7 @@ import {
   epssText,
   factorEffectLabel,
   factorKindLabel,
+  pageAfterRefresh,
   tieText,
 } from '../src/app/models/device-priority.models';
 
@@ -66,6 +71,8 @@ function summary(over: Partial<DevicePrioritySummary>): DevicePrioritySummary {
     dispositions: [],
     outOfScopeSources: 0,
     outOfScopeNote: null,
+    absenceState: 'conclusive',
+    absenceNote: null,
     ...over,
   };
 }
@@ -179,7 +186,7 @@ test('paginação com unidade e página de casos que não finge ser o total', ()
   eq(devicePriorityRangeText({ total: 23, page: 2, pageSize: 10 }), '11–20 de 23 dispositivos', 'faixa');
   eq(devicePriorityRangeText({ total: 1, page: 1, pageSize: 10 }), '1–1 de 1 dispositivo', 'singular');
   eq(casePageText(null), 'Sem evidência de vulnerabilidade elegível.', 'sem evidência');
-  eq(casePageText({ total: 0, page: 1, pageSize: 10, items: [] }), 'Nenhum caso em aberto nas evidências elegíveis.', 'zero');
+  eq(casePageText({ total: 0, page: 1, pageSize: 10, items: [] }), 'Nenhum caso em aberto publicado nesta leitura.', 'zero é fato, não ausência');
   eq(casePageText({ total: 12, page: 1, pageSize: 10, items: [] }), '1–10 de 12 casos', 'página');
 });
 
@@ -188,6 +195,61 @@ test('declaração de criticidade: gate de apresentação só para Manager e Ten
   eq(canDeclareCriticality('TenantAdmin'), true, 'TenantAdmin');
   eq(canDeclareCriticality('Analyst'), false, 'Analyst');
   eq(canDeclareCriticality(null), false, 'sem papel');
+});
+
+test('zero candidatos: só a completude da coleta permite chamar de ausência', () => {
+  const unverified = devicePriorityListView(list({}, {
+    candidateAssets: 0, absenceState: 'notVerifiable', absenceNote: 'Microsoft Defender Vulnerability Management: a aquisição mais recente foi parcial.',
+  }));
+  eq(unverified.kind, 'noCandidatesUnverified', 'parcial/não concluída ≠ ausência');
+  const ut = 'text' in unverified ? unverified.text : '';
+  ok(ut.includes('não permite concluir ausência') && ut.includes('parcial'), 'diz por quê');
+  ok(!ut.includes('Nenhum dispositivo com vulnerabilidade'), 'não afirma ausência');
+  const conclusive = devicePriorityListView(list({}, { candidateAssets: 0, absenceState: 'conclusive' }));
+  eq(conclusive.kind, 'noCandidates', 'completa: ausência na aquisição completa');
+  ok(('text' in conclusive ? conclusive.text : '').includes('aquisição completa mais recente'), 'com a base da conclusão');
+  const failed = devicePriorityListView(list({}, {
+    candidateAssets: 0, absenceState: 'conclusiveAttemptFailed', absenceNote: 'A tentativa mais recente de coleta falhou.',
+  }));
+  eq(failed.kind, 'noCandidates', 'zero anterior conhecido');
+  ok(('text' in failed ? failed.text : '').includes('tentativa mais recente de coleta falhou'), 'com a ressalva da tentativa');
+});
+
+const declared: DevicePriorityCriticality = {
+  storedValue: 4, state: 'declared', label: 'Criticidade 4 declarada em 12/09/2026 13:00 UTC por Gestora Demo',
+  declaredValue: 4, declaredAt: '2026-09-12T13:00:00Z', declaredByName: 'Gestora Demo', note: null,
+};
+
+test('declaração: "nada foi alterado" só quando o servidor recusou; gravação confirmada nunca vira isso', () => {
+  ok(declarationErrorText({ status: 403 }).includes('Nada foi alterado'), '403');
+  ok(declarationErrorText({ status: 400, error: 'A criticidade declarada deve estar entre 1 e 4.' })
+    .startsWith('A criticidade declarada deve estar entre 1 e 4.'), '400 com motivo do servidor');
+  ok(!declarationErrorText({ status: 0 }).includes('Nada foi alterado'), 'sem resposta: não confirma nem nega');
+  ok(!declarationErrorText({ status: 500 }).includes('Nada foi alterado'), 'erro do servidor: não confirma nem nega');
+  const saved = declarationSavedNotRefreshedText(declared);
+  ok(saved.includes('foi registrada') && saved.includes('não pôde ser atualizada'), 'gravou, releitura falhou');
+  ok(!saved.includes('Nada foi alterado'), 'nunca nega a gravação');
+});
+
+test('inventário: a criticidade confirmada entra só na linha do ativo declarado', () => {
+  const rows = [
+    { id: 'a', name: 'nb-01', criticality: 1, criticalityConfirmed: false },
+    { id: 'b', name: 'srv-02', criticality: 2, criticalityConfirmed: false },
+  ];
+  const next = applyDeclaredCriticality(rows, { assetId: 'a', criticality: declared });
+  eq(next[0].criticality, 4, 'valor confirmado');
+  eq(next[0].criticalityConfirmed, true, 'deixa de ser "não confirmada"');
+  eq(next[1], rows[1], 'outra linha intacta');
+  eq(rows[0].criticality, 1, 'sem mutar a lista anterior');
+  const diverged = applyDeclaredCriticality(rows, { assetId: 'b', criticality: { ...declared, state: 'diverged', storedValue: 2 } });
+  eq(diverged[1].criticalityConfirmed, false, 'divergente não é confirmada');
+});
+
+test('releitura em segundo plano: página que esvaziou volta à última válida, uma vez', () => {
+  eq(pageAfterRefresh({ items: [{}] as DevicePriorityList['items'], total: 11, page: 2, pageSize: 10 }), null, 'página com itens');
+  eq(pageAfterRefresh({ items: [], total: 10, page: 2, pageSize: 10 }), 1, 'item saiu da faixa: volta para a 1');
+  eq(pageAfterRefresh({ items: [], total: 0, page: 3, pageSize: 10 }), null, 'fila vazia: estado próprio, sem correção');
+  eq(pageAfterRefresh({ items: [], total: 5, page: 1, pageSize: 10 }), null, 'primeira página');
 });
 
 console.log(`\n${count - failures}/${count} ok`);

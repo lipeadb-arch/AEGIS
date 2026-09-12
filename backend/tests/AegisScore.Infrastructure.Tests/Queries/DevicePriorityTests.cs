@@ -659,6 +659,241 @@ public sealed class DevicePriorityTests : IDisposable
         (await db.AssetThreatExposures.CountAsync(e => e.Status != ExposureStatus.Active)).Should().Be(3);
     }
 
+    // ================= Caso determinante = primeiro caso pela chave FINAL ===========================================
+
+    [Fact]
+    public async Task DeterminingCase_FollowsTheFinalKey_WhenAggravationSaturatesInP1()
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner);
+        // A: crítica com exploit público → base P1. B: média com exploit verificado → base P2. Com agravante, as duas
+        // ficam em P1 e a política desempata pelo exploit: B (verificado) antes de A (público).
+        DefenderData(new[] { Machine("mde-sat", "srv-sat.demo.example.com", null) },
+            new[] { ("mde-sat", "CVE-2024-1101"), ("mde-sat", "CVE-2024-1102") },
+            Cve("CVE-2024-1101", "Critical", 9.8, publicExploit: true, exploitVerified: false),
+            Cve("CVE-2024-1102", "Medium", 6.5, publicExploit: true, exploitVerified: true));
+        await Sync(defender);
+        var assetId = await AssetOf(defender, "mde-sat");
+
+        var plain = await Detail(assetId);
+        plain.Band.Should().Be(DevicePriorityBands.P1);
+        plain.DeterminingCase!.CveId.Should().Be("CVE-2024-1101", "sem agravante, A é P1 e B é P2");
+        plain.Cases!.Items.Select(c => (c.CveId, c.Band)).Should().Equal(
+            ("CVE-2024-1101", DevicePriorityBands.P1), ("CVE-2024-1102", DevicePriorityBands.P2));
+
+        await Declare(assetId, 4);
+        var aggravated = await Detail(assetId);
+        aggravated.Band.Should().Be(DevicePriorityBands.P1);
+        aggravated.DeterminingCase!.CveId.Should().Be("CVE-2024-1102", "P1 × P1: exploit verificado precede o público");
+        aggravated.Cases!.Items.Select(c => (c.CveId, c.Band)).Should().Equal(
+            ("CVE-2024-1102", DevicePriorityBands.P1), ("CVE-2024-1101", DevicePriorityBands.P1));
+        aggravated.PositionReason.Should().StartWith("Prioridade 1 · tratar primeiro: determinada por CVE-2024-1102 — " +
+            "severidade técnica média (CVSS 6.5) e exploit verificado informado pela fonte; antecipada de Prioridade 2 " +
+            "para Prioridade 1 por criticidade 4 declarada com proveniência");
+        Factor(aggravated, "technicalSeverity").Value.Should().Be("Média (CVSS 6.5)");
+        Factor(aggravated, "exploit").Value.Should().Be("Exploit verificado informado pela fonte");
+        aggravated.NextAction.Should().StartWith("Tratar CVE-2024-1102 neste dispositivo");
+        var item = (await List()).Items.Single();
+        item.DeterminingCase!.CveId.Should().Be("CVE-2024-1102");
+        item.PositionReason.Should().Be(aggravated.PositionReason);
+        item.NextAction.Should().Be(aggravated.NextAction);
+        (await Detail(assetId, casePage: 2, casePageSize: 1)).Cases!.Items.Single().CveId.Should().Be("CVE-2024-1101",
+            "a paginação segue a mesma ordem");
+    }
+
+    [Fact]
+    public async Task CaseOrder_EveryTableCombination_MatchesThePolicyComparer_WithAndWithoutAggravation()
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner);
+        var combos = new List<(string Cve, int Sev, int Exp, double Cvss)>();
+        var cvss = new[] { 9.8, 8.1, 5.5, 3.1 };
+        for (var s = 1; s <= 4; s++)
+            for (var e = 0; e <= 2; e++)
+                combos.Add(($"CVE-2025-{s}{e}00", s, e, cvss[s - 1]));
+        DefenderData(new[] { Machine("mde-all", "srv-all.demo.example.com", null) },
+            combos.Select(c => ("mde-all", c.Cve)).ToArray(),
+            combos.Select(c => Cve(c.Cve, null, c.Cvss, publicExploit: c.Exp <= 1, exploitVerified: c.Exp == 0)).ToArray());
+        await Sync(defender);
+        var assetId = await AssetOf(defender, "mde-all");
+
+        IReadOnlyList<(string, string)> Expected(bool aggravated) => combos
+            .Select(c => (c.Cve, Key: new DevicePriorityKey(
+                DevicePriorityPolicy.FinalBand(DevicePriorityPolicy.BaseBand(c.Sev, c.Exp)!.Value, aggravated),
+                c.Exp, c.Sev, aggravated, c.Cvss)))
+            .OrderBy(x => x.Key, Comparer<DevicePriorityKey>.Create(DevicePriorityPolicy.Compare))
+            .ThenBy(x => x.Cve, StringComparer.Ordinal)
+            .Select(x => (x.Cve, DevicePriorityBands.Of(x.Key.Band)))
+            .ToList();
+
+        foreach (var aggravated in new[] { false, true })
+        {
+            if (aggravated) await Declare(assetId, 4);
+            var d = await Detail(assetId, casePageSize: 50);
+            d.Cases!.Items.Select(c => (c.CveId, c.Band)).Should().Equal(Expected(aggravated),
+                $"ordem do banco = DevicePriorityPolicy.Compare (agravante: {aggravated})");
+            d.DeterminingCase!.CveId.Should().Be(Expected(aggravated)[0].Item1);
+        }
+    }
+
+    // ================= Ausência só com completude suficiente =========================================================
+
+    [Fact]
+    public async Task AbsenceOfCases_IsConcludedOnlyFromACompleteAcquisition()
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner);
+        string[] machines =
+        {
+            Machine("mde-a", "pc-a.demo.example.com", null), Machine("mde-b", "pc-b.demo.example.com", null),
+            Machine("mde-c", "pc-c.demo.example.com", null),
+        };
+        // (1) PRIMEIRA aquisição parcial (relação órfã): A observado sem CVE publicada; B com CVE; C com CVE disposta.
+        DefenderData(machines,
+            new[] { ("mde-b", "CVE-2024-1201"), ("mde-c", "CVE-2024-1202"), ("mde-orfa", "CVE-2024-1209") },
+            Cve("CVE-2024-1201"), Cve("CVE-2024-1202"), Cve("CVE-2024-1209"));
+        await Sync(defender);
+        var a = await AssetOf(defender, "mde-a");
+        var b = await AssetOf(defender, "mde-b");
+        var c = await AssetOf(defender, "mde-c");
+        await SetDispositionAsync(c, "CVE-2024-1202", ExposureStatus.Accepted);
+
+        var partialA = await Detail(a);
+        partialA.Status.Should().NotBe(DevicePriorityStatuses.NoOpenCases, "aquisição parcial não prova ausência");
+        partialA.NextAction.Should().NotContain("Nada a tratar");
+        partialA.PositionReason.Should().Contain("parcial");
+        partialA.Status.Should().Be(DevicePriorityStatuses.AbsenceNotVerified);
+        partialA.BandLabel.Should().Be("Sem caso publicado · ausência não verificável");
+        partialA.AbsenceState.Should().Be(DevicePriorityAbsenceStates.NotVerifiable);
+        partialA.StoredOpenCases.Should().Be(0, "o fato (nenhum caso publicado) é distinto da conclusão");
+        Factor(partialA, "evidence").Kind.Should().Be(DevicePriorityFactorKinds.Unknown);
+        Factor(partialA, "evidence").Value.Should().Contain("ausência não verificável");
+        partialA.CouldChange.Should().Contain(x => x.Contains("aquisição completa"));
+        var partialB = await Detail(b);
+        partialB.Band.Should().Be(DevicePriorityBands.P3, "o caso positivo de coleta parcial continua utilizável (alta sem exploit)");
+        partialB.Caveats.Should().Contain(n => n.Code == "partialAcquisition");
+        partialB.AbsenceState.Should().Be(DevicePriorityAbsenceStates.NotVerifiable, "a ausência de OUTRAS não é concluída");
+        partialB.AbsenceLabel.Should().Contain("não pode ser concluída");
+        var partialC = await Detail(c);
+        partialC.Status.Should().Be(DevicePriorityStatuses.AllDisposed);
+        partialC.NextAction.Should().Contain("não permite concluir");
+        partialC.StoredOpenCases.Should().Be(1);
+        var partialList = await List();
+        partialList.Summary.CandidateAssets.Should().Be(1, "candidatos continuam sendo só os dispositivos com caso em aberto");
+        partialList.Summary.AbsenceState.Should().Be(DevicePriorityAbsenceStates.NotVerifiable);
+        partialList.Summary.AbsenceNote.Should().Contain("parcial");
+        partialList.Items.Should().ContainSingle().Which.AssetId.Should().Be(b);
+
+        // (2) Aquisição completa sem CVE para A: ZERO verdadeiro.
+        DefenderData(machines, new[] { ("mde-b", "CVE-2024-1201"), ("mde-c", "CVE-2024-1202") },
+            Cve("CVE-2024-1201"), Cve("CVE-2024-1202"));
+        await Sync(defender);
+        var complete = await Detail(a);
+        complete.Status.Should().Be(DevicePriorityStatuses.NoOpenCases);
+        complete.NextAction.Should().Contain("não comprova que o dispositivo esteja seguro");
+        complete.AbsenceState.Should().Be(DevicePriorityAbsenceStates.Conclusive);
+        complete.BandLabel.Should().Be("Sem vulnerabilidade em aberto na aquisição completa mais recente");
+        Factor(complete, "evidence").Kind.Should().Be(DevicePriorityFactorKinds.SourceFact);
+        Factor(complete, "evidence").Value.Should().StartWith("Nenhuma em aberto na aquisição completa de");
+        (await Detail(c)).NextAction.Should().NotContain("não permite concluir");
+        var completeList = await List();
+        completeList.Summary.AbsenceState.Should().Be(DevicePriorityAbsenceStates.Conclusive);
+        completeList.Summary.AbsenceNote.Should().BeNull();
+
+        // (3) Tentativa seguinte falha: o zero é o da última aquisição completa, com ressalva da tentativa.
+        _src.DefenderRoute = req => req.RequestUri!.AbsolutePath.Contains("/api/machines") ? (HttpStatusCode.Forbidden, "{}") : null;
+        await FluentActions.Awaiting(() => Sync(defender)).Should().ThrowAsync<Exception>();
+        var failed = await Detail(a);
+        failed.Status.Should().Be(DevicePriorityStatuses.NoOpenCases);
+        failed.Caveats.Should().Contain(n => n.Code == "latestAttemptFailed");
+        failed.PositionReason.Should().Contain("tentativa mais recente");
+        failed.NextAction.Should().Contain("tentativa mais recente");
+        failed.AbsenceState.Should().Be(DevicePriorityAbsenceStates.ConclusiveAttemptFailed);
+        var failedList = await List();
+        failedList.Summary.AbsenceState.Should().Be(DevicePriorityAbsenceStates.ConclusiveAttemptFailed);
+        failedList.Summary.AbsenceNote.Should().Contain("falhou").And.Contain("última aquisição completa publicada");
+
+        // (4) Publicação interrompida DEPOIS dos dispositivos e ANTES dos lotes de CVEs.
+        _src.DefenderRoute = null;
+        DefenderData(machines,
+            new[] { ("mde-a", "CVE-2024-1203"), ("mde-b", "CVE-2024-1201"), ("mde-c", "CVE-2024-1202") },
+            Cve("CVE-2024-1201"), Cve("CVE-2024-1202"), Cve("CVE-2024-1203"));
+        await FluentActions.Awaiting(() => Sync(defender, checkpoint: (point, _) =>
+                point == DeviceIdentityResolver.CheckpointPresenceCommitted
+                    ? throw new InvalidOperationException("interrupção sintética")
+                    : Task.CompletedTask))
+            .Should().ThrowAsync<InvalidOperationException>();
+        var unconcluded = await Detail(a);
+        unconcluded.Status.Should().NotBe(DevicePriorityStatuses.NoOpenCases, "a publicação não permite concluir");
+        unconcluded.NextAction.Should().NotContain("Nada a tratar");
+        unconcluded.PositionReason.Should().Contain("não foi concluída");
+        unconcluded.Cases!.Total.Should().Be(0, "a CVE do lote não publicado nunca aparece");
+        unconcluded.Status.Should().Be(DevicePriorityStatuses.AbsenceNotVerified);
+        var unconcludedList = await List();
+        unconcludedList.Summary.AbsenceState.Should().Be(DevicePriorityAbsenceStates.NotVerifiable);
+        unconcludedList.Summary.AbsenceNote.Should().Contain("não foi concluída");
+
+        // (5) Leitura cujo desfecho não foi registrado (legado anterior ao registro do desfecho).
+        DefenderData(machines, new[] { ("mde-b", "CVE-2024-1201"), ("mde-c", "CVE-2024-1202") },
+            Cve("CVE-2024-1201"), Cve("CVE-2024-1202"));
+        await Sync(defender);
+        (await Detail(a)).Status.Should().Be(DevicePriorityStatuses.NoOpenCases);
+        await using (var db = NewContext(TenantA))
+            await db.Connectors.Where(x => x.Id == defender)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.DeviceSnapshotOutcome, DeviceSnapshotOutcome.NotRecorded));
+        var notRecorded = await Detail(a);
+        notRecorded.Status.Should().NotBe(DevicePriorityStatuses.NoOpenCases);
+        notRecorded.PositionReason.Should().Contain("desfecho");
+        notRecorded.Status.Should().Be(DevicePriorityStatuses.AbsenceNotVerified);
+        (await List()).Summary.AbsenceNote.Should().Contain("desfecho");
+        (await Detail(b)).Band.Should().Be(DevicePriorityBands.P3, "o caso positivo continua valendo");
+
+        // (6) Central com ZERO candidatos numa primeira aquisição parcial (outro tenant): a contagem é zero, a ausência
+        // não é conclusiva — nunca "nenhum dispositivo com vulnerabilidade" como fato consumado.
+        var defenderB = Seed(TenantB, ConnectorCapability.VulnerabilityScanner);
+        DefenderData(new[] { Machine("mde-z", "pc-z.demo.example.com", null) }, new[] { ("mde-orfa", "CVE-2024-1209") },
+            Cve("CVE-2024-1209"));
+        await Sync(defenderB, TenantB);
+        var zero = await List(TenantB);
+        zero.Summary.ReadingState.Should().Be(DevicePriorityReadingStates.Available);
+        zero.Summary.CandidateAssets.Should().Be(0);
+        zero.Summary.AbsenceState.Should().Be(DevicePriorityAbsenceStates.NotVerifiable);
+        zero.Summary.AbsenceNote.Should().Contain("parcial");
+    }
+
+    // ================= Estado informado pelo Intune preservado =======================================================
+
+    [Fact]
+    public async Task GracePeriod_IsNeverPresentedAsCompliant()
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner);
+        var intune = Seed(TenantA, ConnectorCapability.ConfigAnalyzer);
+        DefenderData(
+            new[] { Machine("mde-grace", "pc-grace.demo.example.com", DevX), Machine("mde-ok", "pc-ok.demo.example.com", DevY) },
+            new[] { ("mde-grace", "CVE-2024-1301"), ("mde-ok", "CVE-2024-1301") }, Cve("CVE-2024-1301"));
+        _src.IntuneDevices = Page(Device("int-grace", DevX, "inGracePeriod", true), Device("int-ok", DevY, "compliant", true));
+        await Sync(defender);
+        await Sync(intune);
+        var grace = await AssetOf(defender, "mde-grace");
+        var ok = await AssetOf(defender, "mde-ok");
+
+        var g = await Detail(grace);
+        g.Band.Should().Be(DevicePriorityBands.P3, "carência não é não conformidade: nenhuma situação identificada");
+        Factor(g, "deviceManagement").Value.Should().NotContain("como conforme").And.Contain("período de carência");
+        Factor(g, "deviceManagement").Value.Should().Be(
+            "O Intune informa o dispositivo em período de carência de conformidade e com criptografia — carência não é conformidade");
+        Factor(g, "deviceManagement").Note.Should().Contain("Não é conformidade").And.Contain("XS-DEF-INT-NONCOMPLIANT");
+        Factor(g, "deviceManagement").Effect.Should().Be(DevicePriorityEffects.None);
+        g.CouldChange.Should().Contain(x => x.Contains("período de carência terminar"));
+        g.Situations.Should().OnlyContain(s => s.State == CrossSourceStates.NotIdentified);
+        var o = await Detail(ok);
+        o.Band.Should().Be(DevicePriorityBands.P3);
+        Factor(o, "deviceManagement").Value.Should().Be("O Intune informa o dispositivo como conforme e com criptografia");
+        Factor(o, "deviceManagement").Note.Should().NotContain("carência");
+        o.CouldChange.Should().NotContain(x => x.Contains("carência"));
+
+        var list = await List();
+        list.Items.Single(i => i.AssetId == grace).DeviceContextLabel.Should().Be(Factor(g, "deviceManagement").Value);
+        list.Items.Single(i => i.AssetId == ok).DeviceContextLabel.Should().Be(Factor(o, "deviceManagement").Value);
+    }
+
     // ================= Isolamento, paginação e seleção de candidatos =================================================
 
     [Fact]
@@ -743,9 +978,12 @@ public sealed class DevicePriorityTests : IDisposable
         none.Summary.ReadingState.Should().Be(DevicePriorityReadingStates.NoSource);
         none.Summary.ReadingNote.Should().Contain("Ausência de fonte não é ausência de vulnerabilidade");
         none.Items.Should().BeEmpty();
+        none.Summary.AbsenceState.Should().Be(DevicePriorityAbsenceStates.NotApplicable);
 
         Seed(TenantA, ConnectorCapability.VulnerabilityScanner);
-        (await List()).Summary.ReadingState.Should().Be(DevicePriorityReadingStates.NeverCollected);
+        var never = await List();
+        never.Summary.ReadingState.Should().Be(DevicePriorityReadingStates.NeverCollected);
+        never.Summary.AbsenceState.Should().Be(DevicePriorityAbsenceStates.NotApplicable, "o estado da leitura já diz o motivo");
     }
 
     // ================= Política (autoridade pura) e tradução da classificação =======================================

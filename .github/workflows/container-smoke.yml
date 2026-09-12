@@ -190,6 +190,9 @@ jobs:
       #     com o candidato prioritário fora da primeira página alfabética, recorte declarado e a tabela da política/tradução
       #     da classificação. CrossSourceCorrelationTests (já no filtro) cobre a autoridade de correlação refatorada. A classe
       #     é NOVA: sem esta linha ela não executaria. O passo vai de 588 a 601 (medido localmente com este MESMO filtro).
+      #     Revisão dirigida (mesmo PR): +4 casos em DevicePriorityTests (ordem pela chave FINAL com saturação em P1, as 12
+      #     combinações da tabela com e sem agravante, ausência só com completude suficiente e período de carência ≠
+      #     conforme). Filtro inalterado; o passo vai de 601 a 605.
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
@@ -487,6 +490,8 @@ jobs:
       # não publicada nunca entra) e concluída no meio da leitura (REPEATABLE READ). A migration nova também entra na
       # sequência cumulativa de DatabaseUpgradePostgresTests (mesmo caso). A classe é NOVA: sem esta linha ela não
       # executaria. O passo vai de 74 a 77 (medido localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
+      # Revisão dirigida (mesmo PR): +1 caso em DevicePriorityPostgresTests (ordem dos casos pela chave FINAL e completude
+      # da ausência traduzidas no Npgsql). Filtro inalterado; o passo vai de 77 a 78.
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'

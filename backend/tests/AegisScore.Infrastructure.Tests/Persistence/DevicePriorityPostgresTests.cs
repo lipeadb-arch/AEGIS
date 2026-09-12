@@ -212,6 +212,74 @@ public sealed class DevicePriorityPostgresTests
             .Should().Be(DevicePriorityBands.P1, "a leitura seguinte vê a aquisição nova");
     }
 
+    [Fact]
+    public async Task FinalKeyCaseOrder_AndAbsenceCompleteness_TranslateOnNpgsql()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) return;
+        var opt = pg.DbOptions();
+        var now = DeviceSnapshotMarker.Normalize(DateTimeOffset.UtcNow);
+        var tenant = await TenantAsync(opt);
+        var (defender, _) = await ConnectorsAsync(opt, tenant);
+
+        // As 12 combinações da tabela num dispositivo; outro dispositivo sem CVE; relação órfã → primeira aquisição PARCIAL.
+        var severities = new[] { ("Critical", 9.8), ("High", 8.1), ("Medium", 5.5), ("Low", 3.1) };
+        var combos = new List<(string Cve, int Sev, int Exp, double Cvss)>();
+        for (var s = 1; s <= 4; s++)
+            for (var e = 0; e <= 2; e++)
+                combos.Add(($"CVE-2025-{s}{e}10", s, e, severities[s - 1].Item2));
+        var machines = new[] { ("mde-all", "srv-all.demo.example.com", (string?)null), ("mde-zero", "pc-zero.demo.example.com", null) };
+        var cves = combos.Select(c => Cve(c.Cve, severities[c.Sev - 1].Item1, c.Cvss, publicExploit: c.Exp <= 1, verified: c.Exp == 0)).ToList();
+        await Acquisition(now, machines,
+                combos.Select(c => ("mde-all", c.Cve)).Append(("mde-orfa", "CVE-2025-9910")).ToArray(),
+                cves.Append(Cve("CVE-2025-9910", "Low", 2.0)).ToArray())
+            .SyncAsync(opt, tenant, defender);
+        Guid all, zero;
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            all = (await db.AssetSourceBindings.AsNoTracking().SingleAsync(b => b.ExternalId == "mde-all")).AssetId;
+            zero = (await db.AssetSourceBindings.AsNoTracking().SingleAsync(b => b.ExternalId == "mde-zero")).AssetId;
+        }
+
+        IReadOnlyList<string> Expected(bool aggravated) => combos
+            .OrderBy(c => new DevicePriorityKey(
+                    DevicePriorityPolicy.FinalBand(DevicePriorityPolicy.BaseBand(c.Sev, c.Exp)!.Value, aggravated),
+                    c.Exp, c.Sev, aggravated, c.Cvss),
+                Comparer<DevicePriorityKey>.Create(DevicePriorityPolicy.Compare))
+            .Select(c => c.Cve)
+            .ToList();
+
+        var plain = (await DetailAsync(opt, tenant, all, now, pageSize: 50));
+        plain.Cases!.Items.Select(c => c.CveId).Should().Equal(Expected(false));
+        // Criticidade 4 declarada com proveniência (como a declaração a grava): a saturação em P1 reordena no banco.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+            await db.Assets.Where(a => a.Id == all).ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.Criticality, 4).SetProperty(a => a.CriticalityDeclaredValue, 4)
+                .SetProperty(a => a.CriticalityDeclaredAt, now).SetProperty(a => a.CriticalityDeclaredByName, "Gestora Sintética"));
+        var aggravated = await DetailAsync(opt, tenant, all, now, pageSize: 50);
+        aggravated.Cases!.Items.Select(c => c.CveId).Should().Equal(Expected(true), "ordem do Npgsql = DevicePriorityPolicy.Compare");
+        aggravated.DeterminingCase!.CveId.Should().Be(Expected(true)[0]);
+        aggravated.Cases.Items.Select(c => c.CveId).Should().NotEqual(plain.Cases.Items.Select(c => c.CveId),
+            "a saturação em P1 reordena casos de faixas base diferentes");
+
+        // Completude: zero publicado em aquisição parcial não é ausência; a Central diz isso à parte da contagem.
+        var partial = await DetailAsync(opt, tenant, zero, now);
+        partial.Status.Should().Be(DevicePriorityStatuses.AbsenceNotVerified);
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var list = await Query(db, now).ListAsync(new DevicePriorityFilter());
+            list.Summary.CandidateAssets.Should().Be(1);
+            list.Summary.AbsenceState.Should().Be(DevicePriorityAbsenceStates.NotVerifiable);
+        }
+
+        // Aquisição completa seguinte: o mesmo zero passa a ser conclusivo.
+        await Acquisition(now, machines, combos.Select(c => ("mde-all", c.Cve)).ToArray(), cves.ToArray())
+            .SyncAsync(opt, tenant, defender);
+        var complete = await DetailAsync(opt, tenant, zero, now);
+        complete.Status.Should().Be(DevicePriorityStatuses.NoOpenCases);
+        complete.AbsenceState.Should().Be(DevicePriorityAbsenceStates.Conclusive);
+    }
+
     // ---- apoio --------------------------------------------------------------------------------------------------
 
     private static string Q(string s) => SyntheticDeviceSources.Q(s);
@@ -271,10 +339,10 @@ public sealed class DevicePriorityPostgresTests
         };
 
     private static async Task<AssetDevicePriorityDto> DetailAsync(
-        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, Guid assetId, DateTimeOffset now)
+        DbContextOptions<AegisScoreDbContext> opt, Guid tenant, Guid assetId, DateTimeOffset now, int pageSize = 10)
     {
         await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
-        return (await Query(db, now).GetForAssetAsync(assetId, 1, 10))!;
+        return (await Query(db, now).GetForAssetAsync(assetId, 1, pageSize))!;
     }
 
     private static async Task<Guid> AssetOfAsync(DbContextOptions<AegisScoreDbContext> opt, Guid tenant, Guid defender)
