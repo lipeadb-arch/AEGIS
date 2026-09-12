@@ -197,6 +197,11 @@ public sealed class CrossSourceCorrelationTests : IDisposable
         dto.Heading.Should().Be("Situações identificadas entre fontes");
         dto.EvaluatedAt.Should().Be(_base.AddHours(2), "o momento do cálculo vem do relógio injetado");
         dto.Rules.Should().HaveCount(2).And.OnlyContain(r => r.State == CrossSourceStates.Identified && !r.HasCaveats);
+        // Critério (requisito) ≠ conclusão: a associação é afirmada porque a AVALIAÇÃO a comprovou.
+        dto.AssociationCriterion.Should().StartWith("Critério de associação:");
+        dto.Association.State.Should().Be(CrossSourceAssociationStates.Proven);
+        dto.Association.Label.Should().Be("Associação comprovada");
+        dto.Association.Text.Should().StartWith("Associação comprovada:").And.Contain("mesmo identificador de dispositivo");
 
         var a = Rule(dto, RuleA);
         a.RuleVersion.Should().Be(1);
@@ -244,8 +249,11 @@ public sealed class CrossSourceCorrelationTests : IDisposable
         list.Items.Select(x => x.RuleCode).Should().Equal(RuleA, RuleB);
         list.Items.Should().OnlyContain(x => x.OpenCveCount == 2 && !x.CvePreviewTruncated
             && x.CvePreview.SequenceEqual(new[] { "CVE-2024-1001", "CVE-2024-1002" }));
-        list.Items[0].VulnerabilitiesAcquiredAt.Should().Be(d.DeviceSnapshotWatermark);
-        list.Items[0].DeviceManagementAcquiredAt.Should().Be(i.DeviceSnapshotWatermark);
+        list.Items[0].EvidenceBasis.Should().Be(CrossSourceEvidenceBasis.Supporting);
+        list.Items[0].VulnerabilityAcquisitions.Should().Be(
+            new CrossSourceAcquisitionSpanDto(d.DeviceSnapshotWatermark!.Value, d.DeviceSnapshotWatermark!.Value, 1));
+        list.Items[0].DeviceManagementAcquisitions.Should().Be(
+            new CrossSourceAcquisitionSpanDto(i.DeviceSnapshotWatermark!.Value, i.DeviceSnapshotWatermark!.Value, 1));
         JsonSerializer.Serialize(list).Should().NotContain(DevX).And.NotContain("mde-0001");
     }
 
@@ -257,13 +265,22 @@ public sealed class CrossSourceCorrelationTests : IDisposable
         var dto = await Detail(assetId);
         var a = Rule(dto, RuleA);
         a.State.Should().Be(CrossSourceStates.NotIdentified);
-        a.StateLabel.Should().Be("Nenhuma condição correspondente");
-        a.Summary.Should().StartWith("Nenhuma condição correspondente nas evidências elegíveis.")
-            .And.Contain("“Conforme, segundo a fonte”");
+        a.HasCaveats.Should().BeFalse();
+        a.StateLabel.Should().Be("Combinação não identificada", "a regra é uma conjunção: uma condição pode estar presente");
+        a.Summary.Should().StartWith("A combinação das duas condições não foi identificada nas evidências elegíveis.")
+            .And.Contain("“Conforme, segundo a fonte”")
+            .And.Contain("O Microsoft Defender reporta vulnerabilidade(s) em aberto neste dispositivo; essa condição, isolada, " +
+                "continua informada pela fonte", "o fato individual presente não é negado");
+        a.SupportingData.Should().StartWith("Associação comprovada:").And.Contain("“Conforme, segundo a fonte”")
+            .And.Contain("sustentam apenas que a combinação não se formou");
         a.OpenCveCount.Should().Be(1, "as vulnerabilidades continuam contadas, só não formam a situação desta regra");
         Rule(dto, RuleB).State.Should().Be(CrossSourceStates.Identified);
 
         (await List()).Items.Should().ContainSingle().Which.RuleCode.Should().Be(RuleB);
+        var negative = (await List(state: CrossSourceStates.NotIdentified)).Items.Should().ContainSingle().Subject;
+        negative.EvidenceBasis.Should().Be(CrossSourceEvidenceBasis.Supporting);
+        negative.VulnerabilityAcquisitions.Should().BeNull("o Defender não sustenta esta conclusão negativa");
+        negative.DeviceManagementAcquisitions!.Acquisitions.Should().Be(1);
     }
 
     [Fact]
@@ -556,6 +573,10 @@ public sealed class CrossSourceCorrelationTests : IDisposable
         var dto = await Detail(assetA);
         dto.Rules.Should().OnlyContain(r => r.State == CrossSourceStates.NotEvaluated);
         Rule(dto, RuleA).Summary.Should().Contain("não tem registro do Microsoft Intune");
+        // Fonte ausente: a associação não é afirmada — nem pelo contrato, nem em nenhum texto da leitura.
+        dto.Association.State.Should().Be(CrossSourceAssociationStates.SourceMissing);
+        dto.Association.Text.Should().Contain("não tem registro do Microsoft Intune");
+        JsonSerializer.Serialize(dto).Should().NotContain("Associação comprovada").And.NotContain("informaram o mesmo identificador");
 
         var listA = await List();
         listA.Summary.ReadingState.Should().Be(CrossSourceReadingStates.Available);
@@ -679,5 +700,269 @@ public sealed class CrossSourceCorrelationTests : IDisposable
         zero.Summary.AssetsWithBothSources.Should().Be(1);
         zero.Summary.SituationsIdentified.Should().Be(0, "zero apurado, com a população avaliada informada");
         zero.Summary.ByRule.Should().OnlyContain(t => t.NotIdentified == 1);
+    }
+
+    // ================= Revisão do PR #72: associação, ressalvas das conclusões e datas participantes ===============
+
+    [Fact]
+    public async Task Association_InConflict_IsNeverClaimed_TheContractSaysWhatTheEvaluationFound()
+    {
+        var (defender, _, assetId) = await LinkedDeviceAsync(new[] { "CVE-2024-1001" });
+        DefenderData(_src, new[] { Machine("mde-0001", "pc-01.demo.example.com", DevY) }, new[] { ("mde-0001", "CVE-2024-1001") });
+        await Sync(defender);
+
+        var dto = await Detail(assetId);
+        dto.Rules.Should().OnlyContain(r => r.State == CrossSourceStates.LinkConflict);
+        dto.Association.State.Should().Be(CrossSourceAssociationStates.Conflict);
+        dto.Association.Label.Should().Be("Vínculo em conflito — associação não resolvida");
+        dto.Association.Text.Should().StartWith("Associação não comprovada").And.Contain("Conflito: identificador mudou");
+        dto.AssociationCriterion.Should().StartWith("Critério de associação:", "o requisito continua explicado como requisito");
+        JsonSerializer.Serialize(dto).Should().NotContain("Associação comprovada").And.NotContain("informaram o mesmo identificador");
+    }
+
+    [Fact]
+    public async Task Association_MissingIdentifier_IsNotClaimed_AndTheRecordSaysWhy()
+    {
+        // Caminho real: a máquina do Defender não informa o identificador de diretório. Sem chave forte ela não se une ao
+        // dispositivo do Intune (nome igual não conta) — o ativo dela fica só com a fonte de vulnerabilidades.
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner, DirA);
+        var intune = Seed(TenantA, ConnectorCapability.ConfigAnalyzer, DirA);
+        DefenderData(_src, new[] { Machine("mde-0001", "pc-01.demo.example.com", deviceId: null) },
+            new[] { ("mde-0001", "CVE-2024-1001") });
+        _src.IntuneDevices = Page(Device("int-0001", DevX));
+        await Sync(defender);
+        await Sync(intune);
+
+        var dto = await Detail(await AssetOf(defender, "mde-0001"));
+        dto.Rules.Should().OnlyContain(r => r.State == CrossSourceStates.NotEvaluated);
+        dto.Association.State.Should().Be(CrossSourceAssociationStates.SourceMissing);
+        dto.Association.Text.Should().Contain("não tem registro do Microsoft Intune")
+            .And.Contain("A fonte não informou o identificador de dispositivo do diretório");
+        JsonSerializer.Serialize(dto).Should().NotContain("Associação comprovada");
+    }
+
+    [Fact]
+    public async Task NegativeResult_FromPreservedEvidenceAfterAFailedAttempt_KeepsTheCaveat_InDetailAndList()
+    {
+        var (_, intune, assetId) = await LinkedDeviceAsync(new[] { "CVE-2024-1001" }, compliance: "compliant", encrypted: true);
+        _src.IntuneRoute = _ => (HttpStatusCode.Forbidden, """{"error":{"code":"Forbidden"}}""");
+        await Sync(intune);
+
+        var dto = await Detail(assetId);
+        var b = Rule(dto, RuleB);
+        b.State.Should().Be(CrossSourceStates.NotIdentified, "o fato determinado preservado continua utilizável");
+        b.HasCaveats.Should().BeTrue();
+        b.StateLabel.Should().Be("Combinação não identificada, com ressalvas");
+        b.Caveats.Should().ContainSingle(c => c.Code == "latestAttemptFailed").Which.Text.Should().StartWith("Microsoft Intune");
+        b.Caveats.Should().NotContain(c => c.Text.StartsWith("Microsoft Defender"), "o Defender não sustenta esta conclusão");
+        b.SupportingData.Should().Contain("“Criptografado, segundo a fonte”");
+        b.WhatToVerify.Should().Contain("ressalvas");
+
+        var list = await List(state: CrossSourceStates.NotIdentified);
+        list.Summary.ByRule.Should().OnlyContain(t => t.NotIdentified == 1 && t.NotIdentifiedWithCaveats == 1);
+        var item = list.Items.Single(x => x.RuleCode == RuleB);
+        item.HasCaveats.Should().BeTrue();
+        item.StateLabel.Should().Be(b.StateLabel);
+        item.Caveats.Should().BeEquivalentTo(b.Caveats, "detalhe e lista dizem o mesmo");
+    }
+
+    [Fact]
+    public async Task NegativeResult_DuringANewerUnconcludedPublication_UsesThePreservedFact_WithoutExtendingCompleteness()
+    {
+        var (_, intune, assetId) = await LinkedDeviceAsync(new[] { "CVE-2024-1001" }, compliance: "compliant", encrypted: true);
+        var first = (await ConnectorOf(intune)).DeviceSnapshotWatermark!.Value;
+        // Nova aquisição do Intune sem este dispositivo, interrompida logo após publicar a presença: a marca avança, o
+        // registro deste dispositivo continua o da aquisição anterior e a ausência não é publicada.
+        _src.IntuneDevices = Page(Device("int-0002", DevY));
+        await FluentActions.Awaiting(() => Sync(intune, checkpoint: (point, _) =>
+                point == DeviceIdentityResolver.CheckpointPresenceCommitted
+                    ? throw new InvalidOperationException("interrupção sintética")
+                    : Task.CompletedTask))
+            .Should().ThrowAsync<Exception>();
+        (await ConnectorOf(intune)).DeviceSnapshotOutcome.Should().Be(DeviceSnapshotOutcome.Publishing);
+
+        var dto = await Detail(assetId);
+        var mg = dto.Evidence.Single(e => e.Role == "deviceManagement");
+        mg.AcquisitionState.Should().Be(CrossSourceAcquisitionStates.Previous);
+        mg.AcquiredAt.Should().Be(first);
+        var b = Rule(dto, RuleB);
+        b.State.Should().Be(CrossSourceStates.NotIdentified);
+        b.Caveats.Select(c => c.Code).Should().Contain(new[] { "recordNotReconfirmed", "publicationNotConcluded" });
+        b.Caveats.Single(c => c.Code == "recordNotReconfirmed").Text.Should().Contain(CrossSourceCorrelationEvaluator.Utc(first));
+        b.SupportingData.Should().Contain("aquisição anterior, não reconfirmada pela mais recente");
+        (await List(state: CrossSourceStates.NotIdentified)).Items.Single(x => x.RuleCode == RuleB)
+            .DeviceManagementAcquisitions.Should().Be(new CrossSourceAcquisitionSpanDto(first, first, 1));
+    }
+
+    [Fact]
+    public async Task AcquisitionGap_ConsidersEveryParticipatingEvidence_ARecentOneNeverHidesAnOlderOne()
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner, DirA);
+        var intune = Seed(TenantA, ConnectorCapability.ConfigAnalyzer, DirA);
+        DefenderData(_src, new[] { Machine("mde-0001", "pc-01.demo.example.com", DevX) }, new[] { ("mde-0001", "CVE-2024-1001") });
+        await Sync(defender);
+        var first = (await ConnectorOf(defender)).DeviceSnapshotWatermark!.Value;
+        // Segunda aquisição PARCIAL (relação órfã): reporta CVE-2024-1002; a CVE-2024-1001 não é reconfirmada e segue
+        // aberta, preservada da aquisição anterior. O Intune é lido logo depois.
+        DefenderData(_src, new[] { Machine("mde-0001", "pc-01.demo.example.com", DevX) },
+            new[] { ("mde-0001", "CVE-2024-1002"), ("mde-orfa", "CVE-2024-1009") });
+        await Sync(defender);
+        var second = (await ConnectorOf(defender)).DeviceSnapshotWatermark!.Value;
+        _src.IntuneDevices = Page(Device("int-0001", DevX));
+        await Sync(intune);
+        // A aquisição anterior passa a ter ocorrido três dias antes (o Defender marca a coleta com o relógio real).
+        await ShiftObservationsAsync(first, TimeSpan.FromDays(-3));
+        var shifted = first.AddDays(-3);
+
+        var detail = await Detail(await AssetOf(defender, "mde-0001"));
+        var a = Rule(detail, RuleA);
+        a.State.Should().Be(CrossSourceStates.Identified);
+        a.OpenCveCount.Should().Be(2);
+        a.Caveats.Should().Contain(c => c.Code == "previousAcquisition");
+        a.Caveats.Should().ContainSingle(c => c.Code == "acquisitionGap", "a CVE de três dias atrás participa da combinação")
+            .Which.Text.Should().Contain("vulnerabilidades em 2 aquisições, de " + CrossSourceCorrelationEvaluator.Utc(shifted))
+            .And.Contain("maior defasagem entre as fontes");
+        // Cada CVE mantém a própria data e proveniência na paginação.
+        detail.Cves!.Items.Select(c => (c.CveId, c.Sources.Single().AcquiredAt))
+            .Should().Equal(("CVE-2024-1001", shifted), ("CVE-2024-1002", second));
+
+        var item = (await List()).Items.Single(x => x.RuleCode == RuleA);
+        item.VulnerabilityAcquisitions.Should().Be(new CrossSourceAcquisitionSpanDto(shifted, second, 2),
+            "a Central mostra o intervalo e a quantidade de aquisições, não só a mais recente");
+        item.DeviceManagementAcquisitions!.Acquisitions.Should().Be(1);
+    }
+
+    /// <summary>Desloca no tempo as observações de uma aquisição (o Defender marca a coleta com o relógio real).</summary>
+    private async Task ShiftObservationsAsync(DateTimeOffset marker, TimeSpan delta)
+    {
+        await using var db = NewContext(TenantA);
+        var rows = (await db.AssetThreatObservations.ToListAsync()).Where(o => o.LastSeenAt == marker).ToList();
+        rows.Should().NotBeEmpty();
+        foreach (var o in rows)
+        {
+            o.LastSeenAt += delta;
+            o.FirstSeenAt += delta;
+        }
+        await db.SaveChangesAsync();
+    }
+
+    // ================= Autoridade pura (fatos montados): casos que a coleta real não produz =======================
+
+    private static readonly Guid PDef = Guid.Parse("e1000000-0000-0000-0000-000000000001");
+    private static readonly Guid PInt = Guid.Parse("e2000000-0000-0000-0000-000000000002");
+
+    private static CrossSourceBindingFacts PBinding(Guid connector, int n, DateTimeOffset observedAt,
+        AssetBindingResolutionState state = AssetBindingResolutionState.Linked, bool withIdentifier = true,
+        DeviceComplianceBucket? compliance = null, DeviceEncryptionBucket? encryption = null) =>
+        new(Guid.Parse($"b0000000-0000-0000-0000-{n:D12}"), connector, null, IsActive: true, state,
+            AssetBindingConflictKind.None, withIdentifier ? DirA : null, withIdentifier ? DevX : null,
+            FirstObservedAt: observedAt.AddDays(-10), LastObservedAt: observedAt, SourceLastSeenAt: observedAt.AddHours(-1),
+            ResolvedAt: observedAt.AddDays(-10),
+            LinkedAt: state == AssetBindingResolutionState.Linked ? observedAt.AddDays(-10) : null,
+            compliance, encryption);
+
+    private static CrossSourceAssetFacts PFacts(DateTimeOffset defenderWatermark, DateTimeOffset intuneWatermark,
+        IReadOnlyList<CrossSourceBindingFacts> bindings, IReadOnlyList<CrossSourceObservationGroup> observations,
+        DeviceSnapshotOutcome defenderOutcome = DeviceSnapshotOutcome.Complete,
+        DeviceSnapshotOutcome intuneOutcome = DeviceSnapshotOutcome.Complete) =>
+        new(Guid.Parse("a0000000-0000-0000-0000-00000000000a"), "pc-01.demo.example.com", NameIsPlaceholder: false,
+            new[] { new CrossSourceKey(DirA, DevX) }, bindings,
+            new Dictionary<Guid, CrossSourceConnectorFacts>
+            {
+                [PDef] = new(PDef, CrossSourceRole.Vulnerabilities, "Microsoft Defender Vulnerability Management",
+                    "Defender (sintético)", defenderWatermark, defenderOutcome, LatestAttemptFailed: false, LatestAttemptAt: null),
+                [PInt] = new(PInt, CrossSourceRole.DeviceManagement, "Microsoft Intune", "Intune (sintético)",
+                    intuneWatermark, intuneOutcome, LatestAttemptFailed: false, LatestAttemptAt: null),
+            },
+            observations);
+
+    private CrossSourceAssetAssessment PEvaluate(CrossSourceAssetFacts facts) =>
+        CrossSourceCorrelationEvaluator.Evaluate(facts, CrossSourcePolicy.Default, _base.AddHours(1));
+
+    private static CrossSourceObservationGroup[] OpenCves(DateTimeOffset at, int count) =>
+        new[] { new CrossSourceObservationGroup(PDef, ObservationLifecycle.Open, at, count) };
+
+    [Fact]
+    public void Authority_MissingIdentifierOnTheSameAsset_DoesNotProveTheAssociation()
+    {
+        var t = _base;
+        var a = PEvaluate(PFacts(t, t, new[]
+            {
+                PBinding(PDef, 1, t),
+                PBinding(PInt, 2, t, AssetBindingResolutionState.NoIdentifier, withIdentifier: false,
+                    DeviceComplianceBucket.Noncompliant, DeviceEncryptionBucket.NotEncrypted),
+            }, OpenCves(t, 2)));
+
+        a.Association.State.Should().Be(CrossSourceAssociationStates.NotProven);
+        a.Association.Text.Should().StartWith("Associação não comprovada")
+            .And.Contain("A fonte não informou o identificador de dispositivo do diretório");
+        a.Rules.Should().OnlyContain(r => r.State == CrossSourceStates.InsufficientEvidence
+            && r.EvidenceBasis == CrossSourceEvidenceBasis.None && r.Caveats.Count == 0);
+    }
+
+    [Fact]
+    public void Authority_ValidLinkWithUndeterminedPosture_ProvesTheAssociation_WithoutConcludingTheRule()
+    {
+        // Vínculo válido e fatos de postura insuficientes: a associação é comprovada; a regra, não. Um não se deduz do outro.
+        var t = _base;
+        var a = PEvaluate(PFacts(t, t, new[] { PBinding(PDef, 1, t), PBinding(PInt, 2, t) }, OpenCves(t, 1)));
+        a.Association.State.Should().Be(CrossSourceAssociationStates.Proven);
+        a.Rules.Should().OnlyContain(r => r.State == CrossSourceStates.InsufficientEvidence
+            && r.EvidenceBasis == CrossSourceEvidenceBasis.Available && r.DeviceAcquisitions.SequenceEqual(new[] { t }));
+    }
+
+    [Fact]
+    public void Authority_AcquisitionGap_UsesEveryParticipatingRecord_NotOnlyTheLatestOfEachSource()
+    {
+        var t = _base;
+        var older = t.AddDays(-2);
+        // Dois registros elegíveis e concordantes do Intune (aquisição mais recente parcial): um observado nela, outro
+        // preservado de dois dias antes. O Defender e o registro recente coincidem — o antigo não pode ser escondido.
+        var a = PEvaluate(PFacts(t, t, new[]
+                {
+                    PBinding(PDef, 1, t),
+                    PBinding(PInt, 2, t, compliance: DeviceComplianceBucket.Noncompliant, encryption: DeviceEncryptionBucket.NotEncrypted),
+                    PBinding(PInt, 3, older, compliance: DeviceComplianceBucket.Noncompliant, encryption: DeviceEncryptionBucket.NotEncrypted),
+                },
+                OpenCves(t, 1), intuneOutcome: DeviceSnapshotOutcome.Partial))
+            .Rules.Single(r => r.Rule.Code == RuleA);
+
+        a.State.Should().Be(CrossSourceStates.Identified);
+        a.DeviceAcquisitions.Should().Equal(older, t);
+        a.Caveats.Should().ContainSingle(c => c.Code == "acquisitionGap").Which.Text.Should()
+            .Contain("conformidade em 2 aquisições, de " + CrossSourceCorrelationEvaluator.Utc(older)).And.Contain("48 h");
+        a.Caveats.Should().Contain(c => c.Code == "recordNotReconfirmed" && c.Text.Contains(CrossSourceCorrelationEvaluator.Utc(older)));
+        a.Caveats.Should().Contain(c => c.Code == "partialAcquisition" && c.Text.Contains("não se estende a este fato"));
+
+        // Dentro da defasagem configurada, nenhuma ressalva temporal: as fontes não precisam ter o mesmo horário.
+        var close = PEvaluate(PFacts(t, t.AddHours(-3), new[]
+                {
+                    PBinding(PDef, 1, t),
+                    PBinding(PInt, 2, t.AddHours(-3), compliance: DeviceComplianceBucket.Noncompliant),
+                }, OpenCves(t, 1)))
+            .Rules.Single(r => r.Rule.Code == RuleA);
+        close.State.Should().Be(CrossSourceStates.Identified);
+        close.Caveats.Should().NotContain(c => c.Code == "acquisitionGap");
+    }
+
+    [Fact]
+    public void Authority_NegativeFromADeviceFactOfAPartialAcquisition_StaysUsable_WithOnlyThatEvidencesCaveat()
+    {
+        var t = _base;
+        var a = PEvaluate(PFacts(t, t, new[]
+                {
+                    PBinding(PDef, 1, t),
+                    PBinding(PInt, 2, t, compliance: DeviceComplianceBucket.Compliant, encryption: DeviceEncryptionBucket.Encrypted),
+                },
+                OpenCves(t, 3), defenderOutcome: DeviceSnapshotOutcome.Partial, intuneOutcome: DeviceSnapshotOutcome.Partial))
+            .Rules.Single(r => r.Rule.Code == RuleA);
+
+        a.State.Should().Be(CrossSourceStates.NotIdentified, "um fato determinado de coleta parcial continua utilizável");
+        a.Caveats.Should().ContainSingle().Which.Code.Should().Be("partialAcquisition");
+        a.Caveats.Should().OnlyContain(c => c.Text.StartsWith("Microsoft Intune"),
+            "a parcialidade do Defender não qualifica uma conclusão que ele não sustenta");
+        a.VulnerabilityAcquisitions.Should().BeEmpty();
+        a.DeviceAcquisitions.Should().Equal(t);
+        a.SupportingDeviceRecords.Should().ContainSingle();
     }
 }
