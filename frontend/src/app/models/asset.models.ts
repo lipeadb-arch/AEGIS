@@ -34,6 +34,11 @@ export interface AssetDto {
   nameIsPlaceholder?: boolean;
   /** [AEGIS-ENTITY-RESOLUTION-01] Resumo das fontes e do vínculo entre elas (sem identificadores técnicos). */
   sources?: AssetSourceSummary | null;
+  /**
+   * [AEGIS-RISK-PRIORITIZATION-01] A criticidade cadastrada tem proveniência (declarada com autor e data)? Sem ela —
+   * inclusive o padrão 1 do resolvedor — o valor é "criticidade não confirmada", nunca "baixa".
+   */
+  criticalityConfirmed?: boolean;
 }
 
 // ---- [AEGIS-ENTITY-RESOLUTION-01] Fontes do ativo e vínculo entre elas ----------------------------------------

@@ -23,6 +23,7 @@ import { PostureSummaryComponent } from '../components/scoring/posture-summary.c
 import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
 import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
 import { CrossSourceSituationsComponent } from '../components/cross-source/cross-source-situations.component';
+import { DevicePriorityComponent } from '../components/device-priority/device-priority.component';
 import { AegisScoreService } from '../services/aegis-score.service';
 import { ScoringService } from '../services/scoring.service';
 import { FunctionPosture, functionOf } from '../models/workspace.models';
@@ -45,6 +46,7 @@ import {
   imports: [
     DatePipe, PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent,
     CrossSourceSituationsComponent,
+    DevicePriorityComponent,
   ],
   template: `
     <div class="app">
@@ -212,7 +214,12 @@ import {
                   }
                 </td>
                 <td><span class="cat">{{ label(a.category) }}</span></td>
-                <td class="num"><span class="crit crit-{{ a.criticality }}">{{ a.criticality }}</span></td>
+                <td class="num">
+                  <!-- [AEGIS-RISK-PRIORITIZATION-01] Sem declaração com autor e data (inclui o padrão 1), o valor não é criticidade confirmada. -->
+                  <span class="crit crit-{{ a.criticality }}"
+                    [attr.title]="a.criticalityConfirmed ? 'Criticidade declarada com proveniência' : 'Criticidade não confirmada — valor cadastrado sem proveniência'">{{ a.criticality }}</span>
+                  @if (!a.criticalityConfirmed) { <div class="asset-sub">não confirmada</div> }
+                </td>
                 <td>
                   @if (a.riskLevel) {
                     <span
@@ -335,6 +342,8 @@ import {
                         </div>
                       }
                     }
+                    <!-- [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento: carga e falha próprias; usa as situações abaixo como contexto. -->
+                    <app-device-priority [assetId]="a.id" />
                     <!-- [AEGIS-CROSS-SOURCE-01] Situações entre fontes: carga e falha próprias, independentes das fontes acima. -->
                     <app-cross-source-situations [assetId]="a.id" />
                   </td>

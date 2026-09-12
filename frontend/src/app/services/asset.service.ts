@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { AssetDto, AssetQuery, AssetSources, PagedResult } from '../models/asset.models';
 import { AssetCrossSource } from '../models/cross-source.models';
+import { AssetDevicePriority, DevicePriorityCriticality } from '../models/device-priority.models';
 import { environment } from '../../environments/environment';
 
 @Injectable({ providedIn: 'root' })
@@ -37,6 +38,27 @@ export class AssetService {
     return this.http.get<AssetCrossSource>(
       `${environment.apiBase}/api/v1/assets/${encodeURIComponent(assetId)}/correlations`,
       { params, headers: { Accept: 'application/json' } },
+    );
+  }
+
+  /**
+   * [AEGIS-RISK-PRIORITIZATION-01] GET /api/v1/assets/{id}/priority — prioridade de tratamento do dispositivo, com o
+   * caso determinante, fatores, desconhecidos, ressalvas e os casos paginados.
+   */
+  priority(assetId: string, casePage = 1, casePageSize = 10): Observable<AssetDevicePriority> {
+    const params = new HttpParams().set('casePage', casePage).set('casePageSize', casePageSize);
+    return this.http.get<AssetDevicePriority>(
+      `${environment.apiBase}/api/v1/assets/${encodeURIComponent(assetId)}/priority`,
+      { params, headers: { Accept: 'application/json' } },
+    );
+  }
+
+  /** [AEGIS-RISK-PRIORITIZATION-01] PUT /api/v1/assets/{id}/criticality — declara a criticidade (autor vem do token). */
+  declareCriticality(assetId: string, criticality: number, note: string | null): Observable<DevicePriorityCriticality> {
+    return this.http.put<DevicePriorityCriticality>(
+      `${environment.apiBase}/api/v1/assets/${encodeURIComponent(assetId)}/criticality`,
+      { criticality, note: note?.trim() || null },
+      { headers: { Accept: 'application/json' } },
     );
   }
 
