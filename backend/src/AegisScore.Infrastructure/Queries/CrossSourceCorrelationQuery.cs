@@ -118,7 +118,8 @@ public sealed class CrossSourceCorrelationQuery : ICrossSourceCorrelationQuery
                 EvaluatedAt: now,
                 Heading: CrossSourceNarrative.Heading,
                 Scope: CrossSourceNarrative.Scope,
-                AssociationReason: CrossSourceNarrative.AssociationReason,
+                AssociationCriterion: CrossSourceNarrative.AssociationCriterion,
+                Association: CrossSourceAssociationDto.From(assessment.Association),
                 Policy: CrossSourcePolicyDto.From(_policy),
                 Rules: assessment.Rules.Select(r => ToRuleDto(r, assessment, openCves)).ToList(),
                 Evidence: assessment.Records.Select(ToEvidenceDto).ToList(),
@@ -171,6 +172,7 @@ public sealed class CrossSourceCorrelationQuery : ICrossSourceCorrelationQuery
                     Identified: results.Count(x => x.State == CrossSourceStates.Identified),
                     IdentifiedWithCaveats: results.Count(x => x.State == CrossSourceStates.Identified && x.Caveats.Count > 0),
                     NotIdentified: results.Count(x => x.State == CrossSourceStates.NotIdentified),
+                    NotIdentifiedWithCaveats: results.Count(x => x.State == CrossSourceStates.NotIdentified && x.Caveats.Count > 0),
                     InsufficientEvidence: results.Count(x => x.State == CrossSourceStates.InsufficientEvidence),
                     LinkConflict: results.Count(x => x.State == CrossSourceStates.LinkConflict),
                     ContradictoryEvidence: results.Count(x => x.State == CrossSourceStates.ContradictoryEvidence));
@@ -209,11 +211,7 @@ public sealed class CrossSourceCorrelationQuery : ICrossSourceCorrelationQuery
             var items = pageItems.Select(x =>
             {
                 var cves = cveByAsset.TryGetValue(x.Asset.Facts.AssetId, out var c) ? c : ((int Total, List<string> Preview)?)null;
-                var vulnAt = x.Asset.Vulnerabilities.SelectMany(v => v.EligibleMarkers).DefaultIfEmpty().Max();
-                var mgmtRecords = x.Rule.SupportingDeviceRecords.Count > 0
-                    ? x.Rule.SupportingDeviceRecords
-                    : x.Asset.Records.Where(r => r.Eligible && r.Connector.Role == CrossSourceRole.DeviceManagement).ToList();
-                var mgmtAt = mgmtRecords.Select(r => r.Binding.LastObservedAt).DefaultIfEmpty().Max();
+                // Datas: as aquisições que o AVALIADOR declarou participantes — intervalo e quantidade, nunca só a máxima.
                 return new CrossSourceSituationItemDto(
                     AssetId: x.Asset.Facts.AssetId,
                     AssetName: x.Asset.Facts.AssetName,
@@ -229,8 +227,9 @@ public sealed class CrossSourceCorrelationQuery : ICrossSourceCorrelationQuery
                     CvePreview: cves?.Preview ?? new List<string>(),
                     CvePreviewTruncated: cves is { } p && p.Total > p.Preview.Count,
                     Caveats: x.Rule.Caveats,
-                    VulnerabilitiesAcquiredAt: vulnAt == default ? null : vulnAt,
-                    DeviceManagementAcquiredAt: mgmtAt == default ? null : mgmtAt);
+                    EvidenceBasis: x.Rule.EvidenceBasis,
+                    VulnerabilityAcquisitions: CrossSourceAcquisitionSpanDto.From(x.Rule.VulnerabilityAcquisitions),
+                    DeviceManagementAcquisitions: CrossSourceAcquisitionSpanDto.From(x.Rule.DeviceAcquisitions));
             }).ToList();
 
             var summary = new CrossSourceSituationSummaryDto(

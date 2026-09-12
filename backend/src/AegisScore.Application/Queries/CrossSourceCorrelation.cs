@@ -241,6 +241,38 @@ public static class CrossSourceAcquisitionStates
     public const string NotRecorded = "notRecorded";
 }
 
+/// <summary>
+/// Conclusão da AVALIAÇÃO sobre a associação entre os registros das duas fontes no ativo (códigos estáveis). É distinta do
+/// critério (o requisito) e do estado da regra: pode haver associação comprovada com fatos de postura insuficientes.
+/// </summary>
+public static class CrossSourceAssociationStates
+{
+    /// <summary>Registros elegíveis das duas fontes compartilham a única chave forte do ativo.</summary>
+    public const string Proven = "proven";
+
+    /// <summary>As duas fontes têm registro no ativo, mas a avaliação não comprovou a associação.</summary>
+    public const string NotProven = "notProven";
+
+    /// <summary>Há registro ativo em conflito de vínculo: a associação não está resolvida.</summary>
+    public const string Conflict = "conflict";
+
+    /// <summary>Falta registro de uma das fontes no ativo: não há associação entre fontes a avaliar.</summary>
+    public const string SourceMissing = "sourceMissing";
+}
+
+/// <summary>O que representam as datas apresentadas para um resultado (códigos estáveis).</summary>
+public static class CrossSourceEvidenceBasis
+{
+    /// <summary>Evidências que SUSTENTAM a conclusão (identificada ou não identificada).</summary>
+    public const string Supporting = "supporting";
+
+    /// <summary>Evidências elegíveis disponíveis, sem conclusão combinada.</summary>
+    public const string Available = "available";
+
+    /// <summary>Nenhuma evidência elegível participa (fonte ausente, conflito, associação não comprovada).</summary>
+    public const string None = "none";
+}
+
 // ---- Fatos de entrada (obtidos pela infraestrutura) -----------------------------------------------------------------
 
 /// <summary>Chave forte do ativo (namespace do diretório + identificador de dispositivo). Dado interno — nunca exposto.</summary>
@@ -340,11 +372,26 @@ public sealed record CrossSourceRuleAssessment(
     string State,
     IReadOnlyList<CrossSourceNoteDto> Caveats,
     IReadOnlyList<string> Reasons,
-    /// <summary>Registros da gestão de dispositivos que sustentam a condição (vazio fora de "identificada").</summary>
-    IReadOnlyList<CrossSourceRecordAssessment> SupportingDeviceRecords);
+    /// <summary>
+    /// Registros da gestão de dispositivos que sustentam a CONCLUSÃO: a condição presente ("identificada") ou não
+    /// correspondente ("não identificada" pelo lado do dispositivo). Vazio sem conclusão.
+    /// </summary>
+    IReadOnlyList<CrossSourceRecordAssessment> SupportingDeviceRecords,
+    /// <summary>O que representam as datas abaixo (<see cref="CrossSourceEvidenceBasis"/>).</summary>
+    string EvidenceBasis,
+    /// <summary>Aquisições do Defender que participam — marcas distintas, em ordem crescente (nunca só a mais recente).</summary>
+    IReadOnlyList<DateTimeOffset> VulnerabilityAcquisitions,
+    /// <summary>Aquisições do Intune que participam — marcas distintas, em ordem crescente.</summary>
+    IReadOnlyList<DateTimeOffset> DeviceAcquisitions,
+    /// <summary>A conclusão negativa se apoia na ausência de vulnerabilidade em aberto numa aquisição completa do Defender.</summary>
+    bool VulnerabilityAbsenceSupports = false);
+
+/// <summary>Conclusão sobre a associação (<see cref="CrossSourceAssociationStates"/>) e o texto derivado da avaliação.</summary>
+public sealed record CrossSourceAssociation(string State, string Text);
 
 public sealed record CrossSourceAssetAssessment(
     CrossSourceAssetFacts Facts,
+    CrossSourceAssociation Association,
     IReadOnlyList<CrossSourceRecordAssessment> Records,
     IReadOnlyList<CrossSourceVulnerabilityEvidence> Vulnerabilities,
     IReadOnlyList<CrossSourceRuleAssessment> Rules);
@@ -374,7 +421,8 @@ public static class CrossSourceCorrelationEvaluator
         IReadOnlyList<CrossSourceRuleAssessment> All(string state, IReadOnlyList<string> reasons) =>
             CrossSourceRules.All
                 .Select(r => new CrossSourceRuleAssessment(r, state, Array.Empty<CrossSourceNoteDto>(), reasons,
-                    Array.Empty<CrossSourceRecordAssessment>()))
+                    Array.Empty<CrossSourceRecordAssessment>(), CrossSourceEvidenceBasis.None,
+                    Array.Empty<DateTimeOffset>(), Array.Empty<DateTimeOffset>()))
                 .ToList();
 
         var hasVuln = records.Any(r => r.Connector.Role == CrossSourceRole.Vulnerabilities);
@@ -384,7 +432,9 @@ public static class CrossSourceCorrelationEvaluator
             var missing = new List<string>();
             if (!hasVuln) missing.Add("o ativo não tem registro do Microsoft Defender (vulnerabilidades)");
             if (!hasMgmt) missing.Add("o ativo não tem registro do Microsoft Intune (gestão de dispositivos)");
-            return new CrossSourceAssetAssessment(f, records, Array.Empty<CrossSourceVulnerabilityEvidence>(),
+            var association = new CrossSourceAssociation(CrossSourceAssociationStates.SourceMissing,
+                "Associação entre fontes não avaliada: " + string.Join("; ", missing) + "." + IdentityNotes(records));
+            return new CrossSourceAssetAssessment(f, association, records, Array.Empty<CrossSourceVulnerabilityEvidence>(),
                 All(CrossSourceStates.NotEvaluated, missing));
         }
 
@@ -402,7 +452,10 @@ public static class CrossSourceCorrelationEvaluator
                 })
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
-            return new CrossSourceAssetAssessment(f, records, Array.Empty<CrossSourceVulnerabilityEvidence>(),
+            var association = new CrossSourceAssociation(CrossSourceAssociationStates.Conflict,
+                "Associação não comprovada: há registro deste ativo em conflito de vínculo, e a associação só é avaliada " +
+                "quando ele estiver resolvido. " + string.Join(" ", reasons));
+            return new CrossSourceAssetAssessment(f, association, records, Array.Empty<CrossSourceVulnerabilityEvidence>(),
                 All(CrossSourceStates.LinkConflict, reasons));
         }
 
@@ -418,7 +471,9 @@ public static class CrossSourceCorrelationEvaluator
             if (vulnKeys.Count > 0 && mgmtKeys.Count > 0)
                 reasons.Add("Os registros elegíveis das duas fontes não compartilham uma única chave forte deste ativo; " +
                     "a associação entre eles não está comprovada.");
-            return new CrossSourceAssetAssessment(f, records, Array.Empty<CrossSourceVulnerabilityEvidence>(),
+            var association = new CrossSourceAssociation(CrossSourceAssociationStates.NotProven,
+                "Associação não comprovada nesta avaliação. " + string.Join(" ", reasons));
+            return new CrossSourceAssetAssessment(f, association, records, Array.Empty<CrossSourceVulnerabilityEvidence>(),
                 All(CrossSourceStates.InsufficientEvidence, reasons));
         }
 
@@ -473,8 +528,28 @@ public static class CrossSourceCorrelationEvaluator
                 ambiguous, policy))
             .ToList();
 
-        return new CrossSourceAssetAssessment(f, records, vulnerabilities, rules);
+        // A chave compartilhada comprova a associação dos registros; a atribuição das CVEs é outra questão e é dita à parte.
+        var proven = new CrossSourceAssociation(CrossSourceAssociationStates.Proven,
+            CrossSourceNarrative.AssociationProven + (ambiguous.Count > 0
+                ? " As vulnerabilidades, porém, não podem ser atribuídas sem ambiguidade a este dispositivo (ver o motivo " +
+                  "de cada regra)."
+                : ""));
+        return new CrossSourceAssetAssessment(f, proven, records, vulnerabilities, rules);
     }
+
+    /// <summary>Motivos de IDENTIDADE dos registros presentes (sem identificador, inválido, outra chave), para a associação.</summary>
+    private static string IdentityNotes(IEnumerable<CrossSourceRecordAssessment> records)
+    {
+        var notes = records
+            .Where(r => r.Eligibility is CrossSourceEligibility.NotLinked or CrossSourceEligibility.KeyMismatch && r.ExclusionReason is not null)
+            .Select(r => $"{r.Connector.Label}: {r.ExclusionReason}")
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        return notes.Count == 0 ? "" : " " + string.Join(" ", notes);
+    }
+
+    private static IReadOnlyList<DateTimeOffset> Dates(IEnumerable<DateTimeOffset> dates) =>
+        dates.Distinct().OrderBy(d => d).ToList();
 
     // ---- Registro ---------------------------------------------------------------------------------------------------
 
@@ -657,10 +732,22 @@ public static class CrossSourceCorrelationEvaluator
         var notMatching = mgmtRecords.Where(r => Classify(rule.Condition, r.Binding) == DeviceFact.NotMatching).ToList();
         var what = rule.Condition == CrossSourceDeviceCondition.Noncompliant ? "conformidade" : "criptografia";
 
-        CrossSourceRuleAssessment Result(string state, IReadOnlyList<string> reasons,
-            IReadOnlyList<CrossSourceNoteDto>? caveats = null, IReadOnlyList<CrossSourceRecordAssessment>? supporting = null) =>
-            new(rule, state, caveats ?? Array.Empty<CrossSourceNoteDto>(), reasons,
-                supporting ?? Array.Empty<CrossSourceRecordAssessment>());
+        // Sem conclusão combinada, as datas apresentadas são as das evidências elegíveis DISPONÍVEIS — rotuladas como tal.
+        var availableVuln = Dates(vulnRecords.Select(r => r.Binding.LastObservedAt)
+            .Concat(vulnerabilities.SelectMany(v => v.EligibleMarkers)));
+        var availableDevice = Dates(mgmtRecords.Select(r => r.Binding.LastObservedAt));
+
+        CrossSourceRuleAssessment Unconcluded(string state, IReadOnlyList<string> reasons) =>
+            new(rule, state, Array.Empty<CrossSourceNoteDto>(), reasons, Array.Empty<CrossSourceRecordAssessment>(),
+                CrossSourceEvidenceBasis.Available, availableVuln, availableDevice);
+
+        string DeviceUndetermined()
+        {
+            var labels = mgmtRecords.Select(r => ConditionFactLabel(rule.Condition, r.Binding)).Distinct(StringComparer.Ordinal).ToList();
+            return mgmtRecords.Count == 0
+                ? NoEligibleRecord(allRecords, CrossSourceRole.DeviceManagement)
+                : $"O Microsoft Intune não informou {what} determinada para este dispositivo ({string.Join("; ", labels)}).";
+        }
 
         // Registros ELEGÍVEIS da mesma fonte discordando: política explícita — nenhum é escolhido (nem o mais
         // favorável, nem o mais grave, nem o primeiro). Os indeterminados não contradizem ninguém.
@@ -670,7 +757,7 @@ public static class CrossSourceCorrelationEvaluator
                 .Select(r => ConditionFactLabel(rule.Condition, r.Binding))
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
-            return Result(CrossSourceStates.ContradictoryEvidence, new[]
+            return Unconcluded(CrossSourceStates.ContradictoryEvidence, new[]
             {
                 $"{present.Count + notMatching.Count} registros elegíveis do Microsoft Intune para o mesmo dispositivo informam " +
                 $"{what} divergente ({string.Join("; ", facts)}). Nenhum foi escolhido; a divergência é preservada.",
@@ -680,37 +767,74 @@ public static class CrossSourceCorrelationEvaluator
         var deviceSide = present.Count > 0 ? Side.Present : notMatching.Count > 0 ? Side.Absent : Side.Undetermined;
 
         if (deviceSide == Side.Present && vulnSide == Side.Present)
-            return Result(CrossSourceStates.Identified, Array.Empty<string>(),
-                Caveats(rule, vulnerabilities, vulnRecords, present, allRecords, ambiguous, policy), present);
+        {
+            // Participam TODAS as aquisições com CVE em aberto elegível e todos os registros que informam a condição.
+            var positive = vulnerabilities.Where(v => v.OpenEligible > 0).ToList();
+            var vulnDates = Dates(positive.SelectMany(v => v.EligibleMarkers));
+            var deviceDates = Dates(present.Select(r => r.Binding.LastObservedAt));
+            var caveats = Caveats(new EvidenceInUse(positive, VulnerabilityAbsence: false, vulnRecords, present),
+                rule, allRecords, ambiguous, policy, vulnDates, deviceDates);
+            return new CrossSourceRuleAssessment(rule, CrossSourceStates.Identified, caveats, Array.Empty<string>(), present,
+                CrossSourceEvidenceBasis.Supporting, vulnDates, deviceDates);
+        }
 
         var reasons = new List<string>();
-        if (deviceSide == Side.Absent)
+        var deviceAbsent = deviceSide == Side.Absent;
+        var vulnAbsent = vulnSide == Side.Absent;
+        if (deviceAbsent)
             reasons.Add($"O Microsoft Intune informa, para este dispositivo: “{ConditionFactLabel(rule.Condition, notMatching[0].Binding)}”. " +
-                "A condição da regra não está presente.");
-        if (vulnSide == Side.Absent)
+                "A condição de dispositivo desta regra não está presente.");
+        if (vulnAbsent)
             reasons.Add("A aquisição completa mais recente do Defender não reporta vulnerabilidade em aberto neste dispositivo. " +
                 "Ausência de vulnerabilidades reportadas não comprova que o dispositivo esteja seguro.");
-        if (deviceSide == Side.Absent || vulnSide == Side.Absent)
+        if (deviceAbsent || vulnAbsent)
         {
-            if (vulnSide == Side.Undetermined) reasons.AddRange(vulnReasons);
-            return Result(CrossSourceStates.NotIdentified, reasons);
+            // A regra é uma CONJUNÇÃO: basta uma condição ausente para a combinação não se formar. A outra condição, quando
+            // presente, continua sendo um fato informado pela fonte — o resultado não a nega.
+            if (vulnSide == Side.Present)
+                reasons.Add("O Microsoft Defender reporta vulnerabilidade(s) em aberto neste dispositivo; essa condição, " +
+                    "isolada, continua informada pela fonte.");
+            else if (vulnSide == Side.Undetermined)
+                reasons.AddRange(vulnReasons);
+            if (deviceSide == Side.Present)
+                reasons.Add($"O Microsoft Intune informa “{ConditionFactLabel(rule.Condition, present[0].Binding)}”; essa " +
+                    "condição, isolada, continua informada pela fonte.");
+            else if (deviceSide == Side.Undetermined)
+                reasons.Add(DeviceUndetermined());
+
+            // Só as evidências que sustentam a conclusão negativa são qualificadas (ressalvas) e datadas.
+            var deviceUsed = deviceAbsent ? notMatching : new List<CrossSourceRecordAssessment>();
+            var vulnUsed = vulnAbsent ? vulnerabilities : Array.Empty<CrossSourceVulnerabilityEvidence>();
+            var vulnRecordsUsed = vulnAbsent ? vulnRecords : Array.Empty<CrossSourceRecordAssessment>();
+            var caveats = Caveats(new EvidenceInUse(vulnUsed, VulnerabilityAbsence: vulnAbsent, vulnRecordsUsed, deviceUsed),
+                rule, allRecords, ambiguous, policy, vulnDates: null, deviceDates: null);
+            return new CrossSourceRuleAssessment(rule, CrossSourceStates.NotIdentified, caveats, reasons, deviceUsed,
+                CrossSourceEvidenceBasis.Supporting,
+                Dates(vulnRecordsUsed.Select(r => r.Binding.LastObservedAt)),
+                Dates(deviceUsed.Select(r => r.Binding.LastObservedAt)),
+                VulnerabilityAbsenceSupports: vulnAbsent);
         }
 
-        if (deviceSide == Side.Undetermined)
-        {
-            var labels = mgmtRecords.Select(r => ConditionFactLabel(rule.Condition, r.Binding)).Distinct(StringComparer.Ordinal).ToList();
-            reasons.Add(mgmtRecords.Count == 0
-                ? NoEligibleRecord(allRecords, CrossSourceRole.DeviceManagement)
-                : $"O Microsoft Intune não informou {what} determinada para este dispositivo ({string.Join("; ", labels)}).");
-        }
+        if (deviceSide == Side.Undetermined) reasons.Add(DeviceUndetermined());
         if (vulnSide == Side.Undetermined) reasons.AddRange(vulnReasons);
-        return Result(CrossSourceStates.InsufficientEvidence, reasons);
+        return Unconcluded(CrossSourceStates.InsufficientEvidence, reasons);
     }
 
+    /// <summary>Evidências que participam de UMA conclusão — só elas são qualificadas por ressalvas.</summary>
+    private sealed record EvidenceInUse(
+        IReadOnlyList<CrossSourceVulnerabilityEvidence> Vulnerabilities,
+        bool VulnerabilityAbsence,
+        IReadOnlyList<CrossSourceRecordAssessment> VulnerabilityRecords,
+        IReadOnlyList<CrossSourceRecordAssessment> DeviceRecords);
+
+    /// <summary>
+    /// Ressalvas das evidências que PARTICIPAM de uma conclusão (identificada ou não identificada) — qualificação das
+    /// evidências, separada da identificação positiva. Fontes que não participam da conclusão não geram ressalva.
+    /// </summary>
     private static IReadOnlyList<CrossSourceNoteDto> Caveats(
-        CrossSourceRuleDefinition rule, IReadOnlyList<CrossSourceVulnerabilityEvidence> vulnerabilities,
-        IReadOnlyList<CrossSourceRecordAssessment> vulnRecords, IReadOnlyList<CrossSourceRecordAssessment> supporting,
-        IReadOnlyList<CrossSourceRecordAssessment> allRecords, IReadOnlySet<Guid> ambiguous, CrossSourcePolicy policy)
+        EvidenceInUse used, CrossSourceRuleDefinition rule, IReadOnlyList<CrossSourceRecordAssessment> allRecords,
+        IReadOnlySet<Guid> ambiguous, CrossSourcePolicy policy,
+        IReadOnlyList<DateTimeOffset>? vulnDates, IReadOnlyList<DateTimeOffset>? deviceDates)
     {
         var notes = new List<CrossSourceNoteDto>();
         void Add(string code, string text)
@@ -718,43 +842,55 @@ public static class CrossSourceCorrelationEvaluator
             if (!notes.Any(n => n.Code == code && n.Text == text)) notes.Add(new CrossSourceNoteDto(code, text));
         }
 
-        foreach (var e in vulnerabilities.Where(v => v.OpenEligible > 0))
+        foreach (var e in used.Vulnerabilities)
         {
             var label = e.Connector.Label;
-            switch (e.Connector.Outcome)
+            // A ausência só é conclusiva numa aquisição atual e completa; as ressalvas de completude valem para o fato positivo.
+            if (!used.VulnerabilityAbsence)
             {
-                case DeviceSnapshotOutcome.Partial when e.OpenCurrent > 0:
-                    Add("partialAcquisition", $"{label}: a aquisição mais recente foi parcial. As vulnerabilidades reportadas " +
-                        "valem como fato positivo; a ausência de outras não pode ser concluída.");
-                    break;
-                case DeviceSnapshotOutcome.Publishing:
-                    Add("publicationNotConcluded", $"{label}: a publicação da aquisição mais recente não foi concluída (em " +
-                        "andamento ou interrompida). Cada CVE mostra de qual aquisição veio.");
-                    break;
-                case DeviceSnapshotOutcome.NotRecorded:
-                    Add("outcomeNotRecorded", $"{label}: o desfecho da aquisição que observou estes fatos não foi registrado " +
-                        "(anterior a este registro); a completude dela não é afirmada.");
-                    break;
+                switch (e.Connector.Outcome)
+                {
+                    case DeviceSnapshotOutcome.Partial when e.OpenCurrent > 0:
+                        Add("partialAcquisition", $"{label}: a aquisição mais recente foi parcial. As vulnerabilidades reportadas " +
+                            "valem como fato positivo; a ausência de outras não pode ser concluída.");
+                        break;
+                    case DeviceSnapshotOutcome.Publishing:
+                        Add("publicationNotConcluded", $"{label}: a publicação da aquisição mais recente não foi concluída (em " +
+                            "andamento ou interrompida). Cada CVE mostra de qual aquisição veio.");
+                        break;
+                    case DeviceSnapshotOutcome.NotRecorded:
+                        Add("outcomeNotRecorded", $"{label}: o desfecho da aquisição que observou estes fatos não foi registrado " +
+                            "(anterior a este registro); a completude dela não é afirmada.");
+                        break;
+                }
+                if (e.OpenPrevious > 0)
+                    Add("previousAcquisition", $"{label}: {e.OpenPrevious} CVE(s) foram observadas numa aquisição anterior e " +
+                        "ainda não foram reconfirmadas pela mais recente (evidência preservada).");
             }
-            if (e.OpenPrevious > 0)
-                Add("previousAcquisition", $"{label}: {e.OpenPrevious} CVE(s) foram observadas numa aquisição anterior e ainda " +
-                    "não foram reconfirmadas pela mais recente (evidência preservada).");
             if (e.OpenOutOfPolicy > 0)
                 Add("excludedOutOfPolicy", $"{label}: {e.OpenOutOfPolicy} CVE(s) em aberto observadas antes da política " +
                     $"temporal ({policy.MaxEvidenceAgeDays} dia(s)) não foram consideradas.");
             if (e.Connector.LatestAttemptFailed)
-                Add("latestAttemptFailed", $"{label}: a tentativa mais recente de coleta falhou; os fatos exibidos são da " +
+                Add("latestAttemptFailed", $"{label}: a tentativa mais recente de coleta falhou; os fatos usados são da " +
                     "última aquisição publicada.");
         }
 
-        foreach (var r in supporting.Concat(vulnRecords))
+        foreach (var r in used.DeviceRecords.Concat(used.VulnerabilityRecords))
         {
             var label = r.Connector.Label;
+            var management = r.Connector.Role == CrossSourceRole.DeviceManagement;
             switch (r.AcquisitionState)
             {
                 case CrossSourceAcquisitionStates.Previous:
-                    Add("recordNotReconfirmed", $"{label}: o registro do dispositivo foi observado numa aquisição anterior e " +
-                        "ainda não foi reconfirmado pela mais recente (evidência preservada).");
+                    Add("recordNotReconfirmed", $"{label}: o registro do dispositivo foi observado na aquisição de " +
+                        $"{Utc(r.Binding.LastObservedAt)} e ainda não foi reconfirmado pela mais recente (evidência preservada).");
+                    // O fato é o da aquisição anterior: o desfecho da mais recente não se estende a ele.
+                    if (management && r.Connector.Outcome == DeviceSnapshotOutcome.Publishing)
+                        Add("publicationNotConcluded", $"{label}: a publicação da aquisição mais recente não foi concluída (em " +
+                            "andamento ou interrompida); o fato usado é o da aquisição anterior preservada.");
+                    else if (management && r.Connector.Outcome == DeviceSnapshotOutcome.Partial)
+                        Add("partialAcquisition", $"{label}: a aquisição mais recente foi parcial e não reconfirmou este " +
+                            "registro; a completude dela não se estende a este fato.");
                     break;
                 case CrossSourceAcquisitionStates.CurrentPartial when r.Connector.Role == CrossSourceRole.DeviceManagement:
                     Add("partialAcquisition", $"{label}: a aquisição mais recente foi parcial; o fato deste dispositivo foi " +
@@ -777,19 +913,29 @@ public static class CrossSourceCorrelationEvaluator
                 Add("sourceActivityUnknown", $"{label}: a fonte não informou a última atividade do dispositivo.");
         }
 
-        // Defasagem entre as fontes: não é requisito que coincidam — é ressalva, com as datas de cada uma.
-        var vulnAt = vulnerabilities.SelectMany(v => v.EligibleMarkers).DefaultIfEmpty().Max();
-        var mgmtAt = supporting.Select(r => r.Binding.LastObservedAt).DefaultIfEmpty().Max();
-        if (vulnAt != default && mgmtAt != default && (vulnAt - mgmtAt).Duration() > policy.AcquisitionGapCaveat)
-            Add("acquisitionGap", $"As evidências foram obtidas em momentos diferentes: vulnerabilidades em {Utc(vulnAt)} e " +
-                $"{(rule.Condition == CrossSourceDeviceCondition.Noncompliant ? "conformidade" : "criptografia")} em " +
-                $"{Utc(mgmtAt)}. As fontes são independentes; a coexistência vale para as datas de cada evidência.");
+        // Defasagem entre as fontes, sobre TODAS as evidências participantes (não só a mais recente de cada lado): a maior
+        // distância entre uma aquisição do Defender e uma do Intune — pelos extremos, sem produto cartesiano. Não é
+        // requisito que coincidam: é ressalva, com o intervalo de cada fonte.
+        if (vulnDates is { Count: > 0 } && deviceDates is { Count: > 0 })
+        {
+            var widest = new[] { vulnDates[^1] - deviceDates[0], deviceDates[^1] - vulnDates[0] }.Max();
+            if (widest > policy.AcquisitionGapCaveat)
+                Add("acquisitionGap", "As evidências que sustentam a combinação foram obtidas em momentos diferentes: " +
+                    $"vulnerabilidades {DateSpan(vulnDates)} e " +
+                    $"{(rule.Condition == CrossSourceDeviceCondition.Noncompliant ? "conformidade" : "criptografia")} " +
+                    $"{DateSpan(deviceDates)} — maior defasagem entre as fontes: " +
+                    $"{Math.Round(widest.TotalHours).ToString(CultureInfo.InvariantCulture)} h. As fontes são independentes; " +
+                    "a coexistência vale para as datas de cada evidência.");
+        }
 
-        if (ambiguous.Count > 0)
+        var usesVuln = used.Vulnerabilities.Count > 0 || used.VulnerabilityRecords.Count > 0;
+        var usesDevice = used.DeviceRecords.Count > 0;
+        if (usesVuln && ambiguous.Count > 0)
             Add("excludedSource", "Um conector do Defender com registro não elegível neste ativo foi excluído da combinação " +
                 "(atribuição ambígua); as evidências dele seguem visíveis.");
 
-        var excluded = allRecords.Count(r => !r.Eligible && r.Binding.IsActive);
+        var excluded = allRecords.Count(r => !r.Eligible && r.Binding.IsActive
+            && (r.Connector.Role == CrossSourceRole.Vulnerabilities ? usesVuln : usesDevice));
         if (excluded > 0)
             Add("excludedRecords", $"{excluded} registro(s) ativo(s) de fonte deste ativo ficaram fora da combinação; o motivo " +
                 "de cada um está nas evidências.");
@@ -804,6 +950,11 @@ public static class CrossSourceCorrelationEvaluator
     /// <summary>Data em UTC para textos (os campos de data dos contratos seguem ISO 8601).</summary>
     public static string Utc(DateTimeOffset d) =>
         d.ToUniversalTime().ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture) + " UTC";
+
+    /// <summary>"em 12/09/2026 10:00 UTC" ou, com mais de uma aquisição, "em 2 aquisições, de … a …" (datas em ordem).</summary>
+    public static string DateSpan(IReadOnlyList<DateTimeOffset> ordered) => ordered.Count == 1
+        ? $"em {Utc(ordered[0])}"
+        : $"em {ordered.Count} aquisições, de {Utc(ordered[0])} a {Utc(ordered[^1])}";
 }
 
 /// <summary>
@@ -819,10 +970,25 @@ public static class CrossSourceNarrative
         "explícitas e versionadas. Afirmam a coexistência de condições informadas pelas fontes — não são incidentes " +
         "confirmados, risco calculado, prioridade de risco nem exposição à internet, e não alteram scores nem filas.";
 
-    public const string AssociationReason =
-        "Os registros do Microsoft Defender e do Microsoft Intune informaram o mesmo identificador de dispositivo do " +
-        "Microsoft Entra, no mesmo diretório e no mesmo tenant, e estão no mesmo ativo canônico. Nome, endereço ou " +
-        "semelhança não participam da associação.";
+    /// <summary>O REQUISITO da associação — explicado como critério, nunca como afirmação sobre um ativo.</summary>
+    public const string AssociationCriterion =
+        "Critério de associação: os registros do Microsoft Defender e do Microsoft Intune precisam informar o mesmo " +
+        "identificador de dispositivo do Microsoft Entra, no mesmo diretório e no mesmo tenant, e estar no mesmo ativo " +
+        "canônico. Nome, endereço ou semelhança não participam da associação.";
+
+    /// <summary>Afirmação usada SÓ quando a avaliação comprovou a associação (<see cref="CrossSourceAssociationStates.Proven"/>).</summary>
+    public const string AssociationProven =
+        "Associação comprovada: os registros elegíveis do Microsoft Defender e do Microsoft Intune informaram o mesmo " +
+        "identificador de dispositivo do Microsoft Entra, no mesmo diretório e no mesmo tenant, e estão no mesmo ativo " +
+        "canônico.";
+
+    public static string AssociationLabel(string state) => state switch
+    {
+        CrossSourceAssociationStates.Proven => "Associação comprovada",
+        CrossSourceAssociationStates.Conflict => "Vínculo em conflito — associação não resolvida",
+        CrossSourceAssociationStates.SourceMissing => "Associação não avaliada — falta registro de uma das fontes",
+        _ => "Associação não comprovada",
+    };
 
     public static string PolicyDescription(CrossSourcePolicy p) =>
         $"Política operacional do AEGIS (configurável), não exigência normativa nem garantia de segurança: evidência obtida " +
@@ -833,7 +999,7 @@ public static class CrossSourceNarrative
     public static string StateLabel(string state, bool hasCaveats = false) => state switch
     {
         CrossSourceStates.Identified => hasCaveats ? "Situação identificada, com ressalvas" : "Situação identificada",
-        CrossSourceStates.NotIdentified => "Nenhuma condição correspondente",
+        CrossSourceStates.NotIdentified => hasCaveats ? "Combinação não identificada, com ressalvas" : "Combinação não identificada",
         CrossSourceStates.InsufficientEvidence => "Evidência insuficiente para verificar",
         CrossSourceStates.LinkConflict => "Vínculo em conflito — combinação indisponível",
         CrossSourceStates.ContradictoryEvidence => "Registros contraditórios — combinação indisponível",
@@ -878,7 +1044,8 @@ public static class CrossSourceNarrative
             CrossSourceStates.Identified =>
                 $"No mesmo dispositivo, o Microsoft Defender reporta {openCves?.ToString(CultureInfo.InvariantCulture) ?? "ao menos uma"} " +
                 $"vulnerabilidade(s) em aberto e o Microsoft Intune {device}.",
-            CrossSourceStates.NotIdentified => "Nenhuma condição correspondente nas evidências elegíveis. " + string.Join(" ", r.Reasons),
+            CrossSourceStates.NotIdentified =>
+                "A combinação das duas condições não foi identificada nas evidências elegíveis. " + string.Join(" ", r.Reasons),
             CrossSourceStates.InsufficientEvidence => "Evidência insuficiente para verificar a regra. " + string.Join(" ", r.Reasons),
             CrossSourceStates.LinkConflict =>
                 "Vínculo em conflito: a combinação não foi avaliada, porque a associação dos registros não está resolvida. " +
@@ -891,19 +1058,33 @@ public static class CrossSourceNarrative
     /// <summary>"Quais dados sustentam isso?" — com a data PRÓPRIA de cada evidência.</summary>
     public static string SupportingData(CrossSourceRuleAssessment r, CrossSourceAssetAssessment a, int? openCves)
     {
+        string DeviceFact(CrossSourceRecordAssessment d) =>
+            $"{d.Connector.Label}: “{(r.Rule.Condition == CrossSourceDeviceCondition.Noncompliant
+                ? AssetCrossSourceNarrative.ComplianceLabel(d.Binding.Compliance)
+                : AssetCrossSourceNarrative.EncryptionLabel(d.Binding.Encryption))}”, na aquisição de " +
+            $"{CrossSourceCorrelationEvaluator.Utc(d.Binding.LastObservedAt)} ({AcquisitionLabel(d.AcquisitionState).ToLowerInvariant()})" +
+            (d.Binding.SourceLastSeenAt is { } s ? $", última atividade informada pela fonte: {CrossSourceCorrelationEvaluator.Utc(s)}." : ".");
+
+        if (r.State == CrossSourceStates.NotIdentified)
+        {
+            var negative = new List<string> { a.Association.Text };
+            negative.AddRange(r.SupportingDeviceRecords.Select(DeviceFact));
+            if (r.VulnerabilityAbsenceSupports)
+                foreach (var v in a.Vulnerabilities)
+                    negative.Add($"{v.Connector.Label}: nenhuma vulnerabilidade em aberto para este dispositivo na aquisição " +
+                        $"completa {CrossSourceCorrelationEvaluator.DateSpan(r.VulnerabilityAcquisitions)}.");
+            negative.Add("Estas evidências sustentam apenas que a combinação não se formou; cada condição isolada continua " +
+                "nas telas de cada fonte.");
+            return string.Join(" ", negative);
+        }
         if (r.State != CrossSourceStates.Identified)
             return "As evidências de cada fonte e o motivo de cada exclusão estão listados abaixo; nenhuma conclusão combinada " +
                 "foi tirada delas.";
-        var parts = new List<string> { "Vínculo: " + AssociationReason };
+        var parts = new List<string> { a.Association.Text };
         foreach (var v in a.Vulnerabilities.Where(v => v.OpenEligible > 0))
             parts.Add($"{v.Connector.Label}: {v.OpenEligible} observação(ões) de CVE em aberto, das aquisições de " +
                 string.Join(", ", v.EligibleMarkers.Select(CrossSourceCorrelationEvaluator.Utc)) + ".");
-        foreach (var d in r.SupportingDeviceRecords)
-            parts.Add($"{d.Connector.Label}: “{(r.Rule.Condition == CrossSourceDeviceCondition.Noncompliant
-                ? AssetCrossSourceNarrative.ComplianceLabel(d.Binding.Compliance)
-                : AssetCrossSourceNarrative.EncryptionLabel(d.Binding.Encryption))}”, na aquisição de " +
-                $"{CrossSourceCorrelationEvaluator.Utc(d.Binding.LastObservedAt)}" +
-                (d.Binding.SourceLastSeenAt is { } s ? $" (última atividade informada pela fonte: {CrossSourceCorrelationEvaluator.Utc(s)})." : "."));
+        parts.AddRange(r.SupportingDeviceRecords.Select(DeviceFact));
         if (openCves is { } n) parts.Add($"CVEs distintas em aberto que sustentam a situação: {n}.");
         return string.Join(" ", parts);
     }
@@ -921,7 +1102,8 @@ public static class CrossSourceNarrative
         CrossSourceStates.InsufficientEvidence =>
             "Verifique a coleta das fontes em Integrações e o vínculo do dispositivo; a regra é reavaliada a cada leitura.",
         CrossSourceStates.NotIdentified =>
-            "Nada a tratar por esta regra agora. As vulnerabilidades e a condição do dispositivo continuam nas telas de cada fonte.",
+            "Nada a tratar por esta regra agora: a combinação não se formou. Cada condição isolada (vulnerabilidades ou " +
+            "condição do dispositivo) continua nas telas de cada fonte" + (r.Caveats.Count > 0 ? "; considere as ressalvas acima." : "."),
         _ => "Nada a avaliar por esta regra neste ativo.",
     };
 }
@@ -1007,17 +1189,36 @@ public sealed record AssetCrossSourceDto(
     DateTimeOffset EvaluatedAt,
     string Heading,
     string Scope,
-    string AssociationReason,
+    /// <summary>O requisito da associação (critério), igual para todo ativo.</summary>
+    string AssociationCriterion,
+    /// <summary>A conclusão da avaliação sobre a associação NESTE ativo — nunca presumida.</summary>
+    CrossSourceAssociationDto Association,
     CrossSourcePolicyDto Policy,
     IReadOnlyList<CrossSourceRuleResultDto> Rules,
     IReadOnlyList<CrossSourceEvidenceRecordDto> Evidence,
     CrossSourceCvePageDto? Cves);
 
+public sealed record CrossSourceAssociationDto(string State, string Label, string Text)
+{
+    public static CrossSourceAssociationDto From(CrossSourceAssociation a) =>
+        new(a.State, CrossSourceNarrative.AssociationLabel(a.State), a.Text);
+}
+
 /// <summary>Contagem de ATIVOS por estado, para UMA regra (unidade: ativos).</summary>
 public sealed record CrossSourceRuleTallyDto(
     string RuleCode, int RuleVersion, string Title,
-    int Identified, int IdentifiedWithCaveats, int NotIdentified, int InsufficientEvidence, int LinkConflict,
-    int ContradictoryEvidence);
+    int Identified, int IdentifiedWithCaveats, int NotIdentified, int NotIdentifiedWithCaveats, int InsufficientEvidence,
+    int LinkConflict, int ContradictoryEvidence);
+
+/// <summary>
+/// Aquisições de UMA fonte que participam de um resultado: intervalo (primeira e última marca) e quantas aquisições
+/// distintas — nunca reduzido a uma única data.
+/// </summary>
+public sealed record CrossSourceAcquisitionSpanDto(DateTimeOffset First, DateTimeOffset Last, int Acquisitions)
+{
+    public static CrossSourceAcquisitionSpanDto? From(IReadOnlyList<DateTimeOffset> ordered) =>
+        ordered.Count == 0 ? null : new(ordered[0], ordered[^1], ordered.Count);
+}
 
 public static class CrossSourceReadingStates
 {
@@ -1062,8 +1263,12 @@ public sealed record CrossSourceSituationItemDto(
     IReadOnlyList<string> CvePreview,
     bool CvePreviewTruncated,
     IReadOnlyList<CrossSourceNoteDto> Caveats,
-    DateTimeOffset? VulnerabilitiesAcquiredAt,
-    DateTimeOffset? DeviceManagementAcquiredAt);
+    /// <summary>O que representam as aquisições abaixo (<see cref="CrossSourceEvidenceBasis"/>).</summary>
+    string EvidenceBasis,
+    /// <summary>Aquisições do Defender que participam (intervalo e quantidade); nulo quando nenhuma participa.</summary>
+    CrossSourceAcquisitionSpanDto? VulnerabilityAcquisitions,
+    /// <summary>Aquisições do Intune que participam (intervalo e quantidade); nulo quando nenhuma participa.</summary>
+    CrossSourceAcquisitionSpanDto? DeviceManagementAcquisitions);
 
 public sealed record CrossSourceSituationListDto(
     DateTimeOffset EvaluatedAt,

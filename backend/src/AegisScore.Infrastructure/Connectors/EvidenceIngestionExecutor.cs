@@ -531,7 +531,7 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         // A marca da fotografia é o instante em que a COLETA começou (não o da reconciliação): entre duas passadas do
         // mesmo conector, a fotografia mais recente prevalece — uma passada atrasada não anula o que ela publicou.
         await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
-        var resolver = new DeviceIdentityResolver(db, _log);
+        var resolver = new DeviceIdentityResolver(db, _log) { Checkpoint = Checkpoint };
         return await resolver.ReconcileSnapshotAsync(
             connectorId, posture.Source, posture.DirectoryNamespace, observations, complete, devices.AttemptedAt, ct);
     }
