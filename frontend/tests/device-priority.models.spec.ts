@@ -20,7 +20,9 @@ import {
   casesText,
   declarationErrorText,
   declarationSavedNotRefreshedText,
+  detailOutsideListNote,
   devicePriorityListView,
+  inventoryPageStep,
   devicePriorityRangeText,
   devicePrioritySummaryText,
   dispositionText,
@@ -250,6 +252,33 @@ test('releitura em segundo plano: página que esvaziou volta à última válida,
   eq(pageAfterRefresh({ items: [], total: 10, page: 2, pageSize: 10 }), 1, 'item saiu da faixa: volta para a 1');
   eq(pageAfterRefresh({ items: [], total: 0, page: 3, pageSize: 10 }), null, 'fila vazia: estado próprio, sem correção');
   eq(pageAfterRefresh({ items: [], total: 5, page: 1, pageSize: 10 }), null, 'primeira página');
+});
+
+test('Central: o detalhe aberto diz por que o dispositivo não está mais na lista exibida', () => {
+  const row = { assetId: 'a' } as DevicePriorityList['items'][number];
+  eq(detailOutsideListNote({ items: [row], total: 1, bandFilter: 'p3' }, 'a'), null, 'linha visível: sem nota');
+  eq(detailOutsideListNote({ items: [], total: 0, bandFilter: 'p3' }, null), null, 'sem detalhe aberto');
+  eq(detailOutsideListNote(null, 'a'), null, 'sem leitura');
+  const left = detailOutsideListNote({ items: [], total: 0, bandFilter: 'p3' }, 'a') ?? '';
+  ok(left.includes('saiu do filtro "Prioridade 3"') && left.includes('continua aberto'), 'filtro vazio: saiu do filtro');
+  const moved = detailOutsideListNote({ items: [{ assetId: 'b' } as typeof row], total: 4, bandFilter: 'p3' }, 'a') ?? '';
+  ok(moved.includes('não está mais nesta página do filtro') && !moved.includes('saiu do filtro'), 'filtro com outros: não afirma saída');
+  ok((detailOutsideListNote({ items: [], total: 3, bandFilter: null }, 'a') ?? '').includes('nesta página da fila'), 'sem filtro');
+});
+
+test('inventário: página que deixou de existir volta à última válida uma vez; sem resultados, página 1', () => {
+  const s = inventoryPageStep(2, 1, false);
+  eq(s.kind, 'reread', 'página 2 de 1: relê');
+  eq(s.page, 1, 'a última página válida');
+  const second = inventoryPageStep(1, 1, true);
+  eq(second.kind, 'apply', 'a releitura corrigida é aplicada');
+  eq(second.page, 1, 'na página 1');
+  const none = inventoryPageStep(2, 0, false);
+  eq(none.kind, 'apply', 'sem resultados: aplica o vazio verdadeiro, sem nova leitura');
+  eq(none.page, 1, 'normaliza para a página 1');
+  eq(inventoryPageStep(3, 2, true).kind, 'apply', 'segunda resposta ainda fora do total: sem laço');
+  eq(inventoryPageStep(2, 3, false).kind, 'apply', 'página válida: aplica');
+  eq(inventoryPageStep(2, 3, false).page, 2, 'mantém a página');
 });
 
 console.log(`\n${count - failures}/${count} ok`);
