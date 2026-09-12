@@ -88,6 +88,10 @@ public sealed class DatabaseUpgradePostgresTests
             // do conflito (diretório da observação contraditória, valores contraditórios da mesma coleta): três
             // colunas anuláveis, SEM backfill — conflitos anteriores ficam sem diretório registrado, nada é inventado.
             "20260911141553_DeviceResolution02_LifecycleAndConflictProvenance",
+            // [AEGIS-CROSS-SOURCE-01] Desfecho da publicação da fotografia de dispositivos por conector: uma coluna
+            // aditiva com default 0 = "não registrado", SEM backfill — o desfecho das fotografias já publicadas não foi
+            // guardado e não é inventado; a próxima passada de cada fonte o registra.
+            "20260912001829_CrossSource01_DeviceSnapshotOutcome",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

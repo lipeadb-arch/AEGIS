@@ -1,8 +1,9 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { PriorityWorkspace } from '../models/priority.models';
+import { CrossSourceFilter, CrossSourceSituationList } from '../models/cross-source.models';
 
 /**
  * [AEGIS-MVP-PRIORITIES-01] Cliente da superfície SOMENTE LEITURA da Central de Prioridades
@@ -22,7 +23,27 @@ export class PriorityService {
       .pipe(catchError((err) => throwError(() => this.describe(err))));
   }
 
-  private describe(err: { status?: number; error?: unknown }): Error {
+  /**
+   * [AEGIS-CROSS-SOURCE-01] `GET /api/v1/priorities/correlations` — situações identificadas entre fontes, SEPARADAS das
+   * filas: resumo por regra × estado e lista por ativo × regra, paginada (ordem por nome do ativo, não por risco).
+   */
+  correlations(filter: CrossSourceFilter): Observable<CrossSourceSituationList> {
+    let params = new HttpParams()
+      .set('state', filter.state)
+      .set('page', filter.page)
+      .set('pageSize', filter.pageSize);
+    if (filter.rule) params = params.set('rule', filter.rule);
+    return this.http
+      .get<CrossSourceSituationList>(`${this.base}/correlations`, { params })
+      .pipe(catchError((err) => throwError(() => this.describe(err,
+        'Não foi possível avaliar as situações entre fontes agora — nada é exibido, para que a falha não pareça ' +
+        'ausência de situação. Tente novamente.'))));
+  }
+
+  private describe(
+    err: { status?: number; error?: unknown },
+    fallback = 'Não foi possível carregar a Central de Prioridades. Tente novamente.',
+  ): Error {
     switch (err?.status) {
       case 0:
         return new Error('API inacessível. Verifique se o servidor está no ar.');
@@ -32,9 +53,7 @@ export class PriorityService {
         return new Error('Sem permissão para consultar as prioridades deste cliente.');
       default:
         return new Error(
-          typeof err?.error === 'string' && err.error
-            ? err.error
-            : 'Não foi possível carregar a Central de Prioridades. Tente novamente.',
+          typeof err?.error === 'string' && err.error ? err.error : fallback,
         );
     }
   }

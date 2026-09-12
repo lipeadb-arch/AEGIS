@@ -93,6 +93,20 @@ public class AssetsController : ControllerBase
         return dto is null ? NotFound() : dto;
     }
 
+    /// <summary>
+    /// [AEGIS-CROSS-SOURCE-01] Situações identificadas entre fontes para o ativo: as regras (código e versão), o estado de
+    /// cada uma, as evidências de cada fonte com as próprias datas, as limitações e as CVEs que as sustentam (paginadas,
+    /// uma linha por CVE). Somente leitura; sem identificadores técnicos para nenhum papel.
+    /// </summary>
+    [HttpGet("{id:guid}/correlations")]
+    public async Task<ActionResult<AssetCrossSourceDto>> Correlations(
+        Guid id, [FromServices] ICrossSourceCorrelationQuery correlations,
+        [FromQuery] int cvePage = 1, [FromQuery] int cvePageSize = 10, CancellationToken ct = default)
+    {
+        var dto = await correlations.GetForAssetAsync(id, cvePage, cvePageSize, ct);
+        return dto is null ? NotFound() : dto;
+    }
+
     private static AssetDto ToDto(Asset a, AssetSourceSummaryDto? sources) => new(
         a.Id, a.Name, a.Category.ToString(), a.SubType, a.Description,
         a.Criticality, a.OwnerName, a.ExternalRef, a.BusinessProcessId,

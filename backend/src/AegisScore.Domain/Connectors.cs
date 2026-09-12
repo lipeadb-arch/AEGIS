@@ -38,6 +38,34 @@ public class ConnectorConfig : Entity, ITenantOwned
     /// que uma fotografia mais nova já afirmou. Só é lida/escrita sob a trava de ciclo de vida da fonte.
     /// </summary>
     public DateTimeOffset? DeviceSnapshotWatermark { get; set; }
+
+    /// <summary>
+    /// [AEGIS-CROSS-SOURCE-01] Desfecho da PUBLICAÇÃO dos fatos por dispositivo da fotografia marcada em
+    /// <see cref="DeviceSnapshotWatermark"/> (Defender: máquinas e vulnerabilidades; Intune: dispositivos gerenciados —
+    /// o software da aquisição combinada fica fora). Escrito sob a mesma trava da fonte: <c>Publishing</c> na mesma
+    /// atualização que move a marca; <c>Complete</c>/<c>Partial</c> ao final da passada, somente se a marca ainda for a
+    /// dela. É o que permite à leitura distinguir fato da aquisição atual completa, parcial ou ainda não concluída —
+    /// o <see cref="LastStatus"/> do conector, sozinho, não comprova a completude de uma dimensão.
+    /// </summary>
+    public DeviceSnapshotOutcome DeviceSnapshotOutcome { get; set; } = DeviceSnapshotOutcome.NotRecorded;
+}
+
+/// <summary>
+/// [AEGIS-CROSS-SOURCE-01] O que se sabe sobre a publicação da fotografia de dispositivos marcada no conector.
+/// </summary>
+public enum DeviceSnapshotOutcome
+{
+    /// <summary>Desfecho não registrado (fotografia publicada antes deste registro existir, ou nenhuma). Nada é presumido.</summary>
+    NotRecorded = 0,
+
+    /// <summary>A marca avançou e a publicação da passada ainda não terminou — em andamento ou interrompida por falha.</summary>
+    Publishing = 1,
+
+    /// <summary>A passada terminou com a dimensão completa: presença e ausência publicadas.</summary>
+    Complete = 2,
+
+    /// <summary>A passada terminou sem completude: só fatos positivos foram publicados; nenhuma ausência foi concluída.</summary>
+    Partial = 3,
 }
 
 /// <summary>A normalized fact collected from a connector and mapped to NIST subcategories.</summary>

@@ -1114,6 +1114,13 @@ internal sealed class SyntheticDeviceSources
     public string IntuneDevices { get; set; } = Page();
     public Func<HttpRequestMessage, (HttpStatusCode, string)>? IntuneRoute { get; set; }
 
+    /// <summary>
+    /// [AEGIS-CROSS-SOURCE-01] Relógio-base da coleta do Intune (a marca da fotografia). Nulo = o instante fixo histórico
+    /// destes testes. As baterias de correlação o ancoram no relógio real, porque o Defender marca a coleta com o
+    /// instante real — assim as idades e defasagens entre as duas fontes não dependem da data em que o teste roda.
+    /// </summary>
+    public DateTimeOffset? IntuneNow { get; set; }
+
     /// <summary>Rota PRIORITÁRIA do Defender (ex.: 403 numa só dimensão); devolver null segue o roteamento normal.</summary>
     public Func<HttpRequestMessage, (HttpStatusCode, string)?>? DefenderRoute { get; set; }
 
@@ -1169,7 +1176,7 @@ internal sealed class SyntheticDeviceSources
             new MicrosoftDefenderVulnerabilityConnector(new DefenderApiClient(new HttpClient(DefenderHandler())), new Passthrough()),
             new MicrosoftIntuneDevicePostureConnector(
                 new EntraGraphClient(new HttpClient(IntuneHandler())), new Passthrough(),
-                new FakeTimeProvider(Now.AddSeconds(Interlocked.Increment(ref _syncs)))));
+                new FakeTimeProvider((IntuneNow ?? Now).AddSeconds(Interlocked.Increment(ref _syncs)))));
         var executor = new EvidenceIngestionExecutor(
             options, new NistSignalMapper(new AegisScoreDbContext(options, new SystemTenantContext(null))),
             new Payload(), registry, NullLogger<EvidenceIngestionExecutor>.Instance, NullLogger<ControlStateWriter>.Instance)

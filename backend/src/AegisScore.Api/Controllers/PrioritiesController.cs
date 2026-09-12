@@ -30,4 +30,22 @@ public class PrioritiesController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<PriorityWorkspaceDto>> Get(CancellationToken ct = default)
         => Ok(await _priorities.GetAsync(ct));
+
+    /// <summary>
+    /// [AEGIS-CROSS-SOURCE-01] Situações identificadas entre fontes — SEPARADAS das filas e de qualquer ranking de risco:
+    /// resumo por regra × estado (unidade: ativos) e lista agrupada por ativo × regra (unidade: situações), paginada, em
+    /// ordem por nome do ativo (não por risco). <paramref name="state"/> padrão: situações identificadas.
+    /// </summary>
+    [HttpGet("correlations")]
+    public async Task<ActionResult<CrossSourceSituationListDto>> Correlations(
+        [FromServices] ICrossSourceCorrelationQuery correlations,
+        [FromQuery] string? state = null, [FromQuery] string? rule = null,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 10, CancellationToken ct = default)
+    {
+        if (state is not null && !CrossSourceStates.IsKnown(state))
+            return BadRequest($"Estado desconhecido. Use: {string.Join(", ", CrossSourceStates.All)}.");
+        if (rule is not null && CrossSourceRules.Find(rule) is null)
+            return BadRequest($"Regra desconhecida. Use: {string.Join(", ", CrossSourceRules.All.Select(r => r.Code))}.");
+        return Ok(await correlations.ListAsync(new CrossSourceSituationFilter(state, rule, page, pageSize), ct));
+    }
 }

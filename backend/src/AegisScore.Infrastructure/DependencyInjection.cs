@@ -256,6 +256,15 @@ public static class DependencyInjection
         services.AddScoped<ISoftwareInventoryQuery, SoftwareInventoryQuery>();
         // [AEGIS-ENTITY-RESOLUTION-01] Fontes de um ativo e o vínculo entre elas (somente leitura, tenant-scoped).
         services.AddScoped<IAssetSourceQuery, AssetSourceQuery>();
+        // [AEGIS-CROSS-SOURCE-01] Situações identificadas entre fontes (Defender × Intune no mesmo dispositivo): leitura
+        // calculada na hora a partir das evidências persistidas, sem persistir resultado. A política temporal é
+        // OPERACIONAL e configurável — validada na subida para que um valor inválido não vire janela silenciosa.
+        services.AddOptions<CrossSourceCorrelationOptions>()
+            .Bind(config.GetSection(CrossSourceCorrelationOptions.SectionName))
+            .Validate(o => o.IsValid,
+                "CrossSourceCorrelation: janelas em dias entre 1 e 365 e ressalva de defasagem entre 1 e 8760 horas.")
+            .ValidateOnStart();
+        services.AddScoped<ICrossSourceCorrelationQuery, CrossSourceCorrelationQuery>();
         // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Leitura tenant-scoped da postura de configuração/conformidade de
         // dispositivos (consultiva). Somente leitura — nenhuma escrita de score/evidência passa por aqui.
         services.AddScoped<IDevicePostureQuery, DevicePostureQuery>();

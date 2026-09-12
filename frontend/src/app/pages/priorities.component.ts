@@ -30,6 +30,25 @@ import {
   originLabel,
 } from '../models/remediation.models';
 import { RemediationService } from '../services/remediation.service';
+import { CrossSourceSituationsComponent } from '../components/cross-source/cross-source-situations.component';
+import {
+  CROSS_SOURCE_HEADING,
+  CROSS_SOURCE_STATE_FILTERS,
+  CrossSourceFilter,
+  CrossSourceSituationList,
+  CrossSourceState,
+  CrossSourceSituationItem,
+  acquisitionSpanText,
+  evidenceBasisLabel,
+  crossSourceListView,
+  crossSourceStateTone,
+  crossSourceSummaryText,
+  cveCountText,
+  cvePreviewText,
+  pageRangeText,
+  ruleShortLabel,
+  truncationNote,
+} from '../models/cross-source.models';
 
 /**
  * [AEGIS-MVP-PRIORITIES-01] Central de Prioridades — visão operacional que REÚNE, sem combinar num único
@@ -46,7 +65,7 @@ import { RemediationService } from '../services/remediation.service';
 @Component({
   selector: 'app-priorities',
   standalone: true,
-  imports: [RouterLink],
+  imports: [RouterLink, CrossSourceSituationsComponent],
   template: `
     <section class="page">
       <header class="page-head">
@@ -392,6 +411,156 @@ import { RemediationService } from '../services/remediation.service';
           </div>
         </div>
 
+        <!-- ---------- [AEGIS-CROSS-SOURCE-01] Situações identificadas entre fontes ----------
+             Leitura PRÓPRIA (carga, falha e filtros independentes das filas): uma falha aqui não derruba a Central, e
+             uma falha da Central não é lida como "nenhuma situação". Não é fila de prioridade nem ranking de risco. -->
+        <div class="queue">
+          <div class="queue-head">
+            <div>
+              <h2>{{ xsHeading }}</h2>
+              <p class="queue-sub">
+                Condições informadas por fontes diferentes que coexistem no <strong>mesmo dispositivo</strong> —
+                vulnerabilidades do Microsoft Defender × conformidade ou criptografia do Microsoft Intune — segundo regras
+                explícitas e versionadas. <strong>Não é fila de prioridade nem ranking de risco</strong>: a lista segue a
+                ordem alfabética do ativo e nada aqui altera scores ou as filas desta Central.
+              </p>
+            </div>
+          </div>
+          @if (xs(); as l) {
+            @if (xsTruncation(); as tn) {
+              <p class="notice warn" role="status">{{ tn }}</p>
+            }
+          }
+          <div class="panel">
+            @if (xsView().kind === 'loading') {
+              <p class="muted">Avaliando as regras entre fontes…</p>
+            } @else if (xsView().kind === 'error') {
+              <div class="state error">
+                <p class="err">⚠ {{ xsText() }}</p>
+                <button type="button" class="ghost" (click)="loadCrossSource()">Tentar novamente</button>
+              </div>
+            } @else if (xsView().kind === 'noSource' || xsView().kind === 'neverCollected' || xsView().kind === 'noPopulation') {
+              <div class="state empty"><p class="muted">{{ xsText() }}</p></div>
+            } @else {
+              @let l = xs()!;
+              <p class="xs-summary">{{ xsSummary() }}</p>
+              <div class="xs-tally-wrap">
+                <table class="grid-table xs-tally">
+                  <caption>Estado por regra — unidade: ativos</caption>
+                  <thead>
+                    <tr>
+                      <th>Regra</th>
+                      <th>Identificadas</th>
+                      <th>com ressalvas</th>
+                      <th>Combinação não identificada</th>
+                      <th>com ressalvas</th>
+                      <th>Evidência insuficiente</th>
+                      <th>Vínculo em conflito</th>
+                      <th>Registros contraditórios</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (t of l.summary.byRule; track t.ruleCode) {
+                      <tr>
+                        <td>
+                          <strong class="title">{{ ruleShort(t.ruleCode) }}</strong>
+                          <span class="meta mono">{{ t.ruleCode }} · v{{ t.ruleVersion }}</span>
+                        </td>
+                        <td>{{ t.identified }}</td>
+                        <td>{{ t.identifiedWithCaveats }}</td>
+                        <td>{{ t.notIdentified }}</td>
+                        <td>{{ t.notIdentifiedWithCaveats }}</td>
+                        <td>{{ t.insufficientEvidence }}</td>
+                        <td>{{ t.linkConflict }}</td>
+                        <td>{{ t.contradictoryEvidence }}</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="xs-filters" role="group" aria-label="Filtrar situações">
+                @for (f of xsStates; track f.value) {
+                  <button type="button" class="xs-chip" [class.on]="xsFilter().state === f.value"
+                    [attr.aria-pressed]="xsFilter().state === f.value" (click)="setXsState(f.value)">{{ f.label }}</button>
+                }
+                <select class="xs-select" [value]="xsFilter().rule ?? ''" (change)="setXsRule($any($event.target).value)"
+                  aria-label="Regra">
+                  <option value="">Todas as regras</option>
+                  @for (t of l.summary.byRule; track t.ruleCode) {
+                    <option [value]="t.ruleCode">{{ ruleShort(t.ruleCode) }}</option>
+                  }
+                </select>
+              </div>
+
+              @if (xsEmpty()) {
+                <!-- Zero conclusivo, inconclusivo ou misto (e o recorte do teto) vêm dos totais por estado. -->
+                <div class="state empty"><p class="muted">{{ xsText() }}</p></div>
+              } @else {
+                <table class="grid-table">
+                  <thead>
+                    <tr>
+                      <th>Ativo</th>
+                      <th>Regra</th>
+                      <th>Situação</th>
+                      <th>CVEs (distintas)</th>
+                      <th class="c-when">Aquisições</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (it of l.items; track it.assetId + it.ruleCode) {
+                      <tr class="row">
+                        <td>
+                          <strong class="title">{{ it.assetName }}</strong>
+                          @if (it.nameIsPlaceholder) { <span class="meta">nome não coletado pela fonte</span> }
+                          <span class="xs-rem">{{ it.summary }}</span>
+                        </td>
+                        <td>
+                          <span class="meta">{{ ruleShort(it.ruleCode) }}</span>
+                          <span class="meta mono">{{ it.ruleCode }} · v{{ it.ruleVersion }}</span>
+                        </td>
+                        <td class="xs-state">
+                          <span class="badge xs-{{ xsTone(it.state) }}">{{ it.stateLabel }}</span>
+                          @if (it.caveats.length) { <span class="meta">{{ it.caveats.length }} ressalva(s)</span> }
+                        </td>
+                        <td class="xs-cves">
+                          <strong>{{ cveCount(it.openCveCount) }}</strong>
+                          <span class="meta mono">{{ cvePreview(it) }}</span>
+                        </td>
+                        <td class="c-when">
+                          <span class="meta xs-basis">{{ basisLabel(it.evidenceBasis) }}</span>
+                          <span class="meta">Defender: {{ spanText(it.vulnerabilityAcquisitions, it.evidenceBasis) }}</span>
+                          <span class="meta">Intune: {{ spanText(it.deviceManagementAcquisitions, it.evidenceBasis) }}</span>
+                        </td>
+                        <td>
+                          <button type="button" class="ghost xs-open" (click)="toggleXs(it.assetId + '|' + it.ruleCode)"
+                            [attr.aria-expanded]="xsExpanded() === it.assetId + '|' + it.ruleCode">
+                            {{ xsExpanded() === it.assetId + '|' + it.ruleCode ? 'Fechar' : 'Evidências' }}
+                          </button>
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+                <div class="xs-pager">
+                  <span class="meta">{{ xsRange() }}</span>
+                  <button type="button" class="ghost" (click)="goXs(l.page - 1)" [disabled]="l.page <= 1">‹ Anterior</button>
+                  <button type="button" class="ghost" (click)="goXs(l.page + 1)" [disabled]="l.page * l.pageSize >= l.total">Próxima ›</button>
+                </div>
+                <!-- O detalhe aberto fica ABAIXO da lista (não dentro de uma linha), para não alargar a tabela. -->
+                @if (xsExpandedItem(); as ex) {
+                  <div class="xs-detail-panel">
+                    <p class="meta">Evidências de <strong>{{ ex.assetName }}</strong> · {{ ruleShort(ex.ruleCode) }}</p>
+                    <app-cross-source-situations [assetId]="ex.assetId" />
+                  </div>
+                }
+              }
+              <p class="meta xs-policy">{{ l.policy.description }} Calculado em {{ fmtDate(l.evaluatedAt) }}.</p>
+            }
+          </div>
+        </div>
+
         <!-- ---------- [AEGIS-MVP-PRODUCT-02] Fila de achados de identidade (AEGIS KNIGHT) ---------- -->
         <div class="queue">
           <div class="queue-head">
@@ -610,6 +779,26 @@ import { RemediationService } from '../services/remediation.service';
       button.ghost { background: transparent; border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); padding: 0.4rem 0.8rem; font-size: 0.8rem; }
       button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+      /* [AEGIS-CROSS-SOURCE-01] Situações entre fontes: resumo por regra × estado, filtros e lista agrupada. */
+      .xs-summary { margin: 0.2rem 0.4rem 0.5rem; font-size: 0.82rem; }
+      .xs-tally-wrap { overflow-x: auto; margin-bottom: 0.6rem; }
+      .xs-tally caption { text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.55; padding: 0 0.6rem 0.3rem; }
+      .xs-filters { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 0.2rem 0.4rem 0.6rem; }
+      .xs-chip { cursor: pointer; font: inherit; font-size: 0.74rem; color: inherit; opacity: 0.7; background: transparent; border: 1px solid color-mix(in srgb, var(--c) 25%, transparent); border-radius: 999px; padding: 0.2rem 0.7rem; }
+      .xs-chip.on { opacity: 1; color: var(--c); border-color: var(--c); background: color-mix(in srgb, var(--c) 10%, transparent); }
+      .xs-select { font: inherit; font-size: 0.76rem; color: inherit; background: transparent; border: 1px solid color-mix(in srgb, var(--c) 25%, transparent); border-radius: 5px; padding: 0.2rem 0.5rem; }
+      .badge.xs-attention { color: #ff3d9a; }
+      .badge.xs-warn { color: #f5a524; }
+      .xs-open { font-size: 0.74rem; padding: 0.25rem 0.6rem; white-space: nowrap; }
+      .xs-pager { display: flex; gap: 0.5rem; align-items: center; justify-content: flex-end; padding: 0.5rem 0.4rem 0; }
+      .xs-policy { margin: 0.6rem 0.4rem 0.2rem; }
+      /* Colunas próprias que QUEBRAM linha: prévia de CVEs, selo e resumo nunca alargam o painel. */
+      .xs-rem { display: block; font-size: 0.74rem; opacity: 0.66; margin-top: 0.15rem; max-width: 52ch; line-height: 1.4; }
+      .xs-state .badge { display: inline-block; white-space: normal; max-width: 14rem; line-height: 1.35; }
+      .xs-cves { min-width: 8rem; }
+      .xs-cves .meta { white-space: normal; overflow-wrap: anywhere; }
+      .xs-detail-panel { margin: 0.7rem 0.4rem 0; padding-top: 0.4rem; border-top: 1px solid color-mix(in srgb, var(--c) 18%, transparent); }
+
       @media (max-width: 720px) { .card.wide { grid-column: span 1; } }
     `,
   ],
@@ -718,6 +907,79 @@ export class PrioritiesComponent {
   protected readonly tier = tierPt;
   protected readonly reachUnknown = EXPOSURE_REACH_UNKNOWN;
 
+  // ---- [AEGIS-CROSS-SOURCE-01] Situações identificadas entre fontes (leitura própria, separada das filas) ----
+  protected readonly xsHeading = CROSS_SOURCE_HEADING;
+  protected readonly xsStates = CROSS_SOURCE_STATE_FILTERS;
+  protected readonly xs = signal<CrossSourceSituationList | null>(null);
+  protected readonly xsLoading = signal(false);
+  protected readonly xsError = signal<string | null>(null);
+  protected readonly xsFilter = signal<CrossSourceFilter>({ state: 'identified', rule: null, page: 1, pageSize: 10 });
+  protected readonly xsExpanded = signal<string | null>(null);
+  protected readonly xsView = computed(() => crossSourceListView(this.xs(), this.xsLoading(), this.xsError()));
+  protected readonly xsText = computed(() => {
+    const v = this.xsView();
+    return 'text' in v ? v.text : '';
+  });
+  protected readonly xsEmpty = computed(() =>
+    ['zeroConclusive', 'zeroInconclusive', 'zeroMixed', 'filterEmpty'].includes(this.xsView().kind));
+  protected readonly basisLabel = evidenceBasisLabel;
+  protected spanText(
+    span: CrossSourceSituationItem['vulnerabilityAcquisitions'], basis: CrossSourceSituationItem['evidenceBasis'],
+  ): string {
+    return acquisitionSpanText(span, (d) => this.fmtDate(d), basis);
+  }
+  protected readonly xsSummary = computed(() => (this.xs() ? crossSourceSummaryText(this.xs()!.summary) : ''));
+  protected readonly xsTruncation = computed(() => (this.xs() ? truncationNote(this.xs()!.summary) : null));
+  protected readonly xsRange = computed(() => {
+    const l = this.xs();
+    return l ? pageRangeText(l.total, l.page, l.pageSize, l.total === 1 ? 'situação' : 'situações') : '';
+  });
+  protected readonly xsExpandedItem = computed(() => {
+    const key = this.xsExpanded();
+    return key ? (this.xs()?.items.find((i) => `${i.assetId}|${i.ruleCode}` === key) ?? null) : null;
+  });
+  protected readonly xsTone = crossSourceStateTone;
+  protected readonly ruleShort = ruleShortLabel;
+  protected readonly cveCount = cveCountText;
+  protected readonly cvePreview = cvePreviewText;
+
+  protected loadCrossSource(): void {
+    this.xsLoading.set(true);
+    this.xsError.set(null);
+    this.xsExpanded.set(null);
+    this.api.correlations(this.xsFilter()).subscribe({
+      next: (list) => {
+        this.xs.set(list);
+        this.xsLoading.set(false);
+      },
+      error: (err: Error) => {
+        this.xs.set(null);
+        this.xsError.set(err.message);
+        this.xsLoading.set(false);
+      },
+    });
+  }
+
+  protected setXsState(state: CrossSourceState): void {
+    this.xsFilter.update((f) => ({ ...f, state, page: 1 }));
+    this.loadCrossSource();
+  }
+
+  protected setXsRule(rule: string): void {
+    this.xsFilter.update((f) => ({ ...f, rule: rule || null, page: 1 }));
+    this.loadCrossSource();
+  }
+
+  protected goXs(page: number): void {
+    if (page < 1) return;
+    this.xsFilter.update((f) => ({ ...f, page }));
+    this.loadCrossSource();
+  }
+
+  protected toggleXs(key: string): void {
+    this.xsExpanded.set(this.xsExpanded() === key ? null : key);
+  }
+
   constructor() {
     this.load();
   }
@@ -726,6 +988,7 @@ export class PrioritiesComponent {
     this.loading.set(true);
     this.error.set(null);
     this.loadPlans();
+    this.loadCrossSource();
     this.api.get().subscribe({
       next: (workspace) => {
         this.data.set(workspace);

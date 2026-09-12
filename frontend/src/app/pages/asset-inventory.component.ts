@@ -22,6 +22,7 @@ import { environment } from '../../environments/environment';
 import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
 import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
 import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
+import { CrossSourceSituationsComponent } from '../components/cross-source/cross-source-situations.component';
 import { AegisScoreService } from '../services/aegis-score.service';
 import { ScoringService } from '../services/scoring.service';
 import { FunctionPosture, functionOf } from '../models/workspace.models';
@@ -41,7 +42,10 @@ import {
 @Component({
   selector: 'app-asset-inventory',
   standalone: true,
-  imports: [DatePipe, PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
+  imports: [
+    DatePipe, PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent,
+    CrossSourceSituationsComponent,
+  ],
   template: `
     <div class="app">
       <header class="topbar">
@@ -331,6 +335,8 @@ import {
                         </div>
                       }
                     }
+                    <!-- [AEGIS-CROSS-SOURCE-01] Situações entre fontes: carga e falha próprias, independentes das fontes acima. -->
+                    <app-cross-source-situations [assetId]="a.id" />
                   </td>
                 </tr>
               }
