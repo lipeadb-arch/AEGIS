@@ -46,6 +46,7 @@ import {
   devicePriorityListView,
   devicePriorityRangeText,
   devicePrioritySummaryText,
+  pageAfterRefresh,
   dispositionText,
   tieText,
 } from '../models/device-priority.models';
@@ -452,6 +453,16 @@ import {
             @if (dl.summary.outOfScopeNote) {
               <p class="notice warn" role="status">{{ dl.summary.outOfScopeNote }}</p>
             }
+            <!-- Completude da coleta, distinta da contagem: com casos na fila, diz se a ausência fora dela é conclusiva. -->
+            @if (dl.summary.absenceNote && dl.summary.candidateAssets > 0) {
+              <p class="notice warn" role="status">{{ dl.summary.absenceNote }}</p>
+            }
+          }
+          @if (dpRefreshError(); as e) {
+            <div class="notice warn" role="alert">
+              {{ e }}
+              <button type="button" class="ghost" (click)="loadDevicePriority({ background: true })">Tentar novamente</button>
+            </div>
           }
           <div class="panel">
             @if (dpView().kind === 'loading') {
@@ -461,7 +472,8 @@ import {
                 <p class="err">⚠ {{ dpText() }}</p>
                 <button type="button" class="ghost" (click)="loadDevicePriority()">Tentar novamente</button>
               </div>
-            } @else if (dpView().kind === 'noSource' || dpView().kind === 'neverCollected' || dpView().kind === 'noCandidates') {
+            } @else if (dpView().kind === 'noSource' || dpView().kind === 'neverCollected' || dpView().kind === 'noCandidates'
+                || dpView().kind === 'noCandidatesUnverified') {
               <div class="state empty"><p class="muted">{{ dpText() }}</p></div>
             } @else {
               @let dl = dp()!;
@@ -526,12 +538,16 @@ import {
                 </table>
                 <div class="xs-pager">
                   <span class="meta">{{ dpRange() }}</span>
+                  @if (dpRefreshing()) { <span class="meta" role="status">Atualizando a fila…</span> }
                   <button type="button" class="ghost" (click)="goDp(dl.page - 1)" [disabled]="dl.page <= 1">‹ Anterior</button>
                   <button type="button" class="ghost" (click)="goDp(dl.page + 1)" [disabled]="dl.page * dl.pageSize >= dl.total">Próxima ›</button>
                 </div>
                 @if (dpExpanded(); as id) {
                   <div class="xs-detail-panel">
-                    <app-device-priority [assetId]="id" />
+                    @if (dpExpandedOffPage()) {
+                      <p class="meta" role="status">Após a atualização, este dispositivo não está mais nesta página da fila (nova posição ou faixa); o detalhe continua aberto.</p>
+                    }
+                    <app-device-priority [assetId]="id" (criticalityDeclared)="onDeviceCriticalityDeclared()" />
                   </div>
                 }
               }
@@ -1072,21 +1088,65 @@ export class PrioritiesComponent {
   protected readonly cases = casesText;
   protected readonly tie = tieText;
 
-  protected loadDevicePriority(): void {
-    this.dpLoading.set(true);
+  protected readonly dpRefreshing = signal(false);
+  protected readonly dpRefreshError = signal<string | null>(null);
+  /** O detalhe aberto não está na página exibida (a atualização mudou a posição ou a faixa dele). */
+  protected readonly dpExpandedOffPage = computed(() => {
+    const id = this.dpExpanded();
+    const l = this.dp();
+    return !!id && !!l && !l.items.some((i) => i.assetId === id);
+  });
+  /** Só a resposta da ÚLTIMA leitura pedida é aplicada — filtro, página ou atualização depois de uma declaração. */
+  private dpSeq = 0;
+
+  /**
+   * @param opts.background releitura sem apagar a fila nem fechar o detalhe (depois de uma declaração confirmada): a
+   * tabela antiga fica visível com "Atualizando…", e uma falha diz que a fila pode estar desatualizada.
+   */
+  protected loadDevicePriority(opts: { background?: boolean } = {}): void {
+    const seq = ++this.dpSeq;
+    if (opts.background) {
+      this.dpRefreshing.set(true);
+    } else {
+      this.dpLoading.set(true);
+      this.dpExpanded.set(null);
+    }
     this.dpError.set(null);
-    this.dpExpanded.set(null);
+    this.dpRefreshError.set(null);
     this.api.devices(this.dpFilter()).subscribe({
       next: (list) => {
+        if (seq !== this.dpSeq) return;   // resposta tardia de um filtro ou página anterior
+        const page = opts.background ? pageAfterRefresh(list) : null;
+        if (page !== null) {
+          // A página ficou vazia porque a ordem ou a faixa mudou: uma correção para a última página válida.
+          this.dpFilter.update((f) => ({ ...f, page }));
+          this.loadDevicePriority(opts);
+          return;
+        }
         this.dp.set(list);
         this.dpLoading.set(false);
+        this.dpRefreshing.set(false);
       },
       error: (err: Error) => {
+        if (seq !== this.dpSeq) return;
+        this.dpLoading.set(false);
+        this.dpRefreshing.set(false);
+        if (opts.background && this.dp()) {
+          this.dpRefreshError.set(
+            'A declaração foi registrada, mas a fila não pôde ser atualizada agora — posição, faixas e totais exibidos ' +
+              'podem estar desatualizados.',
+          );
+          return;
+        }
         this.dp.set(null);
         this.dpError.set(err.message);
-        this.dpLoading.set(false);
       },
     });
+  }
+
+  /** Declaração CONFIRMADA pelo servidor no detalhe aberto: a fila é relida preservando filtro, página e detalhe. */
+  protected onDeviceCriticalityDeclared(): void {
+    this.loadDevicePriority({ background: true });
   }
 
   protected setDpBand(band: DevicePriorityBand | null): void {

@@ -11,7 +11,16 @@ import { CrossSourceNote, CrossSourcePolicy, pageRangeText } from './cross-sourc
 
 export type DevicePriorityBand = 'p1' | 'p2' | 'p3' | 'p4' | 'insufficient';
 
-export type DevicePriorityStatus = 'prioritized' | 'insufficient' | 'allDisposed' | 'noOpenCases' | 'noSourceRecord';
+export type DevicePriorityStatus =
+  | 'prioritized'
+  | 'insufficient'
+  | 'allDisposed'
+  | 'noOpenCases'
+  | 'absenceNotVerified'
+  | 'noSourceRecord';
+
+/** Completude para concluir ausência — distinta da contagem de casos e de candidatos. */
+export type DevicePriorityAbsenceState = 'conclusive' | 'conclusiveAttemptFailed' | 'notVerifiable' | 'notApplicable';
 
 export type DevicePriorityFactorKind = 'sourceFact' | 'declared' | 'inferred' | 'unknown';
 
@@ -137,6 +146,11 @@ export interface AssetDevicePriority {
   noLongerReported: number;
   excludedOutOfPolicy: number;
   cases: DevicePriorityCasePage | null;
+  absenceState: DevicePriorityAbsenceState;
+  /** Completude da fonte neste dispositivo, com a data da aquisição que a sustenta (texto do backend). */
+  absenceLabel: string | null;
+  /** Casos em aberto armazenados nas aquisições elegíveis — o fato, sem conclusão de ausência. */
+  storedOpenCases: number;
 }
 
 export interface DevicePriorityItem {
@@ -177,6 +191,15 @@ export interface DevicePrioritySummary {
   dispositions: DevicePriorityDisposition[];
   outOfScopeSources: number;
   outOfScopeNote: string | null;
+  /** Suficiência da coleta para concluir ausência fora da fila — nunca deduzida de candidateAssets. */
+  absenceState: DevicePriorityAbsenceState;
+  absenceNote: string | null;
+}
+
+/** Declaração de criticidade CONFIRMADA pelo servidor — o que o componente avisa às superfícies que o contêm. */
+export interface DevicePriorityCriticalityChange {
+  assetId: string;
+  criticality: DevicePriorityCriticality;
 }
 
 export interface DevicePriorityList {
@@ -320,6 +343,7 @@ export type DevicePriorityListView =
   | { kind: 'noSource'; text: string }
   | { kind: 'neverCollected'; text: string }
   | { kind: 'noCandidates'; text: string }
+  | { kind: 'noCandidatesUnverified'; text: string }
   | { kind: 'onlyInsufficient'; text: string }
   | { kind: 'filterEmpty'; text: string }
   | { kind: 'items' };
@@ -341,13 +365,23 @@ export function devicePriorityListView(
     return { kind: 'noSource', text: s.readingNote ?? 'Nenhuma fonte de vulnerabilidades está configurada.' };
   if (s.readingState === 'NeverCollected')
     return { kind: 'neverCollected', text: s.readingNote ?? 'A fonte ainda não publicou uma leitura por dispositivo.' };
-  if (s.candidateAssets === 0)
+  if (s.candidateAssets === 0) {
+    // Zero candidatos é uma CONTAGEM; só a completude da coleta permite chamá-la de ausência.
+    if (s.absenceState === 'notVerifiable')
+      return {
+        kind: 'noCandidatesUnverified',
+        text:
+          'Nenhum caso de vulnerabilidade em aberto está publicado nesta leitura, mas isso não permite concluir ausência. ' +
+          (s.absenceNote ?? ''),
+      };
     return {
       kind: 'noCandidates',
       text:
-        'Nenhum dispositivo com vulnerabilidade em aberto e disposição ativa na última leitura da fonte. Isso não comprova ' +
-        'que os dispositivos estejam seguros.',
+        'Nenhum dispositivo com vulnerabilidade em aberto e disposição ativa na aquisição completa mais recente da fonte. ' +
+        'Isso não comprova que os dispositivos estejam seguros.' +
+        (s.absenceState === 'conclusiveAttemptFailed' && s.absenceNote ? ' ' + s.absenceNote : ''),
     };
+  }
   if (list.items.length > 0) return { kind: 'items' };
   const prioritized = s.assetsByBand.filter((b) => b.band !== 'insufficient').reduce((a, b) => a + b.count, 0);
   if (!list.bandFilter && prioritized === 0)
@@ -368,7 +402,7 @@ export function devicePriorityRangeText(l: Pick<DevicePriorityList, 'total' | 'p
 /** Página de casos com unidade. */
 export function casePageText(p: DevicePriorityCasePage | null | undefined): string {
   if (!p) return 'Sem evidência de vulnerabilidade elegível.';
-  if (p.total === 0) return 'Nenhum caso em aberto nas evidências elegíveis.';
+  if (p.total === 0) return 'Nenhum caso em aberto publicado nesta leitura.';
   return pageRangeText(p.total, p.page, p.pageSize, p.total === 1 ? 'caso' : 'casos');
 }
 
@@ -382,4 +416,48 @@ export function epssText(epss: number | null | undefined): string {
 /** Gate de APRESENTAÇÃO da declaração de criticidade — o servidor continua sendo a autoridade (Manager, TenantAdmin). */
 export function canDeclareCriticality(role: string | null): boolean {
   return role === 'Manager' || role === 'TenantAdmin';
+}
+
+/**
+ * Falha da PRÓPRIA declaração: só afirma "nada foi alterado" quando o servidor recusou (400/403/404). Sem resposta ou com
+ * erro do servidor, a gravação não é confirmada nem negada.
+ */
+export function declarationErrorText(err: { status?: number; error?: unknown } | null | undefined): string {
+  if (err?.status === 403) return 'Seu papel não permite declarar a criticidade (Manager ou TenantAdmin). Nada foi alterado.';
+  if (err?.status === 400 || err?.status === 404)
+    return (typeof err.error === 'string' && err.error ? err.error + ' ' : '') + 'Nada foi alterado.';
+  return 'Não foi possível confirmar se a declaração foi registrada. Recarregue a prioridade para verificar antes de repetir.';
+}
+
+/** Gravação confirmada, releitura falhou: diz exatamente isso — nunca "nada foi alterado". */
+export function declarationSavedNotRefreshedText(c: DevicePriorityCriticality): string {
+  return (
+    `A declaração foi registrada (${c.label}), mas a apresentação não pôde ser atualizada agora. ` +
+    'Use "Tentar novamente" para recarregar a prioridade.'
+  );
+}
+
+/**
+ * Linhas do inventário com a criticidade CONFIRMADA pelo servidor aplicada ao ativo declarado (as demais, intactas).
+ * Confirmada = declarada com proveniência e igual ao valor cadastrado.
+ */
+export function applyDeclaredCriticality<T extends { id: string; criticality: number; criticalityConfirmed?: boolean }>(
+  rows: readonly T[],
+  change: DevicePriorityCriticalityChange,
+): T[] {
+  return rows.map((r) =>
+    r.id === change.assetId
+      ? { ...r, criticality: change.criticality.storedValue, criticalityConfirmed: change.criticality.state === 'declared' }
+      : r,
+  );
+}
+
+/**
+ * Depois de uma releitura em segundo plano: se a página pedida ficou vazia porque a ordem/faixa mudou, a última página
+ * válida (uma única correção, nunca um laço). Nula quando a página continua válida.
+ */
+export function pageAfterRefresh(l: Pick<DevicePriorityList, 'items' | 'total' | 'page' | 'pageSize'>): number | null {
+  if (l.items.length > 0 || l.total === 0 || l.page <= 1) return null;
+  const last = Math.max(1, Math.ceil(l.total / l.pageSize));
+  return last < l.page ? last : null;
 }

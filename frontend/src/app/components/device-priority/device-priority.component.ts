@@ -1,16 +1,20 @@
 import { DatePipe } from '@angular/common';
-import { Component, Input, OnChanges, computed, inject, signal } from '@angular/core';
+import { Component, EventEmitter, Input, OnChanges, Output, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AssetService } from '../../services/asset.service';
 import { AuthService } from '../../services/auth.service';
 import {
   AssetDevicePriority,
   DEVICE_PRIORITY_HEADING,
+  DevicePriorityCriticality,
+  DevicePriorityCriticalityChange,
   DevicePriorityPolicy,
   bandCountsText,
   bandTone,
   canDeclareCriticality,
   casePageText,
+  declarationErrorText,
+  declarationSavedNotRefreshedText,
   dispositionText,
   epssText,
   factorEffectLabel,
@@ -97,6 +101,10 @@ export class DevicePriorityPolicyComponent {
           <span class="dp-when">calculado em {{ data()!.evaluatedAt | date: 'dd/MM/yy HH:mm' }}</span>
         }
       </div>
+      <!-- Resultado da declaração fica FORA dos estados de carga: gravação confirmada nunca vira "nada foi alterado". -->
+      @if (saveNotice(); as n) {
+        <p class="dp-sub" [class.warn]="n.tone === 'warn'" role="status">{{ n.text }}</p>
+      }
 
       @switch (state()) {
         @case ('loading') {
@@ -105,7 +113,7 @@ export class DevicePriorityPolicyComponent {
         @case ('error') {
           <div class="dp-err">
             <span>Não foi possível calcular a prioridade deste dispositivo agora — nada é exibido, para que a falha não pareça ausência de prioridade.</span>
-            <button type="button" class="dp-btn" (click)="load()">Tentar novamente</button>
+            <button type="button" class="dp-btn" (click)="retry()">Tentar novamente</button>
           </div>
         }
         @case ('loaded') {
@@ -145,6 +153,13 @@ export class DevicePriorityPolicyComponent {
             <div class="dp-caveats">
               <span class="dp-k">Ressalvas</span>
               <ul>@for (n of d.caveats; track n.code + n.text) { <li>{{ n.text }}</li> }</ul>
+            </div>
+          }
+
+          @if (d.absenceLabel) {
+            <div class="dp-block">
+              <span class="dp-k">Completude da fonte neste dispositivo</span>
+              <p class="dp-note" [class.warn-text]="d.absenceState === 'notVerifiable'">{{ d.absenceLabel }}</p>
             </div>
           }
 
@@ -294,7 +309,7 @@ export class DevicePriorityPolicyComponent {
       .dp-k { text-transform: uppercase; letter-spacing: 0.08em; display: block; }
       .dp-note { margin: 0; max-width: 900px; line-height: 1.5; display: block; }
       .dp-sub { display: block; margin-top: 2px; line-height: 1.45; }
-      .dp-sub.warn { color: var(--amber, #ffb020); }
+      .dp-sub.warn, .dp-note.warn-text { color: var(--amber, #ffb020); }
       .dp-err { display: flex; flex-direction: column; gap: 8px; font-family: var(--mono, monospace); font-size: 12px; color: var(--muted, #9aa7c7); }
       .dp-position { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
       .dp-reason { margin: 0; font-size: 12.5px; line-height: 1.55; max-width: 900px; }
@@ -335,6 +350,12 @@ export class DevicePriorityPolicyComponent {
 export class DevicePriorityComponent implements OnChanges {
   @Input({ required: true }) assetId!: string;
 
+  /**
+   * Emitido UMA vez por declaração, só depois da confirmação do servidor — para a Central e o inventário atualizarem
+   * faixa, ordem, contagens e criticidade. Nunca emitido por recarga, paginação ou falha.
+   */
+  @Output() readonly criticalityDeclared = new EventEmitter<DevicePriorityCriticalityChange>();
+
   private readonly svc = inject(AssetService);
   private readonly auth = inject(AuthService);
 
@@ -343,6 +364,9 @@ export class DevicePriorityComponent implements OnChanges {
   protected readonly data = signal<AssetDevicePriority | null>(null);
   protected readonly saving = signal(false);
   protected readonly declError = signal<string | null>(null);
+  protected readonly saveNotice = signal<{ text: string; tone: 'ok' | 'warn' } | null>(null);
+  /** Só a resposta da ÚLTIMA leitura pedida é aplicada (troca de ativo, paginação ou releitura após declarar). */
+  private seq = 0;
   protected readonly canDeclare = computed(() => canDeclareCriticality(this.auth.activeRole()));
   protected declValue = 3;
   protected declNote = '';
@@ -361,25 +385,35 @@ export class DevicePriorityComponent implements OnChanges {
 
   ngOnChanges(): void {
     this.casePage = 1;
+    this.saveNotice.set(null);
+    this.declError.set(null);
     this.load();
   }
 
-  load(): void {
-    const assetId = this.assetId;
+  /** @param saved criticalidade recém-confirmada pelo servidor, quando a leitura é a releitura depois da declaração. */
+  load(saved?: DevicePriorityCriticality): void {
+    const seq = ++this.seq;
+    if (!saved) this.saveNotice.set(null);
     this.state.set('loading');
-    this.svc.priority(assetId, this.casePage, this.casePageSize).subscribe({
+    this.svc.priority(this.assetId, this.casePage, this.casePageSize).subscribe({
       next: (d) => {
-        if (this.assetId !== assetId) return;   // resposta de outro ativo (linha trocada)
+        if (seq !== this.seq) return;   // resposta tardia de outro ativo ou de uma leitura anterior
         this.data.set(d);
         this.declValue = d.criticality.declaredValue ?? d.criticality.storedValue;
         this.state.set('loaded');
+        if (saved) this.saveNotice.set({ text: `Declaração registrada: ${saved.label}.`, tone: 'ok' });
       },
       error: () => {
-        if (this.assetId !== assetId) return;
+        if (seq !== this.seq) return;
         this.data.set(null);
         this.state.set('error');
+        if (saved) this.saveNotice.set({ text: declarationSavedNotRefreshedText(saved), tone: 'warn' });
       },
     });
+  }
+
+  protected retry(): void {
+    this.load();
   }
 
   protected goCases(page: number): void {
@@ -393,20 +427,16 @@ export class DevicePriorityComponent implements OnChanges {
     this.saving.set(true);
     this.declError.set(null);
     this.svc.declareCriticality(assetId, this.declValue, this.declNote).subscribe({
-      next: () => {
+      next: (criticality) => {
         this.saving.set(false);
         this.declNote = '';
-        if (this.assetId === assetId) this.load();
+        // Gravação CONFIRMADA: as superfícies que contêm este bloco se atualizam (mesmo que a linha já seja outra).
+        this.criticalityDeclared.emit({ assetId, criticality });
+        if (this.assetId === assetId) this.load(criticality);
       },
       error: (err: { status?: number; error?: unknown }) => {
         this.saving.set(false);
-        this.declError.set(
-          err?.status === 403
-            ? 'Seu papel não permite declarar a criticidade (Manager ou TenantAdmin).'
-            : typeof err?.error === 'string' && err.error
-              ? err.error
-              : 'Não foi possível registrar a declaração agora. Nada foi alterado.',
-        );
+        if (this.assetId === assetId) this.declError.set(declarationErrorText(err));
       },
     });
   }

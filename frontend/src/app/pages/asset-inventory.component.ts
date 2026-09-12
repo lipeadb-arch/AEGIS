@@ -24,6 +24,7 @@ import { ControlComplianceCardComponent } from '../components/scoring/control-co
 import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
 import { CrossSourceSituationsComponent } from '../components/cross-source/cross-source-situations.component';
 import { DevicePriorityComponent } from '../components/device-priority/device-priority.component';
+import { DevicePriorityCriticalityChange, applyDeclaredCriticality } from '../models/device-priority.models';
 import { AegisScoreService } from '../services/aegis-score.service';
 import { ScoringService } from '../services/scoring.service';
 import { FunctionPosture, functionOf } from '../models/workspace.models';
@@ -182,6 +183,10 @@ import {
           <b>Não foi possível carregar o inventário.</b> O serviço não respondeu agora — nenhum ativo é
           exibido, para que uma lista antiga não seja lida como o inventário atual.
         </div>
+      }
+
+      @if (inventoryNotice(); as n) {
+        <div class="notice" role="status">{{ n }}</div>
       }
 
       <!-- ---- Tabela ---- -->
@@ -343,7 +348,7 @@ import {
                       }
                     }
                     <!-- [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento: carga e falha próprias; usa as situações abaixo como contexto. -->
-                    <app-device-priority [assetId]="a.id" />
+                    <app-device-priority [assetId]="a.id" (criticalityDeclared)="onCriticalityDeclared($event)" />
                     <!-- [AEGIS-CROSS-SOURCE-01] Situações entre fontes: carga e falha próprias, independentes das fontes acima. -->
                     <app-cross-source-situations [assetId]="a.id" />
                   </td>
@@ -704,7 +709,28 @@ export class AssetInventoryComponent implements OnInit {
   /** Filtros reiniciam a paginação para a página 1 e recarregam. */
   private reload(): void {
     this.page.set(1);
+    this.inventoryNotice.set(null);
     this.load();
+  }
+
+  // ---- [AEGIS-RISK-PRIORITIZATION-01] Declaração de criticidade confirmada no detalhe ----
+  inventoryNotice = signal<string | null>(null);
+
+  /**
+   * A linha reflete a criticidade CONFIRMADA pelo servidor sem recarregar a página. Se um filtro de criticidade ativo
+   * deixar de corresponder, a lista é relida com os mesmos filtros e página — e isso é dito, em vez de o ativo sumir.
+   */
+  onCriticalityDeclared(change: DevicePriorityCriticalityChange): void {
+    const row = this.rows().find((r) => r.id === change.assetId);
+    this.rows.set(applyDeclaredCriticality(this.rows(), change));
+    const filter = this.criticality();
+    if (filter !== null && change.criticality.storedValue !== filter) {
+      this.inventoryNotice.set(
+        `Criticidade registrada para ${row?.name ?? 'o ativo'} (${change.criticality.label}). Ele não corresponde mais ao ` +
+          `filtro de criticidade ${filter} e saiu desta lista.`,
+      );
+      this.load();
+    }
   }
 
   toggleCategory(c: AssetCategory): void {
