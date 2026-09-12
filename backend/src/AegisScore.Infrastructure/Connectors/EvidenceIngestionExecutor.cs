@@ -599,7 +599,7 @@ public sealed class EvidenceIngestionExecutor : IEvidenceIngestionExecutor
         Guid tenantId, Guid connectorId, VulnerabilityCollection collection, CancellationToken ct)
     {
         await using var db = new AegisScoreDbContext(_options, new SystemTenantContext(tenantId));
-        var reconciler = new VulnerabilityReconciler(db, _log);
+        var reconciler = new VulnerabilityReconciler(db, _log) { Checkpoint = Checkpoint };
         return await reconciler.ReconcileAsync(connectorId, collection, ct);
     }
 

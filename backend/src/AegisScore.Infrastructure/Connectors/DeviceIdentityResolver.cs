@@ -172,7 +172,27 @@ public sealed class DeviceIdentityResolver
         }
 
         await RecomputeAssetsAsync(touched, ct);
+
+        // [AEGIS-CROSS-SOURCE-01] Desfecho da publicação desta fotografia: completa só quando a ausência foi publicada
+        // (dimensão completa, sem registro recusado, marca ainda vigente); do contrário, parcial. Uma passada mais nova
+        // que já moveu a marca é a dona do desfecho — esta não escreve nada.
+        if (!counts.Superseded)
+            await SettleAsync(connectorId, outcome.Marker, complete: counts.DeactivationApplied, ct);
         return counts;
+    }
+
+    /// <summary>
+    /// [AEGIS-CROSS-SOURCE-01] Registra o DESFECHO da publicação da passada marcada em <paramref name="snapshotAt"/>
+    /// (<see cref="DeviceSnapshotOutcome.Complete"/> ou <see cref="DeviceSnapshotOutcome.Partial"/>), sob a trava da
+    /// fonte e SOMENTE se a marca ainda for a dela — o desfecho de uma passada nunca descreve a fotografia de outra.
+    /// Devolve <c>false</c>, sem escrever, quando uma fotografia mais recente já foi publicada.
+    /// </summary>
+    public Task<bool> SettleAsync(Guid connectorId, DateTimeOffset snapshotAt, bool complete, CancellationToken ct)
+    {
+        var settled = complete ? DeviceSnapshotOutcome.Complete : DeviceSnapshotOutcome.Partial;
+        return RunIfCurrentAsync(connectorId, snapshotAt, workCt => _db.Connectors
+            .Where(c => c.Id == connectorId)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.DeviceSnapshotOutcome, settled), workCt), ct);
     }
 
     /// <summary>
@@ -321,10 +341,14 @@ public sealed class DeviceIdentityResolver
                 new Dictionary<string, Guid>(), new HashSet<Guid>(),
                 EmptyCounts(receivedCount, rejected) with { Superseded = true }, marker);
         }
+        // [AEGIS-CROSS-SOURCE-01] A marca nova nasce "publicando": até o desfecho desta passada ser registrado, a
+        // leitura sabe que os fatos da fotografia ainda podem estar parcialmente publicados (lotes) ou interrompidos.
         if (watermark != marker)
             await _db.Connectors
                 .Where(c => c.Id == connectorId)
-                .ExecuteUpdateAsync(s => s.SetProperty(c => c.DeviceSnapshotWatermark, (DateTimeOffset?)marker), ct);
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(c => c.DeviceSnapshotWatermark, (DateTimeOffset?)marker)
+                    .SetProperty(c => c.DeviceSnapshotOutcome, DeviceSnapshotOutcome.Publishing), ct);
 
         // (1) Bindings desta fonte. Rastreados: são atualizados nesta passada.
         var bindings = await _db.AssetSourceBindings
