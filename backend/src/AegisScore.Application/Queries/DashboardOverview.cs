@@ -175,6 +175,78 @@ public sealed record DashboardSourcesDto(
     IReadOnlyList<DashboardSourceDto> Items);
 
 /// <summary>
+/// [AEGIS-JOURNEY-01] Resumo COMPACTO da prioridade de tratamento em dispositivos na tela inicial. É a MESMA leitura da
+/// Central (<see cref="IDevicePriorityQuery"/>), sem fórmula própria: faixas, teto, completude e textos vêm da autoridade.
+/// Três unidades que NUNCA são somadas entre si: dispositivos (<see cref="AssetsByBand"/>, <see cref="CandidateAssets"/>),
+/// casos dispositivo × CVE (<see cref="CasesByBand"/>) e planos (<see cref="Plans"/>).
+/// </summary>
+/// <param name="State">
+/// Estado da leitura: <c>NoSource</c>, <c>NeverCollected</c>, <c>Available</c> (os da autoridade) ou <c>Unavailable</c>
+/// (a leitura falhou — nada é exibido, para a falha não parecer ausência de prioridade).
+/// </param>
+/// <param name="CasesPartial">
+/// Os casos por faixa cobrem só os dispositivos avaliados (teto por leitura): com recorte, o total de casos é parcial.
+/// </param>
+/// <param name="CandidateAssets">
+/// Dispositivos com ao menos um caso em aberto SEM disposição humana — a população da fila. Zero aqui NÃO é ausência de
+/// vulnerabilidade: casos em aberto na fonte com disposição registrada ficam fora da fila (<see cref="Dispositions"/>).
+/// </param>
+/// <param name="Dispositions">
+/// Casos dispositivo × CVE ainda em aberto na fonte com disposição humana registrada (risco aceito, mitigação informada,
+/// falso positivo), em todo o tenant — os mesmos da Central. Vazio quando não há leitura.
+/// </param>
+/// <param name="Top">Os primeiros dispositivos da fila (sem filtro de faixa), com o caso que determinou a posição.</param>
+public sealed record DashboardDevicePriorityDto(
+    string State,
+    string? Note,
+    DateTimeOffset? EvaluatedAt,
+    string? PolicyCode,
+    int? PolicyVersion,
+    int? CandidateAssets,
+    int? AssetsEvaluated,
+    bool EvaluationTruncated,
+    string? CompleteThroughBand,
+    string? TruncationNote,
+    IReadOnlyList<DevicePriorityCountDto> AssetsByBand,
+    IReadOnlyList<DevicePriorityCountDto> CasesByBand,
+    bool CasesPartial,
+    string? AbsenceState,
+    string? AbsenceNote,
+    IReadOnlyList<DevicePriorityDispositionDto> Dispositions,
+    IReadOnlyList<DashboardDevicePriorityItemDto> Top,
+    DashboardDevicePlansDto Plans)
+{
+    /// <summary>A leitura da prioridade falhou nesta composição.</summary>
+    public const string Unavailable = "Unavailable";
+
+    /// <summary>Quantos dispositivos a tela inicial mostra — a Central é a lista completa.</summary>
+    public const int MaxItems = 3;
+}
+
+/// <summary>UM dispositivo do resumo — aponta o caso determinante e, quando houver, o plano ativo desse caso.</summary>
+public sealed record DashboardDevicePriorityItemDto(
+    Guid AssetId,
+    string AssetName,
+    bool NameIsPlaceholder,
+    int Position,
+    string Band,
+    string BandLabel,
+    string? CveId,
+    string? CaseBandLabel,
+    /// <summary>Plano ATIVO para o caso determinante (ativo + CVE), quando existe.</summary>
+    Guid? ActivePlanId);
+
+/// <summary>
+/// Planos de casos de dispositivo do tenant (unidade: planos). Contagem COMPLETA — todos os planos dessa origem, não só os
+/// dos dispositivos exibidos. "Concluído" é etapa do plano, não ambiente corrigido.
+/// </summary>
+public sealed record DashboardDevicePlansDto(
+    int Active,
+    int AwaitingValidation,
+    int Overdue,
+    int Completed);
+
+/// <summary>
 /// Read model COMPOSTO da tela inicial. Cada bloco carrega o próprio estado e a própria origem; nada aqui é
 /// recalculado e nenhuma dimensão é combinada com outra num índice único.
 /// </summary>
@@ -189,6 +261,10 @@ public sealed record DashboardSourcesDto(
 /// <param name="Vulnerabilities">Fila curta de vulnerabilidades abertas por CVE (autoridade das vulnerabilidades).</param>
 /// <param name="Identity">Postura consultiva de identidade do último snapshot da Evidence Fabric.</param>
 /// <param name="Sources">Saúde e recência das fontes conectadas.</param>
+/// <param name="DevicePriority">
+/// [AEGIS-JOURNEY-01] Resumo compacto da prioridade de tratamento em dispositivos — a MESMA autoridade da Central, com
+/// dispositivos, casos e planos em unidades separadas e a parcialidade declarada.
+/// </param>
 public sealed record DashboardOverviewDto(
     string ReadModelVersion,
     DateTimeOffset GeneratedAt,
@@ -200,7 +276,8 @@ public sealed record DashboardOverviewDto(
     PriorityExposureQueueDto ConfigurationExposures,
     PriorityVulnerabilityQueueDto Vulnerabilities,
     DashboardIdentityDto Identity,
-    DashboardSourcesDto Sources)
+    DashboardSourcesDto Sources,
+    DashboardDevicePriorityDto DevicePriority)
 {
     /// <summary>Versão semântica do contrato composto da tela inicial.</summary>
     public const string Version = "dashboard-overview-v1";

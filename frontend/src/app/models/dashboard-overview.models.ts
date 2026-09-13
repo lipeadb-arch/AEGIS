@@ -9,6 +9,13 @@
 // O frontend NÃO recalcula score, cobertura, contagem, gap ou criticidade — tudo vem apurado do backend.
 
 import { PostureExposureItem, PostureExposureSummary } from './posture-exposure.models';
+import {
+  DevicePriorityBand,
+  DevicePriorityCount,
+  DevicePriorityDisposition,
+  bandCountsText,
+  disposedCasesText,
+} from './device-priority.models';
 import { VulnerabilityGroup, VulnerabilitySummary } from './vulnerability.models';
 import { ConnectorHealthSummary, EvidenceCoverageSummary, WorkspaceOverall, WorkspacePosture } from './workspace.models';
 
@@ -107,6 +114,59 @@ export interface DashboardVulnerabilityQueue {
   top: VulnerabilityGroup[];
 }
 
+/** [AEGIS-JOURNEY-01] UM dispositivo do resumo — aponta o caso determinante e o plano ativo desse caso, se houver. */
+export interface DashboardDevicePriorityItem {
+  assetId: string;
+  assetName: string;
+  nameIsPlaceholder: boolean;
+  position: number;
+  band: DevicePriorityBand;
+  bandLabel: string;
+  cveId: string | null;
+  caseBandLabel: string | null;
+  activePlanId: string | null;
+}
+
+/** [AEGIS-JOURNEY-01] Planos de casos de dispositivo do tenant (unidade: planos) — contagem completa. */
+export interface DashboardDevicePlans {
+  active: number;
+  awaitingValidation: number;
+  overdue: number;
+  completed: number;
+}
+
+/**
+ * [AEGIS-JOURNEY-01] Resumo da prioridade de tratamento em dispositivos — a MESMA leitura da Central. Três unidades que
+ * a tela nunca soma: dispositivos (`assetsByBand`), casos dispositivo × CVE (`casesByBand`) e planos (`plans`).
+ * Sem fonte, sem leitura ou com falha, as contagens chegam NULAS ou vazias — nunca zero inventado.
+ */
+export interface DashboardDevicePriority {
+  state: 'NoSource' | 'NeverCollected' | 'Available' | 'Unavailable';
+  note: string | null;
+  evaluatedAt: string | null;
+  policyCode: string | null;
+  policyVersion: number | null;
+  /** Dispositivos com caso em aberto SEM disposição — a população da fila. Zero não é ausência de vulnerabilidade. */
+  candidateAssets: number | null;
+  assetsEvaluated: number | null;
+  evaluationTruncated: boolean;
+  completeThroughBand: DevicePriorityBand | null;
+  truncationNote: string | null;
+  assetsByBand: DevicePriorityCount[];
+  casesByBand: DevicePriorityCount[];
+  /** Os casos cobrem só os dispositivos avaliados (teto por leitura). */
+  casesPartial: boolean;
+  absenceState: string | null;
+  absenceNote: string | null;
+  /**
+   * Casos dispositivo × CVE ainda em aberto na fonte com disposição humana registrada — fora da fila, não corrigidos.
+   * Opcional para respostas anteriores a este campo (sem ele, a tela não afirma ausência).
+   */
+  dispositions?: DevicePriorityDisposition[] | null;
+  top: DashboardDevicePriorityItem[];
+  plans: DashboardDevicePlans;
+}
+
 export interface DashboardOverview {
   readModelVersion: string;
   generatedAt: string;
@@ -119,6 +179,124 @@ export interface DashboardOverview {
   vulnerabilities: DashboardVulnerabilityQueue;
   identity: DashboardIdentity;
   sources: DashboardSources;
+  /** [AEGIS-JOURNEY-01] Prioridade de tratamento em dispositivos. Opcional para respostas de versões anteriores. */
+  devicePriority?: DashboardDevicePriority;
+}
+
+/** [AEGIS-JOURNEY-01] O que o cartão de prioridade da visão geral pode afirmar — cada estado com texto próprio. */
+export type DevicePriorityCardView =
+  | { kind: 'missing'; text: string }
+  | { kind: 'unavailable'; text: string }
+  | { kind: 'noSource'; text: string }
+  | { kind: 'neverCollected'; text: string }
+  | { kind: 'noCandidates'; text: string }
+  | { kind: 'noCandidatesUnverified'; text: string }
+  | { kind: 'onlyDispositions'; text: string }
+  | { kind: 'data' };
+
+/**
+ * Estado do cartão. Fila vazia (zero candidatos) NÃO é ausência de vulnerabilidade: os casos em aberto com disposição
+ * humana ficam fora da fila e continuam em aberto na fonte. "A fonte não reporta vulnerabilidade em aberto" só é dito
+ * quando não há candidato NEM caso disposto e a completude da coleta sustenta a ausência; falha e ausência de fonte têm
+ * textos próprios e nunca aparecem como "nada a tratar".
+ */
+export function devicePriorityCardView(dp: DashboardDevicePriority | null | undefined): DevicePriorityCardView {
+  if (!dp)
+    return {
+      kind: 'missing',
+      text: 'A prioridade de tratamento não veio nesta leitura. Abra a Central de Prioridades para consultá-la.',
+    };
+  if (dp.state === 'Unavailable')
+    return {
+      kind: 'unavailable',
+      text: dp.note ?? 'Não foi possível calcular a prioridade de tratamento agora — nada é exibido, para a falha não parecer ausência.',
+    };
+  if (dp.state === 'NoSource')
+    return { kind: 'noSource', text: dp.note ?? 'Nenhuma fonte de vulnerabilidades por dispositivo está configurada.' };
+  if (dp.state === 'NeverCollected')
+    return { kind: 'neverCollected', text: dp.note ?? 'A fonte ainda não publicou uma leitura por dispositivo.' };
+  if ((dp.candidateAssets ?? 0) === 0) {
+    const disposed = disposedCasesText(dp.dispositions);
+    if (disposed)
+      return {
+        kind: 'onlyDispositions',
+        text:
+          `Nenhum dispositivo na fila de prioridade — e isso não é ausência de vulnerabilidade: ${disposed}. ` +
+          (dp.absenceState === 'notVerifiable'
+            ? 'Além disso, a coleta não permite concluir a ausência de outros casos. ' + (dp.absenceNote ?? '')
+            : ''),
+      };
+    if (dp.absenceState === 'notVerifiable')
+      return {
+        kind: 'noCandidatesUnverified',
+        text:
+          'Nenhum caso de vulnerabilidade em aberto está publicado nesta leitura, mas a coleta não permite concluir ausência. ' +
+          (dp.absenceNote ?? ''),
+      };
+    // Sem o campo das disposições (resposta anterior), a tela não pode afirmar que não há caso disposto.
+    if (!dp.dispositions)
+      return {
+        kind: 'noCandidates',
+        text:
+          'Nenhum dispositivo na fila de prioridade nesta leitura. Casos com disposição registrada ficam fora da fila e não ' +
+          'são contados aqui — consulte a Central de Prioridades.',
+      };
+    return {
+      kind: 'noCandidates',
+      text:
+        'A fonte não reporta vulnerabilidade em aberto em nenhum dispositivo na aquisição completa mais recente — nem na ' +
+        'fila, nem com disposição registrada. Isso não comprova que os dispositivos estejam seguros.' +
+        (dp.absenceState === 'conclusiveAttemptFailed' && dp.absenceNote ? ' ' + dp.absenceNote : ''),
+    };
+  }
+  return { kind: 'data' };
+}
+
+/** Soma só as faixas priorizáveis (P1…P4) de uma contagem por faixa — a mesma unidade da própria contagem. */
+function prioritized(counts: DevicePriorityCount[]): number {
+  return counts.filter((c) => c.band !== 'insufficient').reduce((s, c) => s + c.count, 0);
+}
+
+/**
+ * As três linhas do cartão, cada uma com a SUA unidade: dispositivos, casos dispositivo × CVE e planos. Nenhuma soma
+ * atravessa unidades. A linha de casos diz quando o total é parcial (teto por leitura).
+ */
+export function devicePriorityUnitLines(dp: DashboardDevicePriority): {
+  devices: string;
+  cases: string;
+  /** Casos fora da fila por disposição humana (ainda em aberto na fonte); nulo quando não há nenhum. */
+  disposed: string | null;
+  plans: string;
+} {
+  const n = dp.candidateAssets ?? 0;
+  const devicesInsufficient = dp.assetsByBand.find((b) => b.band === 'insufficient')?.count ?? 0;
+  const devices =
+    `${n === 1 ? '1 dispositivo' : `${n} dispositivos`} na fila (vulnerabilidade em aberto sem disposição registrada)` +
+    (bandCountsText(dp.assetsByBand.filter((b) => b.band !== 'insufficient')) !== '—'
+      ? ` · ${bandCountsText(dp.assetsByBand.filter((b) => b.band !== 'insufficient'))}`
+      : '') +
+    (devicesInsufficient > 0 ? ` · ${devicesInsufficient} sem informação suficiente` : '');
+
+  const c = prioritized(dp.casesByBand);
+  const casesInsufficient = dp.casesByBand.find((b) => b.band === 'insufficient')?.count ?? 0;
+  const cases =
+    `${c === 1 ? '1 caso' : `${c} casos`} dispositivo × CVE priorizáve${c === 1 ? 'l' : 'is'}` +
+    (c > 0 ? ` · ${bandCountsText(dp.casesByBand.filter((b) => b.band !== 'insufficient'))}` : '') +
+    (casesInsufficient > 0 ? ` · ${casesInsufficient} sem severidade informada` : '') +
+    (dp.casesPartial ? ` — parcial: só dos ${dp.assetsEvaluated ?? 0} dispositivos avaliados nesta leitura` : '');
+
+  const p = dp.plans;
+  const plans =
+    `${p.active === 1 ? '1 plano ativo' : `${p.active} planos ativos`}` +
+    ` · ${p.awaitingValidation} aguardando validação · ${p.overdue} em atraso · ` +
+    `${p.completed === 1 ? '1 concluído' : `${p.completed} concluídos`} (concluído ≠ dispositivo corrigido)`;
+
+  return { devices, cases, disposed: disposedCasesText(dp.dispositions), plans };
+}
+
+/** Parâmetros do endereço da Central que abrem o detalhe do dispositivo com o caso (e o plano ativo) selecionados. */
+export function devicePriorityItemParams(i: DashboardDevicePriorityItem): Record<string, string | null> {
+  return { tab: 'achados', device: i.assetId, cve: i.cveId, plan: i.activePlanId };
 }
 
 /**

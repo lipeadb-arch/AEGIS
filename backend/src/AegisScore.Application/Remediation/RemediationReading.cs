@@ -24,11 +24,16 @@ public static class RemediationReading
     /// exposição e uma que não comprovou nada levam a providências opostas. Derivar a frase só da presença de
     /// uma validação faria a tela negar, logo abaixo, a comprovação que ela mesma acabou de exibir.
     /// </summary>
+    /// <param name="origin">
+    /// [AEGIS-JOURNEY-01] Origem do plano. Um caso de vulnerabilidade em dispositivo não tem "nova avaliação" que o
+    /// comprove: a providência não pode sugerir um caminho de validação que o servidor recusa para essa origem.
+    /// </param>
     public static string NextStep(
         ActionPlanStatus status,
         bool isOverdue,
         ActionPlanValidationOutcome? applicableOutcome = null,
-        ActionPlanValidationOutcome? latestOutcome = null) => status switch
+        ActionPlanValidationOutcome? latestOutcome = null,
+        ActionPlanOriginKind origin = ActionPlanOriginKind.KnightFinding) => status switch
     {
         ActionPlanStatus.Aberto => isOverdue
             ? "Atrasada e ainda não iniciada — confirmar responsável e repactuar o prazo."
@@ -36,11 +41,35 @@ public static class RemediationReading
         ActionPlanStatus.EmAndamento => isOverdue
             ? "Em andamento e fora do prazo — repactuar a data e registrar o que já foi feito."
             : "Concluir a execução e registrar o que foi feito.",
-        ActionPlanStatus.AguardandoValidacao => AwaitingStep(applicableOutcome, latestOutcome),
-        ActionPlanStatus.Concluido => "Encerrada. Nenhuma providência pendente.",
+        ActionPlanStatus.AguardandoValidacao => origin == ActionPlanOriginKind.DeviceVulnerability
+            ? DeviceAwaitingStep(applicableOutcome, latestOutcome)
+            : AwaitingStep(applicableOutcome, latestOutcome),
+        ActionPlanStatus.Concluido => origin == ActionPlanOriginKind.DeviceVulnerability
+            ? "Encerrada. Plano concluído não comprova que a CVE foi corrigida no dispositivo — a situação atual na fonte é " +
+              "apresentada à parte."
+            : "Encerrada. Nenhuma providência pendente.",
         ActionPlanStatus.Vencido => "Etapa legada 'vencida' — reabrir e repactuar prazo para retomar o acompanhamento.",
         _ => "Sem providência definida.",
     };
+
+    /// <summary>Texto fixo do limite desta versão para casos de dispositivo — dito sempre que a validação entra em cena.</summary>
+    public const string DeviceVerificationPending =
+        "A verificação técnica automática da correção de uma CVE em dispositivo ainda não está disponível nesta versão.";
+
+    /// <summary>
+    /// [AEGIS-JOURNEY-01] A providência de quem relatou execução num caso de dispositivo. Só a atestação humana existe
+    /// como decisão de validação aqui, e ela é dita como tal.
+    /// </summary>
+    private static string DeviceAwaitingStep(ActionPlanValidationOutcome? applicable, ActionPlanValidationOutcome? latest)
+    {
+        if (applicable == ActionPlanValidationOutcome.HumanAttested)
+            return "Atestação humana registrada — o AEGIS não verificou o dispositivo. Encerrar a ação assumindo isso; a " +
+                   "situação atual na fonte continua sendo acompanhada à parte, e não é comprovação.";
+        return latest is null
+            ? "Execução relatada — registrar uma atestação humana com evidência referenciada. " + DeviceVerificationPending
+            : "A validação registrada não fala por esta execução (é de um ciclo anterior ou anterior ao relato) — registrar " +
+              "nova atestação humana com evidência referenciada.";
+    }
 
     /// <summary>
     /// A providência de quem já relatou execução. Segue a validação APLICÁVEL ao ciclo atual; quando não há
@@ -272,15 +301,20 @@ public static class RemediationReading
     /// Por que encerrar ainda não está disponível — <c>null</c> quando está. A tela precisa DIZER o que falta;
     /// esconder o botão sem explicação faz a pessoa procurar o defeito no produto em vez de fazer o trabalho.
     /// </summary>
-    public static string? ClosureBlockedReason(ActionPlanStatus status, ActionPlanCycleBasis basis)
+    public static string? ClosureBlockedReason(
+        ActionPlanStatus status, ActionPlanCycleBasis basis,
+        ActionPlanOriginKind origin = ActionPlanOriginKind.KnightFinding)
     {
         if (status == ActionPlanStatus.Concluido) return null;
         if (!basis.HasExecutionInCurrentCycle)
             return "Encerrar exige o relato do que foi feito neste ciclo. Registre a execução primeiro — " +
                    "avançar a etapa não é o mesmo que executar.";
         if (basis.ApplicableOutcome is not { } outcome)
-            return "Encerrar exige uma decisão de validação sobre ESTA execução. Valide com uma coleta " +
-                   "posterior ao trabalho relatado, ou registre uma atestação humana com evidência.";
+            return origin == ActionPlanOriginKind.DeviceVulnerability
+                ? "Encerrar exige uma decisão de validação sobre ESTA execução: registre uma atestação humana com " +
+                  "evidência referenciada. " + DeviceVerificationPending
+                : "Encerrar exige uma decisão de validação sobre ESTA execução. Valide com uma coleta " +
+                  "posterior ao trabalho relatado, ou registre uma atestação humana com evidência.";
         if (!SupportsClosure(outcome))
             return $"A validação aplicável a este ciclo é '{OutcomeLabel(outcome)}' — ela não sustenta o " +
                    "encerramento. Retome a execução e valide de novo.";

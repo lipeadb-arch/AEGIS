@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Queries;
 using AegisScore.Application.Remediation;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
@@ -14,14 +16,17 @@ namespace AegisScore.Infrastructure.Remediation;
 
 /// <summary>
 /// [AEGIS-MVP-PRODUCT-03] Implementação da jornada de remediação de um achado do AEGIS KNIGHT.
+/// [AEGIS-JOURNEY-01] Estendida com uma segunda origem explícita — o CASO de vulnerabilidade em dispositivo (ativo × CVE)
+/// da prioridade de tratamento —, sobre o MESMO plano, a mesma trilha, o mesmo ciclo e a mesma concorrência.
 ///
 /// O que este serviço deliberadamente NÃO faz: não escreve <c>TenantControlState</c>, <c>EvidenceSignal</c>,
 /// score, cobertura, veredito de indicador nem fotografia de postura. Concluir uma ação NÃO torna um achado
 /// conforme — o diagnóstico continua sendo autoridade exclusiva da avaliação, e a ação apenas registra o que
-/// a organização decidiu fazer a respeito.
+/// a organização decidiu fazer a respeito. Num caso de dispositivo, também não escreve prioridade, criticidade,
+/// disposição da exposição, observação da fonte nem estado do conector: a prioridade é lida, nunca gravada.
 ///
 /// Isolamento: o tenant é resolvido do contexto (claim) e aplicado pelo Global Query Filter fail-closed. Uma
-/// avaliação, um achado ou uma ação de outro tenant são indistinguíveis de inexistentes.
+/// avaliação, um achado, um ativo ou uma ação de outro tenant são indistinguíveis de inexistentes.
 ///
 /// Concorrência: DUAS defesas. A explícita compara a versão que o cliente leu com a vigente (o navegador que
 /// ficou com a tela aberta recebe 409 em vez de sobrescrever); a do banco é o token de concorrência do EF na
@@ -38,15 +43,35 @@ public sealed class RemediationService : IRemediationService
     /// <summary>Teto dos campos curtos de pessoa/área.</summary>
     private const int MaxNameLength = 200;
 
+    /// <summary>Teto do identificador da CVE — o mesmo <c>HasMaxLength</c> da coluna da chave do caso.</summary>
+    private const int MaxCveLength = 40;
+
+    /// <summary>Teto da nota de uma entrada da trilha — o mesmo <c>HasMaxLength</c> da coluna.</summary>
+    private const int MaxEventNoteLength = 1000;
+
+    /// <summary>Serialização do registro de origem congelado (camelCase, como os contratos de leitura).</summary>
+    private static readonly JsonSerializerOptions OriginJson = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// O limite desta versão, dito junto de toda leitura da situação atual de um caso de dispositivo.
+    /// </summary>
+    private const string SourceReadingLimit =
+        "Verificação técnica automática da correção desta CVE no dispositivo: pendente — não disponível nesta versão. A " +
+        "situação na fonte é informação atual, não comprovação: queda de prioridade, saída da fila, ausência na leitura, " +
+        "coleta parcial, falha ou perda de vínculo não comprovam correção.";
+
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
     private readonly TimeProvider _clock;
+    private readonly IDevicePriorityQuery _priorities;
 
-    public RemediationService(AegisScoreDbContext db, ITenantContext tenant, TimeProvider clock)
+    public RemediationService(
+        AegisScoreDbContext db, ITenantContext tenant, TimeProvider clock, IDevicePriorityQuery priorities)
     {
         _db = db;
         _tenant = tenant;
         _clock = clock;
+        _priorities = priorities;
     }
 
     // ---- Criação -------------------------------------------------------------------------------------
@@ -92,6 +117,7 @@ public sealed class RemediationService : IRemediationService
             ResponsibleArea = Trim(command.ResponsibleArea, MaxNameLength),
             DueDate = command.DueDate,
             Status = ActionPlanStatus.Aberto,
+            OriginKind = ActionPlanOriginKind.KnightFinding,
             KnightIndicatorId = indicatorId,
             OriginRunId = command.RunId,
             OriginSourceType = finding.SourceType,
@@ -105,7 +131,102 @@ public sealed class RemediationService : IRemediationService
         AddEvent(plan, actor, ActionPlanEventKind.Created, now, null, ActionPlanStatus.Aberto,
             $"Ação criada a partir do achado {indicatorId} da avaliação {command.RunId:D} " +
             $"({DescribeOrigin(finding.SourceType, finding.Mode)}).");
-        await SaveWithConcurrencyGuardAsync(ct);
+        await SaveWithConcurrencyGuardAsync(ct, plan);
+
+        return await GetAsync(plan.Id, ct);
+    }
+
+    /// <summary>
+    /// [AEGIS-JOURNEY-01] Cria um plano a partir de UM caso de vulnerabilidade em dispositivo. O caso e o contexto que o
+    /// sustenta são obtidos AQUI, pela autoridade da prioridade: o pedido só identifica ativo + CVE e os campos do plano.
+    /// </summary>
+    public async Task<ActionPlanView?> CreateForDeviceCaseAsync(
+        CreateDeviceCaseActionPlanCommand command, RemediationActor actor, CancellationToken ct = default)
+    {
+        EnsureTenant();
+
+        var cve = DevicePriorityNarrative.NormalizeCve(command.CveId);
+        if (cve.Length == 0 || cve.Length > MaxCveLength)
+            throw new ActionPlanValidationException("Informe o identificador da CVE do caso.");
+        var title = Trim(command.Title, MaxTitleLength);
+        if (string.IsNullOrWhiteSpace(title))
+            throw new ActionPlanValidationException("O título da ação é obrigatório.");
+
+        // O CASO é lido pela autoridade da prioridade — a mesma leitura coerente do detalhe do dispositivo. Faixa, motivo,
+        // fatores ou vínculos que o navegador enviar não são lidos: o contrato de criação nem os tem.
+        var reading = await _priorities.GetCaseAsync(command.AssetId, cve, ct);
+        if (reading is null) return null;   // ativo inexistente neste tenant — indistinguível de outro tenant
+
+        // Segundo clique: abre o plano existente ANTES de qualquer outra recusa — ele continua sendo o plano do caso,
+        // mesmo que o caso tenha saído da fila ou mudado de faixa desde então.
+        var active = await FindActiveDeviceCaseAsync(command.AssetId, cve, exceptPlanId: null, ct);
+        if (active is not null)
+            throw new ActionPlanConflictException(
+                "Já existe um plano ativo para esta CVE neste dispositivo. Abra o plano existente em vez de criar outro.",
+                active);
+
+        if (reading.State != DevicePriorityCaseStates.Open || reading.Case is not { } c
+            || reading.ThreatId is not { } threatId || reading.ExposureId is not { } exposureId)
+            throw new ActionPlanValidationException(
+                $"Não é possível abrir um plano a partir deste caso agora — {reading.StateLabel.ToLowerInvariant()}. " +
+                "Um plano nasce de um caso em aberto e atribuível na leitura atual da prioridade de tratamento.");
+
+        var origin = new DeviceCaseOrigin(
+            Schema: DeviceCaseOrigin.SchemaV1,
+            AssetId: reading.AssetId,
+            AssetName: reading.AssetName,
+            AssetNameIsPlaceholder: reading.NameIsPlaceholder,
+            CveId: c.CveId,
+            CveTitle: c.Title,
+            EvaluatedAt: reading.EvaluatedAt,
+            PolicyCode: reading.PolicyCode,
+            PolicyVersion: reading.PolicyVersion,
+            CaseBand: c.Band,
+            CaseBandLabel: c.BandLabel,
+            CaseReason: c.Reason,
+            WasDeterminingCase: reading.IsDeterminingCase,
+            DeviceBand: reading.DeviceBand,
+            DeviceBandLabel: reading.DeviceBandLabel,
+            DevicePositionReason: reading.DevicePositionReason,
+            SeverityLabel: c.SeverityLabel,
+            CvssScore: c.CvssScore,
+            ExploitLabel: c.ExploitLabel,
+            Epss: c.Epss,
+            Source: c.Source,
+            FirstSeenAt: c.FirstSeenAt,
+            AcquiredAt: c.AcquiredAt,
+            AcquisitionLabel: c.AcquisitionLabel,
+            Factors: reading.Factors,
+            Caveats: reading.Caveats,
+            InformationLabel: reading.InformationLabel,
+            AbsenceLabel: reading.AbsenceLabel);
+
+        var now = _clock.GetUtcNow();
+        var plan = new ActionPlan
+        {
+            RiskId = null,                       // nenhum risco fictício
+            Treatment = RiskTreatmentType.Mitigar,
+            Title = title,
+            Description = Trim(command.ProposedAction, MaxTextLength),
+            ResponsiblePerson = Trim(command.ResponsiblePerson, MaxNameLength),
+            ResponsibleArea = Trim(command.ResponsibleArea, MaxNameLength),
+            DueDate = command.DueDate,
+            Status = ActionPlanStatus.Aberto,
+            OriginKind = ActionPlanOriginKind.DeviceVulnerability,
+            OriginAssetId = reading.AssetId,
+            OriginCveId = cve,
+            OriginThreatId = threatId,
+            OriginExposureId = exposureId,
+            OriginContextJson = JsonSerializer.Serialize(origin, OriginJson),
+            CycleStartedAt = now,
+            Version = 1,
+        };
+
+        _db.ActionPlans.Add(plan);
+        AddEvent(plan, actor, ActionPlanEventKind.Created, now, null, ActionPlanStatus.Aberto,
+            $"Plano criado a partir do caso {c.CveId} no dispositivo {reading.AssetName} — {c.BandLabel} pela política " +
+            $"{reading.PolicyCode} v{reading.PolicyVersion}, leitura de {CrossSourceCorrelationEvaluator.Utc(reading.EvaluatedAt)}.");
+        await SaveWithConcurrencyGuardAsync(ct, plan);
 
         return await GetAsync(plan.Id, ct);
     }
@@ -117,12 +238,20 @@ public sealed class RemediationService : IRemediationService
     {
         EnsureTenant();
 
-        // Somente ações de ACHADO. Os planos legados de tratamento de risco continuam pertencendo ao registro
-        // de riscos e não são reapresentados aqui como se fossem remediações de identidade.
+        // Os planos legados de tratamento de risco continuam pertencendo ao registro de riscos e nunca são
+        // reapresentados aqui como se fossem remediações. O recorte padrão continua sendo SÓ os achados do KNIGHT.
         var query = _db.ActionPlans.AsNoTracking()
             .Include(p => p.Validations)
             .Include(p => p.Events)
-            .Where(p => p.KnightIndicatorId != null);
+            .AsQueryable();
+        query = filter.Origin switch
+        {
+            ActionPlanOriginScope.DeviceVulnerability =>
+                query.Where(p => p.OriginKind == ActionPlanOriginKind.DeviceVulnerability),
+            ActionPlanOriginScope.All =>
+                query.Where(p => p.KnightIndicatorId != null || p.OriginKind == ActionPlanOriginKind.DeviceVulnerability),
+            _ => query.Where(p => p.KnightIndicatorId != null),
+        };
 
         var indicatorId = (filter.IndicatorId ?? "").Trim();
         if (indicatorId.Length > 0)
@@ -135,6 +264,12 @@ public sealed class RemediationService : IRemediationService
             query = query.Where(p => p.OriginSourceType == sourceType);
         if (filter.Mode is { } mode)
             query = query.Where(p => p.OriginMode == mode);
+
+        if (filter.AssetId is { } assetId)
+            query = query.Where(p => p.OriginAssetId == assetId);
+        var cve = DevicePriorityNarrative.NormalizeCve(filter.CveId);
+        if (cve.Length > 0)
+            query = query.Where(p => p.OriginCveId == cve);
 
         if (filter.ActiveOnly)
             query = query.Where(p =>
@@ -158,6 +293,71 @@ public sealed class RemediationService : IRemediationService
             .Include(p => p.Events)
             .FirstOrDefaultAsync(p => p.Id == id, ct);
         return plan is null ? null : ToView(plan);
+    }
+
+    /// <summary>
+    /// [AEGIS-JOURNEY-01] A situação ATUAL do caso de origem, lida agora pela autoridade da prioridade. Não toca o plano:
+    /// nenhuma leitura daqui muda etapa, validação ou registro de origem.
+    /// </summary>
+    public async Task<DeviceCaseSourceReadingView?> GetDeviceCaseReadingAsync(Guid id, CancellationToken ct = default)
+    {
+        EnsureTenant();
+        var plan = await _db.ActionPlans.AsNoTracking()
+            .Where(p => p.Id == id)
+            .Select(p => new { p.Id, p.OriginKind, p.OriginAssetId, p.OriginCveId, p.OriginContextJson })
+            .FirstOrDefaultAsync(ct);
+        if (plan is null) return null;
+        if (plan.OriginKind != ActionPlanOriginKind.DeviceVulnerability
+            || plan.OriginAssetId is not { } assetId || string.IsNullOrEmpty(plan.OriginCveId))
+            throw new ActionPlanValidationException(
+                "Este plano não nasceu de um caso de vulnerabilidade em dispositivo; não há situação de fonte a acompanhar aqui.");
+
+        var origin = ReadOrigin(plan.OriginContextJson);
+        var reading = await _priorities.GetCaseAsync(assetId, plan.OriginCveId, ct);
+        if (reading is null)
+            return new DeviceCaseSourceReadingView(
+                ActionPlanId: plan.Id,
+                EvaluatedAt: _clock.GetUtcNow(),
+                State: DeviceCaseSourceReadingView.AssetNotFound,
+                StateLabel: "Dispositivo não encontrado no inventário",
+                Explanation:
+                    "O dispositivo de origem não está mais no inventário deste cliente, e a situação atual do caso não pode ser " +
+                    "lida. O plano e o registro de origem continuam preservados — ausência do dispositivo não comprova correção.",
+                AssetFound: false,
+                AssetName: null,
+                Case: null,
+                IsDeterminingCase: false,
+                DeviceBandLabel: null,
+                DispositionLabel: null,
+                AbsenceLabel: null,
+                Caveats: Array.Empty<CrossSourceNoteDto>(),
+                ComparisonNote: null,
+                VerificationNote: SourceReadingLimit);
+
+        var notes = new List<string>();
+        if (origin is not null && reading.Case is { } current && current.Band != origin.CaseBand)
+            notes.Add($"A faixa atual deste caso ({current.BandLabel}) difere da registrada na criação do plano " +
+                      $"({origin.CaseBandLabel}). A diferença reflete a leitura atual da política — não comprova correção.");
+        if (origin is not null && origin.PolicyVersion != reading.PolicyVersion)
+            notes.Add($"A leitura atual usa a política {reading.PolicyCode} v{reading.PolicyVersion}; o registro de origem, a " +
+                      $"v{origin.PolicyVersion}.");
+
+        return new DeviceCaseSourceReadingView(
+            ActionPlanId: plan.Id,
+            EvaluatedAt: reading.EvaluatedAt,
+            State: reading.State,
+            StateLabel: reading.StateLabel,
+            Explanation: reading.StateExplanation,
+            AssetFound: true,
+            AssetName: reading.AssetName,
+            Case: reading.Case,
+            IsDeterminingCase: reading.IsDeterminingCase,
+            DeviceBandLabel: reading.DeviceBandLabel,
+            DispositionLabel: reading.DispositionLabel,
+            AbsenceLabel: reading.AbsenceLabel,
+            Caveats: reading.Caveats,
+            ComparisonNote: notes.Count == 0 ? null : string.Join(" ", notes),
+            VerificationNote: SourceReadingLimit);
     }
 
     // ---- Mutações ------------------------------------------------------------------------------------
@@ -205,14 +405,27 @@ public sealed class RemediationService : IRemediationService
                 "Campos alterados: " + string.Join(", ", changes) + ".");
 
         if (command.Status is { } target && target != plan.Status)
+        {
+            // [AEGIS-JOURNEY-01] Reabrir um plano de caso de dispositivo enquanto OUTRO plano ativo ocupa o mesmo caso
+            // criaria dois ciclos simultâneos. O índice parcial barra isso no PostgreSQL; a checagem aqui diz qual plano
+            // abrir em qualquer provedor.
+            if (plan.Status == ActionPlanStatus.Concluido && ActionPlan.IsActiveStatus(target)
+                && plan.ResolveOriginKind() == ActionPlanOriginKind.DeviceVulnerability
+                && plan.OriginAssetId is { } assetId && plan.OriginCveId is { } cve
+                && await FindActiveDeviceCaseAsync(assetId, cve, plan.Id, ct) is { } other)
+                throw new ActionPlanConflictException(
+                    "Já existe outro plano ativo para esta CVE neste dispositivo; reabrir este criaria dois ciclos " +
+                    "simultâneos. Abra o plano ativo.",
+                    other);
             ApplyTransition(plan, target, actor, now, note: null);
+        }
 
         if (changes.Count == 0 && command.Status is null)
             return ToView(plan);   // nada a fazer: não incrementa versão nem escreve trilha vazia
 
         plan.Version++;
         plan.UpdatedAt = now;
-        await SaveWithConcurrencyGuardAsync(ct);
+        await SaveWithConcurrencyGuardAsync(ct, plan);
         return await GetAsync(plan.Id, ct);
     }
 
@@ -245,7 +458,7 @@ public sealed class RemediationService : IRemediationService
 
         plan.Version++;
         plan.UpdatedAt = now;
-        await SaveWithConcurrencyGuardAsync(ct);
+        await SaveWithConcurrencyGuardAsync(ct, plan);
         return await GetAsync(plan.Id, ct);
     }
 
@@ -256,10 +469,25 @@ public sealed class RemediationService : IRemediationService
         var plan = await LoadForWriteAsync(id, command.ExpectedVersion, ct);
         if (plan is null) return null;
 
-        var indicatorId = plan.KnightIndicatorId ?? "";
-        if (indicatorId.Length == 0)
-            throw new ActionPlanValidationException(
-                "Esta ação não veio de um achado do KNIGHT; não há indicador a validar.");
+        string indicatorId;
+        if (plan.ResolveOriginKind() == ActionPlanOriginKind.DeviceVulnerability)
+        {
+            // [AEGIS-JOURNEY-01] A comparação de avaliações do KNIGHT compara INDICADORES de identidade. Aplicá-la a uma CVE
+            // de dispositivo fabricaria uma comprovação que ela não sustenta — a recusa é da API, não só da tela.
+            if (command.ValidationRunId is not null)
+                throw new ActionPlanValidationException(
+                    "A comparação com uma nova avaliação do AEGIS KNIGHT não se aplica a um caso de vulnerabilidade em " +
+                    "dispositivo: ela compara indicadores de identidade, não CVEs. Registre uma atestação humana com " +
+                    "evidência referenciada. " + RemediationReading.DeviceVerificationPending);
+            indicatorId = plan.OriginCveId ?? "";
+        }
+        else
+        {
+            indicatorId = plan.KnightIndicatorId ?? "";
+            if (indicatorId.Length == 0)
+                throw new ActionPlanValidationException(
+                    "Esta ação não veio de um achado do KNIGHT; não há indicador a validar.");
+        }
 
         var now = _clock.GetUtcNow();
         ActionPlanValidation validation;
@@ -315,6 +543,7 @@ public sealed class RemediationService : IRemediationService
             validation = new ActionPlanValidation
             {
                 ActionPlanId = plan.Id,
+                // Num caso de dispositivo, o "indicador" validado é a CVE do caso — denormalizado como nos achados.
                 IndicatorId = indicatorId,
                 Method = ActionPlanValidationMethod.HumanEvidence,
                 Outcome = ActionPlanValidationOutcome.HumanAttested,
@@ -350,7 +579,7 @@ public sealed class RemediationService : IRemediationService
 
         plan.Version++;
         plan.UpdatedAt = now;
-        await SaveWithConcurrencyGuardAsync(ct);
+        await SaveWithConcurrencyGuardAsync(ct, plan);
         return await GetAsync(plan.Id, ct);
     }
 
@@ -379,6 +608,22 @@ public sealed class RemediationService : IRemediationService
         return existing;
     }
 
+    /// <summary>
+    /// [AEGIS-JOURNEY-01] Plano ATIVO já existente para o mesmo CASO — (tenant implícito, ativo, CVE). A chave é canônica:
+    /// nome do dispositivo, posição na fila ou faixa não entram, então um caso que mudou de faixa continua sendo o mesmo.
+    /// </summary>
+    private async Task<Guid?> FindActiveDeviceCaseAsync(Guid assetId, string cve, Guid? exceptPlanId, CancellationToken ct) =>
+        await _db.ActionPlans.AsNoTracking()
+            .Where(p => p.OriginKind == ActionPlanOriginKind.DeviceVulnerability
+                        && p.OriginAssetId == assetId
+                        && p.OriginCveId == cve
+                        && (exceptPlanId == null || p.Id != exceptPlanId)
+                        && (p.Status == ActionPlanStatus.Aberto
+                            || p.Status == ActionPlanStatus.EmAndamento
+                            || p.Status == ActionPlanStatus.AguardandoValidacao))
+            .Select(p => (Guid?)p.Id)
+            .FirstOrDefaultAsync(ct);
+
     /// <summary>Descrição curta da procedência, para a trilha dizer de qual coleta a ação nasceu.</summary>
     private static string DescribeOrigin(KnightSourceType source, KnightAssessmentMode mode) =>
         mode == KnightAssessmentMode.Demo
@@ -405,17 +650,18 @@ public sealed class RemediationService : IRemediationService
     }
 
     /// <summary>
-    /// Converte em 409 as DUAS corridas que o banco decide, e só elas:
+    /// Converte em 409 as corridas que o banco decide, e só elas:
     ///
     ///   • o token de concorrência do EF perdido — alguém gravou entre a leitura e o UPDATE;
-    ///   • a violação do índice único PARCIAL de ação ativa por achado — duas criações (ou uma criação e uma
-    ///     reabertura) passaram juntas pela checagem em memória e o banco desempatou.
+    ///   • a violação de um índice único PARCIAL de plano ativo — por achado ou, desde [AEGIS-JOURNEY-01], por caso de
+    ///     dispositivo: duas criações (ou uma criação e uma reabertura) passaram juntas pela checagem em memória e o banco
+    ///     desempatou. No caso de dispositivo, o 409 devolve o plano que ganhou, para o segundo clique abri-lo.
     ///
-    /// A segunda é reconhecida pelo NOME do índice, não por "erro de chave duplicada" em geral. Traduzir
+    /// As violações são reconhecidas pelo NOME do índice, não por "erro de chave duplicada" em geral. Traduzir
     /// qualquer 23505 em "já existe ação ativa" mentiria sobre qualquer outra unicidade violada e esconderia
     /// um defeito real atrás de uma mensagem de negócio plausível.
     /// </summary>
-    private async Task SaveWithConcurrencyGuardAsync(CancellationToken ct)
+    private async Task SaveWithConcurrencyGuardAsync(CancellationToken ct, ActionPlan? subject = null)
     {
         try
         {
@@ -427,29 +673,41 @@ public sealed class RemediationService : IRemediationService
                 "Esta ação foi alterada por outra pessoa enquanto a sua gravação estava em curso. " +
                 "Recarregue para ver a versão atual antes de gravar.");
         }
-        catch (DbUpdateException ex) when (IsActiveFindingIndexViolation(ex))
+        catch (DbUpdateException ex) when (IsIndexViolation(ex, ActiveFindingIndexName))
         {
             throw new ActionPlanConflictException(
                 "Outra pessoa acabou de abrir (ou reabrir) uma ação para este mesmo achado nesta fonte. " +
                 "Recarregue a lista e trabalhe na ação existente.");
         }
+        catch (DbUpdateException ex) when (IsIndexViolation(ex, ActiveDeviceCaseIndexName))
+        {
+            var existing = subject is { OriginAssetId: { } assetId, OriginCveId: { } cve }
+                ? await FindActiveDeviceCaseAsync(assetId, cve, subject.Id, ct)
+                : null;
+            throw new ActionPlanConflictException(
+                "Outra pessoa acabou de abrir (ou reabrir) um plano para esta mesma CVE neste dispositivo. " +
+                "Abra o plano existente em vez de criar outro.",
+                existing);
+        }
     }
 
     /// <summary>
-    /// A exceção é a violação do índice <c>UX_ActionPlans_ActiveByFinding</c>? A checagem olha o NOME da
-    /// restrição no texto do erro do provedor — o suficiente para não confundir esta invariante com nenhuma
-    /// outra, e sem acoplar a Infrastructure ao tipo de exceção do Npgsql.
+    /// A exceção é a violação do índice indicado? A checagem olha o NOME da restrição no texto do erro do provedor — o
+    /// suficiente para não confundir uma invariante com outra, e sem acoplar a Infrastructure ao tipo de exceção do Npgsql.
     /// </summary>
-    private static bool IsActiveFindingIndexViolation(DbUpdateException ex)
+    private static bool IsIndexViolation(DbUpdateException ex, string indexName)
     {
         for (Exception? e = ex; e is not null; e = e.InnerException)
-            if (e.Message.Contains(ActiveFindingIndexName, StringComparison.OrdinalIgnoreCase))
+            if (e.Message.Contains(indexName, StringComparison.OrdinalIgnoreCase))
                 return true;
         return false;
     }
 
     /// <summary>Nome do índice único parcial de ação ativa por achado — o mesmo declarado no DbContext.</summary>
     internal const string ActiveFindingIndexName = "UX_ActionPlans_ActiveByFinding";
+
+    /// <summary>[AEGIS-JOURNEY-01] Nome do índice único parcial de plano ativo por caso de dispositivo.</summary>
+    internal const string ActiveDeviceCaseIndexName = "UX_ActionPlans_ActiveByDeviceCase";
 
     /// <summary>
     /// Aplica uma transição PERMITIDA e registra a mudança na trilha. A permissão é decidida contra o que o
@@ -467,7 +725,7 @@ public sealed class RemediationService : IRemediationService
         if (!RemediationReading.IsAllowedTransition(plan.Status, target, basis))
         {
             var reason = target == ActionPlanStatus.Concluido
-                ? RemediationReading.ClosureBlockedReason(plan.Status, basis)
+                ? RemediationReading.ClosureBlockedReason(plan.Status, basis, plan.ResolveOriginKind())
                 : null;
             throw new ActionPlanValidationException(
                 $"Transição não permitida: de '{RemediationReading.StatusLabel(plan.Status)}' para " +
@@ -517,7 +775,7 @@ public sealed class RemediationService : IRemediationService
             ActorName = actor.DisplayName ?? "",
             FromStatus = from,
             ToStatus = to,
-            Note = note,
+            Note = Trim(note, MaxEventNoteLength),
         });
 
     /// <summary>
@@ -584,12 +842,30 @@ public sealed class RemediationService : IRemediationService
     }
 
     /// <summary>
+    /// Lê o registro de origem congelado. Um registro ilegível NÃO é substituído pela leitura atual — a tela diz que
+    /// ele não está disponível, em vez de apresentar a situação de agora como se fosse a que motivou o plano.
+    /// </summary>
+    private static DeviceCaseOrigin? ReadOrigin(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<DeviceCaseOrigin>(json, OriginJson);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Compõe a visão de leitura. Duas coisas que ela apresenta SEPARADAS de propósito: a validação mais
     /// recente (o histórico) e a validação APLICÁVEL ao ciclo atual (o que sustenta a decisão de hoje). Uma
     /// ação reaberta tem as duas, e são diferentes — colapsá-las faria a tela reciclar uma comprovação velha.
     /// </summary>
     private static ActionPlanView ToView(ActionPlan p)
     {
+        var origin = p.ResolveOriginKind();
         var cycleStart = RemediationReading.CycleStartOf(p);
         var ordered = p.Validations
             .OrderByDescending(v => v.DecidedAt).ThenByDescending(v => v.Id)
@@ -633,7 +909,7 @@ public sealed class RemediationService : IRemediationService
             p.IsOverdue,
             p.IsActive,
             RemediationReading.NextStep(
-                p.Status, p.IsOverdue, applicableEntity?.Outcome, ordered.FirstOrDefault()?.Outcome),
+                p.Status, p.IsOverdue, applicableEntity?.Outcome, ordered.FirstOrDefault()?.Outcome, origin),
             p.ExecutionNotes,
             p.ExecutionEvidenceRef,
             p.ExecutedAt,
@@ -644,8 +920,10 @@ public sealed class RemediationService : IRemediationService
             validations.FirstOrDefault(),
             applicable,
             RemediationReading.AllowedTransitions(p.Status, basis),
-            RemediationReading.ClosureBlockedReason(p.Status, basis),
+            RemediationReading.ClosureBlockedReason(p.Status, basis, origin),
             validations,
-            events);
+            events,
+            origin,
+            origin == ActionPlanOriginKind.DeviceVulnerability ? ReadOrigin(p.OriginContextJson) : null);
     }
 }

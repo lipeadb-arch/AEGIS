@@ -113,6 +113,40 @@ public class ActionPlan : Entity, ITenantOwned
     /// <summary>Demo ou Live — o mesmo eixo da fonte visto pelo outro lado, guardado explicitamente.</summary>
     public KnightAssessmentMode? OriginMode { get; set; }
 
+    // ---- [AEGIS-JOURNEY-01] Origem explícita e caso de vulnerabilidade em dispositivo ------------------
+    // A nova origem estende ESTE plano — responsável, prazo, execução, ciclo, trilha e concorrência são os mesmos. A
+    // chave do caso é canônica (ativo do AEGIS + identificador da CVE): nome, hostname, posição na fila ou faixa não
+    // identificam nada. Não há FK para o ativo de propósito: o plano precisa continuar acessível mesmo que o ativo saia
+    // do inventário, e o vínculo é verificado pelo servidor na criação e relido na leitura atual.
+
+    /// <summary>
+    /// Origem EXPLÍCITA do plano. Nula nos planos gravados antes dela — nesses, a origem continua derivada como antes
+    /// (ver <see cref="ResolveOriginKind"/>).
+    /// </summary>
+    public ActionPlanOriginKind? OriginKind { get; set; }
+
+    /// <summary>Ativo (dispositivo) do caso de origem — identificador do AEGIS, isolado por tenant.</summary>
+    public Guid? OriginAssetId { get; set; }
+
+    /// <summary>Identificador da CVE do caso de origem, normalizado (maiúsculas). Com o ativo, forma a chave do caso.</summary>
+    public string? OriginCveId { get; set; }
+
+    /// <summary>Entrada do catálogo de ameaças que a fonte associou ao caso na criação — vínculo verificável.</summary>
+    public Guid? OriginThreatId { get; set; }
+
+    /// <summary>Exposição consolidada ativo × CVE que sustentava o caso na criação — vínculo verificável.</summary>
+    public Guid? OriginExposureId { get; set; }
+
+    /// <summary>
+    /// REGISTRO DE ORIGEM congelado: o contexto que motivou o plano (faixa e versão da política, fatores, fonte, datas,
+    /// ressalvas), obtido pelo servidor na criação. Nunca é atualizado — a leitura atual é outra coisa.
+    /// </summary>
+    public string? OriginContextJson { get; set; }
+
+    /// <summary>A origem do plano: a explícita quando gravada; nos planos anteriores a ela, a derivada como sempre foi.</summary>
+    public ActionPlanOriginKind ResolveOriginKind() => OriginKind
+        ?? (KnightIndicatorId is not null ? ActionPlanOriginKind.KnightFinding : ActionPlanOriginKind.RiskTreatment);
+
     /// <summary>
     /// Início do CICLO vigente de trabalho. Nasce com a ação e é REPACTUADO quando uma ação encerrada é
     /// reaberta. É o que impede uma validação antiga de continuar autorizando a conclusão do ciclo novo: a
@@ -147,9 +181,11 @@ public class ActionPlan : Entity, ITenantOwned
     /// <summary>Validações registradas — cada uma com método, desfecho e evidência próprios.</summary>
     public ICollection<ActionPlanValidation> Validations { get; set; } = new List<ActionPlanValidation>();
 
-    public bool IsOverdue =>
-        Status != ActionPlanStatus.Concluido && DueDate is { } d &&
-        d < DateOnly.FromDateTime(DateTime.UtcNow);
+    public bool IsOverdue => IsOverdueOn(Status, DueDate, DateOnly.FromDateTime(DateTime.UtcNow));
+
+    /// <summary>A regra ÚNICA de atraso — também usada por contagens que não materializam o plano inteiro.</summary>
+    public static bool IsOverdueOn(ActionPlanStatus status, DateOnly? dueDate, DateOnly today) =>
+        status != ActionPlanStatus.Concluido && dueDate is { } d && d < today;
 
     /// <summary>
     /// [AEGIS-MVP-PRODUCT-03] Uma ação ATIVA ocupa a origem: enquanto ela existe, um novo clique em "criar

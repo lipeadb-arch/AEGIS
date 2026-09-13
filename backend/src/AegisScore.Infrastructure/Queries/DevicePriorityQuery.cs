@@ -273,11 +273,7 @@ public sealed class DevicePriorityQuery : IDevicePriorityQuery
 
         return await CrossSourceFactReader.InReadSnapshotAsync(_db, async () =>
         {
-            var asset = await _db.Assets.AsNoTracking()
-                .Where(a => a.Id == assetId)
-                .Select(a => new AssetInfo(a.Id, a.Name, a.NameOrigin, a.Criticality, a.CriticalityDeclaredValue,
-                    a.CriticalityDeclaredAt, a.CriticalityDeclaredByName, a.CriticalityDeclarationNote, 0))
-                .FirstOrDefaultAsync(ct);
+            var asset = await AssetAsync(assetId, ct);
             if (asset is null) return null;
 
             var connectors = await CrossSourceFactReader.LoadConnectorsAsync(_db, ct);
@@ -329,6 +325,103 @@ public sealed class DevicePriorityQuery : IDevicePriorityQuery
                 StoredOpenCases: a.StoredOpenCases);
         }, ct);
     }
+
+    // ---- [AEGIS-JOURNEY-01] Um caso (ativo × CVE) -------------------------------------------------------------------
+
+    /// <summary>
+    /// UM caso na leitura atual, pela MESMA avaliação coerente do detalhe: a CVE só é "em aberto" quando está entre os casos
+    /// elegíveis que a autoridade lista; fora deles, o estado diz o que a fonte informa (disposição, não reportada numa
+    /// aquisição completa, ausência não verificável, atribuição não verificável) — nunca "corrigida".
+    /// </summary>
+    public async Task<DevicePriorityCaseReading?> GetCaseAsync(Guid assetId, string cveId, CancellationToken ct = default)
+    {
+        var cve = DevicePriorityNarrative.NormalizeCve(cveId);
+        var now = _clock.GetUtcNow();
+
+        return await CrossSourceFactReader.InReadSnapshotAsync(_db, async () =>
+        {
+            var asset = await AssetAsync(assetId, ct);
+            if (asset is null) return null;
+
+            var connectors = await CrossSourceFactReader.LoadConnectorsAsync(_db, ct);
+            await HitAsync(CheckpointFactsPending, ct);
+            var vulnIds = connectors.Values.Where(c => c.Role == CrossSourceRole.Vulnerabilities).Select(c => c.ConnectorId).ToList();
+            var a = DevicePriorityEvaluator.Evaluate(
+                (await LoadPriorityFactsAsync(new[] { asset }, connectors, vulnIds, ct))[asset.Id], _policy, now);
+
+            var determining = a.Best is null ? default : (await CasesAsync(asset.Id, a, 1, 1, ct)).Items.FirstOrDefault();
+            var match = cve.Length == 0 ? default : (await CasesAsync(asset.Id, a, 1, 1, ct, cve)).Items.FirstOrDefault();
+
+            // Fora dos casos elegíveis: o que a fonte registra sobre esta CVE neste dispositivo — só para DIZER o estado.
+            var observed = cve.Length == 0 || vulnIds.Count == 0 ? new() : await (
+                    from o in _db.AssetThreatObservations.AsNoTracking()
+                    join x in _db.AssetThreatExposures.AsNoTracking() on o.AssetThreatExposureId equals x.Id
+                    join t in _db.Threats.AsNoTracking() on x.ThreatId equals t.Id
+                    where x.AssetId == asset.Id && vulnIds.Contains(o.ConnectorConfigId) && t.Code.ToUpper() == cve
+                    select new { o.ConnectorConfigId, o.LastSeenAt, o.LifecycleState, o.ResolvedAt, x.Status })
+                .ToListAsync(ct);
+            bool Eligible(Guid connector, DateTimeOffset marker) =>
+                a.EligibleMarkers.TryGetValue(connector, out var m) && m.Contains(marker);
+            var lastNoLongerReported = observed
+                .Where(o => o.LifecycleState == ObservationLifecycle.Resolved && o.ResolvedAt != null)
+                .Select(o => o.ResolvedAt).Max();
+
+            string state;
+            string? disposition = null;
+            if (match.Dto is not null)
+                state = DevicePriorityCaseStates.Open;
+            else if (observed.FirstOrDefault(o => o.LifecycleState == ObservationLifecycle.Open
+                         && o.Status != ExposureStatus.Active && Eligible(o.ConnectorConfigId, o.LastSeenAt)) is { } disposed)
+            {
+                state = DevicePriorityCaseStates.OpenWithDisposition;
+                disposition = DispositionLabel(disposed.Status);
+            }
+            else if (a.Source.State != CrossSourceVulnerabilitySourceStates.Attributable)
+                state = DevicePriorityCaseStates.NotAttributable;
+            else if (observed.Any(o => o.LifecycleState == ObservationLifecycle.Open))
+                state = DevicePriorityCaseStates.OutsideEligibleAcquisitions;
+            else if (a.AbsenceState is DevicePriorityAbsenceStates.Conclusive or DevicePriorityAbsenceStates.ConclusiveAttemptFailed)
+                state = DevicePriorityCaseStates.NotReported;
+            else
+                state = DevicePriorityCaseStates.AbsenceNotVerifiable;
+
+            return new DevicePriorityCaseReading(
+                AssetId: asset.Id,
+                AssetName: asset.Name,
+                NameIsPlaceholder: asset.NameOrigin == AssetNameOrigin.Placeholder,
+                EvaluatedAt: now,
+                PolicyCode: DevicePriorityPolicy.Code,
+                PolicyVersion: DevicePriorityPolicy.Version,
+                CveId: match.Dto?.CveId ?? cve,
+                State: state,
+                StateLabel: DevicePriorityNarrative.CaseStateLabel(state),
+                StateExplanation: DevicePriorityNarrative.CaseStateExplanation(state, a, disposition, lastNoLongerReported),
+                DeviceStatus: a.Status,
+                DeviceBand: BandOf(a),
+                DeviceBandLabel: DevicePriorityNarrative.StatusBandLabel(a),
+                DevicePositionReason: DevicePriorityNarrative.PositionReason(a, determining.Facts),
+                Case: match.Dto,
+                IsDeterminingCase: match.Key is not null && determining.Key is not null && match.Key.ThreatId == determining.Key.ThreatId,
+                DispositionLabel: disposition,
+                LastNoLongerReportedAt: lastNoLongerReported,
+                Factors: match.Facts is { } f
+                    ? DevicePriorityNarrative.CaseFactors(a, f, match.Key!.SeverityOrder, match.Key.ExploitOrder)
+                    : Array.Empty<DevicePriorityFactorDto>(),
+                Caveats: Caveats(a, match.Facts),
+                AbsenceState: a.AbsenceState,
+                AbsenceLabel: DevicePriorityNarrative.AbsenceLabel(a),
+                InformationLabel: DevicePriorityNarrative.InformationLabel(a, match.Facts ?? determining.Facts),
+                ThreatId: match.Key?.ThreatId,
+                ExposureId: match.Key?.ExposureId);
+        }, ct);
+    }
+
+    private Task<AssetInfo?> AssetAsync(Guid assetId, CancellationToken ct) =>
+        _db.Assets.AsNoTracking()
+            .Where(a => a.Id == assetId)
+            .Select(a => new AssetInfo(a.Id, a.Name, a.NameOrigin, a.Criticality, a.CriticalityDeclaredValue,
+                a.CriticalityDeclaredAt, a.CriticalityDeclaredByName, a.CriticalityDeclarationNote, 0))
+            .FirstOrDefaultAsync(ct);
 
     // ---- Fatos ------------------------------------------------------------------------------------------------------
 
@@ -382,13 +475,15 @@ public sealed class DevicePriorityQuery : IDevicePriorityQuery
     // ---- Casos ------------------------------------------------------------------------------------------------------
 
     private sealed record CasePage(
-        DevicePriorityCasePageDto Page, IReadOnlyList<(DevicePriorityCaseFacts Facts, DevicePriorityCaseDto Dto)> Items);
+        DevicePriorityCasePageDto Page, IReadOnlyList<(DevicePriorityCaseFacts Facts, DevicePriorityCaseDto Dto, CaseKey Key)> Items);
 
     /// <summary>
     /// Casos em aberto (disposição ativa) do dispositivo, SÓ nas marcas elegíveis de cada conector usável, na ordem da
-    /// política — ordenados e paginados no banco; detalhe e proveniência só da página.
+    /// política — ordenados e paginados no banco; detalhe e proveniência só da página. <paramref name="cve"/> (normalizada)
+    /// restringe a UM caso sem mudar nenhuma outra regra.
     /// </summary>
-    private async Task<CasePage> CasesAsync(Guid assetId, DevicePriorityAssessment a, int page, int size, CancellationToken ct)
+    private async Task<CasePage> CasesAsync(
+        Guid assetId, DevicePriorityAssessment a, int page, int size, CancellationToken ct, string? cve = null)
     {
         IQueryable<CaseKey>? keys = null;
         foreach (var (connectorId, markers) in a.EligibleMarkers.OrderBy(m => m.Key))
@@ -408,11 +503,12 @@ public sealed class DevicePriorityQuery : IDevicePriorityQuery
                     ExposureId = x.Id, ThreatId = t.ThreatId, Code = t.Code,
                     SeverityOrder = t.SeverityOrder, ExploitOrder = t.ExploitOrder, Cvss = t.Cvss,
                 };
+            if (cve is not null) part = part.Where(k => k.Code.ToUpper() == cve);
             keys = keys is null ? part : keys.Union(part);
         }
         if (keys is null)
             return new CasePage(new DevicePriorityCasePageDto(0, page, size, Array.Empty<DevicePriorityCaseDto>()),
-                Array.Empty<(DevicePriorityCaseFacts, DevicePriorityCaseDto)>());
+                Array.Empty<(DevicePriorityCaseFacts, DevicePriorityCaseDto, CaseKey)>());
 
         var total = await keys.CountAsync(ct);
         // Ordem no banco = a chave FINAL do avaliador (DevicePriorityPolicy.Compare): faixa FINAL — gerada da própria tabela
@@ -430,7 +526,7 @@ public sealed class DevicePriorityQuery : IDevicePriorityQuery
             .ToListAsync(ct);
         if (pageKeys.Count == 0)
             return new CasePage(new DevicePriorityCasePageDto(total, page, size, Array.Empty<DevicePriorityCaseDto>()),
-                Array.Empty<(DevicePriorityCaseFacts, DevicePriorityCaseDto)>());
+                Array.Empty<(DevicePriorityCaseFacts, DevicePriorityCaseDto, CaseKey)>());
 
         var threatIds = pageKeys.Select(k => k.ThreatId).ToList();
         var exposureIds = pageKeys.Select(k => k.ExposureId).ToList();
@@ -454,7 +550,7 @@ public sealed class DevicePriorityQuery : IDevicePriorityQuery
             .ToLookup(p => p.AssetThreatExposureId);
         var connectors = a.Source.Evidence.ToDictionary(e => e.Connector.ConnectorId, e => e.Connector);
 
-        var items = new List<(DevicePriorityCaseFacts, DevicePriorityCaseDto)>(pageKeys.Count);
+        var items = new List<(DevicePriorityCaseFacts Facts, DevicePriorityCaseDto Dto, CaseKey Key)>(pageKeys.Count);
         foreach (var k in pageKeys)
         {
             var t = threats[k.ThreatId];
@@ -486,10 +582,19 @@ public sealed class DevicePriorityQuery : IDevicePriorityQuery
                 FirstSeenAt: p.FirstSeenAt,
                 AcquiredAt: p.LastSeenAt,
                 AcquisitionState: acquisition,
-                AcquisitionLabel: CrossSourceNarrative.AcquisitionLabel(acquisition))));
+                AcquisitionLabel: CrossSourceNarrative.AcquisitionLabel(acquisition)), k));
         }
-        return new CasePage(new DevicePriorityCasePageDto(total, page, size, items.Select(i => i.Item2).ToList()), items);
+        return new CasePage(new DevicePriorityCasePageDto(total, page, size, items.Select(i => i.Dto).ToList()), items);
     }
+
+    /// <summary>Rótulo da disposição humana — o mesmo do resumo de disposições.</summary>
+    private static string DispositionLabel(ExposureStatus status) => status switch
+    {
+        ExposureStatus.Mitigated => "Mitigação informada",
+        ExposureStatus.Accepted => "Risco aceito",
+        ExposureStatus.FalsePositive => "Falso positivo",
+        _ => "Disposição registrada",
+    };
 
     // ---- Projeção ---------------------------------------------------------------------------------------------------
 

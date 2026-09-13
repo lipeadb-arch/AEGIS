@@ -285,7 +285,9 @@ public sealed class DashboardOverviewPostgresTests
             new IdentityEvidenceService(db, new KnightCollectorRegistry(new[] { new ThrowingCollector() }), new FixedConfig(), new AegisScore.Infrastructure.Identity.IdentityAcquisitionStore(db, ctx, TimeProvider.System), ctx),
             new MaturityScoringService(),
             new IcrScoringService(),
-            new FixedClock(Now));
+            new FixedClock(Now),
+            new DevicePriorityQuery(db, new FixedClock(Now),
+                Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions())));
     }
 
     private static ConnectorConfig NewConnector(

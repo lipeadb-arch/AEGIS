@@ -250,6 +250,26 @@ test('fechar o detalhe sem a linha na tabela: ação explícita, sem releitura',
   eq(st.reads, 0, 'fechar não relê a fila');
 });
 
+test('[AEGIS-JOURNEY-01] fila sem dispositivos: o detalhe aberto pelo endereço (plano de caso fora da fila) continua acessível', () => {
+  const vazia = list({
+    bandFilter: null, items: [], total: 0,
+    summary: {
+      readingState: 'Available', readingNote: null, candidateAssets: 0, assetsEvaluated: 0, evaluationTruncated: false,
+      completeThroughBand: null, truncationNote: null, assetsByBand: [], casesByBand: [], dispositions: [], outOfScopeSources: 0,
+      outOfScopeNote: null, absenceState: 'conclusive', absenceNote: null,
+    },
+  }, 0);
+  eq(devicePriorityListView(vazia).kind, 'noCandidates', 'fila vazia');
+  const st: State = { list: vazia, expanded: DEVICE, name: null, reads: 0, declarations: 0 };
+  const [d] = detailOf(render(parsed.nodes, component(st)));
+  ok(!!d, 'o detalhe é renderizado mesmo com a fila vazia');
+  ok(!d.blocks.some((b) => b.startsWith('@for')), 'e não depende de linha da tabela');
+  const withTable = detailOf(render(parsed.nodes, component({
+    list: list({ items: [item()], total: 1 }, 1), expanded: DEVICE, name: 'nb-diretoria-03', reads: 0, declarations: 0,
+  })))[0];
+  eq(d.blocks.join(' > '), withTable.blocks.join(' > '), 'mesmo caminho de ramos com e sem fila: a instância é preservada');
+});
+
 test('sem filtro, dispositivo que mudou de página: detalhe preservado com a nota de posição', () => {
   const other = item({ assetId: 'b2000000-0000-0000-0000-000000000002', assetName: 'srv-arquivos-02', band: 'p1' });
   const st: State = {

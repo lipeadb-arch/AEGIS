@@ -912,7 +912,25 @@ public record ActionPlanDto(
     /// <summary>Por que encerrar ainda não está disponível — nulo quando está.</summary>
     string? ClosureBlockedReason,
     IReadOnlyList<ActionPlanValidationDto> Validations,
-    IReadOnlyList<ActionPlanEventDto> Events);
+    IReadOnlyList<ActionPlanEventDto> Events,
+    /// <summary>[AEGIS-JOURNEY-01] Origem do plano ("KnightFinding", "DeviceVulnerability" ou "RiskTreatment").</summary>
+    string OriginKind,
+    /// <summary>[AEGIS-JOURNEY-01] Registro de origem congelado de um caso de dispositivo — nunca a leitura atual.</summary>
+    AegisScore.Application.Remediation.DeviceCaseOrigin? DeviceOrigin);
+
+/// <summary>
+/// [AEGIS-JOURNEY-01] Criação de um plano a partir de um CASO de vulnerabilidade em dispositivo. Só identifica o caso
+/// (ativo + CVE) e os campos do plano: faixa, justificativa, fatores e vínculos são obtidos pelo servidor. Campos
+/// extras enviados pelo navegador são ignorados pela desserialização — não há onde colocá-los.
+/// </summary>
+public record CreateDeviceCaseActionPlanRequest(
+    Guid AssetId,
+    string CveId,
+    string Title,
+    string? ProposedAction,
+    string? ResponsiblePerson,
+    string? ResponsibleArea,
+    DateOnly? DueDate);
 
 /// <summary>Criação de uma ação a partir de um achado — não exige risco nem processo de negócio.</summary>
 public record CreateActionPlanRequest(

@@ -996,6 +996,99 @@ public static class DevicePriorityNarrative
         return list;
     }
 
+    // ---- [AEGIS-JOURNEY-01] Um caso (ativo × CVE) -------------------------------------------------------------------
+
+    /// <summary>Forma canônica do identificador da CVE (sem espaços, maiúsculas) — a mesma na chave do plano e na leitura.</summary>
+    public static string NormalizeCve(string? cve) => (cve ?? "").Trim().ToUpperInvariant();
+
+    /// <summary>Rótulo curto do estado de UM caso na leitura atual — nenhum deles diz "corrigido".</summary>
+    public static string CaseStateLabel(string state) => state switch
+    {
+        DevicePriorityCaseStates.Open => "Em aberto na fonte",
+        DevicePriorityCaseStates.OpenWithDisposition => "Em aberto na fonte, com disposição registrada",
+        DevicePriorityCaseStates.NotReported => "Não reportada em aberto na aquisição completa mais recente",
+        DevicePriorityCaseStates.AbsenceNotVerifiable => "Sem caso publicado nesta leitura · ausência não verificável",
+        DevicePriorityCaseStates.NotAttributable => "Atribuição ao dispositivo não verificável na leitura atual",
+        DevicePriorityCaseStates.OutsideEligibleAcquisitions => "Em aberto, fora das aquisições que sustentam a leitura atual",
+        _ => "Situação não determinada",
+    };
+
+    /// <summary>
+    /// O que o estado do caso significa — e o que ele NÃO significa. "Não reportada" é o que a fonte informa agora; ausência
+    /// na página, queda de faixa, coleta parcial ou perda de vínculo nunca são ditas como correção.
+    /// </summary>
+    public static string CaseStateExplanation(
+        string state, DevicePriorityAssessment a, string? dispositionLabel, DateTimeOffset? lastNoLongerReportedAt)
+    {
+        var at = a.AbsenceAt is { } w ? $" ({CrossSourceCorrelationEvaluator.Utc(w)})" : "";
+        var resolved = lastNoLongerReportedAt is { } r
+            ? $" A fonte deu uma observação desta CVE neste dispositivo como não mais reportada em {CrossSourceCorrelationEvaluator.Utc(r)}."
+            : "";
+        return state switch
+        {
+            DevicePriorityCaseStates.Open =>
+                "A leitura atual da fonte ainda reporta esta CVE em aberto neste dispositivo. A faixa exibida é a da política " +
+                "aplicada agora, e pode diferir da registrada na criação do plano.",
+            DevicePriorityCaseStates.OpenWithDisposition =>
+                $"A fonte ainda reporta esta CVE em aberto; o caso está fora da fila por disposição registrada ({dispositionLabel}). " +
+                "Disposição é decisão humana, não correção.",
+            DevicePriorityCaseStates.NotReported =>
+                (a.AbsenceState == DevicePriorityAbsenceStates.ConclusiveAttemptFailed
+                    ? $"A última aquisição completa publicada do Microsoft Defender{at} observou este dispositivo e não reporta esta " +
+                      "CVE em aberto; a tentativa mais recente de coleta falhou."
+                    : $"A aquisição completa mais recente do Microsoft Defender{at} observou este dispositivo e não reporta esta CVE " +
+                      "em aberto.") + resolved +
+                " É o que a fonte informa agora: não comprova a correção nem valida o plano.",
+            DevicePriorityCaseStates.AbsenceNotVerifiable =>
+                "Nenhuma observação em aberto desta CVE está publicada nesta leitura, e a publicação não permite concluir " +
+                "ausência" + (a.AbsenceReasons.Count > 0 ? ": " + string.Join(" ", a.AbsenceReasons) : ".") + resolved,
+            DevicePriorityCaseStates.NotAttributable =>
+                "As vulnerabilidades da fonte não podem ser atribuídas a este dispositivo agora" +
+                (a.Reasons.Count > 0 ? ": " + string.Join(" ", a.Reasons) : ".") +
+                " Sem atribuição, nada se conclui sobre esta CVE.",
+            DevicePriorityCaseStates.OutsideEligibleAcquisitions =>
+                "Há observação em aberto desta CVE, mas de uma aquisição que não sustenta a leitura atual (anterior à política " +
+                "temporal ou não reconfirmada pela aquisição mais recente).",
+            _ => "Situação não determinada.",
+        };
+    }
+
+    /// <summary>
+    /// Fatores de UM caso: severidade técnica, exploit e EPSS DESTE caso (nunca os do determinante) e os fatores do
+    /// dispositivo (evidência, criticidade, situação entre fontes e desconhecidos), pela mesma autoridade do detalhe.
+    /// </summary>
+    public static IReadOnlyList<DevicePriorityFactorDto> CaseFactors(
+        DevicePriorityAssessment a, DevicePriorityCaseFacts d, int severityOrder, int exploitOrder)
+    {
+        var prioritizable = DevicePriorityPolicy.BaseBand(severityOrder, exploitOrder) is not null;
+        var sevNote = SeverityDivergence(d);
+        var own = new[]
+        {
+            new DevicePriorityFactorDto(
+                "technicalSeverity", "Severidade técnica (este caso)", SeverityLabel(severityOrder, d.Cvss),
+                severityOrder == DevicePrioritySeverity.Unknown ? DevicePriorityFactorKinds.Unknown : DevicePriorityFactorKinds.SourceFact,
+                VulnerabilitiesSource, d.AcquiredAt, "Aquisição do AEGIS",
+                prioritizable ? DevicePriorityEffects.Determinant : DevicePriorityEffects.None,
+                (d.UpdatedOn is { } u ? $"CVE atualizada pela fonte em {CrossSourceCorrelationEvaluator.Utc(u)}. " : "") +
+                "Faixa qualitativa oficial do CVSS v3.1; a severidade textual só é usada sem CVSS." +
+                (sevNote is null ? "" : " " + sevNote)),
+            new DevicePriorityFactorDto(
+                "exploit", "Exploit (este caso)", ExploitLabel(d.PublicExploit, d.ExploitVerified),
+                d is { PublicExploit: null, ExploitVerified: null } ? DevicePriorityFactorKinds.Unknown : DevicePriorityFactorKinds.SourceFact,
+                VulnerabilitiesSource, d.AcquiredAt, "Aquisição do AEGIS",
+                prioritizable ? DevicePriorityEffects.Determinant : DevicePriorityEffects.None,
+                "Disponibilidade de exploit informada pela fonte; não comprova exploração ativa nem ameaça observada no dispositivo."),
+            new DevicePriorityFactorDto(
+                "epss", "EPSS (este caso)",
+                d.Epss is { } e ? $"{Math.Round(e * 100, 1).ToString("0.#", CultureInfo.InvariantCulture)}% (informado pela fonte)" : "Não informado pela fonte",
+                d.Epss is null ? DevicePriorityFactorKinds.Unknown : DevicePriorityFactorKinds.SourceFact,
+                VulnerabilitiesSource, d.AcquiredAt, "Aquisição do AEGIS", DevicePriorityEffects.NotUsed, EpssMeaning),
+        };
+        var rest = Factors(a, d).Where(f => f.Code is not ("technicalSeverity" or "exploit" or "epss")).ToList();
+        rest.InsertRange(rest.FindIndex(f => f.Code == "evidence") + 1, own);
+        return rest;
+    }
+
     private static string? SeverityDivergence(DevicePriorityCaseFacts d)
     {
         if (d.Cvss is null || string.IsNullOrWhiteSpace(d.Severity)) return null;
@@ -1261,6 +1354,68 @@ public sealed record DevicePriorityListDto(
 
 public sealed record DevicePriorityFilter(string? Band = null, int Page = 1, int PageSize = 10);
 
+// ---- [AEGIS-JOURNEY-01] UM caso (ativo × CVE) na leitura atual ------------------------------------------------------
+
+/// <summary>
+/// O que a leitura ATUAL diz sobre um caso ativo × CVE (códigos estáveis). É a mesma autoridade da fila e do detalhe,
+/// aplicada a uma CVE: nenhum destes estados é comprovação de correção — "não reportado" é o que a fonte informa agora.
+/// </summary>
+public static class DevicePriorityCaseStates
+{
+    /// <summary>Observação em aberto, disposição ativa, numa aquisição elegível: o caso existe na leitura atual.</summary>
+    public const string Open = "open";
+
+    /// <summary>Em aberto na fonte, com disposição humana registrada (mitigação informada, risco aceito, falso positivo).</summary>
+    public const string OpenWithDisposition = "openWithDisposition";
+
+    /// <summary>A aquisição completa que observou o dispositivo não reporta o caso em aberto — fato da fonte, não correção.</summary>
+    public const string NotReported = "notReported";
+
+    /// <summary>Nenhuma observação em aberto elegível e a publicação não permite concluir ausência.</summary>
+    public const string AbsenceNotVerifiable = "absenceNotVerifiable";
+
+    /// <summary>A atribuição das vulnerabilidades ao dispositivo não é verificável (sem registro atual ou ambígua).</summary>
+    public const string NotAttributable = "notAttributable";
+
+    /// <summary>Há observação em aberto da CVE, mas fora das aquisições elegíveis (política temporal ou não reconfirmada).</summary>
+    public const string OutsideEligibleAcquisitions = "outsideEligibleAcquisitions";
+}
+
+/// <summary>
+/// UM caso na leitura atual, com o contexto que a autoridade sustenta: faixa do caso e do dispositivo, fatores, ressalvas,
+/// completude e os vínculos internos (entrada do catálogo e exposição consolidada) — estes últimos para o servidor
+/// registrar a origem de um plano; não são apresentados.
+/// </summary>
+public sealed record DevicePriorityCaseReading(
+    Guid AssetId,
+    string AssetName,
+    bool NameIsPlaceholder,
+    DateTimeOffset EvaluatedAt,
+    string PolicyCode,
+    int PolicyVersion,
+    string CveId,
+    string State,
+    string StateLabel,
+    string StateExplanation,
+    string DeviceStatus,
+    string DeviceBand,
+    string DeviceBandLabel,
+    string DevicePositionReason,
+    /// <summary>O caso em aberto e elegível (com a faixa ATUAL), quando existe.</summary>
+    DevicePriorityCaseDto? Case,
+    /// <summary>O caso é o determinante da posição do dispositivo.</summary>
+    bool IsDeterminingCase,
+    string? DispositionLabel,
+    /// <summary>Última vez que a fonte deu uma observação desta CVE como não mais reportada, quando houver.</summary>
+    DateTimeOffset? LastNoLongerReportedAt,
+    IReadOnlyList<DevicePriorityFactorDto> Factors,
+    IReadOnlyList<CrossSourceNoteDto> Caveats,
+    string AbsenceState,
+    string? AbsenceLabel,
+    string InformationLabel,
+    Guid? ThreatId,
+    Guid? ExposureId);
+
 /// <summary>
 /// Leitura tenant-scoped (Global Query Filter fail-closed) da prioridade de tratamento em dispositivos. Somente leitura:
 /// nunca coleta, nunca escreve, nunca aciona IA e nunca altera score ou fila existente.
@@ -1272,4 +1427,10 @@ public interface IDevicePriorityQuery
 
     /// <summary>Prioridade de UM ativo com os casos paginados; <c>null</c> quando o ativo não existe no tenant.</summary>
     Task<AssetDevicePriorityDto?> GetForAssetAsync(Guid assetId, int casePage, int casePageSize, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-JOURNEY-01] UM caso (ativo × CVE) na leitura atual, pela mesma avaliação coerente do detalhe; <c>null</c>
+    /// quando o ativo não existe no tenant. Um caso ausente da leitura NUNCA é dito corrigido.
+    /// </summary>
+    Task<DevicePriorityCaseReading?> GetCaseAsync(Guid assetId, string cveId, CancellationToken ct = default);
 }

@@ -310,6 +310,21 @@ export function dispositionText(dispositions: DevicePriorityDisposition[] | null
   return present.map((d) => `${d.count} · ${d.label.toLowerCase()}`).join(' · ');
 }
 
+/**
+ * [AEGIS-JOURNEY-01] Os casos que ficaram FORA da fila por disposição humana, com a unidade e o que eles são: continuam
+ * em aberto na fonte e não foram corrigidos. Nenhum = null. Mesma contagem do resumo da Central (casos distintos).
+ */
+export function disposedCasesText(dispositions: DevicePriorityDisposition[] | null | undefined): string | null {
+  const present = (dispositions ?? []).filter((d) => d.count > 0);
+  if (!present.length) return null;
+  const n = present.reduce((s, d) => s + d.count, 0);
+  return (
+    `${n === 1 ? '1 caso dispositivo × CVE segue' : `${n} casos dispositivo × CVE seguem`} em aberto na fonte com ` +
+    `disposição humana registrada (${present.map((d) => `${d.label}: ${d.count}`).join(' · ')}) e ` +
+    `${n === 1 ? 'fica' : 'ficam'} fora da fila, com a evidência preservada — disposição não é correção`
+  );
+}
+
 /** Empate real: diz que a ordem entre eles é só de estabilidade — nunca finge diferença de risco. */
 export function tieText(tiedAssets: number): string | null {
   if (tiedAssets <= 0) return null;
@@ -325,12 +340,15 @@ export function casesText(n: number | null | undefined): string {
   return n === 1 ? '1 caso' : `${n} casos`;
 }
 
-/** "3 dispositivos com vulnerabilidade em aberto · P1 1 · P2 2 · 1 sem informação suficiente · recorte parcial". */
+/**
+ * "3 dispositivos com vulnerabilidade em aberto sem disposição registrada · P1 1 · P2 2 · …". A população é a da fila:
+ * dispositivos só com casos dispostos não entram nela (e aparecem na nota de disposições).
+ */
 export function devicePrioritySummaryText(s: DevicePrioritySummary): string {
   const pop = s.candidateAssets === 1 ? '1 dispositivo' : `${s.candidateAssets} dispositivos`;
   const bands = s.assetsByBand.filter((b) => b.band !== 'insufficient' && b.count > 0);
   const insufficient = s.assetsByBand.find((b) => b.band === 'insufficient')?.count ?? 0;
-  const parts = [`${pop} com vulnerabilidade em aberto`];
+  const parts = [`${pop} com vulnerabilidade em aberto sem disposição registrada`];
   if (bands.length) parts.push(bands.map((b) => `${bandShort(b.band)} ${b.count}`).join(' · '));
   if (insufficient > 0) parts.push(`${insufficient} sem informação suficiente para priorizar`);
   if (s.evaluationTruncated) parts.push(`recorte parcial: ${s.assetsEvaluated} avaliados`);
@@ -344,6 +362,7 @@ export type DevicePriorityListView =
   | { kind: 'neverCollected'; text: string }
   | { kind: 'noCandidates'; text: string }
   | { kind: 'noCandidatesUnverified'; text: string }
+  | { kind: 'onlyDispositions'; text: string }
   | { kind: 'onlyInsufficient'; text: string }
   | { kind: 'filterEmpty'; text: string }
   | { kind: 'items' };
@@ -366,7 +385,18 @@ export function devicePriorityListView(
   if (s.readingState === 'NeverCollected')
     return { kind: 'neverCollected', text: s.readingNote ?? 'A fonte ainda não publicou uma leitura por dispositivo.' };
   if (s.candidateAssets === 0) {
-    // Zero candidatos é uma CONTAGEM; só a completude da coleta permite chamá-la de ausência.
+    // Zero candidatos é uma CONTAGEM da fila; casos com disposição humana ficam fora dela e continuam em aberto na fonte.
+    // Só sem eles, e com a completude da coleta, a contagem pode ser chamada de ausência.
+    const disposed = disposedCasesText(s.dispositions);
+    if (disposed)
+      return {
+        kind: 'onlyDispositions',
+        text:
+          `Nenhum dispositivo na fila de prioridade — e isso não é ausência de vulnerabilidade: ${disposed}. ` +
+          (s.absenceState === 'notVerifiable'
+            ? 'Além disso, a coleta não permite concluir a ausência de outros casos. ' + (s.absenceNote ?? '')
+            : ''),
+      };
     if (s.absenceState === 'notVerifiable')
       return {
         kind: 'noCandidatesUnverified',
@@ -377,8 +407,8 @@ export function devicePriorityListView(
     return {
       kind: 'noCandidates',
       text:
-        'Nenhum dispositivo com vulnerabilidade em aberto e disposição ativa na aquisição completa mais recente da fonte. ' +
-        'Isso não comprova que os dispositivos estejam seguros.' +
+        'A fonte não reporta vulnerabilidade em aberto em nenhum dispositivo na aquisição completa mais recente — nem na ' +
+        'fila, nem com disposição registrada. Isso não comprova que os dispositivos estejam seguros.' +
         (s.absenceState === 'conclusiveAttemptFailed' && s.absenceNote ? ' ' + s.absenceNote : ''),
     };
   }

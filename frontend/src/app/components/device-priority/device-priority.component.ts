@@ -1,11 +1,23 @@
 import { DatePipe } from '@angular/common';
-import { Component, EventEmitter, Input, OnChanges, Output, computed, inject, signal } from '@angular/core';
+import {
+  Component,
+  EventEmitter,
+  Input,
+  OnChanges,
+  Output,
+  SimpleChanges,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AssetService } from '../../services/asset.service';
 import { AuthService } from '../../services/auth.service';
+import { RemediationService } from '../../services/remediation.service';
 import {
   AssetDevicePriority,
   DEVICE_PRIORITY_HEADING,
+  DevicePriorityCase,
   DevicePriorityCriticality,
   DevicePriorityCriticalityChange,
   DevicePriorityPolicy,
@@ -20,6 +32,15 @@ import {
   factorEffectLabel,
   factorKindLabel,
 } from '../../models/device-priority.models';
+import {
+  ActionPlan,
+  actionSituation,
+  activeDevicePlanFor,
+  canManageActionPlans,
+  devicePlansForCase,
+  normalizeCve,
+} from '../../models/remediation.models';
+import { DeviceCasePlanComponent } from './device-case-plan.component';
 
 /**
  * [AEGIS-RISK-PRIORITIZATION-01] Como a ordem é decidida — a política versionada, igual na Central e no detalhe do ativo.
@@ -83,16 +104,26 @@ export class DevicePriorityPolicyComponent {
   @Input({ required: true }) policy!: DevicePriorityPolicy;
 }
 
+/** [AEGIS-JOURNEY-01] Caso (e plano) selecionado no detalhe — para quem contém o bloco manter o endereço em dia. */
+export interface DevicePriorityCaseSelection {
+  cveId: string | null;
+  planId: string | null;
+}
+
 /**
  * [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento de UM dispositivo — o mesmo bloco no detalhe do inventário e na
  * Central de Prioridades. Responde: qual a posição e por quê (o caso determinante), quais fatores foram usados (valor,
  * origem, data e natureza), o que é desconhecido e poderia alterar a avaliação, as ressalvas, a próxima ação e os casos.
  * Carregamento, falha e vazio são estados distintos — uma falha nunca parece "sem prioridade".
+ *
+ * [AEGIS-JOURNEY-01] Cada caso (dispositivo × CVE) mostra se já tem plano de tratamento e abre o painel do plano — criar,
+ * consultar, executar e acompanhar sem sair do detalhe. Os planos têm leitura e falha próprias: uma falha ao lê-los não
+ * esconde a prioridade, e a prioridade não é relida quando um plano muda (plano não altera prioridade).
  */
 @Component({
   selector: 'app-device-priority',
   standalone: true,
-  imports: [DatePipe, FormsModule, DevicePriorityPolicyComponent],
+  imports: [DatePipe, FormsModule, DevicePriorityPolicyComponent, DeviceCasePlanComponent],
   template: `
     <section class="dp" [attr.aria-label]="heading">
       <div class="dp-head">
@@ -114,6 +145,12 @@ export class DevicePriorityPolicyComponent {
           <div class="dp-err">
             <span>Não foi possível calcular a prioridade deste dispositivo agora — nada é exibido, para que a falha não pareça ausência de prioridade.</span>
             <button type="button" class="dp-btn" (click)="retry()">Tentar novamente</button>
+          </div>
+        }
+        @case ('notFound') {
+          <div class="dp-err" role="status">
+            <span>Dispositivo não encontrado neste cliente — pode ter saído do inventário. Não há prioridade atual para ele, e isso não significa que as vulnerabilidades foram corrigidas. Planos já criados para os casos dele continuam acessíveis.</span>
+            <button type="button" class="dp-btn" (click)="retry()">Ler de novo</button>
           </div>
         }
         @case ('loaded') {
@@ -141,6 +178,12 @@ export class DevicePriorityPolicyComponent {
                 <span class="dp-sub warn">Marca de "explorada ativamente" no catálogo sem origem verificável — não usada na decisão.</span>
               }
               <span class="dp-sub">{{ c.source }} · aquisição de {{ c.acquiredAt | date: 'dd/MM/yy HH:mm' }} · {{ c.acquisitionLabel }} · observada desde {{ c.firstSeenAt | date: 'dd/MM/yy' }}</span>
+              <div class="dp-case-actions">
+                <button type="button" class="dp-btn" (click)="selectCase(c.cveId)" [attr.aria-pressed]="isSelected(c.cveId)">
+                  {{ planButtonLabel(c.cveId) }}
+                </button>
+                <span class="dp-sub">{{ planStateText(c.cveId) }}</span>
+              </div>
             </div>
           }
 
@@ -148,6 +191,34 @@ export class DevicePriorityPolicyComponent {
             <span class="dp-k">Próxima ação sugerida</span>
             <p>{{ d.nextAction }}</p>
           </div>
+
+        }
+      }
+
+      <!-- [AEGIS-JOURNEY-01] Plano do caso selecionado: logo abaixo da ação sugerida e FORA dos estados de carga da
+           prioridade. Uma releitura (página de casos, declaração, nova tentativa), a falha dela ou o dispositivo ausente
+           não destroem o painel nem o que está sendo digitado: o plano tem leitura e falha próprias, e o registro de
+           origem dá o contexto quando a prioridade não pode ser lida. -->
+      @if (selected(); as cve) {
+        <div class="dp-plan" [id]="'dp-plan-' + assetId">
+          <app-device-case-plan
+            [assetId]="assetId"
+            [assetName]="data()?.assetName ?? null"
+            [cveId]="cve"
+            [caseInfo]="caseInfo(cve)"
+            [plans]="plans()"
+            [plansError]="plansError()"
+            [pinnedPlanId]="pinned()"
+            [creationBlockedReason]="creationBlock()"
+            (changed)="onPlanChanged($event)"
+            (closed)="selectCase(null)"
+            (planOpened)="onPlanOpened($event)"
+            (retryPlans)="loadPlans()" />
+        </div>
+      }
+
+      @if (state() === 'loaded') {
+          @let d = data()!;
 
           @if (d.caveats.length) {
             <div class="dp-caveats">
@@ -239,22 +310,26 @@ export class DevicePriorityPolicyComponent {
 
           @if (d.cases; as cp) {
             <div class="dp-block">
-              <span class="dp-k">Casos em aberto (ativo × CVE) na ordem da política</span>
+              <span class="dp-k">Casos em aberto (dispositivo × CVE) na ordem da política</span>
               <span class="dp-note">{{ pageText(cp) }} · {{ counts(d.casesByBand) }}@if (d.insufficientCases > 0) { · {{ d.insufficientCases }} sem severidade informada }</span>
+              @if (plansError(); as pe) {
+                <span class="dp-sub warn">Planos de tratamento indisponíveis agora: {{ pe }} A prioridade continua válida.</span>
+              }
               @if (cp.items.length) {
                 <div class="dp-scroll">
-                  <table class="dp-table">
+                  <table class="dp-table dp-cases">
                     <thead>
                       <tr>
                         <th>CVE</th>
                         <th>Faixa</th>
                         <th>Severidade · exploit</th>
                         <th>Aquisição</th>
+                        <th>Plano de tratamento</th>
                       </tr>
                     </thead>
                     <tbody>
                       @for (c of cp.items; track c.cveId) {
-                        <tr>
+                        <tr [class.selected]="isSelected(c.cveId)">
                           <td>
                             <b class="dp-mono">{{ c.cveId }}</b>
                             @if (c.title) { <span class="dp-sub">{{ c.title }}</span> }
@@ -265,6 +340,12 @@ export class DevicePriorityPolicyComponent {
                           </td>
                           <td>{{ c.severityLabel }}<span class="dp-sub">{{ c.exploitLabel }}</span></td>
                           <td class="dp-date">{{ c.acquiredAt | date: 'dd/MM/yy HH:mm' }}<span class="dp-sub">{{ c.acquisitionLabel }}</span></td>
+                          <td>
+                            <button type="button" class="dp-btn" (click)="selectCase(c.cveId)" [attr.aria-pressed]="isSelected(c.cveId)">
+                              {{ planButtonLabel(c.cveId) }}
+                            </button>
+                            <span class="dp-sub">{{ planStateText(c.cveId) }}</span>
+                          </td>
                         </tr>
                       }
                     </tbody>
@@ -296,7 +377,6 @@ export class DevicePriorityPolicyComponent {
           </details>
           <app-device-priority-policy [policy]="d.policy" />
           <p class="dp-scope">{{ d.scope }}</p>
-        }
       }
     </section>
   `,
@@ -315,16 +395,20 @@ export class DevicePriorityPolicyComponent {
       .dp-reason { margin: 0; font-size: 12.5px; line-height: 1.55; max-width: 900px; }
       .dp-case { border: 1px solid var(--line, rgba(255,255,255,0.15)); border-radius: 10px; padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; max-width: 900px; }
       .dp-case-row { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+      .dp-case-actions { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-top: 4px; }
       .dp-facts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; }
       .dp-next p { margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; max-width: 900px; }
+      .dp-plan { scroll-margin-top: 80px; }
       .dp-caveats ul, .dp-list, .dp-limits ul { margin: 4px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.5; max-width: 900px; }
       .dp-caveats ul { color: var(--amber, #ffb020); }
       .dp-block { display: flex; flex-direction: column; gap: 4px; }
       .dp-scroll { overflow-x: auto; }
       .dp-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+      .dp-table.dp-cases { min-width: 640px; }
       .dp-table td { overflow-wrap: anywhere; padding: 6px 8px; vertical-align: top; border-bottom: 1px solid var(--line-2, rgba(255,255,255,0.07)); }
       .dp-table th { text-align: left; font-family: var(--mono, monospace); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted, #9aa7c7); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line, rgba(255,255,255,0.15)); }
       .dp-table tr.unknown td { opacity: 0.85; }
+      .dp-table tr.selected td { background: rgba(38, 224, 255, 0.05); }
       .dp-date { font-family: var(--mono, monospace); font-size: 11px; }
       .dp-mono { font-family: var(--mono, monospace); }
       .dp-badge { display: inline-block; max-width: 100%; white-space: normal; font-family: var(--mono, monospace); font-size: 10.5px; line-height: 1.4; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line, rgba(255,255,255,0.2)); color: var(--muted, #9aa7c7); }
@@ -350,17 +434,34 @@ export class DevicePriorityPolicyComponent {
 export class DevicePriorityComponent implements OnChanges {
   @Input({ required: true }) assetId!: string;
 
+  /** [AEGIS-JOURNEY-01] CVE a abrir no painel do plano (vinda do endereço) — nula = nenhum caso aberto. */
+  @Input() selectedCve: string | null = null;
+
+  /** [AEGIS-JOURNEY-01] Plano nomeado pelo endereço para o caso aberto. */
+  @Input() pinnedPlanId: string | null = null;
+
   /**
    * Emitido UMA vez por declaração, só depois da confirmação do servidor — para a Central e o inventário atualizarem
    * faixa, ordem, contagens e criticidade. Nunca emitido por recarga, paginação ou falha.
    */
   @Output() readonly criticalityDeclared = new EventEmitter<DevicePriorityCriticalityChange>();
 
+  /** [AEGIS-JOURNEY-01] Caso (e plano) escolhido pela pessoa — quem contém o bloco mantém o endereço em dia. */
+  @Output() readonly caseSelected = new EventEmitter<DevicePriorityCaseSelection>();
+
+  /** [AEGIS-JOURNEY-01] Prioridade lida (ex.: para a Central mostrar o nome do dispositivo aberto pelo endereço). */
+  @Output() readonly loaded = new EventEmitter<AssetDevicePriority>();
+
+  /** [AEGIS-JOURNEY-01] Um plano deste dispositivo foi criado ou alterado. */
+  @Output() readonly planChanged = new EventEmitter<ActionPlan>();
+
   private readonly svc = inject(AssetService);
   private readonly auth = inject(AuthService);
+  private readonly remediation = inject(RemediationService);
 
   protected readonly heading = DEVICE_PRIORITY_HEADING;
-  protected readonly state = signal<'loading' | 'loaded' | 'error'>('loading');
+  /** `notFound`: o dispositivo não existe (mais) neste cliente — distinto de falha, e nunca "sem vulnerabilidade". */
+  protected readonly state = signal<'loading' | 'loaded' | 'error' | 'notFound'>('loading');
   protected readonly data = signal<AssetDevicePriority | null>(null);
   protected readonly saving = signal(false);
   protected readonly declError = signal<string | null>(null);
@@ -368,10 +469,19 @@ export class DevicePriorityComponent implements OnChanges {
   /** Só a resposta da ÚLTIMA leitura pedida é aplicada (troca de ativo, paginação ou releitura após declarar). */
   private seq = 0;
   protected readonly canDeclare = computed(() => canDeclareCriticality(this.auth.activeRole()));
+  protected readonly canManagePlans = computed(() => canManageActionPlans(this.auth.activeRole()));
   protected declValue = 3;
   protected declNote = '';
   private readonly casePageSize = 10;
   private casePage = 1;
+
+  /** Planos de casos DESTE dispositivo — leitura própria, com falha própria. */
+  protected readonly plans = signal<ActionPlan[]>([]);
+  protected readonly plansError = signal<string | null>(null);
+  private plansSeq = 0;
+  /** CVE aberta no painel do plano (normalizada) e plano nomeado para ela. */
+  protected readonly selected = signal<string | null>(null);
+  protected readonly pinned = signal<string | null>(null);
 
   protected readonly tone = bandTone;
   protected readonly kind = factorKindLabel;
@@ -383,11 +493,22 @@ export class DevicePriorityComponent implements OnChanges {
     return dispositionText(d.dispositions);
   }
 
-  ngOnChanges(): void {
-    this.casePage = 1;
-    this.saveNotice.set(null);
-    this.declError.set(null);
-    this.load();
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['assetId']) {
+      this.casePage = 1;
+      this.saveNotice.set(null);
+      this.declError.set(null);
+      this.data.set(null);   // nada do dispositivo anterior (nome, casos) chega ao painel do novo
+      this.load();
+      this.loadPlans();
+    }
+    // O conjunto COERENTE dos inputs, sempre: trocar só o dispositivo (a mesma CVE e o plano continuam no endereço) não
+    // pode descartar a seleção — nem manter a do dispositivo anterior quando o endereço não nomeia caso.
+    if (changes['assetId'] || changes['selectedCve'] || changes['pinnedPlanId']) {
+      const cve = this.selectedCve ? normalizeCve(this.selectedCve) : null;
+      this.selected.set(cve);
+      this.pinned.set(cve ? this.pinnedPlanId || null : null);
+    }
   }
 
   /** @param saved criticalidade recém-confirmada pelo servidor, quando a leitura é a releitura depois da declaração. */
@@ -402,24 +523,112 @@ export class DevicePriorityComponent implements OnChanges {
         this.declValue = d.criticality.declaredValue ?? d.criticality.storedValue;
         this.state.set('loaded');
         if (saved) this.saveNotice.set({ text: `Declaração registrada: ${saved.label}.`, tone: 'ok' });
+        this.loaded.emit(d);
       },
-      error: () => {
+      error: (err: { status?: number }) => {
         if (seq !== this.seq) return;
         this.data.set(null);
-        this.state.set('error');
+        this.state.set(err?.status === 404 ? 'notFound' : 'error');
         if (saved) this.saveNotice.set({ text: declarationSavedNotRefreshedText(saved), tone: 'warn' });
+      },
+    });
+  }
+
+  /**
+   * [AEGIS-JOURNEY-01] Por que o painel do plano não pode oferecer CRIAÇÃO agora — nulo com a prioridade lida. Criar
+   * depende da leitura atual do caso; consultar e acompanhar planos existentes, não.
+   */
+  protected readonly creationBlock = computed<string | null>(() => {
+    switch (this.state()) {
+      case 'loading':
+        return 'A prioridade deste dispositivo ainda está sendo lida — criar um plano depende da leitura atual do caso.';
+      case 'error':
+        return 'A leitura da prioridade falhou: sem ela não é possível confirmar que o caso está em aberto. Use "Tentar novamente" acima; planos existentes continuam acessíveis.';
+      case 'notFound':
+        return 'O dispositivo não foi encontrado neste cliente — não é possível abrir plano novo para ele. Planos existentes e o registro de origem continuam acessíveis.';
+      default:
+        return null;
+    }
+  });
+
+  /** O caso na página exibida (ou o determinante), só para semear o formulário do plano — nulo sem leitura. */
+  protected caseInfo(cve: string): DevicePriorityCase | null {
+    const d = this.data();
+    return d ? this.caseFor(d, cve) : null;
+  }
+
+  /** Planos dos casos deste dispositivo. Falha aqui não esconde a prioridade — o texto diz que os planos não vieram. */
+  protected loadPlans(): void {
+    const seq = ++this.plansSeq;
+    const assetId = this.assetId;
+    this.plansError.set(null);
+    this.remediation.list({ origin: 'device', assetId }).subscribe({
+      next: (plans) => {
+        if (seq !== this.plansSeq) return;
+        this.plans.set(plans);
+      },
+      error: (e: Error) => {
+        if (seq !== this.plansSeq) return;
+        this.plans.set([]);
+        this.plansError.set(e.message);
       },
     });
   }
 
   protected retry(): void {
     this.load();
+    this.loadPlans();
   }
 
   protected goCases(page: number): void {
     if (page < 1) return;
     this.casePage = page;
     this.load();
+  }
+
+  protected isSelected(cve: string): boolean {
+    return this.selected() === normalizeCve(cve);
+  }
+
+  /** Abre (ou fecha, com nulo) o painel do plano de um caso — escolha da pessoa, que o endereço acompanha. */
+  protected selectCase(cve: string | null): void {
+    const next = cve ? normalizeCve(cve) : null;
+    this.selected.set(next);
+    this.pinned.set(null);
+    this.caseSelected.emit({ cveId: next, planId: null });
+    if (next) setTimeout(() => document.getElementById('dp-plan-' + this.assetId)?.scrollIntoView({ block: 'nearest' }));
+  }
+
+  protected onPlanOpened(planId: string | null): void {
+    this.pinned.set(planId);
+    this.caseSelected.emit({ cveId: this.selected(), planId });
+  }
+
+  /** Plano criado ou alterado: relê só os planos — a prioridade não muda por causa de um plano. */
+  protected onPlanChanged(p: ActionPlan): void {
+    this.loadPlans();
+    this.planChanged.emit(p);
+  }
+
+  protected planButtonLabel(cve: string): string {
+    if (activeDevicePlanFor(this.plans(), this.assetId, cve)) return 'Abrir plano';
+    return this.canManagePlans() ? 'Planejar tratamento' : 'Ver planos do caso';
+  }
+
+  /** Situação do plano do caso numa linha — ou a ausência dele, dita como tal. */
+  protected planStateText(cve: string): string {
+    const active = activeDevicePlanFor(this.plans(), this.assetId, cve);
+    if (active) return `Plano ativo · ${actionSituation(active)}`;
+    const all = devicePlansForCase(this.plans(), this.assetId, cve);
+    if (all.length) return `Sem plano ativo · ${all.length === 1 ? '1 ciclo encerrado' : `${all.length} ciclos encerrados`}`;
+    return this.plansError() ? 'Planos indisponíveis agora' : 'Sem plano';
+  }
+
+  /** O caso na página exibida (ou o determinante), só para semear o formulário do plano. */
+  protected caseFor(d: AssetDevicePriority, cve: string): DevicePriorityCase | null {
+    const n = normalizeCve(cve);
+    return d.cases?.items.find((c) => normalizeCve(c.cveId) === n)
+      ?? (d.determiningCase && normalizeCve(d.determiningCase.cveId) === n ? d.determiningCase : null);
   }
 
   protected declare(): void {

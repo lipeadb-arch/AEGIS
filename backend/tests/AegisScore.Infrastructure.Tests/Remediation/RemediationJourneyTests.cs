@@ -720,7 +720,8 @@ public sealed class RemediationJourneyTests : IDisposable
             new[] { nameof(ActionPlanStatus.EmAndamento), nameof(ActionPlanStatus.Concluido) },
             null, new[] { validacao },
             new[] { new ActionPlanEventDto(nameof(ActionPlanEventKind.StatusChanged), T0, "Analista",
-                nameof(ActionPlanStatus.Aberto), nameof(ActionPlanStatus.EmAndamento), null) });
+                nameof(ActionPlanStatus.Aberto), nameof(ActionPlanStatus.EmAndamento), null) },
+            nameof(ActionPlanOriginKind.KnightFinding), null);
 
         var json = System.Text.Json.JsonSerializer.Serialize(dto, ApiJson);
 
@@ -1342,7 +1343,9 @@ public sealed class RemediationJourneyTests : IDisposable
     }
 
     private static IRemediationService RemediationFor(AegisScoreDbContext db, Guid tenantId) =>
-        new RemediationService(db, new SystemTenantContext(tenantId), TimeProvider.System);
+        new RemediationService(db, new SystemTenantContext(tenantId), TimeProvider.System,
+            new AegisScore.Infrastructure.Queries.DevicePriorityQuery(db, TimeProvider.System,
+                Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions())));
 
     private static IPostureSnapshotService PostureFor(AegisScoreDbContext db, Guid tenantId) =>
         new PostureSnapshotService(db, new SystemTenantContext(tenantId),

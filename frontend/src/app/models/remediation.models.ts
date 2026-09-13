@@ -10,7 +10,13 @@
  *   2. RELATO ≠ PROVA. "Marcar como executado" registra o que a pessoa diz ter feito.
  *   3. ATESTAÇÃO ≠ COMPROVAÇÃO. Uma validação humana com evidência referenciada é registro legítimo, mas
  *      nunca é apresentada como correção técnica comprovada.
+ *
+ * [AEGIS-JOURNEY-01] A mesma jornada atende a segunda origem: o caso de vulnerabilidade em dispositivo (ativo × CVE).
+ * Ali a tela separa ainda o REGISTRO DE ORIGEM (o que motivou o plano) da SITUAÇÃO ATUAL NA FONTE (lida agora) — e
+ * nenhuma delas é comprovação de correção.
  */
+import type { DevicePriorityBand, DevicePriorityCase, DevicePriorityFactor } from './device-priority.models';
+import type { CrossSourceNote } from './cross-source.models';
 
 /** Etapa OPERACIONAL. `Vencido` é legado: atraso hoje vem do prazo (`isOverdue`), não de uma etapa. */
 export type ActionPlanStatus = 'Aberto' | 'EmAndamento' | 'AguardandoValidacao' | 'Concluido' | 'Vencido';
@@ -67,6 +73,93 @@ export interface ActionPlanValidation {
 /** Fonte concreta da coleta — o mesmo eixo que o KNIGHT usa. */
 export type KnightOriginSource = 'Demo' | 'MicrosoftEntraId' | 'GoogleWorkspace';
 
+/**
+ * [AEGIS-JOURNEY-01] De onde o plano nasceu. Valor técnico do contrato — a tela nunca o exibe cru; usa `originLabel`.
+ */
+export type ActionPlanOriginKind = 'KnightFinding' | 'DeviceVulnerability' | 'RiskTreatment';
+
+/**
+ * [AEGIS-JOURNEY-01] REGISTRO DE ORIGEM de um plano de caso de dispositivo — o contexto que motivou a criação, obtido
+ * pelo SERVIDOR na autoridade da prioridade e congelado. Não é a leitura atual (ver `DeviceCaseSourceReading`).
+ */
+export interface DeviceCaseOrigin {
+  schema: string;
+  assetId: string;
+  assetName: string;
+  assetNameIsPlaceholder: boolean;
+  cveId: string;
+  cveTitle: string | null;
+  /** Momento do cálculo da prioridade que sustentou a criação. */
+  evaluatedAt: string;
+  policyCode: string;
+  policyVersion: number;
+  caseBand: DevicePriorityBand;
+  caseBandLabel: string;
+  caseReason: string;
+  wasDeterminingCase: boolean;
+  deviceBand: DevicePriorityBand;
+  deviceBandLabel: string;
+  devicePositionReason: string;
+  severityLabel: string;
+  cvssScore: number | null;
+  exploitLabel: string;
+  epss: number | null;
+  source: string;
+  firstSeenAt: string;
+  acquiredAt: string;
+  acquisitionLabel: string;
+  factors: DevicePriorityFactor[];
+  caveats: CrossSourceNote[];
+  informationLabel: string;
+  absenceLabel: string | null;
+}
+
+/** [AEGIS-JOURNEY-01] Estados da situação ATUAL do caso na fonte — nenhum deles significa "corrigido". */
+export type DeviceCaseSourceState =
+  | 'open'
+  | 'openWithDisposition'
+  | 'notReported'
+  | 'absenceNotVerifiable'
+  | 'notAttributable'
+  | 'outsideEligibleAcquisitions'
+  | 'assetNotFound';
+
+/**
+ * [AEGIS-JOURNEY-01] SITUAÇÃO ATUAL observada na fonte para o caso de origem de um plano — lida agora, pela autoridade
+ * da prioridade. Apresentada SEPARADA da situação do plano, da execução relatada e da validação.
+ */
+export interface DeviceCaseSourceReading {
+  actionPlanId: string;
+  evaluatedAt: string;
+  state: DeviceCaseSourceState;
+  stateLabel: string;
+  explanation: string;
+  assetFound: boolean;
+  assetName: string | null;
+  /** O caso em aberto com a faixa ATUAL, quando a leitura o sustenta. */
+  case: DevicePriorityCase | null;
+  isDeterminingCase: boolean;
+  deviceBandLabel: string | null;
+  dispositionLabel: string | null;
+  absenceLabel: string | null;
+  caveats: CrossSourceNote[];
+  /** Diferença entre a faixa atual e a do registro de origem — dita sem conclusão. */
+  comparisonNote: string | null;
+  /** O limite desta versão: verificação técnica automática da correção pendente. */
+  verificationNote: string;
+}
+
+/** [AEGIS-JOURNEY-01] Criação de um plano para UM caso — só identifica o caso; o servidor obtém o contexto. */
+export interface CreateDeviceCasePlanRequest {
+  assetId: string;
+  cveId: string;
+  title: string;
+  proposedAction: string | null;
+  responsiblePerson: string | null;
+  responsibleArea: string | null;
+  dueDate: string | null;
+}
+
 /** Demonstração ou coleta real. */
 export type KnightOriginMode = 'Demo' | 'Live';
 
@@ -114,6 +207,10 @@ export interface ActionPlan {
   closureBlockedReason: string | null;
   validations: ActionPlanValidation[];
   events: ActionPlanEvent[];
+  /** [AEGIS-JOURNEY-01] Origem do plano (valor técnico; a tela usa `originLabel`). Ausente em respostas antigas. */
+  originKind?: ActionPlanOriginKind;
+  /** [AEGIS-JOURNEY-01] Registro de origem de um caso de dispositivo — nulo nas outras origens. */
+  deviceOrigin?: DeviceCaseOrigin | null;
 }
 
 export interface CreateActionPlanRequest {
@@ -383,8 +480,115 @@ export function panelAllowsCreation(state: PinnedPlanState): boolean {
   return state.kind === 'livre';
 }
 
+// ---- [AEGIS-JOURNEY-01] Caso de vulnerabilidade em dispositivo --------------------------------
+
+/** Forma canônica do identificador da CVE — a mesma da chave do caso no servidor (sem espaços, maiúsculas). */
+export function normalizeCve(cve: string | null | undefined): string {
+  return (cve ?? '').trim().toUpperCase();
+}
+
+/** O plano nasceu de um caso de vulnerabilidade em dispositivo? */
+export function isDevicePlan(p: ActionPlan): boolean {
+  return p.originKind === 'DeviceVulnerability' || (!p.originKind && !!p.deviceOrigin);
+}
+
+/** Planos de UM caso (dispositivo + CVE), do mais recente ao mais antigo. Nome, posição e faixa não entram na chave. */
+export function devicePlansForCase(plans: ActionPlan[], assetId: string, cveId: string): ActionPlan[] {
+  const asset = (assetId ?? '').toLowerCase();
+  const cve = normalizeCve(cveId);
+  return plans
+    .filter((p) => isDevicePlan(p) && p.deviceOrigin?.assetId?.toLowerCase() === asset && normalizeCve(p.deviceOrigin?.cveId) === cve)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+
+/** O plano ATIVO do caso, se houver — decide entre "Abrir plano" e "Planejar tratamento". */
+export function activeDevicePlanFor(plans: ActionPlan[], assetId: string, cveId: string): ActionPlan | null {
+  return devicePlansForCase(plans, assetId, cveId).find((p) => p.isActive) ?? null;
+}
+
+/**
+ * Por que o plano nomeado pelo endereço NÃO pode ocupar o painel do caso aberto — `null` quando pode. Outro dispositivo,
+ * outra CVE ou outra origem: o plano apareceria sob um cabeçalho que não é o dele.
+ */
+export function pinnedDevicePlanRejection(plan: ActionPlan, assetId: string, cveId: string): string | null {
+  if (!isDevicePlan(plan) || !plan.deviceOrigin)
+    return 'O plano indicado no endereço não nasceu de um caso de vulnerabilidade em dispositivo.';
+  if (plan.deviceOrigin.assetId.toLowerCase() !== (assetId ?? '').toLowerCase())
+    return 'O plano indicado no endereço pertence a outro dispositivo.';
+  if (normalizeCve(plan.deviceOrigin.cveId) !== normalizeCve(cveId))
+    return `O plano indicado no endereço é do caso ${plan.deviceOrigin.cveId}, não de ${normalizeCve(cveId)}.`;
+  return null;
+}
+
+/** O limite desta versão, dito sempre que a validação de um caso de dispositivo entra em cena. */
+export const DEVICE_VERIFICATION_PENDING =
+  'A verificação técnica automática da correção desta CVE no dispositivo ainda não está disponível: atestação humana é ' +
+  'registro, não comprovação, e plano concluído não significa dispositivo corrigido.';
+
+/** Tom do estado da situação na fonte. "Não reportada" é informativo — nunca o tom de "resolvido". */
+export function sourceReadingTone(state: DeviceCaseSourceState | string): 'warn' | 'info' | 'muted' {
+  if (state === 'open' || state === 'openWithDisposition') return 'warn';
+  if (state === 'notReported') return 'info';
+  return 'muted';
+}
+
+/** Título sugerido para o plano de um caso — editável; não é decisão. */
+export function seededDeviceTitle(cveId: string, assetName: string): string {
+  return `Tratar ${normalizeCve(cveId)} em ${assetName}`.slice(0, 200);
+}
+
+/** Ação proposta sugerida para um caso — a pessoa responsável escreve a ação; o AEGIS não aplica correção. */
+export function seededDeviceProposal(cveId: string, _info: DevicePriorityCase | null): string {
+  return (
+    `Aplicar a atualização ou a mitigação indicada pela fonte para ${normalizeCve(cveId)} neste dispositivo e registrar ` +
+    'o que foi feito. A confirmação técnica depende de uma nova coleta do Microsoft Defender — o plano, sozinho, não a comprova.'
+  );
+}
+
+function formatStamp(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** Resumo do registro de origem numa linha — sempre identificado como registro da criação, nunca como leitura atual. */
+export function deviceOriginLead(o: DeviceCaseOrigin): string {
+  return `Registro de origem · ${o.caseBandLabel} · política ${o.policyCode} v${o.policyVersion} · leitura de ${formatStamp(o.evaluatedAt)}`;
+}
+
+/** Destino de um plano na navegação: a tela onde o caso de origem é aberto, com o plano nomeado no endereço. */
+export interface PlanLink {
+  commands: string[];
+  queryParams: Record<string, string | null>;
+}
+
+export function planLink(p: ActionPlan): PlanLink | null {
+  if (isDevicePlan(p)) {
+    const o = p.deviceOrigin;
+    return o
+      ? { commands: ['/priorities'], queryParams: { tab: 'achados', device: o.assetId, cve: o.cveId, plan: p.id } }
+      : null;
+  }
+  if (p.knightIndicatorId)
+    return { commands: ['/identity'], queryParams: { finding: p.knightIndicatorId, run: p.originRunId, plan: p.id } };
+  return null;
+}
+
+/** Identificador curto do problema na lista de planos: o achado do KNIGHT ou a CVE do caso. */
+export function planSubject(p: ActionPlan): string {
+  if (isDevicePlan(p)) return p.deviceOrigin?.cveId ?? 'caso de dispositivo';
+  return p.knightIndicatorId ?? '—';
+}
+
 /** Procedência da ação em uma linha — o que distingue um treino de trabalho real sobre o cliente. */
 export function originLabel(p: ActionPlan): string {
+  if (isDevicePlan(p)) {
+    const o = p.deviceOrigin;
+    return o
+      ? `Vulnerabilidade em dispositivo · ${o.assetName} · ${o.cveId}`
+      : 'Vulnerabilidade em dispositivo · registro de origem indisponível';
+  }
   if (!p.originSourceType) return 'Origem não registrada';
   const fonte =
     p.originSourceType === 'MicrosoftEntraId'

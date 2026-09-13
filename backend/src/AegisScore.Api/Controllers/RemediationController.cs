@@ -11,6 +11,9 @@ namespace AegisScore.Api.Controllers;
 /// <summary>
 /// [AEGIS-MVP-PRODUCT-03] Planos de ação nascidos de um achado do AEGIS KNIGHT — a jornada que leva de
 /// "existe uma exposição" a "isto foi feito, e aqui está a prova".
+/// [AEGIS-JOURNEY-01] A MESMA superfície atende a segunda origem explícita: o caso de vulnerabilidade em dispositivo
+/// (ativo × CVE) da prioridade de tratamento. Criação própria (o servidor lê o caso), leitura da situação atual na fonte
+/// e a mesma trilha, execução, validação e concorrência.
 ///
 /// Autorização e isolamento reutilizam EXATAMENTE os padrões já existentes; nenhuma matriz nova de permissões
 /// foi criada. LER é permitido a qualquer papel autenticado do tenant (inclusive Analyst, que já lê toda a
@@ -22,8 +25,9 @@ namespace AegisScore.Api.Controllers;
 /// fail-closed — nunca por URL, querystring ou corpo. Uma ação de outro tenant é indistinguível de
 /// inexistente (404), jamais uma pista de que existe.
 ///
-/// Nada aqui altera score, veredito, cobertura, snapshot de avaliação ou o ledger de controles: concluir uma
-/// ação não torna um achado conforme.
+/// Nada aqui altera score, veredito, cobertura, snapshot de avaliação, prioridade, disposição de vulnerabilidade,
+/// observação da fonte ou o ledger de controles: concluir uma ação não torna um achado conforme nem um dispositivo
+/// corrigido.
 /// </summary>
 [ApiController]
 [Authorize]
@@ -39,7 +43,7 @@ public class RemediationController : ControllerBase
         _tenant = tenant;
     }
 
-    /// <summary>Ações de achado do tenant (mais recentes primeiro), com filtro por achado e por atividade.</summary>
+    /// <summary>Ações do tenant (mais recentes primeiro), com filtro por achado, caso de dispositivo e atividade.</summary>
     /// <response code="200">Lista (possivelmente vazia).</response>
     /// <response code="401">Tenant não resolvido no contexto.</response>
     /// <param name="sourceType">
@@ -48,10 +52,17 @@ public class RemediationController : ControllerBase
     /// de uma coleta real com a mesma aparência de trabalho real em curso.
     /// </param>
     /// <param name="mode">Modo de origem (Demo/Live) — o mesmo eixo, explícito.</param>
+    /// <param name="origin">
+    /// [AEGIS-JOURNEY-01] <c>knight</c> (padrão — o comportamento anterior), <c>device</c> (casos de vulnerabilidade em
+    /// dispositivo) ou <c>all</c> (as duas). Planos de tratamento de risco nunca entram.
+    /// </param>
+    /// <param name="assetId">Planos de casos de UM dispositivo.</param>
+    /// <param name="cveId">Planos de UMA CVE.</param>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ActionPlanDto>>> List(
         [FromQuery] string? indicatorId, [FromQuery] bool activeOnly = false,
         [FromQuery] string? sourceType = null, [FromQuery] string? mode = null,
+        [FromQuery] string? origin = null, [FromQuery] Guid? assetId = null, [FromQuery] string? cveId = null,
         CancellationToken ct = default)
     {
         if (_tenant.TenantId is not Guid)
@@ -73,8 +84,18 @@ public class RemediationController : ControllerBase
             parsedMode = m;
         }
 
+        ActionPlanOriginScope scope;
+        switch ((origin ?? "").Trim().ToLowerInvariant())
+        {
+            case "":
+            case "knight": scope = ActionPlanOriginScope.Knight; break;
+            case "device": scope = ActionPlanOriginScope.DeviceVulnerability; break;
+            case "all": scope = ActionPlanOriginScope.All; break;
+            default: return BadRequest($"Origem desconhecida: '{origin}'. Use knight, device ou all.");
+        }
+
         var plans = await _service.ListAsync(
-            new ActionPlanFilter(indicatorId, activeOnly, source, parsedMode), ct);
+            new ActionPlanFilter(indicatorId, activeOnly, source, parsedMode, scope, assetId, cveId), ct);
         return Ok(plans.Select(ToDto).ToList());
     }
 
@@ -86,6 +107,26 @@ public class RemediationController : ControllerBase
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
         var plan = await _service.GetAsync(id, ct);
         return plan is null ? NotFound() : Ok(ToDto(plan));
+    }
+
+    /// <summary>
+    /// [AEGIS-JOURNEY-01] Situação ATUAL observada na fonte para o caso de origem de um plano de dispositivo — lida agora
+    /// pela autoridade da prioridade, SEPARADA da situação do plano e da validação. Não é comprovação de correção e não
+    /// altera o plano.
+    /// </summary>
+    /// <response code="400">O plano não nasceu de um caso de dispositivo.</response>
+    /// <response code="404">Plano inexistente neste tenant.</response>
+    [HttpGet("{id:guid}/source-reading")]
+    public async Task<ActionResult<DeviceCaseSourceReadingView>> SourceReading(Guid id, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        try
+        {
+            var reading = await _service.GetDeviceCaseReadingAsync(id, ct);
+            return reading is null ? NotFound() : Ok(reading);
+        }
+        catch (ActionPlanValidationException ex) { return BadRequest(ex.Message); }
     }
 
     /// <summary>
@@ -113,6 +154,43 @@ public class RemediationController : ControllerBase
             var created = await _service.CreateForFindingAsync(
                 new CreateFindingActionPlanCommand(
                     request.RunId, request.IndicatorId, request.Title, request.ProposedAction,
+                    request.ResponsiblePerson, request.ResponsibleArea, request.DueDate),
+                CurrentActor(), ct);
+
+            return created is null
+                ? NotFound()
+                : CreatedAtAction(nameof(GetById), new { id = created.Id }, ToDto(created));
+        }
+        catch (ActionPlanValidationException ex) { return BadRequest(ex.Message); }
+        catch (ActionPlanConflictException ex) { return Conflict(ConflictBody(ex)); }
+    }
+
+    /// <summary>
+    /// [AEGIS-JOURNEY-01] Cria um plano para UM caso de vulnerabilidade em dispositivo (ativo × CVE). O corpo só
+    /// identifica o caso e os campos do plano; faixa, motivo, fatores e vínculos são lidos pelo SERVIDOR na autoridade
+    /// da prioridade e congelados como registro de origem. Um segundo clique no mesmo caso NÃO duplica: 409 com o plano
+    /// ativo existente, para a tela abri-lo.
+    /// </summary>
+    /// <response code="201">Plano criado.</response>
+    /// <response code="400">Pedido inválido, ou caso fora da leitura atual (não está em aberto e atribuível).</response>
+    /// <response code="403">Papel do tenant insuficiente (Analyst não cria planos).</response>
+    /// <response code="404">Dispositivo inexistente neste tenant.</response>
+    /// <response code="409">Já existe plano ativo para este caso.</response>
+    [HttpPost("device-cases")]
+    [Authorize(Roles = "Manager,TenantAdmin")]
+    public async Task<ActionResult<ActionPlanDto>> CreateForDeviceCase(
+        [FromBody] CreateDeviceCaseActionPlanRequest request, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        if (request is null)
+            return BadRequest("Corpo da requisição ausente.");
+
+        try
+        {
+            var created = await _service.CreateForDeviceCaseAsync(
+                new CreateDeviceCaseActionPlanCommand(
+                    request.AssetId, request.CveId, request.Title, request.ProposedAction,
                     request.ResponsiblePerson, request.ResponsibleArea, request.DueDate),
                 CurrentActor(), ct);
 
@@ -184,6 +262,8 @@ public class RemediationController : ControllerBase
     /// Registra uma validação. Com <c>validationRunId</c>, o DESFECHO é decidido pelo servidor a partir da
     /// comparação (fonte, regras, ordem temporal e suficiência da evidência para AQUELE indicador) — o cliente
     /// não escolhe "resolvido". Sem ela, exige-se referência de evidência e registra-se uma atestação humana.
+    /// [AEGIS-JOURNEY-01] Num plano de caso de dispositivo, a comparação de avaliações do KNIGHT é recusada (400): só a
+    /// atestação humana, identificada como tal, é aceita — a verificação técnica automática ainda não existe.
     /// </summary>
     [HttpPost("{id:guid}/validations")]
     [Authorize(Roles = "Manager,TenantAdmin")]
@@ -267,7 +347,9 @@ public class RemediationController : ControllerBase
         p.ClosureBlockedReason,
         p.Validations.Select(ToDto).ToList(),
         p.Events.Select(e => new ActionPlanEventDto(
-            e.Kind.ToString(), e.At, e.ActorName, e.FromStatus?.ToString(), e.ToStatus?.ToString(), e.Note)).ToList());
+            e.Kind.ToString(), e.At, e.ActorName, e.FromStatus?.ToString(), e.ToStatus?.ToString(), e.Note)).ToList(),
+        p.OriginKind.ToString(),
+        p.DeviceOrigin);
 
     private static ActionPlanValidationDto ToDto(ActionPlanValidationView v) => new(
         v.Method.ToString(),

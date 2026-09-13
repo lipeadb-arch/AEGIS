@@ -3,9 +3,13 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { BlastRadiusSummary, ExecutiveDashboard, GapBalance } from '../models/dashboard.models';
 import {
+  DashboardDevicePriorityItem,
   DashboardIdentityGap,
   DashboardMetric,
   DashboardOverview,
+  devicePriorityCardView,
+  devicePriorityItemParams,
+  devicePriorityUnitLines,
   hasReading,
   metricFreshness,
   identityCapabilityLabel,
@@ -191,6 +195,66 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           <div class="block-head">
             <h2>O que merece atenção</h2>
             <a class="linknav" routerLink="/priorities">Central de Prioridades →</a>
+          </div>
+
+          <!-- [AEGIS-JOURNEY-01] Prioridade de tratamento em dispositivos — a MESMA leitura da Central. Dispositivos, casos
+               e planos aparecem em linhas próprias, cada uma com a sua unidade (nunca somadas), e a parcialidade é dita
+               junto dos números. Cada dispositivo abre o detalhe na Central com o caso determinante selecionado. -->
+          <div class="panel dp-panel">
+            <div class="hd">
+              <h3>Prioridade de tratamento · vulnerabilidades em dispositivos</h3>
+              @if (d.devicePriority?.policyCode; as code) {
+                <span class="hint">política {{ code }} v{{ d.devicePriority!.policyVersion }}</span>
+              }
+            </div>
+            @if (dpCard().kind === 'data' && d.devicePriority; as dp) {
+              <ul class="dp-units">
+                <li><span class="u-k">Dispositivos</span><span class="u-v">{{ dpLines()!.devices }}</span></li>
+                <li><span class="u-k">Casos</span><span class="u-v">{{ dpLines()!.cases }}</span></li>
+                @if (dpLines()!.disposed; as fora) {
+                  <li><span class="u-k">Fora da fila</span><span class="u-v">{{ fora }}</span></li>
+                }
+                <li><span class="u-k">Planos</span><span class="u-v">{{ dpLines()!.plans }}</span></li>
+              </ul>
+              @if (dp.truncationNote) {
+                <p class="dp-note">{{ dp.truncationNote }}</p>
+              }
+              @if (dp.absenceNote) {
+                <p class="dp-note">{{ dp.absenceNote }}</p>
+              }
+              <ul class="queue">
+                @for (i of dp.top; track i.assetId) {
+                  <li>
+                    <a class="q-t q-link" routerLink="/priorities" [queryParams]="itemParams(i)">
+                      {{ i.position }}. {{ i.assetName }}
+                    </a>
+                    <span class="q-m">
+                      {{ i.bandLabel }}@if (i.cveId) { · caso determinante {{ i.cveId }} }@if (i.nameIsPlaceholder) { · nome não coletado pela fonte }
+                    </span>
+                    <span class="q-m" [class.has-plan]="!!i.activePlanId">
+                      {{ i.activePlanId ? 'Plano de tratamento ativo para este caso' : 'Sem plano de tratamento para este caso' }}
+                    </span>
+                  </li>
+                }
+              </ul>
+              <p class="dp-foot">
+                Ordem de tratamento pela política determinística do AEGIS — não é probabilidade de comprometimento nem avaliação
+                completa dos riscos. Calculada em {{ dp.evaluatedAt | date: 'dd/MM HH:mm' }}.
+              </p>
+              <div class="dp-links">
+                <a class="linknav" routerLink="/priorities">Fila completa →</a>
+                <a class="linknav" routerLink="/priorities" [queryParams]="{ tab: 'planos' }">Planos de ação →</a>
+              </div>
+            } @else {
+              <p class="panel-empty" [class.is-fail]="dpCard().kind === 'unavailable' || dpCard().kind === 'missing'">
+                {{ dpCardText() }}
+              </p>
+              @if (dpLines(); as l) {
+                @if (d.devicePriority!.plans.active + d.devicePriority!.plans.completed > 0) {
+                  <p class="dp-note">Planos de casos de dispositivo: {{ l.plans }}</p>
+                }
+              }
+            }
           </div>
 
           <div class="grid two">
@@ -981,6 +1045,78 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         opacity: 0.75;
       }
 
+      /* ---------- [AEGIS-JOURNEY-01] Prioridade de tratamento em dispositivos ---------- */
+      .dp-panel {
+        margin-bottom: 14px;
+      }
+      .dp-units {
+        list-style: none;
+        margin: 0 0 10px;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .dp-units li {
+        display: grid;
+        grid-template-columns: 96px minmax(0, 1fr);
+        gap: 10px;
+        align-items: baseline;
+      }
+      .u-k {
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .u-v {
+        font-family: var(--sans);
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--text);
+        min-width: 0;
+      }
+      .dp-note {
+        margin: 0 0 8px;
+        font-family: var(--sans);
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--amber);
+      }
+      .dp-foot {
+        margin: 10px 0 0;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+      .dp-links {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+      .q-link {
+        text-decoration: none;
+      }
+      .q-link:hover {
+        color: var(--cyan);
+        text-decoration: underline;
+      }
+      .q-m.has-plan {
+        color: var(--cyan);
+      }
+      .panel-empty.is-fail {
+        color: var(--amber);
+      }
+      @media (max-width: 720px) {
+        .dp-units li {
+          grid-template-columns: 1fr;
+          gap: 2px;
+        }
+      }
+
       /* Telas estreitas: nada rola lateralmente — as grades já colapsam sozinhas. */
       @media (max-width: 720px) {
         .page {
@@ -1185,6 +1321,23 @@ export class ExecutiveDashboardComponent implements OnInit {
         return 'Nenhuma vulnerabilidade aberta na última leitura das fontes.';
     }
   });
+
+  /** [AEGIS-JOURNEY-01] Estado do cartão de prioridade de tratamento — falha, sem fonte e ausência com textos próprios. */
+  readonly dpCard = computed(() => devicePriorityCardView(this.data()?.devicePriority));
+  readonly dpCardText = computed(() => {
+    const v = this.dpCard();
+    return 'text' in v ? v.text : '';
+  });
+  /** Dispositivos, casos e planos em linhas próprias, cada uma com a sua unidade. */
+  readonly dpLines = computed(() => {
+    const dp = this.data()?.devicePriority;
+    return dp ? devicePriorityUnitLines(dp) : null;
+  });
+
+  /** Endereço da Central que abre o detalhe do dispositivo com o caso determinante (e o plano ativo) selecionados. */
+  protected itemParams(i: DashboardDevicePriorityItem): Record<string, string | null> {
+    return devicePriorityItemParams(i);
+  }
 
   ngOnInit(): void {
     this.load();
