@@ -863,6 +863,16 @@ public class AegisScoreDbContext : DbContext
                 .HasDatabaseName("UX_ActionPlans_ActiveByFinding")
                 .HasFilter("\"KnightIndicatorId\" IS NOT NULL AND \"Status\" IN (0, 1, 4)");
 
+            // [AEGIS-JOURNEY-01] Caso de vulnerabilidade em dispositivo: a MESMA invariante de banco, com a chave
+            // canônica do caso — (tenant, ativo, CVE). No máximo UM plano ATIVO por caso; concluído libera um novo
+            // ciclo. Filtrado pela origem explícita, então nenhum plano legado (origem nula) ou do KNIGHT entra.
+            e.Property(x => x.OriginCveId).HasMaxLength(40);
+            e.HasIndex(x => new { x.TenantId, x.OriginKind, x.OriginAssetId, x.OriginCveId, x.Status });
+            e.HasIndex(x => new { x.TenantId, x.OriginAssetId, x.OriginCveId })
+                .IsUnique()
+                .HasDatabaseName("UX_ActionPlans_ActiveByDeviceCase")
+                .HasFilter("\"OriginKind\" = 2 AND \"Status\" IN (0, 1, 4)");
+
             e.HasAlternateKey(x => new { x.Id, x.TenantId });
             e.HasMany(x => x.Events).WithOne(v => v.ActionPlan)
                 .HasForeignKey(v => new { v.ActionPlanId, v.TenantId })

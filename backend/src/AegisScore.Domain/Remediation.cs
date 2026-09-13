@@ -14,6 +14,26 @@ namespace AegisScore.Domain;
 // "Marcar como executado" mora no evento. "Está corrigido" só pode morar na validação — e mesmo lá, o
 // desfecho distingue melhora observada de resolução, e prova técnica de atestação humana.
 
+/// <summary>
+/// [AEGIS-JOURNEY-01] De onde um plano de ação nasceu — a origem EXPLÍCITA, persistida junto com os vínculos que a
+/// sustentam. É ela que decide qual validação faz sentido: a comparação de avaliações do KNIGHT só vale para achados
+/// de identidade, e um caso de vulnerabilidade em dispositivo nunca é "validado" por ela.
+///
+/// Os planos gravados antes desta coluna ficam com ela NULA e continuam identificados como sempre foram — indicador
+/// KNIGHT preenchido é achado; senão, tratamento de risco. Nenhuma linha antiga é reescrita.
+/// </summary>
+public enum ActionPlanOriginKind
+{
+    /// <summary>Plano de tratamento do registro de riscos (inclui todos os legados com risco).</summary>
+    RiskTreatment = 0,
+
+    /// <summary>Plano nascido de um achado de uma avaliação do AEGIS KNIGHT.</summary>
+    KnightFinding = 1,
+
+    /// <summary>Plano nascido de um caso de vulnerabilidade em dispositivo (ativo × CVE) da prioridade de tratamento.</summary>
+    DeviceVulnerability = 2,
+}
+
 /// <summary>Natureza de uma entrada da trilha de auditoria de um plano de ação.</summary>
 public enum ActionPlanEventKind
 {

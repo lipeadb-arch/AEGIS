@@ -98,7 +98,80 @@ public sealed record ActionPlanView(
     /// <summary>Por que encerrar ainda não está disponível — nulo quando está.</summary>
     string? ClosureBlockedReason,
     IReadOnlyList<ActionPlanValidationView> Validations,
-    IReadOnlyList<ActionPlanEventView> Events);
+    IReadOnlyList<ActionPlanEventView> Events,
+    /// <summary>[AEGIS-JOURNEY-01] Origem EXPLÍCITA (ou derivada, nos planos anteriores a ela).</summary>
+    ActionPlanOriginKind OriginKind = ActionPlanOriginKind.KnightFinding,
+    /// <summary>[AEGIS-JOURNEY-01] Registro de origem congelado de um caso de dispositivo — nunca a leitura atual.</summary>
+    DeviceCaseOrigin? DeviceOrigin = null);
+
+/// <summary>
+/// [AEGIS-JOURNEY-01] REGISTRO DE ORIGEM de um plano nascido de um caso de vulnerabilidade em dispositivo — o contexto que
+/// motivou a criação, obtido pelo SERVIDOR na autoridade da prioridade e congelado. Nada aqui é atualizado depois: a
+/// leitura atual do caso é consultada à parte (<see cref="DeviceCaseSourceReadingView"/>), e a diferença entre as duas é
+/// exatamente o que o acompanhamento precisa mostrar.
+/// </summary>
+public sealed record DeviceCaseOrigin(
+    string Schema,
+    Guid AssetId,
+    string AssetName,
+    bool AssetNameIsPlaceholder,
+    string CveId,
+    string? CveTitle,
+    /// <summary>Instante do cálculo da prioridade que sustentou a criação.</summary>
+    DateTimeOffset EvaluatedAt,
+    string PolicyCode,
+    int PolicyVersion,
+    string CaseBand,
+    string CaseBandLabel,
+    string CaseReason,
+    bool WasDeterminingCase,
+    string DeviceBand,
+    string DeviceBandLabel,
+    string DevicePositionReason,
+    string SeverityLabel,
+    double? CvssScore,
+    string ExploitLabel,
+    double? Epss,
+    string Source,
+    DateTimeOffset FirstSeenAt,
+    DateTimeOffset AcquiredAt,
+    string AcquisitionLabel,
+    IReadOnlyList<AegisScore.Application.Queries.DevicePriorityFactorDto> Factors,
+    IReadOnlyList<AegisScore.Application.Queries.CrossSourceNoteDto> Caveats,
+    string InformationLabel,
+    string? AbsenceLabel)
+{
+    public const string SchemaV1 = "device-case-origin-v1";
+}
+
+/// <summary>
+/// [AEGIS-JOURNEY-01] SITUAÇÃO ATUAL observada na fonte para o caso de origem de um plano — lida agora, pela autoridade
+/// da prioridade, e apresentada SEPARADA da situação do plano, da execução relatada e da validação. Nenhum estado aqui é
+/// comprovação de correção, e nenhum deles altera o plano.
+/// </summary>
+public sealed record DeviceCaseSourceReadingView(
+    Guid ActionPlanId,
+    DateTimeOffset EvaluatedAt,
+    string State,
+    string StateLabel,
+    string Explanation,
+    bool AssetFound,
+    string? AssetName,
+    /// <summary>O caso em aberto com a faixa ATUAL, quando a leitura o sustenta.</summary>
+    AegisScore.Application.Queries.DevicePriorityCaseDto? Case,
+    bool IsDeterminingCase,
+    string? DeviceBandLabel,
+    string? DispositionLabel,
+    string? AbsenceLabel,
+    IReadOnlyList<AegisScore.Application.Queries.CrossSourceNoteDto> Caveats,
+    /// <summary>Diferença entre a faixa atual e a do registro de origem, dita sem conclusão; nula sem diferença.</summary>
+    string? ComparisonNote,
+    /// <summary>O limite desta versão: a verificação técnica automática da correção está pendente.</summary>
+    string VerificationNote)
+{
+    /// <summary>O dispositivo de origem não está mais no inventário deste cliente.</summary>
+    public const string AssetNotFound = "assetNotFound";
+}
 
 /// <summary>Criação de uma ação a partir de um ACHADO. Não exige risco, processo de negócio nem cadastro prévio.</summary>
 /// <param name="RunId">Avaliação que originou o achado — preservada como referência de ORIGEM.</param>
@@ -106,6 +179,20 @@ public sealed record ActionPlanView(
 public sealed record CreateFindingActionPlanCommand(
     Guid RunId,
     string IndicatorId,
+    string Title,
+    string? ProposedAction,
+    string? ResponsiblePerson,
+    string? ResponsibleArea,
+    DateOnly? DueDate);
+
+/// <summary>
+/// [AEGIS-JOURNEY-01] Criação de um plano a partir de um CASO de vulnerabilidade em dispositivo. Só identifica o caso
+/// (ativo + CVE) e os campos do plano: faixa, justificativa, fatores e vínculos são obtidos pelo SERVIDOR na autoridade
+/// da prioridade — nada do que o navegador disser sobre o caso é aceito como evidência.
+/// </summary>
+public sealed record CreateDeviceCaseActionPlanCommand(
+    Guid AssetId,
+    string CveId,
     string Title,
     string? ProposedAction,
     string? ResponsiblePerson,
@@ -148,11 +235,33 @@ public sealed record ValidateActionPlanCommand(
 /// coleta real, com a mesma aparência de ação real.
 /// </param>
 /// <param name="Mode">Restringe ao modo (Demo/Live) — o mesmo eixo, explícito.</param>
+/// <param name="Origin">
+/// [AEGIS-JOURNEY-01] Quais origens entram. O padrão continua sendo SÓ os achados do KNIGHT — quem já consultava a lista
+/// recebe exatamente o que recebia. Planos legados de tratamento de risco nunca entram: pertencem ao registro de riscos.
+/// </param>
+/// <param name="AssetId">Restringe aos planos de casos de UM dispositivo.</param>
+/// <param name="CveId">Restringe aos planos de UMA CVE (normalizada no serviço).</param>
 public sealed record ActionPlanFilter(
     string? IndicatorId = null,
     bool ActiveOnly = false,
     KnightSourceType? SourceType = null,
-    KnightAssessmentMode? Mode = null);
+    KnightAssessmentMode? Mode = null,
+    ActionPlanOriginScope Origin = ActionPlanOriginScope.Knight,
+    Guid? AssetId = null,
+    string? CveId = null);
+
+/// <summary>[AEGIS-JOURNEY-01] Recorte de origem da lista de planos.</summary>
+public enum ActionPlanOriginScope
+{
+    /// <summary>Só planos de achados do AEGIS KNIGHT (o comportamento anterior).</summary>
+    Knight = 0,
+
+    /// <summary>Só planos de casos de vulnerabilidade em dispositivo.</summary>
+    DeviceVulnerability = 1,
+
+    /// <summary>As duas origens de remediação — nunca os planos de tratamento de risco.</summary>
+    All = 2,
+}
 
 /// <summary>
 /// Conflito de escrita: já existe ação ATIVA para a mesma origem, ou a versão enviada não é a vigente. Nos
@@ -188,6 +297,21 @@ public interface IRemediationService
     /// <returns><c>null</c> quando a avaliação ou o achado não existem neste tenant.</returns>
     Task<ActionPlanView?> CreateForFindingAsync(
         CreateFindingActionPlanCommand command, RemediationActor actor, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-JOURNEY-01] Cria um plano para UM caso de vulnerabilidade em dispositivo (ativo × CVE). O servidor lê o caso
+    /// na autoridade da prioridade e congela o contexto que o sustenta; recusa (409, com o plano existente) quando já há
+    /// plano ativo para o mesmo caso, e (400) quando o caso não está em aberto e atribuível na leitura atual.
+    /// </summary>
+    /// <returns><c>null</c> quando o ativo não existe neste tenant.</returns>
+    Task<ActionPlanView?> CreateForDeviceCaseAsync(
+        CreateDeviceCaseActionPlanCommand command, RemediationActor actor, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-JOURNEY-01] A situação ATUAL observada na fonte para o caso de origem de um plano de dispositivo — leitura
+    /// que não altera o plano. <c>null</c> quando o plano não existe neste tenant; recusa (400) outras origens.
+    /// </summary>
+    Task<DeviceCaseSourceReadingView?> GetDeviceCaseReadingAsync(Guid id, CancellationToken ct = default);
 
     /// <summary>Ações do tenant (mais recentes primeiro), opcionalmente filtradas por achado e atividade.</summary>
     Task<IReadOnlyList<ActionPlanView>> ListAsync(ActionPlanFilter filter, CancellationToken ct = default);

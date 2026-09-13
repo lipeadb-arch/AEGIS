@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Identity;
 using AegisScore.Application.Knight;
@@ -40,6 +41,8 @@ public sealed class DashboardOverviewQuery : IDashboardOverviewQuery
     private readonly MaturityScoringService _maturity;
     private readonly IcrScoringService _icr;
     private readonly TimeProvider _clock;
+    private readonly IDevicePriorityQuery _devicePriority;
+    private readonly ILogger<DashboardOverviewQuery>? _logger;
 
     public DashboardOverviewQuery(
         AegisScoreDbContext db,
@@ -50,7 +53,9 @@ public sealed class DashboardOverviewQuery : IDashboardOverviewQuery
         IIdentityEvidenceService identity,
         MaturityScoringService maturity,
         IcrScoringService icr,
-        TimeProvider clock)
+        TimeProvider clock,
+        IDevicePriorityQuery devicePriority,
+        ILogger<DashboardOverviewQuery>? logger = null)
     {
         _db = db;
         _tenant = tenant;
@@ -61,6 +66,8 @@ public sealed class DashboardOverviewQuery : IDashboardOverviewQuery
         _maturity = maturity;
         _icr = icr;
         _clock = clock;
+        _devicePriority = devicePriority;
+        _logger = logger;
     }
 
     public async Task<DashboardOverviewDto> GetAsync(CancellationToken ct = default)
@@ -107,7 +114,108 @@ public sealed class DashboardOverviewQuery : IDashboardOverviewQuery
             ConfigurationExposures: new PriorityExposureQueueDto(exposures.Summary, exposures.Items),
             Vulnerabilities: new PriorityVulnerabilityQueueDto(vulnerabilities.Summary, vulnerabilities.Groups),
             Identity: BuildIdentity(identity),
-            Sources: BuildSources(workspace.Connectors, now));
+            Sources: BuildSources(workspace.Connectors, now),
+            // [AEGIS-JOURNEY-01] Por ÚLTIMO e com falha isolada: a prioridade é uma leitura mais cara (a mesma da Central),
+            // e uma falha nela não pode derrubar o que as outras dimensões já leram.
+            DevicePriority: await BuildDevicePriorityAsync(now, ct));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // [AEGIS-JOURNEY-01] Prioridade de tratamento em dispositivos
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Resumo da prioridade de tratamento pela MESMA autoridade da Central (<see cref="IDevicePriorityQuery"/>): primeira
+    /// página da fila sem filtro de faixa, com o resumo, o teto e a completude que ela já declara. Nada é recalculado aqui.
+    /// Sem fonte ou sem leitura, as contagens são NULAS — nunca zero. Uma falha vira estado próprio, sem números.
+    /// </summary>
+    private async Task<DashboardDevicePriorityDto> BuildDevicePriorityAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var plans = await BuildDevicePlansAsync(now, ct);
+
+        DevicePriorityListDto list;
+        try
+        {
+            list = await _devicePriority.ListAsync(
+                new DevicePriorityFilter(Band: null, Page: 1, PageSize: DashboardDevicePriorityDto.MaxItems), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.LogWarning(ex, "Prioridade de tratamento indisponível na composição da visão geral.");
+            return new DashboardDevicePriorityDto(
+                State: DashboardDevicePriorityDto.Unavailable,
+                Note: "Não foi possível calcular a prioridade de tratamento nesta leitura — nada é exibido, para que a falha " +
+                      "não pareça ausência de prioridade. A Central de Prioridades faz uma leitura própria.",
+                EvaluatedAt: null, PolicyCode: null, PolicyVersion: null,
+                CandidateAssets: null, AssetsEvaluated: null, EvaluationTruncated: false,
+                CompleteThroughBand: null, TruncationNote: null,
+                AssetsByBand: Array.Empty<DevicePriorityCountDto>(), CasesByBand: Array.Empty<DevicePriorityCountDto>(),
+                CasesPartial: false, AbsenceState: null, AbsenceNote: null,
+                Top: Array.Empty<DashboardDevicePriorityItemDto>(), Plans: plans);
+        }
+
+        var s = list.Summary;
+        var available = s.ReadingState == DevicePriorityReadingStates.Available;
+
+        // Plano ATIVO do caso determinante de cada dispositivo exibido — pela chave canônica do caso (ativo + CVE).
+        var shown = list.Items.Select(i => (Guid?)i.AssetId).ToList();
+        var active = shown.Count == 0
+            ? new()
+            : await _db.ActionPlans.AsNoTracking()
+                .Where(p => p.OriginKind == ActionPlanOriginKind.DeviceVulnerability
+                            && shown.Contains(p.OriginAssetId)
+                            && (p.Status == ActionPlanStatus.Aberto
+                                || p.Status == ActionPlanStatus.EmAndamento
+                                || p.Status == ActionPlanStatus.AguardandoValidacao))
+                .Select(p => new { p.Id, p.OriginAssetId, p.OriginCveId })
+                .ToListAsync(ct);
+
+        var top = list.Items
+            .Select(i => new DashboardDevicePriorityItemDto(
+                i.AssetId, i.AssetName, i.NameIsPlaceholder, i.Position, i.Band, i.BandLabel,
+                i.DeterminingCase?.CveId, i.DeterminingCase?.BandLabel,
+                i.DeterminingCase is { } c
+                    ? active.FirstOrDefault(p => p.OriginAssetId == i.AssetId
+                                                 && p.OriginCveId == DevicePriorityNarrative.NormalizeCve(c.CveId))?.Id
+                    : null))
+            .ToList();
+
+        return new DashboardDevicePriorityDto(
+            State: s.ReadingState,
+            Note: s.ReadingNote,
+            EvaluatedAt: list.EvaluatedAt,
+            PolicyCode: list.Policy.Code,
+            PolicyVersion: list.Policy.Version,
+            CandidateAssets: available ? s.CandidateAssets : null,
+            AssetsEvaluated: available ? s.AssetsEvaluated : null,
+            EvaluationTruncated: s.EvaluationTruncated,
+            CompleteThroughBand: s.CompleteThroughBand,
+            TruncationNote: s.TruncationNote,
+            AssetsByBand: available ? s.AssetsByBand : Array.Empty<DevicePriorityCountDto>(),
+            CasesByBand: available ? s.CasesByBand : Array.Empty<DevicePriorityCountDto>(),
+            CasesPartial: s.EvaluationTruncated,
+            AbsenceState: available ? s.AbsenceState : null,
+            AbsenceNote: s.AbsenceNote,
+            Top: top,
+            Plans: plans);
+    }
+
+    /// <summary>
+    /// Planos de casos de dispositivo do tenant (unidade: planos), pela regra de atraso do próprio domínio. O conjunto é o
+    /// de planos abertos manualmente — pequeno por natureza —, então só etapa e prazo são materializados.
+    /// </summary>
+    private async Task<DashboardDevicePlansDto> BuildDevicePlansAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var rows = await _db.ActionPlans.AsNoTracking()
+            .Where(p => p.OriginKind == ActionPlanOriginKind.DeviceVulnerability)
+            .Select(p => new { p.Status, p.DueDate })
+            .ToListAsync(ct);
+        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        return new DashboardDevicePlansDto(
+            Active: rows.Count(r => ActionPlan.IsActiveStatus(r.Status)),
+            AwaitingValidation: rows.Count(r => r.Status == ActionPlanStatus.AguardandoValidacao),
+            Overdue: rows.Count(r => ActionPlan.IsOverdueOn(r.Status, r.DueDate, today)),
+            Completed: rows.Count(r => r.Status == ActionPlanStatus.Concluido));
     }
 
     // ---------------------------------------------------------------------------------------------
