@@ -5,6 +5,8 @@ import { environment } from '../../environments/environment';
 import {
   ActionPlan,
   CreateActionPlanRequest,
+  CreateDeviceCasePlanRequest,
+  DeviceCaseSourceReading,
   KnightOriginMode,
   KnightOriginSource,
   RecordExecutionRequest,
@@ -16,12 +18,18 @@ import {
  * Recorte de uma leitura da fila de ações. `sourceType`/`mode` são a PROCEDÊNCIA: sem eles, uma ação nascida
  * do cenário de demonstração viria junto com os achados de uma coleta real, com a mesma aparência de
  * trabalho real em curso.
+ *
+ * [AEGIS-JOURNEY-01] `origin`: `knight` (padrão do servidor — o comportamento anterior), `device` (casos de
+ * vulnerabilidade em dispositivo) ou `all`. `assetId`/`cveId` restringem aos planos de um caso.
  */
 export interface ActionPlanQuery {
   indicatorId?: string | null;
   activeOnly?: boolean;
   sourceType?: KnightOriginSource | null;
   mode?: KnightOriginMode | null;
+  origin?: 'knight' | 'device' | 'all' | null;
+  assetId?: string | null;
+  cveId?: string | null;
 }
 
 /**
@@ -52,13 +60,16 @@ export class RemediationService {
   private readonly READ_TIMEOUT_MS = 20_000;
   private readonly WRITE_TIMEOUT_MS = 30_000;
 
-  /** Ações de achado do tenant. `activeOnly` traz só as que ocupam a origem (Aberta/Em andamento/Aguardando). */
+  /** Ações do tenant. `activeOnly` traz só as que ocupam a origem (Aberta/Em andamento/Aguardando). */
   list(query: ActionPlanQuery = {}): Observable<ActionPlan[]> {
     let params = new HttpParams();
     if (query.indicatorId) params = params.set('indicatorId', query.indicatorId);
     if (query.activeOnly) params = params.set('activeOnly', 'true');
     if (query.sourceType) params = params.set('sourceType', query.sourceType);
     if (query.mode) params = params.set('mode', query.mode);
+    if (query.origin) params = params.set('origin', query.origin);
+    if (query.assetId) params = params.set('assetId', query.assetId);
+    if (query.cveId) params = params.set('cveId', query.cveId);
     return this.http.get<ActionPlan[]>(this.base, { params }).pipe(
       timeout(this.READ_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível carregar os planos de ação.')),
@@ -76,6 +87,25 @@ export class RemediationService {
     return this.http.post<ActionPlan>(this.base, request).pipe(
       timeout(this.WRITE_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível criar o plano de ação.')),
+    );
+  }
+
+  /**
+   * [AEGIS-JOURNEY-01] Cria o plano de UM caso de vulnerabilidade em dispositivo. O corpo só identifica ativo + CVE e os
+   * campos do plano; faixa, motivo, fatores e vínculos são lidos pelo servidor — a tela não envia evidência.
+   */
+  createForDeviceCase(request: CreateDeviceCasePlanRequest): Observable<ActionPlan> {
+    return this.http.post<ActionPlan>(`${this.base}/device-cases`, request).pipe(
+      timeout(this.WRITE_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível criar o plano de ação.')),
+    );
+  }
+
+  /** [AEGIS-JOURNEY-01] Situação ATUAL do caso de origem na fonte — leitura que não altera o plano. */
+  sourceReading(id: string): Observable<DeviceCaseSourceReading> {
+    return this.http.get<DeviceCaseSourceReading>(`${this.base}/${id}/source-reading`).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível ler a situação atual na fonte.')),
     );
   }
 
@@ -107,7 +137,10 @@ export class RemediationService {
         if (err.status === 401) return throwError(() => new Error('Sessão expirada. Entre novamente.'));
         if (err.status === 403)
           return throwError(() => new Error('Seu papel não permite alterar planos de ação (requer Manager ou TenantAdmin).'));
-        if (err.status === 404) return throwError(() => new Error('Avaliação, achado ou plano não encontrados neste cliente.'));
+        if (err.status === 404)
+          return throwError(
+            () => new Error('Não encontrado neste cliente: o plano, o dispositivo, a avaliação ou o achado indicado não existe aqui.'),
+          );
         if (err.status === 409) {
           const body = err.error as { message?: string; existingActionPlanId?: string } | string | null;
           if (typeof body === 'object' && body !== null) {

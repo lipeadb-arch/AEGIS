@@ -1,5 +1,6 @@
-import { Component, computed, inject, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { ActivatedRoute, ParamMap, Router, RouterLink } from '@angular/router';
 import { AgentStateService } from '../services/agent-state.service';
 import { PriorityService } from '../services/priority.service';
 import { PriorityWorkspace } from '../models/priority.models';
@@ -28,14 +29,18 @@ import {
   actionSituation,
   activePlanFor,
   originLabel,
+  planLink,
+  planSubject,
 } from '../models/remediation.models';
 import { RemediationService } from '../services/remediation.service';
 import { CrossSourceSituationsComponent } from '../components/cross-source/cross-source-situations.component';
 import {
+  DevicePriorityCaseSelection,
   DevicePriorityComponent,
   DevicePriorityPolicyComponent,
 } from '../components/device-priority/device-priority.component';
 import {
+  AssetDevicePriority,
   DEVICE_PRIORITY_BAND_FILTERS,
   DevicePriorityBand,
   DevicePriorityFilter,
@@ -206,12 +211,15 @@ import {
              Achados e planos são leituras da MESMA central, não duas entradas de menu: acrescentar "Planos de
              ação" à navegação principal separaria o problema do trabalho que o endereça. -->
         <div class="subtabs" role="tablist">
-          <button type="button" role="tab" [class.on]="tab() === 'achados'" (click)="tab.set('achados')">
+          <button type="button" role="tab" [class.on]="tab() === 'achados'" [attr.aria-selected]="tab() === 'achados'"
+            (click)="setTab('achados')">
             Achados
           </button>
-          <button type="button" role="tab" [class.on]="tab() === 'planos'" (click)="tab.set('planos')">
+          <button type="button" role="tab" [class.on]="tab() === 'planos'" [attr.aria-selected]="tab() === 'planos'"
+            (click)="setTab('planos')">
             Planos de ação
-            @if (plans().length) { <span class="n">{{ plans().length }}</span> }
+            <!-- Contagem só com leitura válida: depois de uma falha, o número anterior não descreve a lista atual. -->
+            @if (plans().length && !plansError()) { <span class="n">{{ plans().length }}</span> }
           </button>
         </div>
 
@@ -221,19 +229,24 @@ import {
               <div>
                 <h2>Planos de ação</h2>
                 <p class="queue-sub">
-                  Ações nascidas de achados de identidade. <strong>A etapa do plano e o resultado no achado
-                  são coisas distintas</strong>: encerrar uma ação é uma decisão de gestão sobre o trabalho;
-                  o que aconteceu com a exposição só uma validação com evidência pode dizer.
+                  Planos nascidos de achados de identidade (AEGIS KNIGHT) e de casos de vulnerabilidade em
+                  dispositivos. <strong>A etapa do plano e o que foi comprovado são coisas distintas</strong>:
+                  concluir um plano é decisão de gestão sobre o trabalho; só a validação registra o que foi
+                  verificado — e, para casos de dispositivo, a verificação técnica automática ainda não está disponível.
                 </p>
               </div>
             </div>
             <div class="panel">
               @if (plansError(); as pe) {
-                <div class="state error"><p class="err">⚠ {{ pe }}</p></div>
+                <div class="state error">
+                  <p class="err">⚠ {{ pe }}</p>
+                  <button type="button" class="ghost" (click)="loadPlans()">Tentar novamente</button>
+                </div>
               } @else if (plans().length === 0) {
                 <div class="state empty">
                   <p class="muted">
-                    Nenhum plano de ação registrado. Abra um achado de identidade abaixo e crie a primeira ação.
+                    Nenhum plano de ação registrado. Crie um a partir de um achado de identidade ou de um caso na
+                    prioridade de tratamento de dispositivos.
                   </p>
                 </div>
               } @else {
@@ -241,30 +254,30 @@ import {
                   <thead>
                     <tr>
                       <th>Ação</th>
-                      <th class="c-tier">Origem</th>
+                      <th class="c-origin">Origem</th>
                       <th class="c-tier">Responsável</th>
                       <th class="c-when">Prazo</th>
                       <th class="c-state">Situação do plano</th>
-                      <th>Resultado no achado</th>
-                      <th class="c-when">Próxima providência</th>
+                      <th>Validação registrada</th>
+                      <th class="c-next">Próxima providência</th>
                     </tr>
                   </thead>
                   <tbody>
                     @for (p of plans(); track p.id) {
                       <tr class="row">
                         <td>
-                          <!-- [AEGIS-MVP-PRODUCT-03] O link identifica O PLANO, não apenas o achado. Sem o
+                          <!-- [AEGIS-MVP-PRODUCT-03] O link identifica O PLANO, não apenas o problema. Sem o
                                identificador da ação, abrir a linha de uma ação ENCERRADA levaria ao ciclo
-                               ATIVO do mesmo indicador — outro trabalho, com a mesma aparência de resposta. -->
-                          <a
-                            class="title link"
-                            [routerLink]="['/identity']"
-                            [queryParams]="{ finding: p.knightIndicatorId, run: p.originRunId, plan: p.id }">
-                            {{ p.title }}
-                          </a>
-                          <span class="meta mono">{{ p.knightIndicatorId }}</span>
+                               ATIVO do mesmo problema — outro trabalho, com a mesma aparência de resposta.
+                               [AEGIS-JOURNEY-01] Casos de dispositivo abrem o detalhe na Central com a CVE e o plano. -->
+                          @if (link(p); as l) {
+                            <a class="title link" [routerLink]="l.commands" [queryParams]="l.queryParams">{{ p.title }}</a>
+                          } @else {
+                            <strong class="title">{{ p.title }}</strong>
+                          }
+                          <span class="meta mono">{{ subject(p) }}</span>
                         </td>
-                        <td class="c-tier">
+                        <td class="c-origin">
                           <span class="meta" [class.demo]="p.originMode === 'Demo'">{{ origin(p) }}</span>
                         </td>
                         <td class="c-tier">{{ p.responsiblePerson || '—' }}</td>
@@ -544,26 +557,34 @@ import {
                   <button type="button" class="ghost" (click)="goDp(dl.page + 1)" [disabled]="dl.page * dl.pageSize >= dl.total">Próxima ›</button>
                 </div>
               }
-              <!-- O detalhe NÃO depende da linha da tabela: quando a releitura esvazia o filtro (o dispositivo mudou de
-                   faixa), a lista mostra o vazio, e o detalhe continua aberto com a confirmação e a prioridade atualizada.
-                   Fora do ramo tabela/vazio, a instância é preservada — sem nova leitura nem nova declaração. -->
-              @if (dpExpanded(); as id) {
-                <div class="xs-detail-panel">
-                  <div class="dp-detail-head">
-                    <p class="meta">Detalhe de <strong>{{ dpExpandedName() }}</strong></p>
-                    <button type="button" class="ghost xs-open dp-detail-close" (click)="closeDp()">Fechar detalhe</button>
-                  </div>
-                  @if (dpDetailNote(); as note) {
-                    <p class="meta" role="status">{{ note }}</p>
-                  }
-                  <app-device-priority [assetId]="id" (criticalityDeclared)="onDeviceCriticalityDeclared()" />
-                </div>
-              }
               @if (dpDispositions(); as dt) {
                 <p class="meta xs-policy">Casos fora da fila por disposição registrada (evidência preservada): {{ dt }}.</p>
               }
               <div class="xs-policy"><app-device-priority-policy [policy]="dl.policy" /></div>
               <p class="meta xs-policy">{{ dl.scope }} Calculado em {{ fmtDate(dl.evaluatedAt) }}.</p>
+            }
+            <!-- O detalhe NÃO depende da linha da tabela nem do estado da fila: quando a releitura esvazia o filtro (o
+                 dispositivo mudou de faixa), quando a fila está vazia ou quando o dispositivo foi aberto pelo endereço
+                 (plano de um caso que saiu da fila), o detalhe continua aberto. Fora da cadeia de estados, a instância é
+                 preservada — sem nova leitura nem nova declaração. [AEGIS-JOURNEY-01] Caso e plano vêm do endereço. -->
+            @if (dpExpanded(); as id) {
+              <div class="xs-detail-panel">
+                <div class="dp-detail-head">
+                  <p class="meta">Detalhe de <strong>{{ dpExpandedName() || 'dispositivo indicado no endereço' }}</strong></p>
+                  <button type="button" class="ghost xs-open dp-detail-close" (click)="closeDp()">Fechar detalhe</button>
+                </div>
+                @if (dpDetailNote(); as note) {
+                  <p class="meta" role="status">{{ note }}</p>
+                }
+                <app-device-priority
+                  [assetId]="id"
+                  [selectedCve]="dpCase()"
+                  [pinnedPlanId]="dpPlan()"
+                  (criticalityDeclared)="onDeviceCriticalityDeclared()"
+                  (caseSelected)="onDpCaseSelected($event)"
+                  (loaded)="onDpLoaded($event)"
+                  (planChanged)="onDevicePlanChanged()" />
+              </div>
             }
           </div>
         </div>
@@ -880,6 +901,10 @@ import {
       .subtabs button.on { opacity: 1; color: var(--c); border-bottom-color: var(--c); }
       .subtabs .n { font-size: 0.68rem; margin-left: 0.35rem; opacity: 0.75; }
       .meta.late { color: #ff6b8a; }
+      /* [AEGIS-JOURNEY-01] Aba de planos com duas origens: origem e providência QUEBRAM linha, nunca alargam a tabela. */
+      .c-origin { min-width: 12rem; max-width: 18rem; }
+      .c-origin .meta, .c-next .meta { white-space: normal; overflow-wrap: anywhere; }
+      .c-next { min-width: 14rem; }
       .meta.demo { color: #ffb020; opacity: 0.95; }
       /* [AEGIS-MVP-PRODUCT-02] Barra de contexto da avaliação KNIGHT: origem, score PRÓPRIO e cobertura. */
       .knight-bar { display: flex; gap: 1.4rem; flex-wrap: wrap; padding: 0.55rem 0.7rem 0.75rem; }
@@ -976,15 +1001,22 @@ import {
 export class PrioritiesComponent {
   private readonly api = inject(PriorityService);
   private readonly agent = inject(AgentStateService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  private readonly destroyRef = inject(DestroyRef);
 
   private readonly remediation = inject(RemediationService);
 
-  /** Sub-aba ativa: os achados (as três filas) ou os planos que os endereçam. */
+  /**
+   * Sub-aba ativa: os achados (as filas) ou os planos que os endereçam. [AEGIS-JOURNEY-01] Acompanhada no endereço,
+   * como a faixa, a página, o dispositivo aberto, a CVE e o plano — abrir o link ou recarregar volta ao mesmo contexto.
+   */
   protected readonly tab = signal<'achados' | 'planos'>('achados');
 
   /**
-   * Planos de ação do tenant. Uma leitura ÚNICA serve às duas sub-abas e ao botão de cada achado — a mesma
-   * autoridade que a tela do KNIGHT usa, de modo que os dois lugares não discordem sobre "existe ação ativa?".
+   * Planos de ação do tenant — achados do KNIGHT e casos de dispositivo. Uma leitura ÚNICA serve às duas sub-abas e ao
+   * botão de cada achado — a mesma autoridade que a tela do KNIGHT usa, de modo que os dois lugares não discordem sobre
+   * "existe ação ativa?".
    */
   protected readonly plans = signal<ActionPlan[]>([]);
   protected readonly plansError = signal<string | null>(null);
@@ -992,6 +1024,13 @@ export class PrioritiesComponent {
   protected readonly situation = actionSituation;
   protected readonly result = actionResult;
   protected readonly origin = originLabel;
+  protected readonly link = planLink;
+  protected readonly subject = planSubject;
+
+  protected setTab(tab: 'achados' | 'planos'): void {
+    this.tab.set(tab);
+    this.syncUrl();
+  }
 
   /** Ação ATIVA de um achado — decide entre "Criar plano de ação" e "Abrir plano". */
   /**
@@ -1101,22 +1140,40 @@ export class PrioritiesComponent {
   protected readonly dpRefreshError = signal<string | null>(null);
   /** Nome do dispositivo do detalhe aberto — guardado na abertura, porque a linha pode sair da lista depois da releitura. */
   protected readonly dpExpandedName = signal<string | null>(null);
-  /** Por que o detalhe aberto não está na lista exibida (saiu do filtro ou mudou de página); nula com a linha visível. */
-  protected readonly dpDetailNote = computed(() => detailOutsideListNote(this.dp(), this.dpExpanded()));
+  /** [AEGIS-JOURNEY-01] CVE e plano abertos no detalhe — acompanhados no endereço. */
+  protected readonly dpCase = signal<string | null>(null);
+  protected readonly dpPlan = signal<string | null>(null);
+  /** O detalhe foi aberto pelo endereço (visão geral ou lista de planos), não por uma linha desta página. */
+  private readonly dpFromLink = signal(false);
+  /**
+   * Por que o detalhe aberto não está na lista exibida; nula com a linha visível. Aberto pelo endereço, o dispositivo
+   * pode simplesmente não estar nesta página — ou ter saído da fila (plano de um caso já sem prioridade atual).
+   */
+  protected readonly dpDetailNote = computed(() => {
+    const l = this.dp();
+    const id = this.dpExpanded();
+    if (id && l && this.dpFromLink() && !l.items.some((i) => i.assetId === id))
+      return (
+        'Este dispositivo não está nesta página da fila: pode estar em outra página, em outra faixa ou fora da fila. ' +
+        'O detalhe abaixo é a leitura atual dele.'
+      );
+    return detailOutsideListNote(l, id);
+  });
   /** Só a resposta da ÚLTIMA leitura pedida é aplicada — filtro, página ou atualização depois de uma declaração. */
   private dpSeq = 0;
 
   /**
    * @param opts.background releitura sem apagar a fila nem fechar o detalhe (depois de uma declaração confirmada): a
    * tabela antiga fica visível com "Atualizando…", e uma falha diz que a fila pode estar desatualizada.
+   * @param opts.keepDetail leitura inicial ou vinda do endereço: o detalhe indicado continua aberto.
    */
-  protected loadDevicePriority(opts: { background?: boolean } = {}): void {
+  protected loadDevicePriority(opts: { background?: boolean; keepDetail?: boolean } = {}): void {
     const seq = ++this.dpSeq;
     if (opts.background) {
       this.dpRefreshing.set(true);
     } else {
       this.dpLoading.set(true);
-      this.dpExpanded.set(null);
+      if (!opts.keepDetail) this.closeDetailState();
     }
     this.dpError.set(null);
     this.dpRefreshError.set(null);
@@ -1159,24 +1216,103 @@ export class PrioritiesComponent {
   protected setDpBand(band: DevicePriorityBand | null): void {
     this.dpFilter.update((f) => ({ ...f, band, page: 1 }));
     this.loadDevicePriority();
+    this.syncUrl();
   }
 
   protected goDp(page: number): void {
     if (page < 1) return;
     this.dpFilter.update((f) => ({ ...f, page }));
     this.loadDevicePriority();
+    this.syncUrl();
   }
 
   protected toggleDp(assetId: string, name: string): void {
     const open = this.dpExpanded() !== assetId;
-    this.dpExpanded.set(open ? assetId : null);
-    this.dpExpandedName.set(open ? name : null);
+    if (open) {
+      this.dpExpanded.set(assetId);
+      this.dpExpandedName.set(name);
+      this.dpCase.set(null);
+      this.dpPlan.set(null);
+      this.dpFromLink.set(false);
+    } else {
+      this.closeDetailState();
+    }
+    this.syncUrl();
   }
 
   /** Fecha o detalhe mesmo quando a linha dele já não está na tabela (filtro esvaziado). Não relê nada. */
   protected closeDp(): void {
+    this.closeDetailState();
+    this.syncUrl();
+  }
+
+  private closeDetailState(): void {
     this.dpExpanded.set(null);
     this.dpExpandedName.set(null);
+    this.dpCase.set(null);
+    this.dpPlan.set(null);
+    this.dpFromLink.set(false);
+  }
+
+  /** [AEGIS-JOURNEY-01] Caso (e plano) escolhido no detalhe: o endereço acompanha, para recarregar no mesmo ponto. */
+  protected onDpCaseSelected(sel: DevicePriorityCaseSelection): void {
+    this.dpCase.set(sel.cveId);
+    this.dpPlan.set(sel.planId);
+    this.syncUrl();
+  }
+
+  /** O nome do dispositivo aberto pelo endereço só é conhecido quando o detalhe lê a prioridade dele. */
+  protected onDpLoaded(d: AssetDevicePriority): void {
+    if (d.assetId === this.dpExpanded()) this.dpExpandedName.set(d.assetName);
+  }
+
+  /** Um plano de caso de dispositivo mudou: a lista de planos é relida; a prioridade não (plano não a altera). */
+  protected onDevicePlanChanged(): void {
+    this.loadPlans();
+  }
+
+  /**
+   * O endereço é a fonte do contexto da Central: aba, faixa, página, dispositivo aberto, CVE e plano. Recarregar a
+   * página, abrir o link direto ou voltar no navegador leva ao mesmo ponto. Parâmetro desconhecido é ignorado.
+   */
+  private applyUrl(q: ParamMap): { filterChanged: boolean } {
+    this.tab.set(q.get('tab') === 'planos' ? 'planos' : 'achados');
+    const bandParam = q.get('band');
+    const band = DEVICE_PRIORITY_BAND_FILTERS.some((b) => b.value !== null && b.value === bandParam)
+      ? (bandParam as DevicePriorityBand)
+      : null;
+    const pageNum = Number(q.get('page'));
+    const page = Number.isInteger(pageNum) && pageNum > 1 ? pageNum : 1;
+    const f = this.dpFilter();
+    const filterChanged = f.band !== band || f.page !== page;
+    if (filterChanged) this.dpFilter.set({ ...f, band, page });
+
+    const device = q.get('device');
+    if (device !== this.dpExpanded()) {
+      this.dpExpandedName.set(null);
+      this.dpFromLink.set(!!device);
+    }
+    this.dpExpanded.set(device);
+    this.dpCase.set(device ? q.get('cve') : null);
+    this.dpPlan.set(device ? q.get('plan') : null);
+    return { filterChanged };
+  }
+
+  private syncUrl(): void {
+    const f = this.dpFilter();
+    const device = this.dpExpanded();
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: {
+        tab: this.tab() === 'planos' ? 'planos' : null,
+        band: f.band,
+        page: f.page > 1 ? f.page : null,
+        device,
+        cve: device ? this.dpCase() : null,
+        plan: device ? this.dpPlan() : null,
+      },
+      replaceUrl: true,
+    });
   }
 
   // ---- [AEGIS-CROSS-SOURCE-01] Situações identificadas entre fontes (leitura própria, separada das filas) ----
@@ -1253,14 +1389,26 @@ export class PrioritiesComponent {
   }
 
   constructor() {
-    this.load();
+    // [AEGIS-JOURNEY-01] O endereço decide o contexto: a primeira leitura já nasce com aba, filtro, página, dispositivo,
+    // CVE e plano do link. Mudanças posteriores (voltar no navegador, link de um plano nesta mesma tela) reaplicam o
+    // contexto; a fila só é relida quando filtro ou página mudaram.
+    let first = true;
+    this.route.queryParamMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((q) => {
+      const { filterChanged } = this.applyUrl(q);
+      if (first) {
+        first = false;
+        this.load();
+        return;
+      }
+      if (filterChanged) this.loadDevicePriority({ keepDetail: true });
+    });
   }
 
   protected load(): void {
     this.loading.set(true);
     this.error.set(null);
     this.loadPlans();
-    this.loadDevicePriority();
+    this.loadDevicePriority({ keepDetail: true });
     this.loadCrossSource();
     this.api.get().subscribe({
       next: (workspace) => {
@@ -1279,9 +1427,10 @@ export class PrioritiesComponent {
    * Lê os planos. Uma falha aqui NÃO derruba a Central: as filas de achados continuam válidas, e a sub-aba de
    * planos mostra o erro em vez de uma lista vazia que se leria como "não há ação alguma".
    */
-  private loadPlans(): void {
+  protected loadPlans(): void {
     this.plansError.set(null);
-    this.remediation.list({}).subscribe({
+    // [AEGIS-JOURNEY-01] As duas origens de remediação — achados do KNIGHT e casos de dispositivo; nunca o registro de riscos.
+    this.remediation.list({ origin: 'all' }).subscribe({
       next: (plans) => this.plans.set(plans),
       error: (err: Error) => this.plansError.set(err.message),
     });
