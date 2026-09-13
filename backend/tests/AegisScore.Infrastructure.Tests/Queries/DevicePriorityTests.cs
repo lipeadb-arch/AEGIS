@@ -858,6 +858,45 @@ public sealed class DevicePriorityTests : IDisposable
         zero.Summary.AbsenceNote.Should().Contain("parcial");
     }
 
+    // ================= [AEGIS-JOURNEY-01] Fila vazia ≠ ausência de vulnerabilidade ==================================
+
+    /// <summary>
+    /// Coleta COMPLETA com todos os casos ainda em aberto na fonte, porém com disposição humana (risco aceito, mitigação
+    /// informada, falso positivo): a fila fica vazia (zero candidatos) e a ausência de OUTROS casos é conclusiva — mas os
+    /// casos dispostos continuam em aberto e são contados no resumo. É esse resumo que impede "fila vazia" de virar
+    /// "nenhuma vulnerabilidade" na visão geral e na Central.
+    /// </summary>
+    [Fact]
+    public async Task EmptyQueue_WithEveryCaseDisposed_KeepsTheOpenCasesCounted_NeverAsAbsence()
+    {
+        var defender = Seed(TenantA, ConnectorCapability.VulnerabilityScanner);
+        string[] machines = { Machine("mde-x", "pc-x.demo.example.com", null), Machine("mde-y", "pc-y.demo.example.com", null) };
+        DefenderData(machines,
+            new[] { ("mde-x", "CVE-2024-9101"), ("mde-x", "CVE-2024-9102"), ("mde-y", "CVE-2024-9103") },
+            Cve("CVE-2024-9101", "Critical", 9.8, publicExploit: true), Cve("CVE-2024-9102", "High", 8.8), Cve("CVE-2024-9103", "Medium", 5.0));
+        await Sync(defender);
+        var x = await AssetOf(defender, "mde-x");
+        var y = await AssetOf(defender, "mde-y");
+        await SetDispositionAsync(x, "CVE-2024-9101", ExposureStatus.Accepted);
+        await SetDispositionAsync(x, "CVE-2024-9102", ExposureStatus.Mitigated);
+        await SetDispositionAsync(y, "CVE-2024-9103", ExposureStatus.FalsePositive);
+
+        var list = await List();
+        list.Summary.ReadingState.Should().Be(DevicePriorityReadingStates.Available);
+        list.Summary.AbsenceState.Should().Be(DevicePriorityAbsenceStates.Conclusive, "a aquisição foi completa");
+        list.Summary.CandidateAssets.Should().Be(0, "nenhum caso em aberto SEM disposição — a fila está vazia");
+        list.Items.Should().BeEmpty();
+        list.Summary.Dispositions.Select(d => (d.Status, d.Count))
+            .Should().Equal(new[] { ("mitigated", 1), ("accepted", 1), ("falsePositive", 1) }, "os três casos seguem em aberto na fonte");
+        (await Detail(x)).Status.Should().Be(DevicePriorityStatuses.AllDisposed);
+        (await Detail(y)).Status.Should().Be(DevicePriorityStatuses.AllDisposed);
+
+        // A leitura não reabre nada: os três casos seguem em aberto na fonte, com a disposição como estava.
+        await using var db = NewContext(TenantA);
+        (await db.AssetThreatObservations.CountAsync(o => o.LifecycleState == ObservationLifecycle.Open)).Should().Be(3);
+        (await db.AssetThreatExposures.CountAsync(e => e.Status == ExposureStatus.Active)).Should().Be(0);
+    }
+
     // ================= Estado informado pelo Intune preservado =======================================================
 
     [Fact]

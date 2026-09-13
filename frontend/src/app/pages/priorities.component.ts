@@ -487,7 +487,7 @@ import {
                 <button type="button" class="ghost" (click)="loadDevicePriority()">Tentar novamente</button>
               </div>
             } @else if (dpView().kind === 'noSource' || dpView().kind === 'neverCollected' || dpView().kind === 'noCandidates'
-                || dpView().kind === 'noCandidatesUnverified') {
+                || dpView().kind === 'noCandidatesUnverified' || dpView().kind === 'onlyDispositions') {
               <div class="state empty"><p class="muted">{{ dpText() }}</p></div>
             } @else {
               @let dl = dp()!;

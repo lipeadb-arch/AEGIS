@@ -151,6 +151,7 @@ public sealed class DashboardOverviewQuery : IDashboardOverviewQuery
                 CompleteThroughBand: null, TruncationNote: null,
                 AssetsByBand: Array.Empty<DevicePriorityCountDto>(), CasesByBand: Array.Empty<DevicePriorityCountDto>(),
                 CasesPartial: false, AbsenceState: null, AbsenceNote: null,
+                Dispositions: Array.Empty<DevicePriorityDispositionDto>(),
                 Top: Array.Empty<DashboardDevicePriorityItemDto>(), Plans: plans);
         }
 
@@ -196,6 +197,9 @@ public sealed class DashboardOverviewQuery : IDashboardOverviewQuery
             CasesPartial: s.EvaluationTruncated,
             AbsenceState: available ? s.AbsenceState : null,
             AbsenceNote: s.AbsenceNote,
+            // Sem elas, "nenhum dispositivo na fila" viraria "nenhuma vulnerabilidade em aberto": casos com disposição humana
+            // continuam em aberto na fonte e só ficam FORA da fila.
+            Dispositions: available ? s.Dispositions : Array.Empty<DevicePriorityDispositionDto>(),
             Top: top,
             Plans: plans);
     }

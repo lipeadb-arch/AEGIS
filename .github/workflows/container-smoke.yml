@@ -197,7 +197,10 @@ jobs:
       #     contexto obtido pelo servidor, chave canônica, novo ciclo e reabertura, recusa da comparação KNIGHT, registro de
       #     origem × leitura atual, compatibilidade das origens) é NOVA: sem esta linha ela não executaria. +1 caso em
       #     DashboardOverviewQueryTests (resumo da prioridade sem fonte = nulo; falha isolada). O passo vai de 605 a 612
-      #     (medido localmente com este MESMO filtro).
+      #     (medido localmente com este MESMO filtro). Revisão dirigida (mesmo PR): +1 caso em DevicePriorityTests (fila
+      #     vazia com todos os casos dispostos numa aquisição completa — zero candidatos, disposições contadas) e +1 em
+      #     DashboardOverviewQueryTests (a visão geral leva as disposições; sem leitura, não leva). Filtro inalterado; o
+      #     passo vai de 612 a 614.
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj

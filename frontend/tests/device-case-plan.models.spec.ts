@@ -34,6 +34,7 @@ import {
   devicePriorityItemParams,
   devicePriorityUnitLines,
 } from '../src/app/models/dashboard-overview.models';
+import { DevicePriorityDisposition } from '../src/app/models/device-priority.models';
 
 // ---- micro-harness ---------------------------------------------------------------------------
 let failures = 0;
@@ -103,7 +104,7 @@ function summary(over: Partial<DashboardDevicePriority> = {}): DashboardDevicePr
       { band: 'p1', label: '', count: 2 }, { band: 'p2', label: '', count: 0 }, { band: 'p3', label: '', count: 1 },
       { band: 'p4', label: '', count: 0 }, { band: 'insufficient', label: '', count: 0 },
     ],
-    casesPartial: false, absenceState: 'conclusive', absenceNote: null, top: [],
+    casesPartial: false, absenceState: 'conclusive', absenceNote: null, dispositions: [], top: [],
     plans: { active: 1, awaitingValidation: 0, overdue: 0, completed: 0 },
     ...over,
   };
@@ -167,7 +168,8 @@ test('nenhum estado da situação na fonte tem tom de "resolvido"', () => {
 
 test('visão geral: dispositivos, casos e planos em linhas próprias, sem soma entre unidades', () => {
   const lines = devicePriorityUnitLines(summary());
-  contains(lines.devices, '2 dispositivos com vulnerabilidade em aberto · P1 2', 'unidade: dispositivos');
+  contains(lines.devices, '2 dispositivos na fila (vulnerabilidade em aberto sem disposição registrada) · P1 2', 'unidade: dispositivos');
+  eq(lines.disposed, null, 'sem casos dispostos, sem linha "fora da fila"');
   contains(lines.cases, '3 casos dispositivo × CVE priorizáveis · P1 2 · P3 1', 'unidade: casos');
   contains(lines.plans, '1 plano ativo', 'unidade: planos');
   contains(lines.plans, 'concluído ≠ dispositivo corrigido', 'concluído ≠ corrigido');
@@ -190,6 +192,49 @@ test('sem fonte, sem leitura ou com falha: nada vira zero nem "nada a tratar"', 
   const zero = devicePriorityCardView(summary({ candidateAssets: 0 }));
   contains('text' in zero ? zero.text : '', 'não comprova que os dispositivos estejam seguros', 'zero conclusivo com limite');
   eq(devicePriorityCardView(summary()).kind, 'data', 'com dados');
+});
+
+test('[revisão] fila vazia não é ausência: casos em aberto com disposição humana aparecem, com unidade e sem virar correção', () => {
+  const disp: DevicePriorityDisposition[] = [
+    { status: 'mitigated', label: 'Mitigação informada', count: 1 },
+    { status: 'accepted', label: 'Risco aceito', count: 1 },
+    { status: 'falsePositive', label: 'Falso positivo', count: 1 },
+  ];
+  // Coleta completa, todos os casos ainda em aberto na fonte, todos com disposição: zero candidatos.
+  const only = devicePriorityCardView(summary({ candidateAssets: 0, assetsByBand: [], casesByBand: [], dispositions: disp }));
+  eq(only.kind, 'onlyDispositions', 'estado próprio, não "sem candidatos"');
+  const t = 'text' in only ? only.text : '';
+  contains(t, 'Nenhum dispositivo na fila de prioridade', 'descreve a fila');
+  contains(t, 'não é ausência de vulnerabilidade', 'e o que ela não é');
+  contains(t, '3 casos dispositivo × CVE seguem em aberto na fonte com disposição humana registrada', 'conjunto contado, com unidade');
+  contains(t, 'Mitigação informada: 1 · Risco aceito: 1 · Falso positivo: 1', 'cada disposição');
+  contains(t, 'disposição não é correção', 'disposição não é correção');
+  notContains(t, 'A fonte não reporta', 'nunca a frase de ausência');
+  notContains(t, 'Nenhum dispositivo com vulnerabilidade', 'nem a frase antiga');
+
+  // Mesmo estado com coleta parcial: a parcialidade é dita junto.
+  const parcial = devicePriorityCardView(summary({
+    candidateAssets: 0, absenceState: 'notVerifiable', absenceNote: 'A aquisição mais recente foi parcial.', dispositions: disp,
+  }));
+  eq(parcial.kind, 'onlyDispositions', 'parcial com dispostos');
+  contains('text' in parcial ? parcial.text : '', 'não permite concluir a ausência de outros casos', 'parcialidade dita');
+
+  // Cenário misto: fila com dispositivos + casos dispostos fora dela — linhas próprias, sem soma.
+  const misto = devicePriorityUnitLines(summary({ dispositions: [{ status: 'accepted', label: 'Risco aceito', count: 2 }] }));
+  contains(misto.devices, '2 dispositivos na fila', 'a população é a da fila');
+  contains(misto.disposed ?? '', '2 casos dispositivo × CVE seguem em aberto na fonte', 'fora da fila, com unidade');
+  eq(devicePriorityCardView(summary({ dispositions: [{ status: 'accepted', label: 'Risco aceito', count: 2 }] })).kind, 'data', 'misto tem dados');
+
+  // Ausência real: nenhum candidato E nenhum caso disposto, coleta completa.
+  const zero = devicePriorityCardView(summary({ candidateAssets: 0, assetsByBand: [], casesByBand: [], dispositions: [] }));
+  eq(zero.kind, 'noCandidates', 'ausência real');
+  contains('text' in zero ? zero.text : '', 'nem na fila, nem com disposição registrada', 'descreve os dois conjuntos');
+  // Resposta anterior sem o campo: a tela não afirma ausência que não pode sustentar.
+  const antigo = devicePriorityCardView({ ...summary({ candidateAssets: 0 }), dispositions: undefined });
+  notContains('text' in antigo ? antigo.text : '', 'A fonte não reporta', 'sem o campo, sem afirmação de ausência');
+  contains('text' in antigo ? antigo.text : '', 'Casos com disposição registrada ficam fora da fila', 'e diz o que falta');
+  // Falha continua falha, sem números.
+  eq(devicePriorityCardView(summary({ state: 'Unavailable', candidateAssets: null, dispositions: [] })).kind, 'unavailable', 'falha');
 });
 
 test('o item da visão geral abre a Central com dispositivo, caso e plano', () => {

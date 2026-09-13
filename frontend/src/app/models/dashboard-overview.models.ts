@@ -9,7 +9,13 @@
 // O frontend NÃO recalcula score, cobertura, contagem, gap ou criticidade — tudo vem apurado do backend.
 
 import { PostureExposureItem, PostureExposureSummary } from './posture-exposure.models';
-import { DevicePriorityBand, DevicePriorityCount, bandCountsText } from './device-priority.models';
+import {
+  DevicePriorityBand,
+  DevicePriorityCount,
+  DevicePriorityDisposition,
+  bandCountsText,
+  disposedCasesText,
+} from './device-priority.models';
 import { VulnerabilityGroup, VulnerabilitySummary } from './vulnerability.models';
 import { ConnectorHealthSummary, EvidenceCoverageSummary, WorkspaceOverall, WorkspacePosture } from './workspace.models';
 
@@ -140,6 +146,7 @@ export interface DashboardDevicePriority {
   evaluatedAt: string | null;
   policyCode: string | null;
   policyVersion: number | null;
+  /** Dispositivos com caso em aberto SEM disposição — a população da fila. Zero não é ausência de vulnerabilidade. */
   candidateAssets: number | null;
   assetsEvaluated: number | null;
   evaluationTruncated: boolean;
@@ -151,6 +158,11 @@ export interface DashboardDevicePriority {
   casesPartial: boolean;
   absenceState: string | null;
   absenceNote: string | null;
+  /**
+   * Casos dispositivo × CVE ainda em aberto na fonte com disposição humana registrada — fora da fila, não corrigidos.
+   * Opcional para respostas anteriores a este campo (sem ele, a tela não afirma ausência).
+   */
+  dispositions?: DevicePriorityDisposition[] | null;
   top: DashboardDevicePriorityItem[];
   plans: DashboardDevicePlans;
 }
@@ -179,11 +191,14 @@ export type DevicePriorityCardView =
   | { kind: 'neverCollected'; text: string }
   | { kind: 'noCandidates'; text: string }
   | { kind: 'noCandidatesUnverified'; text: string }
+  | { kind: 'onlyDispositions'; text: string }
   | { kind: 'data' };
 
 /**
- * Estado do cartão. Zero dispositivos só é dito como "nenhum com vulnerabilidade em aberto" quando a completude da
- * coleta sustenta a ausência; falha e ausência de fonte têm textos próprios e nunca aparecem como "nada a tratar".
+ * Estado do cartão. Fila vazia (zero candidatos) NÃO é ausência de vulnerabilidade: os casos em aberto com disposição
+ * humana ficam fora da fila e continuam em aberto na fonte. "A fonte não reporta vulnerabilidade em aberto" só é dito
+ * quando não há candidato NEM caso disposto e a completude da coleta sustenta a ausência; falha e ausência de fonte têm
+ * textos próprios e nunca aparecem como "nada a tratar".
  */
 export function devicePriorityCardView(dp: DashboardDevicePriority | null | undefined): DevicePriorityCardView {
   if (!dp)
@@ -201,6 +216,16 @@ export function devicePriorityCardView(dp: DashboardDevicePriority | null | unde
   if (dp.state === 'NeverCollected')
     return { kind: 'neverCollected', text: dp.note ?? 'A fonte ainda não publicou uma leitura por dispositivo.' };
   if ((dp.candidateAssets ?? 0) === 0) {
+    const disposed = disposedCasesText(dp.dispositions);
+    if (disposed)
+      return {
+        kind: 'onlyDispositions',
+        text:
+          `Nenhum dispositivo na fila de prioridade — e isso não é ausência de vulnerabilidade: ${disposed}. ` +
+          (dp.absenceState === 'notVerifiable'
+            ? 'Além disso, a coleta não permite concluir a ausência de outros casos. ' + (dp.absenceNote ?? '')
+            : ''),
+      };
     if (dp.absenceState === 'notVerifiable')
       return {
         kind: 'noCandidatesUnverified',
@@ -208,11 +233,20 @@ export function devicePriorityCardView(dp: DashboardDevicePriority | null | unde
           'Nenhum caso de vulnerabilidade em aberto está publicado nesta leitura, mas a coleta não permite concluir ausência. ' +
           (dp.absenceNote ?? ''),
       };
+    // Sem o campo das disposições (resposta anterior), a tela não pode afirmar que não há caso disposto.
+    if (!dp.dispositions)
+      return {
+        kind: 'noCandidates',
+        text:
+          'Nenhum dispositivo na fila de prioridade nesta leitura. Casos com disposição registrada ficam fora da fila e não ' +
+          'são contados aqui — consulte a Central de Prioridades.',
+      };
     return {
       kind: 'noCandidates',
       text:
-        'Nenhum dispositivo com vulnerabilidade em aberto na aquisição completa mais recente. Isso não comprova que os ' +
-        'dispositivos estejam seguros.',
+        'A fonte não reporta vulnerabilidade em aberto em nenhum dispositivo na aquisição completa mais recente — nem na ' +
+        'fila, nem com disposição registrada. Isso não comprova que os dispositivos estejam seguros.' +
+        (dp.absenceState === 'conclusiveAttemptFailed' && dp.absenceNote ? ' ' + dp.absenceNote : ''),
     };
   }
   return { kind: 'data' };
@@ -227,11 +261,17 @@ function prioritized(counts: DevicePriorityCount[]): number {
  * As três linhas do cartão, cada uma com a SUA unidade: dispositivos, casos dispositivo × CVE e planos. Nenhuma soma
  * atravessa unidades. A linha de casos diz quando o total é parcial (teto por leitura).
  */
-export function devicePriorityUnitLines(dp: DashboardDevicePriority): { devices: string; cases: string; plans: string } {
+export function devicePriorityUnitLines(dp: DashboardDevicePriority): {
+  devices: string;
+  cases: string;
+  /** Casos fora da fila por disposição humana (ainda em aberto na fonte); nulo quando não há nenhum. */
+  disposed: string | null;
+  plans: string;
+} {
   const n = dp.candidateAssets ?? 0;
   const devicesInsufficient = dp.assetsByBand.find((b) => b.band === 'insufficient')?.count ?? 0;
   const devices =
-    `${n === 1 ? '1 dispositivo' : `${n} dispositivos`} com vulnerabilidade em aberto` +
+    `${n === 1 ? '1 dispositivo' : `${n} dispositivos`} na fila (vulnerabilidade em aberto sem disposição registrada)` +
     (bandCountsText(dp.assetsByBand.filter((b) => b.band !== 'insufficient')) !== '—'
       ? ` · ${bandCountsText(dp.assetsByBand.filter((b) => b.band !== 'insufficient'))}`
       : '') +
@@ -251,7 +291,7 @@ export function devicePriorityUnitLines(dp: DashboardDevicePriority): { devices:
     ` · ${p.awaitingValidation} aguardando validação · ${p.overdue} em atraso · ` +
     `${p.completed === 1 ? '1 concluído' : `${p.completed} concluídos`} (concluído ≠ dispositivo corrigido)`;
 
-  return { devices, cases, plans };
+  return { devices, cases, disposed: disposedCasesText(dp.dispositions), plans };
 }
 
 /** Parâmetros do endereço da Central que abrem o detalhe do dispositivo com o caso (e o plano ativo) selecionados. */

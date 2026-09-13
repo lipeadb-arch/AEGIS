@@ -392,6 +392,55 @@ public sealed class DashboardOverviewQueryTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// [AEGIS-JOURNEY-01] Fila vazia com casos dispostos: a composição leva as disposições da autoridade (as mesmas da
+    /// Central) para a tela inicial — sem elas, zero candidatos seria lido como "nenhuma vulnerabilidade em aberto".
+    /// </summary>
+    [Fact]
+    public async Task PrioridadeDeDispositivos_FilaVaziaComCasosDispostos_LevaAsDisposicoes_E_SemLeituraNaoLeva()
+    {
+        await using var db = NewContext();
+        var real = new AegisScore.Infrastructure.Queries.DevicePriorityQuery(db, new FixedClock(Now),
+            Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions()));
+
+        var overview = await QueryFor(db, devicePriority: new DisposedOnlyDevicePriority(real)).GetAsync();
+        overview.DevicePriority.State.Should().Be(DevicePriorityReadingStates.Available);
+        overview.DevicePriority.CandidateAssets.Should().Be(0);
+        overview.DevicePriority.Dispositions.Select(d => (d.Status, d.Count))
+            .Should().Equal(new[] { ("mitigated", 1), ("accepted", 2), ("falsePositive", 0) });
+
+        var semFonte = await QueryFor(db, devicePriority: real).GetAsync();
+        semFonte.DevicePriority.State.Should().Be(DevicePriorityReadingStates.NoSource);
+        semFonte.DevicePriority.Dispositions.Should().BeEmpty("sem leitura não há contagem de disposições — nem 0");
+    }
+
+    /// <summary>A leitura real (sem fonte) com o resumo de uma coleta completa em que todos os casos têm disposição.</summary>
+    private sealed class DisposedOnlyDevicePriority(IDevicePriorityQuery inner) : IDevicePriorityQuery
+    {
+        public async Task<DevicePriorityListDto> ListAsync(DevicePriorityFilter filter, CancellationToken ct = default)
+        {
+            var l = await inner.ListAsync(filter, ct);
+            return l with
+            {
+                Summary = l.Summary with
+                {
+                    ReadingState = DevicePriorityReadingStates.Available, ReadingNote = null, CandidateAssets = 0,
+                    AbsenceState = DevicePriorityAbsenceStates.Conclusive, AbsenceNote = null,
+                    Dispositions = new[]
+                    {
+                        new DevicePriorityDispositionDto("mitigated", "Mitigação informada", 1),
+                        new DevicePriorityDispositionDto("accepted", "Risco aceito", 2),
+                        new DevicePriorityDispositionDto("falsePositive", "Falso positivo", 0),
+                    },
+                },
+            };
+        }
+        public Task<AssetDevicePriorityDto?> GetForAssetAsync(Guid assetId, int casePage, int casePageSize, CancellationToken ct = default) =>
+            inner.GetForAssetAsync(assetId, casePage, casePageSize, ct);
+        public Task<DevicePriorityCaseReading?> GetCaseAsync(Guid assetId, string cveId, CancellationToken ct = default) =>
+            inner.GetCaseAsync(assetId, cveId, ct);
+    }
+
     private sealed class ThrowingDevicePriority : IDevicePriorityQuery
     {
         private static Exception Falha() => new InvalidOperationException("falha sintética da leitura de prioridade");

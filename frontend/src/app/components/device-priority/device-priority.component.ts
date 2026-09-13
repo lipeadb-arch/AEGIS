@@ -147,6 +147,12 @@ export interface DevicePriorityCaseSelection {
             <button type="button" class="dp-btn" (click)="retry()">Tentar novamente</button>
           </div>
         }
+        @case ('notFound') {
+          <div class="dp-err" role="status">
+            <span>Dispositivo não encontrado neste cliente — pode ter saído do inventário. Não há prioridade atual para ele, e isso não significa que as vulnerabilidades foram corrigidas. Planos já criados para os casos dele continuam acessíveis.</span>
+            <button type="button" class="dp-btn" (click)="retry()">Ler de novo</button>
+          </div>
+        }
         @case ('loaded') {
           @let d = data()!;
           <div class="dp-position">
@@ -186,22 +192,33 @@ export interface DevicePriorityCaseSelection {
             <p>{{ d.nextAction }}</p>
           </div>
 
-          <!-- [AEGIS-JOURNEY-01] Plano do caso selecionado: logo abaixo da ação sugerida, com leitura e falha próprias. -->
-          @if (selected(); as cve) {
-            <div class="dp-plan" [id]="'dp-plan-' + d.assetId">
-              <app-device-case-plan
-                [assetId]="d.assetId"
-                [assetName]="d.assetName"
-                [cveId]="cve"
-                [caseInfo]="caseFor(d, cve)"
-                [plans]="plans()"
-                [plansError]="plansError()"
-                [pinnedPlanId]="pinned()"
-                (changed)="onPlanChanged($event)"
-                (closed)="selectCase(null)"
-                (planOpened)="onPlanOpened($event)" />
-            </div>
-          }
+        }
+      }
+
+      <!-- [AEGIS-JOURNEY-01] Plano do caso selecionado: logo abaixo da ação sugerida e FORA dos estados de carga da
+           prioridade. Uma releitura (página de casos, declaração, nova tentativa), a falha dela ou o dispositivo ausente
+           não destroem o painel nem o que está sendo digitado: o plano tem leitura e falha próprias, e o registro de
+           origem dá o contexto quando a prioridade não pode ser lida. -->
+      @if (selected(); as cve) {
+        <div class="dp-plan" [id]="'dp-plan-' + assetId">
+          <app-device-case-plan
+            [assetId]="assetId"
+            [assetName]="data()?.assetName ?? null"
+            [cveId]="cve"
+            [caseInfo]="caseInfo(cve)"
+            [plans]="plans()"
+            [plansError]="plansError()"
+            [pinnedPlanId]="pinned()"
+            [creationBlockedReason]="creationBlock()"
+            (changed)="onPlanChanged($event)"
+            (closed)="selectCase(null)"
+            (planOpened)="onPlanOpened($event)"
+            (retryPlans)="loadPlans()" />
+        </div>
+      }
+
+      @if (state() === 'loaded') {
+          @let d = data()!;
 
           @if (d.caveats.length) {
             <div class="dp-caveats">
@@ -360,7 +377,6 @@ export interface DevicePriorityCaseSelection {
           </details>
           <app-device-priority-policy [policy]="d.policy" />
           <p class="dp-scope">{{ d.scope }}</p>
-        }
       }
     </section>
   `,
@@ -444,7 +460,8 @@ export class DevicePriorityComponent implements OnChanges {
   private readonly remediation = inject(RemediationService);
 
   protected readonly heading = DEVICE_PRIORITY_HEADING;
-  protected readonly state = signal<'loading' | 'loaded' | 'error'>('loading');
+  /** `notFound`: o dispositivo não existe (mais) neste cliente — distinto de falha, e nunca "sem vulnerabilidade". */
+  protected readonly state = signal<'loading' | 'loaded' | 'error' | 'notFound'>('loading');
   protected readonly data = signal<AssetDevicePriority | null>(null);
   protected readonly saving = signal(false);
   protected readonly declError = signal<string | null>(null);
@@ -477,18 +494,20 @@ export class DevicePriorityComponent implements OnChanges {
   }
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['selectedCve']) this.selected.set(this.selectedCve ? normalizeCve(this.selectedCve) : null);
-    if (changes['pinnedPlanId']) this.pinned.set(this.pinnedPlanId || null);
     if (changes['assetId']) {
       this.casePage = 1;
       this.saveNotice.set(null);
       this.declError.set(null);
-      if (!changes['selectedCve']) {
-        this.selected.set(null);
-        this.pinned.set(null);
-      }
+      this.data.set(null);   // nada do dispositivo anterior (nome, casos) chega ao painel do novo
       this.load();
       this.loadPlans();
+    }
+    // O conjunto COERENTE dos inputs, sempre: trocar só o dispositivo (a mesma CVE e o plano continuam no endereço) não
+    // pode descartar a seleção — nem manter a do dispositivo anterior quando o endereço não nomeia caso.
+    if (changes['assetId'] || changes['selectedCve'] || changes['pinnedPlanId']) {
+      const cve = this.selectedCve ? normalizeCve(this.selectedCve) : null;
+      this.selected.set(cve);
+      this.pinned.set(cve ? this.pinnedPlanId || null : null);
     }
   }
 
@@ -506,17 +525,40 @@ export class DevicePriorityComponent implements OnChanges {
         if (saved) this.saveNotice.set({ text: `Declaração registrada: ${saved.label}.`, tone: 'ok' });
         this.loaded.emit(d);
       },
-      error: () => {
+      error: (err: { status?: number }) => {
         if (seq !== this.seq) return;
         this.data.set(null);
-        this.state.set('error');
+        this.state.set(err?.status === 404 ? 'notFound' : 'error');
         if (saved) this.saveNotice.set({ text: declarationSavedNotRefreshedText(saved), tone: 'warn' });
       },
     });
   }
 
+  /**
+   * [AEGIS-JOURNEY-01] Por que o painel do plano não pode oferecer CRIAÇÃO agora — nulo com a prioridade lida. Criar
+   * depende da leitura atual do caso; consultar e acompanhar planos existentes, não.
+   */
+  protected readonly creationBlock = computed<string | null>(() => {
+    switch (this.state()) {
+      case 'loading':
+        return 'A prioridade deste dispositivo ainda está sendo lida — criar um plano depende da leitura atual do caso.';
+      case 'error':
+        return 'A leitura da prioridade falhou: sem ela não é possível confirmar que o caso está em aberto. Use "Tentar novamente" acima; planos existentes continuam acessíveis.';
+      case 'notFound':
+        return 'O dispositivo não foi encontrado neste cliente — não é possível abrir plano novo para ele. Planos existentes e o registro de origem continuam acessíveis.';
+      default:
+        return null;
+    }
+  });
+
+  /** O caso na página exibida (ou o determinante), só para semear o formulário do plano — nulo sem leitura. */
+  protected caseInfo(cve: string): DevicePriorityCase | null {
+    const d = this.data();
+    return d ? this.caseFor(d, cve) : null;
+  }
+
   /** Planos dos casos deste dispositivo. Falha aqui não esconde a prioridade — o texto diz que os planos não vieram. */
-  private loadPlans(): void {
+  protected loadPlans(): void {
     const seq = ++this.plansSeq;
     const assetId = this.assetId;
     this.plansError.set(null);

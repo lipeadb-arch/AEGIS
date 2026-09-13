@@ -211,6 +211,9 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
               <ul class="dp-units">
                 <li><span class="u-k">Dispositivos</span><span class="u-v">{{ dpLines()!.devices }}</span></li>
                 <li><span class="u-k">Casos</span><span class="u-v">{{ dpLines()!.cases }}</span></li>
+                @if (dpLines()!.disposed; as fora) {
+                  <li><span class="u-k">Fora da fila</span><span class="u-v">{{ fora }}</span></li>
+                }
                 <li><span class="u-k">Planos</span><span class="u-v">{{ dpLines()!.plans }}</span></li>
               </ul>
               @if (dp.truncationNote) {

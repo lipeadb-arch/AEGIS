@@ -54,6 +54,12 @@ import { AuthService } from '../../services/auth.service';
  *
  * Nada aqui envia faixa, fatores ou justificativa ao servidor: o pedido de criação só identifica ativo + CVE. Etapas
  * alcançáveis e motivo de bloqueio chegam prontos do servidor e não são reimplementados.
+ *
+ * Identidade de CONTEXTO (dispositivo × CVE × plano em foco): o painel é reutilizado ao trocar de caso, de plano ou de
+ * dispositivo. Ao trocar, os rascunhos de edição, execução e atestação, os avisos e o "salvando" são reiniciados — nada
+ * digitado para um plano pode ser enviado para outro. Uma nova versão do MESMO plano (releitura da lista, escrita própria)
+ * não é troca: o que a pessoa está digitando fica. Respostas de escrita, conflito e releitura carregam o contexto em que
+ * nasceram e não pintam, selecionam nem limpam nada em outro.
  */
 @Component({
   selector: 'app-device-case-plan',
@@ -62,7 +68,7 @@ import { AuthService } from '../../services/auth.service';
   template: `
     <section class="cp" [attr.aria-label]="'Plano de tratamento de ' + cveId()">
       <div class="cp-head">
-        <h5>Plano de tratamento · <span class="mono">{{ cveId() }}</span> em {{ assetName() }}</h5>
+        <h5>Plano de tratamento · <span class="mono">{{ cveId() }}</span> em {{ displayName() }}</h5>
         <button type="button" class="btn ghost sm" (click)="closed.emit()">Fechar plano</button>
       </div>
 
@@ -82,7 +88,7 @@ import { AuthService } from '../../services/auth.service';
         </div>
       }
       @if (plansError(); as pe) {
-        <p class="hint warn">Não foi possível conferir os planos deste dispositivo: {{ pe }} Criar agora pode esbarrar num plano já existente — o servidor recusa a duplicidade e abre o existente.</p>
+        <p class="hint warn">Não foi possível ler a lista de planos deste dispositivo agora: {{ pe }} O plano ativo e os ciclos anteriores deste caso podem não aparecer.</p>
       }
 
       @switch (pinned().kind) {
@@ -304,8 +310,17 @@ import { AuthService } from '../../services/auth.service';
           }
         </div>
       } @else if (pinned().kind === 'livre') {
-        @if (!canManage()) {
+        <!-- Sem plano em foco. Criar só é oferecido quando a AUSÊNCIA de plano ativo foi lida e o caso pode ser lido agora:
+             lista de planos com falha, prioridade sem leitura ou dispositivo ausente não viram convite para criar. -->
+        @if (plansError()) {
+          <div class="state err" role="alert">
+            <b>Criar um plano fica indisponível até a lista de planos ser lida: sem ela, não dá para saber se já existe um plano ativo para este caso.</b>
+            <button type="button" class="btn ghost sm" (click)="retryPlans.emit()">Ler os planos de novo</button>
+          </div>
+        } @else if (!canManage()) {
           <p class="hint warn">Nenhum plano ativo para esta CVE neste dispositivo. Criar um exige <b>Manager</b> ou <b>TenantAdmin</b> — seu papel permite acompanhar, não iniciar.</p>
+        } @else if (creationBlockedReason()) {
+          <p class="hint warn">Nenhum plano ativo para esta CVE neste dispositivo. {{ creationBlockedReason() }}</p>
         } @else {
           <p class="hint">
             Crie o plano para este caso. O servidor lê o caso na prioridade de tratamento e registra a faixa, os fatores,
@@ -379,7 +394,8 @@ export class DeviceCasePlanComponent {
   private readonly auth = inject(AuthService);
 
   readonly assetId = input.required<string>();
-  readonly assetName = input.required<string>();
+  /** Nome do dispositivo na leitura atual da prioridade — nulo quando ela falhou ou o dispositivo não existe mais. */
+  readonly assetName = input<string | null>(null);
   readonly cveId = input.required<string>();
   /** O caso na leitura atual, quando está na página exibida — só para semear o formulário. */
   readonly caseInfo = input<DevicePriorityCase | null>(null);
@@ -388,12 +404,19 @@ export class DeviceCasePlanComponent {
   readonly plansError = input<string | null>(null);
   /** Plano nomeado pelo endereço (`?plan=`): é ele que ocupa o painel, mesmo encerrado. */
   readonly pinnedPlanId = input<string | null>(null);
+  /**
+   * Por que criar um plano NÃO pode ser oferecido agora (prioridade sem leitura, com falha, dispositivo ausente) — nulo
+   * quando pode. Planos existentes continuam acessíveis; só a criação depende da leitura atual do caso.
+   */
+  readonly creationBlockedReason = input<string | null>(null);
 
   /** Um plano foi criado ou alterado — quem contém o painel relê os planos. */
   readonly changed = output<ActionPlan>();
   readonly closed = output<void>();
   /** O plano em foco mudou por escolha da pessoa (ciclo anterior ou volta ao ativo) — para o endereço acompanhar. */
   readonly planOpened = output<string | null>();
+  /** Pedido explícito para reler a lista de planos (depois de uma falha). */
+  readonly retryPlans = output<void>();
 
   protected readonly statusLabel = actionStatusLabel;
   protected readonly situation = actionSituation;
@@ -411,7 +434,6 @@ export class DeviceCasePlanComponent {
   protected readonly bandTone = bandTone;
   protected readonly verificationPending = DEVICE_VERIFICATION_PENDING;
 
-  readonly busy = signal(false);
   readonly error = signal<string | null>(null);
   readonly notice = signal<string | null>(null);
   readonly editOpen = signal(false);
@@ -447,6 +469,21 @@ export class DeviceCasePlanComponent {
 
   readonly canManage = computed(() => canManageActionPlans(this.auth.activeRole()));
 
+  /** Nome exibido: o da leitura atual; sem ela, o do registro de origem do plano em foco (como era na criação). */
+  readonly displayName = computed(
+    () => this.assetName() || this.plan()?.deviceOrigin?.assetName || 'dispositivo indicado no endereço',
+  );
+
+  /** Identidade do contexto: dispositivo × CVE × plano em foco ("novo" quando não há plano). */
+  readonly contextKey = computed(() =>
+    [(this.assetId() ?? '').toLowerCase(), normalizeCve(this.cveId()), this.plan()?.id ?? 'novo'].join('|'),
+  );
+  private currentContext: string | null = null;
+
+  /** Contexto da escrita em curso: o "salvando" pertence a ele, não ao painel. */
+  private readonly pendingKey = signal<string | null>(null);
+  readonly busy = computed(() => this.pendingKey() !== null && this.pendingKey() === this.contextKey());
+
   readonly reading = signal<DeviceCaseSourceReading | null>(null);
   readonly readingState = signal<'idle' | 'loading' | 'error' | 'loaded'>('idle');
   readonly readingError = signal<string | null>(null);
@@ -480,6 +517,16 @@ export class DeviceCasePlanComponent {
       untracked(() => this.pin(id, asset, cve));
     });
 
+    // Troca de contexto (outro caso, outro plano, outro dispositivo): rascunhos e avisos do contexto anterior saem.
+    effect(() => {
+      const key = this.contextKey();
+      untracked(() => {
+        if (key === this.currentContext) return;
+        this.currentContext = key;
+        this.resetDrafts();
+      });
+    });
+
     // A situação na fonte é lida para o plano em foco — e só relida quando o plano em foco muda.
     effect(() => {
       const id = this.plan()?.id ?? null;
@@ -494,9 +541,9 @@ export class DeviceCasePlanComponent {
 
     // Semeia o formulário de criação a cada caso sem plano — sugestão editável, não decisão.
     effect(() => {
-      const key = `${this.assetId()}|${normalizeCve(this.cveId())}`;
+      const key = `${(this.assetId() ?? '').toLowerCase()}|${normalizeCve(this.cveId())}`;
       const hasPlan = !!this.plan();
-      const name = this.assetName();
+      const name = this.displayName();
       const cve = this.cveId();
       const info = this.caseInfo();
       untracked(() => {
@@ -511,6 +558,29 @@ export class DeviceCasePlanComponent {
     });
 
     inject(DestroyRef).onDestroy(() => (this.destroyed = true));
+  }
+
+  /** Rascunhos de edição, execução e atestação e os avisos pertencem ao contexto em que foram escritos. */
+  private resetDrafts(): void {
+    this.editTitle = '';
+    this.editProposal = '';
+    this.editPerson = '';
+    this.editArea = '';
+    this.editDue = '';
+    this.execNotes = '';
+    this.execEvidence = '';
+    this.humanEvidence = '';
+    this.humanNote = '';
+    this.editOpen.set(false);
+    this.execOpen.set(false);
+    this.valOpen.set(false);
+    this.notice.set(null);
+    this.error.set(null);
+  }
+
+  /** O painel passou a outro contexto por uma resposta DESTE contexto (criação, plano ativo apontado): não é troca. */
+  private adoptContext(): void {
+    this.currentContext = this.contextKey();
   }
 
   private pin(id: string | null, asset: string, cve: string): void {
@@ -676,25 +746,26 @@ export class DeviceCasePlanComponent {
     );
   }
 
-  /** Contexto de uma escrita: caso aberto × plano em foco. Resposta de outro contexto não pinta nada. */
-  private contextKey(): string {
-    return [this.assetId(), normalizeCve(this.cveId()), this.plan()?.id ?? ''].join('|');
+  /** A escrita do contexto `key` terminou: o "salvando" dele sai (o de outro contexto em curso, não). */
+  private settle(key: string): void {
+    if (this.pendingKey() === key) this.pendingKey.set(null);
   }
 
   private run(call: ReturnType<RemediationService['create']>, success: string, onDone?: () => void): void {
     const key = this.contextKey();
-    this.busy.set(true);
+    this.pendingKey.set(key);
     this.error.set(null);
     this.notice.set(null);
     call.subscribe({
       next: (p) => {
         if (this.destroyed) return;
-        this.busy.set(false);
+        this.settle(key);
         this.changed.emit(p);   // a escrita aconteceu: quem contém o painel relê de qualquer forma
-        if (key !== this.contextKey()) return;
+        if (key !== this.contextKey()) return;   // resposta de outro caso/plano: nada é pintado aqui
         this.local.set(p);
-        this.notice.set(success);
         onDone?.();
+        this.adoptContext();   // criar leva o painel do rascunho ao plano criado — sem apagar o aviso
+        this.notice.set(success);
         // O endereço passa a nomear ESTE plano: recarregar ou compartilhar volta a ele — mesmo depois de concluído.
         if (this.pinnedPlanId() !== p.id) this.planOpened.emit(p.id);
       },
@@ -703,38 +774,89 @@ export class DeviceCasePlanComponent {
   }
 
   /**
-   * 409 de DUPLICIDADE abre o plano existente (é o que o segundo clique deveria abrir); 409 de VERSÃO relê o plano e
-   * pede conferência — nunca repete a escrita às cegas.
+   * 409 de DUPLICIDADE (o servidor aponta o plano ativo do caso) abre esse plano — é o que o segundo clique, ou a
+   * reabertura de um ciclo encerrado, deveria mostrar. 409 de VERSÃO relê o plano e pede conferência. Nenhuma escrita é
+   * repetida, e uma resposta que chega depois de a pessoa trocar de caso ou de plano não mexe no painel.
    */
   private fail(e: Error, key: string): void {
     if (this.destroyed) return;
+    if (key !== this.contextKey()) {
+      this.settle(key);
+      return;
+    }
     if (e instanceof ActionPlanConflictError && e.existingActionPlanId) {
-      this.reread(e.existingActionPlanId, 'Já existe um plano ativo para esta CVE neste dispositivo — ele foi aberto.');
+      this.openAnnounced(e.existingActionPlanId, key, this.plan());
       return;
     }
     if (e instanceof ActionPlanConflictError && this.plan()) {
-      this.reread(this.plan()!.id, `${e.message} O plano foi relido com o estado atual — confira antes de enviar de novo.`);
+      this.rereadAfterVersionConflict(this.plan()!.id, key, e.message);
       return;
     }
-    this.busy.set(false);
-    if (key === this.contextKey()) this.error.set(e.message);
+    this.settle(key);
+    this.error.set(e.message);
   }
 
-  private reread(id: string, aviso: string): void {
+  /**
+   * Abre o plano ATIVO que o servidor anunciou no 409, depois de conferir que é deste caso: ele passa a ser o plano em
+   * foco (fixado) e o endereço acompanha — a mensagem descreve exatamente o que ficou na tela.
+   */
+  private openAnnounced(id: string, key: string, from: ActionPlan | null): void {
     this.api.get(id).subscribe({
       next: (p) => {
         if (this.destroyed) return;
-        this.busy.set(false);
-        this.changed.emit(p);
-        if (pinnedDevicePlanRejection(p, this.assetId(), this.cveId()) !== null) return;
+        this.settle(key);
+        this.changed.emit(p);   // a lista pode não conhecer esse plano (criado em outra sessão)
+        if (key !== this.contextKey()) return;
+        const why = pinnedDevicePlanRejection(p, this.assetId(), this.cveId());
+        if (why) {
+          this.error.set(`O servidor apontou outro plano (${id}), mas ele não pode ser exibido aqui: ${why} Nada foi criado nem reaberto.`);
+          return;
+        }
+        this.pinSeq++;
         this.local.set(p);
-        this.notice.set(aviso);
-        this.seedEdit();
+        this.pinned.set({ kind: 'carregada', id: p.id, plan: p });
+        this.resetDrafts();   // o que foi digitado para o plano anterior não segue para este
+        this.adoptContext();
+        this.notice.set(
+          (from
+            ? `O plano "${from.title}" não foi alterado: já existe um plano ativo para esta CVE neste dispositivo. `
+            : 'Nenhum plano novo foi criado: já existe um plano ativo para esta CVE neste dispositivo. ') +
+            `Agora está aberto o plano ativo "${p.title}" (${actionSituation(p)}) — o endereço aponta para ele.`,
+        );
+        if (this.pinnedPlanId() !== p.id) this.planOpened.emit(p.id);
       },
       error: (err: Error) => {
         if (this.destroyed) return;
-        this.busy.set(false);
-        this.error.set(err.message);
+        this.settle(key);
+        if (key !== this.contextKey()) return;
+        this.error.set(
+          'Já existe um plano ativo para esta CVE neste dispositivo, mas ele não pôde ser aberto agora ' +
+            `(${err.message}). Nada foi criado nem reaberto.`,
+        );
+      },
+    });
+  }
+
+  /** Conflito de VERSÃO: o plano é relido; o que a pessoa digitou fica, para conferir antes de enviar de novo. */
+  private rereadAfterVersionConflict(id: string, key: string, message: string): void {
+    this.api.get(id).subscribe({
+      next: (p) => {
+        if (this.destroyed) return;
+        this.settle(key);
+        this.changed.emit(p);
+        if (key !== this.contextKey()) return;
+        if (pinnedDevicePlanRejection(p, this.assetId(), this.cveId()) !== null) return;
+        this.local.set(p);
+        this.adoptContext();
+        this.notice.set(
+          `${message} O plano foi relido com o estado atual — o que você digitou foi mantido; confira antes de enviar de novo.`,
+        );
+      },
+      error: (err: Error) => {
+        if (this.destroyed) return;
+        this.settle(key);
+        if (key !== this.contextKey()) return;
+        this.error.set(`${message} Não foi possível reler o plano agora (${err.message}).`);
       },
     });
   }

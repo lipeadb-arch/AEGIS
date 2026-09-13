@@ -187,6 +187,14 @@ public sealed record DashboardSourcesDto(
 /// <param name="CasesPartial">
 /// Os casos por faixa cobrem só os dispositivos avaliados (teto por leitura): com recorte, o total de casos é parcial.
 /// </param>
+/// <param name="CandidateAssets">
+/// Dispositivos com ao menos um caso em aberto SEM disposição humana — a população da fila. Zero aqui NÃO é ausência de
+/// vulnerabilidade: casos em aberto na fonte com disposição registrada ficam fora da fila (<see cref="Dispositions"/>).
+/// </param>
+/// <param name="Dispositions">
+/// Casos dispositivo × CVE ainda em aberto na fonte com disposição humana registrada (risco aceito, mitigação informada,
+/// falso positivo), em todo o tenant — os mesmos da Central. Vazio quando não há leitura.
+/// </param>
 /// <param name="Top">Os primeiros dispositivos da fila (sem filtro de faixa), com o caso que determinou a posição.</param>
 public sealed record DashboardDevicePriorityDto(
     string State,
@@ -204,6 +212,7 @@ public sealed record DashboardDevicePriorityDto(
     bool CasesPartial,
     string? AbsenceState,
     string? AbsenceNote,
+    IReadOnlyList<DevicePriorityDispositionDto> Dispositions,
     IReadOnlyList<DashboardDevicePriorityItemDto> Top,
     DashboardDevicePlansDto Plans)
 {

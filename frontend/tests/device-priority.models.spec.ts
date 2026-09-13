@@ -9,6 +9,7 @@
 import {
   DEVICE_PRIORITY_BAND_FILTERS,
   DevicePriorityCriticality,
+  DevicePriorityDisposition,
   DevicePriorityList,
   DevicePrioritySummary,
   applyDeclaredCriticality,
@@ -25,6 +26,7 @@ import {
   inventoryPageStep,
   devicePriorityRangeText,
   devicePrioritySummaryText,
+  disposedCasesText,
   dispositionText,
   epssText,
   factorEffectLabel,
@@ -153,7 +155,7 @@ test('EPSS é probabilidade GLOBAL de 30 dias — nunca chance de ataque a este 
 });
 
 test('resumo com unidades: dispositivos, faixas presentes, não priorizáveis e recorte', () => {
-  eq(devicePrioritySummaryText(summary({})), '3 dispositivos com vulnerabilidade em aberto · P1 1 · P2 2', 'simples');
+  eq(devicePrioritySummaryText(summary({})), '3 dispositivos com vulnerabilidade em aberto sem disposição registrada · P1 1 · P2 2', 'simples');
   const s = summary({
     candidateAssets: 10, assetsEvaluated: 4, evaluationTruncated: true,
     assetsByBand: [
@@ -161,7 +163,7 @@ test('resumo com unidades: dispositivos, faixas presentes, não priorizáveis e 
     ],
   });
   eq(devicePrioritySummaryText(s),
-    '10 dispositivos com vulnerabilidade em aberto · P1 1 · 2 sem informação suficiente para priorizar · recorte parcial: 4 avaliados',
+    '10 dispositivos com vulnerabilidade em aberto sem disposição registrada · P1 1 · 2 sem informação suficiente para priorizar · recorte parcial: 4 avaliados',
     'com recorte');
 });
 
@@ -215,6 +217,33 @@ test('zero candidatos: só a completude da coleta permite chamar de ausência', 
   }));
   eq(failed.kind, 'noCandidates', 'zero anterior conhecido');
   ok(('text' in failed ? failed.text : '').includes('tentativa mais recente de coleta falhou'), 'com a ressalva da tentativa');
+});
+
+test('[AEGIS-JOURNEY-01] fila vazia com casos dispostos NÃO é ausência de vulnerabilidade na Central', () => {
+  const disp: DevicePriorityDisposition[] = [
+    { status: 'mitigated', label: 'Mitigação informada', count: 1 },
+    { status: 'accepted', label: 'Risco aceito', count: 2 },
+    { status: 'falsePositive', label: 'Falso positivo', count: 0 },
+  ];
+  const only = devicePriorityListView(list({}, { candidateAssets: 0, absenceState: 'conclusive', dispositions: disp }));
+  eq(only.kind, 'onlyDispositions', 'estado próprio');
+  const t = 'text' in only ? only.text : '';
+  ok(t.includes('Nenhum dispositivo na fila de prioridade') && t.includes('não é ausência de vulnerabilidade'), 'diz o que a fila vazia é');
+  ok(t.includes('3 casos dispositivo × CVE seguem em aberto na fonte'), 'conjunto contado, com unidade');
+  ok(t.includes('Mitigação informada: 1 · Risco aceito: 2') && !t.includes('Falso positivo'), 'só as disposições presentes');
+  ok(t.includes('disposição não é correção'), 'disposição não é correção');
+  ok(!t.includes('A fonte não reporta'), 'nunca a frase de ausência');
+  const partial = devicePriorityListView(list({}, {
+    candidateAssets: 0, absenceState: 'notVerifiable', absenceNote: 'a aquisição mais recente foi parcial.', dispositions: disp,
+  }));
+  eq(partial.kind, 'onlyDispositions', 'com coleta parcial continua o mesmo estado');
+  ok(('text' in partial ? partial.text : '').includes('não permite concluir a ausência de outros casos'), 'e diz a parcialidade');
+  const zero = devicePriorityListView(list({}, { candidateAssets: 0, absenceState: 'conclusive', dispositions: [] }));
+  ok(('text' in zero ? zero.text : '').includes('nem na fila, nem com disposição registrada'), 'ausência real diz os dois conjuntos');
+  eq(disposedCasesText([{ status: 'accepted', label: 'Risco aceito', count: 1 }]),
+    '1 caso dispositivo × CVE segue em aberto na fonte com disposição humana registrada (Risco aceito: 1) e fica fora da fila, ' +
+    'com a evidência preservada — disposição não é correção', 'singular');
+  eq(disposedCasesText([]), null, 'nenhum');
 });
 
 const declared: DevicePriorityCriticality = {
