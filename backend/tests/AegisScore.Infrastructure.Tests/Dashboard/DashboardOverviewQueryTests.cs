@@ -359,12 +359,54 @@ public sealed class DashboardOverviewQueryTests : IDisposable
         IsActive = true,
     };
 
+    /// <summary>
+    /// [AEGIS-JOURNEY-01] O resumo da prioridade de tratamento na tela inicial: sem fonte, as contagens são NULAS (nunca
+    /// zero) e os planos continuam contados à parte; uma falha da leitura vira estado próprio, sem números, e não derruba
+    /// as outras dimensões que a composição já leu.
+    /// </summary>
+    [Fact]
+    public async Task PrioridadeDeDispositivos_SemFonteEhNulaNuncaZero_EFalhaNaoDerrubaAVisaoGeral()
+    {
+        await using (var db = NewContext())
+        {
+            var overview = await QueryFor(db).GetAsync();
+            overview.DevicePriority.State.Should().Be(DevicePriorityReadingStates.NoSource);
+            overview.DevicePriority.Note.Should().Contain("Ausência de fonte não é ausência de vulnerabilidade");
+            overview.DevicePriority.CandidateAssets.Should().BeNull("sem fonte não há contagem — nem 0");
+            overview.DevicePriority.AssetsByBand.Should().BeEmpty();
+            overview.DevicePriority.CasesByBand.Should().BeEmpty();
+            overview.DevicePriority.Top.Should().BeEmpty();
+            overview.DevicePriority.Plans.Active.Should().Be(0);
+        }
+
+        await using (var db = NewContext())
+        {
+            var overview = await QueryFor(db,
+                vulnerabilities: CollectedVulnerabilities(distinctCves: 5, affectedAssets: 2),
+                devicePriority: new ThrowingDevicePriority()).GetAsync();
+            overview.DevicePriority.State.Should().Be(DashboardDevicePriorityDto.Unavailable);
+            overview.DevicePriority.Note.Should().Contain("não pareça ausência de prioridade");
+            overview.DevicePriority.CandidateAssets.Should().BeNull();
+            overview.DevicePriority.Top.Should().BeEmpty();
+            overview.Environment.Vulnerabilities.Value.Should().Be(5, "a falha da prioridade não apaga as outras dimensões");
+        }
+    }
+
+    private sealed class ThrowingDevicePriority : IDevicePriorityQuery
+    {
+        private static Exception Falha() => new InvalidOperationException("falha sintética da leitura de prioridade");
+        public Task<DevicePriorityListDto> ListAsync(DevicePriorityFilter filter, CancellationToken ct = default) => throw Falha();
+        public Task<AssetDevicePriorityDto?> GetForAssetAsync(Guid assetId, int casePage, int casePageSize, CancellationToken ct = default) => throw Falha();
+        public Task<DevicePriorityCaseReading?> GetCaseAsync(Guid assetId, string cveId, CancellationToken ct = default) => throw Falha();
+    }
+
     private static DashboardOverviewQuery QueryFor(
         AegisScoreDbContext db,
         PostureExposureListDto? exposures = null,
         VulnerabilityOverviewDto? vulnerabilities = null,
         IdentityEvidenceProjection? identity = null,
-        ConnectorHealthSummaryDto? connectors = null) =>
+        ConnectorHealthSummaryDto? connectors = null,
+        IDevicePriorityQuery? devicePriority = null) =>
         new(db,
             new SystemTenantContext(TenantId),
             new FakePosture(connectors ?? EmptyConnectors),
@@ -373,7 +415,9 @@ public sealed class DashboardOverviewQueryTests : IDisposable
             new FakeIdentity(identity ?? NoIdentitySource()),
             new MaturityScoringService(),
             new IcrScoringService(),
-            new FixedClock(Now));
+            new FixedClock(Now),
+            devicePriority ?? new AegisScore.Infrastructure.Queries.DevicePriorityQuery(db, new FixedClock(Now),
+                Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions())));
 
     private static readonly ConnectorHealthSummaryDto EmptyConnectors =
         new(0, 0, 0, 0, 0, 0, 0, null, Array.Empty<ConnectorHealthItemDto>());

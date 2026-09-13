@@ -95,6 +95,9 @@ public sealed class DatabaseUpgradePostgresTests
             // [AEGIS-RISK-PRIORITIZATION-01] Proveniência da criticidade DECLARADA do ativo: cinco colunas anuláveis, SEM
             // backfill — nenhum ativo existente (inclusive os criados com o padrão 1) ganha declaração inventada.
             "20260912132148_RiskPrioritization01_AssetCriticalityDeclaration",
+            // [AEGIS-JOURNEY-01] Origem explícita do plano e caso de vulnerabilidade em dispositivo: seis colunas anuláveis e
+            // dois índices (um único PARCIAL por caso ativo), SEM backfill — nenhum plano existente ganha origem inventada.
+            "20260913051453_Journey01_DeviceCaseActionPlanOrigin",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;
@@ -215,10 +218,19 @@ public sealed class DatabaseUpgradePostgresTests
             planoLegado.OriginMode.Should().BeNull();
             planoLegado.CycleStartedAt.Should().BeNull("um ciclo que nunca foi pactuado não recebe data retroativa");
 
+            // [AEGIS-JOURNEY-01] A origem explícita não é inventada para a linha legada: continua nula e derivada como antes.
+            planoLegado.OriginKind.Should().BeNull("a coluna nova não reescreve linhas antigas");
+            planoLegado.ResolveOriginKind().Should().Be(ActionPlanOriginKind.RiskTreatment);
+            planoLegado.OriginAssetId.Should().BeNull();
+
             var remediacao = new AegisScore.Infrastructure.Remediation.RemediationService(
-                db, new SystemTenantContext(tenantId), TimeProvider.System);
+                db, new SystemTenantContext(tenantId), TimeProvider.System,
+                new AegisScore.Infrastructure.Queries.DevicePriorityQuery(db, TimeProvider.System,
+                    Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions())));
             (await remediacao.ListAsync(new ActionPlanFilter(null, false, null, null))).Should()
                 .BeEmpty("a Central de ações mostra remediação de ACHADO — não o registro de riscos legado");
+            (await remediacao.ListAsync(new ActionPlanFilter(Origin: ActionPlanOriginScope.All))).Should()
+                .BeEmpty("nem com o recorte de todas as origens de remediação o registro de riscos entra");
         }
 
         // ---- 5) Prontidão e nova execução idempotente -------------------------------------------------
