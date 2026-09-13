@@ -4,6 +4,7 @@ import { Observable, catchError, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { PriorityWorkspace } from '../models/priority.models';
 import { CrossSourceFilter, CrossSourceSituationList } from '../models/cross-source.models';
+import { DevicePriorityFilter, DevicePriorityList } from '../models/device-priority.models';
 
 /**
  * [AEGIS-MVP-PRIORITIES-01] Cliente da superfície SOMENTE LEITURA da Central de Prioridades
@@ -38,6 +39,20 @@ export class PriorityService {
       .pipe(catchError((err) => throwError(() => this.describe(err,
         'Não foi possível avaliar as situações entre fontes agora — nada é exibido, para que a falha não pareça ' +
         'ausência de situação. Tente novamente.'))));
+  }
+
+  /**
+   * [AEGIS-RISK-PRIORITIZATION-01] `GET /api/v1/priorities/devices` — prioridade de tratamento de vulnerabilidades em
+   * dispositivos: um item por dispositivo, com o caso determinante. Fila SEPARADA das demais.
+   */
+  devices(filter: DevicePriorityFilter): Observable<DevicePriorityList> {
+    let params = new HttpParams().set('page', filter.page).set('pageSize', filter.pageSize);
+    if (filter.band) params = params.set('band', filter.band);
+    return this.http
+      .get<DevicePriorityList>(`${this.base}/devices`, { params })
+      .pipe(catchError((err) => throwError(() => this.describe(err,
+        'Não foi possível calcular a prioridade de tratamento agora — nada é exibido, para que a falha não pareça ' +
+        'ausência de prioridade. Tente novamente.'))));
   }
 
   private describe(

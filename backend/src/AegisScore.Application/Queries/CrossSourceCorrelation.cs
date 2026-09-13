@@ -396,6 +396,42 @@ public sealed record CrossSourceAssetAssessment(
     IReadOnlyList<CrossSourceVulnerabilityEvidence> Vulnerabilities,
     IReadOnlyList<CrossSourceRuleAssessment> Rules);
 
+/// <summary>[AEGIS-RISK-PRIORITIZATION-01] Estado da atribuição das vulnerabilidades de UMA fonte ao ativo (códigos estáveis).</summary>
+public static class CrossSourceVulnerabilitySourceStates
+{
+    /// <summary>Há registro atual e inequívoco da fonte: as observações nas marcas elegíveis são deste ativo.</summary>
+    public const string Attributable = "attributable";
+
+    /// <summary>O ativo não tem registro da fonte de vulnerabilidades.</summary>
+    public const string NoSourceRecord = "noSourceRecord";
+
+    /// <summary>Os registros da fonte não estão atualmente observados (inativos, fora da política, sem atividade recente).</summary>
+    public const string NotCurrentlyObserved = "notCurrentlyObserved";
+
+    /// <summary>Outro registro ativo do mesmo conector não é atual: a atribuição é ambígua e nada é escolhido.</summary>
+    public const string AmbiguousAttribution = "ambiguousAttribution";
+}
+
+/// <summary>
+/// [AEGIS-RISK-PRIORITIZATION-01] Vulnerabilidades da fonte atribuídas ao ativo SEM exigir a segunda fonte — produzido pela
+/// mesma autoridade (<see cref="CrossSourceCorrelationEvaluator.AssessVulnerabilitySource"/>), com as mesmas regras de
+/// ciclo de vida, política temporal e atribuição inequívoca.
+/// </summary>
+public sealed record CrossSourceVulnerabilitySource(
+    string State,
+    IReadOnlyList<CrossSourceRecordAssessment> Records,
+    /// <summary>Evidência por conector usável — marcas elegíveis, abertas atuais/anteriores, fora da política, não mais reportadas.</summary>
+    IReadOnlyList<CrossSourceVulnerabilityEvidence> Evidence,
+    IReadOnlyList<string> Reasons,
+    IReadOnlyList<CrossSourceNoteDto> Caveats,
+    /// <summary>
+    /// O que a fonte NÃO reporta pode ser dado como ausente? Só com o registro reconfirmado pela aquisição mais recente e
+    /// ela completa — a mesma regra do lado das vulnerabilidades na combinação. Atribuível não é prova de ausência.
+    /// </summary>
+    bool AbsenceConclusive,
+    /// <summary>Por que a ausência não pode ser concluída (vazio quando conclusiva ou sem atribuição).</summary>
+    IReadOnlyList<string> AbsenceReasons);
+
 /// <summary>
 /// Autoridade ÚNICA e DETERMINÍSTICA das regras: mesma entrada ⇒ mesma saída, independente da ordem dos registros.
 /// Pura — não lê banco nem relógio (o instante da avaliação é recebido). Usada pelo detalhe do ativo e pela Central.
@@ -577,15 +613,145 @@ public static class CrossSourceCorrelationEvaluator
             });
         if (KeyOf(b) is not { } key || !keys.Contains(key))
             return Out(CrossSourceEligibility.KeyMismatch, "O vínculo registrado não corresponde à chave forte deste ativo.");
-        if (now - b.LastObservedAt > policy.MaxEvidenceAge)
-            return Out(CrossSourceEligibility.OutOfPolicy,
-                $"Obtido pelo AEGIS em {Utc(b.LastObservedAt)}, fora da política temporal (até {policy.MaxEvidenceAgeDays} dia(s)).");
-        if (b.SourceLastSeenAt is { } seen && now - seen > policy.MaxSourceActivityAge)
-            return Out(CrossSourceEligibility.InactiveInSource,
-                $"Última atividade informada pela fonte em {Utc(seen)}, além de {policy.MaxSourceActivityAgeDays} dia(s) — " +
-                "o dispositivo não é tratado como atualmente observado.");
+        if (TemporalExclusion(b, policy, now) is { } t)
+            return Out(t.Code, t.Reason);
         return new CrossSourceRecordAssessment(b, c, CrossSourceEligibility.Eligible, null, acquisition);
     }
+
+    /// <summary>Política temporal de UM registro: aquisição fora da janela ou sem atividade recente informada pela fonte.</summary>
+    private static (string Code, string Reason)? TemporalExclusion(CrossSourceBindingFacts b, CrossSourcePolicy policy, DateTimeOffset now)
+    {
+        if (now - b.LastObservedAt > policy.MaxEvidenceAge)
+            return (CrossSourceEligibility.OutOfPolicy,
+                $"Obtido pelo AEGIS em {Utc(b.LastObservedAt)}, fora da política temporal (até {policy.MaxEvidenceAgeDays} dia(s)).");
+        if (b.SourceLastSeenAt is { } seen && now - seen > policy.MaxSourceActivityAge)
+            return (CrossSourceEligibility.InactiveInSource,
+                $"Última atividade informada pela fonte em {Utc(seen)}, além de {policy.MaxSourceActivityAgeDays} dia(s) — " +
+                "o dispositivo não é tratado como atualmente observado.");
+        return null;
+    }
+
+    // ---- [AEGIS-RISK-PRIORITIZATION-01] Vulnerabilidades de UMA fonte, sem exigir a segunda --------------------------
+
+    /// <summary>
+    /// Atribuição das vulnerabilidades da fonte de vulnerabilidades (Defender) a ESTE ativo, sem exigir a fonte de gestão
+    /// (Intune) nem o vínculo por chave forte — que só importam para COMBINAR as duas. As regras são as mesmas da
+    /// combinação, e o código é o mesmo: registro não mais observado não sustenta nada; aquisição fora da política
+    /// temporal ou sem atividade recente na fonte não é tratada como atual; outro registro ATIVO do mesmo conector que não
+    /// seja atribuível torna a atribuição ambígua (nunca se escolhe o registro mais conveniente); e as observações só
+    /// contam nas marcas de aquisição dentro da política. Uma vulnerabilidade grave num dispositivo sem Intune continua
+    /// visível e atribuída.
+    /// </summary>
+    public static CrossSourceVulnerabilitySource AssessVulnerabilitySource(
+        CrossSourceAssetFacts f, CrossSourcePolicy policy, DateTimeOffset now)
+    {
+        var records = f.Bindings
+            .Where(b => f.Connectors.TryGetValue(b.ConnectorId, out var c) && c.Role == CrossSourceRole.Vulnerabilities)
+            .OrderByDescending(b => b.IsActive)
+            .ThenByDescending(b => b.LastObservedAt)
+            .ThenBy(b => b.BindingId)
+            .Select(b =>
+            {
+                var c = f.Connectors[b.ConnectorId];
+                var acquisition = AcquisitionState(b.LastObservedAt, c);
+                if (!b.IsActive)
+                    return new CrossSourceRecordAssessment(b, c, CrossSourceEligibility.NotObserved,
+                        "Não mais observado pela fonte" + (b.ResolvedAt is { } r ? $" desde {Utc(r)}" : "") +
+                        " — não é tratado como atualmente observado nem sustenta condição aberta.", acquisition);
+                return TemporalExclusion(b, policy, now) is { } t
+                    ? new CrossSourceRecordAssessment(b, c, t.Code, t.Reason, acquisition)
+                    : new CrossSourceRecordAssessment(b, c, CrossSourceEligibility.Eligible, null, acquisition);
+            })
+            .ToList();
+
+        if (records.Count == 0)
+            return new CrossSourceVulnerabilitySource(CrossSourceVulnerabilitySourceStates.NoSourceRecord, records,
+                Array.Empty<CrossSourceVulnerabilityEvidence>(),
+                new[] { "O ativo não tem registro do Microsoft Defender (vulnerabilidades)." }, Array.Empty<CrossSourceNoteDto>(),
+                AbsenceConclusive: false, AbsenceReasons: Array.Empty<string>());
+
+        var ambiguous = records
+            .GroupBy(r => r.Connector.ConnectorId)
+            .Where(g => g.Any(r => r.Eligible) && g.Any(r => r.Binding.IsActive && !r.Eligible))
+            .Select(g => g.Key)
+            .ToHashSet();
+        if (ambiguous.Count > 0)
+            records = records
+                .Select(r => r.Eligible && ambiguous.Contains(r.Connector.ConnectorId)
+                    ? r with
+                    {
+                        Eligibility = CrossSourceEligibility.AmbiguousAttribution,
+                        ExclusionReason = "Outro registro ativo do mesmo conector neste ativo não está atualmente observado; as " +
+                            "vulnerabilidades não podem ser atribuídas apenas ao registro atual.",
+                    }
+                    : r)
+                .ToList();
+
+        var usable = records.Where(r => r.Eligible).ToList();
+        var evidence = usable
+            .Select(r => r.Connector)
+            .DistinctBy(c => c.ConnectorId)
+            .OrderBy(c => c.ConnectorId)
+            .Select(c => VulnerabilityEvidence(c, f.Observations, policy, now))
+            .ToList();
+
+        if (evidence.Count == 0)
+        {
+            var why = records.Where(r => r.ExclusionReason is not null)
+                .Select(r => $"{r.Connector.Label}: {r.ExclusionReason}")
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            return new CrossSourceVulnerabilitySource(
+                ambiguous.Count > 0
+                    ? CrossSourceVulnerabilitySourceStates.AmbiguousAttribution
+                    : CrossSourceVulnerabilitySourceStates.NotCurrentlyObserved,
+                records, evidence, why, Array.Empty<CrossSourceNoteDto>(),
+                AbsenceConclusive: false, AbsenceReasons: Array.Empty<string>());
+        }
+
+        // As MESMAS ressalvas que qualificam o lado das vulnerabilidades numa combinação (parcial, publicação não concluída,
+        // desfecho não registrado, aquisição anterior preservada, fora da política, tentativa recente falha).
+        var caveats = Caveats(new EvidenceInUse(evidence, VulnerabilityAbsence: false, usable, Array.Empty<CrossSourceRecordAssessment>()),
+            rule: null, records, ambiguous, policy, vulnDates: null, deviceDates: null);
+        var (conclusive, absenceReasons) = VulnerabilityAbsence(evidence, usable);
+        return new CrossSourceVulnerabilitySource(CrossSourceVulnerabilitySourceStates.Attributable, records, evidence,
+            Array.Empty<string>(), caveats, conclusive, absenceReasons);
+    }
+
+    /// <summary>
+    /// Completude para concluir AUSÊNCIA de vulnerabilidade em aberto — regra única, usada pela combinação e pela
+    /// prioridade: o registro do dispositivo foi reconfirmado pela aquisição mais recente de cada fonte usável, e ela foi
+    /// publicada COMPLETA. Parcial, publicação não concluída, desfecho não registrado ou registro não reconfirmado: não
+    /// conclui (fatos positivos continuam valendo).
+    /// </summary>
+    public static (bool Conclusive, IReadOnlyList<string> Reasons) VulnerabilityAbsence(
+        IReadOnlyList<CrossSourceVulnerabilityEvidence> evidence, IReadOnlyList<CrossSourceRecordAssessment> vulnRecords)
+    {
+        var reasons = new List<string>();
+        foreach (var e in evidence)
+        {
+            var recs = vulnRecords.Where(r => r.Connector.ConnectorId == e.Connector.ConnectorId).ToList();
+            if (recs.Any(r => r.AcquisitionState == CrossSourceAcquisitionStates.Previous))
+            {
+                reasons.Add($"{e.Connector.Label}: o registro do dispositivo não foi reconfirmado pela aquisição mais recente; a " +
+                    "ausência de vulnerabilidades não pode ser concluída.");
+                continue;
+            }
+            if (AcquisitionIncompleteness(e.Connector) is { } why) reasons.Add(why);
+        }
+        return (evidence.Count > 0 && reasons.Count == 0, reasons);
+    }
+
+    /// <summary>Por que a aquisição mais recente da fonte não sustenta ausência; <c>null</c> quando foi publicada completa.</summary>
+    public static string? AcquisitionIncompleteness(CrossSourceConnectorFacts c) => c.Outcome switch
+    {
+        DeviceSnapshotOutcome.Complete => null,
+        DeviceSnapshotOutcome.Partial =>
+            $"{c.Label}: a aquisição mais recente foi parcial — nenhuma vulnerabilidade em aberto nela não prova ausência.",
+        DeviceSnapshotOutcome.Publishing =>
+            $"{c.Label}: a publicação da aquisição mais recente não foi concluída (em andamento ou interrompida).",
+        _ => $"{c.Label}: o desfecho da aquisição mais recente não foi registrado; a completude não é afirmada.",
+    };
 
     /// <summary>Relação do fato (pela marca da aquisição que o observou) com a aquisição mais recente publicada da fonte.</summary>
     public static string AcquisitionState(DateTimeOffset observedAt, CrossSourceConnectorFacts c)
@@ -652,37 +818,8 @@ public static class CrossSourceCorrelationEvaluator
         if (evidence.Any(e => e.OpenEligible > 0)) return (Side.Present, reasons);
 
         // Zero só é conclusivo quando o dispositivo foi observado na aquisição mais recente, e ela foi COMPLETA.
-        var conclusive = true;
-        foreach (var e in evidence)
-        {
-            var label = e.Connector.Label;
-            var recs = vulnRecords.Where(r => r.Connector.ConnectorId == e.Connector.ConnectorId).ToList();
-            if (recs.Any(r => r.AcquisitionState == CrossSourceAcquisitionStates.Previous))
-            {
-                conclusive = false;
-                reasons.Add($"{label}: o registro do dispositivo não foi reconfirmado pela aquisição mais recente; a ausência " +
-                    "de vulnerabilidades não pode ser concluída.");
-                continue;
-            }
-            switch (e.Connector.Outcome)
-            {
-                case DeviceSnapshotOutcome.Complete:
-                    break;
-                case DeviceSnapshotOutcome.Partial:
-                    conclusive = false;
-                    reasons.Add($"{label}: a aquisição mais recente foi parcial — nenhuma vulnerabilidade em aberto nela não " +
-                        "prova ausência.");
-                    break;
-                case DeviceSnapshotOutcome.Publishing:
-                    conclusive = false;
-                    reasons.Add($"{label}: a publicação da aquisição mais recente não foi concluída (em andamento ou interrompida).");
-                    break;
-                default:
-                    conclusive = false;
-                    reasons.Add($"{label}: o desfecho da aquisição mais recente não foi registrado; a completude não é afirmada.");
-                    break;
-            }
-        }
+        var (conclusive, why) = VulnerabilityAbsence(evidence, vulnRecords);
+        reasons.AddRange(why);
         if (evidence.Any(e => e.OpenOutOfPolicy > 0))
             reasons.Add("Há vulnerabilidades em aberto observadas antes da política temporal; elas não são consideradas.");
         return (conclusive ? Side.Absent : Side.Undetermined, reasons);
@@ -832,7 +969,7 @@ public static class CrossSourceCorrelationEvaluator
     /// evidências, separada da identificação positiva. Fontes que não participam da conclusão não geram ressalva.
     /// </summary>
     private static IReadOnlyList<CrossSourceNoteDto> Caveats(
-        EvidenceInUse used, CrossSourceRuleDefinition rule, IReadOnlyList<CrossSourceRecordAssessment> allRecords,
+        EvidenceInUse used, CrossSourceRuleDefinition? rule, IReadOnlyList<CrossSourceRecordAssessment> allRecords,
         IReadOnlySet<Guid> ambiguous, CrossSourcePolicy policy,
         IReadOnlyList<DateTimeOffset>? vulnDates, IReadOnlyList<DateTimeOffset>? deviceDates)
     {
@@ -916,7 +1053,7 @@ public static class CrossSourceCorrelationEvaluator
         // Defasagem entre as fontes, sobre TODAS as evidências participantes (não só a mais recente de cada lado): a maior
         // distância entre uma aquisição do Defender e uma do Intune — pelos extremos, sem produto cartesiano. Não é
         // requisito que coincidam: é ressalva, com o intervalo de cada fonte.
-        if (vulnDates is { Count: > 0 } && deviceDates is { Count: > 0 })
+        if (rule is not null && vulnDates is { Count: > 0 } && deviceDates is { Count: > 0 })
         {
             var widest = new[] { vulnDates[^1] - deviceDates[0], deviceDates[^1] - vulnDates[0] }.Max();
             if (widest > policy.AcquisitionGapCaveat)

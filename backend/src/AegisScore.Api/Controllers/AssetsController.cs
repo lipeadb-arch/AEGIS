@@ -3,7 +3,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Queries;
+using AegisScore.Application.Services;
 using AegisScore.Domain;
+using AegisScore.Infrastructure.Auth;
 using AegisScore.Infrastructure.Persistence;
 
 namespace AegisScore.Api.Controllers;
@@ -107,11 +109,58 @@ public class AssetsController : ControllerBase
         return dto is null ? NotFound() : dto;
     }
 
+    /// <summary>
+    /// [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento do dispositivo: faixa, caso determinante, fatores (valor,
+    /// origem, data e natureza), desconhecidos, ressalvas, próxima ação e os casos (ativo × CVE) paginados. Somente leitura.
+    /// </summary>
+    [HttpGet("{id:guid}/priority")]
+    public async Task<ActionResult<AssetDevicePriorityDto>> Priority(
+        Guid id, [FromServices] IDevicePriorityQuery priorities,
+        [FromQuery] int casePage = 1, [FromQuery] int casePageSize = 10, CancellationToken ct = default)
+    {
+        var dto = await priorities.GetForAssetAsync(id, casePage, casePageSize, ct);
+        return dto is null ? NotFound() : dto;
+    }
+
+    /// <summary>
+    /// [AEGIS-RISK-PRIORITIZATION-01] DECLARA a criticidade do ativo (1–4) com proveniência: quem (do token, nunca do corpo),
+    /// quando (relógio do servidor) e justificativa opcional. Opcional — a prioridade funciona sem ela e mostra a lacuna.
+    /// Não altera score algum; atualiza o valor cadastrado junto com a proveniência que o sustenta.
+    /// </summary>
+    [HttpPut("{id:guid}/criticality")]
+    [Authorize(Roles = "Manager,TenantAdmin")]
+    public async Task<ActionResult<DevicePriorityCriticalityDto>> DeclareCriticality(
+        Guid id, [FromBody] DeclareAssetCriticalityRequest request, [FromServices] TimeProvider clock, CancellationToken ct)
+    {
+        if (request is null || request.Criticality is < 1 or > 4)
+            return BadRequest("A criticidade declarada deve estar entre 1 e 4.");
+        var note = SourceTextSanitizer.ToPlainText(request.Note, 500);
+        var asset = await _db.Assets.SingleOrDefaultAsync(a => a.Id == id, ct);
+        if (asset is null) return NotFound();
+
+        Guid? accountId = Guid.TryParse(User.FindFirst(JwtTokenService.AccountClaim)?.Value, out var account) && account != Guid.Empty
+            ? account
+            : null;
+        var name = (User.FindFirst("name")?.Value ?? "").Trim();
+        asset.Criticality = request.Criticality;
+        asset.CriticalityDeclaredValue = request.Criticality;
+        asset.CriticalityDeclaredAt = clock.GetUtcNow();
+        asset.CriticalityDeclaredByAccountId = accountId;
+        asset.CriticalityDeclaredByName = name.Length > 200 ? name[..200] : name;
+        asset.CriticalityDeclarationNote = note;
+        await _db.SaveChangesAsync(ct);
+
+        return DevicePriorityNarrative.CriticalityDto(new DevicePriorityCriticalityFacts(
+            asset.Criticality, asset.CriticalityDeclaredValue, asset.CriticalityDeclaredAt, asset.CriticalityDeclaredByName,
+            asset.CriticalityDeclarationNote));
+    }
+
     private static AssetDto ToDto(Asset a, AssetSourceSummaryDto? sources) => new(
         a.Id, a.Name, a.Category.ToString(), a.SubType, a.Description,
         a.Criticality, a.OwnerName, a.ExternalRef, a.BusinessProcessId,
         a.DiscoverySource.ToString(), a.LastSeenAt, a.IsActive,
         a.RiskScore, a.RiskLevel?.ToString(), a.RiskScoredAt, a.CreatedAt,
         NameIsPlaceholder: a.NameOrigin == AssetNameOrigin.Placeholder,
-        Sources: sources);
+        Sources: sources,
+        CriticalityConfirmed: a.CriticalityDeclaredAt != null && a.CriticalityDeclaredValue == a.Criticality);
 }

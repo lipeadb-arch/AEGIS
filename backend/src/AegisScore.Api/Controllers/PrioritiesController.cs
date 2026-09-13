@@ -48,4 +48,21 @@ public class PrioritiesController : ControllerBase
             return BadRequest($"Regra desconhecida. Use: {string.Join(", ", CrossSourceRules.All.Select(r => r.Code))}.");
         return Ok(await correlations.ListAsync(new CrossSourceSituationFilter(state, rule, page, pageSize), ct));
     }
+
+    /// <summary>
+    /// [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento de vulnerabilidades em DISPOSITIVOS — fila SEPARADA das
+    /// demais (não é ordem universal entre identidades, documentação e dispositivos): um item por dispositivo, apontando
+    /// o caso (ativo × CVE) que determinou a posição, com motivo, fatores, ressalvas e próxima ação. Política versionada
+    /// e determinística; candidatos selecionados antes da paginação. <paramref name="band"/>: p1…p4, insufficient ou
+    /// nulo (todas as faixas).
+    /// </summary>
+    [HttpGet("devices")]
+    public async Task<ActionResult<DevicePriorityListDto>> Devices(
+        [FromServices] IDevicePriorityQuery priorities,
+        [FromQuery] string? band = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 10, CancellationToken ct = default)
+    {
+        if (!DevicePriorityBands.IsKnownFilter(band))
+            return BadRequest($"Faixa desconhecida. Use: {string.Join(", ", DevicePriorityBands.Prioritized)} ou {DevicePriorityBands.Insufficient}.");
+        return Ok(await priorities.ListAsync(new DevicePriorityFilter(band, page, pageSize), ct));
+    }
 }

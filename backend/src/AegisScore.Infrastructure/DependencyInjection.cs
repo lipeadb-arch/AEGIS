@@ -265,6 +265,9 @@ public static class DependencyInjection
                 "CrossSourceCorrelation: janelas em dias entre 1 e 365 e ressalva de defasagem entre 1 e 8760 horas.")
             .ValidateOnStart();
         services.AddScoped<ICrossSourceCorrelationQuery, CrossSourceCorrelationQuery>();
+        // [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento em dispositivos — a MESMA política temporal e a mesma
+        // leitura de fatos da correlação (projeção calculada na leitura; sem persistência de prioridade).
+        services.AddScoped<IDevicePriorityQuery, DevicePriorityQuery>();
         // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Leitura tenant-scoped da postura de configuração/conformidade de
         // dispositivos (consultiva). Somente leitura — nenhuma escrita de score/evidência passa por aqui.
         services.AddScoped<IDevicePostureQuery, DevicePostureQuery>();
