@@ -150,9 +150,12 @@ import {
   `,
   styles: [
     `
+      /* Continua a página de Detect: mesma calha e largura máxima de .page, a um vão de seção abaixo. */
       :host {
         display: block;
-        padding: 0 32px 40px;
+        max-width: var(--content-max);
+        margin-top: calc(var(--sp-6) - var(--page-bottom));
+        padding: 0 var(--page-x) var(--page-bottom);
       }
       .dc {
         border: 1px solid var(--line, #26304a);
@@ -161,9 +164,9 @@ import {
         background: rgba(122, 145, 190, 0.03);
       }
       .eyebrow {
-        font-family: var(--mono, monospace);
-        font-size: 10px;
-        letter-spacing: 0.14em;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         color: var(--cyan, #26e0ff);
         margin: 0 0 4px;
@@ -189,16 +192,16 @@ import {
         border-left: 3px solid var(--cyan, #26e0ff);
         border-radius: 8px;
         background: rgba(38, 224, 255, 0.05);
-        font-family: var(--mono, monospace);
-        font-size: 11.5px;
+        font-family: var(--sans);
+        font-size: var(--fs-meta);
         color: var(--text, #e6ecf5);
       }
       .notice {
         margin: 0 0 12px;
         padding: 8px 12px;
         border-radius: 8px;
-        font-family: var(--mono, monospace);
-        font-size: 11.5px;
+        font-family: var(--sans);
+        font-size: var(--fs-meta);
       }
       .notice.warn {
         border: 1px solid rgba(255, 176, 32, 0.4);
@@ -228,10 +231,10 @@ import {
         color: var(--text, #e6ecf5);
       }
       .chip .l {
-        font-family: var(--mono, monospace);
-        font-size: 9.5px;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
         text-transform: uppercase;
-        letter-spacing: 0.1em;
+        letter-spacing: var(--tracking-caps);
         color: var(--muted, #8a97ad);
       }
       .chip.ok .n {
@@ -281,17 +284,17 @@ import {
       }
       .tcode {
         font-family: var(--mono, monospace);
-        font-size: 11px;
+        font-size: var(--fs-meta);
         color: var(--muted, #8a97ad);
         background: rgba(255, 255, 255, 0.05);
         padding: 1px 6px;
         border-radius: 5px;
       }
       .tactic {
-        font-family: var(--mono, monospace);
-        font-size: 10px;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
         text-transform: uppercase;
-        letter-spacing: 0.06em;
+        letter-spacing: 0;
         color: var(--cyan, #26e0ff);
         border: 1px solid rgba(38, 224, 255, 0.28);
         border-radius: 999px;
@@ -304,13 +307,13 @@ import {
         gap: 12px;
       }
       .count {
-        font-family: var(--mono, monospace);
-        font-size: 11px;
+        font-family: var(--sans);
+        font-size: var(--fs-meta);
         color: var(--muted, #8a97ad);
       }
       .status {
-        font-family: var(--mono, monospace);
-        font-size: 10.5px;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
         color: var(--cyan, #26e0ff);
       }
       .status.attn {
@@ -319,9 +322,9 @@ import {
       .more {
         margin: 12px 0 0;
         cursor: pointer;
-        font-family: var(--mono, monospace);
-        font-size: 11px;
-        letter-spacing: 0.04em;
+        font-family: var(--sans);
+        font-size: var(--fs-meta);
+        letter-spacing: 0;
         color: var(--cyan, #26e0ff);
         background: rgba(38, 224, 255, 0.06);
         border: 1px solid rgba(38, 224, 255, 0.35);
@@ -338,8 +341,8 @@ import {
         margin-top: 16px;
         padding-top: 12px;
         border-top: 1px solid var(--line-2, rgba(122, 145, 190, 0.15));
-        font-family: var(--mono, monospace);
-        font-size: 10.5px;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
         color: var(--muted, #8a97ad);
       }
       .panel.state {
@@ -356,7 +359,7 @@ import {
         font-size: 14px;
       }
       .state span {
-        font-family: var(--mono, monospace);
+        font-family: var(--sans);
         font-size: 12px;
         color: var(--muted, #8a97ad);
       }
@@ -376,8 +379,8 @@ import {
         align-self: flex-start;
         cursor: pointer;
         margin-top: 4px;
-        font-family: var(--mono, monospace);
-        font-size: 11px;
+        font-family: var(--sans);
+        font-size: var(--fs-meta);
         color: var(--cyan, #26e0ff);
         background: rgba(38, 224, 255, 0.06);
         border: 1px solid rgba(38, 224, 255, 0.35);
@@ -385,7 +388,7 @@ import {
         padding: 5px 12px;
       }
       .pulse {
-        font-family: var(--mono, monospace);
+        font-family: var(--sans);
         font-size: 12px;
         color: var(--muted, #8a97ad);
         animation: pulse 1.4s ease-in-out infinite;

@@ -54,25 +54,25 @@ import {
     DevicePriorityComponent,
   ],
   template: `
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <span class="mark">Inventário <b>de Ativos</b></span>
-          <span class="sub">NIST CSF 2.0 · Identify (ID.AM) · ativos cadastrados e descobertos por integrações</span>
+    <div class="page">
+      <header class="page-head">
+        <div>
+          <p class="page-eyebrow">Ambiente</p>
+          <h1>Inventário de ativos</h1>
+          <!-- Subtítulo tático da Função Identify (mesmo padrão dos painéis de pilar / Govern) -->
+          <p class="page-desc">{{ idDescription }}</p>
+          <p class="page-meta">NIST CSF 2.0 · Identify (ID.AM) · ativos cadastrados e descobertos por integrações</p>
         </div>
-        <div class="client">
-          <span class="label">Ativos</span>
+        <div class="head-stat">
+          <span class="head-stat-k">Ativos</span>
           <!-- Sem resposta do inventário (carregando ou falha) o total é desconhecido: "—", nunca 0. -->
-          <span class="name">{{ loaded() ? total() : '—' }}</span>
+          <span class="head-stat-v">{{ loaded() ? total() : '—' }}</span>
         </div>
       </header>
 
-      <!-- Subtítulo tático da Função Identify (mesmo padrão dos painéis de pilar / Govern) -->
-      <p class="id-description">{{ idDescription }}</p>
-
       <!-- Seção COMUM de postura + controles da Função Identify (mesmo contrato/painel das demais Funções);
            o inventário de ativos abaixo permanece como área especializada. -->
-      <section class="panel id-workspace">
+      <section class="panel">
         <div class="idw-head">
           <h3>Postura Identify <span class="code">ID</span></h3>
           <span class="hint">controles ID.* avaliados — score, cobertura, evidência e pendências</span>
@@ -87,7 +87,7 @@ import {
               @case ('error') {
                 <div class="idw-err">
                   <span>Não foi possível carregar o resumo de postura.</span>
-                  <button type="button" class="retry-sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
+                  <button type="button" class="ghost sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
                 </div>
               }
             }
@@ -99,11 +99,11 @@ import {
               @case ('error') {
                 <div class="idw-err">
                   <span>Não foi possível carregar os controles ID.</span>
-                  <button type="button" class="retry-sm" (click)="loadIdControls()">Tentar novamente</button>
+                  <button type="button" class="ghost sm" (click)="loadIdControls()">Tentar novamente</button>
                 </div>
               }
               @case ('loaded') {
-                <div class="idw-tabs" role="tablist">
+                <div class="tabbar" role="tablist">
                   <button type="button" role="tab" class="tab" [class.on]="idTab() === 'controls'"
                     [attr.aria-selected]="idTab() === 'controls'" (click)="idTab.set('controls')">Controles</button>
                   <button type="button" role="tab" class="tab blind" [class.on]="idTab() === 'blind'"
@@ -127,13 +127,15 @@ import {
       </section>
 
       <!-- ---- Barra de filtros combinados ---- -->
-      <section class="panel filters">
-        <div class="chips">
+      <section class="filter-bar" aria-label="Filtros do inventário">
+        <div class="filter-row">
+          <span class="filter-label">Categoria</span>
           @for (c of categories; track c.value) {
             <button
               type="button"
-              class="chip"
+              class="filter-chip"
               [class.on]="selectedCategories().has(c.value)"
+              [attr.aria-pressed]="selectedCategories().has(c.value)"
               (click)="toggleCategory(c.value)"
             >
               {{ c.label }}
@@ -141,7 +143,7 @@ import {
           }
         </div>
 
-        <div class="controls">
+        <div class="filter-row">
           <label class="ctl">
             <span>Risco</span>
             <select [value]="riskLevel() ?? ''" (change)="setRisk($any($event.target).value)">
@@ -171,30 +173,31 @@ import {
             class="search"
             type="search"
             placeholder="Buscar nome / tipo / ref…"
+            aria-label="Buscar ativos por nome, tipo ou referência"
             [value]="search()"
             (input)="onSearch($any($event.target).value)"
           />
 
           @if (hasAnyFilter()) {
-            <button type="button" class="clear" (click)="clearFilters()">Limpar</button>
+            <button type="button" class="ghost sm" (click)="clearFilters()">Limpar filtros</button>
           }
         </div>
       </section>
 
       <!-- ---- Estados ---- -->
       @if (loadError()) {
-        <div class="notice">
+        <div class="notice error" role="alert">
           <b>Não foi possível carregar o inventário.</b> O serviço não respondeu agora — nenhum ativo é
           exibido, para que uma lista antiga não seja lida como o inventário atual.
         </div>
       }
 
       @if (inventoryNotice(); as n) {
-        <div class="notice" role="status">{{ n }}</div>
+        <div class="notice warn" role="status">{{ n }}</div>
       }
 
       <!-- ---- Tabela ---- -->
-      <section class="panel table-wrap">
+      <section class="panel flush">
         <table class="asset-table">
           <thead>
             <tr>
@@ -267,7 +270,7 @@ import {
                       @case ('error') {
                         <div class="idw-err">
                           <span>Não foi possível carregar as fontes deste ativo agora — nada é exibido, para que a falha não pareça ausência de fonte.</span>
-                          <button type="button" class="retry-sm" (click)="loadSources(a.id)">Tentar novamente</button>
+                          <button type="button" class="ghost sm" (click)="loadSources(a.id)">Tentar novamente</button>
                         </div>
                       }
                       @case ('loaded') {
@@ -379,7 +382,7 @@ import {
 
       <!-- ---- Paginação ---- -->
       <footer class="pager">
-        <span class="info">
+        <span class="range">
           @if (loaded()) {
             Página {{ page() }} de {{ totalPages() || 1 }} · {{ total() }} ativos
           } @else {
@@ -395,8 +398,8 @@ import {
               }
             </select>
           </label>
-          <button type="button" (click)="goTo(page() - 1)" [disabled]="page() <= 1">‹ Anterior</button>
-          <button type="button" (click)="goTo(page() + 1)" [disabled]="page() >= (totalPages() || 1)">
+          <button type="button" class="ghost sm" (click)="goTo(page() - 1)" [disabled]="page() <= 1">‹ Anterior</button>
+          <button type="button" class="ghost sm" (click)="goTo(page() + 1)" [disabled]="page() >= (totalPages() || 1)">
             Próxima ›
           </button>
         </div>
@@ -405,149 +408,347 @@ import {
   `,
   styles: [
     `
-      /* Subtítulo tático da Função (logo abaixo da topbar) — mutado, mesmo padrão do Govern. */
-      .id-description {
-        color: var(--muted);
-        font-family: var(--sans);
-        font-size: 13.5px;
-        line-height: 1.6;
-        margin: -14px 0 24px;
-        max-width: 820px;
-      }
+      /* Página, cabeçalho, filtros, avisos, painéis e botões: sistema visual global (styles.css). */
 
       /* Seção comum Identify (postura + controles) — compacta, acima do inventário. */
-      .id-workspace { padding: 16px 18px; margin-bottom: 18px; }
-      .idw-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
-      .idw-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
-      .idw-head .code { font-family: var(--mono); font-size: 12px; color: var(--cyan); margin-left: 6px; }
-      .idw-head .hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-      .idw-grid { display: grid; grid-template-columns: minmax(260px, 320px) 1fr; gap: 16px; align-items: start; }
-      .idw-pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); }
-      .idw-empty { font-family: var(--mono); font-size: 12px; color: var(--muted); padding: 16px 2px; margin: 0; }
-      .idw-err { display: flex; flex-direction: column; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
-      .retry-sm { align-self: flex-start; cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--cyan); background: rgba(38,224,255,0.06); border: 1px solid rgba(38,224,255,0.35); border-radius: 8px; padding: 5px 12px; }
-      .retry-sm:hover { background: rgba(38,224,255,0.12); }
-      .idw-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line-2, var(--line)); margin-bottom: 12px; }
-      .idw-tabs .tab { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 4px 12px 9px; cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
-      .idw-tabs .tab.on { color: var(--cyan); border-bottom-color: var(--cyan); }
-      .idw-tabs .tab.blind.on { color: var(--red); border-bottom-color: var(--red); }
-      .idw-tabs .tab i { font-style: normal; font-family: var(--display); font-size: 11px; border: 1px solid rgba(255,45,111,0.45); border-radius: 999px; padding: 1px 7px; color: var(--red); }
-      @media (max-width: 900px) { .idw-grid { grid-template-columns: 1fr; } }
+      .idw-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: var(--sp-1) var(--sp-3);
+        margin-bottom: var(--sp-4);
+      }
+      .idw-head h3 {
+        font-size: var(--fs-panel);
+        font-weight: 600;
+      }
+      .idw-head .code {
+        margin-left: 6px;
+        font-family: var(--mono);
+        font-size: var(--fs-meta);
+        color: var(--cyan);
+      }
+      .idw-grid {
+        display: grid;
+        grid-template-columns: minmax(260px, 320px) 1fr;
+        gap: var(--sp-5);
+        align-items: start;
+      }
+      .idw-pulse,
+      .idw-empty {
+        font-size: var(--fs-sm);
+        color: var(--text-2);
+      }
+      .idw-empty {
+        padding: var(--sp-4) 2px;
+      }
+      .idw-err {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--sp-2);
+        font-size: var(--fs-sm);
+        color: var(--text-2);
+      }
+      .tabbar {
+        margin-bottom: var(--sp-3);
+      }
+      .tabbar > button.blind.on {
+        color: var(--red-text);
+        border-bottom-color: var(--red);
+      }
+      .tabbar i {
+        padding: 1px 7px;
+        border: 1px solid rgba(255, 45, 111, 0.45);
+        border-radius: var(--radius-pill);
+        font-style: normal;
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        color: var(--red-text);
+      }
+      @media (max-width: 900px) {
+        .idw-grid {
+          grid-template-columns: 1fr;
+        }
+      }
 
-      .filters { padding: 16px 18px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 14px; }
-      .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-      .chip {
-        font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em;
-        color: var(--muted); background: var(--panel-2);
-        border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; cursor: pointer;
-        transition: 0.15s;
+      /* Rótulos dos filtros de seleção. */
+      .ctl {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--sp-2);
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--muted);
       }
-      .chip:hover { color: var(--text); border-color: rgba(38, 224, 255, 0.4); }
-      .chip.on {
-        color: #05070f; font-weight: 600; border-color: transparent;
-        background: var(--neon-h); box-shadow: 0 0 14px -3px rgba(38, 224, 255, 0.6);
+      .ctl.chk {
+        font-size: var(--fs-sm);
+        font-weight: 500;
+        letter-spacing: 0;
+        text-transform: none;
+        color: var(--text-2);
+        cursor: pointer;
       }
-      .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
-      .ctl { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
-      .ctl.chk { text-transform: none; letter-spacing: 0.02em; cursor: pointer; }
-      .ctl select, .search {
-        font-family: var(--sans); font-size: 13px; color: var(--text); text-transform: none; letter-spacing: 0;
-        background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px;
+      .search {
+        flex: 1 1 16rem;
+        min-width: 0;
       }
-      .ctl select:focus, .search:focus { outline: none; border-color: rgba(38, 224, 255, 0.5); }
-      .search { min-width: 240px; flex: 1; }
-      .clear { font-family: var(--mono); font-size: 11px; color: var(--magenta); background: none; border: 1px solid rgba(255, 61, 154, 0.3); border-radius: 9px; padding: 7px 12px; cursor: pointer; }
 
-      .table-wrap { padding: 6px 8px; overflow-x: auto; }
-      /* ⚠️ NÃO renomear esta classe de volta para "grid": existe um utilitário GLOBAL
-         ".grid { display: grid }" (styles.css) que casava com esta table e a transformava em container
-         CSS Grid — thead/tbody viravam grid items (display:block), cada tr formava a própria tabela
-         anônima e as colunas do cabeçalho descolavam das do corpo. O alinhamento aqui é NATIVO da
-         table: th e td da mesma coluna compartilham largura por construção do algoritmo de layout,
-         não por fração ajustada à mão. */
-      table.asset-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      /* ⚠️ NÃO renomear esta classe para "grid": o seletor casaria com utilitários de grade e quebraria o layout nativo
+         da tabela (thead/tbody virariam itens de grade e as colunas do cabeçalho descolariam das do corpo). */
+      table.asset-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: var(--fs-sm);
+      }
       table.asset-table thead th {
-        font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em;
-        color: var(--muted); text-align: left; font-weight: 500;
-        padding: 12px 14px; border-bottom: 1px solid var(--line);
+        padding: 10px var(--sp-3);
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--muted);
+        white-space: nowrap;
       }
-      /* Os thead/tbody explícitos NÃO são decoração: sem eles o seletor perde para
-         "table.asset-table thead th" (que fixa text-align:left) — a encapsulação do Angular injeta
-         atributos que empatam a contagem de classes, e o desempate vai para o seletor com mais
-         elementos. Resultado sem isto: cabeçalho à esquerda sobre dado centralizado. */
+      /* Os thead/tbody explícitos NÃO são decoração: sem eles o seletor perde para "table.asset-table thead th" (que
+         fixa text-align:left) — a encapsulação empata a contagem de classes e o desempate vai para mais elementos. */
       table.asset-table thead th.num,
-      table.asset-table tbody td.num { text-align: center; }
-      table.asset-table tbody td { padding: 13px 14px; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
-      table.asset-table tbody tr:hover td { background: rgba(38, 224, 255, 0.03); }
-      .asset-name { font-weight: 600; color: var(--text); }
-      .asset-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
-      .cat { font-family: var(--mono); font-size: 11.5px; color: var(--cyan-2); }
-      .dim { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
-      .src { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-
-      .crit { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; border-radius: 6px; font-family: var(--display); font-weight: 700; font-size: 12px; }
-      .crit-1 { color: var(--cyan); background: rgba(38, 224, 255, 0.1); }
-      .crit-2 { color: var(--amber); background: rgba(255, 176, 32, 0.1); }
-      .crit-3 { color: #ff7a3d; background: rgba(255, 122, 61, 0.12); }
-      .crit-4 { color: var(--red); background: rgba(255, 45, 111, 0.14); }
-
-      .risk-pill {
-        display: inline-flex; align-items: center; gap: 8px;
-        font-family: var(--mono); font-size: 12px;
-        padding: 5px 11px; border-radius: 999px; border: 1px solid currentColor;
-        background: rgba(0, 0, 0, 0.25);
+      table.asset-table tbody td.num {
+        text-align: center;
       }
-      .risk-pill b { font-family: var(--display); font-weight: 700; }
-      .risk-dot { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 10px 1px currentColor; }
-      .risk-none { font-family: var(--mono); font-size: 11.5px; color: var(--muted); opacity: 0.7; }
+      table.asset-table tbody td {
+        padding: var(--sp-3);
+        border-bottom: 1px solid var(--line-2);
+        vertical-align: middle;
+      }
+      table.asset-table tbody tr:hover td {
+        background: rgba(38, 224, 255, 0.03);
+      }
+      /* Nome de host inteiro numa linha: quebrar em cada hífen tornava "pc-laboratorio-06" ilegível.
+         A tabela rola dentro do próprio painel quando faltar largura. */
+      .asset-name {
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .asset-sub {
+        margin-top: 2px;
+        font-size: var(--fs-meta);
+        color: var(--muted);
+      }
+      .cat {
+        font-size: var(--fs-meta);
+        font-weight: 500;
+        color: var(--cyan-2);
+      }
+      .dim {
+        font-size: var(--fs-meta);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .src {
+        font-family: var(--mono);
+        font-size: var(--fs-meta);
+        color: var(--muted);
+      }
+      .crit {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        font-size: var(--fs-sm);
+        font-weight: 700;
+      }
+      .crit-1 {
+        color: var(--cyan);
+        background: rgba(38, 224, 255, 0.1);
+      }
+      .crit-2 {
+        color: var(--amber);
+        background: rgba(255, 176, 32, 0.1);
+      }
+      .crit-3 {
+        color: #ff7a3d;
+        background: rgba(255, 122, 61, 0.12);
+      }
+      .crit-4 {
+        color: var(--red-text);
+        background: rgba(255, 45, 111, 0.14);
+      }
+      .risk-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--sp-2);
+        padding: 3px 10px;
+        border: 1px solid currentColor;
+        border-radius: var(--radius-pill);
+        background: rgba(0, 0, 0, 0.25);
+        font-size: var(--fs-meta);
+        white-space: nowrap;
+      }
+      .risk-pill b {
+        font-weight: 700;
+      }
+      .risk-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        box-shadow: 0 0 10px 1px currentColor;
+      }
+      .risk-none {
+        font-size: var(--fs-meta);
+        color: var(--muted);
+      }
 
       /* [AEGIS-ENTITY-RESOLUTION-01] Fontes · vínculo (coluna) e detalhe das fontes (linha expandida). */
-      tr.asset-row { cursor: pointer; }
-      table.asset-table tbody tr.asset-row.open td { background: rgba(38, 224, 255, 0.05); }
-      .xs-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
-      .xs-srcs { font-family: var(--mono); font-size: 11px; color: var(--text); }
-      .xs-badge { display: inline-block; font-family: var(--mono); font-size: 10.5px; line-height: 1.4; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); max-width: 260px; }
-      .xs-badge.tone-ok { color: var(--cyan); border-color: rgba(38, 224, 255, 0.45); }
-      .xs-badge.tone-info { color: var(--cyan-2); border-color: rgba(38, 224, 255, 0.25); }
-      .xs-badge.tone-warn { color: var(--amber); border-color: rgba(255, 176, 32, 0.5); }
-      .xs-badge.tone-muted { color: var(--muted); }
-      table.asset-table tbody tr.detail-row td { background: var(--panel-2); padding: 16px 18px; cursor: default; }
-      .xs-detail { display: flex; flex-direction: column; gap: 10px; }
-      .xs-head { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-      .xs-head p { margin: 0; font-size: 13px; line-height: 1.55; max-width: 900px; }
-      .xs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-      .xs-list li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
-      .xs-list li.off { opacity: 0.78; }
-      .xs-title { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-      .xs-presence { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-      .xs-meta { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 4px; }
-      .xs-link { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-top: 6px; font-size: 12.5px; line-height: 1.5; }
-      .xs-diag { margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
-      .xs-diag code { color: var(--text); background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 4px; }
-      .xs-note { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--muted); max-width: 900px; }
-
-      .status { font-family: var(--mono); font-size: 11px; color: var(--cyan); }
-      .status.off { color: var(--muted); }
-      tr.empty td { text-align: center; color: var(--muted); font-family: var(--mono); font-size: 12px; padding: 30px; }
-
-      .notice {
-        font-family: var(--mono); font-size: 11.5px; color: var(--red);
-        border: 1px solid rgba(255, 45, 111, 0.3); background: rgba(255, 45, 111, 0.07);
-        padding: 10px 14px; border-radius: 12px; margin-bottom: 18px;
+      tr.asset-row {
+        cursor: pointer;
       }
-      .notice code { color: var(--text); background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 4px; }
-
-      .pager { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 18px; flex-wrap: wrap; }
-      .pager .info { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
-      .pg-ctl { display: flex; align-items: center; gap: 10px; }
-      .pg-ctl button {
-        font-family: var(--mono); font-size: 12px; color: var(--text);
-        background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 7px 14px; cursor: pointer; transition: 0.15s;
+      table.asset-table tbody tr.asset-row.open td {
+        background: rgba(38, 224, 255, 0.05);
       }
-      .pg-ctl button:hover:not(:disabled) { border-color: rgba(38, 224, 255, 0.5); }
-      .pg-ctl button:disabled { opacity: 0.35; cursor: not-allowed; }
-
-      @media (max-width: 720px) { .search { min-width: 140px; } }
+      .xs-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--sp-1);
+      }
+      .xs-srcs {
+        font-size: var(--fs-meta);
+      }
+      .xs-badge {
+        display: inline-block;
+        max-width: 260px;
+        padding: 2px 8px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-pill);
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        line-height: 1.45;
+        color: var(--text-2);
+      }
+      .xs-badge.tone-ok {
+        color: var(--cyan);
+        border-color: rgba(38, 224, 255, 0.45);
+      }
+      .xs-badge.tone-info {
+        color: var(--cyan-2);
+        border-color: rgba(38, 224, 255, 0.25);
+      }
+      .xs-badge.tone-warn {
+        color: var(--amber);
+        border-color: rgba(255, 176, 32, 0.5);
+      }
+      .xs-badge.tone-muted {
+        color: var(--muted);
+      }
+      table.asset-table tbody tr.detail-row td {
+        padding: var(--sp-4) var(--sp-5);
+        background: var(--panel-2);
+        cursor: default;
+      }
+      .xs-detail {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-3);
+      }
+      .xs-head {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+      }
+      .xs-head p {
+        max-width: 100ch;
+        font-size: var(--fs-sm);
+        line-height: 1.55;
+        color: var(--text-2);
+      }
+      .xs-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 10px;
+      }
+      .xs-list li {
+        padding: var(--sp-3) 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(5, 7, 15, 0.3);
+      }
+      .xs-list li.off {
+        opacity: 0.78;
+      }
+      .xs-title {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .xs-presence,
+      .xs-meta {
+        font-size: var(--fs-meta);
+        color: var(--muted);
+      }
+      .xs-meta {
+        margin-top: var(--sp-1);
+      }
+      .xs-link {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: var(--sp-2);
+        margin-top: 6px;
+        font-size: var(--fs-sm);
+        line-height: var(--lh);
+      }
+      .xs-diag {
+        margin-top: 6px;
+        font-size: var(--fs-meta);
+        color: var(--muted);
+      }
+      .xs-diag summary {
+        cursor: pointer;
+        color: var(--text-2);
+      }
+      .xs-diag code {
+        padding: 1px 5px;
+        border-radius: var(--radius-xs);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+      }
+      .xs-note {
+        max-width: 100ch;
+        font-size: var(--fs-meta);
+        color: var(--muted);
+      }
+      .status {
+        font-size: var(--fs-meta);
+        font-weight: 500;
+        color: var(--cyan);
+      }
+      .status.off {
+        color: var(--muted);
+      }
+      tr.empty td {
+        padding: var(--sp-8);
+        text-align: center;
+        font-size: var(--fs-sm);
+        color: var(--text-2);
+      }
+      .pg-ctl {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--sp-2);
+      }
     `,
   ],
 })

@@ -55,10 +55,10 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
   standalone: true,
   imports: [ReactiveFormsModule],
   template: `
-    <section class="page">
+    <section class="stack">
       <!-- Sem <h1> redundante: a aba "Integrações" do shell de Configurações já rotula esta seção. -->
       <header class="page-head">
-        <p class="sub">
+        <p class="page-desc">
           Conecte o Aegis aos ambientes do cliente. As credenciais são cifradas no servidor e nunca
           retornam para esta tela.
         </p>
@@ -179,7 +179,7 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                       O histórico já coletado é preservado.
                     </span>
                     <div class="edit-actions">
-                      <button type="button" class="danger sm" (click)="disconnect(c)" [disabled]="busyId() === c.id">
+                      <button type="button" class="ghost danger sm" (click)="disconnect(c)" [disabled]="busyId() === c.id">
                         Confirmar desconexão
                       </button>
                       <button type="button" class="ghost sm" (click)="disconnectingId.set(null)">Cancelar</button>
@@ -438,68 +438,45 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
   `,
   styles: [
     `
-      /* Sem padding externo: o shell de Configurações já provê o espaçamento da página (evita margem dupla). */
-      .page {
-        padding: 0 0 1rem;
+      /* Dentro do shell de Configurações: sem padding de página próprio (o shell já tem). Painéis, botões e
+         cabeçalho vêm do sistema visual global (styles.css). */
+      .stack {
         display: flex;
         flex-direction: column;
-        gap: 1.25rem;
+        gap: var(--sp-5);
       }
-      .page-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-      }
-      h1 {
-        margin: 0;
-        font-size: 1.35rem;
-        letter-spacing: 0.02em;
-      }
-      .sub {
-        margin: 0.35rem 0 0;
-        max-width: 62ch;
-        opacity: 0.7;
-        font-size: 0.85rem;
-      }
-      .panel {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 4%, transparent);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 22%, transparent);
-        border-radius: 8px;
-        padding: 1rem 1.15rem;
-      }
-      .panel-title {
+                                    .panel-title {
         margin: 0 0 0.75rem;
-        font-size: 0.75rem;
-        letter-spacing: 0.14em;
+        font-size: var(--fs-meta);
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         opacity: 0.75;
       }
       .muted {
         opacity: 0.65;
-        font-size: 0.85rem;
+        font-size: var(--fs-body);
       }
       .small {
-        font-size: 0.78rem;
+        font-size: var(--fs-meta);
       }
       .err {
         color: #ff6b8a;
-        font-size: 0.78rem;
+        font-size: var(--fs-meta);
         font-style: normal;
       }
       .ok {
-        color: var(--hud-cyan, #26e0ff);
-        font-size: 0.82rem;
+        color: var(--cyan);
+        font-size: var(--fs-sm);
       }
 
       /* ---- lista ---- */
       .group-title {
         margin: 0.85rem 0 0.4rem;
-        font-size: 0.72rem;
-        letter-spacing: 0.12em;
+        font-size: var(--fs-meta);
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         opacity: 0.85;
-        color: var(--hud-cyan, #26e0ff);
+        color: var(--cyan);
       }
       .group-title:first-child {
         margin-top: 0;
@@ -527,14 +504,14 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         gap: 0.55rem;
         align-items: flex-start;
         padding: 0.55rem 0.65rem;
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 16%, transparent);
+        border: 1px solid color-mix(in srgb, var(--cyan) 16%, transparent);
         border-radius: 6px;
         cursor: pointer;
       }
       .svc input[type='checkbox'] {
         margin-top: 0.2rem;
         width: auto;
-        accent-color: var(--hud-cyan, #26e0ff);
+        accent-color: var(--cyan);
       }
       .svc-main {
         display: flex;
@@ -543,7 +520,7 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         min-width: 0;
       }
       .hint {
-        font-size: 0.72rem;
+        font-size: var(--fs-meta);
         opacity: 0.65;
         font-style: normal;
         line-height: 1.4;
@@ -554,21 +531,21 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         align-items: center;
         gap: 0.85rem;
         padding: 0.6rem 0.75rem;
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 16%, transparent);
+        border: 1px solid color-mix(in srgb, var(--cyan) 16%, transparent);
         border-radius: 6px;
       }
       .conn-msg {
         grid-column: 2 / -1;
         margin: 0.35rem 0 0;
-        font-size: 0.78rem;
+        font-size: var(--fs-meta);
         opacity: 0.85;
       }
       .ok-note {
-        color: var(--hud-cyan, #26e0ff);
+        color: var(--cyan);
       }
       .note {
         margin: 0.6rem 0 0;
-        font-size: 0.8rem;
+        font-size: var(--fs-sm);
         line-height: 1.4;
       }
       .warn-note {
@@ -576,18 +553,18 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
       }
       .perms {
         margin: 0.5rem 0 0;
-        font-size: 0.78rem;
+        font-size: var(--fs-meta);
       }
       /* [AEGIS-MVP-MICROSOFT-COVERAGE-03] Matriz de permissões por capacidade */
       .svc-cell { display: flex; flex-direction: column; gap: 6px; }
-      .cap-matrix summary { cursor: pointer; font-size: 11px; color: var(--cyan); }
+      .cap-matrix summary { cursor: pointer; font-size: var(--fs-meta); color: var(--cyan); }
       .cap-matrix .caveat { margin: 8px 0; }
       .cap-matrix ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
       .cap-matrix li { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-left: 2px solid var(--line); }
       .cap-matrix li.NewForIdentityRisk { border-left-color: var(--cyan); }
       .cap-matrix li.NotRequired { border-left-color: var(--amber); }
       .cap-hd { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: baseline; }
-      .cap-matrix .usage { font-size: 10px; font-style: normal; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+      .cap-matrix .usage { font-size: var(--fs-caps); font-style: normal; text-transform: uppercase; letter-spacing: 0; color: var(--muted); }
       .cap-matrix li.NewForIdentityRisk .usage { color: var(--cyan); }
       .cap-matrix li.NotRequired .usage { color: var(--amber); }
       .cap-matrix .lic, .cap-matrix .act { line-height: 1.45; }
@@ -625,9 +602,9 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         opacity: 0.9;
       }
       .ep-label {
-        font-size: 0.62rem;
+        font-size: var(--fs-caps);
         text-transform: uppercase;
-        letter-spacing: 0.08em;
+        letter-spacing: var(--tracking-caps);
         opacity: 0.6;
         flex: none;
       }
@@ -637,7 +614,7 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         background: #64748b;
       }
       .tone-ok {
-        background: var(--hud-cyan, #26e0ff);
+        background: var(--cyan);
       }
       .tone-warn {
         background: #f5a524;
@@ -651,7 +628,7 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         min-width: 0;
       }
       .meta {
-        font-size: 0.72rem;
+        font-size: var(--fs-meta);
         opacity: 0.6;
       }
       .conn-state {
@@ -660,15 +637,15 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         gap: 0.5rem;
       }
       .badge {
-        font-size: 0.68rem;
+        font-size: var(--fs-caps);
         padding: 0.15rem 0.45rem;
         border-radius: 3px;
         border: 1px solid currentColor;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
+        letter-spacing: 0;
       }
       .badge.tone-ok {
-        color: var(--hud-cyan, #26e0ff);
+        color: var(--cyan);
         background: transparent;
       }
       .badge.tone-warn,
@@ -706,7 +683,7 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         grid-column: 1 / -1;
         margin: 0.5rem 0 0;
         padding-top: 0.6rem;
-        border-top: 1px dashed color-mix(in srgb, var(--hud-cyan, #26e0ff) 20%, transparent);
+        border-top: 1px dashed color-mix(in srgb, var(--cyan) 20%, transparent);
         display: flex;
         flex-wrap: wrap;
         gap: 0.75rem;
@@ -714,27 +691,17 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
       }
       .confirm-disc {
         align-items: center;
-        font-size: 0.82rem;
+        font-size: var(--fs-sm);
         line-height: 1.4;
       }
       .edit-actions {
         display: flex;
         gap: 0.4rem;
       }
-      button.danger {
-        background: transparent;
-        border: 1px solid #ff3d6a;
-        color: #ff8098;
-        border-radius: 5px;
-        padding: 0.4rem 0.8rem;
-        font: inherit;
-        font-size: 0.8rem;
-        cursor: pointer;
-      }
-      button.primary.sm,
+            button.primary.sm,
       button.danger.sm {
         padding: 0.25rem 0.6rem;
-        font-size: 0.72rem;
+        font-size: var(--fs-meta);
       }
 
       /* ---- formulário ---- */
@@ -750,24 +717,24 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         position: relative;
       }
       .field > span {
-        font-size: 0.72rem;
-        letter-spacing: 0.08em;
+        font-size: var(--fs-meta);
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         opacity: 0.7;
       }
       input,
       select {
         background: rgba(4, 8, 18, 0.6);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 26%, transparent);
+        border: 1px solid color-mix(in srgb, var(--cyan) 26%, transparent);
         border-radius: 5px;
         padding: 0.45rem 0.6rem;
         color: inherit;
         font: inherit;
-        font-size: 0.85rem;
+        font-size: var(--fs-body);
       }
       input:focus,
       select:focus {
-        outline: 1px solid var(--hud-cyan, #26e0ff);
+        outline: 1px solid var(--cyan);
       }
       .reveal {
         position: absolute;
@@ -775,20 +742,20 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         bottom: 0.4rem;
         background: transparent;
         border: 0;
-        color: var(--hud-cyan, #26e0ff);
-        font-size: 0.68rem;
+        color: var(--cyan);
+        font-size: var(--fs-caps);
         cursor: pointer;
         opacity: 0.8;
       }
       .creds {
         margin: 1rem 0 0;
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent);
+        border: 1px solid color-mix(in srgb, var(--cyan) 18%, transparent);
         border-radius: 6px;
         padding: 0.85rem;
       }
       legend {
-        font-size: 0.72rem;
-        letter-spacing: 0.1em;
+        font-size: var(--fs-meta);
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         opacity: 0.75;
         padding: 0 0.4rem;
@@ -800,36 +767,8 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         margin-top: 1rem;
         flex-wrap: wrap;
       }
-      button.primary {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent);
-        border: 1px solid var(--hud-cyan, #26e0ff);
-        color: inherit;
-        border-radius: 5px;
-        padding: 0.5rem 1.1rem;
-        font: inherit;
-        font-size: 0.85rem;
-        cursor: pointer;
-      }
-      button.ghost {
-        background: transparent;
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 30%, transparent);
-        color: inherit;
-        border-radius: 5px;
-        padding: 0.4rem 0.8rem;
-        font: inherit;
-        font-size: 0.8rem;
-        cursor: pointer;
-      }
-      button.sm {
-        padding: 0.25rem 0.6rem;
-        font-size: 0.72rem;
-      }
-      button:disabled {
-        opacity: 0.55;
-        cursor: not-allowed;
-      }
-      code {
-        font-size: 0.78rem;
+                              code {
+        font-size: var(--fs-meta);
         opacity: 0.85;
       }
     `,

@@ -24,22 +24,27 @@ import { AegisScoreService } from '../services/aegis-score.service';
     <section class="page">
       <header class="page-head">
         <div>
+          <p class="page-eyebrow">NIST CSF 2.0</p>
           <h1>Governança e controles</h1>
-          <p class="sub">
+          <p class="page-desc">
             As seis funções do NIST CSF 2.0 e a evidência que sustenta cada uma. <strong>Score e cobertura são
             eixos distintos</strong>: 100% de cobertura pode conter controles não conformes, e cobertura zero
             significa "ainda não avaliado" — nunca reprovação.
           </p>
         </div>
-        <a class="ghost" routerLink="/governance">Evidências e documentos</a>
+        <div class="page-actions">
+          <a class="ghost" routerLink="/governance">Evidências e documentos</a>
+        </div>
       </header>
 
       @if (loading()) {
-        <div class="panel"><p class="muted">Carregando a postura por função…</p></div>
+        <div class="panel"><div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>Carregando a postura por função…</p></div></div>
       } @else if (error()) {
         <div class="panel">
-          <p class="muted">Não foi possível carregar a postura por função agora.</p>
-          <button type="button" class="ghost" (click)="reload()">Tentar novamente</button>
+          <div class="state error" role="alert">
+            <p class="err">Não foi possível carregar a postura por função agora.</p>
+            <button type="button" class="ghost" (click)="reload()">Tentar novamente</button>
+          </div>
         </div>
       } @else {
         <div class="fn-grid">
@@ -58,73 +63,16 @@ import { AegisScoreService } from '../services/aegis-score.service';
   `,
   styles: [
     `
-      .page {
-        /* Folga inferior: reserva o canto do FAB flutuante do Auditor (ver a Visão geral). */
-        padding: 20px 26px 104px;
-        max-width: 1320px;
-      }
-      .page-head {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 14px;
-        align-items: flex-start;
-        justify-content: space-between;
-        margin-bottom: 22px;
-      }
-      .page-head h1 {
-        margin: 0 0 6px;
-        font-family: var(--display);
-        font-size: 22px;
-        font-weight: 700;
-        color: var(--text);
-      }
-      .sub {
-        margin: 0;
-        max-width: 74ch;
-        font-family: var(--sans);
-        font-size: 13px;
-        line-height: 1.6;
-        color: var(--muted);
-      }
-      .sub strong {
-        color: var(--text);
-        font-weight: 600;
-      }
-      .ghost {
-        flex: none;
-        font-family: var(--mono);
-        font-size: 11.5px;
-        text-decoration: none;
-        padding: 8px 14px;
-        border-radius: 8px;
-        border: 1px solid var(--line);
-        background: rgba(122, 145, 190, 0.06);
-        color: var(--text);
-        cursor: pointer;
-      }
-      .ghost:hover {
-        border-color: color-mix(in srgb, var(--cyan) 40%, var(--line));
-      }
-      .panel {
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--panel);
-        padding: 18px;
-      }
-      .muted {
-        margin: 0 0 10px;
-        font-family: var(--sans);
-        font-size: 13px;
-        color: var(--muted);
-      }
+      /* Página, cabeçalho, painéis, botões e estados: sistema visual global (styles.css). */
 
-      /* 3 colunas em 1366px, 2 em telas médias, 1 no celular — sem rolagem lateral em nenhuma. */
+      /* Seis Funções: 3 colunas em 1366 px, 2 em telas médias, 1 no celular — sem rolagem lateral. */
       .fn-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+        gap: var(--sp-4);
       }
       .fn {
+        position: relative;
         display: grid;
         grid-template-columns: auto 1fr;
         grid-template-areas:
@@ -132,65 +80,82 @@ import { AegisScoreService } from '../services/aegis-score.service';
           'score score'
           'meta meta'
           'blurb blurb';
-        gap: 4px 10px;
-        align-items: baseline;
-        padding: 16px 18px;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--panel);
-        text-decoration: none;
-        transition: 0.15s;
+        gap: 6px 10px;
+        align-items: center;
         min-width: 0;
+        padding: var(--sp-5);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        background: var(--panel);
+        box-shadow: var(--shadow-panel);
+        color: inherit;
+        text-decoration: none;
+        overflow: hidden;
+        transition: border-color var(--ease), background var(--ease);
+      }
+      /* Filete neon = há avaliação; neutro = ainda não avaliado (nunca "reprovado"). */
+      .fn::before {
+        content: '';
+        position: absolute;
+        inset: 0 0 auto;
+        height: 2px;
+        background: var(--neon-h);
+        opacity: 0.75;
+      }
+      .fn.is-na::before {
+        background: var(--line-strong);
+        opacity: 1;
       }
       .fn:hover {
-        border-color: color-mix(in srgb, var(--cyan) 35%, var(--line));
+        border-color: rgba(38, 224, 255, 0.4);
+        background: linear-gradient(180deg, rgba(38, 224, 255, 0.05), transparent 90px), var(--panel);
+      }
+      .fn:focus-visible {
+        outline: none;
+        box-shadow: var(--focus);
       }
       .fn-code {
         grid-area: code;
+        padding: 2px var(--sp-2);
+        border-radius: 6px;
+        background: var(--tint-cyan);
         font-family: var(--mono);
-        font-size: 10px;
-        letter-spacing: 0.14em;
+        font-size: var(--fs-meta);
+        font-weight: 600;
         color: var(--cyan);
       }
       .fn-name {
         grid-area: name;
-        font-family: var(--sans);
-        font-size: 14px;
+        font-size: var(--fs-panel);
         font-weight: 600;
-        color: var(--text);
       }
       .fn-score {
         grid-area: score;
-        margin-top: 6px;
-        font-family: var(--display);
+        margin-top: var(--sp-2);
+        font-size: var(--fs-value);
         font-weight: 700;
-        font-size: 24px;
-        color: var(--text);
+        line-height: 1.1;
+        letter-spacing: -0.02em;
       }
       .fn.is-na .fn-score {
-        font-size: 16px;
-        color: var(--muted);
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: 0;
+        color: var(--text-2);
       }
       .fn-meta {
         grid-area: meta;
-        font-family: var(--mono);
-        font-size: 10.5px;
-        color: var(--muted);
+        font-size: var(--fs-meta);
+        color: var(--text-2);
       }
       .fn-blurb {
         grid-area: blurb;
-        margin-top: 8px;
-        padding-top: 8px;
+        margin-top: var(--sp-2);
+        padding-top: 10px;
         border-top: 1px solid var(--line-2);
-        font-family: var(--sans);
-        font-size: 12px;
-        line-height: 1.5;
+        font-size: var(--fs-sm);
+        line-height: var(--lh);
         color: var(--muted);
-      }
-      @media (max-width: 720px) {
-        .page {
-          padding: 16px 14px 48px;
-        }
       }
     `,
   ],

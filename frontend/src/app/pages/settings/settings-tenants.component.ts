@@ -138,22 +138,15 @@ import {
   `,
   styles: [
     `
-      .panel {
-        background: var(--panel, rgba(11, 15, 26, 0.6));
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 1.1rem 1.25rem;
-        margin-bottom: 1.1rem;
-      }
-      h2 { margin: 0 0 0.6rem; font-size: 1rem; color: var(--text); }
-      .note { margin: 0; font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
+            h2 { margin: 0 0 0.6rem; font-size: 1rem; color: var(--text); }
+      .note { margin: 0; font-size: var(--fs-sm); color: var(--muted); line-height: 1.5; }
       .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
       .toolbar .search { flex: 1 1 240px; }
       .toolbar input, .toolbar select {
         padding: 0.5rem 0.6rem; border-radius: 8px; border: 1px solid var(--line);
-        background: var(--void, rgba(5, 7, 15, 0.6)); color: var(--text); font-size: 0.85rem; outline: none;
+        background: var(--void, rgba(5, 7, 15, 0.6)); color: var(--text); font-size: var(--fs-body); outline: none;
       }
-      .state { color: var(--muted); font-size: 0.86rem; padding: 1rem 0; }
+      .state { color: var(--muted); font-size: var(--fs-body); padding: 1rem 0; }
       .tenants { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
       .tenant {
         border: 1px solid var(--line); border-radius: 10px; padding: 0.8rem 0.95rem;
@@ -163,11 +156,11 @@ import {
       .tenant.suspended { opacity: 0.75; border-style: dashed; }
       .who { display: flex; flex-direction: column; gap: 0.15rem; }
       .who strong { color: var(--text); font-size: 0.92rem; }
-      .who .slug { color: var(--muted); font-size: 0.8rem; }
+      .who .slug { color: var(--muted); font-size: var(--fs-sm); }
       .mono { font-family: var(--mono); }
       .meta { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.35rem; }
       .badge {
-        font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.03em; padding: 0.12rem 0.45rem;
+        font-family: var(--sans); font-size: var(--fs-caps); letter-spacing: 0; padding: 0.12rem 0.45rem;
         border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
       }
       .badge.tone-ok { color: var(--teal, #2ee6b6); border-color: color-mix(in srgb, var(--teal, #2ee6b6) 40%, var(--line)); }
@@ -176,31 +169,22 @@ import {
       .badge.self { color: var(--violet, #8b5cff); }
       .dates {
         grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.25rem 1rem;
-        font-size: 0.72rem; color: var(--muted); margin-top: 0.35rem;
+        font-size: var(--fs-meta); color: var(--muted); margin-top: 0.35rem;
       }
       .row-actions { display: flex; gap: 0.4rem; align-self: start; }
       .edit, .confirm {
         grid-column: 1 / -1; border-top: 1px dashed var(--line); padding-top: 0.7rem; margin-top: 0.4rem;
         display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end;
       }
-      .confirm { align-items: center; font-size: 0.83rem; color: var(--text); line-height: 1.4; }
-      .field { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.78rem; color: var(--muted); }
+      .confirm { align-items: center; font-size: var(--fs-sm); color: var(--text); line-height: 1.4; }
+      .field { display: flex; flex-direction: column; gap: 0.3rem; font-size: var(--fs-meta); color: var(--muted); }
       .field input {
         padding: 0.5rem 0.6rem; border-radius: 8px; border: 1px solid var(--line);
-        background: var(--void, rgba(5, 7, 15, 0.6)); color: var(--text); font-size: 0.88rem; outline: none;
+        background: var(--void, rgba(5, 7, 15, 0.6)); color: var(--text); font-size: var(--fs-body); outline: none;
       }
       .field input:disabled { opacity: 0.6; }
       .actions { display: flex; gap: 0.5rem; }
-      .btn {
-        padding: 0.5rem 0.8rem; border-radius: 8px; border: 1px solid var(--line);
-        background: rgba(122, 145, 190, 0.08); color: var(--text); font-family: var(--mono);
-        font-size: 0.8rem; cursor: pointer;
-      }
-      .btn.sm { padding: 0.35rem 0.6rem; font-size: 0.75rem; }
-      .btn:disabled { opacity: 0.5; cursor: default; }
-      .btn.primary { border: none; color: #05070f; background: var(--neon-h, linear-gradient(90deg, #26e0ff, #8b5cff)); font-weight: 600; }
-      .btn.danger { color: var(--red, #ff6b8b); border-color: color-mix(in srgb, var(--red, #ff6b8b) 40%, var(--line)); }
-      .msg { font-size: 0.8rem; border-radius: 8px; padding: 0.55rem 0.7rem; margin: 0; }
+                                    .msg { font-size: var(--fs-sm); border-radius: 8px; padding: 0.55rem 0.7rem; margin: 0; }
       .msg.err { color: var(--red, #ff6b8b); background: rgba(255, 107, 139, 0.08); }
       .msg.ok { color: var(--text); background: rgba(38, 224, 255, 0.08); }
       .row-msg { grid-column: 1 / -1; margin-top: 0.4rem; }

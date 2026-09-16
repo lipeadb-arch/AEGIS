@@ -61,93 +61,126 @@ import { TenantContextService } from '../services/tenant-context.service';
     `
       .switcher {
         position: relative;
-        font-family: inherit;
+        min-width: 0;
       }
       .trigger {
         display: flex;
         align-items: center;
-        gap: 0.6rem;
-        padding: 0.4rem 0.75rem;
-        background: color-mix(in srgb, var(--hud-cyan, #22d3ee) 8%, transparent);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #22d3ee) 35%, transparent);
-        border-radius: 6px;
-        color: var(--hud-text, #e2e8f0);
-        cursor: pointer;
+        gap: 10px;
+        width: 100%;
         min-width: 13rem;
+        max-width: 18rem;
+        min-height: var(--control-h);
+        padding: 3px 10px 3px 12px;
+        border: 1px solid rgba(38, 224, 255, 0.3);
+        border-radius: var(--radius-sm);
+        background: var(--tint-cyan);
+        color: var(--text);
+        cursor: pointer;
+        transition: border-color var(--ease), background var(--ease);
+      }
+      .trigger:hover:not(:disabled) {
+        border-color: rgba(38, 224, 255, 0.6);
+      }
+      .trigger:focus-visible {
+        outline: none;
+        box-shadow: var(--focus);
       }
       .trigger:disabled {
         opacity: 0.6;
         cursor: progress;
       }
       .glyph {
-        color: var(--hud-cyan, #22d3ee);
+        color: var(--cyan);
+        font-size: var(--fs-meta);
       }
       .label {
         display: flex;
         flex-direction: column;
         align-items: flex-start;
-        line-height: 1.15;
         flex: 1;
         min-width: 0;
+        line-height: 1.2;
       }
       .name {
-        font-size: 0.85rem;
+        max-width: 100%;
+        font-size: var(--fs-sm);
         font-weight: 600;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 100%;
       }
       .role {
-        font-size: 0.65rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        opacity: 0.7;
+        font-size: var(--fs-caps);
+        color: var(--text-2);
       }
       .caret {
-        opacity: 0.7;
+        color: var(--muted);
       }
       .menu {
         position: absolute;
-        top: calc(100% + 0.35rem);
+        top: calc(100% + 6px);
         right: 0;
-        left: 0;
-        z-index: 50;
+        z-index: 70;
+        min-width: 100%;
+        width: max-content;
+        max-width: min(22rem, calc(100vw - 32px));
+        max-height: 18rem;
         margin: 0;
-        padding: 0.25rem;
-        list-style: none;
-        background: var(--hud-panel, #0f172a);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #22d3ee) 30%, transparent);
-        border-radius: 6px;
-        max-height: 16rem;
+        padding: 4px;
         overflow-y: auto;
+        list-style: none;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--panel-2);
+        box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.9);
       }
       .menu button {
         display: flex;
         justify-content: space-between;
-        gap: 0.75rem;
+        align-items: center;
+        gap: 12px;
         width: 100%;
-        padding: 0.45rem 0.6rem;
-        background: transparent;
+        min-height: 36px;
+        padding: 6px 10px;
         border: 0;
-        border-radius: 4px;
-        color: var(--hud-text, #e2e8f0);
-        cursor: pointer;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text);
         text-align: left;
+        cursor: pointer;
       }
-      .menu button:hover:not(:disabled) {
-        background: color-mix(in srgb, var(--hud-cyan, #22d3ee) 14%, transparent);
+      .menu button:hover:not(:disabled),
+      .menu button:focus-visible {
+        outline: none;
+        background: var(--hover);
       }
       .menu button.current {
-        color: var(--hud-cyan, #22d3ee);
+        color: var(--cyan);
+        background: var(--tint-cyan);
       }
       .t-name {
-        font-size: 0.82rem;
+        font-size: var(--fs-sm);
       }
       .t-role {
-        font-size: 0.65rem;
-        opacity: 0.65;
-        text-transform: uppercase;
+        font-size: var(--fs-caps);
+        color: var(--text-2);
+      }
+      @media (max-width: 720px) {
+        .trigger {
+          min-width: 0;
+          max-width: 44vw;
+        }
+        /* Ancorada no botão, a lista saía pela borda esquerda: no celular ela ocupa a largura útil da tela. */
+        .menu {
+          position: fixed;
+          top: calc(var(--header-h) - 4px);
+          left: var(--sp-4);
+          right: var(--sp-4);
+          width: auto;
+          min-width: 0;
+          max-width: none;
+        }
       }
     `,
   ],

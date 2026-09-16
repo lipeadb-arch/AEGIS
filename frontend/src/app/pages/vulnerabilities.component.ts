@@ -48,8 +48,9 @@ interface OccState {
     <section class="page">
       <header class="page-head">
         <div>
+          <p class="page-eyebrow">Ambiente</p>
           <h1>Vulnerabilidades</h1>
-          <p class="sub">
+          <p class="page-desc">
             @if (tab() === 'software') {
               Inventário de software observado pelo Microsoft Defender nos ativos do ambiente. Vulnerabilidades
               conhecidas, exploit público e alerta associado são informações da fonte sobre cada produto — produto
@@ -61,7 +62,7 @@ interface OccState {
             }
           </p>
         </div>
-        <div class="head-actions">
+        <div class="page-actions">
           @if (tab() === 'vulnerabilities') {
             <!-- Sem leitura, uma análise pressuporia evidência que não existe: o botão só vale com dados. -->
             <button
@@ -81,12 +82,12 @@ interface OccState {
       </header>
 
       <!-- ---------- Sub-área: Vulnerabilidades × Inventário de software (MESMA tela, sem novo item de menu) ---------- -->
-      <div class="tabs" role="tablist">
-        <button type="button" role="tab" class="tab-btn" [class.active]="tab() === 'vulnerabilities'"
+      <div class="tabbar" role="tablist">
+        <button type="button" role="tab" [class.active]="tab() === 'vulnerabilities'"
           [attr.aria-selected]="tab() === 'vulnerabilities'" (click)="setTab('vulnerabilities')">
           Vulnerabilidades
         </button>
-        <button type="button" role="tab" class="tab-btn" [class.active]="tab() === 'software'"
+        <button type="button" role="tab" [class.active]="tab() === 'software'"
           [attr.aria-selected]="tab() === 'software'" (click)="setTab('software')">
           Inventário de software
         </button>
@@ -104,46 +105,47 @@ interface OccState {
       <!-- [AEGIS-LANGUAGE-STATES-01] Sem leitura as contagens ficam "—" (nunca 0) e o motivo é dito pelo estado. -->
       <div class="cards">
         <div class="card">
-          <span class="card-label">Problemas distintos em aberto</span>
+          <span class="metric-label">Problemas distintos em aberto</span>
           @if (reading().hasData) {
-            <span class="card-value">{{ summary()!.distinctCvesOpen }}</span>
-            <span class="card-meta">{{ summary()!.affectedAssetsOpen }} ativo(s) com vulnerabilidade em aberto</span>
+            <span class="metric-value">{{ summary()!.distinctCvesOpen }}</span>
+            <span class="metric-unit">{{ summary()!.affectedAssetsOpen }} ativo(s) com vulnerabilidade em aberto</span>
           } @else {
-            <span class="card-value muted">—</span>
-            <span class="card-meta">{{ readingLabel() }}</span>
+            <span class="metric-value is-na">—</span>
+            <span class="metric-unit">{{ readingLabel() }}</span>
           }
         </div>
         <div class="card">
-          <span class="card-label">Ocorrências em aberto</span>
+          <span class="metric-label">Ocorrências em aberto</span>
           @if (reading().hasData) {
-            <span class="card-value">{{ summary()!.totalOpen }}</span>
-            <span class="card-meta" [title]="noLongerReportedHint">
+            <span class="metric-value">{{ summary()!.totalOpen }}</span>
+            <span class="metric-unit" [title]="noLongerReportedHint">
               {{ summary()!.totalResolved }} ocorrência(s) não mais reportada(s)
             </span>
           } @else {
-            <span class="card-value muted">—</span>
-            <span class="card-meta">{{ readingLabel() }}</span>
+            <span class="metric-value is-na">—</span>
+            <span class="metric-unit">{{ readingLabel() }}</span>
           }
         </div>
         <div class="card">
-          <span class="card-label">Última coleta</span>
+          <span class="metric-label">Última coleta</span>
           @if (summary()?.lastCollectedAt) {
-            <span class="card-value sm">{{ fmtDate(summary()?.lastCollectedAt) }}</span>
+            <span class="metric-value sm">{{ fmtDate(summary()?.lastCollectedAt) }}</span>
           } @else {
-            <span class="card-value sm muted">{{ readingLabel() }}</span>
+            <span class="metric-value sm is-na">{{ readingLabel() }}</span>
           }
-          <span class="card-meta">{{ (summary()?.sources?.length ?? 0) }} fonte(s) configurada(s)</span>
+          <span class="metric-unit">{{ (summary()?.sources?.length ?? 0) }} fonte(s) configurada(s)</span>
         </div>
         <div class="card wide">
-          <span class="card-label">Em aberto por severidade técnica (fonte)</span>
+          <span class="metric-label">Em aberto por severidade técnica (fonte)</span>
           @if ((summary()?.openBySeverity?.length ?? 0) > 0) {
             <div class="cats">
               @for (s of summary()!.openBySeverity; track s.severity) {
                 <button
                   type="button"
-                  class="cat-chip"
+                  class="filter-chip"
                   [class]="'sev-' + s.severity.toLowerCase()"
                   [class.active]="severityFilter() === s.severity"
+                  [attr.aria-pressed]="severityFilter() === s.severity"
                   (click)="toggleSeverity(s.severity)"
                 >
                   {{ sevPt(s.severity) }} <span class="cat-n">{{ s.open }}</span>
@@ -151,65 +153,73 @@ interface OccState {
               }
             </div>
           } @else if (reading().hasData) {
-            <span class="card-meta">Nenhuma vulnerabilidade em aberto na última leitura.</span>
+            <span class="metric-unit">Nenhuma vulnerabilidade em aberto na última leitura.</span>
           } @else {
-            <span class="card-meta">Sem leitura das fontes.</span>
+            <span class="metric-unit">Sem leitura das fontes.</span>
           }
         </div>
       </div>
 
-      <!-- ---------- Filtros ---------- -->
-      <div class="filters">
-        <div class="seg" role="tablist">
-          @for (s of stateOptions; track s.value) {
-            <button type="button" class="seg-btn" [class.active]="stateFilter() === s.value" (click)="setState(s.value)">
-              {{ s.label }}
-            </button>
-          }
-        </div>
-        <div class="seg" role="tablist">
-          @for (e of exploitOptions; track e.value) {
-            <button type="button" class="seg-btn" [class.active]="exploitFilter() === e.value" (click)="setExploit(e.value)">
-              {{ e.label }}
-            </button>
-          }
-        </div>
-        @if ((summary()?.sources?.length ?? 0) > 0) {
-          <select class="src-select" [ngModel]="connectorFilter()" (ngModelChange)="setConnector($event)">
-            <option [ngValue]="null">Todas as fontes</option>
-            @for (src of summary()!.sources; track src.connectorConfigId) {
-              <option [ngValue]="src.connectorConfigId">{{ src.displayName }} ({{ src.provider }})</option>
+      <!-- ---------- Filtros: agrupados acima dos resultados ---------- -->
+      <div class="filter-bar">
+        <div class="filter-row">
+          <span class="filter-label">Situação</span>
+          <div class="segmented" role="group" aria-label="Situação">
+            @for (s of stateOptions; track s.value) {
+              <button type="button" [class.active]="stateFilter() === s.value" [attr.aria-pressed]="stateFilter() === s.value"
+                (click)="setState(s.value)">
+                {{ s.label }}
+              </button>
             }
-          </select>
-        }
-        @if (severityFilter()) {
-          <button type="button" class="ghost sm" (click)="toggleSeverity(severityFilter()!)">
-            Severidade: {{ sevPt(severityFilter()) }} ✕
-          </button>
-        }
-        <input
-          class="search"
-          type="search"
-          placeholder="Buscar por CVE ou título…"
-          [ngModel]="searchTerm()"
-          (ngModelChange)="onSearchInput($event)"
-          aria-label="Buscar vulnerabilidades por CVE ou título"
-        />
+          </div>
+          <span class="filter-label">Exploit</span>
+          <div class="segmented" role="group" aria-label="Exploit">
+            @for (e of exploitOptions; track e.value) {
+              <button type="button" [class.active]="exploitFilter() === e.value" [attr.aria-pressed]="exploitFilter() === e.value"
+                (click)="setExploit(e.value)">
+                {{ e.label }}
+              </button>
+            }
+          </div>
+        </div>
+        <div class="filter-row">
+          <input
+            class="search"
+            type="search"
+            placeholder="Buscar por CVE ou título…"
+            [ngModel]="searchTerm()"
+            (ngModelChange)="onSearchInput($event)"
+            aria-label="Buscar vulnerabilidades por CVE ou título"
+          />
+          @if ((summary()?.sources?.length ?? 0) > 0) {
+            <select class="src-select" [ngModel]="connectorFilter()" (ngModelChange)="setConnector($event)" aria-label="Fonte">
+              <option [ngValue]="null">Todas as fontes</option>
+              @for (src of summary()!.sources; track src.connectorConfigId) {
+                <option [ngValue]="src.connectorConfigId">{{ src.displayName }} ({{ src.provider }})</option>
+              }
+            </select>
+          }
+          @if (severityFilter()) {
+            <button type="button" class="ghost sm" (click)="toggleSeverity(severityFilter()!)">
+              Severidade: {{ sevPt(severityFilter()) }} ✕
+            </button>
+          }
+        </div>
       </div>
 
       <!-- ---------- Tabela ---------- -->
-      <div class="panel">
+      <div class="panel flush">
         @if (loading()) {
-          <p class="muted">Carregando vulnerabilidades…</p>
+          <div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>Carregando vulnerabilidades…</p></div>
         } @else if (error()) {
-          <div class="state error">
+          <div class="state error" role="alert">
             <p class="err">⚠ {{ error() }}</p>
             <button type="button" class="ghost" (click)="retry()">Tentar novamente</button>
           </div>
         } @else if (!reading().hasData) {
           <div class="state empty">
-            <p class="muted">{{ reading().notice }}</p>
-            <p class="muted">
+            <p>{{ reading().notice }}</p>
+            <p>
               Fontes suportadas: <strong>Microsoft Defender Vulnerability Management</strong> e
               <strong>Google Cloud VM Manager</strong>, em <strong>Configurações → Integrações</strong>, com
               <strong>Sincronizar agora</strong>. Cada fonte exige seus próprios pré-requisitos (licença/capacidade,
@@ -219,13 +229,13 @@ interface OccState {
         } @else if (groups().length === 0) {
           <div class="state empty">
             @if (filtersActive()) {
-              <p class="muted">Nenhuma vulnerabilidade corresponde aos filtros atuais.</p>
+              <p>Nenhuma vulnerabilidade corresponde aos filtros atuais.</p>
             } @else {
-              <p class="muted">Nenhuma vulnerabilidade em aberto na última leitura das fontes.</p>
+              <p>Nenhuma vulnerabilidade em aberto na última leitura das fontes.</p>
             }
           </div>
         } @else {
-          <table class="grid-table">
+          <table class="data-table">
             <thead>
               <tr>
                 <th>Problema</th>
@@ -245,7 +255,7 @@ interface OccState {
                     @if (g.effectiveLifecycle === 'Resolved') {
                       <span class="badge ok" [title]="noLongerReportedHint">{{ lifecycle(g.effectiveLifecycle) }}</span>
                     }
-                    <span class="meta mono">{{ g.cveId }} · severidade {{ g.severityLabel.toLowerCase() }} (fonte)</span>
+                    <span class="meta"><span class="mono">{{ g.cveId }}</span> · severidade {{ g.severityLabel.toLowerCase() }} (fonte)</span>
                   </td>
                   <td><span class="meta why">{{ g.whyItMatters }}</span></td>
                   <td class="c-cvss">
@@ -268,12 +278,12 @@ interface OccState {
                   </td>
                   <td class="c-src">
                     @for (p of g.providers; track p) {
-                      <span class="badge src">{{ p }}</span>
+                      <span class="badge neutral src">{{ p }}</span>
                     }
                   </td>
                   <td><span class="meta">{{ g.firstAction }}</span></td>
                   <td class="c-exp">
-                    <button type="button" class="linkbtn" (click)="toggleExpand(g.cveId)">
+                    <button type="button" class="linkbtn" (click)="toggleExpand(g.cveId)" [attr.aria-expanded]="expanded().has(g.cveId)">
                       {{ expanded().has(g.cveId) ? 'Ocultar' : 'Detalhes' }}
                     </button>
                   </td>
@@ -316,7 +326,7 @@ interface OccState {
                                   <span class="obs-life">criticidade {{ o.assetCriticality }} · {{ o.assetSubType || '—' }}</span>
                                   <span class="obs-seen">{{ lifecycle(o.effectiveLifecycle) }}</span>
                                   @for (s of o.sources; track s.connectorConfigId) {
-                                    <span class="badge src" [class.res]="s.lifecycleState === 'Resolved'" [title]="s.displayName">{{ s.provider }}</span>
+                                    <span class="badge neutral src" [class.res]="s.lifecycleState === 'Resolved'" [title]="s.displayName">{{ s.provider }}</span>
                                   }
                                 </div>
                               } @empty {
@@ -326,7 +336,7 @@ interface OccState {
                             @if (os?.error) {
                               <!-- §9: falha ao carregar MAIS — preserva os itens já vistos e oferece nova tentativa. -->
                               <div class="occ-err">
-                                <span class="err sm">⚠ {{ os?.error }}</span>
+                                <span class="err">⚠ {{ os?.error }}</span>
                                 <button type="button" class="linkbtn" (click)="loadOccurrences(g.cveId)">Tentar novamente</button>
                               </div>
                             }
@@ -348,8 +358,8 @@ interface OccState {
           </table>
 
           <footer class="pager">
+            <span class="range">Página {{ page() }} de {{ pageCount() }} · {{ total() }} problema(s)</span>
             <button type="button" class="ghost sm" (click)="prevPage()" [disabled]="page() <= 1">← Anterior</button>
-            <span class="pg-info">Página {{ page() }} de {{ pageCount() }} · {{ total() }} problema(s)</span>
             <button type="button" class="ghost sm" (click)="nextPage()" [disabled]="page() >= pageCount()">Próxima →</button>
           </footer>
         }
@@ -359,108 +369,132 @@ interface OccState {
   `,
   styles: [
     `
-      .page { padding: 1.25rem 1.5rem 2rem; display: flex; flex-direction: column; gap: 1.1rem; }
-      .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
-      h1 { margin: 0; font-size: 1.35rem; letter-spacing: 0.02em; }
-      .sub { margin: 0.35rem 0 0; max-width: 72ch; opacity: 0.72; font-size: 0.85rem; }
-      .head-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-      .notice { margin: 0; padding: 0.55rem 0.8rem; border-radius: 6px; font-size: 0.8rem; line-height: 1.4; }
-      .notice.warn { color: #f5a524; background: color-mix(in srgb, #f5a524 9%, transparent); border: 1px solid color-mix(in srgb, #f5a524 30%, transparent); }
-      .tabs { display: inline-flex; border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 26%, transparent); border-radius: 6px; overflow: hidden; width: fit-content; }
-      .tab-btn { background: transparent; border: 0; color: inherit; font: inherit; font-size: 0.82rem; padding: 0.45rem 1rem; cursor: pointer; }
-      .tab-btn.active { background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 20%, transparent); }
-      .muted { opacity: 0.65; font-size: 0.85rem; }
-      .dim { opacity: 0.4; }
-      .err { color: #ff6b8a; font-size: 0.85rem; }
+      /* Página, abas, cartões, filtros, tabela, badges, estados e botões: sistema visual global (styles.css). */
+      .card.wide {
+        grid-column: span 2;
+      }
+      .cats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: var(--sp-2);
+      }
+      .cat-n {
+        margin-left: 2px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .sev-critical {
+        color: var(--red-text);
+      }
+      .sev-high {
+        color: #ff9a6b;
+      }
+      .sev-medium {
+        color: var(--amber);
+      }
+      .sev-low {
+        color: var(--cyan);
+      }
+      .sev-desconhecida {
+        color: var(--muted);
+      }
+      .search {
+        flex: 1 1 18rem;
+        min-width: 0;
+      }
+      .src-select {
+        max-width: 100%;
+      }
 
-      .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.75rem; }
-      .card {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 4%, transparent);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 22%, transparent);
-        border-radius: 8px; padding: 0.8rem 0.95rem; display: flex; flex-direction: column; gap: 0.2rem;
+      .row.resolved {
+        opacity: 0.6;
       }
-      .card.wide { grid-column: span 2; min-width: 0; }
-      .card-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.6; }
-      .card-value { font-size: 1.6rem; font-weight: 600; }
-      .card-value.sm { font-size: 1rem; }
-      .card-value.muted { font-size: 1rem; opacity: 0.7; }
-      .card-meta { font-size: 0.72rem; opacity: 0.6; }
-      .cats { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.25rem; }
-      .cat-chip {
-        background: transparent; border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 30%, transparent);
-        color: inherit; border-radius: 999px; padding: 0.2rem 0.6rem; font: inherit; font-size: 0.75rem; cursor: pointer;
+      .c-cvss {
+        white-space: nowrap;
       }
-      .cat-chip.active { background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent); border-color: var(--hud-cyan, #26e0ff); }
-      .cat-n { opacity: 0.7; margin-left: 0.2rem; }
+      .c-exp {
+        text-align: right;
+        white-space: nowrap;
+      }
+      .badge.ok {
+        margin-left: 6px;
+      }
+      .badge.src {
+        margin: 0 4px 4px 0;
+      }
+      .badge.src.res {
+        opacity: 0.5;
+      }
+      .err {
+        color: var(--red-text);
+      }
 
-      .filters { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-      .seg { display: inline-flex; border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 26%, transparent); border-radius: 6px; overflow: hidden; }
-      .seg-btn { background: transparent; border: 0; color: inherit; font: inherit; font-size: 0.8rem; padding: 0.35rem 0.8rem; cursor: pointer; }
-      .seg-btn.active { background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 20%, transparent); }
-      .src-select, .search {
-        background: rgba(4, 8, 18, 0.6); border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 26%, transparent);
-        border-radius: 5px; padding: 0.4rem 0.6rem; color: inherit; font: inherit; font-size: 0.85rem;
+      .details-row td {
+        background: rgba(5, 7, 15, 0.45);
       }
-      .search { flex: 1; min-width: 12rem; }
-
-      .panel {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 4%, transparent);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 22%, transparent);
-        border-radius: 8px; padding: 0.6rem; overflow-x: auto;
+      .details {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-3);
+        padding: var(--sp-1) 2px;
       }
-      .state { padding: 1.5rem 1rem; text-align: center; display: flex; flex-direction: column; gap: 0.75rem; align-items: center; }
-      .grid-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-      .grid-table th {
-        text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.6;
-        padding: 0.4rem 0.6rem; border-bottom: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent);
+      .det-label {
+        display: block;
+        margin-bottom: 2px;
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--muted);
       }
-      .grid-table td { padding: 0.5rem 0.6rem; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 8%, transparent); }
-      .row.resolved { opacity: 0.6; }
-      .title { display: block; line-height: 1.3; }
-      .meta { font-size: 0.72rem; opacity: 0.62; display: block; }
-      .c-cvss, .c-epss, .c-sev { white-space: nowrap; }
-      .mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
-      .badge { font-size: 0.62rem; padding: 0.05rem 0.4rem; border-radius: 3px; border: 1px solid currentColor; text-transform: uppercase; letter-spacing: 0.05em; }
-      .badge.ok { color: var(--hud-cyan, #26e0ff); margin-left: 0.35rem; }
-      .badge.warn { color: #f5a524; }
-      .badge.bad { color: #ff3d6a; }
-      .badge.src { color: #9aa7c7; margin-right: 0.2rem; }
-      .badge.src.res { opacity: 0.5; }
-      .sev-tag { font-size: 0.72rem; padding: 0.1rem 0.45rem; border-radius: 3px; border: 1px solid currentColor; }
-      .sev-critical { color: #ff3d6a; }
-      .sev-high { color: #ff8a5c; }
-      .sev-medium { color: #f5a524; }
-      .sev-low { color: #26e0ff; }
-      .sev-desconhecida { color: #9aa7c7; }
-      .linkbtn { background: transparent; border: 0; color: var(--hud-cyan, #26e0ff); font: inherit; font-size: 0.78rem; cursor: pointer; }
-      .c-exp { text-align: right; white-space: nowrap; }
-      .details-row td { background: rgba(4, 8, 18, 0.35); }
-      .details { display: flex; flex-direction: column; gap: 0.6rem; padding: 0.3rem 0.2rem; }
-      .det-label { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.55; }
-      .det-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.5rem; }
-      .det-grid > div { display: flex; flex-direction: column; }
-      .obs { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.2rem; }
-      .obs-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; font-size: 0.78rem; }
-      .obs-name { opacity: 0.8; }
-      .obs-life { opacity: 0.7; }
-      .obs-seen, .obs-prod { opacity: 0.55; font-size: 0.72rem; }
-      .obs-prod em { opacity: 0.7; }
-      .occ-err { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.4rem; }
-      .occ-err .err.sm { font-size: 0.75rem; }
-      .load-more { margin-top: 0.5rem; }
-      .pager { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.6rem 0.4rem 0.2rem; }
-      .pg-info { font-size: 0.75rem; opacity: 0.65; }
-
-      button.primary {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent); border: 1px solid var(--hud-cyan, #26e0ff);
-        color: inherit; border-radius: 5px; padding: 0.45rem 1rem; font: inherit; font-size: 0.82rem; cursor: pointer;
+      .det-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+        gap: var(--sp-3);
       }
-      button.ghost {
-        background: transparent; border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 30%, transparent);
-        color: inherit; border-radius: 5px; padding: 0.4rem 0.8rem; font: inherit; font-size: 0.8rem; cursor: pointer;
+      .det-grid > div {
+        display: flex;
+        flex-direction: column;
       }
-      button.sm { padding: 0.25rem 0.6rem; font-size: 0.74rem; }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      .obs {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: var(--sp-1);
+      }
+      .obs-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--sp-2);
+        font-size: var(--fs-sm);
+      }
+      .obs-name {
+        font-weight: 500;
+      }
+      .obs-life {
+        color: var(--text-2);
+      }
+      .obs-seen {
+        font-size: var(--fs-meta);
+        color: var(--muted);
+      }
+      .occ-err {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-top: 6px;
+      }
+      .load-more {
+        margin-top: var(--sp-2);
+      }
+      @media (max-width: 720px) {
+        .card.wide {
+          grid-column: auto;
+        }
+      }
     `,
   ],
 })

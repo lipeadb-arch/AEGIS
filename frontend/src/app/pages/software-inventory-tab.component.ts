@@ -47,9 +47,9 @@ interface AssetState {
            informações DA FONTE sobre o produto — cada uma com o próprio significado, nenhuma é comprometimento. -->
       <div class="cards">
         <div class="card">
-          <span class="card-label">Produtos observados</span>
-          <span class="card-value">{{ reading().hasData ? summary()!.totalProducts : '—' }}</span>
-          <span class="card-meta">
+          <span class="metric-label">Produtos observados</span>
+          <span class="metric-value" [class.is-na]="!reading().hasData">{{ reading().hasData ? summary()!.totalProducts : '—' }}</span>
+          <span class="metric-unit">
             @if (reading().hasData) {
               {{ summary()!.exposedInstallations }} instalação(ões) observada(s) na última leitura
             } @else {
@@ -58,23 +58,23 @@ interface AssetState {
           </span>
         </div>
         <div class="card">
-          <span class="card-label">Com vulnerabilidades conhecidas (fonte)</span>
-          <span class="card-value">{{ reading().hasData ? summary()!.productsWithWeaknesses : '—' }}</span>
+          <span class="metric-label">Com vulnerabilidades conhecidas (fonte)</span>
+          <span class="metric-value" [class.is-na]="!reading().hasData">{{ reading().hasData ? summary()!.productsWithWeaknesses : '—' }}</span>
         </div>
         <div class="card">
-          <span class="card-label">Com exploit público informado</span>
-          <span class="card-value warn">{{ reading().hasData ? summary()!.productsWithPublicExploit : '—' }}</span>
+          <span class="metric-label">Com exploit público informado</span>
+          <span class="metric-value warn" [class.is-na]="!reading().hasData">{{ reading().hasData ? summary()!.productsWithPublicExploit : '—' }}</span>
         </div>
         <div class="card">
-          <span class="card-label">Com alerta associado (fonte)</span>
-          <span class="card-value bad">{{ reading().hasData ? summary()!.productsWithActiveAlert : '—' }}</span>
+          <span class="metric-label">Com alerta associado (fonte)</span>
+          <span class="metric-value bad" [class.is-na]="!reading().hasData">{{ reading().hasData ? summary()!.productsWithActiveAlert : '—' }}</span>
         </div>
         <div class="card wide">
-          <span class="card-label">Última coleta</span>
+          <span class="metric-label">Última coleta</span>
           @if (summary()?.lastCollectedAt) {
-            <span class="card-value sm">{{ fmtDate(summary()?.lastCollectedAt) }}</span>
+            <span class="metric-value sm">{{ fmtDate(summary()?.lastCollectedAt) }}</span>
           } @else {
-            <span class="card-value sm muted">Ainda não coletado</span>
+            <span class="metric-value sm is-na">Ainda não coletado</span>
           }
           @if ((summary()?.sources?.length ?? 0) > 0) {
             <div class="src-states">
@@ -85,23 +85,27 @@ interface AssetState {
               }
             </div>
           } @else {
-            <span class="card-meta">Nenhuma fonte Microsoft Defender configurada.</span>
+            <span class="metric-unit">Nenhuma fonte Microsoft Defender configurada.</span>
           }
         </div>
       </div>
 
       <!-- ---------- Filtros ---------- -->
-      <div class="filters">
-        <div class="seg" role="tablist">
+      <div class="filter-bar">
+        <div class="filter-row">
+        <span class="filter-label">Situação</span>
+        <div class="segmented" role="group" aria-label="Situação">
           @for (s of stateOptions; track s.value) {
-            <button type="button" class="seg-btn" [class.active]="stateFilter() === s.value" (click)="setState(s.value)">
+            <button type="button" [class.active]="stateFilter() === s.value" [attr.aria-pressed]="stateFilter() === s.value" (click)="setState(s.value)">
               {{ s.label }}
             </button>
           }
         </div>
-        <button type="button" class="chip-btn" [class.active]="exploitOnly()" (click)="toggleExploit()">Com exploit público</button>
-        <button type="button" class="chip-btn" [class.active]="alertOnly()" (click)="toggleAlert()">Com alerta associado</button>
-        <button type="button" class="chip-btn" [class.active]="weaknessOnly()" (click)="toggleWeakness()">Com vulnerabilidades conhecidas</button>
+        <button type="button" class="filter-chip" [class.active]="exploitOnly()" [attr.aria-pressed]="exploitOnly()" (click)="toggleExploit()">Com exploit público</button>
+        <button type="button" class="filter-chip" [class.active]="alertOnly()" [attr.aria-pressed]="alertOnly()" (click)="toggleAlert()">Com alerta associado</button>
+        <button type="button" class="filter-chip" [class.active]="weaknessOnly()" [attr.aria-pressed]="weaknessOnly()" (click)="toggleWeakness()">Com vulnerabilidades conhecidas</button>
+        </div>
+        <div class="filter-row">
         <input
           class="search"
           type="search"
@@ -110,12 +114,13 @@ interface AssetState {
           (ngModelChange)="onSearchInput($event)"
           aria-label="Buscar software por produto ou vendor"
         />
+        </div>
       </div>
 
       <!-- ---------- Tabela ---------- -->
-      <div class="panel">
+      <div class="panel flush">
         @if (loading()) {
-          <p class="muted">Carregando inventário de software…</p>
+          <div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>Carregando inventário de software…</p></div>
         } @else if (error()) {
           <div class="state error">
             <p class="err">⚠ {{ error() }}</p>
@@ -139,7 +144,7 @@ interface AssetState {
             }
           </div>
         } @else {
-          <table class="grid-table">
+          <table class="data-table">
             <thead>
               <tr>
                 <th>Produto</th>
@@ -192,7 +197,7 @@ interface AssetState {
                     }
                   </td>
                   <td class="c-exp">
-                    <button type="button" class="linkbtn" (click)="toggleExpand(p.id)">
+                    <button type="button" class="linkbtn" (click)="toggleExpand(p.id)" [attr.aria-expanded]="expanded().has(p.id)">
                       {{ expanded().has(p.id) ? 'Ocultar' : 'Detalhes' }}
                     </button>
                   </td>
@@ -256,8 +261,8 @@ interface AssetState {
           </table>
 
           <footer class="pager">
+            <span class="range">Página {{ page() }} de {{ pageCount() }} · {{ total() }} produto(s)</span>
             <button type="button" class="ghost sm" (click)="prevPage()" [disabled]="page() <= 1">← Anterior</button>
-            <span class="pg-info">Página {{ page() }} de {{ pageCount() }} · {{ total() }} produto(s)</span>
             <button type="button" class="ghost sm" (click)="nextPage()" [disabled]="page() >= pageCount()">Próxima →</button>
           </footer>
         }
@@ -266,95 +271,138 @@ interface AssetState {
   `,
   styles: [
     `
-      .sw-page { display: flex; flex-direction: column; gap: 1.1rem; }
-      .muted { opacity: 0.65; font-size: 0.85rem; }
-      .dim { opacity: 0.4; }
-      .err { color: #ff6b8a; font-size: 0.85rem; }
-
-      .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.75rem; }
-      .card {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 4%, transparent);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 22%, transparent);
-        border-radius: 8px; padding: 0.8rem 0.95rem; display: flex; flex-direction: column; gap: 0.2rem;
+      /* Cartões, filtros, tabela, badges, avisos, estados e botões: sistema visual global (styles.css). */
+      .sw-page {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-6);
       }
-      .card.wide { grid-column: span 2; min-width: 0; }
-      .card-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.6; }
-      .card-value { font-size: 1.6rem; font-weight: 600; }
-      .card-value.warn { color: #f5a524; }
-      .card-value.bad { color: #ff3d6a; }
-      .card-value.sm { font-size: 1rem; }
-      .card-value.muted { font-size: 1rem; opacity: 0.7; }
-      .card-meta { font-size: 0.72rem; opacity: 0.6; }
-      .src-states { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+      .card.wide {
+        grid-column: span 2;
+      }
+      .metric-value.warn {
+        color: var(--amber);
+      }
+      .metric-value.bad {
+        color: var(--red-text);
+      }
+      .metric-value.is-na {
+        color: var(--muted);
+      }
+      .src-states {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+      }
       .src-chip {
-        font-size: 0.68rem; padding: 0.1rem 0.45rem; border-radius: 4px; opacity: 0.75;
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 25%, transparent);
+        padding: 2px var(--sp-2);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-pill);
+        font-size: var(--fs-meta);
+        color: var(--text-2);
       }
-      .src-chip.ok { color: var(--hud-cyan, #26e0ff); opacity: 1; }
-      .src-chip.warn { color: #f5a524; opacity: 1; }
-
-      .filters { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-      .seg { display: inline-flex; border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 26%, transparent); border-radius: 6px; overflow: hidden; }
-      .seg-btn { background: transparent; border: 0; color: inherit; font: inherit; font-size: 0.8rem; padding: 0.35rem 0.8rem; cursor: pointer; }
-      .seg-btn.active { background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 20%, transparent); }
-      .chip-btn {
-        background: transparent; border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 26%, transparent);
-        color: inherit; border-radius: 999px; padding: 0.3rem 0.7rem; font: inherit; font-size: 0.78rem; cursor: pointer;
+      .src-chip.ok {
+        color: var(--cyan);
+        border-color: rgba(38, 224, 255, 0.4);
       }
-      .chip-btn.active { background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent); border-color: var(--hud-cyan, #26e0ff); }
+      .src-chip.warn {
+        color: var(--amber);
+        border-color: rgba(255, 176, 32, 0.4);
+      }
       .search {
-        background: rgba(4, 8, 18, 0.6); border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 26%, transparent);
-        border-radius: 5px; padding: 0.4rem 0.6rem; color: inherit; font: inherit; font-size: 0.85rem; flex: 1; min-width: 12rem;
+        flex: 1 1 18rem;
+        min-width: 0;
+      }
+      .err {
+        color: var(--red-text);
       }
 
-      .panel {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 4%, transparent);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 22%, transparent);
-        border-radius: 8px; padding: 0.6rem; overflow-x: auto;
+      .row.resolved {
+        opacity: 0.6;
       }
-      .state { padding: 1.5rem 1rem; text-align: center; display: flex; flex-direction: column; gap: 0.75rem; align-items: center; }
-      .grid-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-      .grid-table th {
-        text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.6;
-        padding: 0.4rem 0.6rem; border-bottom: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent);
+      .c-dev {
+        white-space: nowrap;
       }
-      .grid-table td { padding: 0.5rem 0.6rem; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 8%, transparent); }
-      .row.resolved { opacity: 0.6; }
-      .title { display: block; line-height: 1.3; }
-      .meta { font-size: 0.72rem; opacity: 0.62; display: block; }
-      .c-dev { white-space: nowrap; }
-      .mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
-      .badge { font-size: 0.62rem; padding: 0.05rem 0.4rem; border-radius: 3px; border: 1px solid currentColor; text-transform: uppercase; letter-spacing: 0.05em; }
-      .badge.ok { color: var(--hud-cyan, #26e0ff); margin-left: 0.35rem; }
-      .badge.warn { color: #f5a524; }
-      .badge.bad { color: #ff3d6a; margin-right: 0.25rem; }
-      .badge.src { color: #9aa7c7; margin-right: 0.2rem; }
-      .badge.src.res { opacity: 0.5; }
-      .linkbtn { background: transparent; border: 0; color: var(--hud-cyan, #26e0ff); font: inherit; font-size: 0.78rem; cursor: pointer; }
-      .c-exp { text-align: right; white-space: nowrap; }
-      .details-row td { background: rgba(4, 8, 18, 0.35); }
-      .details { display: flex; flex-direction: column; gap: 0.6rem; padding: 0.3rem 0.2rem; }
-      .det-label { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.55; }
-      .det-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.5rem; }
-      .det-grid > div { display: flex; flex-direction: column; }
-      .obs { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.2rem; }
-      .obs-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; font-size: 0.78rem; }
-      .obs-name { opacity: 0.8; }
-      .obs-life { opacity: 0.7; }
-      .obs-prod { opacity: 0.55; font-size: 0.72rem; }
-      .occ-err { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.4rem; }
-      .occ-err .err.sm { font-size: 0.75rem; }
-      .load-more { margin-top: 0.5rem; }
-      .pager { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.6rem 0.4rem 0.2rem; }
-      .pg-info { font-size: 0.75rem; opacity: 0.65; }
-      button.ghost {
-        background: transparent; border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 30%, transparent);
-        color: inherit; border-radius: 5px; padding: 0.4rem 0.8rem; font: inherit; font-size: 0.8rem; cursor: pointer;
+      .c-exp {
+        text-align: right;
+        white-space: nowrap;
       }
-      button.sm { padding: 0.25rem 0.6rem; font-size: 0.74rem; }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
-      .notice { margin: 0; padding: 0.55rem 0.8rem; border-radius: 6px; font-size: 0.8rem; line-height: 1.4; }
-      .notice.warn { color: #f5a524; background: color-mix(in srgb, #f5a524 9%, transparent); border: 1px solid color-mix(in srgb, #f5a524 30%, transparent); }
+      .badge.ok {
+        margin-left: 6px;
+      }
+      .badge.bad,
+      .badge.src {
+        margin: 0 4px 4px 0;
+      }
+      .badge.src.res {
+        opacity: 0.5;
+      }
+      .details-row td {
+        background: rgba(5, 7, 15, 0.45);
+      }
+      .details {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-3);
+        padding: var(--sp-1) 2px;
+      }
+      .det-label {
+        display: block;
+        margin-bottom: 2px;
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .det-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+        gap: var(--sp-3);
+      }
+      .det-grid > div {
+        display: flex;
+        flex-direction: column;
+      }
+      .obs {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: var(--sp-1);
+      }
+      .obs-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--sp-2);
+        font-size: var(--fs-sm);
+      }
+      .obs-name {
+        font-weight: 500;
+      }
+      .obs-life {
+        color: var(--text-2);
+      }
+      .obs-prod {
+        font-size: var(--fs-meta);
+        color: var(--muted);
+      }
+      .occ-err {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-top: 6px;
+      }
+      .load-more {
+        margin-top: var(--sp-2);
+      }
+      @media (max-width: 720px) {
+        .card.wide {
+          grid-column: auto;
+        }
+      }
     `,
   ],
 })

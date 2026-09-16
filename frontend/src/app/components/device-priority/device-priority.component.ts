@@ -88,15 +88,15 @@ import { DeviceCasePlanComponent } from './device-case-plan.component';
   styles: [
     `
       .dpp { font-size: 12px; color: var(--muted, #9aa7c7); }
-      .dpp summary { cursor: pointer; font-family: var(--mono, monospace); font-size: 11px; }
+      .dpp summary { cursor: pointer; font-family: var(--sans); font-size: var(--fs-meta); }
       .dpp-p { margin: 6px 0; line-height: 1.5; max-width: 900px; }
-      .dpp-k { display: block; margin-top: 6px; font-family: var(--mono, monospace); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; }
+      .dpp-k { display: block; margin-top: 6px; font-family: var(--sans); font-size: var(--fs-caps); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
       .dpp ul { margin: 4px 0 0; padding-left: 18px; line-height: 1.5; max-width: 900px; }
       .dpp-scroll { overflow-x: auto; }
-      .dpp-table { border-collapse: collapse; font-size: 11.5px; margin-top: 6px; }
-      .dpp-table caption { text-align: left; font-family: var(--mono, monospace); font-size: 10.5px; padding-bottom: 4px; }
+      .dpp-table { border-collapse: collapse; font-size: var(--fs-meta); margin-top: 6px; }
+      .dpp-table caption { text-align: left; font-family: var(--sans); font-size: var(--fs-caps); padding-bottom: 4px; }
       .dpp-table th, .dpp-table td { padding: 4px 10px; border-bottom: 1px solid var(--line-2, rgba(255,255,255,0.08)); text-align: left; }
-      .dpp-table th { font-weight: 500; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+      .dpp-table th { font-weight: 500; font-size: var(--fs-caps); text-transform: uppercase; letter-spacing: 0; }
     `,
   ],
 })
@@ -385,7 +385,7 @@ export interface DevicePriorityCaseSelection {
       .dp { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line, rgba(255,255,255,0.15)); }
       .dp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
       .dp-head h4 { margin: 0; font-size: 13.5px; font-weight: 600; }
-      .dp-when, .dp-note, .dp-pulse, .dp-sub, .dp-k, .dp-info { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color: var(--muted, #9aa7c7); }
+      .dp-when, .dp-note, .dp-pulse, .dp-sub, .dp-k, .dp-info { font-family: var(--mono, ui-monospace, monospace); font-size: var(--fs-meta); color: var(--muted, #9aa7c7); }
       .dp-k { text-transform: uppercase; letter-spacing: 0.08em; display: block; }
       .dp-note { margin: 0; max-width: 900px; line-height: 1.5; display: block; }
       .dp-sub { display: block; margin-top: 2px; line-height: 1.45; }
@@ -406,28 +406,28 @@ export interface DevicePriorityCaseSelection {
       .dp-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
       .dp-table.dp-cases { min-width: 640px; }
       .dp-table td { overflow-wrap: anywhere; padding: 6px 8px; vertical-align: top; border-bottom: 1px solid var(--line-2, rgba(255,255,255,0.07)); }
-      .dp-table th { text-align: left; font-family: var(--mono, monospace); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted, #9aa7c7); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line, rgba(255,255,255,0.15)); }
+      .dp-table th { text-align: left; font-family: var(--mono, monospace); font-size: var(--fs-meta); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted, #9aa7c7); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line, rgba(255,255,255,0.15)); }
       .dp-table tr.unknown td { opacity: 0.85; }
       .dp-table tr.selected td { background: rgba(38, 224, 255, 0.05); }
-      .dp-date { font-family: var(--mono, monospace); font-size: 11px; }
+      .dp-date { font-family: var(--mono, monospace); font-size: var(--fs-meta); }
       .dp-mono { font-family: var(--mono, monospace); }
-      .dp-badge { display: inline-block; max-width: 100%; white-space: normal; font-family: var(--mono, monospace); font-size: 10.5px; line-height: 1.4; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line, rgba(255,255,255,0.2)); color: var(--muted, #9aa7c7); }
+      .dp-badge { display: inline-block; max-width: 100%; white-space: normal; font-family: var(--mono, monospace); font-size: var(--fs-meta); line-height: 1.4; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line, rgba(255,255,255,0.2)); color: var(--muted, #9aa7c7); }
       .dp-badge.tone-attention { color: var(--magenta, #ff3d9a); border-color: rgba(255, 61, 154, 0.55); }
       .dp-badge.tone-warn { color: var(--amber, #ffb020); border-color: rgba(255, 176, 32, 0.55); }
       .dp-badge.tone-info { color: var(--cyan, #26e0ff); border-color: rgba(38, 224, 255, 0.45); }
       .dp-badge.kind-unknown { border-style: dashed; }
-      .dp-effect { font-size: 11px; }
+      .dp-effect { font-size: var(--fs-meta); }
       .dp-effect.effect-aggravating, .dp-effect.effect-determinant { color: var(--amber, #ffb020); }
       .dp-effect.effect-notUsed { opacity: 0.7; }
       .dp-declare { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
       .dp-declare select, .dp-declare input { font: inherit; font-size: 12px; color: inherit; background: transparent; border: 1px solid var(--line, rgba(255,255,255,0.2)); border-radius: 6px; padding: 3px 8px; }
       .dp-declare input { min-width: 16rem; }
-      .dp-btn { cursor: pointer; font-family: var(--mono, monospace); font-size: 11px; color: var(--cyan, #26e0ff); background: rgba(38,224,255,0.06); border: 1px solid rgba(38,224,255,0.35); border-radius: 8px; padding: 5px 12px; align-self: flex-start; }
+      .dp-btn { cursor: pointer; font-family: var(--mono, monospace); font-size: var(--fs-meta); color: var(--cyan, #26e0ff); background: rgba(38,224,255,0.06); border: 1px solid rgba(38,224,255,0.35); border-radius: 8px; padding: 5px 12px; align-self: flex-start; }
       .dp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
       .dp-pager { display: flex; gap: 8px; }
       .dp-limits { font-size: 12px; color: var(--muted, #9aa7c7); }
-      .dp-limits summary { cursor: pointer; font-family: var(--mono, monospace); font-size: 11px; }
-      .dp-scope { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--muted, #9aa7c7); max-width: 900px; font-style: italic; }
+      .dp-limits summary { cursor: pointer; font-family: var(--mono, monospace); font-size: var(--fs-meta); }
+      .dp-scope { margin: 0; font-size: var(--fs-meta); line-height: 1.5; color: var(--muted, #9aa7c7); max-width: 900px; font-style: italic; }
     `,
   ],
 })

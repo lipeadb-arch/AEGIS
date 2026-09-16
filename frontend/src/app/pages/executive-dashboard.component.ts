@@ -37,6 +37,7 @@ import { RiskLevelsComponent } from '../components/risk-levels.component';
 import { ExposureCardComponent } from '../components/exposure-card.component';
 import { MaturityGaugeComponent } from '../components/maturity-gauge.component';
 import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bars.component';
+import { IconComponent } from '../components/icon.component';
 
 /**
  * [AEGIS-MVP-PRODUCT-01] VISÃO GERAL — a tela inicial do AEGIS.
@@ -79,24 +80,27 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
     ExposureCardComponent,
     PostureSummaryComponent,
     EnvironmentFirstComponent,
+    IconComponent,
   ],
   template: `
     <div class="page">
       <header class="page-head">
-        <div class="ph-title">
+        <div>
+          <p class="page-eyebrow">Operação</p>
           <h1>Visão geral</h1>
           @if (data(); as d) {
-            <p class="ph-sub">
+            <p class="page-meta">
               {{ d.clientName }}
               @if (d.generatedAt) {
-                <span class="ph-when">· leitura de {{ d.generatedAt | date: 'dd/MM HH:mm' }}</span>
+                · leitura de {{ d.generatedAt | date: 'dd/MM HH:mm' }}
               }
             </p>
           }
         </div>
-        <div class="ph-actions">
+        <div class="page-actions">
           <a class="ghost" routerLink="/priorities">Ver prioridades</a>
           <button type="button" class="ghost" (click)="reload()" [disabled]="loading()">
+            <app-icon name="refresh" />
             {{ loading() ? 'Carregando…' : 'Atualizar' }}
           </button>
         </div>
@@ -107,48 +111,60 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
       @if (data(); as d) {
 
         <!-- ============================ 1) AMBIENTE OBSERVADO ============================ -->
-        <section class="block">
-          <div class="block-head">
+        <section class="section">
+          <div class="section-head">
             <h2>O que já foi observado</h2>
             <a class="linknav" routerLink="/assets">Ver ambiente →</a>
           </div>
 
-          <div class="metrics">
+          <!-- Cada cartão: rótulo → valor → unidade → estado e origem da leitura. Sem leitura, "—" e o estado — nunca 0. -->
+          <div class="metric-grid">
             @for (m of environmentMetrics(); track m.key) {
-              <a class="metric" [class.is-void]="!hasReading(m.metric)" [class.is-partial]="m.metric.state === 'Partial'" [routerLink]="m.link">
-                <span class="m-k">{{ m.label }}</span>
+              <a
+                class="metric"
+                [class.is-void]="!hasReading(m.metric)"
+                [class.is-partial]="m.metric.state === 'Partial'"
+                [class.is-stale]="m.fresh.stale"
+                [routerLink]="m.link"
+              >
+                <span class="metric-label">{{ m.label }}</span>
                 @if (hasReading(m.metric)) {
-                  <span class="m-v">{{ m.metric.value }}</span>
+                  <span class="metric-value">{{ m.metric.value }}</span>
                 } @else {
-                  <span class="m-v is-na">—</span>
+                  <span class="metric-value is-na">—</span>
                 }
                 <!-- [AEGIS-MVP-PRODUCT-02] A UNIDADE do número, quando ela não é óbvia pelo rótulo. O cartão
                      de identidade contava CAPACIDADES coletadas e parecia contar contas. -->
-                @if (m.unit) { <span class="m-unit">{{ m.unit }}</span> }
-                <span class="m-state" [class.is-stale]="m.fresh.stale">{{ m.fresh.label }}</span>
-                <span class="m-src">{{ m.metric.sourceLabel }}</span>
+                <span class="metric-unit">{{ m.unit }}</span>
+                <span class="metric-foot">
+                  <span class="metric-state">{{ m.fresh.label }}</span>
+                  <span class="metric-src" [title]="m.metric.sourceLabel">{{ m.metric.sourceLabel }}</span>
+                </span>
               </a>
             }
           </div>
 
-          <!-- Uma nota por métrica sem leitura, agrupada: explica o vazio sem poluir cada cartão. -->
+          <!-- Uma nota por métrica com ressalva, agrupada junto dos cartões: explica o vazio e a parcialidade sem
+               poluir cada cartão. -->
           @if (metricNotes().length > 0) {
-            <ul class="notes">
-              @for (n of metricNotes(); track n.label) {
-                <li><b>{{ n.label }}</b> · {{ n.note }}</li>
-              }
-            </ul>
+            <div class="notice metric-notes" role="note">
+              <ul>
+                @for (n of metricNotes(); track n.label) {
+                  <li><b>{{ n.label }}</b> — {{ n.note }}</li>
+                }
+              </ul>
+            </div>
           }
         </section>
 
         <!-- ============================ 2) POSTURA AVALIADA ============================ -->
-        <section class="block">
-          <div class="block-head">
+        <section class="section">
+          <div class="section-head">
             <h2>Quanto foi avaliado</h2>
             <a class="linknav" routerLink="/controls">Ver controles →</a>
           </div>
 
-          <div class="grid two">
+          <div class="grid-2">
             <div class="panel">
               <app-posture-summary [posture]="d.posture" label="AEGIS Score" />
               <!-- [AEGIS-LANGUAGE-STATES-01] Três escalas convivem no produto; esta é só uma delas. -->
@@ -191,8 +207,8 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         </section>
 
         <!-- ============================ 3) O QUE MERECE ATENÇÃO ============================ -->
-        <section class="block">
-          <div class="block-head">
+        <section class="section">
+          <div class="section-head">
             <h2>O que merece atenção</h2>
             <a class="linknav" routerLink="/priorities">Central de Prioridades →</a>
           </div>
@@ -200,11 +216,11 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           <!-- [AEGIS-JOURNEY-01] Prioridade de tratamento em dispositivos — a MESMA leitura da Central. Dispositivos, casos
                e planos aparecem em linhas próprias, cada uma com a sua unidade (nunca somadas), e a parcialidade é dita
                junto dos números. Cada dispositivo abre o detalhe na Central com o caso determinante selecionado. -->
-          <div class="panel dp-panel">
+          <div class="panel">
             <div class="hd">
               <h3>Prioridade de tratamento · vulnerabilidades em dispositivos</h3>
               @if (d.devicePriority?.policyCode; as code) {
-                <span class="hint">política {{ code }} v{{ d.devicePriority!.policyVersion }}</span>
+                <span class="hint">política <span class="mono">{{ code }} v{{ d.devicePriority!.policyVersion }}</span></span>
               }
             </div>
             @if (dpCard().kind === 'data' && d.devicePriority; as dp) {
@@ -217,10 +233,10 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
                 <li><span class="u-k">Planos</span><span class="u-v">{{ dpLines()!.plans }}</span></li>
               </ul>
               @if (dp.truncationNote) {
-                <p class="dp-note">{{ dp.truncationNote }}</p>
+                <p class="notice warn dp-note">{{ dp.truncationNote }}</p>
               }
               @if (dp.absenceNote) {
-                <p class="dp-note">{{ dp.absenceNote }}</p>
+                <p class="notice warn dp-note">{{ dp.absenceNote }}</p>
               }
               <ul class="queue">
                 @for (i of dp.top; track i.assetId) {
@@ -229,7 +245,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
                       {{ i.position }}. {{ i.assetName }}
                     </a>
                     <span class="q-m">
-                      {{ i.bandLabel }}@if (i.cveId) { · caso determinante {{ i.cveId }} }@if (i.nameIsPlaceholder) { · nome não coletado pela fonte }
+                      {{ i.bandLabel }}@if (i.cveId) { · caso determinante <span class="mono">{{ i.cveId }}</span> }@if (i.nameIsPlaceholder) { · nome não coletado pela fonte }
                     </span>
                     <span class="q-m" [class.has-plan]="!!i.activePlanId">
                       {{ i.activePlanId ? 'Plano de tratamento ativo para este caso' : 'Sem plano de tratamento para este caso' }}
@@ -251,13 +267,13 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
               </p>
               @if (dpLines(); as l) {
                 @if (d.devicePriority!.plans.active + d.devicePriority!.plans.completed > 0) {
-                  <p class="dp-note">Planos de casos de dispositivo: {{ l.plans }}</p>
+                  <p class="dp-foot">Planos de casos de dispositivo: {{ l.plans }}</p>
                 }
               }
             }
           </div>
 
-          <div class="grid two">
+          <div class="grid-2">
             <div class="panel">
               <div class="hd">
                 <h3>{{ recommendationsLabel }}</h3>
@@ -301,8 +317,8 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         </section>
 
         <!-- ============================ 4) IDENTIDADE ============================ -->
-        <section class="block">
-          <div class="block-head">
+        <section class="section">
+          <div class="section-head">
             <h2>Identidade</h2>
             <a class="linknav" routerLink="/identity">AEGIS KNIGHT →</a>
           </div>
@@ -320,8 +336,8 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
               </p>
 
               <div class="caps">
-                <div class="cap-col">
-                  <span class="cap-k ok">Disponível agora</span>
+                <div>
+                  <span class="badge ok cap-k">Disponível agora</span>
                   <ul>
                     @for (c of d.identity.capabilitiesCollected; track c) {
                       <li>{{ identityCapabilityLabel(c) }}</li>
@@ -329,9 +345,9 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
                   </ul>
                 </div>
                 @if (d.identity.capabilitiesMissing.length > 0) {
-                  <div class="cap-col">
+                  <div>
                     <!-- Parcialidade NÃO é "integração sem dados": o que falta é nomeado com o motivo real. -->
-                    <span class="cap-k mid">Ainda indisponível</span>
+                    <span class="badge warn cap-k">Ainda indisponível</span>
                     <ul>
                       @for (g of d.identity.capabilitiesMissing; track g.capability) {
                         <li>
@@ -357,8 +373,8 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         </section>
 
         <!-- ============================ 5) SAÚDE DAS FONTES ============================ -->
-        <section class="block">
-          <div class="block-head">
+        <section class="section">
+          <div class="section-head">
             <h2>Fontes conectadas</h2>
             @if (isTenantAdmin()) {
               <a class="linknav" routerLink="/settings/integrations">Gerenciar integrações →</a>
@@ -391,11 +407,11 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         <!-- ============================ 6) RISCO DE NEGÓCIO ============================ -->
         <!-- Dimensão SEPARADA: vem de avaliação assistida, não de telemetria. Cada painel abaixo só aparece
              com a PRÓPRIA evidência — nenhum gráfico legado é liberado zerado. -->
-        <section class="block">
-          <div class="block-head">
-            <div class="bh-title">
+        <section class="section">
+          <div class="section-head">
+            <div>
               <h2>Risco de negócio</h2>
-              <span class="bh-sub">maturidade, criticidade e registro de riscos</span>
+              <p class="section-desc">Maturidade, criticidade e registro de riscos</p>
             </div>
           </div>
 
@@ -423,7 +439,7 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
               </div>
             }
 
-            <div class="grid two">
+            <div class="grid-2">
               @if (d.businessRisk.maturityState === 'Available') {
                 <div class="panel">
                   <div class="hd">
@@ -511,14 +527,14 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
           <app-environment-first [posture]="w" [isTenantAdmin]="isTenantAdmin()" />
         }
       } @else if (loading()) {
-        <section class="panel state">
-          <span class="scan" aria-hidden="true"></span>
+        <section class="panel state" role="status">
+          <span class="spinner" aria-hidden="true"></span>
           <b>Consolidando a leitura do ambiente…</b>
         </section>
       } @else {
         <!-- Falha operacional: NUNCA cair em exemplo nem reaproveitar a carga anterior — e sem mandar o
              cliente investigar console, endereço de API ou identificador técnico. -->
-        <section class="panel state is-error">
+        <section class="panel state error" role="alert">
           <h3>Não foi possível carregar a visão geral</h3>
           <p>
             O serviço não respondeu agora. <b>Nenhum indicador é exibido</b> — números remanescentes seriam
@@ -531,363 +547,99 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
   `,
   styles: [
     `
-      /* ---------- Página ---------- */
-      .page {
-        /* Folga inferior generosa: o FAB do Auditor flutua no canto inferior direito, e sem esta reserva
-           o último cartão da página ficaria permanentemente sob ele. */
-        padding: 20px 26px 104px;
-        max-width: 1320px;
-      }
-      .page-head {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        align-items: flex-end;
-        justify-content: space-between;
-        margin-bottom: 22px;
-      }
-      .page-head h1 {
-        margin: 0;
-        font-family: var(--display);
-        font-size: 22px;
-        font-weight: 700;
-        letter-spacing: 0.02em;
-        color: var(--text);
-      }
-      .ph-sub {
-        margin: 5px 0 0;
-        font-family: var(--mono);
-        font-size: 12px;
-        color: var(--muted);
-      }
-      .ph-when {
-        opacity: 0.8;
-      }
-      .ph-actions {
-        display: flex;
-        gap: 8px;
-        flex: none;
-      }
-      .ghost,
-      .primary {
-        appearance: none;
-        cursor: pointer;
-        font-family: var(--mono);
-        font-size: 11.5px;
-        letter-spacing: 0.03em;
-        text-decoration: none;
-        padding: 8px 14px;
-        border-radius: 8px;
-        border: 1px solid var(--line);
-        background: rgba(122, 145, 190, 0.06);
-        color: var(--text);
-        transition: 0.15s;
-      }
-      .ghost:hover:not(:disabled) {
-        border-color: color-mix(in srgb, var(--cyan) 40%, var(--line));
-        background: rgba(38, 224, 255, 0.08);
-      }
-      .ghost:disabled {
-        opacity: 0.55;
-        cursor: progress;
-      }
-      .primary {
-        border-color: var(--cyan);
-        background: rgba(38, 224, 255, 0.12);
-      }
+      /* Página, cabeçalho, seções, painéis, botões, cartões de métrica e estados vêm do sistema visual global
+         (styles.css). Aqui só o que é próprio da Visão geral. */
 
-      /* ---------- Blocos ---------- */
-      .block {
-        margin: 0 0 26px;
-      }
-      .block-head {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 12px;
-        margin: 0 0 12px;
-        /* Título e ação não colidem: o link encolhe antes do título. */
-        flex-wrap: wrap;
-      }
-      .bh-title {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-        min-width: 0;
-      }
-      /* Subtítulo do bloco: ABAIXO do título, nunca na borda oposta (ali competia por leitura com ele). */
-      .bh-sub {
-        font-family: var(--mono);
-        font-size: 10.5px;
-        color: var(--muted);
-      }
-      .block-head h2 {
-        margin: 0;
-        font-family: var(--sans);
-        font-size: 14px;
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--muted);
-      }
-      .linknav {
-        font-family: var(--mono);
-        font-size: 11.5px;
-        color: var(--cyan);
-        text-decoration: none;
-        white-space: nowrap;
-      }
-      .linknav:hover {
-        text-decoration: underline;
-      }
-
-      .panel {
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--panel);
-        padding: 16px 18px;
-      }
-      /* O título nunca é espremido pela dica: em painel estreito ela desce para a linha de baixo. */
-      .panel .hd {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: 4px 10px;
-        margin: 0 0 12px;
-      }
-      .panel .hd h3 {
-        margin: 0;
-        font-family: var(--sans);
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--text);
-      }
-      .panel .hint {
-        font-family: var(--mono);
-        font-size: 10.5px;
-        color: var(--muted);
-        white-space: nowrap;
-      }
-      .panel-empty {
-        margin: 0;
-        font-family: var(--sans);
-        font-size: 12.5px;
-        line-height: 1.6;
-        color: var(--muted);
-      }
-      .panel-empty b {
-        color: var(--text);
-        font-weight: 600;
-      }
-      .lead {
-        margin: 0 0 12px;
-        font-family: var(--sans);
-        font-size: 13px;
-        line-height: 1.6;
-        color: var(--text);
-      }
-      .lead b {
-        font-weight: 600;
-      }
-      .lead .warn {
-        color: var(--amber);
-      }
-      .foot {
-        margin: 12px 0 0;
-        padding-top: 10px;
-        border-top: 1px solid var(--line-2);
-        font-family: var(--sans);
-        font-size: 12.5px;
-        line-height: 1.55;
-        color: var(--muted);
-      }
-
-      /* ---------- Estado da página ---------- */
-      .state {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        align-items: flex-start;
-        font-family: var(--sans);
-        font-size: 13px;
-        color: var(--text);
-      }
-      .state h3 {
-        margin: 0;
-        font-family: var(--sans);
-        font-size: 15px;
-        font-weight: 600;
-      }
-      .state p {
-        margin: 0;
-        max-width: 62ch;
-        line-height: 1.6;
-        color: var(--muted);
-      }
-      .state.is-error {
-        border-left: 3px solid var(--red);
-      }
-      .state .scan {
-        display: inline-block;
-        width: 11px;
-        height: 11px;
-        border-radius: 50%;
-        border: 2px solid rgba(38, 224, 255, 0.25);
-        border-top-color: var(--cyan);
-        animation: exec-spin 0.75s linear infinite;
-      }
-      @keyframes exec-spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .state .scan {
-          animation: none;
-        }
-      }
-
-      /* ---------- Métricas do ambiente ---------- */
-      /* auto-fit + minmax: em 1366px cabem 5 colunas; abaixo disso quebra sozinho, sem rolagem lateral. */
-      .metrics {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
-        gap: 12px;
-      }
-      .metric {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-        padding: 14px 16px;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--panel);
-        text-decoration: none;
-        transition: 0.15s;
-        min-width: 0;
-      }
-      .metric:hover {
-        border-color: color-mix(in srgb, var(--cyan) 35%, var(--line));
-      }
-      .m-k {
-        font-family: var(--mono);
-        font-size: 10px;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--muted);
-      }
-      .m-v {
-        font-family: var(--display);
-        font-weight: 700;
-        font-size: 26px;
-        line-height: 1.15;
-        color: var(--text);
-      }
-      .m-v.is-na {
-        color: var(--muted);
-        opacity: 0.6;
-      }
-      .m-state {
-        font-family: var(--mono);
-        font-size: 10.5px;
-        color: var(--cyan);
-        opacity: 0.85;
-      }
-      .metric.is-void .m-state {
-        color: var(--muted);
-      }
-      .metric.is-partial .m-state {
-        color: var(--amber);
-      }
-      /* Leitura antiga: mesma cor de atenção da lista de fontes — a etiqueta já diz "desatualizada". */
-      .m-state.is-stale {
-        color: var(--amber);
-      }
-      .m-src {
-        font-family: var(--mono);
-        font-size: 10px;
-        color: var(--muted);
-        opacity: 0.7;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .notes {
+      /* ---------- Notas das métricas: um aviso só, junto dos cartões ---------- */
+      .metric-notes ul {
         list-style: none;
-        margin: 12px 0 0;
+        margin: 0;
         padding: 0;
         display: flex;
         flex-direction: column;
-        gap: 5px;
+        gap: var(--sp-1);
       }
-      .notes li {
-        font-family: var(--sans);
-        font-size: 12px;
-        line-height: 1.55;
+
+      /* ---------- Postura avaliada ---------- */
+      .scale-note {
+        margin-top: var(--sp-3);
+        max-width: 72ch;
+        font-size: var(--fs-meta);
+        line-height: var(--lh);
         color: var(--muted);
       }
-      .notes b {
-        color: var(--text);
+      .trend-strip {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-3);
+        margin-top: var(--sp-4);
+        padding-top: var(--sp-3);
+        border-top: 1px solid var(--line-2);
+      }
+      .ts-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+      .ts-delta {
+        font-size: var(--fs-sm);
         font-weight: 600;
+        color: var(--text-2);
+      }
+      .ts-delta.up {
+        color: var(--cyan);
+      }
+      .ts-delta.down {
+        color: var(--red-text);
+      }
+      .ts-meta em {
+        font-style: normal;
+        font-size: var(--fs-meta);
+        color: var(--muted);
       }
 
-      /* ---------- Grades ---------- */
-      .grid.two {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-        gap: 14px;
-      }
-      .cards {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-        gap: 12px;
-        margin-bottom: 14px;
-      }
-
-      /* ---------- Cobertura ---------- */
+      /* Cobertura por natureza da prova. NEUTRO de propósito: cobertura não é conformidade. */
       .coverage {
         list-style: none;
         margin: 0;
         padding: 0;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 14px;
       }
       .coverage li {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) clamp(64px, 18%, 128px) 58px;
+        grid-template-columns: minmax(0, 1fr) clamp(72px, 32%, 220px) 56px;
         align-items: center;
-        gap: 10px;
+        gap: var(--sp-3);
       }
-      /* O rótulo QUEBRA em vez de truncar: em painéis estreitos "Avaliação orientada" virava
-         "Avaliação orient…", e o nome da natureza da prova é justamente o que se lê aqui. */
+      /* O rótulo QUEBRA em vez de truncar: o nome da natureza da prova é justamente o que se lê aqui. */
       .c-k {
-        font-family: var(--sans);
-        font-size: 12.5px;
+        min-width: 0;
+        font-size: var(--fs-sm);
         line-height: 1.35;
         color: var(--text);
-        min-width: 0;
       }
       .c-bar {
         display: block;
         height: 6px;
         border-radius: 3px;
-        background: rgba(122, 145, 190, 0.14);
+        background: rgba(122, 145, 190, 0.16);
         overflow: hidden;
       }
-      /* NEUTRO de propósito: cobertura não é conformidade — nada de verde/vermelho aqui. */
       .c-bar i {
         display: block;
         height: 100%;
+        border-radius: 3px;
         background: var(--cyan);
-        opacity: 0.55;
+        opacity: 0.6;
       }
       .c-v {
-        font-family: var(--mono);
-        font-size: 11px;
-        color: var(--muted);
+        font-size: var(--fs-sm);
+        font-weight: 600;
         text-align: right;
+        color: var(--text-2);
       }
 
       /* ---------- Filas ---------- */
@@ -897,50 +649,134 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         padding: 0;
         display: flex;
         flex-direction: column;
-        gap: 10px;
       }
       .queue li {
         display: flex;
         flex-direction: column;
-        gap: 2px;
-        padding-bottom: 10px;
+        gap: 3px;
+        padding: var(--sp-3) 0;
         border-bottom: 1px solid var(--line-2);
       }
+      .queue li:first-child {
+        padding-top: 0;
+      }
       .queue li:last-child {
-        border-bottom: none;
         padding-bottom: 0;
+        border-bottom: 0;
       }
       .q-t {
-        font-family: var(--sans);
-        font-size: 13px;
-        line-height: 1.45;
+        font-size: var(--fs-body);
+        font-weight: 500;
+        line-height: 1.4;
         color: var(--text);
       }
       .q-m {
-        font-family: var(--mono);
-        font-size: 10.5px;
+        font-size: var(--fs-meta);
+        line-height: 1.45;
         color: var(--muted);
+      }
+      .q-m.has-plan {
+        color: var(--cyan);
+      }
+      .q-link {
+        align-self: flex-start;
+        text-decoration: none;
+      }
+      .q-link:hover {
+        color: var(--cyan);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .panel-empty {
+        font-size: var(--fs-sm);
+        line-height: var(--lh-relaxed);
+        color: var(--text-2);
+      }
+      .panel-empty b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .panel-empty.is-fail {
+        color: var(--amber);
+      }
+      .lead {
+        margin-bottom: 14px;
+        font-size: var(--fs-body);
+        line-height: 1.55;
+      }
+      .lead b {
+        font-weight: 600;
+      }
+      .lead .warn {
+        color: var(--amber);
+      }
+      .foot {
+        margin-top: 14px;
+        padding-top: var(--sp-3);
+        border-top: 1px solid var(--line-2);
+        font-size: var(--fs-sm);
+        line-height: 1.55;
+        color: var(--text-2);
+      }
+      .foot b {
+        color: var(--text);
+      }
+
+      /* ---------- Prioridade de tratamento em dispositivos ---------- */
+      .dp-units {
+        list-style: none;
+        margin: 0 0 var(--sp-4);
+        padding: 0;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+        gap: var(--sp-2);
+      }
+      .dp-units li {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        padding: 10px var(--sp-3);
+        border: 1px solid var(--line-2);
+        border-radius: var(--radius);
+        background: rgba(122, 145, 190, 0.04);
+      }
+      .u-k {
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .u-v {
+        font-size: var(--fs-sm);
+        line-height: 1.45;
+        color: var(--text);
+      }
+      .dp-note {
+        margin-bottom: var(--sp-3);
+      }
+      .dp-foot {
+        margin-top: 14px;
+        font-size: var(--fs-meta);
+        line-height: var(--lh);
+        color: var(--muted);
+      }
+      .dp-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--sp-5);
+        margin-top: 10px;
       }
 
       /* ---------- Identidade ---------- */
       .caps {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+        gap: var(--sp-4) var(--sp-6);
       }
       .cap-k {
-        display: block;
-        font-family: var(--mono);
-        font-size: 10px;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin-bottom: 7px;
-      }
-      .cap-k.ok {
-        color: var(--cyan);
-      }
-      .cap-k.mid {
-        color: var(--amber);
+        margin-bottom: 10px;
       }
       .caps ul {
         list-style: none;
@@ -948,19 +784,16 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         padding: 0;
         display: flex;
         flex-direction: column;
-        gap: 5px;
+        gap: var(--sp-2);
       }
       .caps li {
-        font-family: var(--sans);
-        font-size: 12.5px;
-        line-height: 1.5;
-        color: var(--text);
+        font-size: var(--fs-sm);
+        line-height: 1.45;
       }
       .caps li em {
         display: block;
         font-style: normal;
-        font-family: var(--mono);
-        font-size: 10.5px;
+        font-size: var(--fs-meta);
         color: var(--muted);
       }
 
@@ -969,165 +802,49 @@ import { MaturityBarsComponent, FunctionScore } from '../components/maturity-bar
         list-style: none;
         margin: 0;
         padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
       }
       .sources li {
         display: grid;
-        grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.3fr);
-        gap: 10px;
+        grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.2fr);
+        gap: var(--sp-3);
         align-items: baseline;
-        padding-bottom: 8px;
+        padding: 10px 0;
         border-bottom: 1px solid var(--line-2);
       }
+      .sources li:first-child {
+        padding-top: 0;
+      }
       .sources li:last-child {
-        border-bottom: none;
         padding-bottom: 0;
+        border-bottom: 0;
       }
       .s-n {
-        font-family: var(--sans);
-        font-size: 12.5px;
-        color: var(--text);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        font-size: var(--fs-sm);
+        font-weight: 500;
+        overflow-wrap: anywhere;
       }
-      .s-c,
-      .s-s {
+      .s-c {
         font-family: var(--mono);
-        font-size: 10.5px;
+        font-size: var(--fs-meta);
         color: var(--muted);
+        overflow-wrap: anywhere;
+      }
+      .s-s {
+        font-size: var(--fs-meta);
+        color: var(--text-2);
       }
       .sources li.attention .s-s {
         color: var(--amber);
       }
 
-      /* ---------- Tendência ---------- */
-      .trend-strip {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin-top: 14px;
-        padding-top: 12px;
-        border-top: 1px solid var(--line-2);
-      }
-      .ts-meta {
-        display: flex;
-        flex-direction: column;
-        gap: 1px;
-        min-width: 0;
-      }
-      .ts-delta {
-        font-family: var(--display);
-        font-weight: 700;
-        font-size: 13px;
-        color: var(--muted);
-      }
-      .ts-delta.up {
-        color: var(--cyan);
-      }
-      .ts-delta.down {
-        color: var(--red);
-      }
-      .scale-note {
-        margin: 8px 2px 0;
-        font-family: var(--mono);
-        font-size: 10.5px;
-        line-height: 1.45;
-        color: var(--muted);
-      }
-      .ts-meta em {
-        font-style: normal;
-        font-family: var(--mono);
-        font-size: 10px;
-        color: var(--muted);
-        opacity: 0.75;
-      }
-
-      /* ---------- [AEGIS-JOURNEY-01] Prioridade de tratamento em dispositivos ---------- */
-      .dp-panel {
-        margin-bottom: 14px;
-      }
-      .dp-units {
-        list-style: none;
-        margin: 0 0 10px;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .dp-units li {
-        display: grid;
-        grid-template-columns: 96px minmax(0, 1fr);
-        gap: 10px;
-        align-items: baseline;
-      }
-      .u-k {
-        font-family: var(--mono);
-        font-size: 10px;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--muted);
-      }
-      .u-v {
-        font-family: var(--sans);
-        font-size: 12.5px;
-        line-height: 1.5;
-        color: var(--text);
-        min-width: 0;
-      }
-      .dp-note {
-        margin: 0 0 8px;
-        font-family: var(--sans);
-        font-size: 12px;
-        line-height: 1.55;
-        color: var(--amber);
-      }
-      .dp-foot {
-        margin: 10px 0 0;
-        font-family: var(--mono);
-        font-size: 10.5px;
-        line-height: 1.5;
-        color: var(--muted);
-      }
-      .dp-links {
-        display: flex;
-        gap: 16px;
-        flex-wrap: wrap;
-        margin-top: 8px;
-      }
-      .q-link {
-        text-decoration: none;
-      }
-      .q-link:hover {
-        color: var(--cyan);
-        text-decoration: underline;
-      }
-      .q-m.has-plan {
-        color: var(--cyan);
-      }
-      .panel-empty.is-fail {
-        color: var(--amber);
-      }
-      @media (max-width: 720px) {
-        .dp-units li {
-          grid-template-columns: 1fr;
-          gap: 2px;
-        }
-      }
-
       /* Telas estreitas: nada rola lateralmente — as grades já colapsam sozinhas. */
       @media (max-width: 720px) {
-        .page {
-          padding: 16px 14px 48px;
-        }
         .sources li {
           grid-template-columns: 1fr;
           gap: 2px;
         }
         .coverage li {
-          grid-template-columns: minmax(0, 1fr) 60px 52px;
+          grid-template-columns: minmax(0, 1fr) 64px 48px;
         }
       }
     `,

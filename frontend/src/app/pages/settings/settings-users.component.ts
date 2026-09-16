@@ -287,14 +287,7 @@ import {
   `,
   styles: [
     `
-      .panel {
-        background: var(--panel, rgba(11, 15, 26, 0.6));
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 1.1rem 1.25rem;
-        margin-bottom: 1.1rem;
-      }
-      h2 {
+            h2 {
         margin: 0 0 0.75rem;
         font-size: 1rem;
         color: var(--text);
@@ -313,7 +306,7 @@ import {
         display: flex;
         flex-direction: column;
         gap: 0.3rem;
-        font-size: 0.78rem;
+        font-size: var(--fs-meta);
         color: var(--muted);
       }
       .field input,
@@ -323,7 +316,7 @@ import {
         border: 1px solid var(--line);
         background: var(--void, rgba(5, 7, 15, 0.6));
         color: var(--text);
-        font-size: 0.88rem;
+        font-size: var(--fs-body);
         outline: none;
       }
       .field input:focus,
@@ -332,7 +325,7 @@ import {
         box-shadow: 0 0 0 2px rgba(38, 224, 255, 0.2);
       }
       .note {
-        font-size: 0.78rem;
+        font-size: var(--fs-meta);
         color: var(--muted);
         line-height: 1.5;
         margin: 0;
@@ -359,12 +352,12 @@ import {
         border: 1px solid var(--line);
         background: var(--void, rgba(5, 7, 15, 0.6));
         color: var(--text);
-        font-size: 0.85rem;
+        font-size: var(--fs-body);
         outline: none;
       }
       .state {
         color: var(--muted);
-        font-size: 0.86rem;
+        font-size: var(--fs-body);
         padding: 1rem 0;
       }
       .users {
@@ -399,7 +392,7 @@ import {
       }
       .who .email {
         color: var(--muted);
-        font-size: 0.8rem;
+        font-size: var(--fs-sm);
       }
       .meta {
         display: flex;
@@ -408,9 +401,9 @@ import {
         margin-top: 0.35rem;
       }
       .badge {
-        font-family: var(--mono);
-        font-size: 0.68rem;
-        letter-spacing: 0.03em;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
+        letter-spacing: 0;
         padding: 0.12rem 0.45rem;
         border-radius: 999px;
         border: 1px solid var(--line);
@@ -435,7 +428,7 @@ import {
         display: flex;
         flex-wrap: wrap;
         gap: 0.25rem 1rem;
-        font-size: 0.72rem;
+        font-size: var(--fs-meta);
         color: var(--muted);
         margin-top: 0.35rem;
       }
@@ -457,7 +450,7 @@ import {
       }
       .confirm {
         align-items: center;
-        font-size: 0.83rem;
+        font-size: var(--fs-sm);
         color: var(--text);
       }
       .reset {
@@ -479,11 +472,11 @@ import {
       }
       .err {
         color: var(--red, #ff6b8b);
-        font-size: 0.72rem;
+        font-size: var(--fs-meta);
       }
       .prov-hint {
         align-self: center;
-        font-size: 0.72rem;
+        font-size: var(--fs-meta);
         color: var(--muted);
         font-style: italic;
       }
@@ -491,36 +484,8 @@ import {
         display: flex;
         gap: 0.5rem;
       }
-      .btn {
-        padding: 0.5rem 0.8rem;
-        border-radius: 8px;
-        border: 1px solid var(--line);
-        background: rgba(122, 145, 190, 0.08);
-        color: var(--text);
-        font-family: var(--mono);
-        font-size: 0.8rem;
-        cursor: pointer;
-      }
-      .btn.sm {
-        padding: 0.35rem 0.6rem;
-        font-size: 0.75rem;
-      }
-      .btn:disabled {
-        opacity: 0.5;
-        cursor: default;
-      }
-      .btn.primary {
-        border: none;
-        color: #05070f;
-        background: var(--neon-h, linear-gradient(90deg, #26e0ff, #8b5cff));
-        font-weight: 600;
-      }
-      .btn.danger {
-        color: var(--red, #ff6b8b);
-        border-color: color-mix(in srgb, var(--red, #ff6b8b) 40%, var(--line));
-      }
-      .msg {
-        font-size: 0.8rem;
+                                    .msg {
+        font-size: var(--fs-sm);
         border-radius: 8px;
         padding: 0.55rem 0.7rem;
         margin: 0;

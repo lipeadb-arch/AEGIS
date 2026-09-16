@@ -354,17 +354,17 @@ import { AuthService } from '../../services/auth.service';
       .cp { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; max-width: 980px; }
       .cp-head, .blk-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
       .cp-head h5 { margin: 0; font-size: 13px; font-weight: 600; }
-      h6, .k, .fl > span, .ft th { font-family: var(--mono); font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; margin: 0; }
+      h6, .k, .fl > span, .ft th { font-family: var(--sans); font-size: var(--fs-caps); color: var(--muted); text-transform: uppercase; letter-spacing: 0; font-weight: 500; margin: 0; }
       .kv { display: grid; grid-template-columns: 170px 1fr; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line-2); }
       .v { font-size: 12.5px; line-height: 1.5; display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
-      .mono, .dim, .pulse { font-family: var(--mono); font-size: 10.5px; color: var(--muted); line-height: 1.45; margin: 0; }
-      .chip { font-family: var(--mono); font-size: 10.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); align-self: flex-start; }
+      .mono, .dim, .pulse { font-family: var(--mono); font-size: var(--fs-caps); color: var(--muted); line-height: 1.45; margin: 0; }
+      .chip { font-family: var(--sans); font-size: var(--fs-caps); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); align-self: flex-start; }
       .chip.late { color: #ff5c8a; }
       .chip.tone-warn, .notes, .state.note b { color: var(--amber); }
       .chip.tone-info { color: var(--cyan); }
       .blk { border-top: 1px solid var(--line-2); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
       .src-state { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin: 0; }
-      summary, .link { cursor: pointer; font-family: var(--mono); font-size: 11.5px; color: var(--cyan); }
+      summary, .link { cursor: pointer; font-family: var(--sans); font-size: var(--fs-meta); color: var(--cyan); }
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid var(--line-2); }
       .fl { display: flex; flex-direction: column; gap: 3px; }
       .fl input, .fl textarea { background: rgba(122, 145, 190, 0.06); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; color: inherit; font: inherit; font-size: 12.5px; width: 100%; box-sizing: border-box; }
@@ -374,13 +374,13 @@ import { AuthService } from '../../services/auth.service';
       .hint.warn { border-left: 2px solid var(--amber); padding: 4px 8px; }
       .notes { margin: 2px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.5; }
       .scroll { overflow-x: auto; }
-      .ft { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+      .ft { width: 100%; border-collapse: collapse; font-size: var(--fs-meta); }
       .ft th, .ft td { text-align: left; padding: 4px 6px; vertical-align: top; border-bottom: 1px solid var(--line-2); overflow-wrap: anywhere; }
       .val { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; border-bottom: 1px solid var(--line-2); font-size: 12.5px; }
       .val.past { opacity: 0.72; padding-left: 8px; }
       .ev, .state { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; align-items: center; }
-      .btn { cursor: pointer; font-family: var(--mono); font-size: 11.5px; font-weight: 600; border-radius: 9px; padding: 6px 12px; border: 1px solid var(--line); color: inherit; background: rgba(122, 145, 190, 0.08); align-self: flex-start; }
-      .btn.sm { padding: 4px 9px; font-size: 10.5px; }
+      .btn { cursor: pointer; font-family: var(--sans); font-size: var(--fs-meta); font-weight: 600; border-radius: 9px; padding: 6px 12px; border: 1px solid var(--line); color: inherit; background: rgba(122, 145, 190, 0.08); align-self: flex-start; }
+      .btn.sm { padding: 4px 9px; font-size: var(--fs-caps); }
       .btn.real { color: var(--cyan); border-color: var(--cyan); }
       .btn:disabled { opacity: 0.5; cursor: not-allowed; }
       .link { background: none; border: none; padding: 0; text-align: left; font-size: 12px; }

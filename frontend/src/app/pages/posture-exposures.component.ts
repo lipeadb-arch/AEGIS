@@ -36,15 +36,16 @@ import {
     <section class="page">
       <header class="page-head">
         <div>
+          <p class="page-eyebrow">Ambiente</p>
           <h1>Recomendações de postura</h1>
-          <p class="sub">
+          <p class="page-desc">
             Recomendações de configuração coletadas do <strong>{{ sourceLabel() }}</strong>. Cada item mostra a
             diferença entre os pontos obtidos e o máximo da recomendação, segundo a fonte — isso, sozinho, não
             comprova configuração insegura, exposição de ativo ou vulnerabilidade. O índice da fonte não é o
             AEGIS Score.
           </p>
         </div>
-        <div class="head-actions">
+        <div class="page-actions">
           <!-- Sem leitura, uma análise pressuporia evidência que não existe: o botão só vale com dados. -->
           <button
             type="button"
@@ -69,52 +70,53 @@ import {
       <!-- [AEGIS-LANGUAGE-STATES-01] Sem leitura as contagens ficam "—" (nunca 0) e o motivo é dito pelo estado. -->
       <div class="cards">
         <div class="card">
-          <span class="card-label">Microsoft Secure Score · índice da fonte</span>
+          <span class="metric-label">Microsoft Secure Score · índice da fonte</span>
           @if (summary()?.latestSecureScorePercent != null) {
-            <span class="card-value">{{ pct(summary()!.latestSecureScorePercent!) }}</span>
-            <span class="card-meta">coletado {{ fmtDate(summary()?.latestSecureScoreAt) }} · não é o AEGIS Score</span>
+            <span class="metric-value">{{ pct(summary()!.latestSecureScorePercent!) }}</span>
+            <span class="metric-unit">coletado {{ fmtDate(summary()?.latestSecureScoreAt) }} · não é o AEGIS Score</span>
           } @else if (reading().hasData) {
-            <span class="card-value muted">Não informado</span>
-            <span class="card-meta">a fonte não entregou o índice geral nesta leitura</span>
+            <span class="metric-value is-na">Não informado</span>
+            <span class="metric-unit">a fonte não entregou o índice geral nesta leitura</span>
           } @else {
-            <span class="card-value muted">{{ readingLabel() }}</span>
-            <span class="card-meta">sem leitura da fonte</span>
+            <span class="metric-value is-na">{{ readingLabel() }}</span>
+            <span class="metric-unit">sem leitura da fonte</span>
           }
         </div>
         <div class="card">
-          <span class="card-label">Recomendações pendentes</span>
+          <span class="metric-label">Recomendações pendentes</span>
           @if (reading().hasData) {
-            <span class="card-value">{{ summary()!.totalOpen }}</span>
-            <span class="card-meta" [title]="noLongerPendingHint">
+            <span class="metric-value">{{ summary()!.totalOpen }}</span>
+            <span class="metric-unit" [title]="noLongerPendingHint">
               {{ summary()!.totalResolved }} sem pendência na fonte
             </span>
           } @else {
-            <span class="card-value muted">—</span>
-            <span class="card-meta">{{ readingLabel() }}</span>
+            <span class="metric-value is-na">—</span>
+            <span class="metric-unit">{{ readingLabel() }}</span>
           }
         </div>
         <div class="card">
-          <span class="card-label">Última coleta</span>
+          <span class="metric-label">Última coleta</span>
           @if (summary()?.lastCollectedAt) {
-            <span class="card-value sm">{{ fmtDate(summary()?.lastCollectedAt) }}</span>
+            <span class="metric-value sm">{{ fmtDate(summary()?.lastCollectedAt) }}</span>
             @if (reading().lastAttemptFailed) {
-              <span class="card-meta warn-text">tentativa mais recente falhou</span>
+              <span class="metric-unit warn-text">tentativa mais recente falhou</span>
             } @else if (reading().lastAttemptDegraded) {
-              <span class="card-meta warn-text">coleta mais recente com restrições</span>
+              <span class="metric-unit warn-text">coleta mais recente com restrições</span>
             }
           } @else {
-            <span class="card-value sm muted">{{ readingLabel() }}</span>
+            <span class="metric-value sm is-na">{{ readingLabel() }}</span>
           }
         </div>
         <div class="card wide">
-          <span class="card-label">Pendentes por categoria</span>
+          <span class="metric-label">Pendentes por categoria</span>
           @if ((summary()?.openByCategory?.length ?? 0) > 0) {
             <div class="cats">
               @for (c of summary()!.openByCategory; track c.category) {
                 <button
                   type="button"
-                  class="cat-chip"
+                  class="filter-chip"
                   [class.active]="categoryFilter() === c.category"
+                  [attr.aria-pressed]="categoryFilter() === c.category"
                   (click)="toggleCategory(c.category)"
                 >
                   {{ cat(c.category) }} <span class="cat-n">{{ c.open }}</span>
@@ -122,21 +124,23 @@ import {
               }
             </div>
           } @else if (reading().hasData) {
-            <span class="card-meta">Nenhuma recomendação pendente na última leitura.</span>
+            <span class="metric-unit">Nenhuma recomendação pendente na última leitura.</span>
           } @else {
-            <span class="card-meta">Sem leitura da fonte.</span>
+            <span class="metric-unit">Sem leitura da fonte.</span>
           }
         </div>
       </div>
 
       <!-- ---------- Filtros ---------- -->
-      <div class="filters">
-        <div class="seg" role="tablist">
+      <div class="filter-bar">
+        <div class="filter-row">
+        <span class="filter-label">Situação</span>
+        <div class="segmented" role="group" aria-label="Situação">
           @for (s of stateOptions; track s.value) {
             <button
               type="button"
-              class="seg-btn"
               [class.active]="stateFilter() === s.value"
+              [attr.aria-pressed]="stateFilter() === s.value"
               (click)="setState(s.value)"
             >
               {{ s.label }}
@@ -147,6 +151,7 @@ import {
           type="search"
           class="search"
           placeholder="Buscar título, controle ou serviço…"
+          aria-label="Buscar recomendações por título, controle ou serviço"
           [ngModel]="search()"
           (ngModelChange)="onSearch($event)"
         />
@@ -155,12 +160,13 @@ import {
             Categoria: {{ cat(categoryFilter()) }} ✕
           </button>
         }
+        </div>
       </div>
 
       <!-- ---------- Tabela ---------- -->
-      <div class="panel">
+      <div class="panel flush">
         @if (loading()) {
-          <p class="muted">Carregando recomendações…</p>
+          <div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>Carregando recomendações…</p></div>
         } @else if (error()) {
           <!-- Falha ao LER o AEGIS: nada é exibido como se fosse a leitura atual; a tentativa pode ser refeita. -->
           <div class="state error">
@@ -191,7 +197,7 @@ import {
             }
           </div>
         } @else {
-          <table class="grid-table">
+          <table class="data-table">
             <thead>
               <tr>
                 <th class="c-rank" title="Ordem sugerida pela própria fonte">Ordem (fonte)</th>
@@ -235,7 +241,7 @@ import {
                   <td class="c-gap"><span class="gap">{{ num(x.gap) }}</span></td>
                   <td class="c-tier">{{ tier(x.tier) || '—' }}</td>
                   <td class="c-exp">
-                    <button type="button" class="linkbtn" (click)="toggleExpand(x.id)">
+                    <button type="button" class="linkbtn" (click)="toggleExpand(x.id)" [attr.aria-expanded]="expanded().has(x.id)">
                       {{ expanded().has(x.id) ? 'Ocultar' : 'Detalhes' }}
                     </button>
                   </td>
@@ -300,8 +306,8 @@ import {
           </table>
 
           <footer class="pager">
+            <span class="range">Página {{ page() }} de {{ pageCount() }} · {{ total() }} no total</span>
             <button type="button" class="ghost sm" (click)="prevPage()" [disabled]="page() <= 1">← Anterior</button>
-            <span class="pg-info">Página {{ page() }} de {{ pageCount() }} · {{ total() }} no total</span>
             <button type="button" class="ghost sm" (click)="nextPage()" [disabled]="page() >= pageCount()">
               Próxima →
             </button>
@@ -312,215 +318,47 @@ import {
   `,
   styles: [
     `
-      .page {
-        padding: 1.25rem 1.5rem 2rem;
-        display: flex;
-        flex-direction: column;
-        gap: 1.1rem;
-      }
-      .page-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-        flex-wrap: wrap;
-      }
-      h1 {
-        margin: 0;
-        font-size: 1.35rem;
-        letter-spacing: 0.02em;
-      }
-      .sub {
-        margin: 0.35rem 0 0;
-        max-width: 70ch;
-        opacity: 0.72;
-        font-size: 0.85rem;
-      }
-      .head-actions {
-        display: flex;
-        gap: 0.5rem;
-        flex-wrap: wrap;
-      }
-      .muted {
-        opacity: 0.65;
-        font-size: 0.85rem;
-      }
-      .notice {
-        margin: 0;
-        padding: 0.55rem 0.8rem;
-        border-radius: 6px;
-        font-size: 0.8rem;
-        line-height: 1.4;
-      }
-      .notice.warn,
-      .warn-text {
-        color: #f5a524;
-      }
-      .notice.warn {
-        background: color-mix(in srgb, #f5a524 9%, transparent);
-        border: 1px solid color-mix(in srgb, #f5a524 30%, transparent);
-      }
-      .err {
-        color: #ff6b8a;
-        font-size: 0.85rem;
-      }
-
-      /* ---- cards ---- */
-      .cards {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-        gap: 0.75rem;
-      }
-      .card {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 4%, transparent);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 22%, transparent);
-        border-radius: 8px;
-        padding: 0.8rem 0.95rem;
-        display: flex;
-        flex-direction: column;
-        gap: 0.2rem;
-      }
+      /* Página, cabeçalho, cartões, filtros, tabela, badges, avisos, estados e botões: sistema visual global (styles.css). */
       .card.wide {
         grid-column: span 2;
-        min-width: 0;
-      }
-      .card-label {
-        font-size: 0.66rem;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        opacity: 0.6;
-      }
-      .card-value {
-        font-size: 1.6rem;
-        font-weight: 600;
-        letter-spacing: 0.01em;
-      }
-      .card-value.sm {
-        font-size: 1rem;
-      }
-      .card-value.muted {
-        font-size: 1rem;
-        opacity: 0.7;
-      }
-      .card-meta {
-        font-size: 0.72rem;
-        opacity: 0.6;
       }
       .cats {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.35rem;
-        margin-top: 0.25rem;
-      }
-      .cat-chip {
-        background: transparent;
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 30%, transparent);
-        color: inherit;
-        border-radius: 999px;
-        padding: 0.2rem 0.6rem;
-        font: inherit;
-        font-size: 0.75rem;
-        cursor: pointer;
-      }
-      .cat-chip.active {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent);
-        border-color: var(--hud-cyan, #26e0ff);
+        gap: 6px;
+        margin-top: var(--sp-2);
       }
       .cat-n {
-        opacity: 0.7;
-        margin-left: 0.2rem;
-      }
-
-      /* ---- filtros ---- */
-      .filters {
-        display: flex;
-        align-items: center;
-        gap: 0.6rem;
-        flex-wrap: wrap;
-      }
-      .seg {
-        display: inline-flex;
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 26%, transparent);
-        border-radius: 6px;
-        overflow: hidden;
-      }
-      .seg-btn {
-        background: transparent;
-        border: 0;
-        color: inherit;
-        font: inherit;
-        font-size: 0.8rem;
-        padding: 0.35rem 0.8rem;
-        cursor: pointer;
-      }
-      .seg-btn.active {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 20%, transparent);
+        margin-left: 2px;
+        font-weight: 600;
+        color: var(--muted);
       }
       .search {
-        flex: 1;
-        min-width: 12rem;
-        background: rgba(4, 8, 18, 0.6);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 26%, transparent);
-        border-radius: 5px;
-        padding: 0.4rem 0.6rem;
-        color: inherit;
-        font: inherit;
-        font-size: 0.85rem;
+        flex: 1 1 18rem;
+        min-width: 0;
       }
-
-      /* ---- painel/tabela ---- */
-      .panel {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 4%, transparent);
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 22%, transparent);
-        border-radius: 8px;
-        padding: 0.6rem;
-        overflow-x: auto;
-      }
-      .state {
-        padding: 1.5rem 1rem;
-        text-align: center;
+      .data-table .meta {
         display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
+        flex-wrap: wrap;
         align-items: center;
+        gap: 4px var(--sp-2);
       }
-      .grid-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.85rem;
+      .meta.why,
+      .meta.act {
+        display: block;
+        margin-top: 3px;
+        color: var(--text-2);
       }
-      .grid-table th {
-        text-align: left;
-        font-size: 0.66rem;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        opacity: 0.6;
-        padding: 0.4rem 0.6rem;
-        border-bottom: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent);
-      }
-      .grid-table td {
-        padding: 0.5rem 0.6rem;
-        vertical-align: top;
-        border-bottom: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 8%, transparent);
+      .meta.act em {
+        font-style: normal;
+        color: var(--muted);
       }
       .row.resolved {
         opacity: 0.62;
       }
-      .title {
-        display: block;
-        line-height: 1.3;
-      }
-      .meta {
-        font-size: 0.72rem;
-        opacity: 0.62;
-        display: inline-flex;
-        gap: 0.4rem;
-        align-items: center;
-        flex-wrap: wrap;
-      }
       .c-rank {
-        width: 3.5rem;
-        opacity: 0.85;
+        width: 4rem;
+        color: var(--text-2);
       }
       .c-score,
       .c-gap,
@@ -528,141 +366,72 @@ import {
         white-space: nowrap;
       }
       .gap {
-        color: #f5a524;
         font-weight: 600;
+        color: var(--amber);
       }
       .c-exp {
         text-align: right;
         white-space: nowrap;
       }
-      .badge {
-        font-size: 0.62rem;
-        padding: 0.05rem 0.4rem;
-        border-radius: 3px;
-        border: 1px solid currentColor;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-      }
-      .badge.ok {
-        color: var(--hud-cyan, #26e0ff);
-      }
       .badge.src {
-        color: #f5a524;
-      }
-      .badge.gen {
-        color: #9aa7c7;
-      }
-      .meta.why,
-      .meta.act {
-        display: block;
-        margin-top: 0.2rem;
-      }
-      .meta.act em {
-        font-style: italic;
-        opacity: 0.8;
-      }
-      .linkbtn {
-        background: transparent;
-        border: 0;
-        color: var(--hud-cyan, #26e0ff);
-        font: inherit;
-        font-size: 0.78rem;
-        cursor: pointer;
+        color: var(--amber);
       }
       .details-row td {
-        background: rgba(4, 8, 18, 0.35);
+        background: rgba(5, 7, 15, 0.45);
       }
       .details {
         display: flex;
         flex-direction: column;
-        gap: 0.6rem;
-        padding: 0.3rem 0.2rem;
+        gap: var(--sp-3);
+        padding: var(--sp-1) 2px;
       }
       .det p {
-        margin: 0.15rem 0 0;
-        font-size: 0.82rem;
-        line-height: 1.4;
-        opacity: 0.9;
         max-width: 90ch;
+        margin-top: 2px;
+        font-size: var(--fs-sm);
+        line-height: var(--lh);
+        color: var(--text-2);
       }
       .det-label {
-        font-size: 0.64rem;
+        display: block;
+        margin-bottom: 2px;
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
-        letter-spacing: 0.08em;
-        opacity: 0.55;
+        color: var(--muted);
       }
       .det-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-        gap: 0.5rem;
+        gap: var(--sp-3);
       }
       .det-grid > div {
         display: flex;
         flex-direction: column;
       }
-      .mono {
-        font-family: ui-monospace, monospace;
-        font-size: 0.76rem;
-        opacity: 0.85;
-      }
       .threats {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.3rem;
-        margin-top: 0.2rem;
+        gap: 6px;
+        margin-top: var(--sp-1);
       }
       .threat {
-        font-size: 0.72rem;
-        padding: 0.1rem 0.45rem;
-        border-radius: 999px;
-        background: color-mix(in srgb, #ff6b8a 12%, transparent);
-        border: 1px solid color-mix(in srgb, #ff6b8a 30%, transparent);
+        padding: 2px var(--sp-2);
+        border: 1px solid rgba(255, 61, 154, 0.35);
+        border-radius: var(--radius-pill);
+        background: var(--tint-magenta);
+        color: #ffb3d4;
+        font-size: var(--fs-meta);
       }
       .seen {
-        font-size: 0.72rem;
-        opacity: 0.55;
-        margin: 0.1rem 0 0;
+        font-size: var(--fs-meta);
+        color: var(--muted);
       }
-      .pager {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.75rem;
-        padding: 0.6rem 0.4rem 0.2rem;
-      }
-      .pg-info {
-        font-size: 0.75rem;
-        opacity: 0.65;
-      }
-
-      /* ---- botões ---- */
-      button.primary {
-        background: color-mix(in srgb, var(--hud-cyan, #26e0ff) 18%, transparent);
-        border: 1px solid var(--hud-cyan, #26e0ff);
-        color: inherit;
-        border-radius: 5px;
-        padding: 0.45rem 1rem;
-        font: inherit;
-        font-size: 0.82rem;
-        cursor: pointer;
-      }
-      button.ghost {
-        background: transparent;
-        border: 1px solid color-mix(in srgb, var(--hud-cyan, #26e0ff) 30%, transparent);
-        color: inherit;
-        border-radius: 5px;
-        padding: 0.4rem 0.8rem;
-        font: inherit;
-        font-size: 0.8rem;
-        cursor: pointer;
-      }
-      button.sm {
-        padding: 0.25rem 0.6rem;
-        font-size: 0.74rem;
-      }
-      button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
+      @media (max-width: 720px) {
+        .card.wide {
+          grid-column: auto;
+        }
       }
     `,
   ],

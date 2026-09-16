@@ -210,26 +210,26 @@ import { severityPt } from '../../models/vulnerability.models';
       .xsc { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line, rgba(255,255,255,0.15)); }
       .xsc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
       .xsc-head h4 { margin: 0; font-size: 13.5px; font-weight: 600; }
-      .xsc-when, .xsc-note, .xsc-pulse, .xsc-code, .xsc-sub, .xsc-k { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color: var(--muted, #9aa7c7); }
-      .xsc-k { text-transform: uppercase; letter-spacing: 0.08em; }
+      .xsc-when, .xsc-note, .xsc-pulse, .xsc-code, .xsc-sub, .xsc-k { font-family: var(--mono, ui-monospace, monospace); font-size: var(--fs-meta); color: var(--muted, #9aa7c7); }
+      .xsc-k { text-transform: uppercase; letter-spacing: var(--tracking-caps); }
       .xsc-note { margin: 0; max-width: 900px; line-height: 1.5; display: block; }
       .xsc-scope { margin: 0; font-size: 12.5px; line-height: 1.55; max-width: 900px; }
       .xsc-assoc { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 12px; line-height: 1.5; max-width: 900px; }
       .xsc-assoc-text { flex: 1 1 320px; }
-      .xsc-err { display: flex; flex-direction: column; gap: 8px; font-family: var(--mono, monospace); font-size: 12px; color: var(--muted, #9aa7c7); }
-      .xsc-retry { align-self: flex-start; cursor: pointer; font-family: var(--mono, monospace); font-size: 11px; color: var(--cyan, #26e0ff); background: rgba(38,224,255,0.06); border: 1px solid rgba(38,224,255,0.35); border-radius: 8px; padding: 5px 12px; }
+      .xsc-err { display: flex; flex-direction: column; gap: 8px; font-family: var(--sans); font-size: 12px; color: var(--muted, #9aa7c7); }
+      .xsc-retry { align-self: flex-start; cursor: pointer; font-family: var(--sans); font-size: var(--fs-meta); color: var(--cyan, #26e0ff); background: rgba(38,224,255,0.06); border: 1px solid rgba(38,224,255,0.35); border-radius: 8px; padding: 5px 12px; }
       .xsc-rule { border: 1px solid var(--line, rgba(255,255,255,0.15)); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
       .xsc-rule.tone-attention { border-color: rgba(255, 61, 154, 0.45); }
       .xsc-rule.tone-warn { border-color: rgba(255, 176, 32, 0.45); }
       .xsc-rule-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
       .xsc-qa { margin: 0; display: grid; grid-template-columns: minmax(180px, 230px) 1fr; gap: 4px 12px; font-size: 12.5px; line-height: 1.5; }
-      .xsc-qa dt { color: var(--muted, #9aa7c7); font-size: 11.5px; }
+      .xsc-qa dt { color: var(--muted, #9aa7c7); font-size: var(--fs-meta); }
       .xsc-qa dd { margin: 0; }
       .xsc-caveats ul { margin: 4px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.5; color: var(--amber, #ffb020); }
-      .xsc-limit { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--muted, #9aa7c7); font-style: italic; }
-      .xsc-criteria { font-size: 11.5px; color: var(--muted, #9aa7c7); }
+      .xsc-limit { margin: 0; font-size: var(--fs-meta); line-height: 1.5; color: var(--muted, #9aa7c7); font-style: italic; }
+      .xsc-criteria { font-size: var(--fs-meta); color: var(--muted, #9aa7c7); }
       .xsc-criteria ol { margin: 6px 0 0; padding-left: 18px; line-height: 1.5; }
-      .xsc-badge { display: inline-block; max-width: 100%; white-space: normal; font-family: var(--mono, monospace); font-size: 10.5px; line-height: 1.4; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line, rgba(255,255,255,0.2)); color: var(--muted, #9aa7c7); }
+      .xsc-badge { display: inline-block; max-width: 100%; white-space: normal; font-family: var(--sans); font-size: var(--fs-caps); line-height: 1.4; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line, rgba(255,255,255,0.2)); color: var(--muted, #9aa7c7); }
       .xsc-badge.tone-attention { color: var(--magenta, #ff3d9a); border-color: rgba(255, 61, 154, 0.5); }
       .xsc-badge.tone-warn { color: var(--amber, #ffb020); border-color: rgba(255, 176, 32, 0.5); }
       .xsc-badge.tone-ok { color: var(--cyan, #26e0ff); border-color: rgba(38, 224, 255, 0.45); }
@@ -238,15 +238,15 @@ import { severityPt } from '../../models/vulnerability.models';
       /* Layout fixo: a tabela ocupa a largura disponível e quebra o texto — nunca alarga o contêiner que a hospeda. */
       .xsc-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
       .xsc-table td { overflow-wrap: anywhere; }
-      .xsc-table th { text-align: left; font-family: var(--mono, monospace); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted, #9aa7c7); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line, rgba(255,255,255,0.15)); }
+      .xsc-table th { text-align: left; font-family: var(--sans); font-size: var(--fs-caps); text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--muted, #9aa7c7); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line, rgba(255,255,255,0.15)); }
       .xsc-table td { padding: 7px 8px; vertical-align: top; border-bottom: 1px solid var(--line-2, rgba(255,255,255,0.07)); }
       .xsc-table tr.off td { opacity: 0.75; }
       .xsc-sub { display: block; margin-top: 2px; }
       .xsc-sub.warn { color: var(--amber, #ffb020); }
-      .xsc-date { white-space: nowrap; font-family: var(--mono, monospace); font-size: 11px; }
+      .xsc-date { white-space: nowrap; font-family: var(--sans); font-size: var(--fs-meta); }
       .xsc-mono { font-family: var(--mono, monospace); }
       .xsc-pager { display: flex; gap: 8px; }
-      .xsc-pager button { font-family: var(--mono, monospace); font-size: 11px; color: var(--text, inherit); background: var(--panel-2, transparent); border: 1px solid var(--line, rgba(255,255,255,0.2)); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+      .xsc-pager button { font-family: var(--sans); font-size: var(--fs-meta); color: var(--text, inherit); background: var(--panel-2, transparent); border: 1px solid var(--line, rgba(255,255,255,0.2)); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
       .xsc-pager button:disabled { opacity: 0.35; cursor: not-allowed; }
       @media (max-width: 760px) { .xsc-qa { grid-template-columns: 1fr; } }
     `,

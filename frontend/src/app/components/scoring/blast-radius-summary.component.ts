@@ -57,7 +57,7 @@ import { BlastRadiusSummary } from '../../models/dashboard.models';
         margin-bottom: 12px;
       }
       .br-score {
-        font-family: var(--display);
+        font-family: var(--sans);
         font-weight: 700;
         font-size: 38px;
         line-height: 1;
@@ -69,15 +69,15 @@ import { BlastRadiusSummary } from '../../models/dashboard.models';
         gap: 2px;
       }
       .br-level {
-        font-family: var(--mono);
-        font-size: 11px;
-        letter-spacing: 0.14em;
+        font-family: var(--sans);
+        font-size: var(--fs-meta);
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         color: var(--muted);
       }
       .br-cap {
-        font-family: var(--mono);
-        font-size: 10px;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
         color: var(--muted);
         opacity: 0.7;
       }
@@ -132,23 +132,23 @@ import { BlastRadiusSummary } from '../../models/dashboard.models';
         background: rgba(122, 145, 190, 0.03);
       }
       .br-fact b {
-        font-family: var(--display);
+        font-family: var(--sans);
         font-weight: 700;
         font-size: 19px;
         color: var(--cyan);
       }
       .br-fact em {
         font-style: normal;
-        font-family: var(--mono);
-        font-size: 10px;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
         line-height: 1.4;
         color: var(--muted);
       }
 
       .br-empty {
         margin: 6px 0 0;
-        font-family: var(--mono);
-        font-size: 11.5px;
+        font-family: var(--sans);
+        font-size: var(--fs-meta);
         line-height: 1.55;
         color: var(--muted);
       }

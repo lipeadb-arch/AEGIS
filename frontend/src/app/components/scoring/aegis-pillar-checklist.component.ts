@@ -128,14 +128,14 @@ import { MissingRequirementsComponent } from './missing-requirements.component';
       }
       .chk-eyebrow {
         display: block;
-        font-family: var(--mono);
-        font-size: 9.5px;
-        letter-spacing: 0.16em;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
+        letter-spacing: var(--tracking-caps);
         color: var(--muted);
       }
       .chk-hd h3 {
         margin: 3px 0 0;
-        font-family: var(--display);
+        font-family: var(--sans);
         font-size: 16px;
         font-weight: 600;
         color: var(--text);
@@ -144,12 +144,12 @@ import { MissingRequirementsComponent } from './missing-requirements.component';
         display: flex;
         align-items: baseline;
         gap: 7px;
-        font-family: var(--mono);
-        font-size: 11px;
+        font-family: var(--sans);
+        font-size: var(--fs-meta);
         color: var(--muted);
       }
       .chk-tally b {
-        font-family: var(--display);
+        font-family: var(--sans);
         font-size: 14px;
         color: var(--cyan);
       }
@@ -212,22 +212,21 @@ import { MissingRequirementsComponent } from './missing-requirements.component';
         gap: 1px;
         min-width: 0;
       }
+      /* Linha não expansível: o título quebra linha para ser lido inteiro (sem reticências nem hover). */
       .name {
         font-family: var(--sans);
         font-size: 12.5px;
         color: var(--text);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        overflow-wrap: anywhere;
       }
       .code {
         font-family: var(--mono);
-        font-size: 10px;
-        letter-spacing: 0.03em;
+        font-size: var(--fs-caps);
+        letter-spacing: 0;
         color: var(--muted);
       }
       .pts {
-        font-family: var(--display);
+        font-family: var(--sans);
         font-weight: 600;
         font-size: 12.5px;
         color: var(--muted);
@@ -235,7 +234,7 @@ import { MissingRequirementsComponent } from './missing-requirements.component';
       .pts i {
         font-style: normal;
         opacity: 0.6;
-        font-size: 10.5px;
+        font-size: var(--fs-caps);
       }
 
       .chk-state {
@@ -243,7 +242,7 @@ import { MissingRequirementsComponent } from './missing-requirements.component';
         align-items: center;
         gap: 11px;
         padding: 18px 2px;
-        font-family: var(--mono);
+        font-family: var(--sans);
         font-size: 12px;
         color: var(--muted);
       }
@@ -268,8 +267,8 @@ import { MissingRequirementsComponent } from './missing-requirements.component';
         margin: 0;
       }
       .chk-state.err button {
-        font-family: var(--mono);
-        font-size: 11px;
+        font-family: var(--sans);
+        font-size: var(--fs-meta);
         color: var(--cyan);
         background: none;
         border: 1px solid rgba(38, 224, 255, 0.35);
@@ -282,7 +281,7 @@ import { MissingRequirementsComponent } from './missing-requirements.component';
       }
 
       .empty {
-        font-family: var(--mono);
+        font-family: var(--sans);
         font-size: 12px;
         color: var(--muted);
         padding: 14px 4px;
