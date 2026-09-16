@@ -95,8 +95,9 @@ import {
     <section class="page">
       <header class="page-head">
         <div>
+          <p class="page-eyebrow">Operação</p>
           <h1>Central de Prioridades</h1>
-          <p class="sub">
+          <p class="page-desc">
             AEGIS Score (controles NIST CSF avaliados), recomendações de postura do Microsoft Secure Score,
             vulnerabilidades identificadas em ativos e achados de identidade do AEGIS KNIGHT são dimensões
             <strong>relacionadas, porém distintas</strong>. Elas <strong>não formam um único score</strong>: cada fila
@@ -104,10 +105,10 @@ import {
             dispositivos — não é uma ordem universal entre identidades, documentação e dispositivos.
           </p>
           @if (data()) {
-            <p class="freshness">Leitura de {{ fmtDate(data()!.generatedAt) }}</p>
+            <p class="page-meta">Leitura de {{ fmtDate(data()!.generatedAt) }}</p>
           }
         </div>
-        <div class="head-actions">
+        <div class="page-actions">
           <!-- Sem nenhuma leitura, uma análise pressuporia evidência que não existe. -->
           <button
             type="button"
@@ -125,7 +126,7 @@ import {
       </header>
 
       @if (loading()) {
-        <div class="panel"><p class="muted">Carregando prioridades…</p></div>
+        <div class="panel"><div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>Carregando prioridades…</p></div></div>
       } @else if (error()) {
         <div class="panel">
           <div class="state error">
@@ -138,49 +139,49 @@ import {
         <div class="cards">
           <!-- [AEGIS-LANGUAGE-STATES-01] Sem leitura, os cartões mostram "—" e o estado — nunca 0. -->
           <div class="card">
-            <span class="card-label">AEGIS Score · NIST CSF</span>
-            <span class="card-value" [class.muted]="posture()!.percentage === null">
+            <span class="metric-label">AEGIS Score · NIST CSF</span>
+            <span class="metric-value" [class.is-na]="posture()!.percentage === null">
               {{ postureText() }}
             </span>
-            <span class="card-meta">
+            <span class="metric-unit">
               {{ posture()!.evaluationState === 'Evaluated' ? 'avaliado' : 'não avaliado' }} · cobertura
               {{ num(posture()!.coveragePercentage) }}% dos controles elegíveis
             </span>
           </div>
           <div class="card">
-            <span class="card-label">{{ recommendationsLabel }}</span>
+            <span class="metric-label">{{ recommendationsLabel }}</span>
             @if (exposureReading().hasData) {
-              <span class="card-value">{{ exposures()!.summary.totalOpen }}</span>
-              <span class="card-meta">pendentes · fonte: {{ exposures()!.summary.sourceLabel }}</span>
+              <span class="metric-value">{{ exposures()!.summary.totalOpen }}</span>
+              <span class="metric-unit">pendentes · fonte: {{ exposures()!.summary.sourceLabel }}</span>
             } @else {
-              <span class="card-value muted">—</span>
-              <span class="card-meta">{{ readingShort(exposureReading().state) }} · {{ exposures()!.summary.sourceLabel }}</span>
+              <span class="metric-value is-na">—</span>
+              <span class="metric-unit">{{ readingShort(exposureReading().state) }} · {{ exposures()!.summary.sourceLabel }}</span>
             }
           </div>
           <div class="card">
-            <span class="card-label">Vulnerabilidades</span>
+            <span class="metric-label">Vulnerabilidades</span>
             @if (vulnReading().hasData) {
-              <span class="card-value">{{ vulns()!.summary.distinctCvesOpen }}</span>
-              <span class="card-meta">
+              <span class="metric-value">{{ vulns()!.summary.distinctCvesOpen }}</span>
+              <span class="metric-unit">
                 problema(s) distinto(s) em aberto · {{ vulns()!.summary.totalOpen }} ocorrência(s) em ativos
               </span>
             } @else {
-              <span class="card-value muted">—</span>
-              <span class="card-meta">{{ readingShort(vulnReading().state) }}</span>
+              <span class="metric-value is-na">—</span>
+              <span class="metric-unit">{{ readingShort(vulnReading().state) }}</span>
             }
           </div>
           <div class="card">
-            <span class="card-label">Ativos afetados</span>
+            <span class="metric-label">Ativos afetados</span>
             @if (vulnReading().hasData) {
-              <span class="card-value">{{ vulns()!.summary.affectedAssetsOpen }}</span>
-              <span class="card-meta">com vulnerabilidade em aberto</span>
+              <span class="metric-value">{{ vulns()!.summary.affectedAssetsOpen }}</span>
+              <span class="metric-unit">com vulnerabilidade em aberto</span>
             } @else {
-              <span class="card-value muted">—</span>
-              <span class="card-meta">{{ readingShort(vulnReading().state) }}</span>
+              <span class="metric-value is-na">—</span>
+              <span class="metric-unit">{{ readingShort(vulnReading().state) }}</span>
             }
           </div>
           <div class="card wide">
-            <span class="card-label">Coleta das fontes</span>
+            <span class="metric-label">Coleta das fontes</span>
             <div class="collect">
               <span class="collect-row">
                 <span class="collect-k">{{ recommendationsLabel }}</span>
@@ -210,7 +211,7 @@ import {
         <!-- ---------- [AEGIS-MVP-PRODUCT-03] Sub-abas da Central ----------
              Achados e planos são leituras da MESMA central, não duas entradas de menu: acrescentar "Planos de
              ação" à navegação principal separaria o problema do trabalho que o endereça. -->
-        <div class="subtabs" role="tablist">
+        <div class="tabbar" role="tablist">
           <button type="button" role="tab" [class.on]="tab() === 'achados'" [attr.aria-selected]="tab() === 'achados'"
             (click)="setTab('achados')">
             Achados
@@ -219,16 +220,16 @@ import {
             (click)="setTab('planos')">
             Planos de ação
             <!-- Contagem só com leitura válida: depois de uma falha, o número anterior não descreve a lista atual. -->
-            @if (plans().length && !plansError()) { <span class="n">{{ plans().length }}</span> }
+            @if (plans().length && !plansError()) { <span class="tab-count">{{ plans().length }}</span> }
           </button>
         </div>
 
         @if (tab() === 'planos') {
           <div class="queue">
-            <div class="queue-head">
+            <div class="section-head">
               <div>
                 <h2>Planos de ação</h2>
-                <p class="queue-sub">
+                <p class="section-desc">
                   Planos nascidos de achados de identidade (AEGIS KNIGHT) e de casos de vulnerabilidade em
                   dispositivos. <strong>A etapa do plano e o que foi comprovado são coisas distintas</strong>:
                   concluir um plano é decisão de gestão sobre o trabalho; só a validação registra o que foi
@@ -250,7 +251,7 @@ import {
                   </p>
                 </div>
               } @else {
-                <table class="grid-table">
+                <table class="data-table">
                   <thead>
                     <tr>
                       <th>Ação</th>
@@ -299,10 +300,10 @@ import {
         @if (tab() === 'achados') {
         <!-- ---------- Fila de recomendações de postura (Microsoft Secure Score) ---------- -->
         <div class="queue">
-          <div class="queue-head">
+          <div class="section-head">
             <div>
               <h2>{{ recommendationsLabel }}</h2>
-              <p class="queue-sub">
+              <p class="section-desc">
                 Recomendações pendentes na ordem da própria fonte (rank, depois maior diferença de pontos). Fonte:
                 <strong>{{ exposures()!.summary.sourceLabel }}</strong>. A diferença de pontos não comprova, sozinha,
                 configuração insegura nem exposição de ativo.
@@ -326,7 +327,7 @@ import {
                 </p>
               </div>
             } @else {
-              <table class="grid-table">
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th class="c-rank">Ordem (fonte)</th>
@@ -372,10 +373,10 @@ import {
 
         <!-- ---------- Fila de vulnerabilidades ---------- -->
         <div class="queue">
-          <div class="queue-head">
+          <div class="section-head">
             <div>
               <h2>Vulnerabilidades em ativos</h2>
-              <p class="queue-sub">
+              <p class="section-desc">
                 Vulnerabilidades identificadas pelas fontes, agrupadas por problema e ordenadas por exploit informado,
                 severidade técnica (CVSS/EPSS) e criticidade cadastrada do ativo — não é risco de negócio calculado.
                 @if (vulns()!.summary.sources.length > 0) {
@@ -398,7 +399,7 @@ import {
                 <p class="muted">Nenhuma vulnerabilidade aberta na última leitura das fontes.</p>
               </div>
             } @else {
-              <table class="grid-table">
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th>Problema</th>
@@ -449,10 +450,10 @@ import {
              Leitura PRÓPRIA (carga, falha e filtros independentes): uma falha aqui não derruba a Central e não é lida como
              "nenhuma prioridade". Um item por dispositivo, apontando o caso que determinou a posição. -->
         <div class="queue">
-          <div class="queue-head">
+          <div class="section-head">
             <div>
               <h2>Prioridade de tratamento · vulnerabilidades em dispositivos</h2>
-              <p class="queue-sub">
+              <p class="section-desc">
                 Um item por dispositivo, na ordem da política determinística e versionada do AEGIS: severidade técnica e
                 exploit informados pela fonte, antecipados no máximo uma faixa por contexto comprovado (criticidade
                 declarada ou situação entre fontes identificada). <strong>Não é avaliação completa dos riscos do
@@ -480,7 +481,7 @@ import {
           }
           <div class="panel">
             @if (dpView().kind === 'loading') {
-              <p class="muted">Calculando a prioridade de tratamento…</p>
+              <div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>Calculando a prioridade de tratamento…</p></div>
             } @else if (dpView().kind === 'error') {
               <div class="state error">
                 <p class="err">⚠ {{ dpText() }}</p>
@@ -494,14 +495,14 @@ import {
               <p class="xs-summary">{{ dpSummary() }}</p>
               <div class="xs-filters" role="group" aria-label="Filtrar por faixa">
                 @for (f of dpBands; track f.label) {
-                  <button type="button" class="xs-chip" [class.on]="dpFilter().band === f.value"
+                  <button type="button" class="filter-chip" [class.on]="dpFilter().band === f.value"
                     [attr.aria-pressed]="dpFilter().band === f.value" (click)="setDpBand(f.value)">{{ f.label }}</button>
                 }
               </div>
               @if (dpView().kind === 'onlyInsufficient' || dpView().kind === 'filterEmpty') {
                 <div class="state empty"><p class="muted">{{ dpText() }}</p></div>
               } @else {
-                <table class="grid-table dp-table">
+                <table class="data-table dp-table">
                   <thead>
                     <tr>
                       <th class="c-rank">#</th>
@@ -550,8 +551,8 @@ import {
                     }
                   </tbody>
                 </table>
-                <div class="xs-pager">
-                  <span class="meta">{{ dpRange() }}</span>
+                <div class="pager">
+                  <span class="meta range">{{ dpRange() }}</span>
                   @if (dpRefreshing()) { <span class="meta" role="status">Atualizando a fila…</span> }
                   <button type="button" class="ghost" (click)="goDp(dl.page - 1)" [disabled]="dl.page <= 1">‹ Anterior</button>
                   <button type="button" class="ghost" (click)="goDp(dl.page + 1)" [disabled]="dl.page * dl.pageSize >= dl.total">Próxima ›</button>
@@ -593,10 +594,10 @@ import {
              Leitura PRÓPRIA (carga, falha e filtros independentes das filas): uma falha aqui não derruba a Central, e
              uma falha da Central não é lida como "nenhuma situação". Não é fila de prioridade nem ranking de risco. -->
         <div class="queue">
-          <div class="queue-head">
+          <div class="section-head">
             <div>
               <h2>{{ xsHeading }}</h2>
-              <p class="queue-sub">
+              <p class="section-desc">
                 Condições informadas por fontes diferentes que coexistem no <strong>mesmo dispositivo</strong> —
                 vulnerabilidades do Microsoft Defender × conformidade ou criptografia do Microsoft Intune — segundo regras
                 explícitas e versionadas. <strong>Não é fila de prioridade nem ranking de risco</strong>: a lista segue a
@@ -611,7 +612,7 @@ import {
           }
           <div class="panel">
             @if (xsView().kind === 'loading') {
-              <p class="muted">Avaliando as regras entre fontes…</p>
+              <div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>Avaliando as regras entre fontes…</p></div>
             } @else if (xsView().kind === 'error') {
               <div class="state error">
                 <p class="err">⚠ {{ xsText() }}</p>
@@ -623,7 +624,7 @@ import {
               @let l = xs()!;
               <p class="xs-summary">{{ xsSummary() }}</p>
               <div class="xs-tally-wrap">
-                <table class="grid-table xs-tally">
+                <table class="data-table xs-tally">
                   <caption>Estado por regra — unidade: ativos</caption>
                   <thead>
                     <tr>
@@ -659,7 +660,7 @@ import {
 
               <div class="xs-filters" role="group" aria-label="Filtrar situações">
                 @for (f of xsStates; track f.value) {
-                  <button type="button" class="xs-chip" [class.on]="xsFilter().state === f.value"
+                  <button type="button" class="filter-chip" [class.on]="xsFilter().state === f.value"
                     [attr.aria-pressed]="xsFilter().state === f.value" (click)="setXsState(f.value)">{{ f.label }}</button>
                 }
                 <select class="xs-select" [value]="xsFilter().rule ?? ''" (change)="setXsRule($any($event.target).value)"
@@ -675,7 +676,7 @@ import {
                 <!-- Zero conclusivo, inconclusivo ou misto (e o recorte do teto) vêm dos totais por estado. -->
                 <div class="state empty"><p class="muted">{{ xsText() }}</p></div>
               } @else {
-                <table class="grid-table">
+                <table class="data-table">
                   <thead>
                     <tr>
                       <th>Ativo</th>
@@ -721,8 +722,8 @@ import {
                     }
                   </tbody>
                 </table>
-                <div class="xs-pager">
-                  <span class="meta">{{ xsRange() }}</span>
+                <div class="pager">
+                  <span class="meta range">{{ xsRange() }}</span>
                   <button type="button" class="ghost" (click)="goXs(l.page - 1)" [disabled]="l.page <= 1">‹ Anterior</button>
                   <button type="button" class="ghost" (click)="goXs(l.page + 1)" [disabled]="l.page * l.pageSize >= l.total">Próxima ›</button>
                 </div>
@@ -741,10 +742,10 @@ import {
 
         <!-- ---------- [AEGIS-MVP-PRODUCT-02] Fila de achados de identidade (AEGIS KNIGHT) ---------- -->
         <div class="queue">
-          <div class="queue-head">
+          <div class="section-head">
             <div>
               <h2>Achados de identidade</h2>
-              <p class="queue-sub">
+              <p class="section-desc">
                 Vereditos do <strong>AEGIS KNIGHT</strong> sobre a postura de identidade — régua e score
                 próprios, <strong>não somados</strong> ao AEGIS Score nem às vulnerabilidades. Aqui aparecem os
                 indicadores com veredito <strong>Exposto</strong> (a regra encontrou a condição na coleta); abrir um
@@ -796,7 +797,7 @@ import {
                   </p>
                 </div>
               } @else {
-                <table class="grid-table">
+                <table class="data-table">
                   <thead>
                     <tr>
                       <th>Achado</th>
@@ -867,134 +868,254 @@ import {
   `,
   styles: [
     `
-      /* Alias local da cor de acento (dual-neon cyan): encurta os ~14 usos de color-mix e mantém o
-         fallback #26e0ff quando --hud-cyan não está definido. Custom property herda para todo o componente. */
-      :host { --c: var(--hud-cyan, #26e0ff); }
-      .page { padding: 1.25rem 1.5rem 2rem; display: flex; flex-direction: column; gap: 1.1rem; }
-      .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
-      h1 { margin: 0; font-size: 1.35rem; }
-      h2 { margin: 0; font-size: 1.02rem; }
-      .sub { margin: 0.35rem 0 0; max-width: 82ch; opacity: 0.72; font-size: 0.85rem; line-height: 1.45; }
-      .freshness { margin: 0.4rem 0 0; font-size: 0.72rem; opacity: 0.55; }
-      .head-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-      .muted { opacity: 0.65; font-size: 0.85rem; }
-      .dim { opacity: 0.4; }
-      .err { color: #ff6b8a; font-size: 0.85rem; }
+      /* Página, cabeçalho, abas, cartões, tabelas, filtros, badges, avisos, estados e botões: sistema visual global
+         (styles.css). Aqui só o que é próprio da Central. */
+      .card.wide {
+        grid-column: span 2;
+      }
+      .collect {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: var(--sp-1);
+      }
+      .collect-row {
+        display: flex;
+        justify-content: space-between;
+        gap: var(--sp-3);
+        font-size: var(--fs-sm);
+      }
+      .collect-k {
+        color: var(--text-2);
+      }
+      .collect-v {
+        font-weight: 500;
+        text-align: right;
+      }
+      .collect-v.muted {
+        font-weight: 400;
+      }
 
-      .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.75rem; }
-      .card, .panel { background: color-mix(in srgb, var(--c) 4%, transparent); border: 1px solid color-mix(in srgb, var(--c) 22%, transparent); border-radius: 8px; }
-      .card { padding: 0.8rem 0.95rem; display: flex; flex-direction: column; gap: 0.2rem; }
-      .card.wide { grid-column: span 2; min-width: 0; }
-      .card-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.6; }
-      .card-value { font-size: 1.6rem; font-weight: 600; }
-      .card-value.muted { font-size: 1.05rem; opacity: 0.7; }
-      .card-meta { font-size: 0.72rem; opacity: 0.6; }
-      .collect { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.15rem; }
-      .collect-row { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.78rem; }
-      .collect-k { opacity: 0.62; }
-      .collect-v { font-size: 0.76rem; }
-      .collect-v.muted { font-family: inherit; }
-
-      .queue { display: flex; flex-direction: column; gap: 0.5rem; }
-      .subtabs { display: flex; gap: 0.4rem; border-bottom: 1px solid color-mix(in srgb, var(--c) 18%, transparent); }
-      .subtabs button { cursor: pointer; background: none; border: none; border-bottom: 2px solid transparent; color: inherit; opacity: 0.6; font: inherit; font-size: 0.85rem; padding: 0.45rem 0.85rem; }
-      .subtabs button.on { opacity: 1; color: var(--c); border-bottom-color: var(--c); }
-      .subtabs .n { font-size: 0.68rem; margin-left: 0.35rem; opacity: 0.75; }
-      .meta.late { color: #ff6b8a; }
+      /* Cada fila: cabeçalho de seção + painel com a tabela (rolagem lateral local). */
+      .queue {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-3);
+      }
+      .queue > .panel {
+        padding: var(--sp-2) var(--sp-3) var(--sp-3);
+        overflow-x: auto;
+      }
+      .dim {
+        color: var(--muted);
+      }
+      .rem,
+      .xs-rem {
+        display: block;
+        max-width: 60ch;
+        margin-top: 3px;
+        font-size: var(--fs-meta);
+        line-height: 1.45;
+        color: var(--text-2);
+      }
+      .rem em,
+      .xs-rem em {
+        font-style: normal;
+        color: var(--muted);
+      }
+      .meta.late {
+        color: var(--red-text);
+      }
+      .meta.demo,
+      .kb-v.demo {
+        color: var(--amber);
+      }
       /* [AEGIS-JOURNEY-01] Aba de planos com duas origens: origem e providência QUEBRAM linha, nunca alargam a tabela. */
-      .c-origin { min-width: 12rem; max-width: 18rem; }
-      .c-origin .meta, .c-next .meta { white-space: normal; overflow-wrap: anywhere; }
-      .c-next { min-width: 14rem; }
-      .meta.demo { color: #ffb020; opacity: 0.95; }
+      .c-origin {
+        min-width: 12rem;
+        max-width: 18rem;
+      }
+      .c-origin .meta,
+      .c-next .meta {
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .c-next {
+        min-width: 14rem;
+      }
+      .c-rank {
+        width: 4rem;
+        color: var(--text-2);
+      }
+      .c-cvss,
+      .c-gap,
+      .c-tier,
+      .c-state,
+      .c-when {
+        white-space: nowrap;
+      }
+      .gap {
+        font-weight: 600;
+        color: var(--amber);
+      }
+      .badge.src {
+        margin: 0 4px 4px 0;
+      }
+      .row.resolved {
+        opacity: 0.6;
+      }
+      a.link {
+        color: var(--cyan);
+        text-decoration: none;
+      }
+      a.link:hover {
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .notice .ghost {
+        margin-left: var(--sp-2);
+      }
+      .foot-note {
+        max-width: 92ch;
+        font-size: var(--fs-meta);
+        line-height: var(--lh);
+        color: var(--muted);
+      }
+
       /* [AEGIS-MVP-PRODUCT-02] Barra de contexto da avaliação KNIGHT: origem, score PRÓPRIO e cobertura. */
-      .knight-bar { display: flex; gap: 1.4rem; flex-wrap: wrap; padding: 0.55rem 0.7rem 0.75rem; }
-      .kb-item { display: flex; flex-direction: column; gap: 0.1rem; }
-      .kb-k { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.09em; opacity: 0.55; }
-      .kb-v { font-size: 0.86rem; }
-      .kb-v.demo { color: #ffb020; }
-      .kb-s { font-size: 0.68rem; opacity: 0.55; }
-      .badge.sev.Critical { border-color: #ff6b8a; color: #ff6b8a; }
-      .badge.sev.High { border-color: #ffb020; color: #ffb020; }
-      a.link { color: var(--c); text-decoration: none; }
-      a.link:hover { text-decoration: underline; }
-      .queue-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; }
-      .queue-sub { margin: 0.2rem 0 0; max-width: 78ch; opacity: 0.68; font-size: 0.8rem; }
-      .linknav { color: var(--c); text-decoration: none; font-size: 0.8rem; white-space: nowrap; border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); border-radius: 5px; padding: 0.35rem 0.7rem; }
-      .linknav:hover { background: color-mix(in srgb, var(--c) 12%, transparent); }
+      .knight-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--sp-3) 28px;
+        margin-bottom: var(--sp-1);
+        padding: var(--sp-3) var(--sp-3) var(--sp-4);
+        border-bottom: 1px solid var(--line-2);
+      }
+      .kb-item {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .kb-k {
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .kb-v {
+        font-size: var(--fs-body);
+        font-weight: 500;
+      }
+      .kb-s {
+        font-size: var(--fs-meta);
+        font-weight: 400;
+        color: var(--muted);
+      }
+      .badge.sev.Critical {
+        color: var(--red-text);
+      }
+      .badge.sev.High {
+        color: var(--amber);
+      }
 
-      .panel { padding: 0.6rem; overflow-x: auto; }
-      .state { padding: 1.4rem 1rem; text-align: center; display: flex; flex-direction: column; gap: 0.75rem; align-items: center; }
+      /* [AEGIS-CROSS-SOURCE-01] Situações entre fontes · [AEGIS-RISK-PRIORITIZATION-01] prioridade de tratamento. */
+      .xs-summary {
+        margin: var(--sp-2) var(--sp-1) var(--sp-3);
+        font-size: var(--fs-sm);
+      }
+      .xs-tally-wrap {
+        overflow-x: auto;
+        margin-bottom: var(--sp-3);
+      }
+      .xs-filters {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--sp-2);
+        margin: var(--sp-1) var(--sp-1) var(--sp-3);
+      }
+      .xs-select {
+        min-height: var(--control-h-sm);
+        font-size: var(--fs-meta);
+      }
+      .badge.xs-attention,
+      .badge.dp-attention {
+        color: var(--magenta);
+      }
+      .badge.xs-warn,
+      .badge.dp-warn {
+        color: var(--amber);
+      }
+      .badge.dp-info {
+        color: var(--cyan);
+      }
+      /* Rótulos longos de faixa e situação: caixa normal e quebra de linha — legíveis e sem alargar a tabela. */
+      .xs-state .badge,
+      .dp-band .badge {
+        max-width: 14rem;
+        white-space: normal;
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: var(--fs-meta);
+        line-height: 1.35;
+      }
+      .xs-open {
+        white-space: nowrap;
+      }
+      .xs-policy {
+        margin: var(--sp-3) var(--sp-1) var(--sp-1);
+      }
+      .xs-cves {
+        min-width: 8rem;
+      }
+      .xs-cves .meta {
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .xs-detail-panel {
+        margin: var(--sp-3) var(--sp-1) 0;
+        padding-top: var(--sp-3);
+        border-top: 1px solid var(--line);
+      }
+      .dp-tie {
+        max-width: 16rem;
+        margin-top: var(--sp-1);
+        white-space: normal;
+      }
+      .dp-ctx {
+        width: 17rem;
+      }
+      .dp-ctx .meta {
+        margin-bottom: 2px;
+        white-space: normal;
+      }
+      .dp-why {
+        min-width: 26rem;
+      }
+      .dp-why .xs-rem {
+        max-width: none;
+      }
+      .dp-why .meta.mono {
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .dp-detail-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: var(--sp-3);
+        margin-bottom: var(--sp-2);
+      }
 
-      .grid-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-      .grid-table th { text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.6; padding: 0.4rem 0.6rem; border-bottom: 1px solid color-mix(in srgb, var(--c) 18%, transparent); }
-      .grid-table td { padding: 0.5rem 0.6rem; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--c) 8%, transparent); }
-      .row.resolved { opacity: 0.6; }
-      .title { display: block; line-height: 1.3; }
-      .rem { display: block; font-size: 0.74rem; opacity: 0.66; margin-top: 0.15rem; max-width: 60ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .meta { font-size: 0.72rem; opacity: 0.62; display: block; }
-      .asset { color: var(--c); text-decoration: none; }
-      .asset:hover { text-decoration: underline; }
-      .c-rank { width: 3.5rem; opacity: 0.85; }
-      .c-cvss, .c-epss, .c-sev, .c-gap, .c-tier, .c-state, .c-when { white-space: nowrap; }
-      .freshness, .collect-v, .mono { font-family: ui-monospace, monospace; }
-      .gap, .badge.warn, .sev-medium { color: #f5a524; }
-      .gap { font-weight: 600; }
-      .mono { font-size: 0.82rem; }
-      .badge { font-size: 0.62rem; padding: 0.05rem 0.4rem; border-radius: 3px; border: 1px solid currentColor; text-transform: uppercase; letter-spacing: 0.05em; color: #9aa7c7; }
-      .badge.ok { color: var(--c); }
-      .badge.bad { color: #ff3d6a; }
-      .badge.src { margin-right: 0.2rem; }
-      .badge.lc { margin-top: 0.2rem; display: inline-block; }
-      .sev-tag { font-size: 0.72rem; padding: 0.1rem 0.45rem; border-radius: 3px; border: 1px solid currentColor; }
-      .sev-critical { color: #ff3d6a; }
-      .sev-high { color: #ff8a5c; }
-      .sev-low { color: #26e0ff; }
-      .sev-desconhecida { color: #9aa7c7; }
-
-      .notice { margin: 0; padding: 0.5rem 0.75rem; border-radius: 6px; font-size: 0.78rem; line-height: 1.4; }
-      .notice.warn, .warn-text { color: #f5a524; }
-      .notice.warn { background: color-mix(in srgb, #f5a524 9%, transparent); border: 1px solid color-mix(in srgb, #f5a524 30%, transparent); }
-      .foot-note { margin: 0.2rem 0 0; font-size: 0.74rem; opacity: 0.55; max-width: 90ch; line-height: 1.4; }
-
-      button.primary, button.ghost { color: inherit; border-radius: 5px; font: inherit; cursor: pointer; }
-      button.primary { background: color-mix(in srgb, var(--c) 18%, transparent); border: 1px solid var(--c); padding: 0.45rem 1rem; font-size: 0.82rem; }
-      button.ghost { background: transparent; border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); padding: 0.4rem 0.8rem; font-size: 0.8rem; }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-      /* [AEGIS-CROSS-SOURCE-01] Situações entre fontes: resumo por regra × estado, filtros e lista agrupada. */
-      .xs-summary { margin: 0.2rem 0.4rem 0.5rem; font-size: 0.82rem; }
-      .xs-tally-wrap { overflow-x: auto; margin-bottom: 0.6rem; }
-      .xs-tally caption { text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.55; padding: 0 0.6rem 0.3rem; }
-      .xs-filters { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 0.2rem 0.4rem 0.6rem; }
-      .xs-chip { cursor: pointer; font: inherit; font-size: 0.74rem; color: inherit; opacity: 0.7; background: transparent; border: 1px solid color-mix(in srgb, var(--c) 25%, transparent); border-radius: 999px; padding: 0.2rem 0.7rem; }
-      .xs-chip.on { opacity: 1; color: var(--c); border-color: var(--c); background: color-mix(in srgb, var(--c) 10%, transparent); }
-      .xs-select { font: inherit; font-size: 0.76rem; color: inherit; background: transparent; border: 1px solid color-mix(in srgb, var(--c) 25%, transparent); border-radius: 5px; padding: 0.2rem 0.5rem; }
-      .badge.xs-attention { color: #ff3d9a; }
-      .badge.xs-warn { color: #f5a524; }
-      .xs-open { font-size: 0.74rem; padding: 0.25rem 0.6rem; white-space: nowrap; }
-      .xs-pager { display: flex; gap: 0.5rem; align-items: center; justify-content: flex-end; padding: 0.5rem 0.4rem 0; }
-      .xs-policy { margin: 0.6rem 0.4rem 0.2rem; }
-      /* Colunas próprias que QUEBRAM linha: prévia de CVEs, selo e resumo nunca alargam o painel. */
-      .xs-rem { display: block; font-size: 0.74rem; opacity: 0.66; margin-top: 0.15rem; max-width: 52ch; line-height: 1.4; }
-      .xs-state .badge { display: inline-block; white-space: normal; max-width: 14rem; line-height: 1.35; }
-      .xs-cves { min-width: 8rem; }
-      .xs-cves .meta { white-space: normal; overflow-wrap: anywhere; }
-      .xs-detail-panel { margin: 0.7rem 0.4rem 0; padding-top: 0.4rem; border-top: 1px solid color-mix(in srgb, var(--c) 18%, transparent); }
-
-      /* [AEGIS-RISK-PRIORITIZATION-01] Fila de prioridade de tratamento: faixas por tom (nunca "ok" = seguro). */
-      .badge.dp-attention { color: #ff3d9a; }
-      .badge.dp-warn { color: #f5a524; }
-      .badge.dp-info { color: var(--c); }
-      .dp-band .badge { display: inline-block; white-space: normal; max-width: 13rem; line-height: 1.35; }
-      .dp-tie { white-space: normal; max-width: 16rem; margin-top: 0.25rem; }
-      .dp-ctx { width: 17rem; }
-      .dp-ctx .meta { white-space: normal; margin-bottom: 0.15rem; }
-      .dp-why { min-width: 26rem; }
-      .dp-why .xs-rem { max-width: none; }
-      .dp-why .meta.mono { white-space: normal; overflow-wrap: anywhere; font-size: 0.72rem; }
-      .dp-detail-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; margin-bottom: 0.35rem; }
-
-      @media (max-width: 720px) { .card.wide { grid-column: span 1; } }
+      @media (max-width: 720px) {
+        .card.wide {
+          grid-column: auto;
+        }
+        .dp-why {
+          min-width: 18rem;
+        }
+      }
     `,
   ],
 })

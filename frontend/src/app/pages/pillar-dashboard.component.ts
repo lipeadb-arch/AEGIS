@@ -29,17 +29,19 @@ import { AegisScoreService } from '../services/aegis-score.service';
   standalone: true,
   imports: [PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
   template: `
-    <section class="pillar">
-      <p class="eyebrow">NIST CSF 2.0 · {{ meta().code }}</p>
-      <header class="head">
-        <h1>{{ meta().label }} <span class="code">{{ meta().code }}</span></h1>
-        <p class="blurb">{{ meta().blurb }}</p>
-        <p class="description">{{ meta().description }}</p>
+    <section class="page pillar">
+      <header class="page-head">
+        <div>
+          <p class="page-eyebrow">NIST CSF 2.0 · {{ meta().code }}</p>
+          <h1>{{ meta().label }} <span class="code">{{ meta().code }}</span></h1>
+          <p class="page-desc">{{ meta().description }}</p>
+          <p class="page-meta">{{ meta().blurb }}</p>
+        </div>
       </header>
 
       @if (loading()) {
-        <div class="panel state">
-          <span class="pulse">Carregando a matriz de conformidade…</span>
+        <div class="panel">
+          <div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>Carregando a matriz de conformidade…</p></div>
         </div>
       } @else if (error()) {
         <!-- Mensagem OPERACIONAL: o cliente não deve ser mandado conferir endereço de API nem console. -->
@@ -90,7 +92,7 @@ import { AegisScoreService } from '../services/aegis-score.service';
               @case ('error') {
                 <div class="posture-err">
                   <span>Não foi possível carregar o resumo de postura.</span>
-                  <button type="button" class="retry-sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
+                  <button type="button" class="ghost sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
                 </div>
               }
             }
@@ -100,7 +102,7 @@ import { AegisScoreService } from '../services/aegis-score.service';
                Cegos). Eram dois blocos empilhados mostrando a mesma matriz — a aba elimina a
                redundância sem esconder nenhuma das duas leituras. -->
           <div class="panel list">
-            <div class="hd tabs" role="tablist">
+            <div class="tabbar" role="tablist">
               <button
                 type="button" role="tab" class="tab"
                 [class.on]="tab() === 'controls'" [attr.aria-selected]="tab() === 'controls'"
@@ -135,91 +137,57 @@ import { AegisScoreService } from '../services/aegis-score.service';
   `,
   styles: [
     `
-      :host {
-        display: block;
-        padding: 28px 32px 60px;
-      }
-      .head {
-        margin: 0 0 22px;
-      }
-      .head h1 {
-        font-family: var(--sans);
-        font-size: 24px;
-        color: var(--text);
-        margin: 0 0 4px;
-      }
-      .head .code {
+      /* Página, cabeçalho, painéis, abas, botões e estados: sistema visual global (styles.css). */
+      .page-head .code {
+        margin-left: var(--sp-2);
+        padding: 2px var(--sp-2);
+        border-radius: 6px;
+        background: var(--tint-cyan);
         font-family: var(--mono);
-        font-size: 13px;
+        font-size: 15px;
+        font-weight: 600;
         color: var(--cyan);
-        margin-left: 8px;
-      }
-      .head .blurb {
-        color: var(--muted);
-        font-size: 13px;
-        margin: 0;
-        font-family: var(--mono);
-        letter-spacing: 0.02em;
-      }
-      /* Subtítulo tático: parágrafo de leitura (sans), mutado e contido — informa sem disputar com os
-         gauges/cards. A fonte sans + max-width o distinguem do blurb (mono, categorias). */
-      .head .description {
-        color: var(--muted);
-        font-family: var(--sans);
-        font-size: 13.5px;
-        line-height: 1.6;
-        margin: 12px 0 0;
-        max-width: 820px;
+        vertical-align: middle;
       }
 
-      /* HUD de resposta: cards pequenos, lidos antes do gauge — é a métrica que o CISO cobra. */
+      /* HUD de resposta (DE/RS/RC): só ocupa espaço quando há medição — não medido ≠ zero. */
       .hud {
         display: flex;
-        gap: 12px;
         flex-wrap: wrap;
-        margin: 0 0 18px;
+        gap: var(--sp-3);
       }
       .hud-card {
         display: flex;
         flex-direction: column;
         gap: 2px;
-        min-width: 172px;
-        padding: 11px 14px;
+        min-width: 180px;
+        padding: var(--sp-3) var(--sp-4);
         border: 1px solid var(--line);
         border-left: 3px solid var(--cyan);
-        border-radius: 10px;
-        background: rgba(122, 145, 190, 0.03);
+        border-radius: var(--radius);
+        background: var(--panel);
       }
       .hud-k {
-        font-family: var(--mono);
-        font-size: 10px;
-        letter-spacing: 0.14em;
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         color: var(--cyan);
       }
       .hud-v {
-        font-family: var(--display);
+        font-size: 22px;
         font-weight: 700;
-        font-size: 20px;
-        color: var(--text);
       }
       .hud-l {
-        font-family: var(--mono);
-        font-size: 10px;
-        color: var(--muted);
+        font-size: var(--fs-meta);
+        color: var(--text-2);
       }
-      /* Sem medição: o card se apaga e mostra "—". Nunca um zero — zero minutos seria uma detecção
-         instantânea, o oposto de "ninguém mediu". */
-      /* Linha discreta que substitui os dois cartões vazios (ver o comentário no template). */
       .hud-none {
-        margin: 0 0 18px;
-        font-family: var(--mono);
-        font-size: 11.5px;
-        color: var(--muted);
+        font-size: var(--fs-sm);
+        color: var(--text-2);
       }
       .hud-card.void {
-        border-left-color: var(--line);
-        opacity: 0.7;
+        border-left-color: var(--line-strong);
       }
       .hud-card.void .hud-k,
       .hud-card.void .hud-v {
@@ -228,213 +196,68 @@ import { AegisScoreService } from '../services/aegis-score.service';
 
       .grid {
         display: grid;
-        grid-template-columns: 300px 1fr;
-        gap: 18px;
+        grid-template-columns: 320px minmax(0, 1fr);
+        gap: var(--sp-4);
         align-items: start;
       }
-
       .summary {
         display: flex;
         flex-direction: column;
         gap: 14px;
       }
-      .counts {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
-      }
-      .count {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        padding: 10px 12px;
-        border: 1px solid var(--line);
-        border-radius: 10px;
-        background: rgba(122, 145, 190, 0.03);
-      }
-      .count .n {
-        font-family: var(--display);
-        font-weight: 700;
-        font-size: 22px;
-        color: var(--text);
-      }
-      .count .l {
-        font-family: var(--mono);
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-        color: var(--muted);
-      }
-      .count.ok .n {
-        color: var(--cyan);
-      }
-      .count.partial .n {
-        color: var(--amber);
-      }
-      /* Não conformes: contido quando é 0, ACESO quando há risco. */
-      .count.fail.hot {
-        border-color: rgba(255, 45, 111, 0.45);
-        background: rgba(255, 45, 111, 0.07);
-        box-shadow: inset 0 0 22px -14px rgba(255, 45, 111, 0.7);
-      }
-      .count.fail.hot .n {
-        color: var(--red);
-        text-shadow: 0 0 18px rgba(255, 45, 111, 0.5);
-      }
-
-      .list .hd {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        margin-bottom: 14px;
-      }
-      /* Abas do painel: veredito × cobertura de prova. A dica migra para a direita da barra. */
-      .list .hd.tabs {
-        gap: 4px;
-        justify-content: flex-start;
-        border-bottom: 1px solid var(--line-2);
-        padding-bottom: 0;
-      }
-      .list .hd.tabs .hint {
-        margin-left: auto;
-        padding-bottom: 9px;
-      }
-      .list .tab {
-        display: inline-flex;
-        align-items: center;
-        gap: 7px;
-        background: none;
-        border: 0;
-        border-bottom: 2px solid transparent;
-        padding: 4px 12px 9px;
-        margin-bottom: -1px;
-        cursor: pointer;
-        font-family: var(--mono);
-        font-size: 11px;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--muted);
-        transition: color 0.15s ease, border-color 0.15s ease;
-      }
-      .list .tab i {
-        font-style: normal;
-        font-family: var(--display);
-        font-size: 11px;
-        border: 1px solid rgba(255, 45, 111, 0.45);
-        border-radius: 999px;
-        padding: 1px 7px;
-        color: var(--red);
-      }
-      .list .tab:hover {
-        color: var(--text);
-      }
-      .list .tab.on {
-        color: var(--cyan);
-        border-bottom-color: var(--cyan);
-      }
-      .list .tab.blind.on {
-        color: var(--red);
-        border-bottom-color: var(--red);
-      }
-      .list h3 {
-        margin: 0;
-        font-size: 14px;
-        font-weight: 600;
-        position: relative;
-        padding-left: 13px;
-      }
-      .list h3::before {
-        content: '';
-        position: absolute;
-        left: 0;
-        top: 2px;
-        bottom: 2px;
-        width: 3px;
-        border-radius: 2px;
-        background: var(--neon);
-        box-shadow: 0 0 10px rgba(38, 224, 255, 0.6);
-      }
-      .list .hint {
-        font-family: var(--mono);
-        font-size: 11px;
-        color: var(--muted);
-      }
-
-      /* Estados de carga/erro — elegantes, nunca um crash. */
-      .state {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .pulse {
-        font-family: var(--mono);
-        font-size: 12px;
-        color: var(--muted);
-        letter-spacing: 0.08em;
-        animation: pulse 1.4s ease-in-out infinite;
-      }
-      .state.err {
-        border-color: rgba(255, 45, 111, 0.4);
-        box-shadow: inset 0 0 40px -24px rgba(255, 45, 111, 0.7);
-      }
-      .state.err b {
-        color: #ffe3ee;
-        font-size: 14px;
-      }
-      .state.err span {
-        font-family: var(--mono);
-        font-size: 12px;
-        color: var(--muted);
-      }
-      .state.err code {
-        color: var(--text);
-        background: rgba(255, 255, 255, 0.06);
-        padding: 1px 5px;
-        border-radius: 4px;
-      }
-      /* Erro + retry do cabeçalho de postura (falha isolada da projeção, sem derrubar a matriz). */
       .posture-err {
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        font-family: var(--mono);
-        font-size: 12px;
-        color: var(--muted);
+        align-items: flex-start;
+        gap: var(--sp-2);
+        font-size: var(--fs-sm);
+        color: var(--text-2);
       }
-      .retry-sm {
-        align-self: flex-start;
-        cursor: pointer;
-        font-family: var(--mono);
-        font-size: 11px;
-        letter-spacing: 0.04em;
-        color: var(--cyan);
-        background: rgba(38, 224, 255, 0.06);
-        border: 1px solid rgba(38, 224, 255, 0.35);
-        border-radius: 8px;
-        padding: 5px 12px;
-      }
-      .retry-sm:hover {
-        background: rgba(38, 224, 255, 0.12);
+      .pulse {
+        font-size: var(--fs-sm);
+        color: var(--text-2);
       }
 
-      @keyframes pulse {
-        0%,
-        100% {
-          opacity: 0.35;
-        }
-        50% {
-          opacity: 0.75;
-        }
+      /* Abas do painel: veredito × cobertura de prova. A dica fica à direita da barra. */
+      .tabbar {
+        margin-bottom: var(--sp-4);
+      }
+      .tabbar > button.blind.on {
+        color: var(--red-text);
+        border-bottom-color: var(--red);
+      }
+      .tabbar i {
+        padding: 1px 7px;
+        border: 1px solid rgba(255, 45, 111, 0.45);
+        border-radius: var(--radius-pill);
+        font-style: normal;
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        color: var(--red-text);
+      }
+      .tabbar .hint {
+        align-self: center;
+        margin-left: auto;
+        padding-left: var(--sp-3);
       }
 
-      @media (max-width: 900px) {
+      /* Falha ocupando o painel: alinhada à esquerda, com a orientação logo abaixo. */
+      .panel.state {
+        align-items: flex-start;
+        gap: 10px;
+        padding: var(--sp-5);
+        text-align: left;
+      }
+      .panel.state b {
+        font-size: var(--fs-body);
+        color: var(--red-text);
+      }
+      .panel.state span {
+        color: var(--text-2);
+      }
+      @media (max-width: 1100px) {
         .grid {
           grid-template-columns: 1fr;
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .pulse {
-          animation: none;
         }
       }
     `,

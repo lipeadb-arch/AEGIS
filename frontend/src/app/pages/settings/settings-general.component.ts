@@ -136,14 +136,7 @@ function slugify(name: string): string {
   `,
   styles: [
     `
-      .panel {
-        background: var(--panel, rgba(11, 15, 26, 0.6));
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 1.1rem 1.25rem;
-        margin-bottom: 1.1rem;
-      }
-      h2 {
+            h2 {
         margin: 0 0 0.9rem;
         font-size: 1rem;
         color: var(--text);
@@ -163,12 +156,12 @@ function slugify(name: string): string {
       }
       .kv dt {
         color: var(--muted);
-        font-size: 0.82rem;
+        font-size: var(--fs-sm);
       }
       .kv dd {
         margin: 0;
         color: var(--text);
-        font-size: 0.88rem;
+        font-size: var(--fs-body);
         text-align: right;
       }
       .mono {
@@ -176,7 +169,7 @@ function slugify(name: string): string {
       }
       .note {
         margin: 0.9rem 0 0;
-        font-size: 0.8rem;
+        font-size: var(--fs-sm);
         color: var(--muted);
         line-height: 1.5;
       }
@@ -191,7 +184,7 @@ function slugify(name: string): string {
         display: flex;
         flex-direction: column;
         gap: 0.35rem;
-        font-size: 0.8rem;
+        font-size: var(--fs-sm);
         color: var(--muted);
       }
       .field input {
@@ -200,7 +193,7 @@ function slugify(name: string): string {
         border: 1px solid var(--line);
         background: var(--void, rgba(5, 7, 15, 0.6));
         color: var(--text);
-        font-size: 0.9rem;
+        font-size: var(--fs-body);
         outline: none;
       }
       .field input:focus {
@@ -209,35 +202,15 @@ function slugify(name: string): string {
       }
       .err {
         color: var(--red, #ff6b8b);
-        font-size: 0.75rem;
+        font-size: var(--fs-meta);
       }
       .actions {
         display: flex;
         gap: 0.6rem;
       }
-      .btn {
-        padding: 0.55rem 0.9rem;
-        border-radius: 8px;
-        border: 1px solid var(--line);
-        background: rgba(122, 145, 190, 0.08);
-        color: var(--text);
-        font-family: var(--mono);
-        font-size: 0.82rem;
-        cursor: pointer;
-      }
-      .btn:disabled {
-        opacity: 0.6;
-        cursor: default;
-      }
-      .btn.primary {
-        border: none;
-        color: #05070f;
-        background: var(--neon-h, linear-gradient(90deg, #26e0ff, #8b5cff));
-        font-weight: 600;
-      }
-      .msg {
+                        .msg {
         margin: 0.4rem 0 0;
-        font-size: 0.82rem;
+        font-size: var(--fs-sm);
         border-radius: 8px;
         padding: 0.6rem 0.75rem;
       }

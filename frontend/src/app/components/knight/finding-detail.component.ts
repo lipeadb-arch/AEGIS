@@ -322,21 +322,21 @@ import { KnightActionPlanComponent } from './action-plan.component';
       .d-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
       .d-head h3 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
       .d-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-      .d-meta, .af-count, .p-of, .af-id .mono { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+      .d-meta, .af-count, .p-of, .af-id .mono { font-family: var(--mono); font-size: var(--fs-caps); color: var(--muted); }
       .code { color: var(--cyan); }
-      .sev, .st, .kind { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
+      .sev, .st, .kind { font-family: var(--sans); font-size: var(--fs-caps); letter-spacing: 0; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
       .sev.Critical { color: #ff5c8a; border-color: rgba(255, 92, 138, 0.45); }
       .sev.High { color: var(--amber); border-color: rgba(255, 176, 32, 0.45); }
       .st.Exposed { color: #ff5c8a; }
       .st.Mitigated, .kind.ServicePrincipal { color: var(--amber); border-color: rgba(255, 176, 32, 0.4); }
       .kind, .st.NotEvaluated { color: var(--muted); }
       .kind.Guest { color: var(--cyan); border-color: rgba(38, 224, 255, 0.35); }
-      .btn { cursor: pointer; font-family: var(--mono); font-size: 12px; font-weight: 600; border-radius: 11px; padding: 8px 14px; border: 1px solid var(--line); color: var(--text); background: rgba(122, 145, 190, 0.08); }
+      .btn { cursor: pointer; font-family: var(--sans); font-size: 12px; font-weight: 600; border-radius: 11px; padding: 8px 14px; border: 1px solid var(--line); color: var(--text); background: rgba(122, 145, 190, 0.08); }
       .btn:disabled { opacity: 0.5; cursor: not-allowed; }
       .tabs { display: flex; gap: 6px; margin: 14px 0 0; border-bottom: 1px solid var(--line); }
-      .tabs button { cursor: pointer; background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-family: var(--mono); font-size: 12px; padding: 8px 12px; }
+      .tabs button { cursor: pointer; background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-family: var(--sans); font-size: 12px; padding: 8px 12px; }
       .tabs button.on { color: var(--cyan); border-bottom-color: var(--cyan); }
-      .tabs .n { font-size: 10px; margin-left: 6px; opacity: 0.8; }
+      .tabs .n { font-size: var(--fs-caps); margin-left: 6px; opacity: 0.8; }
       .tabpane { padding: 16px 2px 4px; }
       .lead { margin: 0 0 10px; font-size: 13.5px; line-height: 1.6; color: var(--text); }
       .lead.soft, .kv .v.literal { color: var(--muted); }
@@ -347,14 +347,14 @@ import { KnightActionPlanComponent } from './action-plan.component';
       .notice.warn { color: var(--text); }
       .plan-recover { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
       .kv { display: grid; grid-template-columns: 190px 1fr; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
-      .kv .k { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      .kv .k { font-family: var(--sans); font-size: var(--fs-meta); color: var(--muted); text-transform: uppercase; letter-spacing: 0; }
       .kv .v { font-size: 13px; line-height: 1.55; color: var(--text); }
-      .kv.tech .v { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+      .kv.tech .v { font-family: var(--sans); font-size: var(--fs-meta); color: var(--muted); }
       .af-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
       .af-search { flex: 1 1 260px; min-width: 200px; background: rgba(122, 145, 190, 0.06); border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px; color: var(--text); font-family: var(--sans); font-size: 13px; }
       .tbl-wrap { overflow-x: auto; }
       .tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
-      .tbl th { text-align: left; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      .tbl th { text-align: left; font-family: var(--sans); font-size: var(--fs-caps); text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
       .tbl td { padding: 10px; border-bottom: 1px solid rgba(122, 145, 190, 0.12); color: var(--text); vertical-align: top; }
       .af-id .nm { display: block; font-size: 13px; }
       .af-id .mono { display: block; }
@@ -362,9 +362,9 @@ import { KnightActionPlanComponent } from './action-plan.component';
       .pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 12px; }
       .state.inline { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
       .state.err b { color: #ff5c8a; }
-      .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+      .pulse { font-family: var(--sans); font-size: 12px; color: var(--muted); }
       .kv.plan-entry .v { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-      .kv.plan-entry .mono { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+      .kv.plan-entry .mono { font-family: var(--mono); font-size: var(--fs-caps); color: var(--muted); }
       .kv.plan-entry .mono.warn { color: var(--amber); line-height: 1.5; }
       @media (max-width: 900px) { .kv { grid-template-columns: 1fr; gap: 4px; } }
     `,

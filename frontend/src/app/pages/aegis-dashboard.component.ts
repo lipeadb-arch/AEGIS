@@ -15,15 +15,10 @@ import { environment } from '../../environments/environment';
   templateUrl: './aegis-dashboard.component.html',
   styles: [
     `
-      .hist-link {
+      /* Página, cabeçalho, cartões, painel e gráfico: sistema visual global (styles.css). */
+      :host {
         display: block;
-        margin-top: 6px;
-        font-family: var(--mono, monospace);
-        font-size: 11px;
-        color: var(--neon-h, #26e0ff);
-        text-decoration: none;
       }
-      .hist-link:hover { text-decoration: underline; }
     `,
   ],
 })
@@ -97,7 +92,7 @@ export class AegisDashboardComponent implements OnInit {
 
   /**
    * Desenha a tendência no <canvas> com a Canvas 2D API (sem libs, como os demais gráficos do
-   * projeto). Aura SOC: linha esmeralda-neon com glow, preenchimento em gradiente translúcido e
+   * projeto). Aura SOC: linha ciano-neon com glow, preenchimento em gradiente translúcido e
    * nós discretos. Eixo Y travado em 0–100 (escala de %); eixo X com datas dd/MM esparsas.
    */
   private drawTrend(canvas: HTMLCanvasElement, data: TenantTrendDto[]): void {
@@ -116,7 +111,7 @@ export class AegisDashboardComponent implements OnInit {
     const padL = 32, padR = 14, padT = 16, padB = 26;
     const plotW = w - padL - padR;
     const plotH = h - padT - padB;
-    const emerald = '#00e5a0';
+    const neon = '#26e0ff';
 
     // Eixo Y travado 0..100 (escala de porcentagem).
     const yFor = (pct: number) => padT + plotH * (1 - Math.min(100, Math.max(0, pct)) / 100);
@@ -124,7 +119,7 @@ export class AegisDashboardComponent implements OnInit {
       padL + (data.length === 1 ? plotW / 2 : (plotW * i) / (data.length - 1));
 
     // Grade horizontal + rótulos do eixo Y.
-    ctx.font = '10px "JetBrains Mono", ui-monospace, monospace';
+    ctx.font = '11px Inter, system-ui, sans-serif';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'right';
     for (const g of [0, 25, 50, 75, 100]) {
@@ -151,8 +146,8 @@ export class AegisDashboardComponent implements OnInit {
 
     // Preenchimento em gradiente translúcido sob a linha.
     const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
-    grad.addColorStop(0, 'rgba(0,229,160,0.30)');
-    grad.addColorStop(1, 'rgba(0,229,160,0.02)');
+    grad.addColorStop(0, 'rgba(38,224,255,0.30)');
+    grad.addColorStop(1, 'rgba(38,224,255,0.02)');
     ctx.beginPath();
     data.forEach((pt, i) => {
       const x = xFor(i), y = yFor(pt.percentage ?? 0);
@@ -170,10 +165,10 @@ export class AegisDashboardComponent implements OnInit {
       const x = xFor(i), y = yFor(pt.percentage ?? 0);
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     });
-    ctx.strokeStyle = emerald;
+    ctx.strokeStyle = neon;
     ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
-    ctx.shadowColor = 'rgba(0,229,160,0.6)';
+    ctx.shadowColor = 'rgba(38,224,255,0.6)';
     ctx.shadowBlur = 10;
     ctx.stroke();
     ctx.shadowBlur = 0; // reseta para não borrar os nós
@@ -183,7 +178,7 @@ export class AegisDashboardComponent implements OnInit {
       const x = xFor(i), y = yFor(data[i].percentage ?? 0);
       ctx.beginPath();
       ctx.arc(x, y, 2.6, 0, Math.PI * 2);
-      ctx.fillStyle = emerald;
+      ctx.fillStyle = neon;
       ctx.fill();
       ctx.lineWidth = 1;
       ctx.strokeStyle = 'rgba(5,7,15,0.9)';

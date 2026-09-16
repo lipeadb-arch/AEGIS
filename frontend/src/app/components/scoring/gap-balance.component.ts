@@ -68,7 +68,7 @@ import { GapBalance } from '../../models/dashboard.models';
       }
       .gb-empty,
       .gb-k {
-        font-family: var(--mono);
+        font-family: var(--sans);
         color: var(--muted);
       }
       .gb-empty {
@@ -85,8 +85,8 @@ import { GapBalance } from '../../models/dashboard.models';
         display: flex;
         align-items: center;
         gap: 6px;
-        font-family: var(--mono);
-        font-size: 11px;
+        font-family: var(--sans);
+        font-size: var(--fs-meta);
         color: var(--muted);
       }
       .gb-key i {
@@ -95,12 +95,12 @@ import { GapBalance } from '../../models/dashboard.models';
         border-radius: 2px;
       }
       .gb-key b {
-        font-family: var(--display);
+        font-family: var(--sans);
         font-size: 13px;
       }
       .gb-key em {
         font-style: normal;
-        font-size: 10px;
+        font-size: var(--fs-caps);
         opacity: 0.7;
       }
       .gb-key.tool i {
@@ -138,9 +138,9 @@ import { GapBalance } from '../../models/dashboard.models';
 
       .gb-k {
         display: block;
-        font-size: 10px;
+        font-size: var(--fs-caps);
         text-transform: uppercase;
-        letter-spacing: 0.12em;
+        letter-spacing: var(--tracking-caps);
         margin-bottom: 7px;
       }
       .gb-top {
@@ -194,19 +194,19 @@ import { GapBalance } from '../../models/dashboard.models';
         text-overflow: ellipsis;
       }
       .gb-src {
-        font-family: var(--mono);
-        font-size: 10px;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
         color: var(--muted);
       }
       .gb-pts {
-        font-family: var(--display);
+        font-family: var(--sans);
         font-weight: 700;
         font-size: 13px;
         color: var(--cyan);
       }
       .gb-pts i {
         font-style: normal;
-        font-size: 9.5px;
+        font-size: var(--fs-caps);
         opacity: 0.7;
         margin-left: 2px;
       }

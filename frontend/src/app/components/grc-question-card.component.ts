@@ -114,13 +114,13 @@ type InterviewPhase = 'starting' | 'active' | 'sending' | 'done' | 'error';
       }
       .titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
       .titles h5 {
-        margin: 0; font-family: var(--display); font-weight: 700; font-size: 12.5px;
-        letter-spacing: 0.05em; color: var(--text);
+        margin: 0; font-family: var(--sans); font-weight: 700; font-size: 12.5px;
+        letter-spacing: 0; color: var(--text);
       }
-      .target { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
-      .target b { color: var(--magenta); font-weight: 600; letter-spacing: 0.03em; }
+      .target { font-family: var(--sans); font-size: var(--fs-caps); color: var(--muted); }
+      .target b { color: var(--magenta); font-weight: 600; letter-spacing: 0; }
       .phase {
-        font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+        font-family: var(--sans); font-size: var(--fs-caps); letter-spacing: var(--tracking-caps); text-transform: uppercase;
         color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
       }
       .phase[data-phase='active'] { color: var(--magenta); border-color: rgba(255, 61, 154, 0.4); }
@@ -141,7 +141,7 @@ type InterviewPhase = 'starting' | 'active' | 'sending' | 'done' | 'error';
       }
       .qa.current .q { color: var(--text); font-weight: 500; }
       .qa .tag {
-        font-family: var(--mono); font-size: 9.5px; font-weight: 600; color: var(--magenta);
+        font-family: var(--sans); font-size: var(--fs-caps); font-weight: 600; color: var(--magenta);
         border: 1px solid rgba(255, 61, 154, 0.35); border-radius: 5px; padding: 1px 5px; flex: none;
       }
       .qa .a {
@@ -158,7 +158,7 @@ type InterviewPhase = 'starting' | 'active' | 'sending' | 'done' | 'error';
       .composer textarea:focus { outline: none; border-color: rgba(255, 61, 154, 0.5); }
       .composer textarea:disabled { opacity: 0.5; cursor: not-allowed; }
       .respond {
-        align-self: stretch; cursor: pointer; font-family: var(--mono); font-size: 11.5px; font-weight: 600;
+        align-self: stretch; cursor: pointer; font-family: var(--sans); font-size: var(--fs-meta); font-weight: 600;
         color: #05070f; background: var(--magenta); border: 0; border-radius: 10px; padding: 0 15px;
         box-shadow: 0 0 14px -4px rgba(255, 61, 154, 0.7); transition: 0.15s;
       }
@@ -167,7 +167,7 @@ type InterviewPhase = 'starting' | 'active' | 'sending' | 'done' | 'error';
 
       /* ---- Estados ---- */
       .analyzing {
-        font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; color: var(--magenta);
+        font-family: var(--sans); font-size: var(--fs-meta); letter-spacing: 0; color: var(--magenta);
         animation: grc-pulse 1.5s ease-in-out infinite;
       }
       @keyframes grc-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
@@ -177,9 +177,9 @@ type InterviewPhase = 'starting' | 'active' | 'sending' | 'done' | 'error';
       }
       .done-note .check {
         color: #05070f; background: var(--cyan); border-radius: 50%; width: 16px; height: 16px; flex: none;
-        display: inline-flex; align-items: center; justify-content: center; font-size: 11px; margin-top: 1px;
+        display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-meta); margin-top: 1px;
       }
-      .err { margin: 0; font-family: var(--mono); font-size: 11.5px; color: var(--red); }
+      .err { margin: 0; font-family: var(--sans); font-size: var(--fs-meta); color: var(--red); }
 
       @media (prefers-reduced-motion: reduce) { .analyzing { animation: none; } }
     `,

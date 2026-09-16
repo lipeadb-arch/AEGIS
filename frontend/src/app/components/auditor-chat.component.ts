@@ -142,13 +142,13 @@ interface BlastRadiusChatMessage {
       .intro { text-align: center; margin: auto 0; padding: 12px 6px; }
       .intro-mark { font-size: 30px; color: var(--cyan); filter: drop-shadow(0 0 14px rgba(38, 224, 255, 0.55)); }
       .intro h4 {
-        margin: 12px 0 8px; font-family: var(--display); font-weight: 700; font-size: 15px;
-        letter-spacing: 0.05em; color: var(--text);
+        margin: 12px 0 8px; font-family: var(--sans); font-weight: 700; font-size: 15px;
+        letter-spacing: 0; color: var(--text);
       }
       .intro p { max-width: 340px; margin: 0 auto; font-size: 12.5px; line-height: 1.6; color: var(--muted); }
       .intro p b { color: var(--magenta); font-weight: 600; }
       .chip {
-        font-family: var(--mono); font-size: 11px; color: var(--cyan);
+        font-family: var(--sans); font-size: var(--fs-meta); color: var(--cyan);
         border: 1px solid rgba(38, 224, 255, 0.35); border-radius: 999px; padding: 1px 8px;
       }
 
@@ -172,18 +172,18 @@ interface BlastRadiusChatMessage {
         box-shadow: inset 0 0 26px -18px rgba(255, 61, 154, 0.7);
       }
       .txt { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--text); }
-      .time { display: block; margin-top: 5px; font-family: var(--mono); font-size: 9.5px; color: var(--muted); text-align: right; }
+      .time { display: block; margin-top: 5px; font-family: var(--sans); font-size: var(--fs-caps); color: var(--muted); text-align: right; }
 
       /* ---- Indicador técnico de análise (sem spinner genérico) ---- */
       .analyzing {
-        font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.06em; color: var(--cyan);
+        font-family: var(--sans); font-size: var(--fs-meta); letter-spacing: 0; color: var(--cyan);
         padding: 4px 2px; animation: analyze-pulse 1.5s ease-in-out infinite;
       }
       @keyframes analyze-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 
       /* ---- Base: erro + composer ---- */
       .foot { flex: none; border-top: 1px solid var(--line); padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 9px; }
-      .err { margin: 0; font-family: var(--mono); font-size: 11.5px; color: var(--red); }
+      .err { margin: 0; font-family: var(--sans); font-size: var(--fs-meta); color: var(--red); }
 
       .composer { display: flex; gap: 9px; align-items: flex-end; }
       .composer textarea {
@@ -194,7 +194,7 @@ interface BlastRadiusChatMessage {
       .composer textarea:disabled { opacity: 0.5; cursor: not-allowed; }
 
       .send {
-        align-self: stretch; cursor: pointer; font-family: var(--mono); font-size: 12px; font-weight: 600;
+        align-self: stretch; cursor: pointer; font-family: var(--sans); font-size: 12px; font-weight: 600;
         color: #05070f; background: var(--neon-h); border: 1px solid transparent; border-radius: 11px;
         padding: 0 18px; box-shadow: 0 0 14px -3px rgba(38, 224, 255, 0.6); transition: 0.15s;
       }
@@ -202,9 +202,9 @@ interface BlastRadiusChatMessage {
       .send:disabled { opacity: 0.4; cursor: not-allowed; }
 
       .meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-      .scope { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+      .scope { font-family: var(--sans); font-size: var(--fs-caps); color: var(--muted); }
       .scope b { color: var(--cyan); }
-      .hint { font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.04em; }
+      .hint { font-family: var(--sans); font-size: var(--fs-caps); color: var(--muted); letter-spacing: 0; }
 
       @media (prefers-reduced-motion: reduce) { .analyzing { animation: none; } }
     `,

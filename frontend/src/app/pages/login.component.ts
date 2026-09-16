@@ -19,7 +19,30 @@ import { FederatedLoginService } from '../services/federated-login.service';
   template: `
     <div class="login-wrap">
       <div class="login-card">
-        <h1 class="title">AEGIS</h1>
+        <!-- Marca: o mesmo escudo dual-neon do cabeçalho; Orbitron só no nome. -->
+        <div class="brand">
+          <svg class="shield" viewBox="0 0 120 138" fill="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="loginShieldStroke" x1="8" y1="6" x2="112" y2="132" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#26e0ff" />
+                <stop offset="0.55" stop-color="#8b5cff" />
+                <stop offset="1" stop-color="#ff3d9a" />
+              </linearGradient>
+              <linearGradient id="loginShieldFill" x1="60" y1="5" x2="60" y2="132" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#26e0ff" stop-opacity="0.16" />
+                <stop offset="1" stop-color="#0b0f1a" stop-opacity="0.25" />
+              </linearGradient>
+            </defs>
+            <path
+              d="M60 5 L108 22 V64 C108 96 88 120 60 132 C32 120 12 96 12 64 V22 Z"
+              fill="url(#loginShieldFill)"
+              stroke="url(#loginShieldStroke)"
+              stroke-width="5"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <h1 class="title">AEGIS</h1>
+        </div>
         <p class="sub">Acesso ao painel de postura e evidências de segurança</p>
 
         @if (selection(); as sel) {
@@ -92,75 +115,109 @@ import { FederatedLoginService } from '../services/federated-login.service';
         min-height: 100vh;
         display: grid;
         place-items: center;
-        padding: 24px;
+        padding: var(--sp-6) var(--sp-4);
+        background: radial-gradient(70% 55% at 50% 0%, rgba(38, 224, 255, 0.08), transparent 70%), var(--void);
       }
       .login-card {
+        position: relative;
         width: 100%;
-        max-width: 360px;
+        max-width: 400px;
         display: flex;
         flex-direction: column;
-        gap: 14px;
-        padding: 32px 28px;
-        border: 1px solid var(--line, #1b2438);
-        border-radius: 16px;
-        background: linear-gradient(180deg, rgba(11, 15, 26, 0.9), rgba(7, 10, 20, 0.95));
-        box-shadow: 0 0 40px -12px rgba(38, 224, 255, 0.4);
+        gap: var(--sp-4);
+        padding: var(--sp-8) var(--sp-6) var(--sp-6);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 120px), var(--panel);
+        box-shadow: var(--shadow-panel), 0 0 48px -18px rgba(38, 224, 255, 0.45);
+        overflow: hidden;
+      }
+      .login-card::before {
+        content: '';
+        position: absolute;
+        inset: 0 0 auto;
+        height: 2px;
+        background: var(--neon-h);
+      }
+      .brand {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--sp-3);
+      }
+      .shield {
+        width: 56px;
+        height: auto;
+        filter: drop-shadow(0 6px 16px rgba(38, 224, 255, 0.35));
       }
       .title {
         margin: 0;
-        text-align: center;
-        font-family: var(--mono, monospace);
-        letter-spacing: 0.3em;
-        color: var(--text, #eaf1ff);
-        text-shadow: 0 0 12px rgba(38, 224, 255, 0.5);
+        font-family: var(--brand);
+        font-size: 24px;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        background: var(--neon-h);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
       }
       .sub {
-        margin: 0 0 6px;
+        margin: 0;
         text-align: center;
-        font-size: 12px;
-        color: var(--muted, #7a91be);
+        font-size: var(--fs-sm);
+        line-height: var(--lh);
+        color: var(--text-2);
       }
       .field {
         display: flex;
         flex-direction: column;
         gap: 6px;
-        font-size: 12px;
-        color: var(--muted, #7a91be);
+        font-size: var(--fs-sm);
+        font-weight: 500;
+        color: var(--text-2);
       }
       .field input {
-        padding: 10px 12px;
-        border-radius: 10px;
-        border: 1px solid var(--line, #1b2438);
-        background: rgba(5, 7, 15, 0.6);
-        color: var(--text, #eaf1ff);
-        font-size: 14px;
+        min-height: 44px;
+        padding: 0 var(--sp-3);
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--line-strong);
+        background: var(--void-2);
+        color: var(--text);
+        font-size: var(--fs-body);
         outline: none;
       }
-      .field input:focus {
-        border-color: var(--cyan, #26e0ff);
-        box-shadow: 0 0 0 2px rgba(38, 224, 255, 0.2);
+      .field input:focus-visible {
+        border-color: var(--cyan);
+        box-shadow: var(--focus);
       }
       .loading {
         margin: 0;
         text-align: center;
-        font-size: 12px;
-        color: var(--muted, #7a91be);
+        font-size: var(--fs-sm);
+        color: var(--text-2);
       }
       .error {
         margin: 0;
-        font-size: 12px;
-        color: #ff6b8b;
+        font-size: var(--fs-sm);
+        color: var(--red-text);
       }
       .submit {
-        margin-top: 6px;
-        padding: 12px;
+        min-height: 44px;
+        margin-top: var(--sp-1);
         border: none;
-        border-radius: 10px;
+        border-radius: var(--radius-sm);
         cursor: pointer;
+        font-size: var(--fs-body);
         font-weight: 600;
-        color: #05070f;
-        background: var(--neon-h, linear-gradient(90deg, #26e0ff, #8b5cff));
+        color: var(--void);
+        background: var(--neon-h);
         transition: filter 0.15s;
+      }
+      .submit:focus-visible,
+      .corp:focus-visible,
+      .tenant:focus-visible {
+        outline: none;
+        box-shadow: var(--focus);
       }
       .submit:disabled {
         opacity: 0.7;
@@ -179,9 +236,9 @@ import { FederatedLoginService } from '../services/federated-login.service';
         align-items: center;
         gap: 10px;
         color: var(--muted, #7a91be);
-        font-size: 11px;
+        font-size: var(--fs-meta);
         text-transform: uppercase;
-        letter-spacing: 0.15em;
+        letter-spacing: var(--tracking-caps);
       }
       .divider::before,
       .divider::after {
@@ -248,8 +305,8 @@ import { FederatedLoginService } from '../services/federated-login.service';
         font-weight: 600;
       }
       .tenant .t-role {
-        font-size: 10px;
-        letter-spacing: 0.08em;
+        font-size: var(--fs-caps);
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         opacity: 0.7;
       }

@@ -85,12 +85,12 @@ import { BlastRadiusResponse } from '../services/auditor.service';
       .mark { font-size: 19px; color: var(--red); filter: drop-shadow(0 0 10px rgba(255, 45, 111, 0.6)); line-height: 1; }
       .blast[data-risk='baixo'] .mark, .blast[data-risk='medio'] .mark { color: var(--amber); filter: none; }
       .titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-      .titles h5 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 12.5px; letter-spacing: 0.05em; color: var(--text); }
-      .root { font-family: var(--sans); font-size: 10.5px; color: var(--muted); }
+      .titles h5 { margin: 0; font-family: var(--sans); font-weight: 700; font-size: 12.5px; letter-spacing: 0; color: var(--text); }
+      .root { font-family: var(--sans); font-size: var(--fs-caps); color: var(--muted); }
       .mono { font-family: var(--mono); letter-spacing: 0.02em; }
       .root b { color: var(--text); }
       .risk-pill {
-        font-family: var(--mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+        font-family: var(--sans); font-size: var(--fs-caps); font-weight: 600; letter-spacing: var(--tracking-caps); text-transform: uppercase;
         border-radius: 999px; padding: 2px 9px; white-space: nowrap; color: #05070f; background: var(--muted);
       }
       .blast[data-risk='critico'] .risk-pill { background: var(--red); }
@@ -104,28 +104,28 @@ import { BlastRadiusResponse } from '../services/auditor.service';
         padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 10px; background: rgba(122, 145, 190, 0.04);
       }
       .score { display: flex; align-items: baseline; }
-      .score .val { font-family: var(--display); font-weight: 800; font-size: 30px; line-height: 1; color: var(--text); }
-      .score i { font-style: normal; font-family: var(--mono); font-size: 12px; color: var(--muted); margin-left: 2px; }
+      .score .val { font-family: var(--sans); font-weight: 800; font-size: 30px; line-height: 1; color: var(--text); }
+      .score i { font-style: normal; font-family: var(--sans); font-size: 12px; color: var(--muted); margin-left: 2px; }
       .metrics { display: flex; gap: 16px; flex-wrap: wrap; }
       .metrics > div { display: flex; flex-direction: column; }
-      .metrics .v { font-family: var(--display); font-weight: 700; font-size: 15px; color: var(--cyan); }
-      .metrics .k { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.04em; color: var(--muted); text-transform: uppercase; }
+      .metrics .v { font-family: var(--sans); font-weight: 700; font-size: 15px; color: var(--cyan); }
+      .metrics .k { font-family: var(--sans); font-size: var(--fs-caps); letter-spacing: 0; color: var(--muted); text-transform: uppercase; }
 
       /* ---- Tabela de nós ---- */
       .table-wrap { overflow-x: auto; }
       .nodes { width: 100%; border-collapse: collapse; font-size: 12px; }
       .nodes th {
-        text-align: left; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+        text-align: left; font-family: var(--sans); font-size: var(--fs-caps); letter-spacing: var(--tracking-caps); text-transform: uppercase;
         color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--line);
       }
       .nodes th.c, .nodes td.c { text-align: center; }
       .nodes td { padding: 7px 8px; border-bottom: 1px solid var(--line-2); color: var(--text); }
       .nodes tbody tr:last-child td { border-bottom: 0; }
-      .dist { font-family: var(--display); font-weight: 600; color: var(--muted); }
+      .dist { font-family: var(--sans); font-weight: 600; color: var(--muted); }
 
       /* Força do elo: Hard vermelho (propaga integral) → Redundant cyan (amortece). */
       .edge {
-        font-family: var(--mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em;
+        font-family: var(--sans); font-size: var(--fs-caps); font-weight: 600; letter-spacing: 0;
         border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px;
       }
       .edge[data-strength='hard'] { color: var(--red); border-color: rgba(255, 45, 111, 0.45); }
@@ -142,10 +142,10 @@ import { BlastRadiusResponse } from '../services/auditor.service';
         display: block; height: 100%; min-width: 2px; border-radius: 3px;
         background: linear-gradient(90deg, var(--magenta), var(--red)); box-shadow: 0 0 8px -2px rgba(255, 61, 154, 0.7);
       }
-      .impact .num { flex: none; min-width: 34px; text-align: right; font-family: var(--mono); font-size: 11px; color: var(--text); }
+      .impact .num { flex: none; min-width: 34px; text-align: right; font-family: var(--sans); font-size: var(--fs-meta); color: var(--text); }
 
-      .empty { margin: 0; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
-      .foot { font-family: var(--mono); font-size: 9.5px; color: var(--muted); text-align: right; }
+      .empty { margin: 0; font-family: var(--sans); font-size: var(--fs-meta); color: var(--muted); }
+      .foot { font-family: var(--sans); font-size: var(--fs-caps); color: var(--muted); text-align: right; }
     `,
   ],
 })

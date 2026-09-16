@@ -17,7 +17,7 @@ interface GapRow {
   selector: 'app-gap-chart',
   standalone: true,
   template: `
-    <div class="gap">
+    <div class="gap-chart">
       @for (r of rows(); track r.code) {
         <div class="gap-row">
           <span class="gap-lab">{{ r.name }}</span>

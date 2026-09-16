@@ -282,7 +282,6 @@ type AdvisoryUiState =
         cursor: pointer;
         text-align: left;
         color: var(--text);
-        font-family: var(--sans);
       }
       .dot {
         width: 9px;
@@ -297,7 +296,6 @@ type AdvisoryUiState =
         min-width: 0;
       }
       .name {
-        font-family: var(--sans);
         font-size: 13px;
         color: var(--text);
         white-space: nowrap;
@@ -306,19 +304,22 @@ type AdvisoryUiState =
       }
       .code {
         font-family: var(--mono);
-        font-size: 10.5px;
-        letter-spacing: 0.03em;
+        font-size: var(--fs-caps);
+        letter-spacing: 0;
         color: var(--muted);
       }
       /* Resumo curto no cabeçalho — compreensão SEM IA e sem expandir. Uma linha, com reticências, para não
          inflar a altura da linha em listas longas. */
       .summary {
-        font-family: var(--sans);
-        font-size: 11.5px;
+        font-size: 12px;
         color: var(--muted);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+      /* Expandido (Enter/toque): título e resumo completos, sem depender de hover. */
+      .ctl-head[aria-expanded='true'] :is(.name, .summary) {
+        white-space: normal;
       }
       /* Faixa de referência técnica do corpo expandido: código, severidade, pontos e série na MESMA linha,
          longe do cabeçalho — aqui elas são consulta, não decisão. */
@@ -339,14 +340,12 @@ type AdvisoryUiState =
         min-height: 20px;
       }
       .status {
-        font-family: var(--mono);
-        font-size: 10.5px;
+        font-size: var(--fs-caps);
         text-transform: uppercase;
-        letter-spacing: 0.12em;
+        letter-spacing: var(--tracking-caps);
         color: var(--muted);
       }
       .pts {
-        font-family: var(--display);
         font-weight: 600;
         font-size: 13px;
         color: var(--muted);
@@ -355,7 +354,7 @@ type AdvisoryUiState =
         font-style: normal;
         color: var(--muted);
         opacity: 0.6;
-        font-size: 11px;
+        font-size: 12px;
       }
       .chev {
         font-size: 18px;
@@ -425,20 +424,18 @@ type AdvisoryUiState =
       }
       .chk {
         display: grid;
-        grid-template-columns: 16px minmax(0, auto) 1fr;
+        grid-template-columns: 16px minmax(0, 1fr);
         align-items: baseline;
-        gap: 9px;
-        font-family: var(--mono);
-        font-size: 11.5px;
+        gap: 2px 9px;
+        font-size: 12px;
       }
       .chk .ic { font-size: 12px; line-height: 1; text-align: center; }
-      .chk .nm { color: var(--text); white-space: nowrap; }
+      /* Item e detalhe quebram linha: nada do veredito fica cortado no estreito. */
+      .chk .nm { color: var(--text); overflow-wrap: anywhere; }
       .chk .dt {
+        grid-column: 2;
         color: var(--muted);
-        font-size: 10.5px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        font-size: var(--fs-caps);
       }
       /* Passou → cyan (contido); falhou → vermelho aceso, salta aos olhos. */
       .chk.pass .ic { color: var(--cyan); }
@@ -447,7 +444,6 @@ type AdvisoryUiState =
       .chk.fail .nm { color: #ffe3ee; }
 
       .evidence {
-        font-family: var(--mono);
         font-size: 12px;
         line-height: 1.55;
         color: var(--text);
@@ -458,8 +454,7 @@ type AdvisoryUiState =
         display: flex;
         flex-wrap: wrap;
         gap: 18px;
-        font-family: var(--mono);
-        font-size: 11px;
+        font-size: 12px;
         color: var(--muted);
       }
       .meta b {
@@ -486,7 +481,6 @@ type AdvisoryUiState =
       }
       .plain-lead {
         margin: 0 0 8px;
-        font-family: var(--sans);
         font-size: 13px;
         line-height: 1.55;
         color: var(--text);
@@ -497,7 +491,6 @@ type AdvisoryUiState =
       .plain-row p,
       .na-box p {
         margin: 0;
-        font-family: var(--sans);
         font-size: 12.5px;
         line-height: 1.5;
         color: var(--text);
@@ -506,7 +499,7 @@ type AdvisoryUiState =
       .plain-ref {
         margin: 10px 0 0;
         font-family: var(--mono);
-        font-size: 10.5px;
+        font-size: var(--fs-caps);
         line-height: 1.5;
         color: var(--muted);
         opacity: 0.85;
@@ -538,9 +531,8 @@ type AdvisoryUiState =
         margin-bottom: 6px;
       }
       .tel-hd .tool {
-        font-family: var(--mono);
-        font-size: 10px;
-        letter-spacing: 0.08em;
+        font-size: var(--fs-caps);
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         color: var(--cyan);
         border: 1px solid rgba(38, 224, 255, 0.35);
@@ -548,15 +540,13 @@ type AdvisoryUiState =
         padding: 2px 7px;
       }
       .tel-hd .when {
-        font-family: var(--mono);
-        font-size: 10.5px;
+        font-size: var(--fs-caps);
         color: var(--muted);
       }
       /* Rolagem própria: um dump de log não pode empurrar o plano de ação para fora da tela. */
       .raw {
         margin: 0;
-        font-family: var(--mono);
-        font-size: 11px;
+        font-size: 12px;
         line-height: 1.55;
         color: var(--text);
         opacity: 0.9;
@@ -580,9 +570,8 @@ type AdvisoryUiState =
         gap: 6px;
       }
       .threat {
-        font-family: var(--mono);
-        font-size: 10.5px;
-        letter-spacing: 0.04em;
+        font-size: var(--fs-caps);
+        letter-spacing: 0;
         color: #ffe3ee;
         background: rgba(255, 45, 111, 0.1);
         border: 1px solid rgba(255, 45, 111, 0.35);
@@ -593,7 +582,6 @@ type AdvisoryUiState =
       /* Plano de Ação — o resumo inline do LLM, acima do motor consultivo sob demanda. */
       .plan {
         margin: 0 0 10px;
-        font-family: var(--sans);
         font-size: 12.5px;
         line-height: 1.55;
         color: var(--text);
@@ -628,7 +616,6 @@ type AdvisoryUiState =
         transition: width 0.3s ease;
       }
       .conf-num {
-        font-family: var(--display);
         font-size: 12.5px;
         font-weight: 700;
         min-width: 42px;
@@ -636,7 +623,6 @@ type AdvisoryUiState =
       }
 
       .empty {
-        font-family: var(--mono);
         font-size: 12px;
         color: var(--muted);
         padding: 18px 4px;
@@ -650,9 +636,8 @@ type AdvisoryUiState =
         display: inline-flex;
         align-items: center;
         gap: 8px;
-        font-family: var(--mono);
-        font-size: 11.5px;
-        letter-spacing: 0.06em;
+        font-size: 12px;
+        letter-spacing: 0;
         color: var(--magenta);
         background: rgba(255, 61, 154, 0.08);
         border: 1px solid rgba(255, 61, 154, 0.4);
@@ -669,10 +654,9 @@ type AdvisoryUiState =
 
       .advise-loading { display: inline-flex; align-items: center; gap: 10px; padding: 6px 2px; }
       .advise-loading .pulse {
-        font-family: var(--mono);
-        font-size: 11.5px;
+        font-size: 12px;
         color: var(--magenta);
-        letter-spacing: 0.06em;
+        letter-spacing: 0;
         animation: advise-pulse 1.4s ease-in-out infinite;
       }
       .advise-loading .spin {
@@ -695,9 +679,8 @@ type AdvisoryUiState =
       }
       .advise-hd { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
       .advise-hd .badge {
-        font-family: var(--mono);
-        font-size: 9.5px;
-        letter-spacing: 0.16em;
+        font-size: var(--fs-caps);
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         color: var(--magenta);
       }
@@ -710,18 +693,16 @@ type AdvisoryUiState =
       .plain-row .k,
       .na-box .k {
         display: block;
-        font-family: var(--mono);
-        font-size: 10px;
+        font-size: var(--fs-caps);
         text-transform: uppercase;
-        letter-spacing: 0.12em;
+        letter-spacing: var(--tracking-caps);
         color: var(--muted);
         margin-bottom: 5px;
       }
       .advise-sec p { margin: 0; font-family: var(--sans); font-size: 12.5px; line-height: 1.55; color: var(--text); }
       .advise-sec .steps {
         margin: 0;
-        font-family: var(--mono);
-        font-size: 11.5px;
+        font-size: 12px;
         line-height: 1.6;
         color: var(--text);
         white-space: pre-wrap;
@@ -736,14 +717,12 @@ type AdvisoryUiState =
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        font-family: var(--mono);
-        font-size: 10.5px;
+        font-size: var(--fs-caps);
         color: var(--muted);
       }
       .advise-regen,
       .advise-retry {
-        font-family: var(--mono);
-        font-size: 10.5px;
+        font-size: var(--fs-caps);
         color: var(--magenta);
         background: none;
         border: 1px solid rgba(255, 61, 154, 0.3);
@@ -759,8 +738,7 @@ type AdvisoryUiState =
         align-items: center;
         gap: 12px;
         flex-wrap: wrap;
-        font-family: var(--mono);
-        font-size: 11.5px;
+        font-size: 12px;
         color: var(--red);
       }
 
