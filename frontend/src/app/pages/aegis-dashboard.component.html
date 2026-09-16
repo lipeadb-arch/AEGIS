@@ -1,70 +1,74 @@
-<div class="app">
-  <header class="topbar">
-    <div class="brand">
-      <span class="mark">Aegis <b>Score</b></span>
-      <span class="sub">HUD Tático · Tendência de Postura</span>
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="page-eyebrow">Relatórios</p>
+      <h1>Tendência de postura</h1>
+      <p class="page-desc">AEGIS Score diário do ambiente ativo — a leitura atual, não um registro publicado.</p>
+      <p class="page-meta">Janela: últimos {{ trend().length }} dias</p>
     </div>
-    <div class="client">
-      <span class="label">Janela</span>
-      <span class="name">últimos {{ trend().length }} dias</span>
-      <a class="hist-link" routerLink="/history">Histórico auditável →</a>
+    <div class="page-actions">
+      <a class="ghost" routerLink="/history">Histórico auditável →</a>
     </div>
   </header>
 
   @if (loadError()) {
-    <div class="notice">
+    <div class="notice error" role="alert">
       <b>Tendência indisponível.</b> A série de postura não respondeu agora. Nenhum ponto é exibido — uma
       curva remanescente seria lida como a leitura atual. Recarregue a página em alguns instantes.
     </div>
   }
 
-  <p class="eyebrow">Postura de Segurança</p>
+  <section class="section">
+    <div class="section-head">
+      <h2>Postura de segurança</h2>
+    </div>
 
-  <!-- Faixa superior: KPIs -->
-  <section class="cards">
-    <article class="card ok hero">
-      <div class="k">AEGIS Score atual</div>
-      <div class="v">
-        @if (currentScore(); as s) {
-          @if (s.percentage === null) {
-            Não avaliado
+    <!-- Faixa superior: KPIs -->
+    <div class="cards">
+      <article class="card ok hero">
+        <div class="k">AEGIS Score atual</div>
+        <div class="v">
+          @if (currentScore(); as s) {
+            @if (s.percentage === null) {
+              Não avaliado
+            } @else {
+              {{ s.percentage.toFixed(1) }}<small>%</small>
+            }
           } @else {
-            {{ s.percentage.toFixed(1) }}<small>%</small>
+            <span class="v-loading" aria-label="Carregando score">···</span>
           }
-        } @else {
-          <span class="v-loading" aria-label="Carregando score">···</span>
-        }
-      </div>
-    </article>
+        </div>
+      </article>
 
-    <article class="card">
-      <div class="k">Cobertura de Avaliação</div>
-      <div class="v">
-        @if (currentScore(); as s) {
-          {{ s.coveragePercentage.toFixed(1) }}<small>%</small>
-        } @else {
-          <span class="v-loading" aria-label="Carregando cobertura">···</span>
-        }
-      </div>
-    </article>
+      <article class="card">
+        <div class="k">Cobertura de avaliação</div>
+        <div class="v">
+          @if (currentScore(); as s) {
+            {{ s.coveragePercentage.toFixed(1) }}<small>%</small>
+          } @else {
+            <span class="v-loading" aria-label="Carregando cobertura">···</span>
+          }
+        </div>
+      </article>
 
-    <article class="card warn">
-      <div class="k">Controles Pendentes</div>
-      <div class="v">
-        @if (pendingControls() === null) {
-          <span class="v-loading" aria-label="Carregando contagem">···</span>
-        } @else {
-          {{ pendingControls() }}
-        }
-      </div>
-    </article>
+      <article class="card warn">
+        <div class="k">Controles pendentes</div>
+        <div class="v">
+          @if (pendingControls() === null) {
+            <span class="v-loading" aria-label="Carregando contagem">···</span>
+          } @else {
+            {{ pendingControls() }}
+          }
+        </div>
+      </article>
+    </div>
   </section>
 
-  <!-- Corpo central: container reservado para o gráfico de linha (Chart.js será injetado aqui). -->
-  <section class="panel trend-panel">
+  <!-- Gráfico de linha da tendência (canvas 2D desenhado no componente). -->
+  <section class="panel">
     <div class="hd">
-      <h3>Tendência de Postura</h3>
-      <span class="hint">Aegis Score · % diário</span>
+      <h3>Tendência de postura</h3>
+      <span class="hint">AEGIS Score · % diário</span>
     </div>
 
     <div

@@ -62,59 +62,48 @@ export interface PostureView {
   `,
   styles: [
     `
+      /* Plano dentro do painel que o contém: o painel é da página, não do componente. */
       .posture {
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        padding: 16px 18px;
-        border: 1px solid var(--line);
-        border-left: 3px solid var(--cyan);
-        border-radius: 12px;
-        background: rgba(122, 145, 190, 0.03);
-      }
-      .posture.na {
-        border-left-color: var(--line-2, var(--line));
+        gap: 10px;
       }
       .eyebrow {
-        font-family: var(--mono);
-        font-size: 10px;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: var(--cyan);
+        margin: 0;
       }
       .eyebrow b {
-        color: var(--muted);
+        color: var(--text-2);
         font-weight: 600;
       }
       .score {
         display: flex;
         align-items: baseline;
-        gap: 3px;
+        gap: 4px;
       }
       .score .v {
-        font-family: var(--display);
+        font-size: var(--fs-value-lg);
         font-weight: 700;
-        font-size: 34px;
         line-height: 1;
+        letter-spacing: -0.02em;
       }
       .posture.na .score .v {
-        font-size: 20px;
-        letter-spacing: 0.01em;
+        font-size: 24px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
       }
       .score .pct {
-        font-family: var(--display);
-        font-weight: 700;
-        font-size: 16px;
+        font-size: 18px;
+        font-weight: 600;
         color: var(--muted);
       }
       .hint {
-        margin: 0;
-        font-family: var(--mono);
-        font-size: 11px;
-        color: var(--muted);
+        font-size: var(--fs-sm);
+        line-height: var(--lh);
+        color: var(--text-2);
       }
       .hint b {
         color: var(--text);
+        font-weight: 600;
       }
       .chips {
         display: flex;
@@ -123,13 +112,12 @@ export interface PostureView {
         margin-top: 2px;
       }
       .chip {
-        font-family: var(--mono);
-        font-size: 10.5px;
-        letter-spacing: 0.02em;
-        padding: 3px 8px;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        color: var(--muted);
+        padding: 3px 10px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-pill);
+        font-size: var(--fs-meta);
+        font-weight: 500;
+        color: var(--text-2);
       }
       .chip.ok {
         color: var(--cyan);
@@ -140,9 +128,9 @@ export interface PostureView {
         border-color: rgba(255, 176, 32, 0.35);
       }
       .chip.bad.hot {
-        color: var(--red);
+        color: var(--red-text);
         border-color: rgba(255, 45, 111, 0.45);
-        background: rgba(255, 45, 111, 0.06);
+        background: var(--tint-red);
       }
     `,
   ],

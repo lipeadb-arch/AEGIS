@@ -88,7 +88,7 @@ export interface FunctionScore {
         min-width: 0;
       }
       .mb-v {
-        font-family: var(--display);
+        font-family: var(--sans);
         font-weight: 600;
         font-size: 13px;
         color: var(--text);
@@ -120,16 +120,16 @@ export interface FunctionScore {
         min-width: 0;
       }
       .mb-x b {
-        font-family: var(--mono);
+        font-family: var(--sans);
         font-weight: 700;
         font-size: 12px;
-        letter-spacing: 0.1em;
+        letter-spacing: var(--tracking-caps);
         color: var(--cyan);
       }
       .mb-x small {
-        font-family: var(--mono);
-        font-size: 9px;
-        letter-spacing: 0.05em;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
+        letter-spacing: 0;
         color: var(--muted);
         text-transform: uppercase;
         white-space: nowrap;

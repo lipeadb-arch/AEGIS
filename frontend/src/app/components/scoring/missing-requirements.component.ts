@@ -75,9 +75,9 @@ import {
         align-items: center;
         gap: 7px;
         font-family: var(--mono);
-        font-size: 10px;
+        font-size: var(--fs-caps);
         text-transform: uppercase;
-        letter-spacing: 0.12em;
+        letter-spacing: var(--tracking-caps);
         margin-bottom: 7px;
       }
       .gap-ic {
@@ -97,9 +97,9 @@ import {
         margin-bottom: 5px;
         padding: 2px 7px;
         border-radius: 6px;
-        font-family: var(--mono);
-        font-size: 9.5px;
-        letter-spacing: 0.1em;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
       }
       .gap-cta {
@@ -112,8 +112,8 @@ import {
       /* A frase do motor (fontes alternativas aceitas etc.) — contexto, não a chamada de ação. */
       .gap-detail {
         margin: 3px 0 0;
-        font-family: var(--mono);
-        font-size: 10.5px;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
         line-height: 1.5;
         color: var(--muted);
       }

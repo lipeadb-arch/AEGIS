@@ -50,10 +50,10 @@ import { SeverityLevel } from '../../models/scoring.models';
         box-shadow: 0 0 6px -1px var(--sev);
       }
       .lbl {
-        font-family: var(--mono);
-        font-size: 10.5px;
+        font-family: var(--sans);
+        font-size: var(--fs-caps);
         text-transform: uppercase;
-        letter-spacing: 0.1em;
+        letter-spacing: var(--tracking-caps);
         color: var(--sev);
       }
     `,

@@ -101,20 +101,20 @@ import { PostureSnapshotActionItem, PostureSnapshotDetail } from '../../models/p
   styles: [
     `
       .frozen { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
-      h4 { margin: 0; font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+      h4 { margin: 0; font-family: var(--sans); font-size: var(--fs-meta); text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--muted); }
       ul { margin: 0; padding-left: 18px; }
       li, .note { margin: 0; font-size: 12px; line-height: 1.55; color: var(--muted); }
-      li { font-family: var(--mono); font-size: 11.5px; }
+      li { font-family: var(--sans); font-size: var(--fs-meta); }
       .note b { color: var(--text); }
       .wrap { overflow-x: auto; }
       table { width: 100%; border-collapse: collapse; font-size: 12px; }
-      th { text-align: left; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      th { text-align: left; font-family: var(--sans); font-size: var(--fs-caps); text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
       td { padding: 9px 10px; border-bottom: 1px solid rgba(122, 145, 190, 0.12); color: var(--text); vertical-align: top; }
       .tt { display: block; }
-      .mono { display: block; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
-      .basis { font-size: 11.5px; color: var(--muted); }
+      .mono { display: block; font-family: var(--mono); font-size: var(--fs-caps); color: var(--muted); }
+      .basis { font-size: var(--fs-meta); color: var(--muted); }
       .late { color: #ff5c8a; }
-      .past { display: block; margin-top: 4px; font-size: 11px; line-height: 1.5; color: var(--amber); }
+      .past { display: block; margin-top: 4px; font-size: var(--fs-meta); line-height: 1.5; color: var(--amber); }
     `,
   ],
 })

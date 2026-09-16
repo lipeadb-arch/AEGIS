@@ -1,4 +1,4 @@
-import { Component, OnDestroy, effect, input, output } from '@angular/core';
+import { Component, ElementRef, OnDestroy, effect, inject, input, output } from '@angular/core';
 
 /**
  * Drawer — painel lateral deslizante genérico (shell, não acoplado ao conteúdo).
@@ -64,21 +64,16 @@ import { Component, OnDestroy, effect, input, output } from '@angular/core';
         display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
         padding: 18px 20px; border-bottom: 1px solid var(--line);
       }
-      .dr-titles { display: flex; flex-direction: column; gap: 4px; }
-      .dr-title {
-        font-family: var(--display); font-weight: 700; font-size: 15px; letter-spacing: 0.08em;
-        text-transform: uppercase; color: var(--text);
-      }
-      .dr-sub {
-        font-family: var(--mono); font-size: 10px; color: var(--muted);
-        letter-spacing: 0.14em; text-transform: uppercase;
-      }
+      .dr-titles { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+      .dr-title { font-size: var(--fs-panel); font-weight: 600; color: var(--text); }
+      .dr-sub { font-size: var(--fs-meta); color: var(--text-2); }
       .dr-close {
-        flex: none; width: 32px; height: 32px; border-radius: 9px; cursor: pointer;
-        font-size: 14px; color: var(--muted);
-        background: var(--panel-2); border: 1px solid var(--line); transition: 0.15s;
+        flex: none; width: 36px; height: 36px; border-radius: var(--radius-sm); cursor: pointer;
+        font-size: 14px; color: var(--text-2);
+        background: var(--panel-2); border: 1px solid var(--line-strong); transition: var(--ease);
       }
       .dr-close:hover { color: var(--text); border-color: rgba(255, 61, 154, 0.5); }
+      .dr-close:focus-visible { outline: none; box-shadow: var(--focus); }
 
       .dr-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
     `,
@@ -94,10 +89,26 @@ export class DrawerComponent implements OnDestroy {
   /** Pedido de fechamento (backdrop, ✕ ou ESC) — o pai decide o estado. */
   closed = output<void>();
 
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  /** Elemento que tinha o foco antes da abertura (o gatilho) — recebe o foco de volta ao fechar. */
+  private returnFocus: HTMLElement | null = null;
+  private wasOpen = false;
+
   constructor() {
-    // Trava o scroll do fundo enquanto o drawer está aberto.
     effect(() => {
-      document.body.style.overflow = this.open() ? 'hidden' : '';
+      const open = this.open();
+      // Trava o scroll do fundo enquanto o drawer está aberto.
+      document.body.style.overflow = open ? 'hidden' : '';
+      // Foco: entra no painel ao abrir (o fundo fica inerte) e volta ao gatilho ao fechar.
+      if (open && !this.wasOpen) {
+        this.returnFocus = document.activeElement as HTMLElement | null;
+        setTimeout(() => this.host.nativeElement.querySelector<HTMLElement>('.dr-close')?.focus());
+      } else if (!open && this.wasOpen) {
+        const back = this.returnFocus;
+        this.returnFocus = null;
+        setTimeout(() => back?.isConnected && back.focus());
+      }
+      this.wasOpen = open;
     });
   }
 

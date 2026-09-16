@@ -86,21 +86,21 @@ import { Component, computed, input } from '@angular/core';
         margin-top: 2px;
       }
       .mg-val {
-        font-family: var(--display);
+        font-family: var(--sans);
         font-weight: 700;
         font-size: 44px;
         line-height: 1;
       }
       .mg-of {
-        font-family: var(--mono);
+        font-family: var(--sans);
         font-size: 14px;
         color: var(--muted);
       }
       .mg-cap {
         margin: 8px 0 0;
-        font-family: var(--mono);
-        font-size: 11px;
-        letter-spacing: 0.14em;
+        font-family: var(--sans);
+        font-size: var(--fs-meta);
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         color: var(--text);
       }

@@ -37,12 +37,12 @@ import {
 
       <!-- Aviso operacional: falha, degradação OU sincronização parcial (nunca-sincronizado fora da etapa B). -->
       @if (hasConnectorAlert()) {
-        <div class="alert">
+        <div class="notice warn alert">
           <b>Atenção aos conectores.</b>
           {{ connectorBreakdown(connectors()) }} — a coleta pode estar incompleta. A última coleta válida e os
           resultados já reconciliados seguem preservados.
           @if (isTenantAdmin()) {
-            <a routerLink="/settings/integrations" class="link">Revisar integrações</a>
+            <a routerLink="/settings/integrations" class="linknav">Revisar integrações</a>
           } @else {
             <span class="muted">Peça a um administrador para revisar as integrações.</span>
           }
@@ -60,7 +60,7 @@ import {
               entra depois, onde houver lacuna genuinamente organizacional.
             </p>
             @if (isTenantAdmin()) {
-              <a routerLink="/settings/integrations" class="cta">Conectar um ambiente</a>
+              <a routerLink="/settings/integrations" class="primary">Conectar um ambiente</a>
             } @else {
               <p class="muted">
                 Peça a um administrador para conectar um ambiente em <b>Configurações › Integrações</b>.
@@ -74,7 +74,7 @@ import {
               enquanto as integrações permanecerem desabilitadas.
             </p>
             @if (isTenantAdmin()) {
-              <a routerLink="/settings/integrations" class="cta">Revisar integrações</a>
+              <a routerLink="/settings/integrations" class="primary">Revisar integrações</a>
             } @else {
               <p class="muted">
                 Peça a um administrador para revisar as integrações em <b>Configurações › Integrações</b>.
@@ -90,7 +90,7 @@ import {
             leitura técnica — e leitura ausente <b>não é zero risco</b>.
           </p>
           @if (isTenantAdmin()) {
-            <a routerLink="/settings/integrations" class="cta">Testar e sincronizar</a>
+            <a routerLink="/settings/integrations" class="primary">Testar e sincronizar</a>
           } @else {
             <p class="muted">
               Peça a um administrador para testar e sincronizar em <b>Configurações › Integrações</b>.
@@ -106,9 +106,9 @@ import {
             mapeados comprovam controles deterministicamente.
           </p>
           <div class="links">
-            <a routerLink="/assets" class="link">Ativos</a>
-            <a routerLink="/exposures" class="link">Recomendações de postura</a>
-            <a routerLink="/vulnerabilities" class="link">Vulnerabilidades</a>
+            <a routerLink="/assets" class="linknav">Ativos</a>
+            <a routerLink="/exposures" class="linknav">Recomendações de postura</a>
+            <a routerLink="/vulnerabilities" class="linknav">Vulnerabilidades</a>
           </div>
         }
 
@@ -128,9 +128,9 @@ import {
             ({{ connectors().healthy }}/{{ connectors().enabled }} operacionais) é um eixo à parte.
           </p>
           <div class="links">
-            <a routerLink="/exposures" class="link">Recomendações de postura</a>
-            <a routerLink="/vulnerabilities" class="link">Vulnerabilidades</a>
-            <a routerLink="/assets" class="link">Ativos</a>
+            <a routerLink="/exposures" class="linknav">Recomendações de postura</a>
+            <a routerLink="/vulnerabilities" class="linknav">Vulnerabilidades</a>
+            <a routerLink="/assets" class="linknav">Ativos</a>
           </div>
         }
       }
@@ -176,7 +176,7 @@ import {
 
       <!-- Documentos REPOSICIONADOS (não removidos): complemento posterior, não etapa obrigatória paralela. -->
       <p class="docs">
-        Depois de ler o que foi coletado, complemente a <a routerLink="/governance" class="link">governança</a>
+        Depois de ler o que foi coletado, complemente a <a routerLink="/governance" class="linknav">governança</a>
         onde houver lacuna organizacional — com entrevista, evidência dirigida ou documento, só quando necessário.
       </p>
     </section>
@@ -184,46 +184,38 @@ import {
   styles: [
     `
       .env {
+        padding: var(--sp-5);
         border: 1px solid var(--line);
         border-left: 3px solid var(--cyan);
-        border-radius: 12px;
-        background: rgba(122, 145, 190, 0.03);
-        padding: 16px 18px;
-        margin: 0 0 20px;
+        border-radius: var(--radius-lg);
+        background: var(--panel);
+        box-shadow: var(--shadow-panel);
       }
       .head {
         display: flex;
         align-items: baseline;
         justify-content: space-between;
-        gap: 12px;
+        gap: var(--sp-3);
       }
       .eyebrow {
-        font-family: var(--mono);
-        font-size: 10px;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: var(--cyan);
+        margin: 0;
       }
       .step {
-        font-family: var(--mono);
-        font-size: 10px;
-        letter-spacing: 0.08em;
-        color: var(--muted);
+        font-size: var(--fs-meta);
+        font-weight: 500;
+        color: var(--text-2);
       }
       h4 {
-        margin: 10px 0 6px;
-        font-family: var(--display);
-        font-size: 16px;
+        margin: var(--sp-3) 0 6px;
+        font-size: var(--fs-panel);
         font-weight: 600;
-        color: var(--text);
       }
       p {
-        margin: 0 0 10px;
-        font-family: var(--sans);
-        font-size: 13px;
-        line-height: 1.6;
-        color: var(--text);
-        opacity: 0.9;
+        margin: 0 0 var(--sp-3);
+        max-width: 92ch;
+        font-size: var(--fs-sm);
+        line-height: var(--lh-relaxed);
+        color: var(--text-2);
       }
       p b {
         color: var(--text);
@@ -232,144 +224,96 @@ import {
       .muted {
         color: var(--muted);
       }
-      /* CTA administrativo — só o TenantAdmin o vê; ao não admin, orientação em texto. */
-      .cta {
-        display: inline-block;
-        font-family: var(--mono);
-        font-size: 12px;
-        letter-spacing: 0.02em;
-        color: var(--text);
-        background: rgba(38, 224, 255, 0.1);
-        border: 1px solid var(--cyan);
-        border-radius: 8px;
-        padding: 8px 16px;
-        text-decoration: none;
-        transition: background 0.15s ease;
-      }
-      .cta:hover {
-        background: rgba(38, 224, 255, 0.18);
-      }
       .links {
         display: flex;
         flex-wrap: wrap;
-        gap: 14px;
+        gap: var(--sp-4);
         margin: 2px 0 4px;
-      }
-      .link {
-        font-family: var(--mono);
-        font-size: 12px;
-        color: var(--cyan);
-        text-decoration: none;
-        border-bottom: 1px solid transparent;
-      }
-      .link:hover {
-        border-bottom-color: var(--cyan);
       }
       /* Aviso de conectores — tom de alerta, mas sem apagar a coleta válida anterior. */
       .alert {
-        border: 1px solid rgba(255, 176, 32, 0.4);
-        background: rgba(255, 176, 32, 0.06);
-        border-radius: 8px;
-        padding: 10px 12px;
-        margin: 10px 0;
-        font-family: var(--sans);
-        font-size: 12.5px;
-        line-height: 1.55;
-        color: var(--text);
+        margin: var(--sp-3) 0;
       }
       .alert b {
         color: var(--amber);
       }
-      .alert .link {
+      .alert .linknav {
         margin-left: 6px;
       }
       /* Cobertura por natureza — NEUTRO de propósito: cobertura não é conformidade. */
       .cov-wrap {
-        margin-top: 12px;
-        padding-top: 12px;
-        border-top: 1px solid var(--line-2, var(--line));
+        margin-top: var(--sp-3);
+        padding-top: var(--sp-3);
+        border-top: 1px solid var(--line-2);
       }
       .cov-cap {
-        margin: 0 0 8px;
-        font-family: var(--mono);
-        font-size: 10px;
-        letter-spacing: 0.1em;
+        margin: 0 0 10px;
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        letter-spacing: var(--tracking-caps);
         text-transform: uppercase;
         color: var(--muted);
       }
       .cov-grid {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
         gap: 10px;
       }
       .cov {
         display: flex;
         flex-direction: column;
-        gap: 5px;
-        padding: 10px 12px;
+        gap: 6px;
+        padding: var(--sp-3);
         border: 1px solid var(--line);
-        border-radius: 10px;
+        border-radius: var(--radius);
         background: rgba(122, 145, 190, 0.04);
       }
       .cov.zero {
-        opacity: 0.72;
+        opacity: 0.75;
       }
       .cov-top {
         display: flex;
         align-items: baseline;
         justify-content: space-between;
-        gap: 8px;
+        gap: var(--sp-2);
       }
       .cov-label {
-        font-family: var(--sans);
-        font-size: 12px;
+        font-size: var(--fs-sm);
         font-weight: 600;
-        color: var(--text);
       }
+      /* Neutro: NUNCA a régua de cor do score (ciano/âmbar/vermelho). */
       .cov-pct {
-        font-family: var(--display);
+        font-size: var(--fs-panel);
         font-weight: 700;
-        font-size: 15px;
-        /* Neutro: NUNCA a régua de cor do score (ciano/âmbar/vermelho). */
-        color: var(--text);
       }
       .cov-bar {
         position: relative;
         height: 5px;
-        border-radius: 999px;
+        border-radius: var(--radius-pill);
         background: rgba(122, 145, 190, 0.16);
         overflow: hidden;
       }
+      /* Cinza-azulado neutro — leitura de "quanto foi medido", não de aprovação. */
       .cov-fill {
         position: absolute;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        border-radius: 999px;
-        /* Cinza-azulado neutro — leitura de "quanto foi medido", não de aprovação. */
+        inset: 0 auto 0 0;
+        border-radius: var(--radius-pill);
         background: rgba(122, 145, 190, 0.6);
       }
       .cov-sub {
-        font-family: var(--mono);
-        font-size: 10.5px;
-        color: var(--muted);
+        font-size: var(--fs-meta);
+        color: var(--text-2);
       }
       .cov-help {
-        font-family: var(--sans);
-        font-size: 11px;
+        font-size: var(--fs-meta);
         line-height: 1.45;
         color: var(--muted);
       }
-      .cov-note {
-        margin: 10px 0 0;
-        font-family: var(--mono);
-        font-size: 11px;
-        color: var(--muted);
-      }
-      .ai {
-        margin: 12px 0 0;
-        font-family: var(--sans);
-        font-size: 12px;
+      .cov-note,
+      .ai,
+      .docs {
+        margin: var(--sp-3) 0 0;
+        font-size: var(--fs-meta);
         line-height: 1.55;
         color: var(--muted);
       }
@@ -378,23 +322,8 @@ import {
         font-weight: 600;
       }
       .docs {
-        margin: 12px 0 0;
         padding-top: 10px;
-        border-top: 1px solid var(--line-2, var(--line));
-        font-family: var(--sans);
-        font-size: 12px;
-        line-height: 1.55;
-        color: var(--muted);
-      }
-      @media (max-width: 860px) {
-        .cov-grid {
-          grid-template-columns: repeat(2, 1fr);
-        }
-      }
-      @media (max-width: 520px) {
-        .cov-grid {
-          grid-template-columns: 1fr;
-        }
+        border-top: 1px solid var(--line-2);
       }
     `,
   ],

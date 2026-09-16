@@ -54,15 +54,18 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
     AiModeBannerComponent,
   ],
   template: `
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <span class="mark">Central <b>de Governança</b></span>
-          <span class="sub">NIST CSF 2.0 · Govern (GV)</span>
+    <div class="page">
+      <header class="page-head">
+        <div>
+          <p class="page-eyebrow">Governança e controles</p>
+          <h1>Central de governança</h1>
+          <!-- Subtítulo tático da Função Govern (mesmo texto dos painéis de pilar) -->
+          <p class="page-desc">{{ govMeta.description }}</p>
+          <p class="page-meta">NIST CSF 2.0 · Govern (GV) · evidências e documentos</p>
         </div>
-        <div class="client">
-          <span class="label" title="Categorias GV com documentação que cita a execução do controle — cobertura documental, não conformidade">Cobertura documental GV</span>
-          <span class="name">
+        <div class="head-stat" title="Categorias GV com documentação que cita a execução do controle — cobertura documental, não conformidade">
+          <span class="head-stat-k">Cobertura documental GV</span>
+          <span class="head-stat-v">
             @if (coverage(); as cov) {
               {{ cov.coveredPct }}%
             } @else {
@@ -71,9 +74,6 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
           </span>
         </div>
       </header>
-
-      <!-- Subtítulo tático da Função Govern (mesmo texto dos painéis de pilar) -->
-      <p class="gov-description">{{ govMeta.description }}</p>
 
       <!-- Estado da IA + aviso do Free Tier (só dados sintéticos) — o Hub é onde documentos são enviados. -->
       <app-ai-mode-banner />
@@ -105,7 +105,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
                 @case ('error') {
                   <div class="posture-err">
                     <span>Não foi possível carregar o resumo de postura.</span>
-                    <button type="button" class="retry-sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
+                    <button type="button" class="ghost sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
                   </div>
                 }
               }
@@ -233,8 +233,8 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
       </section>
 
       <!-- ---- Filtros ---- -->
-      <section class="panel filters">
-        <div class="controls">
+      <section class="filter-bar" aria-label="Filtros de documentos">
+        <div class="filter-row">
           <label class="ctl">
             <span>Tipo</span>
             <select [value]="typeFilter() ?? ''" (change)="setType($any($event.target).value)">
@@ -256,21 +256,21 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
           </label>
 
           @if (typeFilter() || statusFilter()) {
-            <button type="button" class="clear" (click)="clearFilters()">Limpar</button>
+            <button type="button" class="ghost sm" (click)="clearFilters()">Limpar filtros</button>
           }
         </div>
       </section>
 
       <!-- ---- Estado de erro ---- -->
       @if (loadError()) {
-        <div class="notice">
+        <div class="notice error" role="alert">
           <b>Não foi possível carregar os documentos.</b> O serviço não respondeu agora — a lista fica
           vazia de propósito, para não apresentar um acervo desatualizado.
         </div>
       }
 
       <!-- ============ 3) HUB — documentos ingeridos ============ -->
-      <section class="panel table-wrap">
+      <section class="panel flush">
         <table class="doc-table">
           <thead>
             <tr>
@@ -328,10 +328,10 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
                 <td class="dim">{{ d.analyzedAt ? (d.analyzedAt | date: 'dd/MM/yy HH:mm') : '—' }}</td>
                 <td class="num">
                   <div class="row-actions">
-                    <button type="button" class="act" (click)="reanalyze(d.id)" [disabled]="busyId() === d.id">
+                    <button type="button" class="ghost xs" (click)="reanalyze(d.id)" [disabled]="busyId() === d.id">
                       Reanalisar
                     </button>
-                    <button type="button" class="act danger" (click)="remove(d)" [disabled]="busyId() === d.id">
+                    <button type="button" class="ghost xs danger" (click)="remove(d)" [disabled]="busyId() === d.id">
                       Excluir
                     </button>
                   </div>
@@ -400,147 +400,380 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
   `,
   styles: [
     `
-      /* Subtítulo tático da Função Govern (logo abaixo da topbar). O -14px encurta parte do
-         margin-bottom:30px da topbar global, colando o texto ao título; sans + mutado + contido, para
-         informar sem disputar atenção com o gauge e os cards de controle. */
-      .gov-description {
-        color: var(--muted);
-        font-family: var(--sans);
-        font-size: 13.5px;
-        line-height: 1.6;
-        margin: -14px 0 24px;
-        max-width: 820px;
-      }
+      /* Página, cabeçalho, contador, filtros, painéis, avisos e botões: sistema visual global (styles.css). */
 
       /* ---- 1) Postura de Governança (telemetria GV) ---- */
-      .gov-score { padding: 20px 22px; margin-bottom: 18px; }
-      .gov-score .hd { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; gap: 12px; }
-      .gov-score h3 { margin: 0; font-size: 14px; font-weight: 600; position: relative; padding-left: 13px; }
-      .gov-score h3::before {
-        content: ''; position: absolute; left: 0; top: 2px; bottom: 2px; width: 3px; border-radius: 2px;
-        background: var(--neon); box-shadow: 0 0 10px rgba(38, 224, 255, 0.6);
+      .gs-grid {
+        display: grid;
+        grid-template-columns: 300px minmax(0, 1fr);
+        gap: var(--sp-5);
+        align-items: start;
       }
-      .gov-score .hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-      .gs-grid { display: grid; grid-template-columns: 300px 1fr; gap: 18px; align-items: start; }
-      .gs-left { display: flex; flex-direction: column; gap: 12px; }
-      .score-err { font-family: var(--mono); font-size: 12px; color: var(--red); margin: 0; }
-      .posture-err { display: flex; flex-direction: column; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
-      .retry-sm { align-self: flex-start; cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--cyan); background: rgba(38,224,255,0.06); border: 1px solid rgba(38,224,255,0.35); border-radius: 8px; padding: 5px 12px; }
-      .retry-sm:hover { background: rgba(38,224,255,0.12); }
-      .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: 0.08em; animation: hub-pulse 1.4s ease-in-out infinite; }
-      @keyframes hub-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
-
-      .coverage-strip { display: flex; gap: 30px; padding: 16px 20px; margin-bottom: 18px; }
-      .cov-metric { display: flex; flex-direction: column; gap: 4px; }
-      .cov-k { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
-      .cov-v { font-family: var(--display); font-weight: 700; font-size: 22px; color: var(--text); }
-      .cov-v.ok { color: var(--cyan) }
-      .cov-v.warn { color: var(--amber) }
-
-      /* ---- 2) Integração Corporativa ---- */
-      .integration { padding: 18px 20px; margin-bottom: 18px; }
-      .integration .eyebrow { margin-bottom: 14px; }
-      .int-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
-      .int-copy { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.55; max-width: 560px; }
-      .sync-btn { display: inline-flex; align-items: center; gap: 9px; white-space: nowrap; }
-      .spin { width: 13px; height: 13px; border: 2px solid rgba(5,7,15,.35); border-top-color: #05070f; border-radius: 50%; animation: hub-spin .7s linear infinite; }
-      @keyframes hub-spin { to { transform: rotate(360deg); } }
-      .int-ok, .int-err { font-family: var(--mono); font-size: 12px; margin: 12px 0 0; }
-      .int-ok { color: var(--cyan); }
-      .int-err { color: var(--red); }
-      .int-demo { color: var(--amber); font-weight: 600; }
-
-      .uploader { padding: 18px 20px; margin-bottom: 18px; }
-      .uploader .eyebrow { margin-bottom: 14px; }
-      .up-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; }
-      .up-field { display: flex; flex-direction: column; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
-      .up-field input[type='text'], .up-field select {
-        font-family: var(--sans); font-size: 13px; color: var(--text); text-transform: none; letter-spacing: 0;
-        background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px; min-width: 240px;
+      .gs-left {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-3);
       }
-      .up-field input[type='file'] { font-family: var(--sans); font-size: 12px; color: var(--muted); text-transform: none; letter-spacing: 0; }
-      .up-field input:focus, .up-field select:focus { outline: none; border-color: rgba(38, 224, 255, 0.5); }
-      .up-error { font-family: var(--mono); font-size: 11.5px; color: var(--red); margin: 12px 0 0; }
-
-      .btn {
-        font-family: var(--mono); font-size: 12px; color: var(--text);
-        background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 9px 16px; cursor: pointer; transition: 0.15s;
+      .score-err {
+        font-size: var(--fs-sm);
+        color: var(--red-text);
       }
-      .btn:hover:not(:disabled) { border-color: rgba(38, 224, 255, 0.5); }
-      .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-      .btn.primary { color: #05070f; font-weight: 600; border-color: transparent; background: var(--neon-h); box-shadow: 0 0 14px -3px rgba(38, 224, 255, 0.6); }
+      .posture-err {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--sp-2);
+        font-size: var(--fs-sm);
+        color: var(--text-2);
+      }
+      .pulse {
+        font-size: var(--fs-sm);
+        color: var(--text-2);
+        animation: hub-pulse 1.4s ease-in-out infinite;
+      }
+      @keyframes hub-pulse {
+        0%,
+        100% {
+          opacity: 0.55;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
 
-      .filters { padding: 14px 20px; margin-bottom: 18px; }
-      .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
-      .ctl { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
-      .ctl select { font-family: var(--sans); font-size: 13px; color: var(--text); text-transform: none; letter-spacing: 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; }
-      .ctl select:focus { outline: none; border-color: rgba(38, 224, 255, 0.5); }
-      .clear { font-family: var(--mono); font-size: 11px; color: var(--magenta); background: none; border: 1px solid rgba(255, 61, 154, 0.3); border-radius: 9px; padding: 7px 12px; cursor: pointer; }
+      .coverage-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--sp-4) var(--sp-10);
+      }
+      .cov-metric {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-1);
+      }
+      .cov-k,
+      .up-field,
+      .ctl {
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .cov-v {
+        font-size: 24px;
+        font-weight: 700;
+      }
+      .cov-v.ok {
+        color: var(--cyan);
+      }
+      .cov-v.warn {
+        color: var(--amber);
+      }
 
-      .table-wrap { padding: 6px 8px; overflow-x: auto; }
-      table.doc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      /* ---- 2) Integração corporativa e upload ---- */
+      .int-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--sp-5);
+      }
+      .int-copy {
+        max-width: 72ch;
+        font-size: var(--fs-sm);
+        line-height: 1.55;
+        color: var(--text-2);
+      }
+      .spin {
+        width: 13px;
+        height: 13px;
+        border: 2px solid rgba(5, 7, 15, 0.35);
+        border-top-color: #05070f;
+        border-radius: 50%;
+        animation: hub-spin 0.7s linear infinite;
+      }
+      @keyframes hub-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .int-ok,
+      .int-err {
+        margin-top: var(--sp-3);
+        font-size: var(--fs-sm);
+      }
+      .int-ok {
+        color: var(--cyan);
+      }
+      .int-err {
+        color: var(--red-text);
+      }
+      .int-demo {
+        color: var(--amber);
+        font-weight: 600;
+      }
+      .up-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 14px;
+      }
+      .up-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .up-field input[type='text'],
+      .up-field select {
+        min-width: 240px;
+        font-weight: 400;
+        letter-spacing: 0;
+        text-transform: none;
+      }
+      .up-field input[type='file'] {
+        font-size: var(--fs-sm);
+        font-weight: 400;
+        letter-spacing: 0;
+        text-transform: none;
+        color: var(--text-2);
+      }
+      .up-error {
+        margin-top: var(--sp-3);
+        font-size: var(--fs-sm);
+        color: var(--red-text);
+      }
+      .ctl {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--sp-2);
+      }
+
+      /* ---- 3) Hub de documentos ---- */
+      table.doc-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: var(--fs-sm);
+      }
       table.doc-table thead th {
-        font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em;
-        color: var(--muted); text-align: left; font-weight: 500; padding: 12px 14px; border-bottom: 1px solid var(--line);
+        padding: 10px var(--sp-3);
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        font-size: var(--fs-caps);
+        font-weight: 600;
+        letter-spacing: var(--tracking-caps);
+        text-transform: uppercase;
+        color: var(--muted);
+        white-space: nowrap;
       }
-      table.doc-table th.num, table.doc-table td.num { text-align: center; }
-      table.doc-table tbody td { padding: 13px 14px; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
-      table.doc-table tbody tr:hover td { background: rgba(38, 224, 255, 0.03); }
-      .doc-title { font-weight: 600; color: var(--text); }
-      .doc-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
-      .tag { font-family: var(--mono); font-size: 11.5px; color: var(--cyan-2); }
-      .src { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-      .dim { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
-      .map-count { font-family: var(--display); font-weight: 700; font-size: 13px; color: var(--text); }
-
-      .ai-status { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; padding: 4px 10px; border-radius: 999px; border: 1px solid currentColor; }
+      table.doc-table th.num,
+      table.doc-table td.num {
+        text-align: center;
+      }
+      table.doc-table tbody td {
+        padding: var(--sp-3);
+        border-bottom: 1px solid var(--line-2);
+        vertical-align: middle;
+      }
+      table.doc-table tbody tr:hover td {
+        background: rgba(38, 224, 255, 0.03);
+      }
+      .doc-title {
+        font-weight: 600;
+      }
+      .doc-sub {
+        margin-top: 2px;
+        font-size: var(--fs-meta);
+        color: var(--muted);
+        overflow-wrap: anywhere;
+      }
+      .tag {
+        font-size: var(--fs-meta);
+        font-weight: 500;
+        color: var(--cyan-2);
+      }
+      .src {
+        font-size: var(--fs-meta);
+        color: var(--text-2);
+      }
+      .dim {
+        font-size: var(--fs-meta);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .map-count {
+        font-size: var(--fs-sm);
+        font-weight: 700;
+      }
+      .ai-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 10px;
+        border: 1px solid currentColor;
+        border-radius: var(--radius-pill);
+        font-size: var(--fs-meta);
+        white-space: nowrap;
+      }
       /* Spinner do status ATIVO (Na fila / Analisando); herda a cor via currentColor. */
       .ai-spin {
-        width: 9px; height: 9px; flex: none; border-radius: 50%;
-        border: 1.5px solid currentColor; border-top-color: transparent;
-        animation: ai-spin 0.7s linear infinite;
+        flex: none;
+        width: 9px;
+        height: 9px;
+        border: 1.5px solid currentColor;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: hub-spin 0.7s linear infinite;
       }
-      @keyframes ai-spin { to { transform: rotate(360deg); } }
-      /* Estado REFINADO da leitura (separa Analisado com/sem evidência) + parecer expandível. */
-      .st-pending, .st-analyzedwithoutevidence { color: var(--muted); }
-      .st-queued { color: var(--cyan-2); }
-      .st-processing { color: var(--amber); }
-      .st-analyzedwithevidence { color: var(--cyan); }
-      .st-failed { color: var(--red); }
-      .ai-err { font-family: var(--mono); font-size: 10.5px; color: var(--red); margin-top: 4px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .map-toggle { display: inline-flex; align-items: center; gap: 6px; background: none; border: 1px solid transparent; border-radius: 8px; padding: 4px 8px; cursor: pointer; }
-      .map-toggle:not(:disabled):hover, .map-toggle.on { border-color: rgba(38,224,255,.4); }
-      .caret { font-size: 10px; color: var(--cyan); }
-      tr.detail-row td { background: rgba(38,224,255,.02); padding: 0 14px 16px; }
-      .parecer { display: flex; flex-direction: column; gap: 12px; }
-      .parecer-head { display: flex; gap: 12px; }
-      .ev-badge { font-family: var(--mono); font-size: 10.5px; padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor; }
-      .ev-badge.ok { color: var(--cyan); }
-      .ev-badge.none { color: var(--amber); }
-      .cites { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-      .cite { border-left: 2px solid rgba(38, 224, 255, 0.4); padding-left: 12px; }
-      .cite-head { display: flex; align-items: center; gap: 12px; margin-bottom: 5px; }
-      .cite-head .ctrl { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--cyan-2); }
-      .cite-head .conf { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
-      .summary, .quote, .rationale, .no-evidence { margin: 0; line-height: 1.5; }
-      .summary, .quote { font-size: 12.5px; color: var(--text); }
-      .quote { font-style: italic; margin-bottom: 5px; }
-      .rationale, .no-evidence { font-size: 11.5px; color: var(--muted); }
-      .no-evidence b { color: var(--amber); }
-
-      .row-actions { display: inline-flex; gap: 6px; }
-      .act { font-family: var(--mono); font-size: 11px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; cursor: pointer; transition: 0.15s; }
-      .act:hover:not(:disabled) { border-color: rgba(38, 224, 255, 0.5); }
-      .act.danger { color: var(--magenta); border-color: rgba(255, 61, 154, 0.3); }
-      .act:disabled { opacity: 0.4; cursor: not-allowed; }
-
-      tr.empty td { text-align: center; color: var(--muted); font-family: var(--mono); font-size: 12px; padding: 30px; }
-
-      @media (max-width: 900px) { .gs-grid { grid-template-columns: 1fr; } }
+      /* Estado REFINADO da leitura (separa Analisado com/sem evidência). */
+      .st-pending,
+      .st-analyzedwithoutevidence {
+        color: var(--text-2);
+      }
+      .st-queued {
+        color: var(--cyan-2);
+      }
+      .st-processing {
+        color: var(--amber);
+      }
+      .st-analyzedwithevidence {
+        color: var(--cyan);
+      }
+      .st-failed {
+        color: var(--red-text);
+      }
+      .ai-err {
+        max-width: 240px;
+        margin-top: var(--sp-1);
+        font-size: var(--fs-meta);
+        color: var(--red-text);
+      }
+      .map-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px var(--sp-2);
+        border: 1px solid transparent;
+        border-radius: var(--radius-sm);
+        background: none;
+        color: var(--text);
+        cursor: pointer;
+      }
+      .map-toggle:not(:disabled):hover,
+      .map-toggle.on {
+        border-color: rgba(38, 224, 255, 0.4);
+      }
+      .map-toggle:focus-visible {
+        outline: none;
+        box-shadow: var(--focus);
+      }
+      .caret {
+        font-size: var(--fs-caps);
+        color: var(--cyan);
+      }
+      tr.detail-row td {
+        padding: 0 var(--sp-4) var(--sp-4);
+        background: rgba(38, 224, 255, 0.02);
+      }
+      .parecer {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-3);
+      }
+      .parecer-head {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--sp-3);
+      }
+      .ev-badge {
+        align-self: flex-start;
+        padding: 3px 10px;
+        border: 1px solid currentColor;
+        border-radius: var(--radius-pill);
+        font-size: var(--fs-caps);
+        font-weight: 600;
+      }
+      .ev-badge.ok {
+        color: var(--cyan);
+      }
+      .ev-badge.none {
+        color: var(--amber);
+      }
+      .cites {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-3);
+      }
+      .cite {
+        padding-left: var(--sp-3);
+        border-left: 2px solid rgba(38, 224, 255, 0.4);
+      }
+      .cite-head {
+        display: flex;
+        align-items: center;
+        gap: var(--sp-3);
+        margin-bottom: 6px;
+      }
+      .cite-head .ctrl {
+        font-family: var(--mono);
+        font-size: var(--fs-meta);
+        font-weight: 600;
+        color: var(--cyan-2);
+      }
+      .cite-head .conf {
+        font-size: var(--fs-meta);
+        color: var(--muted);
+      }
+      .summary,
+      .quote,
+      .rationale,
+      .no-evidence {
+        line-height: var(--lh);
+      }
+      .summary,
+      .quote {
+        font-size: var(--fs-sm);
+      }
+      .quote {
+        margin: 0 0 6px;
+        font-style: italic;
+      }
+      .rationale,
+      .no-evidence {
+        font-size: var(--fs-meta);
+        color: var(--text-2);
+      }
+      .no-evidence b {
+        color: var(--amber);
+      }
+      .row-actions {
+        display: inline-flex;
+        gap: 6px;
+      }
+      tr.empty td {
+        padding: var(--sp-8);
+        text-align: center;
+        font-size: var(--fs-sm);
+        color: var(--text-2);
+      }
+      @media (max-width: 900px) {
+        .gs-grid {
+          grid-template-columns: 1fr;
+        }
+      }
       @media (max-width: 720px) {
-        .up-field input[type='text'], .up-field select { min-width: 160px; }
+        .up-field {
+          flex: 1 1 100%;
+        }
+        .up-field input[type='text'],
+        .up-field select {
+          min-width: 0;
+          width: 100%;
+        }
       }
-      @media (prefers-reduced-motion: reduce) { .pulse, .spin, .ai-spin { animation: none; } }
     `,
   ],
 })

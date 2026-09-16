@@ -306,23 +306,23 @@ import { AuthService } from '../../services/auth.service';
     `
       .ap { display: flex; flex-direction: column; gap: 10px; }
       .kv { display: grid; grid-template-columns: 190px 1fr; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
-      .kv .k, .row .k { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      .kv .k, .row .k { font-family: var(--sans); font-size: var(--fs-meta); color: var(--muted); text-transform: uppercase; letter-spacing: 0; }
       .kv .v { font-size: 13px; line-height: 1.55; color: var(--text); display: flex; flex-direction: column; gap: 3px; }
       .kv .v.proven { color: #4fd39a; }
-      .mono, .dim { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
-      .chip { font-family: var(--mono); font-size: 10.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); align-self: flex-start; }
+      .mono, .dim { font-family: var(--mono); font-size: var(--fs-caps); color: var(--muted); }
+      .chip { font-family: var(--sans); font-size: var(--fs-caps); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); align-self: flex-start; }
       .chip.late { color: #ff5c8a; border-color: rgba(255, 92, 138, 0.45); }
       .chip.demo { color: var(--amber); border-color: rgba(255, 176, 32, 0.45); }
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-top: 8px; border-top: 1px solid var(--line); }
-      .btn { cursor: pointer; font-family: var(--mono); font-size: 12px; font-weight: 600; border-radius: 11px; padding: 8px 14px; border: 1px solid var(--line); color: var(--text); background: rgba(122, 145, 190, 0.08); align-self: flex-start; }
-      .btn.sm { padding: 5px 10px; font-size: 11px; }
+      .btn { cursor: pointer; font-family: var(--sans); font-size: 12px; font-weight: 600; border-radius: 11px; padding: 8px 14px; border: 1px solid var(--line); color: var(--text); background: rgba(122, 145, 190, 0.08); align-self: flex-start; }
+      .btn.sm { padding: 5px 10px; font-size: var(--fs-meta); }
       .btn.real { color: var(--cyan); background: rgba(38, 224, 255, 0.08); border-color: rgba(38, 224, 255, 0.45); }
       .btn:disabled { opacity: 0.5; cursor: not-allowed; }
       .blk { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
-      .blk h4 { margin: 0; font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-      details > summary { cursor: pointer; font-family: var(--mono); font-size: 12px; color: var(--cyan); list-style: none; }
+      .blk h4 { margin: 0; font-family: var(--sans); font-size: var(--fs-meta); text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--muted); }
+      details > summary { cursor: pointer; font-family: var(--sans); font-size: 12px; color: var(--cyan); list-style: none; }
       .fl { display: flex; flex-direction: column; gap: 4px; }
-      .fl > span { font-family: var(--mono); font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      .fl > span { font-family: var(--sans); font-size: var(--fs-caps); color: var(--muted); text-transform: uppercase; letter-spacing: 0; }
       .fl input, .fl textarea { background: rgba(122, 145, 190, 0.06); border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px; color: var(--text); font-family: var(--sans); font-size: 13px; width: 100%; box-sizing: border-box; }
       .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
       .hint { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--muted); }
@@ -332,13 +332,13 @@ import { AuthService } from '../../services/auth.service';
       .val.past { opacity: 0.72; border-left: 2px solid rgba(122, 145, 190, 0.35); padding-left: 10px; }
       .val-top { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13px; }
       .val-body { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
-      .val-basis { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+      .val-basis { font-family: var(--sans); font-size: var(--fs-caps); color: var(--muted); }
       .val-basis.scope { color: var(--amber); }
       .ev { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text); padding: 3px 0; }
       .state.err, .state.note { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
       .state.err b { color: #ff5c8a; font-size: 12.5px; }
       .state.note b { color: var(--amber); font-size: 12.5px; }
-      .pulse { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 0; }
+      .pulse { font-family: var(--sans); font-size: 12px; color: var(--muted); margin: 0; }
     `,
   ],
 })
