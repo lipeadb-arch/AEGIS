@@ -199,6 +199,11 @@ import { AuthService } from '../../services/auth.service';
               <button type="button" class="btn real" (click)="validateWithRun()" [disabled]="busy()">
                 Validar com a avaliação aberta
               </button>
+            } @else if (!runFinalized()) {
+              <p class="hint warn">
+                A execução aberta na tela <b>não foi finalizada</b> e não serve de evidência técnica. Abra uma
+                avaliação concluída para validar por comparação.
+              </p>
             } @else {
               <p class="hint warn">
                 A avaliação aberta na tela é a <b>mesma</b> que originou este achado. Uma coleta não comprova a
@@ -263,6 +268,12 @@ import { AuthService } from '../../services/auth.service';
             </div>
           }
         </div>
+      } @else if (!runFinalized()) {
+        <!-- [AEGIS-KNIGHT-DURABLE-01] Uma execução não finalizada não é origem de plano. -->
+        <p class="hint warn">
+          Nenhuma ação para este achado. Um plano só pode ser criado a partir de uma avaliação concluída — a
+          execução aberta não foi finalizada.
+        </p>
       } @else if (!canManage()) {
         <p class="hint warn">
           Nenhuma ação para este achado. Criar uma exige <b>Manager</b> ou <b>TenantAdmin</b> — seu papel
@@ -355,6 +366,11 @@ export class KnightActionPlanComponent {
   /** Avaliação ABERTA agora — candidata a evidência de validação quando não for a própria origem. */
   readonly currentRunId = input.required<string>();
   /**
+   * [AEGIS-KNIGHT-DURABLE-01] FALSE quando a avaliação aberta não foi finalizada: ela não origina plano
+   * nem serve de evidência de validação.
+   */
+  readonly runFinalized = input(true);
+  /**
    * A ação EM FOCO. Normalmente é a ação ativa do achado, mas pode ser uma ação ENCERRADA apontada por um
    * link — e nesse caso é ela que precisa aparecer, com a própria execução e o próprio histórico, mesmo
    * havendo outro ciclo ativo para o mesmo indicador.
@@ -418,7 +434,7 @@ export class KnightActionPlanComponent {
    */
   readonly canValidateWithRun = computed(() => {
     const p = this.plan();
-    return !!p && this.currentRunId() !== p.originRunId;
+    return !!p && this.runFinalized() && this.currentRunId() !== p.originRunId;
   });
 
   // Campos do formulário de criação (semeados na primeira leitura do achado).

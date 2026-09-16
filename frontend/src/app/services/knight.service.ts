@@ -18,16 +18,10 @@ const SOURCE_SLUG: Record<KnightSourceType, string> = {
 };
 
 /**
- * Cliente do AEGIS KNIGHT (/api/v1/knight/assessments). O X-Tenant e o Bearer são injetados pelo
- * authInterceptor. Todas as chamadas têm TIMEOUT explícito (sem carregamento infinito); o erro é normalizado
- * num Error limpo para o componente renderizar estado + retry. Uma coleta real NÃO configurada (409) vira um
- * erro identificável — o componente jamais apresenta o Demo no lugar de uma coleta real que falhou.
- */
-/**
- * [AEGIS-KNIGHT-DURABLE-01] O navegador desistiu de esperar — NÃO o servidor. O servidor grava o veredito
- * determinístico ANTES de pedir a narrativa à IA, então um corte aqui costuma significar que o resultado já
- * existe do outro lado. Distinguir esse erro dos demais é o que permite RECUPERAR a avaliação em vez de
- * oferecer "tentar de novo" e disparar uma segunda coleta na fonte.
+ * [AEGIS-KNIGHT-DURABLE-01] O NAVEGADOR deixou de esperar — o que aconteceu no servidor NÃO é conhecido. A
+ * tentativa pode ter concluído, pode ainda estar em andamento ou pode não ter sido registrada, e a requisição
+ * não devolveu nenhum identificador que permita reconhecê-la depois. Distinguir este erro serve para NÃO
+ * tratá-lo como falha da avaliação e NÃO oferecer "tentar de novo" (outra coleta na fonte) como saída.
  */
 export class KnightRunTimeoutError extends Error {
   constructor(message: string) {
@@ -36,6 +30,12 @@ export class KnightRunTimeoutError extends Error {
   }
 }
 
+/**
+ * Cliente do AEGIS KNIGHT (/api/v1/knight/assessments). O X-Tenant e o Bearer são injetados pelo
+ * authInterceptor. Todas as chamadas têm TIMEOUT explícito (sem carregamento infinito); o erro é normalizado
+ * num Error limpo para o componente renderizar estado + retry. Uma coleta real NÃO configurada (409) vira um
+ * erro identificável — o componente jamais apresenta o Demo no lugar de uma coleta real que falhou.
+ */
 @Injectable({ providedIn: 'root' })
 export class KnightService {
   private readonly http = inject(HttpClient);
@@ -69,10 +69,10 @@ export class KnightService {
     );
   }
 
-  /** O corte é do NAVEGADOR: a execução pode ter concluído do outro lado e ser recuperável por leitura. */
+  /** O corte é do NAVEGADOR: o desfecho no servidor é desconhecido e a resposta não identificou a execução. */
   private runTimeout(): KnightRunTimeoutError {
     return new KnightRunTimeoutError(
-      'O navegador parou de esperar pela resposta. A execução pode ter concluído no servidor.',
+      'O navegador deixou de aguardar a resposta desta execução. O desfecho dela não foi confirmado.',
     );
   }
 
@@ -85,18 +85,29 @@ export class KnightService {
   }
 
   /**
-   * [AEGIS-KNIGHT-DURABLE-01] Último RESULTADO CONCLUÍDO do tenant e, à parte, a tentativa mais recente que
-   * não concluiu. 204 = nenhuma execução ainda (as duas metades vazias). Somente leitura: NÃO dispara coleta.
+   * Último assessment CONCLUÍDO do tenant — <c>null</c> quando o servidor responde 204. Contrato público
+   * preservado de `GET /latest`.
    */
-  getLatest(): Observable<KnightLatest> {
-    return this.http.get<KnightLatest>(`${this.base}/latest`, { observe: 'response' }).pipe(
+  getLatest(): Observable<KnightAssessment | null> {
+    return this.http.get<KnightAssessment>(`${this.base}/latest`, { observe: 'response' }).pipe(
       timeout(this.READ_TIMEOUT_MS),
-      map((resp) =>
-        resp.status === 204 || !resp.body
-          ? { assessment: null, unfinishedAttempt: null }
-          : resp.body,
-      ),
+      map((resp) => (resp.status === 204 ? null : resp.body)),
       catchError(this.normalize('Não foi possível carregar a última avaliação.')),
+    );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-DURABLE-01] Leitura COMPOSTA (`GET /latest-state`): o último resultado concluído e, à parte,
+   * a tentativa não finalizada que o sucede. Somente leitura: NÃO dispara coleta.
+   */
+  getLatestState(): Observable<KnightLatest> {
+    return this.http.get<KnightLatest>(`${this.base}/latest-state`).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      map((body) => ({
+        assessment: body?.assessment ?? null,
+        unfinishedAttempt: body?.unfinishedAttempt ?? null,
+      })),
+      catchError(this.normalize('Não foi possível consultar a última avaliação disponível.')),
     );
   }
 

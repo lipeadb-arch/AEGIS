@@ -836,7 +836,8 @@ public record KnightUnfinishedRunDto(
     DateTimeOffset StartedAt);
 
 /// <summary>
-/// [AEGIS-KNIGHT-DURABLE-01] Resposta de <c>GET /latest</c>: o ÚLTIMO RESULTADO CONCLUÍDO e, à parte, a
+/// [AEGIS-KNIGHT-DURABLE-01] Resposta de <c>GET /latest-state</c> (a leitura composta; <c>GET /latest</c> mantém o
+/// formato anterior): o ÚLTIMO RESULTADO CONCLUÍDO e, à parte, a
 /// tentativa mais recente que não concluiu (quando começou depois dele). A separação é o ponto: uma
 /// execução em andamento/abandonada nunca ocupa o lugar do resultado, e tampouco desaparece atrás de uma
 /// avaliação antiga apresentada como se fosse a atual. O acesso por Id continua alcançando qualquer uma.

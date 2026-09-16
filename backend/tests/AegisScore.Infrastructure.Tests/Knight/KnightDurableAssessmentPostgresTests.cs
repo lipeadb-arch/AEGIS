@@ -190,7 +190,7 @@ public sealed class KnightDurableAssessmentPostgresTests
             var controller = new KnightAssessmentsController(
                 ServiceFor(db, tenant, new SemIa()), new SystemTenantContext(tenant));
 
-            var body = (await controller.GetLatest(default)).Result
+            var body = (await controller.GetLatestState(default)).Result
                 .Should().BeOfType<OkObjectResult>().Which.Value
                 .Should().BeOfType<KnightLatestDto>().Which;
 
