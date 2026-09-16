@@ -91,14 +91,15 @@ public sealed class PriorityWorkspaceTests
     private sealed class FakeKnightService : IAegisKnightAssessmentService
     {
         public KnightAssessment? Latest;
+        public KnightUnfinishedRun? UnfinishedAttempt { get; set; }
         public int Calls;
         public CancellationToken Token;
 
-        public Task<KnightAssessment?> GetLatestAsync(CancellationToken ct = default)
+        public Task<KnightLatestAssessment> GetLatestAsync(CancellationToken ct = default)
         {
             Calls++;
             Token = ct;
-            return Task.FromResult(Latest);
+            return Task.FromResult(new KnightLatestAssessment(Latest, UnfinishedAttempt));
         }
 
         public Task<KnightAssessment> RunDemoAssessmentAsync(CancellationToken ct = default) =>

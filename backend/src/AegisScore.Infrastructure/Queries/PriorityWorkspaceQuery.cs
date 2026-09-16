@@ -70,7 +70,9 @@ public sealed class PriorityWorkspaceQuery : IPriorityWorkspaceQuery
         // Fila 3 — ACHADOS DE IDENTIDADE: leitura da avaliação KNIGHT já persistida (a MESMA que a tela do
         // KNIGHT mostra). Somente leitura: NÃO dispara coleta, NÃO reavalia e NÃO recalcula score — abrir a
         // Central jamais toca a fonte de identidade.
-        var knight = await _knight.GetLatestAsync(ct);
+        // [AEGIS-KNIGHT-DURABLE-01] A fila usa o último resultado CONCLUÍDO. Uma tentativa que não
+        // concluiu não tem veredito fechado para priorizar — entrar na fila com ela seria inventar achado.
+        var knight = (await _knight.GetLatestAsync(ct)).Assessment;
 
         return new PriorityWorkspaceDto(
             ReadModelVersion: PriorityWorkspaceDto.Version,

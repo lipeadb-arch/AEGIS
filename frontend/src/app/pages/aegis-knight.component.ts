@@ -1,13 +1,16 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { map } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
 import {
   KnightAssessment,
   KnightIndicator,
+  KnightLatest,
   KnightSourceType,
   KnightSources,
+  KnightUnfinishedRun,
   capabilityLabel,
   capabilityOutcomeLabel,
   categoryLabel,
@@ -27,7 +30,7 @@ import { IdentityRiskPanelComponent } from '../components/identity/identity-risk
 import { KnightFindingDetailComponent } from '../components/knight/finding-detail.component';
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
 import { IdentityRiskService } from '../services/identity-risk.service';
-import { KnightService } from '../services/knight.service';
+import { KnightRunTimeoutError, KnightService } from '../services/knight.service';
 import {
   ActionPlan,
   KnightOriginMode,
@@ -113,6 +116,32 @@ import { PostureHistoryService } from '../services/posture-history.service';
           <div class="banner pinned">
             <span>{{ pmsg }}</span>
             <a class="btn ghost" routerLink="/history">Abrir histórico</a>
+          </div>
+        }
+
+        <!-- [AEGIS-KNIGHT-DURABLE-01] Uma tentativa que NÃO concluiu não é um resultado: ela não tem
+             veredito, score nem narrativa. Também não pode desaparecer — sem este aviso, a avaliação
+             concluída anterior passaria por "a atual". O link por Id continua alcançando a tentativa. -->
+        @if (unfinishedAttempt(); as tent) {
+          <div class="banner err">
+            <span>
+              Há uma execução <b>iniciada em {{ tent.startedAt | date: 'dd/MM/yyyy HH:mm' }}</b> que não
+              concluiu ({{ tent.sourceType === 'Demo' ? 'demonstração' : sourceTypeLabel(tent.sourceType) }}).
+              Ela <b>não</b> produziu veredito e o resultado mostrado abaixo é o da última avaliação
+              concluída.
+            </span>
+            <a class="btn ghost" [routerLink]="[]" [queryParams]="{ run: tent.id }">Abrir a execução</a>
+          </div>
+        }
+
+        <!-- Corte do NAVEGADOR, não do servidor: o resultado pode já estar gravado. A recuperação é uma
+             LEITURA — nunca uma segunda coleta disparada por conta própria. -->
+        @if (timeoutNotice(); as tmsg) {
+          <div class="banner pinned">
+            <span>{{ tmsg }}</span>
+            <button type="button" class="btn ghost" (click)="recoverAfterTimeout()" [disabled]="busy()">
+              Recuperar resultado gravado
+            </button>
           </div>
         }
 
@@ -494,6 +523,17 @@ export class AegisKnightComponent implements OnInit {
   private readonly router = inject(Router);
 
   readonly assessment = signal<KnightAssessment | null>(null);
+
+  /**
+   * [AEGIS-KNIGHT-DURABLE-01] A tentativa mais recente que NÃO concluiu, quando existe uma. Fica fora de
+   * `assessment` de propósito: ela não tem veredito, e ocupar o lugar do resultado seria apresentar uma
+   * execução abandonada como a foto atual da postura.
+   */
+  readonly unfinishedAttempt = signal<KnightUnfinishedRun | null>(null);
+
+  /** O navegador cortou a espera de uma execução. Não dispara nada sozinho — só oferece a recuperação. */
+  readonly timeoutNotice = signal<string | null>(null);
+
   readonly sources = signal<KnightSources | null>(null);
   readonly loading = signal(true); // 1ª carga (fontes + último)
   readonly running = signal(false); // execução (demo ou real)
@@ -827,10 +867,19 @@ export class AegisKnightComponent implements OnInit {
       error: () => this.sources.set(null), // fontes é secundário; não bloqueia a tela
     });
 
-    const wanted$ = requested ? this.knight.getById(requested) : this.knight.getLatest();
+    // [AEGIS-KNIGHT-DURABLE-01] A leitura da última avaliação devolve DUAS coisas: o resultado concluído e,
+    // à parte, a tentativa que não concluiu depois dele. Abrir por Id continua alcançando qualquer execução
+    // — inclusive uma não concluída, que é mostrada com o estado real, sem virar "resultado".
+    const wanted$ = requested
+      ? this.knight.getById(requested).pipe(
+          map((a) => ({ assessment: a, unfinishedAttempt: null }) as KnightLatest),
+        )
+      : this.knight.getLatest();
+
     wanted$.subscribe({
-      next: (a) => {
+      next: ({ assessment: a, unfinishedAttempt }) => {
         this.assessment.set(a);
+        this.unfinishedAttempt.set(unfinishedAttempt);
         this.loading.set(false);
         this.applyDeepLink(a);
         // Só agora a PROCEDÊNCIA é conhecida — ler a fila antes traria ações de outra fonte/modo.
@@ -839,6 +888,7 @@ export class AegisKnightComponent implements OnInit {
       },
       error: (e: Error) => {
         this.loading.set(false);
+        this.unfinishedAttempt.set(null);
         if (requested) {
           this.assessment.set(null);
           this.selected.set(null);
@@ -902,9 +952,11 @@ export class AegisKnightComponent implements OnInit {
   private execute(run: () => ReturnType<KnightService['runDemo']>): void {
     this.running.set(true);
     this.error.set(null);
+    this.timeoutNotice.set(null);
     run().subscribe({
       next: (a) => {
         this.assessment.set(a);
+        this.unfinishedAttempt.set(null);
         this.running.set(false);
         this.linkNotice.set(null);
         this.findingNotice.set(null);
@@ -923,9 +975,56 @@ export class AegisKnightComponent implements OnInit {
         this.reloadRisk();
       },
       error: (e: Error) => {
+        this.running.set(false);
+        // [AEGIS-KNIGHT-DURABLE-01] Quem desistiu foi o NAVEGADOR, não o servidor. O veredito
+        // determinístico é gravado antes de a narrativa da IA ser pedida, então o resultado provavelmente
+        // já existe. Isso não é uma falha da avaliação e não se conserta repetindo a coleta — a saída é
+        // RECUPERAR por leitura, e a decisão é de quem está na tela.
+        if (e instanceof KnightRunTimeoutError) {
+          this.timeoutNotice.set(
+            `${e.message} Recupere o resultado gravado — isso é uma leitura e não coleta nada na fonte.`,
+          );
+          return;
+        }
         // Mantém o assessment anterior visível; NUNCA substitui por Demo numa falha real.
         this.error.set(e.message);
-        this.running.set(false);
+      },
+    });
+  }
+
+  /**
+   * [AEGIS-KNIGHT-DURABLE-01] Recupera a avaliação depois de o navegador ter cortado a espera. É uma
+   * LEITURA da última avaliação — jamais uma segunda execução: repetir a coleta aqui bateria na fonte real
+   * de novo por causa de um tempo limite do cliente, e produziria uma avaliação diferente da que já existe.
+   */
+  recoverAfterTimeout(): void {
+    this.loading.set(true);
+    this.error.set(null);
+    this.knight.getLatest().subscribe({
+      next: ({ assessment: a, unfinishedAttempt }) => {
+        this.loading.set(false);
+        this.unfinishedAttempt.set(unfinishedAttempt);
+        if (!a) {
+          // Nada concluído para recuperar. Dizer isso é melhor que limpar o aviso e deixar a tela muda.
+          this.timeoutNotice.set(
+            'Nenhuma avaliação concluída foi encontrada para recuperar. Nada foi coletado de novo.',
+          );
+          return;
+        }
+        this.timeoutNotice.set(null);
+        this.assessment.set(a);
+        this.pinnedRun.set(a.id);
+        this.pinned.set({ kind: 'livre' });
+        const aberto = this.selected();
+        const mantem = aberto && a.indicators.some((i) => i.indicatorId === aberto) ? aberto : null;
+        this.selected.set(mantem);
+        this.syncQueryParam(mantem);
+        this.reloadPlans();
+        this.reloadRisk();
+      },
+      error: (e: Error) => {
+        this.loading.set(false);
+        this.error.set(e.message);
       },
     });
   }

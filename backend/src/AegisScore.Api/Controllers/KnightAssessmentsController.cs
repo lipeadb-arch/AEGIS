@@ -76,14 +76,27 @@ public class KnightAssessmentsController : ControllerBase
             status.RealSources.Select(s => new KnightSourceDto(s.Source.ToString(), s.Label, s.Configured, s.Enabled)).ToList()));
     }
 
-    /// <summary>Último assessment do tenant (200 com corpo, 204 sem nenhum, 401 sem tenant).</summary>
+    /// <summary>
+    /// [AEGIS-KNIGHT-DURABLE-01] Último RESULTADO CONCLUÍDO do tenant e, separadamente, a tentativa mais
+    /// recente que não concluiu. Uma execução em andamento/abandonada jamais ocupa o campo do resultado, e
+    /// a existência dela não é omitida — a tela decide como dizer cada coisa. 204 quando não há nem uma
+    /// coisa nem outra; o acesso por Id continua alcançando qualquer execução.
+    /// </summary>
+    /// <response code="200">Resultado concluído e/ou tentativa não concluída.</response>
+    /// <response code="204">Nenhuma execução neste tenant.</response>
+    /// <response code="401">Tenant não resolvido no contexto.</response>
     [HttpGet("latest")]
-    public async Task<ActionResult<KnightAssessmentDto>> GetLatest(CancellationToken ct)
+    public async Task<ActionResult<KnightLatestDto>> GetLatest(CancellationToken ct)
     {
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
-        var assessment = await _service.GetLatestAsync(ct);
-        return assessment is null ? NoContent() : Ok(ToDto(assessment));
+
+        var latest = await _service.GetLatestAsync(ct);
+        if (latest.Assessment is null && latest.UnfinishedAttempt is null) return NoContent();
+
+        return Ok(new KnightLatestDto(
+            latest.Assessment is null ? null : ToDto(latest.Assessment),
+            latest.UnfinishedAttempt is null ? null : ToDto(latest.UnfinishedAttempt)));
     }
 
     /// <summary>Assessment por Id (401 sem tenant; 404 inexistente/de outro tenant com tenant válido).</summary>
@@ -152,6 +165,9 @@ public class KnightAssessmentsController : ControllerBase
             default: sourceType = default; return false;
         }
     }
+
+    private static KnightUnfinishedRunDto ToDto(KnightUnfinishedRun r) => new(
+        r.Id, r.Status.ToString(), r.SourceType.ToString(), r.Mode.ToString(), r.StartedAt);
 
     private static KnightAssessmentDto ToDto(KnightAssessment a) => new(
         a.Id,

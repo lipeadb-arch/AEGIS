@@ -114,6 +114,8 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             SourceType = source,
             SourceState = result.State,
             Source = result.SourceLabel,
+            // [AEGIS-KNIGHT-DURABLE-01] Estado inicial APENAS em memória: a primeira gravação já leva a
+            // execução CONCLUÍDA (ver passo 6). Nunca existe uma linha em Running esperando pela IA.
             Status = KnightRunStatus.Running,
             CatalogVersion = KnightCatalog.Version,
             ScoreFormulaVersion = score.FormulaVersion,
@@ -174,7 +176,27 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             run.Indicators.Add(indicator);
         }
 
-        // 6) Persiste o veredito DETERMINÍSTICO ANTES da IA (durável já em Running).
+        // 6) A avaliação FECHA AQUI, antes de qualquer dependência da IA.
+        //
+        // [AEGIS-KNIGHT-DURABLE-01] Antes deste pacote a linha era gravada em Running, a narrativa era pedida
+        // à IA com o MESMO token da requisição e só então o status virava Completed. Um cancelamento nessa
+        // janela — o navegador cortando a requisição no seu próprio tempo limite — propagava a exceção e
+        // deixava o registro em Running para sempre: nenhum caminho grava Failed e não há rotina que feche
+        // execução órfã. O veredito determinístico, porém, JÁ ESTAVA PRONTO; o que faltava era só a narrativa.
+        //
+        // A ordem passa a dizer a verdade sobre o que é a avaliação: a narrativa determinística do
+        // KnightAdvisoryFallback — a MESMA que já cobria a IA indisponível — entra junto com os resultados,
+        // e a execução nasce Completed, com CompletedAt, numa única escrita. A IA vem depois, como
+        // ENRIQUECIMENTO de algo que já é válido e recuperável.
+        var advisoryInput = BuildAdvisoryInput(run, score, evaluated, result);
+        var fallbackJson = JsonSerializer.Serialize(KnightAdvisoryFallback.Build(advisoryInput), Json);
+        run.AdvisoryJson = fallbackJson;
+        run.AdvisoryFromAi = false;
+        run.Status = KnightRunStatus.Completed;
+        run.CompletedAt = DateTimeOffset.UtcNow;
+
+        // A ÚNICA escrita que a avaliação precisa — resultados, evidências congeladas, narrativa determinística,
+        // status final e CompletedAt saem juntos, coerentes entre si.
         //
         // [AEGIS-ADM-02] Quando a execução CITA uma aquisição do ADM, a citação e a fixação daquela aquisição
         // entram na MESMA transação: a retenção operacional pode estar decidindo, agora, se aquela linha é
@@ -219,26 +241,54 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             await _db.SaveChangesAsync(ct);
         }
 
-        // 7) IA CONSULTIVA (uma chamada, fora da transação) — nunca altera vereditos; falha → fallback.
-        var advisoryResult = await GenerateAdvisorySafeAsync(BuildAdvisoryInput(run, score, evaluated, result), ct);
-        run.AdvisoryJson = JsonSerializer.Serialize(advisoryResult.Advisory, Json);
-        run.AdvisoryFromAi = advisoryResult.FromAi;
-
-        // 8) Conclui e grava novamente.
-        run.Status = KnightRunStatus.Completed;
-        run.CompletedAt = DateTimeOffset.UtcNow;
-        await _db.SaveChangesAsync(ct);
+        // 7) IA CONSULTIVA (uma chamada, fora da transação) — ENRIQUECIMENTO de um resultado que já está
+        //    gravado e concluído. Cancelamento, indisponibilidade ou falha de gravação aqui não apagam o
+        //    veredito, não mudam status/score e não deixam nada pendente.
+        await TryEnrichWithAiAsync(run, advisoryInput, fallbackJson, ct);
 
         return ToAssessment(run);
     }
 
-    public async Task<KnightAssessment?> GetLatestAsync(CancellationToken ct = default)
+    /// <summary>
+    /// [AEGIS-KNIGHT-DURABLE-01] Leitura da ÚLTIMA avaliação. Devolve o último resultado CONCLUÍDO e,
+    /// separadamente, a tentativa mais recente que NÃO concluiu — quando ela começou depois dele.
+    ///
+    /// As duas metades importam. Apresentar uma execução em <c>Running</c> como resultado mostraria uma
+    /// avaliação sem narrativa e sem conclusão como se fosse a foto atual da postura; simplesmente
+    /// ignorá-la faria uma avaliação antiga passar por atual, escondendo que houve uma tentativa depois
+    /// dela. A leitura declara as duas coisas e deixa a tela dizer qual é qual.
+    /// </summary>
+    public async Task<KnightLatestAssessment> GetLatestAsync(CancellationToken ct = default)
     {
-        var run = await _db.KnightAssessmentRuns
-            .AsNoTracking().Include(r => r.Indicators)
+        // Ordenação por instante do lado do cliente, pelo mesmo motivo que a publicação de fotografias já
+        // adota: o SQLite dos testes não traduz ORDER BY de DateTimeOffset. O conjunto por tenant é pequeno
+        // (execuções de assessment) e só o cabeçalho é materializado — a execução escolhida é lida depois,
+        // sozinha, com os indicadores.
+        var headers = await _db.KnightAssessmentRuns.AsNoTracking()
+            .Select(r => new { r.Id, r.Status, r.SourceType, r.Mode, r.StartedAt })
+            .ToListAsync(ct);
+
+        var latestHeader = headers
+            .Where(r => r.Status == KnightRunStatus.Completed)
             .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.Id)
-            .FirstOrDefaultAsync(ct);
-        return run is null ? null : ToAssessment(run);
+            .FirstOrDefault();
+
+        // A tentativa só é PENDÊNCIA enquanto nenhum resultado a sucedeu: uma execução abandonada ANTES da
+        // última concluída é história, e avisar sobre ela para sempre seria ruído, não informação.
+        var unfinished = headers
+            .Where(r => r.Status != KnightRunStatus.Completed)
+            .Where(r => latestHeader is null || r.StartedAt > latestHeader.StartedAt)
+            .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.Id)
+            .Select(r => new KnightUnfinishedRun(r.Id, r.Status, r.SourceType, r.Mode, r.StartedAt))
+            .FirstOrDefault();
+
+        if (latestHeader is null) return new KnightLatestAssessment(null, unfinished);
+
+        var latest = await _db.KnightAssessmentRuns
+            .AsNoTracking().Include(r => r.Indicators)
+            .FirstOrDefaultAsync(r => r.Id == latestHeader.Id, ct);
+
+        return new KnightLatestAssessment(latest is null ? null : ToAssessment(latest), unfinished);
     }
 
     public async Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default)
@@ -385,20 +435,63 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             }.Where(x => !string.IsNullOrWhiteSpace(x)));
     }
 
-    private async Task<KnightAdvisoryResult> GenerateAdvisorySafeAsync(KnightAdvisoryInput input, CancellationToken ct)
+    /// <summary>
+    /// [AEGIS-KNIGHT-DURABLE-01] Tenta ENRIQUECER com a narrativa da IA uma avaliação que já está gravada e
+    /// concluída, com a narrativa determinística no lugar. Nada aqui pode reprovar, apagar ou deixar
+    /// pendente o veredito: qualquer desfecho ruim simplesmente mantém o que já está no banco.
+    ///
+    /// Continua sendo UMA chamada, no escopo da requisição. Não há tarefa solta, nem <c>DbContext</c>
+    /// sobrevivendo ao escopo, nem timeout ampliado — o que mudou foi de que a conclusão depende.
+    /// </summary>
+    private async Task TryEnrichWithAiAsync(
+        KnightAssessmentRun run, KnightAdvisoryInput input, string fallbackJson, CancellationToken ct)
     {
+        KnightAdvisoryResult enrichment;
         try
         {
-            return await _advisory.GenerateAsync(input, ct);
+            enrichment = await _advisory.GenerateAsync(input, ct);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            throw;
+            // O chamador desistiu no meio da narrativa. Antes isto abandonava o registro em Running; agora
+            // é só um enriquecimento que não aconteceu — a avaliação já está concluída e recuperável.
+            _log?.LogInformation(
+                "Narrativa consultiva da execução {Run} do KNIGHT cancelada pelo chamador. O veredito "
+                + "determinístico já está concluído e gravado com a narrativa determinística.", run.Id);
+            return;
         }
         catch (Exception ex)
         {
-            _log?.LogWarning(ex, "Gerador de narrativa consultiva do KNIGHT falhou; aplicando fallback determinístico.");
-            return new KnightAdvisoryResult(KnightAdvisoryFallback.Build(input), FromAi: false);
+            _log?.LogWarning(ex,
+                "Gerador de narrativa consultiva do KNIGHT falhou na execução {Run}; a avaliação mantém a "
+                + "narrativa determinística. Falha consultiva NÃO é falha da avaliação.", run.Id);
+            return;
+        }
+
+        // O próprio gerador já caiu no fallback (IA indisponível/resposta inválida): o que está gravado é
+        // exatamente isso. Uma segunda gravação idêntica não acrescentaria nada.
+        if (!enrichment.FromAi) return;
+
+        run.AdvisoryJson = JsonSerializer.Serialize(enrichment.Advisory, Json);
+        run.AdvisoryFromAi = true;
+
+        try
+        {
+            // CancellationToken.None de propósito, e só aqui: a linha já é durável, este UPDATE toca duas
+            // colunas consultivas e a narrativa JÁ FOI produzida e paga. Honrar um cancelamento neste ponto
+            // descartaria trabalho concluído sem proteger coisa alguma. A operação continua dentro do escopo
+            // da requisição — não é tarefa em segundo plano.
+            await _db.SaveChangesAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // O enriquecimento não chegou ao banco. O que o chamador recebe tem de ser o que está GRAVADO:
+            // devolver a narrativa da IA aqui apresentaria como salva uma narrativa que se perdeu.
+            run.AdvisoryJson = fallbackJson;
+            run.AdvisoryFromAi = false;
+            _log?.LogWarning(ex,
+                "Falha ao gravar o enriquecimento consultivo da execução {Run} do KNIGHT. O resultado "
+                + "anteriormente confirmado (veredito + narrativa determinística) permanece intacto.", run.Id);
         }
     }
 
