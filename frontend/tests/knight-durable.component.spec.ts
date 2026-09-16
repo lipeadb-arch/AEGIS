@@ -214,7 +214,9 @@ const TENTATIVA: KnightUnfinishedRun = {
   startedAt: '2026-09-15T18:29:41Z',
 };
 
-const SRC = fs.readFileSync(path.join(process.cwd(), 'src/app/pages/aegis-knight.component.ts'), 'utf8');
+// Fim de linha normalizado: no Windows o checkout pode vir com CRLF (core.autocrlf); no CI Linux, LF.
+const SRC = fs.readFileSync(path.join(process.cwd(), 'src/app/pages/aegis-knight.component.ts'), 'utf8')
+  .replace(/\r\n/g, '\n');
 
 console.log('AEGIS-KNIGHT-DURABLE-01 · tela do KNIGHT');
 
