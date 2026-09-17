@@ -92,7 +92,7 @@ public sealed class RemediationService : IRemediationService
         var finding = await _db.KnightIndicatorResults.AsNoTracking()
             .Where(i => i.RunId == command.RunId && i.IndicatorId == indicatorId)
             .Join(_db.KnightAssessmentRuns.AsNoTracking(), i => i.RunId, r => r.Id,
-                (i, r) => new { i.AffectedObjectCount, r.SourceType, r.Mode })
+                (i, r) => new { i.AffectedObjectCount, r.SourceType, r.Mode, r.Status })
             .FirstOrDefaultAsync(ct);
         if (finding is null) return null;
 
@@ -104,6 +104,14 @@ public sealed class RemediationService : IRemediationService
             throw new ActionPlanConflictException(
                 "Já existe uma ação ativa para este achado nesta fonte. Abra a ação existente em vez de criar outra.",
                 active);
+
+        // [AEGIS-KNIGHT-DURABLE-01] Um plano só nasce de uma avaliação CONCLUÍDA. Uma execução não finalizada pode
+        // ter vereditos gravados, mas ninguém confirmou que ela chegou ao fim — a recusa é da API, não só da tela,
+        // e acontece antes de qualquer escrita. O acesso histórico à execução e os planos já existentes não mudam.
+        if (finding.Status != KnightRunStatus.Completed)
+            throw new ActionPlanValidationException(UnfinishedRunMessage(
+                "Não é possível criar um plano a partir desta avaliação",
+                "Um plano só pode nascer de uma avaliação concluída."));
 
         var now = _clock.GetUtcNow();
         var plan = new ActionPlan
@@ -495,15 +503,24 @@ public sealed class RemediationService : IRemediationService
         if (command.ValidationRunId is { } runId)
         {
             // Comparação automática: o servidor decide o desfecho. O cliente não escolhe "resolvido".
-            var origin = await LoadEvidenceAsync(plan.OriginRunId, indicatorId, ct);
+            // A ORIGEM não é reexaminada quanto à conclusão: o plano já existe, e recusar agora invalidaria
+            // retroativamente um histórico que esta regra não governava.
+            var origin = (await LoadEvidenceAsync(plan.OriginRunId, indicatorId, ct))?.Evidence;
             if (origin is null)
                 throw new ActionPlanValidationException(
                     "A avaliação que originou esta ação não está mais disponível neste cliente; não há base de comparação.");
 
-            var evidence = await LoadEvidenceAsync(runId, indicatorId, ct);
-            if (evidence is null)
+            var loaded = await LoadEvidenceAsync(runId, indicatorId, ct);
+            if (loaded is null)
                 throw new ActionPlanValidationException(
                     "A avaliação indicada como evidência não existe neste cliente.");
+
+            // [AEGIS-KNIGHT-DURABLE-01] A NOVA evidência precisa ser uma avaliação concluída — antes de qualquer escrita.
+            if (loaded.Status != KnightRunStatus.Completed)
+                throw new ActionPlanValidationException(UnfinishedRunMessage(
+                    "Esta avaliação não pode ser usada como evidência de validação",
+                    "Use uma avaliação concluída ou registre uma atestação humana com evidência referenciada."));
+            var evidence = loaded.Evidence;
 
             // O relato de execução entra na conta: uma coleta ANTERIOR a ele pode mostrar mudança real no
             // ambiente, mas não mudança produzida por este trabalho.
@@ -778,17 +795,25 @@ public sealed class RemediationService : IRemediationService
             Note = Trim(note, MaxEventNoteLength),
         });
 
+    /// <summary>Uma avaliação lida para comparação, com o estado da execução que a produziu.</summary>
+    private sealed record LoadedRunEvidence(KnightRunEvidence Evidence, KnightRunStatus Status);
+
+    /// <summary>A recusa de uma execução não finalizada, dita igual na criação e na validação.</summary>
+    private static string UnfinishedRunMessage(string refusal, string guidance) =>
+        $"{refusal}: a execução não foi finalizada. Os valores que ela registrou continuam acessíveis para " +
+        $"consulta, mas não comprovam uma avaliação concluída. {guidance}";
+
     /// <summary>
     /// Reúne os fatos de UMA avaliação para o indicador pedido. Tudo passa pelo query filter fail-closed: uma
     /// avaliação de outro tenant simplesmente não é encontrada.
     /// </summary>
-    private async Task<KnightRunEvidence?> LoadEvidenceAsync(Guid? runId, string indicatorId, CancellationToken ct)
+    private async Task<LoadedRunEvidence?> LoadEvidenceAsync(Guid? runId, string indicatorId, CancellationToken ct)
     {
         if (runId is not { } id) return null;
 
         var run = await _db.KnightAssessmentRuns.AsNoTracking()
             .Where(r => r.Id == id)
-            .Select(r => new { r.Id, r.SourceType, r.Mode, r.CatalogVersion, r.StartedAt, r.CompletedAt, r.CapabilitiesJson })
+            .Select(r => new { r.Id, r.Status, r.SourceType, r.Mode, r.CatalogVersion, r.StartedAt, r.CompletedAt, r.CapabilitiesJson })
             .FirstOrDefaultAsync(ct);
         if (run is null) return null;
 
@@ -824,14 +849,14 @@ public sealed class RemediationService : IRemediationService
                 .ToArrayAsync(ct);
         }
 
-        return new KnightRunEvidence(
+        return new LoadedRunEvidence(new KnightRunEvidence(
             run.Id, run.SourceType, run.Mode, run.CatalogVersion, collectedAt,
             IndicatorFound: indicator is not null,
             Status: indicator?.Status ?? KnightIndicatorStatus.NotEvaluated,
             AffectedCount: indicator?.AffectedObjectCount ?? 0,
             DetailComplete: detailComplete,
             AffectedExternalIds: ids,
-            Capabilities: KnightCapabilitiesJson.Deserialize(run.CapabilitiesJson));
+            Capabilities: KnightCapabilitiesJson.Deserialize(run.CapabilitiesJson)), run.Status);
     }
 
     private static string? Trim(string? value, int max)

@@ -156,6 +156,28 @@ export interface KnightAssessment {
   advisoryFromAi: boolean; // true = IA; false = fallback determinístico
 }
 
+/**
+ * [AEGIS-KNIGHT-DURABLE-01] Uma execução que NÃO concluiu — só o cabeçalho. Não tem score, contagens nem
+ * narrativa porque não tem veredito fechado: o que interessa é que a tentativa existiu e em que estado ficou.
+ */
+export interface KnightUnfinishedRun {
+  id: string;
+  status: KnightRunStatus;
+  sourceType: KnightSourceType;
+  mode: KnightMode;
+  startedAt: string; // ISO 8601
+}
+
+/**
+ * [AEGIS-KNIGHT-DURABLE-01] Resposta de `GET /latest`: o último RESULTADO CONCLUÍDO e, à parte, a tentativa
+ * mais recente que não concluiu. A tela mostra o resultado como resultado e a tentativa como tentativa —
+ * nunca uma no lugar da outra.
+ */
+export interface KnightLatest {
+  assessment: KnightAssessment | null;
+  unfinishedAttempt: KnightUnfinishedRun | null;
+}
+
 /** Badge: sem assessment → NÃO CONFIGURADO; demo → DEMONSTRAÇÃO; real → CONECTADO. */
 export function connectionStateOf(a: KnightAssessment | null): KnightConnectionState {
   if (!a) return 'NotConfigured';

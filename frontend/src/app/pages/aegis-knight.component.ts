@@ -1,13 +1,16 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { map } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
 import {
   KnightAssessment,
   KnightIndicator,
+  KnightLatest,
   KnightSourceType,
   KnightSources,
+  KnightUnfinishedRun,
   capabilityLabel,
   capabilityOutcomeLabel,
   categoryLabel,
@@ -27,7 +30,7 @@ import { IdentityRiskPanelComponent } from '../components/identity/identity-risk
 import { KnightFindingDetailComponent } from '../components/knight/finding-detail.component';
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
 import { IdentityRiskService } from '../services/identity-risk.service';
-import { KnightService } from '../services/knight.service';
+import { KnightRunTimeoutError, KnightService } from '../services/knight.service';
 import {
   ActionPlan,
   KnightOriginMode,
@@ -72,10 +75,13 @@ import { PostureHistoryService } from '../services/posture-history.service';
           <a class="btn ghost" routerLink="/history">Histórico auditável</a>
           <!-- [AEGIS-MVP-PRODUCT-03] Publica EXATAMENTE a avaliação aberta. Sem o runId, o servidor
                congelaria a mais recente — e o relatório sairia de uma coleta diferente da que está na tela. -->
+          <!-- [AEGIS-KNIGHT-DURABLE-01] Só uma avaliação CONCLUÍDA é publicável — o servidor recusa as demais. -->
           @if (assessment(); as pub) {
+            @if (!unfinishedView()) {
             <button type="button" class="btn real" (click)="publishReport(pub.id)" [disabled]="publishing()">
               {{ publishing() ? 'Publicando…' : 'Publicar relatório desta avaliação' }}
             </button>
+            }
           }
           <button type="button" class="btn primary" (click)="runDemo()" [disabled]="busy()">
             {{ running() ? 'Executando…' : 'Executar avaliação demo' }}
@@ -116,8 +122,50 @@ import { PostureHistoryService } from '../services/posture-history.service';
           </div>
         }
 
+        <!-- [AEGIS-KNIGHT-DURABLE-01] Uma execução cuja conclusão não foi registrada não é um resultado
+             concluído — mas pode ter gravado vereditos determinísticos. O texto depende de existir, ou não,
+             uma avaliação concluída abaixo. Inspecionar a execução é uma leitura por Id. -->
+        @if (unfinishedAttempt(); as tent) {
+          <div class="banner err">
+            <span>{{ unfinishedAttemptMessage() }}</span>
+            <button type="button" class="btn ghost" (click)="openRun(tent.id)">
+              Inspecionar a execução não finalizada
+            </button>
+          </div>
+        }
+
+        <!-- Corte do NAVEGADOR: o desfecho no servidor é desconhecido. A saída oferecida é CONSULTAR a
+             última avaliação disponível — uma leitura, que não identifica a tentativa e não dispara coleta. -->
+        @if (timeoutNotice(); as tmsg) {
+          <div class="banner pinned">
+            <span>{{ tmsg }}</span>
+            <button type="button" class="btn ghost" (click)="consultLatestAfterTimeout()" [disabled]="busy()">
+              Consultar a última avaliação disponível
+            </button>
+          </div>
+        }
+        @if (consultNotice(); as cmsg) {
+          <div class="banner pinned">
+            <span>{{ cmsg }}</span>
+            <button type="button" class="btn ghost" (click)="consultNotice.set(null)">Fechar</button>
+          </div>
+        }
+
         @if (assessment(); as a) {
-          @if (pinnedRun()) {
+          @if (unfinishedView()) {
+            <!-- [AEGIS-KNIGHT-DURABLE-01] Aberta por Id: o registro é mostrado como é. Resultado registrado,
+                 conclusão da execução e narrativa consultiva são três coisas diferentes. -->
+            <div class="banner err">
+              <span>
+                <b>Execução não finalizada.</b> Iniciada em {{ a.startedAt | date: 'dd/MM/yyyy HH:mm' }}
+                ({{ sourceTypeLabel(a.sourceType) }}), sem conclusão registrada. Os resultados determinísticos
+                que ela gravou aparecem abaixo apenas para inspeção — <b>não</b> formam uma avaliação
+                concluída, não podem ser publicados nem originar ou validar planos de ação, e não há
+                narrativa consultiva registrada.
+              </span>
+              <button type="button" class="btn ghost" (click)="openLatest()">Ver a última avaliação concluída</button>
+            </div>
+          } @else if (pinnedRun()) {
             <div class="banner pinned">
               <span>
                 Avaliação <b>aberta por link</b> e fixada no endereço — pode não ser a mais recente. Os
@@ -154,7 +202,13 @@ import { PostureHistoryService } from '../services/posture-history.service';
             <span class="sep">·</span>
             <span>Estado da coleta: <b>{{ sourceStateLabel(a.sourceState) }}</b></span>
             <span class="sep">·</span>
-            <span>Última coleta: <b>{{ (a.completedAt || a.startedAt) | date: 'dd/MM/yyyy HH:mm' }}</b></span>
+            @if (unfinishedView()) {
+              <span>Iniciada em: <b>{{ a.startedAt | date: 'dd/MM/yyyy HH:mm' }}</b></span>
+              <span class="sep">·</span>
+              <span>Execução: <b>não finalizada</b></span>
+            } @else {
+              <span>Última coleta: <b>{{ (a.completedAt || a.startedAt) | date: 'dd/MM/yyyy HH:mm' }}</b></span>
+            }
           </div>
 
           @if (a.isDemo) {
@@ -196,6 +250,9 @@ import { PostureHistoryService } from '../services/posture-history.service';
                 (os não aplicáveis ficam fora). Cobertura não é conformidade. Score do AEGIS KNIGHT, distinto do
                 AEGIS Score geral.
               </p>
+              @if (unfinishedView()) {
+                <p class="score-lead">Valores registrados por uma execução não finalizada — não é uma avaliação concluída.</p>
+              }
               <p class="score-lead">{{ summaryLine(a) }}</p>
 
               <div class="meta">
@@ -254,6 +311,7 @@ import { PostureHistoryService } from '../services/posture-history.service';
           @if (selectedIndicator(); as ind) {
             <app-knight-finding-detail
               [assessment]="a"
+              [runFinalized]="!unfinishedView()"
               [indicator]="ind"
               [activePlan]="activePlan()"
               [plan]="focusedPlan()"
@@ -272,9 +330,13 @@ import { PostureHistoryService } from '../services/posture-history.service';
           <div class="panel ai">
             <div class="hd">
               <h3>Interpretação e priorização assistidas por IA</h3>
+              @if (unfinishedView()) {
+                <span class="src fallback">Execução não finalizada</span>
+              } @else {
               <span class="src" [class.fallback]="!a.advisoryFromAi">
                 {{ a.advisoryFromAi ? 'Gerado por IA' : 'Fallback determinístico (IA indisponível)' }}
               </span>
+              }
             </div>
             @if (a.advisory; as ai) {
               <p class="summary-txt">{{ ai.executiveSummary }}</p>
@@ -305,7 +367,11 @@ import { PostureHistoryService } from '../services/posture-history.service';
                 </ul></div>
               }
             } @else {
-              <p class="summary-txt muted">Sem interpretação disponível para esta avaliação.</p>
+              <p class="summary-txt muted">
+                {{ unfinishedView()
+                  ? 'Nenhuma narrativa consultiva foi registrada: a execução não foi finalizada.'
+                  : 'Sem interpretação disponível para esta avaliação.' }}
+              </p>
             }
           </div>
         } @else {
@@ -324,7 +390,7 @@ import { PostureHistoryService } from '../services/posture-history.service';
             </div>
           } @else {
           <div class="panel state empty">
-            <b>Nenhuma avaliação executada ainda.</b>
+            <b>{{ unfinishedAttempt() ? 'Nenhuma avaliação concluída.' : 'Nenhuma avaliação executada ainda.' }}</b>
             <span>
               Este módulo é MULTICOLETOR. Em <code>example.com</code> use a DEMONSTRAÇÃO; conecte o
               Microsoft Entra ID (somente leitura) para executar uma coleta real.
@@ -798,6 +864,51 @@ export class AegisKnightComponent implements OnInit {
   private readonly router = inject(Router);
 
   readonly assessment = signal<KnightAssessment | null>(null);
+
+  /**
+   * [AEGIS-KNIGHT-DURABLE-01] A tentativa mais recente que NÃO concluiu, quando existe uma. Fica fora de
+   * `assessment` de propósito: ela não tem veredito, e ocupar o lugar do resultado seria apresentar uma
+   * execução abandonada como a foto atual da postura.
+   */
+  readonly unfinishedAttempt = signal<KnightUnfinishedRun | null>(null);
+
+  /** O navegador cortou a espera de uma execução. Não dispara nada sozinho — só oferece a CONSULTA. */
+  readonly timeoutNotice = signal<string | null>(null);
+
+  /** O que a consulta posterior ao tempo limite encontrou — sempre sem afirmar que é a tentativa. */
+  readonly consultNotice = signal<string | null>(null);
+
+  /**
+   * A avaliação exibida no instante em que a tentativa começou. É a única referência que a tela tem: a
+   * requisição cortada não devolveu identificador, então só dá para dizer se a consulta trouxe a MESMA
+   * avaliação ou OUTRA — nunca que a outra é a tentativa.
+   */
+  private shownBeforeAttempt: string | null = null;
+
+  /**
+   * [AEGIS-KNIGHT-DURABLE-01] A avaliação aberta é uma execução SEM conclusão registrada (aberta por Id).
+   * Os dados gravados podem ser inspecionados, mas não são apresentados como avaliação concluída.
+   */
+  readonly unfinishedView = computed(() => {
+    const a = this.assessment();
+    return !!a && a.status !== 'Completed';
+  });
+
+  /** Texto do aviso da tentativa não finalizada — depende de haver avaliação concluída abaixo. */
+  readonly unfinishedAttemptMessage = computed(() => {
+    const t = this.unfinishedAttempt();
+    if (!t) return null;
+    const base =
+      `Há uma execução iniciada em ${formatDateTime(t.startedAt)} (${sourceTypeLabel(t.sourceType)}) cuja ` +
+      'conclusão não foi registrada. Ela pode ter gravado resultados determinísticos, mas não foi finalizada ' +
+      'e não tem narrativa consultiva registrada.';
+    const a = this.assessment();
+    return a && a.status === 'Completed'
+      ? `${base} O resultado mostrado abaixo é o da última avaliação concluída, iniciada em ` +
+          `${formatDateTime(a.startedAt)}, antes dela.`
+      : `${base} Não há avaliação concluída para mostrar.`;
+  });
+
   readonly sources = signal<KnightSources | null>(null);
   readonly loading = signal(true); // 1ª carga (fontes + último)
   readonly running = signal(false); // execução (demo ou real)
@@ -1099,6 +1210,21 @@ export class AegisKnightComponent implements OnInit {
       .then(() => this.reload());
   }
 
+  /**
+   * [AEGIS-KNIGHT-DURABLE-01] Abre UMA execução pelo Id, inclusive uma não finalizada. Mudar só o
+   * `?run=` não basta: a rota é a mesma e a tela não seria relida.
+   */
+  openRun(id: string): void {
+    this.selected.set(null);
+    this.pinned.set({ kind: 'livre' });
+    void this.router
+      .navigate([], {
+        relativeTo: this.route,
+        queryParams: { finding: null, run: id, plan: null },
+      })
+      .then(() => this.reload());
+  }
+
   clearFindingNotice(): void {
     this.findingNotice.set(null);
   }
@@ -1131,10 +1257,20 @@ export class AegisKnightComponent implements OnInit {
       error: () => this.sources.set(null), // fontes é secundário; não bloqueia a tela
     });
 
-    const wanted$ = requested ? this.knight.getById(requested) : this.knight.getLatest();
+    // [AEGIS-KNIGHT-DURABLE-01] A leitura da última avaliação devolve DUAS coisas: o resultado concluído e,
+    // à parte, a tentativa que não concluiu depois dele. Abrir por Id continua alcançando qualquer execução
+    // — inclusive uma não concluída, que é mostrada com o estado real, sem virar "resultado".
+    this.consultNotice.set(null);
+    const wanted$ = requested
+      ? this.knight.getById(requested).pipe(
+          map((a) => ({ assessment: a, unfinishedAttempt: null }) as KnightLatest),
+        )
+      : this.knight.getLatestState();
+
     wanted$.subscribe({
-      next: (a) => {
+      next: ({ assessment: a, unfinishedAttempt }) => {
         this.assessment.set(a);
+        this.unfinishedAttempt.set(unfinishedAttempt);
         this.loading.set(false);
         this.applyDeepLink(a);
         // Só agora a PROCEDÊNCIA é conhecida — ler a fila antes traria ações de outra fonte/modo.
@@ -1143,6 +1279,7 @@ export class AegisKnightComponent implements OnInit {
       },
       error: (e: Error) => {
         this.loading.set(false);
+        this.unfinishedAttempt.set(null);
         if (requested) {
           this.assessment.set(null);
           this.selected.set(null);
@@ -1206,9 +1343,13 @@ export class AegisKnightComponent implements OnInit {
   private execute(run: () => ReturnType<KnightService['runDemo']>): void {
     this.running.set(true);
     this.error.set(null);
+    this.timeoutNotice.set(null);
+    this.consultNotice.set(null);
+    this.shownBeforeAttempt = this.assessment()?.id ?? null;
     run().subscribe({
       next: (a) => {
         this.assessment.set(a);
+        this.unfinishedAttempt.set(null);
         this.running.set(false);
         this.linkNotice.set(null);
         this.findingNotice.set(null);
@@ -1227,10 +1368,92 @@ export class AegisKnightComponent implements OnInit {
         this.reloadRisk();
       },
       error: (e: Error) => {
+        this.running.set(false);
+        // [AEGIS-KNIGHT-DURABLE-01] Quem desistiu foi o NAVEGADOR. O que houve no servidor é desconhecido
+        // e a resposta não trouxe identificador. Não é falha da avaliação e não se resolve repetindo a
+        // coleta — a saída oferecida é CONSULTAR a última avaliação disponível, por decisão de quem está
+        // na tela.
+        if (e instanceof KnightRunTimeoutError) {
+          this.timeoutNotice.set(
+            'O navegador deixou de aguardar a resposta desta execução e o desfecho dela não foi confirmado: ' +
+              'ela pode ter sido concluída, ainda estar em andamento ou não ter sido registrada. ' +
+              'Consultar a última avaliação disponível é só uma leitura: não coleta nada na fonte e não ' +
+              'identifica a tentativa interrompida.',
+          );
+          return;
+        }
         // Mantém o assessment anterior visível; NUNCA substitui por Demo numa falha real.
         this.error.set(e.message);
-        this.running.set(false);
       },
     });
   }
+
+  /**
+   * [AEGIS-KNIGHT-DURABLE-01] Depois do tempo limite do navegador, CONSULTA a última avaliação disponível.
+   * É uma leitura — jamais uma segunda execução. A requisição cortada não devolveu identificador, e fonte
+   * ou horário não distinguem a tentativa de outra execução concorrente; por isso a tela afirma só o que a
+   * leitura comprova: se a última avaliação é a MESMA já exibida, OUTRA, ou nenhuma. O desfecho da tentativa
+   * interrompida permanece não confirmado em todos os casos.
+   */
+  consultLatestAfterTimeout(): void {
+    const before = this.shownBeforeAttempt;
+    this.loading.set(true);
+    this.error.set(null);
+    this.knight.getLatestState().subscribe({
+      next: ({ assessment: a, unfinishedAttempt }) => {
+        this.loading.set(false);
+        this.timeoutNotice.set(null);
+        this.unfinishedAttempt.set(unfinishedAttempt);
+        const pendente = 'O desfecho da tentativa interrompida continua não confirmado. Nada foi coletado.';
+
+        if (!a) {
+          this.consultNotice.set(`Não há avaliação concluída disponível. ${pendente}`);
+          return;
+        }
+        const quem =
+          `${sourceTypeLabel(a.sourceType)} (${a.isDemo ? 'demonstração' : 'coleta real'}), ` +
+          `iniciada em ${formatDateTime(a.startedAt)} · avaliação ${a.id.slice(0, 8)}`;
+
+        if (a.id === before) {
+          this.consultNotice.set(
+            `A última avaliação disponível é a mesma já exibida antes da tentativa: ${quem}. ` +
+              `Nenhuma avaliação concluída mais recente foi encontrada. ${pendente}`,
+          );
+          return;
+        }
+
+        // OUTRA avaliação ocupa a posição de última. Ela passa a ser a exibida — com procedência, data e
+        // endereço próprios — mas NÃO é apresentada como a tentativa: outra execução pode tê-la produzido.
+        this.assessment.set(a);
+        this.pinnedRun.set(a.id);
+        this.pinned.set({ kind: 'livre' });
+        const aberto = this.selected();
+        const mantem = aberto && a.indicators.some((i) => i.indicatorId === aberto) ? aberto : null;
+        this.selected.set(mantem);
+        this.syncQueryParam(mantem);
+        this.reloadPlans();
+        this.reloadRisk();
+        this.consultNotice.set(
+          `Exibindo a última avaliação disponível: ${quem}. Ela é diferente da exibida antes da tentativa, ` +
+            'mas não é possível confirmar que corresponde à tentativa interrompida — outra execução pode ' +
+            `tê-la produzido. ${pendente}`,
+        );
+      },
+      error: () => {
+        // A consulta falhou: a avaliação exibida não muda e a consulta continua à mão.
+        this.loading.set(false);
+        this.consultNotice.set(
+          'Não foi possível consultar a última avaliação agora. A avaliação exibida não mudou e o desfecho ' +
+            'da tentativa interrompida continua não confirmado. Nada foi coletado.',
+        );
+      },
+    });
+  }
+}
+
+/** Data/hora local no mesmo formato do template (dd/MM/yyyy HH:mm). */
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }

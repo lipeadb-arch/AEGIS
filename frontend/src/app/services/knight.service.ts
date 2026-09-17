@@ -1,10 +1,11 @@
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable, catchError, map, throwError, timeout } from 'rxjs';
+import { Observable, TimeoutError, catchError, map, throwError, timeout } from 'rxjs';
 import { environment } from '../../environments/environment';
 import {
   KnightAffectedObjects,
   KnightAssessment,
+  KnightLatest,
   KnightSources,
   KnightSourceType,
 } from '../models/knight.models';
@@ -15,6 +16,19 @@ const SOURCE_SLUG: Record<KnightSourceType, string> = {
   MicrosoftEntraId: 'entra',
   GoogleWorkspace: 'google',
 };
+
+/**
+ * [AEGIS-KNIGHT-DURABLE-01] O NAVEGADOR deixou de esperar — o que aconteceu no servidor NÃO é conhecido. A
+ * tentativa pode ter concluído, pode ainda estar em andamento ou pode não ter sido registrada, e a requisição
+ * não devolveu nenhum identificador que permita reconhecê-la depois. Distinguir este erro serve para NÃO
+ * tratá-lo como falha da avaliação e NÃO oferecer "tentar de novo" (outra coleta na fonte) como saída.
+ */
+export class KnightRunTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'KnightRunTimeoutError';
+  }
+}
 
 /**
  * Cliente do AEGIS KNIGHT (/api/v1/knight/assessments). O X-Tenant e o Bearer são injetados pelo
@@ -34,7 +48,10 @@ export class KnightService {
   runDemo(): Observable<KnightAssessment> {
     return this.http.post<KnightAssessment>(`${this.base}/demo`, {}).pipe(
       timeout(this.RUN_TIMEOUT_MS),
-      catchError(this.normalize('Não foi possível executar a avaliação de demonstração.')),
+      catchError((err: unknown) => {
+        if (err instanceof TimeoutError) return throwError(() => this.runTimeout());
+        return this.normalize('Não foi possível executar a avaliação de demonstração.')(err);
+      }),
     );
   }
 
@@ -43,11 +60,19 @@ export class KnightService {
     return this.http.post<KnightAssessment>(`${this.base}/run/${SOURCE_SLUG[source]}`, {}).pipe(
       timeout(this.RUN_TIMEOUT_MS),
       catchError((err: unknown) => {
+        if (err instanceof TimeoutError) return throwError(() => this.runTimeout());
         if (err instanceof HttpErrorResponse && err.status === 409) {
           return throwError(() => new Error(`A fonte ${source} não está configurada para este tenant.`));
         }
         return this.normalize(`Não foi possível executar a coleta da fonte ${source}.`)(err);
       }),
+    );
+  }
+
+  /** O corte é do NAVEGADOR: o desfecho no servidor é desconhecido e a resposta não identificou a execução. */
+  private runTimeout(): KnightRunTimeoutError {
+    return new KnightRunTimeoutError(
+      'O navegador deixou de aguardar a resposta desta execução. O desfecho dela não foi confirmado.',
     );
   }
 
@@ -59,12 +84,30 @@ export class KnightService {
     );
   }
 
-  /** Último assessment do tenant — <c>null</c> quando o servidor responde 204 (nenhum ainda). */
+  /**
+   * Último assessment CONCLUÍDO do tenant — <c>null</c> quando o servidor responde 204. Contrato público
+   * preservado de `GET /latest`.
+   */
   getLatest(): Observable<KnightAssessment | null> {
     return this.http.get<KnightAssessment>(`${this.base}/latest`, { observe: 'response' }).pipe(
       timeout(this.READ_TIMEOUT_MS),
       map((resp) => (resp.status === 204 ? null : resp.body)),
       catchError(this.normalize('Não foi possível carregar a última avaliação.')),
+    );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-DURABLE-01] Leitura COMPOSTA (`GET /latest-state`): o último resultado concluído e, à parte,
+   * a tentativa não finalizada que o sucede. Somente leitura: NÃO dispara coleta.
+   */
+  getLatestState(): Observable<KnightLatest> {
+    return this.http.get<KnightLatest>(`${this.base}/latest-state`).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      map((body) => ({
+        assessment: body?.assessment ?? null,
+        unfinishedAttempt: body?.unfinishedAttempt ?? null,
+      })),
+      catchError(this.normalize('Não foi possível consultar a última avaliação disponível.')),
     );
   }
 

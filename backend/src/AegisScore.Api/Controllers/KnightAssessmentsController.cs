@@ -76,14 +76,38 @@ public class KnightAssessmentsController : ControllerBase
             status.RealSources.Select(s => new KnightSourceDto(s.Source.ToString(), s.Label, s.Configured, s.Enabled)).ToList()));
     }
 
-    /// <summary>Último assessment do tenant (200 com corpo, 204 sem nenhum, 401 sem tenant).</summary>
+    /// <summary>
+    /// Último assessment CONCLUÍDO do tenant — formato público preservado: o corpo é o próprio
+    /// <see cref="KnightAssessmentDto"/> (200), ou 204 quando não há resultado concluído; 401 sem tenant.
+    /// [AEGIS-KNIGHT-DURABLE-01] Uma execução não finalizada nunca é devolvida aqui como "a última avaliação";
+    /// quem precisa saber que ela existe usa <c>GET latest-state</c>.
+    /// </summary>
     [HttpGet("latest")]
     public async Task<ActionResult<KnightAssessmentDto>> GetLatest(CancellationToken ct)
     {
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
-        var assessment = await _service.GetLatestAsync(ct);
-        return assessment is null ? NoContent() : Ok(ToDto(assessment));
+        var latest = await _service.GetLatestAsync(ct);
+        return latest.Assessment is null ? NoContent() : Ok(ToDto(latest.Assessment));
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-DURABLE-01] Leitura COMPOSTA: o último resultado CONCLUÍDO e, à parte, a tentativa não
+    /// finalizada mais recente que o sucede. Sai da MESMA autoridade de <c>GET latest</c>. Sempre 200, com
+    /// os dois campos explícitos (qualquer um pode ser nulo) — a ausência também é resposta.
+    /// </summary>
+    /// <response code="200">Resultado concluído e/ou tentativa não finalizada (ambos podem ser nulos).</response>
+    /// <response code="401">Tenant não resolvido no contexto.</response>
+    [HttpGet("latest-state")]
+    public async Task<ActionResult<KnightLatestDto>> GetLatestState(CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+
+        var latest = await _service.GetLatestAsync(ct);
+        return Ok(new KnightLatestDto(
+            latest.Assessment is null ? null : ToDto(latest.Assessment),
+            latest.UnfinishedAttempt is null ? null : ToDto(latest.UnfinishedAttempt)));
     }
 
     /// <summary>Assessment por Id (401 sem tenant; 404 inexistente/de outro tenant com tenant válido).</summary>
@@ -152,6 +176,9 @@ public class KnightAssessmentsController : ControllerBase
             default: sourceType = default; return false;
         }
     }
+
+    private static KnightUnfinishedRunDto ToDto(KnightUnfinishedRun r) => new(
+        r.Id, r.Status.ToString(), r.SourceType.ToString(), r.Mode.ToString(), r.StartedAt);
 
     private static KnightAssessmentDto ToDto(KnightAssessment a) => new(
         a.Id,

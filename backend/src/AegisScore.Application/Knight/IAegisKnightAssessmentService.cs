@@ -60,6 +60,30 @@ public sealed record KnightAssessment(
     KnightAdvisory? Advisory,
     bool AdvisoryFromAi);
 
+/// <summary>
+/// [AEGIS-KNIGHT-DURABLE-01] Uma execução que NÃO concluiu — o cabeçalho dela, nunca um resultado. Não
+/// carrega score, cobertura, indicadores nem narrativa porque não tem veredito fechado a oferecer: é a
+/// EXISTÊNCIA da tentativa que é a informação.
+/// </summary>
+public sealed record KnightUnfinishedRun(
+    Guid Id,
+    KnightRunStatus Status,
+    KnightSourceType SourceType,
+    KnightAssessmentMode Mode,
+    DateTimeOffset StartedAt);
+
+/// <summary>
+/// [AEGIS-KNIGHT-DURABLE-01] A leitura da "última avaliação": o último resultado CONCLUÍDO e, à parte, a
+/// tentativa mais recente que não concluiu (quando começou DEPOIS dele). São coisas diferentes e aparecem
+/// separadas — uma execução não concluída nunca é apresentada como resultado, e a existência dela nunca é
+/// omitida por uma avaliação antiga exibida como se fosse a atual.
+/// </summary>
+/// <param name="Assessment">O último assessment CONCLUÍDO, ou <c>null</c> quando ainda não há nenhum.</param>
+/// <param name="UnfinishedAttempt">A tentativa não concluída que o sucede, ou <c>null</c>.</param>
+public sealed record KnightLatestAssessment(
+    KnightAssessment? Assessment,
+    KnightUnfinishedRun? UnfinishedAttempt);
+
 /// <summary>Disponibilidade das fontes para o tenant — o que a UI usa para oferecer Demo × execução real.</summary>
 public sealed record KnightSourceInfo(KnightSourceType Source, string Label, bool Configured, bool Enabled);
 
@@ -92,8 +116,12 @@ public interface IAegisKnightAssessmentService
     /// </summary>
     Task<KnightAssessment> RunAssessmentAsync(KnightSourceType source, CancellationToken ct = default);
 
-    /// <summary>Último assessment do tenant do contexto, ou <c>null</c> se ainda não houver nenhum.</summary>
-    Task<KnightAssessment?> GetLatestAsync(CancellationToken ct = default);
+    /// <summary>
+    /// [AEGIS-KNIGHT-DURABLE-01] Último assessment CONCLUÍDO do tenant do contexto e, separadamente, a
+    /// tentativa não concluída que o sucede. Nunca devolve uma execução em andamento/abandonada no lugar
+    /// do resultado, nem esconde que ela existe.
+    /// </summary>
+    Task<KnightLatestAssessment> GetLatestAsync(CancellationToken ct = default);
 
     /// <summary>Assessment por Id, restrito ao tenant do contexto (<c>null</c> quando inexistente ou de outro tenant).</summary>
     Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default);

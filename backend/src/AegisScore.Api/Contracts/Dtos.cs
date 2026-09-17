@@ -824,6 +824,29 @@ public record KnightAssessmentDto(
     bool AdvisoryFromAi);
 
 /// <summary>
+/// [AEGIS-KNIGHT-DURABLE-01] Uma execução KNIGHT que NÃO concluiu, na visão da API — só o cabeçalho.
+/// Não traz score, cobertura, contagens nem narrativa porque não há veredito fechado: o que a tela precisa
+/// saber é que a tentativa existiu, quando começou e em que estado ficou.
+/// </summary>
+public record KnightUnfinishedRunDto(
+    Guid Id,
+    string Status,
+    string SourceType,
+    string Mode,
+    DateTimeOffset StartedAt);
+
+/// <summary>
+/// [AEGIS-KNIGHT-DURABLE-01] Resposta de <c>GET /latest-state</c> (a leitura composta; <c>GET /latest</c> mantém o
+/// formato anterior): o ÚLTIMO RESULTADO CONCLUÍDO e, à parte, a
+/// tentativa mais recente que não concluiu (quando começou depois dele). A separação é o ponto: uma
+/// execução em andamento/abandonada nunca ocupa o lugar do resultado, e tampouco desaparece atrás de uma
+/// avaliação antiga apresentada como se fosse a atual. O acesso por Id continua alcançando qualquer uma.
+/// </summary>
+public record KnightLatestDto(
+    KnightAssessmentDto? Assessment,
+    KnightUnfinishedRunDto? UnfinishedAttempt);
+
+/// <summary>
 /// [AEGIS-AUD-035] Requisição de PUBLICAÇÃO de uma fotografia auditável de postura. O cliente só escolhe o
 /// instrumento (<paramref name="Type"/>: "AegisScoreNist" ou "Knight") e, para KNIGHT, opcionalmente a fonte
 /// (<paramref name="Source"/>: "entra"/"google"/"demo"). NUNCA fornece score/cobertura/contagens/vereditos — o

@@ -118,6 +118,12 @@ import { KnightActionPlanComponent } from './action-plan.component';
                     </span>
                   }
                   <button type="button" class="btn ghost" (click)="tab.set('plano')">Abrir plano</button>
+                } @else if (!runFinalized()) {
+                  <!-- [AEGIS-KNIGHT-DURABLE-01] Execução sem conclusão registrada não origina plano. -->
+                  <span class="mono warn">
+                    Nenhuma ação ativa. Um plano só pode nascer de uma avaliação concluída — esta execução não
+                    foi finalizada.
+                  </span>
                 } @else {
                   <span class="mono">Nenhuma ação ativa para este achado.</span>
                   <button type="button" class="btn ghost" (click)="tab.set('plano')">Criar plano de ação</button>
@@ -256,6 +262,7 @@ import { KnightActionPlanComponent } from './action-plan.component';
               [affectedCount]="indicator().affectedObjectCount"
               [originRunId]="planOriginRunId()"
               [currentRunId]="assessment().id"
+              [runFinalized]="runFinalized()"
               [existing]="plan()"
               (changed)="planChanged.emit($event)" />
           }
@@ -368,6 +375,11 @@ export class KnightFindingDetailComponent {
 
   /** Avaliação à qual o achado pertence — o vínculo que impede mostrar o presente como prova do passado. */
   readonly assessment = input.required<KnightAssessment>();
+  /**
+   * [AEGIS-KNIGHT-DURABLE-01] FALSE quando a avaliação aberta é uma execução sem conclusão registrada: os
+   * dados podem ser inspecionados, mas não originam nem validam planos de ação.
+   */
+  readonly runFinalized = input(true);
   readonly indicator = input.required<KnightIndicator>();
   /**
    * [AEGIS-MVP-PRODUCT-03] Ação ATIVA deste achado, quando existe. Vem da página (uma única leitura da lista
