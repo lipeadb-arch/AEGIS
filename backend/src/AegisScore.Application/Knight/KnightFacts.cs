@@ -48,14 +48,21 @@ public enum KnightSignalKey
     DesignatedBreakGlassAccounts = 109,
 
     /// <summary>
-    /// [AEGIS-KNIGHT-MULTICLOUD-01] Papéis privilegiados ATIVOS para os quais nenhuma política HABILITADA exige MFA
-    /// em todas as aplicações, sem condição que estreite a exigência. Ausente (com motivo) quando a cobertura não
-    /// pode ser resolvida com os dados coletados — nunca zero por suposição.
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Papéis privilegiados ATIVOS com lacuna COMPROVADA de exigência de MFA por
+    /// política habilitada (em todas as aplicações, sem condição que a estreite): membro que nenhuma política
+    /// alcança, ou papel em que nenhum membro é coberto. Ausente (com motivo) quando a cobertura não pode ser
+    /// afirmada nem negada — pertencimento a grupo não coletado, ou exceções explícitas sem outra política que as
+    /// cubra —, nunca zero por suposição.
     /// </summary>
     PrivilegedRolesWithoutMfaPolicy = 110,
 
-    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Políticas HABILITADAS que EXIGEM MFA ou força de autenticação (qualquer alcance).</summary>
-    EnforcedMfaPolicies = 111,
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Políticas HABILITADAS que exigem MFA ou força de autenticação com alvo DECLARADO
+    /// em todos os usuários, em todas as aplicações, sem condição que as estreite e sem exclusão de grupo — a base
+    /// mínima para o ambiente. Política de alcance restrito não conta. Ausente (com motivo) quando a única
+    /// candidata depende de grupo cujo pertencimento não é coletado.
+    /// </summary>
+    BaselineMfaPolicies = 111,
 
     // ---- Específicos do Google Workspace (Admin SDK Directory + Reports) ----
     /// <summary>Cobertura (%) de 2SV inscrito entre os usuários ATIVOS do diretório.</summary>

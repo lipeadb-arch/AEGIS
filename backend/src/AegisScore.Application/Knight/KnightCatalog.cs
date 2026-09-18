@@ -56,6 +56,8 @@ public static class KnightCatalog
     // v3 [AEGIS-KNIGHT-MULTICLOUD-01]: AK-ENTRA-001 passa a afirmar só o que mede (método REGISTRADO); AK-ENTRA-007,
     // 008 e 014 leem as políticas de acesso condicional por estado, alvo (inclusive papel), aplicação, condição e
     // controle exigido, e deixam de reprovar quando a alternativa (security defaults) não pôde ser verificada.
+    // Exclusões explícitas nunca viram cobertura: sem outra política que as cubra, 007/008 ficam não avaliados
+    // (a exceção não é irregular por si, mas não comprova proteção); 014 exige alcance declarado amplo.
     // Comparações entre fotografias v2 e v3 são recusadas pelo comparador (versão de catálogo diferente).
     public const string Version = "ak-knight-v3";
 
@@ -269,9 +271,10 @@ public static class KnightCatalog
             KnightIndicatorCategory.IdentityGovernance, SeverityLevel.High, EntraOnly,
             new[] { "PR.AA-02", "PR.PS-01" }, new[] { "T1110 · Brute Force" },
             "Bloquear os clientes de autenticação legada (Exchange ActiveSync e outros clientes) por política de acesso condicional habilitada para todos os usuários e aplicações, ou habilitar os security defaults.",
-            "Política HABILITADA bloqueando Exchange ActiveSync e outros clientes para todos os usuários e aplicações — OU security defaults habilitados.",
+            "Política HABILITADA bloqueando Exchange ActiveSync e outros clientes (ou todos os tipos de cliente) para todos os usuários e aplicações, sem exclusão que outra política não cubra — OU security defaults habilitados.",
             // [v2] Reprovar exige as DUAS verificações: nenhuma política bloqueia E os security defaults estão
-            // comprovadamente desligados. Security defaults não verificado → não há como reprovar.
+            // comprovadamente desligados. Security defaults não verificado → não há como reprovar. Bloqueio "para
+            // todos" com exclusões não cobertas por outra política → sinal ausente com o motivo → não avaliado.
             f =>
             {
                 var defaults = f.Get(KnightSignalKey.SecurityDefaultsEnabled);
@@ -279,7 +282,7 @@ public static class KnightCatalog
                 if (defaults.IsCollected && defaults.Flag == true)
                     return Passed("Autenticação legada bloqueada pelos security defaults.");
                 if (blocked.IsCollected && blocked.Flag == true)
-                    return Passed("Autenticação legada bloqueada por política de acesso condicional habilitada, para todos os usuários e aplicações.");
+                    return Passed("Autenticação legada bloqueada por política de acesso condicional habilitada, para todos os usuários e aplicações — sem exclusão que outra política não cubra.");
                 if (!blocked.IsCollected)
                     return NotEvaluated(blocked.MissingReason ?? "políticas de acesso condicional não coletadas");
                 if (!defaults.IsCollected)
@@ -293,9 +296,9 @@ public static class KnightCatalog
             KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.High, EntraOnly,
             new[] { "PR.AA-01", "PR.AA-03" }, Array.Empty<string>(),
             "Criar ou ajustar política de acesso condicional habilitada que exija MFA (idealmente resistente a phishing) para os papéis administrativos listados, em todas as aplicações, excluindo apenas as contas de emergência.",
-            "Papéis privilegiados ativos cobertos por política HABILITADA que exige MFA em todas as aplicações, sem condição que a estreite — OU security defaults habilitados.",
-            // [v2] Lê as políticas papel a papel (ver ConditionalAccessAnalyzer). Cobertura não resolvida (política
-            // por grupo) → não avaliado; security defaults não verificado → não reprova.
+            "Cada membro dos papéis privilegiados ativos alcançado por política HABILITADA que exige MFA em todas as aplicações, sem condição que a estreite e sem exclusão que outra política não cubra — OU security defaults habilitados.",
+            // [v2] Lê as políticas membro a membro (ver ConditionalAccessAnalyzer). Cobertura não resolvida (grupo)
+            // ou exceções explícitas sem outra cobertura → não avaliado; security defaults não verificado → não reprova.
             f =>
             {
                 var defaults = f.Get(KnightSignalKey.SecurityDefaultsEnabled);
@@ -306,11 +309,11 @@ public static class KnightCatalog
                     return NotEvaluated(uncovered.MissingReason ?? "cobertura de MFA administrativa não coletada");
                 var n = uncovered.Count ?? 0;
                 if (n == 0)
-                    return Passed("Todos os papéis privilegiados ativos são cobertos por política habilitada que exige MFA em todas as aplicações.");
+                    return Passed("Todos os membros dos papéis privilegiados ativos são alcançados por política habilitada que exige MFA em todas as aplicações, sem exclusão que os deixe de fora.");
                 if (!defaults.IsCollected)
                     return NotEvaluated($"{n} papel(éis) privilegiado(s) sem política que exija MFA, mas os security defaults não puderam ser verificados — "
                         + (defaults.MissingReason ?? "sinal não coletado"));
-                return Exposed($"{n} papel(éis) privilegiado(s) ativo(s) sem política habilitada que exija MFA em todas as aplicações, e os security defaults estão desligados.", (int)n);
+                return Exposed($"{n} papel(éis) privilegiado(s) ativo(s) com membro(s) sem política habilitada que exija MFA em todas as aplicações (os membros estão nomeados na evidência), e os security defaults estão desligados.", (int)n);
             }),
 
         new KnightIndicatorDefinition(
@@ -391,22 +394,26 @@ public static class KnightCatalog
             "AK-ENTRA-014", "2", "Ausência de baseline de segurança da plataforma",
             KnightIndicatorCategory.IdentityGovernance, SeverityLevel.Medium, EntraOnly,
             new[] { "PR.PS-01", "GV.RR-02" }, Array.Empty<string>(),
-            "Habilitar os security defaults ou manter ao menos uma política de acesso condicional habilitada exigindo MFA.",
-            "Security defaults habilitados OU ao menos uma política HABILITADA exigindo MFA ou força de autenticação.",
+            "Habilitar os security defaults ou manter uma política de acesso condicional habilitada exigindo MFA de todos os usuários, em todas as aplicações.",
+            "Security defaults habilitados OU ao menos uma política HABILITADA exigindo MFA ou força de autenticação com alvo declarado em todos os usuários, em todas as aplicações e sem condição que a estreite.",
+            // Política para um usuário, um papel ou uma aplicação não sustenta conclusão sobre o ambiente. Alcance
+            // dependente de grupo não coletado → sinal ausente com o motivo → não avaliado.
             f =>
             {
                 var defaults = f.Get(KnightSignalKey.SecurityDefaultsEnabled);
-                var enforced = f.Get(KnightSignalKey.EnforcedMfaPolicies);
+                var baseline = f.Get(KnightSignalKey.BaselineMfaPolicies);
                 if (defaults.IsCollected && defaults.Flag == true)
                     return Passed("Baseline presente: security defaults habilitados.");
-                if (enforced.IsCollected && (enforced.Count ?? 0) > 0)
-                    return Passed($"Baseline presente: {enforced.Count} política(s) habilitada(s) exigem MFA ou força de autenticação.");
-                if (!enforced.IsCollected)
-                    return NotEvaluated(enforced.MissingReason ?? "políticas de acesso condicional não coletadas");
+                if (baseline.IsCollected && (baseline.Count ?? 0) > 0)
+                    return Passed($"Baseline presente: {baseline.Count} política(s) habilitada(s) exigem MFA com alvo declarado em todos os usuários e todas as aplicações. "
+                        + "Isso não comprova a cobertura de cada conta: exclusões aparecem na evidência e o alcance para administradores é avaliado em AK-ENTRA-008.");
+                if (!baseline.IsCollected)
+                    return NotEvaluated(baseline.MissingReason ?? "políticas de acesso condicional não coletadas");
                 if (!defaults.IsCollected)
-                    return NotEvaluated("nenhuma política habilitada exige MFA, mas os security defaults não puderam ser verificados — "
+                    return NotEvaluated("nenhuma política habilitada exige MFA de todos os usuários em todas as aplicações, mas os security defaults não puderam ser verificados — "
                         + (defaults.MissingReason ?? "sinal não coletado"));
-                return Exposed("Sem security defaults e sem nenhuma política habilitada exigindo MFA — baseline ausente.", 0);
+                return Exposed("Sem security defaults e sem política habilitada exigindo MFA de todos os usuários em todas as aplicações — baseline ausente. "
+                    + "Políticas de alcance restrito (usuários, papéis ou aplicações específicos, ou com condições) não sustentam uma base para o ambiente.", 0);
             }),
 
         new KnightIndicatorDefinition(

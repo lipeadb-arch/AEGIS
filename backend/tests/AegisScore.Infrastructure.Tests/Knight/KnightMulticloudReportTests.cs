@@ -31,8 +31,10 @@ namespace AegisScore.Infrastructure.Tests.Knight;
 /// PERSISTIDA → objetos afetados e evidências de configuração → resumo → fotografia v2 → HTML e CSV.
 ///
 /// O cenário é o que a leitura antiga errava: a MFA administrativa é exigida por política DIRIGIDA AO PAPEL de
-/// Administrador Global (com a conta de emergência excluída), o Administrador de Segurança não é coberto, e o
-/// bloqueio de autenticação legada existe só em SOMENTE RELATÓRIO. As permissões de risco de identidade faltam
+/// Administrador Global, com a conta de emergência excluída (exceção explícita: não é cobertura); Bruno, que
+/// também é Administrador de Segurança, é coberto por deter o papel Global; Carla, só Administradora de
+/// Segurança, não é alcançada por nenhuma política (lacuna comprovada); e o bloqueio de autenticação legada
+/// existe só em SOMENTE RELATÓRIO. As permissões de risco de identidade faltam
 /// (coleta parcial). Nomes de objetos trazem conteúdo hostil — marcação e fórmula — para provar que as
 /// exportações tratam evidência como dado.
 /// </summary>
@@ -77,7 +79,7 @@ public sealed class KnightMulticloudReportTests : IDisposable
         // ---- MFA administrativa lida papel a papel ----
         var adminMfa = assessment.Indicators.Single(i => i.IndicatorId == "AK-ENTRA-008");
         adminMfa.Status.Should().Be(KnightIndicatorStatus.Exposed);
-        adminMfa.AffectedObjectCount.Should().Be(1, "só o Administrador de Segurança não é coberto");
+        adminMfa.AffectedObjectCount.Should().Be(1, "só o papel de Administrador de Segurança tem membro sem política (Carla)");
         adminMfa.HasAffectedDetail.Should().BeTrue();
         adminMfa.AffectedDetailComplete.Should().BeTrue();
         adminMfa.EvidenceObjectCount.Should().BeGreaterThan(0);
@@ -88,13 +90,15 @@ public sealed class KnightMulticloudReportTests : IDisposable
         var svc = ServiceFor(db, TenantA);
         var afetados = await svc.GetAffectedObjectsAsync(assessment.Id, "AK-ENTRA-008", 1, 50, null);
         afetados!.Items.Should().ContainSingle().Which.Should().Match<KnightAffectedObjectView>(
-            o => o.Kind == KnightAffectedObjectKind.DirectoryRole && o.DisplayName == "Security Administrator");
+            o => o.Kind == KnightAffectedObjectKind.DirectoryRole && o.DisplayName == "Security Administrator"
+                 && o.Detail!.Contains("alcança: Carla Dias") && o.Detail.Contains("Cobertos: Bruno Costa"));
 
         var evidencias = await svc.GetAffectedObjectsAsync(assessment.Id, "AK-ENTRA-008", 1, 50, null, default, KnightObjectRelation.Evidence);
         evidencias!.Items.Should().Contain(o => o.Kind == KnightAffectedObjectKind.Policy && o.ExternalId == "p-admins"
             && o.ObservedConfiguration!.Contains("habilitada"));
         evidencias.Items.Should().Contain(o => o.Kind == KnightAffectedObjectKind.DirectoryRole && o.ExternalId == GaTemplate
-            && o.Detail!.Contains("Conta de emergência"), "a exceção declarada aparece pelo NOME do membro privilegiado");
+            && o.Detail!.Contains("Conta de emergência") && o.Detail.Contains("não é contado como coberto"),
+            "a exceção explícita aparece pelo NOME do membro privilegiado e não conta como cobertura");
         evidencias.Items.Should().Contain(o => o.Kind == KnightAffectedObjectKind.TenantSetting);
 
         // ---- Autenticação legada: a política existe, mas só relata ----
@@ -103,7 +107,10 @@ public sealed class KnightMulticloudReportTests : IDisposable
         var legadoEv = await svc.GetAffectedObjectsAsync(assessment.Id, "AK-ENTRA-007", 1, 50, null, default, KnightObjectRelation.Evidence);
         legadoEv!.Items.Should().Contain(o => o.ExternalId == "p-legacy" && o.Detail!.Contains("somente relatório"));
 
-        assessment.Indicators.Single(i => i.IndicatorId == "AK-ENTRA-014").Status.Should().Be(KnightIndicatorStatus.Passed);
+        // A única política que exige MFA mira só um papel: não sustenta uma base mínima para o ambiente.
+        assessment.Indicators.Single(i => i.IndicatorId == "AK-ENTRA-014").Status.Should().Be(KnightIndicatorStatus.Exposed);
+        var baselineEv = await svc.GetAffectedObjectsAsync(assessment.Id, "AK-ENTRA-014", 1, 50, null, default, KnightObjectRelation.Evidence);
+        baselineEv!.Items.Should().Contain(o => o.ExternalId == "p-admins" && o.Detail!.StartsWith("Não sustenta a base mínima"));
         assessment.Indicators.Single(i => i.IndicatorId == "AK-ENTRA-001").Title.Should().Contain("registrado");
 
         // ---- Unidades distintas: controles × ocorrências × objetos únicos ----
@@ -212,12 +219,15 @@ public sealed class KnightMulticloudReportTests : IDisposable
         await dbt.SaveChangesAsync();
     }
 
-    internal static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId)
+    internal static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId) =>
+        ServiceFor(db, tenantId, new KnightGraphScenario.StubHandler());
+
+    internal static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId, HttpMessageHandler graph)
     {
         var tenant = new SystemTenantContext(tenantId);
         var registry = new KnightCollectorRegistry(new IKnightCollector[]
         {
-            new EntraIdKnightCollector(new EntraGraphClient(new HttpClient(new KnightGraphScenario.StubHandler()))),
+            new EntraIdKnightCollector(new EntraGraphClient(new HttpClient(graph))),
         });
         var config = new EntraConfig();
         var store = new IdentityAcquisitionStore(db, tenant, TimeProvider.System);
@@ -303,11 +313,12 @@ internal static class KnightGraphScenario
                 """{"@odata.type":"#microsoft.graph.user","id":"u-bg","userType":"Member","displayName":"Conta de emergência 1","userPrincipalName":"bg1@demo.example.com","signInActivity":{"lastSignInDateTime":"R"}},""" +
                 """{"@odata.type":"#microsoft.graph.user","id":"u2","userType":"Member","displayName":"Bruno Costa","userPrincipalName":"bruno@demo.example.com","signInActivity":{"lastSignInDateTime":"R"}}]}""").Replace("R", Recent));
         if (url.Contains("/directoryRoles/r-sa/members"))
-            return (HttpStatusCode.OK, """{"value":[{"@odata.type":"#microsoft.graph.user","id":"u2","userType":"Member","displayName":"Bruno Costa","userPrincipalName":"bruno@demo.example.com","signInActivity":{"lastSignInDateTime":"R"}}]}""".Replace("R", Recent));
+            return (HttpStatusCode.OK, ("""{"value":[{"@odata.type":"#microsoft.graph.user","id":"u2","userType":"Member","displayName":"Bruno Costa","userPrincipalName":"bruno@demo.example.com","signInActivity":{"lastSignInDateTime":"R"}},""" +
+                """{"@odata.type":"#microsoft.graph.user","id":"u3","userType":"Member","displayName":"Carla Dias","userPrincipalName":"carla@demo.example.com","signInActivity":{"lastSignInDateTime":"R"}}]}""").Replace("R", Recent));
         if (url.Contains("/directoryRoles?"))
             return (HttpStatusCode.OK, $$"""{"value":[{"id":"r-ga","displayName":"Global Administrator","roleTemplateId":"{{GaTemplate}}"},{"id":"r-sa","displayName":"Security Administrator","roleTemplateId":"{{SaTemplate}}"}]}""");
         if (url.Contains("userRegistrationDetails"))
-            return (HttpStatusCode.OK, """{"value":[{"id":"u1","isMfaCapable":true},{"id":"u-bg","isMfaCapable":true},{"id":"u2","isMfaCapable":false},{"id":"u9","isMfaCapable":true}]}""");
+            return (HttpStatusCode.OK, """{"value":[{"id":"u1","isMfaCapable":true},{"id":"u-bg","isMfaCapable":true},{"id":"u2","isMfaCapable":false},{"id":"u3","isMfaCapable":true},{"id":"u9","isMfaCapable":true}]}""");
         if (url.Contains("/users") && url.Contains("Guest"))
             return (HttpStatusCode.OK, System.Text.Json.JsonSerializer.Serialize(new
             {
@@ -338,6 +349,37 @@ internal static class KnightGraphScenario
         {
             var (status, body) = Graph(request);
             return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+        }
+    }
+
+    /// <summary>
+    /// O mesmo cenário, contando as chamadas à fonte (prova de que uma retomada NÃO coletou de novo) e, quando
+    /// armado, SEGURANDO a primeira leitura das políticas até <see cref="Release"/> — para colocar uma tentativa no
+    /// meio da coleta enquanto outra assume o pedido.
+    /// </summary>
+    internal sealed class CountingHandler : HttpMessageHandler
+    {
+        private int _calls;
+        private TaskCompletionSource? _gate;
+        private TaskCompletionSource? _held;
+        public int Calls => Volatile.Read(ref _calls);
+        public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void HoldNextPolicyRead() => _gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void Release() => (_held ?? _gate)?.TrySetResult();
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _calls);
+            if (_gate is { } gate && request.RequestUri!.AbsoluteUri.Contains("conditionalAccess/policies"))
+            {
+                _gate = null;
+                _held = gate;
+                Reached.TrySetResult();
+                await gate.Task.WaitAsync(cancellationToken);
+            }
+            var (status, body) = Graph(request);
+            return new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         }
     }
 }

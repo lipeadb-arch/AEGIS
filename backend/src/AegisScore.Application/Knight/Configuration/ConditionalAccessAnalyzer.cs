@@ -20,14 +20,24 @@ namespace AegisScore.Application.Knight.Configuration;
 //   • CONDIÇÕES que estreitam a exigência — localização, plataforma, risco, filtro de dispositivo, clientes;
 //   • CONCESSÃO — MFA ou força de autenticação EXIGIDA, ou oferecida como ALTERNATIVA num "OU".
 //
-// E devolve, papel a papel, se há exigência de MFA — COBERTO, NÃO COBERTO ou NÃO RESOLVIDO. "Não resolvido" é
-// honesto quando a política mira GRUPOS cujo pertencimento esta entrega não coleta: nesse caso o indicador
-// fica inconclusivo, e nunca aprovado ou reprovado por suposição.
+// Três coisas são mantidas SEPARADAS: a política EXISTIR, o ALVO que ela declara e a COBERTURA que os dados
+// comprovam. A cobertura é lida MEMBRO A MEMBRO — é assim que o acesso condicional se aplica: uma política que
+// inclui um papel vale para quem DETÉM o papel, e uma exclusão (por usuário, por papel, por grupo, de
+// convidados) prevalece sobre qualquer inclusão. Para cada membro privilegiado conhecido:
+//   • COBERTO — alguma política que impõe o alcança sem exclusão que o deixe de fora;
+//   • NÃO RESOLVIDO — o alcance depende de GRUPO ou da condição de convidado, que esta entrega não coleta;
+//   • EXCEÇÃO — as políticas que o alcançariam o excluem EXPLICITAMENTE, e nenhuma outra o cobre;
+//   • NÃO ALCANÇADO — nenhuma política que impõe o tem como alvo.
 //
-// EXCLUSÕES de usuários/grupos numa política que cobre o papel são EXCEÇÕES DECLARADAS — o padrão para contas
-// de emergência. Elas não reprovam o papel, mas são listadas nominalmente (quando o objeto é um membro
-// privilegiado conhecido) para revisão. A exigência por POLÍTICA não comprova que cada autenticação aplicou o
-// segundo fator — isso seria autenticação observada, que esta entrega não coleta.
+// Uma exclusão explícita NÃO é irregular por si (é o padrão para contas de emergência), mas também NÃO comprova
+// proteção nem controle compensatório — e a designação de contas de emergência não é inferível por API. Por
+// isso ela nunca vira cobertura: um papel com exceções não é aprovado; fica sem conclusão, com as contas
+// nomeadas. Já um membro NÃO ALCANÇADO, ou um papel em que NENHUM membro é coberto (todos excluídos, ou o
+// próprio papel excluído), é lacuna comprovada. Outra política que comprovadamente cubra a exceção preserva a
+// aprovação.
+//
+// A exigência por POLÍTICA não comprova que cada autenticação aplicou o segundo fator — isso seria
+// autenticação observada, que esta entrega não coleta.
 
 /// <summary>Leitura de UMA política: o que ela exige, de quem, onde e se de fato impõe.</summary>
 public sealed record ConditionalAccessPolicyReading(
@@ -39,34 +49,78 @@ public sealed record ConditionalAccessPolicyReading(
     bool TargetsAllUsers,
     bool CoversAllApplications,
     IReadOnlyList<string> Narrowing,
-    string Summary);
+    string Summary)
+{
+    /// <summary>A política declara alguma exclusão de usuários, grupos, papéis ou convidados.</summary>
+    public bool HasExclusions =>
+        Policy.ExcludeUsers.Count > 0 || Policy.ExcludeGroups.Count > 0 || Policy.ExcludeRoles.Count > 0
+        || Policy.ExcludesGuestsOrExternalUsers;
+}
 
 /// <summary>Situação da exigência de MFA para UM papel privilegiado.</summary>
 public enum RoleMfaCoverageState
 {
-    /// <summary>Uma política habilitada exige MFA para o papel em todas as aplicações, sem condição que a estreite.</summary>
+    /// <summary>Todos os membros conhecidos são alcançados por política habilitada que exige MFA, sem exclusão.</summary>
     Covered = 0,
 
-    /// <summary>Nenhuma política habilitada exige MFA para o papel com esse alcance.</summary>
+    /// <summary>
+    /// Lacuna COMPROVADA: há membro que nenhuma política que impõe alcança, ou nenhum membro é coberto (todos
+    /// excluídos, ou o próprio papel excluído).
+    /// </summary>
     NotCovered = 1,
 
-    /// <summary>Há política que talvez o cubra, mas por GRUPO/usuário nominal — pertencimento não verificável.</summary>
+    /// <summary>A cobertura de algum membro depende de grupo/condição de convidado — pertencimento não coletado.</summary>
     Unresolved = 2,
+
+    /// <summary>
+    /// Há membros cobertos, e os demais estão EXCLUÍDOS explicitamente sem outra política que os cubra. Não é
+    /// cobertura: a exceção não é irregular por si, mas também não comprova proteção.
+    /// </summary>
+    CoveredWithExceptions = 3,
 }
 
-/// <summary>Como UM papel privilegiado está coberto — com as políticas e as exceções declaradas.</summary>
+/// <summary>Situação da exigência de MFA para UM membro privilegiado (usuário) de um papel.</summary>
+public enum MemberMfaCoverageState
+{
+    Covered = 0,
+    Excepted = 1,
+    Unresolved = 2,
+    NotTargeted = 3,
+}
+
+/// <summary>
+/// Um membro e as políticas que decidem sua situação: as que o COBREM (<see cref="MemberMfaCoverageState.Covered"/>),
+/// as que o EXCLUEM (<see cref="MemberMfaCoverageState.Excepted"/>) ou as que dependem de pertencimento não
+/// coletado (<see cref="MemberMfaCoverageState.Unresolved"/>).
+/// </summary>
+public sealed record MemberMfaCoverage(string MemberId, MemberMfaCoverageState State, IReadOnlyList<string> PolicyIds);
+
+/// <summary>Como UM papel privilegiado está coberto — membro a membro, com as políticas e as exceções.</summary>
 public sealed record RoleMfaCoverage(
     DirectoryRoleConfiguration Role,
     RoleMfaCoverageState State,
     IReadOnlyList<string> CoveringPolicyIds,
-    IReadOnlyList<string> ExceptionMemberIds,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<MemberMfaCoverage> Members,
+    IReadOnlyList<string> Notes)
+{
+    /// <summary>Membros excluídos explicitamente, sem outra política que os cubra.</summary>
+    public IReadOnlyList<string> ExceptionMemberIds => IdsIn(MemberMfaCoverageState.Excepted);
+
+    /// <summary>Membros que nenhuma política que impõe tem como alvo.</summary>
+    public IReadOnlyList<string> UncoveredMemberIds => IdsIn(MemberMfaCoverageState.NotTargeted);
+
+    /// <summary>Membros cuja cobertura depende de pertencimento não coletado.</summary>
+    public IReadOnlyList<string> UnresolvedMemberIds => IdsIn(MemberMfaCoverageState.Unresolved);
+
+    private IReadOnlyList<string> IdsIn(MemberMfaCoverageState state) =>
+        Members.Where(m => m.State == state).Select(m => m.MemberId).ToList();
+}
 
 /// <summary>Conclusão sobre a exigência de MFA administrativa.</summary>
-/// <param name="Evaluable">FALSE quando os dados não permitem concluir (motivo em <paramref name="InconclusiveReason"/>).</param>
-/// <param name="UncoveredRoleCount">Papéis privilegiados ativos sem exigência — o número que o indicador conta.</param>
+/// <param name="Evaluable">FALSE quando os dados não permitem afirmar nem negar (motivo em <paramref name="InconclusiveReason"/>).</param>
+/// <param name="UncoveredRoleCount">Papéis com lacuna comprovada — o número que o indicador conta.</param>
 /// <param name="Roles">Cobertura papel a papel (vazio quando o inventário de papéis não foi coletado).</param>
-/// <param name="UniversalPolicyIds">Políticas que exigem MFA de TODOS os usuários, sem exceção de papel.</param>
+/// <param name="UniversalPolicyIds">Políticas que exigem MFA de TODOS os usuários, sem nenhuma exclusão.</param>
 public sealed record AdminMfaConclusion(
     bool Evaluable,
     string? InconclusiveReason,
@@ -75,17 +129,35 @@ public sealed record AdminMfaConclusion(
     IReadOnlyList<string> UniversalPolicyIds);
 
 /// <summary>Conclusão sobre o bloqueio de autenticação legada.</summary>
+/// <param name="Blocked">Bloqueio COMPROVADO para todos os usuários e aplicações (exceções cobertas por outra política).</param>
+/// <param name="BlockingPolicyIds">Políticas que sustentam o bloqueio comprovado.</param>
+/// <param name="PartialPolicyIds">Políticas que tocam a autenticação legada mas não contam (estado, alvo, aplicação, condição).</param>
+/// <param name="ExceptionPolicyIds">Políticas que bloqueiam para todos os usuários, mas com exclusões que nenhuma outra política cobre.</param>
+/// <param name="InconclusiveReason">Preenchido quando só há bloqueio com exceções: não se afirma nem se nega o bloqueio para todos.</param>
 public sealed record LegacyAuthConclusion(
     bool Blocked,
     IReadOnlyList<string> BlockingPolicyIds,
-    IReadOnlyList<string> PartialPolicyIds);
+    IReadOnlyList<string> PartialPolicyIds,
+    IReadOnlyList<string> ExceptionPolicyIds,
+    string? InconclusiveReason);
+
+/// <summary>Conclusão sobre a base mínima de exigência de MFA para o ambiente.</summary>
+/// <param name="BaselinePolicyIds">Políticas habilitadas que exigem MFA com ALVO DECLARADO em todos os usuários, em todas as aplicações, sem condição que as estreite e sem exclusão de grupo.</param>
+/// <param name="UnresolvedPolicyIds">Políticas que seriam base mínima, mas cujo alcance depende de grupo(s) não coletado(s).</param>
+/// <param name="RestrictedPolicyIds">Políticas habilitadas que exigem MFA com alcance restrito (usuários, papéis, grupos, aplicações ou condições).</param>
+/// <param name="InconclusiveReason">Preenchido quando não há base comprovada e o alcance da candidata depende de grupo.</param>
+public sealed record MfaBaselineConclusion(
+    IReadOnlyList<string> BaselinePolicyIds,
+    IReadOnlyList<string> UnresolvedPolicyIds,
+    IReadOnlyList<string> RestrictedPolicyIds,
+    string? InconclusiveReason);
 
 /// <summary>Resultado completo da leitura das políticas de uma coleta.</summary>
 public sealed record ConditionalAccessAnalysis(
     IReadOnlyList<ConditionalAccessPolicyReading> Policies,
     AdminMfaConclusion AdminMfa,
     LegacyAuthConclusion LegacyAuth,
-    int EnforcedMfaPolicyCount)
+    MfaBaselineConclusion Baseline)
 {
     public ConditionalAccessPolicyReading? Find(string policyId) =>
         Policies.FirstOrDefault(p => string.Equals(p.Policy.Id, policyId, StringComparison.Ordinal));
@@ -97,6 +169,8 @@ public static class ConditionalAccessAnalyzer
     public const string RuleVersion = "aegis-ca-analysis-v1";
 
     private static readonly StringComparer Ci = StringComparer.OrdinalIgnoreCase;
+    private const string GuestsValue = "GuestsOrExternalUsers";
+    private const string RestrictedClients = "tipos de cliente restritos";
 
     /// <summary>
     /// Lê as políticas da coleta. Devolve <c>null</c> quando as políticas NÃO foram coletadas — ausência de
@@ -115,8 +189,8 @@ public static class ConditionalAccessAnalyzer
         return new ConditionalAccessAnalysis(
             readings,
             ConcludeAdminMfa(readings, configuration!.PrivilegedRoles),
-            ConcludeLegacy(readings),
-            readings.Count(r => r.IsEnforced && r.RequiresMfa));
+            ConcludeLegacy(readings, configuration.PrivilegedRoles),
+            ConcludeBaseline(readings));
     }
 
     // ---- Leitura de uma política ---------------------------------------------------------------------
@@ -142,7 +216,7 @@ public static class ConditionalAccessAnalyzer
         if (p.HasSignInRiskCondition) narrowing.Add("condição de risco de entrada");
         if (p.HasUserRiskCondition) narrowing.Add("condição de risco do usuário");
         if (p.HasDeviceFilter) narrowing.Add("filtro de dispositivo");
-        if (NarrowsModernClients(p.ClientAppTypes)) narrowing.Add("tipos de cliente restritos");
+        if (NarrowsModernClients(p.ClientAppTypes)) narrowing.Add(RestrictedClients);
 
         return new ConditionalAccessPolicyReading(
             p, p.State == ConditionalAccessPolicyState.Enabled, requiresMfa, alternative, blocks,
@@ -155,119 +229,239 @@ public static class ConditionalAccessAnalyzer
     /// </summary>
     private static bool NarrowsModernClients(IReadOnlyList<string> clientAppTypes)
     {
-        if (clientAppTypes.Count == 0 || clientAppTypes.Contains("all", Ci)) return false;
+        if (AllClientTypes(clientAppTypes)) return false;
         return !(clientAppTypes.Contains("browser", Ci) && clientAppTypes.Contains("mobileAppsAndDesktopClients", Ci));
     }
 
-    private static bool IsLegacyBlock(ConditionalAccessPolicyConfiguration p) =>
-        p.ClientAppTypes.Contains("exchangeActiveSync", Ci) && p.ClientAppTypes.Contains("other", Ci);
+    /// <summary>"all" ou lista vazia (o padrão da fonte quando a condição não é configurada) = todos os tipos de cliente.</summary>
+    private static bool AllClientTypes(IReadOnlyList<string> clientAppTypes) =>
+        clientAppTypes.Count == 0 || clientAppTypes.Contains("all", Ci);
 
-    private static bool TouchesLegacy(ConditionalAccessPolicyConfiguration p) =>
-        p.ClientAppTypes.Contains("exchangeActiveSync", Ci) || p.ClientAppTypes.Contains("other", Ci)
+    /// <summary>A política alcança os DOIS canais legados: Exchange ActiveSync e "outros clientes" — ou todos os tipos.</summary>
+    public static bool CoversAllLegacyClients(ConditionalAccessPolicyConfiguration p) =>
+        AllClientTypes(p.ClientAppTypes)
+        || (p.ClientAppTypes.Contains("exchangeActiveSync", Ci) && p.ClientAppTypes.Contains("other", Ci));
+
+    /// <summary>A política alcança ao menos um canal legado (inclusive por abranger todos os tipos de cliente).</summary>
+    public static bool TouchesLegacy(ConditionalAccessPolicyConfiguration p) =>
+        AllClientTypes(p.ClientAppTypes)
+        || p.ClientAppTypes.Contains("exchangeActiveSync", Ci) || p.ClientAppTypes.Contains("other", Ci)
         || p.ClientAppTypes.Contains("easSupported", Ci);
 
+    private static bool ExcludesGuests(ConditionalAccessPolicyConfiguration p) =>
+        p.ExcludesGuestsOrExternalUsers || p.ExcludeUsers.Contains(GuestsValue, Ci);
+
+    private static bool IncludesGuests(ConditionalAccessPolicyConfiguration p) =>
+        p.IncludesGuestsOrExternalUsers || p.IncludeUsers.Contains(GuestsValue, Ci);
+
+    // ---- Alcance de uma política sobre UM usuário conhecido ------------------------------------------
+
+    private enum Reach { Applies, Excluded, NotTargeted, Unknown }
+
+    /// <summary>
+    /// A política vale para o usuário? Exclusões prevalecem sobre inclusões. <paramref name="userRoles"/> são os
+    /// modelos dos papéis ATIVOS que o usuário detém (do inventário da mesma coleta). Grupo e condição de
+    /// convidado não são resolvidos nesta entrega → <see cref="Reach.Unknown"/>, nunca suposição.
+    /// <see cref="Reach.Excluded"/> só é devolvido quando a política o teria como alvo.
+    /// </summary>
+    private static Reach ReachOf(ConditionalAccessPolicyReading r, string userId, IReadOnlyCollection<string> userRoles)
+    {
+        var p = r.Policy;
+        var targeted = r.TargetsAllUsers
+            || p.IncludeUsers.Contains(userId, Ci)
+            || p.IncludeRoles.Any(role => userRoles.Contains(role, Ci));
+        var maybeTargeted = !targeted && (p.IncludeGroups.Count > 0 || IncludesGuests(p));
+
+        var excluded = p.ExcludeUsers.Contains(userId, Ci) || p.ExcludeRoles.Any(role => userRoles.Contains(role, Ci));
+        if (excluded) return targeted ? Reach.Excluded : Reach.NotTargeted;
+        if (!targeted && !maybeTargeted) return Reach.NotTargeted;
+
+        var maybeExcluded = p.ExcludeGroups.Count > 0 || ExcludesGuests(p);
+        return targeted && !maybeExcluded ? Reach.Applies : Reach.Unknown;
+    }
+
     // ---- MFA administrativa -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Só uma política HABILITADA, que EXIGE MFA, em TODAS as aplicações e sem condição que a estreite, conta
+    /// como exigência. Somente relatório, desabilitada, "MFA ou outra coisa", aplicações parciais e condições de
+    /// localização/risco são registradas como notas — nunca como cobertura.
+    /// </summary>
+    private static bool IsFullMfa(ConditionalAccessPolicyReading r) =>
+        r.IsEnforced && r.RequiresMfa && r.CoversAllApplications && r.Narrowing.Count == 0;
 
     private static AdminMfaConclusion ConcludeAdminMfa(
         IReadOnlyList<ConditionalAccessPolicyReading> readings, IReadOnlyList<DirectoryRoleConfiguration>? roles)
     {
-        // Só uma política HABILITADA, que EXIGE MFA, em TODAS as aplicações e sem condição que a estreite,
-        // conta como exigência. Somente relatório, desabilitada, "MFA ou outra coisa", aplicações parciais e
-        // condições de localização/risco são registradas como notas — nunca como cobertura.
-        var full = readings.Where(r => r.IsEnforced && r.RequiresMfa && r.CoversAllApplications && r.Narrowing.Count == 0).ToList();
+        var full = readings.Where(IsFullMfa).ToList();
 
-        var universal = full
-            .Where(r => r.TargetsAllUsers && r.Policy.ExcludeRoles.Count == 0)
-            .Select(r => r.Policy.Id).ToList();
+        var universal = full.Where(r => r.TargetsAllUsers && !r.HasExclusions).Select(r => r.Policy.Id).ToList();
 
         if (roles is null)
         {
             // Sem inventário de papéis não dá para dizer QUAIS papéis estão cobertos. Só uma política universal
-            // (todos os usuários, sem exclusão de papel) alcança todos eles por definição.
-            return universal.Count > 0
-                ? new AdminMfaConclusion(true, null, 0, Array.Empty<RoleMfaCoverage>(), universal)
-                : new AdminMfaConclusion(false,
-                    "O inventário de papéis privilegiados não foi coletado e nenhuma política exige MFA de todos os "
-                    + "usuários — não é possível dizer quais papéis estão cobertos.",
-                    0, Array.Empty<RoleMfaCoverage>(), universal);
+            // SEM NENHUMA exclusão alcança todos eles por definição — com exclusão, o excluído pode ser um deles.
+            if (universal.Count > 0)
+                return new AdminMfaConclusion(true, null, 0, Array.Empty<RoleMfaCoverage>(), universal);
+            var withExclusions = full.Any(r => r.TargetsAllUsers);
+            return new AdminMfaConclusion(false,
+                withExclusions
+                    ? "O inventário de papéis privilegiados não foi coletado e a política que exige MFA de todos os "
+                      + "usuários declara exclusões — sem o inventário não é possível saber se algum administrador está entre os excluídos."
+                    : "O inventário de papéis privilegiados não foi coletado e nenhuma política exige MFA de todos os "
+                      + "usuários — não é possível dizer quais papéis estão cobertos.",
+                0, Array.Empty<RoleMfaCoverage>(), universal);
         }
+
+        // Papéis que cada usuário DETÉM — a inclusão/exclusão por papel vale para quem tem o papel.
+        var rolesOf = roles
+            .SelectMany(role => role.UserMemberIds.Select(m => (m, role.TemplateId)))
+            .GroupBy(x => x.m, Ci)
+            .ToDictionary(g => g.Key, g => (IReadOnlyCollection<string>)g.Select(x => x.TemplateId).ToHashSet(Ci), Ci);
 
         var coverages = new List<RoleMfaCoverage>();
         foreach (var role in roles
                      .Where(r => r.MemberCount > 0)
                      .OrderBy(r => r.DisplayName ?? r.TemplateId, StringComparer.OrdinalIgnoreCase))
         {
-            var covering = new List<string>();
-            var exceptions = new SortedSet<string>(StringComparer.Ordinal);
-            var unresolvedVia = new List<string>();
-            var notes = new List<string>();
-
-            foreach (var r in full)
-            {
-                var p = r.Policy;
-                if (p.ExcludeRoles.Contains(role.TemplateId, Ci)) { notes.Add($"“{Name(p)}” exclui este papel."); continue; }
-
-                if (r.TargetsAllUsers || p.IncludeRoles.Contains(role.TemplateId, Ci))
-                {
-                    covering.Add(p.Id);
-                    foreach (var m in role.UserMemberIds.Where(m => p.ExcludeUsers.Contains(m, Ci))) exceptions.Add(m);
-                    continue;
-                }
-
-                // Direcionada a grupos ou a usuários nominais: sem o pertencimento dos grupos, não há como saber
-                // se os membros do papel estão lá. Usuários nominais cobrem o papel só se incluírem TODOS os membros.
-                var nominalAll = role.UserMemberIds.Count > 0
-                    && role.UserMemberIds.All(m => p.IncludeUsers.Contains(m, Ci));
-                if (nominalAll && p.IncludeGroups.Count == 0) { covering.Add(p.Id); continue; }
-                if (p.IncludeGroups.Count > 0 || p.IncludeUsers.Any(u => role.UserMemberIds.Contains(u, Ci)))
-                    unresolvedVia.Add(p.Id);
-            }
-
-            if (covering.Count > 0)
-            {
-                // Exceções que TODAS as políticas que cobrem o papel fazem: um membro excluído de uma política mas
-                // coberto por outra não é exceção de fato.
-                var realExceptions = exceptions
-                    .Where(m => covering.All(pid => readings.First(x => x.Policy.Id == pid).Policy.ExcludeUsers.Contains(m, Ci)))
-                    .ToList();
-                var groupExclusions = covering
-                    .Select(pid => readings.First(x => x.Policy.Id == pid).Policy)
-                    .Where(p => p.ExcludeGroups.Count > 0)
-                    .Select(p => $"“{Name(p)}” exclui {p.ExcludeGroups.Count} grupo(s) — o pertencimento a esses grupos não é verificado nesta coleta.")
-                    .ToList();
-                notes.AddRange(groupExclusions);
-                coverages.Add(new RoleMfaCoverage(role, RoleMfaCoverageState.Covered, covering, realExceptions, notes));
-                continue;
-            }
-
-            // Não coberto: registra POR QUE as políticas candidatas não contam.
-            foreach (var r in readings.Where(r => r.RequiresMfa || r.MfaIsAlternative))
-            {
-                var p = r.Policy;
-                var targets = r.TargetsAllUsers || p.IncludeRoles.Contains(role.TemplateId, Ci);
-                if (!targets || p.ExcludeRoles.Contains(role.TemplateId, Ci)) continue;
-                if (full.Contains(r)) continue;
-                notes.Add($"“{Name(p)}” não conta como exigência: {WhyNotEnforcing(r)}.");
-            }
-
-            coverages.Add(unresolvedVia.Count > 0
-                ? new RoleMfaCoverage(role, RoleMfaCoverageState.Unresolved, unresolvedVia, Array.Empty<string>(),
-                    notes.Append("Política direcionada a grupo(s) ou usuários nominais: o pertencimento não é coletado nesta entrega.").ToList())
-                : new RoleMfaCoverage(role, RoleMfaCoverageState.NotCovered, Array.Empty<string>(), Array.Empty<string>(), notes));
+            coverages.Add(role.UserMemberIds.Count == 0
+                ? RoleLevelCoverage(role, readings, full)
+                : MemberLevelCoverage(role, readings, full, rolesOf));
         }
 
         var uncovered = coverages.Count(c => c.State == RoleMfaCoverageState.NotCovered);
-        var unresolved = coverages.Count(c => c.State == RoleMfaCoverageState.Unresolved);
+        var unresolved = coverages.Where(c => c.State == RoleMfaCoverageState.Unresolved).ToList();
+        var excepted = coverages
+            .Where(c => c.State == RoleMfaCoverageState.CoveredWithExceptions
+                        || (c.State == RoleMfaCoverageState.Unresolved && c.ExceptionMemberIds.Count > 0))
+            .ToList();
 
-        // Um papel sem política é exposição comprovada, mesmo havendo outros não resolvidos. Só quando o que
-        // falta é exclusivamente NÃO RESOLVIDO a conclusão fica em aberto.
-        if (uncovered == 0 && unresolved > 0)
-            return new AdminMfaConclusion(false,
-                $"{unresolved} papel(éis) privilegiado(s) dependem de política direcionada a grupos ou usuários "
-                + "nominais, cujo pertencimento não é coletado nesta entrega — a cobertura não pode ser afirmada nem negada.",
-                0, coverages, universal);
+        // Um papel com lacuna comprovada é exposição, mesmo havendo outros não resolvidos ou com exceções.
+        if (uncovered > 0)
+            return new AdminMfaConclusion(true, null, uncovered, coverages, universal);
 
-        return new AdminMfaConclusion(true, null, uncovered, coverages, universal);
+        if (unresolved.Count > 0 || excepted.Count > 0)
+        {
+            var parts = new List<string>();
+            if (unresolved.Count > 0)
+                parts.Add($"{Plural(unresolved.Count, "papel privilegiado depende", "papéis privilegiados dependem")} de "
+                    + "política direcionada a grupos ou a convidados, ou de exclusão de grupos, cujo pertencimento não é "
+                    + "coletado nesta entrega — a cobertura não pode ser afirmada nem negada.");
+            if (excepted.Count > 0)
+                parts.Add(ExceptionsReason(excepted));
+            return new AdminMfaConclusion(false, string.Join(" ", parts), 0, coverages, universal);
+        }
+
+        return new AdminMfaConclusion(true, null, 0, coverages, universal);
+    }
+
+    private static string ExceptionsReason(IReadOnlyList<RoleMfaCoverage> excepted)
+    {
+        var members = excepted.SelectMany(c => c.ExceptionMemberIds).Distinct(Ci).Count();
+        var roleNames = string.Join(", ", excepted.Select(c => c.Role.DisplayName ?? c.Role.TemplateId));
+        return $"{Plural(members, "conta privilegiada está excluída", "contas privilegiadas estão excluídas")} "
+            + $"explicitamente das políticas que exigem MFA do papel, sem outra política que a(s) cubra ({roleNames}). "
+            + "Uma exclusão não é irregular por si — é o padrão para contas de emergência —, mas não comprova proteção "
+            + "nem controle compensatório, e a designação dessas contas não é verificável nesta coleta. O controle não é "
+            + "aprovado nem reprovado; as contas aparecem nomeadas na evidência.";
+    }
+
+    private static RoleMfaCoverage MemberLevelCoverage(
+        DirectoryRoleConfiguration role,
+        IReadOnlyList<ConditionalAccessPolicyReading> readings,
+        IReadOnlyList<ConditionalAccessPolicyReading> full,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> rolesOf)
+    {
+        var members = new List<MemberMfaCoverage>();
+        var covering = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var memberId in role.UserMemberIds.Distinct(Ci).OrderBy(m => m, StringComparer.Ordinal))
+        {
+            var userRoles = rolesOf.TryGetValue(memberId, out var held) ? held : new[] { role.TemplateId };
+            var applies = new List<string>();
+            var excludes = new List<string>();
+            var unknown = new List<string>();
+            foreach (var r in full)
+            {
+                switch (ReachOf(r, memberId, userRoles))
+                {
+                    case Reach.Applies: applies.Add(r.Policy.Id); break;
+                    case Reach.Excluded: excludes.Add(r.Policy.Id); break;
+                    case Reach.Unknown: unknown.Add(r.Policy.Id); break;
+                }
+            }
+
+            foreach (var id in applies) covering.Add(id);
+            members.Add(applies.Count > 0 ? new MemberMfaCoverage(memberId, MemberMfaCoverageState.Covered, applies)
+                : unknown.Count > 0 ? new MemberMfaCoverage(memberId, MemberMfaCoverageState.Unresolved, unknown)
+                : excludes.Count > 0 ? new MemberMfaCoverage(memberId, MemberMfaCoverageState.Excepted, excludes)
+                : new MemberMfaCoverage(memberId, MemberMfaCoverageState.NotTargeted, Array.Empty<string>()));
+        }
+
+        var notes = CandidateNotes(role, readings, full);
+        foreach (var r in full.Where(r => r.Policy.ExcludeRoles.Contains(role.TemplateId, Ci)))
+            notes.Insert(0, $"“{Name(r.Policy)}” exclui este papel.");
+
+        int Count(MemberMfaCoverageState s) => members.Count(m => m.State == s);
+        RoleMfaCoverageState state;
+        if (Count(MemberMfaCoverageState.NotTargeted) > 0) state = RoleMfaCoverageState.NotCovered;
+        else if (Count(MemberMfaCoverageState.Covered) == 0 && Count(MemberMfaCoverageState.Unresolved) == 0)
+            state = RoleMfaCoverageState.NotCovered; // todos excluídos: a exigência não alcança o papel
+        else if (Count(MemberMfaCoverageState.Unresolved) > 0) state = RoleMfaCoverageState.Unresolved;
+        else if (Count(MemberMfaCoverageState.Excepted) > 0) state = RoleMfaCoverageState.CoveredWithExceptions;
+        else state = RoleMfaCoverageState.Covered;
+
+        if (state == RoleMfaCoverageState.Unresolved)
+            notes.Add("Parte da cobertura depende de grupo(s) ou da condição de convidado: o pertencimento não é coletado nesta entrega.");
+
+        return new RoleMfaCoverage(role, state, covering.ToList(), members, notes);
+    }
+
+    /// <summary>
+    /// Papel ativo sem membro USUÁRIO conhecido (só identidades de aplicação ou grupos atribuíveis): lido pelo
+    /// alvo declarado ao papel, como antes — exclusão de grupo ou de convidados deixa a cobertura não resolvida.
+    /// </summary>
+    private static RoleMfaCoverage RoleLevelCoverage(
+        DirectoryRoleConfiguration role,
+        IReadOnlyList<ConditionalAccessPolicyReading> readings,
+        IReadOnlyList<ConditionalAccessPolicyReading> full)
+    {
+        var covering = new List<string>();
+        var unknown = new List<string>();
+        var notes = CandidateNotes(role, readings, full);
+        foreach (var r in full)
+        {
+            var p = r.Policy;
+            if (p.ExcludeRoles.Contains(role.TemplateId, Ci)) { notes.Insert(0, $"“{Name(p)}” exclui este papel."); continue; }
+            var targeted = r.TargetsAllUsers || p.IncludeRoles.Contains(role.TemplateId, Ci);
+            if (targeted && p.ExcludeGroups.Count == 0 && !ExcludesGuests(p)) covering.Add(p.Id);
+            else if (targeted || p.IncludeGroups.Count > 0) unknown.Add(p.Id);
+        }
+
+        var state = covering.Count > 0 ? RoleMfaCoverageState.Covered
+            : unknown.Count > 0 ? RoleMfaCoverageState.Unresolved
+            : RoleMfaCoverageState.NotCovered;
+        if (state == RoleMfaCoverageState.Unresolved)
+            notes.Add("Política direcionada a grupo(s), ou com exclusão de grupo(s): o pertencimento não é coletado nesta entrega.");
+        return new RoleMfaCoverage(role, state, state == RoleMfaCoverageState.Covered ? covering : Array.Empty<string>(),
+            Array.Empty<MemberMfaCoverage>(), notes);
+    }
+
+    /// <summary>Por que as políticas que miram o papel e mencionam MFA NÃO contam como exigência.</summary>
+    private static List<string> CandidateNotes(
+        DirectoryRoleConfiguration role,
+        IReadOnlyList<ConditionalAccessPolicyReading> readings,
+        IReadOnlyList<ConditionalAccessPolicyReading> full)
+    {
+        var notes = new List<string>();
+        foreach (var r in readings.Where(r => r.RequiresMfa || r.MfaIsAlternative))
+        {
+            var p = r.Policy;
+            var targets = r.TargetsAllUsers || p.IncludeRoles.Contains(role.TemplateId, Ci)
+                || p.IncludeUsers.Any(u => role.UserMemberIds.Contains(u, Ci));
+            if (!targets || p.ExcludeRoles.Contains(role.TemplateId, Ci) || full.Contains(r)) continue;
+            notes.Add($"“{Name(p)}” não conta como exigência: {WhyNotEnforcing(r)}.");
+        }
+        return notes;
     }
 
     private static string WhyNotEnforcing(ConditionalAccessPolicyReading r)
@@ -284,25 +478,151 @@ public static class ConditionalAccessAnalyzer
 
     // ---- Autenticação legada -------------------------------------------------------------------------
 
-    private static LegacyAuthConclusion ConcludeLegacy(IReadOnlyList<ConditionalAccessPolicyReading> readings)
+    /// <summary>Bloqueio que alcança os dois canais legados, habilitado, em todas as aplicações e sem condição que o estreite.</summary>
+    private static bool IsFullLegacyBlock(ConditionalAccessPolicyReading r) =>
+        r.IsEnforced && r.Blocks && CoversAllLegacyClients(r.Policy) && r.CoversAllApplications
+        && !r.Narrowing.Any(n => n != RestrictedClients);
+
+    private static LegacyAuthConclusion ConcludeLegacy(
+        IReadOnlyList<ConditionalAccessPolicyReading> readings, IReadOnlyList<DirectoryRoleConfiguration>? roles)
     {
+        var candidates = readings.Where(r => r.Blocks && TouchesLegacy(r.Policy)).ToList();
+        var fullBlocks = candidates.Where(IsFullLegacyBlock).ToList();
+        var forAll = fullBlocks.Where(r => r.TargetsAllUsers).ToList();
+
+        var rolesOf = (roles ?? Array.Empty<DirectoryRoleConfiguration>())
+            .SelectMany(role => role.UserMemberIds.Select(m => (m, role.TemplateId)))
+            .GroupBy(x => x.m, Ci)
+            .ToDictionary(g => g.Key, g => (IReadOnlyCollection<string>)g.Select(x => x.TemplateId).ToHashSet(Ci), Ci);
+
         var blocking = new List<string>();
-        var partial = new List<string>();
-        foreach (var r in readings.Where(r => r.Blocks && TouchesLegacy(r.Policy)))
+        var withExceptions = new List<(ConditionalAccessPolicyReading Policy, IReadOnlyList<string> Open)>();
+        foreach (var r in forAll)
         {
-            var full = r.IsEnforced && IsLegacyBlock(r.Policy) && r.TargetsAllUsers && r.CoversAllApplications
-                && r.Narrowing.Where(n => n != "tipos de cliente restritos").Count() == 0
-                && r.Policy.ExcludeRoles.Count == 0;
-            (full ? blocking : partial).Add(r.Policy.Id);
+            var open = OpenLegacyExceptions(r, fullBlocks, rolesOf, roles is not null);
+            if (open.Count == 0)
+            {
+                blocking.Add(r.Policy.Id);
+                // Quem cobre as exceções também sustenta o bloqueio.
+                foreach (var id in CoveringLegacyPolicies(r, fullBlocks, rolesOf, roles is not null))
+                    if (!blocking.Contains(id)) blocking.Add(id);
+            }
+            else withExceptions.Add((r, open));
         }
-        return new LegacyAuthConclusion(blocking.Count > 0, blocking, partial);
+
+        var partial = candidates
+            .Where(r => !blocking.Contains(r.Policy.Id) && withExceptions.All(w => !ReferenceEquals(w.Policy, r)))
+            .Select(r => r.Policy.Id).ToList();
+
+        if (blocking.Count > 0)
+            return new LegacyAuthConclusion(true, blocking, partial, withExceptions.Select(w => w.Policy.Policy.Id).ToList(), null);
+
+        if (withExceptions.Count > 0)
+        {
+            var reason = string.Join(" ", withExceptions.Select(w =>
+                $"“{Name(w.Policy.Policy)}” bloqueia a autenticação legada em todas as aplicações para todos os usuários, "
+                + "exceto " + string.Join(", ", w.Open) + ", e nenhuma outra política habilitada comprova o bloqueio para essas exceções."))
+                + " Uma exclusão não é irregular por si, mas nela a autenticação legada continua possível; sem verificar as "
+                + "exceções, o bloqueio para todos os usuários não pode ser afirmado nem negado.";
+            return new LegacyAuthConclusion(false, blocking, partial, withExceptions.Select(w => w.Policy.Policy.Id).ToList(), reason);
+        }
+
+        return new LegacyAuthConclusion(false, blocking, partial, Array.Empty<string>(), null);
+    }
+
+    /// <summary>
+    /// Exclusões de um bloqueio "para todos" que NENHUMA outra política de bloqueio completo comprovadamente cobre,
+    /// descritas em palavras. Usuário: coberto se outra política o alcança sem exclusão que o deixe de fora.
+    /// Grupo, papel e convidados: cobertos só por outra política que os inclua (ou inclua todos) SEM exclusões.
+    /// Sem o inventário de papéis, uma exclusão por papel na outra política torna a cobertura do usuário incerta.
+    /// </summary>
+    private static List<string> OpenLegacyExceptions(
+        ConditionalAccessPolicyReading policy,
+        IReadOnlyList<ConditionalAccessPolicyReading> fullBlocks,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> rolesOf,
+        bool rolesKnown)
+    {
+        var others = fullBlocks.Where(o => !ReferenceEquals(o, policy)).ToList();
+        var p = policy.Policy;
+
+        var users = p.ExcludeUsers.Where(u => !u.Equals(GuestsValue, StringComparison.OrdinalIgnoreCase))
+            .Where(u => !others.Any(o => CoversUser(o, u, rolesOf, rolesKnown))).ToList();
+        var groups = p.ExcludeGroups
+            .Where(g => !others.Any(o => !o.HasExclusions && (o.TargetsAllUsers || o.Policy.IncludeGroups.Contains(g, Ci)))).ToList();
+        var excludedRoles = p.ExcludeRoles
+            .Where(role => !others.Any(o => !o.HasExclusions && (o.TargetsAllUsers || o.Policy.IncludeRoles.Contains(role, Ci)))).ToList();
+        var guests = ExcludesGuests(p)
+            && !others.Any(o => !o.HasExclusions && (o.TargetsAllUsers || IncludesGuests(o.Policy)));
+
+        var open = new List<string>();
+        if (users.Count > 0) open.Add(Plural(users.Count, "usuário excluído nominalmente", "usuários excluídos nominalmente"));
+        if (groups.Count > 0) open.Add(Plural(groups.Count, "grupo excluído", "grupos excluídos") + " (pertencimento não coletado)");
+        if (excludedRoles.Count > 0) open.Add(Plural(excludedRoles.Count, "papel excluído", "papéis excluídos"));
+        if (guests) open.Add("convidados e usuários externos");
+        return open;
+    }
+
+    private static IEnumerable<string> CoveringLegacyPolicies(
+        ConditionalAccessPolicyReading policy,
+        IReadOnlyList<ConditionalAccessPolicyReading> fullBlocks,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> rolesOf,
+        bool rolesKnown)
+    {
+        var p = policy.Policy;
+        foreach (var o in fullBlocks.Where(o => !ReferenceEquals(o, policy)))
+        {
+            var coversUser = p.ExcludeUsers.Any(u => CoversUser(o, u, rolesOf, rolesKnown));
+            var coversRest = !o.HasExclusions && (
+                p.ExcludeGroups.Any(g => o.TargetsAllUsers || o.Policy.IncludeGroups.Contains(g, Ci))
+                || p.ExcludeRoles.Any(role => o.TargetsAllUsers || o.Policy.IncludeRoles.Contains(role, Ci))
+                || (ExcludesGuests(p) && (o.TargetsAllUsers || IncludesGuests(o.Policy))));
+            if (coversUser || coversRest) yield return o.Policy.Id;
+        }
+    }
+
+    private static bool CoversUser(
+        ConditionalAccessPolicyReading other, string userId,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> rolesOf, bool rolesKnown) =>
+        (rolesKnown || other.Policy.ExcludeRoles.Count == 0)
+        && ReachOf(other, userId, rolesOf.TryGetValue(userId, out var held) ? held : Array.Empty<string>()) == Reach.Applies;
+
+    // ---- Base mínima -------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A base mínima é uma exigência AMPLA: habilitada, exigindo MFA, com alvo DECLARADO em todos os usuários, em
+    /// todas as aplicações e sem condição que a estreite. Exclusões nominais, de papel e de convidados são
+    /// delimitadas e ficam listadas na evidência; exclusão de GRUPO não — o grupo pode conter quase todos, e seu
+    /// pertencimento não é coletado. Política para um usuário, um papel ou uma aplicação não sustenta uma
+    /// conclusão sobre o ambiente.
+    /// </summary>
+    private static MfaBaselineConclusion ConcludeBaseline(IReadOnlyList<ConditionalAccessPolicyReading> readings)
+    {
+        var baseline = new List<string>();
+        var unresolved = new List<string>();
+        var restricted = new List<string>();
+        foreach (var r in readings.Where(r => r.IsEnforced && r.RequiresMfa))
+        {
+            var broadScope = r.CoversAllApplications && r.Narrowing.Count == 0;
+            if (broadScope && r.TargetsAllUsers && r.Policy.ExcludeGroups.Count == 0) baseline.Add(r.Policy.Id);
+            else if (broadScope && (r.TargetsAllUsers || r.Policy.IncludeGroups.Count > 0)) unresolved.Add(r.Policy.Id);
+            else restricted.Add(r.Policy.Id);
+        }
+
+        string? reason = null;
+        if (baseline.Count == 0 && unresolved.Count > 0)
+            reason = "Há política habilitada que exige MFA em todas as aplicações, mas o alcance dela depende de grupo(s) "
+                + "cujo pertencimento não é coletado nesta entrega ("
+                + string.Join(", ", unresolved.Select(id => "“" + Name(readings.First(x => x.Policy.Id == id).Policy) + "”"))
+                + ") — não é possível afirmar nem negar uma base mínima para o ambiente.";
+        return new MfaBaselineConclusion(baseline, unresolved, restricted, reason);
     }
 
     // ---- Tradução em sinais do KNIGHT -----------------------------------------------------------------
 
     /// <summary>
     /// Os sinais que as regras do catálogo consomem. Políticas não coletadas → sinais AUSENTES (com o motivo
-    /// da capacidade), nunca "nenhuma política". MFA administrativa não resolvida → sinal ausente com o motivo.
+    /// da capacidade), nunca "nenhuma política". Conclusão que não pode ser afirmada nem negada (pertencimento
+    /// não coletado, exceções explícitas sem outra cobertura) → sinal ausente com o motivo — nunca zero.
     /// </summary>
     public static IReadOnlyList<KnightObservation> ToObservations(ConditionalAccessAnalysis? analysis, string? missingReason)
     {
@@ -313,18 +633,24 @@ public static class ConditionalAccessAnalyzer
             {
                 KnightObservation.MissingData(KnightSignalKey.LegacyAuthenticationBlocked, reason),
                 KnightObservation.MissingData(KnightSignalKey.PrivilegedRolesWithoutMfaPolicy, reason),
-                KnightObservation.MissingData(KnightSignalKey.EnforcedMfaPolicies, reason),
+                KnightObservation.MissingData(KnightSignalKey.BaselineMfaPolicies, reason),
             };
         }
 
+        var legacy = analysis.LegacyAuth;
+        var baseline = analysis.Baseline;
         return new[]
         {
-            KnightObservation.OfFlag(KnightSignalKey.LegacyAuthenticationBlocked, analysis.LegacyAuth.Blocked),
+            legacy.Blocked || legacy.InconclusiveReason is null
+                ? KnightObservation.OfFlag(KnightSignalKey.LegacyAuthenticationBlocked, legacy.Blocked)
+                : KnightObservation.MissingData(KnightSignalKey.LegacyAuthenticationBlocked, legacy.InconclusiveReason),
             analysis.AdminMfa.Evaluable
                 ? KnightObservation.OfCount(KnightSignalKey.PrivilegedRolesWithoutMfaPolicy, analysis.AdminMfa.UncoveredRoleCount)
                 : KnightObservation.MissingData(KnightSignalKey.PrivilegedRolesWithoutMfaPolicy,
                     analysis.AdminMfa.InconclusiveReason ?? "Cobertura de MFA administrativa não resolvida."),
-            KnightObservation.OfCount(KnightSignalKey.EnforcedMfaPolicies, analysis.EnforcedMfaPolicyCount),
+            baseline.BaselinePolicyIds.Count > 0 || baseline.InconclusiveReason is null
+                ? KnightObservation.OfCount(KnightSignalKey.BaselineMfaPolicies, baseline.BaselinePolicyIds.Count)
+                : KnightObservation.MissingData(KnightSignalKey.BaselineMfaPolicies, baseline.InconclusiveReason),
         };
     }
 
@@ -353,12 +679,13 @@ public static class ConditionalAccessAnalyzer
         if (nominal > 0) users.Add($"{nominal} usuário(s) nominal(is)");
         if (p.IncludeRoles.Count > 0) users.Add($"{p.IncludeRoles.Count} papel(éis)");
         if (p.IncludeGroups.Count > 0) users.Add($"{p.IncludeGroups.Count} grupo(s)");
-        if (p.IncludesGuestsOrExternalUsers || p.IncludeUsers.Contains("GuestsOrExternalUsers", Ci)) users.Add("convidados/externos");
+        if (IncludesGuests(p)) users.Add("convidados/externos");
         var excl = new List<string>();
-        if (p.ExcludeUsers.Count > 0) excl.Add($"{p.ExcludeUsers.Count} usuário(s)");
+        var nominalExcluded = p.ExcludeUsers.Count(u => !IsSpecialUser(u));
+        if (nominalExcluded > 0) excl.Add($"{nominalExcluded} usuário(s)");
         if (p.ExcludeGroups.Count > 0) excl.Add($"{p.ExcludeGroups.Count} grupo(s)");
         if (p.ExcludeRoles.Count > 0) excl.Add($"{p.ExcludeRoles.Count} papel(éis)");
-        if (p.ExcludesGuestsOrExternalUsers) excl.Add("convidados/externos");
+        if (ExcludesGuests(p)) excl.Add("convidados/externos");
         parts.Add("Alvos: " + (users.Count == 0 ? "não identificados" : string.Join(", ", users))
             + (excl.Count > 0 ? " (exceto " + string.Join(", ", excl) + ")" : ""));
 
@@ -377,11 +704,11 @@ public static class ConditionalAccessAnalyzer
             apps = "não identificadas";
         parts.Add("Aplicações: " + apps);
 
-        if (p.ClientAppTypes.Count > 0 && !p.ClientAppTypes.Contains("all", Ci))
+        if (!AllClientTypes(p.ClientAppTypes))
             parts.Add("Clientes: " + string.Join(", ", p.ClientAppTypes.Select(ClientLabel)));
-        parts.Add("Condições: " + (narrowing.Count(n => n != "tipos de cliente restritos") == 0
+        parts.Add("Condições: " + (narrowing.Count(n => n != RestrictedClients) == 0
             ? "nenhuma que estreite"
-            : string.Join(", ", narrowing.Where(n => n != "tipos de cliente restritos"))));
+            : string.Join(", ", narrowing.Where(n => n != RestrictedClients))));
 
         string grant;
         if (blocks) grant = "bloquear acesso";
@@ -399,7 +726,7 @@ public static class ConditionalAccessAnalyzer
 
     private static bool IsSpecialUser(string u) =>
         u.Equals("All", StringComparison.OrdinalIgnoreCase) || u.Equals("None", StringComparison.OrdinalIgnoreCase)
-        || u.Equals("GuestsOrExternalUsers", StringComparison.OrdinalIgnoreCase);
+        || u.Equals(GuestsValue, StringComparison.OrdinalIgnoreCase);
 
     private static string ClientLabel(string c) => c.ToLowerInvariant() switch
     {

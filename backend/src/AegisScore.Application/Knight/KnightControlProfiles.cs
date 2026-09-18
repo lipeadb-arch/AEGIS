@@ -123,15 +123,15 @@ public static class KnightControlProfiles
         new KnightControlProfile("AK-ENTRA-007", KnightSecurityDomain.Identity,
             "Protocolos de autenticação legada não estão comprovadamente bloqueados por política habilitada ou pelos security defaults.",
             "Autenticação legada não suporta MFA: ela abre um caminho em que a exigência de segundo fator simplesmente não se aplica, e é o canal preferido de ataques de senha em massa.",
-            "Política de acesso condicional HABILITADA bloqueando os clientes Exchange ActiveSync e \"outros clientes\" para todos os usuários e todas as aplicações — ou security defaults habilitados.",
-            "Exceções nominais (como contas de emergência) são listadas, não reprovadas. Uma política em somente relatório não bloqueia nada.",
+            "Política de acesso condicional HABILITADA bloqueando os clientes Exchange ActiveSync e \"outros clientes\" (ou todos os tipos de cliente) para todos os usuários e todas as aplicações — ou security defaults habilitados.",
+            "Exclusões explícitas (como contas de emergência) não são tratadas como irregulares nem como bloqueadas: sem outra política que as cubra, o controle fica não avaliado, com as exceções listadas. Uma política em somente relatório não bloqueia nada.",
             Docs(DocLegacy, DocDefaults), Caps(KnightCapability.ConditionalAccessPolicies, KnightCapability.SecurityBaseline)),
 
         new KnightControlProfile("AK-ENTRA-008", KnightSecurityDomain.Identity,
             "Papéis administrativos ativos sem política habilitada que EXIJA MFA em todas as aplicações.",
             "Contas administrativas são o alvo prioritário de roubo de credencial. Sem exigência de segundo fator por política, uma senha comprometida de um administrador basta para controlar o ambiente.",
-            "Para cada papel privilegiado com membros: ao menos uma política de acesso condicional HABILITADA, mirando o papel (ou todos os usuários), em todas as aplicações, sem condição que estreite a exigência, exigindo MFA ou uma força de autenticação — ou security defaults habilitados.",
-            "Exigência por política não comprova que cada autenticação aplicou o segundo fator. Exclusões nominais (contas de emergência) são exceções declaradas e aparecem listadas.",
+            "Para cada membro dos papéis privilegiados: ao menos uma política de acesso condicional HABILITADA que o alcance (pelo papel, por todos os usuários ou nominalmente), em todas as aplicações, sem condição que estreite a exigência, exigindo MFA ou uma força de autenticação — ou security defaults habilitados.",
+            "Exigência por política não comprova que cada autenticação aplicou o segundo fator. Exclusões explícitas (como contas de emergência) não são irregulares por si, mas não comprovam proteção: sem outra política que as cubra, o controle fica não avaliado e as contas aparecem nomeadas. Pertencimento a grupos não é coletado.",
             Docs(DocAdminMfa, DocDefaults),
             Caps(KnightCapability.ConditionalAccessPolicies, KnightCapability.SecurityBaseline, KnightCapability.PrivilegedRoleInventory)),
 
@@ -167,10 +167,10 @@ public static class KnightControlProfiles
             null, Docs(DocConsent), Caps(KnightCapability.ApplicationConsents)),
 
         new KnightControlProfile("AK-ENTRA-014", KnightSecurityDomain.Governance,
-            "Nenhuma base mínima de proteção de identidade: sem security defaults e sem política habilitada exigindo MFA.",
+            "Nenhuma base mínima de proteção de identidade: sem security defaults e sem política habilitada exigindo MFA de todos os usuários.",
             "Sem uma base mínima, cada usuário depende só da própria senha, e nenhum controle do provedor compensa isso.",
-            "Security defaults habilitados, ou ao menos uma política de acesso condicional HABILITADA exigindo MFA.",
-            "Presença de baseline não significa cobertura completa: o alcance da exigência é avaliado em AK-ENTRA-008.",
+            "Security defaults habilitados, ou ao menos uma política de acesso condicional HABILITADA exigindo MFA com alvo declarado em todos os usuários, em todas as aplicações e sem condição que a estreite.",
+            "Presença de baseline não significa cobertura completa: exclusões são listadas e o alcance para administradores é avaliado em AK-ENTRA-008. Política de alcance restrito não sustenta uma base para o ambiente.",
             Docs(DocDefaults), Caps(KnightCapability.ConditionalAccessPolicies, KnightCapability.SecurityBaseline)),
 
         new KnightControlProfile("AK-ENTRA-015", KnightSecurityDomain.Governance,

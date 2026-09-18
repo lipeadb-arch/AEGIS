@@ -170,7 +170,7 @@ public sealed class EntraIdKnightCollector : IKnightCollector
             () => CollectGuestsAsync(token, cfg, obs, affected, now, ct), obs, caps);
 
         await RunCapabilityAsync(KnightCapability.ConditionalAccessPolicies,
-            new[] { KnightSignalKey.LegacyAuthenticationBlocked, KnightSignalKey.PrivilegedRolesWithoutMfaPolicy, KnightSignalKey.EnforcedMfaPolicies },
+            new[] { KnightSignalKey.LegacyAuthenticationBlocked, KnightSignalKey.PrivilegedRolesWithoutMfaPolicy, KnightSignalKey.BaselineMfaPolicies },
             () => CollectConditionalAccessAsync(token, cfg, obs, configBox, ct), obs, caps);
 
         await RunCapabilityAsync(KnightCapability.SecurityBaseline,

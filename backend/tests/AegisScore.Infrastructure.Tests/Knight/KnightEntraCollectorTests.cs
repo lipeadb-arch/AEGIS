@@ -377,22 +377,27 @@ public sealed class KnightEntraCollectorTests
 
     // ---- 13) Conditional Access: só cobertura GLOBAL comprovada aprova ------------------------------
 
-    // [AEGIS-KNIGHT-MULTICLOUD-01] A leitura é papel a papel (o papel do cenário feliz tem id "role1", sem
-    // roleTemplateId — o coletor usa o id como modelo). O que cada caso prova:
-    //   • política HABILITADA que mira o PAPEL cobre o papel (antes, só "todos os usuários" contava);
+    // [AEGIS-KNIGHT-MULTICLOUD-01] A leitura é membro a membro (o papel do cenário feliz tem id "role1", sem
+    // roleTemplateId — o coletor usa o id como modelo; membros u1 e u2). O que cada caso prova:
+    //   • política HABILITADA que mira o PAPEL cobre quem o detém (antes, só "todos os usuários" contava);
     //   • mirar OUTRO papel não cobre — 1 papel sem exigência;
     //   • somente relatório não impõe; MFA como alternativa (OU) não é exigência;
-    //   • bloqueio legado exige Exchange ActiveSync E outros clientes; exclusões nominais são exceções
-    //     DECLARADAS (padrão para contas de emergência), não reprovação.
+    //   • bloqueio legado exige Exchange ActiveSync E outros clientes;
+    //   • EXCLUSÃO explícita (u1, ou usuário/grupo no bloqueio) não é irregular por si, mas também não é
+    //     cobertura: sem outra política que a cubra, o sinal fica AUSENTE com o motivo (-1 abaixo) — nunca zero
+    //     nem "bloqueado para todos".
     public static IEnumerable<object[]> CaCases() => new[]
     {
         new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"users":{"includeRoles":["role-x"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", 1L },
-        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"users":{"includeRoles":["role1"],"excludeUsers":["u1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", 0L },
+        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"users":{"includeRoles":["role1"],"excludeUsers":["u1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", -1L },
+        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"users":{"includeRoles":["role1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", 0L },
         new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", 0L },
         new object[] { """{"value":[{"id":"p1","state":"enabledForReportingButNotEnforced","conditions":{"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", 1L },
         new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"operator":"OR","builtInControls":["mfa","compliantDevice"]}}]}""", "AdminMfa", 1L },
         new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync"],"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", 0L },
-        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync","other"],"users":{"includeUsers":["All"],"excludeUsers":["u-1"],"excludeGroups":["g-1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", 1L },
+        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync","other"],"users":{"includeUsers":["All"],"excludeUsers":["u-1"],"excludeGroups":["g-1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", -1L },
+        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync","other"],"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", 1L },
+        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"clientAppTypes":["all"],"users":{"includeUsers":["All"],"excludeUsers":["u-1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", -1L },
         new object[] { """{"value":[{"id":"p1","state":"enabledForReportingButNotEnforced","conditions":{"clientAppTypes":["exchangeActiveSync","other"],"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", 0L },
     };
 
@@ -410,10 +415,18 @@ public sealed class KnightEntraCollectorTests
 
         var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
 
-        if (which == "AdminMfa")
-            result.Facts.Get(KnightSignalKey.PrivilegedRolesWithoutMfaPolicy).Count.Should().Be(expected);
+        var signal = result.Facts.Get(which == "AdminMfa"
+            ? KnightSignalKey.PrivilegedRolesWithoutMfaPolicy
+            : KnightSignalKey.LegacyAuthenticationBlocked);
+        if (expected < 0)
+        {
+            signal.IsCollected.Should().BeFalse("exceção explícita sem outra cobertura: nem aprovado nem reprovado");
+            signal.MissingReason.Should().Contain("exc");
+        }
+        else if (which == "AdminMfa")
+            signal.Count.Should().Be(expected);
         else
-            result.Facts.Get(KnightSignalKey.LegacyAuthenticationBlocked).Flag.Should().Be(expected == 1);
+            signal.Flag.Should().Be(expected == 1);
 
         // A configuração observada viaja com a coleta, normalizada — nunca reduzida a flags.
         result.DirectoryConfiguration!.ConditionalAccessPolicies.Should().ContainSingle(p => p.Id == "p1");
