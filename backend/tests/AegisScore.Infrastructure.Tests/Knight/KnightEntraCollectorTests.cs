@@ -377,23 +377,28 @@ public sealed class KnightEntraCollectorTests
 
     // ---- 13) Conditional Access: só cobertura GLOBAL comprovada aprova ------------------------------
 
+    // [AEGIS-KNIGHT-MULTICLOUD-01] A leitura é papel a papel (o papel do cenário feliz tem id "role1", sem
+    // roleTemplateId — o coletor usa o id como modelo). O que cada caso prova:
+    //   • política HABILITADA que mira o PAPEL cobre o papel (antes, só "todos os usuários" contava);
+    //   • mirar OUTRO papel não cobre — 1 papel sem exigência;
+    //   • somente relatório não impõe; MFA como alternativa (OU) não é exigência;
+    //   • bloqueio legado exige Exchange ActiveSync E outros clientes; exclusões nominais são exceções
+    //     DECLARADAS (padrão para contas de emergência), não reprovação.
     public static IEnumerable<object[]> CaCases() => new[]
     {
-        // MFA administrativa: um único includeRole não prova cobertura completa.
-        new object[] { """{"value":[{"state":"enabled","conditions":{"users":{"includeRoles":["role-x"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", false },
-        // MFA para All users / All apps, sem exclusões → comprovada.
-        new object[] { """{"value":[{"state":"enabled","conditions":{"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", true },
-        // Bloqueio legado com excludeUsers → não comprovado.
-        new object[] { """{"value":[{"state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync"],"users":{"includeUsers":["All"],"excludeUsers":["u-1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", false },
-        // Bloqueio legado com excludeGroups → não comprovado.
-        new object[] { """{"value":[{"state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync"],"users":{"includeUsers":["All"],"excludeGroups":["g-1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", false },
-        // Bloqueio legado para All users / All apps, sem exclusões → comprovado.
-        new object[] { """{"value":[{"state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync"],"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", true },
+        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"users":{"includeRoles":["role-x"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", 1L },
+        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"users":{"includeRoles":["role1"],"excludeUsers":["u1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", 0L },
+        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", 0L },
+        new object[] { """{"value":[{"id":"p1","state":"enabledForReportingButNotEnforced","conditions":{"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["mfa"]}}]}""", "AdminMfa", 1L },
+        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"operator":"OR","builtInControls":["mfa","compliantDevice"]}}]}""", "AdminMfa", 1L },
+        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync"],"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", 0L },
+        new object[] { """{"value":[{"id":"p1","state":"enabled","conditions":{"clientAppTypes":["exchangeActiveSync","other"],"users":{"includeUsers":["All"],"excludeUsers":["u-1"],"excludeGroups":["g-1"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", 1L },
+        new object[] { """{"value":[{"id":"p1","state":"enabledForReportingButNotEnforced","conditions":{"clientAppTypes":["exchangeActiveSync","other"],"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]}},"grantControls":{"builtInControls":["block"]}}]}""", "Legacy", 0L },
     };
 
     [Theory]
     [MemberData(nameof(CaCases))]
-    public async Task ConditionalAccess_OnlyGlobalCoverageProves(string policiesJson, string which, bool expected)
+    public async Task ConditionalAccess_LidaPorEstadoAlvoAplicacaoEConcessao(string policiesJson, string which, long expected)
     {
         var handler = new StubHandler(req =>
         {
@@ -405,8 +410,15 @@ public sealed class KnightEntraCollectorTests
 
         var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
 
-        var key = which == "AdminMfa" ? KnightSignalKey.AdminMfaPolicyEnforced : KnightSignalKey.LegacyAuthenticationBlocked;
-        result.Facts.Get(key).Flag.Should().Be(expected);
+        if (which == "AdminMfa")
+            result.Facts.Get(KnightSignalKey.PrivilegedRolesWithoutMfaPolicy).Count.Should().Be(expected);
+        else
+            result.Facts.Get(KnightSignalKey.LegacyAuthenticationBlocked).Flag.Should().Be(expected == 1);
+
+        // A configuração observada viaja com a coleta, normalizada — nunca reduzida a flags.
+        result.DirectoryConfiguration!.ConditionalAccessPolicies.Should().ContainSingle(p => p.Id == "p1");
+        result.DirectoryConfiguration.PrivilegedRoles.Should().ContainSingle(r => r.TemplateId == "role1");
+        result.Facts.Has(KnightSignalKey.AdminMfaPolicyEnforced).Should().BeFalse("o sinal legado não é mais emitido");
     }
 
     // ---- 14) Cobertura de MFA/atividade de privilegiados deve ser COMPLETA -------------------------

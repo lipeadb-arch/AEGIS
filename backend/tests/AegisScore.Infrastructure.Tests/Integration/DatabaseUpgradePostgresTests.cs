@@ -98,6 +98,10 @@ public sealed class DatabaseUpgradePostgresTests
             // [AEGIS-JOURNEY-01] Origem explícita do plano e caso de vulnerabilidade em dispositivo: seis colunas anuláveis e
             // dois índices (um único PARCIAL por caso ativo), SEM backfill — nenhum plano existente ganha origem inventada.
             "20260913051453_Journey01_DeviceCaseActionPlanOrigin",
+            // [AEGIS-KNIGHT-MULTICLOUD-01] Evidência de configuração no ADM, pedido durável de sincronização e relatório
+            // KNIGHT v2: três tabelas novas e colunas aditivas (anuláveis ou com default "Afetado"/"[]"), SEM backfill —
+            // fotografias v1 continuam v1 e verificáveis; nenhum detalhe que o legado não guardou é inventado.
+            "20260918080744_KnightMulticloud01_ConfigurationEvidenceSyncReport",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

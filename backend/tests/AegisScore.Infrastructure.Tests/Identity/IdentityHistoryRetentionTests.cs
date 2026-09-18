@@ -257,7 +257,7 @@ public sealed class IdentityHistoryRetentionTests : IDisposable
             Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1", "obj-2", "obj-3"));
         await GravarAsync(TenantA, _conectorA, DiretorioA, Em(5, 10), KnightSourceState.Completed,
             Coletado(IdentityObservationSet.PrivilegedRoleMember, "obj-1"),
-            normalizacao: "aegis-adm-identity-normalization-v2");
+            normalizacao: "aegis-adm-identity-normalization-teste-incompativel");
 
         await ManterAsync(consolidar: true, remover: false);
 

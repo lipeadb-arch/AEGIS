@@ -481,8 +481,17 @@ public sealed class IdentityAcquisitionTests : IDisposable
         foreach (var kind in Enum.GetValues<IdentityEntityKind>())
             IdentityKnightBoundary.ToIdentityKind(IdentityKnightBoundary.ToKnightKind(kind)).Should().Be(kind);
 
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Os tipos de CONFIGURAÇÃO (política, papel, configuração do tenant) não são
+        // identidades: não têm correspondente no ADM de identidade e nunca entram nos conjuntos — mapeiam para
+        // Unknown de forma explícita. A reversibilidade vale para todos os tipos de identidade.
+        var configuracao = new[] { KnightAffectedObjectKind.Policy, KnightAffectedObjectKind.DirectoryRole, KnightAffectedObjectKind.TenantSetting };
         foreach (var kind in Enum.GetValues<KnightAffectedObjectKind>())
-            IdentityKnightBoundary.ToKnightKind(IdentityKnightBoundary.ToIdentityKind(kind)).Should().Be(kind);
+        {
+            if (configuracao.Contains(kind))
+                IdentityKnightBoundary.ToIdentityKind(kind).Should().Be(IdentityEntityKind.Unknown);
+            else
+                IdentityKnightBoundary.ToKnightKind(IdentityKnightBoundary.ToIdentityKind(kind)).Should().Be(kind);
+        }
     }
 
     // ==================================================================================================

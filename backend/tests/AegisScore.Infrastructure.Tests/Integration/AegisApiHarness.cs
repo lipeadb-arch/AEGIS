@@ -108,6 +108,23 @@ internal sealed class AegisApiHarness : IAsyncDisposable
         return _janela;
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Os workers de fundo são removidos do host de teste (para não escreverem em
+    /// paralelo às asserções). Este passo EXPLÍCITO faz o que o <c>KnightSyncWorker</c> faria num ciclo: adquire o
+    /// próximo pedido da fila durável e o processa com o MESMO contêiner de DI da aplicação. Devolve falso quando
+    /// não havia pedido elegível.
+    /// </summary>
+    public async Task<bool> RunKnightSyncOnceAsync()
+    {
+        var services = _factory.Services;
+        var queue = services.GetRequiredService<AegisScore.Application.Knight.IKnightSyncQueue>();
+        var lease = await queue.TryClaimNextAsync();
+        if (lease is null) return false;
+        var worker = ActivatorUtilities.CreateInstance<AegisScore.Api.Workers.KnightSyncWorker>(services);
+        await worker.ProcessAsync(lease, CancellationToken.None);
+        return true;
+    }
+
     public string ConnectionString => _pg.ConnectionString;
 
     public DbContextOptions<AegisScoreDbContext> DbOptions() => _pg.DbOptions();
