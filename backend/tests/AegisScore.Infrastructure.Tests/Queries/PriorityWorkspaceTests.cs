@@ -108,6 +108,9 @@ public sealed class PriorityWorkspaceTests
         public Task<KnightAssessment> RunAssessmentAsync(KnightSourceType source, CancellationToken ct = default) =>
             throw new InvalidOperationException("A Central de Prioridades NUNCA executa uma coleta KNIGHT.");
 
+        public Task<KnightSyncRunResult> RunForSyncRequestAsync(KnightSourceType source, KnightSyncBinding binding, CancellationToken ct = default) =>
+            throw new InvalidOperationException("A Central de Prioridades NUNCA executa uma coleta KNIGHT.");
+
         public Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
             Task.FromResult<KnightAssessment?>(null);
 

@@ -68,7 +68,41 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
     public Task<KnightAssessment> RunDemoAssessmentAsync(CancellationToken ct = default) =>
         RunAssessmentAsync(KnightSourceType.Demo, ct);
 
-    public async Task<KnightAssessment> RunAssessmentAsync(KnightSourceType source, CancellationToken ct = default)
+    public async Task<KnightAssessment> RunAssessmentAsync(KnightSourceType source, CancellationToken ct = default) =>
+        (await RunCoreAsync(source, null, ct)).Assessment!;
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Avaliação pedida por uma sincronização. A autoridade do vínculo é o PRÓPRIO
+    /// pedido: <c>RunId</c> é gravado na mesma transação que grava a execução, só por quem detém o lease e só
+    /// enquanto o pedido não tem resultado. Por isso uma retomada — depois de queda do processo, de falha ao
+    /// finalizar o pedido ou de lease assumido por outro worker — encontra o resultado já gravado e não produz
+    /// um segundo. A coleta externa pode repetir-se numa corrida (não é "exatamente uma vez"); o resultado
+    /// aceito para o pedido, não.
+    /// </summary>
+    public async Task<KnightSyncRunResult> RunForSyncRequestAsync(
+        KnightSourceType source, KnightSyncBinding binding, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        var state = await SyncRequestStateAsync(binding.RequestId, ct);
+        if (state?.RunId is { } linked)
+            return new KnightSyncRunResult(KnightSyncRunOutcome.AlreadyRegistered, await GetByIdAsync(linked, ct));
+
+        // Pedido fora do tenant do contexto, ou lease que já não é desta tentativa: nada é coletado.
+        if (state is null || state.LeaseId != binding.LeaseId || state.Status != KnightSyncStatus.Running)
+            return new KnightSyncRunResult(KnightSyncRunOutcome.LeaseLost, null);
+
+        return await RunCoreAsync(source, binding, ct);
+    }
+
+    private sealed record SyncRequestState(Guid? RunId, Guid? LeaseId, KnightSyncStatus Status);
+
+    private Task<SyncRequestState?> SyncRequestStateAsync(Guid requestId, CancellationToken ct) =>
+        _db.KnightSyncRequests.AsNoTracking()
+            .Where(r => r.Id == requestId)
+            .Select(r => new SyncRequestState(r.RunId, r.LeaseId, r.Status))
+            .FirstOrDefaultAsync(ct);
+
+    private async Task<KnightSyncRunResult> RunCoreAsync(KnightSourceType source, KnightSyncBinding? binding, CancellationToken ct)
     {
         var tenantId = _tenant.TenantId
             ?? throw new TenantSecurityException("Execução do assessment KNIGHT sem tenant resolvido no contexto (fail-closed).");
@@ -226,35 +260,43 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         // sobre os candidatos: um dos dois espera, e o que passa enxerga o estado já decidido.
         _db.KnightAssessmentRuns.Add(run);
 
-        if (identityAcquisitionId is { } citada)
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Uma avaliação pedida por sincronização também entra em transação: a
+        // execução e o vínculo com o pedido são gravados JUNTOS (ver RunForSyncRequestAsync).
+        if (identityAcquisitionId is not null || binding is not null)
         {
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
-            var fixada = await _identityAcquisitions.PinForReferenceAsync(citada, ct);
-
-            if (!fixada.Exists)
-                throw new InvalidOperationException(
-                    $"A aquisição de identidade {citada} não está mais disponível para ser citada por esta "
-                    + "avaliação. Gravar a execução assim produziria um veredito apontando para uma coleta "
-                    + "inexistente — o oposto do que a procedência existe para garantir.");
-
-            if (fixada.DetailRetiredAt is { } expiradoEm)
-            {
-                // [AEGIS-ADM-02] A linha está lá e está TRAVADA (a retenção não a remove por baixo desta
-                // transação), mas o detalhe observado já expirou. Citar assim é legítimo — o cabeçalho, os
-                // fatos agregados e a completude por conjunto continuam sustentando o veredito, e os objetos
-                // afetados desta execução são congelados aqui mesmo, em KnightAffectedObjects, que nenhuma
-                // retenção alcança. O que não pode acontecer é isso passar em silêncio: "a linha existe" e "a
-                // evidência está íntegra" são afirmações diferentes.
-                _log?.LogWarning(
-                    "Execução do KNIGHT cita a aquisição de identidade {Aquisicao}, cujo detalhe operacional "
-                    + "expirou por retenção em {ExpiradoEm}. O veredito segue reproduzível pelos fatos e pela "
-                    + "completude por conjunto, e os objetos afetados ficam congelados nesta execução — mas a "
-                    + "lista de objetos daquela coleta não é mais recuperável a partir dela.",
-                    citada, expiradoEm);
-            }
+            if (identityAcquisitionId is { } citada)
+                await PinCitedAcquisitionAsync(citada, ct);
 
             await _db.SaveChangesAsync(ct);
+
+            if (binding is not null)
+            {
+                // Guardado pelo lease E pela ausência de resultado: quem perdeu o lease, ou chegou depois de
+                // outra tentativa já ter vinculado a dela, desfaz a própria gravação — o pedido nunca fica com
+                // dois resultados aceitos.
+                var linked = await _db.KnightSyncRequests
+                    .Where(r => r.Id == binding.RequestId && r.LeaseId == binding.LeaseId
+                                && r.Status == KnightSyncStatus.Running && r.RunId == null)
+                    .ExecuteUpdateAsync(u => u
+                        .SetProperty(r => r.RunId, run.Id)
+                        .SetProperty(r => r.ResultSourceState, run.SourceState)
+                        .SetProperty(r => r.UpdatedAt, DateTimeOffset.UtcNow), ct);
+                if (linked == 0)
+                {
+                    await tx.RollbackAsync(ct);
+                    _db.ChangeTracker.Clear();
+                    var now = await SyncRequestStateAsync(binding.RequestId, ct);
+                    _log?.LogWarning(
+                        "Avaliação do KNIGHT descartada: o pedido de sincronização {Request} {Motivo}.",
+                        binding.RequestId, now?.RunId is null ? "não pertence mais a esta tentativa (lease)" : "já tem resultado vinculado");
+                    return now?.RunId is { } other
+                        ? new KnightSyncRunResult(KnightSyncRunOutcome.AlreadyRegistered, await GetByIdAsync(other, ct))
+                        : new KnightSyncRunResult(KnightSyncRunOutcome.LeaseLost, null);
+                }
+            }
+
             await tx.CommitAsync(ct);
         }
         else
@@ -267,10 +309,40 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         //    veredito, não mudam status/score e não deixam nada pendente.
         await TryEnrichWithAiAsync(run, advisoryInput, fallbackJson, ct);
 
-        return ToAssessment(run, run.Indicators.ToDictionary(
+        return new KnightSyncRunResult(KnightSyncRunOutcome.Registered, ToAssessment(run, run.Indicators.ToDictionary(
             i => i.IndicatorId,
             i => i.AffectedObjects.Count(o => o.Relation == KnightObjectRelation.Evidence),
-            StringComparer.Ordinal));
+            StringComparer.Ordinal)));
+    }
+
+    /// <summary>
+    /// [AEGIS-ADM-02] Fixa, DENTRO da transação da gravação, a aquisição do ADM que a execução cita.
+    /// </summary>
+    private async Task PinCitedAcquisitionAsync(Guid citada, CancellationToken ct)
+    {
+        var fixada = await _identityAcquisitions.PinForReferenceAsync(citada, ct);
+
+        if (!fixada.Exists)
+            throw new InvalidOperationException(
+                $"A aquisição de identidade {citada} não está mais disponível para ser citada por esta "
+                + "avaliação. Gravar a execução assim produziria um veredito apontando para uma coleta "
+                + "inexistente — o oposto do que a procedência existe para garantir.");
+
+        if (fixada.DetailRetiredAt is { } expiradoEm)
+        {
+            // [AEGIS-ADM-02] A linha está lá e está TRAVADA (a retenção não a remove por baixo desta
+            // transação), mas o detalhe observado já expirou. Citar assim é legítimo — o cabeçalho, os
+            // fatos agregados e a completude por conjunto continuam sustentando o veredito, e os objetos
+            // afetados desta execução são congelados aqui mesmo, em KnightAffectedObjects, que nenhuma
+            // retenção alcança. O que não pode acontecer é isso passar em silêncio: "a linha existe" e "a
+            // evidência está íntegra" são afirmações diferentes.
+            _log?.LogWarning(
+                "Execução do KNIGHT cita a aquisição de identidade {Aquisicao}, cujo detalhe operacional "
+                + "expirou por retenção em {ExpiradoEm}. O veredito segue reproduzível pelos fatos e pela "
+                + "completude por conjunto, e os objetos afetados ficam congelados nesta execução — mas a "
+                + "lista de objetos daquela coleta não é mais recuperável a partir dela.",
+                citada, expiradoEm);
+        }
     }
 
     /// <summary>

@@ -13,6 +13,8 @@ using AegisScore.Infrastructure.Posture.Export;
 using AegisScore.Infrastructure.Tests.Documents;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -24,7 +26,10 @@ namespace AegisScore.Infrastructure.Tests.Knight;
 ///     (jsonb, FKs compostas tenant-safe);
 ///   • a fotografia v2 re-deriva o hash depois da ida-e-volta ao banco (precisão de timestamptz, jsonb);
 ///   • os objetos congelados herdam o gatilho append-only das fotografias;
-///   • o índice único PARCIAL impede dois pedidos de sincronização ativos para o mesmo conector.
+///   • o índice único PARCIAL impede dois pedidos de sincronização ativos para o mesmo conector;
+///   • o VÍNCULO pedido → avaliação nasce na transação que grava a execução: a aquisição por lease usa o caminho
+///     real (FOR UPDATE SKIP LOCKED), quem perde o lease no meio da coleta tem a própria gravação DESFEITA no
+///     PostgreSQL, e a retomada finaliza com o resultado vinculado sem coletar de novo.
 /// </summary>
 public sealed class KnightMulticloudPostgresTests
 {
@@ -107,5 +112,87 @@ public sealed class KnightMulticloudPostgresTests
             both.Select(b => b.Request.Id).Distinct().Should().ContainSingle("dois cliques simultâneos convergem para UM pedido");
             (await db1.KnightSyncRequests.CountAsync()).Should().Be(1);
         }
+    }
+
+    [Fact]
+    public async Task VinculoPedidoAvaliacao_TransacaoGuardadaPeloLease_SobrePostgres()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var opt = pg.DbOptions();
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            await db.Database.MigrateAsync();
+
+        var tenant = Guid.NewGuid();
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+        {
+            db.Tenants.Add(new Tenant { Id = tenant, Name = "Cliente PG", Slug = $"t-{tenant:N}", Status = TenantStatus.Active });
+            await db.SaveChangesAsync();
+        }
+        Guid pedido;
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var c = new ConnectorConfig
+            {
+                TenantId = tenant, Provider = ConnectorProvider.Microsoft, Capability = ConnectorCapability.IdentityPosture,
+                DisplayName = "Entra", Enabled = true, EncryptedSettings = "cifrado",
+            };
+            db.Connectors.Add(c);
+            await db.SaveChangesAsync();
+            pedido = (await new KnightSyncRequests(db, new SystemTenantContext(tenant), TimeProvider.System)
+                .EnqueueAsync(c.Id, KnightSourceType.MicrosoftEntraId, null)).Request.Id;
+        }
+
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        var services = new ServiceCollection();
+        services.AddSingleton(opt);
+        var queue = new DurableKnightSyncQueue(services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), clock,
+            Options.Create(new KnightSyncOptions { LeaseSeconds = 30, HeartbeatSeconds = 5, PollSeconds = 1, MaxAttempts = 2 }));
+
+        // A adquire (SKIP LOCKED) e fica parada no meio da coleta.
+        var graphA = new KnightGraphScenario.CountingHandler();
+        graphA.HoldNextPolicyRead();
+        var leaseA = await queue.TryClaimNextAsync();
+        leaseA!.RequestId.Should().Be(pedido);
+        var dbA = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+        var tentativaA = KnightMulticloudReportTests.ServiceFor(dbA, tenant, graphA).RunForSyncRequestAsync(
+            KnightSourceType.MicrosoftEntraId, new KnightSyncBinding(pedido, leaseA.LeaseId));
+        await graphA.Reached.Task.WaitAsync(TimeSpan.FromSeconds(60));
+
+        // O lease vence; B assume, grava e vincula.
+        clock.Advance(TimeSpan.FromSeconds(31));
+        var leaseB = await queue.TryClaimNextAsync();
+        leaseB!.Attempts.Should().Be(2);
+        KnightSyncRunResult b;
+        await using (var dbB = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+            b = await KnightMulticloudReportTests.ServiceFor(dbB, tenant, new KnightGraphScenario.CountingHandler())
+                .RunForSyncRequestAsync(KnightSourceType.MicrosoftEntraId, new KnightSyncBinding(pedido, leaseB.LeaseId));
+        b.Outcome.Should().Be(KnightSyncRunOutcome.Registered);
+
+        // A termina a coleta: a transação dela é desfeita no PostgreSQL.
+        graphA.Release();
+        var a = await tentativaA;
+        await dbA.DisposeAsync();
+        a.Outcome.Should().Be(KnightSyncRunOutcome.AlreadyRegistered);
+        a.Assessment!.Id.Should().Be(b.Assessment!.Id);
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            (await db.KnightAssessmentRuns.CountAsync()).Should().Be(1, "a gravação de quem perdeu o lease não sobreviveu");
+            (await db.KnightSyncRequests.AsNoTracking().SingleAsync(r => r.Id == pedido)).RunId.Should().Be(b.Assessment.Id);
+        }
+
+        // Falhar agora é recusado (há vínculo); a retomada lê o vínculo e conclui com ele.
+        (await queue.FailAsync(pedido, leaseB.LeaseId, "CollectionError", "Nenhuma avaliação nova foi registrada.")).Should().BeFalse();
+        (await queue.GetLinkedResultAsync(pedido))!.RunId.Should().Be(b.Assessment.Id);
+        (await queue.CompleteAsync(pedido, leaseB.LeaseId, b.Assessment.Id, b.Assessment.SourceState, "ok")).Should().BeTrue();
+    }
+
+    private sealed class ManualClock : TimeProvider
+    {
+        private DateTimeOffset _now;
+        public ManualClock(DateTimeOffset now) => _now = now;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan by) => _now = _now.Add(by);
     }
 }

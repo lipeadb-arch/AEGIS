@@ -58,7 +58,10 @@ export interface SyncView {
   tone: SyncTone;
   title: string;
   detail: string | null;
-  /** Avaliação produzida por ESTE pedido (link direto) — só quando concluído. */
+  /**
+   * Avaliação produzida por ESTE pedido (link direto): quando concluído, ou quando a avaliação determinística já
+   * foi gravada e vinculada ao pedido e só falta finalizá-lo (a narrativa da IA pode chegar depois).
+   */
   runId: string | null;
   /** Avaliação anterior que continua valendo — nunca apresentada como resultado deste pedido. */
   previousRunId: string | null;
@@ -94,6 +97,17 @@ export function syncView(r: KnightSyncRequest): SyncView {
         previousRunId: null,
       };
     case 'Running':
+      // O vínculo com a avaliação nasce na mesma gravação que a conclui: se ele existe, o resultado determinístico
+      // JÁ está gravado — falta só finalizar o pedido (e, talvez, a narrativa consultiva da IA).
+      if (r.runId) {
+        return {
+          tone: 'busy',
+          title: 'Avaliação registrada — finalizando a sincronização…',
+          detail: 'O resultado determinístico já está gravado e pode ser aberto; a narrativa consultiva pode ser acrescentada em seguida.',
+          runId: r.runId,
+          previousRunId: null,
+        };
+      }
       return {
         tone: 'busy',
         title: 'Coletando da fonte e avaliando os controles…',
@@ -114,6 +128,17 @@ export function syncView(r: KnightSyncRequest): SyncView {
     }
     case 'Failed':
     default: {
+      // O servidor recusa marcar como falho um pedido com avaliação vinculada; se ainda assim chegar um, a tela não
+      // afirma que nada foi registrado.
+      if (r.runId) {
+        return {
+          tone: 'warn',
+          title: r.message ?? 'A sincronização terminou com ressalvas.',
+          detail: 'Uma avaliação foi registrada por este pedido.',
+          runId: r.runId,
+          previousRunId: null,
+        };
+      }
       const previous = r.lastCompletedRunId && r.lastCompletedRunId !== r.runId ? r.lastCompletedRunId : null;
       return {
         tone: 'err',

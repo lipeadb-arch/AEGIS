@@ -82,6 +82,14 @@ test('em execução mostra tentativa quando houve retomada', () => {
   eq(syncView(req({ status: 'Running', attempts: 1 })).detail?.includes('tentativa'), false, 'primeira tentativa não é destacada');
 });
 
+test('em execução COM avaliação vinculada oferece o resultado, sem dizer que acabou', () => {
+  const v = syncView(req({ status: 'Running', runId: 'run-9', attempts: 1 }));
+  eq(v.tone, 'busy', 'o pedido ainda não foi finalizado');
+  eq(v.runId, 'run-9', 'o resultado determinístico já gravado pode ser aberto');
+  ok(v.title.includes('finalizando'), 'diz que falta finalizar');
+  ok(isActiveSync(req({ status: 'Running', runId: 'run-9' })), 'o acompanhamento continua até o desfecho');
+});
+
 test('concluído íntegro leva à avaliação produzida por ESTE pedido', () => {
   const v = syncView(req({ status: 'Completed', completedAt: '2026-09-18T10:02:00Z', runId: 'run-9', resultSourceState: 'Completed' }));
   eq(v.tone, 'ok', 'sucesso');
@@ -116,6 +124,12 @@ test('falha sem avaliação anterior não oferece link', () => {
 
 test('falha cuja última concluída é a própria execução não a oferece como anterior', () => {
   eq(syncView(req({ status: 'Failed', runId: 'run-5', lastCompletedRunId: 'run-5' })).previousRunId, null, 'mesma execução');
+});
+
+test('falha com avaliação vinculada nunca afirma que nada foi registrado', () => {
+  const v = syncView(req({ status: 'Failed', runId: 'run-5', message: 'x' }));
+  eq(v.runId, 'run-5', 'a avaliação do pedido é oferecida');
+  ok(!(v.detail ?? '').includes('Nenhuma avaliação'), 'sem afirmação falsa');
 });
 
 console.log(`\n${count - failures}/${count} testes passaram (knight-sync.models).`);

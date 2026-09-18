@@ -167,6 +167,14 @@ public interface IAegisKnightAssessmentService
     Task<KnightAssessment> RunAssessmentAsync(KnightSourceType source, CancellationToken ct = default);
 
     /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] A mesma avaliação, pedida por uma sincronização de Integrações. Idempotente
+    /// POR PEDIDO: se o pedido já tem avaliação vinculada, devolve-a sem coletar; senão coleta, avalia e grava a
+    /// execução e o vínculo com o pedido NUMA transação curta, guardada pelo lease — quem perdeu o lease não
+    /// grava resultado. A narrativa da IA continua sendo enriquecimento posterior, fora da transação.
+    /// </summary>
+    Task<KnightSyncRunResult> RunForSyncRequestAsync(KnightSourceType source, KnightSyncBinding binding, CancellationToken ct = default);
+
+    /// <summary>
     /// [AEGIS-KNIGHT-DURABLE-01] Último assessment CONCLUÍDO do tenant do contexto e, separadamente, a
     /// tentativa não concluída que o sucede. Nunca devolve uma execução em andamento/abandonada no lugar
     /// do resultado, nem esconde que ela existe.

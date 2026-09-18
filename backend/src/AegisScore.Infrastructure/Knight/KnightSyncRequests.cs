@@ -121,6 +121,10 @@ public sealed class KnightSyncRequests : IKnightSyncRequests
 /// [AEGIS-KNIGHT-MULTICLOUD-01] Fila DURÁVEL de sincronização do KNIGHT — mesmo desenho da fila de políticas:
 /// aquisição atômica (<c>FOR UPDATE SKIP LOCKED</c> no PostgreSQL) sob contexto de sistema, e toda transição
 /// guardada pelo lease, de modo que um worker que perdeu o lease não sobrescreve o desfecho de outro.
+///
+/// O VÍNCULO com a avaliação (<c>RunId</c>) não é gravado aqui: ele nasce na transação que grava a execução
+/// (ver <c>AegisKnightAssessmentService.RunForSyncRequestAsync</c>). Aqui ele só é lido — para retomar sem coletar
+/// de novo — e respeitado: concluir exige o mesmo vínculo; falhar exige que não haja vínculo.
 /// </summary>
 public sealed class DurableKnightSyncQueue : IKnightSyncQueue
 {
@@ -202,7 +206,9 @@ public sealed class DurableKnightSyncQueue : IKnightSyncQueue
         Guid requestId, Guid leaseId, Guid runId, KnightSourceState sourceState, string message, CancellationToken ct = default)
     {
         var now = _clock.GetUtcNow();
-        return RunGuardedAsync(requestId, leaseId, (q, c) => q.ExecuteUpdateAsync(s => s
+        return RunGuardedAsync(requestId, leaseId, (q, c) => q
+            .Where(r => r.RunId == null || r.RunId == runId)
+            .ExecuteUpdateAsync(s => s
             .SetProperty(r => r.Status, KnightSyncStatus.Completed)
             .SetProperty(r => r.CompletedAt, now)
             .SetProperty(r => r.RunId, runId)
@@ -217,7 +223,8 @@ public sealed class DurableKnightSyncQueue : IKnightSyncQueue
     public Task<bool> FailAsync(Guid requestId, Guid leaseId, string category, string message, CancellationToken ct = default)
     {
         var now = _clock.GetUtcNow();
-        return RunGuardedAsync(requestId, leaseId, (q, c) => q.ExecuteUpdateAsync(s => s
+        // Um pedido com avaliação vinculada nunca vira "falhou — nenhuma avaliação nova foi registrada".
+        return RunGuardedAsync(requestId, leaseId, (q, c) => q.Where(r => r.RunId == null).ExecuteUpdateAsync(s => s
             .SetProperty(r => r.Status, KnightSyncStatus.Failed)
             .SetProperty(r => r.CompletedAt, now)
             .SetProperty(r => r.FailureCategory, category)
@@ -237,6 +244,23 @@ public sealed class DurableKnightSyncQueue : IKnightSyncQueue
             .SetProperty(r => r.LeaseExpiresAt, (DateTimeOffset?)null)
             .SetProperty(r => r.Attempts, r => r.Attempts > 0 ? r.Attempts - 1 : 0)
             .SetProperty(r => r.UpdatedAt, now), c), ct);
+    }
+
+    public async Task<KnightSyncLinkedResult?> GetLinkedResultAsync(Guid requestId, CancellationToken ct = default)
+    {
+        using var scope = _scopes.CreateScope();
+        var dbOptions = scope.ServiceProvider.GetRequiredService<DbContextOptions<AegisScoreDbContext>>();
+        await using var db = new AegisScoreDbContext(dbOptions, new SystemTenantContext(null));
+
+        // O estado da fonte vem da PRÓPRIA execução vinculada — do mesmo tenant do pedido —, não de suposição.
+        var linked = await (
+                from r in db.KnightSyncRequests.IgnoreQueryFilters().AsNoTracking()
+                where r.Id == requestId && r.RunId != null
+                join run in db.KnightAssessmentRuns.IgnoreQueryFilters().AsNoTracking()
+                    on new { Id = r.RunId!.Value, r.TenantId } equals new { run.Id, run.TenantId }
+                select new { run.Id, run.SourceState })
+            .FirstOrDefaultAsync(ct);
+        return linked is null ? null : new KnightSyncLinkedResult(linked.Id, linked.SourceState);
     }
 
     private async Task<bool> RunGuardedAsync(
