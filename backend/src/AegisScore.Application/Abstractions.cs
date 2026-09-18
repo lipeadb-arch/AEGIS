@@ -65,7 +65,7 @@ public interface IAiAssessmentService
 
 /// <summary>
 /// Escopo de contexto do Copiloto GRC: a tela/Função NIST onde o usuário está. Ajusta a persona e o foco
-/// de auditoria da IA. <c>Global</c> = visão executiva do Secure Score (fora de uma Função dedicada).
+/// de auditoria da IA. <c>Global</c> = visão executiva geral da postura (fora de uma Função dedicada).
 /// </summary>
 public enum AuditorScope { Global = 0, Govern, Identify, Protect, Detect, Respond, Recover }
 
@@ -399,6 +399,27 @@ public interface IConnectorRegistry
 public interface ITenantContext
 {
     Guid? TenantId { get; }
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-MULTICLOUD-01] Tenant FIXADO para um escopo de DI sem requisição HTTP (worker). Existe para que
+/// um processamento em segundo plano resolva os MESMOS serviços do caminho HTTP — DbContext com query filter e
+/// carimbo fail-closed, coleta, ADM, avaliação — sob o tenant DONO do pedido, sem reimplementá-los à mão.
+///
+/// Só código de servidor o define (nenhum dado de requisição chega aqui), e só uma vez por escopo: redefinir
+/// seria trocar de tenant no meio de uma unidade de trabalho.
+/// </summary>
+public sealed class TenantScopeOverride
+{
+    public Guid? TenantId { get; private set; }
+
+    public void Set(Guid tenantId)
+    {
+        if (tenantId == Guid.Empty) throw new ArgumentException("Tenant vazio.", nameof(tenantId));
+        if (TenantId is { } atual && atual != tenantId)
+            throw new InvalidOperationException("O tenant deste escopo já foi fixado e não pode ser trocado.");
+        TenantId = tenantId;
+    }
 }
 
 // ---- Connector secrets ------------------------------------------------------

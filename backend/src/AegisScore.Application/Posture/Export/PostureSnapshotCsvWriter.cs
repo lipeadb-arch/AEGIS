@@ -59,6 +59,14 @@ public static class PostureSnapshotCsvWriter
 
     private static void WriteKnight(CsvBuilder csv, PostureSnapshot s)
     {
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Fotografia v2: uma linha por objeto de cada controle, a partir do MESMO
+        // modelo do HTML. As v1 mantêm exatamente o formato anterior (uma linha por indicador).
+        if (string.Equals(s.SchemaVersion, PostureSnapshotSchema.KnightReportVersion, StringComparison.Ordinal))
+        {
+            WriteKnightV2(csv, s);
+            return;
+        }
+
         csv.Text("SnapshotId").Text("ContentHash").Text("Type").Timestamp("CapturedAt")
            .Text("SchemaVersion").Text("FormulaVersion").Text("CatalogVersion")
            .Text("EvaluationState").Text("Score").Text("Coverage")
@@ -78,6 +86,59 @@ public static class PostureSnapshotCsvWriter
                .Number(i.AffectedObjectCount).TimestampValue(i.CollectedAt)
                .Text(string.Join(" ", i.NistCodes)).Text(string.Join(" ", i.MitreTechniques)).Text(i.Evidence)
                .EndRow();
+        }
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] CSV v2. As colunas da v1 vêm primeiro, com os mesmos nomes; as novas são
+    /// acrescentadas ao final. Cada controle aparece ao menos uma vez: com objetos, uma linha por objeto
+    /// (<c>RowKind=Objeto</c>); sem objetos, uma linha do controle (<c>RowKind=Controle</c>). Reconciliação com o
+    /// HTML: controles = IndicatorId distintos; ocorrências = linhas com ObjectRelation "Afetado" em controles
+    /// reprovados/mitigados; objetos únicos = pares (ObjectType, ObjectExternalId) distintos dessas linhas.
+    /// </summary>
+    private static void WriteKnightV2(CsvBuilder csv, PostureSnapshot s)
+    {
+        var model = KnightReportModelBuilder.Build(s, integrityVerified: true);
+        var indicators = s.Indicators.ToDictionary(i => i.IndicatorId, StringComparer.Ordinal);
+
+        csv.Text("SnapshotId").Text("ContentHash").Text("Type").Timestamp("CapturedAt")
+           .Text("SchemaVersion").Text("FormulaVersion").Text("CatalogVersion")
+           .Text("EvaluationState").Text("Score").Text("Coverage")
+           .Text("SourceType").Text("SourceLabel")
+           .Text("IndicatorId").Text("Title").Text("Category").Text("Severity").Text("Status")
+           .Text("AffectedObjectCount").Timestamp("CollectedAt")
+           .Text("NistCodes").Text("MitreTechniques").Text("Evidence")
+           .Text("ClientName").Text("RunId").Text("ResultLabel").Text("SeverityLabel").Text("Domain").Text("Service").Text("Provider")
+           .Text("Description").Text("Rationale").Text("ExpectedConfiguration").Text("DoesNotProve").Text("Recommendation")
+           .Text("NotEvaluatedReason").Text("Weight").Text("ScoreFactor").Text("ScorePointsAchieved").Text("References")
+           .Text("RowKind").Text("ObjectRelation").Text("ObjectType").Text("ObjectExternalId").Text("ObjectName")
+           .Text("ObjectPrincipalName").Text("ObjectRoles").Text("ObjectDetail").Text("ObjectConfiguration")
+           .EndRow();
+
+        var state = EvaluationState(s.Score);
+        foreach (var c in model.Controls.OrderBy(c => c.Id, StringComparer.Ordinal))
+        {
+            var i = indicators[c.Id];
+            var rows = c.Objects.Count == 0 ? new ReportObject?[] { null } : c.Objects.Cast<ReportObject?>().ToArray();
+            foreach (var o in rows)
+            {
+                csv.Text(s.Id.ToString("D")).Text(s.ContentHash).Text(s.Type.ToString()).TimestampValue(s.CapturedAt)
+                   .Text(s.SchemaVersion).Text(s.FormulaVersion).Text(s.CatalogVersion)
+                   .Text(state).Number(s.Score).Number(s.Coverage)
+                   .Text(s.SourceType?.ToString()).Text(s.SourceLabel)
+                   .Text(i.IndicatorId).Text(i.Title).Text(i.Category.ToString()).Text(i.Severity.ToString()).Text(i.Status.ToString())
+                   .Number(i.AffectedObjectCount).TimestampValue(i.CollectedAt)
+                   .Text(string.Join(" ", i.NistCodes)).Text(string.Join(" ", i.MitreTechniques)).Text(i.Evidence)
+                   .Text(s.ClientName).Text(s.SourceRunId?.ToString("D")).Text(c.StatusLabel).Text(c.SeverityLabel)
+                   .Text(c.DomainLabel).Text(c.Service).Text(c.Provider)
+                   .Text(c.Description).Text(c.Rationale).Text(c.ExpectedConfiguration).Text(c.DoesNotProve).Text(c.Recommendation)
+                   .Text(c.NotEvaluatedReason).Number(c.Weight).Number(c.Factor).Number(c.Achieved)
+                   .Text(string.Join(" | ", c.References.Select(r => (r.Version is null ? r.Framework : r.Framework + " " + r.Version) + ": " + r.Code + (r.Url is null ? "" : " <" + r.Url + ">"))))
+                   .Text(o is null ? "Controle" : "Objeto")
+                   .Text(o?.RelationLabel).Text(o?.KindLabel).Text(o?.ExternalId).Text(o?.DisplayName)
+                   .Text(o?.UserPrincipalName).Text(o is null ? null : string.Join(", ", o.Roles)).Text(o?.Detail).Text(o?.ObservedConfiguration)
+                   .EndRow();
+            }
         }
     }
 

@@ -209,7 +209,13 @@ public sealed record KnightCollectionResult(
     /// declara a ausência em vez de inventar uma lista. Estes objetos NÃO entram no snapshot agregado da
     /// Evidence Fabric (que segue sem PII): quem os persiste é a superfície dedicada do assessment.
     /// </summary>
-    IReadOnlyList<KnightAffectedObjectEvidence>? AffectedObjects = null)
+    IReadOnlyList<KnightAffectedObjectEvidence>? AffectedObjects = null,
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Configuração de diretório observada pela MESMA coleta (políticas de acesso
+    /// condicional normalizadas, papéis privilegiados ativos). Persistida no ADM como objetos de configuração e
+    /// relida de lá antes da avaliação. <c>null</c> quando a fonte não a produz.
+    /// </summary>
+    AegisScore.Application.Knight.Configuration.KnightDirectoryConfiguration? DirectoryConfiguration = null)
 {
     /// <summary>Conjuntos de objetos afetados desta coleta — vazio quando a fonte não preserva detalhe.</summary>
     public IReadOnlyList<KnightAffectedObjectEvidence> AffectedObjectSets =>

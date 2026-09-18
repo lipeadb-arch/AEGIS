@@ -723,7 +723,45 @@ public record KnightIndicatorDto(
     /// <summary>TRUE quando a lista preservada cobre todo o conjunto que produziu a contagem.</summary>
     bool AffectedDetailComplete,
     /// <summary>O que a coleta não conseguiu enumerar no detalhe (sanitizado), quando aplicável.</summary>
-    string? AffectedDetailLimitation);
+    string? AffectedDetailLimitation,
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Evidências de configuração preservadas (não contadas como afetados).</summary>
+    int EvidenceObjectCount = 0,
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Perfil, eixos e contribuição para a nota.</summary>
+    KnightControlPresentationDto? Presentation = null);
+
+/// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Referência de framework ou documentação oficial conferida.</summary>
+public record KnightControlReferenceDto(string Framework, string? Version, string Code, string? Url);
+
+/// <summary>
+/// [AEGIS-KNIGHT-MULTICLOUD-01] Como o controle se apresenta: o problema, por que importa, a configuração
+/// esperada, o que o resultado não comprova, os eixos domínio × serviço × provedor e a contribuição para a nota
+/// (peso da severidade × fator do veredito; nulos quando o controle não foi avaliado).
+/// </summary>
+public record KnightControlPresentationDto(
+    string Domain,
+    string DomainLabel,
+    string Service,
+    string Provider,
+    string? Description,
+    string? Rationale,
+    string? ExpectedConfiguration,
+    string? DoesNotProve,
+    string? Criterion,
+    IReadOnlyList<KnightControlReferenceDto> References,
+    IReadOnlyList<string> RequiredCapabilities,
+    int Weight,
+    double? Factor,
+    double? AchievedPoints,
+    double? PossiblePoints);
+
+/// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Objeto que se repete entre controles expostos.</summary>
+public record KnightAffectedSummaryItemDto(
+    string ExternalId, string Kind, string? DisplayName, string? UserPrincipalName, int ControlCount, IReadOnlyList<string> IndicatorIds);
+
+/// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Ocorrências × objetos únicos × controles expostos de uma avaliação.</summary>
+public record KnightAffectedSummaryDto(
+    Guid RunId, int ExposedControls, int Occurrences, int UniqueObjects, bool Complete,
+    IReadOnlyList<string> IncompleteIndicatorIds, IReadOnlyList<KnightAffectedSummaryItemDto> Top);
 
 // ---- [AEGIS-MVP-PRODUCT-02] Objetos AFETADOS de um achado -----------------------------------------------
 
@@ -739,7 +777,11 @@ public record KnightAffectedObjectDto(
     string? DisplayName,
     string? UserPrincipalName,
     IReadOnlyList<string> Roles,
-    string? Detail);
+    string? Detail,
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] "Affected" (contado) ou "Evidence" (configuração que sustentou o veredito).</summary>
+    string Relation = "Affected",
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Configuração observada do objeto, quando houver.</summary>
+    string? ObservedConfiguration = null);
 
 /// <summary>
 /// Página de objetos afetados de UM achado de UMA execução — paginada e pesquisada NO SERVIDOR. O vínculo

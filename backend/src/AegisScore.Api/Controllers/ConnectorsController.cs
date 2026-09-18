@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using AegisScore.Api.Contracts;
+using System.Security.Claims;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Knight;
 using AegisScore.Application.Services;
 using AegisScore.Domain;
 
@@ -36,6 +38,7 @@ public class ConnectorsController : ControllerBase
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ConnectorsController> _log;
+    private readonly IKnightSyncRequests _knightSync;
 
     public ConnectorsController(
         ITenantManagementService connectors,
@@ -43,7 +46,8 @@ public class ConnectorsController : ControllerBase
         IEvidenceIngestionExecutor executor,
         IServiceScopeFactory scopeFactory,
         IHostApplicationLifetime lifetime,
-        ILogger<ConnectorsController> log)
+        ILogger<ConnectorsController> log,
+        IKnightSyncRequests knightSync)
     {
         _connectors = connectors;
         _registry = registry;
@@ -51,6 +55,7 @@ public class ConnectorsController : ControllerBase
         _scopeFactory = scopeFactory;
         _lifetime = lifetime;
         _log = log;
+        _knightSync = knightSync;
     }
 
     /// <summary>
@@ -63,10 +68,13 @@ public class ConnectorsController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<ConnectorConfigDto>>> List(CancellationToken ct)
     {
         var connectors = await _connectors.ListConnectorsAsync(ct);
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Pedido DURÁVEL ativo do KNIGHT também é "sincronizando" — lido do banco,
+        // e não de memória, para valer entre réplicas e depois de um reinício.
+        var knightActive = await _knightSync.ActiveConnectorIdsAsync(ct);
         return Ok(connectors
             .Select(c =>
             {
-                var syncing = BackgroundSyncs.ContainsKey(c.ConnectorId);
+                var syncing = BackgroundSyncs.ContainsKey(c.ConnectorId) || knightActive.Contains(c.ConnectorId);
                 return new ConnectorConfigDto(
                     c.ConnectorId, c.Provider.ToString(), c.Capability.ToString(), c.DisplayName,
                     c.AuthType.ToString(), c.Enabled, c.SyncIntervalMinutes,
@@ -136,6 +144,16 @@ public class ConnectorsController : ControllerBase
                 title = "Conector desconectado: informe a credencial novamente antes de sincronizar.",
                 status = 409,
             });
+
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Postura de identidade (AEGIS KNIGHT): o pedido é registrado de forma
+        // DURÁVEL e identificada, e processado pelo worker com a MESMA autoridade de coleta → ADM → avaliação.
+        // 202 imediato com o identificador — a tela acompanha ESTE pedido, sem depender do tempo limite do
+        // navegador. Um segundo clique com pedido ativo devolve o MESMO pedido (sem nova coleta).
+        if (KnightConnectorSources.SourceOf(cfg.Provider, cfg.Capability) is { } knightSource)
+        {
+            var enqueued = await _knightSync.EnqueueAsync(cfg.Id, knightSource, RequesterId(), ct);
+            return Accepted(ToDto(enqueued.Request, enqueued.AlreadyActive));
+        }
 
         if (cfg.Capability == ConnectorCapability.VulnerabilityScanner)
         {
@@ -242,6 +260,40 @@ public class ConnectorsController : ControllerBase
             result.Persisted, Array.Empty<SignalDto>(), vuln, siem, coverage, devicePosture));
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Um pedido de sincronização do KNIGHT deste conector. Tenant implícito; um
+    /// pedido de outro tenant ou de outro conector é 404 — a tela nunca recebe o desfecho de outra execução.
+    /// </summary>
+    [HttpGet("{connectorId:guid}/sync-requests/{requestId:guid}")]
+    public async Task<ActionResult<KnightSyncRequestDto>> GetSyncRequest(Guid connectorId, Guid requestId, CancellationToken ct)
+    {
+        var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
+        if (cfg is null) return NotFound();
+        var view = await _knightSync.GetAsync(connectorId, requestId, ct);
+        return view is null ? NotFound() : Ok(ToDto(view, false));
+    }
+
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] O pedido mais recente do conector (204 quando nunca houve).</summary>
+    [HttpGet("{connectorId:guid}/sync-requests/latest")]
+    public async Task<ActionResult<KnightSyncRequestDto>> GetLatestSyncRequest(Guid connectorId, CancellationToken ct)
+    {
+        var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
+        if (cfg is null) return NotFound();
+        var view = await _knightSync.GetLatestAsync(connectorId, ct);
+        return view is null ? NoContent() : Ok(ToDto(view, false));
+    }
+
+    private Guid? RequesterId()
+    {
+        var raw = User.FindFirst("sub")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        return Guid.TryParse(raw, out var id) ? id : null;
+    }
+
+    private static KnightSyncRequestDto ToDto(KnightSyncRequestView v, bool alreadyActive) => new(
+        v.Id, v.ConnectorId, v.Source.ToString(), v.Status.ToString(), v.RequestedAt, v.StartedAt, v.CompletedAt,
+        v.Attempts, v.RunId, v.ResultSourceState?.ToString(), v.FailureCategory, v.Message,
+        v.LastCompletedRunId, v.LastCompletedAt, alreadyActive);
+
     // ---- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ciclo de vida administrativo (TenantAdmin) --------------------
     // Listar/testar/sincronizar são operações de qualquer autenticado; EDITAR o estado de uma integração é
     // ato de administrador do ambiente. A autorização vive no backend (papel do JWT), não só na visibilidade
@@ -305,3 +357,12 @@ public class ConnectorsController : ControllerBase
 }
 
 public sealed record SyncAcceptedDto(bool Queued, string Message);
+
+/// <summary>
+/// [AEGIS-KNIGHT-MULTICLOUD-01] Pedido de sincronização do KNIGHT. <c>RunId</c> só existe quando concluído;
+/// <c>LastCompletedRunId</c> é a última avaliação concluída da fonte — o que continua valendo se este falhar.
+/// </summary>
+public sealed record KnightSyncRequestDto(
+    Guid Id, Guid ConnectorId, string Source, string Status, DateTimeOffset RequestedAt, DateTimeOffset? StartedAt,
+    DateTimeOffset? CompletedAt, int Attempts, Guid? RunId, string? ResultSourceState, string? FailureCategory,
+    string? Message, Guid? LastCompletedRunId, DateTimeOffset? LastCompletedAt, bool AlreadyActive);

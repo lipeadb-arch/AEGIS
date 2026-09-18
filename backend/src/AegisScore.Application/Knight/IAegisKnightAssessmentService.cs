@@ -29,7 +29,57 @@ public sealed record KnightIndicatorView(
     /// <summary>TRUE quando a lista preservada cobre todo o conjunto que produziu a contagem.</summary>
     bool AffectedDetailComplete = false,
     /// <summary>O que a coleta não conseguiu enumerar no detalhe (sanitizado), quando aplicável.</summary>
-    string? AffectedDetailLimitation = null);
+    string? AffectedDetailLimitation = null,
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Objetos de configuração que sustentaram o veredito (não contados como afetados).</summary>
+    int EvidenceObjectCount = 0,
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Perfil, eixos (domínio/serviço/provedor) e contribuição para a nota.</summary>
+    KnightControlPresentation? Presentation = null);
+
+/// <summary>
+/// [AEGIS-KNIGHT-MULTICLOUD-01] Como um controle se apresenta no relatório: o problema, por que importa, a
+/// configuração esperada, o que o resultado não comprova, os eixos (domínio × serviço × provedor), as
+/// referências e a CONTRIBUIÇÃO para a nota KNIGHT pela fórmula oficial (peso × fator do veredito). O perfil é o
+/// do catálogo corrente; <see cref="Criterion"/> só aparece quando a avaliação usou esse mesmo catálogo.
+/// </summary>
+public sealed record KnightControlPresentation(
+    string Domain,
+    string DomainLabel,
+    string Service,
+    string Provider,
+    string? Description,
+    string? Rationale,
+    string? ExpectedConfiguration,
+    string? DoesNotProve,
+    string? Criterion,
+    IReadOnlyList<KnightControlReference> References,
+    IReadOnlyList<string> RequiredCapabilities,
+    int Weight,
+    double? Factor,
+    double? AchievedPoints,
+    double? PossiblePoints);
+
+/// <summary>Um objeto afetado em vários controles de uma avaliação — a base dos "principais objetos afetados".</summary>
+public sealed record KnightAffectedSummaryItem(
+    string ExternalId,
+    KnightAffectedObjectKind Kind,
+    string? DisplayName,
+    string? UserPrincipalName,
+    int ControlCount,
+    IReadOnlyList<string> IndicatorIds);
+
+/// <summary>
+/// [AEGIS-KNIGHT-MULTICLOUD-01] Objetos afetados de uma avaliação, contados em TRÊS unidades que não se
+/// confundem: ocorrências (objeto × controle), objetos ÚNICOS e controles. <see cref="Complete"/> é falso
+/// quando algum controle exposto não preservou o detalhe completo — o número de únicos vira um piso.
+/// </summary>
+public sealed record KnightAffectedSummary(
+    Guid RunId,
+    int ExposedControls,
+    int Occurrences,
+    int UniqueObjects,
+    bool Complete,
+    IReadOnlyList<string> IncompleteIndicatorIds,
+    IReadOnlyList<KnightAffectedSummaryItem> Top);
 
 /// <summary>
 /// Um assessment KNIGHT completo, na visão de leitura da aplicação: a execução, a FONTE e seu estado, os
@@ -137,5 +187,12 @@ public interface IAegisKnightAssessmentService
     /// </summary>
     /// <returns><c>null</c> quando a execução ou o achado não existem neste tenant.</returns>
     Task<KnightAffectedObjectsPage?> GetAffectedObjectsAsync(
-        Guid runId, string indicatorId, int page, int pageSize, string? search, CancellationToken ct = default);
+        Guid runId, string indicatorId, int page, int pageSize, string? search, CancellationToken ct = default,
+        KnightObjectRelation relation = KnightObjectRelation.Affected);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Resumo dos objetos afetados da avaliação: ocorrências, únicos e os que mais
+    /// se repetem entre controles expostos. Somente leitura; <c>null</c> quando a avaliação não existe no tenant.
+    /// </summary>
+    Task<KnightAffectedSummary?> GetAffectedSummaryAsync(Guid runId, CancellationToken ct = default);
 }

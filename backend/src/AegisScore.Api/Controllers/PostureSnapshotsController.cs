@@ -130,7 +130,7 @@ public class PostureSnapshotsController : ControllerBase
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
         if (!PostureExportFormats.TryParse(format, out var fmt))
-            return BadRequest($"Formato de exportação desconhecido: '{format}'. Use 'pdf' ou 'csv'.");
+            return BadRequest($"Formato de exportação desconhecido: '{format}'. Use 'pdf', 'csv' ou 'html'.");
 
         try
         {
@@ -140,6 +140,10 @@ public class PostureSnapshotsController : ControllerBase
         catch (PostureSnapshotIntegrityException ex)
         {
             return Conflict(ex.Message);
+        }
+        catch (PostureExportNotSupportedException ex)
+        {
+            return BadRequest(ex.Message);
         }
     }
 

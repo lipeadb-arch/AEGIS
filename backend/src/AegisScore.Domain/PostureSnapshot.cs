@@ -147,6 +147,25 @@ public class PostureSnapshot : Entity, ITenantOwned
     /// <summary>Indicadores KNIGHT congelados (apenas em fotografias KNIGHT).</summary>
     public ICollection<PostureSnapshotIndicator> Indicators { get; set; } = new List<PostureSnapshotIndicator>();
 
+    // ---- [AEGIS-KNIGHT-MULTICLOUD-01] Relatório KNIGHT v2 — tudo ADITIVO e ANULÁVEL -----------------
+    // As fotografias anteriores continuam com estes campos nulos/vazios, o hash delas permanece o mesmo (o
+    // bloco canônico v2 só é escrito para SchemaVersion v2) e o relatório declara o que elas não congelaram.
+
+    /// <summary>Narrativa consultiva CONGELADA (o JSON gravado na avaliação). Nula nas fotografias v1.</summary>
+    public string? AdvisoryJson { get; set; }
+
+    /// <summary>A narrativa congelada veio da IA (true) ou do fallback determinístico (false). Nulo nas v1.</summary>
+    public bool? AdvisoryFromAi { get; set; }
+
+    /// <summary>Estado por capacidade da coleta congelada (JSON tipado) — base das limitações estruturadas.</summary>
+    public string? CapabilitiesJson { get; set; }
+
+    /// <summary>Versão do catálogo cujos PERFIS (descrição, impacto, configuração esperada) foram congelados.</summary>
+    public string? ProfileCatalogVersion { get; set; }
+
+    /// <summary>Objetos (afetados e evidências de configuração) CONGELADOS por indicador. Vazio nas v1.</summary>
+    public ICollection<PostureSnapshotObject> Objects { get; set; } = new List<PostureSnapshotObject>();
+
     /// <summary>
     /// [AEGIS-MVP-PRODUCT-03] Ações CONGELADAS no instante da publicação. Uma fotografia antiga continua
     /// mostrando as ações como estavam então: injetar o estado atual dos planos num relatório histórico
@@ -384,4 +403,59 @@ public class PostureSnapshotIndicator : Entity, ITenantOwned
 
     /// <summary>Instante da coleta que originou o resultado.</summary>
     public DateTimeOffset CollectedAt { get; set; }
+
+    // ---- [AEGIS-KNIGHT-MULTICLOUD-01] Campos congelados do relatório v2 (nulos nas fotografias v1) ----
+
+    public string? Recommendation { get; set; }
+    public string? NotEvaluatedReason { get; set; }
+
+    /// <summary>Domínio de segurança (nome do enum do catálogo), serviço e provedor — eixos distintos.</summary>
+    public string? Domain { get; set; }
+    public string? Service { get; set; }
+    public string? Provider { get; set; }
+
+    /// <summary>O problema, por que importa, a configuração esperada e o que o resultado NÃO comprova.</summary>
+    public string? Description { get; set; }
+    public string? Rationale { get; set; }
+    public string? ExpectedConfiguration { get; set; }
+    public string? DoesNotProve { get; set; }
+
+    /// <summary>Critério da regra — só quando o catálogo da avaliação é o dos perfis congelados.</summary>
+    public string? Criterion { get; set; }
+
+    /// <summary>Frameworks e documentação oficial conferida (jsonb). Vazio nas v1.</summary>
+    public List<PostureControlReference> References { get; set; } = new();
+
+    /// <summary>Capacidades de coleta que o controle consome (jsonb) — "controles prejudicados" por limitação.</summary>
+    public List<string> RequiredCapabilities { get; set; } = new();
+
+    public bool? HasAffectedDetail { get; set; }
+    public bool? AffectedDetailComplete { get; set; }
+    public string? AffectedDetailLimitation { get; set; }
+}
+
+/// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Referência de framework/documentação congelada num indicador.</summary>
+public record PostureControlReference(string Framework, string? Version, string Code, string? Url);
+
+/// <summary>
+/// [AEGIS-KNIGHT-MULTICLOUD-01] UM objeto CONGELADO numa fotografia KNIGHT: afetado ou evidência de configuração
+/// de um indicador. Cópia do que a execução preservou — o relatório nunca vai buscar a lista de hoje.
+/// </summary>
+public class PostureSnapshotObject : Entity, ITenantOwned
+{
+    /// <summary>Carimbado no SaveChanges (fail-closed) — nunca confiar em valor vindo do cliente.</summary>
+    public Guid TenantId { get; set; }
+
+    public Guid SnapshotId { get; set; }
+    public PostureSnapshot? Snapshot { get; set; }
+
+    public string IndicatorId { get; set; } = "";
+    public KnightObjectRelation Relation { get; set; }
+    public KnightAffectedObjectKind Kind { get; set; }
+    public string ExternalId { get; set; } = "";
+    public string? DisplayName { get; set; }
+    public string? UserPrincipalName { get; set; }
+    public List<string> Roles { get; set; } = new();
+    public string? Detail { get; set; }
+    public string? ObservedConfiguration { get; set; }
 }

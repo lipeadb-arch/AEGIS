@@ -15,13 +15,22 @@ namespace AegisScore.Api;
 public class HttpTenantContext : ITenantContext
 {
     private readonly IHttpContextAccessor _accessor;
+    private readonly TenantScopeOverride? _override;
 
-    public HttpTenantContext(IHttpContextAccessor accessor) => _accessor = accessor;
+    public HttpTenantContext(IHttpContextAccessor accessor, TenantScopeOverride? scopeOverride = null)
+    {
+        _accessor = accessor;
+        _override = scopeOverride;
+    }
 
     public Guid? TenantId
     {
         get
         {
+            // [AEGIS-KNIGHT-MULTICLOUD-01] Escopo de worker com tenant fixado pelo servidor (nunca por dado de
+            // requisição). Numa requisição HTTP o override não é definido e nada abaixo muda.
+            if (_override?.TenantId is Guid fixado && _accessor.HttpContext is null) return fixado;
+
             var http = _accessor.HttpContext;
             if (http is null) return null;   // fora de uma requisição (startup/seed): sem tenant ambiente
 

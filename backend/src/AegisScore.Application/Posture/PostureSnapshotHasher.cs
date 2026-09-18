@@ -40,6 +40,12 @@ public static class PostureSnapshotHasher
     /// </remarks>
     private const string ExtensionVersion = "posture-hash-ext-report-v1";
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Bloco do relatório KNIGHT v2 — escrito SÓ quando a fotografia é v2, então o
+    /// hash de toda fotografia anterior permanece idêntico e continua verificável.
+    /// </summary>
+    private const string KnightReportVersion = "posture-hash-ext-knight-report-v2";
+
     /// <summary>Computa o hash SHA-256 (hex minúsculo, 64 chars) do conteúdo canônico da fotografia.</summary>
     public static string Compute(PostureSnapshot s)
     {
@@ -193,6 +199,50 @@ public static class PostureSnapshotHasher
                  .EnumN(a.ApplicableValidationMethod)
                  .EnumN(a.ApplicableValidationOutcome)
                  .Inst(a.ApplicableValidatedAt);
+            }
+        }
+
+        if (string.Equals(s.SchemaVersion, PostureSnapshotSchema.KnightReportVersion, StringComparison.Ordinal))
+        {
+            w.Str(KnightReportVersion)
+             .Str(s.ProfileCatalogVersion)
+             .Str(s.AdvisoryJson)
+             .BoolN(s.AdvisoryFromAi)
+             .Str(s.CapabilitiesJson);
+
+            w.Int(indicators.Count);
+            foreach (var i in indicators)
+            {
+                w.Str(i.IndicatorId)
+                 .Str(i.Recommendation).Str(i.NotEvaluatedReason)
+                 .Str(i.Domain).Str(i.Service).Str(i.Provider)
+                 .Str(i.Description).Str(i.Rationale).Str(i.ExpectedConfiguration).Str(i.DoesNotProve).Str(i.Criterion)
+                 .BoolN(i.HasAffectedDetail).BoolN(i.AffectedDetailComplete).Str(i.AffectedDetailLimitation);
+
+                var refs = i.References
+                    .OrderBy(r => r.Framework, StringComparer.Ordinal).ThenBy(r => r.Code, StringComparer.Ordinal)
+                    .ThenBy(r => r.Version, StringComparer.Ordinal).ThenBy(r => r.Url, StringComparer.Ordinal).ToList();
+                w.Int(refs.Count);
+                foreach (var r in refs) w.Str(r.Framework).Str(r.Version).Str(r.Code).Str(r.Url);
+
+                var caps = i.RequiredCapabilities.OrderBy(x => x, StringComparer.Ordinal).ToList();
+                w.Int(caps.Count);
+                foreach (var c in caps) w.Str(c);
+            }
+
+            var objects = s.Objects
+                .OrderBy(o => o.IndicatorId, StringComparer.Ordinal)
+                .ThenBy(o => (int)o.Relation)
+                .ThenBy(o => (int)o.Kind)
+                .ThenBy(o => o.ExternalId, StringComparer.Ordinal).ToList();
+            w.Int(objects.Count);
+            foreach (var o in objects)
+            {
+                w.Str(o.IndicatorId).Enum(o.Relation).Enum(o.Kind).Str(o.ExternalId)
+                 .Str(o.DisplayName).Str(o.UserPrincipalName).Str(o.Detail).Str(o.ObservedConfiguration);
+                var roles = o.Roles.OrderBy(x => x, StringComparer.Ordinal).ToList();
+                w.Int(roles.Count);
+                foreach (var r in roles) w.Str(r);
             }
         }
 

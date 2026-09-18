@@ -26,7 +26,11 @@ public enum KnightSignalKey
     MfaRegistrationCoveragePercent = 100,
     /// <summary>Verdadeiro quando a autenticação legada está BLOQUEADA por política.</summary>
     LegacyAuthenticationBlocked = 101,
-    /// <summary>Verdadeiro quando há política exigindo MFA para acesso administrativo.</summary>
+    /// <summary>
+    /// [LEGADO — produzido até o catálogo ak-knight-v2] Verdadeiro quando havia política exigindo MFA de todos os
+    /// usuários, em todas as aplicações e sem exclusão. Substituído por <see cref="PrivilegedRolesWithoutMfaPolicy"/>,
+    /// que lê as políticas papel a papel. Mantido para ler aquisições antigas; não é mais emitido.
+    /// </summary>
     AdminMfaPolicyEnforced = 102,
     /// <summary>Credenciais (segredos/certificados) de aplicações vencidas ou vencendo na janela.</summary>
     ApplicationCredentialsExpiring = 103,
@@ -42,6 +46,16 @@ public enum KnightSignalKey
     SecurityDefaultsEnabled = 108,
     /// <summary>Contas de emergência/break-glass designadas (requer marcação — normalmente não inferível por API).</summary>
     DesignatedBreakGlassAccounts = 109,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Papéis privilegiados ATIVOS para os quais nenhuma política HABILITADA exige MFA
+    /// em todas as aplicações, sem condição que estreite a exigência. Ausente (com motivo) quando a cobertura não
+    /// pode ser resolvida com os dados coletados — nunca zero por suposição.
+    /// </summary>
+    PrivilegedRolesWithoutMfaPolicy = 110,
+
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Políticas HABILITADAS que EXIGEM MFA ou força de autenticação (qualquer alcance).</summary>
+    EnforcedMfaPolicies = 111,
 
     // ---- Específicos do Google Workspace (Admin SDK Directory + Reports) ----
     /// <summary>Cobertura (%) de 2SV inscrito entre os usuários ATIVOS do diretório.</summary>

@@ -125,6 +125,8 @@ public class AegisScoreDbContext : DbContext
     public DbSet<KnightAssessmentRun> KnightAssessmentRuns => Set<KnightAssessmentRun>();
     public DbSet<KnightIndicatorResult> KnightIndicatorResults => Set<KnightIndicatorResult>();
     public DbSet<KnightAffectedObject> KnightAffectedObjects => Set<KnightAffectedObject>();
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Sincronizações do KNIGHT solicitadas em Integrações (fila durável).</summary>
+    public DbSet<KnightSyncRequest> KnightSyncRequests => Set<KnightSyncRequest>();
 
     // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidência de identidade NORMALIZADA e compartilhada (uma aquisição real do
     // Entra ID → KNIGHT + projeção NIST + dashboard + relatórios). Snapshot ATUAL por (tenant, conector), sem PII.
@@ -137,6 +139,8 @@ public class AegisScoreDbContext : DbContext
     public DbSet<IdentityEntity> IdentityEntities => Set<IdentityEntity>();
     public DbSet<IdentitySourceLink> IdentitySourceLinks => Set<IdentitySourceLink>();
     public DbSet<IdentityEntityObservation> IdentityEntityObservations => Set<IdentityEntityObservation>();
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Objetos de configuração observados por aquisição (políticas, papéis).</summary>
+    public DbSet<IdentityConfigurationObservation> IdentityConfigurationObservations => Set<IdentityConfigurationObservation>();
     public DbSet<IdentityObservationSetState> IdentityObservationSetStates => Set<IdentityObservationSetState>();
 
     // [AEGIS-ADM-02] Histórico MENSAL do ADM: uma consolidação por (tenant, provedor, namespace, mês UTC), com
@@ -152,6 +156,8 @@ public class AegisScoreDbContext : DbContext
     public DbSet<PostureSnapshotIndicator> PostureSnapshotIndicators => Set<PostureSnapshotIndicator>();
     /// <summary>[AEGIS-MVP-PRODUCT-03] Ações CONGELADAS numa fotografia — o relatório histórico não lê o presente.</summary>
     public DbSet<PostureSnapshotActionItem> PostureSnapshotActionItems => Set<PostureSnapshotActionItem>();
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Objetos congelados de uma fotografia KNIGHT v2.</summary>
+    public DbSet<PostureSnapshotObject> PostureSnapshotObjects => Set<PostureSnapshotObject>();
     /// <summary>[AEGIS-MVP-PRODUCT-03] Trilha de auditoria de um plano de ação.</summary>
     public DbSet<ActionPlanEvent> ActionPlanEvents => Set<ActionPlanEvent>();
     /// <summary>[AEGIS-MVP-PRODUCT-03] Validações registradas de um plano de ação.</summary>
@@ -188,6 +194,13 @@ public class AegisScoreDbContext : DbContext
         // padrão (não o enum-aware). Cópia rasa: o record é imutável, clonar a lista basta para o snapshot do tracker.
         var evidenceRefs = JsonbConverter<List<PostureEvidenceRef>>();
         var evidenceRefsCmp = new ValueComparer<List<PostureEvidenceRef>>(
+            (x, y) => (x ?? new()).SequenceEqual(y ?? new()),
+            v => v == null ? 0 : v.Aggregate(0, (h, e) => HashCode.Combine(h, e.GetHashCode())),
+            v => v == null ? new() : v.ToList());
+
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Referências de framework/documentação congeladas num indicador.
+        var controlRefs = JsonbConverter<List<PostureControlReference>>();
+        var controlRefsCmp = new ValueComparer<List<PostureControlReference>>(
             (x, y) => (x ?? new()).SequenceEqual(y ?? new()),
             v => v == null ? 0 : v.Aggregate(0, (h, e) => HashCode.Combine(h, e.GetHashCode())),
             v => v == null ? new() : v.ToList());
@@ -549,6 +562,26 @@ public class AegisScoreDbContext : DbContext
                 .HasForeignKey(o => new { o.AcquisitionId, o.TenantId })
                 .HasPrincipalKey(x => new { x.Id, x.TenantId })
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // [AEGIS-KNIGHT-MULTICLOUD-01] Objetos de configuração: evidência da aquisição, removidos com ela.
+            e.HasMany(x => x.Configurations).WithOne(c => c.Acquisition)
+                .HasForeignKey(c => new { c.AcquisitionId, c.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Configuração observada: chave natural (tenant, aquisição, tipo, id externo)
+        // torna o reprocessamento da mesma aquisição idempotente. O documento é jsonb do contrato tipado.
+        b.Entity<IdentityConfigurationObservation>(e =>
+        {
+            e.Property(x => x.Kind).HasConversion<int>();
+            e.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.DisplayName).HasMaxLength(300);
+            e.Property(x => x.SchemaVersion).HasMaxLength(80).IsRequired();
+            e.Property(x => x.ConfigurationJson).HasColumnType("jsonb").IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.AcquisitionId, x.Kind, x.ExternalId })
+                .IsUnique()
+                .HasDatabaseName("UX_IdentityConfigurationObservation_Natural");
         });
 
         // ENTIDADE canônica: a PROJEÇÃO do estado atual. Sobrevive à remoção do conector de propósito — o que
@@ -1281,6 +1314,33 @@ public class AegisScoreDbContext : DbContext
             // Um objeto aparece UMA vez por achado de uma execução — a dedupe do coletor vira invariante de
             // banco, de modo que lista e contagem não podem divergir por duplicata.
             e.HasIndex(x => new { x.TenantId, x.IndicatorResultId, x.ExternalId }).IsUnique();
+            // [AEGIS-KNIGHT-MULTICLOUD-01] Afetado × evidência de configuração; default = afetado (linhas antigas).
+            e.Property(x => x.Relation).HasConversion<int>().HasDefaultValue(KnightObjectRelation.Affected);
+            e.Property(x => x.ObservedConfiguration).HasMaxLength(2000);
+        });
+
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Sincronização durável do KNIGHT (idioma da PolicySyncRequest): índices de
+        // aquisição e de lease, e ÚNICO PARCIAL — no máximo um pedido ATIVO (Pending=0/Running=1) por conector.
+        // FK composta tenant-safe para o conector: remover o conector remove o histórico de pedidos dele.
+        b.Entity<KnightSyncRequest>(e =>
+        {
+            e.Property(x => x.SourceType).HasConversion<int>();
+            e.Property(x => x.Status).HasConversion<int>();
+            e.Property(x => x.ResultSourceState).HasConversion<int>();
+            e.Property(x => x.FailureCategory).HasMaxLength(100);
+            e.Property(x => x.Message).HasMaxLength(1000);
+            e.HasIndex(x => new { x.Status, x.AvailableAt });
+            e.HasIndex(x => new { x.Status, x.LeaseExpiresAt });
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.RequestedAt });
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId })
+                .IsUnique()
+                .HasDatabaseName("UX_KnightSyncRequest_ActivePerConnector")
+                .HasFilter("\"Status\" IN (0, 1)");
+            e.HasOne<ConnectorConfig>()
+                .WithMany()
+                .HasForeignKey(x => new { x.ConnectorConfigId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // ============================================================
@@ -1326,6 +1386,32 @@ public class AegisScoreDbContext : DbContext
                 .HasForeignKey(a => new { a.SnapshotId, a.TenantId })
                 .HasPrincipalKey(x => new { x.Id, x.TenantId })
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // [AEGIS-KNIGHT-MULTICLOUD-01] Relatório v2: narrativa, capacidades e objetos congelados (aditivos).
+            // TEXT e não jsonb, de propósito: o hash assina a STRING congelada, e o jsonb do PostgreSQL normaliza
+            // o texto (ordem de chaves, espaços) — a fotografia deixaria de re-derivar o próprio hash.
+            e.Property(x => x.AdvisoryJson).HasColumnType("text");
+            e.Property(x => x.CapabilitiesJson).HasColumnType("text");
+            e.Property(x => x.ProfileCatalogVersion).HasMaxLength(50);
+            e.HasMany(x => x.Objects).WithOne(o => o.Snapshot)
+                .HasForeignKey(o => new { o.SnapshotId, o.TenantId })
+                .HasPrincipalKey(x => new { x.Id, x.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Objeto congelado de uma fotografia: tenant-owned, filho por FK composta.
+        b.Entity<PostureSnapshotObject>(e =>
+        {
+            e.Property(x => x.IndicatorId).HasMaxLength(40).IsRequired();
+            e.Property(x => x.Relation).HasConversion<int>();
+            e.Property(x => x.Kind).HasConversion<int>();
+            e.Property(x => x.ExternalId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.DisplayName).HasMaxLength(300);
+            e.Property(x => x.UserPrincipalName).HasMaxLength(320);
+            e.Property(x => x.Detail).HasMaxLength(1000);
+            e.Property(x => x.ObservedConfiguration).HasMaxLength(2000);
+            e.Property(x => x.Roles).HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
+            e.HasIndex(x => new { x.TenantId, x.SnapshotId });
         });
 
         // [AEGIS-MVP-PRODUCT-03] Ação CONGELADA numa fotografia: tenant-owned, filha por FK COMPOSTA
@@ -1367,6 +1453,29 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.MitreTechniques)
                 .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
             e.HasIndex(x => new { x.TenantId, x.SnapshotId });
+
+            // [AEGIS-KNIGHT-MULTICLOUD-01] Campos congelados do relatório v2 — nulos (ou []) nas fotografias v1.
+            e.Property(x => x.Recommendation).HasMaxLength(2000);
+            e.Property(x => x.NotEvaluatedReason).HasMaxLength(1000);
+            e.Property(x => x.Domain).HasMaxLength(50);
+            e.Property(x => x.Service).HasMaxLength(100);
+            e.Property(x => x.Provider).HasMaxLength(50);
+            e.Property(x => x.Description).HasMaxLength(2000);
+            e.Property(x => x.Rationale).HasMaxLength(2000);
+            e.Property(x => x.ExpectedConfiguration).HasMaxLength(2000);
+            e.Property(x => x.DoesNotProve).HasMaxLength(2000);
+            e.Property(x => x.Criterion).HasMaxLength(2000);
+            e.Property(x => x.AffectedDetailLimitation).HasMaxLength(2000);
+            e.Property(x => x.References)
+                .HasConversion(controlRefs, controlRefsCmp)
+                .HasColumnType("jsonb")
+                .HasDefaultValue(new List<PostureControlReference>())
+                .IsRequired();
+            e.Property(x => x.RequiredCapabilities)
+                .HasConversion(stringList, stringListCmp)
+                .HasColumnType("jsonb")
+                .HasDefaultValue(new List<string>())
+                .IsRequired();
         });
 
         // Multi-tenant isolation: every operational entity is scoped to the ambient tenant.
@@ -1455,6 +1564,9 @@ public class AegisScoreDbContext : DbContext
         b.Entity<PostureSnapshotControl>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<PostureSnapshotIndicator>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<PostureSnapshotActionItem>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<PostureSnapshotObject>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<IdentityConfigurationObservation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<KnightSyncRequest>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
     }
 
     // [AEGIS-AUD-008] Todos os quatro pontos de entrada públicos de SaveChanges são interceptados

@@ -115,6 +115,26 @@ public static class IdentityAcquisitionContent
             }
             w.WriteEndArray();
 
+            // [AEGIS-KNIGHT-MULTICLOUD-01] Objetos de configuração: escritos SÓ quando existem, para que o
+            // fingerprint das aquisições anteriores (que não os têm) permaneça exatamente o mesmo.
+            var configurations = CanonicalConfigurations(request.Configurations);
+            if (configurations.Count > 0)
+            {
+                w.WriteStartArray("configurations");
+                foreach (var c in configurations)
+                {
+                    w.WriteStartObject();
+                    w.WriteNumber("kind", (int)c.Kind);
+                    w.WriteString("externalId", c.ExternalId);
+                    WriteNullableString(w, "displayName", c.DisplayName);
+                    w.WriteString("schemaVersion", c.SchemaVersion);
+                    w.WritePropertyName("configuration");
+                    WriteCanonicalJson(w, c.ConfigurationJson);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+            }
+
             w.WriteEndObject();
         }
 
@@ -127,6 +147,23 @@ public static class IdentityAcquisitionContent
     /// enxergar exatamente o que a gravação vai guardar — se divergisse, o fingerprint deixaria de descrever
     /// o registro e passaria a descrever a intenção.
     /// </summary>
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Objetos de configuração na forma em que serão persistidos: identificador vazio
+    /// descartado, primeira ocorrência de cada (tipo, identificador) preservada, ordem estável.
+    /// </summary>
+    public static IReadOnlyList<IdentityObservedConfiguration> CanonicalConfigurations(
+        IReadOnlyList<IdentityObservedConfiguration>? configurations)
+    {
+        var byKey = new Dictionary<(int, string), IdentityObservedConfiguration>();
+        foreach (var c in configurations ?? Array.Empty<IdentityObservedConfiguration>())
+        {
+            var externalId = (c.ExternalId ?? "").Trim();
+            if (externalId.Length == 0 || byKey.ContainsKey(((int)c.Kind, externalId))) continue;
+            byKey[((int)c.Kind, externalId)] = c with { ExternalId = externalId };
+        }
+        return byKey.Values.OrderBy(c => (int)c.Kind).ThenBy(c => c.ExternalId, StringComparer.Ordinal).ToList();
+    }
+
     public static IReadOnlyList<IdentityObservedObject> Canonical(IdentityObservedSet set)
     {
         var byExternalId = new Dictionary<string, IdentityObservedObject>(StringComparer.Ordinal);

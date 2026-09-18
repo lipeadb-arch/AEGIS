@@ -89,7 +89,13 @@ public static class KnightAffectedObjectScope
     public static IReadOnlyList<string> Indicators { get; } =
         BySignal.Values.Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
 
-    public static bool IsInScope(string indicatorId) => Indicators.Contains(indicatorId);
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Também estão no escopo os indicadores cujo detalhe vem da configuração
+    /// observada (acesso condicional) — as execuções anteriores a este pacote se declaram "não preservado".
+    /// </summary>
+    public static bool IsInScope(string indicatorId) =>
+        Indicators.Contains(indicatorId)
+        || AegisScore.Application.Knight.Configuration.KnightConfigurationEvidence.Indicators.Contains(indicatorId);
 }
 
 // ---- Leitura (paginada e pesquisável NO SERVIDOR) ------------------------------------------------------
@@ -101,7 +107,11 @@ public sealed record KnightAffectedObjectView(
     string? DisplayName,
     string? UserPrincipalName,
     IReadOnlyList<string> Roles,
-    string? Detail);
+    string? Detail,
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Afetado ou evidência de configuração.</summary>
+    KnightObjectRelation Relation = KnightObjectRelation.Affected,
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Configuração observada do objeto (políticas, papéis), quando houver.</summary>
+    string? ObservedConfiguration = null);
 
 /// <summary>
 /// Estado do DETALHE de um achado numa avaliação. Distingue três coisas que a UI não pode confundir:

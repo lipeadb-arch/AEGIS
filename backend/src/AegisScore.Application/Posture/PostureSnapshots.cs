@@ -15,6 +15,13 @@ namespace AegisScore.Application.Posture;
 public static class PostureSnapshotSchema
 {
     public const string Version = "posture-snapshot-v1";
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Fotografia KNIGHT v2: congela também recomendação, perfil do controle
+    /// (problema, impacto, configuração esperada), eixos, referências, objetos afetados e evidências de
+    /// configuração, capacidades e a narrativa consultiva. As v1 continuam legíveis e verificáveis.
+    /// </summary>
+    public const string KnightReportVersion = "posture-snapshot-v2";
 }
 
 /// <summary>Referência de evidência sanitizada de um controle congelado (só metadados; nunca payload/segredo).</summary>

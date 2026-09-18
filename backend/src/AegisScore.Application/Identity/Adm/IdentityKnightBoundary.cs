@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Knight.Configuration;
 using AegisScore.Domain;
 
 namespace AegisScore.Application.Identity.Adm;
@@ -93,7 +94,11 @@ public static class IdentityKnightBoundary
     /// quando a semântica da tradução muda — é o que permite distinguir "o diretório mudou" de "nós passamos
     /// a interpretar o diretório de outro jeito".
     /// </summary>
-    public const string NormalizationVersion = "aegis-adm-identity-normalization-v1";
+    /// <remarks>
+    /// v2 [AEGIS-KNIGHT-MULTICLOUD-01]: a aquisição passa a carregar os objetos de CONFIGURAÇÃO (políticas de acesso
+    /// condicional, papéis privilegiados ativos) e os sinais de acesso condicional lidos papel a papel.
+    /// </remarks>
+    public const string NormalizationVersion = "aegis-adm-identity-normalization-v2";
 
     /// <summary>Versão do contrato canônico do ADM de identidade.</summary>
     public const string SchemaVersion = "aegis-adm-identity-v1";
@@ -138,6 +143,9 @@ public static class IdentityKnightBoundary
         KnightAffectedObjectKind.Group => IdentityEntityKind.Group,
         KnightAffectedObjectKind.Device => IdentityEntityKind.Device,
         KnightAffectedObjectKind.Unknown => IdentityEntityKind.Unknown,
+        // Políticas, papéis e configurações do tenant não são identidades: nunca entram nos conjuntos do ADM.
+        KnightAffectedObjectKind.Policy or KnightAffectedObjectKind.DirectoryRole
+            or KnightAffectedObjectKind.TenantSetting => IdentityEntityKind.Unknown,
         _ => IdentityEntityKind.Unknown,
     };
 
@@ -276,7 +284,9 @@ public static class IdentityKnightBoundary
             result.Detail,
             factsJson,
             capsJson,
-            sets);
+            sets,
+            // [AEGIS-KNIGHT-MULTICLOUD-01] Configuração observada pela MESMA coleta, como documento do contrato tipado.
+            DirectoryConfigurationDocuments.ToObserved(result.DirectoryConfiguration));
     }
 
     // ---- Aquisição persistida → contrato do avaliador -------------------------------------------------
@@ -321,6 +331,15 @@ public static class IdentityKnightBoundary
             })
             .ToList();
 
+        // [AEGIS-KNIGHT-MULTICLOUD-01] A configuração é relida DA AQUISIÇÃO. O desfecho das capacidades decide o que
+        // é "coletado, lista vazia" e o que é "não coletado" — a lista de objetos sozinha não distingue os dois.
+        bool Collected(KnightCapability c) =>
+            capabilities.Any(x => x.Capability == c && x.Outcome == KnightCapabilityOutcome.Collected);
+        var configuration = DirectoryConfigurationDocuments.FromObserved(
+            record.Configurations ?? Array.Empty<IdentityObservedConfiguration>(),
+            Collected(KnightCapability.ConditionalAccessPolicies),
+            Collected(KnightCapability.PrivilegedRoleInventory));
+
         return new KnightCollectionResult(
             record.Origin.Provider,
             record.State,
@@ -331,7 +350,8 @@ public static class IdentityKnightBoundary
             record.Detail,
             facts.IdentityRisk,
             facts.AuthenticationPosture,
-            affected);
+            affected,
+            configuration);
     }
 
     /// <summary>

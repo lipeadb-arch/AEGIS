@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Identity;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Knight.Configuration;
 using AegisScore.Domain;
 
 namespace AegisScore.Connectors.Microsoft.Knight;
@@ -151,11 +152,14 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         var affected = new List<KnightAffectedObjectEvidence>();
         var privileged = new PrivilegedAccumulator();
         var authPostureBox = new AuthenticationPostureBox();
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Configuração observada pela MESMA coleta: papéis privilegiados ativos (com o
+        // id de modelo que as políticas usam) e as políticas de acesso condicional normalizadas.
+        var configBox = new DirectoryConfigurationBox();
 
         await RunCapabilityAsync(KnightCapability.PrivilegedRoleInventory,
             new[] { KnightSignalKey.PrivilegedAccountsTotal, KnightSignalKey.PrivilegedAccountsWithMailbox,
                     KnightSignalKey.StalePrivilegedAccounts, KnightSignalKey.ExternalMembersInPrivilegedRoles },
-            () => CollectPrivilegedRolesAsync(token, cfg, privileged, obs, affected, now, ct), obs, caps);
+            () => CollectPrivilegedRolesAsync(token, cfg, privileged, obs, affected, configBox, now, ct), obs, caps);
 
         await RunCapabilityAsync(KnightCapability.MfaRegistration,
             new[] { KnightSignalKey.MfaRegistrationCoveragePercent, KnightSignalKey.PrivilegedAccountsWithoutMfa },
@@ -166,8 +170,8 @@ public sealed class EntraIdKnightCollector : IKnightCollector
             () => CollectGuestsAsync(token, cfg, obs, affected, now, ct), obs, caps);
 
         await RunCapabilityAsync(KnightCapability.ConditionalAccessPolicies,
-            new[] { KnightSignalKey.LegacyAuthenticationBlocked, KnightSignalKey.AdminMfaPolicyEnforced },
-            () => CollectConditionalAccessAsync(token, cfg, obs, ct), obs, caps);
+            new[] { KnightSignalKey.LegacyAuthenticationBlocked, KnightSignalKey.PrivilegedRolesWithoutMfaPolicy, KnightSignalKey.EnforcedMfaPolicies },
+            () => CollectConditionalAccessAsync(token, cfg, obs, configBox, ct), obs, caps);
 
         await RunCapabilityAsync(KnightCapability.SecurityBaseline,
             new[] { KnightSignalKey.SecurityDefaultsEnabled },
@@ -204,7 +208,8 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         var runState = DeriveState(caps);
         return new KnightCollectionResult(
             Source, runState, Label, facts, caps, now, DescribeState(runState),
-            identityRisk, authPostureBox.Value, affected);
+            identityRisk, authPostureBox.Value, affected,
+            new KnightDirectoryConfiguration(configBox.Policies, configBox.Roles));
     }
 
     private async Task RunCapabilityAsync(
@@ -263,15 +268,21 @@ public sealed class EntraIdKnightCollector : IKnightCollector
 
     private async Task CollectPrivilegedRolesAsync(
         string token, KnightEntraIdConfiguration cfg, PrivilegedAccumulator acc, List<KnightObservation> obs,
-        List<KnightAffectedObjectEvidence> affected, DateTimeOffset now, CancellationToken ct)
+        List<KnightAffectedObjectEvidence> affected, DirectoryConfigurationBox configBox, DateTimeOffset now, CancellationToken ct)
     {
         var members = new Dictionary<string, MemberInfo>(StringComparer.OrdinalIgnoreCase);
+        var roles = new List<DirectoryRoleConfiguration>();
 
-        await foreach (var role in _graph.GetPagedAsync(token, cfg, "directoryRoles?$select=id,displayName", ct))
+        // [AEGIS-KNIGHT-MULTICLOUD-01] roleTemplateId entra no $select da MESMA consulta (Directory.Read.All): é o
+        // identificador que as políticas de acesso condicional usam para mirar papéis.
+        await foreach (var role in _graph.GetPagedAsync(token, cfg, "directoryRoles?$select=id,displayName,roleTemplateId", ct))
         {
             var roleId = Str(role, "id");
             if (string.IsNullOrEmpty(roleId)) continue;
             var roleName = Str(role, "displayName");
+            var templateId = Str(role, "roleTemplateId") ?? roleId;
+            var roleMemberCount = 0;
+            var roleUserIds = new List<string>();
             // [AEGIS-MVP-PRODUCT-02] O $select ganhou displayName/userPrincipalName na MESMA consulta já
             // autorizada por Directory.Read.All — nenhuma chamada por usuário e nenhuma permissão nova. São
             // campos que o próprio endpoint de membros devolve; para objetos que não são pessoa (aplicação,
@@ -282,6 +293,9 @@ public sealed class EntraIdKnightCollector : IKnightCollector
                 var id = Str(m, "id");
                 if (string.IsNullOrEmpty(id)) continue;
 
+                roleMemberCount++;
+                if (ClassifyMember(m) == MemberKind.User) roleUserIds.Add(id);
+
                 // Deduplicação por ID do objeto — a MESMA regra que produz a contagem. Um objeto em vários
                 // papéis é UM afetado, com os papéis acumulados (nunca uma linha por papel).
                 if (members.TryGetValue(id, out var existing))
@@ -291,14 +305,18 @@ public sealed class EntraIdKnightCollector : IKnightCollector
                     continue;
                 }
 
-                var roles = new List<string>();
-                if (!string.IsNullOrWhiteSpace(roleName)) roles.Add(roleName!);
+                var memberRoles = new List<string>();
+                if (!string.IsNullOrWhiteSpace(roleName)) memberRoles.Add(roleName!);
                 members[id] = new MemberInfo(
                     ClassifyMember(m), Str(m, "userType"), LastSignIn(m),
-                    Str(m, "displayName"), Str(m, "userPrincipalName"), roles);
+                    Str(m, "displayName"), Str(m, "userPrincipalName"), memberRoles);
             }
+
+            roles.Add(new DirectoryRoleConfiguration(templateId, roleName, roleMemberCount,
+                roleUserIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList()));
         }
 
+        configBox.Roles = roles;
         acc.Collected = true;
         acc.PrivilegedUsers = members
             .Where(kv => kv.Value.Kind == MemberKind.User)
@@ -528,39 +546,80 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         };
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Lê as políticas de acesso condicional e as NORMALIZA sem interpretá-las
+    /// (estado, alvos, aplicações, condições, concessão). A leitura dos sinais é do analisador puro — o mesmo
+    /// que a avaliação usa para mostrar, política a política, o que sustentou o veredito.
+    /// </summary>
     private async Task CollectConditionalAccessAsync(
-        string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs, CancellationToken ct)
+        string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs, DirectoryConfigurationBox configBox,
+        CancellationToken ct)
     {
-        var legacyBlocked = false;
-        var adminMfa = false;
+        var policies = new List<ConditionalAccessPolicyConfiguration>();
         await foreach (var p in _graph.GetPagedAsync(token, cfg, "identity/conditionalAccess/policies", ct))
         {
-            if (!string.Equals(Str(p, "state"), "enabled", StringComparison.OrdinalIgnoreCase)) continue;
-
-            var controls = BuiltInControls(p);
-            var cond = Obj(p, "conditions");
-            var users = Obj(cond, "users");
-            var apps = Obj(cond, "applications");
-
-            var appliesAllApps = ArrayStrings(apps, "includeApplications")
-                .Any(a => a.Equals("All", StringComparison.OrdinalIgnoreCase));
-            var appliesAllUsers = ArrayStrings(users, "includeUsers")
-                .Any(u => u.Equals("All", StringComparison.OrdinalIgnoreCase));
-            var hasExclusions = ArrayStrings(users, "excludeUsers").Count > 0
-                || ArrayStrings(users, "excludeGroups").Count > 0
-                || ArrayStrings(users, "excludeRoles").Count > 0;
-            var targetsLegacy = ArrayStrings(cond, "clientAppTypes").Any(c =>
-                c.Equals("exchangeActiveSync", StringComparison.OrdinalIgnoreCase) || c.Equals("other", StringComparison.OrdinalIgnoreCase));
-
-            if (targetsLegacy && controls.Contains("block") && appliesAllApps && appliesAllUsers && !hasExclusions)
-                legacyBlocked = true;
-
-            var requiresMfa = controls.Contains("mfa");
-            if (requiresMfa && appliesAllUsers && appliesAllApps && !hasExclusions)
-                adminMfa = true;
+            var normalized = NormalizePolicy(p);
+            if (normalized is not null) policies.Add(normalized);
         }
-        obs.Add(KnightObservation.OfFlag(KnightSignalKey.LegacyAuthenticationBlocked, legacyBlocked));
-        obs.Add(KnightObservation.OfFlag(KnightSignalKey.AdminMfaPolicyEnforced, adminMfa));
+
+        configBox.Policies = policies;
+        var analysis = ConditionalAccessAnalyzer.Analyze(new KnightDirectoryConfiguration(policies, configBox.Roles));
+        obs.AddRange(ConditionalAccessAnalyzer.ToObservations(analysis, null));
+    }
+
+    /// <summary>Tradução de UMA política do Graph para o contrato normalizado. Sem id → descartada.</summary>
+    internal static ConditionalAccessPolicyConfiguration? NormalizePolicy(JsonElement p)
+    {
+        var id = Str(p, "id");
+        if (string.IsNullOrWhiteSpace(id)) return null;
+
+        var rawState = Str(p, "state");
+        var state = rawState?.ToLowerInvariant() switch
+        {
+            "enabled" => ConditionalAccessPolicyState.Enabled,
+            "disabled" => ConditionalAccessPolicyState.Disabled,
+            "enabledforreportingbutnotenforced" => ConditionalAccessPolicyState.ReportOnly,
+            _ => ConditionalAccessPolicyState.Unknown,
+        };
+
+        var cond = Obj(p, "conditions");
+        var users = Obj(cond, "users");
+        var apps = Obj(cond, "applications");
+        var grant = Obj(p, "grantControls");
+        var strength = Obj(grant, "authenticationStrength");
+
+        var platforms = Obj(cond, "platforms");
+        var hasPlatform = platforms.ValueKind == JsonValueKind.Object
+            && (!ArrayStrings(platforms, "includePlatforms").Any(x => x.Equals("all", StringComparison.OrdinalIgnoreCase))
+                || ArrayStrings(platforms, "excludePlatforms").Count > 0);
+
+        var locations = Obj(cond, "locations");
+        var hasLocation = locations.ValueKind == JsonValueKind.Object
+            && (!ArrayStrings(locations, "includeLocations").Any(x => x.Equals("All", StringComparison.OrdinalIgnoreCase))
+                || ArrayStrings(locations, "excludeLocations").Count > 0);
+
+        var devices = Obj(cond, "devices");
+        var hasDeviceFilter = devices.ValueKind == JsonValueKind.Object
+            && Obj(devices, "deviceFilter").ValueKind == JsonValueKind.Object;
+
+        return new ConditionalAccessPolicyConfiguration(
+            id!, Str(p, "displayName"), state, rawState,
+            ArrayStrings(users, "includeUsers"), ArrayStrings(users, "excludeUsers"),
+            ArrayStrings(users, "includeGroups"), ArrayStrings(users, "excludeGroups"),
+            ArrayStrings(users, "includeRoles"), ArrayStrings(users, "excludeRoles"),
+            Obj(users, "includeGuestsOrExternalUsers").ValueKind == JsonValueKind.Object,
+            Obj(users, "excludeGuestsOrExternalUsers").ValueKind == JsonValueKind.Object,
+            ArrayStrings(apps, "includeApplications"), ArrayStrings(apps, "excludeApplications"),
+            ArrayStrings(apps, "includeUserActions"), ArrayStrings(apps, "includeAuthenticationContextClassReferences"),
+            ArrayStrings(cond, "clientAppTypes"),
+            hasPlatform, hasLocation,
+            ArrayStrings(cond, "signInRiskLevels").Count > 0,
+            ArrayStrings(cond, "userRiskLevels").Count > 0,
+            hasDeviceFilter,
+            Str(grant, "operator"),
+            ArrayStrings(grant, "builtInControls"),
+            strength.ValueKind == JsonValueKind.Object ? Str(strength, "id") : null,
+            strength.ValueKind == JsonValueKind.Object ? Str(strength, "displayName") : null);
     }
 
     private async Task CollectSecurityDefaultsAsync(
@@ -885,6 +944,16 @@ public sealed class EntraIdKnightCollector : IKnightCollector
     private sealed class AuthenticationPostureBox
     {
         public IdentityAuthenticationPosture? Value { get; set; }
+    }
+
+    /// <summary>
+    /// Configuração observada, preenchida SÓ pelas capacidades que concluíram: <c>null</c> significa "não
+    /// coletado", distinto de lista vazia.
+    /// </summary>
+    private sealed class DirectoryConfigurationBox
+    {
+        public IReadOnlyList<DirectoryRoleConfiguration>? Roles { get; set; }
+        public IReadOnlyList<ConditionalAccessPolicyConfiguration>? Policies { get; set; }
     }
 
     private static KnightSourceState DeriveState(IReadOnlyList<KnightCapabilityStatus> caps)

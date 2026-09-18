@@ -138,12 +138,23 @@ public class KnightAssessmentsController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = KnightAffectedObjectsPage.DefaultPageSize,
         [FromQuery] string? search = null,
+        [FromQuery] string? relation = null,
         CancellationToken ct = default)
     {
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
 
-        var result = await _service.GetAffectedObjectsAsync(runId, indicatorId, page, pageSize, search, ct);
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Padrão = afetados (contrato anterior preservado); "evidence" lista a
+        // configuração que sustentou o veredito.
+        var rel = (relation ?? "").Trim().ToLowerInvariant() switch
+        {
+            "" or "affected" => (KnightObjectRelation?)KnightObjectRelation.Affected,
+            "evidence" => KnightObjectRelation.Evidence,
+            _ => null,
+        };
+        if (rel is null) return BadRequest($"Relação desconhecida: '{relation}'. Use 'affected' ou 'evidence'.");
+
+        var result = await _service.GetAffectedObjectsAsync(runId, indicatorId, page, pageSize, search, ct, rel.Value);
         if (result is null) return NotFound();
 
         return Ok(new KnightAffectedObjectsDto(
@@ -156,9 +167,27 @@ public class KnightAssessmentsController : ControllerBase
             result.Page,
             result.PageSize,
             result.Items.Select(o => new KnightAffectedObjectDto(
-                o.ExternalId, o.Kind.ToString(), o.DisplayName, o.UserPrincipalName, o.Roles, o.Detail)).ToList(),
+                o.ExternalId, o.Kind.ToString(), o.DisplayName, o.UserPrincipalName, o.Roles, o.Detail,
+                o.Relation.ToString(), o.ObservedConfiguration)).ToList(),
             result.Limitation,
             result.CollectedAt));
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Resumo dos objetos afetados de UMA avaliação: ocorrências (objeto × controle),
+    /// objetos únicos e os que mais se repetem entre controles expostos. Somente leitura; 404 fora do tenant.
+    /// </summary>
+    [HttpGet("{runId:guid}/affected-summary")]
+    public async Task<ActionResult<KnightAffectedSummaryDto>> GetAffectedSummary(Guid runId, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        var s = await _service.GetAffectedSummaryAsync(runId, ct);
+        if (s is null) return NotFound();
+        return Ok(new KnightAffectedSummaryDto(
+            s.RunId, s.ExposedControls, s.Occurrences, s.UniqueObjects, s.Complete, s.IncompleteIndicatorIds,
+            s.Top.Select(t => new KnightAffectedSummaryItemDto(
+                t.ExternalId, t.Kind.ToString(), t.DisplayName, t.UserPrincipalName, t.ControlCount, t.IndicatorIds)).ToList()));
     }
 
     // ---- Mapeamento ----------------------------------------------------------------------------------
@@ -218,7 +247,15 @@ public class KnightAssessmentsController : ControllerBase
         i.NotEvaluatedReason,
         i.HasAffectedDetail,
         i.AffectedDetailComplete,
-        i.AffectedDetailLimitation);
+        i.AffectedDetailLimitation,
+        i.EvidenceObjectCount,
+        i.Presentation is null ? null : new KnightControlPresentationDto(
+            i.Presentation.Domain, i.Presentation.DomainLabel, i.Presentation.Service, i.Presentation.Provider,
+            i.Presentation.Description, i.Presentation.Rationale, i.Presentation.ExpectedConfiguration,
+            i.Presentation.DoesNotProve, i.Presentation.Criterion,
+            i.Presentation.References.Select(r => new KnightControlReferenceDto(r.Framework, r.Version, r.Code, r.Url)).ToList(),
+            i.Presentation.RequiredCapabilities, i.Presentation.Weight, i.Presentation.Factor,
+            i.Presentation.AchievedPoints, i.Presentation.PossiblePoints));
 
     private static KnightAdvisoryDto ToDto(KnightAdvisory ad) => new(
         ad.ExecutiveSummary,

@@ -67,6 +67,21 @@ public enum IdentityEntityKind
 }
 
 /// <summary>
+/// [AEGIS-KNIGHT-MULTICLOUD-01] Natureza de um OBJETO DE CONFIGURAÇÃO observado numa aquisição. É um eixo
+/// separado de <see cref="IdentityEntityKind"/> de propósito: uma política de acesso condicional ou um papel de
+/// diretório não é uma identidade, e tratá-lo como "usuário" produziria recomendações impossíveis. Novos
+/// provedores/serviços (Microsoft 365, Azure) acrescentam membros aqui, sem tocar os existentes.
+/// </summary>
+public enum ConfigurationObjectKind
+{
+    /// <summary>Política de acesso condicional do Microsoft Entra ID.</summary>
+    ConditionalAccessPolicy = 0,
+
+    /// <summary>Papel de diretório privilegiado ATIVO (com membros) — alvo da exigência de MFA administrativa.</summary>
+    DirectoryRole = 1,
+}
+
+/// <summary>
 /// CONJUNTO observado de uma aquisição — a população específica à qual a observação pertence. O escopo é
 /// fechado de propósito: são exatamente os conjuntos que a coleta atual do Entra já produz, sem uma única
 /// chamada nova ao diretório.
@@ -217,6 +232,9 @@ public class IdentityAcquisition : Entity, ITenantOwned
 
     /// <summary>Objetos observados nesta aquisição.</summary>
     public ICollection<IdentityEntityObservation> Observations { get; set; } = new List<IdentityEntityObservation>();
+
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Objetos de CONFIGURAÇÃO observados nesta aquisição (políticas, papéis).</summary>
+    public ICollection<IdentityConfigurationObservation> Configurations { get; set; } = new List<IdentityConfigurationObservation>();
 
     /// <summary>
     /// [AEGIS-ADM-02] Instante em que o DETALHE desta aquisição (as observações) foi removido pela retenção
@@ -414,4 +432,42 @@ public class IdentityObservationSetState : Entity, ITenantOwned
 
     /// <summary>O que exatamente ficou de fora ou não pôde ser lido (sanitizado, sem segredo).</summary>
     public string? Limitation { get; set; }
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-MULTICLOUD-01] Um OBJETO DE CONFIGURAÇÃO como foi observado por UMA aquisição — a política de
+/// acesso condicional, o papel privilegiado ativo. É EVIDÊNCIA, com as mesmas garantias das observações de
+/// identidade: pertence à aquisição (conector, namespace, instante e versão de normalização vêm dela), não é
+/// reescrito depois de gravado e expira junto com o detalhe da aquisição na retenção operacional.
+///
+/// A configuração é guardada como o documento de um CONTRATO TIPADO e versionado
+/// (<see cref="SchemaVersion"/>), não como JSON livre: a leitura só interpreta os contratos que conhece.
+///
+/// Chave natural <c>(TenantId, AcquisitionId, Kind, ExternalId)</c>: reprocessar a mesma aquisição não duplica.
+/// </summary>
+public class IdentityConfigurationObservation : Entity, ITenantOwned
+{
+    /// <summary>Carimbado no SaveChanges (fail-closed) — nunca confiar em valor vindo do cliente.</summary>
+    public Guid TenantId { get; set; }
+
+    /// <summary>Aquisição que observou — de onde vêm conector, namespace, instante e versão de normalização.</summary>
+    public Guid AcquisitionId { get; set; }
+    public IdentityAcquisition? Acquisition { get; set; }
+
+    public ConfigurationObjectKind Kind { get; set; }
+
+    /// <summary>Identificador do objeto NA FONTE (id da política; id de modelo do papel).</summary>
+    public string ExternalId { get; set; } = "";
+
+    /// <summary>Nome COMO observado nesta aquisição. Ausente permanece ausente.</summary>
+    public string? DisplayName { get; set; }
+
+    /// <summary>Nome e versão do contrato de normalização do documento abaixo.</summary>
+    public string SchemaVersion { get; set; } = "";
+
+    /// <summary>Documento do contrato tipado (configuração observada, sem segredo).</summary>
+    public string ConfigurationJson { get; set; } = "{}";
+
+    /// <summary>Instante da aquisição, denormalizado para leitura.</summary>
+    public DateTimeOffset ObservedAt { get; set; }
 }

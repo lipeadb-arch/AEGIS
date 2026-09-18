@@ -149,6 +149,19 @@ public sealed record IdentityObservedSet(
 }
 
 /// <summary>
+/// [AEGIS-KNIGHT-MULTICLOUD-01] UM objeto de CONFIGURAÇÃO observado por uma aquisição (política, papel), no
+/// vocabulário do ADM: tipo explícito, identificador na fonte, nome observado e o documento do CONTRATO tipado
+/// que o normalizou (nome e versão em <paramref name="SchemaVersion"/>). O ADM não interpreta a configuração —
+/// guarda o que foi observado para que a avaliação e o relatório possam mostrar o que sustentou o veredito.
+/// </summary>
+public sealed record IdentityObservedConfiguration(
+    ConfigurationObjectKind Kind,
+    string ExternalId,
+    string? DisplayName,
+    string SchemaVersion,
+    string ConfigurationJson);
+
+/// <summary>
 /// A ORIGEM de uma aquisição, resolvida a partir da configuração EFETIVAMENTE usada na coleta. O namespace do
 /// diretório vem da credencial resolvida, não de um rótulo escolhido pela UI: é ele que delimita o espaço de
 /// identificadores e impede que trocar a configuração para outro diretório reaproveite vínculos antigos.
@@ -180,7 +193,12 @@ public sealed record IdentityAcquisitionRequest(
     string? Detail,
     string FactsJson,
     string CapabilitiesJson,
-    IReadOnlyList<IdentityObservedSet> Sets);
+    IReadOnlyList<IdentityObservedSet> Sets,
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Objetos de configuração observados (políticas, papéis). Vazio quando a fonte
+    /// não os produz — o conteúdo e o fingerprint das aquisições anteriores permanecem idênticos.
+    /// </summary>
+    IReadOnlyList<IdentityObservedConfiguration>? Configurations = null);
 
 /// <summary>
 /// A aquisição COMO FOI PERSISTIDA — o que os consumidores leem. Devolvida pela releitura do registro gravado,
@@ -207,7 +225,9 @@ public sealed record IdentityAcquisitionRecord(
     string CapabilitiesJson,
     string ContentFingerprint,
     IReadOnlyList<IdentityObservedSetRecord> Sets,
-    DateTimeOffset? DetailRetiredAt = null);
+    DateTimeOffset? DetailRetiredAt = null,
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Objetos de configuração COMO persistidos nesta aquisição.</summary>
+    IReadOnlyList<IdentityObservedConfiguration>? Configurations = null);
 
 /// <summary>Um conjunto como foi persistido, com os objetos preservados e a entidade canônica de cada um.</summary>
 public sealed record IdentityObservedSetRecord(
