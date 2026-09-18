@@ -3,31 +3,27 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { map } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { ScoreGaugeComponent } from '../components/scoring/score-gauge.component';
 import {
+  EMPTY_FILTERS,
+  KnightAffectedSummary,
   KnightAssessment,
+  KnightControlFilters,
   KnightIndicator,
+  isFinding,
   KnightLatest,
   KnightSourceType,
   KnightSources,
   KnightUnfinishedRun,
-  capabilityLabel,
-  capabilityOutcomeLabel,
-  categoryLabel,
   connectionBadgeLabel,
   connectionStateOf,
-  findingSituation,
-  findingTitle,
   isProblemState,
-  problemCapabilities,
-  severityLabel,
-  sortIndicatorsByRisk,
   sourceStateLabel,
   sourceTypeLabel,
-  statusLabel,
 } from '../models/knight.models';
 import { IdentityRiskPanelComponent } from '../components/identity/identity-risk-panel.component';
 import { KnightFindingDetailComponent } from '../components/knight/finding-detail.component';
+import { KnightOverviewComponent } from '../components/knight/knight-overview.component';
+import { KnightControlsComponent } from '../components/knight/knight-controls.component';
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
 import { IdentityRiskService } from '../services/identity-risk.service';
 import { KnightRunTimeoutError, KnightService } from '../services/knight.service';
@@ -42,37 +38,43 @@ import {
 } from '../models/remediation.models';
 import { RemediationService } from '../services/remediation.service';
 import { PostureHistoryService } from '../services/posture-history.service';
+import { PostureExportFormat } from '../models/posture-history.models';
 
 /**
- * AegisKnightComponent — SMART. Tela MULTICOLETOR do AEGIS KNIGHT.
+ * AegisKnightComponent — SMART. Assessment de postura do AEGIS KNIGHT.
  *
- * Ao abrir, lê as FONTES disponíveis e o ÚLTIMO assessment (somente leitura — NÃO executa análise). O botão
- * "Executar assessment demo" roda a fonte Demo (sintética); quando uma fonte real (Entra ID) está configurada,
- * um botão dedicado dispara a COLETA REAL. A tela identifica a fonte usada e o estado da coleta (concluída,
- * parcial, permissão insuficiente…), lista as limitações de cobertura e nunca confunde Demo com coleta real —
- * uma coleta real que falha mostra o estado real, jamais o resultado Demo.
+ * Ao abrir, lê as FONTES disponíveis e o ÚLTIMO assessment (somente leitura — NÃO executa análise). A coleta
+ * real nasce em Configurações → Integrações ("Sincronizar agora"); esta tela não a dispara. A demonstração
+ * sintética existe só em builds de desenvolvimento, fora da jornada normal.
+ *
+ * [AEGIS-KNIGHT-MULTICLOUD-01] Duas abas: "Visão geral" (nota, aprovação, cobertura, distribuição, prioridades,
+ * objetos e limitações — cada gráfico abre a lista filtrada) e "Controles e findings" (pesquisa e filtros
+ * combináveis + o detalhe do controle com o plano de ação). A aba e o controle aberto vivem no endereço.
  */
 @Component({
   selector: 'app-aegis-knight',
   standalone: true,
-  imports: [ScoreGaugeComponent, DatePipe, RouterLink, IdentityRiskPanelComponent, KnightFindingDetailComponent],
+  imports: [DatePipe, RouterLink, IdentityRiskPanelComponent, KnightFindingDetailComponent, KnightOverviewComponent, KnightControlsComponent],
   template: `
     <section class="page knight">
       <header class="page-head">
         <div class="titles">
-          <p class="page-eyebrow">Identidades</p>
+          <p class="page-eyebrow">Assessment de postura</p>
           <h1>
             AEGIS KNIGHT
             <span class="badge" [class]="badgeState()">{{ badgeLabel() }}</span>
           </h1>
           <p class="page-desc">
-            Avaliação determinística de exposição de identidade. Vereditos por regras; interpretação
-            assistida por IA.
+            Avaliação determinística das configurações de segurança dos provedores conectados: o que favorece
+            exposição, os objetos envolvidos e o que fazer. Vereditos por regras; interpretação assistida por IA.
           </p>
-          <p class="page-meta">Postura de identidade e exposição · multicoletor</p>
+          <p class="page-meta">
+            Cobertura atual: identidade (Microsoft Entra ID, Google Workspace) · a coleta é feita em Configurações → Integrações
+          </p>
         </div>
         <div class="page-actions">
           <a class="btn ghost" routerLink="/history">Histórico auditável</a>
+          <a class="btn ghost" routerLink="/settings/integrations">Integrações</a>
           <!-- [AEGIS-MVP-PRODUCT-03] Publica EXATAMENTE a avaliação aberta. Sem o runId, o servidor
                congelaria a mais recente — e o relatório sairia de uma coleta diferente da que está na tela. -->
           <!-- [AEGIS-KNIGHT-DURABLE-01] Só uma avaliação CONCLUÍDA é publicável — o servidor recusa as demais. -->
@@ -82,19 +84,6 @@ import { PostureHistoryService } from '../services/posture-history.service';
               {{ publishing() ? 'Publicando…' : 'Publicar relatório desta avaliação' }}
             </button>
             }
-          }
-          <button type="button" class="btn primary" (click)="runDemo()" [disabled]="busy()">
-            {{ running() ? 'Executando…' : 'Executar avaliação demo' }}
-          </button>
-          @if (entraConfigured()) {
-            <button type="button" class="btn real" (click)="runSource('MicrosoftEntraId')" [disabled]="busy()">
-              {{ running() ? 'Coletando…' : 'Coletar do Entra ID' }}
-            </button>
-          }
-          @if (googleConfigured()) {
-            <button type="button" class="btn real" (click)="runSource('GoogleWorkspace')" [disabled]="busy()">
-              {{ running() ? 'Coletando…' : 'Coletar do Google Workspace' }}
-            </button>
           }
         </div>
       </header>
@@ -118,8 +107,21 @@ import { PostureHistoryService } from '../services/posture-history.service';
         @if (publishNotice(); as pmsg) {
           <div class="banner pinned">
             <span>{{ pmsg }}</span>
+            <!-- [AEGIS-KNIGHT-MULTICLOUD-01] Os três arquivos saem da MESMA fotografia, completa (não um recorte). -->
+            @if (publishedId(); as snap) {
+              <span class="dl">
+                <button type="button" class="btn real" (click)="downloadReport(snap, 'html')" [disabled]="downloading() !== null">
+                  {{ downloading() === 'html' ? 'Baixando…' : 'Baixar relatório HTML' }}
+                </button>
+                <button type="button" class="btn ghost" (click)="downloadReport(snap, 'csv')" [disabled]="downloading() !== null">CSV</button>
+                <button type="button" class="btn ghost" (click)="downloadReport(snap, 'pdf')" [disabled]="downloading() !== null">PDF</button>
+              </span>
+            }
             <a class="btn ghost" routerLink="/history">Abrir histórico</a>
           </div>
+        }
+        @if (downloadError(); as derr) {
+          <div class="banner err"><span>{{ derr }}</span></div>
         }
 
         <!-- [AEGIS-KNIGHT-DURABLE-01] Uma execução cuja conclusão não foi registrada não é um resultado
@@ -224,156 +226,89 @@ import { PostureHistoryService } from '../services/posture-history.service';
             </p>
           }
 
-          @if (limitations().length) {
-            <div class="panel limits">
-              <h4>Limitações de coleta</h4>
-              <ul>
-                @for (c of limitations(); track c.capability) {
-                  <li><b>{{ capabilityLabel(c.capability) }}</b> — {{ capabilityOutcomeLabel(c.outcome) }}@if (c.detail) { · {{ c.detail }} }</li>
-                }
-              </ul>
-            </div>
-          }
-
-          <div class="grid">
-            <div class="panel summary">
-              @if (a.score !== null) {
-                <app-score-gauge [percent]="a.score" caption="AEGIS KNIGHT" />
-              } @else {
-                <div class="no-score"><span class="dash">—</span><span class="l">sem avaliação</span></div>
-              }
-              <!-- [AEGIS-MVP-PRODUCT-01] O número sozinho não se lê: a ESCALA e a COBERTURA vêm junto dele, e
-                   a frase abaixo resume, em linguagem clara, o que a avaliação de fato encontrou — sem
-                   inventar lista de afetados e sem misturar este score com o AEGIS Score geral. -->
-              <p class="score-note">
-                Escala 0–100 · cobertura {{ a.coverage }}% = indicadores aplicáveis que puderam ser avaliados
-                (os não aplicáveis ficam fora). Cobertura não é conformidade. Score do AEGIS KNIGHT, distinto do
-                AEGIS Score geral.
-              </p>
-              @if (unfinishedView()) {
-                <p class="score-lead">Valores registrados por uma execução não finalizada — não é uma avaliação concluída.</p>
-              }
-              <p class="score-lead">{{ summaryLine(a) }}</p>
-
-              <div class="meta">
-                <div class="mrow"><span class="k">Cobertura (avaliados / aplicáveis)</span><span class="v">{{ a.coverage }}%</span></div>
-                <div class="mrow"><span class="k">Catálogo</span><span class="v mono">{{ a.catalogVersion }}</span></div>
-                <div class="mrow"><span class="k">Fórmula</span><span class="v mono">{{ a.scoreFormulaVersion }}</span></div>
-              </div>
-
-              <div class="counts">
-                <div class="count ok"><span class="n">{{ a.counts.passed }}</span><span class="l">Conformes</span></div>
-                <div class="count fail" [class.hot]="a.counts.exposed > 0"><span class="n">{{ a.counts.exposed }}</span><span class="l">Expostos</span></div>
-                <div class="count comp"><span class="n">{{ a.counts.mitigated }}</span><span class="l">Mitigados</span></div>
-                <div class="count mute"><span class="n">{{ a.counts.notEvaluated }}</span><span class="l">Não avaliados</span></div>
-                <div class="count mute" [class.hot]="a.counts.error > 0"><span class="n">{{ a.counts.error }}</span><span class="l">Erros</span></div>
-              </div>
-            </div>
-
-            <div class="panel list">
-              <div class="hd">
-                <h3>Achados</h3>
-                <span class="hint">Veredito por regras determinísticas · expostos no topo · abra um achado para ver quem sustenta o resultado</span>
-              </div>
-              <ul class="findings">
-                @for (ind of sortedIndicators(); track ind.indicatorId) {
-                  <li>
-                    <button
-                      type="button"
-                      class="finding"
-                      [class.open]="selected() === ind.indicatorId"
-                      (click)="selectFinding(ind.indicatorId)"
-                      [attr.aria-expanded]="selected() === ind.indicatorId">
-                      <span class="f-title">
-                        <span class="tt">{{ findingTitle(ind) }}</span>
-                        <span class="sit">{{ findingSituation(ind) }}</span>
-                        <span class="code">{{ ind.indicatorId }}</span>
-                      </span>
-                      <span class="f-tags">
-                        <span class="sev" [class]="ind.severity">{{ severityLabel(ind.severity) }}</span>
-                        <span class="st" [class]="ind.status">{{ statusLabel(ind.status) }}</span>
-                      </span>
-                      <span class="f-affected">
-                        @if (ind.status === 'Exposed' || ind.status === 'Mitigated') {
-                          <b>{{ ind.affectedObjectCount }}</b><span class="l">afetado(s)</span>
-                        } @else {
-                          <span class="l">—</span>
-                        }
-                      </span>
-                    </button>
-                  </li>
-                }
-              </ul>
-            </div>
+          <div class="tabbar" role="tablist" aria-label="Seções da avaliação">
+            <button type="button" role="tab" id="knight-tab-overview" [class.on]="tab() === 'overview'"
+                    [attr.aria-selected]="tab() === 'overview'" [attr.tabindex]="tab() === 'overview' ? 0 : -1"
+                    (click)="setTab('overview')" (keydown)="tabKey($event)">Visão geral</button>
+            <button type="button" role="tab" id="knight-tab-controls" [class.on]="tab() === 'controls'"
+                    [attr.aria-selected]="tab() === 'controls'" [attr.tabindex]="tab() === 'controls' ? 0 : -1"
+                    (click)="setTab('controls')" (keydown)="tabKey($event)">
+              Controles e findings <span class="tab-count">{{ findingsCount() }}</span>
+            </button>
           </div>
 
-          <!-- Detalhe de UM achado (componente dedicado): resumo · afetados · evidência. -->
-          @if (selectedIndicator(); as ind) {
-            <app-knight-finding-detail
-              [assessment]="a"
-              [runFinalized]="!unfinishedView()"
-              [indicator]="ind"
-              [activePlan]="activePlan()"
-              [plan]="focusedPlan()"
-              [planState]="pinned()"
-              [focusPlan]="pinned().kind !== 'livre'"
-              (closed)="closeFinding()"
-              (planChanged)="onPlanChanged()"
-              (planRetry)="retryPinnedPlan()"
-              (planRelease)="dropPinnedPlan()" />
-          }
+          @if (tab() === 'overview') {
+            <div role="tabpanel" aria-labelledby="knight-tab-overview" class="tabpanel">
+              <app-knight-overview [assessment]="a" [summary]="summary()" [summaryState]="summaryState()"
+                                   (filter)="openControls($event)" (open)="openControl($event)" />
 
-          <!-- [AEGIS-MVP-PRODUCT-02] O painel abaixo lê o snapshot ATUAL da Evidence Fabric e diz isso por
-               conta própria — ele NÃO pertence à avaliação aberta acima. -->
-          <app-identity-risk-panel [projection]="riskProjection()" />
+              <!-- [AEGIS-MVP-PRODUCT-02] O painel abaixo lê o snapshot ATUAL da Evidence Fabric e diz isso por
+                   conta própria — ele NÃO pertence à avaliação aberta acima. -->
+              <app-identity-risk-panel [projection]="riskProjection()" />
 
-          <div class="panel ai">
-            <div class="hd">
-              <h3>Interpretação e priorização assistidas por IA</h3>
-              @if (unfinishedView()) {
-                <span class="src fallback">Execução não finalizada</span>
-              } @else {
-              <span class="src" [class.fallback]="!a.advisoryFromAi">
-                {{ a.advisoryFromAi ? 'Gerado por IA' : 'Fallback determinístico (IA indisponível)' }}
-              </span>
+              <div class="panel ai">
+                <div class="hd">
+                  <h3>Interpretação e priorização assistidas por IA</h3>
+                  @if (unfinishedView()) {
+                    <span class="src fallback">Execução não finalizada</span>
+                  } @else {
+                  <span class="src" [class.fallback]="!a.advisoryFromAi">
+                    {{ a.advisoryFromAi ? 'Gerado por IA' : 'Fallback determinístico (IA indisponível)' }}
+                  </span>
+                  }
+                </div>
+                <p class="muted ai-note">Consultiva: não altera nota, resultado, severidade nem mapeamento.</p>
+                @if (a.advisory; as ai) {
+                  <p class="summary-txt">{{ ai.executiveSummary }}</p>
+                  @if (ai.priorityRisks.length) {
+                    <div class="ai-block"><h4>Riscos prioritários</h4><ol>
+                      @for (r of ai.priorityRisks; track $index) {
+                        <li><b>{{ r.title }}</b> — {{ r.rationale }} <span class="ids">[{{ r.indicatorIds.join(', ') }}]</span></li>
+                      }
+                    </ol></div>
+                  }
+                  @if (ai.recommendedActions.length) {
+                    <div class="ai-block"><h4>Ações recomendadas</h4><ol>
+                      @for (act of ai.recommendedActions; track act.order) {
+                        <li>{{ act.action }} <span class="ids">[{{ act.indicatorIds.join(', ') }}]</span></li>
+                      }
+                    </ol></div>
+                  }
+                  @if (ai.collectionGaps.length) {
+                    <div class="ai-block"><h4>Lacunas de coleta</h4><ul>
+                      @for (g of ai.collectionGaps; track $index) { <li>{{ g }}</li> }
+                    </ul></div>
+                  }
+                } @else {
+                  <p class="summary-txt muted">
+                    {{ unfinishedView()
+                      ? 'Nenhuma narrativa consultiva foi registrada: a execução não foi finalizada.'
+                      : 'Sem interpretação disponível para esta avaliação.' }}
+                  </p>
+                }
+              </div>
+            </div>
+          } @else {
+            <div role="tabpanel" aria-labelledby="knight-tab-controls" class="tabpanel ctl-layout">
+              <app-knight-controls [assessment]="a" [filters]="filters()" [selected]="selected()"
+                                   (filtersChange)="setFilters($event)" (select)="selectFinding($event)" />
+              <!-- Detalhe de UM controle (componente dedicado): o problema, por que importa, onde, o que fazer. -->
+              @if (selectedIndicator(); as ind) {
+                <app-knight-finding-detail
+                  [assessment]="a"
+                  [runFinalized]="!unfinishedView()"
+                  [indicator]="ind"
+                  [activePlan]="activePlan()"
+                  [plan]="focusedPlan()"
+                  [planState]="pinned()"
+                  [focusPlan]="pinned().kind !== 'livre'"
+                  (closed)="closeFinding()"
+                  (planChanged)="onPlanChanged()"
+                  (planRetry)="retryPinnedPlan()"
+                  (planRelease)="dropPinnedPlan()" />
               }
             </div>
-            @if (a.advisory; as ai) {
-              <p class="summary-txt">{{ ai.executiveSummary }}</p>
-              @if (ai.priorityRisks.length) {
-                <div class="ai-block"><h4>Riscos prioritários</h4><ol>
-                  @for (r of ai.priorityRisks; track $index) {
-                    <li><b>{{ r.title }}</b> — {{ r.rationale }} <span class="ids">[{{ r.indicatorIds.join(', ') }}]</span></li>
-                  }
-                </ol></div>
-              }
-              @if (ai.recommendedActions.length) {
-                <div class="ai-block"><h4>Ações recomendadas</h4><ol>
-                  @for (act of ai.recommendedActions; track act.order) {
-                    <li>{{ act.action }} <span class="ids">[{{ act.indicatorIds.join(', ') }}]</span></li>
-                  }
-                </ol></div>
-              }
-              @if (ai.correlations.length) {
-                <div class="ai-block"><h4>Correlações</h4><ul>
-                  @for (c of ai.correlations; track $index) {
-                    <li>{{ c.description }} <span class="ids">[{{ c.indicatorIds.join(', ') }}]</span></li>
-                  }
-                </ul></div>
-              }
-              @if (ai.collectionGaps.length) {
-                <div class="ai-block"><h4>Lacunas de coleta</h4><ul>
-                  @for (g of ai.collectionGaps; track $index) { <li>{{ g }}</li> }
-                </ul></div>
-              }
-            } @else {
-              <p class="summary-txt muted">
-                {{ unfinishedView()
-                  ? 'Nenhuma narrativa consultiva foi registrada: a execução não foi finalizada.'
-                  : 'Sem interpretação disponível para esta avaliação.' }}
-              </p>
-            }
-          </div>
+          }
         } @else {
           @if (linkNotice(); as msg) {
             <!-- [AEGIS-MVP-PRODUCT-02] O endereço indicava uma avaliação específica que NÃO pôde ser aberta.
@@ -392,8 +327,8 @@ import { PostureHistoryService } from '../services/posture-history.service';
           <div class="panel state empty">
             <b>{{ unfinishedAttempt() ? 'Nenhuma avaliação concluída.' : 'Nenhuma avaliação executada ainda.' }}</b>
             <span>
-              Este módulo é MULTICOLETOR. Em <code>example.com</code> use a DEMONSTRAÇÃO; conecte o
-              Microsoft Entra ID (somente leitura) para executar uma coleta real.
+              A avaliação nasce da sincronização de uma fonte conectada. Configure o conector e use
+              “Sincronizar agora” em Configurações → Integrações.
             </span>
             @if (entraConfigured()) {
               <span>Fonte real configurada: <b>Microsoft Entra ID</b>.</span>
@@ -402,26 +337,26 @@ import { PostureHistoryService } from '../services/posture-history.service';
               <span>Fonte real configurada: <b>Google Workspace</b>.</span>
             }
             @if (!entraConfigured() && !googleConfigured()) {
-              <span>Nenhuma fonte real configurada — apenas a demonstração está disponível.</span>
+              <span>Nenhuma fonte real configurada ainda.</span>
             }
             <div class="empty-actions">
-              <button type="button" class="btn primary" (click)="runDemo()" [disabled]="busy()">
-                {{ running() ? 'Executando…' : 'Executar avaliação demo' }}
-              </button>
-              @if (entraConfigured()) {
-                <button type="button" class="btn real" (click)="runSource('MicrosoftEntraId')" [disabled]="busy()">
-                  {{ running() ? 'Coletando…' : 'Coletar do Entra ID' }}
-                </button>
-              }
-              @if (googleConfigured()) {
-                <button type="button" class="btn real" (click)="runSource('GoogleWorkspace')" [disabled]="busy()">
-                  {{ running() ? 'Coletando…' : 'Coletar do Google Workspace' }}
-                </button>
-              }
+              <a class="btn primary" routerLink="/settings/integrations">Ir para Integrações</a>
             </div>
           </div>
           }
         }
+      }
+
+      <!-- Demonstração sintética: só em builds de DESENVOLVIMENTO, fora da jornada normal. A build de produção não
+           a oferece — a avaliação nasce da sincronização em Integrações. -->
+      @if (devTools) {
+        <details class="dev-tools">
+          <summary>Ferramentas de desenvolvimento</summary>
+          <p>Demonstração com dados 100% sintéticos (demo.example.com). Não aparece na build de produção.</p>
+          <button type="button" class="btn ghost" (click)="runDemo()" [disabled]="busy()">
+            {{ running() ? 'Executando…' : 'Executar avaliação demo' }}
+          </button>
+        </details>
       }
     </section>
   `,
@@ -534,163 +469,13 @@ import { PostureHistoryService } from '../services/posture-history.service';
         color: var(--text);
       }
 
-      .limits h4 {
-        margin: 0 0 var(--sp-2);
-        font-size: var(--fs-caps);
-        font-weight: 600;
-        letter-spacing: var(--tracking-caps);
-        text-transform: uppercase;
-        color: var(--amber);
-      }
-      .limits ul {
-        margin: 0;
-        padding-left: 18px;
-      }
-      .limits li {
-        font-size: var(--fs-sm);
-        line-height: var(--lh);
-        color: var(--text-2);
-      }
-      .limits li b {
-        color: var(--text);
-      }
-
-      /* Resumo (score) + lista de achados. Em 1100 px ou menos, empilham e cada um usa a largura inteira. */
-      .grid {
-        display: grid;
-        grid-template-columns: 320px minmax(0, 1fr);
-        gap: var(--sp-4);
-        align-items: start;
-      }
-      .summary {
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-      }
-      .no-score {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: var(--sp-1);
-        padding: var(--sp-6) 0;
-      }
-      .no-score .dash {
-        font-size: 44px;
-        color: var(--muted);
-      }
-      .no-score .l {
-        font-size: var(--fs-caps);
-        font-weight: 600;
-        letter-spacing: var(--tracking-caps);
-        text-transform: uppercase;
-        color: var(--muted);
-      }
-      .score-note {
-        font-size: var(--fs-meta);
-        line-height: var(--lh);
-        text-align: center;
-        color: var(--muted);
-      }
-      /* Leitura em uma frase — o que a avaliação encontrou, antes das contagens. */
-      .score-lead {
-        font-size: var(--fs-sm);
-        line-height: 1.55;
-        text-align: center;
-      }
-      .meta {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        padding-top: var(--sp-3);
-        border-top: 1px solid var(--line);
-      }
-      .mrow {
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
-        font-size: var(--fs-meta);
-      }
-      .mrow .k {
-        color: var(--text-2);
-      }
-      .mrow .v.mono {
-        color: var(--cyan);
-      }
-      .counts {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: var(--sp-2);
-      }
-      .count {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        padding: 10px var(--sp-3);
-        border: 1px solid var(--line);
-        border-radius: var(--radius);
-        background: rgba(122, 145, 190, 0.04);
-      }
-      .count .n {
-        font-size: 22px;
-        font-weight: 700;
-      }
-      .count .l {
-        font-size: var(--fs-caps);
-        font-weight: 600;
-        letter-spacing: var(--tracking-caps);
-        text-transform: uppercase;
-        color: var(--muted);
-      }
-      .count.ok .n {
-        color: var(--cyan);
-      }
-      .count.comp .n {
-        color: var(--amber);
-      }
-      .count.fail.hot {
-        border-color: rgba(255, 45, 111, 0.45);
-        background: var(--tint-red);
-      }
-      .count.fail.hot .n,
-      .count.mute.hot .n {
-        color: var(--red-text);
-      }
-
-      .sev,
-      .st {
-        padding: 2px var(--sp-2);
-        border-radius: var(--radius-pill);
-        font-size: var(--fs-caps);
-        font-weight: 600;
-        white-space: nowrap;
-      }
-      .sev.Critical,
-      .st.Exposed {
-        color: var(--red-text);
-        background: rgba(255, 45, 111, 0.12);
-      }
-      .sev.High,
-      .st.Error {
-        color: #ff9a3d;
-        background: rgba(255, 154, 61, 0.12);
-      }
-      .sev.Medium,
-      .st.Mitigated {
-        color: var(--amber);
-        background: rgba(255, 176, 32, 0.12);
-      }
-      .sev.Low,
-      .st.Passed {
-        color: var(--cyan);
-        background: rgba(38, 224, 255, 0.1);
-      }
-      .sev.Informational,
-      .st.NotEvaluated,
-      .st.NotApplicable {
-        color: var(--text-2);
-        background: rgba(122, 145, 190, 0.12);
-      }
-
+      .tabpanel { display: flex; flex-direction: column; gap: var(--sp-4); margin-top: var(--sp-4); }
+      .ctl-layout > app-knight-finding-detail { display: block; }
+      .dl { display: inline-flex; flex-wrap: wrap; gap: var(--sp-2); }
+      .ai-note { margin: 0 0 var(--sp-3); font-size: var(--fs-meta); }
+      .dev-tools { margin-top: var(--sp-6); padding: var(--sp-3) var(--sp-4); border: 1px dashed var(--line-strong);
+        border-radius: var(--radius); color: var(--text-2); font-size: var(--fs-sm); }
+      .dev-tools summary { cursor: pointer; }
       .ai .src {
         padding: 3px 10px;
         border: 1px solid rgba(38, 224, 255, 0.4);
@@ -765,93 +550,6 @@ import { PostureHistoryService } from '../services/posture-history.service';
         margin-top: var(--sp-1);
       }
 
-      /* [AEGIS-MVP-PRODUCT-02] Lista compacta de achados (o detalhe tem componente e estilo próprios). */
-      .findings {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .finding {
-        display: grid;
-        grid-template-columns: 1fr auto auto;
-        gap: 14px;
-        align-items: center;
-        width: 100%;
-        padding: var(--sp-3) 14px;
-        border: 1px solid var(--line);
-        border-radius: var(--radius);
-        background: rgba(122, 145, 190, 0.04);
-        color: var(--text);
-        text-align: left;
-        cursor: pointer;
-        transition: border-color var(--ease), background var(--ease);
-      }
-      .finding:hover {
-        border-color: rgba(38, 224, 255, 0.35);
-      }
-      .finding:focus-visible {
-        outline: none;
-        box-shadow: var(--focus);
-      }
-      .finding.open {
-        border-color: var(--cyan);
-        background: var(--tint-cyan);
-      }
-      .finding .f-title {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-        min-width: 0;
-      }
-      .finding .tt {
-        font-size: var(--fs-body);
-        font-weight: 500;
-      }
-      .finding .sit {
-        font-size: var(--fs-meta);
-        line-height: 1.45;
-        color: var(--text-2);
-      }
-      .finding .f-tags {
-        display: flex;
-        align-items: center;
-        gap: var(--sp-2);
-      }
-      .finding .f-affected {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        min-width: 76px;
-      }
-      .finding .f-affected b {
-        font-size: var(--fs-panel);
-      }
-      .finding .code {
-        font-family: var(--mono);
-        font-size: var(--fs-caps);
-        color: var(--muted);
-      }
-      .finding .f-affected .l {
-        font-size: var(--fs-caps);
-        color: var(--muted);
-      }
-      @media (max-width: 1100px) {
-        .grid {
-          grid-template-columns: 1fr;
-        }
-      }
-      @media (max-width: 900px) {
-        .finding {
-          grid-template-columns: 1fr;
-          gap: var(--sp-2);
-        }
-        .finding .f-affected {
-          align-items: flex-start;
-        }
-      }
     `,
   ],
 })
@@ -914,40 +612,83 @@ export class AegisKnightComponent implements OnInit {
   readonly running = signal(false); // execução (demo ou real)
   readonly error = signal<string | null>(null);
 
-  protected readonly apiBase = environment.apiBase;
+  /** A demonstração sintética só existe em builds de desenvolvimento — nunca na jornada normal de produção. */
+  protected readonly devTools = !environment.production;
 
   // Helpers de apresentação (funções puras do modelo) expostos ao template.
-  protected readonly categoryLabel = categoryLabel;
-  protected readonly severityLabel = severityLabel;
-  protected readonly statusLabel = statusLabel;
   protected readonly sourceTypeLabel = sourceTypeLabel;
   protected readonly sourceStateLabel = sourceStateLabel;
-  protected readonly capabilityOutcomeLabel = capabilityOutcomeLabel;
-  protected readonly capabilityLabel = capabilityLabel;
   protected readonly isProblemState = isProblemState;
-  protected readonly findingTitle = findingTitle;
-  protected readonly findingSituation = findingSituation;
 
   readonly badgeState = computed(() => connectionStateOf(this.assessment()));
   readonly badgeLabel = computed(() => connectionBadgeLabel(this.badgeState()));
-  readonly sortedIndicators = computed(() => sortIndicatorsByRisk(this.assessment()?.indicators ?? []));
-  readonly limitations = computed(() => problemCapabilities(this.assessment()?.capabilities ?? []));
 
-  /**
-   * [AEGIS-MVP-PRODUCT-01] Uma frase que resume o que a avaliação ENCONTROU, derivada só das contagens que o
-   * backend já apurou. Não inventa lista de afetados, não estima nada e nunca transforma "não avaliado" em
-   * "conforme" — quando não há indicador avaliado, a frase diz exatamente isso.
-   */
-  summaryLine(a: KnightAssessment): string {
-    const c = a.counts;
-    const avaliados = c.passed + c.exposed + c.mitigated;
-    if (avaliados === 0) {
-      return 'Nenhum indicador de identidade pôde ser avaliado nesta coleta.';
+  // ---- [AEGIS-KNIGHT-MULTICLOUD-01] Abas, filtros e resumo de objetos afetados ----------------------
+  readonly tab = signal<'overview' | 'controls'>('overview');
+  readonly filters = signal<KnightControlFilters>(EMPTY_FILTERS);
+  /** Findings = reprovados + mitigados (atenção) — o número na aba. */
+  readonly findingsCount = computed(() => (this.assessment()?.indicators ?? []).filter(isFinding).length);
+  /** Ocorrências × objetos únicos DESTA avaliação — lido do servidor, nunca estimado na tela. */
+  readonly summary = signal<KnightAffectedSummary | null>(null);
+  readonly summaryState = signal<'loading' | 'ok' | 'error'>('loading');
+  private summaryRun: string | null = null;
+
+  setTab(t: 'overview' | 'controls'): void {
+    if (this.tab() === t) return;
+    this.tab.set(t);
+    this.syncQueryParam(this.selected());
+  }
+
+  /** Setas esquerda/direita alternam as abas (padrão WAI-ARIA de tablist). */
+  tabKey(ev: KeyboardEvent): void {
+    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+    ev.preventDefault();
+    const next = this.tab() === 'overview' ? 'controls' : 'overview';
+    this.setTab(next);
+    const el = typeof document !== 'undefined' ? document.getElementById(`knight-tab-${next}`) : null;
+    el?.focus();
+  }
+
+  /** Um gráfico da visão geral abre a lista de controles JÁ filtrada pelo recorte clicado. */
+  openControls(f: Partial<KnightControlFilters>): void {
+    this.filters.set({ ...EMPTY_FILTERS, ...f });
+    this.setTab('controls');
+  }
+
+  /** Uma prioridade da visão geral abre o controle na aba de controles. */
+  openControl(indicatorId: string): void {
+    this.tab.set('controls');
+    if (this.selected() !== indicatorId) this.selectFinding(indicatorId);
+    else this.syncQueryParam(indicatorId);
+  }
+
+  setFilters(f: KnightControlFilters): void {
+    this.filters.set(f);
+  }
+
+  /** Relê o resumo de afetados da avaliação exibida; resposta de outra avaliação é descartada. */
+  private loadSummary(a: KnightAssessment | null): void {
+    if (!a) {
+      this.summaryRun = null;
+      this.summary.set(null);
+      return;
     }
-    const partes = [`${c.exposed} exposto(s)`, `${c.passed} conforme(s)`];
-    if (c.mitigated > 0) partes.push(`${c.mitigated} mitigado(s)`);
-    const pendentes = c.notEvaluated > 0 ? ` ${c.notEvaluated} seguem não avaliados.` : '';
-    return `${avaliados} indicador(es) avaliados: ${partes.join(', ')}.${pendentes}`;
+    if (this.summaryRun === a.id && this.summaryState() !== 'error') return;
+    const runId = a.id;
+    this.summaryRun = runId;
+    this.summary.set(null);
+    this.summaryState.set('loading');
+    this.knight.getAffectedSummary(runId).subscribe({
+      next: (s) => {
+        if (this.summaryRun !== runId) return;
+        this.summary.set(s);
+        this.summaryState.set('ok');
+      },
+      error: () => {
+        if (this.summaryRun !== runId) return;
+        this.summaryState.set('error');
+      },
+    });
   }
   readonly busy = computed(() => this.running() || this.loading());
   readonly entraConfigured = computed(
@@ -970,6 +711,10 @@ export class AegisKnightComponent implements OnInit {
   readonly activePlans = signal<ActionPlan[]>([]);
   readonly publishing = signal(false);
   readonly publishNotice = signal<string | null>(null);
+  /** A fotografia recém-publicada DESTA avaliação — os downloads saem dela, por Id (nunca "a mais recente"). */
+  readonly publishedId = signal<string | null>(null);
+  readonly downloading = signal<PostureExportFormat | null>(null);
+  readonly downloadError = signal<string | null>(null);
 
   /**
    * A PROCEDÊNCIA da avaliação exibida. Ela entra na leitura das ações porque o indicador sozinho não
@@ -1119,12 +864,16 @@ export class AegisKnightComponent implements OnInit {
     this.publishing.set(true);
     this.publishNotice.set(null);
     this.error.set(null);
+    this.publishedId.set(null);
+    this.downloadError.set(null);
     this.history.publish({ type: 'Knight', runId }).subscribe({
       next: (d) => {
         this.publishing.set(false);
+        // A publicação só vale para a avaliação que continua aberta — outra resposta não oferece download.
+        if (this.assessment()?.id === runId) this.publishedId.set(d.summary.id);
         this.publishNotice.set(
           `Relatório publicado a partir desta avaliação (${d.summary.id}). O conteúdo foi congelado: ` +
-            'reexportá-lo depois traz exatamente o que foi publicado agora.',
+            'reexportá-lo depois traz exatamente o que foi publicado agora. HTML, CSV e PDF saem desta mesma fotografia.',
         );
       },
       error: (e: Error) => {
@@ -1135,6 +884,36 @@ export class AegisKnightComponent implements OnInit {
   }
 
 
+
+  /**
+   * [AEGIS-KNIGHT-MULTICLOUD-01] Baixa um formato da fotografia PUBLICADA, pelo Id dela. Um download por vez;
+   * o arquivo é tratado como Blob e o object URL é sempre revogado.
+   */
+  downloadReport(snapshotId: string, format: PostureExportFormat): void {
+    if (this.downloading() !== null) return;
+    this.downloading.set(format);
+    this.downloadError.set(null);
+    this.history.exportSnapshot(snapshotId, format).subscribe({
+      next: (file) => {
+        this.downloading.set(null);
+        const url = URL.createObjectURL(file.blob);
+        try {
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = file.filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+        } finally {
+          setTimeout(() => URL.revokeObjectURL(url), 1500);
+        }
+      },
+      error: (e: Error) => {
+        this.downloading.set(null);
+        this.downloadError.set(`Não foi possível baixar o arquivo: ${e.message}`);
+      },
+    });
+  }
 
   // ---- [AEGIS-MVP-PRODUCT-02] Seleção do achado -------------------------------------------------
   // O estado do DETALHE (aba, página, busca, erro) vive no componente dedicado. A página só decide QUAL
@@ -1169,6 +948,7 @@ export class AegisKnightComponent implements OnInit {
     // arrastá-la para cá exibiria a ação de um problema ao lado do veredito de outro.
     this.pinned.set({ kind: 'livre' });
     this.selected.set(indicatorId);
+    this.tab.set('controls');
     this.syncQueryParam(indicatorId);
     // Relê ao abrir: uma escrita enviada de um painel que foi fechado já está gravada, e a fila precisa
     // mostrar o estado do servidor, não o que estava em memória antes.
@@ -1188,7 +968,12 @@ export class AegisKnightComponent implements OnInit {
   private syncQueryParam(indicatorId: string | null): void {
     void this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { finding: indicatorId, run: this.pinnedRun(), plan: this.pinnedPlanId() },
+      queryParams: {
+        finding: indicatorId,
+        run: this.pinnedRun(),
+        plan: this.pinnedPlanId(),
+        tab: this.tab() === 'controls' ? 'controls' : null,
+      },
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
@@ -1249,6 +1034,8 @@ export class AegisKnightComponent implements OnInit {
     this.pinned.set(pedida ? { kind: 'carregando', id: pedida } : { kind: 'livre' });
     this.linkNotice.set(null);
     this.findingNotice.set(null);
+    const q = this.route.snapshot.queryParamMap;
+    this.tab.set(q.get('tab') === 'controls' || q.get('finding') ? 'controls' : 'overview');
 
     this.loading.set(true);
     this.error.set(null);
@@ -1272,6 +1059,8 @@ export class AegisKnightComponent implements OnInit {
         this.assessment.set(a);
         this.unfinishedAttempt.set(unfinishedAttempt);
         this.loading.set(false);
+        this.publishedId.set(null);
+        this.loadSummary(a);
         this.applyDeepLink(a);
         // Só agora a PROCEDÊNCIA é conhecida — ler a fila antes traria ações de outra fonte/modo.
         this.reloadPlans();
@@ -1282,6 +1071,7 @@ export class AegisKnightComponent implements OnInit {
         this.unfinishedAttempt.set(null);
         if (requested) {
           this.assessment.set(null);
+          this.loadSummary(null);
           this.selected.set(null);
           this.linkNotice.set('A avaliação indicada no endereço não está disponível para este tenant.');
           return;
@@ -1324,18 +1114,23 @@ export class AegisKnightComponent implements OnInit {
       return;
     }
     this.selected.set(wanted);
+    this.tab.set('controls');
   }
 
   clearError(): void {
     this.error.set(null);
   }
 
-  /** Executa o assessment de demonstração. */
+  /** Executa o assessment de demonstração (ferramenta de desenvolvimento; fora da jornada normal). */
   runDemo(): void {
     this.execute(() => this.knight.runDemo());
   }
 
-  /** Executa a coleta real da fonte indicada (ex.: Entra ID). Falha real NÃO cai para Demo. */
+  /**
+   * Executa a coleta real da fonte indicada. Não é oferecida na tela — a jornada normal é "Sincronizar agora"
+   * em Integrações (pedido durável) —, mas a semântica de tempo limite do PR #75 continua protegida por testes.
+   * Falha real NÃO cai para Demo.
+   */
   runSource(source: KnightSourceType): void {
     this.execute(() => this.knight.runSource(source));
   }
@@ -1349,6 +1144,8 @@ export class AegisKnightComponent implements OnInit {
     run().subscribe({
       next: (a) => {
         this.assessment.set(a);
+        this.publishedId.set(null);
+        this.loadSummary(a);
         this.unfinishedAttempt.set(null);
         this.running.set(false);
         this.linkNotice.set(null);
@@ -1425,6 +1222,8 @@ export class AegisKnightComponent implements OnInit {
         // OUTRA avaliação ocupa a posição de última. Ela passa a ser a exibida — com procedência, data e
         // endereço próprios — mas NÃO é apresentada como a tentativa: outra execução pode tê-la produzido.
         this.assessment.set(a);
+        this.publishedId.set(null);
+        this.loadSummary(a);
         this.pinnedRun.set(a.id);
         this.pinned.set({ kind: 'livre' });
         const aberto = this.selected();

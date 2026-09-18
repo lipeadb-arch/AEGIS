@@ -70,7 +70,7 @@ import {
       <!-- [AEGIS-LANGUAGE-STATES-01] Sem leitura as contagens ficam "—" (nunca 0) e o motivo é dito pelo estado. -->
       <div class="cards">
         <div class="card">
-          <span class="metric-label">Microsoft Secure Score · índice da fonte</span>
+          <span class="metric-label">{{ sourceLabel() }} · índice da fonte</span>
           @if (summary()?.latestSecureScorePercent != null) {
             <span class="metric-value">{{ pct(summary()!.latestSecureScorePercent!) }}</span>
             <span class="metric-unit">coletado {{ fmtDate(summary()?.latestSecureScoreAt) }} · não é o AEGIS Score</span>
@@ -475,7 +475,7 @@ export class PostureExposuresComponent {
     if (!d || d.pageSize <= 0) return 1;
     return Math.max(1, Math.ceil(d.total / d.pageSize));
   });
-  protected readonly sourceLabel = computed(() => this.summary()?.sourceLabel ?? 'Microsoft Secure Score');
+  protected readonly sourceLabel = computed(() => this.summary()?.sourceLabel ?? 'Fonte de recomendações');
 
   /**
    * [AEGIS-LANGUAGE-STATES-01] O que a tela pode AFIRMAR sobre a leitura: sem integração × sem coleta × primeira
@@ -591,7 +591,7 @@ export class PostureExposuresComponent {
    */
   protected analyzeWithAi(): void {
     this.agent.requestAudit(
-      'Analise as recomendações de postura pendentes do Microsoft Secure Score: explique por que as principais ' +
+      `Analise as recomendações de postura pendentes informadas pela fonte conectada (${this.sourceLabel()}): explique por que as principais ` +
         'costumam importar, relacione-as com as lacunas dos controles NIST CSF avaliados pelo AEGIS e sugira uma ' +
         'sequência de revisão. Trate a diferença de pontos como informação da fonte — não como configuração ' +
         'insegura, exposição de ativo ou vulnerabilidade confirmada — e as ameaças listadas como as que a ' +

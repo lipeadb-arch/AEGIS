@@ -52,7 +52,9 @@ export type KnightCapabilityOutcome =
   | 'NotAttempted'
   | 'Throttled'
   | 'AuthenticationFailure'
-  | 'Error';
+  | 'Error'
+  /** Permissão existe, mas a LICENÇA do tenant não habilita a capacidade — distinto de permissão ausente. */
+  | 'LimitedByLicense';
 
 export interface KnightCapability {
   capability: string;
@@ -98,6 +100,10 @@ export interface KnightIndicator {
   affectedDetailComplete: boolean;
   /** O que a coleta não conseguiu enumerar no detalhe, quando aplicável. */
   affectedDetailLimitation: string | null;
+  /** [AEGIS-KNIGHT-MULTICLOUD-01] Evidências de configuração preservadas (não contadas como afetados). */
+  evidenceObjectCount?: number;
+  /** [AEGIS-KNIGHT-MULTICLOUD-01] Perfil, eixos e contribuição para a nota. Ausente em respostas antigas. */
+  presentation?: KnightControlPresentation | null;
 }
 
 export interface KnightCounts {
@@ -195,12 +201,14 @@ export function connectionBadgeLabel(state: KnightConnectionState): string {
   }
 }
 
+// [AEGIS-KNIGHT-MULTICLOUD-01] Vocabulário do assessment: controle APROVADO ou REPROVADO — o mesmo do relatório
+// HTML/CSV. "Mitigado" é exposição com controle compensatório COMPROVADO (atenção), nunca um rótulo visual.
 const STATUS_LABEL: Record<KnightIndicatorStatus, string> = {
-  Passed: 'Conforme',
-  Exposed: 'Exposto',
-  Mitigated: 'Mitigado',
+  Passed: 'Aprovado',
+  Exposed: 'Reprovado',
+  Mitigated: 'Mitigado (atenção)',
   NotEvaluated: 'Não avaliado',
-  Error: 'Erro',
+  Error: 'Erro na avaliação',
   NotApplicable: 'Não aplicável',
 };
 
@@ -209,11 +217,11 @@ export function statusLabel(status: KnightIndicatorStatus): string {
 }
 
 const SEVERITY_LABEL: Record<SeverityLevel, string> = {
-  Critical: 'Crítica',
-  High: 'Alta',
-  Medium: 'Média',
-  Low: 'Baixa',
-  Informational: 'Informativa',
+  Critical: 'Crítico',
+  High: 'Alto',
+  Medium: 'Médio',
+  Low: 'Baixo',
+  Informational: 'Informativo',
 };
 
 export function severityLabel(severity: SeverityLevel): string {
@@ -293,6 +301,7 @@ const CAPABILITY_OUTCOME_LABEL: Record<KnightCapabilityOutcome, string> = {
   Throttled: 'Throttling',
   AuthenticationFailure: 'Falha de autenticação',
   Error: 'Erro',
+  LimitedByLicense: 'Licença insuficiente',
 };
 
 export function capabilityOutcomeLabel(outcome: KnightCapabilityOutcome): string {
@@ -314,7 +323,14 @@ const CAPABILITY_LABEL: Record<string, string> = {
   SecurityBaseline: 'Configuração de segurança padrão',
   BreakGlassDesignation: 'Contas de emergência',
   IdentityRiskDetections: 'Detecções de risco de identidade',
+  IdentityRiskyUsers: 'Usuários sinalizados como de risco',
   RiskyUsers: 'Usuários sinalizados como de risco',
+  ApplicationPermissions: 'Permissões de aplicativo concedidas',
+  ApplicationConsents: 'Consentimentos delegados (todos os usuários)',
+  DirectoryUsers: 'Diretório de usuários',
+  DirectoryGroups: 'Grupos e membros externos',
+  DriveSharingAudit: 'Auditoria de compartilhamento no Drive',
+  OAuthTokenAudit: 'Auditoria de autorizações OAuth',
   AuthenticationMethods: 'Métodos de autenticação registrados',
 };
 
@@ -338,7 +354,16 @@ export function problemCapabilities(caps: KnightCapability[]): KnightCapability[
 //   3. nome ausente não se inventa — sem nome, mostra-se o identificador e declara-se a limitação.
 
 /** Natureza do objeto afetado. Nunca presumir pessoa: aplicação e grupo têm ações diferentes. */
-export type KnightAffectedObjectKind = 'User' | 'Guest' | 'ServicePrincipal' | 'Group' | 'Device' | 'Unknown';
+export type KnightAffectedObjectKind =
+  | 'User'
+  | 'Guest'
+  | 'ServicePrincipal'
+  | 'Group'
+  | 'Device'
+  | 'Unknown'
+  | 'Policy'
+  | 'DirectoryRole'
+  | 'TenantSetting';
 
 /**
  * Estado do DETALHE de um achado numa avaliação:
@@ -356,6 +381,10 @@ export interface KnightAffectedObject {
   userPrincipalName: string | null;
   roles: string[];
   detail: string | null;
+  /** [AEGIS-KNIGHT-MULTICLOUD-01] Afetado (contado) ou evidência de configuração que sustentou o veredito. */
+  relation?: 'Affected' | 'Evidence';
+  /** [AEGIS-KNIGHT-MULTICLOUD-01] Configuração observada (políticas, papéis), quando houver. */
+  observedConfiguration?: string | null;
 }
 
 /** Página de afetados de UM achado de UMA avaliação (paginada e pesquisada no servidor). */
@@ -382,6 +411,9 @@ const AFFECTED_KIND_LABEL: Record<KnightAffectedObjectKind, string> = {
   Group: 'Grupo',
   Device: 'Dispositivo',
   Unknown: 'Tipo não identificado',
+  Policy: 'Política',
+  DirectoryRole: 'Papel de diretório',
+  TenantSetting: 'Configuração do tenant',
 };
 
 export function affectedKindLabel(kind: KnightAffectedObjectKind): string {
@@ -577,4 +609,291 @@ export function affectedRequestKey(
 /** `true` somente quando a resposta pertence ao pedido que está aberto agora. */
 export function isCurrentAffectedResponse(current: string, responded: string): boolean {
   return current === responded;
+}
+
+/* ============================================================================================
+ * [AEGIS-KNIGHT-MULTICLOUD-01] Assessment de postura — perfil, eixos, visão geral e filtros
+ *
+ * Tudo aqui é derivado da avaliação que a API devolveu: nenhuma contagem é estimada, nenhum gráfico tem série
+ * inventada, e as unidades não se misturam — controles, ocorrências (objeto × controle) e objetos únicos são
+ * números diferentes. Funções PURAS (testadas em tests/knight-assessment.models.spec.ts).
+ * ============================================================================================ */
+
+export interface KnightControlReference {
+  framework: string;
+  version: string | null;
+  code: string;
+  url: string | null;
+}
+
+export interface KnightControlPresentation {
+  domain: string;
+  domainLabel: string;
+  service: string;
+  provider: string;
+  description: string | null;
+  rationale: string | null;
+  expectedConfiguration: string | null;
+  doesNotProve: string | null;
+  criterion: string | null;
+  references: KnightControlReference[];
+  requiredCapabilities: string[];
+  weight: number;
+  factor: number | null;
+  achievedPoints: number | null;
+  possiblePoints: number | null;
+}
+
+export interface KnightAffectedSummaryItem {
+  externalId: string;
+  kind: KnightAffectedObjectKind;
+  displayName: string | null;
+  userPrincipalName: string | null;
+  controlCount: number;
+  indicatorIds: string[];
+}
+
+/** Ocorrências × objetos únicos × controles expostos de uma avaliação. */
+export interface KnightAffectedSummary {
+  runId: string;
+  exposedControls: number;
+  occurrences: number;
+  uniqueObjects: number;
+  complete: boolean;
+  incompleteIndicatorIds: string[];
+  top: KnightAffectedSummaryItem[];
+}
+
+export const NIST_FRAMEWORK = 'NIST CSF';
+export const MITRE_FRAMEWORK = 'MITRE ATT&CK';
+const SEVERITY_ORDER: SeverityLevel[] = ['Critical', 'High', 'Medium', 'Low', 'Informational'];
+
+/** Um controle reprovado ou mitigado é um FINDING — o que o relatório conta por severidade. */
+export function isFinding(i: KnightIndicator): boolean {
+  return i.status === 'Exposed' || i.status === 'Mitigated';
+}
+
+export function isEvaluated(i: KnightIndicator): boolean {
+  return i.status === 'Passed' || i.status === 'Exposed' || i.status === 'Mitigated';
+}
+
+/** Domínio, serviço e provedor do controle; resposta antiga (sem perfil) cai na fonte, nunca em "Microsoft". */
+export function axesOf(i: KnightIndicator): { domain: string; domainLabel: string; service: string; provider: string } {
+  const p = i.presentation;
+  if (p) return { domain: p.domain, domainLabel: p.domainLabel, service: p.service, provider: p.provider };
+  const service = sourceTypeLabel(i.sourceType);
+  const provider = i.sourceType === 'MicrosoftEntraId' ? 'Microsoft' : i.sourceType === 'GoogleWorkspace' ? 'Google' : 'Demonstração';
+  return { domain: 'Identity', domainLabel: 'Identidade', service, provider };
+}
+
+/** Frameworks do controle (um controle mapeado a dois frameworks continua sendo UM controle). */
+export function frameworksOf(i: KnightIndicator): string[] {
+  const out = new Set<string>();
+  for (const r of i.presentation?.references ?? []) {
+    if (r.framework === NIST_FRAMEWORK || r.framework === MITRE_FRAMEWORK)
+      out.add(r.version ? `${r.framework} ${r.version}` : r.framework);
+  }
+  if (!i.presentation) {
+    if (i.nistCodes.length) out.add(`${NIST_FRAMEWORK} 2.0`);
+    if (i.mitreTechniques.length) out.add(MITRE_FRAMEWORK);
+  }
+  return [...out];
+}
+
+export interface KnightOverviewKpis {
+  total: number;
+  evaluated: number;
+  passed: number;
+  failed: number;
+  mitigated: number;
+  notEvaluated: number;
+  errors: number;
+  notApplicable: number;
+  /** Aprovados ÷ avaliados — NÃO é a nota. `null` sem controle avaliado. */
+  approvalPercent: number | null;
+  findings: number;
+  findingsBySeverity: { key: SeverityLevel; label: string; count: number }[];
+}
+
+export function overviewKpis(a: KnightAssessment): KnightOverviewKpis {
+  const ind = a.indicators;
+  const passed = ind.filter((i) => i.status === 'Passed').length;
+  const failed = ind.filter((i) => i.status === 'Exposed').length;
+  const mitigated = ind.filter((i) => i.status === 'Mitigated').length;
+  const evaluated = passed + failed + mitigated;
+  const findings = ind.filter(isFinding);
+  return {
+    total: ind.length,
+    evaluated,
+    passed,
+    failed,
+    mitigated,
+    notEvaluated: ind.filter((i) => i.status === 'NotEvaluated').length,
+    errors: ind.filter((i) => i.status === 'Error').length,
+    notApplicable: ind.filter((i) => i.status === 'NotApplicable').length,
+    approvalPercent: evaluated > 0 ? Math.round((1000 * passed) / evaluated) / 10 : null,
+    findings: findings.length,
+    findingsBySeverity: SEVERITY_ORDER.map((key) => ({
+      key,
+      label: severityLabel(key),
+      count: findings.filter((f) => f.severity === key).length,
+    })),
+  };
+}
+
+export interface KnightDistributionRow {
+  key: string;
+  label: string;
+  counts: Record<KnightIndicatorStatus, number>;
+  total: number;
+}
+
+/** Distribuição de resultados por eixo (domínio ou serviço). Cada controle entra UMA vez. */
+export function distributionBy(a: KnightAssessment, axis: 'domain' | 'service'): KnightDistributionRow[] {
+  const rows = new Map<string, KnightDistributionRow>();
+  for (const i of a.indicators) {
+    const ax = axesOf(i);
+    const key = axis === 'domain' ? ax.domain : ax.service;
+    const label = axis === 'domain' ? ax.domainLabel : ax.service;
+    const row = rows.get(key) ?? {
+      key,
+      label,
+      counts: { Passed: 0, Exposed: 0, Mitigated: 0, NotEvaluated: 0, Error: 0, NotApplicable: 0 },
+      total: 0,
+    };
+    row.counts[i.status]++;
+    row.total++;
+    rows.set(key, row);
+  }
+  return [...rows.values()].sort(
+    (x, y) => y.counts.Exposed - x.counts.Exposed || y.total - x.total || x.label.localeCompare(y.label),
+  );
+}
+
+const WEIGHT: Record<SeverityLevel, number> = { Critical: 10, High: 7, Medium: 4, Low: 2, Informational: 0 };
+
+/** Até cinco controles REPROVADOS: severidade, depois objetos afetados — critérios verificáveis, nada inventado. */
+export function priorityControls(a: KnightAssessment, max = 5): KnightIndicator[] {
+  return a.indicators
+    .filter((i) => i.status === 'Exposed')
+    .sort(
+      (x, y) =>
+        WEIGHT[y.severity] - WEIGHT[x.severity] ||
+        y.affectedObjectCount - x.affectedObjectCount ||
+        x.indicatorId.localeCompare(y.indicatorId),
+    )
+    .slice(0, max);
+}
+
+/** Filtros combináveis da aba de controles. `status: 'findings'` = reprovado OU mitigado. */
+export interface KnightControlFilters {
+  q: string;
+  status: '' | 'findings' | KnightIndicatorStatus;
+  severity: '' | SeverityLevel;
+  service: string;
+  domain: string;
+  framework: string;
+}
+
+export const EMPTY_FILTERS: KnightControlFilters = { q: '', status: '', severity: '', service: '', domain: '', framework: '' };
+
+export function matchesFilters(i: KnightIndicator, f: KnightControlFilters): boolean {
+  if (f.status === 'findings' ? !isFinding(i) : f.status && i.status !== f.status) return false;
+  if (f.severity && i.severity !== f.severity) return false;
+  const ax = axesOf(i);
+  if (f.service && ax.service !== f.service) return false;
+  if (f.domain && ax.domain !== f.domain) return false;
+  if (f.framework && !frameworksOf(i).includes(f.framework)) return false;
+  const q = f.q.trim().toLowerCase();
+  if (q) {
+    const hay = [i.indicatorId, findingTitle(i), i.title, i.evidence, ax.service, ax.domainLabel, i.presentation?.description ?? '']
+      .join(' ')
+      .toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+/** O recorte aplicado, em palavras — a tela diz o que está mostrando, sempre. */
+export function describeFilters(f: KnightControlFilters, a: KnightAssessment | null): string {
+  const parts: string[] = [];
+  if (f.status) parts.push(`resultado: ${f.status === 'findings' ? 'findings' : statusLabel(f.status)}`);
+  if (f.severity) parts.push(`severidade: ${severityLabel(f.severity)}`);
+  if (f.service) parts.push(`serviço: ${f.service}`);
+  if (f.domain) {
+    const label = a?.indicators.map(axesOf).find((x) => x.domain === f.domain)?.domainLabel ?? f.domain;
+    parts.push(`domínio: ${label}`);
+  }
+  if (f.framework) parts.push(`framework: ${f.framework}`);
+  if (f.q.trim()) parts.push(`pesquisa: “${f.q.trim()}”`);
+  return parts.length ? parts.join(' · ') : 'sem filtros (avaliação completa)';
+}
+
+export function filterOptions(a: KnightAssessment): { services: string[]; domains: { key: string; label: string }[]; frameworks: string[] } {
+  const services = new Set<string>();
+  const domains = new Map<string, string>();
+  const frameworks = new Set<string>();
+  for (const i of a.indicators) {
+    const ax = axesOf(i);
+    services.add(ax.service);
+    domains.set(ax.domain, ax.domainLabel);
+    frameworksOf(i).forEach((x) => frameworks.add(x));
+  }
+  return {
+    services: [...services].sort(),
+    domains: [...domains.entries()].map(([key, label]) => ({ key, label })).sort((x, y) => x.label.localeCompare(y.label)),
+    frameworks: [...frameworks].sort(),
+  };
+}
+
+/** Uma limitação de coleta com o que ela prejudicou e o que fazer. */
+export interface KnightLimitationView {
+  capability: string;
+  label: string;
+  cause: string;
+  detail: string | null;
+  affectedControls: string[];
+  guidance: string;
+}
+
+const CAUSE: Record<string, [string, string]> = {
+  InsufficientPermission: [
+    'Permissão ausente',
+    'Conceder a permissão indicada ao aplicativo do conector (consentimento de administrador) e sincronizar novamente em Integrações.',
+  ],
+  LimitedByLicense: [
+    'Licença insuficiente',
+    'A capacidade depende de licença do provedor. Sem ela, os controles afetados continuam não avaliados — nunca aprovados.',
+  ],
+  Throttled: ['Limite de taxa do provedor', 'Sincronizar novamente mais tarde.'],
+  AuthenticationFailure: ['Falha de autenticação', 'Verificar a credencial do conector e reconectar em Integrações.'],
+  Unavailable: ['Serviço indisponível', 'Sincronizar novamente; persistindo, verificar a conectividade.'],
+  NotAttempted: ['Não executada', 'A capacidade não foi executada nesta coleta.'],
+  Error: ['Erro de coleta', 'Sincronizar novamente; persistindo, acionar o suporte com o horário da tentativa.'],
+};
+
+/** Capacidades não coletadas → causa, controles prejudicados (não avaliados que dependem dela) e orientação. */
+export function limitationViews(a: KnightAssessment): KnightLimitationView[] {
+  return problemCapabilities(a.capabilities).map((c) => {
+    const [cause, guidance] = CAUSE[c.outcome] ?? ['Não coletado', 'Sincronizar novamente em Integrações.'];
+    return {
+      capability: c.capability,
+      label: capabilityLabel(c.capability),
+      cause,
+      detail: c.detail,
+      affectedControls: a.indicators
+        .filter((i) => (i.status === 'NotEvaluated' || i.status === 'Error') && (i.presentation?.requiredCapabilities ?? []).includes(c.capability))
+        .map((i) => i.indicatorId),
+      guidance,
+    };
+  });
+}
+
+/** Contribuição do controle para a nota, em palavras (peso × fator); fora da nota quando não avaliado. */
+export function contributionText(i: KnightIndicator): string {
+  const p = i.presentation;
+  if (!p) return 'Contribuição não disponível nesta resposta.';
+  if (p.factor === null) return 'Fora da nota (não avaliado, erro ou não aplicável): reduz a cobertura, não a nota.';
+  const fmt = (n: number | null) => String(n ?? 0).replace('.', ',');
+  return `Peso ${p.weight} × fator ${fmt(p.factor)} = ${fmt(p.achievedPoints)} de ${p.possiblePoints} ponto(s).`;
 }

@@ -21,7 +21,7 @@ interface NavGroup {
 
 /**
  * [AEGIS-MVP-PRODUCT-01] Navegação organizada por INTENÇÃO, não por framework: Visão geral · Prioridades · Ambiente ·
- * Identidades · Governança e controles · Relatórios · Configurações. As seis Funções NIST vivem DENTRO de "Controles NIST"
+ * Assessment (AEGIS KNIGHT) · Governança e controles · Relatórios · Configurações. As seis Funções NIST vivem DENTRO de "Controles NIST"
  * e nenhuma rota foi removida — todas seguem acessíveis por link direto.
  */
 const NAV: NavGroup[] = [
@@ -42,7 +42,9 @@ const NAV: NavGroup[] = [
       { path: '/exposures', label: 'Recomendações de postura', icon: 'recommendations' },
     ],
   },
-  { label: 'Identidades', items: [{ path: '/identity', label: 'AEGIS KNIGHT', icon: 'identity' }] },
+  // [AEGIS-KNIGHT-MULTICLOUD-01] O KNIGHT é o assessment de postura (hoje: identidade — Entra ID e Google Workspace);
+  // a rota /identity é mantida para os links já emitidos.
+  { label: 'Assessment', items: [{ path: '/identity', label: 'AEGIS KNIGHT', icon: 'identity' }] },
   {
     label: 'Governança e controles',
     items: [
@@ -129,7 +131,7 @@ const NAV: NavGroup[] = [
         </svg>
         <span class="brand-text">
           <span class="brand-name">AEGIS</span>
-          <span class="brand-tag">Postura e evidências</span>
+          <span class="brand-tag">Análise da postura de segurança multicloud.</span>
         </span>
       </a>
 

@@ -236,6 +236,12 @@ import {
                     <button type="button" class="btn ghost sm" (click)="download('csv', d.summary.id)" [disabled]="downloading() !== null">
                       {{ downloading() === 'csv' ? 'Baixando CSV…' : 'Baixar CSV' }}
                     </button>
+                    <!-- [AEGIS-KNIGHT-MULTICLOUD-01] Relatório interativo autocontido — só para fotografias do KNIGHT. -->
+                    @if (d.summary.type === 'Knight') {
+                      <button type="button" class="btn ghost sm" (click)="download('html', d.summary.id)" [disabled]="downloading() !== null">
+                        {{ downloading() === 'html' ? 'Baixando HTML…' : 'Baixar relatório HTML' }}
+                      </button>
+                    }
                     @if (downloadError()) {
                       <span class="dl-err">
                         {{ downloadError() }}

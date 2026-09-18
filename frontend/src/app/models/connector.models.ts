@@ -107,8 +107,8 @@ export interface ProviderSpec {
   adapterNote?: string;
   /**
    * AEGIS KNIGHT (IdentityPosture): coletor REAL somente-leitura que NÃO usa o pipeline genérico
-   * IConnectorRegistry/IEvidenceIngestionExecutor. A tela não mostra "Testar"/"Coletar" (retornariam 501):
-   * mostra "Abrir AEGIS KNIGHT" (rota /identity), onde a coleta real é disparada.
+   * IConnectorRegistry/IEvidenceIngestionExecutor. [AEGIS-KNIGHT-MULTICLOUD-01] "Sincronizar agora" registra um
+   * pedido durável no servidor (coleta → ADM → avaliação) e a tela acompanha aquele pedido até o desfecho.
    */
   knight?: boolean;
   /** Nota informativa (não é aviso de stub) — usada pelo coletor real do KNIGHT. */
@@ -176,7 +176,7 @@ export const PROVIDERS: ProviderSpec[] = [
     capabilityValue: 10,
     knight: true,
     infoNote:
-      'Coletor REAL somente-leitura do Microsoft Entra ID (client credentials). Após salvar, dispare a coleta em Abrir AEGIS KNIGHT → “Coletar do Entra ID”. O destino é o Microsoft Graph oficial — não há URL configurável. As duas permissões de risco de identidade dependem de Microsoft Entra ID P1/P2; sem elas (ou sem a licença) a coleta continua, e a dimensão correspondente é apresentada como não coletada — nunca como zero.',
+      'Coletor REAL somente-leitura do Microsoft Entra ID (client credentials). Após salvar, use “Sincronizar agora” neste conector: a coleta, o registro no ADM e a avaliação acontecem no servidor, e o resultado aparece no AEGIS KNIGHT. O destino é o Microsoft Graph oficial — não há URL configurável. As duas permissões de risco de identidade dependem de Microsoft Entra ID P1/P2; sem elas (ou sem a licença) a coleta continua, e a dimensão correspondente é apresentada como não coletada — nunca como zero.',
     appPermissions: [
       'Directory.Read.All',
       'AuditLog.Read.All',
@@ -202,7 +202,7 @@ export const PROVIDERS: ProviderSpec[] = [
     capabilityValue: 10,
     knight: true,
     infoNote:
-      'Coletor REAL somente-leitura do Google Workspace (service account com domain-wide delegation). Após salvar, dispare a coleta em Abrir AEGIS KNIGHT → “Coletar do Google Workspace”. Coleta apenas metadados administrativos/auditoria — nunca conteúdo de Gmail, Drive ou Chat.',
+      'Coletor REAL somente-leitura do Google Workspace (service account com domain-wide delegation). Após salvar, use “Sincronizar agora” neste conector; o resultado aparece no AEGIS KNIGHT. Coleta apenas metadados administrativos/auditoria — nunca conteúdo de Gmail, Drive ou Chat.',
     appPermissions: [
       'admin.directory.user.readonly',
       'admin.directory.group.readonly',
@@ -543,7 +543,7 @@ export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
     providerValue: 0,
     label: 'Microsoft Entra ID · AEGIS KNIGHT',
     description:
-      'Postura de identidade e RISCO de identidade (somente leitura). A coleta é disparada em Abrir AEGIS KNIGHT.',
+      'Configuração e postura de identidade avaliadas pelo AEGIS KNIGHT (somente leitura). Sincronize neste conector depois de salvar.',
     needsWorkspaceId: false,
     appPermissions: requiredPermissions(ENTRA_IDENTITY_CAPABILITIES),
     capabilities: ENTRA_IDENTITY_CAPABILITIES,

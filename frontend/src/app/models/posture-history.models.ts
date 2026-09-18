@@ -255,7 +255,8 @@ export function scoreDisplay(score: number | null): string {
 
 // ---- Exportação PDF/CSV (AEGIS-AUD-034) ----------------------------------------------------------
 
-export type PostureExportFormat = 'pdf' | 'csv';
+// [AEGIS-KNIGHT-MULTICLOUD-01] 'html' = relatório interativo autocontido (fotografias do AEGIS KNIGHT).
+export type PostureExportFormat = 'pdf' | 'csv' | 'html';
 
 /** Sanitiza um nome de arquivo: remove separadores de caminho, controles e caracteres inválidos; nunca vazio. */
 export function sanitizeExportFilename(name: string): string {

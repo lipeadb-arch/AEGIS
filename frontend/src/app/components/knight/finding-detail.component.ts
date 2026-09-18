@@ -12,6 +12,9 @@ import {
   affectedNotice,
   affectedRequestKey,
   categoryLabel,
+  axesOf,
+  contributionText,
+  frameworksOf,
   findingReading,
   findingSituation,
   findingTitle,
@@ -67,14 +70,14 @@ import { KnightActionPlanComponent } from './action-plan.component';
       </div>
 
       <div class="tabs" role="tablist">
-        <button type="button" role="tab" [class.on]="tab() === 'resumo'" (click)="tab.set('resumo')">Resumo</button>
-        <button type="button" role="tab" [class.on]="tab() === 'afetados'" (click)="openAffected()">
-          Afetados
+        <button type="button" role="tab" [class.on]="tab() === 'resumo'" [attr.aria-selected]="tab() === 'resumo'" (click)="tab.set('resumo')">Detalhe</button>
+        <button type="button" role="tab" [class.on]="tab() === 'afetados'" [attr.aria-selected]="tab() === 'afetados'" (click)="openAffected()">
+          Onde foi encontrado
           @if (indicator().status === 'Exposed' || indicator().status === 'Mitigated') {
             <span class="n">{{ indicator().affectedObjectCount }}</span>
           }
         </button>
-        <button type="button" role="tab" [class.on]="tab() === 'evidencia'" (click)="tab.set('evidencia')">Evidência</button>
+        <button type="button" role="tab" [class.on]="tab() === 'evidencia'" [attr.aria-selected]="tab() === 'evidencia'" (click)="tab.set('evidencia')">Evidência e proveniência</button>
         <!-- [AEGIS-MVP-PRODUCT-03] O plano vive numa aba própria para não empurrar o Resumo para baixo; o
              Resumo mantém o ponto de ENTRADA (criar/abrir), que é onde o analista decide agir. -->
         <button type="button" role="tab" [class.on]="tab() === 'plano'" (click)="tab.set('plano')">
@@ -85,12 +88,33 @@ import { KnightActionPlanComponent } from './action-plan.component';
 
       @if (tab() === 'resumo') {
         <div class="tabpane">
-          <p class="lead">{{ findingSituation(indicator()) }}</p>
-          @if (reading(); as r) {
-            <p class="lead soft">{{ r.means }}</p>
-            <p class="caveat"><b>O que isso não significa:</b> {{ r.doesNotMean }}</p>
+          @let pres = indicator().presentation;
+          <h4 class="sec">O problema</h4>
+          <p class="lead">{{ pres?.description || findingSituation(indicator()) }}</p>
+          <p class="lead soft">Nesta avaliação: {{ findingSituation(indicator()) }}</p>
+          @if (reading(); as r) { <p class="lead soft">{{ r.means }}</p> }
+          <h4 class="sec">Por que importa</h4>
+          @if (pres?.rationale) { <p class="lead soft">{{ pres!.rationale }}</p> }
+          @if (pres?.doesNotProve || reading()) {
+            <p class="caveat"><b>O que isso não significa:</b> {{ pres?.doesNotProve || reading()?.doesNotMean }}</p>
           }
+          <h4 class="sec">Onde foi encontrado</h4>
+          <p class="lead soft">
+            {{ axes().provider }} · {{ axes().service }} · domínio {{ axes().domainLabel }}.
+            @if (indicator().affectedObjectCount > 0) { {{ indicator().affectedObjectCount }} objeto(s) afetado(s). }
+            @if (indicator().evidenceObjectCount) { {{ indicator().evidenceObjectCount }} configuração(ões) sustentam o resultado. }
+            <button type="button" class="btn ghost" (click)="openAffected()">Ver objetos e configurações</button>
+          </p>
+          <h4 class="sec">O que fazer</h4>
           <div class="kv"><span class="k">Primeira ação</span><span class="v">{{ indicator().recommendation }}</span></div>
+          @if (pres?.expectedConfiguration) {
+            <div class="kv"><span class="k">Configuração esperada</span><span class="v">{{ pres!.expectedConfiguration }}</span></div>
+          }
+          @if (docs().length) {
+            <div class="kv"><span class="k">Documentação oficial</span><span class="v">
+              @for (d of docs(); track d.url) { <a [href]="d.url" target="_blank" rel="noopener noreferrer">{{ d.code }}</a><br /> }
+            </span></div>
+          }
 
           <!-- [AEGIS-MVP-PRODUCT-03] Entrada da jornada. Com ação ativa, ABRE a existente; sem ela, cria uma
                nova. Nunca oferece "criar" ao lado de uma ação que já está em curso para o mesmo achado. -->
@@ -229,6 +253,35 @@ import { KnightActionPlanComponent } from './action-plan.component';
         </div>
       }
 
+      @if (tab() === 'afetados') {
+        <div class="tabpane ev">
+          <h4 class="sec">Configuração que sustentou o resultado</h4>
+          @if (evidenceLoading()) {
+            <p class="pulse">Carregando configurações…</p>
+          } @else if (evidenceError()) {
+            <p class="notice warn">{{ evidenceError() }}</p>
+          } @else if (!evidence()?.items?.length) {
+            <p class="notice">Nenhuma configuração preservada para este controle nesta avaliação.</p>
+          } @else {
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>Objeto</th><th>Tipo</th><th>Papel no resultado</th><th>Configuração observada</th></tr></thead>
+                <tbody>
+                  @for (o of evidence()!.items; track o.externalId) {
+                    <tr>
+                      <td class="af-id"><span class="nm">{{ affectedLabel(o) }}</span><span class="mono">{{ o.externalId }}</span></td>
+                      <td><span class="kind" [class]="o.kind">{{ affectedKindLabel(o.kind) }}</span></td>
+                      <td class="af-why">{{ o.detail || '—' }}</td>
+                      <td class="af-why">{{ o.observedConfiguration || '—' }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+        </div>
+      }
+
       @if (tab() === 'plano') {
         <div class="tabpane">
           <!-- [AEGIS-MVP-PRODUCT-03] O endereço nomeia uma ação: enquanto ela não estiver disponível, este
@@ -301,6 +354,11 @@ import { KnightActionPlanComponent } from './action-plan.component';
               @if (indicator().affectedDetailLimitation) { {{ indicator().affectedDetailLimitation }} }
             </span>
           </div>
+          @if (indicator().presentation?.criterion; as crit) {
+            <div class="kv"><span class="k">Critério da regra</span><span class="v">{{ crit }}</span></div>
+          }
+          <div class="kv"><span class="k">Contribuição para a nota</span><span class="v">{{ contribution() }}</span></div>
+          <div class="kv tech"><span class="k">Frameworks</span><span class="v">{{ frameworks().join(' · ') || '—' }}</span></div>
           <div class="kv tech">
             <span class="k">NIST / MITRE</span>
             <span class="v">
@@ -366,6 +424,9 @@ import { KnightActionPlanComponent } from './action-plan.component';
       .kv.plan-entry .v { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
       .kv.plan-entry .mono { font-family: var(--mono); font-size: var(--fs-caps); color: var(--muted); }
       .kv.plan-entry .mono.warn { color: var(--amber); line-height: 1.5; }
+      .sec { margin: 14px 0 6px; font-size: var(--fs-caps); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--cyan); }
+      .tabpane.ev { padding-top: 0; }
+      .kv a { color: var(--cyan); }
       @media (max-width: 900px) { .kv { grid-template-columns: 1fr; gap: 4px; } }
     `,
   ],
@@ -418,6 +479,20 @@ export class KnightFindingDetailComponent {
   protected readonly isUnnamed = isUnnamed;
   protected readonly findingTitle = findingTitle;
   protected readonly findingSituation = findingSituation;
+  readonly axes = computed(() => axesOf(this.indicator()));
+  readonly frameworks = computed(() => frameworksOf(this.indicator()));
+  readonly contribution = computed(() => contributionText(this.indicator()));
+  /** Só documentação oficial com endereço HTTPS vindo do catálogo — nunca link montado aqui. */
+  readonly docs = computed(() =>
+    (this.indicator().presentation?.references ?? []).filter((r) => !!r.url && r.url.startsWith('https://')),
+  );
+
+  // [AEGIS-KNIGHT-MULTICLOUD-01] Evidências de configuração (políticas, papéis, security defaults) desta avaliação.
+  readonly evidence = signal<KnightAffectedObjects | null>(null);
+  readonly evidenceLoading = signal(false);
+  readonly evidenceError = signal<string | null>(null);
+  private evidenceKey: string | null = null;
+  private evidenceSub: Subscription | null = null;
   protected readonly situation = actionSituation;
   protected readonly result = actionResult;
   protected readonly origin = originLabel;
@@ -488,6 +563,11 @@ export class KnightFindingDetailComponent {
     this.inFlight?.unsubscribe();
     this.inFlight = null;
     this.requestKey = null;
+    this.evidenceSub?.unsubscribe();
+    this.evidenceSub = null;
+    this.evidenceKey = null;
+    this.evidence?.set(null);
+    this.evidenceLoading?.set(false);
   }
 
   readonly reading = computed<FindingReading | null>(() => findingReading(this.indicator().indicatorId));
@@ -507,6 +587,32 @@ export class KnightFindingDetailComponent {
   openAffected(): void {
     this.tab.set('afetados');
     if (!this.affected() && !this.loading()) this.load(1);
+    this.loadEvidence();
+  }
+
+  /** Configurações que sustentaram o veredito — sempre DESTA avaliação e DESTE controle; resposta de outro contexto é descartada. */
+  private loadEvidence(): void {
+    const runId = this.assessment().id;
+    const indicatorId = this.indicator().indicatorId;
+    const key = `${runId}|${indicatorId}`;
+    if (this.evidenceKey === key && (this.evidence() || this.evidenceLoading())) return;
+    this.evidenceSub?.unsubscribe();
+    this.evidenceKey = key;
+    this.evidence.set(null);
+    this.evidenceError.set(null);
+    this.evidenceLoading.set(true);
+    this.evidenceSub = this.knight.getAffected(runId, indicatorId, 1, 100, null, 'evidence').subscribe({
+      next: (p) => {
+        if (this.evidenceKey !== key) return;
+        this.evidence.set(p);
+        this.evidenceLoading.set(false);
+      },
+      error: (e: Error) => {
+        if (this.evidenceKey !== key) return;
+        this.evidenceError.set(e.message);
+        this.evidenceLoading.set(false);
+      },
+    });
   }
 
   onSearch(event: Event): void {
