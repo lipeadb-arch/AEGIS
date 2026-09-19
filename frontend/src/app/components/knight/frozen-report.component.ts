@@ -60,7 +60,7 @@ import { PostureSnapshotActionItem, PostureSnapshotDetail } from '../../models/p
                 <tr>
                   <td><span class="tt">{{ a.title }}</span><span class="mono">{{ a.indicatorId }}</span></td>
                   <td>{{ a.responsiblePerson || 'não designado' }}@if (a.responsibleArea) { · {{ a.responsibleArea }} }</td>
-                  <td>{{ a.dueDate || 'sem prazo' }}</td>
+                  <td>{{ a.dueDate ? (a.dueDate | date: 'dd/MM/yyyy') : 'sem prazo' }}</td>
                   <td>
                     {{ statusLabel(a.status) }}
                     @if (a.wasOverdue) { <span class="late">· em atraso</span> }

@@ -17,7 +17,9 @@ import {
   KnightControlPresentation,
   KnightIndicator,
   axesOf,
+  connectionStateOf,
   contributionText,
+  knightUnitsLine,
   describeFilters,
   distributionBy,
   filterOptions,
@@ -284,6 +286,20 @@ test('rótulos em português, com severidade Informativo e Mitigado como atenç�
   eq(statusLabel('NotEvaluated'), 'Não avaliado', 'não avaliado');
   eq(statusLabel('Error'), 'Erro na avaliação', 'erro');
   eq(severityLabel('Informational'), 'Informativo', 'informativo');
+});
+
+test('linha de achados em linguagem simples: ocorrências, objetos distintos e mínimo quando parcial', () => {
+  const base = { runId: 'r', exposedControls: 3, occurrences: 4, uniqueObjects: 3, complete: true, incompleteIndicatorIds: [], top: [] };
+  eq(knightUnitsLine(base), '4 ocorrência(s) em 3 objeto(s) distinto(s).', 'completo');
+  const partial = knightUnitsLine({ ...base, complete: false, incompleteIndicatorIds: ['AK-ENTRA-006'] });
+  ok(partial.includes('pelo menos 3'), 'parcial diz que é um mínimo');
+  ok(partial.includes('1 controle(s)'), 'parcial diz quantos controles têm lista incompleta');
+  ok(!/objeto × controle|piso/.test(partial), 'sem jargão interno');
+});
+
+test('badge sem avaliação segue a fonte: configurada não é "não configurado"', () => {
+  eq(connectionStateOf(null), 'NotConfigured', 'sem avaliação e sem fonte');
+  eq(connectionStateOf(null, true), 'Connected', 'fonte real configurada, ainda sem sincronização');
 });
 
 console.log(`\n${count - failures}/${count} testes passaram (knight-assessment.models).`);

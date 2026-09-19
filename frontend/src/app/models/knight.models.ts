@@ -184,9 +184,12 @@ export interface KnightLatest {
   unfinishedAttempt: KnightUnfinishedRun | null;
 }
 
-/** Badge: sem assessment → NÃO CONFIGURADO; demo → DEMONSTRAÇÃO; real → CONECTADO. */
-export function connectionStateOf(a: KnightAssessment | null): KnightConnectionState {
-  if (!a) return 'NotConfigured';
+/**
+ * Badge: demo → DEMONSTRAÇÃO; real → CONECTADO. Sem assessment, o badge segue a FONTE: conector real configurado
+ * ainda sem sincronização é CONECTADO (a tela diz que falta a primeira avaliação); sem fonte, NÃO CONFIGURADO.
+ */
+export function connectionStateOf(a: KnightAssessment | null, realSourceConfigured = false): KnightConnectionState {
+  if (!a) return realSourceConfigured ? 'Connected' : 'NotConfigured';
   return a.isDemo ? 'Demo' : 'Connected';
 }
 
@@ -662,6 +665,18 @@ export interface KnightAffectedSummary {
   complete: boolean;
   incompleteIndicatorIds: string[];
   top: KnightAffectedSummaryItem[];
+}
+
+/**
+ * Linha curta dos controles com achados: ocorrências (cada aparição de um objeto num controle) e objetos
+ * distintos. Com a lista de algum controle incompleta, o total de objetos é um mínimo — dito em palavras.
+ */
+export function knightUnitsLine(s: KnightAffectedSummary | null): string {
+  if (!s) return 'Controles reprovados ou mitigados.';
+  const occ = `${s.occurrences} ocorrência(s)`;
+  if (s.complete) return `${occ} em ${s.uniqueObjects} objeto(s) distinto(s).`;
+  const n = s.incompleteIndicatorIds.length;
+  return `${occ} em pelo menos ${s.uniqueObjects} objeto(s) distinto(s) — a lista de objetos de ${n} controle(s) está incompleta.`;
 }
 
 export const NIST_FRAMEWORK = 'NIST CSF';

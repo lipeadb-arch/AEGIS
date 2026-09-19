@@ -84,7 +84,7 @@ import { AuthService } from '../../services/auth.service';
           <span class="k">Situação do plano</span>
           <span class="v">
             <span class="chip" [class.late]="p.isOverdue">{{ situation(p) }}</span>
-            @if (p.dueDate) { <span class="mono">prazo {{ p.dueDate }}</span> }
+            @if (p.dueDate) { <span class="mono">prazo {{ p.dueDate | date: 'dd/MM/yyyy' }}</span> }
           </span>
         </div>
         <div class="kv">

@@ -53,10 +53,13 @@ import {
 
     @if (state() === 'NoConnector' || state() === 'NeverCollected') {
       <p class="risk-empty">
-        Use <b>Coletar do Entra ID</b> acima para produzir a primeira fotografia. Enquanto não houver
+        Sincronize o Microsoft Entra ID em <b>Configurações → Integrações</b> para produzir a primeira fotografia. Enquanto não houver
         coleta, o AEGIS não afirma nem que existe nem que não existe risco.
       </p>
     } @else {
+      <!-- Coleta executada sem nenhuma dimensão legível: contagens e distribuições seriam só "—" e "nenhuma
+           detecção", o que sugere ausência de risco. Fica só o motivo por dimensão e a ação. -->
+      @if (state() !== 'Unreadable') {
       <div class="counts kpis">
         <div class="count fail" [class.hot]="(usersCap()?.hasData ?? false) && (risk()?.riskyUsers?.active ?? 0) > 0">
           <span class="n">{{ countDisplay(usersCap(), risk()?.riskyUsers?.active) }}</span>
@@ -128,6 +131,7 @@ import {
           }
         </div>
       </div>
+      }
 
       <div class="caps">
         <div class="cap" [class.limited]="isLimited(usersCap())">

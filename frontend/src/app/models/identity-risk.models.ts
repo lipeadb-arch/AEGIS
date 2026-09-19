@@ -271,6 +271,7 @@ export function isLimited(capability: IdentityRiskCapability | null): boolean {
 export type IdentityRiskSectionState =
   | 'NoConnector'
   | 'NeverCollected'
+  | 'Unreadable'
   | 'PreservedAfterFailure'
   | 'Partial'
   | 'Complete';
@@ -285,7 +286,9 @@ export function sectionState(p: IdentityEvidenceProjection | null): IdentityRisk
 
   const caps = [p.identityRisk.riskyUsersCapability, p.identityRisk.riskDetectionsCapability];
   const anyData = caps.some((c) => c.hasData);
-  if (!anyData) return 'NeverCollected';
+  // Sem dado algum: só é "nunca coletado" se nenhuma dimensão foi sequer tentada. Uma coleta que rodou e
+  // esbarrou em permissão/licença/indisponibilidade tem estado próprio — dizer "não foi executada" seria falso.
+  if (!anyData) return caps.every((c) => c.outcome === 'NotAttempted') ? 'NeverCollected' : 'Unreadable';
 
   // Degradação com evidência preservada tem precedência: o operador precisa saber que está vendo o passado.
   if (p.isDegraded) return 'PreservedAfterFailure';
@@ -296,6 +299,8 @@ const SECTION_MESSAGE: Record<IdentityRiskSectionState, string> = {
   NoConnector: 'Conecte o Microsoft Entra ID para acompanhar o risco de identidade deste cliente.',
   NeverCollected:
     'Nenhuma coleta de risco de identidade foi executada ainda. Sem coleta não há como afirmar que existe — ou que não existe — risco.',
+  Unreadable:
+    'A coleta foi executada, mas nenhuma dimensão do risco de identidade pôde ser lida (motivo e ação abaixo). Sem leitura não há como afirmar — ou descartar — risco.',
   PreservedAfterFailure:
     'Esta é a última fotografia válida. A coleta mais recente falhou e os dados anteriores foram preservados, não apagados.',
   Partial:

@@ -590,9 +590,11 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         background: var(--hover);
         opacity: 1;
       }
-      .sync-state.tone-ok { border-left-color: var(--cyan); }
-      .sync-state.tone-warn { border-left-color: var(--amber); }
-      .sync-state.tone-err { border-left-color: var(--red); }
+      /* Mesma especificidade que as faixas .tone-* abaixo: o fundo precisa ser reafirmado aqui,
+         senão o aviso vira um bloco âmbar/ciano com texto claro ilegível. */
+      .sync-state.tone-ok { border-left-color: var(--cyan); background: var(--hover); }
+      .sync-state.tone-warn { border-left-color: var(--amber); background: var(--hover); }
+      .sync-state.tone-err { border-left-color: var(--red); background: var(--hover); }
       .sync-title { display: flex; gap: 8px; align-items: center; color: var(--text); font-weight: 600; }
       .sync-detail { color: var(--text-2); }
       .sync-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -717,6 +719,12 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         display: flex;
         gap: 0.4rem;
         flex-wrap: wrap;
+      }
+      /* Largura de celular: nome, estado e ações em linhas próprias — em 4 colunas o nome colapsava a zero
+         e as ações empurravam a página para rolagem horizontal. */
+      @media (max-width: 40rem) {
+        .conn { grid-template-columns: 4px minmax(0, 1fr); }
+        .conn-state, .conn-actions { grid-column: 2 / -1; flex-wrap: wrap; }
       }
       /* Conector desconectado: rebaixado visualmente, estado inequívoco. */
       .conn.disconnected {
@@ -976,6 +984,8 @@ export class IntegrationsComponent {
 
   /** Último recebimento/coleta em formato curto, ou "—" quando nunca houve. */
   protected lastSync(c: ConnectorConfig): string {
+    // Durante a coleta o servidor omite o carimbo até o fim real; "—" ali sugeriria que nunca houve coleta.
+    if (c.lastStatus === 'Syncing') return 'em andamento';
     if (!c.lastSyncAt) return '—';
     const d = new Date(c.lastSyncAt);
     return isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR');

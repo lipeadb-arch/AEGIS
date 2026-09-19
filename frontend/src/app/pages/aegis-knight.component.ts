@@ -209,7 +209,7 @@ import { PostureExportFormat } from '../models/posture-history.models';
               <span class="sep">·</span>
               <span>Execução: <b>não finalizada</b></span>
             } @else {
-              <span>Última coleta: <b>{{ (a.completedAt || a.startedAt) | date: 'dd/MM/yyyy HH:mm' }}</b></span>
+              <span>Avaliação concluída: <b>{{ (a.completedAt || a.startedAt) | date: 'dd/MM/yyyy HH:mm' }}</b></span>
             }
           </div>
 
@@ -620,7 +620,9 @@ export class AegisKnightComponent implements OnInit {
   protected readonly sourceStateLabel = sourceStateLabel;
   protected readonly isProblemState = isProblemState;
 
-  readonly badgeState = computed(() => connectionStateOf(this.assessment()));
+  readonly badgeState = computed(() =>
+    connectionStateOf(this.assessment(), this.entraConfigured() || this.googleConfigured()),
+  );
   readonly badgeLabel = computed(() => connectionBadgeLabel(this.badgeState()));
 
   // ---- [AEGIS-KNIGHT-MULTICLOUD-01] Abas, filtros e resumo de objetos afetados ----------------------

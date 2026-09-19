@@ -239,6 +239,20 @@ test('fotografia preservada após falha tem estado e mensagem próprios', () => 
   );
 });
 
+test('coleta executada sem nenhuma dimensão legível não é "nunca coletado"', () => {
+  const p = withRisk(cap('InsufficientPermission', false), cap('InsufficientPermission', false));
+  eq(sectionState(p), 'Unreadable', 'as duas dimensões negadas por permissão');
+  eq(
+    sectionState(withRisk(cap('NotAttempted', false), cap('LimitedByLicense', false))),
+    'Unreadable',
+    'uma dimensão tentada e limitada já prova que a coleta rodou',
+  );
+  const msg = sectionMessage('Unreadable');
+  assert(/foi executada/.test(msg), 'a mensagem reconhece que a coleta rodou');
+  assert(!/nenhuma coleta/i.test(msg), 'não afirma que a coleta não aconteceu');
+  assert(!/sem risco|nenhum risco|seguro/i.test(msg), 'não afirma ausência de risco');
+});
+
 test('nunca coletado não afirma ausência de risco', () => {
   const msg = sectionMessage('NeverCollected');
   assert(msg.includes('Sem coleta'), 'a mensagem reconhece que não houve coleta');
