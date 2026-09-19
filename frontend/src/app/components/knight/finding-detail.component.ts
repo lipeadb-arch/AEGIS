@@ -94,16 +94,18 @@ import { KnightActionPlanComponent } from './action-plan.component';
           <p class="lead soft">Nesta avaliação: {{ findingSituation(indicator()) }}</p>
           @if (reading(); as r) { <p class="lead soft">{{ r.means }}</p> }
           <h4 class="sec">Por que importa</h4>
-          @if (pres?.rationale) { <p class="lead soft">{{ pres!.rationale }}</p> }
+          @if (pres?.rationale) { <div class="kv"><span class="k">Risco</span><span class="v">{{ pres!.rationale }}</span></div> }
+          @if (pres?.impact) { <div class="kv"><span class="k">Impacto potencial</span><span class="v">{{ pres!.impact }}</span></div> }
           @if (pres?.doesNotProve || reading()) {
             <p class="caveat"><b>O que isso não significa:</b> {{ pres?.doesNotProve || reading()?.doesNotMean }}</p>
           }
           <h4 class="sec">Onde foi encontrado</h4>
           <p class="lead soft">
-            {{ axes().provider }} · {{ axes().service }} · domínio {{ axes().domainLabel }}.
-            @if (indicator().affectedObjectCount > 0) { {{ indicator().affectedObjectCount }} objeto(s) afetado(s). }
+            {{ axes().platform }} · {{ axes().service }} · domínio {{ axes().domainLabel }}.
+            @if (indicator().affectedComposition) { Afetados: {{ indicator().affectedComposition }}. }
+            @else if (indicator().affectedObjectCount > 0) { {{ indicator().affectedObjectCount }} afetado(s). }
             @if (indicator().evidenceObjectCount) { {{ indicator().evidenceObjectCount }} configuração(ões) sustentam o resultado. }
-            <button type="button" class="btn ghost" (click)="openAffected()">Ver objetos e configurações</button>
+            <button type="button" class="btn ghost" (click)="openAffected()">Ver itens afetados e configurações</button>
           </p>
           <h4 class="sec">O que fazer</h4>
           <div class="kv"><span class="k">Primeira ação</span><span class="v">{{ indicator().recommendation }}</span></div>
@@ -168,7 +170,7 @@ import { KnightActionPlanComponent } from './action-plan.component';
       @if (tab() === 'afetados') {
         <div class="tabpane">
           @if (loading()) {
-            <p class="pulse">Carregando objetos afetados…</p>
+            <p class="pulse">Carregando itens afetados…</p>
           } @else if (error()) {
             <div class="state err inline">
               <b>{{ error() }}</b>
@@ -208,16 +210,16 @@ import { KnightActionPlanComponent } from './action-plan.component';
                     (input)="onSearch($event)"
                     (keyup.enter)="load()" />
                   <button type="button" class="btn ghost" (click)="load()">Buscar</button>
-                  <span class="af-count">{{ af.matchCount }} de {{ af.totalPreserved }} objeto(s)</span>
+                  <span class="af-count">{{ af.matchCount }} de {{ af.totalPreserved }} item(ns)</span>
                 </div>
 
                 @if (af.items.length === 0) {
-                  <p class="empty-line">Nenhum objeto corresponde à busca. Ajuste os termos ou limpe o filtro.</p>
+                  <p class="empty-line">Nenhum item corresponde à busca. Ajuste os termos ou limpe o filtro.</p>
                 } @else {
                   <div class="tbl-wrap">
                     <table class="tbl">
                       <thead>
-                        <tr><th>Objeto</th><th>Tipo</th><th>Papéis</th><th>Por que está aqui</th></tr>
+                        <tr><th>Item</th><th>Tipo</th><th>Papéis</th><th>Por que está aqui</th></tr>
                       </thead>
                       <tbody>
                         @for (o of af.items; track o.externalId) {
@@ -225,7 +227,7 @@ import { KnightActionPlanComponent } from './action-plan.component';
                             <td class="af-id">
                               <span class="nm">{{ affectedLabel(o) }}</span>
                               @if (isUnnamed(o)) {
-                                <span class="mono">identificador do objeto · a fonte não devolveu nome</span>
+                                <span class="mono">identificador na fonte · a fonte não devolveu nome</span>
                               } @else if (o.userPrincipalName && o.displayName) {
                                 <span class="mono">{{ o.userPrincipalName }}</span>
                               }

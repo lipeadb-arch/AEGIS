@@ -91,6 +91,7 @@ class FakeKnight {
   runSource() { return this.call('runSource'); }
   getAffected() { return this.call('getAffected'); }
   getAffectedSummary() { return this.call('getAffectedSummary'); }
+  getReferenceCoverage() { return this.call('getReferenceCoverage'); }
   of(m: string): Call[] { return this.calls.filter((c) => c.m === m); }
   last(m: string): Call {
     const c = this.of(m).at(-1);
@@ -252,6 +253,16 @@ test('tentativa SEM avaliação concluída: o aviso não promete resultado abaix
   contains(msg, 'Não há avaliação concluída para mostrar', 'a ausência é dita');
   lacks(msg, /mostrado abaixo/, 'não existe resultado concluído abaixo');
   lacks(msg, /não produziu veredito/, 'os vereditos eram gravados antes da IA');
+});
+
+test('[AEGIS-KNIGHT-COVERAGE-01] abrir a tela lê a cobertura do catálogo e NÃO inicia coleta', () => {
+  const { c, api } = mount({ assessment: assessment(RUN_A), unfinishedAttempt: null });
+  eq(api.of('getReferenceCoverage').length, 1, 'uma leitura do catálogo (servidor), sem consultar o cliente');
+  eq(api.of('runSource').length + api.of('runDemo').length, 0, 'abrir a tela nunca coleta');
+  eq(c.referenceCoverage(), null, 'até a resposta chegar, a tela não inventa cobertura');
+  fail(api.last('getReferenceCoverage'), new Error('x'));
+  eq(c.referenceCoverage(), null, 'falha na leitura da cobertura não inventa número nem derruba a avaliação');
+  eq(c.assessment()?.id, RUN_A, 'a avaliação exibida continua a mesma');
 });
 
 test('sem tentativa, não há aviso', () => {

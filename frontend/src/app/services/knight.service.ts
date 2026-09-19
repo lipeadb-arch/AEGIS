@@ -7,6 +7,7 @@ import {
   KnightAffectedSummary,
   KnightAssessment,
   KnightLatest,
+  KnightReferenceCoverage,
   KnightSources,
   KnightSourceType,
 } from '../models/knight.models';
@@ -74,6 +75,17 @@ export class KnightService {
   private runTimeout(): KnightRunTimeoutError {
     return new KnightRunTimeoutError(
       'O navegador deixou de aguardar a resposta desta execução. O desfecho dela não foi confirmado.',
+    );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-COVERAGE-01] Cobertura de IMPLEMENTAÇÃO do catálogo de referência (propriedade do produto). Leitura
+   * pura do catálogo no servidor: não consulta o cliente e NÃO inicia coleta.
+   */
+  getReferenceCoverage(): Observable<KnightReferenceCoverage> {
+    return this.http.get<KnightReferenceCoverage>(`${this.base}/reference-coverage`).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível carregar a cobertura do catálogo de referência.')),
     );
   }
 

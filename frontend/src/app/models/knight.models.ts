@@ -23,7 +23,12 @@ export type KnightCategory =
   | 'IdentityGovernance'
   | 'AccountHygiene'
   | 'GuestAccess'
-  | 'ServiceAccounts';
+  | 'ServiceAccounts'
+  // [AEGIS-KNIGHT-COVERAGE-01] Controles de configuração do locatário.
+  | 'TenantConfiguration'
+  | 'AuthenticationPolicy'
+  | 'ApplicationGovernance'
+  | 'DeviceGovernance';
 
 /** Estado de conexão exibido no badge: separação inequívoca entre Demo, Não configurado e Conectado. */
 export type KnightConnectionState = 'Demo' | 'NotConfigured' | 'Connected';
@@ -104,6 +109,11 @@ export interface KnightIndicator {
   evidenceObjectCount?: number;
   /** [AEGIS-KNIGHT-MULTICLOUD-01] Perfil, eixos e contribuição para a nota. Ausente em respostas antigas. */
   presentation?: KnightControlPresentation | null;
+  /**
+   * [AEGIS-KNIGHT-COVERAGE-01] Composição NOMEADA dos afetados ("12 contas de usuário e 2 aplicações"), calculada no
+   * servidor pela mesma definição do HTML, CSV e PDF. Nula quando nada foi afetado ou em respostas antigas.
+   */
+  affectedComposition?: string | null;
 }
 
 export interface KnightCounts {
@@ -237,6 +247,10 @@ const CATEGORY_LABEL: Record<KnightCategory, string> = {
   AccountHygiene: 'Higiene de contas',
   GuestAccess: 'Acesso de convidados',
   ServiceAccounts: 'Contas de serviço',
+  TenantConfiguration: 'Configuração do locatário',
+  AuthenticationPolicy: 'Política de autenticação',
+  ApplicationGovernance: 'Governança de aplicações',
+  DeviceGovernance: 'Governança de dispositivos',
 };
 
 export function categoryLabel(category: KnightCategory): string {
@@ -335,6 +349,21 @@ const CAPABILITY_LABEL: Record<string, string> = {
   DriveSharingAudit: 'Auditoria de compartilhamento no Drive',
   OAuthTokenAudit: 'Auditoria de autorizações OAuth',
   AuthenticationMethods: 'Métodos de autenticação registrados',
+  // [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário (mesmos nomes do relatório exportado).
+  AuthorizationPolicy: 'Política de autorização do diretório',
+  AdminConsentPolicy: 'Fluxo de consentimento do administrador',
+  AppManagementPolicy: 'Política de gerenciamento de aplicações',
+  AuthenticationMethodsPolicy: 'Política de métodos de autenticação',
+  DirectorySettings: 'Configurações de diretório (senhas e grupos)',
+  Domains: 'Domínios',
+  DirectorySynchronization: 'Sincronização híbrida',
+  DeviceRegistrationPolicy: 'Política de registro de dispositivos',
+  GroupVisibility: 'Visibilidade de grupos do Microsoft 365',
+  PrivilegedAccountDetails: 'Origem e licenças das contas privilegiadas',
+  PrivilegedIdentityManagement: 'Privileged Identity Management (PIM)',
+  AccessReviews: 'Revisões de acesso',
+  NamedLocations: 'Locais nomeados',
+  ServicePrincipalSettings: 'Aplicações de serviço do Microsoft 365',
 };
 
 /** Capacidade desconhecida degrada para o próprio identificador — nunca some da tela. */
@@ -366,7 +395,8 @@ export type KnightAffectedObjectKind =
   | 'Unknown'
   | 'Policy'
   | 'DirectoryRole'
-  | 'TenantSetting';
+  | 'TenantSetting'
+  | 'Domain';
 
 /**
  * Estado do DETALHE de um achado numa avaliação:
@@ -407,16 +437,18 @@ export interface KnightAffectedObjects {
   collectedAt: string | null;
 }
 
+/** [AEGIS-KNIGHT-COVERAGE-01] Mesmos rótulos do relatório exportado (definição única no servidor: KnightObjectNouns). */
 const AFFECTED_KIND_LABEL: Record<KnightAffectedObjectKind, string> = {
-  User: 'Usuário',
-  Guest: 'Convidado',
+  User: 'Conta de usuário',
+  Guest: 'Conta de convidado',
   ServicePrincipal: 'Aplicação',
   Group: 'Grupo',
   Device: 'Dispositivo',
-  Unknown: 'Tipo não identificado',
+  Unknown: 'Item de tipo não identificado',
   Policy: 'Política',
   DirectoryRole: 'Papel de diretório',
-  TenantSetting: 'Configuração do tenant',
+  TenantSetting: 'Configuração do locatário',
+  Domain: 'Domínio',
 };
 
 export function affectedKindLabel(kind: KnightAffectedObjectKind): string {
@@ -546,12 +578,15 @@ export interface FindingLike {
   status: KnightIndicatorStatus;
   affectedObjectCount: number;
   evidence: string;
+  /** [AEGIS-KNIGHT-COVERAGE-01] Composição nomeada dos afetados, quando o servidor a informou. */
+  affectedComposition?: string | null;
 }
 
 /** Títulos claros para os achados com detalhe preservado; os demais mantêm o título do catálogo. */
 const FINDING_TITLE: Record<string, string> = {
   'AK-ENTRA-001': 'Contas privilegiadas sem método de MFA registrado no diretório',
-  'AK-ENTRA-002': 'Objetos privilegiados sujeitos a revisão de acesso',
+  // [AEGIS-KNIGHT-COVERAGE-01] A lista mistura contas, convidados, aplicações e grupos: "objetos" não dizia o quê.
+  'AK-ENTRA-002': 'Identidades com papel administrativo para revisão de acesso',
   'AK-ENTRA-004': 'Convidados sinalizados por atividade desconhecida',
 };
 
@@ -577,9 +612,9 @@ export function findingSituation(f: FindingLike): string {
           'comprova imposição por política.';
     case 'AK-ENTRA-002':
       return exposto
-        ? `${n} objeto(s) com papel privilegiado — acima do teto de menor privilégio parametrizado no ` +
-          'AEGIS. É o conjunto sujeito a revisão, não uma lista de acessos desnecessários.'
-        : 'Os objetos com papel privilegiado estão dentro do teto de menor privilégio parametrizado no ' +
+        ? `${f.affectedComposition ?? `${n} identidade(s)`} com papel privilegiado — acima do teto de menor privilégio ` +
+          'parametrizado no AEGIS. É o conjunto sujeito a revisão, não uma lista de acessos desnecessários.'
+        : 'As identidades com papel privilegiado estão dentro do teto de menor privilégio parametrizado no ' +
           'AEGIS. O teto é parâmetro do AEGIS, não um número exigido pelo NIST.';
     case 'AK-ENTRA-004':
       return exposto
@@ -645,6 +680,77 @@ export interface KnightControlPresentation {
   factor: number | null;
   achievedPoints: number | null;
   possiblePoints: number | null;
+  /** [AEGIS-KNIGHT-COVERAGE-01] Impacto potencial (texto determinístico do catálogo), distinto do risco (rationale). */
+  impact?: string | null;
+  /** [AEGIS-KNIGHT-COVERAGE-01] Plataforma: Microsoft Entra ID, Microsoft 365, Microsoft Azure, Google Workspace. */
+  platform?: string | null;
+  serviceKey?: string | null;
+}
+
+/* ---- [AEGIS-KNIGHT-COVERAGE-01] Cobertura do catálogo de referência (propriedade do produto) ---------------- */
+
+export type KnightReferenceDisposition = 'Implemented' | 'Partial' | 'Pending' | 'ManualOnly' | 'RequiresAccess' | 'ApiLimitation';
+
+export interface KnightReferenceCoverageGroup {
+  key: string;
+  label: string;
+  total: number;
+  implemented: number;
+  partial: number;
+  pending: number;
+  manualOnly: number;
+  requiresAccess: number;
+  apiLimitation: number;
+  fullPercent: number;
+  partialPercent: number;
+  anyAutomatedPercent: number;
+}
+
+export interface KnightReferenceControlStatus {
+  key: string;
+  framework: string;
+  version: string;
+  section: string | null;
+  variant: string | null;
+  service: string;
+  serviceLabel: string;
+  platform: string;
+  severity: string;
+  title: string;
+  disposition: KnightReferenceDisposition;
+  dispositionLabel: string;
+  indicatorIds: string[];
+  note: string | null;
+}
+
+export interface KnightReferenceCoverage {
+  catalogVersion: string;
+  referenceCommit: string;
+  frameworks: string[];
+  total: KnightReferenceCoverageGroup;
+  byPlatform: KnightReferenceCoverageGroup[];
+  byService: KnightReferenceCoverageGroup[];
+  controls: KnightReferenceControlStatus[];
+}
+
+/** As TRÊS medidas que a tela nunca mistura: catálogo (produto), avaliação (coleta neste ambiente) e aprovação. */
+export interface KnightThreeMeasures {
+  catalogFull: number | null;
+  catalogPartial: number | null;
+  catalogAnyAutomated: number | null;
+  assessmentCoverage: number;
+  approval: number | null;
+}
+
+export function threeMeasures(a: KnightAssessment, c: KnightReferenceCoverage | null, platform: string | null = null): KnightThreeMeasures {
+  const g = c ? (platform ? c.byPlatform.find((p) => p.label === platform) ?? null : c.total) : null;
+  return {
+    catalogFull: g ? g.fullPercent : null,
+    catalogPartial: g ? g.partialPercent : null,
+    catalogAnyAutomated: g ? g.anyAutomatedPercent : null,
+    assessmentCoverage: a.coverage,
+    approval: overviewKpis(a).approvalPercent,
+  };
 }
 
 export interface KnightAffectedSummaryItem {
@@ -674,9 +780,9 @@ export interface KnightAffectedSummary {
 export function knightUnitsLine(s: KnightAffectedSummary | null): string {
   if (!s) return 'Controles reprovados ou mitigados.';
   const occ = `${s.occurrences} ocorrência(s)`;
-  if (s.complete) return `${occ} em ${s.uniqueObjects} objeto(s) distinto(s).`;
+  if (s.complete) return `${occ} em ${s.uniqueObjects} item(ns) distinto(s) (contas, aplicações, papéis, políticas…).`;
   const n = s.incompleteIndicatorIds.length;
-  return `${occ} em pelo menos ${s.uniqueObjects} objeto(s) distinto(s) — a lista de objetos de ${n} controle(s) está incompleta.`;
+  return `${occ} em pelo menos ${s.uniqueObjects} item(ns) distinto(s) — a lista de ${n} controle(s) está incompleta.`;
 }
 
 export const NIST_FRAMEWORK = 'NIST CSF';
@@ -692,20 +798,25 @@ export function isEvaluated(i: KnightIndicator): boolean {
   return i.status === 'Passed' || i.status === 'Exposed' || i.status === 'Mitigated';
 }
 
-/** Domínio, serviço e provedor do controle; resposta antiga (sem perfil) cai na fonte, nunca em "Microsoft". */
-export function axesOf(i: KnightIndicator): { domain: string; domainLabel: string; service: string; provider: string } {
+/** Domínio, serviço, provedor e plataforma do controle; resposta antiga (sem perfil) cai na fonte, nunca em "Microsoft". */
+export function axesOf(i: KnightIndicator): { domain: string; domainLabel: string; service: string; provider: string; platform: string } {
   const p = i.presentation;
-  if (p) return { domain: p.domain, domainLabel: p.domainLabel, service: p.service, provider: p.provider };
+  if (p) return { domain: p.domain, domainLabel: p.domainLabel, service: p.service, provider: p.provider, platform: p.platform ?? p.service };
   const service = sourceTypeLabel(i.sourceType);
   const provider = i.sourceType === 'MicrosoftEntraId' ? 'Microsoft' : i.sourceType === 'GoogleWorkspace' ? 'Google' : 'Demonstração';
-  return { domain: 'Identity', domainLabel: 'Identidade', service, provider };
+  return { domain: 'Identity', domainLabel: 'Identidade', service, provider, platform: service };
+}
+
+/** [AEGIS-KNIGHT-COVERAGE-01] Benchmark de configuração (referência fixada no catálogo de referência). */
+export function isBenchmark(framework: string): boolean {
+  return framework.startsWith('CIS ');
 }
 
 /** Frameworks do controle (um controle mapeado a dois frameworks continua sendo UM controle). */
 export function frameworksOf(i: KnightIndicator): string[] {
   const out = new Set<string>();
   for (const r of i.presentation?.references ?? []) {
-    if (r.framework === NIST_FRAMEWORK || r.framework === MITRE_FRAMEWORK)
+    if (r.framework === NIST_FRAMEWORK || r.framework === MITRE_FRAMEWORK || isBenchmark(r.framework))
       out.add(r.version ? `${r.framework} ${r.version}` : r.framework);
   }
   if (!i.presentation) {
@@ -764,12 +875,12 @@ export interface KnightDistributionRow {
 }
 
 /** Distribuição de resultados por eixo (domínio ou serviço). Cada controle entra UMA vez. */
-export function distributionBy(a: KnightAssessment, axis: 'domain' | 'service'): KnightDistributionRow[] {
+export function distributionBy(a: KnightAssessment, axis: 'domain' | 'service' | 'platform'): KnightDistributionRow[] {
   const rows = new Map<string, KnightDistributionRow>();
   for (const i of a.indicators) {
     const ax = axesOf(i);
-    const key = axis === 'domain' ? ax.domain : ax.service;
-    const label = axis === 'domain' ? ax.domainLabel : ax.service;
+    const key = axis === 'domain' ? ax.domain : axis === 'platform' ? ax.platform : ax.service;
+    const label = axis === 'domain' ? ax.domainLabel : axis === 'platform' ? ax.platform : ax.service;
     const row = rows.get(key) ?? {
       key,
       label,
@@ -805,17 +916,19 @@ export interface KnightControlFilters {
   q: string;
   status: '' | 'findings' | KnightIndicatorStatus;
   severity: '' | SeverityLevel;
+  platform: string;
   service: string;
   domain: string;
   framework: string;
 }
 
-export const EMPTY_FILTERS: KnightControlFilters = { q: '', status: '', severity: '', service: '', domain: '', framework: '' };
+export const EMPTY_FILTERS: KnightControlFilters = { q: '', status: '', severity: '', platform: '', service: '', domain: '', framework: '' };
 
 export function matchesFilters(i: KnightIndicator, f: KnightControlFilters): boolean {
   if (f.status === 'findings' ? !isFinding(i) : f.status && i.status !== f.status) return false;
   if (f.severity && i.severity !== f.severity) return false;
   const ax = axesOf(i);
+  if (f.platform && ax.platform !== f.platform) return false;
   if (f.service && ax.service !== f.service) return false;
   if (f.domain && ax.domain !== f.domain) return false;
   if (f.framework && !frameworksOf(i).includes(f.framework)) return false;
@@ -834,6 +947,7 @@ export function describeFilters(f: KnightControlFilters, a: KnightAssessment | n
   const parts: string[] = [];
   if (f.status) parts.push(`resultado: ${f.status === 'findings' ? 'findings' : statusLabel(f.status)}`);
   if (f.severity) parts.push(`severidade: ${severityLabel(f.severity)}`);
+  if (f.platform) parts.push(`plataforma: ${f.platform}`);
   if (f.service) parts.push(`serviço: ${f.service}`);
   if (f.domain) {
     const label = a?.indicators.map(axesOf).find((x) => x.domain === f.domain)?.domainLabel ?? f.domain;
@@ -844,17 +958,25 @@ export function describeFilters(f: KnightControlFilters, a: KnightAssessment | n
   return parts.length ? parts.join(' · ') : 'sem filtros (avaliação completa)';
 }
 
-export function filterOptions(a: KnightAssessment): { services: string[]; domains: { key: string; label: string }[]; frameworks: string[] } {
+export function filterOptions(a: KnightAssessment): {
+  platforms: string[];
+  services: string[];
+  domains: { key: string; label: string }[];
+  frameworks: string[];
+} {
+  const platforms = new Set<string>();
   const services = new Set<string>();
   const domains = new Map<string, string>();
   const frameworks = new Set<string>();
   for (const i of a.indicators) {
     const ax = axesOf(i);
+    platforms.add(ax.platform);
     services.add(ax.service);
     domains.set(ax.domain, ax.domainLabel);
     frameworksOf(i).forEach((x) => frameworks.add(x));
   }
   return {
+    platforms: [...platforms].sort(),
     services: [...services].sort(),
     domains: [...domains.entries()].map(([key, label]) => ({ key, label })).sort((x, y) => x.label.localeCompare(y.label)),
     frameworks: [...frameworks].sort(),

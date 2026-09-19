@@ -5,6 +5,7 @@ import {
   KnightAssessment,
   KnightControlFilters,
   KnightIndicatorStatus,
+  KnightReferenceCoverage,
   affectedKindLabel,
   distributionBy,
   findingTitle,
@@ -15,6 +16,7 @@ import {
   severityLabel,
   sourceTypeLabel,
   statusLabel,
+  threeMeasures,
 } from '../../models/knight.models';
 
 const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated', 'Error', 'NotEvaluated', 'NotApplicable'];
@@ -67,8 +69,8 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
         <span class="metric-foot">{{ unitsLine() }}</span>
         <details class="help">
           <summary>Como contar</summary>
-          Controles reprovados ou mitigados. Um mesmo objeto (conta, papel, política) pode aparecer em mais de um
-          controle: cada aparição é uma ocorrência; objetos distintos contam uma vez.
+          Controles reprovados ou mitigados. Uma mesma conta, aplicação, papel ou política pode aparecer em mais de um
+          controle: cada aparição é uma ocorrência; itens distintos contam uma vez.
         </details>
       </div>
     </div>
@@ -126,6 +128,23 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       </div>
     </div>
 
+    @if (byPlatform().length > 1) {
+      <div class="panel">
+        <div class="hd"><h3>Resultado por plataforma</h3></div>
+        @for (r of byPlatform(); track r.key) {
+          <button type="button" class="bar" (click)="filter.emit({ platform: r.key })" [attr.aria-label]="rowLabel(r.label, r.counts, r.total)">
+            <span class="lbl">{{ r.label }}</span>
+            <span class="track">
+              @for (st of statuses; track st) {
+                @if (r.counts[st]) { <span class="seg" [class]="st" [style.width.%]="share(r.counts[st], maxPlatform())" [title]="statusLabel(st) + ': ' + r.counts[st]"></span> }
+              }
+            </span>
+            <span class="num">{{ r.total }}</span>
+          </button>
+        }
+      </div>
+    }
+
     <div class="panel">
       <div class="hd"><h3>Resultado por serviço</h3></div>
       @for (r of byService(); track r.key) {
@@ -144,7 +163,7 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
     <div class="ov-grid">
       <div class="panel">
         <div class="hd"><h3>Riscos prioritários</h3></div>
-        <p class="muted small">Até cinco controles reprovados — severidade, depois objetos afetados. Nenhum critério além do comprovado.</p>
+        <p class="muted small">Até cinco controles reprovados — severidade, depois quantidade afetada. Nenhum critério além do comprovado.</p>
         @if (priorities().length === 0) {
           <p class="muted">Nenhum controle reprovado nesta avaliação.</p>
         } @else {
@@ -154,7 +173,7 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
                 <button type="button" class="linkbtn" (click)="open.emit(p.indicatorId)">{{ findingTitle(p) }}</button>
                 <span class="muted small">
                   <span class="sev" [class]="p.severity">{{ severityLabel(p.severity) }}</span>
-                  {{ p.indicatorId }}@if (p.affectedObjectCount > 0) { · {{ p.affectedObjectCount }} objeto(s) }
+                  {{ p.indicatorId }}@if (p.affectedComposition) { · {{ p.affectedComposition }} } @else if (p.affectedObjectCount > 0) { · {{ p.affectedObjectCount }} afetado(s) }
                 </span>
               </li>
             }
@@ -162,17 +181,17 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
         }
       </div>
       <div class="panel">
-        <div class="hd"><h3>Principais objetos afetados</h3></div>
+        <div class="hd"><h3>Contas, aplicações e demais itens mais recorrentes</h3></div>
         @if (summaryState() === 'loading') {
           <p class="muted">Carregando…</p>
         } @else if (summaryState() === 'error' || !summary()) {
-          <p class="muted">O resumo de objetos não pôde ser carregado agora. Os controles continuam na outra aba.</p>
+          <p class="muted">O resumo de itens afetados não pôde ser carregado agora. Os controles continuam na outra aba.</p>
         } @else if (summary()!.top.length === 0) {
-          <p class="muted">Nenhum objeto afetado preservado nesta avaliação.</p>
+          <p class="muted">Nenhum item afetado preservado nesta avaliação.</p>
         } @else {
           <div class="table-wrap">
             <table class="data-table">
-              <thead><tr><th>Objeto</th><th>Tipo</th><th>Controles</th></tr></thead>
+              <thead><tr><th>Item</th><th>Tipo</th><th>Controles</th></tr></thead>
               <tbody>
                 @for (o of summary()!.top; track o.kind + o.externalId) {
                   <tr>
@@ -193,7 +212,7 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       <p class="small">
         <b>{{ sourceTypeLabel(a.sourceType) }}</b> · {{ a.source }} · coleta de
         {{ (a.completedAt || a.startedAt) | date: 'dd/MM/yyyy HH:mm' }} · catálogo {{ a.catalogVersion }}.
-        Escopo desta entrega: identidade. Microsoft 365/Teams e Azure ainda não são avaliados e não aparecem como cobertos.
+        Serviços ainda não coletados não aparecem como avaliados — o que falta está na cobertura do catálogo abaixo.
       </p>
       @if (limitations().length === 0) {
         <p class="muted small">Nenhuma limitação de coleta registrada: todas as capacidades desta fonte foram lidas.</p>
@@ -213,6 +232,52 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
             </tbody>
           </table>
         </div>
+      }
+    </div>
+
+    <div class="panel">
+      <div class="hd"><h3>Três medidas que não se somam</h3></div>
+      @let m = measures();
+      <div class="metric-grid three">
+        <div class="metric">
+          <span class="metric-label">Cobertura do catálogo de referência</span>
+          <span class="metric-value">{{ pct(m.catalogFull) }}</span>
+          <span class="metric-foot">
+            integral · {{ pct(m.catalogPartial) }} parcial · {{ pct(m.catalogAnyAutomated) }} com alguma avaliação automatizada (não é cobertura completa)
+          </span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Cobertura desta avaliação</span>
+          <span class="metric-value">{{ pct(m.assessmentCoverage) }}</span>
+          <span class="metric-foot">O que a coleta conseguiu avaliar neste ambiente.</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Aprovação</span>
+          <span class="metric-value">{{ pct(m.approval) }}</span>
+          <span class="metric-foot">Dos controles avaliados, os que estão conformes.</span>
+        </div>
+      </div>
+      @if (coverage(); as c) {
+        <p class="muted small">
+          Catálogo: o que o AEGIS consegue avaliar (propriedade do produto, {{ c.frameworks.join(' · ') }}). Limitação da API
+          oficial, verificação manual e acesso que o conector não tem nunca contam como avaliados.
+        </p>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Plataforma</th><th>Total</th><th>Integral</th><th>Parcial</th><th>Pendente</th><th>Limitação da API</th><th>Manual</th><th>Outro acesso</th></tr></thead>
+            <tbody>
+              @for (g of c.byPlatform; track g.key) {
+                <tr>
+                  <td>{{ g.label }}</td><td>{{ g.total }}</td>
+                  <td>{{ g.implemented }} ({{ pct(g.fullPercent) }})</td><td>{{ g.partial }} ({{ pct(g.partialPercent) }})</td>
+                  <td>{{ g.pending }}</td><td>{{ g.apiLimitation }}</td><td>{{ g.manualOnly }}</td><td>{{ g.requiresAccess }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      } @else {
+        <p class="muted small">A cobertura do catálogo de referência não pôde ser carregada agora; as outras duas medidas continuam valendo.</p>
       }
     </div>
   `,
@@ -249,6 +314,8 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       .sev.Low { color: var(--cyan); } .sev.Informational { color: var(--text-2); }
       .prio { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
       .prio li span { display: block; margin-top: 2px; }
+      .metric-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      @media (max-width: 700px) { .metric-grid.three { grid-template-columns: minmax(0, 1fr); } }
       @media (max-width: 900px) {
         .ov-grid { grid-template-columns: minmax(0, 1fr); }
         .bar { grid-template-columns: 110px minmax(0, 1fr) 32px; }
@@ -260,6 +327,8 @@ export class KnightOverviewComponent {
   readonly assessment = input.required<KnightAssessment>();
   readonly summary = input<KnightAffectedSummary | null>(null);
   readonly summaryState = input<'loading' | 'ok' | 'error'>('loading');
+  /** [AEGIS-KNIGHT-COVERAGE-01] Cobertura do catálogo de referência (propriedade do produto) — nula se não carregou. */
+  readonly coverage = input<KnightReferenceCoverage | null>(null);
   /** Pedido de abrir a aba de controles já com um recorte. */
   readonly filter = output<Partial<KnightControlFilters>>();
   /** Pedido de abrir UM controle. */
@@ -275,6 +344,9 @@ export class KnightOverviewComponent {
   readonly kpis = computed(() => overviewKpis(this.assessment()));
   readonly byDomain = computed(() => distributionBy(this.assessment(), 'domain'));
   readonly byService = computed(() => distributionBy(this.assessment(), 'service'));
+  readonly byPlatform = computed(() => distributionBy(this.assessment(), 'platform'));
+  readonly maxPlatform = computed(() => Math.max(1, ...this.byPlatform().map((r) => r.total)));
+  readonly measures = computed(() => threeMeasures(this.assessment(), this.coverage()));
   readonly priorities = computed(() => priorityControls(this.assessment()));
   readonly limitations = computed(() => limitationViews(this.assessment()));
   readonly maxSeverity = computed(() => Math.max(1, ...this.kpis().findingsBySeverity.map((s) => s.count)));

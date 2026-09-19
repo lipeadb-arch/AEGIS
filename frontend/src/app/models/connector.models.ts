@@ -176,7 +176,7 @@ export const PROVIDERS: ProviderSpec[] = [
     capabilityValue: 10,
     knight: true,
     infoNote:
-      'Coletor REAL somente-leitura do Microsoft Entra ID (client credentials). Após salvar, use “Sincronizar agora” neste conector: a coleta, o registro no ADM e a avaliação acontecem no servidor, e o resultado aparece no AEGIS KNIGHT. O destino é o Microsoft Graph oficial — não há URL configurável. As duas permissões de risco de identidade dependem de Microsoft Entra ID P1/P2; sem elas (ou sem a licença) a coleta continua, e a dimensão correspondente é apresentada como não coletada — nunca como zero.',
+      'Coletor REAL somente-leitura do Microsoft Entra ID (client credentials). Após salvar, use “Sincronizar agora” neste conector: a coleta, o registro no ADM e a avaliação acontecem no servidor, e o resultado aparece no AEGIS KNIGHT. O destino é o Microsoft Graph oficial (versão estável v1.0) — não há URL configurável. Além das identidades, a mesma coleta lê a configuração do locatário (autorização, métodos de autenticação, regras de senha, domínios, dispositivos, PIM, revisões de acesso, locais nomeados). As permissões de risco de identidade, PIM e revisões de acesso dependem de licença Microsoft Entra ID P1/P2 ou Governance; sem a permissão (ou sem a licença) a coleta continua, e os controles correspondentes ficam não avaliados, com o motivo — nunca aprovados. Nenhuma chamada altera a configuração do locatário.',
     appPermissions: [
       'Directory.Read.All',
       'AuditLog.Read.All',
@@ -185,6 +185,11 @@ export const PROVIDERS: ProviderSpec[] = [
       'Application.Read.All',
       'IdentityRiskyUser.Read.All',
       'IdentityRiskEvent.Read.All',
+      'Policy.Read.DeviceConfiguration',
+      'OnPremDirectorySynchronization.Read.All',
+      'RoleManagement.Read.Directory',
+      'RoleManagementPolicy.Read.Directory',
+      'AccessReview.Read.All',
     ],
     fields: [
       { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
@@ -394,6 +399,8 @@ export type MicrosoftPermissionUsage =
   | 'Consumed'
   /** Necessária para as capacidades de risco de identidade introduzidas neste pacote. */
   | 'NewForIdentityRisk'
+  /** [AEGIS-KNIGHT-COVERAGE-01] Necessária para os controles de configuração do locatário (somente leitura). */
+  | 'NewForConfiguration'
   /** Deliberadamente NÃO exigida — com a justificativa técnica registrada em `action`. */
   | 'NotRequired';
 
@@ -415,7 +422,7 @@ export interface MicrosoftCapabilitySpec {
 export const ENTRA_IDENTITY_CAPABILITIES: MicrosoftCapabilitySpec[] = [
   {
     name: 'Papéis privilegiados e diretório',
-    purpose: 'Inventário de papéis privilegiados, membros, concessões de aplicativo e consentimentos delegados.',
+    purpose: 'Inventário de papéis privilegiados, membros, concessões de aplicativo, consentimentos delegados, configurações de diretório (senhas e grupos), domínios, grupos do Microsoft 365 e licenças das contas privilegiadas.',
     permission: 'Directory.Read.All',
     usage: 'Consumed',
     licenseNote: null,
@@ -440,7 +447,7 @@ export const ENTRA_IDENTITY_CAPABILITIES: MicrosoftCapabilitySpec[] = [
   },
   {
     name: 'Acesso condicional e baseline',
-    purpose: 'Políticas de acesso condicional e configuração padrão de segurança.',
+    purpose: 'Políticas de acesso condicional, configuração padrão de segurança, política de autorização, consentimento do administrador, gerenciamento de aplicações, métodos de autenticação e locais nomeados.',
     permission: 'Policy.Read.All',
     usage: 'Consumed',
     licenseNote: null,
@@ -472,6 +479,47 @@ export const ENTRA_IDENTITY_CAPABILITIES: MicrosoftCapabilitySpec[] = [
     licenseNote:
       'Requer Microsoft Entra ID P1 ou P2. Com P1, as detecções premium chegam sem categoria — a cobertura é parcial, e a tela diz isso.',
     action: 'Conceda a permissão à aplicação e refaça a coleta em AEGIS KNIGHT.',
+  },
+  // ---- [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário — todas de LEITURA ----------------------------
+  {
+    name: 'Política de registro de dispositivos',
+    purpose: 'Quem pode registrar e ingressar dispositivos, cota por usuário, MFA no registro, administradores locais e LAPS.',
+    permission: 'Policy.Read.DeviceConfiguration',
+    usage: 'NewForConfiguration',
+    licenseNote: null,
+    action: 'Conceda a permissão à aplicação e sincronize novamente em Integrações.',
+  },
+  {
+    name: 'Sincronização híbrida',
+    purpose: 'Se a sincronização de hash de senha está habilitada num diretório sincronizado com o Active Directory local.',
+    permission: 'OnPremDirectorySynchronization.Read.All',
+    usage: 'NewForConfiguration',
+    licenseNote: null,
+    action: 'Conceda a permissão à aplicação e sincronize novamente em Integrações. Sem ela, só o controle de hash de senha fica não avaliado.',
+  },
+  {
+    name: 'Atribuições de papéis (PIM)',
+    purpose: 'Atribuições ativas e elegíveis dos papéis administrativos: quais são permanentes e quais dependem de ativação.',
+    permission: 'RoleManagement.Read.Directory',
+    usage: 'NewForConfiguration',
+    licenseNote: 'O Privileged Identity Management requer Microsoft Entra ID P2 ou Governance.',
+    action: 'Conceda a permissão à aplicação e sincronize novamente em Integrações.',
+  },
+  {
+    name: 'Regras de ativação de papéis (PIM)',
+    purpose: 'Se ativar os papéis Administrador Global e Administrador de Função Privilegiada exige aprovação, e por quantos aprovadores.',
+    permission: 'RoleManagementPolicy.Read.Directory',
+    usage: 'NewForConfiguration',
+    licenseNote: 'O Privileged Identity Management requer Microsoft Entra ID P2 ou Governance.',
+    action: 'Conceda a permissão à aplicação e sincronize novamente em Integrações.',
+  },
+  {
+    name: 'Revisões de acesso',
+    purpose: 'Definições de revisão de acesso de convidados e de papéis altamente privilegiados: recorrência, revisores e remoção ao aplicar.',
+    permission: 'AccessReview.Read.All',
+    usage: 'NewForConfiguration',
+    licenseNote: 'Revisões de acesso requerem Microsoft Entra ID P2 ou Governance.',
+    action: 'Conceda a permissão à aplicação e sincronize novamente em Integrações.',
   },
   {
     name: 'Métodos de autenticação por usuário',
@@ -509,6 +557,7 @@ export function licenseDependentCapabilities(caps: MicrosoftCapabilitySpec[]): M
 const USAGE_LABEL: Record<MicrosoftPermissionUsage, string> = {
   Consumed: 'Já consumida',
   NewForIdentityRisk: 'Nova — risco de identidade',
+  NewForConfiguration: 'Nova — configuração do locatário',
   NotRequired: 'Não necessária neste pacote',
 };
 

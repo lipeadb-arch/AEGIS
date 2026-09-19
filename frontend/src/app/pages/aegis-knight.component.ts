@@ -6,6 +6,7 @@ import { environment } from '../../environments/environment';
 import {
   EMPTY_FILTERS,
   KnightAffectedSummary,
+  KnightReferenceCoverage,
   KnightAssessment,
   KnightControlFilters,
   KnightIndicator,
@@ -66,7 +67,7 @@ import { PostureExportFormat } from '../models/posture-history.models';
           </h1>
           <p class="page-desc">
             Avaliação determinística das configurações de segurança dos provedores conectados: o que favorece
-            exposição, os objetos envolvidos e o que fazer. Vereditos por regras; interpretação assistida por IA.
+            exposição, as contas, aplicações e configurações envolvidas e o que fazer. Vereditos por regras; interpretação assistida por IA.
           </p>
           <p class="page-meta">
             Cobertura atual: identidade (Microsoft Entra ID, Google Workspace) · a coleta é feita em Configurações → Integrações
@@ -239,7 +240,7 @@ import { PostureExportFormat } from '../models/posture-history.models';
 
           @if (tab() === 'overview') {
             <div role="tabpanel" aria-labelledby="knight-tab-overview" class="tabpanel">
-              <app-knight-overview [assessment]="a" [summary]="summary()" [summaryState]="summaryState()"
+              <app-knight-overview [assessment]="a" [summary]="summary()" [summaryState]="summaryState()" [coverage]="referenceCoverage()"
                                    (filter)="openControls($event)" (open)="openControl($event)" />
 
               <!-- [AEGIS-MVP-PRODUCT-02] O painel abaixo lê o snapshot ATUAL da Evidence Fabric e diz isso por
@@ -634,6 +635,8 @@ export class AegisKnightComponent implements OnInit {
   readonly summary = signal<KnightAffectedSummary | null>(null);
   readonly summaryState = signal<'loading' | 'ok' | 'error'>('loading');
   private summaryRun: string | null = null;
+  /** [AEGIS-KNIGHT-COVERAGE-01] Cobertura do catálogo (leitura do catálogo no servidor — não coleta nada). */
+  readonly referenceCoverage = signal<KnightReferenceCoverage | null>(null);
 
   setTab(t: 'overview' | 'controls'): void {
     if (this.tab() === t) return;
@@ -1041,6 +1044,10 @@ export class AegisKnightComponent implements OnInit {
 
     this.loading.set(true);
     this.error.set(null);
+    this.knight.getReferenceCoverage().subscribe({
+      next: (c) => this.referenceCoverage.set(c),
+      error: () => this.referenceCoverage.set(null),
+    });
     this.knight.getSources().subscribe({
       next: (s) => this.sources.set(s),
       error: () => this.sources.set(null), // fontes é secundário; não bloqueia a tela
