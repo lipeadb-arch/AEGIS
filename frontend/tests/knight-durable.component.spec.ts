@@ -90,6 +90,7 @@ class FakeKnight {
   runDemo() { return this.call('runDemo'); }
   runSource() { return this.call('runSource'); }
   getAffected() { return this.call('getAffected'); }
+  getAffectedSummary() { return this.call('getAffectedSummary'); }
   of(m: string): Call[] { return this.calls.filter((c) => c.m === m); }
   last(m: string): Call {
     const c = this.of(m).at(-1);
@@ -134,7 +135,7 @@ function mountRaw(query: Record<string, string> = {}): Mounted {
       { provide: ChangeDetectionScheduler, useValue: { notify() {}, runningTick: false } },
       { provide: KnightService, useValue: api },
       { provide: RemediationService, useValue: { list: () => silent(), get: () => silent() } },
-      { provide: PostureHistoryService, useValue: { publish: () => silent() } },
+      { provide: PostureHistoryService, useValue: { publish: () => silent(), exportSnapshot: () => silent() } },
       { provide: IdentityRiskService, useValue: { get: () => silent() } },
       { provide: ActivatedRoute, useValue: { snapshot: { queryParamMap: map } } },
       { provide: Router, useValue: router },

@@ -339,6 +339,10 @@ public static class DependencyInjection
         services.Configure<PolicySyncQueueOptions>(config.GetSection(PolicySyncQueueOptions.SectionName));
         services.AddSingleton<IDocumentAnalysisQueue, DurableDocumentAnalysisQueue>();
         services.AddSingleton<IPolicySyncQueue, DurablePolicySyncQueue>();
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Sincronização do KNIGHT iniciada em Integrações: mesma família de fila.
+        services.Configure<KnightSyncOptions>(config.GetSection(KnightSyncOptions.SectionName));
+        services.AddSingleton<IKnightSyncQueue, DurableKnightSyncQueue>();
+        services.AddScoped<IKnightSyncRequests, KnightSyncRequests>();
 
         return services;
     }

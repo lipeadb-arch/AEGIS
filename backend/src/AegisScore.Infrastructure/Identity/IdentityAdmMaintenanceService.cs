@@ -736,6 +736,11 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
                 observacoesRemovidas += await db.IdentityEntityObservations
                     .Where(o => o.AcquisitionId == candidata.Id)
                     .ExecuteDeleteAsync(ct);
+                // [AEGIS-KNIGHT-MULTICLOUD-01] A configuração observada é DETALHE operacional da aquisição, como as
+                // observações: expira junto. Os objetos que sustentaram vereditos estão congelados na execução.
+                await db.IdentityConfigurationObservations
+                    .Where(c => c.AcquisitionId == candidata.Id)
+                    .ExecuteDeleteAsync(ct);
 
                 var aquisicao = await db.IdentityAcquisitions.FirstAsync(a => a.Id == candidata.Id, ct);
                 aquisicao.DetailRetiredAt = now;
@@ -747,6 +752,9 @@ public sealed class IdentityAdmMaintenanceService : IIdentityAdmMaintenanceServi
             // não limitaria o crescimento — os cabeçalhos e os fatos agregados também se acumulam por coleta.
             observacoesRemovidas += await db.IdentityEntityObservations
                 .Where(o => o.AcquisitionId == candidata.Id)
+                .ExecuteDeleteAsync(ct);
+            await db.IdentityConfigurationObservations
+                .Where(c => c.AcquisitionId == candidata.Id)
                 .ExecuteDeleteAsync(ct);
 
             var vencida = await db.IdentityAcquisitions.FirstAsync(a => a.Id == candidata.Id, ct);

@@ -98,8 +98,8 @@ import {
           <p class="page-eyebrow">Operação</p>
           <h1>Central de Prioridades</h1>
           <p class="page-desc">
-            AEGIS Score (controles NIST CSF avaliados), recomendações de postura do Microsoft Secure Score,
-            vulnerabilidades identificadas em ativos e achados de identidade do AEGIS KNIGHT são dimensões
+            AEGIS Score (controles NIST CSF avaliados), recomendações de postura das fontes conectadas,
+            vulnerabilidades identificadas em ativos e findings do assessment AEGIS KNIGHT são dimensões
             <strong>relacionadas, porém distintas</strong>. Elas <strong>não formam um único score</strong>: cada fila
             mantém a própria ordem e a própria fonte. A prioridade de tratamento vale só para vulnerabilidades em
             dispositivos — não é uma ordem universal entre identidades, documentação e dispositivos.
@@ -1573,7 +1573,7 @@ export class PrioritiesComponent {
   protected analyzeWithAi(): void {
     this.agent.requestAudit(
       'Analise em conjunto o AEGIS Score (controles NIST CSF avaliados), as recomendações de postura pendentes ' +
-        'do Microsoft Secure Score e as vulnerabilidades identificadas nos ativos. Aponte relações apenas quando ' +
+        'das fontes conectadas e as vulnerabilidades identificadas nos ativos. Aponte relações apenas quando ' +
         'houver evidência no contexto e proponha uma sequência de investigação e remediação. Não combine as ' +
         'escalas, não trate diferença de pontos como exposição confirmada nem CVSS como risco de negócio, e diga ' +
         'quando uma fonte não tiver leitura. Preserve separadamente fatos das fontes, inferências e ' +

@@ -184,7 +184,8 @@ export function recommendationReading(s: PostureExposureSummary | null | undefin
       hasData: false,
       lastAttemptFailed: false,
       lastAttemptDegraded: false,
-      notice: 'Nenhuma integração com o Microsoft Secure Score está configurada neste ambiente.',
+      notice:
+        'Nenhuma fonte de recomendações de postura está configurada neste ambiente. A fonte suportada hoje é o Microsoft Secure Score.',
     };
   }
   if (failed) {

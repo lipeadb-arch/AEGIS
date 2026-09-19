@@ -108,6 +108,9 @@ public sealed class PriorityWorkspaceTests
         public Task<KnightAssessment> RunAssessmentAsync(KnightSourceType source, CancellationToken ct = default) =>
             throw new InvalidOperationException("A Central de Prioridades NUNCA executa uma coleta KNIGHT.");
 
+        public Task<KnightSyncRunResult> RunForSyncRequestAsync(KnightSourceType source, KnightSyncBinding binding, CancellationToken ct = default) =>
+            throw new InvalidOperationException("A Central de Prioridades NUNCA executa uma coleta KNIGHT.");
+
         public Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
             Task.FromResult<KnightAssessment?>(null);
 
@@ -115,8 +118,12 @@ public sealed class PriorityWorkspaceTests
             Task.FromResult(new KnightSourcesStatus(true, Array.Empty<KnightSourceInfo>()));
 
         public Task<KnightAffectedObjectsPage?> GetAffectedObjectsAsync(
-            Guid runId, string indicatorId, int page, int pageSize, string? search, CancellationToken ct = default) =>
+            Guid runId, string indicatorId, int page, int pageSize, string? search, CancellationToken ct = default,
+            KnightObjectRelation relation = KnightObjectRelation.Affected) =>
             Task.FromResult<KnightAffectedObjectsPage?>(null);
+
+        public Task<KnightAffectedSummary?> GetAffectedSummaryAsync(Guid runId, CancellationToken ct = default) =>
+            Task.FromResult<KnightAffectedSummary?>(null);
     }
 
     // ---- Builders de DTOs canônicos ---------------------------------------------------------------------

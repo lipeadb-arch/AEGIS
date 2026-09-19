@@ -1,9 +1,18 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, signal } from '@angular/core';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { ConnectorService } from '../services/connector.service';
+import { AuthService } from '../services/auth.service';
+import {
+  KnightSyncRequest,
+  SYNC_POLL_INTERVAL_MS,
+  SYNC_WATCH_LIMIT_MS,
+  isActiveSync,
+  isCurrentSyncResponse,
+  syncView,
+} from '../models/knight-sync.models';
 import {
   buildMicrosoftHubRequest,
   buildSiemSyncMessage,
@@ -53,7 +62,7 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
 @Component({
   selector: 'app-integrations',
   standalone: true,
-  imports: [ReactiveFormsModule],
+  imports: [ReactiveFormsModule, RouterLink],
   template: `
     <section class="stack">
       <!-- Sem <h1> redundante: a aba "Integrações" do shell de Configurações já rotula esta seção. -->
@@ -107,10 +116,15 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                   <span class="meta">última coleta: {{ lastSync(c) }}</span>
                 </div>
                 <div class="conn-actions">
-                  <!-- IdentityPosture não usa o pipeline genérico: Testar/Coletar retornariam 501. A ação real
-                       do KNIGHT (coleta do Entra) vive em /identity. -->
+                  <!-- [AEGIS-KNIGHT-MULTICLOUD-01] Postura de identidade (AEGIS KNIGHT): "Sincronizar agora" registra
+                       um pedido DURÁVEL no servidor (coleta → ADM → avaliação) e a tela acompanha AQUELE pedido. -->
                   @if (knight(c)) {
-                    <button type="button" class="ghost sm" (click)="openKnight()">Abrir AEGIS KNIGHT</button>
+                    @if (canSync(c)) {
+                      <button type="button" class="ghost sm" (click)="syncKnight(c)"
+                              [disabled]="busyId() === c.id || knightActive(c.id)">
+                        {{ knightActive(c.id) ? 'Sincronizando…' : 'Sincronizar agora' }}
+                      </button>
+                    }
                   } @else {
                     @if (canTest(c)) {
                       <button type="button" class="ghost sm" (click)="test(c)" [disabled]="busyId() === c.id">
@@ -189,6 +203,32 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
 
                 @if (actionMsg()[c.id]; as msg) {
                   <p class="conn-msg" [class.err]="msg.startsWith('⚠')">{{ msg }}</p>
+                }
+
+                @if (knight(c) && knightSync()[c.id]; as r) {
+                  @let v = view(r);
+                  <div class="conn-msg sync-state" [class]="'tone-' + v.tone" role="status" aria-live="polite">
+                    <span class="sync-title">
+                      @if (v.tone === 'busy') { <span class="spinner" aria-hidden="true"></span> }
+                      {{ v.title }}
+                    </span>
+                    @if (v.detail) { <span class="sync-detail">{{ v.detail }}</span> }
+                    <span class="sync-actions">
+                      @if (v.runId) {
+                        <a class="ghost sm" routerLink="/identity" [queryParams]="{ run: v.runId }">Abrir avaliação</a>
+                      }
+                      @if (v.previousRunId) {
+                        <a class="ghost sm" routerLink="/identity" [queryParams]="{ run: v.previousRunId }">Ver avaliação anterior</a>
+                      }
+                      @if (watchExpired()[c.id]) {
+                        <span class="sync-detail">
+                          O acompanhamento parou após 15 minutos. A coleta pode continuar no servidor — consultar não
+                          dispara nova coleta.
+                        </span>
+                        <button type="button" class="ghost sm" (click)="consultKnight(c)">Consultar estado</button>
+                      }
+                    </span>
+                  </div>
                 }
               </li>
             }
@@ -540,6 +580,24 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         font-size: var(--fs-meta);
         opacity: 0.85;
       }
+      .sync-state {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px 12px;
+        border-left: 3px solid var(--line-strong);
+        border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+        background: var(--hover);
+        opacity: 1;
+      }
+      /* Mesma especificidade que as faixas .tone-* abaixo: o fundo precisa ser reafirmado aqui,
+         senão o aviso vira um bloco âmbar/ciano com texto claro ilegível. */
+      .sync-state.tone-ok { border-left-color: var(--cyan); background: var(--hover); }
+      .sync-state.tone-warn { border-left-color: var(--amber); background: var(--hover); }
+      .sync-state.tone-err { border-left-color: var(--red); background: var(--hover); }
+      .sync-title { display: flex; gap: 8px; align-items: center; color: var(--text); font-weight: 600; }
+      .sync-detail { color: var(--text-2); }
+      .sync-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
       .ok-note {
         color: var(--cyan);
       }
@@ -662,6 +720,12 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         gap: 0.4rem;
         flex-wrap: wrap;
       }
+      /* Largura de celular: nome, estado e ações em linhas próprias — em 4 colunas o nome colapsava a zero
+         e as ações empurravam a página para rolagem horizontal. */
+      @media (max-width: 40rem) {
+        .conn { grid-template-columns: 4px minmax(0, 1fr); }
+        .conn-state, .conn-actions { grid-column: 2 / -1; flex-wrap: wrap; }
+      }
       /* Conector desconectado: rebaixado visualmente, estado inequívoco. */
       .conn.disconnected {
         opacity: 0.85;
@@ -778,6 +842,18 @@ export class IntegrationsComponent {
   private readonly api = inject(ConnectorService);
   private readonly fb = inject(FormBuilder);
   private readonly router = inject(Router);
+  private readonly auth = inject(AuthService);
+
+  // ---- [AEGIS-KNIGHT-MULTICLOUD-01] Sincronização do KNIGHT (pedido durável, acompanhado por id) ----
+  /** Último pedido conhecido de cada conector do KNIGHT. */
+  protected readonly knightSync = signal<Record<string, KnightSyncRequest>>({});
+  /** O acompanhamento parou pelo limite de tempo — só a CONSULTA manual é oferecida (nunca novo disparo). */
+  protected readonly watchExpired = signal<Record<string, boolean>>({});
+  protected readonly view = syncView;
+  private readonly watchers = new Map<
+    string,
+    { tenantId: string | null; connectorId: string; requestId: string; since: number; timer: ReturnType<typeof setTimeout> | null }
+  >();
 
   // Formulário genérico: a família Microsoft sai daqui (vai para a conexão unificada).
   protected readonly providers = GENERIC_PROVIDERS;
@@ -811,9 +887,94 @@ export class IntegrationsComponent {
     return groups;
   });
 
-  /** Abre a tela do AEGIS KNIGHT (postura de identidade); a coleta real do Entra é disparada de lá. */
-  protected openKnight(): void {
-    this.router.navigate(['/identity']);
+  // ---- [AEGIS-KNIGHT-MULTICLOUD-01] Sincronização do KNIGHT -------------------------------------------
+
+  protected knightActive(connectorId: string): boolean {
+    return isActiveSync(this.knightSync()[connectorId]);
+  }
+
+  /** Relê o último pedido de cada conector do KNIGHT (somente leitura) e retoma o acompanhamento se ativo. */
+  private loadKnightState(list: ConnectorConfig[]): void {
+    for (const c of list.filter((x) => this.knight(x))) {
+      if (this.watchers.has(c.id)) continue;
+      this.api.getLatestKnightSync(c.id).subscribe({
+        next: (r) => {
+          if (!r) return;
+          this.knightSync.update((m) => ({ ...m, [c.id]: r }));
+          if (isActiveSync(r)) this.watch(c.id, r.id);
+        },
+        error: () => {
+          /* secundário: sem estado de sincronização conhecido, o botão continua disponível */
+        },
+      });
+    }
+  }
+
+  /** Dispara a sincronização. Um pedido ativo existente é devolvido pelo servidor — nunca uma segunda coleta. */
+  protected syncKnight(c: ConnectorConfig): void {
+    if (this.busyId() === c.id || this.knightActive(c.id)) return;
+    this.busyId.set(c.id);
+    this.clearMsg(c.id);
+    this.watchExpired.update((m) => ({ ...m, [c.id]: false }));
+    this.api.syncKnight(c.id).subscribe({
+      next: (r) => {
+        this.busyId.set(null);
+        this.knightSync.update((m) => ({ ...m, [c.id]: r }));
+        if (isActiveSync(r)) this.watch(c.id, r.id);
+      },
+      error: (err: Error) => {
+        this.busyId.set(null);
+        this.setMsg(c.id, `⚠ ${err.message}`);
+      },
+    });
+  }
+
+  /** Consulta manual depois do limite de acompanhamento — só leitura do pedido que já existe. */
+  protected consultKnight(c: ConnectorConfig): void {
+    const r = this.knightSync()[c.id];
+    if (!r) return;
+    this.watchExpired.update((m) => ({ ...m, [c.id]: false }));
+    this.watch(c.id, r.id, true);
+  }
+
+  private watch(connectorId: string, requestId: string, immediate = false): void {
+    this.stopWatcher(connectorId);
+    const w = { tenantId: this.auth.activeTenantId(), connectorId, requestId, since: Date.now(), timer: null as ReturnType<typeof setTimeout> | null };
+    this.watchers.set(connectorId, w);
+    const tick = () => {
+      if (this.watchers.get(connectorId) !== w) return;
+      if (Date.now() - w.since > SYNC_WATCH_LIMIT_MS) {
+        this.stopWatcher(connectorId);
+        this.watchExpired.update((m) => ({ ...m, [connectorId]: true }));
+        return;
+      }
+      this.api.getKnightSync(connectorId, requestId).subscribe({
+        next: (r) => {
+          // Resposta de outro tenant (troca de ambiente) ou de outro pedido não escreve nesta tela.
+          if (this.watchers.get(connectorId) !== w || !isCurrentSyncResponse(w, this.auth.activeTenantId(), r)) return;
+          this.knightSync.update((m) => ({ ...m, [connectorId]: r }));
+          if (isActiveSync(r)) w.timer = setTimeout(tick, SYNC_POLL_INTERVAL_MS);
+          else {
+            this.stopWatcher(connectorId);
+            this.reload();
+          }
+        },
+        error: () => {
+          if (this.watchers.get(connectorId) === w) w.timer = setTimeout(tick, SYNC_POLL_INTERVAL_MS * 2);
+        },
+      });
+    };
+    w.timer = setTimeout(tick, immediate ? 0 : SYNC_POLL_INTERVAL_MS);
+  }
+
+  private stopWatcher(connectorId: string): void {
+    const w = this.watchers.get(connectorId);
+    if (w?.timer) clearTimeout(w.timer);
+    this.watchers.delete(connectorId);
+  }
+
+  private stopAllWatchers(): void {
+    for (const id of [...this.watchers.keys()]) this.stopWatcher(id);
   }
 
   /** Endpoint de ingestão do conector (só o connectorId; a chave viaja no header X-Ingestion-Key, nunca na URL). */
@@ -823,6 +984,8 @@ export class IntegrationsComponent {
 
   /** Último recebimento/coleta em formato curto, ou "—" quando nunca houve. */
   protected lastSync(c: ConnectorConfig): string {
+    // Durante a coleta o servidor omite o carimbo até o fim real; "—" ali sugeriria que nunca houve coleta.
+    if (c.lastStatus === 'Syncing') return 'em andamento';
     if (!c.lastSyncAt) return '—';
     const d = new Date(c.lastSyncAt);
     return isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR');
@@ -889,6 +1052,7 @@ export class IntegrationsComponent {
 
   constructor() {
     this.reload();
+    inject(DestroyRef).onDestroy(() => this.stopAllWatchers());
 
     // Troca de provedor ⇒ reconstrói o grupo de credenciais. Um `effect` sobre o valueChanges manteria
     // duas fontes de verdade; aqui o formulário é a única, e o signal apenas espelha para o template.
@@ -917,6 +1081,7 @@ export class IntegrationsComponent {
       next: (list) => {
         this.connectors.set(list);
         this.loading.set(false);
+        this.loadKnightState(list);
       },
       error: (err: Error) => {
         this.loadError.set(err.message);

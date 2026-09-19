@@ -52,7 +52,7 @@ interface OccState {
           <h1>Vulnerabilidades</h1>
           <p class="page-desc">
             @if (tab() === 'software') {
-              Inventário de software observado pelo Microsoft Defender nos ativos do ambiente. Vulnerabilidades
+              Inventário de software observado nos ativos pelas fontes conectadas (hoje, Microsoft Defender). Vulnerabilidades
               conhecidas, exploit público e alerta associado são informações da fonte sobre cada produto — produto
               instalado não é, por si, software exposto. Não altera o AEGIS Score.
             } @else {

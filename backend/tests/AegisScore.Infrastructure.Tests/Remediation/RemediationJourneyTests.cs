@@ -513,7 +513,7 @@ public sealed class RemediationJourneyTests : IDisposable
 
         var publicado = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, run.Id);
         var snapshot = await db.PostureSnapshots.AsNoTracking()
-            .Include(s => s.Indicators).Include(s => s.ActionItems)
+            .Include(s => s.Indicators).Include(s => s.ActionItems).Include(s => s.Objects)
             .FirstAsync(s => s.Id == publicado.Summary.Id);
 
         var congelada = snapshot.ActionItems.Single();
@@ -670,8 +670,10 @@ public sealed class RemediationJourneyTests : IDisposable
         // limitações e sem ações. O hash dela precisa continuar re-derivável — senão a exportação de todo o
         // histórico passaria a falhar por "integridade divergente".
         var legado = await db.PostureSnapshots.IgnoreQueryFilters()
-            .Include(s => s.Indicators).Include(s => s.ActionItems)
+            .Include(s => s.Indicators).Include(s => s.ActionItems).Include(s => s.Objects)
             .FirstAsync(s => s.Id == publicado.Summary.Id);
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Publicada antes das duas extensões: schema v1, sem objetos congelados.
+        legado.SchemaVersion = PostureSnapshotSchema.Version;
         legado.ClientName = null;
         legado.SourceRunId = null;
         legado.CollectionLimitations.Clear();
@@ -1010,7 +1012,7 @@ public sealed class RemediationJourneyTests : IDisposable
         await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, real);
 
         var snapshot = (await db.PostureSnapshots.AsNoTracking()
-                .Include(x => x.ActionItems).Include(x => x.Indicators).ToListAsync())
+                .Include(x => x.ActionItems).Include(x => x.Objects).Include(x => x.Indicators).ToListAsync())
             .OrderByDescending(x => x.CapturedAt).First();
 
         snapshot.ActionItems.Should().HaveCount(1,
@@ -1048,7 +1050,7 @@ public sealed class RemediationJourneyTests : IDisposable
         await svc.UpdateAsync(validado.Id, Status(validado.Version, ActionPlanStatus.Concluido), Actor);
 
         await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, nova.Id);
-        var snapshot = (await db.PostureSnapshots.AsNoTracking().Include(x => x.ActionItems).ToListAsync())
+        var snapshot = (await db.PostureSnapshots.AsNoTracking().Include(x => x.ActionItems).Include(x => x.Objects).ToListAsync())
             .OrderByDescending(x => x.CapturedAt).First();
 
         var item = snapshot.ActionItems.Single();
@@ -1078,7 +1080,7 @@ public sealed class RemediationJourneyTests : IDisposable
 
         var publicado = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, origem.Id);
         var snapshot = await db.PostureSnapshots.AsNoTracking()
-            .Include(x => x.Indicators).Include(x => x.ActionItems)
+            .Include(x => x.Indicators).Include(x => x.ActionItems).Include(x => x.Objects)
             .FirstAsync(x => x.Id == publicado.Summary.Id);
 
         var item = snapshot.ActionItems.Single();
@@ -1136,7 +1138,7 @@ public sealed class RemediationJourneyTests : IDisposable
 
         var publicado = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, origem.Id);
         var snapshot = await db.PostureSnapshots.AsNoTracking()
-            .Include(x => x.Indicators).Include(x => x.ActionItems)
+            .Include(x => x.Indicators).Include(x => x.ActionItems).Include(x => x.Objects)
             .FirstAsync(x => x.Id == publicado.Summary.Id);
         var item = snapshot.ActionItems.Single();
 
@@ -1176,7 +1178,7 @@ public sealed class RemediationJourneyTests : IDisposable
 
         var publicado = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, origem.Id);
         var snapshot = await db.PostureSnapshots.AsNoTracking()
-            .Include(x => x.Indicators).Include(x => x.ActionItems)
+            .Include(x => x.Indicators).Include(x => x.ActionItems).Include(x => x.Objects)
             .FirstAsync(x => x.Id == publicado.Summary.Id);
         var item = snapshot.ActionItems.Single();
 
@@ -1211,7 +1213,7 @@ public sealed class RemediationJourneyTests : IDisposable
 
         var publicado = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, null, origem.Id);
         var snapshot = await db.PostureSnapshots.AsNoTracking()
-            .Include(x => x.Indicators).Include(x => x.ActionItems)
+            .Include(x => x.Indicators).Include(x => x.ActionItems).Include(x => x.Objects)
             .FirstAsync(x => x.Id == publicado.Summary.Id);
         var item = snapshot.ActionItems.Single();
 

@@ -59,6 +59,7 @@ builder.Services.AddSwaggerGen(o =>
 
 // Per-request tenant resolution (X-Tenant header) feeds the DbContext query filters.
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<TenantScopeOverride>();
 builder.Services.AddScoped<ITenantContext, HttpTenantContext>();
 
 // Persistence + AI engine + connector registry + scoring services (registra também IAuthService/JWT).
@@ -180,6 +181,10 @@ builder.Services.AddHostedService<AegisScoreSnapshotWorker>();
 // IdentityAdm:Maintenance:RemovalEnabled=true — aplica a retenção operacional. A consolidação é aditiva e
 // segura; a remoção nasce desligada, para que expurgo seja sempre uma decisão declarada.
 builder.Services.AddHostedService<IdentityAdmMaintenanceWorker>();
+
+// [AEGIS-KNIGHT-MULTICLOUD-01] KNIGHT: processa as sincronizações solicitadas em Integrações (fila durável),
+// cada uma num escopo próprio sob o tenant dono do pedido, reusando a autoridade única de coleta → ADM → avaliação.
+builder.Services.AddHostedService<KnightSyncWorker>();
 
 // [Homologação em container] Atrás do proxy HTTPS da hospedagem: honra X-Forwarded-Proto/For para que
 // Request.Scheme reflita https (cookie Secure do refresh e HttpsRedirection corretos) e o IP do cliente

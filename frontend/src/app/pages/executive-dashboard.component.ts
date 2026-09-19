@@ -169,8 +169,8 @@ import { IconComponent } from '../components/icon.component';
               <app-posture-summary [posture]="d.posture" label="AEGIS Score" />
               <!-- [AEGIS-LANGUAGE-STATES-01] Três escalas convivem no produto; esta é só uma delas. -->
               <p class="scale-note">
-                Pontos obtidos nos controles NIST CSF avaliados pelo AEGIS. Não é o Microsoft Secure Score, nem o
-                score do AEGIS KNIGHT, nem probabilidade de incidente.
+                Pontos obtidos nos controles NIST CSF avaliados pelo AEGIS. Não é índice de fornecedor (como o Microsoft
+                Secure Score), nem o score do AEGIS KNIGHT, nem probabilidade de incidente.
               </p>
               <!-- Tendência só sob postura AVALIADA: uma curva ao lado de "Não avaliado" afirmaria evolução
                    de um score que não existe. -->
@@ -1011,7 +1011,7 @@ export class ExecutiveDashboardComponent implements OnInit {
     const m = this.data()?.environment.configurationExposures;
     switch (m?.state) {
       case 'NoSource':
-        return 'Nenhuma integração com o Microsoft Secure Score configurada neste ambiente.';
+        return 'Nenhuma fonte de recomendações de postura configurada neste ambiente (suportada hoje: Microsoft Secure Score).';
       case 'NeverCollected':
         return m.note ?? 'Integração configurada; nenhuma coleta concluída ainda.';
       default:

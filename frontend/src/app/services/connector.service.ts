@@ -10,6 +10,7 @@ import {
   SyncResult,
   UpdateConnectorRequest,
 } from '../models/connector.models';
+import { KnightSyncRequest } from '../models/knight-sync.models';
 
 /**
  * Cliente das rotas de integração.
@@ -115,6 +116,34 @@ export class ConnectorService {
           return result as SyncResult;
         }),
         catchError((err) => throwError(() => (err instanceof Error ? err : this.describe(err)))),
+      );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-MULTICLOUD-01] "Sincronizar agora" de um conector do AEGIS KNIGHT. O servidor registra um
+   * pedido DURÁVEL e responde 202 com o identificador — um segundo clique devolve o MESMO pedido. A coleta, o
+   * ADM e a avaliação acontecem no servidor; a tela só acompanha.
+   */
+  syncKnight(connectorId: string): Observable<KnightSyncRequest> {
+    return this.http
+      .post<KnightSyncRequest>(`${this.base}/connectors/${connectorId}/sync`, {})
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
+  /** Estado de UM pedido (somente leitura — nunca dispara coleta). */
+  getKnightSync(connectorId: string, requestId: string): Observable<KnightSyncRequest> {
+    return this.http
+      .get<KnightSyncRequest>(`${this.base}/connectors/${connectorId}/sync-requests/${requestId}`)
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
+  /** O pedido mais recente do conector, ou `null` quando nunca houve (204). Somente leitura. */
+  getLatestKnightSync(connectorId: string): Observable<KnightSyncRequest | null> {
+    return this.http
+      .get<KnightSyncRequest>(`${this.base}/connectors/${connectorId}/sync-requests/latest`, { observe: 'response' })
+      .pipe(
+        map((r) => (r.status === 204 ? null : r.body)),
+        catchError((err) => throwError(() => this.describe(err))),
       );
   }
 

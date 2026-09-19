@@ -342,6 +342,19 @@ public class KnightAffectedObject : Entity, ITenantOwned
 
     /// <summary>O fato que sustenta a inclusão — constatação da coleta, nunca conclusão sobre a pessoa.</summary>
     public string? Detail { get; set; }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Afetado (entra na contagem) ou evidência de configuração (sustenta o
+    /// veredito, não é contado). Default <see cref="KnightObjectRelation.Affected"/>: as linhas anteriores a este
+    /// pacote eram todas afetadas.
+    /// </summary>
+    public KnightObjectRelation Relation { get; set; } = KnightObjectRelation.Affected;
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Configuração OBSERVADA do objeto, resumida em texto (estado, alvos,
+    /// aplicações, condições, controles). Nula para identidades e para as linhas anteriores.
+    /// </summary>
+    public string? ObservedConfiguration { get; set; }
 }
 
 /// <summary>
@@ -369,4 +382,91 @@ public enum KnightAffectedObjectKind
 
     /// <summary>A fonte devolveu o objeto sem tipo reconhecível — declarado desconhecido, nunca "usuário".</summary>
     Unknown = 5,
+
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Política de configuração (ex.: acesso condicional). Não é identidade.</summary>
+    Policy = 6,
+
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Papel de diretório privilegiado — o objeto afetado quando nenhuma política o cobre.</summary>
+    DirectoryRole = 7,
+
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Configuração do tenant (ex.: security defaults).</summary>
+    TenantSetting = 8,
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-MULTICLOUD-01] O que um objeto preservado É para o veredito do indicador. Separa duas coisas
+/// que a tela e o relatório não podem confundir:
+///   • <see cref="Affected"/> — o objeto SUSTENTA a exposição e entra na contagem de afetados;
+///   • <see cref="Evidence"/> — a configuração que SUSTENTOU o veredito ("onde foi encontrado"), inclusive
+///     quando ele é aprovado. Não é contado como afetado.
+/// </summary>
+public enum KnightObjectRelation
+{
+    Affected = 0,
+    Evidence = 1,
+}
+
+/// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Estágio de uma sincronização solicitada em Integrações.</summary>
+public enum KnightSyncStatus
+{
+    /// <summary>Registrada, aguardando o processamento.</summary>
+    Pending = 0,
+
+    /// <summary>Coleta → ADM → avaliação em andamento (sob lease).</summary>
+    Running = 1,
+
+    /// <summary>Terminou e produziu uma avaliação concluída (ver <see cref="KnightSyncRequest.RunId"/>).</summary>
+    Completed = 2,
+
+    /// <summary>Não produziu avaliação: conector indisponível, falha da coleta ou interrupção. Dados anteriores intactos.</summary>
+    Failed = 3,
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-MULTICLOUD-01] Sincronização SOLICITADA a partir de Configurações → Integrações — tenant-owned
+/// e DURÁVEL. Segue o padrão da fila de políticas (<see cref="PolicySyncRequest"/>): o pedido é persistido antes
+/// do 202, adquirido por lease atômico e processado num escopo próprio, que é dono do seu DbContext. É o que
+/// dá à tela um IDENTIFICADOR desde o primeiro instante — a consulta posterior nunca precisa adivinhar qual
+/// execução é a dela — e o que impede disparos duplicados (um pedido ATIVO por conector, invariante de banco).
+///
+/// O processamento reusa a autoridade ÚNICA de coleta → ADM → avaliação (<c>IAegisKnightAssessmentService</c>).
+/// Uma falha não apaga nada: a última avaliação concluída e o último snapshot válido permanecem como estavam.
+/// </summary>
+public class KnightSyncRequest : Entity, ITenantOwned
+{
+    /// <summary>Carimbado no SaveChanges (fail-closed) — nunca confiar em valor vindo do cliente.</summary>
+    public Guid TenantId { get; set; }
+
+    /// <summary>Conector de Integrações que originou o pedido.</summary>
+    public Guid ConnectorConfigId { get; set; }
+
+    /// <summary>Fonte KNIGHT correspondente ao conector (Entra, Google Workspace).</summary>
+    public KnightSourceType SourceType { get; set; }
+
+    public KnightSyncStatus Status { get; set; } = KnightSyncStatus.Pending;
+
+    public DateTimeOffset RequestedAt { get; set; }
+
+    /// <summary>Membership (User.Id) de quem pediu — trilha, nunca autorização.</summary>
+    public Guid? RequestedBy { get; set; }
+
+    public DateTimeOffset AvailableAt { get; set; }
+    public Guid? LeaseId { get; set; }
+    public DateTimeOffset? LeaseExpiresAt { get; set; }
+    public int Attempts { get; set; }
+
+    public DateTimeOffset? StartedAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+
+    /// <summary>Avaliação produzida — só quando <see cref="Status"/> é Completed.</summary>
+    public Guid? RunId { get; set; }
+
+    /// <summary>Estado da coleta que a avaliação registrou (Completed, PartialCollection…).</summary>
+    public KnightSourceState? ResultSourceState { get; set; }
+
+    /// <summary>Categoria SANITIZADA da falha (ex.: "ConnectorNotConfigured", "Interrupted") — nunca a exceção crua.</summary>
+    public string? FailureCategory { get; set; }
+
+    /// <summary>Mensagem legível e sanitizada do desfecho.</summary>
+    public string? Message { get; set; }
 }

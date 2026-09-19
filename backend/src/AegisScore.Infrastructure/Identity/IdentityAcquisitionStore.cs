@@ -351,6 +351,35 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
                       + "declarada em vez de escondida.");
         }
 
+        // ---- 4b) [AEGIS-KNIGHT-MULTICLOUD-01] OBJETOS DE CONFIGURAÇÃO da aquisição --------------------------
+        // Evidência da aquisição, como as observações: gravados uma vez, nunca reescritos por um retry — a chave
+        // natural (tenant, aquisição, tipo, id externo) torna o reprocessamento aditivo e convergente.
+        var configurations = IdentityAcquisitionContent.CanonicalConfigurations(request.Configurations);
+        if (configurations.Count > 0)
+        {
+            var jaGravadas = (await _db.IdentityConfigurationObservations
+                    .Where(c => c.AcquisitionId == request.AcquisitionId)
+                    .Select(c => new { c.Kind, c.ExternalId })
+                    .ToListAsync(ct))
+                .Select(c => (c.Kind, c.ExternalId))
+                .ToHashSet();
+
+            foreach (var c in configurations)
+            {
+                if (!jaGravadas.Add((c.Kind, c.ExternalId))) continue;
+                _db.IdentityConfigurationObservations.Add(new IdentityConfigurationObservation
+                {
+                    AcquisitionId = request.AcquisitionId,
+                    Kind = c.Kind,
+                    ExternalId = c.ExternalId,
+                    DisplayName = c.DisplayName,
+                    SchemaVersion = c.SchemaVersion,
+                    ConfigurationJson = string.IsNullOrWhiteSpace(c.ConfigurationJson) ? "{}" : c.ConfigurationJson,
+                    ObservedAt = acquiredAt,
+                });
+            }
+        }
+
         // ---- 5) PROJEÇÃO do estado atual, com ordenação determinística -------------------------------------
         // Uma MESMA entidade pode ter sido observada em vários conjuntos; a projeção é aplicada UMA vez por
         // entidade, na mesma ordem ordinal usada acima.
@@ -417,6 +446,13 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
                     : new List<IdentityObservedObjectRecord>()))
             .ToList();
 
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Configuração COMO persistida nesta aquisição.
+        var configurations = await _db.IdentityConfigurationObservations.AsNoTracking()
+            .Where(c => c.AcquisitionId == acquisitionId)
+            .OrderBy(c => c.Kind).ThenBy(c => c.ExternalId)
+            .Select(c => new IdentityObservedConfiguration(c.Kind, c.ExternalId, c.DisplayName, c.SchemaVersion, c.ConfigurationJson))
+            .ToListAsync(ct);
+
         return new IdentityAcquisitionRecord(
             acquisition.Id,
             acquisition.TenantId,
@@ -435,7 +471,8 @@ public sealed class IdentityAcquisitionStore : IIdentityAcquisitionStore
             sets,
             // [AEGIS-ADM-02] Sem este campo, os objetos vazios acima seriam lidos como "a coleta não achou
             // ninguém" — e detalhe expirado por retenção viraria evidência de ausência.
-            acquisition.DetailRetiredAt);
+            acquisition.DetailRetiredAt,
+            configurations);
     }
 
     /// <inheritdoc />

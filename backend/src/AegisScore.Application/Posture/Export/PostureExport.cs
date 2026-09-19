@@ -19,6 +19,12 @@ public enum PostureExportFormat
 
     /// <summary>Dados completos em CSV (UTF-8 com BOM, delimitador ';', protegido contra CSV/Formula Injection).</summary>
     Csv = 1,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Relatório HTML autocontido e interativo (fotografias KNIGHT) — a avaliação
+    /// completa, não um recorte.
+    /// </summary>
+    Html = 2,
 }
 
 /// <summary>Parsing tolerante e fechado do parâmetro <c>format</c> — só <c>pdf</c>/<c>csv</c> (case-insensitive).</summary>
@@ -30,6 +36,7 @@ public static class PostureExportFormats
         {
             case "pdf": format = PostureExportFormat.Pdf; return true;
             case "csv": format = PostureExportFormat.Csv; return true;
+            case "html": format = PostureExportFormat.Html; return true;
             default: format = default; return false;
         }
     }

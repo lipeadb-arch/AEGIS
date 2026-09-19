@@ -237,7 +237,7 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
         {
             if (entry.Entity is IdentityAcquisition or IdentityEntity or IdentitySourceLink
                 or IdentityEntityObservation or IdentityObservationSetState or IdentityEvidenceSnapshot
-                or ConnectorConfig)
+                or IdentityConfigurationObservation or ConnectorConfig)
             {
                 entry.State = EntityState.Detached;
             }
@@ -265,6 +265,8 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
                         && pg.ConstraintName is "UX_IdentitySourceLink_Natural"
                             or "UX_IdentityEntityObservation_Natural"
                             or "UX_IdentityObservationSetState_Natural"
+                            // [AEGIS-KNIGHT-MULTICLOUD-01] Objetos de configuração da MESMA aquisição.
+                            or "UX_IdentityConfigurationObservation_Natural"
                             // O snapshot agregado entra no MESMO SaveChanges, e a chave natural dele
                             // (tenant, conector) também pode ser disputada por duas coletas simultâneas.
                             or "UX_IdentityEvidenceSnapshot_Natural"
@@ -278,6 +280,7 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
                 && (ex.Message.Contains("IdentitySourceLink", StringComparison.OrdinalIgnoreCase)
                     || ex.Message.Contains("IdentityEntityObservation", StringComparison.OrdinalIgnoreCase)
                     || ex.Message.Contains("IdentityObservationSetState", StringComparison.OrdinalIgnoreCase)
+                    || ex.Message.Contains("IdentityConfigurationObservation", StringComparison.OrdinalIgnoreCase)
                     || ex.Message.Contains("IdentityEvidenceSnapshot", StringComparison.OrdinalIgnoreCase)))
                 return true;
         }

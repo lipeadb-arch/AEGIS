@@ -26,7 +26,11 @@ public enum KnightSignalKey
     MfaRegistrationCoveragePercent = 100,
     /// <summary>Verdadeiro quando a autenticação legada está BLOQUEADA por política.</summary>
     LegacyAuthenticationBlocked = 101,
-    /// <summary>Verdadeiro quando há política exigindo MFA para acesso administrativo.</summary>
+    /// <summary>
+    /// [LEGADO — produzido até o catálogo ak-knight-v2] Verdadeiro quando havia política exigindo MFA de todos os
+    /// usuários, em todas as aplicações e sem exclusão. Substituído por <see cref="PrivilegedRolesWithoutMfaPolicy"/>,
+    /// que lê as políticas papel a papel. Mantido para ler aquisições antigas; não é mais emitido.
+    /// </summary>
     AdminMfaPolicyEnforced = 102,
     /// <summary>Credenciais (segredos/certificados) de aplicações vencidas ou vencendo na janela.</summary>
     ApplicationCredentialsExpiring = 103,
@@ -42,6 +46,23 @@ public enum KnightSignalKey
     SecurityDefaultsEnabled = 108,
     /// <summary>Contas de emergência/break-glass designadas (requer marcação — normalmente não inferível por API).</summary>
     DesignatedBreakGlassAccounts = 109,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Papéis privilegiados ATIVOS com lacuna COMPROVADA de exigência de MFA por
+    /// política habilitada (em todas as aplicações, sem condição que a estreite): membro que nenhuma política
+    /// alcança, ou papel em que nenhum membro é coberto. Ausente (com motivo) quando a cobertura não pode ser
+    /// afirmada nem negada — pertencimento a grupo não coletado, ou exceções explícitas sem outra política que as
+    /// cubra —, nunca zero por suposição.
+    /// </summary>
+    PrivilegedRolesWithoutMfaPolicy = 110,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Políticas HABILITADAS que exigem MFA ou força de autenticação com alvo DECLARADO
+    /// em todos os usuários, em todas as aplicações, sem condição que as estreite e sem exclusão de grupo — a base
+    /// mínima para o ambiente. Política de alcance restrito não conta. Ausente (com motivo) quando a única
+    /// candidata depende de grupo cujo pertencimento não é coletado.
+    /// </summary>
+    BaselineMfaPolicies = 111,
 
     // ---- Específicos do Google Workspace (Admin SDK Directory + Reports) ----
     /// <summary>Cobertura (%) de 2SV inscrito entre os usuários ATIVOS do diretório.</summary>
@@ -129,7 +150,7 @@ public sealed class KnightFactSet
 
     /// <summary>Observação da chave; se ausente, devolve <see cref="KnightObservationOutcome.Missing"/> explícito.</summary>
     public KnightObservation Get(KnightSignalKey key) =>
-        _byKey.TryGetValue(key, out var o) ? o : KnightObservation.MissingData(key, "Sinal não coletado.");
+        _byKey.TryGetValue(key, out var o) ? o : KnightObservation.MissingData(key, "O dado exigido por este controle não foi obtido nesta coleta.");
 
     public bool Has(KnightSignalKey key) => _byKey.ContainsKey(key);
 

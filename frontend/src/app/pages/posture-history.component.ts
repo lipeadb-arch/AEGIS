@@ -4,6 +4,7 @@ import { environment } from '../../environments/environment';
 import { AuthService } from '../services/auth.service';
 import { PostureHistoryService } from '../services/posture-history.service';
 import { KnightFrozenReportComponent } from '../components/knight/frozen-report.component';
+import { SeverityLevel, severityLabel } from '../models/knight.models';
 import {
   PostureComparisonResult,
   PostureExportFormat,
@@ -183,7 +184,8 @@ import {
               </div>
               <div class="score">
                 @if (s.score !== null) {
-                  <span class="n">{{ scoreDisplay(s.score) }}<i>%</i></span>
+                  <!-- O score KNIGHT é uma escala 0–100 própria, não um percentual. -->
+                  <span class="n">{{ scoreDisplay(s.score) }}@if (s.type !== 'Knight') {<i>%</i>}</span>
                 } @else {
                   <span class="n na">—</span>
                 }
@@ -236,6 +238,12 @@ import {
                     <button type="button" class="btn ghost sm" (click)="download('csv', d.summary.id)" [disabled]="downloading() !== null">
                       {{ downloading() === 'csv' ? 'Baixando CSV…' : 'Baixar CSV' }}
                     </button>
+                    <!-- [AEGIS-KNIGHT-MULTICLOUD-01] Relatório interativo autocontido — só para fotografias do KNIGHT. -->
+                    @if (d.summary.type === 'Knight') {
+                      <button type="button" class="btn ghost sm" (click)="download('html', d.summary.id)" [disabled]="downloading() !== null">
+                        {{ downloading() === 'html' ? 'Baixando HTML…' : 'Baixar relatório HTML' }}
+                      </button>
+                    }
                     @if (downloadError()) {
                       <span class="dl-err">
                         {{ downloadError() }}
@@ -285,7 +293,7 @@ import {
                           @for (i of d.indicators; track i.indicatorId) {
                             <tr>
                               <td><span class="mono">{{ i.indicatorId }}</span><span class="tt">{{ i.title }}</span></td>
-                              <td>{{ i.severity }}</td>
+                              <td>{{ severityText(i.severity) }}</td>
                               <td><span class="st" [class]="itemStatusClass(i.status)">{{ itemStatusLabel(i.status) }}</span></td>
                               <td class="num">{{ i.affectedObjectCount }}</td>
                               <td class="ev">{{ i.evidence }}</td>
@@ -913,6 +921,11 @@ export class PostureHistoryComponent implements OnInit {
       // Sempre revoga; adia um instante para o navegador capturar o download antes de liberar o object URL.
       setTimeout(() => URL.revokeObjectURL(url), 1500);
     }
+  }
+
+  /** Severidade do indicador congelado em português; valor desconhecido aparece como veio. */
+  severityText(severity: string): string {
+    return severityLabel(severity as SeverityLevel) ?? severity;
   }
 
   shortHash(hash: string): string {

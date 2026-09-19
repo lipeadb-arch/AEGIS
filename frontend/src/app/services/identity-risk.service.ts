@@ -10,7 +10,7 @@ import { IdentityEvidenceProjection } from '../models/identity-risk.models';
  *
  * Esta é a MESMA fotografia que o AEGIS KNIGHT avalia — a tela lê o snapshot já persistido e NUNCA dispara
  * uma segunda consulta ao Microsoft Graph. A coleta continua sendo disparada por um único caminho (o botão
- * "Coletar do Entra ID" do KNIGHT, que converge para o serviço compartilhado).
+ * sincronização do Microsoft Entra ID em Integrações, que converge para o serviço compartilhado).
  *
  * ⚠️ Nenhum TenantId trafega: o tenant vem do claim `tenant_id` do JWT; o authInterceptor anexa Bearer e
  * X-Tenant. Sem fallback demonstrativo — um erro vira estado de erro na tela, jamais números inventados.

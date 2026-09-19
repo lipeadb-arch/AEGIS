@@ -10,6 +10,7 @@ using AegisScore.Application.Abstractions;
 using AegisScore.Application.Identity;
 using AegisScore.Application.Identity.Adm;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Knight.Configuration;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
@@ -67,7 +68,41 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
     public Task<KnightAssessment> RunDemoAssessmentAsync(CancellationToken ct = default) =>
         RunAssessmentAsync(KnightSourceType.Demo, ct);
 
-    public async Task<KnightAssessment> RunAssessmentAsync(KnightSourceType source, CancellationToken ct = default)
+    public async Task<KnightAssessment> RunAssessmentAsync(KnightSourceType source, CancellationToken ct = default) =>
+        (await RunCoreAsync(source, null, ct)).Assessment!;
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Avaliação pedida por uma sincronização. A autoridade do vínculo é o PRÓPRIO
+    /// pedido: <c>RunId</c> é gravado na mesma transação que grava a execução, só por quem detém o lease e só
+    /// enquanto o pedido não tem resultado. Por isso uma retomada — depois de queda do processo, de falha ao
+    /// finalizar o pedido ou de lease assumido por outro worker — encontra o resultado já gravado e não produz
+    /// um segundo. A coleta externa pode repetir-se numa corrida (não é "exatamente uma vez"); o resultado
+    /// aceito para o pedido, não.
+    /// </summary>
+    public async Task<KnightSyncRunResult> RunForSyncRequestAsync(
+        KnightSourceType source, KnightSyncBinding binding, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        var state = await SyncRequestStateAsync(binding.RequestId, ct);
+        if (state?.RunId is { } linked)
+            return new KnightSyncRunResult(KnightSyncRunOutcome.AlreadyRegistered, await GetByIdAsync(linked, ct));
+
+        // Pedido fora do tenant do contexto, ou lease que já não é desta tentativa: nada é coletado.
+        if (state is null || state.LeaseId != binding.LeaseId || state.Status != KnightSyncStatus.Running)
+            return new KnightSyncRunResult(KnightSyncRunOutcome.LeaseLost, null);
+
+        return await RunCoreAsync(source, binding, ct);
+    }
+
+    private sealed record SyncRequestState(Guid? RunId, Guid? LeaseId, KnightSyncStatus Status);
+
+    private Task<SyncRequestState?> SyncRequestStateAsync(Guid requestId, CancellationToken ct) =>
+        _db.KnightSyncRequests.AsNoTracking()
+            .Where(r => r.Id == requestId)
+            .Select(r => new SyncRequestState(r.RunId, r.LeaseId, r.Status))
+            .FirstOrDefaultAsync(ct);
+
+    private async Task<KnightSyncRunResult> RunCoreAsync(KnightSourceType source, KnightSyncBinding? binding, CancellationToken ct)
     {
         var tenantId = _tenant.TenantId
             ?? throw new TenantSecurityException("Execução do assessment KNIGHT sem tenant resolvido no contexto (fail-closed).");
@@ -145,6 +180,10 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             if (mapped is not null) affectedByIndicator[mapped] = set;
         }
 
+        // [AEGIS-KNIGHT-MULTICLOUD-01] O que sustentou os vereditos de acesso condicional — lido da configuração
+        // RELIDA da aquisição, com o mesmo analisador que produziu os sinais na coleta.
+        var configurationObjects = KnightConfigurationEvidence.Build(result);
+
         foreach (var e in evaluated)
         {
             var indicator = new KnightIndicatorResult
@@ -171,7 +210,23 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             // zero por definição, e anexar ali a lista de objetos observados faria a tabela contradizer o
             // número exibido ao lado dela.
             if (e.AffectedObjectCount > 0 && affectedByIndicator.TryGetValue(e.Definition.Id, out var evidence))
-                AttachAffected(indicator, evidence);
+                AttachAffected(indicator, evidence.Objects.Select(o => new KnightIndicatorObject(
+                        KnightObjectRelation.Affected, o.Kind, o.ExternalId, o.DisplayName, o.UserPrincipalName,
+                        o.Roles ?? Array.Empty<string>(), o.Detail, null)),
+                    evidence.IsComplete, evidence.Limitation);
+
+            if (configurationObjects.TryGetValue(e.Definition.Id, out var config))
+            {
+                // Afetados de configuração (papéis sem exigência) só quando o veredito sinalizou exposição — a
+                // mesma regra das identidades: num indicador aprovado a contagem é zero por definição.
+                if (e.AffectedObjectCount > 0 && e.Status is KnightIndicatorStatus.Exposed or KnightIndicatorStatus.Mitigated
+                    && config.Affected.Count > 0)
+                    AttachAffected(indicator, config.Affected, config.AffectedComplete, config.Limitation);
+
+                // Evidências de configuração: o "onde foi encontrado", inclusive num indicador aprovado. Não
+                // tocam a contagem nem a completude dos afetados.
+                AttachEvidence(indicator, config.Evidence);
+            }
 
             run.Indicators.Add(indicator);
         }
@@ -205,35 +260,43 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         // sobre os candidatos: um dos dois espera, e o que passa enxerga o estado já decidido.
         _db.KnightAssessmentRuns.Add(run);
 
-        if (identityAcquisitionId is { } citada)
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Uma avaliação pedida por sincronização também entra em transação: a
+        // execução e o vínculo com o pedido são gravados JUNTOS (ver RunForSyncRequestAsync).
+        if (identityAcquisitionId is not null || binding is not null)
         {
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
-            var fixada = await _identityAcquisitions.PinForReferenceAsync(citada, ct);
-
-            if (!fixada.Exists)
-                throw new InvalidOperationException(
-                    $"A aquisição de identidade {citada} não está mais disponível para ser citada por esta "
-                    + "avaliação. Gravar a execução assim produziria um veredito apontando para uma coleta "
-                    + "inexistente — o oposto do que a procedência existe para garantir.");
-
-            if (fixada.DetailRetiredAt is { } expiradoEm)
-            {
-                // [AEGIS-ADM-02] A linha está lá e está TRAVADA (a retenção não a remove por baixo desta
-                // transação), mas o detalhe observado já expirou. Citar assim é legítimo — o cabeçalho, os
-                // fatos agregados e a completude por conjunto continuam sustentando o veredito, e os objetos
-                // afetados desta execução são congelados aqui mesmo, em KnightAffectedObjects, que nenhuma
-                // retenção alcança. O que não pode acontecer é isso passar em silêncio: "a linha existe" e "a
-                // evidência está íntegra" são afirmações diferentes.
-                _log?.LogWarning(
-                    "Execução do KNIGHT cita a aquisição de identidade {Aquisicao}, cujo detalhe operacional "
-                    + "expirou por retenção em {ExpiradoEm}. O veredito segue reproduzível pelos fatos e pela "
-                    + "completude por conjunto, e os objetos afetados ficam congelados nesta execução — mas a "
-                    + "lista de objetos daquela coleta não é mais recuperável a partir dela.",
-                    citada, expiradoEm);
-            }
+            if (identityAcquisitionId is { } citada)
+                await PinCitedAcquisitionAsync(citada, ct);
 
             await _db.SaveChangesAsync(ct);
+
+            if (binding is not null)
+            {
+                // Guardado pelo lease E pela ausência de resultado: quem perdeu o lease, ou chegou depois de
+                // outra tentativa já ter vinculado a dela, desfaz a própria gravação — o pedido nunca fica com
+                // dois resultados aceitos.
+                var linked = await _db.KnightSyncRequests
+                    .Where(r => r.Id == binding.RequestId && r.LeaseId == binding.LeaseId
+                                && r.Status == KnightSyncStatus.Running && r.RunId == null)
+                    .ExecuteUpdateAsync(u => u
+                        .SetProperty(r => r.RunId, run.Id)
+                        .SetProperty(r => r.ResultSourceState, run.SourceState)
+                        .SetProperty(r => r.UpdatedAt, DateTimeOffset.UtcNow), ct);
+                if (linked == 0)
+                {
+                    await tx.RollbackAsync(ct);
+                    _db.ChangeTracker.Clear();
+                    var now = await SyncRequestStateAsync(binding.RequestId, ct);
+                    _log?.LogWarning(
+                        "Avaliação do KNIGHT descartada: o pedido de sincronização {Request} {Motivo}.",
+                        binding.RequestId, now?.RunId is null ? "não pertence mais a esta tentativa (lease)" : "já tem resultado vinculado");
+                    return now?.RunId is { } other
+                        ? new KnightSyncRunResult(KnightSyncRunOutcome.AlreadyRegistered, await GetByIdAsync(other, ct))
+                        : new KnightSyncRunResult(KnightSyncRunOutcome.LeaseLost, null);
+                }
+            }
+
             await tx.CommitAsync(ct);
         }
         else
@@ -246,7 +309,40 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         //    veredito, não mudam status/score e não deixam nada pendente.
         await TryEnrichWithAiAsync(run, advisoryInput, fallbackJson, ct);
 
-        return ToAssessment(run);
+        return new KnightSyncRunResult(KnightSyncRunOutcome.Registered, ToAssessment(run, run.Indicators.ToDictionary(
+            i => i.IndicatorId,
+            i => i.AffectedObjects.Count(o => o.Relation == KnightObjectRelation.Evidence),
+            StringComparer.Ordinal)));
+    }
+
+    /// <summary>
+    /// [AEGIS-ADM-02] Fixa, DENTRO da transação da gravação, a aquisição do ADM que a execução cita.
+    /// </summary>
+    private async Task PinCitedAcquisitionAsync(Guid citada, CancellationToken ct)
+    {
+        var fixada = await _identityAcquisitions.PinForReferenceAsync(citada, ct);
+
+        if (!fixada.Exists)
+            throw new InvalidOperationException(
+                $"A aquisição de identidade {citada} não está mais disponível para ser citada por esta "
+                + "avaliação. Gravar a execução assim produziria um veredito apontando para uma coleta "
+                + "inexistente — o oposto do que a procedência existe para garantir.");
+
+        if (fixada.DetailRetiredAt is { } expiradoEm)
+        {
+            // [AEGIS-ADM-02] A linha está lá e está TRAVADA (a retenção não a remove por baixo desta
+            // transação), mas o detalhe observado já expirou. Citar assim é legítimo — o cabeçalho, os
+            // fatos agregados e a completude por conjunto continuam sustentando o veredito, e os objetos
+            // afetados desta execução são congelados aqui mesmo, em KnightAffectedObjects, que nenhuma
+            // retenção alcança. O que não pode acontecer é isso passar em silêncio: "a linha existe" e "a
+            // evidência está íntegra" são afirmações diferentes.
+            _log?.LogWarning(
+                "Execução do KNIGHT cita a aquisição de identidade {Aquisicao}, cujo detalhe operacional "
+                + "expirou por retenção em {ExpiradoEm}. O veredito segue reproduzível pelos fatos e pela "
+                + "completude por conjunto, e os objetos afetados ficam congelados nesta execução — mas a "
+                + "lista de objetos daquela coleta não é mais recuperável a partir dela.",
+                citada, expiradoEm);
+        }
     }
 
     /// <summary>
@@ -288,7 +384,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             .AsNoTracking().Include(r => r.Indicators)
             .FirstOrDefaultAsync(r => r.Id == latestHeader.Id, ct);
 
-        return new KnightLatestAssessment(latest is null ? null : ToAssessment(latest), unfinished);
+        return new KnightLatestAssessment(latest is null ? null : ToAssessment(latest, await EvidenceCountsAsync(latest.Id, ct)), unfinished);
     }
 
     public async Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default)
@@ -296,7 +392,73 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         var run = await _db.KnightAssessmentRuns
             .AsNoTracking().Include(r => r.Indicators)
             .FirstOrDefaultAsync(r => r.Id == id, ct);
-        return run is null ? null : ToAssessment(run);
+        return run is null ? null : ToAssessment(run, await EvidenceCountsAsync(run.Id, ct));
+    }
+
+    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Quantas evidências de configuração cada indicador da execução preservou.</summary>
+    private async Task<IReadOnlyDictionary<string, int>> EvidenceCountsAsync(Guid runId, CancellationToken ct) =>
+        (await _db.KnightAffectedObjects.AsNoTracking()
+            .Where(o => o.RunId == runId && o.Relation == KnightObjectRelation.Evidence)
+            .GroupBy(o => o.IndicatorId)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToListAsync(ct))
+        .ToDictionary(x => x.Key, x => x.Count, StringComparer.Ordinal);
+
+    /// <inheritdoc />
+    public async Task<KnightAffectedSummary?> GetAffectedSummaryAsync(Guid runId, CancellationToken ct = default)
+    {
+        var indicators = await _db.KnightIndicatorResults.AsNoTracking()
+            .Where(i => i.RunId == runId)
+            .Select(i => new { i.Id, i.IndicatorId, i.Status, i.Severity, i.AffectedObjectCount, i.HasAffectedDetail, i.AffectedDetailComplete })
+            .ToListAsync(ct);
+        if (indicators.Count == 0)
+        {
+            var exists = await _db.KnightAssessmentRuns.AsNoTracking().AnyAsync(r => r.Id == runId, ct);
+            return exists ? new KnightAffectedSummary(runId, 0, 0, 0, true, Array.Empty<string>(), Array.Empty<KnightAffectedSummaryItem>()) : null;
+        }
+
+        var exposed = indicators
+            .Where(i => i.Status is KnightIndicatorStatus.Exposed or KnightIndicatorStatus.Mitigated)
+            .ToList();
+        var exposedIds = exposed.Select(i => i.IndicatorId).ToHashSet(StringComparer.Ordinal);
+
+        // Controle exposto com objetos contados mas sem lista completa preservada: o número de únicos vira PISO.
+        var incomplete = exposed
+            .Where(i => i.AffectedObjectCount > 0 && !(i.HasAffectedDetail && i.AffectedDetailComplete))
+            .Select(i => i.IndicatorId).OrderBy(x => x, StringComparer.Ordinal).ToList();
+
+        var rows = await _db.KnightAffectedObjects.AsNoTracking()
+            .Where(o => o.RunId == runId && o.Relation == KnightObjectRelation.Affected)
+            .Select(o => new { o.IndicatorId, o.ExternalId, o.Kind, o.DisplayName, o.UserPrincipalName })
+            .ToListAsync(ct);
+        rows = rows.Where(r => exposedIds.Contains(r.IndicatorId)).ToList();
+
+        var severityById = exposed.ToDictionary(i => i.IndicatorId, i => KnightScoreFormula.WeightFor(i.Severity), StringComparer.Ordinal);
+        var grouped = rows
+            .GroupBy(r => (r.Kind, Id: r.ExternalId.ToLowerInvariant()))
+            .Select(g =>
+            {
+                var first = g.First();
+                var ids = g.Select(x => x.IndicatorId).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
+                return new
+                {
+                    Item = new KnightAffectedSummaryItem(first.ExternalId, first.Kind,
+                        g.Select(x => x.DisplayName).FirstOrDefault(n => n != null),
+                        g.Select(x => x.UserPrincipalName).FirstOrDefault(n => n != null),
+                        ids.Count, ids),
+                    Weight = ids.Sum(id => severityById.TryGetValue(id, out var w) ? w : 0),
+                };
+            })
+            .ToList();
+
+        // Ordem VERIFICÁVEL: em quantos controles expostos o objeto aparece, depois o peso somado das
+        // severidades desses controles, depois o nome — nada de criticidade inventada.
+        var top = grouped
+            .OrderByDescending(g => g.Item.ControlCount).ThenByDescending(g => g.Weight)
+            .ThenBy(g => g.Item.DisplayName ?? g.Item.UserPrincipalName ?? g.Item.ExternalId, StringComparer.OrdinalIgnoreCase)
+            .Take(10).Select(g => g.Item).ToList();
+
+        return new KnightAffectedSummary(runId, exposed.Count, rows.Count, grouped.Count, incomplete.Count == 0, incomplete, top);
     }
 
     public async Task<KnightSourcesStatus> GetSourcesStatusAsync(CancellationToken ct = default)
@@ -312,7 +474,8 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
 
     /// <inheritdoc />
     public async Task<KnightAffectedObjectsPage?> GetAffectedObjectsAsync(
-        Guid runId, string indicatorId, int page, int pageSize, string? search, CancellationToken ct = default)
+        Guid runId, string indicatorId, int page, int pageSize, string? search, CancellationToken ct = default,
+        KnightObjectRelation relation = KnightObjectRelation.Affected)
     {
         // Paginacao SANEADA no servidor: um pageSize absurdo vindo do cliente nao vira varredura de tabela.
         var safePage = page < 1 ? 1 : page;
@@ -338,6 +501,26 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
 
         if (indicator is null) return null;
 
+        // [AEGIS-KNIGHT-MULTICLOUD-01] Evidências de configuração não obedecem à contagem de afetados: são lidas
+        // à parte, sem mudar a semântica (nem os números) da leitura de afetados que já existia.
+        if (relation == KnightObjectRelation.Evidence)
+        {
+            var evidenceQuery = _db.KnightAffectedObjects.AsNoTracking()
+                .Where(o => o.IndicatorResultId == indicator.Id && o.Relation == KnightObjectRelation.Evidence);
+            var evidenceTotal = await evidenceQuery.CountAsync(ct);
+            var evidenceItems = await evidenceQuery
+                .OrderBy(o => o.Kind).ThenBy(o => o.DisplayName ?? o.ExternalId).ThenBy(o => o.ExternalId)
+                .Skip((safePage - 1) * safeSize).Take(safeSize)
+                .Select(o => new KnightAffectedObjectView(
+                    o.ExternalId, o.Kind, o.DisplayName, o.UserPrincipalName, o.Roles, o.Detail, o.Relation, o.ObservedConfiguration))
+                .ToListAsync(ct);
+            return new KnightAffectedObjectsPage(
+                runId, id,
+                evidenceTotal > 0 || KnightAffectedObjectScope.IsInScope(id) ? KnightAffectedDetailState.Available : KnightAffectedDetailState.OutOfScope,
+                indicator.AffectedObjectCount, evidenceTotal, evidenceTotal, safePage, safeSize, evidenceItems,
+                null, indicator.CollectedAt);
+        }
+
         if (!indicator.HasAffectedDetail)
         {
             // TRÊS ausências distintas, e a tela precisa dizer qual é qual:
@@ -359,7 +542,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         }
 
         var query = _db.KnightAffectedObjects.AsNoTracking()
-            .Where(o => o.IndicatorResultId == indicator.Id);
+            .Where(o => o.IndicatorResultId == indicator.Id && o.Relation == KnightObjectRelation.Affected);
 
         var totalPreserved = await query.CountAsync(ct);
 
@@ -382,7 +565,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             .OrderBy(o => o.DisplayName ?? o.UserPrincipalName ?? o.ExternalId).ThenBy(o => o.ExternalId)
             .Skip((safePage - 1) * safeSize).Take(safeSize)
             .Select(o => new KnightAffectedObjectView(
-                o.ExternalId, o.Kind, o.DisplayName, o.UserPrincipalName, o.Roles, o.Detail))
+                o.ExternalId, o.Kind, o.DisplayName, o.UserPrincipalName, o.Roles, o.Detail, o.Relation, o.ObservedConfiguration))
             .ToListAsync(ct);
 
         return new KnightAffectedObjectsPage(
@@ -401,39 +584,64 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
     /// diverge da contagem do veredito — e essa divergencia vira uma limitacao VISIVEL, em vez de uma tabela
     /// que silenciosamente contradiz o numero exibido ao lado dela.
     /// </summary>
-    private static void AttachAffected(KnightIndicatorResult indicator, KnightAffectedObjectEvidence evidence)
+    private static void AttachAffected(
+        KnightIndicatorResult indicator, IEnumerable<KnightIndicatorObject> objects, bool isComplete, string? limitation)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var o in evidence.Objects)
+        var seen = new HashSet<string>(
+            indicator.AffectedObjects.Select(a => a.ExternalId), StringComparer.OrdinalIgnoreCase);
+        foreach (var o in objects)
         {
             if (string.IsNullOrWhiteSpace(o.ExternalId) || !seen.Add(o.ExternalId)) continue;
-            indicator.AffectedObjects.Add(new KnightAffectedObject
-            {
-                RunId = indicator.RunId,
-                IndicatorId = indicator.IndicatorId,
-                ExternalId = o.ExternalId,
-                Kind = o.Kind,
-                DisplayName = o.DisplayName,
-                UserPrincipalName = o.UserPrincipalName,
-                Roles = o.Roles?.ToList() ?? new List<string>(),
-                Detail = o.Detail,
-            });
+            indicator.AffectedObjects.Add(ToEntity(indicator, o, KnightObjectRelation.Affected));
         }
 
-        var preserved = indicator.AffectedObjects.Count;
+        var preserved = indicator.AffectedObjects.Count(a => a.Relation == KnightObjectRelation.Affected);
         var matchesCount = preserved == indicator.AffectedObjectCount;
 
         indicator.HasAffectedDetail = true;
-        indicator.AffectedDetailComplete = evidence.IsComplete && matchesCount;
+        indicator.AffectedDetailComplete = isComplete && matchesCount;
         indicator.AffectedDetailLimitation = matchesCount
-            ? evidence.Limitation
+            ? limitation
             : string.Join(" ", new[]
             {
-                evidence.Limitation,
+                limitation,
                 $"A lista preservada tem {preserved} objeto(s) e o veredito contou {indicator.AffectedObjectCount} — "
                 + "a diferenca e declarada aqui em vez de ser escondida.",
             }.Where(x => !string.IsNullOrWhiteSpace(x)));
     }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] Anexa a configuração que SUSTENTOU o veredito (políticas, papéis cobertos,
+    /// security defaults). Um objeto já presente como afetado não é repetido como evidência — a chave única
+    /// (indicador, id externo) é a mesma.
+    /// </summary>
+    private static void AttachEvidence(KnightIndicatorResult indicator, IEnumerable<KnightIndicatorObject> objects)
+    {
+        var seen = new HashSet<string>(
+            indicator.AffectedObjects.Select(a => a.ExternalId), StringComparer.OrdinalIgnoreCase);
+        foreach (var o in objects)
+        {
+            if (string.IsNullOrWhiteSpace(o.ExternalId) || !seen.Add(o.ExternalId)) continue;
+            indicator.AffectedObjects.Add(ToEntity(indicator, o, KnightObjectRelation.Evidence));
+        }
+    }
+
+    private static KnightAffectedObject ToEntity(KnightIndicatorResult indicator, KnightIndicatorObject o, KnightObjectRelation relation) => new()
+    {
+        RunId = indicator.RunId,
+        IndicatorId = indicator.IndicatorId,
+        ExternalId = Truncate(o.ExternalId, 200)!,
+        Kind = o.Kind,
+        DisplayName = Truncate(o.DisplayName, 300),
+        UserPrincipalName = Truncate(o.UserPrincipalName, 320),
+        Roles = o.Roles?.ToList() ?? new List<string>(),
+        Detail = Truncate(o.Detail, 1000),
+        Relation = relation,
+        ObservedConfiguration = Truncate(o.ObservedConfiguration, 2000),
+    };
+
+    private static string? Truncate(string? value, int max) =>
+        value is null || value.Length <= max ? value : value[..(max - 1)] + "…";
 
     /// <summary>
     /// [AEGIS-KNIGHT-DURABLE-01] Tenta ENRIQUECER com a narrativa da IA uma avaliação que já está gravada e
@@ -516,14 +724,17 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             limitations);
     }
 
-    private KnightAssessment ToAssessment(KnightAssessmentRun run)
+    private KnightAssessment ToAssessment(KnightAssessmentRun run, IReadOnlyDictionary<string, int> evidenceCounts)
     {
         var indicators = run.Indicators
             .OrderBy(i => i.IndicatorId, StringComparer.Ordinal)
             .Select(i => new KnightIndicatorView(
                 i.IndicatorId, i.Title, i.Category, i.Severity, i.Status, i.Evidence, i.AffectedObjectCount,
                 i.NistCodes, i.MitreTechniques, i.Recommendation, i.CollectedAt, i.SourceType, i.NotEvaluatedReason,
-                i.HasAffectedDetail, i.AffectedDetailComplete, i.AffectedDetailLimitation))
+                i.HasAffectedDetail, i.AffectedDetailComplete, i.AffectedDetailLimitation,
+                evidenceCounts.TryGetValue(i.IndicatorId, out var ev) ? ev : 0,
+                KnightControlPresentations.For(i.IndicatorId, i.Category, i.Severity, i.Status, i.SourceType,
+                    i.NistCodes, i.MitreTechniques, run.CatalogVersion)))
             .ToList();
 
         return new KnightAssessment(

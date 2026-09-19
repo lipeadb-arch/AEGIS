@@ -4,6 +4,7 @@ import { Observable, TimeoutError, catchError, map, throwError, timeout } from '
 import { environment } from '../../environments/environment';
 import {
   KnightAffectedObjects,
+  KnightAffectedSummary,
   KnightAssessment,
   KnightLatest,
   KnightSources,
@@ -130,10 +131,13 @@ export class KnightService {
     page: number,
     pageSize: number,
     search: string | null,
+    relation: 'affected' | 'evidence' = 'affected',
   ): Observable<KnightAffectedObjects> {
     let params = new HttpParams().set('page', page).set('pageSize', pageSize);
     const term = (search ?? '').trim();
     if (term) params = params.set('search', term);
+    // [AEGIS-KNIGHT-MULTICLOUD-01] "evidence" = a configuração que sustentou o veredito (políticas, papéis).
+    if (relation === 'evidence') params = params.set('relation', 'evidence');
 
     return this.http
       .get<KnightAffectedObjects>(
@@ -144,6 +148,17 @@ export class KnightService {
         timeout(this.READ_TIMEOUT_MS),
         catchError(this.normalize('Não foi possível carregar os objetos afetados por este achado.')),
       );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-MULTICLOUD-01] Ocorrências (objeto × controle), objetos únicos e os que mais se repetem entre
+   * controles reprovados — da avaliação indicada. Somente leitura.
+   */
+  getAffectedSummary(runId: string): Observable<KnightAffectedSummary> {
+    return this.http.get<KnightAffectedSummary>(`${this.base}/${runId}/affected-summary`).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível carregar o resumo de objetos afetados.')),
+    );
   }
 
   private normalize(message: string) {

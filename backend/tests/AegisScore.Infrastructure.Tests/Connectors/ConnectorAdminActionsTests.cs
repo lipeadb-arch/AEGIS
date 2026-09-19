@@ -29,7 +29,7 @@ public sealed class ConnectorAdminActionsTests
 
     private static ConnectorsController ControllerFor(ConnectorConfig cfg) =>
         new(new FakeTenants(cfg), registry: null!, executor: null!, scopeFactory: null!, lifetime: null!,
-            NullLogger<ConnectorsController>.Instance);
+            NullLogger<ConnectorsController>.Instance, knightSync: null!);
 
     private static int? StatusOf(object? result) => (result as ObjectResult)?.StatusCode;
 
@@ -70,7 +70,7 @@ public sealed class ConnectorAdminActionsTests
         };
         var controller = new ConnectorsController(
             tenants, registry: null!, executor: null!, scopeFactory: null!, lifetime: null!,
-            NullLogger<ConnectorsController>.Instance);
+            NullLogger<ConnectorsController>.Instance, knightSync: null!);
 
         var result = await controller.Enable(cfg.Id, default);
         StatusOf(result.Result).Should().Be(409, "habilitar um conector desconectado é conflito de estado");

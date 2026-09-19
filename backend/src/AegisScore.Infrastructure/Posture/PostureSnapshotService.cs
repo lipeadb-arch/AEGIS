@@ -75,6 +75,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         foreach (var c in snapshot.Controls) c.TenantId = tenantId;
         foreach (var i in snapshot.Indicators) i.TenantId = tenantId;
         foreach (var a in snapshot.ActionItems) a.TenantId = tenantId;
+        foreach (var o in snapshot.Objects) o.TenantId = tenantId;
 
         // Hash determinístico do conteúdo — re-derivável da linha para detectar adulteração.
         snapshot.ContentHash = PostureSnapshotHasher.Compute(snapshot);
@@ -467,7 +468,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         }
 
         var run = await _db.KnightAssessmentRuns.AsNoTracking()
-            .Include(r => r.Indicators)
+            .Include(r => r.Indicators).ThenInclude(i => i.AffectedObjects)
+            .AsSplitQuery()
             .FirstAsync(r => r.Id == chosenId.Value, ct);
 
         // Peso avaliado/elegível pela fórmula do KNIGHT (severidade → peso), coerente com knight-score-v1.
@@ -491,7 +493,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         var snapshot = new PostureSnapshot
         {
             Type = PostureSnapshotType.Knight,
-            SchemaVersion = PostureSnapshotSchema.Version,
+            // [AEGIS-KNIGHT-MULTICLOUD-01] v2: o relatório completo sai só da fotografia.
+            SchemaVersion = PostureSnapshotSchema.KnightReportVersion,
             FormulaVersion = run.ScoreFormulaVersion,
             CatalogVersion = run.CatalogVersion,
             SemanticFamily = $"knight:{run.SourceType}",
@@ -518,10 +521,19 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             // [AEGIS-MVP-PRODUCT-03] Limitações de coleta CONGELADAS: o resumo executivo precisa dizer o que a
             // coleta não viu, e essa lista muda a cada nova coleta.
             CollectionLimitations = BuildCollectionLimitations(run.CapabilitiesJson),
+            // [AEGIS-KNIGHT-MULTICLOUD-01] Narrativa, capacidades e versão dos perfis CONGELADAS: reexportar o
+            // relatório depois traz exatamente isto, e não o estado de hoje.
+            AdvisoryJson = run.AdvisoryJson,
+            AdvisoryFromAi = run.AdvisoryJson is null ? null : run.AdvisoryFromAi,
+            CapabilitiesJson = string.IsNullOrWhiteSpace(run.CapabilitiesJson) ? null : run.CapabilitiesJson,
+            ProfileCatalogVersion = KnightCatalog.Version,
         };
 
         foreach (var i in run.Indicators)
         {
+            var presentation = KnightControlPresentations.For(
+                i.IndicatorId, i.Category, i.Severity, i.Status, i.SourceType, i.NistCodes, i.MitreTechniques, run.CatalogVersion);
+
             snapshot.Indicators.Add(new PostureSnapshotIndicator
             {
                 IndicatorId = i.IndicatorId,
@@ -535,7 +547,40 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 MitreTechniques = i.MitreTechniques.ToList(),
                 SourceType = i.SourceType,
                 CollectedAt = i.CollectedAt,
+                Recommendation = i.Recommendation,
+                NotEvaluatedReason = i.NotEvaluatedReason,
+                Domain = presentation.Domain,
+                Service = presentation.Service,
+                Provider = presentation.Provider,
+                Description = presentation.Description,
+                Rationale = presentation.Rationale,
+                ExpectedConfiguration = presentation.ExpectedConfiguration,
+                DoesNotProve = presentation.DoesNotProve,
+                Criterion = presentation.Criterion,
+                References = presentation.References
+                    .Select(r => new PostureControlReference(r.Framework, r.Version, r.Code, r.Url)).ToList(),
+                RequiredCapabilities = presentation.RequiredCapabilities.ToList(),
+                HasAffectedDetail = i.HasAffectedDetail,
+                AffectedDetailComplete = i.AffectedDetailComplete,
+                AffectedDetailLimitation = i.AffectedDetailLimitation,
             });
+
+            foreach (var o in i.AffectedObjects
+                         .OrderBy(o => o.Relation).ThenBy(o => o.ExternalId, StringComparer.Ordinal))
+            {
+                snapshot.Objects.Add(new PostureSnapshotObject
+                {
+                    IndicatorId = i.IndicatorId,
+                    Relation = o.Relation,
+                    Kind = o.Kind,
+                    ExternalId = o.ExternalId,
+                    DisplayName = o.DisplayName,
+                    UserPrincipalName = o.UserPrincipalName,
+                    Roles = o.Roles.ToList(),
+                    Detail = o.Detail,
+                    ObservedConfiguration = o.ObservedConfiguration,
+                });
+            }
         }
 
         return snapshot;
@@ -604,6 +649,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             .Include(s => s.Controls)
             .Include(s => s.Indicators)
             .Include(s => s.ActionItems)
+            .Include(s => s.Objects)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(s => s.Id == id, ct);
 
     // ---- Mapeamento ----------------------------------------------------------------------------------

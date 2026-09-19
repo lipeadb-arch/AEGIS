@@ -36,6 +36,9 @@ public sealed class PostureSnapshotExporter : IPostureSnapshotExporter
             .Include(s => s.Controls)
             .Include(s => s.Indicators)
             .Include(s => s.ActionItems)
+            // [AEGIS-KNIGHT-MULTICLOUD-01] Objetos congelados (v2) — parte do conteúdo assinado.
+            .Include(s => s.Objects)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(s => s.Id == snapshotId, ct);
 
         if (snapshot is null)
@@ -52,6 +55,10 @@ public sealed class PostureSnapshotExporter : IPostureSnapshotExporter
                 PostureSnapshotPdfWriter.Write(snapshot), "application/pdf", FileName(snapshot, "pdf")),
             PostureExportFormat.Csv => new PostureExportResult(
                 PostureSnapshotCsvWriter.Write(snapshot), "text/csv; charset=utf-8", FileName(snapshot, "csv")),
+            // [AEGIS-KNIGHT-MULTICLOUD-01] A integridade acabou de ser reverificada acima — é isso que o relatório
+            // declara como "hash verificado na exportação".
+            PostureExportFormat.Html => new PostureExportResult(
+                PostureSnapshotHtmlWriter.Write(snapshot, integrityVerified: true), "text/html; charset=utf-8", FileName(snapshot, "html")),
             _ => throw new ArgumentOutOfRangeException(nameof(format), format, "Formato de exportação desconhecido."),
         };
     }
