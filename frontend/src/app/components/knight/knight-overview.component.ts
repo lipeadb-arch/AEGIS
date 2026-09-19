@@ -8,6 +8,7 @@ import {
   affectedKindLabel,
   distributionBy,
   findingTitle,
+  knightUnitsLine,
   limitationViews,
   overviewKpis,
   priorityControls,
@@ -35,29 +36,45 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       <div class="metric">
         <span class="metric-label">Score de postura KNIGHT</span>
         <span class="metric-value">{{ a.score === null ? '—' : round(a.score) }}</span>
-        <span class="metric-foot">
-          {{ a.score === null ? 'Sem controle avaliado: não há nota — nunca zero por ausência.' : 'Escala 0–100 · ' + a.scoreFormulaVersion + ' · pondera severidade e resultado.' }}
-        </span>
+        <span class="metric-foot">{{ a.score === null ? 'Sem controle avaliado, não há nota.' : 'Escala própria do KNIGHT, de 0 a 100.' }}</span>
+        <details class="help">
+          <summary>Como é calculado</summary>
+          Pondera a severidade e o resultado de cada controle avaliado (fórmula {{ a.scoreFormulaVersion }}). Controles
+          não avaliados ficam fora da nota: nunca contam como zero nem como aprovados.
+        </details>
       </div>
       <div class="metric">
         <span class="metric-label">Aprovação</span>
         <span class="metric-value">{{ pct(k.approvalPercent) }}</span>
-        <span class="metric-foot">{{ k.passed }} aprovado(s) de {{ k.evaluated }} avaliado(s). Não é a nota.</span>
+        <span class="metric-foot">{{ k.passed }} de {{ k.evaluated }} controles avaliados foram aprovados.</span>
+        <details class="help">
+          <summary>O que significa</summary>
+          Proporção de aprovados entre os controles avaliados. Não é a nota: a nota também pesa a severidade.
+        </details>
       </div>
       <div class="metric">
         <span class="metric-label">Cobertura do assessment</span>
         <span class="metric-value">{{ pct(a.coverage) }}</span>
-        <span class="metric-foot">Avaliados ÷ aplicáveis. Cobertura não é conformidade.</span>
+        <span class="metric-foot">Parte dos controles que pôde ser verificada.</span>
+        <details class="help">
+          <summary>O que significa</summary>
+          Controles avaliados ÷ controles aplicáveis. Mostra quanto foi possível verificar, não se o ambiente está conforme.
+        </details>
       </div>
       <div class="metric">
-        <span class="metric-label">Findings</span>
+        <span class="metric-label">Controles com achados</span>
         <span class="metric-value">{{ k.findings }}</span>
         <span class="metric-foot">{{ unitsLine() }}</span>
+        <details class="help">
+          <summary>Como contar</summary>
+          Controles reprovados ou mitigados. Um mesmo objeto (conta, papel, política) pode aparecer em mais de um
+          controle: cada aparição é uma ocorrência; objetos distintos contam uma vez.
+        </details>
       </div>
     </div>
-    <p class="notice ov-note">
-      Score, aprovação e cobertura medem coisas diferentes e não se somam. O score KNIGHT não é o AEGIS Score/NIST
-      nem índice de fornecedor.
+    <p class="muted small ov-note">
+      O score KNIGHT resume os controles de configuração desta avaliação — desta fonte e desta coleta. O AEGIS Score
+      (NIST) é outra medida; as duas notas não se somam.
     </p>
 
     <div class="panel">
@@ -70,20 +87,21 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
         }
       </div>
       <p class="muted small">
-        {{ k.total }} controle(s) no escopo. Não avaliado = faltou dado ou permissão (reduz a cobertura, nunca
-        aprova). Erro = a regra falhou ao avaliar. Mitigado = exposição com controle compensatório comprovado.
+        {{ k.total }} controle(s) no escopo. Não avaliado: a evidência faltou, foi insuficiente ou inconclusiva
+        (inclui dado ou permissão ausente) — o motivo aparece em cada controle; reduz a cobertura e nunca aprova.
+        Erro: a regra falhou ao avaliar. Mitigado: exposição com controle compensatório comprovado.
       </p>
     </div>
 
     <div class="ov-grid">
       <div class="panel">
-        <div class="hd"><h3>Findings por severidade</h3></div>
+        <div class="hd"><h3>Controles com achados por severidade</h3></div>
         <p class="muted small">Controles reprovados ou mitigados. Clique para abrir a lista.</p>
         @for (s of k.findingsBySeverity; track s.key) {
           <button type="button" class="bar" (click)="filter.emit({ status: 'findings', severity: s.key })"
                   [attr.aria-label]="s.label + ': ' + s.count + ' finding(s)'">
             <span class="lbl"><span class="sev" [class]="s.key">{{ s.label }}</span></span>
-            <span class="track"><span class="seg Exposed" [style.width.%]="share(s.count, maxSeverity())"></span></span>
+            <span class="track"><span class="seg" [class]="'sev-' + s.key" [style.width.%]="share(s.count, maxSeverity())"></span></span>
             <span class="num">{{ s.count }}</span>
           </button>
         }
@@ -220,6 +238,11 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       .seg.Error, .dot.Error { background: var(--violet); }
       .seg.NotEvaluated, .dot.NotEvaluated { background: var(--muted); }
       .seg.NotApplicable, .dot.NotApplicable { background: var(--line-strong); }
+      .seg.sev-Critical { background: var(--red); } .seg.sev-High { background: #ff9a3d; }
+      .seg.sev-Medium { background: var(--amber); } .seg.sev-Low { background: var(--cyan); }
+      .seg.sev-Informational { background: var(--text-2); }
+      .help { font-size: var(--fs-meta); color: var(--text-2); margin-top: 4px; }
+      .help summary { cursor: pointer; color: var(--cyan); width: fit-content; }
       .dot { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; }
       .sev { padding: 1px 8px; border: 1px solid currentColor; border-radius: var(--radius-pill); font-size: var(--fs-caps); font-weight: 600; }
       .sev.Critical { color: var(--red-text); } .sev.High { color: #ff9a3d; } .sev.Medium { color: var(--amber); }
@@ -259,12 +282,7 @@ export class KnightOverviewComponent {
   readonly maxService = computed(() => Math.max(1, ...this.byService().map((r) => r.total)));
 
   /** Três unidades que não se confundem: controles, ocorrências (objeto × controle) e objetos únicos. */
-  readonly unitsLine = computed(() => {
-    const s = this.summary();
-    if (!s) return 'Controles reprovados ou mitigados.';
-    const unique = `${s.complete ? '' : '≥ '}${s.uniqueObjects} objeto(s) único(s)`;
-    return `${s.occurrences} ocorrência(s) objeto × controle · ${unique}${s.complete ? '' : ' (detalhe parcial: é um piso)'}`;
-  });
+  readonly unitsLine = computed(() => knightUnitsLine(this.summary()));
 
   countOf(st: KnightIndicatorStatus): number {
     return this.assessment().indicators.filter((i) => i.status === st).length;

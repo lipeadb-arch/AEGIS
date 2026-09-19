@@ -150,7 +150,7 @@ public sealed class KnightFactSet
 
     /// <summary>Observação da chave; se ausente, devolve <see cref="KnightObservationOutcome.Missing"/> explícito.</summary>
     public KnightObservation Get(KnightSignalKey key) =>
-        _byKey.TryGetValue(key, out var o) ? o : KnightObservation.MissingData(key, "Sinal não coletado.");
+        _byKey.TryGetValue(key, out var o) ? o : KnightObservation.MissingData(key, "O dado exigido por este controle não foi obtido nesta coleta.");
 
     public bool Has(KnightSignalKey key) => _byKey.ContainsKey(key);
 

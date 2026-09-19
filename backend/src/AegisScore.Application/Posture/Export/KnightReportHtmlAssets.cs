@@ -43,7 +43,8 @@ h1{margin:4px 0 2px;font-size:24px}h2{font-size:17px;margin:0 0 10px}h3{font-siz
 background:none;border:0;padding:3px 0;font:inherit;color:var(--ink);text-align:left;cursor:pointer;width:100%}
 .bar:hover .track{outline:1px solid var(--accent)}.track{height:16px;background:var(--ne-bg);border-radius:4px;overflow:hidden;display:flex}
 .seg{height:100%}.seg.Passed{background:var(--ok)}.seg.Exposed{background:var(--fail)}.seg.Mitigated{background:var(--warn)}.seg.NotEvaluated,.seg.NotApplicable{background:var(--ne)}.seg.Error{background:var(--err)}
-.seg.sev{background:var(--fail)}.bar .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bar .num{text-align:right;font-weight:700}
+.seg.sev-Critical{background:var(--crit)}.seg.sev-High{background:var(--high)}.seg.sev-Medium{background:var(--med)}.seg.sev-Low{background:var(--low)}.seg.sev-Informational{background:var(--info)}
+.kpi details{color:var(--muted);font-size:12px;margin-top:6px}.kpi summary{cursor:pointer;width:fit-content}.bar .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bar .num{text-align:right;font-weight:700}
 .legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--ink2);margin-top:8px}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.tw{overflow-x:auto}
@@ -62,7 +63,7 @@ th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04
 .ctl-body{padding:0 14px 14px;border-top:1px solid var(--line)}.sec{margin-top:12px}.sec h3{color:var(--accent);text-transform:uppercase;font-size:12px;letter-spacing:.06em}
 .kv{display:grid;grid-template-columns:200px minmax(0,1fr);gap:4px 12px;font-size:13px}.kv .k{color:var(--muted)}
 @media (max-width:700px){.kv{grid-template-columns:minmax(0,1fr)}.bar{grid-template-columns:100px minmax(0,1fr) 36px}}
-.empty{color:var(--muted);font-style:italic}footer{color:var(--muted);font-size:12px;margin-top:24px}
+.empty{color:var(--muted);font-style:italic}footer{color:var(--muted);font-size:12px;margin-top:24px;overflow-wrap:anywhere}
 @media print{.tabs,.filters,.btn,.no-print{display:none!important}[hidden]{display:block!important}.panel,.ctl{break-inside:avoid}body{background:#fff}}
 """;
 
@@ -88,25 +89,26 @@ document.getElementById('tab-overview').hidden=t!=='overview';document.getElemen
 function go(filters,open){ST.f={q:'',status:'',severity:'',service:'',domain:'',framework:''};for(var k in filters)ST.f[k]=filters[k];syncFilterInputs();renderList(open);setTab('controls');
 var h=document.getElementById('tab-controls');if(open){var c=document.getElementById('ctl-'+open);if(c){c.scrollIntoView();var b=c.querySelector('button');if(b)b.focus();}}else h.scrollIntoView();}
 // ---------- Visão geral ----------
+function help(t,body){return el('details',null,[el('summary',{text:t}),el('span',{text:body})]);}
 function overview(){var k=D.kpis,box=el('div',{id:'tab-overview',role:'tabpanel','aria-labelledby':'t-overview'});
 var g=el('div',{cls:'grid g4'});
 g.appendChild(el('div',{cls:'kpi'},[el('div',{cls:'l',text:'Score de postura KNIGHT'}),el('div',{cls:'v',text:k.score===null?'—':String(Math.round(k.score))}),
-el('div',{cls:'n',text:k.score===null?'Sem controle avaliado: não há nota (nunca zero por ausência).':'Escala 0–100 · fórmula '+D.header.formulaVersion+' · pondera severidade e resultado.'})]));
-g.appendChild(el('div',{cls:'kpi'},[el('div',{cls:'l',text:'Aprovação'}),el('div',{cls:'v',text:pct(k.approvalPercent)}),el('div',{cls:'n',text:k.passed+' aprovado(s) de '+k.evaluated+' avaliado(s). Não é a nota.'})]));
-g.appendChild(el('div',{cls:'kpi'},[el('div',{cls:'l',text:'Cobertura do assessment'}),el('div',{cls:'v',text:pct(k.coverage)}),el('div',{cls:'n',text:'Controles avaliados ÷ aplicáveis. Cobertura não é conformidade.'})]));
-var ua=k.uniqueAffected===null?'—':(k.uniqueAffectedIsFloor?'≥ ':'')+k.uniqueAffected;
-g.appendChild(el('div',{cls:'kpi'},[el('div',{cls:'l',text:'Findings'}),el('div',{cls:'v',text:String(k.findings)}),el('div',{cls:'n',text:k.occurrences+' ocorrência(s) objeto × controle · '+ua+' objeto(s) único(s) afetado(s)'+(k.uniqueAffected===null?' (não calculável nesta fotografia)':k.uniqueAffectedIsFloor?' (detalhe parcial: é um piso)':'')})]));
+el('div',{cls:'n',text:k.score===null?'Sem controle avaliado, não há nota.':'Escala própria do KNIGHT, de 0 a 100.'}),help('Como é calculado','Pondera a severidade e o resultado de cada controle avaliado (fórmula '+D.header.formulaVersion+'). Controles não avaliados ficam fora da nota: nunca contam como zero nem como aprovados.')]));
+g.appendChild(el('div',{cls:'kpi'},[el('div',{cls:'l',text:'Aprovação'}),el('div',{cls:'v',text:pct(k.approvalPercent)}),el('div',{cls:'n',text:k.passed+' de '+k.evaluated+' controles avaliados foram aprovados.'}),help('O que significa','Proporção de aprovados entre os controles avaliados. Não é a nota: a nota também pesa a severidade.')]));
+g.appendChild(el('div',{cls:'kpi'},[el('div',{cls:'l',text:'Cobertura do assessment'}),el('div',{cls:'v',text:pct(k.coverage)}),el('div',{cls:'n',text:'Parte dos controles que pôde ser verificada.'}),help('O que significa','Controles avaliados ÷ controles aplicáveis. Mostra quanto foi possível verificar, não se o ambiente está conforme.')]));
+var ua=k.uniqueAffected===null?k.occurrences+' ocorrência(s); objetos distintos não calculáveis nesta fotografia.':k.occurrences+' ocorrência(s) em '+(k.uniqueAffectedIsFloor?'pelo menos ':'')+k.uniqueAffected+' objeto(s) distinto(s)'+(k.uniqueAffectedIsFloor?' — a lista de objetos de algum controle está incompleta.':'.');
+g.appendChild(el('div',{cls:'kpi'},[el('div',{cls:'l',text:'Controles com achados'}),el('div',{cls:'v',text:String(k.findings)}),el('div',{cls:'n',text:ua}),help('Como contar','Controles reprovados ou mitigados. Um mesmo objeto (conta, papel, política) pode aparecer em mais de um controle: cada aparição é uma ocorrência; objetos distintos contam uma vez.')]));
 box.appendChild(g);
-box.appendChild(el('p',{cls:'note info',text:'Score, aprovação e cobertura medem coisas diferentes e não se somam. O score KNIGHT também não é o AEGIS Score/NIST nem índice de fornecedor.'}));
+box.appendChild(el('p',{cls:'sub',text:'O score KNIGHT resume os controles de configuração desta avaliação — desta fonte e desta coleta. O AEGIS Score (NIST) é outra medida; as duas notas não se somam.'}));
 var cp=el('div',{cls:'panel'},[el('h2',{text:'Controles por resultado'})]),cs=el('div',{cls:'counts'});
 [['Passed',k.passed],['Exposed',k.failed],['Mitigated',k.mitigated],['NotEvaluated',k.notEvaluated],['Error',k.errors],['NotApplicable',k.notApplicable]].forEach(function(x){
 cs.appendChild(el('button',{cls:'cbtn',type:'button',onclick:function(){go({status:x[0]});}},[el('b',{text:String(x[1])}),pill('s-'+x[0],lbl(STATUS,x[0]))]));});
-cp.appendChild(cs);cp.appendChild(el('p',{cls:'sub',text:k.totalControls+' controle(s) no escopo desta avaliação. Não avaliado = faltou dado ou permissão (reduz a cobertura, nunca aprova). Erro = a regra falhou ao avaliar. Mitigado = exposição com controle compensatório comprovado.'}));
+cp.appendChild(cs);cp.appendChild(el('p',{cls:'sub',text:k.totalControls+' controle(s) no escopo desta avaliação. Não avaliado: a evidência faltou, foi insuficiente ou inconclusiva (inclui dado ou permissão ausente) — o motivo aparece em cada controle; reduz a cobertura e nunca aprova. Erro: a regra falhou ao avaliar. Mitigado: exposição com controle compensatório comprovado.'}));
 box.appendChild(cp);
 var two=el('div',{cls:'grid g2'});
-var sp=el('div',{cls:'panel'},[el('h2',{text:'Findings por severidade'}),el('p',{cls:'sub',text:'Controles reprovados ou mitigados. Clique para ver a lista.'})]),sb=el('div',{cls:'bars'});
+var sp=el('div',{cls:'panel'},[el('h2',{text:'Controles com achados por severidade'}),el('p',{cls:'sub',text:'Controles reprovados ou mitigados. Clique para ver a lista.'})]),sb=el('div',{cls:'bars'});
 var maxS=Math.max.apply(null,k.findingsBySeverity.map(function(x){return x.count;}).concat([1]));
-k.findingsBySeverity.forEach(function(x){var tr=el('span',{cls:'track'}),s=el('span',{cls:'seg sev'});s.style.width=(100*x.count/maxS)+'%';tr.appendChild(s);
+k.findingsBySeverity.forEach(function(x){var tr=el('span',{cls:'track'}),s=el('span',{cls:'seg sev-'+x.key});s.style.width=(100*x.count/maxS)+'%';tr.appendChild(s);
 sb.appendChild(el('button',{cls:'bar',type:'button','aria-label':x.label+': '+x.count+' finding(s)',onclick:function(){go({status:'findings',severity:x.key});}},[el('span',{cls:'lbl'},[pill('v-'+x.key,x.label)]),tr,el('span',{cls:'num',text:String(x.count)})]));});
 sp.appendChild(sb);two.appendChild(sp);
 two.appendChild(dist('Resultado por domínio de segurança',D.byDomain,'domain'));
