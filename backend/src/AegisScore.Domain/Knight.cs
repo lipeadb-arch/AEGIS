@@ -137,6 +137,18 @@ public enum KnightIndicatorCategory
 
     /// <summary>Contas técnicas/de serviço e suas isenções.</summary>
     ServiceAccounts = 4,
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Configurações gerais do locatário (o que usuários podem criar e usar).</summary>
+    TenantConfiguration = 5,
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Políticas de autenticação (métodos, senhas, acesso condicional).</summary>
+    AuthenticationPolicy = 6,
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Governança de aplicações (consentimento, credenciais).</summary>
+    ApplicationGovernance = 7,
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Registro e gerenciamento de dispositivos.</summary>
+    DeviceGovernance = 8,
 }
 
 /// <summary>
@@ -391,6 +403,9 @@ public enum KnightAffectedObjectKind
 
     /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Configuração do tenant (ex.: security defaults).</summary>
     TenantSetting = 8,
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Domínio do diretório (ex.: política de expiração de senha por domínio).</summary>
+    Domain = 9,
 }
 
 /// <summary>

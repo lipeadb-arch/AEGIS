@@ -72,6 +72,52 @@ public enum KnightCapability
     /// não tornam o usuário seguro.
     /// </summary>
     IdentityRiskDetections = 15,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário (Microsoft Entra ID, somente leitura) ----------
+    // Cada capacidade é INDEPENDENTE: a falha de uma (permissão, licença, indisponibilidade) não invalida as
+    // outras, e os controles que dependem dela ficam não avaliados com o motivo específico.
+
+    /// <summary>Política de autorização do diretório (<c>Policy.Read.All</c>).</summary>
+    AuthorizationPolicy = 16,
+
+    /// <summary>Fluxo de consentimento do administrador (<c>Policy.Read.All</c>).</summary>
+    AdminConsentPolicy = 17,
+
+    /// <summary>Política padrão de gerenciamento de aplicações (<c>Policy.Read.All</c>).</summary>
+    AppManagementPolicy = 18,
+
+    /// <summary>Política de métodos de autenticação (<c>Policy.Read.All</c>).</summary>
+    AuthenticationMethodsPolicy = 19,
+
+    /// <summary>Configurações de diretório por modelo — senhas e grupos (<c>Directory.Read.All</c>).</summary>
+    DirectorySettings = 20,
+
+    /// <summary>Domínios do diretório (<c>Directory.Read.All</c>).</summary>
+    Domains = 21,
+
+    /// <summary>Sincronização híbrida e de hash de senha (<c>Directory.Read.All</c>, <c>OnPremDirectorySynchronization.Read.All</c>).</summary>
+    DirectorySynchronization = 22,
+
+    /// <summary>Política de registro e ingresso de dispositivos (<c>Policy.Read.DeviceConfiguration</c>).</summary>
+    DeviceRegistrationPolicy = 23,
+
+    /// <summary>Visibilidade dos grupos do Microsoft 365 (<c>Directory.Read.All</c>).</summary>
+    GroupVisibility = 24,
+
+    /// <summary>Origem e licenças das contas privilegiadas (<c>Directory.Read.All</c>).</summary>
+    PrivilegedAccountDetails = 25,
+
+    /// <summary>Atribuições e regras de ativação do PIM (<c>RoleManagement.Read.Directory</c>, <c>RoleManagementPolicy.Read.Directory</c>).</summary>
+    PrivilegedIdentityManagement = 26,
+
+    /// <summary>Definições de revisão de acesso (<c>AccessReview.Read.All</c>).</summary>
+    AccessReviews = 27,
+
+    /// <summary>Locais nomeados do acesso condicional (<c>Policy.Read.All</c>).</summary>
+    NamedLocations = 28,
+
+    /// <summary>Estado de aplicações de serviço conhecidas do locatário (<c>Application.Read.All</c>).</summary>
+    ServicePrincipalSettings = 29,
 }
 
 /// <summary>
@@ -215,11 +261,23 @@ public sealed record KnightCollectionResult(
     /// condicional normalizadas, papéis privilegiados ativos). Persistida no ADM como objetos de configuração e
     /// relida de lá antes da avaliação. <c>null</c> quando a fonte não a produz.
     /// </summary>
-    AegisScore.Application.Knight.Configuration.KnightDirectoryConfiguration? DirectoryConfiguration = null)
+    AegisScore.Application.Knight.Configuration.KnightDirectoryConfiguration? DirectoryConfiguration = null,
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-01] Configuração do LOCATÁRIO observada pela mesma coleta (política de autorização,
+    /// métodos de autenticação, regras de senha, domínios, dispositivos, PIM, revisões de acesso…), como
+    /// documentos de contratos tipados. Persistida no ADM e relida de lá antes da avaliação. <c>null</c> quando a
+    /// fonte não a produz.
+    /// </summary>
+    AegisScore.Application.Knight.Configuration.KnightTenantConfiguration? TenantConfiguration = null)
 {
     /// <summary>Conjuntos de objetos afetados desta coleta — vazio quando a fonte não preserva detalhe.</summary>
     public IReadOnlyList<KnightAffectedObjectEvidence> AffectedObjectSets =>
         AffectedObjects ?? Array.Empty<KnightAffectedObjectEvidence>();
+
+    /// <summary>Configuração do locatário desta coleta — vazia (tudo "não coletado") quando a fonte não a produz.</summary>
+    public AegisScore.Application.Knight.Configuration.KnightTenantConfiguration TenantConfigurationOrEmpty =>
+        TenantConfiguration ?? new AegisScore.Application.Knight.Configuration.KnightTenantConfiguration(
+            Array.Empty<AegisScore.Application.Knight.Configuration.KnightConfigurationDocument>(), Capabilities);
 
     public static KnightCollectionResult NotConfigured(KnightSourceType source, string label) => new(
         source, KnightSourceState.NotConfigured, label, KnightFactSet.Empty,

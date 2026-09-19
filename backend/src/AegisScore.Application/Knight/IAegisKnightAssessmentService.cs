@@ -33,7 +33,12 @@ public sealed record KnightIndicatorView(
     /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Objetos de configuração que sustentaram o veredito (não contados como afetados).</summary>
     int EvidenceObjectCount = 0,
     /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Perfil, eixos (domínio/serviço/provedor) e contribuição para a nota.</summary>
-    KnightControlPresentation? Presentation = null);
+    KnightControlPresentation? Presentation = null,
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-01] Composição NOMEADA dos afetados preservados ("12 contas de usuário e 2 aplicações"),
+    /// pela mesma definição das exportações. Nula quando nada foi afetado.
+    /// </summary>
+    string? AffectedComposition = null);
 
 /// <summary>
 /// [AEGIS-KNIGHT-MULTICLOUD-01] Como um controle se apresenta no relatório: o problema, por que importa, a
@@ -56,7 +61,10 @@ public sealed record KnightControlPresentation(
     int Weight,
     double? Factor,
     double? AchievedPoints,
-    double? PossiblePoints);
+    double? PossiblePoints,
+    string? Impact = null,
+    string? Platform = null,
+    string? ServiceKey = null);
 
 /// <summary>Um objeto afetado em vários controles de uma avaliação — a base dos "principais objetos afetados".</summary>
 public sealed record KnightAffectedSummaryItem(

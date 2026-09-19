@@ -5,6 +5,10 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <!-- [AEGIS-KNIGHT-COVERAGE-01] Catálogo de referência (seções dos benchmarks, títulos autorais). -->
+    <EmbeddedResource Include="Knight\Reference\knight-reference-catalog.json" LogicalName="AegisScore.Knight.ReferenceCatalog.json" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\AegisScore.Domain\AegisScore.Domain.csproj" />
   </ItemGroup>
 </Project>

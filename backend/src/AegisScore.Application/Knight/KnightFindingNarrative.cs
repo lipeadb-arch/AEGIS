@@ -36,8 +36,13 @@ public static class KnightFindingNarratives
     /// Compõe a leitura executiva de um achado a partir do que está CONGELADO na fotografia. Para um achado
     /// sem redação própria, devolve o título do catálogo e a evidência gravada — nunca uma frase inventada.
     /// </summary>
+    /// <param name="composition">
+    /// [AEGIS-KNIGHT-COVERAGE-01] Composição NOMEADA dos afetados congelados ("12 contas de usuário e 2 aplicações"),
+    /// da mesma definição que a tela e as exportações usam. Sem ela, o alcance cita só a quantidade.
+    /// </param>
     public static KnightFindingNarrative For(
-        string indicatorId, string catalogTitle, KnightIndicatorStatus status, int affectedCount, string evidence)
+        string indicatorId, string catalogTitle, KnightIndicatorStatus status, int affectedCount, string evidence,
+        string? composition = null)
     {
         var id = (indicatorId ?? "").Trim();
         var exposed = status is KnightIndicatorStatus.Exposed or KnightIndicatorStatus.Mitigated;
@@ -56,13 +61,15 @@ public static class KnightFindingNarratives
                 "Registro de método não comprova que a política exige o segundo fator no acesso. Verificar a " +
                 "política de acesso condicional é um passo à parte desta constatação."),
 
+            // [AEGIS-KNIGHT-COVERAGE-01] "Objetos" dava a entender uma população homogênea. A lista mistura contas de
+            // usuário, convidados, aplicações e grupos — a composição real é dita, nunca presumida.
             "AK-ENTRA-002" => new KnightFindingNarrative(
-                "Objetos com papel administrativo sujeitos a revisão de acesso",
-                "Cada objeto com papel administrativo amplia a superfície que um atacante pode aproveitar e o " +
+                "Identidades com papel administrativo para revisão de acesso",
+                "Cada identidade com papel administrativo amplia a superfície que um atacante pode aproveitar e o " +
                 "número de caminhos que a auditoria precisa acompanhar. Manter o mínimo necessário reduz as duas coisas.",
                 exposed
-                    ? $"{n} objeto(s) com papel administrativo — pessoas, aplicações e grupos, juntos."
-                    : "A quantidade de objetos com papel administrativo está dentro do teto parametrizado.",
+                    ? (composition is null ? $"{n} identidade(s) com papel administrativo." : $"{composition} com papel administrativo.")
+                    : "A quantidade de identidades com papel administrativo está dentro do teto parametrizado.",
                 "Não é uma lista de acessos desnecessários: o AEGIS não sabe quem precisa de qual papel. O teto " +
                 "usado na comparação é um parâmetro do AEGIS — o NIST recomenda menor privilégio, mas não fixa " +
                 "um número. A decisão é da revisão humana."),
@@ -81,7 +88,9 @@ public static class KnightFindingNarratives
             _ => new KnightFindingNarrative(
                 string.IsNullOrWhiteSpace(catalogTitle) ? id : catalogTitle,
                 string.IsNullOrWhiteSpace(evidence) ? "Sem evidência registrada nesta avaliação." : evidence,
-                exposed ? $"{n} objeto(s) afetado(s) segundo a regra." : "Sem objetos afetados segundo a regra.",
+                exposed
+                    ? (composition ?? (n > 0 ? $"{n} item(ns) afetado(s) segundo a regra." : "A própria configuração do locatário é o que precisa mudar."))
+                    : "Nada afetado segundo a regra.",
                 null),
         };
     }
@@ -98,7 +107,7 @@ public static class KnightFindingNarratives
                 "Registrar um método resistente a phishing para cada conta administrativa listada e, em seguida, " +
                 "confirmar na política de acesso condicional que o segundo fator é exigido de fato.",
             "AK-ENTRA-002" =>
-                "Conduzir uma revisão de acesso do conjunto listado, separando pessoas, aplicações e grupos, e " +
+                "Conduzir uma revisão de acesso do conjunto listado, separando contas de usuário, convidados, aplicações e grupos, e " +
                 "remover apenas os papéis que a área responsável confirmar como desnecessários.",
             "AK-ENTRA-004" =>
                 "Confirmar com a área responsável, para cada convidado listado, se o acesso ainda é necessário. " +

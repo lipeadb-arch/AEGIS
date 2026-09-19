@@ -1393,6 +1393,8 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.AdvisoryJson).HasColumnType("text");
             e.Property(x => x.CapabilitiesJson).HasColumnType("text");
             e.Property(x => x.ProfileCatalogVersion).HasMaxLength(50);
+            // [AEGIS-KNIGHT-COVERAGE-01] TEXT pelo mesmo motivo dos demais JSON congelados: o hash assina a string.
+            e.Property(x => x.ReferenceCoverageJson).HasColumnType("text");
             e.HasMany(x => x.Objects).WithOne(o => o.Snapshot)
                 .HasForeignKey(o => new { o.SnapshotId, o.TenantId })
                 .HasPrincipalKey(x => new { x.Id, x.TenantId })
@@ -1466,6 +1468,9 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.DoesNotProve).HasMaxLength(2000);
             e.Property(x => x.Criterion).HasMaxLength(2000);
             e.Property(x => x.AffectedDetailLimitation).HasMaxLength(2000);
+            // [AEGIS-KNIGHT-COVERAGE-01] Impacto potencial e plataforma congelados (nulos nas fotografias anteriores).
+            e.Property(x => x.Impact).HasMaxLength(2000);
+            e.Property(x => x.Platform).HasMaxLength(60);
             e.Property(x => x.References)
                 .HasConversion(controlRefs, controlRefsCmp)
                 .HasColumnType("jsonb")

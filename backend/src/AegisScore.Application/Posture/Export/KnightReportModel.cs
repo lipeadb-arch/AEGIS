@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Knight.Reference;
 using AegisScore.Domain;
 
 namespace AegisScore.Application.Posture.Export;
@@ -28,7 +29,8 @@ public sealed record ReportCount(string Key, string Label, int Count);
 public sealed record ReportKpis(
     double? Score, double Coverage, double? ApprovalPercent, int TotalControls, int Evaluated, int Passed, int Failed,
     int Mitigated, int NotEvaluated, int Errors, int NotApplicable, int Findings,
-    IReadOnlyList<ReportCount> FindingsBySeverity, int Occurrences, int? UniqueAffected, bool UniqueAffectedIsFloor);
+    IReadOnlyList<ReportCount> FindingsBySeverity, int Occurrences, int? UniqueAffected, bool UniqueAffectedIsFloor,
+    string? UniqueAffectedComposition = null);
 
 public sealed record ReportDistributionRow(string Key, string Label, int Passed, int Failed, int Mitigated, int NotEvaluated, int Errors, int NotApplicable)
 {
@@ -52,7 +54,21 @@ public sealed record ReportControl(
     string? Recommendation, string? NotEvaluatedReason, string Evidence, string CollectedAt, int AffectedCount,
     int EvidenceCount, bool? DetailPreserved, bool? DetailComplete, string? DetailLimitation, int Weight,
     double? Factor, double? Achieved, double? Possible, IReadOnlyList<ReportReference> References,
-    IReadOnlyList<ReportObject> Objects, IReadOnlyList<ReportAction> Actions, IReadOnlyList<string> RequiredCapabilities);
+    IReadOnlyList<ReportObject> Objects, IReadOnlyList<ReportAction> Actions, IReadOnlyList<string> RequiredCapabilities,
+    string? Impact = null, string? Platform = null, string? AffectedComposition = null, string? ProvenReach = null);
+
+/// <summary>[AEGIS-KNIGHT-COVERAGE-01] Uma linha da cobertura de implementação congelada (total, plataforma ou serviço).</summary>
+public sealed record ReportCoverageRow(
+    string Key, string Label, int Total, int Implemented, int Partial, int Pending, int ManualOnly, int RequiresAccess,
+    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent);
+
+/// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-01] Cobertura de IMPLEMENTAÇÃO do catálogo de referência, congelada na fotografia. É uma
+/// propriedade do produto: não se soma à cobertura da avaliação nem à aprovação, e o relatório diz isso.
+/// </summary>
+public sealed record ReportReferenceCoverage(
+    string CatalogVersion, string ReferenceCommit, IReadOnlyList<string> Frameworks, ReportCoverageRow Total,
+    IReadOnlyList<ReportCoverageRow> ByPlatform, IReadOnlyList<ReportCoverageRow> ByService);
 
 public sealed record ReportPriority(string ControlId, string Title, string Severity, string SeverityLabel, int AffectedCount, string Criterion);
 
@@ -70,7 +86,8 @@ public sealed record KnightReportModel(
     IReadOnlyList<ReportDistributionRow> ByDomain, IReadOnlyList<ReportDistributionRow> ByService,
     IReadOnlyList<ReportPriority> Priorities, IReadOnlyList<ReportTopObject> TopObjects,
     IReadOnlyList<ReportLimitation> Limitations, IReadOnlyList<string> LegacyLimitations,
-    ReportAdvisory? Advisory, IReadOnlyList<string> Notes, IReadOnlyList<string> FrameworkOptions);
+    ReportAdvisory? Advisory, IReadOnlyList<string> Notes, IReadOnlyList<string> FrameworkOptions,
+    ReportReferenceCoverage? ReferenceCoverage = null, IReadOnlyList<ReportDistributionRow>? ByPlatform = null);
 
 public static class KnightReportModelBuilder
 {
@@ -106,7 +123,8 @@ public static class KnightReportModelBuilder
 
         // Ocorrências e objetos únicos: só afetados de controles reprovados/mitigados, na MESMA regra do CSV.
         var occurrences = failedOrAttention.SelectMany(c => c.Objects.Where(o => o.Relation == "Affected").Select(o => (c.Id, o))).ToList();
-        var unique = occurrences.Select(x => (x.o.Kind, Id: x.o.ExternalId.ToLowerInvariant())).Distinct().Count();
+        var uniqueObjects = occurrences.Select(x => (x.o.Kind, Id: x.o.ExternalId.ToLowerInvariant())).Distinct().ToList();
+        var unique = uniqueObjects.Count;
         var floor = !isV2 || failedOrAttention.Any(c => c.AffectedCount > 0 && !(c.DetailPreserved == true && c.DetailComplete == true));
 
         var severityOrder = new[] { SeverityLevel.Critical, SeverityLevel.High, SeverityLevel.Medium, SeverityLevel.Low, SeverityLevel.Informational };
@@ -122,10 +140,14 @@ public static class KnightReportModelBuilder
             evaluated > 0 ? Math.Round(100.0 * passed / evaluated, 1, MidpointRounding.AwayFromZero) : null,
             controls.Count, evaluated, passed, failed, s.MitigatedCount, s.NotEvaluatedCount, s.ErrorCount,
             s.NotApplicableCount, failedOrAttention.Count, bySeverity, occurrences.Count,
-            isV2 ? unique : null, floor);
+            isV2 ? unique : null, floor,
+            isV2 && unique > 0
+                ? KnightObjectNouns.Composition(uniqueObjects.Select(u => Enum.TryParse<KnightAffectedObjectKind>(u.Kind, out var k) ? k : KnightAffectedObjectKind.Unknown))
+                : null);
 
         var byDomain = Distribution(controls, c => (c.Domain, c.DomainLabel));
         var byService = Distribution(controls, c => (c.Service, c.Service));
+        var byPlatform = Distribution(controls, c => (c.Platform ?? c.Provider, c.Platform ?? c.Provider));
 
         var priorities = controls
             .Where(c => c.Status == "Exposed")
@@ -133,7 +155,7 @@ public static class KnightReportModelBuilder
             .Take(5)
             .Select(c => new ReportPriority(c.Id, c.Title, c.Severity, c.SeverityLabel, c.AffectedCount,
                 $"Severidade {c.SeverityLabel.ToLowerInvariant()} (peso {c.Weight})"
-                + (c.AffectedCount > 0 ? $" · {c.AffectedCount} objeto(s) afetado(s)" : "")))
+                + (c.AffectedCount > 0 ? $" · {c.AffectedComposition}" : "")))
             .ToList();
 
         var topObjects = occurrences
@@ -173,6 +195,11 @@ public static class KnightReportModelBuilder
             notes.Add("Avaliação de DEMONSTRAÇÃO com dados 100% sintéticos — não representa nenhum ambiente real.");
         if (isV2 && s.ProfileCatalogVersion is { } pv && !string.Equals(pv, s.CatalogVersion, StringComparison.Ordinal))
             notes.Add($"Os textos descritivos (problema, impacto, configuração esperada) são do catálogo {pv}; o veredito foi produzido pelo catálogo {s.CatalogVersion}. O critério da regra só é exibido quando os dois coincidem.");
+        if (controls.Any(c => c.Impact is not null))
+            notes.Add("Risco e impacto descrevem o que cada condição encontrada permite, no limite do acesso que ela concede. Não indicam que um incidente ocorreu nem que houve acesso indevido.");
+        var coverage = BuildCoverage(s.ReferenceCoverageJson);
+        if (coverage is not null)
+            notes.Add("A cobertura do catálogo de referência mede o que o AEGIS consegue avaliar (propriedade do produto). Ela é diferente da cobertura desta avaliação (o que a coleta conseguiu avaliar neste ambiente) e da aprovação (o que foi avaliado e está conforme).");
 
         var frameworks = controls.SelectMany(c => c.Frameworks).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
 
@@ -182,7 +209,19 @@ public static class KnightReportModelBuilder
             s.SchemaVersion, s.CatalogVersion, s.FormulaVersion, s.ProfileCatalogVersion, s.ContentHash, integrityVerified);
 
         return new KnightReportModel(header, kpis, controls, byDomain, byService, priorities, topObjects, limitations,
-            isV2 ? Array.Empty<string>() : s.CollectionLimitations.ToList(), advisory, notes, frameworks);
+            isV2 ? Array.Empty<string>() : s.CollectionLimitations.ToList(), advisory, notes, frameworks, coverage, byPlatform);
+    }
+
+    private static ReportReferenceCoverage? BuildCoverage(string? json)
+    {
+        if (KnightReferenceCoverageSnapshot.Deserialize(json) is not { } c) return null;
+        static ReportCoverageRow Row(KnightReferenceCoverageGroup g) => new(
+            g.Key, g.Label, g.Total, g.Implemented, g.Partial, g.Pending, g.ManualOnly, g.RequiresAccess, g.ApiLimitation,
+            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent);
+        return new ReportReferenceCoverage(
+            c.CatalogVersion, c.ReferenceCommit,
+            c.Frameworks.Select(f => $"{f.Name} {f.Version} ({f.Controls} controles)").ToList(),
+            Row(c.Total), c.ByPlatform.Select(Row).ToList(), c.ByService.Select(Row).ToList());
     }
 
     private static ReportControl BuildControl(
@@ -203,6 +242,19 @@ public static class KnightReportModelBuilder
 
         var weight = KnightScoreFormula.WeightFor(i.Severity);
         var factor = KnightScoreFormula.FactorFor(i.Status);
+        var affectedObjects = objects.Where(o => o.Relation == KnightObjectRelation.Affected).ToList();
+        var composition = i.AffectedObjectCount > 0
+            ? KnightObjectNouns.Composition(affectedObjects.Select(o => o.Kind), i.AffectedObjectCount)
+            : null;
+        string? reach = null;
+        if (i.Status is KnightIndicatorStatus.Exposed or KnightIndicatorStatus.Mitigated)
+        {
+            if (composition is not null)
+                reach = $"Alcance comprovado nesta coleta: {composition}.";
+            else if (objects.Where(o => o.Relation == KnightObjectRelation.Evidence && o.Kind == KnightAffectedObjectKind.TenantSetting)
+                         .Select(o => o.DisplayName ?? o.ExternalId).ToList() is { Count: > 0 } settings)
+                reach = "Alcance comprovado nesta coleta: configuração do locatário (" + string.Join("; ", settings) + "), que vale para todo o diretório exceto onde houver exceção configurada.";
+        }
 
         return new ReportControl(
             i.IndicatorId, i.Title, i.Status.ToString(), StatusLabel(i.Status), i.Severity.ToString(), SeverityLabel(i.Severity),
@@ -229,7 +281,11 @@ public static class KnightReportModelBuilder
                 a.Title, a.Status.ToString(), a.DueDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), a.WasOverdue,
                 a.NextStep, a.ResponsibleArea ?? a.ResponsiblePerson, a.ApplicableValidationOutcome?.ToString(),
                 a.ApplicableValidatedAt is { } v ? Iso(v) : null)).ToList(),
-            i.RequiredCapabilities.ToList());
+            i.RequiredCapabilities.ToList(),
+            isV2 ? i.Impact : null,
+            isV2 ? i.Platform : null,
+            composition,
+            reach);
     }
 
     private static IReadOnlyList<ReportDistributionRow> Distribution(
@@ -297,18 +353,8 @@ public static class KnightReportModelBuilder
         _ => s.ToString(),
     };
 
-    public static string KindLabel(KnightAffectedObjectKind k) => k switch
-    {
-        KnightAffectedObjectKind.User => "Usuário",
-        KnightAffectedObjectKind.Guest => "Convidado",
-        KnightAffectedObjectKind.ServicePrincipal => "Aplicação (identidade de serviço)",
-        KnightAffectedObjectKind.Group => "Grupo",
-        KnightAffectedObjectKind.Device => "Dispositivo",
-        KnightAffectedObjectKind.Policy => "Política",
-        KnightAffectedObjectKind.DirectoryRole => "Papel de diretório",
-        KnightAffectedObjectKind.TenantSetting => "Configuração do tenant",
-        _ => "Tipo não identificado",
-    };
+    /// <summary>Rótulo do tipo — a MESMA definição usada pela tela (via API), HTML, CSV e PDF.</summary>
+    public static string KindLabel(KnightAffectedObjectKind k) => KnightObjectNouns.Label(k);
 
     private static string CauseLabel(KnightCapabilityOutcome o) => o switch
     {
@@ -337,7 +383,8 @@ public static class KnightReportModelBuilder
     };
 
     private static bool IsFramework(string framework) =>
-        framework == KnightControlProfiles.NistFramework || framework == KnightControlProfiles.MitreFramework;
+        framework == KnightControlProfiles.NistFramework || framework == KnightControlProfiles.MitreFramework
+        || KnightControlProfiles.IsBenchmark(framework);
 
     /// <summary>Só HTTPS absoluto sobrevive — qualquer outra coisa vira texto sem link.</summary>
     public static string? SafeUrl(string? url) =>
@@ -368,6 +415,20 @@ public static class KnightCapabilityLabels
         KnightCapability.OAuthTokenAudit => "Auditoria de autorizações OAuth",
         KnightCapability.IdentityRiskyUsers => "Usuários sinalizados como de risco",
         KnightCapability.IdentityRiskDetections => "Detecções de risco de identidade",
+        KnightCapability.AuthorizationPolicy => "Política de autorização do diretório",
+        KnightCapability.AdminConsentPolicy => "Fluxo de consentimento do administrador",
+        KnightCapability.AppManagementPolicy => "Política de gerenciamento de aplicações",
+        KnightCapability.AuthenticationMethodsPolicy => "Política de métodos de autenticação",
+        KnightCapability.DirectorySettings => "Configurações de diretório (senhas e grupos)",
+        KnightCapability.Domains => "Domínios",
+        KnightCapability.DirectorySynchronization => "Sincronização híbrida",
+        KnightCapability.DeviceRegistrationPolicy => "Política de registro de dispositivos",
+        KnightCapability.GroupVisibility => "Visibilidade de grupos do Microsoft 365",
+        KnightCapability.PrivilegedAccountDetails => "Origem e licenças das contas privilegiadas",
+        KnightCapability.PrivilegedIdentityManagement => "Privileged Identity Management (PIM)",
+        KnightCapability.AccessReviews => "Revisões de acesso",
+        KnightCapability.NamedLocations => "Locais nomeados",
+        KnightCapability.ServicePrincipalSettings => "Aplicações de serviço do Microsoft 365",
         _ => c.ToString(),
     };
 
@@ -389,6 +450,15 @@ public static class KnightCapabilityLabels
             KnightCapability.ApplicationConsents => "Directory.Read.All (aplicativo)",
             KnightCapability.IdentityRiskyUsers => "IdentityRiskyUser.Read.All (aplicativo)",
             KnightCapability.IdentityRiskDetections => "IdentityRiskEvent.Read.All (aplicativo)",
+            KnightCapability.AuthorizationPolicy or KnightCapability.AdminConsentPolicy or KnightCapability.AppManagementPolicy
+                or KnightCapability.AuthenticationMethodsPolicy or KnightCapability.NamedLocations => "Policy.Read.All (aplicativo)",
+            KnightCapability.DirectorySettings or KnightCapability.Domains or KnightCapability.GroupVisibility
+                or KnightCapability.PrivilegedAccountDetails => "Directory.Read.All (aplicativo)",
+            KnightCapability.DirectorySynchronization => "Directory.Read.All e OnPremDirectorySynchronization.Read.All (aplicativo)",
+            KnightCapability.DeviceRegistrationPolicy => "Policy.Read.DeviceConfiguration (aplicativo)",
+            KnightCapability.PrivilegedIdentityManagement => "RoleManagement.Read.Directory e RoleManagementPolicy.Read.Directory (aplicativo)",
+            KnightCapability.AccessReviews => "AccessReview.Read.All (aplicativo)",
+            KnightCapability.ServicePrincipalSettings => "Application.Read.All (aplicativo)",
             _ => null,
         },
         KnightSourceType.GoogleWorkspace => c switch

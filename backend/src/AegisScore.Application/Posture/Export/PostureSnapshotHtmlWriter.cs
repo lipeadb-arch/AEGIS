@@ -38,8 +38,11 @@ public static class PostureSnapshotHtmlWriter
         var model = KnightReportModelBuilder.Build(snapshot, integrityVerified);
         var data = JsonSerializer.Serialize(model, Json);
 
-        var css = KnightReportHtmlAssets.Css;
-        var js = KnightReportHtmlAssets.Js;
+        // [AEGIS-KNIGHT-COVERAGE-01] Quebras de linha NORMALIZADAS antes do hash: o navegador converte CRLF em LF ao
+        // ler o documento e calcula o hash da CSP sobre o texto já normalizado. Num checkout com CRLF (Windows), o
+        // hash do texto bruto não conferia e a CSP bloqueava estilo e script — o relatório abria sem funcionar.
+        var css = NormalizeNewlines(KnightReportHtmlAssets.Css);
+        var js = NormalizeNewlines(KnightReportHtmlAssets.Js);
         var csp = "default-src 'none'; img-src data:; style-src '" + Sha256(css) + "'; script-src '" + Sha256(js)
             + "'; base-uri 'none'; form-action 'none'";
         // frame-ancestors é ignorado em <meta> (só vale como cabeçalho HTTP); o download já sai com cabeçalhos próprios.
@@ -83,6 +86,8 @@ public static class PostureSnapshotHtmlWriter
     }
 
     private static readonly HtmlEncoder Html = HtmlEncoder.Create(UnicodeRanges.All);
+
+    internal static string NormalizeNewlines(string s) => s.Replace("\r\n", "\n").Replace("\r", "\n");
 
     private static string Sha256(string content) =>
         "sha256-" + Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(content)));

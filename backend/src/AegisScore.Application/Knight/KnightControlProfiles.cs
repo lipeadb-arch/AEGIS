@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using AegisScore.Application.Knight.Catalog;
+using AegisScore.Application.Knight.Reference;
 using AegisScore.Domain;
 
 namespace AegisScore.Application.Knight;
@@ -39,6 +41,9 @@ public enum KnightSecurityDomain
 public sealed record KnightControlReference(string Framework, string? Version, string Code, string? Url = null);
 
 /// <summary>Perfil descritivo de um controle do catálogo.</summary>
+/// <param name="Description">O PROBLEMA: o que a condição encontrada é.</param>
+/// <param name="Rationale">O RISCO: o caminho que a condição abre.</param>
+/// <param name="Impact">[AEGIS-KNIGHT-COVERAGE-01] O IMPACTO POTENCIAL, no limite do acesso que a condição concede (ver <see cref="KnightControlImpacts"/>).</param>
 public sealed record KnightControlProfile(
     string IndicatorId,
     KnightSecurityDomain Domain,
@@ -48,7 +53,8 @@ public sealed record KnightControlProfile(
     string? DoesNotProve,
     IReadOnlyList<KnightControlReference> Documentation,
     IReadOnlyList<KnightCapability> RequiredCapabilities,
-    string? ServiceOverride = null);
+    string? ServiceOverride = null,
+    string? Impact = null);
 
 public static class KnightControlProfiles
 {
@@ -78,7 +84,12 @@ public static class KnightControlProfiles
     private static KnightControlReference[] Docs(params KnightControlReference[] d) => d;
     private static KnightCapability[] Caps(params KnightCapability[] c) => c;
 
-    private static readonly IReadOnlyDictionary<string, KnightControlProfile> ById = new[]
+    private static readonly IReadOnlyDictionary<string, KnightControlProfile> ById = BaseProfiles()
+        .Concat(EntraConfigurationProfiles.All)
+        .Select(p => p with { Impact = KnightControlImpacts.For(p.IndicatorId) })
+        .ToDictionary(p => p.IndicatorId, StringComparer.Ordinal);
+
+    private static IEnumerable<KnightControlProfile> BaseProfiles() => new[]
     {
         new KnightControlProfile("AK-ENTRA-001", KnightSecurityDomain.Identity,
             "Contas com papel privilegiado aparecem no relatório de registro do diretório sem nenhum método capaz de autenticação multifator.",
@@ -88,9 +99,9 @@ public static class KnightControlProfiles
             Docs(DocRoles), Caps(KnightCapability.PrivilegedRoleInventory, KnightCapability.MfaRegistration)),
 
         new KnightControlProfile("AK-ENTRA-002", KnightSecurityDomain.IamRbac,
-            "O número de objetos com papel privilegiado no diretório está acima do teto de menor privilégio parametrizado no AEGIS.",
-            "Cada objeto com papel administrativo amplia o que um atacante pode aproveitar e o que a auditoria precisa acompanhar. Manter o mínimo necessário reduz as duas coisas.",
-            "Quantidade de objetos privilegiados no mínimo necessário, com elevação sob demanda (just-in-time) quando disponível.",
+            "O número de identidades com papel administrativo no diretório — contas de usuário, convidados, aplicações e grupos — está acima do teto de menor privilégio parametrizado no AEGIS.",
+            "Cada identidade com papel administrativo amplia o que um atacante pode aproveitar e o que a auditoria precisa acompanhar. Manter o mínimo necessário reduz as duas coisas.",
+            "Quantidade de identidades privilegiadas no mínimo necessário, com elevação sob demanda (just-in-time) quando disponível.",
             "O teto é um parâmetro do AEGIS; o NIST recomenda menor privilégio, mas não fixa um número. Estar na lista não significa que o acesso seja indevido.",
             Docs(DocRoles), Caps(KnightCapability.PrivilegedRoleInventory, KnightCapability.DirectoryUsers)),
 
@@ -217,7 +228,7 @@ public static class KnightControlProfiles
             "Um aplicativo autorizado passa a agir em nome do usuário com os escopos concedidos, fora do controle direto da organização.",
             "Aplicativos de terceiros revisados; consentimento do usuário restrito a aplicativos confiáveis.",
             null, Docs(), Caps(KnightCapability.OAuthTokenAudit)),
-    }.ToDictionary(p => p.IndicatorId, StringComparer.Ordinal);
+    };
 
     /// <summary>Perfil do controle, ou <c>null</c> quando o indicador não tem perfil catalogado (nunca inventado).</summary>
     public static KnightControlProfile? For(string indicatorId) =>
@@ -236,10 +247,38 @@ public static class KnightControlProfiles
         _ => source.ToString(),
     };
 
+    /// <summary>
+    /// Serviço TIPADO do controle: o declarado na definição do catálogo; nos controles compartilhados, o da fonte
+    /// (com o ajuste de serviço do perfil, quando houver).
+    /// </summary>
+    public static KnightService ServiceKindOf(string indicatorId, KnightSourceType source)
+    {
+        if (source == KnightSourceType.Demo) return KnightService.Demo;
+        var declared = KnightCatalog.Indicators.FirstOrDefault(d => d.Id == indicatorId)?.Service ?? KnightService.Unspecified;
+        if (declared != KnightService.Unspecified) return declared;
+        if (source == KnightSourceType.GoogleWorkspace)
+            return For(indicatorId)?.ServiceOverride switch
+            {
+                "Google Groups" => KnightService.GoogleGroups,
+                "Google Drive" => KnightService.GoogleDrive,
+                _ => KnightService.GoogleWorkspace,
+            };
+        return KnightServices.DefaultFor(source);
+    }
+
+    /// <summary>Plataforma do controle (primeiro nível de filtro: Entra ID, Microsoft 365, Azure, Google Workspace).</summary>
+    public static string PlatformOf(string indicatorId, KnightSourceType source) =>
+        KnightServices.Describe(ServiceKindOf(indicatorId, source)) is { } d
+            ? KnightServices.PlatformLabel(d.Platform)
+            : ProviderOf(source);
+
     /// <summary>Serviço onde a configuração avaliada vive, para aquela fonte.</summary>
     public static string ServiceOf(string indicatorId, KnightSourceType source)
     {
         if (source == KnightSourceType.Demo) return "Demonstração (sintético)";
+        if (KnightServices.Describe(ServiceKindOf(indicatorId, source)) is { } described
+            && KnightCatalog.Indicators.FirstOrDefault(d => d.Id == indicatorId)?.Service is { } svc && svc != KnightService.Unspecified)
+            return described.Label;
         var p = For(indicatorId);
         if (p?.ServiceOverride is { } s && source == KnightSourceType.GoogleWorkspace) return s;
         return source switch
@@ -288,9 +327,33 @@ public static class KnightControlProfiles
             list.Add(new KnightControlReference(NistFramework, NistVersion, n.Trim()));
         foreach (var m in mitreTechniques.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal))
             list.Add(new KnightControlReference(MitreFramework, null, m.Trim()));
+        list.AddRange(BenchmarksOf(indicatorId));
         if (For(indicatorId) is { } p) list.AddRange(p.Documentation);
         return list;
     }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-01] Benchmarks de configuração que o controle avalia, com a versão fixada. Equivalência
+    /// parcial é dita no próprio código da referência — o leitor não precisa adivinhar se o critério é idêntico.
+    /// </summary>
+    public static IReadOnlyList<KnightControlReference> BenchmarksOf(string indicatorId)
+    {
+        var def = KnightCatalog.Indicators.FirstOrDefault(d => d.Id == indicatorId);
+        if (def is null) return Array.Empty<KnightControlReference>();
+        var list = new List<KnightControlReference>();
+        foreach (var link in def.References)
+        {
+            if (KnightReferenceCatalog.Find(link.Key) is not { } c) continue;
+            var code = (c.Section ?? "sem seção") + (c.Variant is null ? "" : $" ({c.Variant})")
+                + (link.Match == KnightReferenceMatch.Partial ? " — equivalência parcial" : "");
+            list.Add(new KnightControlReference(c.Framework, c.Version, code));
+        }
+        return list;
+    }
+
+    /// <summary>Framework de benchmark de configuração (as referências fixadas no catálogo de referência).</summary>
+    public static bool IsBenchmark(string framework) =>
+        framework.StartsWith("CIS ", StringComparison.Ordinal);
 
     /// <summary>Capacidades de coleta que o controle consome — base de "controles prejudicados" por limitação.</summary>
     public static IReadOnlyList<KnightCapability> RequiredCapabilitiesOf(string indicatorId) =>
@@ -331,6 +394,9 @@ public static class KnightControlPresentations
             weight,
             factor,
             factor is null ? null : weight * factor.Value,
-            factor is null ? null : weight);
+            factor is null ? null : weight,
+            profile?.Impact,
+            KnightControlProfiles.PlatformOf(indicatorId, source),
+            KnightControlProfiles.ServiceKindOf(indicatorId, source).ToString());
     }
 }
