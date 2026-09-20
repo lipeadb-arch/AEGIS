@@ -3457,6 +3457,9 @@ namespace AegisScore.Infrastructure.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("ReferenceCoverageJson")
+                        .HasColumnType("text");
+
                     b.Property<string>("SchemaVersion")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -3733,6 +3736,10 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Property<bool?>("HasAffectedDetail")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("Impact")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
                     b.Property<string>("IndicatorId")
                         .IsRequired()
                         .HasMaxLength(40)
@@ -3749,6 +3756,10 @@ namespace AegisScore.Infrastructure.Migrations
                     b.Property<string>("NotEvaluatedReason")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Platform")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
 
                     b.Property<string>("Provider")
                         .HasMaxLength(50)

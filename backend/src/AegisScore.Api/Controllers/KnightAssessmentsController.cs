@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Knight.Reference;
 using AegisScore.Domain;
 
 namespace AegisScore.Api.Controllers;
@@ -62,6 +63,35 @@ public class KnightAssessmentsController : ControllerBase
         {
             return Conflict($"A fonte {sourceType} não está configurada para este tenant.");
         }
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-01] Cobertura de IMPLEMENTAÇÃO do catálogo de referência na versão corrente do catálogo
+    /// KNIGHT: controle a controle, com disposição e motivo. Leitura pura do catálogo — não consulta nem coleta nada
+    /// do cliente, e é a mesma para todos os tenants.
+    /// </summary>
+    [HttpGet("reference-coverage")]
+    public ActionResult<KnightReferenceCoverageDto> GetReferenceCoverage()
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        var c = KnightReferenceCatalog.Coverage();
+        static KnightReferenceCoverageGroupDto G(KnightReferenceCoverageGroup g) => new(
+            g.Key, g.Label, g.Total, g.Implemented, g.Partial, g.Pending, g.ManualOnly, g.RequiresAccess, g.ApiLimitation,
+            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent);
+        return Ok(new KnightReferenceCoverageDto(
+            c.CatalogVersion, c.ReferenceCommit,
+            c.Frameworks.Select(f => $"{f.Name} {f.Version}").ToList(),
+            G(c.Total), c.ByPlatform.Select(G).ToList(), c.ByService.Select(G).ToList(),
+            c.Controls.Select(s =>
+            {
+                var d = KnightServices.Describe(s.Control.Service);
+                return new KnightReferenceControlStatusDto(
+                    s.Control.Key, s.Control.Framework, s.Control.Version, s.Control.Section, s.Control.Variant,
+                    s.Control.Service.ToString(), d?.Label ?? s.Control.Service.ToString(),
+                    d is null ? "" : KnightServices.PlatformLabel(d.Platform), s.Control.Severity.ToString(), s.Control.Title,
+                    s.Disposition.ToString(), KnightReferenceCatalog.DispositionLabel(s.Disposition), s.IndicatorIds, s.Note);
+            }).ToList()));
     }
 
     /// <summary>Disponibilidade das fontes para o tenant (Demo sempre; reais conforme configuração).</summary>
@@ -255,7 +285,9 @@ public class KnightAssessmentsController : ControllerBase
             i.Presentation.DoesNotProve, i.Presentation.Criterion,
             i.Presentation.References.Select(r => new KnightControlReferenceDto(r.Framework, r.Version, r.Code, r.Url)).ToList(),
             i.Presentation.RequiredCapabilities, i.Presentation.Weight, i.Presentation.Factor,
-            i.Presentation.AchievedPoints, i.Presentation.PossiblePoints));
+            i.Presentation.AchievedPoints, i.Presentation.PossiblePoints,
+            i.Presentation.Impact, i.Presentation.Platform, i.Presentation.ServiceKey),
+        i.AffectedComposition);
 
     private static KnightAdvisoryDto ToDto(KnightAdvisory ad) => new(
         ad.ExecutiveSummary,

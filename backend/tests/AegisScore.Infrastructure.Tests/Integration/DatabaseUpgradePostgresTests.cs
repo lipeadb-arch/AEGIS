@@ -102,6 +102,10 @@ public sealed class DatabaseUpgradePostgresTests
             // KNIGHT v2: três tabelas novas e colunas aditivas (anuláveis ou com default "Afetado"/"[]"), SEM backfill —
             // fotografias v1 continuam v1 e verificáveis; nenhum detalhe que o legado não guardou é inventado.
             "20260918080744_KnightMulticloud01_ConfigurationEvidenceSyncReport",
+            // [AEGIS-KNIGHT-COVERAGE-01] Impacto e plataforma por controle e cobertura de implementação congelados na
+            // fotografia: três colunas anuláveis, SEM backfill — fotografias anteriores mantêm o hash e não ganham
+            // texto de um catálogo que elas não usaram.
+            "20260919134306_KnightCoverage01_ReferenceCoverageImpact",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

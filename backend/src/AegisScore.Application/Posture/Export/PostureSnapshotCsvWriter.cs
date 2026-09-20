@@ -113,6 +113,8 @@ public static class PostureSnapshotCsvWriter
            .Text("NotEvaluatedReason").Text("Weight").Text("ScoreFactor").Text("ScorePointsAchieved").Text("References")
            .Text("RowKind").Text("ObjectRelation").Text("ObjectType").Text("ObjectExternalId").Text("ObjectName")
            .Text("ObjectPrincipalName").Text("ObjectRoles").Text("ObjectDetail").Text("ObjectConfiguration")
+           // [AEGIS-KNIGHT-COVERAGE-01] Acrescentadas AO FINAL — a ordem das colunas anteriores não muda.
+           .Text("Platform").Text("Impact").Text("ProvenReach").Text("AffectedComposition")
            .EndRow();
 
         var state = EvaluationState(s.Score);
@@ -137,6 +139,7 @@ public static class PostureSnapshotCsvWriter
                    .Text(o is null ? "Controle" : "Objeto")
                    .Text(o?.RelationLabel).Text(o?.KindLabel).Text(o?.ExternalId).Text(o?.DisplayName)
                    .Text(o?.UserPrincipalName).Text(o is null ? null : string.Join(", ", o.Roles)).Text(o?.Detail).Text(o?.ObservedConfiguration)
+                   .Text(c.Platform).Text(c.Impact).Text(c.ProvenReach).Text(c.AffectedComposition)
                    .EndRow();
             }
         }

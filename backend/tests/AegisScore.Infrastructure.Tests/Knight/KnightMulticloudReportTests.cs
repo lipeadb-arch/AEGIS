@@ -70,11 +70,12 @@ public sealed class KnightMulticloudReportTests : IDisposable
         // ---- Coleta parcial declarada, avaliação concluída a partir da aquisição persistida ----
         assessment.Status.Should().Be(KnightRunStatus.Completed);
         assessment.SourceState.Should().Be(KnightSourceState.PartialCollection, "as duas capacidades de risco devolveram 403");
-        assessment.CatalogVersion.Should().Be("ak-knight-v3");
+        assessment.CatalogVersion.Should().Be("ak-knight-v4");
         var run = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == assessment.Id);
         run.IdentityAcquisitionId.Should().NotBeNull();
         (await db.IdentityConfigurationObservations.CountAsync(c => c.AcquisitionId == run.IdentityAcquisitionId))
-            .Should().Be(4, "duas políticas e dois papéis ativos preservados como evidência da aquisição");
+            .Should().Be(6, "duas políticas, dois papéis ativos, o inventário de credenciais de aplicações e o estado da aplicação de "
+                + "armazenamento de terceiros preservados como evidência da aquisição (os demais recursos de configuração não existem neste cenário)");
 
         // ---- MFA administrativa lida papel a papel ----
         var adminMfa = assessment.Indicators.Single(i => i.IndicatorId == "AK-ENTRA-008");
@@ -116,10 +117,12 @@ public sealed class KnightMulticloudReportTests : IDisposable
         // ---- Unidades distintas: controles × ocorrências × objetos únicos ----
         var resumo = await svc.GetAffectedSummaryAsync(assessment.Id);
         // 001 → Bruno (sem método registrado); 004 → o convidado; 008 → o papel de Administrador de Segurança.
-        resumo!.Occurrences.Should().Be(3);
-        resumo.UniqueObjects.Should().Be(3);
+        // [AEGIS-KNIGHT-COVERAGE-01] 058 e 059 (sessão e MFA resistente a phishing para administradores) → os dois
+        // papéis ativos, sem política que aplique a exigência: +4 ocorrências, +1 item único (o papel Global).
+        resumo!.Occurrences.Should().Be(7);
+        resumo.UniqueObjects.Should().Be(4);
         resumo.Complete.Should().BeTrue();
-        resumo.Top.Select(t => t.ExternalId).Should().Contain(new[] { "u2", "g-hostil", SaTemplate });
+        resumo.Top.Select(t => t.ExternalId).Should().Contain(new[] { "u2", "g-hostil", SaTemplate, GaTemplate });
         await using (var dbB = NewContext(TenantB))
         {
             (await ServiceFor(dbB, TenantB).GetAffectedSummaryAsync(assessment.Id)).Should().BeNull("outro tenant não enxerga");
@@ -337,6 +340,8 @@ internal static class KnightGraphScenario
                 """);
         if (url.Contains("identitySecurityDefaultsEnforcementPolicy")) return (HttpStatusCode.OK, """{"isEnabled":false}""");
         if (url.Contains("appRoleAssignedTo")) return (HttpStatusCode.OK, """{"value":[]}""");
+        // [AEGIS-KNIGHT-COVERAGE-01] A aplicação de armazenamento de terceiros não existe neste locatário (404 documentado).
+        if (url.Contains("servicePrincipals(appId='c1f33bc0")) return (HttpStatusCode.NotFound, """{"error":{"code":"Request_ResourceNotFound","message":"x"}}""");
         if (url.Contains("servicePrincipals")) return (HttpStatusCode.OK, """{"id":"graph-sp"}""");
         if (url.Contains("oauth2PermissionGrants")) return (HttpStatusCode.OK, """{"value":[]}""");
         if (url.Contains("/applications")) return (HttpStatusCode.OK, """{"value":[]}""");

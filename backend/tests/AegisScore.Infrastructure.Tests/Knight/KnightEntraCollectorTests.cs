@@ -363,7 +363,11 @@ public sealed class KnightEntraCollectorTests
         var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
 
         result.State.Should().Be(KnightSourceState.Throttled);
-        result.Capabilities.Should().OnlyContain(c => c.Outcome == KnightCapabilityOutcome.Throttled);
+        // [AEGIS-KNIGHT-COVERAGE-01] A capacidade dependente do inventário de papéis fica "não tentada".
+        result.Capabilities.Where(c => c.Outcome != KnightCapabilityOutcome.NotAttempted)
+            .Should().OnlyContain(c => c.Outcome == KnightCapabilityOutcome.Throttled);
+        result.Capabilities.Single(c => c.Capability == KnightCapability.PrivilegedAccountDetails).Outcome
+            .Should().Be(KnightCapabilityOutcome.NotAttempted);
     }
 
     // ---- 12) O ToString da configuração NÃO expõe o ClientSecret -----------------------------------
@@ -561,6 +565,9 @@ public sealed class KnightEntraCollectorTests
     /// <summary>Respostas "felizes" do Graph (token + capacidades) para o cenário de coleta completa.</summary>
     private static (HttpStatusCode, string) Happy(HttpRequestMessage req)
     {
+        // [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário no formato documentado (cenário conforme compartilhado).
+        if (!req.RequestUri!.AbsoluteUri.Contains("/oauth2/") && EntraConfigurationScenario.ConfigurationOnly(req) is { } config)
+            return config;
         var url = req.RequestUri!.AbsoluteUri;
 
         if (req.Method == HttpMethod.Post && url.Contains("/oauth2/v2.0/token"))

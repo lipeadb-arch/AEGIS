@@ -8,6 +8,7 @@ using MigraDoc.DocumentObjectModel.Tables;
 using MigraDoc.Rendering;
 using PdfSharp.Fonts;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Posture.Export;
 using AegisScore.Application.Remediation;
 using AegisScore.Domain;
 
@@ -418,9 +419,16 @@ public static class PostureSnapshotPdfWriter
             return;
         }
 
+        // [AEGIS-KNIGHT-COVERAGE-01] O mesmo modelo do HTML e do CSV: problema → risco → impacto → onde foi
+        // encontrado → o que fazer, com textos congelados na fotografia. A narrativa de gestão dos três achados com
+        // jornada própria continua dando título e ressalva; o resto vem do perfil congelado de cada controle.
+        var model = KnightReportModelBuilder.Build(s, integrityVerified: true);
+        var byId = model.Controls.ToDictionary(c => c.Id, StringComparer.Ordinal);
+
         foreach (var i in exposed)
         {
-            var n = KnightFindingNarratives.For(i.IndicatorId, i.Title, i.Status, i.AffectedObjectCount, i.Evidence);
+            var c = byId.TryGetValue(i.IndicatorId, out var x) ? x : null;
+            var n = KnightFindingNarratives.For(i.IndicatorId, i.Title, i.Status, i.AffectedObjectCount, i.Evidence, c?.AffectedComposition);
 
             var t = section.AddParagraph();
             t.Format.SpaceBefore = Unit.FromMillimeter(2.4);
@@ -429,10 +437,14 @@ public static class PostureSnapshotPdfWriter
             t.AddFormattedText(n.Title, TextFormat.Bold);
             t.AddText($"   ({i.IndicatorId} · severidade {SeverityText(i.Severity)} · {KnightStatusText(i.Status)})");
 
-            Body(section, n.Impact);
-            Body(section, "Alcance observado: " + n.Reach, bold: true);
-            if (n.Caveat is { } c) Body(section, "O que este achado não afirma: " + c, muted: true);
-            Body(section, "Primeira providência: " + KnightFindingNarratives.FirstAction(i.IndicatorId, ""), muted: true);
+            if (c?.Description is { } problem) Body(section, "O problema: " + problem);
+            Body(section, "O que foi encontrado: " + (string.IsNullOrWhiteSpace(i.Evidence) ? "—" : i.Evidence));
+            Body(section, "Por que importa: " + (c?.Rationale ?? n.Impact));
+            if (c?.Impact is { } impact) Body(section, "Impacto potencial: " + impact);
+            Body(section, "Onde foi encontrado: " + (c?.ProvenReach ?? n.Reach), bold: true);
+            var caveat = n.Caveat ?? c?.DoesNotProve;
+            if (caveat is not null) Body(section, "O que este achado não afirma: " + caveat, muted: true);
+            Body(section, "O que fazer: " + KnightFindingNarratives.FirstAction(i.IndicatorId, i.Recommendation ?? c?.Recommendation ?? ""), muted: true);
         }
     }
 
@@ -739,6 +751,49 @@ public static class PostureSnapshotPdfWriter
             nist.Format.Font.Size = 7;
             var mitre = mapCell.AddParagraph("MITRE: " + (i.MitreTechniques.Count > 0 ? string.Join(", ", i.MitreTechniques) : "—"));
             mitre.Format.Font.Size = 7;
+            // [AEGIS-KNIGHT-COVERAGE-01] Benchmark de configuração e versão, congelados com o controle.
+            foreach (var b in i.References.Where(r => KnightControlProfiles.IsBenchmark(r.Framework)))
+            {
+                var bp = mapCell.AddParagraph($"{b.Framework} {b.Version}: {b.Code}");
+                bp.Format.Font.Size = 6.5;
+                bp.Format.Font.Color = Muted;
+            }
+        }
+
+        AddReferenceCoverage(section, s);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-01] Cobertura de IMPLEMENTAÇÃO do catálogo de referência, congelada na publicação.
+    /// Integral e parcial em colunas separadas; nada disto é somado à cobertura da avaliação ou à aprovação.
+    /// </summary>
+    private static void AddReferenceCoverage(Section section, PostureSnapshot s)
+    {
+        var model = KnightReportModelBuilder.Build(s, integrityVerified: true);
+        if (model.ReferenceCoverage is not { } cov) return;
+
+        Heading(section, "Cobertura do catálogo de referência (propriedade do produto)");
+        Body(section,
+            "Mede o que o AEGIS consegue avaliar, não o ambiente do cliente. Integral = critério da referência; " +
+            "parcial = critério equivalente, não idêntico. Limitação de API, verificação manual e acesso não disponível " +
+            "nunca contam como avaliados. " + string.Join(" · ", cov.Frameworks) + $" · catálogo {cov.CatalogVersion}.", muted: true);
+
+        var table = section.AddTable();
+        StyleTable(table);
+        table.AddColumn(Unit.FromCentimeter(4.4));
+        foreach (var _ in Enumerable.Range(0, 7)) table.AddColumn(Unit.FromCentimeter(1.8));
+        HeaderRow(table, "Recorte", "Total", "Integral", "Parcial", "Pendente", "Lim. API", "Manual", "Outro acesso");
+        foreach (var r in new[] { cov.Total }.Concat(cov.ByPlatform))
+        {
+            var row = table.AddRow();
+            Cell(row, 0, r.Label);
+            Cell(row, 1, r.Total.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 2, $"{r.Implemented} ({r.FullPercent.ToString("0.#", Pt)}%)", align: ParagraphAlignment.Center);
+            Cell(row, 3, $"{r.Partial} ({r.PartialPercent.ToString("0.#", Pt)}%)", align: ParagraphAlignment.Center);
+            Cell(row, 4, r.Pending.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 5, r.ApiLimitation.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 6, r.ManualOnly.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 7, r.RequiresAccess.ToString(Pt), align: ParagraphAlignment.Center);
         }
     }
 
@@ -984,6 +1039,10 @@ public static class PostureSnapshotPdfWriter
     {
         KnightIndicatorCategory.PrivilegedAccess => "Acesso privilegiado",
         KnightIndicatorCategory.IdentityGovernance => "Governança de identidade",
+        KnightIndicatorCategory.TenantConfiguration => "Configuração do locatário",
+        KnightIndicatorCategory.AuthenticationPolicy => "Política de autenticação",
+        KnightIndicatorCategory.ApplicationGovernance => "Governança de aplicações",
+        KnightIndicatorCategory.DeviceGovernance => "Governança de dispositivos",
         KnightIndicatorCategory.AccountHygiene => "Higiene de contas",
         _ => category.ToString(),
     };

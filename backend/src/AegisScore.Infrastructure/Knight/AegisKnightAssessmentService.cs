@@ -137,7 +137,9 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         }
 
         // 3) Avaliação DETERMINÍSTICA dos indicadores aplicáveis à fonte sobre os fatos. Dado ausente → NotEvaluated.
-        var evaluated = KnightIndicatorEvaluator.Evaluate(result.Facts, source);
+        // [AEGIS-KNIGHT-COVERAGE-01] O contexto completo da coleta RELIDA (fatos, capacidades, configuração do
+        // diretório e do locatário): os controles de configuração leem a mesma aquisição que sustenta os fatos.
+        var evaluated = KnightIndicatorEvaluator.Evaluate(KnightEvaluationContext.From(result), source);
 
         // 4) Score e cobertura pela fórmula PRÓPRIA do KNIGHT.
         var score = KnightScoreFormula.Compute(evaluated.Select(e => (e.Definition.Severity, e.Status)));
@@ -214,6 +216,20 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
                         KnightObjectRelation.Affected, o.Kind, o.ExternalId, o.DisplayName, o.UserPrincipalName,
                         o.Roles ?? Array.Empty<string>(), o.Detail, null)),
                     evidence.IsComplete, evidence.Limitation);
+
+            // [AEGIS-KNIGHT-COVERAGE-01] Controles de configuração trazem os próprios objetos: afetados (só quando o
+            // veredito sinalizou exposição — a mesma regra das identidades) e evidências ("onde foi encontrado").
+            if (e.Objects is { } own)
+            {
+                var ownAffected = own.Where(o => o.Relation == KnightObjectRelation.Affected).ToList();
+                if (e.AffectedObjectCount > 0 && e.Status is KnightIndicatorStatus.Exposed or KnightIndicatorStatus.Mitigated
+                    && ownAffected.Count > 0)
+                    AttachAffected(indicator, ownAffected, e.ObjectsComplete, e.ObjectsLimitation);
+                AttachEvidence(indicator, own.Where(o => o.Relation == KnightObjectRelation.Evidence)
+                    .Concat(e.Status is KnightIndicatorStatus.Exposed or KnightIndicatorStatus.Mitigated
+                        ? Array.Empty<KnightIndicatorObject>()
+                        : ownAffected.Select(o => o with { Relation = KnightObjectRelation.Evidence })));
+            }
 
             if (configurationObjects.TryGetValue(e.Definition.Id, out var config))
             {
@@ -312,6 +328,9 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         return new KnightSyncRunResult(KnightSyncRunOutcome.Registered, ToAssessment(run, run.Indicators.ToDictionary(
             i => i.IndicatorId,
             i => i.AffectedObjects.Count(o => o.Relation == KnightObjectRelation.Evidence),
+            StringComparer.Ordinal), run.Indicators.ToDictionary(
+            i => i.IndicatorId,
+            i => (IReadOnlyList<KnightAffectedObjectKind>)i.AffectedObjects.Where(o => o.Relation == KnightObjectRelation.Affected).Select(o => o.Kind).ToList(),
             StringComparer.Ordinal)));
     }
 
@@ -384,7 +403,8 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             .AsNoTracking().Include(r => r.Indicators)
             .FirstOrDefaultAsync(r => r.Id == latestHeader.Id, ct);
 
-        return new KnightLatestAssessment(latest is null ? null : ToAssessment(latest, await EvidenceCountsAsync(latest.Id, ct)), unfinished);
+        return new KnightLatestAssessment(latest is null ? null
+            : ToAssessment(latest, await EvidenceCountsAsync(latest.Id, ct), await AffectedKindsAsync(latest.Id, ct)), unfinished);
     }
 
     public async Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default)
@@ -392,8 +412,17 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         var run = await _db.KnightAssessmentRuns
             .AsNoTracking().Include(r => r.Indicators)
             .FirstOrDefaultAsync(r => r.Id == id, ct);
-        return run is null ? null : ToAssessment(run, await EvidenceCountsAsync(run.Id, ct));
+        return run is null ? null : ToAssessment(run, await EvidenceCountsAsync(run.Id, ct), await AffectedKindsAsync(run.Id, ct));
     }
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Tipos dos afetados preservados por indicador — base da composição nomeada.</summary>
+    private async Task<IReadOnlyDictionary<string, IReadOnlyList<KnightAffectedObjectKind>>> AffectedKindsAsync(Guid runId, CancellationToken ct) =>
+        (await _db.KnightAffectedObjects.AsNoTracking()
+            .Where(o => o.RunId == runId && o.Relation == KnightObjectRelation.Affected)
+            .Select(o => new { o.IndicatorId, o.Kind })
+            .ToListAsync(ct))
+        .GroupBy(x => x.IndicatorId, StringComparer.Ordinal)
+        .ToDictionary(g => g.Key, g => (IReadOnlyList<KnightAffectedObjectKind>)g.Select(x => x.Kind).ToList(), StringComparer.Ordinal);
 
     /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Quantas evidências de configuração cada indicador da execução preservou.</summary>
     private async Task<IReadOnlyDictionary<string, int>> EvidenceCountsAsync(Guid runId, CancellationToken ct) =>
@@ -724,7 +753,9 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             limitations);
     }
 
-    private KnightAssessment ToAssessment(KnightAssessmentRun run, IReadOnlyDictionary<string, int> evidenceCounts)
+    private KnightAssessment ToAssessment(
+        KnightAssessmentRun run, IReadOnlyDictionary<string, int> evidenceCounts,
+        IReadOnlyDictionary<string, IReadOnlyList<KnightAffectedObjectKind>>? affectedKinds = null)
     {
         var indicators = run.Indicators
             .OrderBy(i => i.IndicatorId, StringComparer.Ordinal)
@@ -734,7 +765,12 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
                 i.HasAffectedDetail, i.AffectedDetailComplete, i.AffectedDetailLimitation,
                 evidenceCounts.TryGetValue(i.IndicatorId, out var ev) ? ev : 0,
                 KnightControlPresentations.For(i.IndicatorId, i.Category, i.Severity, i.Status, i.SourceType,
-                    i.NistCodes, i.MitreTechniques, run.CatalogVersion)))
+                    i.NistCodes, i.MitreTechniques, run.CatalogVersion),
+                i.AffectedObjectCount > 0
+                    ? KnightObjectNouns.Composition(
+                        affectedKinds is not null && affectedKinds.TryGetValue(i.IndicatorId, out var kinds) ? kinds : Array.Empty<KnightAffectedObjectKind>(),
+                        i.AffectedObjectCount)
+                    : null))
             .ToList();
 
         return new KnightAssessment(
@@ -768,22 +804,6 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         }
     }
 
-    private static string CapabilityLabel(KnightCapability capability) => capability switch
-    {
-        KnightCapability.PrivilegedRoleInventory => "Inventário de papéis privilegiados",
-        KnightCapability.MfaRegistration => "Registro de MFA",
-        KnightCapability.GuestAccounts => "Contas de convidado",
-        KnightCapability.ConditionalAccessPolicies => "Políticas de acesso condicional",
-        KnightCapability.ApplicationInventory => "Inventário de aplicações (credenciais)",
-        KnightCapability.ApplicationPermissions => "Permissões de aplicativo concedidas",
-        KnightCapability.ApplicationConsents => "Consentimentos delegados (tenant-wide)",
-        KnightCapability.ServiceAccountExemptions => "Isenções de contas de serviço",
-        KnightCapability.SecurityBaseline => "Baseline de segurança",
-        KnightCapability.BreakGlassDesignation => "Designação de contas de emergência",
-        KnightCapability.DirectoryUsers => "Diretório de usuários (2SV/superadmins)",
-        KnightCapability.DirectoryGroups => "Grupos e membros externos",
-        KnightCapability.DriveSharingAudit => "Auditoria de compartilhamento no Drive",
-        KnightCapability.OAuthTokenAudit => "Auditoria de autorizações OAuth",
-        _ => capability.ToString(),
-    };
+    private static string CapabilityLabel(KnightCapability capability) =>
+        AegisScore.Application.Posture.Export.KnightCapabilityLabels.Label(capability);
 }

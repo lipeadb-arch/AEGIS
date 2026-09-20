@@ -163,6 +163,13 @@ public class PostureSnapshot : Entity, ITenantOwned
     /// <summary>Versão do catálogo cujos PERFIS (descrição, impacto, configuração esperada) foram congelados.</summary>
     public string? ProfileCatalogVersion { get; set; }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-01] Cobertura de IMPLEMENTAÇÃO do catálogo de referência no instante da publicação
+    /// (texto JSON congelado, assinado pelo hash). É uma propriedade do produto — não do ambiente avaliado — e fica
+    /// separada da cobertura da avaliação e da aprovação. Nula nas fotografias anteriores.
+    /// </summary>
+    public string? ReferenceCoverageJson { get; set; }
+
     /// <summary>Objetos (afetados e evidências de configuração) CONGELADOS por indicador. Vazio nas v1.</summary>
     public ICollection<PostureSnapshotObject> Objects { get; set; } = new List<PostureSnapshotObject>();
 
@@ -432,6 +439,14 @@ public class PostureSnapshotIndicator : Entity, ITenantOwned
     public bool? HasAffectedDetail { get; set; }
     public bool? AffectedDetailComplete { get; set; }
     public string? AffectedDetailLimitation { get; set; }
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-01] Congelados a partir do catálogo v4 (nulos nas fotografias anteriores) ----
+
+    /// <summary>Impacto potencial do controle, no limite do acesso que a condição concede.</summary>
+    public string? Impact { get; set; }
+
+    /// <summary>Plataforma do serviço avaliado (Microsoft Entra ID, Microsoft 365, Microsoft Azure, Google Workspace).</summary>
+    public string? Platform { get; set; }
 }
 
 /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Referência de framework/documentação congelada num indicador.</summary>

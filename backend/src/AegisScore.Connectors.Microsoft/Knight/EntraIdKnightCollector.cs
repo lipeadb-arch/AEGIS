@@ -50,7 +50,7 @@ namespace AegisScore.Connectors.Microsoft.Knight;
 /// (appRoleAssignments no service principal do Graph) — não <c>requiredResourceAccess</c>, que é apenas o que a
 /// aplicação DECLARA/solicita. AK-ENTRA-013 conta consentimentos DELEGADOS tenant-wide (consentType=AllPrincipals).
 /// </summary>
-public sealed class EntraIdKnightCollector : IKnightCollector
+public sealed partial class EntraIdKnightCollector : IKnightCollector
 {
     private const string Label = "Microsoft Entra ID";
     private const string MicrosoftGraphAppId = "00000003-0000-0000-c000-000000000000";
@@ -155,6 +155,9 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         // [AEGIS-KNIGHT-MULTICLOUD-01] Configuração observada pela MESMA coleta: papéis privilegiados ativos (com o
         // id de modelo que as políticas usam) e as políticas de acesso condicional normalizadas.
         var configBox = new DirectoryConfigurationBox();
+        // [AEGIS-KNIGHT-COVERAGE-01] Documentos de configuração do LOCATÁRIO produzidos por esta coleta (contratos
+        // tipados). Só entram documentos de capacidades concluídas; a leitura relida do ADM decide o resto.
+        var tenantDocs = new List<KnightConfigurationDocument>();
 
         await RunCapabilityAsync(KnightCapability.PrivilegedRoleInventory,
             new[] { KnightSignalKey.PrivilegedAccountsTotal, KnightSignalKey.PrivilegedAccountsWithMailbox,
@@ -179,7 +182,7 @@ public sealed class EntraIdKnightCollector : IKnightCollector
 
         await RunCapabilityAsync(KnightCapability.ApplicationInventory,
             new[] { KnightSignalKey.ApplicationCredentialsExpiring },
-            () => CollectApplicationCredentialsAsync(token, cfg, obs, now, ct), obs, caps);
+            () => CollectApplicationCredentialsAsync(token, cfg, obs, tenantDocs, now, ct), obs, caps);
 
         await RunCapabilityAsync(KnightCapability.ApplicationPermissions,
             new[] { KnightSignalKey.HighPrivilegeApplications },
@@ -188,6 +191,9 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         await RunCapabilityAsync(KnightCapability.ApplicationConsents,
             new[] { KnightSignalKey.AdminConsentedApplications },
             () => CollectDelegatedConsentsAsync(token, cfg, obs, ct), obs, caps);
+
+        // ---- [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário: capacidades INDEPENDENTES, mesmo token ------
+        await CollectTenantConfigurationAsync(token, cfg, privileged, obs, caps, tenantDocs, ct);
 
         // ---- [AEGIS-MVP-MICROSOFT-COVERAGE-03] Risco de identidade: DUAS capacidades INDEPENDENTES -------
         // Rodam na MESMA operação lógica, com o MESMO token já adquirido acima — nunca uma segunda aquisição,
@@ -209,7 +215,8 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         return new KnightCollectionResult(
             Source, runState, Label, facts, caps, now, DescribeState(runState),
             identityRisk, authPostureBox.Value, affected,
-            new KnightDirectoryConfiguration(configBox.Policies, configBox.Roles));
+            new KnightDirectoryConfiguration(configBox.Policies, configBox.Roles),
+            new KnightTenantConfiguration(tenantDocs, caps));
     }
 
     private async Task RunCapabilityAsync(
@@ -229,6 +236,8 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         {
             var (outcome, baseReason) = ex.Kind switch
             {
+                // [AEGIS-KNIGHT-COVERAGE-01] Recurso que exige licença (PIM, revisões de acesso) não é falta de permissão.
+                _ when MentionsLicense(ex.GraphErrorCode) => (KnightCapabilityOutcome.LimitedByLicense, "O locatário não tem a licença que este recurso exige."),
                 EntraGraphErrorKind.InsufficientPermission => (KnightCapabilityOutcome.InsufficientPermission, "Permissão insuficiente para esta coleta."),
                 EntraGraphErrorKind.Throttled => (KnightCapabilityOutcome.Throttled, "Throttling/limite de taxa do Microsoft Graph."),
                 EntraGraphErrorKind.AuthFailure => (KnightCapabilityOutcome.AuthenticationFailure, "Falha de autenticação nesta coleta."),
@@ -318,6 +327,7 @@ public sealed class EntraIdKnightCollector : IKnightCollector
 
         configBox.Roles = roles;
         acc.Collected = true;
+        acc.MemberKinds = members.ToDictionary(kv => kv.Key, kv => KindOf(kv.Value), StringComparer.OrdinalIgnoreCase);
         acc.PrivilegedUsers = members
             .Where(kv => kv.Value.Kind == MemberKind.User)
             .Select(kv => new PrivilegedUser(
@@ -602,6 +612,14 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         var hasDeviceFilter = devices.ValueKind == JsonValueKind.Object
             && Obj(devices, "deviceFilter").ValueKind == JsonValueKind.Object;
 
+        // [AEGIS-KNIGHT-COVERAGE-01] v2: condições de risco, fluxos de autenticação, locais e controles de sessão —
+        // os campos que os controles de configuração leem. Ausente na resposta = nulo, nunca "desligado".
+        var session = Obj(p, "sessionControls");
+        var frequency = Obj(session, "signInFrequency");
+        var persistent = Obj(session, "persistentBrowser");
+        var appRestrictions = Obj(session, "applicationEnforcedRestrictions");
+        var flows = Obj(cond, "authenticationFlows");
+
         return new ConditionalAccessPolicyConfiguration(
             id!, Str(p, "displayName"), state, rawState,
             ArrayStrings(users, "includeUsers"), ArrayStrings(users, "excludeUsers"),
@@ -619,8 +637,26 @@ public sealed class EntraIdKnightCollector : IKnightCollector
             Str(grant, "operator"),
             ArrayStrings(grant, "builtInControls"),
             strength.ValueKind == JsonValueKind.Object ? Str(strength, "id") : null,
-            strength.ValueKind == JsonValueKind.Object ? Str(strength, "displayName") : null);
+            strength.ValueKind == JsonValueKind.Object ? Str(strength, "displayName") : null,
+            UserRiskLevels: ArrayStrings(cond, "userRiskLevels"),
+            SignInRiskLevels: ArrayStrings(cond, "signInRiskLevels"),
+            AuthenticationFlowsTransferMethods: flows.ValueKind == JsonValueKind.Object ? Str(flows, "transferMethods") : null,
+            IncludeLocations: ArrayStrings(locations, "includeLocations"),
+            ExcludeLocations: ArrayStrings(locations, "excludeLocations"),
+            SignInFrequencyEnabled: frequency.ValueKind == JsonValueKind.Object ? Bool(frequency, "isEnabled") : false,
+            SignInFrequencyValue: frequency.ValueKind == JsonValueKind.Object ? Int(frequency, "value") : null,
+            SignInFrequencyType: frequency.ValueKind == JsonValueKind.Object ? Str(frequency, "type") : null,
+            SignInFrequencyInterval: frequency.ValueKind == JsonValueKind.Object ? Str(frequency, "frequencyInterval") : null,
+            PersistentBrowserEnabled: persistent.ValueKind == JsonValueKind.Object ? Bool(persistent, "isEnabled") : false,
+            PersistentBrowserMode: persistent.ValueKind == JsonValueKind.Object ? Str(persistent, "mode") : null,
+            ApplicationEnforcedRestrictions: appRestrictions.ValueKind == JsonValueKind.Object ? Bool(appRestrictions, "isEnabled") : false,
+            AuthenticationStrengthCombinations: strength.ValueKind == JsonValueKind.Object ? ArrayStrings(strength, "allowedCombinations") : null,
+            SessionAndConditionsCaptured: true);
     }
+
+    private static int? Int(JsonElement e, string prop) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n)
+            ? n : null;
 
     private async Task CollectSecurityDefaultsAsync(
         string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs, CancellationToken ct)
@@ -631,17 +667,59 @@ public sealed class EntraIdKnightCollector : IKnightCollector
     }
 
     private async Task CollectApplicationCredentialsAsync(
-        string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs, DateTimeOffset now, CancellationToken ct)
+        string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs, List<KnightConfigurationDocument> docs,
+        DateTimeOffset now, CancellationToken ct)
     {
         var window = now.AddDays(KnightCatalog.AppCredentialExpiryWindowDays);
         var expiring = 0;
+        // [AEGIS-KNIGHT-COVERAGE-01] A MESMA leitura (mesma permissão, mesma paginação) produz também o inventário
+        // de certificados de vigência longa — nenhuma chamada a mais.
+        var total = 0;
+        var withCredentials = 0;
+        var longLivedApps = 0;
+        var listed = new List<EntraApplicationCredentialSummary>();
         var url = "applications?$select=id,displayName,passwordCredentials,keyCredentials&$top=999";
         await foreach (var app in _graph.GetPagedAsync(token, cfg, url, ct))
         {
+            total++;
             if (HasExpiringCredential(app, "passwordCredentials", window) || HasExpiringCredential(app, "keyCredentials", window))
                 expiring++;
+
+            var id = Str(app, "id");
+            var certs = Validities(app, "keyCredentials");
+            var secrets = Validities(app, "passwordCredentials");
+            if (certs.Count + secrets.Count == 0 || string.IsNullOrEmpty(id)) continue;
+            withCredentials++;
+            var longLived = certs.Count(d => d > EntraApplicationCredentialThresholdDays);
+            if (longLived == 0) continue;
+            longLivedApps++;
+            if (listed.Count < EntraApplicationCredentialInventory.MaxListed)
+                listed.Add(new EntraApplicationCredentialSummary(
+                    id!, Str(app, "displayName"), certs.Count, longLived,
+                    certs.Count > 0 ? certs.Max() : null, secrets.Count, secrets.Count > 0 ? secrets.Max() : null));
         }
         obs.Add(KnightObservation.OfCount(KnightSignalKey.ApplicationCredentialsExpiring, expiring));
+        docs.Add(KnightTenantConfiguration.Document(EntraApplicationCredentialInventory.ExternalId, "Credenciais de aplicações registradas",
+            new EntraApplicationCredentialInventory(total, withCredentials, EntraApplicationCredentialThresholdDays, listed,
+                longLivedApps <= EntraApplicationCredentialInventory.MaxListed, longLivedApps)));
+    }
+
+    /// <summary>Limite de vigência (dias, do início ao fim) acima do qual um certificado de aplicação é longo.</summary>
+    internal const int EntraApplicationCredentialThresholdDays = 180;
+
+    /// <summary>Vigência declarada (dias) de cada credencial com início e fim informados.</summary>
+    private static List<int> Validities(JsonElement app, string prop)
+    {
+        var list = new List<int>();
+        if (!app.TryGetProperty(prop, out var creds) || creds.ValueKind != JsonValueKind.Array) return list;
+        foreach (var c in creds.EnumerateArray())
+        {
+            var start = Date(c, "startDateTime");
+            var end = Date(c, "endDateTime");
+            if (start is null || end is null) continue;
+            list.Add((int)Math.Ceiling((end.Value - start.Value).TotalDays));
+        }
+        return list;
     }
 
     private async Task CollectApplicationPermissionsAsync(
@@ -956,8 +1034,11 @@ public sealed class EntraIdKnightCollector : IKnightCollector
         public IReadOnlyList<ConditionalAccessPolicyConfiguration>? Policies { get; set; }
     }
 
-    private static KnightSourceState DeriveState(IReadOnlyList<KnightCapabilityStatus> caps)
+    private static KnightSourceState DeriveState(IReadOnlyList<KnightCapabilityStatus> all)
     {
+        // [AEGIS-KNIGHT-COVERAGE-01] Capacidade DEPENDENTE não tentada (porque a que ela depende falhou) não é uma
+        // falha própria: o estado da fonte é decidido pelas capacidades tentadas.
+        var caps = all.Where(c => c.Outcome != KnightCapabilityOutcome.NotAttempted).ToList();
         if (caps.Count == 0) return KnightSourceState.Unavailable;
         var collected = caps.Count(c => c.Outcome == KnightCapabilityOutcome.Collected);
         if (collected == caps.Count) return KnightSourceState.Completed;
@@ -1001,6 +1082,8 @@ public sealed class EntraIdKnightCollector : IKnightCollector
     private sealed class PrivilegedAccumulator
     {
         public bool Collected;
+        public IReadOnlyDictionary<string, KnightAffectedObjectKind> MemberKinds =
+            new Dictionary<string, KnightAffectedObjectKind>(StringComparer.OrdinalIgnoreCase);
         public IReadOnlyList<PrivilegedUser> PrivilegedUsers = Array.Empty<PrivilegedUser>();
         public bool AllMembersClassifiable = true;
     }

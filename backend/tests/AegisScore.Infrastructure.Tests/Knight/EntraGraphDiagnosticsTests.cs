@@ -50,8 +50,13 @@ public sealed class EntraGraphDiagnosticsTests
 
         result.State.Should().Be(KnightSourceState.InsufficientPermission);
         result.Capabilities.Should().NotBeEmpty();
-        result.Capabilities.Should().OnlyContain(c => c.Outcome == KnightCapabilityOutcome.InsufficientPermission);
-        result.Capabilities.Should().OnlyContain(c => c.Detail != null &&
+        // [AEGIS-KNIGHT-COVERAGE-01] A capacidade DEPENDENTE (perfil das contas privilegiadas) não é tentada quando o
+        // inventário de papéis falha — "não tentada", nunca um segundo desfecho de permissão inventado.
+        result.Capabilities.Where(c => c.Outcome != KnightCapabilityOutcome.NotAttempted)
+            .Should().OnlyContain(c => c.Outcome == KnightCapabilityOutcome.InsufficientPermission);
+        result.Capabilities.Where(c => c.Outcome == KnightCapabilityOutcome.NotAttempted).Select(c => c.Capability)
+            .Should().BeEquivalentTo(new[] { KnightCapability.PrivilegedAccountDetails });
+        result.Capabilities.Where(c => c.Outcome != KnightCapabilityOutcome.NotAttempted).Should().OnlyContain(c => c.Detail != null &&
             c.Detail.Contains("HTTP 403") &&
             c.Detail.Contains("Graph: Authorization_RequestDenied") &&
             c.Detail.Contains("endpoint: /v1.0/test"));

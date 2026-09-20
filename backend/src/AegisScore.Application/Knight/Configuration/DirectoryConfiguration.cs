@@ -65,10 +65,30 @@ public sealed record ConditionalAccessPolicyConfiguration(
     string? GrantOperator,
     IReadOnlyList<string> BuiltInControls,
     string? AuthenticationStrengthId,
-    string? AuthenticationStrengthName)
+    string? AuthenticationStrengthName,
+    // ---- [AEGIS-KNIGHT-COVERAGE-01] v2: condições e controles de sessão lidos pelos controles de configuração.
+    // Todos com padrão nulo: um documento v1 continua legível, e SessionAndConditionsCaptured=false diz ao
+    // controle que a coleta daquela época não registrou estes campos (não avaliado — nunca "ausente").
+    IReadOnlyList<string>? UserRiskLevels = null,
+    IReadOnlyList<string>? SignInRiskLevels = null,
+    string? AuthenticationFlowsTransferMethods = null,
+    IReadOnlyList<string>? IncludeLocations = null,
+    IReadOnlyList<string>? ExcludeLocations = null,
+    bool? SignInFrequencyEnabled = null,
+    int? SignInFrequencyValue = null,
+    string? SignInFrequencyType = null,
+    string? SignInFrequencyInterval = null,
+    bool? PersistentBrowserEnabled = null,
+    string? PersistentBrowserMode = null,
+    bool? ApplicationEnforcedRestrictions = null,
+    IReadOnlyList<string>? AuthenticationStrengthCombinations = null,
+    bool SessionAndConditionsCaptured = false)
 {
     /// <summary>Nome e versão do contrato de normalização persistido com o objeto.</summary>
-    public const string SchemaVersion = "aegis-config-entra-ca-policy-v1";
+    public const string SchemaVersion = "aegis-config-entra-ca-policy-v2";
+
+    /// <summary>Versão anterior (sem condições de risco, fluxos de autenticação e sessão) — ainda legível.</summary>
+    public const string SchemaVersionV1 = "aegis-config-entra-ca-policy-v1";
 }
 
 /// <summary>
@@ -151,7 +171,8 @@ public static class DirectoryConfigurationDocuments
                 switch (o.Kind)
                 {
                     case ConfigurationObjectKind.ConditionalAccessPolicy
-                        when o.SchemaVersion == ConditionalAccessPolicyConfiguration.SchemaVersion:
+                        when o.SchemaVersion == ConditionalAccessPolicyConfiguration.SchemaVersion
+                             || o.SchemaVersion == ConditionalAccessPolicyConfiguration.SchemaVersionV1:
                         if (JsonSerializer.Deserialize<ConditionalAccessPolicyConfiguration>(o.ConfigurationJson, IdentityEvidenceFactsJson.Options) is { } p)
                             policies.Add(p);
                         break;

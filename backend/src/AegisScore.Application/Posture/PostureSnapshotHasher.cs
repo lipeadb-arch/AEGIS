@@ -41,6 +41,12 @@ public static class PostureSnapshotHasher
     private const string ExtensionVersion = "posture-hash-ext-report-v1";
 
     /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-01] Extensão do catálogo v4: impacto e plataforma por controle e a cobertura de
+    /// implementação congelada. Escrita SÓ quando existe conteúdo — o hash das fotografias anteriores não muda.
+    /// </summary>
+    private const string CoverageExtensionVersion = "posture-hash-ext-coverage-v1";
+
+    /// <summary>
     /// [AEGIS-KNIGHT-MULTICLOUD-01] Bloco do relatório KNIGHT v2 — escrito SÓ quando a fotografia é v2, então o
     /// hash de toda fotografia anterior permanece idêntico e continua verificável.
     /// </summary>
@@ -243,6 +249,15 @@ public static class PostureSnapshotHasher
                 var roles = o.Roles.OrderBy(x => x, StringComparer.Ordinal).ToList();
                 w.Int(roles.Count);
                 foreach (var r in roles) w.Str(r);
+            }
+
+            var hasCoverage = !string.IsNullOrEmpty(s.ReferenceCoverageJson)
+                || indicators.Any(i => i.Impact is not null || i.Platform is not null);
+            if (hasCoverage)
+            {
+                w.Str(CoverageExtensionVersion).Str(s.ReferenceCoverageJson);
+                w.Int(indicators.Count);
+                foreach (var i in indicators) w.Str(i.IndicatorId).Str(i.Impact).Str(i.Platform);
             }
         }
 

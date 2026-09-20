@@ -727,7 +727,9 @@ public record KnightIndicatorDto(
     /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Evidências de configuração preservadas (não contadas como afetados).</summary>
     int EvidenceObjectCount = 0,
     /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Perfil, eixos e contribuição para a nota.</summary>
-    KnightControlPresentationDto? Presentation = null);
+    KnightControlPresentationDto? Presentation = null,
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Composição nomeada dos afetados (mesma definição das exportações).</summary>
+    string? AffectedComposition = null);
 
 /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Referência de framework ou documentação oficial conferida.</summary>
 public record KnightControlReferenceDto(string Framework, string? Version, string Code, string? Url);
@@ -752,7 +754,33 @@ public record KnightControlPresentationDto(
     int Weight,
     double? Factor,
     double? AchievedPoints,
-    double? PossiblePoints);
+    double? PossiblePoints,
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Impacto potencial (texto determinístico do catálogo).</summary>
+    string? Impact = null,
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Plataforma (Microsoft Entra ID, Microsoft 365, Microsoft Azure, Google Workspace).</summary>
+    string? Platform = null,
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Serviço tipado (chave estável para filtro).</summary>
+    string? ServiceKey = null);
+
+/// <summary>[AEGIS-KNIGHT-COVERAGE-01] Uma linha de cobertura do catálogo de referência (total, plataforma ou serviço).</summary>
+public record KnightReferenceCoverageGroupDto(
+    string Key, string Label, int Total, int Implemented, int Partial, int Pending, int ManualOnly, int RequiresAccess,
+    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent);
+
+/// <summary>[AEGIS-KNIGHT-COVERAGE-01] Situação de UM controle de referência no produto.</summary>
+public record KnightReferenceControlStatusDto(
+    string Key, string Framework, string Version, string? Section, string? Variant, string Service, string ServiceLabel,
+    string Platform, string Severity, string Title, string Disposition, string DispositionLabel,
+    IReadOnlyList<string> IndicatorIds, string? Note);
+
+/// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-01] Cobertura de IMPLEMENTAÇÃO do catálogo de referência (propriedade do produto). Não se
+/// confunde com a cobertura de uma avaliação nem com a aprovação — a tela mostra as três separadas.
+/// </summary>
+public record KnightReferenceCoverageDto(
+    string CatalogVersion, string ReferenceCommit, IReadOnlyList<string> Frameworks, KnightReferenceCoverageGroupDto Total,
+    IReadOnlyList<KnightReferenceCoverageGroupDto> ByPlatform, IReadOnlyList<KnightReferenceCoverageGroupDto> ByService,
+    IReadOnlyList<KnightReferenceControlStatusDto> Controls);
 
 /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Objeto que se repete entre controles expostos.</summary>
 public record KnightAffectedSummaryItemDto(

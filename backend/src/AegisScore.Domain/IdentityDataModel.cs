@@ -79,6 +79,55 @@ public enum ConfigurationObjectKind
 
     /// <summary>Papel de diretório privilegiado ATIVO (com membros) — alvo da exigência de MFA administrativa.</summary>
     DirectoryRole = 1,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário (Entra ID) ------------------------------
+    // Cada tipo guarda o documento de UM contrato tipado e versionado (a leitura só interpreta versões que
+    // conhece). Documentos únicos do locatário usam um identificador fixo; os demais, o id do objeto na fonte.
+
+    /// <summary>Política de autorização do diretório (o que usuários e convidados podem fazer por padrão).</summary>
+    AuthorizationPolicy = 2,
+
+    /// <summary>Política do fluxo de consentimento do administrador.</summary>
+    AdminConsentRequestPolicy = 3,
+
+    /// <summary>Política padrão de gerenciamento de aplicações (restrições de senhas e certificados).</summary>
+    AppManagementPolicy = 4,
+
+    /// <summary>Política de métodos de autenticação (métodos habilitados e recursos do Authenticator).</summary>
+    AuthenticationMethodsPolicy = 5,
+
+    /// <summary>Configuração de diretório por modelo (regras de senha, grupos do Microsoft 365), com os padrões do modelo.</summary>
+    DirectorySetting = 6,
+
+    /// <summary>Domínio do diretório (verificação, tipo de autenticação, validade de senha).</summary>
+    Domain = 7,
+
+    /// <summary>Sincronização com o diretório local (híbrido) e sincronização de hash de senha.</summary>
+    DirectorySynchronization = 8,
+
+    /// <summary>Política de registro e ingresso de dispositivos.</summary>
+    DeviceRegistrationPolicy = 9,
+
+    /// <summary>Inventário de visibilidade dos grupos do Microsoft 365 (grupos públicos).</summary>
+    GroupVisibilityInventory = 10,
+
+    /// <summary>Perfil de uma conta privilegiada (origem da conta e licenças) — atributos, não identidade nova.</summary>
+    PrivilegedAccountProfile = 11,
+
+    /// <summary>Governança de um papel privilegiado (atribuições permanentes, elegíveis e regras de ativação).</summary>
+    PrivilegedRoleGovernance = 12,
+
+    /// <summary>Definição de revisão de acesso.</summary>
+    AccessReviewDefinition = 13,
+
+    /// <summary>Local nomeado usado pelo acesso condicional.</summary>
+    NamedLocation = 14,
+
+    /// <summary>Estado de uma aplicação de serviço específica do locatário (ex.: armazenamento de terceiros).</summary>
+    ServicePrincipalState = 15,
+
+    /// <summary>Inventário das credenciais das aplicações registradas (vigência de certificados e segredos).</summary>
+    ApplicationCredentialInventory = 16,
 }
 
 /// <summary>

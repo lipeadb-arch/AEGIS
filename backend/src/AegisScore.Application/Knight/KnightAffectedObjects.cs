@@ -95,7 +95,9 @@ public static class KnightAffectedObjectScope
     /// </summary>
     public static bool IsInScope(string indicatorId) =>
         Indicators.Contains(indicatorId)
-        || AegisScore.Application.Knight.Configuration.KnightConfigurationEvidence.Indicators.Contains(indicatorId);
+        || AegisScore.Application.Knight.Configuration.KnightConfigurationEvidence.Indicators.Contains(indicatorId)
+        // [AEGIS-KNIGHT-COVERAGE-01] Controles de configuração devolvem os próprios objetos junto com o veredito.
+        || KnightCatalog.Indicators.Any(d => d.Id == indicatorId && d.Evaluate is not null);
 }
 
 // ---- Leitura (paginada e pesquisável NO SERVIDOR) ------------------------------------------------------

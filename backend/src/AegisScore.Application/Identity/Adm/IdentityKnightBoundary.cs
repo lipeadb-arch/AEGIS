@@ -145,7 +145,7 @@ public static class IdentityKnightBoundary
         KnightAffectedObjectKind.Unknown => IdentityEntityKind.Unknown,
         // Políticas, papéis e configurações do tenant não são identidades: nunca entram nos conjuntos do ADM.
         KnightAffectedObjectKind.Policy or KnightAffectedObjectKind.DirectoryRole
-            or KnightAffectedObjectKind.TenantSetting => IdentityEntityKind.Unknown,
+            or KnightAffectedObjectKind.TenantSetting or KnightAffectedObjectKind.Domain => IdentityEntityKind.Unknown,
         _ => IdentityEntityKind.Unknown,
     };
 
@@ -286,7 +286,11 @@ public static class IdentityKnightBoundary
             capsJson,
             sets,
             // [AEGIS-KNIGHT-MULTICLOUD-01] Configuração observada pela MESMA coleta, como documento do contrato tipado.
-            DirectoryConfigurationDocuments.ToObserved(result.DirectoryConfiguration));
+            // [AEGIS-KNIGHT-COVERAGE-01] Mais a configuração do LOCATÁRIO (autorização, métodos, PIM, …), no mesmo
+            // registro de objetos de configuração — sem banco de evidências paralelo.
+            DirectoryConfigurationDocuments.ToObserved(result.DirectoryConfiguration)
+                .Concat(result.TenantConfiguration?.ToObserved() ?? Array.Empty<IdentityObservedConfiguration>())
+                .ToList());
     }
 
     // ---- Aquisição persistida → contrato do avaliador -------------------------------------------------
@@ -351,7 +355,9 @@ public static class IdentityKnightBoundary
             facts.IdentityRisk,
             facts.AuthenticationPosture,
             affected,
-            configuration);
+            configuration,
+            // [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário relida da MESMA aquisição, com as capacidades dela.
+            KnightTenantConfiguration.FromObserved(record.Configurations ?? Array.Empty<IdentityObservedConfiguration>(), capabilities));
     }
 
     /// <summary>

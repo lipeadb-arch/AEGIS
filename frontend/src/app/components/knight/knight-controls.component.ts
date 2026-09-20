@@ -54,6 +54,13 @@ const SEVERITIES: SeverityLevel[] = ['Critical', 'High', 'Medium', 'Low', 'Infor
           </select>
         </label>
         <label class="fl">
+          <span class="filter-label">Plataforma</span>
+          <select [value]="filters().platform" (change)="set('platform', $any($event.target).value)">
+            <option value="">Todas</option>
+            @for (p of o.platforms; track p) { <option [value]="p">{{ p }}</option> }
+          </select>
+        </label>
+        <label class="fl">
           <span class="filter-label">Serviço</span>
           <select [value]="filters().service" (change)="set('service', $any($event.target).value)">
             <option value="">Todos</option>
@@ -78,6 +85,7 @@ const SEVERITIES: SeverityLevel[] = ['Critical', 'High', 'Medium', 'Low', 'Infor
       </div>
       <p class="recorte" role="status" aria-live="polite">
         Mostrando <b>{{ visible().length }}</b> de {{ assessment().indicators.length }} controle(s) · Recorte: {{ recorte() }}
+        · os filtros afetam só esta visualização; o relatório exportado é sempre a avaliação completa.
       </p>
     </div>
 
@@ -98,7 +106,9 @@ const SEVERITIES: SeverityLevel[] = ['Critical', 'High', 'Medium', 'Low', 'Infor
                 <span class="st" [class]="i.status">{{ statusLabel(i.status) }}</span>
                 <span class="sev" [class]="i.severity">{{ severityLabel(i.severity) }}</span>
                 @if (i.status === 'Exposed' || i.status === 'Mitigated') {
-                  <span class="aff"><b>{{ i.affectedObjectCount }}</b> afetado(s)</span>
+                  @if (i.affectedComposition) { <span class="aff">{{ i.affectedComposition }}</span> }
+                  @else if (i.affectedObjectCount > 0) { <span class="aff"><b>{{ i.affectedObjectCount }}</b> afetado(s)</span> }
+                  @else { <span class="aff">configuração do locatário</span> }
                 }
               </span>
             </button>

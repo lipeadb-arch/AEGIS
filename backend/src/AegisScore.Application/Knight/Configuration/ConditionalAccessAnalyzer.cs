@@ -248,15 +248,15 @@ public static class ConditionalAccessAnalyzer
         || p.ClientAppTypes.Contains("exchangeActiveSync", Ci) || p.ClientAppTypes.Contains("other", Ci)
         || p.ClientAppTypes.Contains("easSupported", Ci);
 
-    private static bool ExcludesGuests(ConditionalAccessPolicyConfiguration p) =>
+    internal static bool ExcludesGuests(ConditionalAccessPolicyConfiguration p) =>
         p.ExcludesGuestsOrExternalUsers || p.ExcludeUsers.Contains(GuestsValue, Ci);
 
-    private static bool IncludesGuests(ConditionalAccessPolicyConfiguration p) =>
+    internal static bool IncludesGuests(ConditionalAccessPolicyConfiguration p) =>
         p.IncludesGuestsOrExternalUsers || p.IncludeUsers.Contains(GuestsValue, Ci);
 
     // ---- Alcance de uma política sobre UM usuário conhecido ------------------------------------------
 
-    private enum Reach { Applies, Excluded, NotTargeted, Unknown }
+    internal enum Reach { Applies, Excluded, NotTargeted, Unknown }
 
     /// <summary>
     /// A política vale para o usuário? Exclusões prevalecem sobre inclusões. <paramref name="userRoles"/> são os
@@ -264,7 +264,7 @@ public static class ConditionalAccessAnalyzer
     /// convidado não são resolvidos nesta entrega → <see cref="Reach.Unknown"/>, nunca suposição.
     /// <see cref="Reach.Excluded"/> só é devolvido quando a política o teria como alvo.
     /// </summary>
-    private static Reach ReachOf(ConditionalAccessPolicyReading r, string userId, IReadOnlyCollection<string> userRoles)
+    internal static Reach ReachOf(ConditionalAccessPolicyReading r, string userId, IReadOnlyCollection<string> userRoles)
     {
         var p = r.Policy;
         var targeted = r.TargetsAllUsers

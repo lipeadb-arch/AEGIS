@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Knight.Reference;
 using AegisScore.Application.Posture;
 using AegisScore.Application.Remediation;
 using AegisScore.Application.Scoring;
@@ -527,6 +528,9 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             AdvisoryFromAi = run.AdvisoryJson is null ? null : run.AdvisoryFromAi,
             CapabilitiesJson = string.IsNullOrWhiteSpace(run.CapabilitiesJson) ? null : run.CapabilitiesJson,
             ProfileCatalogVersion = KnightCatalog.Version,
+            // [AEGIS-KNIGHT-COVERAGE-01] Cobertura de implementação do catálogo de referência, congelada: é uma
+            // medida do PRODUTO, publicada ao lado — nunca somada — da cobertura da avaliação e da aprovação.
+            ReferenceCoverageJson = KnightReferenceCoverageSnapshot.Serialize(KnightReferenceCatalog.Coverage()),
         };
 
         foreach (var i in run.Indicators)
@@ -563,6 +567,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 HasAffectedDetail = i.HasAffectedDetail,
                 AffectedDetailComplete = i.AffectedDetailComplete,
                 AffectedDetailLimitation = i.AffectedDetailLimitation,
+                Impact = presentation.Impact,
+                Platform = presentation.Platform,
             });
 
             foreach (var o in i.AffectedObjects

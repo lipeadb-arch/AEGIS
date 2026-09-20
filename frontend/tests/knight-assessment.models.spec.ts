@@ -32,6 +32,8 @@ import {
   priorityControls,
   severityLabel,
   statusLabel,
+  threeMeasures,
+  KnightReferenceCoverage,
 } from '../src/app/models/knight.models';
 
 // ---- micro-harness (sem dependências externas) -------------------------------------------------
@@ -290,7 +292,8 @@ test('rótulos em português, com severidade Informativo e Mitigado como atenç�
 
 test('linha de achados em linguagem simples: ocorrências, objetos distintos e mínimo quando parcial', () => {
   const base = { runId: 'r', exposedControls: 3, occurrences: 4, uniqueObjects: 3, complete: true, incompleteIndicatorIds: [], top: [] };
-  eq(knightUnitsLine(base), '4 ocorrência(s) em 3 objeto(s) distinto(s).', 'completo');
+  eq(knightUnitsLine(base), '4 ocorrência(s) em 3 item(ns) distinto(s) (contas, aplicações, papéis, políticas…).', 'completo');
+  ok(!/objeto/.test(knightUnitsLine(base)), '[AEGIS-KNIGHT-COVERAGE-01] nomeia o que foi avaliado em vez de "objeto(s)"');
   const partial = knightUnitsLine({ ...base, complete: false, incompleteIndicatorIds: ['AK-ENTRA-006'] });
   ok(partial.includes('pelo menos 3'), 'parcial diz que é um mínimo');
   ok(partial.includes('1 controle(s)'), 'parcial diz quantos controles têm lista incompleta');
@@ -300,6 +303,38 @@ test('linha de achados em linguagem simples: ocorrências, objetos distintos e m
 test('badge sem avaliação segue a fonte: configurada não é "não configurado"', () => {
   eq(connectionStateOf(null), 'NotConfigured', 'sem avaliação e sem fonte');
   eq(connectionStateOf(null, true), 'Connected', 'fonte real configurada, ainda sem sincronização');
+});
+
+
+// ---- [AEGIS-KNIGHT-COVERAGE-01] Plataforma, benchmark e as três medidas -----------------------------------
+
+test('filtro por plataforma e opções de plataforma vêm da apresentação do servidor', () => {
+  const a = assessment([
+    ind({ indicatorId: 'AK-ENTRA-016', presentation: pres({ platform: 'Microsoft Entra ID' }) }),
+    ind({ indicatorId: 'AK-GWS-001', sourceType: 'GoogleWorkspace', presentation: pres({ service: 'Google Workspace', provider: 'Google', platform: 'Google Workspace' }) }),
+  ]);
+  eq(filterOptions(a).platforms.join('|'), 'Google Workspace|Microsoft Entra ID', 'plataformas distintas, ordenadas');
+  const only = a.indicators.filter((i) => matchesFilters(i, { ...EMPTY_FILTERS, platform: 'Google Workspace' }));
+  eq(only.map((i) => i.indicatorId).join(), 'AK-GWS-001', 'recorte por plataforma');
+  ok(describeFilters({ ...EMPTY_FILTERS, platform: 'Google Workspace' }, a).includes('plataforma: Google Workspace'), 'o recorte é dito em palavras');
+  eq(distributionBy(a, 'platform').length, 2, 'distribuição por plataforma');
+});
+
+test('benchmark de configuração conta como framework do controle', () => {
+  const i = ind({ presentation: pres({ references: [{ framework: 'CIS Microsoft 365 Foundations', version: '7.0.0', code: '5.1.2.2', url: null }] }) });
+  ok(frameworksOf(i).includes('CIS Microsoft 365 Foundations 7.0.0'), 'benchmark e versão');
+});
+
+test('três medidas separadas: catálogo (integral e parcial), cobertura da avaliação e aprovação', () => {
+  const g = { key: 'Total', label: 'Catálogo de referência', total: 100, implemented: 20, partial: 5, pending: 70, manualOnly: 2, requiresAccess: 0, apiLimitation: 3, fullPercent: 20, partialPercent: 5, anyAutomatedPercent: 25 };
+  const cov: KnightReferenceCoverage = { catalogVersion: 'ak-knight-v4', referenceCommit: 'c', frameworks: [], total: g, byPlatform: [g], byService: [g], controls: [] };
+  const m = threeMeasures(MIXED, cov);
+  eq(m.catalogFull, 20, 'integral não soma o parcial');
+  eq(m.catalogPartial, 5, 'parcial à parte');
+  eq(m.catalogAnyAutomated, 25, '"alguma avaliação" é rótulo próprio');
+  eq(m.assessmentCoverage, MIXED.coverage, 'cobertura da avaliação é a da coleta');
+  eq(m.approval, overviewKpis(MIXED).approvalPercent, 'aprovação é a dos avaliados');
+  eq(threeMeasures(MIXED, null).catalogFull, null, 'sem cobertura carregada, não inventa número');
 });
 
 console.log(`\n${count - failures}/${count} testes passaram (knight-assessment.models).`);

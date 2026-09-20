@@ -95,9 +95,12 @@ test('sem nome de exibição, o UPN é usado antes do identificador', () => {
 test('cada natureza de objeto tem rótulo próprio — aplicação não vira "usuário"', () => {
   eq(affectedKindLabel('ServicePrincipal'), 'Aplicação', 'exigir MFA de uma aplicação não faz sentido');
   eq(affectedKindLabel('Group'), 'Grupo', 'o acesso do grupo é herdado pelos membros');
-  eq(affectedKindLabel('Guest'), 'Convidado', '');
-  eq(affectedKindLabel('Unknown'), 'Tipo não identificado', 'tipo desconhecido é declarado, não presumido');
-  const rotulos = ['User', 'Guest', 'ServicePrincipal', 'Group', 'Device', 'Unknown']
+  // [AEGIS-KNIGHT-COVERAGE-01] Mesmos rótulos do relatório exportado (definição única no servidor).
+  eq(affectedKindLabel('User'), 'Conta de usuário', 'a tela nomeia o tipo real, como o HTML, o CSV e o PDF');
+  eq(affectedKindLabel('Guest'), 'Conta de convidado', '');
+  eq(affectedKindLabel('Domain'), 'Domínio', 'domínio não vira "configuração" genérica');
+  eq(affectedKindLabel('Unknown'), 'Item de tipo não identificado', 'tipo desconhecido é declarado, não presumido');
+  const rotulos = ['User', 'Guest', 'ServicePrincipal', 'Group', 'Device', 'Unknown', 'Policy', 'DirectoryRole', 'TenantSetting', 'Domain']
     .map((k) => affectedKindLabel(k as KnightAffectedObject['kind']));
   eq(new Set(rotulos).size, rotulos.length, 'nenhum tipo compartilha rótulo com outro');
 });

@@ -622,8 +622,8 @@ export function seededProposal(indicatorId: string, affectedCount: number): stri
       );
     case 'AK-ENTRA-002':
       return (
-        `Conduzir revisão de acesso dos ${affectedCount} objeto(s) com papel administrativo, separando ` +
-        'pessoas, aplicações e grupos, e remover apenas os papéis que a área responsável confirmar como ' +
+        `Conduzir revisão de acesso das ${affectedCount} identidade(s) com papel administrativo, separando ` +
+        'contas de usuário, convidados, aplicações e grupos, e remover apenas os papéis que a área responsável confirmar como ' +
         'desnecessários.'
       );
     case 'AK-ENTRA-004':

@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using AegisScore.Application.Knight.Catalog;
+using AegisScore.Application.Knight.Configuration;
+using AegisScore.Application.Knight.Reference;
 using AegisScore.Domain;
 
 namespace AegisScore.Application.Knight;
@@ -33,15 +36,44 @@ public sealed record KnightIndicatorDefinition(
     IReadOnlyList<string> MitreTechniques,
     string Recommendation,
     string ExpectedEvidence,
-    Func<KnightFactSet, KnightIndicatorOutcome> Rule);
+    Func<KnightFactSet, KnightIndicatorOutcome> Rule)
+{
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-01] Serviço onde a configuração avaliada vive. <see cref="KnightService.Unspecified"/>
+    /// nos controles compartilhados entre fontes: o serviço vem da fonte avaliada.
+    /// </summary>
+    public KnightService Service { get; init; } = KnightService.Unspecified;
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-01] Controles do catálogo de referência que este controle avalia, com o grau de
+    /// equivalência. Declarar não basta para contar como implementado: a cobertura também exige a regra no fluxo
+    /// ativo e a coleta que ela consome (ver <see cref="KnightReferenceCatalog"/>).
+    /// </summary>
+    public IReadOnlyList<KnightReferenceLink> References { get; init; } = Array.Empty<KnightReferenceLink>();
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-01] Regra de CONFIGURAÇÃO: lê a coleta relida do ADM e devolve o veredito com os
+    /// objetos que o sustentam. Quando presente, é ela que decide; <see cref="Rule"/> fica só para o caminho sem
+    /// contexto de coleta, em que o controle é declarado não avaliado.
+    /// </summary>
+    public Func<KnightEvaluationContext, KnightControlOutcome>? Evaluate { get; init; }
+}
 
 /// <summary>Indicador já avaliado: a definição (metadados) + o desfecho determinístico dos fatos.</summary>
+/// <remarks>
+/// [AEGIS-KNIGHT-COVERAGE-01] Um controle de configuração devolve também os objetos que sustentam o veredito:
+/// <paramref name="Objects"/> (afetados e evidências), a completude da lista de afetados e a limitação declarada.
+/// <c>null</c> nos controles de fatos agregados, cujo detalhe continua vindo dos conjuntos da coleta.
+/// </remarks>
 public sealed record KnightEvaluatedIndicator(
     KnightIndicatorDefinition Definition,
     KnightIndicatorStatus Status,
     string Evidence,
     int AffectedObjectCount,
-    string? NotEvaluatedReason = null);
+    string? NotEvaluatedReason = null,
+    IReadOnlyList<KnightIndicatorObject>? Objects = null,
+    bool ObjectsComplete = true,
+    string? ObjectsLimitation = null);
 
 /// <summary>
 /// Catálogo ORIGINAL e VERSIONADO do AEGIS KNIGHT. Indicadores multicoletor: cada um declara as fontes que o
@@ -59,7 +91,12 @@ public static class KnightCatalog
     // Exclusões explícitas nunca viram cobertura: sem outra política que as cubra, 007/008 ficam não avaliados
     // (a exceção não é irregular por si, mas não comprova proteção); 014 exige alcance declarado amplo.
     // Comparações entre fotografias v2 e v3 são recusadas pelo comparador (versão de catálogo diferente).
-    public const string Version = "ak-knight-v3";
+    // v4 [AEGIS-KNIGHT-COVERAGE-01]: acrescenta os controles de CONFIGURAÇÃO do Microsoft Entra ID (AK-ENTRA-016 em
+    // diante), que leem a configuração do locatário relida do ADM, e declara em cada controle o serviço e os
+    // controles de referência que ele avalia. Os critérios e limiares de AK-ENTRA-001..015 e AK-GWS-001..006 NÃO
+    // mudam — só ganham referências. Mudar o conjunto de controles muda o denominador da nota e da cobertura: por
+    // isso a versão sobe, fotografias v3 continuam com o catálogo v3 congelado e o comparador recusa v3 × v4.
+    public const string Version = "ak-knight-v4";
 
     // ---- Limiares centralizados (única fonte da verdade dos números da regra) ----
 
@@ -159,7 +196,49 @@ public static class KnightCatalog
     }
 
     /// <summary>Todos os indicadores (multicoletor). Ordem estável = ordem de exibição por padrão.</summary>
-    public static IReadOnlyList<KnightIndicatorDefinition> Indicators { get; } = new[]
+    public static IReadOnlyList<KnightIndicatorDefinition> Indicators { get; } =
+        BaseIndicators().Concat(EntraConfigurationControls.Definitions).ToList();
+
+    private const string M365Ref = "CIS-M365-7.0.0:";
+    private const string AzRef = "CIS-AZ-6.0.0:";
+
+    /// <summary>
+    /// [v4] Referências dos indicadores originais. Critério e limiar continuam os mesmos; a equivalência com a
+    /// referência é declarada com a diferença explícita quando não é idêntica.
+    /// </summary>
+    private static IReadOnlyDictionary<string, KnightReferenceLink[]> BaseReferences() => new Dictionary<string, KnightReferenceLink[]>(StringComparer.Ordinal)
+    {
+        ["AK-ENTRA-006"] = new[]
+        {
+            new KnightReferenceLink(M365Ref + "5.2.3.4", KnightReferenceMatch.Partial,
+                $"A referência pede que todos os usuários membros sejam capazes de MFA; o AEGIS reprova abaixo de {MinMfaCoveragePercent}% de cobertura de registro sobre os usuários do relatório de registro."),
+        },
+        ["AK-ENTRA-007"] = new[] { new KnightReferenceLink(M365Ref + "5.2.2.3") },
+        ["AK-ENTRA-008"] = new[]
+        {
+            new KnightReferenceLink(M365Ref + "5.2.2.1", KnightReferenceMatch.Partial,
+                "O AEGIS verifica todos os papéis de diretório ativos com membros; a referência enumera um conjunto de papéis administrativos."),
+        },
+        ["AK-ENTRA-014"] = new[]
+        {
+            new KnightReferenceLink(M365Ref + "5.2.2.2", KnightReferenceMatch.Partial,
+                "O AEGIS aprova com security defaults ou com política habilitada de alvo declarado em todos os usuários; exclusões são listadas como evidência e a cobertura conta a conta de administradores é avaliada no AK-ENTRA-008."),
+            new KnightReferenceLink(AzRef + "5.1.1", KnightReferenceMatch.Partial,
+                "A referência pede security defaults quando não há acesso condicional; o AEGIS aceita qualquer uma das duas bases."),
+        },
+    };
+
+    private static KnightIndicatorDefinition WithBaseReferences(KnightIndicatorDefinition d, IReadOnlyDictionary<string, KnightReferenceLink[]> map) =>
+        map.TryGetValue(d.Id, out var refs) ? d with { References = refs } : d;
+
+    // Indicadores originais (v1–v3). A ordem é preservada; a v4 só acrescenta referências.
+    private static IEnumerable<KnightIndicatorDefinition> BaseIndicators()
+    {
+        var map = BaseReferences();
+        return RawBaseIndicators().Select(d => WithBaseReferences(d, map));
+    }
+
+    private static IEnumerable<KnightIndicatorDefinition> RawBaseIndicators() => new[]
     {
         // ==== Compartilhados: Demo (sintético) e Entra (real) ====
 
@@ -176,23 +255,26 @@ public static class KnightCatalog
                 if (!TryCount(f, KnightSignalKey.PrivilegedAccountsWithoutMfa, out var without, out var ne)) return ne;
                 var total = f.Get(KnightSignalKey.PrivilegedAccountsTotal);
                 var totalTxt = total.IsCollected ? Fmt(total.Count) : "?";
+                // [v4] O total inclui aplicações e grupos com papel (não são contas de pessoa): o texto diz
+                // "identidades" para o total e "contas" só para o que o relatório de registro cobre.
                 return without > 0
-                    ? Exposed($"{without} de {totalTxt} conta(s) privilegiada(s) sem método capaz de MFA registrado.", (int)without)
-                    : Passed($"Todas as {totalTxt} conta(s) privilegiada(s) com método capaz de MFA registrado (registro não comprova exigência por política).");
+                    ? Exposed($"{without} conta(s) com papel privilegiado sem método capaz de MFA registrado, entre {totalTxt} identidade(s) privilegiada(s).", (int)without)
+                    : Passed($"Nenhuma conta com papel privilegiado sem método capaz de MFA registrado, entre {totalTxt} identidade(s) privilegiada(s) (registro não comprova exigência por política).");
             }),
 
         new KnightIndicatorDefinition(
-            "AK-ENTRA-002", "1", "Volume excessivo de contas privilegiadas",
+            "AK-ENTRA-002", "1", "Volume excessivo de identidades privilegiadas",
             KnightIndicatorCategory.IdentityGovernance, SeverityLevel.High, SharedSources,
             new[] { "PR.AA-05", "GV.RR-02" }, new[] { "T1078 · Valid Accounts" },
             "Reduzir o número de contas privilegiadas ao mínimo necessário e adotar elevação just-in-time.",
-            $"Total de contas privilegiadas comparado ao teto de menor privilégio ({MaxPrivilegedAccounts}).",
+            $"Total de identidades com papel privilegiado (contas, convidados, aplicações e grupos) comparado ao teto de menor privilégio ({MaxPrivilegedAccounts}).",
             f =>
             {
                 if (!TryCount(f, KnightSignalKey.PrivilegedAccountsTotal, out var total, out var ne)) return ne;
+                // [v4] A população são identidades com papel (contas, convidados, aplicações, grupos) — não só contas.
                 return total > MaxPrivilegedAccounts
-                    ? Exposed($"{total} contas privilegiadas excedem o teto de menor privilégio ({MaxPrivilegedAccounts}).", (int)total)
-                    : Passed($"{total} contas privilegiadas dentro do teto de menor privilégio ({MaxPrivilegedAccounts}).");
+                    ? Exposed($"{total} identidades com papel privilegiado excedem o teto de menor privilégio ({MaxPrivilegedAccounts}); a composição por tipo está na lista.", (int)total)
+                    : Passed($"{total} identidades com papel privilegiado, dentro do teto de menor privilégio ({MaxPrivilegedAccounts}).");
             }),
 
         new KnightIndicatorDefinition(
@@ -533,7 +615,15 @@ public static class KnightCatalog
 /// </summary>
 public static class KnightIndicatorEvaluator
 {
-    public static IReadOnlyList<KnightEvaluatedIndicator> Evaluate(KnightFactSet facts, KnightSourceType source)
+    /// <summary>Avaliação só com fatos agregados: os controles de configuração ficam não avaliados, com o motivo.</summary>
+    public static IReadOnlyList<KnightEvaluatedIndicator> Evaluate(KnightFactSet facts, KnightSourceType source) =>
+        Evaluate(KnightEvaluationContext.FromFacts(facts), source);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-01] Avaliação sobre o contexto COMPLETO da coleta relida do ADM: fatos, capacidades e
+    /// configuração. É o mesmo motor — o contexto só amplia o que a regra de configuração enxerga.
+    /// </summary>
+    public static IReadOnlyList<KnightEvaluatedIndicator> Evaluate(KnightEvaluationContext context, KnightSourceType source)
     {
         var applicable = KnightCatalog.ForSource(source);
         var results = new List<KnightEvaluatedIndicator>(applicable.Count);
@@ -541,7 +631,16 @@ public static class KnightIndicatorEvaluator
         {
             try
             {
-                var outcome = def.Rule(facts);
+                if (def.Evaluate is { } evaluate)
+                {
+                    var o = evaluate(context);
+                    results.Add(new KnightEvaluatedIndicator(
+                        def, o.Status, o.Evidence, o.AffectedObjectCount, o.NotEvaluatedReason,
+                        o.Affected.Concat(o.EvidenceObjects).ToList(), o.AffectedComplete, o.Limitation));
+                    continue;
+                }
+
+                var outcome = def.Rule(context.Facts);
                 results.Add(new KnightEvaluatedIndicator(
                     def, outcome.Status, outcome.Evidence, outcome.AffectedObjectCount, outcome.NotEvaluatedReason));
             }
