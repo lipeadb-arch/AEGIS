@@ -215,6 +215,10 @@ jobs:
       #     usuários inativos, opções de consulta fora dos formatos documentados e vigência de séries com
       #     quantidade limitada de ocorrências). Filtro inalterado; o passo vai de 771 a 783 (medido localmente
       #     com este MESMO filtro, em Release).
+      #     Terceira revisão dirigida (mesmo PR): +4 casos em KnightAccessReviewScopeTests (vigência de séries
+      #     com data final: a última ocorrência permitida pela faixa, situada no calendário, e a contradição
+      #     entre as datas e o estado). Filtro inalterado; o passo vai de 783 a 787 (medido localmente com este
+      #     MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj

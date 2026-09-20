@@ -308,6 +308,65 @@ public sealed class KnightAccessReviewScopeTests : IDisposable
             "quatro ocorrências semanais a partir de 120 dias atrás terminaram há muito");
     }
 
+    // ---- Vigência de séries com data final (recurrenceRange do tipo endDate) ---------------------------
+
+    [Fact]
+    public async Task Convidados_DataFinalPassada_UltimaOcorrenciaJaTerminada_NaoAprova()
+    {
+        // A documentação avisa que a ÚLTIMA ocorrência pode não cair na endDate: a data final só impede novas
+        // ocorrências. Somar a duração à endDate produz um limite superior — bom para demonstrar o fim, nunca a
+        // vigência. Aqui a última ocorrência permitida começou há dez dias e a revisão durou sete.
+        var last = MonthlyStartDaysAgo(10);
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(), AllUnifiedGroups(),
+            recurrence: Recurrence("absoluteMonthly", 1, EndsOn(last.AddMonths(-8), Today.AddDays(-1)), dayOfMonth: last.Day),
+            instanceDurationInDays: 7));
+
+        Indicator(run, "AK-ENTRA-053").Status.Should().Be(KnightIndicatorStatus.Exposed,
+            "a última ocorrência permitida pela faixa terminou antes da coleta");
+    }
+
+    [Fact]
+    public async Task Convidados_DataFinalPassada_UltimaOcorrenciaEmAndamento_Aprova()
+    {
+        // A data final impede NOVAS ocorrências; não encerra a instância que ainda corre.
+        var last = MonthlyStartDaysAgo(3);
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(), AllUnifiedGroups(),
+            recurrence: Recurrence("absoluteMonthly", 1, EndsOn(last.AddMonths(-8), Today.AddDays(-1)), dayOfMonth: last.Day),
+            instanceDurationInDays: 7));
+
+        Indicator(run, "AK-ENTRA-053").Status.Should().Be(KnightIndicatorStatus.Passed,
+            "a última ocorrência começou há três dias e a revisão dura sete");
+    }
+
+    [Fact]
+    public async Task Convidados_DataFinalPassada_EstadoContradizAsDatas_NaoAprova()
+    {
+        // As datas põem a última ocorrência em andamento, mas a fonte diz que nada começou. A contradição é
+        // registrada; não vira aprovação.
+        var last = MonthlyStartDaysAgo(3);
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(), AllUnifiedGroups(),
+            recurrence: Recurrence("absoluteMonthly", 1, EndsOn(last.AddMonths(-8), Today.AddDays(-1)), dayOfMonth: last.Day),
+            status: "NotStarted", instanceDurationInDays: 7));
+
+        var i = Indicator(run, "AK-ENTRA-053");
+        i.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        i.NotEvaluatedReason.Should().Contain("NotStarted");
+    }
+
+    [Fact]
+    public async Task Convidados_DataFinalPassada_SemDiaDoMes_NaoAprovaPorLimiteSuperior()
+    {
+        // Sem dayOfMonth não há como situar a última ocorrência permitida pela faixa, e o limite superior não
+        // demonstra que a série continua vigente.
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(), AllUnifiedGroups(),
+            recurrence: Recurrence("absoluteMonthly", 1, EndsOn(Today.AddMonths(-8), Today.AddDays(-1))),
+            instanceDurationInDays: 7));
+
+        var i = Indicator(run, "AK-ENTRA-053");
+        i.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        i.NotEvaluatedReason.Should().Contain("dayOfMonth");
+    }
+
     // ---- Papéis (AK-ENTRA-054 e AK-ENTRA-030) ----------------------------------------------------------
 
     [Fact]
@@ -397,6 +456,24 @@ public sealed class KnightAccessReviewScopeTests : IDisposable
         ["startDate"] = start.ToString("yyyy-MM-dd"),
         ["numberOfOccurrences"] = occurrences,
     };
+
+    /// <summary>Faixa com data final (recurrenceRange do tipo <c>endDate</c>).</summary>
+    private static object EndsOn(DateOnly start, DateOnly end) => new Dictionary<string, object>
+    {
+        ["type"] = "endDate",
+        ["startDate"] = start.ToString("yyyy-MM-dd"),
+        ["endDate"] = end.ToString("yyyy-MM-dd"),
+    };
+
+    /// <summary>
+    /// Data de início de uma ocorrência mensal ocorrida há <paramref name="daysAgo"/> dias ou mais, sempre num dia
+    /// que existe em todos os meses — assim o teste não depende do calendário do dia em que roda.
+    /// </summary>
+    private static DateOnly MonthlyStartDaysAgo(int daysAgo)
+    {
+        var d = Today.AddDays(-daysAgo);
+        return d.Day <= 28 ? d : new DateOnly(d.Year, d.Month, 28);
+    }
 
     private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
 

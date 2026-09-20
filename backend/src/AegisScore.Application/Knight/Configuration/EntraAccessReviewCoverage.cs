@@ -224,9 +224,35 @@ public static class EntraAccessReviewCoverage
                 if (duration is not { } days)
                     return new(KnightAccessReviewCriteria.Undetermined,
                         $"a série deixou de gerar ocorrências em {end:dd/MM/yyyy} e a fonte não informou a duração das revisões: não há como demonstrar que a última terminou");
-                return end.AddDays(days) < today
-                    ? new(KnightAccessReviewCriteria.Fails, $"a série terminou: a última revisão possível acabou em {end.AddDays(days):dd/MM/yyyy}")
-                    : new(KnightAccessReviewCriteria.Meets, ok);
+
+                // LIMITE SUPERIOR: nenhuma ocorrência pode COMEÇAR depois da data final, logo nenhuma pode terminar
+                // depois dela mais a duração. Esse limite demonstra o ENCERRAMENTO — nunca a vigência.
+                if (end.AddDays(days) < today)
+                    return new(KnightAccessReviewCriteria.Fails,
+                        $"a série terminou: nenhuma ocorrência podia começar depois de {end:dd/MM/yyyy} e cada revisão dura {days} dia(s)");
+
+                // Daqui em diante o limite superior não decide nada: é preciso situar no calendário a última
+                // ocorrência que o padrão permite DENTRO da faixa. A documentação avisa que ela pode não cair na
+                // data final.
+                var (kind, begun) = LastOccurrenceWithin(r, end);
+                if (kind == RangeOccurrence.Unknown)
+                    return new(KnightAccessReviewCriteria.Undetermined, MissingForRange(r, end));
+                if (kind == RangeOccurrence.None)
+                    return new(KnightAccessReviewCriteria.Fails,
+                        $"a faixa da série terminou em {end:dd/MM/yyyy} sem permitir nenhuma ocorrência do padrão");
+
+                var closed = begun.AddDays(days);
+                if (closed < today)
+                    return new(KnightAccessReviewCriteria.Fails,
+                        $"a série terminou: a última ocorrência permitida pela faixa começou em {begun:dd/MM/yyyy} e acabou em {closed:dd/MM/yyyy}");
+
+                // A data final impede NOVAS ocorrências; não encerra a instância que ainda corre. Para afirmar que
+                // ela corre, o estado informado pela fonte precisa corroborar as datas.
+                return Underway(d.Status)
+                    ? new(KnightAccessReviewCriteria.Meets,
+                        $"vigência demonstrada: a última ocorrência permitida começou em {begun:dd/MM/yyyy} e segue em andamento até {closed:dd/MM/yyyy}")
+                    : new(KnightAccessReviewCriteria.Undetermined,
+                        $"as datas põem a última ocorrência em andamento até {closed:dd/MM/yyyy}, mas o estado informado ({d.Status ?? "não informado"}) não confirma revisão em andamento: a contradição não é resolvida pelo que foi coletado");
 
             case "numbered":
                 if (r.StartDate is null || r.NumberOfOccurrences is not { } occurrences || occurrences <= 0)
@@ -253,20 +279,68 @@ public static class EntraAccessReviewCoverage
     /// bastam: diário e semanal (que, em revisões de acesso, usam só tipo e intervalo) e mensal absoluto com
     /// <c>dayOfMonth</c> — a documentação avisa que a primeira ocorrência pode ser posterior ao início da faixa.
     /// </summary>
-    private static DateOnly? LastOccurrence(EntraAccessReviewRecurrence r, int occurrences)
+    private static DateOnly? LastOccurrence(EntraAccessReviewRecurrence r, int occurrences) => Occurrence(r, occurrences - 1);
+
+    /// <summary>Data da ocorrência de índice <paramref name="step"/> (0 = a primeira), pelo calendário.</summary>
+    private static DateOnly? Occurrence(EntraAccessReviewRecurrence r, int step)
     {
-        if (r.StartDate is not { } start || r.Interval is not { } interval || interval <= 0) return null;
-        var steps = occurrences - 1;
+        if (step < 0 || r.StartDate is not { } start || r.Interval is not { } interval || interval <= 0) return null;
         switch (r.PatternType?.ToLowerInvariant())
         {
-            case "daily": return start.AddDays(interval * steps);
-            case "weekly": return start.AddDays(7 * interval * steps);
+            case "daily": return start.AddDays(interval * step);
+            case "weekly": return start.AddDays(7 * interval * step);
             case "absolutemonthly":
                 if (r.DayOfMonth is not { } day || day is < 1 or > 31) return null;
-                return FirstMonthly(start, day)?.AddMonths(interval * steps);
+                return FirstMonthly(start, day)?.AddMonths(interval * step);
             default: return null;
         }
     }
+
+    private enum RangeOccurrence { Found, None, Unknown }
+
+    /// <summary>
+    /// ÚLTIMA ocorrência que o padrão permite dentro de uma faixa terminada em <paramref name="end"/>. A data final
+    /// impede novas ocorrências, mas a última pode ser bem anterior a ela: o cálculo usa o MESMO calendário das
+    /// demais contas, e o índice estimado é conferido nas duas direções.
+    /// </summary>
+    private static (RangeOccurrence Kind, DateOnly Date) LastOccurrenceWithin(EntraAccessReviewRecurrence r, DateOnly end)
+    {
+        if (Occurrence(r, 0) is not { } first) return (RangeOccurrence.Unknown, default);
+        if (first > end) return (RangeOccurrence.None, default);
+
+        var step = Math.Max(0, EstimateSteps(r, first, end));
+        while (step > 0 && Occurrence(r, step) > end) step--;
+        while (Occurrence(r, step + 1) is { } next && next <= end) step++;
+        return Occurrence(r, step) is { } last && last <= end ? (RangeOccurrence.Found, last) : (RangeOccurrence.Unknown, default);
+    }
+
+    /// <summary>Índice aproximado da última ocorrência até <paramref name="end"/>, conferido pelo chamador.</summary>
+    private static int EstimateSteps(EntraAccessReviewRecurrence r, DateOnly first, DateOnly end)
+    {
+        var interval = r.Interval!.Value;
+        return r.PatternType?.ToLowerInvariant() switch
+        {
+            "daily" => (end.DayNumber - first.DayNumber) / interval,
+            "weekly" => (end.DayNumber - first.DayNumber) / (7 * interval),
+            "absolutemonthly" => ((end.Year - first.Year) * 12 + end.Month - first.Month) / interval,
+            _ => 0,
+        };
+    }
+
+    private static string MissingForRange(EntraAccessReviewRecurrence r, DateOnly end) =>
+        string.Equals(r.PatternType, "absoluteMonthly", StringComparison.OrdinalIgnoreCase)
+            ? $"a faixa da série terminou em {end:dd/MM/yyyy} e a fonte não informou o dia do mês (dayOfMonth) do padrão: a última ocorrência permitida não pode ser situada, e a data final sozinha não demonstra a vigência"
+            : $"a faixa da série terminou em {end:dd/MM/yyyy} e o padrão {r.PatternType} não permite situar a última ocorrência com o que a coleta traz";
+
+    /// <summary>
+    /// Estados documentados em que uma ocorrência está efetivamente correndo. A documentação lista os estados
+    /// TÍPICOS, então o que não estiver nela não corrobora data nenhuma.
+    /// </summary>
+    private static bool Underway(string? status) =>
+        status is not null && (status.Equals("InProgress", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("Starting", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("Completing", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("AutoReviewing", StringComparison.OrdinalIgnoreCase));
 
     private static string MissingForOccurrences(EntraAccessReviewRecurrence r) =>
         string.Equals(r.PatternType, "absoluteMonthly", StringComparison.OrdinalIgnoreCase)
