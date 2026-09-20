@@ -85,7 +85,9 @@ public sealed class KnightTeamsCollectorTests
         result.State.Should().Be(KnightSourceState.InsufficientPermission);
         result.Capabilities.Should().HaveCount(TeamsKnightCollector.Capabilities.Count)
             .And.OnlyContain(c => c.Outcome == KnightCapabilityOutcome.InsufficientPermission);
-        result.Capabilities.Should().OnlyContain(c => c.Detail!.Contains("não foi estabelecida"));
+        // A mensagem é MONTADA a partir da categoria — não é o texto que a fonte devolveu.
+        result.Capabilities.Should().OnlyContain(c => c.Detail!.Contains("recusada por permissão ou papel insuficiente"));
+        result.Capabilities.Should().OnlyContain(c => c.Detail!.Contains("Leitor do Teams"));
         result.TenantConfigurationOrEmpty.Documents.Should().BeEmpty();
     }
 
@@ -164,7 +166,171 @@ public sealed class KnightTeamsCollectorTests
             .Should().NotContain("graph-token").And.NotContain("teams-token").And.Contain("***");
     }
 
+    // ======================================================================================================
+    //  [Revisão dirigida] Omissão de leitura ≠ leitura concluída sem registros
+    // ======================================================================================================
+
+    /// <summary>
+    /// DEFEITO REPRODUZIDO: o estado da coleta era decidido DEPOIS de descartar as capacidades não tentadas; uma
+    /// leitura que o adaptador simplesmente OMITIU deixava o conjunto restante todo "Collected" e a coleta era
+    /// declarada CONCLUÍDA. Omissão é ausência de leitura, não leitura sem registros.
+    /// </summary>
+    [Fact]
+    public async Task LeituraOmitidaPeloAdaptador_NaoProduzColetaCompleta()
+    {
+        var result = await CollectorFor(new TeamsCollectionScenario(TeamsCollectionScenario.Variant.ReadOmitted))
+            .CollectAsync(Context());
+
+        result.State.Should().Be(KnightSourceState.PartialCollection);
+        result.State.Should().NotBe(KnightSourceState.Completed);
+
+        var omitida = result.Capabilities.Single(c => c.Capability == KnightCapability.TeamsMessagingPolicies);
+        omitida.Outcome.Should().Be(KnightCapabilityOutcome.NotAttempted);
+        omitida.Detail.Should().Contain("não registrou esta leitura");
+
+        // E o que dependia dela permanece ilegível — nunca "coletou e não achou nada".
+        var read = result.TenantConfigurationOrEmpty.Read<TeamsMessagingPolicyConfiguration>();
+        read.Collected.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Uma leitura que CONCLUIU sem devolver registros continua sendo coleta completa: é o outro lado da
+    /// distinção, e ele não pode ser perdido junto com a correção.
+    /// </summary>
+    [Fact]
+    public async Task LeituraConcluidaSemRegistros_ContinuaSendoColetaCompleta()
+    {
+        var result = await CollectorFor(new ColetaComListaVazia()).CollectAsync(Context());
+
+        result.State.Should().Be(KnightSourceState.Completed);
+        result.Capabilities.Should().OnlyContain(c => c.Outcome == KnightCapabilityOutcome.Collected);
+        var read = result.TenantConfigurationOrEmpty.Read<TeamsPolicyAssignment>();
+        read.Collected.Should().BeTrue("a leitura concluiu");
+        read.Items.Should().BeEmpty("e não havia registros");
+    }
+
+    // ======================================================================================================
+    //  [Revisão dirigida] Identificação ausente não vira "Global" no ADM
+    // ======================================================================================================
+
+    /// <summary>
+    /// DEFEITO REPRODUZIDO: sem <c>identity</c>, o coletor gravava "Global" no documento — inventando a política
+    /// padrão da organização — e os registros sem identidade colidiam no mesmo identificador de documento,
+    /// fundindo-se num só. Agora a identidade é preservada como veio (nula) e a posição separa os registros.
+    /// </summary>
+    [Fact]
+    public async Task PoliticasSemIdentificacao_NaoViramGlobal_ENaoSeFundem()
+    {
+        var result = await CollectorFor(new TeamsCollectionScenario(TeamsCollectionScenario.Variant.UnidentifiedPolicies))
+            .CollectAsync(Context());
+
+        var policies = result.TenantConfigurationOrEmpty.Read<TeamsMeetingPolicyConfiguration>();
+        policies.Items.Should().HaveCount(3, "três registros distintos chegaram, e três continuam existindo");
+        policies.Items.Should().OnlyContain(p => !TeamsPolicyIdentities.IsIdentified(p.Identity));
+        policies.Items.Should().NotContain(p => TeamsPolicyIdentities.IsGlobal(p.Identity));
+
+        var ids = result.TenantConfigurationOrEmpty.Documents
+            .Where(d => d.Kind == ConfigurationObjectKind.TeamsMeetingPolicy)
+            .Select(d => d.ExternalId)
+            .ToList();
+        ids.Should().HaveCount(3).And.OnlyHaveUniqueItems();
+        ids.Should().NotContain("TeamsMeetingPolicy:Global");
+    }
+
+    // ======================================================================================================
+    //  [Revisão dirigida] Diagnóstico sanitizado — truncar não é sanitizar
+    // ======================================================================================================
+
+    /// <summary>
+    /// DEFEITO REPRODUZIDO: o texto bruto do erro de conexão era CONCATENADO ao motivo da falha e seguia para o
+    /// ADM, para a API e para o relatório. Esse texto é escrito por um módulo de terceiro e pode repetir o
+    /// cabeçalho de autorização ou o token da chamada. Aqui o adaptador devolve marcadores SINTÉTICOS de segredo
+    /// e nenhum deles pode aparecer no que é persistido ou publicado.
+    /// </summary>
+    [Fact]
+    public async Task SegredoNoDiagnosticoDaConexao_NaoChegaAoResultadoPublicado()
+    {
+        var result = await CollectorFor(new VazaSegredoNoDiagnostico()).CollectAsync(Context());
+
+        var publicado = string.Join(" | ",
+            new[] { result.Detail ?? "" }.Concat(result.Capabilities.Select(c => c.Detail ?? "")));
+
+        publicado.Should().NotContain(VazaSegredoNoDiagnostico.MarcadorDeToken);
+        publicado.Should().NotContain(VazaSegredoNoDiagnostico.MarcadorDeCabecalho);
+        publicado.Should().NotContain("Bearer ");
+        publicado.Should().Contain("Leitor do Teams", "a orientação útil é preservada");
+    }
+
+    /// <summary>
+    /// O mesmo para a falha de UMA leitura: a mensagem é montada pela categoria e pelo comando, e o
+    /// identificador técnico que sobra é sanitizado antes de virar objeto.
+    /// </summary>
+    [Fact]
+    public void IdentificadorDeErroComCaraDeSegredo_EhRedigidoNaLeituraDaSaida()
+    {
+        var jwt = "eyJhbGciOiJIUzI1NiJ9.QUVHSVMtTUFSQ0FET1ItU0lOVEVUSUNP.c2lnbmF0dXJlLXNpbnRldGljYQ";
+        var json = "{\"runtime\":{},\"connected\":false,\"connectionErrorCategory\":\"AuthenticationFailure\","
+            + "\"connectionErrorId\":\"" + jwt + "\",\"reads\":[]}";
+
+        var output = PowerShellTeamsAdminReader.Parse(json);
+        output.ConnectionErrorId.Should().NotContain(jwt);
+        output.ConnectionErrorId.Should().Be("[REDIGIDO]");
+    }
+
     // ---- Duplas de teste ------------------------------------------------------------------------------
+
+    /// <summary>Todas as leituras concluem; a de atribuições devolve uma lista VAZIA (e não uma falha).</summary>
+    private sealed class ColetaComListaVazia : ITeamsAdminReader
+    {
+        public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default)
+        {
+            var reads = TeamsKnightCollector.Capabilities.Select(c => new
+            {
+                capability = c.ToString(),
+                command = "Get-" + c,
+                ok = true,
+                items = Array.Empty<object>(),
+                errorCategory = (string?)null,
+                errorId = (string?)null,
+            });
+            var json = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                runtime = new { powerShell = "7.4.6", module = "6.9.0", platform = "Unix" },
+                connected = true,
+                connectionErrorId = (string?)null,
+                connectionErrorCategory = (string?)null,
+                reads,
+            });
+            return Task.FromResult(PowerShellTeamsAdminReader.Parse(json));
+        }
+
+        public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) => ReadAsync(null!, ct);
+    }
+
+    /// <summary>
+    /// Adaptador que devolve, no diagnóstico da conexão, marcadores SINTÉTICOS com a forma de segredo. Nenhuma
+    /// credencial real: são cadeias inventadas para este teste.
+    /// </summary>
+    private sealed class VazaSegredoNoDiagnostico : ITeamsAdminReader
+    {
+        internal const string MarcadorDeToken = "eyJhZWdpcyI6InNpbnRldGljbyJ9.QUVHSVMtVEVTVEUtU0lOVEVUSUNP.YXNzaW5hdHVyYQ";
+        internal const string MarcadorDeCabecalho = "Authorization: Bearer AEGIS-MARCADOR-SINTETICO-0123456789";
+
+        public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                runtime = new { powerShell = "7.4.6", module = "6.9.0", platform = "Unix" },
+                connected = false,
+                connectionErrorCategory = "InsufficientPermission",
+                connectionErrorId = MarcadorDeToken + " " + MarcadorDeCabecalho,
+                reads = Array.Empty<object>(),
+            });
+            return Task.FromResult(PowerShellTeamsAdminReader.Parse(json));
+        }
+
+        public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) => ReadAsync(null!, ct);
+    }
 
     private sealed class FakeTokens : ITeamsTokenClient
     {

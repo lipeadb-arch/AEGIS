@@ -83,6 +83,9 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
             ConfigurationObjectKind.TeamsClientConfiguration, ConfigurationObjectKind.TeamsFederationConfiguration,
             ConfigurationObjectKind.TeamsMeetingPolicy, ConfigurationObjectKind.TeamsMessagingPolicy,
             ConfigurationObjectKind.TeamsAppPermissionPolicy, ConfigurationObjectKind.TeamsPolicyAssignment,
+            // O modelo de disponibilidade de aplicativos (ACM/UAM) é o que demonstra se a política de permissão
+            // legada ainda governa este locatário — sem ele, AK-TEAMS-007 não conclui.
+            ConfigurationObjectKind.TeamsAppAvailability,
         });
         persisted.Should().OnlyContain(p => p.SchemaVersion.StartsWith("aegis-config-teams-"));
         persisted.Where(p => p.Kind == ConfigurationObjectKind.TeamsMeetingPolicy).Should().HaveCount(2,
@@ -367,7 +370,189 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
             .Should().Be(1, "a coleta recusada não destrói a evidência anterior");
     }
 
+    // ======================================================================================================
+    //  [Revisão dirigida] Os defeitos, reproduzidos pelo caminho INTEIRO: coletor → ADM → releitura → avaliação
+    // ======================================================================================================
+
+    /// <summary>
+    /// AK-TEAMS-010 com a admissão automática em “pessoas que foram convidadas”. Pela documentação oficial esse
+    /// valor deixa passar convidados e participantes externos convidados — logo, o percurso completo precisa
+    /// REPROVAR, e o texto publicado não pode afirmar que só entram pessoas da organização.
+    /// </summary>
+    [Fact]
+    public async Task InvitedUsers_ReprovaNoPercursoCompleto_EOTextoPublicadoDescreveOValor()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+
+        var run = await ServiceFor(db, TenantA,
+                new TeamsCollectionScenario(TeamsCollectionScenario.Variant.Compliant, autoAdmittedUsers: "InvitedUsers"))
+            .RunAssessmentAsync(KnightSourceType.MicrosoftTeams);
+        Dump(run);
+
+        var lobby = run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-010");
+        lobby.Status.Should().Be(KnightIndicatorStatus.Exposed);
+        lobby.Evidence.Should().NotContain("Somente pessoas da organização entram");
+
+        // E o relatório publicado carrega a descrição precisa do valor encontrado.
+        var published = await PostureFor(db, TenantA).PublishAsync(
+            PostureSnapshotType.Knight, KnightSourceType.MicrosoftTeams, run.Id);
+        var html = Encoding.UTF8.GetString(
+            (await new PostureSnapshotExporter(db).ExportAsync(published.Summary.Id, PostureExportFormat.Html))!.Content);
+        html.Should().Contain("CONVIDADOS").And.Contain("encaminhado");
+    }
+
+    /// <summary>
+    /// Registros de política sem identificação, com valores conformes e sem Global explícita: pelo percurso
+    /// inteiro isso é dado insuficiente — a avaliação NÃO aprova e o ADM preserva os registros separados.
+    /// </summary>
+    [Fact]
+    public async Task PoliticasSemIdentificacao_NaoAprovamOAmbiente_ENaoSeFundemNoAdm()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+
+        var run = await RunAsync(db, TenantA, TeamsCollectionScenario.Variant.UnidentifiedPolicies);
+        Dump(run);
+
+        var deReuniao = run.Indicators
+            .Where(i => i.IndicatorId is "AK-TEAMS-008" or "AK-TEAMS-010" or "AK-TEAMS-013" or "AK-TEAMS-016")
+            .ToList();
+        deReuniao.Should().OnlyContain(i => i.Status == KnightIndicatorStatus.NotEvaluated);
+        deReuniao.Should().OnlyContain(i => i.NotEvaluatedReason!.Contains("SEM identificação"));
+
+        var entity = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id);
+        var politicas = await db.IdentityConfigurationObservations.AsNoTracking()
+            .Where(c => c.AcquisitionId == entity.IdentityAcquisitionId
+                && c.Kind == ConfigurationObjectKind.TeamsMeetingPolicy)
+            .Select(c => c.ExternalId)
+            .ToListAsync();
+
+        politicas.Should().HaveCount(3).And.OnlyHaveUniqueItems("três registros distintos, três documentos");
+        politicas.Should().NotContain("TeamsMeetingPolicy:Global", "nada aqui é a política padrão da organização");
+    }
+
+    /// <summary>
+    /// Locatário MIGRADO para ACM/UAM: AK-TEAMS-007 não conclui pela política de permissão legada, mas a
+    /// preserva como evidência e diz o requisito que falta. O restante da avaliação segue normal.
+    /// </summary>
+    [Fact]
+    public async Task TenantMigrado_AkTeams007_NaoAprovaPelaConfiguracaoLegada_MasAPreserva()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+
+        var run = await ServiceFor(db, TenantA,
+                new TeamsCollectionScenario(TeamsCollectionScenario.Variant.Compliant,
+                    TeamsCollectionScenario.AppModel.Migrated))
+            .RunAssessmentAsync(KnightSourceType.MicrosoftTeams);
+        Dump(run);
+
+        var apps = run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-007");
+        apps.Status.Should().Be(KnightIndicatorStatus.NotApplicable);
+        apps.Status.Should().NotBe(KnightIndicatorStatus.Passed);
+        apps.NotEvaluatedReason.Should().Contain("centrado em aplicativos");
+
+        // Os outros controles do cenário conforme continuam aprovando: a condição é só deste critério.
+        run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-010").Status.Should().Be(KnightIndicatorStatus.Passed);
+    }
+
+    /// <summary>Modelo de governo DESCONHECIDO: também não conclui, e o requisito é declarado.</summary>
+    [Fact]
+    public async Task ModeloDeGovernoDeAplicativosDesconhecido_AkTeams007_NaoConclui()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+
+        var run = await ServiceFor(db, TenantA,
+                new TeamsCollectionScenario(TeamsCollectionScenario.Variant.Compliant,
+                    TeamsCollectionScenario.AppModel.Unknown))
+            .RunAssessmentAsync(KnightSourceType.MicrosoftTeams);
+        Dump(run);
+
+        var apps = run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-007");
+        apps.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        apps.NotEvaluatedReason.Should().Contain("Get-AllM365TeamsApps");
+
+        // A coleta inteira é PARCIAL, porque uma leitura esperada foi recusada.
+        run.SourceState.Should().Be(KnightSourceState.PartialCollection);
+    }
+
+    /// <summary>
+    /// Leitura OMITIDA pelo adaptador: a coleta não pode ser declarada concluída, e o controle que dependia
+    /// dela fica não avaliado com o motivo.
+    /// </summary>
+    [Fact]
+    public async Task LeituraOmitida_NaoViraColetaCompleta_NemControleAprovado()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+
+        var run = await RunAsync(db, TenantA, TeamsCollectionScenario.Variant.ReadOmitted);
+        Dump(run);
+
+        run.SourceState.Should().Be(KnightSourceState.PartialCollection);
+        run.SourceState.Should().NotBe(KnightSourceState.Completed);
+
+        var relato = run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-017");
+        relato.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+    }
+
+    /// <summary>
+    /// Nenhum marcador sintético de segredo sobrevive até o que é PERSISTIDO e PUBLICADO quando a conexão falha
+    /// com diagnóstico contaminado. A orientação útil continua lá.
+    /// </summary>
+    [Fact]
+    public async Task SegredoNoDiagnostico_NaoChegaAoAdm_NemAoRelatorio()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+
+        var run = await ServiceFor(db, TenantA, new ConexaoComSegredoNoDiagnostico())
+            .RunAssessmentAsync(KnightSourceType.MicrosoftTeams);
+        Dump(run);
+
+        var published = await PostureFor(db, TenantA).PublishAsync(
+            PostureSnapshotType.Knight, KnightSourceType.MicrosoftTeams, run.Id);
+        var exporter = new PostureSnapshotExporter(db);
+        var html = Encoding.UTF8.GetString((await exporter.ExportAsync(published.Summary.Id, PostureExportFormat.Html))!.Content);
+        var csv = Encoding.UTF8.GetString((await exporter.ExportAsync(published.Summary.Id, PostureExportFormat.Csv))!.Content);
+
+        var tudo = string.Join(" | ",
+            string.Join(" ", run.Capabilities.Select(c => c.Detail)),
+            string.Join(" ", run.Indicators.Select(i => i.Evidence + " " + i.NotEvaluatedReason)),
+            html, csv);
+
+        tudo.Should().NotContain(ConexaoComSegredoNoDiagnostico.MarcadorDeToken);
+        tudo.Should().NotContain(ConexaoComSegredoNoDiagnostico.MarcadorDeSegredo);
+        tudo.Should().NotContain("Bearer ");
+        tudo.Should().Contain("Leitor do Teams", "a orientação sobre a causa é preservada");
+    }
+
     // ---- Infraestrutura -----------------------------------------------------------------------------
+
+    /// <summary>
+    /// Adaptador que devolve, no diagnóstico da conexão, marcadores SINTÉTICOS com forma de segredo. Nenhuma
+    /// credencial real: são cadeias inventadas para este teste.
+    /// </summary>
+    private sealed class ConexaoComSegredoNoDiagnostico : ITeamsAdminReader
+    {
+        internal const string MarcadorDeToken = "eyJhZWdpcyI6ImZsdXhvIn0.QUVHSVMtRkxVWE8tU0lOVEVUSUNP.YXNzaW5hdHVyYQ";
+        internal const string MarcadorDeSegredo = "client_secret=AEGIS-SEGREDO-SINTETICO-do-fluxo-0001";
+
+        public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            Task.FromResult(PowerShellTeamsAdminReader.Parse(
+                System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    runtime = new { powerShell = "7.4.6", module = "6.9.0", platform = "Unix" },
+                    connected = false,
+                    connectionErrorCategory = "InsufficientPermission",
+                    connectionErrorId = MarcadorDeToken + " " + MarcadorDeSegredo,
+                    reads = Array.Empty<object>(),
+                })));
+
+        public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) => ReadAsync(null!, ct);
+    }
 
     private Task<KnightAssessment> RunAsync(AegisScoreDbContext db, Guid tenant, TeamsCollectionScenario.Variant variant) =>
         ServiceFor(db, tenant, variant).RunAssessmentAsync(KnightSourceType.MicrosoftTeams);
@@ -375,7 +560,7 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
     private static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId, TeamsCollectionScenario.Variant variant) =>
         ServiceFor(db, tenantId, new TeamsCollectionScenario(variant));
 
-    internal static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId, TeamsCollectionScenario reader)
+    internal static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId, ITeamsAdminReader reader)
     {
         var tenant = new SystemTenantContext(tenantId);
         var registry = new KnightCollectorRegistry(new IKnightCollector[]

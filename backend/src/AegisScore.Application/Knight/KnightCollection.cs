@@ -143,6 +143,13 @@ public enum KnightCapability
     /// ALCANCE de uma política personalizada sem enumerar usuário a usuário.
     /// </summary>
     TeamsPolicyAssignments = 35,
+
+    /// <summary>
+    /// Modelo de DISPONIBILIDADE DE APLICATIVOS do locatario (<c>Get-AllM365TeamsApps</c>) — o comando oficial do
+    /// gerenciamento centrado em aplicativos (ACM) / unificado (UAM). E o que permite dizer QUAL modelo governa o
+    /// acesso a aplicativos e, portanto, se a politica de permissao legada ainda e autoritativa.
+    /// </summary>
+    TeamsAppAvailability = 36,
 }
 
 /// <summary>

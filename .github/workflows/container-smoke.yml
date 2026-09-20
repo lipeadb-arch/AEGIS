@@ -219,6 +219,17 @@ jobs:
       #     com data final: a última ocorrência permitida pela faixa, situada no calendário, e a contradição
       #     entre as datas e o estado). Filtro inalterado; o passo vai de 783 a 787 (medido localmente com este
       #     MESMO filtro, em Release).
+      #     [AEGIS-KNIGHT-COVERAGE-02] Configuração do Microsoft Teams. São ADICIONADAS ao filtro 4 classes NOVAS:
+      #     KnightTeamsCollectorTests, KnightTeamsPolicyReachTests, KnightTeamsConfigurationFlowTests e
+      #     TeamsAdapterTransportTests. O passo vai de 787 a 839 (medido localmente com este MESMO filtro, em
+      #     Release; conferido no log do CI).
+      #     Revisão dirigida (mesmo PR): +38 casos NAS CLASSES QUE JÁ CONSTAM DESTE FILTRO — nenhuma classe nova.
+      #     São os defeitos reproduzidos e travados: InvitedUsers não exclui convidados do lobby; identificação de
+      #     política ausente que não vira "Global" nem funde registros; leitura OMITIDA que não vira coleta
+      #     completa; a condição de aplicabilidade ACM/UAM de AK-TEAMS-007 (legado comprovado × migrado ×
+      #     desconhecido); a sanitização dos diagnósticos com marcadores sintéticos de segredo; a verificação de
+      #     runtime pelo caminho real do adaptador; e os textos de risco de AK-TEAMS-009/013/015/017 alinhados à
+      #     evidência. O passo vai de 839 a 877 (medido localmente com este MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
@@ -228,40 +239,38 @@ jobs:
       - name: Build homologation image
         run: docker build -t "$IMAGE" .
 
-      # 2b) [AEGIS-KNIGHT-COVERAGE-02] Validação do RUNTIME de coleta do Microsoft Teams DENTRO da imagem Linux
-      #     de implantação — o que não pôde ser validado no Windows local. Prova três coisas distintas:
-      #       • o PowerShell 7 roda nesta imagem;
-      #       • o módulo oficial MicrosoftTeams IMPORTA OFFLINE (--network none), na versão fixada no Dockerfile;
-      #       • os comandos que o adaptador usa EXISTEM nessa versão do módulo.
-      #     Isto NÃO é homologação: não há locatário, credencial nem conexão — só o runtime e o módulo.
-      - name: Teams collection runtime inside the image (pwsh + MicrosoftTeams module, offline)
+      # 2b) [AEGIS-KNIGHT-COVERAGE-02] Validação do RUNTIME de coleta do Microsoft Teams DENTRO da imagem Linux de
+      #     implantação — o que não pôde ser validado no Windows local.
+      #
+      #     ⚠️ Esta validação roda pelo CAMINHO REAL DO ADAPTADOR, e não por um comando de PowerShell solto. A
+      #     primeira versão deste passo chamava `pwsh -Command 'Import-Module MicrosoftTeams'` diretamente e
+      #     FALHOU com o módulo presente na imagem: quem monta o PSModulePath a partir de
+      #     `Knight__Teams__ModulePath` é o adaptador, não o shell. Um teste que não reproduz a configuração do
+      #     produto testa outra coisa. Agora o passo executa o próprio diagnóstico do produto
+      #     (`--knight-teams-runtime-check`), que:
+      #       • lê as opções REAIS do ambiente (Knight__Teams__Executable / Knight__Teams__ModulePath);
+      #       • materializa o script EMBUTIDO no assembly e o executa no processo do PowerShell configurado;
+      #       • importa o módulo oficial OFFLINE (--network none), na versão fixada no Dockerfile;
+      #       • confere que cada comando que a coleta usa existe nessa versão;
+      #       • roda como o usuário NÃO-ROOT da imagem (o USER do Dockerfile), como a coleta rodará.
+      #     Encerra com 0 só quando tudo isso passa — a marca `adaptador=OK` é conferida e o gate não é mascarado.
+      #     Isto NÃO é homologação: não há locatário, credencial nem conexão.
+      - name: Teams collection runtime inside the image (real adapter path, non-root, offline)
         run: |
           set -euo pipefail
 
-          echo "--- runtime do PowerShell ---"
-          docker run --rm --entrypoint /usr/bin/pwsh "$IMAGE" \
-            -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
-
-          echo "--- importação do módulo + comandos usados pelo adaptador (sem rede) ---"
-          OUT="$(docker run --rm --network none --entrypoint /usr/bin/pwsh "$IMAGE" -NoLogo -NoProfile -NonInteractive -Command '
-            $ErrorActionPreference = "Stop"
-            Import-Module MicrosoftTeams -ErrorAction Stop
-            $v = (Get-Module MicrosoftTeams).Version.ToString()
-            $faltando = @()
-            foreach ($n in @(
-                "Connect-MicrosoftTeams","Disconnect-MicrosoftTeams","Get-CsTeamsClientConfiguration",
-                "Get-CsTenantFederationConfiguration","Get-CsTeamsMeetingPolicy","Get-CsTeamsMessagingPolicy",
-                "Get-CsTeamsAppPermissionPolicy","Get-CsGroupPolicyAssignment")) {
-              if (-not (Get-Command $n -Module MicrosoftTeams -ErrorAction SilentlyContinue)) { $faltando += $n }
-            }
-            if ($faltando.Count -gt 0) { throw ("comandos ausentes no modulo " + $v + ": " + ($faltando -join ", ")) }
-            "MicrosoftTeams=$v comandos=OK"
-          ')"
-          echo "$OUT"
-          case "$OUT" in *"comandos=OK"*) ;; *) echo "runtime do Teams NAO validado"; exit 1;; esac
-
           echo "--- usuário efetivo da aplicação e executável disponível ---"
           docker run --rm --entrypoint /bin/sh "$IMAGE" -c 'id -u; test -x /usr/bin/pwsh && echo pwsh-executavel'
+
+          echo "--- adaptador de coleta: script embutido em modo module-check, sem rede e sem locatário ---"
+          set +e
+          OUT="$(docker run --rm --network none --entrypoint dotnet "$IMAGE" \
+            /app/AegisScore.Api.dll --knight-teams-runtime-check 2>&1)"
+          CODE=$?
+          set -e
+          echo "$OUT"
+          if [ "$CODE" -ne 0 ]; then echo "runtime do Teams NAO validado (codigo $CODE)"; exit 1; fi
+          case "$OUT" in *"adaptador=OK"*) ;; *) echo "runtime do Teams NAO validado"; exit 1;; esac
 
       # 3) Smoke do container: rede + Postgres descartáveis, PKCS#12 sintético (grupo 1000, 0640),
       #    montado em /etc/secrets, app com valores 100% sintéticos. TLS interno desabilitado só aqui.

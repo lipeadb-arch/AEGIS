@@ -114,16 +114,23 @@ public static class TeamsPolicyReach
 
         var reach = PolicyReach.Build(context, policies.Items[0].PolicyType);
 
+        // A POSIÇÃO na coleta entra no registro: duas instâncias que chegaram SEM identificação são dois
+        // registros distintos e não podem colapsar num único objeto de evidência.
         var readings = policies.Items
-            .Select(p => (Policy: (ITeamsPolicyDocument)p, Reading: read(p)))
-            .OrderBy(x => TeamsPolicyIdentities.IsGlobal(x.Policy.Identity) ? 0 : 1)
-            .ThenBy(x => TeamsPolicyIdentities.Name(x.Policy.Identity), StringComparer.OrdinalIgnoreCase)
+            .Select((p, index) => new Instance((ITeamsPolicyDocument)p, Interpret(p, read), index))
+            .OrderBy(x => TeamsPolicyIdentities.IsGlobal(x.Policy.Identity) ? 0 : TeamsPolicyIdentities.IsIdentified(x.Policy.Identity) ? 1 : 2)
+            .ThenBy(x => TeamsPolicyIdentities.Name(x.Policy.Identity) ?? "", StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Index)
             .ToList();
 
+        var unidentified = readings.Where(x => !TeamsPolicyIdentities.IsIdentified(x.Policy.Identity)).ToList();
+
         var global = readings.FirstOrDefault(x => TeamsPolicyIdentities.IsGlobal(x.Policy.Identity));
-        if (global.Policy is null)
+        if (global is null)
             return KnightControlOutcome.NotEvaluated(
-                "a coleta não devolveu a política padrão da organização; sem ela não é possível afirmar o que vale para quem não tem política personalizada.");
+                "a coleta não devolveu a política padrão da organização; sem ela não é possível afirmar o que vale para quem não tem política personalizada."
+                + (unidentified.Count > 0 ? " " + UnidentifiedLimitation(unidentified.Count) : ""),
+                readings.Select(x => Evidence(x, settingId, settingLabel, expected, reach)).ToList());
 
         if (global.Reading.State == TeamsPolicyState.Indeterminate)
             return KnightControlOutcome.NotEvaluated(
@@ -159,6 +166,34 @@ public static class TeamsPolicyReach
             affected, evidence, complete: unreadable.Count == 0, limitation: limitation);
     }
 
+    /// <summary>UMA instância de política na coleta, com a posição em que chegou.</summary>
+    private sealed record Instance(ITeamsPolicyDocument Policy, TeamsPolicyReading Reading, int Index);
+
+    /// <summary>
+    /// Leitura do critério numa instância, com a regra da IDENTIFICAÇÃO AUSENTE aplicada por cima:
+    ///   • valor que VIOLA o critério continua violando — o defeito de configuração é um fato demonstrado, e
+    ///     esconder o achado por causa da identidade seria perder o problema;
+    ///   • valor que ATENDE ao critério vira INDETERMINADO — um registro que a fonte não identificou não diz a
+    ///     quem se aplica, então não pode sustentar a aprovação do ambiente.
+    /// </summary>
+    private static TeamsPolicyReading Interpret<TPolicy>(TPolicy policy, Func<TPolicy, TeamsPolicyReading> read)
+        where TPolicy : class, ITeamsPolicyDocument
+    {
+        var reading = read(policy);
+        if (TeamsPolicyIdentities.IsIdentified(policy.Identity)) return reading;
+        return reading.State == TeamsPolicyState.NonCompliant
+            ? reading
+            : new TeamsPolicyReading(TeamsPolicyState.Indeterminate,
+                reading.State == TeamsPolicyState.Compliant
+                    ? $"{reading.Observed}, em registro que a coleta devolveu SEM identificação de política"
+                    : reading.Observed + ", em registro sem identificação de política");
+    }
+
+    private static string UnidentifiedLimitation(int count) =>
+        $"A coleta devolveu {N(count)} registro(s) deste tipo SEM identificação de política. Eles foram preservados "
+        + "como registros distintos, mas não foram interpretados como a política padrão da organização nem tiveram o "
+        + "alcance demonstrado.";
+
     // ---- Alcance --------------------------------------------------------------------------------------
 
     /// <summary>Atribuições a grupos do MESMO tipo de política, indexadas pelo nome da política.</summary>
@@ -177,8 +212,15 @@ public static class TeamsPolicyReach
         public bool AssignmentsCollected { get; }
         public string AssignmentsMissingReason { get; }
 
-        public IReadOnlyList<TeamsPolicyAssignment> For(string? identity) =>
-            AssignmentsCollected ? _byPolicy[TeamsPolicyIdentities.Name(identity)].ToList() : Array.Empty<TeamsPolicyAssignment>();
+        public IReadOnlyList<TeamsPolicyAssignment> For(string? identity)
+        {
+            // Sem NOME não há o que casar com atribuição alguma: devolver a lista vazia é dizer "alcance não
+            // demonstrado", e não "não tem atribuição" — a diferença está no texto de ReachText.
+            var name = TeamsPolicyIdentities.Name(identity);
+            return AssignmentsCollected && name is not null
+                ? _byPolicy[name].ToList()
+                : Array.Empty<TeamsPolicyAssignment>();
+        }
 
         public static PolicyReach Build(KnightEvaluationContext context, string? policyType)
         {
@@ -198,6 +240,11 @@ public static class TeamsPolicyReach
     /// <summary>Alcance de UMA política, em palavras, com o que a coleta tem — nunca mais do que isso.</summary>
     private static string ReachText(string? identity, PolicyReach reach)
     {
+        if (!TeamsPolicyIdentities.IsIdentified(identity))
+            return "Alcance não demonstrado: a coleta devolveu este registro SEM identificação de política. "
+                + "Sem a identidade não é possível dizer se ele é a política padrão da organização ou uma personalizada, "
+                + "nem casá-lo com atribuição a grupo alguma.";
+
         if (TeamsPolicyIdentities.IsGlobal(identity))
             return "Alcance: vale para todas as contas às quais nenhuma política personalizada esteja atribuída.";
 
@@ -218,34 +265,37 @@ public static class TeamsPolicyReach
     }
 
     private static KnightIndicatorObject Evidence(
-        (ITeamsPolicyDocument Policy, TeamsPolicyReading Reading) x,
-        string settingId, string settingLabel, string expected, PolicyReach reach) =>
-        KnightObjects.Evidence(KnightAffectedObjectKind.Policy, PolicyId(settingId, x.Policy.Identity),
+        Instance x, string settingId, string settingLabel, string expected, PolicyReach reach) =>
+        KnightObjects.Evidence(KnightAffectedObjectKind.Policy, PolicyId(settingId, x),
             PolicyDisplay(x.Policy.Identity),
             $"Encontrado: {x.Reading.Observed}. Esperado: {expected}. " + ReachText(x.Policy.Identity, reach),
             $"{settingLabel}: {x.Reading.Observed}");
 
     private static KnightIndicatorObject Affected(
-        (ITeamsPolicyDocument Policy, TeamsPolicyReading Reading) x,
-        string settingId, string settingLabel, string expected, PolicyReach reach) =>
-        KnightObjects.Affected(KnightAffectedObjectKind.Policy, PolicyId(settingId, x.Policy.Identity),
+        Instance x, string settingId, string settingLabel, string expected, PolicyReach reach) =>
+        KnightObjects.Affected(KnightAffectedObjectKind.Policy, PolicyId(settingId, x),
             PolicyDisplay(x.Policy.Identity), null,
             $"Encontrado: {x.Reading.Observed}. Esperado: {expected}. " + ReachText(x.Policy.Identity, reach),
             observed: $"{settingLabel}: {x.Reading.Observed}");
 
     /// <summary>
     /// Identificador do objeto: a configuração lida MAIS a política onde ela foi lida. Duas políticas com o mesmo
-    /// problema são dois objetos distintos, e a mesma política em dois controles não se confunde.
+    /// problema são dois objetos distintos, e a mesma política em dois controles não se confunde. Quando a fonte
+    /// NÃO identificou a política, o identificador usa a POSIÇÃO na coleta — assim dois registros sem identidade
+    /// continuam sendo dois objetos, em vez de se fundirem num só.
     /// </summary>
-    private static string PolicyId(string settingId, string? identity) =>
-        settingId + "@" + (TeamsPolicyIdentities.IsGlobal(identity) ? TeamsPolicyIdentities.Global : TeamsPolicyIdentities.Name(identity));
+    private static string PolicyId(string settingId, Instance x) =>
+        settingId + "@" + (TeamsPolicyIdentities.Name(x.Policy.Identity)
+            ?? "sem-identificacao-" + x.Index.ToString(CultureInfo.InvariantCulture));
 
     private static string PolicyDisplay(string? identity) =>
-        TeamsPolicyIdentities.IsGlobal(identity)
-            ? "Política padrão da organização"
-            : "Política “" + TeamsPolicyIdentities.Name(identity) + "”";
+        !TeamsPolicyIdentities.IsIdentified(identity)
+            ? "Registro de política sem identificação na coleta"
+            : TeamsPolicyIdentities.IsGlobal(identity)
+                ? "Política padrão da organização"
+                : "Política “" + TeamsPolicyIdentities.Name(identity) + "”";
 
-    private static string Failing(IReadOnlyList<(ITeamsPolicyDocument Policy, TeamsPolicyReading Reading)> failing)
+    private static string Failing(IReadOnlyList<Instance> failing)
     {
         var names = failing.Select(f => TeamsPolicyIdentities.Label(f.Policy.Identity)).ToList();
         var joined = names.Count == 1 ? names[0] : string.Join(", ", names.Take(names.Count - 1)) + " e " + names[^1];
@@ -262,9 +312,8 @@ public static class TeamsPolicyReach
             ? "Só existe a política padrão da organização nesta coleta."
             : $"Verificado em {N(total)} políticas deste tipo (a padrão da organização e as personalizadas).";
 
-    private static string Unreadable(
-        IReadOnlyList<(ITeamsPolicyDocument Policy, TeamsPolicyReading Reading)> unreadable, string settingLabel) =>
-        $"{N(unreadable.Count)} política(s) não informaram “{settingLabel}”: "
+    private static string Unreadable(IReadOnlyList<Instance> unreadable, string settingLabel) =>
+        $"{N(unreadable.Count)} política(s) não puderam ser interpretadas para “{settingLabel}”: "
         + string.Join(", ", unreadable.Select(u => TeamsPolicyIdentities.Label(u.Policy.Identity) + " (" + u.Reading.Observed + ")"))
         + ".";
 

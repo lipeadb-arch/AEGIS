@@ -417,6 +417,8 @@ public static class KnightConfigurationKinds
             TeamsAppPermissionPolicyConfiguration.SchemaVersion, typeof(TeamsAppPermissionPolicyConfiguration)),
         new Spec(ConfigurationObjectKind.TeamsPolicyAssignment, KnightCapability.TeamsPolicyAssignments,
             TeamsPolicyAssignment.SchemaVersion, typeof(TeamsPolicyAssignment)),
+        new Spec(ConfigurationObjectKind.TeamsAppAvailability, KnightCapability.TeamsAppAvailability,
+            TeamsAppAvailabilityModel.SchemaVersion, typeof(TeamsAppAvailabilityModel)),
     };
 
     public static Spec? For(ConfigurationObjectKind kind) => All.FirstOrDefault(s => s.Kind == kind);

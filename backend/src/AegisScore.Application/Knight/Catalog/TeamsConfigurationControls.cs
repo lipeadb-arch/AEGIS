@@ -51,6 +51,148 @@ public static class TeamsConfigurationControls
             Evaluate = evaluate,
         };
 
+    // ---- Quem entra sem passar pelo lobby -------------------------------------------------------------
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] Leitura do valor de “quem ignora o lobby”, com o que CADA valor documentado
+    /// admite de fato. O texto observado é o mesmo em tela, HTML, CSV e PDF.
+    ///
+    /// A correção que este método carrega: <b>InvitedUsers não é “somente internos”</b>. A tabela oficial de
+    /// opções do lobby mostra que, com “pessoas que foram convidadas”, também ignoram o lobby os CONVIDADOS e os
+    /// participantes de ORGANIZAÇÕES CONFIÁVEIS que receberam o convite — ou a quem o convite foi encaminhado —,
+    /// e ainda participantes de organizações não confiáveis autenticados no acesso externo. A própria
+    /// documentação diz que a opção "inclui todos os participantes com uma conta corporativa ou de estudante e
+    /// os convidados a quem o convite foi encaminhado, não apenas os que o organizador convidou diretamente".
+    /// Tratar esse valor como equivalente a excluir convidados aprovava uma configuração que deixa gente de fora
+    /// entrar direto, e ainda publicava a frase “somente pessoas da organização entram sem passar pelo lobby”,
+    /// incompatível com o valor encontrado.
+    ///
+    /// Continuam válidos os dois valores que a referência sustenta: <c>EveryoneInCompanyExcludingGuests</c>
+    /// (“pessoas da minha organização”) e <c>OrganizerOnly</c>, estritamente mais restritivo.
+    /// </summary>
+    private static TeamsPolicyReading AutoAdmittedUsers(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return TeamsPolicyReading.Unknown();
+        var v = value.Trim();
+
+        if (v.Equals("OrganizerOnly", StringComparison.OrdinalIgnoreCase))
+            return TeamsPolicyReading.Compliant(
+                "somente organizadores e coorganizadores (todo o resto aguarda no lobby)");
+
+        if (v.Equals("EveryoneInCompanyExcludingGuests", StringComparison.OrdinalIgnoreCase))
+            return TeamsPolicyReading.Compliant(
+                "somente pessoas da organização (convidados, organizações externas e anônimos aguardam no lobby)");
+
+        if (v.Equals("InvitedUsers", StringComparison.OrdinalIgnoreCase))
+            return TeamsPolicyReading.NonCompliant(
+                "pessoas que foram convidadas — inclui CONVIDADOS e participantes de organizações externas que "
+                + "receberam o convite ou a quem ele foi encaminhado, e não apenas pessoas da organização");
+
+        if (v.Equals("EveryoneInCompany", StringComparison.OrdinalIgnoreCase))
+            return TeamsPolicyReading.NonCompliant("pessoas da organização e convidados");
+
+        if (v.Equals("EveryoneInSameAndFederatedCompany", StringComparison.OrdinalIgnoreCase))
+            return TeamsPolicyReading.NonCompliant(
+                "pessoas da organização, de organizações confiáveis e convidados");
+
+        if (v.Equals("Everyone", StringComparison.OrdinalIgnoreCase))
+            return TeamsPolicyReading.NonCompliant("todos, inclusive participantes anônimos");
+
+        return TeamsPolicyReading.Unrecognized(v);
+    }
+
+    /// <summary>
+    /// Quem recebe o papel de APRESENTADOR por padrão. Cada valor nomeia um conjunto DIFERENTE — e é o conjunto
+    /// encontrado que o achado precisa dizer, em vez de “todos os participantes”.
+    /// </summary>
+    private static TeamsPolicyReading DesignatedPresenter(TeamsMeetingPolicyConfiguration p)
+    {
+        var value = p.DesignatedPresenterRoleMode;
+        if (string.IsNullOrWhiteSpace(value)) return TeamsPolicyReading.Unknown();
+        var v = value.Trim();
+
+        if (v.Equals("OrganizerOnlyUserOverride", StringComparison.OrdinalIgnoreCase))
+            return TeamsPolicyReading.Compliant("somente o organizador e os coorganizadores");
+
+        if (v.Equals("EveryoneInCompanyUserOverride", StringComparison.OrdinalIgnoreCase))
+            return TeamsPolicyReading.NonCompliant("todas as pessoas da organização presentes na reunião");
+
+        if (v.Equals("EveryoneInSameAndFederatedCompanyUserOverride", StringComparison.OrdinalIgnoreCase))
+            return TeamsPolicyReading.NonCompliant(
+                "as pessoas da organização e as de organizações confiáveis presentes na reunião");
+
+        if (v.Equals("EveryoneUserOverride", StringComparison.OrdinalIgnoreCase))
+            return TeamsPolicyReading.NonCompliant("todos os participantes, inclusive os de fora da organização");
+
+        return TeamsPolicyReading.Unrecognized(v);
+    }
+
+    // ---- Condição de aplicabilidade: quem governa os aplicativos do locatário -------------------------
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] Só avalia a política de permissão de aplicativos quando a coleta DEMONSTRA que
+    /// ela ainda é a configuração autoritativa do locatário.
+    ///
+    /// Por que a condição existe: a documentação oficial do <c>Get-CsTeamsAppPermissionPolicy</c> afirma que ele
+    /// "só é aplicável a locatários que NÃO foram migrados para ACM ou UAM", e a documentação do gerenciamento
+    /// centrado em aplicativos afirma que, depois da migração, "não é possível acessar, editar ou usar políticas
+    /// de permissão". Uma nota de equivalência parcial no vínculo da referência não impede nada: sem condição, um
+    /// locatário migrado — em que a configuração lida não governa coisa alguma — recebia APROVAÇÃO por uma
+    /// configuração fora de vigor.
+    ///
+    /// O que a condição NÃO faz: não deduz "não migrado" pelo fato de o comando ter devolvido políticas. Um
+    /// comando de leitura pode responder com o resíduo do modelo antigo. A demonstração vem da leitura do modelo
+    /// NOVO (<c>Get-AllM365TeamsApps</c>, ver <see cref="TeamsAppGovernance"/>):
+    ///   • disponibilidade definida POR APLICATIVO → o modelo novo governa → não conclui pela configuração legada;
+    ///   • catálogo lido e NENHUMA disponibilidade por aplicativo → o modelo legado governa → avalia normalmente;
+    ///   • leitura ausente, recusada ou vazia → indeterminado → não conclui.
+    ///
+    /// Nos dois casos em que não conclui, a configuração legada é PRESERVADA como evidência (ela existe e foi
+    /// lida) e o requisito que falta é declarado. Nenhuma permissão nova é pedida por causa disto: se o papel de
+    /// leitura já concedido não cobrir o comando, a leitura falha e o resultado é "indeterminado" — que é
+    /// exatamente o desfecho conservador, e não um motivo para exigir mais acesso ao cliente.
+    /// </summary>
+    private static KnightControlOutcome WhenLegacyAppPoliciesGovern(
+        KnightEvaluationContext c, Func<KnightEvaluationContext, KnightControlOutcome> evaluate)
+    {
+        var (model, reason, observed) = TeamsAppGovernance.Resolve(c);
+        if (model == TeamsAppGovernanceModel.LegacyPermissionPolicies) return evaluate(c);
+
+        // A configuração legada lida continua sendo evidência: ela foi encontrada, e o achado diz onde.
+        var evidence = new List<KnightIndicatorObject>();
+        var policies = c.Configuration.Read<TeamsAppPermissionPolicyConfiguration>();
+        if (policies.Collected)
+        {
+            foreach (var p in policies.Items)
+                evidence.Add(KnightObjects.Evidence(KnightAffectedObjectKind.Policy,
+                    "TeamsAppPermissionPolicy/CatalogAppsType@" + (TeamsPolicyIdentities.Name(p.Identity) ?? "sem-identificacao"),
+                    "Política de permissão de aplicativos — " + TeamsPolicyIdentities.Label(p.Identity),
+                    "Configuração preservada como evidência: " + Join(p.Catalogs.Select(t => t.Label + ": " + (t.Type ?? "não informado")))
+                    + ". Ela NÃO foi usada para concluir o critério porque a coleta não demonstra que as políticas de permissão "
+                    + "ainda governam o acesso a aplicativos deste locatário.",
+                    "Catálogos de aplicativos: " + Join(p.Catalogs.Select(t => t.Label + " = " + (t.Type ?? "não informado")))));
+        }
+
+        if (observed is not null)
+            evidence.Add(KnightObjects.Setting("TeamsAppAvailability/Model",
+                "Modelo de disponibilidade de aplicativos do locatário",
+                $"{N(observed.AppsWithAssignment)} de {N(observed.AppsRead)} aplicativos com disponibilidade definida por aplicativo",
+                "modelo de governo de aplicativos identificado"));
+
+        return model == TeamsAppGovernanceModel.AppCentricOrUnified
+            ? KnightControlOutcome.NotApplicable(
+                "o locatário governa o acesso a aplicativos pelo gerenciamento centrado em aplicativos (ACM/UAM), e não pelas "
+                + "políticas de permissão: " + reason + " A configuração legada foi preservada como evidência, mas não descreve o "
+                + "que está em vigor. Para avaliar este critério neste locatário é preciso ler a disponibilidade POR APLICATIVO do "
+                + "modelo novo — leitura prevista para o bloco seguinte de Microsoft 365.",
+                evidence)
+            : KnightControlOutcome.NotEvaluated(
+                "não foi possível determinar qual modelo governa o acesso a aplicativos deste locatário — "
+                + reason + " Concluir pela configuração legada aprovaria uma configuração que pode não estar em vigor. "
+                + TeamsAppGovernance.Requirement,
+                evidence);
+    }
+
     // ---- Leitor das configurações de instância ÚNICA do locatário -------------------------------------
 
     private static KnightControlOutcome Single<T>(KnightEvaluationContext c, Func<T, KnightControlOutcome> rule) where T : class
@@ -285,8 +427,9 @@ public static class TeamsConfigurationControls
             KnightIndicatorCategory.ApplicationGovernance, SeverityLevel.Medium,
             "Configurar as políticas de permissão de aplicativos com uma lista de PERMITIDOS em cada catálogo "
             + "(Microsoft, terceiros e personalizados da organização), em vez de permitir tudo e bloquear caso a caso.",
-            "Todas as políticas de permissão de aplicativos com os três catálogos restritos a uma lista de permitidos.",
-            c => TeamsPolicyReach.Evaluate<TeamsAppPermissionPolicyConfiguration>(c,
+            "Todas as políticas de permissão de aplicativos com os três catálogos restritos a uma lista de permitidos, "
+            + "NO LOCATÁRIO em que essas políticas ainda governam o acesso a aplicativos.",
+            c => WhenLegacyAppPoliciesGovern(c, c2 => TeamsPolicyReach.Evaluate<TeamsAppPermissionPolicyConfiguration>(c2,
                 "TeamsAppPermissionPolicy/CatalogAppsType", "Catálogos de aplicativos",
                 "lista de permitidos nos três catálogos",
                 p =>
@@ -308,11 +451,14 @@ public static class TeamsConfigurationControls
                 },
                 "Aplicativos do Teams podem ser adicionados sem passar por uma lista de permitidos: o padrão é liberar e bloquear caso a caso, "
                 + "o que só alcança aplicativos que alguém já identificou como indesejados.",
-                "Os catálogos de aplicativos do Teams estão restritos a listas de permitidos."),
+                "Os catálogos de aplicativos do Teams estão restritos a listas de permitidos.")),
             Ref(M365 + "8.4.1", KnightReferenceMatch.Partial,
-                "Equivalência parcial: o critério é avaliado pelas políticas de permissão de aplicativos lidas pelo comando oficial. "
-                + "A documentação declara que esse comando só se aplica a locatários AINDA NÃO migrados para o gerenciamento centrado em "
-                + "aplicativos (ACM/UAM); nos locatários migrados, a configuração autoritativa é outra e não é lida neste bloco.")),
+                "Equivalência parcial: o critério é avaliado pelas políticas de permissão de aplicativos lidas pelo comando oficial, e "
+                + "SOMENTE quando a coleta demonstra que essas políticas ainda governam o acesso a aplicativos do locatário. A documentação "
+                + "declara que o comando só se aplica a locatários NÃO migrados para o gerenciamento centrado em aplicativos (ACM/UAM) e que, "
+                + "depois da migração, as políticas de permissão não podem mais ser acessadas, editadas nem usadas. Em locatário migrado — e "
+                + "quando a coleta não permite dizer qual modelo governa — o controle NÃO conclui: a configuração legada fica preservada como "
+                + "evidência, com a limitação, e falta ler a disponibilidade por aplicativo do modelo novo, prevista para um bloco seguinte.")),
 
         // ==== Reuniões ====
 
@@ -335,30 +481,37 @@ public static class TeamsConfigurationControls
             c => TeamsPolicyReach.Evaluate<TeamsMeetingPolicyConfiguration>(c,
                 "TeamsMeetingPolicy/AllowAnonymousUsersToStartMeeting", "Anônimos podem iniciar reuniões", "Não",
                 p => TeamsPolicyReading.Flag(p.AllowAnonymousUsersToStartMeeting, false),
-                "Participantes anônimos podem iniciar uma reunião da organização sem que ninguém de dentro esteja presente, "
-                + "o que dispensa o lobby e deixa a sala disponível antes de qualquer controle humano.",
-                "Uma reunião da organização só começa com a presença de alguém identificado."),
+                // A afirmação é sobre a CONFIGURAÇÃO, e a condição em que ela produz efeito é dita em seguida —
+                // a documentação oficial é explícita: este ajuste só vale para participantes anônimos quando
+                // "quem pode ignorar o lobby" está em "Todos" e a entrada de anônimos está habilitada; fora
+                // disso, ele vale para quem entra por discagem telefônica. Dizer "anônimos iniciam reuniões" a
+                // partir do booleano sozinho afirmaria mais do que o valor lido sustenta.
+                "A reunião pode começar sem nenhum participante verificado presente. O efeito depende de duas condições "
+                + "documentadas: para participantes ANÔNIMOS, é preciso que a entrada de anônimos esteja habilitada e que "
+                + "“quem entra sem passar pelo lobby” esteja em “todos”; fora dessas condições, o ajuste vale para quem entra "
+                + "por DISCAGEM TELEFÔNICA. Confira AK-TEAMS-008 e AK-TEAMS-010 para saber se as condições estão presentes "
+                + "neste locatário.",
+                "A reunião da organização só começa com a presença de um participante verificado."),
             Ref(M365 + "8.5.2")),
 
         Control("AK-TEAMS-010", "Pessoas de fora ignoram o lobby da reunião",
             KnightIndicatorCategory.CollaborationSecurity, SeverityLevel.Medium,
-            "Configurar a admissão automática para “pessoas da organização, exceto convidados” — ou mais restritivo —, "
-            + "de modo que todo participante externo passe pelo lobby.",
-            "Todas as políticas de reunião com admissão automática restrita a pessoas da organização (excluindo convidados), "
-            + "somente o organizador ou somente pessoas convidadas.",
+            "Configurar a admissão automática para “pessoas da minha organização” — que exclui convidados e participantes "
+            + "de organizações externas — ou para “somente organizadores e coorganizadores”, de modo que todo participante "
+            + "de fora passe pelo lobby.",
+            "Todas as políticas de reunião com admissão automática restrita a pessoas da organização (excluindo convidados) "
+            + "ou somente ao organizador e coorganizadores.",
             c => TeamsPolicyReach.Evaluate<TeamsMeetingPolicyConfiguration>(c,
                 "TeamsMeetingPolicy/AutoAdmittedUsers", "Quem entra sem passar pelo lobby",
                 "pessoas da organização, exceto convidados (ou mais restritivo)",
-                p => TeamsPolicyReading.OneOf(p.AutoAdmittedUsers,
-                    new[] { "EveryoneInCompanyExcludingGuests", "OrganizerOnly", "InvitedUsers" },
-                    new[]
-                    {
-                        "EveryoneInCompanyExcludingGuests", "OrganizerOnly", "InvitedUsers",
-                        "EveryoneInCompany", "EveryoneInSameAndFederatedCompany", "Everyone",
-                    }),
+                p => AutoAdmittedUsers(p.AutoAdmittedUsers),
                 "A admissão automática deixa entrar na reunião, sem passar pelo lobby, pessoas que não são da organização.",
                 "Somente pessoas da organização entram na reunião sem passar pelo lobby."),
-            Ref(M365 + "8.5.3")),
+            Ref(M365 + "8.5.3", KnightReferenceMatch.Exact,
+                "O critério é o da referência (“somente pessoas da organização ignoram o lobby”). O AEGIS aceita também "
+                + "“somente organizadores e coorganizadores”, que é ESTRITAMENTE mais restritivo: todo participante admitido "
+                + "por esse valor também seria admitido pelo valor da referência. “Pessoas convidadas” (InvitedUsers) NÃO é "
+                + "aceito — ver a nota do critério.")),
 
         Control("AK-TEAMS-011", "Chamadores por telefone ignoram o lobby",
             KnightIndicatorCategory.CollaborationSecurity, SeverityLevel.Medium,
@@ -396,15 +549,13 @@ public static class TeamsConfigurationControls
             c => TeamsPolicyReach.Evaluate<TeamsMeetingPolicyConfiguration>(c,
                 "TeamsMeetingPolicy/DesignatedPresenterRoleMode", "Quem pode apresentar por padrão",
                 "somente o organizador (e coorganizadores)",
-                p => TeamsPolicyReading.OneOf(p.DesignatedPresenterRoleMode,
-                    new[] { "OrganizerOnlyUserOverride" },
-                    new[]
-                    {
-                        "OrganizerOnlyUserOverride", "EveryoneUserOverride", "EveryoneInCompanyUserOverride",
-                        "EveryoneInSameAndFederatedCompanyUserOverride",
-                    }),
-                "Participantes que não organizaram a reunião podem apresentar por padrão: compartilhar a tela, exibir conteúdo "
-                + "e remover outras pessoas da sala.",
+                DesignatedPresenter,
+                // NÃO diz "todos os participantes": o conjunto que recebe o papel varia com o valor encontrado
+                // (todos, só quem é da organização, ou a organização mais as confiáveis). O conjunto exato de
+                // cada política está no “Encontrado” do objeto correspondente.
+                "Pessoas que não organizaram a reunião recebem o papel de apresentador por padrão — podem compartilhar a tela, "
+                + "exibir conteúdo e remover outras pessoas da sala. O conjunto que recebe o papel é o indicado em cada política "
+                + "abaixo, e não necessariamente todos os presentes.",
                 "Somente o organizador e os coorganizadores apresentam por padrão."),
             Ref(M365 + "8.5.6")),
 
@@ -427,8 +578,13 @@ public static class TeamsConfigurationControls
             c => TeamsPolicyReach.Evaluate<TeamsMeetingPolicyConfiguration>(c,
                 "TeamsMeetingPolicy/AllowExternalNonTrustedMeetingChat", "Chat em reuniões externas não confiáveis", "Não",
                 p => TeamsPolicyReading.Flag(p.AllowExternalNonTrustedMeetingChat, false),
-                "Pessoas da organização podem participar do chat de reuniões hospedadas por organizações com as quais não há relação "
-                + "de confiança estabelecida — um canal direto para links e arquivos que não passam pelos controles da organização.",
+                // NÃO afirma ausência de todos os controles de segurança: o chat externo é um canal que a
+                // organização não administra, mas os controles do ponto final, do navegador e do próprio Teams
+                // continuam existindo. O que o achado afirma é o que a configuração sustenta.
+                "Pessoas da organização podem participar do chat de reuniões hospedadas por organizações com as quais não há "
+                + "relação de confiança estabelecida. É um canal de entrega de mensagens, links e arquivos ADMINISTRADO POR "
+                + "TERCEIROS: a organização não define quem participa, não retém a conversa e não a audita. Os controles de "
+                + "ponto final e de navegação continuam valendo — o que este ajuste não oferece é controle sobre o canal.",
                 "O chat de reuniões hospedadas por organizações não confiáveis está desligado."),
             Ref(M365 + "8.5.8")),
 
@@ -455,8 +611,13 @@ public static class TeamsConfigurationControls
             c => TeamsPolicyReach.Evaluate<TeamsMessagingPolicyConfiguration>(c,
                 "TeamsMessagingPolicy/AllowSecurityEndUserReporting", "Relatar problemas de segurança no Teams", "Sim",
                 p => TeamsPolicyReading.Flag(p.AllowSecurityEndUserReporting, true),
-                "As pessoas não têm no Teams um caminho para relatar uma mensagem suspeita. Sem esse caminho, a tentativa de golpe "
-                + "que chega por chat não vira registro e a equipe de segurança só fica sabendo quando alguém já agiu sobre ela.",
+                // NÃO conclui que a descoberta só acontece depois de alguém agir sobre a mensagem: a detecção
+                // pode vir de outras fontes (proteção de mensagens, sinais do ponto final, relato por outro
+                // canal). O que falta é ESTE caminho — e é isso que o achado afirma.
+                "As pessoas não têm no Teams um caminho para relatar uma mensagem suspeita. A denúncia pelo próprio destinatário "
+                + "é a via mais rápida e, muitas vezes, a única que identifica uma abordagem dirigida por chat antes de qualquer "
+                + "outro sinal. Sem ela, o que chegar à equipe de segurança dependerá de outras fontes de detecção ou de relato "
+                + "por fora do Teams.",
                 "As pessoas podem relatar mensagens suspeitas pelo próprio Teams."),
             Ref(M365 + "8.6.1", KnightReferenceMatch.Partial,
                 "Equivalência parcial: avalia a metade do critério que vive no Teams (a política de mensagens). A outra metade — o destino "

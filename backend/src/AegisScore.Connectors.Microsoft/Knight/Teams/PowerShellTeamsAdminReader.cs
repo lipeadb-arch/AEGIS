@@ -74,15 +74,18 @@ public sealed class PowerShellTeamsAdminReader : ITeamsAdminReader
             graphToken = credentials.GraphToken,
             teamsToken = credentials.TeamsToken,
         });
-        return RunAsync(payload, ct);
+        // Os tokens desta coleta são entregues à sanitização do diagnóstico: se o módulo repetir um deles num
+        // texto de erro, ele é removido por IGUALDADE, sem depender de nenhuma heurística acertar a forma.
+        return RunAsync(payload, [credentials.GraphToken, credentials.TeamsToken], ct);
     }
 
     public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) =>
-        RunAsync(JsonSerializer.Serialize(new { mode = "module-check" }), ct);
+        RunAsync(JsonSerializer.Serialize(new { mode = "module-check" }), null, ct);
 
     // ---- Processo -------------------------------------------------------------------------------------
 
-    private async Task<TeamsAdminOutput> RunAsync(string stdinPayload, CancellationToken ct)
+    private async Task<TeamsAdminOutput> RunAsync(
+        string stdinPayload, IReadOnlyList<string?>? knownSecrets, CancellationToken ct)
     {
         var script = await EnsureScriptAsync(ct);
 
@@ -155,10 +158,16 @@ public sealed class PowerShellTeamsAdminReader : ITeamsAdminReader
 
         if (errors.Length > 0)
         {
-            // O que o processo escreveu em erro-padrão é DIAGNÓSTICO, nunca conteúdo do relatório. Vai para o
-            // log já truncado, e apenas em nível de aviso.
-            _log?.LogWarning("Adaptador do Microsoft Teams escreveu em erro-padrão: {Detalhe}",
-                errors.Length > 500 ? errors[..500] + "…" : errors);
+            // O que o processo escreveu em erro-padrão é DIAGNÓSTICO DO OPERADOR, nunca conteúdo do relatório —
+            // e é texto de TERCEIRO: o módulo pode repetir ali o cabeçalho de autorização, o token da chamada ou
+            // o corpo bruto da resposta. Por isso o texto é SANITIZADO (reescrito) antes de ir ao log, e não
+            // apenas truncado: um corte por tamanho preservaria exatamente o começo, que é onde o segredo
+            // costuma estar. Nada disto chega ao ADM, à API ou ao relatório.
+            var safe = TeamsDiagnosticScrubber.Scrub(errors, knownSecrets);
+            if (safe.Length > 0)
+                _log?.LogWarning(
+                    "Adaptador do Microsoft Teams escreveu {Bytes} caractere(s) em erro-padrão. Diagnóstico sanitizado: {Detalhe}",
+                    errors.Length, safe);
         }
 
         if (output.Length == 0)
@@ -241,14 +250,16 @@ public sealed class PowerShellTeamsAdminReader : ITeamsAdminReader
                         r.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True,
                         items,
                         Text(r, "errorCategory"),
-                        Text(r, "error")));
+                        // Segunda barreira: o script já restringe o identificador na origem, mas quem lê a saída
+                        // não pode depender disso — o que entra no objeto é sempre o valor sanitizado.
+                        TeamsDiagnosticScrubber.ScrubIdentifier(Text(r, "errorId"))));
                 }
             }
 
             return new TeamsAdminOutput(
                 runtime,
                 root.TryGetProperty("connected", out var c) && c.ValueKind == JsonValueKind.True,
-                Text(root, "connectionError"),
+                TeamsDiagnosticScrubber.ScrubIdentifier(Text(root, "connectionErrorId")),
                 Text(root, "connectionErrorCategory"),
                 reads);
         }

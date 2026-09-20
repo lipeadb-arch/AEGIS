@@ -151,6 +151,9 @@ public enum ConfigurationObjectKind
 
     /// <summary>Atribuição de uma política do Teams a um GRUPO (o que amplia o alcance além da política padrão).</summary>
     TeamsPolicyAssignment = 22,
+
+    /// <summary>Resumo do modelo de disponibilidade de aplicativos do locatario (ACM/UAM), agregado.</summary>
+    TeamsAppAvailability = 23,
 }
 
 /// <summary>

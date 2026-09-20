@@ -94,16 +94,64 @@ public sealed class KnightTeamsPolicyReachTests
         o.NotEvaluatedReason.Should().Contain("valor não reconhecido");
     }
 
+    /// <summary>
+    /// Aprovam SOMENTE os dois valores que a documentação oficial demonstra manterem todo participante de fora no
+    /// lobby: “pessoas da minha organização” e “somente organizadores e coorganizadores” (este, estritamente mais
+    /// restritivo). Os demais valores documentados reprovam — inclusive <c>InvitedUsers</c>.
+    /// </summary>
     [Fact]
     public void ValorDocumentadoPorEmMaisRestritivo_Aprova()
     {
-        foreach (var aceito in new[] { "EveryoneInCompanyExcludingGuests", "OrganizerOnly", "InvitedUsers" })
+        foreach (var aceito in new[] { "EveryoneInCompanyExcludingGuests", "OrganizerOnly" })
             Eval("AK-TEAMS-010", Ctx(new[] { Meeting("Global", aceito) }, Policies, Assignments))
                 .Status.Should().Be(KnightIndicatorStatus.Passed, aceito);
 
-        foreach (var recusado in new[] { "EveryoneInCompany", "EveryoneInSameAndFederatedCompany", "Everyone" })
+        foreach (var recusado in new[]
+                 { "InvitedUsers", "EveryoneInCompany", "EveryoneInSameAndFederatedCompany", "Everyone" })
             Eval("AK-TEAMS-010", Ctx(new[] { Meeting("Global", recusado) }, Policies, Assignments))
                 .Status.Should().Be(KnightIndicatorStatus.Exposed, recusado);
+    }
+
+    /// <summary>
+    /// [Revisão dirigida] DEFEITO REPRODUZIDO: “pessoas que foram convidadas” (<c>InvitedUsers</c>) era aceito
+    /// como equivalente a restringir a admissão automática às pessoas da organização, e o achado publicava a
+    /// frase “somente pessoas da organização entram na reunião sem passar pelo lobby” — incompatível com o valor.
+    ///
+    /// A tabela oficial de opções do lobby mostra que, com esse valor, também ignoram o lobby os CONVIDADOS e os
+    /// participantes de ORGANIZAÇÕES CONFIÁVEIS que receberam o convite, ou a quem ele foi encaminhado. A própria
+    /// página diz que a opção inclui todos os participantes com conta corporativa ou de estudante e os convidados
+    /// a quem o convite foi encaminhado — não apenas quem o organizador convidou diretamente.
+    /// https://learn.microsoft.com/en-us/microsoftteams/who-can-bypass-meeting-lobby
+    /// </summary>
+    [Fact]
+    public void ConvidadosNaoSaoExcluidosPorInvitedUsers_ReprovaEDescreveOQueOValorPermite()
+    {
+        var o = Eval("AK-TEAMS-010", Ctx(new[] { Meeting("Global", "InvitedUsers") }, Policies, Assignments));
+
+        o.Status.Should().Be(KnightIndicatorStatus.Exposed);
+        o.Evidence.Should().NotContain("Somente pessoas da organização entram na reunião sem passar pelo lobby");
+
+        var afetado = o.Affected.Should().ContainSingle().Subject;
+        afetado.Detail.Should().Contain("CONVIDADOS")
+            .And.Contain("organizações externas")
+            .And.Contain("encaminhado");
+    }
+
+    /// <summary>Os dois valores preservados continuam descrevendo com precisão quem entra direto.</summary>
+    [Fact]
+    public void ValoresAceitos_DescrevemQuemEntraSemPassarPeloLobby()
+    {
+        var org = Eval("AK-TEAMS-010",
+            Ctx(new[] { Meeting("Global", "EveryoneInCompanyExcludingGuests") }, Policies, Assignments));
+        org.Status.Should().Be(KnightIndicatorStatus.Passed);
+        org.EvidenceObjects.Should().ContainSingle()
+            .Which.Detail.Should().Contain("somente pessoas da organização");
+
+        var organizador = Eval("AK-TEAMS-010",
+            Ctx(new[] { Meeting("Global", "OrganizerOnly") }, Policies, Assignments));
+        organizador.Status.Should().Be(KnightIndicatorStatus.Passed);
+        organizador.EvidenceObjects.Should().ContainSingle()
+            .Which.Detail.Should().Contain("somente organizadores e coorganizadores");
     }
 
     [Fact]
@@ -283,5 +331,257 @@ public sealed class KnightTeamsPolicyReachTests
         var o = Eval("AK-TEAMS-003", Ctx(new[] { fed }, Cap(KnightCapability.TeamsFederationConfiguration)));
         o.Status.Should().Be(KnightIndicatorStatus.Passed);
         o.Evidence.Should().Contain("acesso externo está desligado");
+    }
+
+    // ======================================================================================================
+    //  [Revisão dirigida] Identificação AUSENTE não vira política padrão da organização
+    // ======================================================================================================
+
+    private static KnightConfigurationDocument MeetingAt(string docId, string? identity, string? autoAdmitted) =>
+        KnightTenantConfiguration.Document(docId, null,
+            new TeamsMeetingPolicyConfiguration(identity, false, false, autoAdmitted, false,
+                "EnabledExceptAnonymous", "OrganizerOnlyUserOverride", false, false, false));
+
+    /// <summary>
+    /// DEFEITO REPRODUZIDO: valores CONFORMES sem <c>identity</c> e sem nenhuma Global explicitamente
+    /// identificada APROVAVAM o ambiente — porque nulo, vazio e só-espaços eram lidos como "Global", inventando
+    /// a instância que sempre se aplica. Agora nada disso é a política padrão: o controle não avalia, e diz por quê.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void IdentificacaoAusente_NaoViraPoliticaPadrao_ENaoAprovaOAmbiente(string? identity)
+    {
+        var o = Eval("AK-TEAMS-010", Ctx(
+            new[] { MeetingAt("TeamsMeetingPolicy:#0", identity, "EveryoneInCompanyExcludingGuests") },
+            Policies, Assignments));
+
+        o.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        o.NotEvaluatedReason.Should().Contain("não devolveu a política padrão da organização")
+            .And.Contain("SEM identificação");
+    }
+
+    /// <summary>
+    /// Registros distintos sem identificação continuam DISTINTOS: não se fundem num objeto só. A posição na
+    /// coleta entra no identificador justamente para isso.
+    /// </summary>
+    [Fact]
+    public void RegistrosSemIdentificacao_NaoSeFundemNumSoObjeto()
+    {
+        var o = Eval("AK-TEAMS-010", Ctx(
+            new[]
+            {
+                MeetingAt("TeamsMeetingPolicy:#0", null, "EveryoneInCompanyExcludingGuests"),
+                MeetingAt("TeamsMeetingPolicy:#1", "", "OrganizerOnly"),
+                MeetingAt("TeamsMeetingPolicy:#2", "   ", "EveryoneInCompanyExcludingGuests"),
+            },
+            Policies, Assignments));
+
+        o.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        o.EvidenceObjects.Should().HaveCount(3);
+        o.EvidenceObjects.Select(e => e.ExternalId).Distinct().Should().HaveCount(3);
+        o.EvidenceObjects.Should().OnlyContain(e => e.Detail!.Contains("Alcance não demonstrado"));
+    }
+
+    /// <summary>
+    /// Com a política padrão presente e conforme, um registro NÃO IDENTIFICADO e conforme ainda assim impede a
+    /// aprovação: não se sabe a quem ele se aplica. A limitação é dita, e não inventada.
+    /// </summary>
+    [Fact]
+    public void PadraoConformeMaisRegistroSemIdentificacao_NaoAprova_EDeclaraALimitacao()
+    {
+        var o = Eval("AK-TEAMS-010", Ctx(
+            new[]
+            {
+                MeetingAt("TeamsMeetingPolicy:Global", "Global", "EveryoneInCompanyExcludingGuests"),
+                MeetingAt("TeamsMeetingPolicy:#1", null, "EveryoneInCompanyExcludingGuests"),
+            },
+            Policies, Assignments));
+
+        o.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        o.NotEvaluatedReason.Should().Contain("SEM identificação").And.Contain("exigiria supor");
+    }
+
+    /// <summary>
+    /// Um registro não identificado que VIOLA o critério continua sendo achado: o defeito de configuração é um
+    /// fato demonstrado, e não desaparece por causa da identidade. O que não se afirma é o alcance dele.
+    /// </summary>
+    [Fact]
+    public void RegistroSemIdentificacaoQueViola_ContinuaSendoAchado_SemAlcanceInventado()
+    {
+        var o = Eval("AK-TEAMS-010", Ctx(
+            new[]
+            {
+                MeetingAt("TeamsMeetingPolicy:Global", "Global", "EveryoneInCompanyExcludingGuests"),
+                MeetingAt("TeamsMeetingPolicy:#1", null, "Everyone"),
+            },
+            Policies, Assignments));
+
+        o.Status.Should().Be(KnightIndicatorStatus.Exposed);
+        var afetado = o.Affected.Should().ContainSingle().Subject;
+        afetado.DisplayName.Should().Contain("sem identificação");
+        afetado.Detail.Should().Contain("Alcance não demonstrado");
+    }
+
+    // ======================================================================================================
+    //  [Revisão dirigida] AK-TEAMS-007 só conclui quando a política legada AINDA governa os aplicativos
+    // ======================================================================================================
+
+    private static KnightConfigurationDocument AppPolicy(string identity, string globalType) =>
+        KnightTenantConfiguration.Document(TeamsAppPermissionPolicyConfiguration.PolicyType + ":" + identity, null,
+            new TeamsAppPermissionPolicyConfiguration(identity, "AllowedAppList", 12, globalType, 4, "AllowedAppList", 2));
+
+    private static KnightConfigurationDocument Availability(int appsRead, int withAssignment) =>
+        KnightTenantConfiguration.Document(TeamsAppAvailabilityModel.ExternalId, null,
+            new TeamsAppAvailabilityModel(appsRead, withAssignment, withAssignment, 0, 0));
+
+    private static readonly KnightCapabilityStatus AppPolicies = Cap(KnightCapability.TeamsAppPermissionPolicies);
+    private static readonly KnightCapabilityStatus AppAvailability = Cap(KnightCapability.TeamsAppAvailability);
+
+    /// <summary>Locatário LEGADO comprovado: nenhum aplicativo com disponibilidade própria → avalia normalmente.</summary>
+    [Fact]
+    public void TenantLegadoComprovado_AvaliaAPoliticaDePermissaoDeAplicativos()
+    {
+        var aprovado = Eval("AK-TEAMS-007", Ctx(
+            new[] { AppPolicy("Global", "AllowedAppList"), Availability(40, 0) }, AppPolicies, AppAvailability, Assignments));
+        aprovado.Status.Should().Be(KnightIndicatorStatus.Passed);
+
+        var exposto = Eval("AK-TEAMS-007", Ctx(
+            new[] { AppPolicy("Global", "BlockedAppList"), Availability(40, 0) }, AppPolicies, AppAvailability, Assignments));
+        exposto.Status.Should().Be(KnightIndicatorStatus.Exposed);
+    }
+
+    /// <summary>
+    /// DEFEITO REPRODUZIDO: locatário MIGRADO para ACM/UAM recebia APROVAÇÃO por uma política de permissão que,
+    /// segundo a documentação oficial, não pode mais ser acessada, editada nem usada naquele locatário. Agora o
+    /// controle não conclui; preserva a configuração como evidência e diz o que falta para avaliar.
+    /// https://learn.microsoft.com/en-us/powershell/module/microsoftteams/get-csteamsapppermissionpolicy
+    /// </summary>
+    [Fact]
+    public void TenantMigradoParaAcm_NaoConcluiPelaConfiguracaoLegada_MasAPreservaComoEvidencia()
+    {
+        var o = Eval("AK-TEAMS-007", Ctx(
+            new[] { AppPolicy("Global", "AllowedAppList"), Availability(40, 40) }, AppPolicies, AppAvailability, Assignments));
+
+        o.Status.Should().Be(KnightIndicatorStatus.NotApplicable);
+        o.Status.Should().NotBe(KnightIndicatorStatus.Passed);
+        o.NotEvaluatedReason.Should().Contain("centrado em aplicativos").And.Contain("disponibilidade");
+        o.EvidenceObjects.Should().Contain(e => e.Detail!.Contains("preservada como evidência"));
+    }
+
+    /// <summary>Estado DESCONHECIDO (a leitura do modelo não concluiu): também não conclui pela legada.</summary>
+    [Fact]
+    public void ModeloDeGovernoDesconhecido_NaoConcluiPelaConfiguracaoLegada()
+    {
+        var o = Eval("AK-TEAMS-007", Ctx(
+            new[] { AppPolicy("Global", "AllowedAppList") },
+            AppPolicies,
+            Cap(KnightCapability.TeamsAppAvailability, KnightCapabilityOutcome.InsufficientPermission,
+                "Permissão insuficiente para esta leitura."),
+            Assignments));
+
+        o.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        o.NotEvaluatedReason.Should().Contain("não foi possível determinar qual modelo governa")
+            .And.Contain("Get-AllM365TeamsApps");
+        o.EvidenceObjects.Should().Contain(e => e.Detail!.Contains("preservada como evidência"));
+    }
+
+    /// <summary>
+    /// A presença de políticas legadas NÃO é, por si só, prova de que o locatário não migrou: sem a leitura do
+    /// modelo novo, o resultado é indeterminado — nunca aprovação.
+    /// </summary>
+    [Fact]
+    public void PoliticasLegadasDevolvidas_NaoProvamPorSiSoQueOTenantNaoMigrou()
+    {
+        var o = Eval("AK-TEAMS-007", Ctx(
+            new[] { AppPolicy("Global", "AllowedAppList"), AppPolicy("Tag:Piloto", "AllowedAppList") },
+            AppPolicies, Assignments));
+
+        o.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+    }
+
+    // ======================================================================================================
+    //  [Revisão dirigida] Textos de risco alinhados à evidência
+    // ======================================================================================================
+
+    /// <summary>
+    /// AK-TEAMS-013 não pode dizer “todos os participantes” quando o valor encontrado promove um conjunto menor.
+    /// </summary>
+    [Fact]
+    public void ApresentadorPorPadrao_NomeiaOConjuntoEncontrado_ENaoTodosOsParticipantes()
+    {
+        KnightConfigurationDocument Presenter(string mode) =>
+            KnightTenantConfiguration.Document("TeamsMeetingPolicy:Global", null,
+                new TeamsMeetingPolicyConfiguration("Global", false, false, "EveryoneInCompanyExcludingGuests", false,
+                    "EnabledExceptAnonymous", mode, false, false, false));
+
+        var daOrganizacao = Eval("AK-TEAMS-013",
+            Ctx(new[] { Presenter("EveryoneInCompanyUserOverride") }, Policies, Assignments));
+        daOrganizacao.Status.Should().Be(KnightIndicatorStatus.Exposed);
+        daOrganizacao.Evidence.Should().NotContain("Todos os participantes");
+        daOrganizacao.Affected.Should().ContainSingle()
+            .Which.Detail.Should().Contain("todas as pessoas da organização presentes")
+            .And.NotContain("inclusive os de fora");
+
+        var todos = Eval("AK-TEAMS-013", Ctx(new[] { Presenter("EveryoneUserOverride") }, Policies, Assignments));
+        todos.Affected.Should().ContainSingle()
+            .Which.Detail.Should().Contain("todos os participantes, inclusive os de fora da organização");
+
+        var confiaveis = Eval("AK-TEAMS-013",
+            Ctx(new[] { Presenter("EveryoneInSameAndFederatedCompanyUserOverride") }, Policies, Assignments));
+        confiaveis.Affected.Should().ContainSingle()
+            .Which.Detail.Should().Contain("organizações confiáveis");
+    }
+
+    /// <summary>
+    /// AK-TEAMS-009 não pode afirmar início de reunião por anônimos a partir do booleano sozinho: a documentação
+    /// oficial condiciona o efeito ao lobby e à entrada de anônimos. O achado diz a condição.
+    /// </summary>
+    [Fact]
+    public void InicioDeReuniaoSemParticipanteVerificado_DeclaraACondicaoDocumentada()
+    {
+        var doc = KnightTenantConfiguration.Document("TeamsMeetingPolicy:Global", null,
+            new TeamsMeetingPolicyConfiguration("Global", false, true, "EveryoneInCompanyExcludingGuests", false,
+                "EnabledExceptAnonymous", "OrganizerOnlyUserOverride", false, false, false));
+
+        var o = Eval("AK-TEAMS-009", Ctx(new[] { doc }, Policies, Assignments));
+        o.Status.Should().Be(KnightIndicatorStatus.Exposed);
+        o.Evidence.Should().Contain("depende de duas condições")
+            .And.Contain("DISCAGEM TELEFÔNICA")
+            .And.Contain("AK-TEAMS-010");
+    }
+
+    /// <summary>AK-TEAMS-015 não afirma ausência de todos os controles de segurança.</summary>
+    [Fact]
+    public void ChatExternoNaoConfiavel_NaoAfirmaAusenciaDeTodosOsControles()
+    {
+        var doc = KnightTenantConfiguration.Document("TeamsMeetingPolicy:Global", null,
+            new TeamsMeetingPolicyConfiguration("Global", false, false, "EveryoneInCompanyExcludingGuests", false,
+                "EnabledExceptAnonymous", "OrganizerOnlyUserOverride", false, true, false));
+
+        var o = Eval("AK-TEAMS-015", Ctx(new[] { doc }, Policies, Assignments));
+        o.Status.Should().Be(KnightIndicatorStatus.Exposed);
+        o.Evidence.Should().Contain("ADMINISTRADO POR TERCEIROS")
+            .And.Contain("continuam valendo")
+            .And.NotContain("não passam pelos controles da organização");
+    }
+
+    /// <summary>
+    /// AK-TEAMS-017 não conclui que a equipe de segurança só descobrirá o problema depois de alguém agir sobre a
+    /// mensagem: afirma a ausência DESTE caminho de relato.
+    /// </summary>
+    [Fact]
+    public void RelatoDeMensagemSuspeita_NaoConcluiQuandoASegurancaDescobre()
+    {
+        var doc = KnightTenantConfiguration.Document("TeamsMessagingPolicy:Global", null,
+            new TeamsMessagingPolicyConfiguration("Global", false));
+
+        var o = Eval("AK-TEAMS-017", Ctx(new[] { doc },
+            Cap(KnightCapability.TeamsMessagingPolicies), Assignments));
+
+        o.Status.Should().Be(KnightIndicatorStatus.Exposed);
+        o.Evidence.Should().Contain("outras fontes de detecção")
+            .And.NotContain("só fica sabendo quando alguém já agiu");
     }
 }

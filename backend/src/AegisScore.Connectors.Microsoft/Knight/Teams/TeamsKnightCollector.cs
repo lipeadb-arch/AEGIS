@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -71,6 +72,7 @@ public sealed class TeamsKnightCollector : IKnightCollector
         KnightCapability.TeamsMeetingPolicies,
         KnightCapability.TeamsMessagingPolicies,
         KnightCapability.TeamsAppPermissionPolicies,
+        KnightCapability.TeamsAppAvailability,
         KnightCapability.TeamsPolicyAssignments,
     };
 
@@ -123,10 +125,14 @@ public sealed class TeamsKnightCollector : IKnightCollector
         if (!output.Connected)
         {
             var outcome = ParseOutcome(output.ConnectionErrorCategory) ?? KnightCapabilityOutcome.AuthenticationFailure;
-            var reason = "A conexão de aplicativo com a administração do Microsoft Teams não foi estabelecida"
-                + (string.IsNullOrWhiteSpace(output.ConnectionError) ? "." : ": " + output.ConnectionError);
-            _log?.LogWarning("Conexão do adaptador do Microsoft Teams recusada: Categoria={Categoria}.",
-                output.ConnectionErrorCategory ?? "n/a");
+            // A razão é MONTADA pelo AEGIS a partir da categoria — o texto vindo da fonte não entra aqui. Antes,
+            // o diagnóstico bruto da conexão era concatenado e seguia para o ADM, para a API e para o relatório;
+            // esse texto é escrito por um módulo de terceiro e pode repetir cabeçalho de autorização ou token.
+            // O identificador técnico (já sanitizado) fica só no log do operador.
+            var reason = ConnectionReason(outcome);
+            _log?.LogWarning(
+                "Conexão do adaptador do Microsoft Teams recusada: Categoria={Categoria}, Diagnostico={Diagnostico}.",
+                output.ConnectionErrorCategory ?? "n/a", output.ConnectionErrorId ?? "n/a");
             return Failure(StateFor(outcome), reason, outcome, reason, output.Runtime);
         }
 
@@ -178,6 +184,7 @@ public sealed class TeamsKnightCollector : IKnightCollector
     {
         if (items.ValueKind != JsonValueKind.Array) yield break;
 
+        var index = 0;
         switch (capability)
         {
             case KnightCapability.TeamsClientConfiguration:
@@ -204,12 +211,13 @@ public sealed class TeamsKnightCollector : IKnightCollector
                 break;
 
             case KnightCapability.TeamsMeetingPolicies:
+                index = 0;
                 foreach (var e in items.EnumerateArray())
                 {
                     var identity = Identity(e);
                     yield return KnightTenantConfiguration.Document(
-                        TeamsMeetingPolicyConfiguration.PolicyType + ":" + identity,
-                        "Política de reunião — " + TeamsPolicyIdentities.Name(identity),
+                        PolicyDocumentId(TeamsMeetingPolicyConfiguration.PolicyType, identity, index++),
+                        "Política de reunião — " + DisplayName(identity),
                         new TeamsMeetingPolicyConfiguration(
                             identity,
                             Bool(e, "allowAnonymousUsersToJoinMeeting"), Bool(e, "allowAnonymousUsersToStartMeeting"),
@@ -221,29 +229,41 @@ public sealed class TeamsKnightCollector : IKnightCollector
                 break;
 
             case KnightCapability.TeamsMessagingPolicies:
+                index = 0;
                 foreach (var e in items.EnumerateArray())
                 {
                     var identity = Identity(e);
                     yield return KnightTenantConfiguration.Document(
-                        TeamsMessagingPolicyConfiguration.PolicyType + ":" + identity,
-                        "Política de mensagens — " + TeamsPolicyIdentities.Name(identity),
+                        PolicyDocumentId(TeamsMessagingPolicyConfiguration.PolicyType, identity, index++),
+                        "Política de mensagens — " + DisplayName(identity),
                         new TeamsMessagingPolicyConfiguration(identity, Bool(e, "allowSecurityEndUserReporting")));
                 }
                 break;
 
             case KnightCapability.TeamsAppPermissionPolicies:
+                index = 0;
                 foreach (var e in items.EnumerateArray())
                 {
                     var identity = Identity(e);
                     yield return KnightTenantConfiguration.Document(
-                        TeamsAppPermissionPolicyConfiguration.PolicyType + ":" + identity,
-                        "Política de permissão de aplicativos — " + TeamsPolicyIdentities.Name(identity),
+                        PolicyDocumentId(TeamsAppPermissionPolicyConfiguration.PolicyType, identity, index++),
+                        "Política de permissão de aplicativos — " + DisplayName(identity),
                         new TeamsAppPermissionPolicyConfiguration(
                             identity,
                             Text(e, "defaultCatalogAppsType"), Int(e, "defaultCatalogAppsCount"),
                             Text(e, "globalCatalogAppsType"), Int(e, "globalCatalogAppsCount"),
                             Text(e, "privateCatalogAppsType"), Int(e, "privateCatalogAppsCount")));
                 }
+                break;
+
+            case KnightCapability.TeamsAppAvailability:
+                foreach (var e in items.EnumerateArray())
+                    yield return KnightTenantConfiguration.Document(
+                        TeamsAppAvailabilityModel.ExternalId,
+                        "Modelo de disponibilidade de aplicativos do locatário",
+                        new TeamsAppAvailabilityModel(
+                            Int(e, "appsRead"), Int(e, "appsWithAssignment"), Int(e, "assignedToEveryone"),
+                            Int(e, "assignedToUsersAndGroups"), Int(e, "assignedToNoOne")));
                 break;
 
             case KnightCapability.TeamsPolicyAssignments:
@@ -262,7 +282,26 @@ public sealed class TeamsKnightCollector : IKnightCollector
         }
     }
 
-    private static string Identity(JsonElement e) => Text(e, "identity") ?? TeamsPolicyIdentities.Global;
+    /// <summary>
+    /// Identidade da política como a FONTE a devolveu — sem substituto. O caminho anterior devolvia "Global"
+    /// quando a fonte não identificava a política, e com isso inventava a instância que sempre se aplica: bastava
+    /// um registro sem identidade para o ambiente inteiro ser aprovado, e dois registros sem identidade viravam
+    /// um só documento. Identificação ausente é DADO INSUFICIENTE, e é assim que a avaliação passa a tratá-la.
+    /// </summary>
+    private static string? Identity(JsonElement e) => Text(e, "identity");
+
+    /// <summary>
+    /// Identificador do documento no ADM. Com identidade, é o tipo mais a identidade — estável entre coletas.
+    /// SEM identidade, entra a posição na resposta: dois registros não identificados continuam sendo dois
+    /// documentos distintos, em vez de um sobrescrever o outro.
+    /// </summary>
+    private static string PolicyDocumentId(string policyType, string? identity, int index) =>
+        TeamsPolicyIdentities.IsIdentified(identity)
+            ? policyType + ":" + identity!.Trim()
+            : policyType + ":#" + index.ToString(CultureInfo.InvariantCulture);
+
+    private static string DisplayName(string? identity) =>
+        TeamsPolicyIdentities.Name(identity) ?? "sem identificação na coleta";
 
     private static bool? Bool(JsonElement e, string name) =>
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v)
@@ -334,6 +373,29 @@ public sealed class TeamsKnightCollector : IKnightCollector
         _ => KnightSourceState.Unavailable,
     };
 
+    /// <summary>
+    /// Mensagem da falha de CONEXÃO, montada pela CATEGORIA. Nunca reproduz texto da fonte: o que o módulo
+    /// escreve num erro é texto de terceiro e pode carregar cabeçalho de autorização ou token.
+    /// </summary>
+    private static string ConnectionReason(KnightCapabilityOutcome outcome) => outcome switch
+    {
+        KnightCapabilityOutcome.InsufficientPermission =>
+            "A conexão de aplicativo com a administração do Microsoft Teams foi recusada por permissão ou papel insuficiente. "
+            + "Confira se a aplicação tem o papel Leitor do Teams (ou Leitor Global) atribuído.",
+        KnightCapabilityOutcome.AuthenticationFailure =>
+            "A conexão de aplicativo com a administração do Microsoft Teams falhou na autenticação. Confira o segredo da "
+            + "aplicação, o consentimento do administrador e se os dois tokens exigidos foram emitidos para os recursos corretos.",
+        KnightCapabilityOutcome.Throttled =>
+            "A administração do Microsoft Teams aplicou limite de taxa ao estabelecer a conexão. Nenhuma leitura foi tentada; "
+            + "a coleta pode ser repetida mais tarde.",
+        KnightCapabilityOutcome.LimitedByLicense =>
+            "A conexão de aplicativo com a administração do Microsoft Teams foi recusada por licença do locatário.",
+        KnightCapabilityOutcome.Unavailable =>
+            "A administração do Microsoft Teams não respondeu ao estabelecer a conexão. Nenhuma leitura foi tentada.",
+        _ =>
+            "A conexão de aplicativo com a administração do Microsoft Teams não foi estabelecida. Nenhuma leitura foi tentada.",
+    };
+
     private static string Describe(KnightCapabilityOutcome outcome, TeamsAdminRead read)
     {
         var head = outcome switch
@@ -350,18 +412,34 @@ public sealed class TeamsKnightCollector : IKnightCollector
         return $"{head} (comando: {read.Command})";
     }
 
+    /// <summary>
+    /// Estado da coleta a partir do desfecho de TODAS as capacidades esperadas — inclusive as que o adaptador
+    /// nem registrou.
+    ///
+    /// A versão anterior descartava as capacidades NÃO TENTADAS antes de decidir, e com isso uma leitura que o
+    /// adaptador simplesmente OMITIU produzia "coleta concluída": o conjunto restante era todo Collected. Uma
+    /// leitura esperada que não aparece na resposta não é leitura concluída sem registros — é leitura ausente.
+    /// Agora: qualquer omissão impede Completed; havendo alguma leitura concluída, o estado é PARCIAL; não
+    /// havendo nenhuma, o estado vem do motivo das que falharam, e a omissão pura é indisponibilidade.
+    /// </summary>
     private static KnightSourceState DeriveState(IReadOnlyList<KnightCapabilityStatus> all)
     {
-        var caps = all.Where(c => c.Outcome != KnightCapabilityOutcome.NotAttempted).ToList();
-        if (caps.Count == 0) return KnightSourceState.Unavailable;
-        var collected = caps.Count(c => c.Outcome == KnightCapabilityOutcome.Collected);
-        if (collected == caps.Count) return KnightSourceState.Completed;
+        if (all.Count == 0) return KnightSourceState.Unavailable;
+
+        var collected = all.Count(c => c.Outcome == KnightCapabilityOutcome.Collected);
+        if (collected == all.Count) return KnightSourceState.Completed;
         if (collected > 0) return KnightSourceState.PartialCollection;
 
-        if (caps.All(c => c.Outcome == KnightCapabilityOutcome.InsufficientPermission)) return KnightSourceState.InsufficientPermission;
-        if (caps.All(c => c.Outcome == KnightCapabilityOutcome.Throttled)) return KnightSourceState.Throttled;
-        if (caps.All(c => c.Outcome == KnightCapabilityOutcome.AuthenticationFailure)) return KnightSourceState.AuthenticationFailure;
-        if (caps.All(c => c.Outcome == KnightCapabilityOutcome.Error)) return KnightSourceState.Error;
+        // Nenhuma leitura concluída: o estado é o motivo, e só quando ele for o MESMO em todas as capacidades.
+        var failed = all.Where(c => c.Outcome != KnightCapabilityOutcome.NotAttempted).ToList();
+        if (failed.Count == all.Count)
+        {
+            if (failed.All(c => c.Outcome == KnightCapabilityOutcome.InsufficientPermission)) return KnightSourceState.InsufficientPermission;
+            if (failed.All(c => c.Outcome == KnightCapabilityOutcome.Throttled)) return KnightSourceState.Throttled;
+            if (failed.All(c => c.Outcome == KnightCapabilityOutcome.AuthenticationFailure)) return KnightSourceState.AuthenticationFailure;
+            if (failed.All(c => c.Outcome == KnightCapabilityOutcome.Error)) return KnightSourceState.Error;
+        }
+
         return KnightSourceState.Unavailable;
     }
 

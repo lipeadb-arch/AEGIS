@@ -11,8 +11,15 @@
     outros processos, e o ambiente de um processo aparece no diagnóstico de falhas.
 
     Saída: UM documento JSON na saída padrão. Cada leitura é registrada com o desfecho próprio: a falha de uma
-    não interrompe as outras nem contamina o resultado delas. Mensagens de erro são resumidas e classificadas;
-    o texto bruto do erro é truncado e nunca carrega token.
+    não interrompe as outras nem contamina o resultado delas.
+
+    DIAGNÓSTICO DE FALHA — o texto BRUTO da exceção NÃO atravessa esta fronteira. Truncar não é sanitizar: uma
+    mensagem de erro pode repetir o cabeçalho de autorização, o token que a originou ou o corpo da resposta, e
+    um corte por tamanho pode deixar um pedaço disso para trás. O que sai daqui é estruturado e controlado:
+      • errorCategory — a classificação (permissão, autenticação, limite de taxa, licença, indisponibilidade);
+      • errorId       — o identificador de erro do PowerShell e o tipo da exceção, restritos a um conjunto FIXO
+                        de caracteres e limitados em tamanho, para diagnóstico técnico.
+    A mensagem que o cliente lê é montada pelo AEGIS a partir da CATEGORIA e do COMANDO, nunca do texto da fonte.
 
     Autenticação: Connect-MicrosoftTeams com -AccessTokens, o caminho de autenticação de APLICATIVO documentado
     pela Microsoft. São necessários DOIS tokens, de RECURSOS DIFERENTES (Microsoft Graph e a API de
@@ -79,13 +86,26 @@ function Get-ErrorCategory {
     return 'Error'
 }
 
-function Get-ErrorSummary {
+function Get-ErrorId {
+    <#
+        Identificador TÉCNICO do erro, para diagnóstico — e nada além disso. NÃO usa a mensagem da exceção:
+        mensagem é texto livre da fonte e pode repetir cabeçalho de autorização, token ou corpo de resposta.
+        Usa o identificador de erro do PowerShell e o nome do tipo da exceção, ambos filtrados para um conjunto
+        FIXO de caracteres (letras, dígitos, ponto, traço, barra, sublinhado) e limitados em tamanho.
+    #>
     param([System.Management.Automation.ErrorRecord]$ErrorRecord)
     if ($null -eq $ErrorRecord) { return $null }
-    $m = ([string]$ErrorRecord.Exception.Message) -replace '\s+', ' '
-    $m = $m.Trim()
-    if ($m.Length -gt 300) { $m = $m.Substring(0, 300) + '…' }
-    return $m
+
+    $parts = @()
+    $fqid = [string]$ErrorRecord.FullyQualifiedErrorId
+    if (-not [string]::IsNullOrWhiteSpace($fqid)) { $parts += $fqid }
+    if ($null -ne $ErrorRecord.Exception) { $parts += $ErrorRecord.Exception.GetType().Name }
+
+    $id = ($parts -join '/')
+    $id = $id -replace '[^A-Za-z0-9._/-]', ''
+    if ($id.Length -gt 120) { $id = $id.Substring(0, 120) }
+    if ([string]::IsNullOrWhiteSpace($id)) { return $null }
+    return $id
 }
 
 $script:Reads = New-Object System.Collections.Generic.List[object]
@@ -101,7 +121,7 @@ function Invoke-Read {
             ok            = $true
             items         = $items
             errorCategory = $null
-            error         = $null
+            errorId       = $null
         })
     }
     catch {
@@ -111,7 +131,7 @@ function Invoke-Read {
             ok            = $false
             items         = @()
             errorCategory = (Get-ErrorCategory $_)
-            error         = (Get-ErrorSummary $_)
+            errorId       = (Get-ErrorId $_)
         })
     }
 }
@@ -232,6 +252,49 @@ function Read-AppPermissionPolicies {
     }
 }
 
+function Read-AppAvailability {
+    <#
+        Modelo de DISPONIBILIDADE DE APLICATIVOS do gerenciamento centrado em aplicativos (ACM) / unificado (UAM).
+        É o que permite dizer QUAL modelo governa o acesso a aplicativos: a documentação oficial do
+        Get-CsTeamsAppPermissionPolicy declara que ele "só é aplicável a locatários que NÃO foram migrados para
+        ACM ou UAM", e a do ACM declara que, depois da migração, as políticas de permissão não podem mais ser
+        acessadas, editadas nem usadas.
+
+        O resultado é AGREGADO aqui, de propósito: o comando devolve, por aplicativo, o identificador e o
+        AssignedBy (o identificador de quem fez a última alteração — dado pessoal). Nada disso é necessário para
+        decidir qual modelo governa, então nada disso sai deste processo. Só contagens atravessam.
+    #>
+    Invoke-Read 'TeamsAppAvailability' 'Get-AllM365TeamsApps' {
+        $apps = @(Get-AllM365TeamsApps)
+        $total = $apps.Count
+        $withAssignment = 0
+        $everyone = 0
+        $usersAndGroups = 0
+        $noOne = 0
+
+        foreach ($app in $apps) {
+            $availability = Get-Prop $app 'AvailableTo'
+            if ($null -eq $availability) { continue }
+            $type = Get-Text $availability 'AssignmentType'
+            if ($null -eq $type) { continue }
+            $withAssignment++
+            switch -Regex ($type) {
+                '^(?i)everyone$' { $everyone++ }
+                '^(?i)usersandgroups$' { $usersAndGroups++ }
+                '^(?i)noone$' { $noOne++ }
+            }
+        }
+
+        @{
+            appsRead                = $total
+            appsWithAssignment      = $withAssignment
+            assignedToEveryone      = $everyone
+            assignedToUsersAndGroups = $usersAndGroups
+            assignedToNoOne         = $noOne
+        }
+    }
+}
+
 function Read-PolicyAssignments {
     Invoke-Read 'TeamsPolicyAssignments' 'Get-CsGroupPolicyAssignment' {
         Get-CsGroupPolicyAssignment | ForEach-Object {
@@ -248,11 +311,11 @@ function Read-PolicyAssignments {
 # ---- Execução --------------------------------------------------------------------------------------------
 
 $result = @{
-    runtime          = @{ powerShell = $null; module = $null; platform = $null }
-    connected        = $false
-    connectionError  = $null
+    runtime           = @{ powerShell = $null; module = $null; platform = $null }
+    connected         = $false
+    connectionErrorId = $null
     connectionErrorCategory = $null
-    reads            = @()
+    reads             = @()
 }
 
 try {
@@ -275,13 +338,13 @@ try {
         $names = @(
             'Connect-MicrosoftTeams', 'Disconnect-MicrosoftTeams', 'Get-CsTeamsClientConfiguration',
             'Get-CsTenantFederationConfiguration', 'Get-CsTeamsMeetingPolicy', 'Get-CsTeamsMessagingPolicy',
-            'Get-CsTeamsAppPermissionPolicy', 'Get-CsGroupPolicyAssignment')
+            'Get-CsTeamsAppPermissionPolicy', 'Get-AllM365TeamsApps', 'Get-CsGroupPolicyAssignment')
         foreach ($n in $names) {
             $found = $null -ne (Get-Command $n -Module MicrosoftTeams -ErrorAction SilentlyContinue)
             $script:Reads.Add(@{
                 capability = 'ModuleCheck'; command = $n; ok = $found; items = @()
                 errorCategory = $(if ($found) { $null } else { 'Unavailable' })
-                error = $(if ($found) { $null } else { 'Comando ausente nesta versão do módulo.' })
+                errorId = $(if ($found) { $null } else { 'CommandNotFound' })
             })
         }
         $result.reads = @($script:Reads)
@@ -302,7 +365,7 @@ try {
     catch {
         $result.connected = $false
         $result.connectionErrorCategory = Get-ErrorCategory $_
-        $result.connectionError = Get-ErrorSummary $_
+        $result.connectionErrorId = Get-ErrorId $_
         $result.reads = @()
         $result | ConvertTo-Json -Depth 12 -Compress
         exit 0
@@ -314,6 +377,7 @@ try {
         Read-MeetingPolicies
         Read-MessagingPolicies
         Read-AppPermissionPolicies
+        Read-AppAvailability
         Read-PolicyAssignments
     }
     finally {
@@ -329,7 +393,7 @@ try {
 catch {
     $result.connected = $false
     $result.connectionErrorCategory = Get-ErrorCategory $_
-    $result.connectionError = Get-ErrorSummary $_
+    $result.connectionErrorId = Get-ErrorId $_
     $result.reads = @($script:Reads)
     $result | ConvertTo-Json -Depth 12 -Compress
     exit 0

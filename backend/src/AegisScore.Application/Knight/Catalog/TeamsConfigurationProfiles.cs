@@ -29,6 +29,9 @@ public static class TeamsConfigurationProfiles
     private static readonly KnightControlReference DocAppPermission = Doc(
         "Políticas de permissão de aplicativos do Teams",
         "https://learn.microsoft.com/en-us/microsoftteams/teams-app-permission-policies");
+    private static readonly KnightControlReference DocAppCentric = Doc(
+        "Gerenciamento centrado em aplicativos (ACM) para o acesso a aplicativos do Teams",
+        "https://learn.microsoft.com/en-us/microsoftteams/app-centric-management");
     private static readonly KnightControlReference DocMeetingPolicy = Doc(
         "Políticas de reunião do Microsoft Teams",
         "https://learn.microsoft.com/en-us/microsoftteams/settings-policies-reference");
@@ -118,9 +121,13 @@ public static class TeamsConfigurationProfiles
             "Permitir tudo e bloquear caso a caso só alcança aplicativos que alguém já identificou como indesejados. Um aplicativo "
             + "adicionado a uma equipe passa a ler o conteúdo dos canais a que tem acesso.",
             "Políticas de permissão com lista de PERMITIDOS nos três catálogos: aplicativos da Microsoft, de terceiros e personalizados.",
-            "O comando oficial de leitura só se aplica a locatários ainda não migrados para o gerenciamento centrado em aplicativos "
-            + "(ACM/UAM); em locatários migrados, esta leitura não é a configuração autoritativa. " + ReachCaveat,
-            Docs(DocAppPermission, DocGroupAssignment), PolicyCaps(KnightCapability.TeamsAppPermissionPolicies)),
+            "O comando oficial de leitura só se aplica a locatários NÃO migrados para o gerenciamento centrado em aplicativos "
+            + "(ACM/UAM). Por isso o controle só conclui quando a coleta demonstra que as políticas de permissão ainda governam o "
+            + "acesso a aplicativos: em locatário migrado — e quando o modelo em vigor não pode ser determinado — a configuração "
+            + "legada é preservada como evidência, sem veredito. " + ReachCaveat,
+            Docs(DocAppPermission, DocAppCentric, DocGroupAssignment),
+            Caps(KnightCapability.TeamsAppPermissionPolicies, KnightCapability.TeamsAppAvailability,
+                 KnightCapability.TeamsPolicyAssignments)),
 
         new KnightControlProfile("AK-TEAMS-008", KnightSecurityDomain.Collaboration,
             "Participantes anônimos podem entrar em reuniões da organização.",
@@ -131,11 +138,14 @@ public static class TeamsConfigurationProfiles
             Docs(DocMeetingPolicy), PolicyCaps(KnightCapability.TeamsMeetingPolicies)),
 
         new KnightControlProfile("AK-TEAMS-009", KnightSecurityDomain.Collaboration,
-            "Participantes anônimos podem iniciar uma reunião da organização.",
-            "Quando a reunião começa sem ninguém de dentro, o lobby deixa de cumprir sua função: a sala fica aberta antes de qualquer "
+            "A reunião pode começar sem nenhum participante verificado presente.",
+            "Quando a reunião começa sem ninguém verificado, o lobby deixa de cumprir sua função: a sala fica aberta antes de qualquer "
             + "controle humano.",
-            "Início de reunião por participantes anônimos desligado em todas as políticas de reunião.",
-            "O controle lê a política; não afirma que alguma reunião foi iniciada dessa forma. " + ReachCaveat,
+            "Início de reunião sem participante verificado desligado em todas as políticas de reunião.",
+            "A documentação oficial condiciona o efeito deste ajuste: para participantes ANÔNIMOS ele só vale quando a entrada de "
+            + "anônimos está habilitada e “quem entra sem passar pelo lobby” está em “todos”; fora dessas condições, ele vale para "
+            + "quem entra por discagem telefônica. O controle lê a política; não afirma que as condições estejam presentes nem que "
+            + "alguma reunião tenha sido iniciada assim. " + ReachCaveat,
             Docs(DocMeetingPolicy), PolicyCaps(KnightCapability.TeamsMeetingPolicies)),
 
         new KnightControlProfile("AK-TEAMS-010", KnightSecurityDomain.Collaboration,
@@ -162,10 +172,12 @@ public static class TeamsConfigurationProfiles
             Docs(DocMeetingPolicy), PolicyCaps(KnightCapability.TeamsMeetingPolicies)),
 
         new KnightControlProfile("AK-TEAMS-013", KnightSecurityDomain.Collaboration,
-            "Todos os participantes entram na reunião com o papel de apresentador.",
+            "Pessoas que não organizaram a reunião entram nela já com o papel de apresentador.",
             "Quem apresenta compartilha a tela, exibe conteúdo para todos e pode remover outras pessoas da sala.",
             "Papel de apresentador restrito ao organizador (e coorganizadores) por padrão, com promoção durante a reunião quando necessário.",
-            "O controle lê o padrão da política; o organizador pode alterar o papel em cada reunião. " + ReachCaveat,
+            "O CONJUNTO que recebe o papel depende do valor encontrado — todos os participantes, só as pessoas da organização, ou a "
+            + "organização mais as confiáveis — e está dito em cada política. O controle lê o padrão; o organizador pode alterar o "
+            + "papel em cada reunião. " + ReachCaveat,
             Docs(DocPresenter), PolicyCaps(KnightCapability.TeamsMeetingPolicies)),
 
         new KnightControlProfile("AK-TEAMS-014", KnightSecurityDomain.Collaboration,
@@ -177,10 +189,12 @@ public static class TeamsConfigurationProfiles
 
         new KnightControlProfile("AK-TEAMS-015", KnightSecurityDomain.Collaboration,
             "Pessoas da organização participam do chat de reuniões hospedadas por organizações não confiáveis.",
-            "O chat de uma reunião externa não confiável é um canal direto para links e arquivos, fora dos controles da organização que hospeda "
-            + "e da que participa.",
+            "O chat de uma reunião externa não confiável entrega mensagens, links e arquivos num canal que a organização não administra: "
+            + "não define quem participa, não retém a conversa e não a audita.",
             "Chat em reuniões externas não confiáveis desligado em todas as políticas de reunião.",
-            "“Não confiável” é o que a configuração de acesso externo define; o controle não reclassifica organizações. " + ReachCaveat,
+            "O achado NÃO afirma que a mensagem chegue sem controle algum: proteção do ponto final, do navegador e do próprio Teams "
+            + "continuam valendo. O que a configuração encontrada não oferece é controle sobre o canal. “Não confiável” é o que a "
+            + "configuração de acesso externo define; o controle não reclassifica organizações. " + ReachCaveat,
             Docs(DocMeetingPolicy, DocExternalAccess), PolicyCaps(KnightCapability.TeamsMeetingPolicies)),
 
         new KnightControlProfile("AK-TEAMS-016", KnightSecurityDomain.DataProtection,
@@ -193,10 +207,12 @@ public static class TeamsConfigurationProfiles
 
         new KnightControlProfile("AK-TEAMS-017", KnightSecurityDomain.Collaboration,
             "As pessoas não têm no Teams um caminho para relatar uma mensagem suspeita.",
-            "Sem esse caminho, a tentativa de golpe que chega por chat não vira registro: a equipe de segurança só fica sabendo quando "
-            + "alguém já agiu sobre a mensagem.",
+            "A denúncia pelo próprio destinatário é a via mais rápida — e às vezes a única — para identificar uma abordagem dirigida por "
+            + "chat. Sem ela, a suspeita não vira registro por esse caminho.",
             "Denúncia de problemas de segurança habilitada nas políticas de mensagens, com destino definido no Microsoft Defender para Office 365.",
-            "A metade do critério que fica no Microsoft Defender para Office 365 não é lida neste bloco. " + ReachCaveat,
+            "O achado NÃO afirma que a equipe de segurança só descobrirá o problema depois de alguém agir sobre a mensagem: a detecção "
+            + "pode vir da proteção de mensagens, de sinais do ponto final ou de relato por outro canal. Ele afirma a ausência DESTE "
+            + "caminho. A metade do critério que fica no Microsoft Defender para Office 365 não é lida neste bloco. " + ReachCaveat,
             Docs(DocReporting), PolicyCaps(KnightCapability.TeamsMessagingPolicies)),
     };
 }

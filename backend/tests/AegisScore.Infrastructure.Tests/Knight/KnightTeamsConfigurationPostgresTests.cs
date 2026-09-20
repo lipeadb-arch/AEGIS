@@ -124,6 +124,17 @@ public sealed class KnightTeamsConfigurationPostgresTests
             outcome.Status.Should().Be(KnightIndicatorStatus.Exposed);
             outcome.Affected.Single().Detail.Should().Contain("11111111-2222-3333-4444-555555555555");
 
+            // [Revisão dirigida] A condição de aplicabilidade de AK-TEAMS-007 depende de um contrato NOVO no
+            // ADM. Aqui ele vem do jsonb REAL: o modelo de governo é resolvido a partir do que o PostgreSQL
+            // devolveu, e não de um objeto montado em memória.
+            var governo = TeamsAppGovernance.Resolve(contexto);
+            governo.Model.Should().Be(TeamsAppGovernanceModel.LegacyPermissionPolicies);
+            governo.Observed!.AppsRead.Should().Be(40);
+            governo.Observed.AppsWithAssignment.Should().Be(0);
+            TeamsConfigurationControls.Definitions.Single(d => d.Id == "AK-TEAMS-007").Evaluate!(contexto)
+                .Status.Should().Be(KnightIndicatorStatus.Passed,
+                    "neste cenário o modelo legado é o que governa, e os catálogos estão restritos a listas de permitidos");
+
             var snapshot = await db.PostureSnapshots.AsNoTracking()
                 .Include(s => s.Controls).Include(s => s.Indicators).Include(s => s.ActionItems).Include(s => s.Objects)
                 .SingleAsync(s => s.Id == snapshotId);

@@ -1,11 +1,15 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Connectors.Microsoft.Knight.Teams;
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace AegisScore.Infrastructure.Tests.Knight;
@@ -41,7 +45,8 @@ public sealed class TeamsAdapterTransportTests
         foreach (var comando in new[]
         {
             "Get-CsTeamsClientConfiguration", "Get-CsTenantFederationConfiguration", "Get-CsTeamsMeetingPolicy",
-            "Get-CsTeamsMessagingPolicy", "Get-CsTeamsAppPermissionPolicy", "Get-CsGroupPolicyAssignment",
+            "Get-CsTeamsMessagingPolicy", "Get-CsTeamsAppPermissionPolicy", "Get-AllM365TeamsApps",
+            "Get-CsGroupPolicyAssignment",
         })
             script.Should().Contain(comando);
 
@@ -55,6 +60,33 @@ public sealed class TeamsAdapterTransportTests
 
         // Os tokens entram pela ENTRADA PADRÃO — nunca por argumento de linha de comando nem por ambiente.
         script.Should().Contain("[Console]::In.ReadToEnd()");
+    }
+
+    /// <summary>
+    /// [Revisão dirigida] O script NÃO reproduz a mensagem da exceção. Truncar texto de terceiro não é
+    /// sanitizar: uma mensagem de erro pode repetir o cabeçalho de autorização ou o token que a originou, e um
+    /// corte por tamanho preserva justamente o começo. O que sai é a CATEGORIA e um identificador técnico
+    /// restrito a um conjunto fixo de caracteres.
+    /// </summary>
+    [Fact]
+    public void ScriptEmbutido_NaoReproduzAMensagemDaExcecao()
+    {
+        var script = Script();
+
+        // A mensagem da exceção pode ser LIDA para classificar a falha localmente — o que ela não pode é ser
+        // EMITIDA. Por isso a única ocorrência permitida está dentro da classificação.
+        var ocorrencias = script.Split("Exception.Message").Length - 1;
+        ocorrencias.Should().Be(1, "a mensagem só é lida para classificar a falha");
+
+        var classificacao = script[script.IndexOf("function Get-ErrorCategory", StringComparison.Ordinal)
+            ..script.IndexOf("function Get-ErrorId", StringComparison.Ordinal)];
+        classificacao.Should().Contain("Exception.Message", "é ali, e só ali, que a mensagem é usada");
+
+        // O que atravessa a fronteira é a categoria e o identificador técnico — nunca o texto da fonte.
+        script.Should().Contain("FullyQualifiedErrorId");
+        script.Should().Contain("errorCategory");
+        script.Should().Contain("errorId");
+        script.Should().NotContain("Get-ErrorSummary", "o resumo do texto bruto foi aposentado");
     }
 
     [Fact]
@@ -110,12 +142,12 @@ public sealed class TeamsAdapterTransportTests
     {
         var saida = PowerShellTeamsAdminReader.Parse("""
             {"runtime":{"powerShell":"7.4.6","module":"7.9.0","platform":"Unix"},
-             "connected":true,"connectionError":null,"connectionErrorCategory":null,
+             "connected":true,"connectionErrorId":null,"connectionErrorCategory":null,
              "reads":[
                {"capability":"TeamsMeetingPolicies","command":"Get-CsTeamsMeetingPolicy","ok":false,
-                "items":[],"errorCategory":"Throttled","error":"429 Too Many Requests"},
+                "items":[],"errorCategory":"Throttled","errorId":"TooManyRequests/HttpRequestException"},
                {"capability":"TeamsMessagingPolicies","command":"Get-CsTeamsMessagingPolicy","ok":true,
-                "items":[{"identity":"Global","allowSecurityEndUserReporting":true}],"errorCategory":null,"error":null}]}
+                "items":[{"identity":"Global","allowSecurityEndUserReporting":true}],"errorCategory":null,"errorId":null}]}
             """);
 
         saida.Runtime.Module.Should().Be("7.9.0");
@@ -124,6 +156,7 @@ public sealed class TeamsAdapterTransportTests
         var falhou = saida.Reads.Single(r => r.Capability == "TeamsMeetingPolicies");
         falhou.Ok.Should().BeFalse();
         falhou.ErrorCategory.Should().Be("Throttled");
+        falhou.ErrorId.Should().Be("TooManyRequests/HttpRequestException");
         falhou.Items.GetArrayLength().Should().Be(0);
 
         var leu = saida.Reads.Single(r => r.Capability == "TeamsMessagingPolicies");
@@ -139,5 +172,169 @@ public sealed class TeamsAdapterTransportTests
 
         saida.Reads.Single().Items.GetArrayLength().Should().Be(0);
         saida.Runtime.PowerShell.Should().BeNull("o que a fonte não informou permanece nulo");
+    }
+
+    // ======================================================================================================
+    //  [Revisão dirigida] Verificação de RUNTIME pelo caminho REAL do adaptador
+    // ======================================================================================================
+
+    /// <summary>
+    /// A verificação executada no CI é a do PRODUTO: monta o leitor com as opções do ambiente e roda o script
+    /// EMBUTIDO em modo de conferência de módulo. Aqui a forma do desfecho é travada com uma saída sintética —
+    /// a execução real, com PowerShell e módulo de verdade, acontece dentro da imagem Linux no CI.
+    /// </summary>
+    [Fact]
+    public async Task VerificacaoDeRuntime_SoAprovaComModuloImportadoETodosOsComandosPresentes()
+    {
+        var saida = new StringWriter();
+        var codigo = await TeamsRuntimeDiagnostics.RunAsync(new RuntimeFake(modulo: "7.9.0", ausentes: 0), saida);
+
+        codigo.Should().Be(0);
+        saida.ToString().Should().Contain(TeamsRuntimeDiagnostics.SuccessMarker).And.Contain("MicrosoftTeams=7.9.0");
+    }
+
+    [Fact]
+    public async Task VerificacaoDeRuntime_ModuloNaoImportado_Reprova_SemMascararAFalha()
+    {
+        var saida = new StringWriter();
+        var codigo = await TeamsRuntimeDiagnostics.RunAsync(new RuntimeFake(modulo: null, ausentes: 0), saida);
+
+        codigo.Should().Be(1);
+        saida.ToString().Should().Contain("não foi importado").And.NotContain(TeamsRuntimeDiagnostics.SuccessMarker);
+    }
+
+    [Fact]
+    public async Task VerificacaoDeRuntime_ComandoAusente_Reprova_EDizQual()
+    {
+        var saida = new StringWriter();
+        var codigo = await TeamsRuntimeDiagnostics.RunAsync(new RuntimeFake(modulo: "7.9.0", ausentes: 1), saida);
+
+        codigo.Should().Be(1);
+        saida.ToString().Should().Contain("comandos ausentes").And.NotContain(TeamsRuntimeDiagnostics.SuccessMarker);
+    }
+
+    [Fact]
+    public async Task VerificacaoDeRuntime_FalhaDeTransporte_Reprova_SemExcecaoVazando()
+    {
+        var saida = new StringWriter();
+        var codigo = await TeamsRuntimeDiagnostics.RunAsync(new SemRuntime(), saida);
+
+        codigo.Should().Be(1);
+        saida.ToString().Should().Contain("FALHA no transporte");
+    }
+
+    /// <summary>A verificação lê as opções REAIS do ambiente — é isso que a torna equivalente ao caminho de coleta.</summary>
+    [Fact]
+    public async Task VerificacaoDeRuntime_UsaOExecutavelEOCaminhoDeModuloDaConfiguracao()
+    {
+        var configuracao = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Executable"] = "aegis-pwsh-que-nao-existe",
+                ["ModulePath"] = "/opt/aegis/psmodules",
+            })
+            .Build();
+
+        var saida = new StringWriter();
+        var codigo = await TeamsRuntimeDiagnostics.RunFromConfigurationAsync(configuracao, saida);
+
+        codigo.Should().Be(1, "o executável configurado não existe nesta máquina");
+        saida.ToString().Should().Contain("aegis-pwsh-que-nao-existe").And.Contain("/opt/aegis/psmodules");
+    }
+
+    // ======================================================================================================
+    //  [Revisão dirigida] Truncar não é sanitizar
+    // ======================================================================================================
+
+    /// <summary>
+    /// Marcadores SINTÉTICOS com forma de segredo — nenhuma credencial real. O diagnóstico registrado não pode
+    /// conter nenhum deles, e o texto útil em volta continua legível.
+    /// </summary>
+    [Theory]
+    [InlineData("eyJhZWdpcyI6InQifQ.QUVHSVMtU0lOVEVUSUNP.YXNzaW5hdHVyYQ")]
+    [InlineData("Authorization: Bearer AEGIS-MARCADOR-SINTETICO-0123456789")]
+    [InlineData("client_secret=AEGIS-SEGREDO-SINTETICO-abcdefghijklmnop")]
+    [InlineData("AEGISMARCADORSINTETICOxxxxxxxxxxxxxxxxxxxxxxxxxxxx")]
+    public void DiagnosticoDoProcesso_EhSanitizado_NaoApenasTruncado(string marcador)
+    {
+        // O marcador fica ANTES do corte por tamanho: truncar sozinho o preservaria inteiro.
+        var bruto = $"Falha ao conectar. {marcador} " + new string('x', 2000);
+
+        var limpo = ScrubViaReader(bruto);
+        limpo.Should().NotContain(marcador);
+        limpo.Should().Contain("Falha ao conectar", "a informação útil sobre a causa é preservada");
+        limpo.Should().Contain("[REDIGIDO]");
+    }
+
+    /// <summary>O token que o AEGIS entregou ao processo é removido por IGUALDADE, qualquer que seja sua forma.</summary>
+    [Fact]
+    public void SegredoConhecidoDaColeta_EhRemovidoPorIgualdade()
+    {
+        const string token = "token-sintetico-desta-coleta-0001";
+        var limpo = ScrubViaReader($"o comando falhou usando {token} no cabecalho", token);
+
+        limpo.Should().NotContain(token).And.Contain("[REDIGIDO]").And.Contain("o comando falhou");
+    }
+
+    /// <summary>
+    /// Invoca a sanitização pelo mesmo tipo que o leitor usa. O tipo é INTERNO de propósito: sanitizar é
+    /// responsabilidade do transporte, não superfície pública.
+    /// </summary>
+    private static string ScrubViaReader(string texto, params string?[] segredos)
+    {
+        var tipo = typeof(PowerShellTeamsAdminReader).Assembly
+            .GetType("AegisScore.Connectors.Microsoft.Knight.Teams.TeamsDiagnosticScrubber")!;
+        var metodo = tipo.GetMethod("Scrub", BindingFlags.Static | BindingFlags.NonPublic)!;
+        return (string)metodo.Invoke(null, [texto, segredos.Length == 0 ? null : segredos])!;
+    }
+
+    // ---- Duplas de teste ------------------------------------------------------------------------------
+
+    private sealed class RuntimeFake : ITeamsAdminReader
+    {
+        private readonly string? _modulo;
+        private readonly int _ausentes;
+        public RuntimeFake(string? modulo, int ausentes) { _modulo = modulo; _ausentes = ausentes; }
+
+        public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            CheckRuntimeAsync(ct);
+
+        public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default)
+        {
+            var comandos = new[]
+            {
+                "Connect-MicrosoftTeams", "Disconnect-MicrosoftTeams", "Get-CsTeamsClientConfiguration",
+                "Get-CsTenantFederationConfiguration", "Get-CsTeamsMeetingPolicy", "Get-CsTeamsMessagingPolicy",
+                "Get-CsTeamsAppPermissionPolicy", "Get-AllM365TeamsApps", "Get-CsGroupPolicyAssignment",
+            };
+            var reads = comandos.Select((c, i) => new
+            {
+                capability = "ModuleCheck",
+                command = c,
+                ok = i >= _ausentes,
+                items = Array.Empty<object>(),
+                errorCategory = i >= _ausentes ? null : "Unavailable",
+                errorId = i >= _ausentes ? null : "CommandNotFound",
+            });
+
+            var json = JsonSerializer.Serialize(new
+            {
+                runtime = new { powerShell = "7.4.7", module = _modulo, platform = "Unix" },
+                connected = false,
+                connectionErrorId = (string?)null,
+                connectionErrorCategory = (string?)null,
+                reads,
+            });
+            return Task.FromResult(PowerShellTeamsAdminReader.Parse(json));
+        }
+    }
+
+    private sealed class SemRuntime : ITeamsAdminReader
+    {
+        public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            CheckRuntimeAsync(ct);
+
+        public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) =>
+            throw new TeamsAdminTransportException("O runtime do PowerShell não pôde ser iniciado neste ambiente.");
     }
 }

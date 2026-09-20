@@ -75,8 +75,19 @@ public sealed class KnightReferenceCoverageTests
             .Where(c => c.Control.Service == KnightService.Teams && c.Disposition == KnightReferenceDisposition.Partial)
             .ToList();
         parciais.Select(p => p.Control.Section).Should().BeEquivalentTo(new[] { "8.4.1", "8.6.1" });
-        parciais.Single(p => p.Control.Section == "8.4.1").Note.Should().Contain("ACM");
         parciais.Single(p => p.Control.Section == "8.6.1").Note.Should().Contain("Defender para Office 365");
+
+        // 8.4.1 continua PARCIAL, mas por um motivo mais forte: a limitação ACM/UAM virou CONDIÇÃO de
+        // aplicabilidade. O vínculo precisa dizer que o controle NÃO conclui no locatário migrado — uma nota que
+        // só descrevesse a limitação não explicaria por que a equivalência não é integral.
+        parciais.Single(p => p.Control.Section == "8.4.1").Note
+            .Should().Contain("ACM").And.Contain("NÃO conclui");
+
+        // 8.5.3 é equivalência INTEGRAL: o critério avaliado é o da referência. O vínculo registra que o AEGIS
+        // também aceita o valor estritamente mais restritivo, e que “pessoas convidadas” NÃO é aceito.
+        var lobby = coverage.Controls.Single(c => c.Control.Section == "8.5.3" && c.Control.Service == KnightService.Teams);
+        lobby.Disposition.Should().Be(KnightReferenceDisposition.Implemented);
+        lobby.Note.Should().Contain("mais restritivo").And.Contain("InvitedUsers");
 
         // Cada referência de Teams é citada por um — e só um — controle do KNIGHT.
         foreach (var c in coverage.Controls.Where(c => c.Control.Service == KnightService.Teams))

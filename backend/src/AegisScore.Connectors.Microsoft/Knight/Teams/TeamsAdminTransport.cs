@@ -28,23 +28,32 @@ public sealed record TeamsAdminCredentials(string TenantId, string GraphToken, s
 /// <param name="Capability">Nome da capacidade do KNIGHT que esta leitura alimenta.</param>
 /// <param name="Command">Comando oficial executado — registrado para rastreabilidade do método de coleta.</param>
 /// <param name="Items">Itens devolvidos, sempre um array JSON (vazio quando a leitura não devolveu nada).</param>
-/// <param name="ErrorCategory">Classificação da falha, quando houve; nunca o texto bruto do erro da fonte.</param>
+/// <param name="ErrorCategory">Classificação da falha, quando houve. É DAQUI que sai a mensagem do cliente.</param>
+/// <param name="ErrorId">
+/// Identificador TÉCNICO do erro (identificador de erro do PowerShell + tipo da exceção), já restrito a um
+/// conjunto fixo de caracteres e sanitizado na leitura. Serve ao diagnóstico do operador e NÃO vira texto de
+/// achado: a mensagem bruta da exceção não atravessa esta fronteira, porque truncar texto de terceiro não é
+/// sanitizar — um corte por tamanho pode preservar justamente o pedaço que carrega o segredo.
+/// </param>
 public sealed record TeamsAdminRead(
     string Capability,
     string Command,
     bool Ok,
     JsonElement Items,
     string? ErrorCategory,
-    string? Error);
+    string? ErrorId);
 
 /// <summary>Runtime em que a coleta correu — o que a homologação precisa saber para reproduzir o resultado.</summary>
 public sealed record TeamsAdminRuntime(string? PowerShell, string? Module, string? Platform);
 
-/// <summary>Saída completa de UMA execução do adaptador.</summary>
+/// <summary>
+/// Saída completa de UMA execução do adaptador. <see cref="ConnectionErrorId"/> segue a mesma regra do
+/// <see cref="TeamsAdminRead.ErrorId"/>: identificador técnico, nunca a mensagem da fonte.
+/// </summary>
 public sealed record TeamsAdminOutput(
     TeamsAdminRuntime Runtime,
     bool Connected,
-    string? ConnectionError,
+    string? ConnectionErrorId,
     string? ConnectionErrorCategory,
     IReadOnlyList<TeamsAdminRead> Reads);
 

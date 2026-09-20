@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,38 +36,83 @@ internal sealed class TeamsCollectionScenario : ITeamsAdminReader
 
         /// <summary>A conexão de aplicativo foi recusada — nenhuma leitura chegou a ser tentada.</summary>
         NotConnected,
+
+        /// <summary>
+        /// [Revisão dirigida] Valores CONFORMES, mas SEM identificação de política: identity nula, vazia e só com
+        /// espaços, e nenhuma Global explicitamente identificada. Nada aqui pode virar "a política padrão da
+        /// organização", e os três registros não podem se fundir num só.
+        /// </summary>
+        UnidentifiedPolicies,
+
+        /// <summary>
+        /// [Revisão dirigida] O adaptador OMITE a leitura das políticas de mensagens — ela simplesmente não
+        /// aparece na resposta. Omissão não é "leitura concluída sem registros".
+        /// </summary>
+        ReadOmitted,
+    }
+
+    /// <summary>Qual modelo de governo de aplicativos a coleta demonstra (ver <c>TeamsAppGovernance</c>).</summary>
+    internal enum AppModel
+    {
+        /// <summary>Catálogo lido, nenhuma disponibilidade por aplicativo: as políticas legadas governam.</summary>
+        LegacyProven,
+
+        /// <summary>Disponibilidade definida por aplicativo: o locatário está no modelo ACM/UAM.</summary>
+        Migrated,
+
+        /// <summary>A leitura do modelo falhou — não é possível dizer qual modelo governa.</summary>
+        Unknown,
     }
 
     private readonly Variant _variant;
+    private readonly AppModel _appModel;
+    private readonly string? _autoAdmittedUsers;
+    private readonly string? _designatedPresenterRoleMode;
 
-    public TeamsCollectionScenario(Variant variant) => _variant = variant;
+    internal TeamsCollectionScenario(
+        Variant variant,
+        AppModel appModel = AppModel.LegacyProven,
+        string? autoAdmittedUsers = null,
+        string? designatedPresenterRoleMode = null)
+    {
+        _variant = variant;
+        _appModel = appModel;
+        _autoAdmittedUsers = autoAdmittedUsers;
+        _designatedPresenterRoleMode = designatedPresenterRoleMode;
+    }
 
     public int Reads { get; private set; }
 
     public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default)
     {
         Reads++;
-        return Task.FromResult(PowerShellTeamsAdminReader.Parse(Json(_variant)));
+        return Task.FromResult(PowerShellTeamsAdminReader.Parse(Json()));
     }
 
     public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) =>
-        Task.FromResult(PowerShellTeamsAdminReader.Parse(Json(Variant.Compliant)));
+        Task.FromResult(PowerShellTeamsAdminReader.Parse(new TeamsCollectionScenario(Variant.Compliant).Json()));
 
     // ---- Documento do adaptador ------------------------------------------------------------------------
 
-    internal static string Json(Variant variant)
+    /// <summary>Atalho para os testes que só querem o documento de uma variante, com os padrões.</summary>
+    internal static string Json(Variant variant) => new TeamsCollectionScenario(variant).Json();
+
+    internal string Json()
     {
+        var variant = _variant;
+
         if (variant == Variant.NotConnected)
             return Serialize(new
             {
                 runtime = Runtime,
                 connected = false,
-                connectionError = "A aplicação não tem o papel necessário no centro de administração do Teams.",
+                connectionErrorId = "AuthorizationFailed/UnauthorizedAccessException",
                 connectionErrorCategory = "InsufficientPermission",
                 reads = Array.Empty<object>(),
             });
 
-        var compliant = variant is Variant.Compliant or Variant.CustomPolicyFails or Variant.Incomplete or Variant.MeetingPoliciesDenied;
+        var compliant = variant is Variant.Compliant or Variant.CustomPolicyFails or Variant.Incomplete
+            or Variant.MeetingPoliciesDenied or Variant.UnidentifiedPolicies or Variant.ReadOmitted;
 
         var reads = new List<object>
         {
@@ -106,7 +150,7 @@ internal sealed class TeamsCollectionScenario : ITeamsAdminReader
 
             variant == Variant.MeetingPoliciesDenied
                 ? Failed("TeamsMeetingPolicies", "Get-CsTeamsMeetingPolicy", "InsufficientPermission",
-                    "O acesso foi negado: a aplicação não tem o papel necessário.")
+                    "AuthorizationFailed/UnauthorizedAccessException")
                 : Read("TeamsMeetingPolicies", "Get-CsTeamsMeetingPolicy", MeetingPolicies(variant)),
 
             Read("TeamsMessagingPolicies", "Get-CsTeamsMessagingPolicy", new[]
@@ -132,6 +176,8 @@ internal sealed class TeamsCollectionScenario : ITeamsAdminReader
                 },
             }),
 
+            AppAvailability(),
+
             Read("TeamsPolicyAssignments", "Get-CsGroupPolicyAssignment", new[]
             {
                 new Dictionary<string, object?>
@@ -144,39 +190,89 @@ internal sealed class TeamsCollectionScenario : ITeamsAdminReader
             }),
         };
 
+        // A OMISSÃO é o defeito em teste: a leitura SOME da resposta, em vez de voltar vazia ou com falha.
+        if (variant == Variant.ReadOmitted) reads.RemoveAt(3);
+
         return Serialize(new
         {
             runtime = Runtime,
             connected = true,
-            connectionError = (string?)null,
+            connectionErrorId = (string?)null,
             connectionErrorCategory = (string?)null,
             reads,
         });
     }
 
-    private static object[] MeetingPolicies(Variant variant)
+    /// <summary>
+    /// Leitura do modelo de disponibilidade de aplicativos (ACM/UAM). É ela que demonstra QUAL modelo governa o
+    /// acesso a aplicativos — e, portanto, se a política de permissão legada ainda é autoritativa.
+    /// </summary>
+    private object AppAvailability() => _appModel switch
     {
+        AppModel.Unknown => Failed("TeamsAppAvailability", "Get-AllM365TeamsApps", "InsufficientPermission",
+            "AuthorizationFailed/UnauthorizedAccessException"),
+
+        AppModel.Migrated => Read("TeamsAppAvailability", "Get-AllM365TeamsApps", new[]
+        {
+            new Dictionary<string, object?>
+            {
+                ["appsRead"] = 40,
+                ["appsWithAssignment"] = 40,
+                ["assignedToEveryone"] = 31,
+                ["assignedToUsersAndGroups"] = 6,
+                ["assignedToNoOne"] = 3,
+            },
+        }),
+
+        // Catálogo lido e NENHUM aplicativo com disponibilidade própria: o modelo legado governa.
+        _ => Read("TeamsAppAvailability", "Get-AllM365TeamsApps", new[]
+        {
+            new Dictionary<string, object?>
+            {
+                ["appsRead"] = 40,
+                ["appsWithAssignment"] = 0,
+                ["assignedToEveryone"] = 0,
+                ["assignedToUsersAndGroups"] = 0,
+                ["assignedToNoOne"] = 0,
+            },
+        }),
+    };
+
+    private object[] MeetingPolicies(Variant variant)
+    {
+        if (variant == Variant.UnidentifiedPolicies)
+        {
+            // Três registros CONFORMES e NENHUM identificado: nulo, vazio e só com espaços.
+            return
+            [
+                Meeting(null, compliant: true),
+                Meeting("", compliant: true),
+                Meeting("   ", compliant: true),
+            ];
+        }
+
         var global = Meeting("Global", compliant: variant != Variant.NonCompliant);
         if (variant == Variant.Incomplete) global["autoAdmittedUsers"] = null;
 
         return variant switch
         {
             // A política padrão atende; a personalizada "Convidados" (atribuída a um grupo) não.
-            Variant.CustomPolicyFails => new object[] { global, Meeting("Tag:Convidados", compliant: false) },
-            Variant.NonCompliant => new object[] { global, Meeting("Tag:Convidados", compliant: false) },
-            _ => new object[] { global, Meeting("Tag:Executivos", compliant: true) },
+            Variant.CustomPolicyFails => [global, Meeting("Tag:Convidados", compliant: false)],
+            Variant.NonCompliant => [global, Meeting("Tag:Convidados", compliant: false)],
+            _ => [global, Meeting("Tag:Executivos", compliant: true)],
         };
     }
 
-    private static Dictionary<string, object?> Meeting(string identity, bool compliant) => new()
+    private Dictionary<string, object?> Meeting(string? identity, bool compliant) => new()
     {
         ["identity"] = identity,
         ["allowAnonymousUsersToJoinMeeting"] = !compliant,
         ["allowAnonymousUsersToStartMeeting"] = !compliant,
-        ["autoAdmittedUsers"] = compliant ? "EveryoneInCompanyExcludingGuests" : "Everyone",
+        ["autoAdmittedUsers"] = _autoAdmittedUsers ?? (compliant ? "EveryoneInCompanyExcludingGuests" : "Everyone"),
         ["allowPSTNUsersToBypassLobby"] = !compliant,
         ["meetingChatEnabledType"] = compliant ? "EnabledExceptAnonymous" : "Enabled",
-        ["designatedPresenterRoleMode"] = compliant ? "OrganizerOnlyUserOverride" : "EveryoneUserOverride",
+        ["designatedPresenterRoleMode"] = _designatedPresenterRoleMode
+            ?? (compliant ? "OrganizerOnlyUserOverride" : "EveryoneUserOverride"),
         ["allowExternalParticipantGiveRequestControl"] = !compliant,
         ["allowExternalNonTrustedMeetingChat"] = !compliant,
         ["allowCloudRecording"] = !compliant,
@@ -191,17 +287,17 @@ internal sealed class TeamsCollectionScenario : ITeamsAdminReader
         ok = true,
         items,
         errorCategory = (string?)null,
-        error = (string?)null,
+        errorId = (string?)null,
     };
 
-    private static object Failed(string capability, string command, string category, string error) => new
+    private static object Failed(string capability, string command, string category, string errorId) => new
     {
         capability,
         command,
         ok = false,
         items = Array.Empty<object>(),
         errorCategory = category,
-        error,
+        errorId,
     };
 
     private static string Serialize(object value) =>
