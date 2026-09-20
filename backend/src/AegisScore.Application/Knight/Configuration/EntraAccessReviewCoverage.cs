@@ -73,17 +73,22 @@ public static class EntraAccessReviewCoverage
     public static KnightAccessReviewScope Guests(EntraAccessReviewDefinition d)
     {
         var scope = Scoping(d).ToList();
-        var guests = scope.Where(q => Norm(q.Query).Contains("usertype eq 'guest'")).ToList();
+        var guests = scope.Where(q => MentionsGuests(q.Query)).ToList();
         if (guests.Count == 0) return new(KnightAccessReviewReach.NotTargeted, "a revisão não tem escopo em convidados");
         if (d.RoleDefinitionIds.Count > 0 || scope.Any(q => Norm(q.Query).Contains("/roledefinitions/") || Norm(q.Query).Contains("roledefinitionid eq")))
             return new(KnightAccessReviewReach.NotTargeted, "a revisão é de atribuições de papel do diretório, não do acesso dos convidados");
+
+        // A restrição a usuários INATIVOS não aparece na consulta: está no tipo do escopo e em inactiveDuration.
+        if (Inactive(d) is { Count: > 0 } inactive)
+            return new(KnightAccessReviewReach.Limited,
+                $"o escopo alcança apenas os usuários inativos{Duration(inactive)}, não todos os convidados", Describe(inactive));
 
         var specific = scope.Where(q => SpecificResource(q.Query)).ToList();
         if (specific.Count > 0)
             return new(KnightAccessReviewReach.Limited,
                 $"o escopo alcança {Groups(specific.Count)}, não todos os convidados do locatário", Describe(specific));
 
-        if (guests.Any(q => Norm(q.Query).StartsWith("./", StringComparison.Ordinal)))
+        if (guests.Any(q => RelativeGuestMembers(q.Query)))
         {
             var enumeration = d.Queries.Where(q => q.Origin == EntraAccessReviewScopeQuery.OriginInstanceEnumeration).ToList();
             if (enumeration.Count == 0)
@@ -92,17 +97,23 @@ public static class EntraAccessReviewCoverage
                     Describe(guests));
             if (enumeration.All(q => AllUnifiedGroups(q.Query)))
                 return new(KnightAccessReviewReach.Full, "os convidados de todos os grupos do Microsoft 365 do locatário", Describe(enumeration));
-            if (enumeration.All(q => Norm(q.Query).StartsWith("/groups", StringComparison.Ordinal)))
+            if (enumeration.Any(q => SpecificResource(q.Query)))
                 return new(KnightAccessReviewReach.Limited,
-                    "a enumeração de instâncias seleciona um subconjunto dos grupos", Describe(enumeration));
+                    "a enumeração de instâncias nomeia grupos específicos", Describe(enumeration));
+            if (enumeration.All(q => TeamsOnly(q.Query)))
+                return new(KnightAccessReviewReach.Limited,
+                    "a enumeração de instâncias alcança apenas os grupos associados a equipes", Describe(enumeration));
             return new(KnightAccessReviewReach.Undetermined,
-                "a enumeração de instâncias não pôde ser interpretada", Describe(enumeration));
+                "a enumeração de instâncias não corresponde a nenhum formato documentado: não há como afirmar quais grupos entram na revisão",
+                Describe(enumeration));
         }
 
-        if (guests.Any(q => Norm(q.Query).StartsWith("/users", StringComparison.Ordinal) || Norm(q.Query).StartsWith("/v1.0/users", StringComparison.Ordinal)))
+        if (guests.Any(q => DirectoryGuests(q.Query)))
             return new(KnightAccessReviewReach.Full, "todos os convidados do diretório", Describe(guests));
 
-        return new(KnightAccessReviewReach.Undetermined, "o escopo da revisão não pôde ser interpretado", Describe(guests));
+        return new(KnightAccessReviewReach.Undetermined,
+            "o escopo da revisão não corresponde a nenhum formato documentado: a população alcançada não pode ser afirmada",
+            Describe(guests));
     }
 
     // ---- Escopo: atribuições de um papel --------------------------------------------------------------
@@ -121,6 +132,11 @@ public static class EntraAccessReviewCoverage
             .ToList();
         var mentions = resources.Where(q => Norm(q.Query).Contains(role, StringComparison.Ordinal)).ToList();
         if (mentions.Count == 0) return new(KnightAccessReviewReach.NotTargeted, "a revisão não tem escopo neste papel");
+
+        // A mesma restrição por inatividade vale aqui: as consultas não a revelam.
+        if (Inactive(d) is { Count: > 0 } inactive)
+            return new(KnightAccessReviewReach.Limited,
+                $"o escopo alcança apenas os principais inativos{Duration(inactive)}, não todas as atribuições do papel", Describe(inactive));
 
         if (!mentions.Any(q => WholeRoleDefinition(q.Query, role)))
             return new(KnightAccessReviewReach.Limited,
@@ -150,10 +166,10 @@ public static class EntraAccessReviewCoverage
         if (r.Interval is not { } interval || interval <= 0)
             return new(KnightAccessReviewCriteria.Undetermined,
                 "a fonte não informou o intervalo da recorrência (obrigatório no padrão documentado): a frequência não pode ser afirmada");
-        if (PeriodDays(r.PatternType!, interval) is not { } period)
+        if (FrequencyDays(r.PatternType!, interval) is not { } frequency)
             return new(KnightAccessReviewCriteria.Undetermined,
                 $"padrão de recorrência não interpretado pelo critério: {r.PatternType}");
-        if (period > 31)
+        if (frequency > 31)
             return new(KnightAccessReviewCriteria.Fails,
                 $"a recorrência é {Frequency(r.PatternType!, interval)}, menos frequente que mensal");
 
@@ -161,20 +177,7 @@ public static class EntraAccessReviewCoverage
             return new(KnightAccessReviewCriteria.Fails, $"a série está encerrada (estado {d.Status})");
 
         var today = DateOnly.FromDateTime(now.UtcDateTime);
-        switch (r.RangeType?.ToLowerInvariant())
-        {
-            case "enddate" when r.EndDate is { } end && end < today:
-                return new(KnightAccessReviewCriteria.Fails, $"a série terminou em {end:dd/MM/yyyy}");
-            case "numbered" when r.StartDate is { } start && r.NumberOfOccurrences is { } occurrences && occurrences > 0:
-                var last = start.AddDays(period * occurrences);
-                if (last < today) return new(KnightAccessReviewCriteria.Fails, $"as {occurrences} ocorrências da série terminaram em {last:dd/MM/yyyy}");
-                break;
-            case "numbered":
-                return new(KnightAccessReviewCriteria.Undetermined,
-                    "a série tem número fixo de ocorrências e a fonte não informou o início ou a quantidade: a vigência não pode ser afirmada");
-            case null when d.Status is null:
-                return new(KnightAccessReviewCriteria.Undetermined, "a fonte não informou o estado nem a vigência da série");
-        }
+        if (Validity(d, r, today) is { State: not KnightAccessReviewCriteria.Meets } validity) return validity;
         if (r.StartDate is { } begin && begin > today)
             return new(KnightAccessReviewCriteria.Fails, $"a série só começa em {begin:dd/MM/yyyy}");
 
@@ -195,6 +198,101 @@ public static class EntraAccessReviewCoverage
 
         return new(KnightAccessReviewCriteria.Meets,
             $"recorrência {Frequency(d.Recurrence!.PatternType!, d.Recurrence.Interval!.Value)}, {Reviewers(d)} e remoção do acesso negado ao aplicar");
+    }
+
+    /// <summary>
+    /// VIGÊNCIA da série, pela semântica documentada do <c>recurrenceRange</c>. A faixa só é afirmada encerrada
+    /// quando os dados coletados permitem situar a última ocorrência no calendário E conhecer a duração das
+    /// revisões; o que falta vira limitação, nunca aprovação por data estimada.
+    /// </summary>
+    private static KnightAccessReviewVerdict Validity(EntraAccessReviewDefinition d, EntraAccessReviewRecurrence r, DateOnly today)
+    {
+        const string ok = "vigência demonstrada";
+        var duration = DurationInDays(d);
+        switch (r.RangeType?.ToLowerInvariant())
+        {
+            case null when d.Status is null:
+                return new(KnightAccessReviewCriteria.Undetermined, "a fonte não informou o estado nem a vigência da série");
+            case null or "noend":
+                return new(KnightAccessReviewCriteria.Meets, ok);
+
+            case "enddate":
+                if (r.EndDate is not { } end)
+                    return new(KnightAccessReviewCriteria.Undetermined,
+                        "a faixa da série é do tipo endDate e a fonte não informou a data final: a vigência não pode ser afirmada");
+                if (end >= today) return new(KnightAccessReviewCriteria.Meets, ok);
+                if (duration is not { } days)
+                    return new(KnightAccessReviewCriteria.Undetermined,
+                        $"a série deixou de gerar ocorrências em {end:dd/MM/yyyy} e a fonte não informou a duração das revisões: não há como demonstrar que a última terminou");
+                return end.AddDays(days) < today
+                    ? new(KnightAccessReviewCriteria.Fails, $"a série terminou: a última revisão possível acabou em {end.AddDays(days):dd/MM/yyyy}")
+                    : new(KnightAccessReviewCriteria.Meets, ok);
+
+            case "numbered":
+                if (r.StartDate is null || r.NumberOfOccurrences is not { } occurrences || occurrences <= 0)
+                    return new(KnightAccessReviewCriteria.Undetermined,
+                        "a série tem número fixo de ocorrências e a fonte não informou o início ou a quantidade: a vigência não pode ser afirmada");
+                if (LastOccurrence(r, occurrences) is not { } last)
+                    return new(KnightAccessReviewCriteria.Undetermined, MissingForOccurrences(r));
+                if (last >= today) return new(KnightAccessReviewCriteria.Meets, ok);
+                if (duration is not { } span)
+                    return new(KnightAccessReviewCriteria.Undetermined,
+                        $"a última das {N(occurrences)} ocorrências começou em {last:dd/MM/yyyy} e a fonte não informou a duração das revisões: não há como demonstrar que ela terminou");
+                return last.AddDays(span) < today
+                    ? new(KnightAccessReviewCriteria.Fails,
+                        $"a última das {N(occurrences)} ocorrências terminou em {last.AddDays(span):dd/MM/yyyy}")
+                    : new(KnightAccessReviewCriteria.Meets, ok);
+
+            default:
+                return new(KnightAccessReviewCriteria.Undetermined, $"tipo de faixa da recorrência não interpretado: {r.RangeType}");
+        }
+    }
+
+    /// <summary>
+    /// Início da ÚLTIMA ocorrência, pelo calendário. Só é calculado nos padrões cujas propriedades coletadas
+    /// bastam: diário e semanal (que, em revisões de acesso, usam só tipo e intervalo) e mensal absoluto com
+    /// <c>dayOfMonth</c> — a documentação avisa que a primeira ocorrência pode ser posterior ao início da faixa.
+    /// </summary>
+    private static DateOnly? LastOccurrence(EntraAccessReviewRecurrence r, int occurrences)
+    {
+        if (r.StartDate is not { } start || r.Interval is not { } interval || interval <= 0) return null;
+        var steps = occurrences - 1;
+        switch (r.PatternType?.ToLowerInvariant())
+        {
+            case "daily": return start.AddDays(interval * steps);
+            case "weekly": return start.AddDays(7 * interval * steps);
+            case "absolutemonthly":
+                if (r.DayOfMonth is not { } day || day is < 1 or > 31) return null;
+                return FirstMonthly(start, day)?.AddMonths(interval * steps);
+            default: return null;
+        }
+    }
+
+    private static string MissingForOccurrences(EntraAccessReviewRecurrence r) =>
+        string.Equals(r.PatternType, "absoluteMonthly", StringComparison.OrdinalIgnoreCase)
+            ? "a série tem número fixo de ocorrências e a fonte não informou o dia do mês (dayOfMonth) do padrão: a data da última ocorrência não pode ser demonstrada"
+            : $"a série tem número fixo de ocorrências e o padrão {r.PatternType} não permite situar a última ocorrência com o que a coleta traz";
+
+    /// <summary>Primeira ocorrência de um padrão mensal: o dia indicado, na faixa a partir do início.</summary>
+    private static DateOnly? FirstMonthly(DateOnly start, int day)
+    {
+        if (DayInMonth(start.Year, start.Month, day) is { } inStartMonth && inStartMonth >= start) return inStartMonth;
+        var next = start.AddMonths(1);
+        return DayInMonth(next.Year, next.Month, day);
+    }
+
+    private static DateOnly? DayInMonth(int year, int month, int day) =>
+        day <= DateTime.DaysInMonth(year, month) ? new DateOnly(year, month, day) : null;
+
+    /// <summary>
+    /// Duração de cada revisão. Quando há etapas, a documentação diz que a soma das durações delas substitui
+    /// <c>instanceDurationInDays</c>; etapa sem duração torna a soma desconhecida.
+    /// </summary>
+    private static int? DurationInDays(EntraAccessReviewDefinition d)
+    {
+        if (d.Stages.Count > 0)
+            return d.Stages.All(s => s.DurationInDays is > 0) ? d.Stages.Sum(s => s.DurationInDays!.Value) : null;
+        return d.InstanceDurationInDays is > 0 ? d.InstanceDurationInDays : null;
     }
 
     /// <summary>Resumo determinístico da revisão para a evidência.</summary>
@@ -246,36 +344,90 @@ public static class EntraAccessReviewCoverage
         return false;
     }
 
-    /// <summary>A consulta documentada de enumeração de TODOS os grupos do Microsoft 365, sem outro filtro.</summary>
-    private static bool AllUnifiedGroups(string query)
+    /// <summary>
+    /// Uma consulta separada em CAMINHO, FILTRO e as DEMAIS opções. Não é um interpretador de OData: serve para
+    /// reconhecer estritamente os formatos documentados e recusar o resto. <c>$count</c> não restringe a
+    /// população e por isso não entra em <see cref="Parsed.Others"/>; qualquer outra opção entra.
+    /// </summary>
+    private readonly record struct Parsed(string Path, string? Filter, IReadOnlyList<string> Others)
     {
-        var n = Norm(query);
-        if (!n.StartsWith("/groups?", StringComparison.Ordinal) && !n.StartsWith("/v1.0/groups?", StringComparison.Ordinal)) return false;
-        var filter = FilterOf(n);
-        return filter is not null && Parenthesized(filter) == AllUnifiedGroupsFilter;
+        public bool OnlyFilter => Others.Count == 0;
     }
 
+    private static Parsed Parse(string query)
+    {
+        var n = Norm(query);
+        var mark = n.IndexOf('?', StringComparison.Ordinal);
+        var path = (mark < 0 ? n : n[..mark]).TrimEnd('/');
+        string? filter = null;
+        var others = new List<string>();
+        if (mark >= 0)
+            foreach (var option in n[(mark + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (option.StartsWith("$filter=", StringComparison.Ordinal)) filter = option["$filter=".Length..].Trim();
+                else if (!option.StartsWith("$count=", StringComparison.Ordinal)) others.Add(option);
+            }
+        return new(path, filter, others);
+    }
+
+    /// <summary>O filtro documentado que seleciona convidados, e nada além disso.</summary>
+    private static bool GuestFilter(string? filter) =>
+        filter is not null && Parenthesized(filter) == "(usertype eq 'guest')";
+
+    private static bool MentionsGuests(string query) => Norm(query).Contains("usertype eq 'guest'", StringComparison.Ordinal);
+
+    /// <summary>Exemplo 6: consulta RELATIVA aos membros convidados de cada grupo enumerado.</summary>
+    private static bool RelativeGuestMembers(string query)
+    {
+        var p = Parse(query);
+        return p.Path is "./members/microsoft.graph.user" && p.OnlyFilter && GuestFilter(p.Filter);
+    }
+
+    /// <summary>Consulta de TODOS os convidados do diretório, sem nenhum outro recorte.</summary>
+    private static bool DirectoryGuests(string query)
+    {
+        var p = Parse(query);
+        return p.Path is "/users" or "/v1.0/users" && p.OnlyFilter && GuestFilter(p.Filter);
+    }
+
+    /// <summary>Exemplos 5 e 6: enumeração de TODOS os grupos do Microsoft 365, sem outro recorte.</summary>
+    private static bool AllUnifiedGroups(string query)
+    {
+        var p = Parse(query);
+        return p.Path is "/groups" or "/v1.0/groups" && p.OnlyFilter
+            && p.Filter is not null && Parenthesized(p.Filter) == AllUnifiedGroupsFilter;
+    }
+
+    /// <summary>Exemplo 8: enumeração restrita aos grupos associados a equipes (subconjunto documentado).</summary>
+    private static bool TeamsOnly(string query)
+    {
+        var p = Parse(query);
+        return p.Path is "/groups" or "/v1.0/groups" && p.OnlyFilter
+            && p.Filter is { } f && f.Contains("grouptypes/any(c:c eq 'unified')", StringComparison.Ordinal)
+            && f.Contains("resourceprovisioningoptions", StringComparison.Ordinal);
+    }
+
+    /// <summary>Exemplo 12.1: o papel inteiro — atribuições ativas e elegíveis, sem filtro nem outra opção.</summary>
     private static bool WholeRoleDefinition(string query, string role)
     {
-        var n = Norm(query).TrimEnd('/');
-        if (FilterOf(n) is not null) return false;
-        return n.EndsWith($"/rolemanagement/directory/roledefinitions/{role}", StringComparison.Ordinal);
+        var p = Parse(query);
+        return p.Filter is null && p.OnlyFilter
+            && p.Path.EndsWith($"/rolemanagement/directory/roledefinitions/{role}", StringComparison.Ordinal);
     }
 
     private static bool AllUsers(string query)
     {
-        var n = Norm(query).TrimEnd('/');
-        return n is "/users" or "/v1.0/users";
+        var p = Parse(query);
+        return p.Path is "/users" or "/v1.0/users" && p.Filter is null && p.OnlyFilter;
     }
 
-    private static string? FilterOf(string normalized)
-    {
-        var i = normalized.IndexOf("$filter=", StringComparison.Ordinal);
-        if (i < 0) return null;
-        var rest = normalized[(i + "$filter=".Length)..];
-        var end = rest.IndexOf('&', StringComparison.Ordinal);
-        return (end < 0 ? rest : rest[..end]).Trim();
-    }
+    /// <summary>Consultas do escopo restritas a usuários INATIVOS (tipo do escopo + inactiveDuration).</summary>
+    private static List<EntraAccessReviewScopeQuery> Inactive(EntraAccessReviewDefinition d) =>
+        d.Queries.Where(q => q.RestrictedToInactiveUsers).ToList();
+
+    private static string Duration(IEnumerable<EntraAccessReviewScopeQuery> queries) =>
+        queries.Select(q => q.InactiveDuration).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)) is { } d
+            ? $" (inactiveDuration {d})" : "";
 
     private static string Parenthesized(string filter) =>
         filter.StartsWith('(') && filter.EndsWith(')') ? filter : "(" + filter + ")";
@@ -292,8 +444,11 @@ public static class EntraAccessReviewCoverage
         status is not null && (status.Equals("Completed", StringComparison.OrdinalIgnoreCase)
             || status.Equals("AutoReviewed", StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>Dias entre ocorrências, pela semântica documentada do padrão (o mês conta como 31 dias).</summary>
-    private static int? PeriodDays(string type, int interval) => type.ToLowerInvariant() switch
+    /// <summary>
+    /// Dias entre ocorrências, só para COMPARAR frequências ("mensal ou mais frequente"): o mês conta como 31 dias,
+    /// o limite superior de um mês do calendário. Não serve para calcular datas — a vigência usa o calendário.
+    /// </summary>
+    private static int? FrequencyDays(string type, int interval) => type.ToLowerInvariant() switch
     {
         "daily" => interval,
         "weekly" => interval * 7,

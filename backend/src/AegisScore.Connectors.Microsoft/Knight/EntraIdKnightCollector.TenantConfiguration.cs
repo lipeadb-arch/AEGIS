@@ -403,7 +403,7 @@ public sealed partial class EntraIdKnightCollector
                         EntraAccessReviewCoverage.ClassifyKind(queries, roles),
                         queries, roles,
                         pattern.ValueKind == JsonValueKind.Object || range.ValueKind == JsonValueKind.Object
-                            ? new EntraAccessReviewRecurrence(Str(pattern, "type"), Int(pattern, "interval"),
+                            ? new EntraAccessReviewRecurrence(Str(pattern, "type"), Int(pattern, "interval"), Int(pattern, "dayOfMonth"),
                                 Str(range, "type"), DayOnly(range, "startDate"), DayOnly(range, "endDate"), Int(range, "numberOfOccurrences"))
                             : null,
                         Items(d, "reviewers").Count(), stages, Int(settings, "instanceDurationInDays"),
@@ -534,7 +534,8 @@ public sealed partial class EntraIdKnightCollector
     {
         if (scope.ValueKind != JsonValueKind.Object) yield break;
         if (Str(scope, "query") is { } q)
-            yield return new EntraAccessReviewScopeQuery(origin, q, Str(scope, "queryType"), Str(scope, "queryRoot"), Str(scope, "@odata.type"));
+            yield return new EntraAccessReviewScopeQuery(origin, q, Str(scope, "queryType"), Str(scope, "queryRoot"),
+                Str(scope, "@odata.type"), Str(scope, "inactiveDuration"));
         foreach (var nested in Items(scope, "principalScopes"))
             foreach (var n in ScopeQueries(nested, EntraAccessReviewScopeQuery.OriginPrincipal))
                 yield return n;

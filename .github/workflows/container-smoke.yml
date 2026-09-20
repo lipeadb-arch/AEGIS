@@ -211,6 +211,10 @@ jobs:
       #     abrangência das revisões de acesso, da resposta do Graph até a avaliação) e +1 caso em
       #     KnightReferenceCoverageTests (o impacto não repete o risco). O passo vai de 755 a 771 (medido localmente
       #     com este MESMO filtro, em Release).
+      #     Segunda revisão dirigida (mesmo PR): +12 casos em KnightAccessReviewScopeTests (escopo restrito a
+      #     usuários inativos, opções de consulta fora dos formatos documentados e vigência de séries com
+      #     quantidade limitada de ocorrências). Filtro inalterado; o passo vai de 771 a 783 (medido localmente
+      #     com este MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj

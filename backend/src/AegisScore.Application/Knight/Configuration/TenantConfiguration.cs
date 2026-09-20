@@ -235,8 +235,17 @@ public sealed record EntraAccessReviewScopeQuery(
     string Query,
     string? QueryType,
     string? QueryRoot,
-    string? OdataType)
+    string? OdataType,
+    string? InactiveDuration)
 {
+    /// <summary>
+    /// Escopo restrito aos usuários INATIVOS (<c>accessReviewInactiveUsersQueryScope</c>). A consulta é idêntica à
+    /// de uma revisão sem restrição: a diferença está no tipo e em <c>inactiveDuration</c>.
+    /// </summary>
+    public bool RestrictedToInactiveUsers =>
+        !string.IsNullOrWhiteSpace(InactiveDuration)
+        || (OdataType?.Contains("accessReviewInactiveUsersQueryScope", StringComparison.OrdinalIgnoreCase) ?? false);
+
     public const string OriginScope = "scope";
     public const string OriginPrincipal = "principalScope";
     public const string OriginResource = "resourceScope";
@@ -254,10 +263,15 @@ public sealed record EntraAccessReviewStage(
     int? DurationInDays,
     IReadOnlyList<string> DependsOn);
 
-/// <summary>Recorrência da série: o PADRÃO (com que frequência repete) e a FAIXA (por quanto tempo repete).</summary>
+/// <summary>
+/// Recorrência da série: o PADRÃO (com que frequência repete, e em que dia do mês) e a FAIXA (por quanto tempo
+/// repete). <c>DayOfMonth</c> é o que permite situar as ocorrências de um padrão mensal no calendário — a primeira
+/// ocorrência pode ser posterior ao início da faixa.
+/// </summary>
 public sealed record EntraAccessReviewRecurrence(
     string? PatternType,
     int? Interval,
+    int? DayOfMonth,
     string? RangeType,
     DateOnly? StartDate,
     DateOnly? EndDate,
@@ -283,7 +297,7 @@ public sealed record EntraAccessReviewDefinition(
     bool? JustificationRequiredOnApproval,
     bool? MailNotificationsEnabled)
 {
-    public const string SchemaVersion = "aegis-config-entra-access-review-v2";
+    public const string SchemaVersion = "aegis-config-entra-access-review-v3";
 
     public const string ScopeGuests = "guests";
     public const string ScopeDirectoryRole = "directoryRole";

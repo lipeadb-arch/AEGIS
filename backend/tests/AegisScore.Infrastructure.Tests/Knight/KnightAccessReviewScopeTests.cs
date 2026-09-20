@@ -178,7 +178,151 @@ public sealed class KnightAccessReviewScopeTests : IDisposable
         i.NotEvaluatedReason.Should().Contain("ar-2").And.NotContain("ar-1");
     }
 
+    // ---- Restrições do escopo que as consultas sozinhas não revelam ------------------------------------
+
+    [Fact]
+    public async Task Convidados_RevisaoSoDosInativos_NaoComprovaTodosOsConvidados()
+    {
+        // Exemplo 7 da documentação: as consultas são IGUAIS às do exemplo 6; a restrição está no tipo do escopo
+        // (accessReviewInactiveUsersQueryScope) e em inactiveDuration.
+        var run = await RunAsync(Review("ar-1", "Convidados inativos", InactiveGuestsOfAllGroups(), AllUnifiedGroups()));
+
+        var i = Indicator(run, "AK-ENTRA-053");
+        i.Status.Should().Be(KnightIndicatorStatus.Exposed, "a revisão alcança apenas os convidados inativos");
+        i.Evidence.Should().Contain("inativ");
+    }
+
+    [Fact]
+    public async Task Convidados_TodosOsConvidadosDoDiretorio_Aprova()
+    {
+        var run = await RunAsync(Review("ar-1", "Todos os convidados",
+            DirectoryGuests("/users?$filter=(userType eq 'Guest')")));
+
+        Indicator(run, "AK-ENTRA-053").Status.Should().Be(KnightIndicatorStatus.Passed);
+    }
+
+    [Fact]
+    public async Task Convidados_ConsultaDeUsuariosComFiltroAdicional_NaoAprovaPeloPrefixo()
+    {
+        var run = await RunAsync(Review("ar-1", "Convidados de um departamento",
+            DirectoryGuests("/users?$filter=(userType eq 'Guest' and department eq 'Engenharia')")));
+
+        var i = Indicator(run, "AK-ENTRA-053");
+        i.Status.Should().NotBe(KnightIndicatorStatus.Passed, "o filtro restringe a população e não é um formato documentado");
+        i.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+    }
+
+    [Fact]
+    public async Task Convidados_EnumeracaoDeGruposComLimite_NaoAprova()
+    {
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(),
+            UnifiedGroups("/groups?$filter=(groupTypes/any(c:c eq 'Unified'))&$top=10")));
+
+        Indicator(run, "AK-ENTRA-053").Status.Should().Be(KnightIndicatorStatus.NotEvaluated,
+            "$top limita quais grupos entram e não é um formato documentado de enumeração");
+    }
+
+    // ---- Vigência de séries com quantidade limitada de ocorrências --------------------------------------
+
+    [Fact]
+    public async Task Convidados_SerieDeUmaOcorrenciaJaTerminada_NaoAprova()
+    {
+        var start = Today.AddDays(-60);
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(), AllUnifiedGroups(),
+            recurrence: Recurrence("absoluteMonthly", 1, Numbered(start, 1), dayOfMonth: start.Day)));
+
+        Indicator(run, "AK-ENTRA-053").Status.Should().Be(KnightIndicatorStatus.Exposed,
+            "a única ocorrência começou há 60 dias e a revisão durou 14");
+    }
+
+    [Fact]
+    public async Task Convidados_SerieMensalComOcorrenciasAindaVigente_Aprova()
+    {
+        var start = Today.AddMonths(-2);
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(), AllUnifiedGroups(),
+            recurrence: Recurrence("absoluteMonthly", 1, Numbered(start, 12), dayOfMonth: start.Day)));
+
+        Indicator(run, "AK-ENTRA-053").Status.Should().Be(KnightIndicatorStatus.Passed,
+            "a décima segunda ocorrência mensal ainda está no futuro");
+    }
+
+    [Fact]
+    public async Task Convidados_SerieMensalComOcorrenciasJaEsgotadas_NaoAprova()
+    {
+        var start = Today.AddMonths(-8);
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(), AllUnifiedGroups(),
+            recurrence: Recurrence("absoluteMonthly", 1, Numbered(start, 3), dayOfMonth: start.Day)));
+
+        Indicator(run, "AK-ENTRA-053").Status.Should().Be(KnightIndicatorStatus.Exposed,
+            "a terceira e última ocorrência terminou há meses");
+    }
+
+    [Fact]
+    public async Task Convidados_SerieMensalEsgotadaNoUltimoMes_NaoAprovaPorMesAproximado()
+    {
+        // Seis ocorrências mensais começadas há seis meses: a última COMEÇOU há um mês e durou 14 dias — a série
+        // terminou. Contar o mês como 31 dias (e somar uma ocorrência a mais) jogava o fim para o futuro e aprovava.
+        var start = Today.AddMonths(-6);
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(), AllUnifiedGroups(),
+            recurrence: Recurrence("absoluteMonthly", 1, Numbered(start, 6), dayOfMonth: start.Day)));
+
+        Indicator(run, "AK-ENTRA-053").Status.Should().Be(KnightIndicatorStatus.Exposed,
+            "a sexta e última ocorrência começou há um mês e já terminou");
+    }
+
+    [Fact]
+    public async Task Convidados_SerieComOcorrenciasSemDuracaoConhecida_NaoAfirmaEncerramento()
+    {
+        var start = Today.AddMonths(-8);
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(), AllUnifiedGroups(),
+            recurrence: Recurrence("absoluteMonthly", 1, Numbered(start, 3), dayOfMonth: start.Day),
+            instanceDurationInDays: null));
+
+        var i = Indicator(run, "AK-ENTRA-053");
+        i.Status.Should().Be(KnightIndicatorStatus.NotEvaluated, "sem a duração não há como dizer se a última ocorrência terminou");
+        i.NotEvaluatedReason.Should().Contain("duração");
+    }
+
+    [Fact]
+    public async Task Convidados_SerieMensalSemDiaDoMes_NaoCalculaVigenciaPorEstimativa()
+    {
+        // No padrão absoluteMonthly, a primeira ocorrência é o dia do mês indicado em dayOfMonth — que pode ser
+        // posterior ao startDate. Sem ele, a data da última ocorrência não pode ser demonstrada.
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(), AllUnifiedGroups(),
+            recurrence: Recurrence("absoluteMonthly", 1, Numbered(Today.AddMonths(-8), 3))));
+
+        var i = Indicator(run, "AK-ENTRA-053");
+        i.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        i.NotEvaluatedReason.Should().Contain("dayOfMonth");
+    }
+
+    [Fact]
+    public async Task Convidados_SerieSemanalComOcorrenciasEsgotadas_NaoAprova()
+    {
+        // Semanal em revisões de acesso só usa type e interval: a série começa no startDate e repete a cada semana.
+        var run = await RunAsync(Review("ar-1", "Convidados", GuestsOfAllGroups(), AllUnifiedGroups(),
+            recurrence: Recurrence("weekly", 1, Numbered(Today.AddDays(-120), 4)),
+            instanceDurationInDays: 7));
+
+        Indicator(run, "AK-ENTRA-053").Status.Should().Be(KnightIndicatorStatus.Exposed,
+            "quatro ocorrências semanais a partir de 120 dias atrás terminaram há muito");
+    }
+
     // ---- Papéis (AK-ENTRA-054 e AK-ENTRA-030) ----------------------------------------------------------
+
+    [Fact]
+    public async Task Papeis_RevisaoSoDosPrincipaisInativos_NaoComprovaAsAtribuicoes()
+    {
+        var reviews = ReviewedRoleDefinitions(EntraConfigurationControls.GlobalAdministratorTemplateId,
+            role => Review("ar-ga", "Administrador Global (inativos)", RoleForInactiveUsersOnly(role))).ToArray();
+
+        var run = await RunAsync(reviews);
+
+        var i = Indicator(run, "AK-ENTRA-054");
+        i.Status.Should().Be(KnightIndicatorStatus.Exposed);
+        i.AffectedObjectCount.Should().Be(1);
+    }
+
 
     [Fact]
     public async Task Papeis_RevisaoDeTodasAsAtribuicoesDeUsuario_Aprova()
@@ -233,17 +377,28 @@ public sealed class KnightAccessReviewScopeTests : IDisposable
 
     // ---- Montagem das definições (formato documentado do Microsoft Graph) -------------------------------
 
-    private static object Recurrence(string? type, int? interval, object? range = null)
+    private static object Recurrence(string? type, int? interval, object? range = null, int? dayOfMonth = null)
     {
         var pattern = new Dictionary<string, object>();
         if (type is not null) pattern["type"] = type;
         if (interval is not null) pattern["interval"] = interval.Value;
+        if (dayOfMonth is not null) pattern["dayOfMonth"] = dayOfMonth.Value;
         return new Dictionary<string, object>
         {
             ["pattern"] = pattern,
             ["range"] = range ?? new { type = "noEnd", startDate = "2026-01-01" },
         };
     }
+
+    /// <summary>Faixa com quantidade limitada de ocorrências (recurrenceRange do tipo <c>numbered</c>).</summary>
+    private static object Numbered(DateOnly start, int occurrences) => new Dictionary<string, object>
+    {
+        ["type"] = "numbered",
+        ["startDate"] = start.ToString("yyyy-MM-dd"),
+        ["numberOfOccurrences"] = occurrences,
+    };
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
 
     private static object Stage(string stageId, int durationInDays, IReadOnlyList<string> reviewers, string[]? dependsOn = null)
     {
@@ -260,11 +415,11 @@ public sealed class KnightAccessReviewScopeTests : IDisposable
 
     private static object Review(
         string id, string name, object scope, object? instanceEnumerationScope = null, object? recurrence = null,
-        object[]? reviewers = null, object[]? stages = null, string status = "InProgress", bool removeAccess = true)
+        object[]? reviewers = null, object[]? stages = null, string status = "InProgress", bool removeAccess = true,
+        int? instanceDurationInDays = 14)
     {
         var settings = new Dictionary<string, object>
         {
-            ["instanceDurationInDays"] = 14,
             ["autoApplyDecisionsEnabled"] = true,
             ["justificationRequiredOnApproval"] = true,
             ["mailNotificationsEnabled"] = true,
@@ -273,6 +428,7 @@ public sealed class KnightAccessReviewScopeTests : IDisposable
                 ? new object[] { new Dictionary<string, object> { ["@odata.type"] = "#microsoft.graph.removeAccessApplyAction" } }
                 : Array.Empty<object>(),
         };
+        if (instanceDurationInDays is not null) settings["instanceDurationInDays"] = instanceDurationInDays.Value;
         var def = new Dictionary<string, object?>
         {
             ["id"] = id,
@@ -301,6 +457,29 @@ public sealed class KnightAccessReviewScopeTests : IDisposable
         ["queryType"] = "MicrosoftGraph",
     };
 
+    /// <summary>Exemplo 7 da documentação: MESMAS consultas do exemplo 6, restritas aos usuários INATIVOS.</summary>
+    private static object InactiveGuestsOfAllGroups() => new Dictionary<string, object>
+    {
+        ["@odata.type"] = "#microsoft.graph.accessReviewInactiveUsersQueryScope",
+        ["query"] = "./members/microsoft.graph.user/?$count=true&$filter=(userType eq 'Guest')",
+        ["queryType"] = "MicrosoftGraph",
+        ["inactiveDuration"] = "P30D",
+    };
+
+    private static object DirectoryGuests(string query) => new Dictionary<string, object>
+    {
+        ["@odata.type"] = "#microsoft.graph.accessReviewQueryScope",
+        ["query"] = query,
+        ["queryType"] = "MicrosoftGraph",
+    };
+
+    private static object UnifiedGroups(string query) => new Dictionary<string, object>
+    {
+        ["@odata.type"] = "#microsoft.graph.accessReviewQueryScope",
+        ["query"] = query,
+        ["queryType"] = "MicrosoftGraph",
+    };
+
     private static object GuestsOfOneGroup(string groupId) => new Dictionary<string, object>
     {
         ["@odata.type"] = "#microsoft.graph.accessReviewQueryScope",
@@ -319,6 +498,21 @@ public sealed class KnightAccessReviewScopeTests : IDisposable
     {
         ["@odata.type"] = "#microsoft.graph.principalResourceMembershipsScope",
         ["principalScopes"] = new object[] { new { query = "/users?$filter=(userType eq 'Guest')", queryType = "MicrosoftGraph" } },
+        ["resourceScopes"] = new object[] { new { query = "/roleManagement/directory/roleDefinitions/" + role, queryType = "MicrosoftGraph" } },
+    };
+
+    /// <summary>Revisão do papel restrita aos principais INATIVOS (mesmo formato do exemplo 7, no caminho de papéis).</summary>
+    private static object RoleForInactiveUsersOnly(string role) => new Dictionary<string, object>
+    {
+        ["@odata.type"] = "#microsoft.graph.principalResourceMembershipsScope",
+        ["principalScopes"] = new object[]
+        {
+            new Dictionary<string, object>
+            {
+                ["@odata.type"] = "#microsoft.graph.accessReviewInactiveUsersQueryScope",
+                ["query"] = "/users", ["queryType"] = "MicrosoftGraph", ["inactiveDuration"] = "P90D",
+            },
+        },
         ["resourceScopes"] = new object[] { new { query = "/roleManagement/directory/roleDefinitions/" + role, queryType = "MicrosoftGraph" } },
     };
 
