@@ -68,9 +68,18 @@ RUN apt-get update \
 
 # [AEGIS-KNIGHT-COVERAGE-02] Runtime do PowerShell 7 e o módulo oficial do Teams, ambos vindos do estágio
 # anterior. O runtime da imagem oficial é autocontido (traz o próprio .NET), então copiar a pasta basta.
-COPY --from=teamsps /opt/microsoft/powershell/7 /opt/microsoft/powershell/7
+#
+# A pasta de instalação VARIA com a tag (a LTS instala em `7-lts`, a comum em `7`), então o diretório inteiro é
+# copiado e o executável é LOCALIZADO — em vez de um caminho fixo que quebra ao trocar de tag. E o binário é
+# EXECUTADO aqui mesmo: se faltar alguma dependência nativa nesta imagem base, o build falha agora, e não numa
+# coleta em produção.
+COPY --from=teamsps /opt/microsoft/powershell /opt/microsoft/powershell
 COPY --from=teamsps /opt/aegis/psmodules /opt/aegis/psmodules
-RUN ln -sf /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh
+RUN set -eux; \
+    PWSH="$(find /opt/microsoft/powershell -maxdepth 2 -name pwsh -type f | head -n1)"; \
+    test -n "$PWSH"; \
+    ln -sf "$PWSH" /usr/bin/pwsh; \
+    /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
 
 WORKDIR /app
 COPY --from=backend /app/api ./
