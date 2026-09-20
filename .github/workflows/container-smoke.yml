@@ -222,11 +222,46 @@ jobs:
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~EvidenceIngestionTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests|FullyQualifiedName~CrossSourceCorrelationTests|FullyQualifiedName~DevicePriorityTests|FullyQualifiedName~DeviceCasePlanTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~EvidenceIngestionTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests|FullyQualifiedName~CrossSourceCorrelationTests|FullyQualifiedName~DevicePriorityTests|FullyQualifiedName~DeviceCasePlanTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests|FullyQualifiedName~KnightTeamsCollectorTests|FullyQualifiedName~KnightTeamsPolicyReachTests|FullyQualifiedName~KnightTeamsConfigurationFlowTests|FullyQualifiedName~TeamsAdapterTransportTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
         run: docker build -t "$IMAGE" .
+
+      # 2b) [AEGIS-KNIGHT-COVERAGE-02] Validação do RUNTIME de coleta do Microsoft Teams DENTRO da imagem Linux
+      #     de implantação — o que não pôde ser validado no Windows local. Prova três coisas distintas:
+      #       • o PowerShell 7 roda nesta imagem;
+      #       • o módulo oficial MicrosoftTeams IMPORTA OFFLINE (--network none), na versão fixada no Dockerfile;
+      #       • os comandos que o adaptador usa EXISTEM nessa versão do módulo.
+      #     Isto NÃO é homologação: não há locatário, credencial nem conexão — só o runtime e o módulo.
+      - name: Teams collection runtime inside the image (pwsh + MicrosoftTeams module, offline)
+        run: |
+          set -euo pipefail
+
+          echo "--- runtime do PowerShell ---"
+          docker run --rm --entrypoint /usr/bin/pwsh "$IMAGE" \
+            -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+
+          echo "--- importação do módulo + comandos usados pelo adaptador (sem rede) ---"
+          OUT="$(docker run --rm --network none --entrypoint /usr/bin/pwsh "$IMAGE" -NoLogo -NoProfile -NonInteractive -Command '
+            $ErrorActionPreference = "Stop"
+            Import-Module MicrosoftTeams -ErrorAction Stop
+            $v = (Get-Module MicrosoftTeams).Version.ToString()
+            $faltando = @()
+            foreach ($n in @(
+                "Connect-MicrosoftTeams","Disconnect-MicrosoftTeams","Get-CsTeamsClientConfiguration",
+                "Get-CsTenantFederationConfiguration","Get-CsTeamsMeetingPolicy","Get-CsTeamsMessagingPolicy",
+                "Get-CsTeamsAppPermissionPolicy","Get-CsGroupPolicyAssignment")) {
+              if (-not (Get-Command $n -Module MicrosoftTeams -ErrorAction SilentlyContinue)) { $faltando += $n }
+            }
+            if ($faltando.Count -gt 0) { throw ("comandos ausentes no modulo " + $v + ": " + ($faltando -join ", ")) }
+            "MicrosoftTeams=$v comandos=OK"
+          ')"
+          echo "$OUT"
+          case "$OUT" in *"comandos=OK"*) ;; *) echo "runtime do Teams NAO validado"; exit 1;; esac
+
+          echo "--- usuário efetivo da aplicação e executável disponível ---"
+          docker run --rm --entrypoint /bin/sh "$IMAGE" -c 'id -u; test -x /usr/bin/pwsh && echo pwsh-executavel'
 
       # 3) Smoke do container: rede + Postgres descartáveis, PKCS#12 sintético (grupo 1000, 0640),
       #    montado em /etc/secrets, app com valores 100% sintéticos. TLS interno desabilitado só aqui.
@@ -531,4 +566,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~DeviceResolutionPostgresTests|FullyQualifiedName~CrossSourceCorrelationPostgresTests|FullyQualifiedName~DevicePriorityPostgresTests|FullyQualifiedName~DeviceCasePlanHttpTests|FullyQualifiedName~KnightDurableAssessmentPostgresTests|FullyQualifiedName~KnightLatestHttpTests|FullyQualifiedName~KnightUnfinishedRunPlanHttpTests|FullyQualifiedName~KnightMulticloudPostgresTests|FullyQualifiedName~KnightSyncHttpTests|FullyQualifiedName~KnightEntraConfigurationPostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~DeviceResolutionPostgresTests|FullyQualifiedName~CrossSourceCorrelationPostgresTests|FullyQualifiedName~DevicePriorityPostgresTests|FullyQualifiedName~DeviceCasePlanHttpTests|FullyQualifiedName~KnightDurableAssessmentPostgresTests|FullyQualifiedName~KnightLatestHttpTests|FullyQualifiedName~KnightUnfinishedRunPlanHttpTests|FullyQualifiedName~KnightMulticloudPostgresTests|FullyQualifiedName~KnightSyncHttpTests|FullyQualifiedName~KnightEntraConfigurationPostgresTests|FullyQualifiedName~KnightTeamsConfigurationPostgresTests"

@@ -52,6 +52,46 @@ export function isCurrentSyncResponse(
   );
 }
 
+/**
+ * [AEGIS-KNIGHT-COVERAGE-02] As fontes KNIGHT que UM conector alimenta. O conector Microsoft é o mesmo
+ * registro de aplicação para o Microsoft Entra ID e para o Microsoft Teams — muda o recurso do token e o
+ * papel de diretório exigido. Cada fonte tem o próprio pedido, o próprio desfecho e a própria avaliação:
+ * sincronizar uma NÃO apaga nem substitui a avaliação da outra.
+ *
+ * O `slug` é o que a rota recebe em `?source=` — espelha KnightConnectorSources.Slug no servidor.
+ */
+export interface KnightConnectorSource {
+  slug: string;
+  label: string;
+  /** O que a coleta desta fonte exige além da credencial do conector (vazio quando nada além). */
+  requirement: string | null;
+}
+
+export function knightSourcesOf(provider: string): KnightConnectorSource[] {
+  switch (provider) {
+    case 'Microsoft':
+      return [
+        { slug: 'entra', label: 'Microsoft Entra ID', requirement: null },
+        {
+          slug: 'teams',
+          label: 'Microsoft Teams',
+          requirement:
+            'Exige, além da credencial acima, o papel Leitor do Teams (ou Leitor Global) atribuído a esta ' +
+            'aplicação no Microsoft Entra ID.',
+        },
+      ];
+    case 'Google':
+      return [{ slug: 'google', label: 'Google Workspace', requirement: null }];
+    default:
+      return [];
+  }
+}
+
+/** Chave de acompanhamento na tela: um pedido por (conector, fonte). */
+export function syncKey(connectorId: string, slug: string): string {
+  return `${connectorId}:${slug}`;
+}
+
 export type SyncTone = 'busy' | 'ok' | 'warn' | 'err';
 
 export interface SyncView {

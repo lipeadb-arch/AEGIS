@@ -8,6 +8,11 @@
     <ProjectReference Include="..\AegisScore.Application\AegisScore.Application.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- [AEGIS-KNIGHT-COVERAGE-02] Adaptador de coleta do Microsoft Teams: script FIXO, embutido no assembly.
+         É a única coisa que o processo do PowerShell executa; o cliente nunca fornece script ou comando. -->
+    <EmbeddedResource Include="Knight\Teams\teams-collect.ps1" LogicalName="AegisScore.Knight.Teams.Collect.ps1" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Só o teto de paginação do EntraGraphClient é internal-visível ao teste: permite exercitar o limite
          sem 200 páginas reais, sem expor à DI um construtor ambíguo (o tenant nunca configura esse teto). -->
     <InternalsVisibleTo Include="AegisScore.Infrastructure.Tests" />

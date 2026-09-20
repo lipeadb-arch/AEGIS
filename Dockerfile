@@ -32,6 +32,31 @@ COPY --from=frontend /src/frontend/dist/aegis-score-frontend/browser/ ./backend/
 RUN dotnet publish backend/src/AegisScore.Api/AegisScore.Api.csproj -c Release -o /app/api \
     && dotnet publish backend/src/AegisScore.DbMigrator/AegisScore.DbMigrator.csproj -c Release -o /app/migrator
 
+# ---- Stage 2b: runtime do PowerShell + módulo OFICIAL do Microsoft Teams ----
+#
+# [AEGIS-KNIGHT-COVERAGE-02] A configuração do Microsoft Teams do locatário NÃO tem leitura na versão estável
+# (v1.0) do Microsoft Graph: o caminho oficial é o módulo Microsoft Teams PowerShell, com autenticação de
+# APLICATIVO. Por isso a imagem carrega um runtime de PowerShell 7 e o módulo PRÉ-INSTALADO.
+#
+# Duas decisões deliberadas:
+#   • o módulo é baixado em TEMPO DE BUILD, numa versão FIXADA, e a imagem roda OFFLINE — nada é buscado da
+#     galeria em tempo de execução, e a versão que a homologação validar é a que vai para produção;
+#   • a origem é a imagem OFICIAL do PowerShell no mesmo registro das imagens .NET (mcr.microsoft.com), com
+#     tag LTS fixada — não há download de binário solto nem script de instalação de terceiro.
+#
+# Sem este estágio a imagem continua subindo: o coletor do Teams declara a falha de transporte ("o runtime do
+# PowerShell não pôde ser iniciado"), os controles de Teams ficam NÃO AVALIADOS com o motivo, e nada mais é
+# afetado. O que ele nunca faz é devolver coleta vazia como se fosse ambiente sem problema.
+FROM mcr.microsoft.com/powershell:lts-7.4-debian-12 AS teamsps
+ARG TEAMS_MODULE_VERSION=7.9.0
+ENV TEAMS_MODULE_VERSION=${TEAMS_MODULE_VERSION}
+# Aspas SIMPLES de propósito: o `$env:` é do PowerShell e não pode ser expandido pelo shell do build.
+RUN pwsh -NoLogo -NoProfile -NonInteractive -Command \
+      'Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; \
+       New-Item -ItemType Directory -Force -Path /opt/aegis/psmodules | Out-Null; \
+       Save-Module -Name MicrosoftTeams -RequiredVersion $env:TEAMS_MODULE_VERSION -Path /opt/aegis/psmodules -Repository PSGallery -ErrorAction Stop; \
+       Get-ChildItem /opt/aegis/psmodules/MicrosoftTeams | Select-Object -ExpandProperty Name'
+
 # ---- Stage 3: runtime enxuto, não-root -------------------------------------
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 
@@ -40,6 +65,12 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
+
+# [AEGIS-KNIGHT-COVERAGE-02] Runtime do PowerShell 7 e o módulo oficial do Teams, ambos vindos do estágio
+# anterior. O runtime da imagem oficial é autocontido (traz o próprio .NET), então copiar a pasta basta.
+COPY --from=teamsps /opt/microsoft/powershell/7 /opt/microsoft/powershell/7
+COPY --from=teamsps /opt/aegis/psmodules /opt/aegis/psmodules
+RUN ln -sf /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh
 
 WORKDIR /app
 COPY --from=backend /app/api ./
@@ -63,6 +94,15 @@ ENV ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_ENVIRONMENT=Production \
     ASPNETCORE_URLS=http://+:8080 \
     DocumentStorage__RootPath=/app/document-store
+
+# [AEGIS-KNIGHT-COVERAGE-02] Adaptador de coleta do Microsoft Teams: executável e módulo PRÉ-INSTALADOS nesta
+# imagem. São configuração do AMBIENTE — o locatário nunca escolhe executável, comando ou destino. Telemetria e
+# verificação de atualização do PowerShell ficam desligadas: a coleta roda offline (sem nenhuma chamada de rede
+# além da do próprio locatário) e sem escrever no diretório do usuário não-root.
+ENV Knight__Teams__Executable=/usr/bin/pwsh \
+    Knight__Teams__ModulePath=/opt/aegis/psmodules \
+    POWERSHELL_TELEMETRY_OPTOUT=1 \
+    POWERSHELL_UPDATECHECK=Off
 
 # Usuário não-root já provido pela imagem base (uid 1654).
 USER $APP_UID

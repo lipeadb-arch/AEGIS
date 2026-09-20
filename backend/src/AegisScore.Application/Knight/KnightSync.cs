@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Domain;
@@ -38,18 +39,59 @@ public sealed record KnightSyncRequestView(
 /// <summary>Desfecho de um pedido: registrado agora, ou um pedido ATIVO que já existia para o conector.</summary>
 public sealed record KnightSyncEnqueueResult(KnightSyncRequestView Request, bool AlreadyActive);
 
-/// <summary>Fonte KNIGHT correspondente a um conector de Integrações — ou nenhuma.</summary>
+/// <summary>
+/// Fontes KNIGHT que um conector de Integrações consegue sincronizar.
+///
+/// [AEGIS-KNIGHT-COVERAGE-02] UM conector passa a poder alimentar MAIS DE UMA fonte. O conector Microsoft é o
+/// mesmo registro de aplicação para o Microsoft Entra ID e para o Microsoft Teams — muda o recurso para o qual
+/// o token é emitido e o papel de diretório exigido. Cada fonte tem o próprio pedido, o próprio desfecho e a
+/// própria avaliação: sincronizar o Teams NÃO apaga nem substitui a avaliação do Entra ID.
+/// </summary>
 public static class KnightConnectorSources
 {
-    public static KnightSourceType? SourceOf(ConnectorProvider provider, ConnectorCapability capability) =>
+    /// <summary>Todas as fontes que este conector alimenta, na ordem de apresentação (a principal primeiro).</summary>
+    public static IReadOnlyList<KnightSourceType> SourcesOf(ConnectorProvider provider, ConnectorCapability capability) =>
         capability != ConnectorCapability.IdentityPosture
-            ? null
+            ? Array.Empty<KnightSourceType>()
             : provider switch
             {
-                ConnectorProvider.Microsoft => KnightSourceType.MicrosoftEntraId,
-                ConnectorProvider.Google => KnightSourceType.GoogleWorkspace,
-                _ => null,
+                ConnectorProvider.Microsoft => new[] { KnightSourceType.MicrosoftEntraId, KnightSourceType.MicrosoftTeams },
+                ConnectorProvider.Google => new[] { KnightSourceType.GoogleWorkspace },
+                _ => Array.Empty<KnightSourceType>(),
             };
+
+    /// <summary>Fonte PADRÃO do conector (a que um pedido sem fonte declarada sincroniza) — ou nenhuma.</summary>
+    public static KnightSourceType? SourceOf(ConnectorProvider provider, ConnectorCapability capability) =>
+        SourcesOf(provider, capability) is { Count: > 0 } list ? list[0] : null;
+
+    /// <summary>
+    /// Resolve a fonte pedida pelo nome. Um nome desconhecido, ou de uma fonte que este conector NÃO alimenta,
+    /// devolve <c>null</c>: a chamada é recusada em vez de sincronizar silenciosamente outra coisa.
+    /// </summary>
+    public static KnightSourceType? Resolve(ConnectorProvider provider, ConnectorCapability capability, string? requested)
+    {
+        var sources = SourcesOf(provider, capability);
+        if (sources.Count == 0) return null;
+        if (string.IsNullOrWhiteSpace(requested)) return sources[0];
+
+        var wanted = requested.Trim();
+        foreach (var s in sources)
+        {
+            if (s.ToString().Equals(wanted, StringComparison.OrdinalIgnoreCase)) return s;
+            if (Slug(s).Equals(wanted, StringComparison.OrdinalIgnoreCase)) return s;
+        }
+        return null;
+    }
+
+    /// <summary>Apelido curto usado nas rotas e na tela ("entra", "teams", "google").</summary>
+    public static string Slug(KnightSourceType source) => source switch
+    {
+        KnightSourceType.MicrosoftEntraId => "entra",
+        KnightSourceType.MicrosoftTeams => "teams",
+        KnightSourceType.GoogleWorkspace => "google",
+        KnightSourceType.Demo => "demo",
+        _ => source.ToString().ToLowerInvariant(),
+    };
 }
 
 /// <summary>
@@ -59,15 +101,20 @@ public static class KnightConnectorSources
 public interface IKnightSyncRequests
 {
     /// <summary>
-    /// Registra o pedido para o conector — idempotente: se já existe um pedido ATIVO para ele, devolve esse
-    /// (<see cref="KnightSyncEnqueueResult.AlreadyActive"/>), sem criar outro nem coletar de novo.
+    /// Registra o pedido para o conector E a fonte — idempotente: se já existe um pedido ATIVO para esse par,
+    /// devolve esse (<see cref="KnightSyncEnqueueResult.AlreadyActive"/>), sem criar outro nem coletar de novo.
+    /// [AEGIS-KNIGHT-COVERAGE-02] A chave é o par (conector, fonte): uma sincronização do Microsoft Teams em
+    /// andamento não impede uma do Microsoft Entra ID no mesmo conector, e vice-versa.
     /// </summary>
     Task<KnightSyncEnqueueResult> EnqueueAsync(Guid connectorId, KnightSourceType source, Guid? requestedBy, CancellationToken ct = default);
 
     Task<KnightSyncRequestView?> GetAsync(Guid connectorId, Guid requestId, CancellationToken ct = default);
 
-    /// <summary>O pedido mais recente do conector (qualquer estado) — para a tela retomar depois de recarregar.</summary>
-    Task<KnightSyncRequestView?> GetLatestAsync(Guid connectorId, CancellationToken ct = default);
+    /// <summary>
+    /// O pedido mais recente do conector (qualquer estado) — para a tela retomar depois de recarregar. Com
+    /// <paramref name="source"/>, o mais recente DAQUELA fonte; sem ela, o mais recente de qualquer fonte.
+    /// </summary>
+    Task<KnightSyncRequestView?> GetLatestAsync(Guid connectorId, KnightSourceType? source = null, CancellationToken ct = default);
 
     /// <summary>Conectores com pedido ATIVO (Pending/Running) — a listagem mostra "sincronizando".</summary>
     Task<System.Collections.Generic.IReadOnlySet<Guid>> ActiveConnectorIdsAsync(CancellationToken ct = default);

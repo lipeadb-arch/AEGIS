@@ -4,6 +4,9 @@
 
 # Scripts sempre LF
 *.sh   text eol=lf
+# [AEGIS-KNIGHT-COVERAGE-02] O adaptador de coleta do Teams é um recurso EMBUTIDO que roda no Linux do
+# contêiner: o conteúdo precisa ser o MESMO em qualquer máquina que gere a imagem.
+*.ps1  text eol=lf
 
 # Binários — não mexer em fim de linha
 *.png  binary

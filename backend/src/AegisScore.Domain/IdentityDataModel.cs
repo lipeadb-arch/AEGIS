@@ -128,6 +128,29 @@ public enum ConfigurationObjectKind
 
     /// <summary>Inventário das credenciais das aplicações registradas (vigência de certificados e segredos).</summary>
     ApplicationCredentialInventory = 16,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-02] Configuração do Microsoft Teams --------------------------------------
+    // Mesmo desenho do bloco anterior: um documento por objeto de configuração, com contrato tipado e versionado.
+    // Configurações ÚNICAS do locatário usam identificador fixo; políticas usam a identidade que a fonte devolve
+    // ("Global" para a política padrão da organização, "Tag:<nome>" para as personalizadas).
+
+    /// <summary>Configuração do cliente do Teams (armazenamento de terceiros, e-mail para canal).</summary>
+    TeamsClientConfiguration = 17,
+
+    /// <summary>Configuração de federação do locatário (acesso externo, domínios, contas não gerenciadas).</summary>
+    TeamsFederationConfiguration = 18,
+
+    /// <summary>Uma política de reunião do Teams (padrão da organização ou personalizada).</summary>
+    TeamsMeetingPolicy = 19,
+
+    /// <summary>Uma política de mensagens do Teams (padrão da organização ou personalizada).</summary>
+    TeamsMessagingPolicy = 20,
+
+    /// <summary>Uma política de permissão de aplicativos do Teams (padrão da organização ou personalizada).</summary>
+    TeamsAppPermissionPolicy = 21,
+
+    /// <summary>Atribuição de uma política do Teams a um GRUPO (o que amplia o alcance além da política padrão).</summary>
+    TeamsPolicyAssignment = 22,
 }
 
 /// <summary>

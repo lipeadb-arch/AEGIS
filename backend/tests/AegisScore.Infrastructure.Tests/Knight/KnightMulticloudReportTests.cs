@@ -70,7 +70,7 @@ public sealed class KnightMulticloudReportTests : IDisposable
         // ---- Coleta parcial declarada, avaliação concluída a partir da aquisição persistida ----
         assessment.Status.Should().Be(KnightRunStatus.Completed);
         assessment.SourceState.Should().Be(KnightSourceState.PartialCollection, "as duas capacidades de risco devolveram 403");
-        assessment.CatalogVersion.Should().Be("ak-knight-v4");
+        assessment.CatalogVersion.Should().Be("ak-knight-v5");
         var run = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == assessment.Id);
         run.IdentityAcquisitionId.Should().NotBeNull();
         (await db.IdentityConfigurationObservations.CountAsync(c => c.AcquisitionId == run.IdentityAcquisitionId))

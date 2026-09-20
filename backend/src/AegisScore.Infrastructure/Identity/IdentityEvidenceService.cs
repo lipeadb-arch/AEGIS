@@ -13,6 +13,7 @@ using AegisScore.Application.Abstractions;
 using AegisScore.Application.Identity;
 using AegisScore.Application.Identity.Adm;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Knight.Configuration;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
@@ -161,6 +162,97 @@ public sealed class IdentityEvidenceService : IIdentityEvidenceService
         }
 
         return IdentityEvidenceProjection.Build(state, view);
+    }
+
+    /// <inheritdoc />
+    public async Task<IdentityEvidenceAcquisition> CollectConfigurationAsync(
+        KnightSourceType source, CancellationToken ct = default)
+    {
+        var tenantId = _tenant.TenantId
+            ?? throw new TenantSecurityException("Aquisição de configuração sem tenant resolvido no contexto (fail-closed).");
+
+        if (source is KnightSourceType.Demo or KnightSourceType.MicrosoftEntraId)
+            throw new ArgumentOutOfRangeException(nameof(source),
+                "Esta aquisição é para serviços de CONFIGURAÇÃO. O Entra ID passa por CollectAsync (que também grava o snapshot de identidade), e o Demo nunca entra no ADM.");
+
+        // O conector continua sendo a autoridade da origem e o alvo da FK tenant-safe. O Microsoft Teams usa o
+        // MESMO conector Microsoft do Entra ID: é o mesmo registro de aplicação.
+        var connector = await _db.Connectors.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Provider == ConnectorProvider.Microsoft && c.Capability == ConnectorCapability.IdentityPosture, ct);
+
+        if (connector is null)
+            return new IdentityEvidenceAcquisition(IdentityEvidenceConnectorState.NotConfigured, null, null);
+        if (!connector.Enabled)
+            return new IdentityEvidenceAcquisition(IdentityEvidenceConnectorState.Disabled, null, null);
+
+        var configuration = await _config.ResolveAsync(tenantId, source, ct);
+        if (configuration is not IMicrosoftGraphCredentials credentials)
+            return new IdentityEvidenceAcquisition(IdentityEvidenceConnectorState.MissingCredential, null, null);
+
+        // O namespace delimita o espaço de identificadores da origem, exatamente como no Entra ID. Junto com a
+        // FONTE gravada na origem, é o que mantém as aquisições do Teams separadas das de identidade.
+        var directoryNamespace = (credentials.AzureTenantId ?? "").Trim();
+        if (directoryNamespace.Length == 0)
+            return new IdentityEvidenceAcquisition(IdentityEvidenceConnectorState.MissingCredential, null, null);
+
+        var collector = _registry.Resolve(source);
+        var result = await collector.CollectAsync(new KnightCollectionContext(tenantId, configuration), ct);
+
+        var origin = new IdentityAcquisitionOrigin(connector.Id, source, directoryNamespace, result.SourceLabel);
+        var acquiredAt = result.CollectedAt == default ? DateTimeOffset.UtcNow : result.CollectedAt;
+        var request = IdentityKnightBoundary.ToAcquisition(Guid.NewGuid(), origin, result, acquiredAt);
+
+        var record = await PersistConfigurationAsync(request, ct);
+
+        // A avaliação recebe o que foi GRAVADO, não o objeto transitório do coletor: a configuração do serviço é
+        // recomposta a partir dos objetos de configuração observados que acabaram de ser persistidos.
+        var capabilities = KnightCapabilitiesJson.Deserialize(record.CapabilitiesJson);
+        var reread = IdentityKnightBoundary.ToCollectionResult(record) with
+        {
+            TenantConfiguration = KnightTenantConfiguration.FromObserved(
+                record.Configurations ?? Array.Empty<IdentityObservedConfiguration>(), capabilities),
+        };
+
+        return new IdentityEvidenceAcquisition(
+            IdentityEvidenceConnectorState.Configured, reread, null, record.AcquisitionId);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] A mesma seção crítica e o mesmo retry idempotente de <see cref="PersistAsync"/>,
+    /// SEM o snapshot agregado de identidade e SEM tocar a saúde do conector — ver
+    /// <c>IIdentityEvidenceService.CollectConfigurationAsync</c> para o porquê.
+    /// </summary>
+    private async Task<IdentityAcquisitionRecord> PersistConfigurationAsync(
+        IdentityAcquisitionRequest request, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < MaxAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                await using var tx = await _db.Database.BeginTransactionAsync(ct);
+                await _acquisitions.LockOriginAsync(request.Origin, ct);
+                await _acquisitions.PrepareAsync(request, ct);
+                await _db.SaveChangesAsync(ct);
+
+                var record = await _acquisitions.ReadAsync(request.AcquisitionId, ct)
+                    ?? throw new InvalidOperationException(
+                        $"A aquisição de configuração {request.AcquisitionId} não pôde ser relida após a gravação.");
+
+                await tx.CommitAsync(ct);
+                return record;
+            }
+            catch (Exception ex) when (attempt < MaxAttempts - 1 && IsRecoverableWriteRace(ex))
+            {
+                DetachWriteScope();
+                _log?.LogInformation(
+                    "Corrida de gravação na aquisição de configuração {AcquisitionId}; reaplicando sobre o estado recarregado.",
+                    request.AcquisitionId);
+            }
+        }
+
+        throw new InvalidOperationException(
+            "A gravação da aquisição de configuração não se recuperou da corrida de escrita concorrente.");
     }
 
     // ---- Persistência degradation-safe ----------------------------------------------------------

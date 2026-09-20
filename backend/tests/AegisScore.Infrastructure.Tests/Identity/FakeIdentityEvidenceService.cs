@@ -22,6 +22,10 @@ public sealed class FakeIdentityEvidenceService : IIdentityEvidenceService
     public Task<IdentityEvidenceAcquisition> CollectAsync(CancellationToken ct = default)
         => throw new NotSupportedException("fake de leitura — o dashboard nunca dispara coleta do Graph");
 
+    public Task<IdentityEvidenceAcquisition> CollectConfigurationAsync(
+        AegisScore.Domain.KnightSourceType source, CancellationToken ct = default)
+        => throw new NotSupportedException("fake de leitura — o dashboard nunca dispara coleta de configuração");
+
     public Task<IdentityEvidenceProjection> GetLatestProjectionAsync(CancellationToken ct = default)
         => Task.FromResult(_projection);
 }

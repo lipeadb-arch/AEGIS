@@ -45,7 +45,7 @@ public sealed class ConnectorAdminActionsTests
     public async Task Sync_ConectorDesconectado_Recusa409()
     {
         var cfg = Cfg(enabled: true, encryptedSettings: "", ingestionKeyHash: null);
-        var result = await ControllerFor(cfg).Sync(cfg.Id, default);
+        var result = await ControllerFor(cfg).Sync(cfg.Id, null, default);
         StatusOf(result).Should().Be(409, "sincronizar um conector desconectado é recusado");
     }
 
@@ -53,7 +53,7 @@ public sealed class ConnectorAdminActionsTests
     public async Task Sync_ConectorDesabilitado_Recusa409()
     {
         var cfg = Cfg(enabled: false, encryptedSettings: "cifrado");   // tem credencial, mas está pausado
-        var result = await ControllerFor(cfg).Sync(cfg.Id, default);
+        var result = await ControllerFor(cfg).Sync(cfg.Id, null, default);
         StatusOf(result).Should().Be(409, "conector desabilitado não inicia novas coletas");
     }
 

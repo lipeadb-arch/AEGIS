@@ -598,6 +598,10 @@ public sealed class DashboardOverviewQueryTests : IDisposable
         public Task<IdentityEvidenceAcquisition> CollectAsync(CancellationToken ct = default) =>
             throw new InvalidOperationException("A tela inicial NUNCA aciona coleta externa.");
 
+        public Task<IdentityEvidenceAcquisition> CollectConfigurationAsync(
+            AegisScore.Domain.KnightSourceType source, CancellationToken ct = default) =>
+            throw new InvalidOperationException("A tela inicial NUNCA aciona coleta externa.");
+
         public Task<IdentityEvidenceProjection> GetLatestProjectionAsync(CancellationToken ct = default) =>
             Task.FromResult(_projection);
     }

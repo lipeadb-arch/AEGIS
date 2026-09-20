@@ -164,7 +164,9 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddSingleton<IAuthorizationHandler, FederatedExchangeHandler>();
 
 // Stack adapters (add AWS/SIEM/EDR connector packages here).
-builder.Services.AddMicrosoftConnectors();
+// [AEGIS-KNIGHT-COVERAGE-02] A seção Knight:Teams configura o adaptador de coleta do Microsoft Teams
+// (executável do PowerShell, módulo pré-instalado na imagem, tempo limite). É do AMBIENTE, não do locatário.
+builder.Services.AddMicrosoftConnectors(builder.Configuration.GetSection("Knight:Teams"));
 builder.Services.AddGoogleConnectors();
 
 // Document Hub: worker que lê os documentos enfileirados e mapeia os controles NIST.

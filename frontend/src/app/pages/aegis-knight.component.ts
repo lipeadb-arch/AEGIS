@@ -1,7 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { map } from 'rxjs';
+import { catchError, map } from 'rxjs';
 import { environment } from '../../environments/environment';
 import {
   EMPTY_FILTERS,
@@ -12,6 +12,7 @@ import {
   KnightIndicator,
   isFinding,
   KnightLatest,
+  KnightSourceLatest,
   KnightSourceType,
   KnightSources,
   KnightUnfinishedRun,
@@ -152,6 +153,38 @@ import { PostureExportFormat } from '../models/posture-history.models';
             <span>{{ cmsg }}</span>
             <button type="button" class="btn ghost" (click)="consultNotice.set(null)">Fechar</button>
           </div>
+        }
+
+        <!-- [AEGIS-KNIGHT-COVERAGE-02] As fontes JÁ AVALIADAS, cada uma com a própria avaliação. Sincronizar
+             uma não descarta a outra: a que não está na tela continua existindo, com a data da coleta dela. -->
+        @if (hasMultipleSources()) {
+          <nav class="panel sources" aria-label="Fonte avaliada">
+            <p class="sources-title">Fontes avaliadas</p>
+            <ul>
+              @for (s of latestBySource(); track s.source) {
+                <li>
+                  <button
+                    type="button"
+                    class="src"
+                    [class.on]="shownSource() === s.source"
+                    [attr.aria-current]="shownSource() === s.source ? 'true' : null"
+                    (click)="selectSource(s.source)"
+                  >
+                    <b>{{ s.label }}</b>
+                    @if (s.assessment; as sa) {
+                      <span class="when">Coletado em {{ sa.startedAt | date: 'dd/MM/yyyy HH:mm' }}</span>
+                    } @else {
+                      <span class="when">Sem avaliação concluída</span>
+                    }
+                  </button>
+                </li>
+              }
+            </ul>
+            <p class="sources-note">
+              Cada fonte tem nota, cobertura e data próprias — elas não são somadas. O relatório publicado é o
+              da fonte aberta aqui.
+            </p>
+          </nav>
         }
 
         @if (assessment(); as a) {
@@ -364,6 +397,57 @@ import { PostureExportFormat } from '../models/posture-history.models';
   styles: [
     `
       /* Página, cabeçalho, painéis, botões e estados: sistema visual global (styles.css). */
+
+      /* [AEGIS-KNIGHT-COVERAGE-02] Seletor de FONTE avaliada. Deliberadamente sóbrio: é navegação entre
+         avaliações que coexistem, não um filtro que soma ou mistura números de fontes diferentes. */
+      .sources {
+        display: grid;
+        gap: var(--sp-2);
+      }
+      .sources-title {
+        margin: 0;
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .sources ul {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--sp-2);
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .sources .src {
+        display: grid;
+        gap: 2px;
+        padding: var(--sp-2) var(--sp-3);
+        text-align: left;
+        color: var(--text);
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-2);
+        cursor: pointer;
+      }
+      .sources .src.on {
+        color: var(--cyan);
+        background: var(--tint-cyan);
+        border-color: rgba(38, 224, 255, 0.45);
+      }
+      .sources .src .when {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .sources .src.on .when {
+        color: inherit;
+        opacity: 0.85;
+      }
+      .sources-note {
+        margin: 0;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
       .page-head h1 {
         display: flex;
         flex-wrap: wrap;
@@ -607,6 +691,20 @@ export class AegisKnightComponent implements OnInit {
           `${formatDateTime(a.startedAt)}, antes dela.`
       : `${base} Não há avaliação concluída para mostrar.`;
   });
+
+  /**
+   * [AEGIS-KNIGHT-COVERAGE-02] A última avaliação de CADA fonte. Com Microsoft Entra ID e Microsoft Teams
+   * avaliados, "a última avaliação" deixou de ter resposta única: mostrar só a sincronização mais recente
+   * faria a avaliação da outra fonte sumir da tela a cada coleta. A lista fica aqui, a fonte exibida é
+   * escolhida explicitamente, e cada bloco traz a própria nota, cobertura e data — nunca somadas entre fontes.
+   */
+  readonly latestBySource = signal<KnightSourceLatest[]>([]);
+
+  /** Fonte cuja avaliação está sendo exibida. `null` enquanto a leitura por fonte não chegou. */
+  readonly shownSource = signal<KnightSourceType | null>(null);
+
+  /** Só vale oferecer a troca quando há mais de uma fonte com resultado. */
+  readonly hasMultipleSources = computed(() => this.latestBySource().length > 1);
 
   readonly sources = signal<KnightSources | null>(null);
   readonly loading = signal(true); // 1ª carga (fontes + último)
@@ -1057,11 +1155,31 @@ export class AegisKnightComponent implements OnInit {
     // à parte, a tentativa que não concluiu depois dele. Abrir por Id continua alcançando qualquer execução
     // — inclusive uma não concluída, que é mostrada com o estado real, sem virar "resultado".
     this.consultNotice.set(null);
+    //
+    // [AEGIS-KNIGHT-COVERAGE-02] Sem um Id pedido, a leitura é POR FONTE: cada fonte tem a própria avaliação,
+    // e a tela exibe uma delas de cada vez, dizendo qual. A leitura antiga (`latest-state`) fica como recuo se
+    // o servidor for anterior a este pacote — nunca como o caminho normal, porque ela responde "a mais recente
+    // de qualquer fonte", que é justamente a pergunta errada aqui.
     const wanted$ = requested
       ? this.knight.getById(requested).pipe(
           map((a) => ({ assessment: a, unfinishedAttempt: null }) as KnightLatest),
         )
-      : this.knight.getLatestState();
+      : this.knight.getLatestBySource().pipe(
+          map(({ sources }) => {
+            this.latestBySource.set(sources);
+            const escolhida = this.pickSource(sources);
+            this.shownSource.set(escolhida?.source ?? null);
+            return {
+              assessment: escolhida?.assessment ?? null,
+              unfinishedAttempt: escolhida?.unfinishedAttempt ?? null,
+            } as KnightLatest;
+          }),
+          catchError(() => {
+            this.latestBySource.set([]);
+            this.shownSource.set(null);
+            return this.knight.getLatestState();
+          }),
+        );
 
     wanted$.subscribe({
       next: ({ assessment: a, unfinishedAttempt }) => {
@@ -1128,6 +1246,39 @@ export class AegisKnightComponent implements OnInit {
 
   clearError(): void {
     this.error.set(null);
+  }
+
+  /**
+   * [AEGIS-KNIGHT-COVERAGE-02] Qual fonte a tela abre por padrão: a que tem o resultado CONCLUÍDO mais
+   * recente. Não há mistura nem soma — é uma escolha de qual avaliação mostrar primeiro, e as outras
+   * continuam a um clique. Sem nenhum resultado concluído, vale a fonte com a tentativa mais recente, para
+   * que a pendência apareça em vez de a tela ficar muda.
+   */
+  private pickSource(sources: readonly KnightSourceLatest[]): KnightSourceLatest | null {
+    const instante = (s: KnightSourceLatest) =>
+      Date.parse(s.assessment?.startedAt ?? s.unfinishedAttempt?.startedAt ?? '') || 0;
+    const comResultado = sources.filter((s) => s.assessment !== null);
+    const candidatas = comResultado.length > 0 ? comResultado : [...sources];
+    return candidatas.sort((a, b) => instante(b) - instante(a))[0] ?? null;
+  }
+
+  /**
+   * Troca a avaliação exibida para a de outra fonte. É uma troca de LEITURA: nada é coletado, e a avaliação
+   * da fonte anterior continua existindo — some da tela, não do produto.
+   */
+  selectSource(source: KnightSourceType): void {
+    const bloco = this.latestBySource().find((s) => s.source === source);
+    if (!bloco || this.shownSource() === source) return;
+
+    this.shownSource.set(source);
+    this.assessment.set(bloco.assessment);
+    this.unfinishedAttempt.set(bloco.unfinishedAttempt);
+    this.publishedId.set(null);
+    this.publishNotice.set(null);
+    this.selected.set(null);
+    this.loadSummary(bloco.assessment);
+    this.reloadPlans();
+    this.reloadPinnedPlan();
   }
 
   /** Executa o assessment de demonstração (ferramenta de desenvolvimento; fora da jornada normal). */

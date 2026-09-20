@@ -52,6 +52,73 @@ public sealed class KnightReferenceCoverageTests
         entra.RequiresAccess.Should().Be(0);
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] As 17 referências de Microsoft Teams, uma a uma. Números TRAVADOS: mudar a
+    /// classificação exige revisar este teste — e explicar por quê no PR.
+    /// </summary>
+    [Fact]
+    public void Teams_TemAs17ReferenciasClassificadas_ComAsDuasParciaisDeclaradas()
+    {
+        var coverage = KnightReferenceCatalog.Coverage();
+        var teams = coverage.ByService.Single(s => s.Key == nameof(KnightService.Teams));
+
+        teams.Total.Should().Be(17);
+        teams.Implemented.Should().Be(15);
+        teams.Partial.Should().Be(2);
+        teams.Pending.Should().Be(0);
+        teams.ApiLimitation.Should().Be(0);
+        teams.ManualOnly.Should().Be(0);
+        teams.RequiresAccess.Should().Be(0);
+
+        // As duas parciais dizem, no próprio vínculo, o que falta para serem integrais.
+        var parciais = coverage.Controls
+            .Where(c => c.Control.Service == KnightService.Teams && c.Disposition == KnightReferenceDisposition.Partial)
+            .ToList();
+        parciais.Select(p => p.Control.Section).Should().BeEquivalentTo(new[] { "8.4.1", "8.6.1" });
+        parciais.Single(p => p.Control.Section == "8.4.1").Note.Should().Contain("ACM");
+        parciais.Single(p => p.Control.Section == "8.6.1").Note.Should().Contain("Defender para Office 365");
+
+        // Cada referência de Teams é citada por um — e só um — controle do KNIGHT.
+        foreach (var c in coverage.Controls.Where(c => c.Control.Service == KnightService.Teams))
+            c.IndicatorIds.Should().ContainSingle(id => id.StartsWith("AK-TEAMS-"), c.Control.Key);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] O bloco do Teams NÃO pode ser apresentado como "Microsoft 365 coberto": os
+    /// demais serviços continuam pendentes, com o motivo, e isso é o que a plataforma reporta.
+    /// </summary>
+    [Fact]
+    public void Microsoft365_ForaDoTeams_ContinuaPendente_ComOMotivoDoProximoBloco()
+    {
+        var coverage = KnightReferenceCatalog.Coverage();
+        var m365 = coverage.ByPlatform.Single(p => p.Key == nameof(KnightPlatform.Microsoft365));
+        m365.Total.Should().Be(89);
+        m365.Implemented.Should().Be(15);
+        m365.Partial.Should().Be(2);
+        m365.Pending.Should().Be(72,
+            "Exchange Online, Defender para Office 365, Purview, SharePoint/OneDrive, Fabric, Intune, Forms e Sway são os próximos blocos");
+
+        var pendentes = coverage.Controls
+            .Where(c => KnightServices.Describe(c.Control.Service)?.Platform == KnightPlatform.Microsoft365
+                        && c.Disposition == KnightReferenceDisposition.Pending)
+            .ToList();
+        pendentes.Should().OnlyContain(c => c.Control.Service != KnightService.Teams);
+        pendentes.Should().OnlyContain(c => c.Note!.Contains("próximos blocos"));
+    }
+
+    [Fact]
+    public void ControlesDoTeams_SoConsomemCapacidadesDoColetorReal()
+    {
+        foreach (var d in TeamsConfigurationControls.Definitions)
+        {
+            KnightCollectorCapabilities.IsActive(d).Should().BeTrue(d.Id);
+            d.Service.Should().Be(KnightService.Teams);
+            d.Sources.Should().BeEquivalentTo(new[] { KnightSourceType.MicrosoftTeams },
+                $"{d.Id} lê a configuração do Teams — aplicá-lo ao Entra ID o deixaria não avaliado para sempre");
+            d.References.Should().NotBeEmpty(d.Id);
+        }
+    }
+
     [Fact]
     public void Disposicoes_DeclaradasSoParaChavesExistentes_ENuncaParaAlgoImplementado()
     {

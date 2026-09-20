@@ -122,4 +122,22 @@ public interface IIdentityEvidenceService
     /// evidência para o dashboard/relatórios. Não consulta o Graph. Não altera score.
     /// </summary>
     Task<IdentityEvidenceProjection> GetLatestProjectionAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] Aquisição de CONFIGURAÇÃO de um serviço que não é um diretório de identidades
+    /// (hoje, o Microsoft Teams). Persiste a coleta no MESMO ADM — mesma tabela de aquisições, mesmos objetos de
+    /// configuração observados, mesma trava de origem — e devolve o resultado RECONSTRUÍDO do que foi gravado,
+    /// para que a avaliação leia a evidência persistida, e não o objeto transitório do coletor.
+    ///
+    /// Duas coisas que esta aquisição deliberadamente NÃO faz, e é por isso que ela existe separada de
+    /// <see cref="CollectAsync"/>:
+    ///   • não escreve o snapshot agregado de identidade — uma coleta do Teams não observa identidade nenhuma, e
+    ///     deixá-la escrever ali substituiria a postura de identidade do Entra ID por um snapshot vazio;
+    ///   • não reescreve a saúde nem a última sincronização do conector como se fosse a coleta de identidade.
+    ///
+    /// A origem é gravada com a FONTE, o que mantém as aquisições do Entra ID e as do Teams em espaços
+    /// separados: uma nunca é confundida com a outra, nem na leitura nem na retenção.
+    /// </summary>
+    Task<IdentityEvidenceAcquisition> CollectConfigurationAsync(
+        AegisScore.Domain.KnightSourceType source, CancellationToken ct = default);
 }

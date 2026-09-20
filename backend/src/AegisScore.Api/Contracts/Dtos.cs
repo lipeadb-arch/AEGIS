@@ -917,6 +917,25 @@ public record KnightLatestDto(
     KnightUnfinishedRunDto? UnfinishedAttempt);
 
 /// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-02] A última avaliação de UMA fonte. <paramref name="Slug"/> é o apelido curto usado
+/// nas rotas e nos filtros da tela ("entra", "teams"), para que o cliente não derive nomes por conta própria.
+/// </summary>
+public record KnightSourceLatestDto(
+    string Source,
+    string Slug,
+    string Label,
+    KnightAssessmentDto? Assessment,
+    KnightUnfinishedRunDto? UnfinishedAttempt);
+
+/// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-02] Resposta de <c>GET /latest-by-source</c>: a última avaliação concluída de CADA
+/// fonte. Com mais de uma fonte avaliada, "a última avaliação" deixou de ser uma pergunta com resposta única —
+/// apresentar só a sincronização mais recente esconderia a avaliação da outra fonte. Não há nota somada entre
+/// fontes: cada bloco traz a própria nota, a própria cobertura e a própria data.
+/// </summary>
+public record KnightLatestBySourceDto(IReadOnlyList<KnightSourceLatestDto> Sources);
+
+/// <summary>
 /// [AEGIS-AUD-035] Requisição de PUBLICAÇÃO de uma fotografia auditável de postura. O cliente só escolhe o
 /// instrumento (<paramref name="Type"/>: "AegisScoreNist" ou "Knight") e, para KNIGHT, opcionalmente a fonte
 /// (<paramref name="Source"/>: "entra"/"google"/"demo"). NUNCA fornece score/cobertura/contagens/vereditos — o

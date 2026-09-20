@@ -39,6 +39,14 @@ public enum KnightSourceType
 
     /// <summary>Google Workspace (somente leitura) — capacidade arquitetural; coletor real na próxima entrega.</summary>
     GoogleWorkspace = 2,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams (somente leitura), pelo módulo oficial Teams PowerShell com
+    /// autenticação de APLICATIVO. Fonte SEPARADA do Entra ID de propósito: a credencial é a mesma aplicação
+    /// registrada, mas o acesso exige um papel de diretório próprio (Leitor do Teams) e o transporte é outro —
+    /// uma falha aqui não pode apagar, nem substituir, a avaliação do Entra ID.
+    /// </summary>
+    MicrosoftTeams = 3,
 }
 
 /// <summary>
@@ -149,6 +157,13 @@ public enum KnightIndicatorCategory
 
     /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Registro e gerenciamento de dispositivos.</summary>
     DeviceGovernance = 8,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] Colaboração e comunicação: com quem se fala, quem entra numa reunião, o que sai
+    /// da organização por um canal de conversa. Distinta de <see cref="GuestAccess"/>, que trata do acesso de
+    /// convidados ao DIRETÓRIO.
+    /// </summary>
+    CollaborationSecurity = 9,
 }
 
 /// <summary>

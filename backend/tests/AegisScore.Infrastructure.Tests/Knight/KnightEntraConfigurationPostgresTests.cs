@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Knight.Catalog;
 using AegisScore.Application.Knight.Configuration;
+using AegisScore.Application.Knight.Reference;
 using AegisScore.Application.Posture;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Knight;
@@ -71,13 +72,19 @@ public sealed class KnightEntraConfigurationPostgresTests
             var acquisition = (await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == runId)).IdentityAcquisitionId;
             var docs = await db.IdentityConfigurationObservations.AsNoTracking().Where(c => c.AcquisitionId == acquisition).ToListAsync();
             // O cenário não conforme não tem revisão de acesso: a capacidade foi COLETADA com lista vazia (nenhum documento).
-            docs.Select(d => d.Kind).Distinct().Should().Contain(KnightConfigurationKinds.All.Select(s => s.Kind)
-                .Where(k => k != ConfigurationObjectKind.AccessReviewDefinition));
+            // Só os tipos que o coletor do ENTRA produz: o catálogo de tipos também abriga os do Microsoft Teams,
+            // que pertencem a outra fonte e a outra aquisição.
+            var doEntra = KnightConfigurationKinds.All
+                .Where(spec => KnightCollectorCapabilities.Produces(KnightSourceType.MicrosoftEntraId).Contains(spec.Capability))
+                .Select(spec => spec.Kind)
+                .Where(k => k != ConfigurationObjectKind.AccessReviewDefinition);
+            docs.Select(d => d.Kind).Distinct().Should().Contain(doEntra);
 
             // Relidos do jsonb pelo contrato, sem documento "ilegível".
             var config = KnightTenantConfiguration.FromObserved(
                 docs.Select(d => new AegisScore.Application.Identity.Adm.IdentityObservedConfiguration(d.Kind, d.ExternalId, d.DisplayName, d.SchemaVersion, d.ConfigurationJson)),
                 KnightConfigurationKinds.All.Select(s => new KnightCapabilityStatus(s.Capability, KnightCapabilityOutcome.Collected)).DistinctBy(c => c.Capability));
+
             config.Read<EntraAuthorizationPolicyConfiguration>().Collected.Should().BeTrue();
             config.Read<EntraPrivilegedRoleGovernance>().Items.Should().HaveCount(EntraConfigurationControls.PrivilegedRoleTemplates.Count);
 

@@ -126,8 +126,13 @@ public class ConnectorsController : ControllerBase
     /// destacado da requisição HTTP e responde 202 imediatamente, porque um tenant real pode ter centenas de
     /// milhares de relações machine×CVE e ultrapassar o timeout do gateway do Render.
     /// </summary>
+    /// <param name="source">
+    /// [AEGIS-KNIGHT-COVERAGE-02] Fonte KNIGHT a sincronizar quando o conector alimenta mais de uma ("entra",
+    /// "teams"). Omitida, vale a fonte PADRÃO do conector — o comportamento anterior, preservado. Um nome que o
+    /// conector não alimenta é recusado com 400, em vez de sincronizar outra coisa em silêncio.
+    /// </param>
     [HttpPost("{connectorId:guid}/sync")]
-    public async Task<IActionResult> Sync(Guid connectorId, CancellationToken ct)
+    public async Task<IActionResult> Sync(Guid connectorId, [FromQuery] string? source, CancellationToken ct)
     {
         var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
         if (cfg is null) return NotFound();
@@ -149,8 +154,18 @@ public class ConnectorsController : ControllerBase
         // DURÁVEL e identificada, e processado pelo worker com a MESMA autoridade de coleta → ADM → avaliação.
         // 202 imediato com o identificador — a tela acompanha ESTE pedido, sem depender do tempo limite do
         // navegador. Um segundo clique com pedido ativo devolve o MESMO pedido (sem nova coleta).
-        if (KnightConnectorSources.SourceOf(cfg.Provider, cfg.Capability) is { } knightSource)
+        //
+        // [AEGIS-KNIGHT-COVERAGE-02] O conector Microsoft alimenta DUAS fontes (Entra ID e Teams), cada uma com o
+        // próprio pedido e o próprio resultado. Sincronizar uma NÃO invalida nem apaga a avaliação da outra.
+        if (KnightConnectorSources.SourcesOf(cfg.Provider, cfg.Capability).Count > 0)
         {
+            if (KnightConnectorSources.Resolve(cfg.Provider, cfg.Capability, source) is not { } knightSource)
+                return BadRequest(new
+                {
+                    title = $"Este conector não sincroniza a fonte “{source}”.",
+                    status = 400,
+                });
+
             var enqueued = await _knightSync.EnqueueAsync(cfg.Id, knightSource, RequesterId(), ct);
             return Accepted(ToDto(enqueued.Request, enqueued.AlreadyActive));
         }
@@ -273,13 +288,26 @@ public class ConnectorsController : ControllerBase
         return view is null ? NotFound() : Ok(ToDto(view, false));
     }
 
-    /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] O pedido mais recente do conector (204 quando nunca houve).</summary>
+    /// <summary>
+    /// [AEGIS-KNIGHT-MULTICLOUD-01] O pedido mais recente do conector (204 quando nunca houve).
+    /// [AEGIS-KNIGHT-COVERAGE-02] Com <c>?source=</c>, o mais recente DAQUELA fonte — necessário porque um
+    /// conector pode alimentar mais de uma, e cada linha da tela acompanha a sua.
+    /// </summary>
     [HttpGet("{connectorId:guid}/sync-requests/latest")]
-    public async Task<ActionResult<KnightSyncRequestDto>> GetLatestSyncRequest(Guid connectorId, CancellationToken ct)
+    public async Task<ActionResult<KnightSyncRequestDto>> GetLatestSyncRequest(
+        Guid connectorId, [FromQuery] string? source, CancellationToken ct)
     {
         var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
         if (cfg is null) return NotFound();
-        var view = await _knightSync.GetLatestAsync(connectorId, ct);
+
+        KnightSourceType? wanted = null;
+        if (!string.IsNullOrWhiteSpace(source))
+        {
+            wanted = KnightConnectorSources.Resolve(cfg.Provider, cfg.Capability, source);
+            if (wanted is null) return BadRequest(new { title = $"Este conector não sincroniza a fonte “{source}”.", status = 400 });
+        }
+
+        var view = await _knightSync.GetLatestAsync(connectorId, wanted, ct);
         return view is null ? NoContent() : Ok(ToDto(view, false));
     }
 

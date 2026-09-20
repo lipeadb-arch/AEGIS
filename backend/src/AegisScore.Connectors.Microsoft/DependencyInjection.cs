@@ -1,11 +1,14 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
+using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Services;
 using AegisScore.Connectors.Microsoft.Defender;
 using AegisScore.Connectors.Microsoft.Intune;
 using AegisScore.Connectors.Microsoft.Knight;
+using AegisScore.Connectors.Microsoft.Knight.Teams;
 using AegisScore.Connectors.Microsoft.Sentinel;
 
 namespace AegisScore.Connectors.Microsoft;
@@ -16,7 +19,13 @@ public static class DependencyInjection
     /// Registers the Microsoft stack adapters. Each is exposed as an <see cref="IEvidenceConnector"/>
     /// so the registry can resolve it by provider+capability. Add Defender/Purview/Azure adapters here.
     /// </summary>
-    public static IServiceCollection AddMicrosoftConnectors(this IServiceCollection services)
+    /// <param name="teamsPowerShell">
+    /// [AEGIS-KNIGHT-COVERAGE-02] Seção de configuração do adaptador de coleta do Microsoft Teams
+    /// (<c>Knight:Teams</c>): executável do PowerShell, caminho do módulo pré-instalado na imagem e tempo
+    /// limite. É configuração do AMBIENTE DE IMPLANTAÇÃO — nunca do locatário. Ausente, valem os padrões.
+    /// </param>
+    public static IServiceCollection AddMicrosoftConnectors(
+        this IServiceCollection services, IConfiguration? teamsPowerShell = null)
     {
         // [AEGIS-MVP-POSTURE-02] Coletor REAL do Microsoft Secure Score (sinais + exposições de configuração).
         // Reusa o transporte VALIDADO do Graph (IEntraGraphClient) e o protetor de segredos existente. SCOPED (não
@@ -67,6 +76,26 @@ public static class DependencyInjection
         // sem infra própria. O coletor recebe a configuração DECIFRADA pelo contexto; não toca segredos.
         services.AddHttpClient<IEntraGraphClient, EntraGraphClient>().AddStandardResilienceHandler();
         services.AddScoped<IKnightCollector, EntraIdKnightCollector>();
+
+        // [AEGIS-KNIGHT-COVERAGE-02] AEGIS KNIGHT → coletor REAL do Microsoft Teams (somente leitura). A
+        // configuração de Teams do locatário não tem leitura na versão estável do Microsoft Graph: o caminho
+        // oficial é o módulo Teams PowerShell com autenticação de APLICATIVO. Duas peças:
+        //   • ITeamsTokenClient — typed HttpClient que obtém os DOIS tokens exigidos (Graph e a API de
+        //     administração do Teams), com as MESMAS client credentials do conector Microsoft;
+        //   • ITeamsAdminReader — executa o script EMBUTIDO num processo isolado e descartável por coleta.
+        // As opções do adaptador são do AMBIENTE (executável, caminho do módulo na imagem, tempo limite), nunca
+        // do locatário. Singleton nas opções e no leitor: não carregam estado de tenant nem HttpClient.
+        services.AddHttpClient<ITeamsTokenClient, TeamsTokenClient>().AddStandardResilienceHandler();
+        services.AddSingleton(_ =>
+        {
+            var options = new TeamsPowerShellOptions();
+            teamsPowerShell?.Bind(options);
+            return options;
+        });
+        services.AddSingleton<ITeamsAdminReader>(sp => new PowerShellTeamsAdminReader(
+            sp.GetRequiredService<TeamsPowerShellOptions>(),
+            sp.GetService<ILogger<PowerShellTeamsAdminReader>>()));
+        services.AddScoped<IKnightCollector, TeamsKnightCollector>();
         return services;
     }
 }

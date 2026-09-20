@@ -57,6 +57,19 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
                     ? new KnightSourceNotConfigured(source)   // segredo ilegível/incompleto = não configurado (fail-closed)
                     : new KnightEntraIdConfiguration(settings.TenantIdValue!, settings.ClientId!, settings.ClientSecret!);
 
+            // [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams reusa o MESMO conector Microsoft já configurado: a
+            // aplicação registrada é a mesma, e a única diferença é o papel de diretório que ela precisa ter
+            // (Leitor do Teams) e o recurso para o qual o token é emitido. Nenhuma credencial nova é pedida ao
+            // cliente, e um conector desabilitado não coleta — a mesma regra do Entra ID.
+            case KnightSourceType.MicrosoftTeams:
+                var teamsCfg = await FindEntraConnectorAsync(ct);
+                if (teamsCfg is null || !teamsCfg.Enabled)
+                    return new KnightSourceNotConfigured(source);
+                var teamsSettings = TryDecrypt(teamsCfg);
+                return teamsSettings is null
+                    ? new KnightSourceNotConfigured(source)   // segredo ilegível/incompleto = não configurado (fail-closed)
+                    : new KnightTeamsConfiguration(teamsSettings.TenantIdValue!, teamsSettings.ClientId!, teamsSettings.ClientSecret!);
+
             case KnightSourceType.GoogleWorkspace:
                 var gcfg = await FindGoogleConnectorAsync(ct);
                 if (gcfg is null || !gcfg.Enabled)
@@ -81,6 +94,10 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
         return new[]
         {
             new KnightSourceAvailability(KnightSourceType.MicrosoftEntraId, "Microsoft Entra ID", entraConfigured, entra?.Enabled ?? false),
+            // [AEGIS-KNIGHT-COVERAGE-02] O Teams aparece como fonte PRÓPRIA, com a mesma credencial do conector
+            // Microsoft: configurar o Entra ID já o torna disponível. Coletar exige, além disso, o papel Leitor do
+            // Teams atribuído à aplicação — o que só a primeira coleta revela, e ela o diz com o motivo.
+            new KnightSourceAvailability(KnightSourceType.MicrosoftTeams, "Microsoft Teams", entraConfigured, entra?.Enabled ?? false),
             new KnightSourceAvailability(KnightSourceType.GoogleWorkspace, "Google Workspace", googleConfigured, google?.Enabled ?? false),
         };
     }
