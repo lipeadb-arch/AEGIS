@@ -224,24 +224,66 @@ public sealed record EntraPrivilegedRoleGovernance(
     public const string SchemaVersion = "aegis-config-entra-privileged-role-governance-v1";
 }
 
-/// <summary>Definição de revisão de acesso, normalizada no que os controles leem.</summary>
+/// <summary>
+/// Uma consulta de escopo da revisão de acesso, com a ORIGEM — é a origem que diz o que a consulta delimita:
+/// <c>scope</c> e <c>resourceScope</c> dizem O QUE é revisado, <c>principalScope</c> QUEM entra na revisão e
+/// <c>instanceEnumerationScope</c> QUAIS recursos a série enumera (a documentação exige essa última para revisar
+/// convidados em todos os grupos do Microsoft 365).
+/// </summary>
+public sealed record EntraAccessReviewScopeQuery(
+    string Origin,
+    string Query,
+    string? QueryType,
+    string? QueryRoot,
+    string? OdataType)
+{
+    public const string OriginScope = "scope";
+    public const string OriginPrincipal = "principalScope";
+    public const string OriginResource = "resourceScope";
+    public const string OriginInstanceEnumeration = "instanceEnumerationScope";
+}
+
+/// <summary>
+/// Uma etapa de revisão multi-etapas. A documentação é explícita: quando <c>stageSettings</c> existe, os valores
+/// da etapa substituem os correspondentes do nível superior — inclusive os revisores.
+/// </summary>
+public sealed record EntraAccessReviewStage(
+    string? StageId,
+    int ReviewerCount,
+    int FallbackReviewerCount,
+    int? DurationInDays,
+    IReadOnlyList<string> DependsOn);
+
+/// <summary>Recorrência da série: o PADRÃO (com que frequência repete) e a FAIXA (por quanto tempo repete).</summary>
+public sealed record EntraAccessReviewRecurrence(
+    string? PatternType,
+    int? Interval,
+    string? RangeType,
+    DateOnly? StartDate,
+    DateOnly? EndDate,
+    int? NumberOfOccurrences);
+
+/// <summary>
+/// Definição de revisão de acesso, normalizada no que os controles leem. O escopo é preservado consulta a consulta,
+/// com a origem, porque existir uma revisão não comprova QUAL população ela alcança.
+/// </summary>
 public sealed record EntraAccessReviewDefinition(
     string Id,
     string? DisplayName,
     string? Status,
     string ScopeKind,
-    IReadOnlyList<string> ScopeQueries,
+    IReadOnlyList<EntraAccessReviewScopeQuery> Queries,
     IReadOnlyList<string> RoleDefinitionIds,
-    string? RecurrenceType,
-    int? RecurrenceInterval,
+    EntraAccessReviewRecurrence? Recurrence,
     int ReviewerCount,
+    IReadOnlyList<EntraAccessReviewStage> Stages,
     int? InstanceDurationInDays,
     bool? AutoApplyDecisionsEnabled,
     bool RemovesAccessWhenApplied,
     bool? JustificationRequiredOnApproval,
     bool? MailNotificationsEnabled)
 {
-    public const string SchemaVersion = "aegis-config-entra-access-review-v1";
+    public const string SchemaVersion = "aegis-config-entra-access-review-v2";
 
     public const string ScopeGuests = "guests";
     public const string ScopeDirectoryRole = "directoryRole";

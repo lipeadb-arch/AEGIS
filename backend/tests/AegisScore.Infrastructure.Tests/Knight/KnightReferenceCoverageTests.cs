@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using AegisScore.Application.Knight;
@@ -42,8 +42,10 @@ public sealed class KnightReferenceCoverageTests
         var entra = KnightReferenceCatalog.Coverage().ByPlatform.Single(p => p.Key == nameof(KnightPlatform.EntraId));
         entra.Total.Should().Be(83);
         // Números TRAVADOS: mudar a classificação exige revisar este teste — e explicar por quê no PR.
-        entra.Implemented.Should().Be(56);
-        entra.Partial.Should().Be(7);
+        // A revisão de convidados (CIS-M365-7.0.0:5.3.2) é PARCIAL: a avaliação comprova os convidados de todos os
+        // grupos do Microsoft 365, que é o alcance da própria configuração, e a diferença está declarada no vínculo.
+        entra.Implemented.Should().Be(55);
+        entra.Partial.Should().Be(8);
         entra.ApiLimitation.Should().Be(18);
         entra.ManualOnly.Should().Be(2);
         entra.Pending.Should().Be(0);
@@ -113,6 +115,36 @@ public sealed class KnightReferenceCoverageTests
         }
         active.Select(d => KnightControlProfiles.For(d.Id)!.Impact).Should().OnlyHaveUniqueItems("texto genérico repetido não explica o controle");
         active.Select(d => KnightControlProfiles.For(d.Id)!.Rationale).Should().OnlyHaveUniqueItems();
+    }
+
+    /// <summary>
+    /// O impacto responde a outra pergunta que o risco: não é o risco reescrito, e não afirma alcance que a condição
+    /// observada não sustenta (comprometimento consumado, acesso a tudo, controle do ambiente inteiro).
+    /// </summary>
+    [Fact]
+    public void Impacto_NaoRepeteORisco_ENaoAfirmaAlcanceQueACondicaoNaoSustenta()
+    {
+        var semSustentacao = new[] { "todos os dados", "controle total", "acesso total", "todo o ambiente", "qualquer sistema", "foi comprometid" };
+        foreach (var d in KnightCatalog.Indicators.Where(x => x.Sources.Any(s => s != KnightSourceType.Demo)))
+        {
+            var p = KnightControlProfiles.For(d.Id)!;
+            foreach (var termo in semSustentacao)
+                p.Impact!.Should().NotContain(termo, $"{d.Id}: o impacto não pode afirmar o que a condição observada não sustenta");
+            Overlap(p.Impact!, p.Rationale).Should().BeLessThan(0.5,
+                $"{d.Id}: o impacto é a consequência possível, não o risco repetido com outras palavras");
+        }
+    }
+
+    /// <summary>Fração das palavras de conteúdo em comum entre dois textos (Jaccard), em minúsculas.</summary>
+    private static double Overlap(string a, string b)
+    {
+        static HashSet<string> Words(string s) => new(
+            s.ToLowerInvariant().Split(new[] { ' ', ',', '.', ';', ':', '(', ')', '—', '–', '“', '”', '"', '\'' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(w => w.Length > 3), StringComparer.Ordinal);
+        var x = Words(a);
+        var y = Words(b);
+        var union = x.Count + y.Count - x.Count(y.Contains);
+        return union == 0 ? 0 : (double)x.Count(y.Contains) / union;
     }
 
     [Fact]

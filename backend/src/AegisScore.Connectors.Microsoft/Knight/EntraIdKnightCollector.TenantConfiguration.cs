@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -381,19 +382,31 @@ public sealed partial class EntraIdKnightCollector
             {
                 var id = Str(d, "id");
                 if (string.IsNullOrWhiteSpace(id)) continue;
-                var queries = ScopeQueries(Obj(d, "scope")).ToList();
-                var roles = queries.SelectMany(q => RoleIdPattern().Matches(q).Select(m => m.Groups[1].Value))
+                var queries = ScopeQueries(Obj(d, "scope"), EntraAccessReviewScopeQuery.OriginScope)
+                    .Concat(ScopeQueries(Obj(d, "instanceEnumerationScope"), EntraAccessReviewScopeQuery.OriginInstanceEnumeration))
+                    .ToList();
+                var roles = queries
+                    .Where(q => q.Origin != EntraAccessReviewScopeQuery.OriginPrincipal)
+                    .SelectMany(q => RoleIdPattern().Matches(q.Query).Select(m => m.Groups[1].Value))
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                var guests = queries.Any(q => q.Contains("userType eq 'Guest'", StringComparison.OrdinalIgnoreCase));
                 var settings = Obj(d, "settings");
-                var pattern = Obj(Obj(settings, "recurrence"), "pattern");
+                var recurrence = Obj(settings, "recurrence");
+                var pattern = Obj(recurrence, "pattern");
+                var range = Obj(recurrence, "range");
                 var applyActions = Items(settings, "applyActions").ToList();
+                var stages = Items(d, "stageSettings").Select(s => new EntraAccessReviewStage(
+                    Str(s, "stageId"), Items(s, "reviewers").Count(), Items(s, "fallbackReviewers").Count(),
+                    Int(s, "durationInDays"), ArrayStrings(s, "dependsOn"))).ToList();
                 add(KnightTenantConfiguration.Document(id!, Str(d, "displayName"),
                     new EntraAccessReviewDefinition(
                         id!, Str(d, "displayName"), Str(d, "status"),
-                        guests ? EntraAccessReviewDefinition.ScopeGuests : roles.Count > 0 ? EntraAccessReviewDefinition.ScopeDirectoryRole : EntraAccessReviewDefinition.ScopeOther,
-                        queries, roles, Str(pattern, "type"), Int(pattern, "interval"),
-                        Items(d, "reviewers").Count(), Int(settings, "instanceDurationInDays"),
+                        EntraAccessReviewCoverage.ClassifyKind(queries, roles),
+                        queries, roles,
+                        pattern.ValueKind == JsonValueKind.Object || range.ValueKind == JsonValueKind.Object
+                            ? new EntraAccessReviewRecurrence(Str(pattern, "type"), Int(pattern, "interval"),
+                                Str(range, "type"), DayOnly(range, "startDate"), DayOnly(range, "endDate"), Int(range, "numberOfOccurrences"))
+                            : null,
+                        Items(d, "reviewers").Count(), stages, Int(settings, "instanceDurationInDays"),
                         Bool(settings, "autoApplyDecisionsEnabled"),
                         applyActions.Any(a => string.Equals(Str(a, "@odata.type"), "#microsoft.graph.removeAccessApplyAction", StringComparison.OrdinalIgnoreCase)),
                         Bool(settings, "justificationRequiredOnApproval"), Bool(settings, "mailNotificationsEnabled"))));
@@ -512,15 +525,28 @@ public sealed partial class EntraIdKnightCollector
         return type;
     }
 
-    /// <summary>Consultas de escopo de uma revisão de acesso (escopo simples ou por recurso e principal).</summary>
-    private static IEnumerable<string> ScopeQueries(JsonElement scope)
+    /// <summary>
+    /// Consultas de escopo de uma revisão de acesso, com a ORIGEM preservada: escopo simples, escopo por recurso e
+    /// principal (principalResourceMembershipsScope) e enumeração de instâncias. Sem a origem não há como separar
+    /// "quem é revisado" de "o que é revisado" — nem como saber quais recursos a série enumera.
+    /// </summary>
+    private static IEnumerable<EntraAccessReviewScopeQuery> ScopeQueries(JsonElement scope, string origin)
     {
         if (scope.ValueKind != JsonValueKind.Object) yield break;
-        if (Str(scope, "query") is { } q) yield return q;
-        foreach (var nested in Items(scope, "principalScopes").Concat(Items(scope, "resourceScopes")))
-            foreach (var n in ScopeQueries(nested))
+        if (Str(scope, "query") is { } q)
+            yield return new EntraAccessReviewScopeQuery(origin, q, Str(scope, "queryType"), Str(scope, "queryRoot"), Str(scope, "@odata.type"));
+        foreach (var nested in Items(scope, "principalScopes"))
+            foreach (var n in ScopeQueries(nested, EntraAccessReviewScopeQuery.OriginPrincipal))
+                yield return n;
+        foreach (var nested in Items(scope, "resourceScopes"))
+            foreach (var n in ScopeQueries(nested, EntraAccessReviewScopeQuery.OriginResource))
                 yield return n;
     }
+
+    /// <summary>Data (sem hora) devolvida pela fonte; valor ausente ou ilegível permanece nulo.</summary>
+    private static DateOnly? DayOnly(JsonElement e, string prop) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String
+        && DateOnly.TryParse(v.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
 
     [GeneratedRegex(@"roleDefinitions/([0-9a-fA-F-]{36})", RegexOptions.CultureInvariant)]
     private static partial Regex RoleIdPattern();

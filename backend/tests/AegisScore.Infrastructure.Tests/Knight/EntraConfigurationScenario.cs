@@ -427,17 +427,26 @@ internal sealed class EntraConfigurationScenario
 
     private static object[] CompliantReviews()
     {
-        object Review(string id, string name, object scope) => new
+        object Review(string id, string name, object scope, object? instanceEnumerationScope = null)
         {
-            id, displayName = name, status = "InProgress", scope,
-            reviewers = new[] { new { query = "/users/u1", queryType = "MicrosoftGraph" } },
-            settings = new
+            var def = new Dictionary<string, object?>
             {
-                instanceDurationInDays = 14, autoApplyDecisionsEnabled = true, justificationRequiredOnApproval = true, mailNotificationsEnabled = true,
-                recurrence = new { pattern = new { type = "absoluteMonthly", interval = 1 } },
-                applyActions = new[] { new Dictionary<string, object> { ["@odata.type"] = "#microsoft.graph.removeAccessApplyAction" } },
-            },
-        };
+                ["id"] = id, ["displayName"] = name, ["status"] = "InProgress", ["scope"] = scope,
+                ["reviewers"] = new[] { new { query = "/users/u1", queryType = "MicrosoftGraph" } },
+                ["settings"] = new
+                {
+                    instanceDurationInDays = 14, autoApplyDecisionsEnabled = true, justificationRequiredOnApproval = true, mailNotificationsEnabled = true,
+                    recurrence = new
+                    {
+                        pattern = new { type = "absoluteMonthly", interval = 1, dayOfMonth = 1 },
+                        range = new { type = "noEnd", startDate = "2026-01-01" },
+                    },
+                    applyActions = new[] { new Dictionary<string, object> { ["@odata.type"] = "#microsoft.graph.removeAccessApplyAction" } },
+                },
+            };
+            if (instanceEnumerationScope is not null) def["instanceEnumerationScope"] = instanceEnumerationScope;
+            return def;
+        }
         object RoleScope(string role) => new Dictionary<string, object>
         {
             ["@odata.type"] = "#microsoft.graph.principalResourceMembershipsScope",
@@ -447,10 +456,16 @@ internal sealed class EntraConfigurationScenario
 
         var list = new List<object>
         {
+            // Revisão dos convidados de TODOS os grupos do Microsoft 365: escopo relativo + enumeração dos grupos,
+            // como a documentação do Microsoft Graph descreve (sem a enumeração não há como saber o alcance).
             Review("ar-guests", "Revisão mensal de convidados", new Dictionary<string, object>
             {
                 ["@odata.type"] = "#microsoft.graph.accessReviewQueryScope",
                 ["query"] = "./members/microsoft.graph.user/?$count=true&$filter=(userType eq 'Guest')", ["queryType"] = "MicrosoftGraph",
+            }, new Dictionary<string, object>
+            {
+                ["@odata.type"] = "#microsoft.graph.accessReviewQueryScope",
+                ["query"] = "/groups?$filter=(groupTypes/any(c:c eq 'Unified'))&$count=true", ["queryType"] = "MicrosoftGraph",
             }),
             Review("ar-tenant-creator", "Revisão do Criador de Locatário", RoleScope(TenantCreator)),
         };

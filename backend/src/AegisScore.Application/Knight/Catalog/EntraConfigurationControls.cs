@@ -469,18 +469,51 @@ public static class EntraConfigurationControls
         ("194ae4cb-b126-40b2-bd5b-6091b380977d", "Administrador de Segurança", "security-administrator"),
     };
 
-    private static bool QualifyingReview(EntraAccessReviewDefinition d) =>
-        !string.Equals(d.Status, "Completed", StringComparison.OrdinalIgnoreCase)
-        && d.ReviewerCount > 0
-        && d.RecurrenceType is "weekly" or "absoluteMonthly" or "relativeMonthly"
-        && (d.RecurrenceType == "weekly" || (d.RecurrenceInterval ?? 1) <= 1)
-        && d.RemovesAccessWhenApplied;
+    // ---- Revisões de acesso ---------------------------------------------------------------------------
+    // Localizar uma revisão não comprova o critério: o ESCOPO dela precisa alcançar a população exigida e a série
+    // precisa estar vigente, ser bastante frequente, ter revisores e remover o acesso negado ao aplicar. A leitura
+    // do escopo e da recorrência vive em EntraAccessReviewCoverage, sobre o que a coleta preservou.
 
-    private static string ReviewSummary(EntraAccessReviewDefinition d) =>
-        $"Recorrência: {d.RecurrenceType ?? "não recorrente"}"
-        + (d.RecurrenceInterval is { } i && i > 1 ? $" a cada {i}" : "")
-        + $" · revisores: {d.ReviewerCount} · remove acesso ao aplicar: {YesNo(d.RemovesAccessWhenApplied)}"
-        + $" · aplicação automática: {YesNo(d.AutoApplyDecisionsEnabled)} · status: {d.Status ?? "não informado"}";
+    /// <summary>O que UMA revisão sustenta: comprova o critério, reprova de forma demonstrável, ou não permite dizer.</summary>
+    private enum ReviewState { Proven, Failed, Undetermined }
+
+    private sealed record AssessedReview(EntraAccessReviewDefinition Def, KnightAccessReviewScope Scope, ReviewState State, string Reason);
+
+    private static AssessedReview Assess(EntraAccessReviewDefinition d, KnightAccessReviewScope scope, DateTimeOffset at)
+    {
+        if (scope.Reach == KnightAccessReviewReach.Limited) return new(d, scope, ReviewState.Failed, scope.Description);
+        if (scope.Reach == KnightAccessReviewReach.Undetermined) return new(d, scope, ReviewState.Undetermined, scope.Description);
+        var criteria = EntraAccessReviewCoverage.Criteria(d, at);
+        return criteria.State switch
+        {
+            KnightAccessReviewCriteria.Meets => new(d, scope, ReviewState.Proven, $"{scope.Description}, com {criteria.Reason}"),
+            KnightAccessReviewCriteria.Fails => new(d, scope, ReviewState.Failed, criteria.Reason),
+            _ => new(d, scope, ReviewState.Undetermined, criteria.Reason),
+        };
+    }
+
+    private static string ReviewName(EntraAccessReviewDefinition d) => $"“{d.DisplayName ?? d.Id}” ({d.Id})";
+
+    /// <summary>Motivos curtos, para o resumo da lista.</summary>
+    private static string Reasons(IEnumerable<AssessedReview> reviews) =>
+        string.Join("; ", reviews.Select(r => $"{ReviewName(r.Def)} — {r.Reason}"));
+
+    /// <summary>Os mesmos motivos com as consultas de escopo lidas, para a expansão e as exportações.</summary>
+    private static string ReasonsWithScope(IEnumerable<AssessedReview> reviews) =>
+        string.Join("; ", reviews.Select(r => $"{ReviewName(r.Def)} — {r.Reason}"
+            + (r.Scope.Queries is { Length: > 0 } q ? $" (escopo lido: {q})" : "")));
+
+    /// <summary>O detalhe da expansão: o veredito, o motivo, o resumo da série e as consultas de escopo lidas.</summary>
+    private static KnightIndicatorObject ReviewEvidence(AssessedReview r) =>
+        Evidence(KnightAffectedObjectKind.Policy, r.Def.Id, r.Def.DisplayName,
+            (r.State switch
+            {
+                ReviewState.Proven => "Comprova o critério: ",
+                ReviewState.Failed => "Não atende ao critério: ",
+                _ => "Não foi possível comprovar: ",
+            }) + r.Reason + ". " + EntraAccessReviewCoverage.Summary(r.Def)
+            + (r.Scope.Queries is { Length: > 0 } q ? " · escopo lido — " + q : ""),
+            "Revisão de acesso");
 
     // ---- Catálogo ------------------------------------------------------------------------------------
 
@@ -1061,40 +1094,62 @@ public static class EntraConfigurationControls
 
         // ==== Revisões de acesso ====
         Control("AK-ENTRA-053", "Revisões de acesso de convidados não configuradas", KnightIndicatorCategory.GuestAccess, SeverityLevel.Medium,
-            "Criar revisão de acesso recorrente (mensal ou mais frequente) de todos os convidados, com revisores definidos e remoção do acesso negado ao aplicar.",
-            "Revisão de acesso ativa com escopo em convidados, recorrência mensal ou mais frequente, revisores definidos e remoção do acesso ao aplicar.",
+            "Criar revisão de acesso recorrente (mensal ou mais frequente) dos convidados de todos os grupos do Microsoft 365, com revisores definidos e remoção do acesso negado ao aplicar.",
+            "Revisão de acesso vigente cujo escopo alcança os convidados de todos os grupos do Microsoft 365 (ou todos os convidados do diretório), com recorrência mensal ou mais frequente, revisores definidos e remoção do acesso ao aplicar.",
             c => Many<EntraAccessReviewDefinition>(c, defs =>
             {
-                var guests = defs.Where(d => d.ScopeKind == EntraAccessReviewDefinition.ScopeGuests).ToList();
-                var ok = guests.Where(QualifyingReview).ToList();
-                var ev = guests.Select(d => Evidence(KnightAffectedObjectKind.Policy, d.Id, d.DisplayName,
-                    (QualifyingReview(d) ? "Atende ao critério. " : "Não atende ao critério. ") + ReviewSummary(d), "Revisão de acesso de convidados")).ToList();
-                if (ok.Count > 0) return KnightControlOutcome.Passed($"{ok.Count} revisão(ões) de acesso de convidados atende(m) ao critério.", ev);
-                return KnightControlOutcome.Exposed(guests.Count == 0
-                    ? "Não há revisão de acesso de convidados configurada."
-                    : "Há revisão de acesso de convidados, mas nenhuma atende ao critério (recorrência, revisores ou remoção ao aplicar).",
+                var candidates = defs
+                    .Select(d => (Def: d, Scope: EntraAccessReviewCoverage.Guests(d)))
+                    .Where(x => x.Scope.Reach != KnightAccessReviewReach.NotTargeted)
+                    .Select(x => Assess(x.Def, x.Scope, c.CollectedAt))
+                    .ToList();
+                if (candidates.Count == 0)
+                    return KnightControlOutcome.Exposed("Não há revisão de acesso com escopo em convidados configurada no locatário.",
+                        Array.Empty<KnightIndicatorObject>());
+
+                var ev = candidates.Select(ReviewEvidence).ToList();
+                if (candidates.FirstOrDefault(x => x.State == ReviewState.Proven) is { } proven)
+                    return KnightControlOutcome.Passed(
+                        $"A revisão de acesso {ReviewName(proven.Def)} alcança {proven.Scope.Description} e atende ao critério.", ev);
+
+                var undetermined = candidates.Where(x => x.State == ReviewState.Undetermined).ToList();
+                if (undetermined.Count > 0)
+                    return KnightControlOutcome.NotEvaluated(
+                        "não foi possível comprovar a abrangência da revisão de convidados: " + Reasons(undetermined), ev);
+
+                return KnightControlOutcome.Exposed(
+                    "Há revisão de acesso de convidados, mas nenhuma comprova o critério: " + Reasons(candidates),
                     Array.Empty<KnightIndicatorObject>(), ev);
             }),
-            Ref(M365 + "5.3.2"),
+            Ref(M365 + "5.3.2", KnightReferenceMatch.Partial,
+                "A avaliação confirma a revisão dos convidados de todos os grupos do Microsoft 365, que é o alcance da própria configuração: a enumeração documentada não inclui grupos de associação dinâmica nem grupos atribuíveis a papéis, e convidados sem grupo não entram na revisão."),
             Ref(AZ + "5.3.2", KnightReferenceMatch.Partial, "A referência do Azure pede revisão ao menos quinzenal; o critério do AEGIS aceita recorrência mensal, como a referência do Microsoft 365.")),
 
         Control("AK-ENTRA-054", "Revisões de acesso de papéis altamente privilegiados não configuradas", KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.High,
             "Criar revisão de acesso recorrente para os papéis Administrador Global, do Exchange, do SharePoint, do Teams e de Segurança.",
-            "Para cada um dos cinco papéis: revisão de acesso ativa, recorrência mensal ou mais frequente, revisores definidos e remoção do acesso ao aplicar.",
+            "Para cada um dos cinco papéis: revisão de acesso vigente que alcance as atribuições do papel, com recorrência mensal ou mais frequente, revisores definidos e remoção do acesso ao aplicar.",
             c => Many<EntraAccessReviewDefinition>(c, defs =>
             {
-                var affected = new List<KnightIndicatorObject>();
-                var ev = new List<KnightIndicatorObject>();
-                foreach (var (templateId, name, _) in ReviewedRoles)
-                {
-                    var obj = RoleReviewObject(defs, templateId, name);
-                    (obj.Relation == KnightObjectRelation.Evidence ? ev : affected).Add(obj);
-                }
-                return affected.Count == 0
-                    ? KnightControlOutcome.Passed("Os cinco papéis altamente privilegiados têm revisão de acesso que atende ao critério.", ev)
-                    : KnightControlOutcome.Exposed($"{affected.Count} de 5 papéis altamente privilegiados sem revisão de acesso que atenda ao critério.", affected, ev);
+                var roles = ReviewedRoles.Select(r => (r.Name, Review: RoleReviewObject(defs, r.TemplateId, r.Name, c.CollectedAt))).ToList();
+                var failed = roles.Where(x => x.Review.State == ReviewState.Failed).ToList();
+                var undetermined = roles.Where(x => x.Review.State == ReviewState.Undetermined).ToList();
+                var affected = roles.Select(x => x.Review.Object).Where(o => o.Relation == KnightObjectRelation.Affected).ToList();
+                var ev = roles.Select(x => x.Review.Object).Where(o => o.Relation == KnightObjectRelation.Evidence).ToList();
+
+                if (failed.Count > 0)
+                    return KnightControlOutcome.Exposed(
+                        $"{failed.Count} de {ReviewedRoles.Count} papéis altamente privilegiados sem revisão de acesso que comprove o critério.",
+                        affected, ev, complete: undetermined.Count == 0,
+                        limitation: undetermined.Count == 0 ? null
+                            : $"A revisão de {string.Join(", ", undetermined.Select(x => x.Name))} não pôde ser interpretada e não entra na contagem.");
+                if (undetermined.Count > 0)
+                    return KnightControlOutcome.NotEvaluated(
+                        "não foi possível comprovar a abrangência da revisão de " + string.Join(", ", undetermined.Select(x => x.Name)), ev);
+                return KnightControlOutcome.Passed(
+                    $"Os {ReviewedRoles.Count} papéis altamente privilegiados têm revisão de acesso que comprova o critério.", ev);
             }),
-            ReviewedRoles.Select(r => Ref(M365 + "5.3.3#" + r.Variant)).ToArray()),
+            ReviewedRoles.Select(r => Ref(M365 + "5.3.3#" + r.Variant, KnightReferenceMatch.Exact,
+                "A avaliação confirma que o escopo da revisão alcança as atribuições do papel (ativas e elegíveis); revisões limitadas a um subconjunto de principais ou só às atribuições ativas não são aceitas.")).ToArray()),
 
         // ==== Locais e aplicações de serviço ====
         Control("AK-ENTRA-055", "Locais confiáveis não definidos", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.Medium,
@@ -1240,24 +1295,44 @@ public static class EntraConfigurationControls
                 "A referência também exige a configuração de tempo limite de sessão ociosa do Microsoft 365 (3 horas ou menos), lida no serviço SharePoint e OneDrive, ainda não implementada.")),
     };
 
-    private static KnightIndicatorObject RoleReviewObject(IReadOnlyList<EntraAccessReviewDefinition> defs, string templateId, string name)
+    /// <summary>
+    /// O que as revisões coletadas comprovam sobre UM papel. Só entra como AFETADO o papel cuja falta de revisão
+    /// (ou cujo escopo menor) é demonstrável; o que não pôde ser interpretado vira evidência com a limitação.
+    /// </summary>
+    private static (ReviewState State, KnightIndicatorObject Object) RoleReviewObject(
+        IReadOnlyList<EntraAccessReviewDefinition> defs, string templateId, string name, DateTimeOffset at)
     {
-        var forRole = defs.Where(d => d.RoleDefinitionIds.Contains(templateId, StringComparer.OrdinalIgnoreCase)).ToList();
-        var ok = forRole.Where(QualifyingReview).ToList();
-        var detail = ok.Count > 0 ? $"Revisão que atende ao critério: {ok[0].DisplayName ?? ok[0].Id}. " + ReviewSummary(ok[0])
-            : forRole.Count > 0 ? "Há revisão para o papel, mas nenhuma atende ao critério. " + ReviewSummary(forRole[0])
-            : "Nenhuma revisão de acesso configurada para o papel.";
-        return new KnightIndicatorObject(ok.Count > 0 ? KnightObjectRelation.Evidence : KnightObjectRelation.Affected,
-            KnightAffectedObjectKind.DirectoryRole, templateId, name, null, Array.Empty<string>(), detail, "Revisão de acesso do papel");
+        var assessed = defs
+            .Select(d => (Def: d, Scope: EntraAccessReviewCoverage.Role(d, templateId)))
+            .Where(x => x.Scope.Reach != KnightAccessReviewReach.NotTargeted)
+            .Select(x => Assess(x.Def, x.Scope, at))
+            .ToList();
+        var proven = assessed.FirstOrDefault(x => x.State == ReviewState.Proven);
+        var state = proven is not null ? ReviewState.Proven
+            : assessed.Any(x => x.State == ReviewState.Undetermined) ? ReviewState.Undetermined
+            : ReviewState.Failed;
+        var detail = proven is not null
+            ? $"Revisão {ReviewName(proven.Def)}: alcança {proven.Scope.Description}. {EntraAccessReviewCoverage.Summary(proven.Def)}"
+                + (proven.Scope.Queries is { Length: > 0 } q ? " · escopo lido — " + q : "")
+            : assessed.Count == 0
+                ? "Nenhuma revisão de acesso configurada para o papel."
+                : ReasonsWithScope(assessed);
+        return (state, new KnightIndicatorObject(
+            state == ReviewState.Failed ? KnightObjectRelation.Affected : KnightObjectRelation.Evidence,
+            KnightAffectedObjectKind.DirectoryRole, templateId, name, null, Array.Empty<string>(), detail, "Revisão de acesso do papel"));
     }
 
     private static KnightControlOutcome RoleReview(KnightEvaluationContext c, string templateId, string name) =>
         Many<EntraAccessReviewDefinition>(c, defs =>
         {
-            var obj = RoleReviewObject(defs, templateId, name);
-            return obj.Relation == KnightObjectRelation.Evidence
-                ? KnightControlOutcome.Passed($"O papel {name} tem revisão de acesso que atende ao critério.", new[] { obj })
-                : KnightControlOutcome.Exposed($"O papel {name} não tem revisão de acesso que atenda ao critério.", new[] { obj });
+            var (state, obj) = RoleReviewObject(defs, templateId, name, c.CollectedAt);
+            return state switch
+            {
+                ReviewState.Proven => KnightControlOutcome.Passed($"O papel {name} tem revisão de acesso que comprova o critério.", new[] { obj }),
+                ReviewState.Undetermined => KnightControlOutcome.NotEvaluated(
+                    $"não foi possível comprovar a abrangência da revisão do papel {name}: {obj.Detail}", new[] { obj }),
+                _ => KnightControlOutcome.Exposed($"O papel {name} não tem revisão de acesso que comprove o critério.", new[] { obj }),
+            };
         });
 
     private static KnightControlOutcome RoleApproval(KnightEvaluationContext c, string templateId, string roleName) =>
