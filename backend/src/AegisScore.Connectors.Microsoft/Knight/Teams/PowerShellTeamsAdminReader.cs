@@ -134,9 +134,23 @@ public sealed class PowerShellTeamsAdminReader : ITeamsAdminReader
 
         try
         {
-            await process.StandardInput.WriteAsync(stdinPayload.AsMemory(), timeout.Token);
-            await process.StandardInput.FlushAsync(timeout.Token);
-            process.StandardInput.Close();
+            try
+            {
+                await process.StandardInput.WriteAsync(stdinPayload.AsMemory(), timeout.Token);
+                await process.StandardInput.FlushAsync(timeout.Token);
+            }
+            catch (IOException)
+            {
+                // O processo fechou a entrada antes de receber o pedido — quase sempre porque JÁ TERMINOU
+                // (runtime ausente, argumento recusado, falha na importação do módulo). Isso não é o fim do
+                // diagnóstico: o motivo está no erro-padrão e no código de saída. Trocar essa causa por “a
+                // comunicação falhou” apagaria justamente a informação útil, então seguimos para lê-la.
+            }
+            finally
+            {
+                try { process.StandardInput.Close(); }
+                catch (IOException) { /* cano já rompido: nada a fechar */ }
+            }
 
             await process.WaitForExitAsync(timeout.Token);
         }

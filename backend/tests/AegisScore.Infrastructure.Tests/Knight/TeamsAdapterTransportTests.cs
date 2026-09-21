@@ -146,11 +146,19 @@ public sealed class TeamsAdapterTransportTests
     [Fact]
     public async Task ProcessoSemResultado_TrazODiagnosticoSanitizadoNaFalhaDeTransporte()
     {
-        if (OperatingSystem.IsWindows()) return;   // depende de um shell POSIX para escrever em erro-padrão
-
+        // Um executável que EXISTE, recusa os argumentos do adaptador e termina na hora — sem jamais ler a
+        // entrada padrão. É o que acontece de verdade quando o runtime da imagem não aceita o pedido.
+        //
+        // Há uma CORRIDA entre a escrita dos tokens e a morte do processo, e ela cai de um lado em cada
+        // sistema: no shell POSIX do CI a escrita perde e o cano rompe (foi assim que o defeito apareceu — o
+        // adaptador trocava a causa real por “a comunicação falhou” e perdia código de saída e diagnóstico);
+        // no Windows a escrita costuma ganhar e o caminho normal é exercitado. O teste cobre os DOIS finais
+        // porque exige a mesma garantia em ambos: a falha nomeia o código de saída e traz o diagnóstico.
         var reader = new PowerShellTeamsAdminReader(new TeamsPowerShellOptions
         {
-            Executable = "/bin/sh",
+            Executable = OperatingSystem.IsWindows()
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "where.exe")
+                : "/bin/sh",
             Timeout = TimeSpan.FromSeconds(10),
         });
 
