@@ -163,9 +163,9 @@ public static class TeamsConfigurationControls
         }
 
         return KnightControlOutcome.NotEvaluated(
-            "não é possível determinar qual modelo governa o acesso a aplicativos deste locatário — "
-            + TeamsAppGovernance.Reason + " Concluir pela configuração legada aprovaria (ou reprovaria) uma configuração que "
-            + "pode não estar em vigor. " + TeamsAppGovernance.Requirement,
+            "não é possível determinar qual modelo governa o acesso a aplicativos deste locatário: "
+            + TeamsAppGovernance.Reason + " A configuração legada fica como evidência, sem veredito. "
+            + TeamsAppGovernance.Requirement,
             evidence);
     }
 

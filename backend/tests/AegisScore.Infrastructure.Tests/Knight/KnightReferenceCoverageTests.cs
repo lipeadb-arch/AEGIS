@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Knight.Catalog;
+using AegisScore.Application.Knight.Configuration;
 using AegisScore.Application.Knight.Reference;
 using AegisScore.Application.Posture;
 using AegisScore.Domain;
@@ -144,6 +145,36 @@ public sealed class KnightReferenceCoverageTests
                     + "declarada em KnightReferenceDispositions, fora do fluxo de avaliação.");
             else
                 d.References.Should().NotBeEmpty(d.Id);
+        }
+    }
+
+    /// <summary>
+    /// [Revisão dirigida] DEFEITO REPRODUZIDO: o motivo de “não avaliado” de AK-TEAMS-007 passou de 500
+    /// caracteres e o PostgreSQL recusou a gravação (22001). O SQLite das baterias locais NÃO valida tamanho, e
+    /// por isso o defeito só apareceu no banco real — um texto que não cabe no banco não chega a ninguém.
+    ///
+    /// Esta verificação vale para TODOS os controles, e não só para o que quebrou: qualquer texto que a avaliação
+    /// possa gravar precisa caber na coluna que o guarda. O limite vem do mapeamento (KnightIndicator), não de um
+    /// número escolhido aqui.
+    /// </summary>
+    [Fact]
+    public void TextosQueAAvaliacaoGrava_CabemNaColunaQueOsGuarda()
+    {
+        const int limiteDoIndicador = 500;
+        const string prefixo = "Não avaliado: ";   // o que a apresentação acrescenta ao motivo
+
+        var contexto = new KnightEvaluationContext(KnightFactSet.Empty, Array.Empty<KnightCapabilityStatus>(),
+            null, KnightTenantConfiguration.Empty, Array.Empty<KnightAffectedObjectEvidence>(), DateTimeOffset.UtcNow);
+
+        foreach (var d in KnightCatalog.Indicators.Where(d => d.Evaluate is not null))
+        {
+            // Sem coleta alguma, todo controle cai no seu motivo de não avaliado — é o texto mais longo que ele
+            // publica, e o que o banco recusou.
+            var motivo = d.Evaluate!(contexto).NotEvaluatedReason;
+            if (motivo is null) continue;
+
+            (prefixo.Length + motivo.Length).Should().BeLessThanOrEqualTo(limiteDoIndicador,
+                $"{d.Id} grava este motivo, e o PostgreSQL recusa o que não couber: \"{motivo}\"");
         }
     }
 

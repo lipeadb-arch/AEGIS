@@ -189,21 +189,19 @@ public sealed record TeamsPolicyAssignment(
 /// </summary>
 public static class TeamsAppGovernance
 {
-    /// <summary>Motivo pelo qual o modelo em vigor não pode ser determinado por esta coleta.</summary>
+    /// <summary>
+    /// Motivo e requisito, num texto único e CURTO: ele é publicado no achado, e o campo que o guarda tem limite
+    /// de 500 caracteres. Um texto que não cabe no banco não chega a ninguém — a explicação longa fica no resumo
+    /// desta classe, que é onde ela serve a quem lê o código.
+    /// </summary>
     public const string Reason =
-        "a leitura que diria qual modelo governa os aplicativos deste locatário — o gerenciamento centrado em "
-        + "aplicativos (ACM/UAM) ou as políticas de permissão legadas — não está disponível para o AEGIS: os "
-        + "comandos oficiais que a fariam (Get-AllM365TeamsApps, Get-M365TeamsApp, Get-M365UnifiedTenantSettings) "
-        + "são documentados como NÃO SUPORTADOS com autenticação de aplicativo, que é a forma usada por este "
-        + "conector. Encontrar políticas de permissão não demonstra que elas governem: podem ser resíduo do "
-        + "modelo anterior à migração.";
+        "os comandos oficiais que leem esse modelo (Get-AllM365TeamsApps e os demais M365*) são documentados "
+        + "como NÃO SUPORTADOS com autenticação de aplicativo, a forma de acesso desta coleta — não é falta de "
+        + "permissão: nenhum papel a mais muda isso.";
 
     /// <summary>O que precisaria existir para completar a avaliação — sem permissão nova e sem endpoint próprio.</summary>
     public const string Requirement =
-        "Completar este critério depende de uma leitura do modelo de aplicativos compatível com autenticação de "
-        + "aplicativo. Enquanto a Microsoft não oferecer essa leitura, concluir exigiria uma sessão administrativa "
-        + "delegada, que é outra forma de acesso ao locatário — decisão do cliente, fora do que esta coleta faz. "
-        + "Nenhuma permissão adicional muda esse quadro.";
+        "Concluir dependeria de leitura compatível ou de sessão administrativa delegada.";
 }
 
 /// <summary>
