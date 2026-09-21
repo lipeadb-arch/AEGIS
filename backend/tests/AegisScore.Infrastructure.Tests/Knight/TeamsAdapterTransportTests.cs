@@ -74,13 +74,14 @@ public sealed class TeamsAdapterTransportTests
         var script = Script();
 
         // A mensagem da exceção pode ser LIDA para classificar a falha localmente — o que ela não pode é ser
-        // EMITIDA. Por isso a única ocorrência permitida está dentro da classificação.
-        var ocorrencias = script.Split("Exception.Message").Length - 1;
-        ocorrencias.Should().Be(1, "a mensagem só é lida para classificar a falha");
-
+        // EMITIDA. A leitura fica confinada à classificação; fora dela, a mensagem não é tocada.
         var classificacao = script[script.IndexOf("function Get-ErrorCategory", StringComparison.Ordinal)
             ..script.IndexOf("function Get-ErrorId", StringComparison.Ordinal)];
-        classificacao.Should().Contain("Exception.Message", "é ali, e só ali, que a mensagem é usada");
+        classificacao.Should().Contain(".Message", "é ali, e só ali, que a mensagem é usada — para classificar");
+
+        var forsDaClassificacao = script.Replace(classificacao, "");
+        forsDaClassificacao.Should().NotContain(".Message",
+            "a mensagem da exceção é texto livre da fonte e não atravessa a fronteira do processo");
 
         // O que atravessa a fronteira é a categoria e o identificador técnico — nunca o texto da fonte.
         script.Should().Contain("FullyQualifiedErrorId");
@@ -112,6 +113,50 @@ public sealed class TeamsAdapterTransportTests
             .Awaiting(() => reader.ReadAsync(new TeamsAdminCredentials("dir", "graph", "teams")))
             .Should().ThrowAsync<TeamsAdminTransportException>();
         erro.Which.Message.Should().Contain("PowerShell");
+    }
+
+    /// <summary>
+    /// [Revisão dirigida] O script SEMPRE escreve um documento de resultado — inclusive quando o próprio caminho
+    /// de erro falha. Sem essa garantia, um erro dentro do bloco de tratamento faria o processo terminar sem
+    /// saída alguma, e o AEGIS veria apenas “terminou com código 1”, sem categoria nem motivo. Foi exatamente
+    /// esse o sintoma observado no CI ao executar o adaptador pela primeira vez dentro da imagem.
+    /// </summary>
+    [Fact]
+    public void ScriptEmbutido_SempreEscreveUmDocumentoDeResultado()
+    {
+        var script = Script();
+
+        // A classificação e o identificador de erro rodam no caminho de ERRO: nenhum dos dois pode lançar.
+        foreach (var funcao in new[] { "function Get-ErrorCategory", "function Get-ErrorId" })
+        {
+            var corpo = script[script.IndexOf(funcao, StringComparison.Ordinal)..];
+            corpo = corpo[..corpo.IndexOf("\n}", StringComparison.Ordinal)];
+            corpo.Should().Contain("catch", $"{funcao} roda no caminho de erro e não pode falhar");
+        }
+
+        // E o bloco final tem um documento MÍNIMO escrito à mão, para o caso de a montagem falhar.
+        script.Should().Contain("DocumentoDeResultadoIndisponivel");
+    }
+
+    /// <summary>
+    /// Quando o processo termina sem resultado, o diagnóstico SANITIZADO do erro-padrão entra na falha de
+    /// transporte: sem ele o operador fica com o código de saída e mais nada. O texto já passou pela
+    /// sanitização, e não é ele que chega ao ADM nem ao relatório — o coletor monta a mensagem do cliente.
+    /// </summary>
+    [Fact]
+    public async Task ProcessoSemResultado_TrazODiagnosticoSanitizadoNaFalhaDeTransporte()
+    {
+        if (OperatingSystem.IsWindows()) return;   // depende de um shell POSIX para escrever em erro-padrão
+
+        var reader = new PowerShellTeamsAdminReader(new TeamsPowerShellOptions
+        {
+            Executable = "/bin/sh",
+            Timeout = TimeSpan.FromSeconds(10),
+        });
+
+        var erro = await FluentActions.Awaiting(() => reader.CheckRuntimeAsync())
+            .Should().ThrowAsync<TeamsAdminTransportException>();
+        erro.Which.Message.Should().Contain("sem devolver resultado");
     }
 
     [Fact]

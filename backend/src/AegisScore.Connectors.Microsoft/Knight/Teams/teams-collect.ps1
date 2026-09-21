@@ -75,15 +75,24 @@ function Get-ErrorCategory {
         colapsar tudo em "erro". O texto do erro não é reproduzido no relatório; só esta categoria e um resumo.
     #>
     param([System.Management.Automation.ErrorRecord]$ErrorRecord)
-    if ($null -eq $ErrorRecord) { return 'Error' }
-    if ($ErrorRecord.Exception -is [System.Management.Automation.CommandNotFoundException]) { return 'Unavailable' }
-    $m = [string]$ErrorRecord.Exception.Message
-    if ($m -match '(?i)429|throttl|too many requests') { return 'Throttled' }
-    if ($m -match '(?i)\b401\b|unauthorized|AADSTS|invalid.?token|expired') { return 'AuthenticationFailure' }
-    if ($m -match '(?i)\b403\b|forbidden|access denied|not authorized|insufficient|privileg') { return 'InsufficientPermission' }
-    if ($m -match '(?i)\b50[0234]\b|service unavailable|timed out|timeout|temporarily') { return 'Unavailable' }
-    if ($m -match '(?i)licen[sc]') { return 'LimitedByLicense' }
-    return 'Error'
+    # A classificação NUNCA pode falhar: ela roda no caminho de ERRO, e uma exceção aqui destruiria o documento
+    # de resultado inteiro — o processo terminaria sem saída e o AEGIS veria "falha de transporte" no lugar de
+    # uma leitura declarada com motivo. Por isso tudo aqui é defensivo.
+    try {
+        if ($null -eq $ErrorRecord) { return 'Error' }
+        $ex = $ErrorRecord.Exception
+        if ($null -eq $ex) { return 'Error' }
+        if ($ex -is [System.Management.Automation.CommandNotFoundException]) { return 'Unavailable' }
+        $m = [string]$ex.Message
+        if ([string]::IsNullOrEmpty($m)) { return 'Error' }
+        if ($m -match '(?i)429|throttl|too many requests') { return 'Throttled' }
+        if ($m -match '(?i)\b401\b|unauthorized|AADSTS|invalid.?token|expired') { return 'AuthenticationFailure' }
+        if ($m -match '(?i)\b403\b|forbidden|access denied|not authorized|insufficient|privileg') { return 'InsufficientPermission' }
+        if ($m -match '(?i)\b50[0234]\b|service unavailable|timed out|timeout|temporarily') { return 'Unavailable' }
+        if ($m -match '(?i)licen[sc]') { return 'LimitedByLicense' }
+        return 'Error'
+    }
+    catch { return 'Error' }
 }
 
 function Get-ErrorId {
@@ -94,18 +103,22 @@ function Get-ErrorId {
         FIXO de caracteres (letras, dígitos, ponto, traço, barra, sublinhado) e limitados em tamanho.
     #>
     param([System.Management.Automation.ErrorRecord]$ErrorRecord)
-    if ($null -eq $ErrorRecord) { return $null }
+    # Mesma regra da classificação: roda no caminho de erro e não pode falhar.
+    try {
+        if ($null -eq $ErrorRecord) { return $null }
 
-    $parts = @()
-    $fqid = [string]$ErrorRecord.FullyQualifiedErrorId
-    if (-not [string]::IsNullOrWhiteSpace($fqid)) { $parts += $fqid }
-    if ($null -ne $ErrorRecord.Exception) { $parts += $ErrorRecord.Exception.GetType().Name }
+        $parts = @()
+        $fqid = [string]$ErrorRecord.FullyQualifiedErrorId
+        if (-not [string]::IsNullOrWhiteSpace($fqid)) { $parts += $fqid }
+        if ($null -ne $ErrorRecord.Exception) { $parts += $ErrorRecord.Exception.GetType().Name }
 
-    $id = ($parts -join '/')
-    $id = $id -replace '[^A-Za-z0-9._/-]', ''
-    if ($id.Length -gt 120) { $id = $id.Substring(0, 120) }
-    if ([string]::IsNullOrWhiteSpace($id)) { return $null }
-    return $id
+        $id = ($parts -join '/')
+        $id = $id -replace '[^A-Za-z0-9._/-]', ''
+        if ($id.Length -gt 120) { $id = $id.Substring(0, 120) }
+        if ([string]::IsNullOrWhiteSpace($id)) { return $null }
+        return $id
+    }
+    catch { return 'DiagnosticoIndisponivel' }
 }
 
 $script:Reads = New-Object System.Collections.Generic.List[object]
@@ -391,10 +404,21 @@ try {
     exit 0
 }
 catch {
-    $result.connected = $false
-    $result.connectionErrorCategory = Get-ErrorCategory $_
-    $result.connectionErrorId = Get-ErrorId $_
-    $result.reads = @($script:Reads)
-    $result | ConvertTo-Json -Depth 12 -Compress
+    # ÚLTIMA LINHA DE DEFESA. Este bloco roda quando algo já deu errado, e ele próprio pode falhar: sob
+    # Set-StrictMode, uma propriedade ausente num objeto de erro inesperado derrubaria o script aqui dentro. Se
+    # isso acontecesse, o processo terminaria SEM NENHUMA SAÍDA — e o AEGIS veria apenas "terminou com código 1",
+    # sem categoria nem motivo. Por isso a montagem do documento é protegida e, no pior caso, um documento
+    # MÍNIMO é escrito à mão: o contrato de saída é sempre honrado.
+    $registro = $_
+    try {
+        $result.connected = $false
+        $result.connectionErrorCategory = Get-ErrorCategory $registro
+        $result.connectionErrorId = Get-ErrorId $registro
+        $result.reads = @($script:Reads)
+        $result | ConvertTo-Json -Depth 12 -Compress
+    }
+    catch {
+        '{"runtime":{},"connected":false,"connectionErrorCategory":"Error","connectionErrorId":"DocumentoDeResultadoIndisponivel","reads":[]}'
+    }
     exit 0
 }

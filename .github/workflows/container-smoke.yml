@@ -230,6 +230,10 @@ jobs:
       #     desconhecido); a sanitização dos diagnósticos com marcadores sintéticos de segredo; a verificação de
       #     runtime pelo caminho real do adaptador; e os textos de risco de AK-TEAMS-009/013/015/017 alinhados à
       #     evidência. O passo vai de 839 a 877 (medido localmente com este MESMO filtro, em Release).
+      #     Correção seguinte (mesmo PR): +2 casos em TeamsAdapterTransportTests — o script SEMPRE escreve um
+      #     documento de resultado (nem a própria rotina de erro pode derrubá-lo) e o diagnóstico sanitizado do
+      #     erro-padrão entra na falha de transporte. Sem isso, um erro dentro do tratamento fazia o processo
+      #     terminar sem saída e o CI só via "terminou com código 1". Filtro inalterado; 877 para 879.
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj

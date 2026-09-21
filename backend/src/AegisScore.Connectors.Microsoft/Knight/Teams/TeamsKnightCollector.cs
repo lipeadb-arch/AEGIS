@@ -117,9 +117,15 @@ public sealed class TeamsKnightCollector : IKnightCollector
         }
         catch (TeamsAdminTransportException ex)
         {
+            // A mensagem da exceção carrega o diagnóstico SANITIZADO do processo — útil para o operador, e por
+            // isso vai ao log. O que chega ao ADM e ao relatório é a mensagem CONTROLADA abaixo: o que o cliente
+            // lê não depende do que um módulo de terceiro escreveu em erro-padrão.
             _log?.LogWarning(ex, "O adaptador de coleta do Microsoft Teams não pôde ser executado.");
-            return Failure(KnightSourceState.Unavailable, ex.Message,
-                KnightCapabilityOutcome.Unavailable, ex.Message);
+            const string reason =
+                "O adaptador de coleta do Microsoft Teams não pôde ser executado neste ambiente: o runtime do "
+                + "PowerShell ou o módulo oficial não respondeu como esperado. Nenhuma leitura foi tentada — e "
+                + "nenhum controle de Teams foi avaliado a partir de coleta vazia.";
+            return Failure(KnightSourceState.Unavailable, reason, KnightCapabilityOutcome.Unavailable, reason);
         }
 
         if (!output.Connected)

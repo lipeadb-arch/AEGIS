@@ -156,23 +156,24 @@ public sealed class PowerShellTeamsAdminReader : ITeamsAdminReader
         var output = (await stdout).Trim();
         var errors = (await stderr).Trim();
 
-        if (errors.Length > 0)
-        {
-            // O que o processo escreveu em erro-padrão é DIAGNÓSTICO DO OPERADOR, nunca conteúdo do relatório —
-            // e é texto de TERCEIRO: o módulo pode repetir ali o cabeçalho de autorização, o token da chamada ou
-            // o corpo bruto da resposta. Por isso o texto é SANITIZADO (reescrito) antes de ir ao log, e não
-            // apenas truncado: um corte por tamanho preservaria exatamente o começo, que é onde o segredo
-            // costuma estar. Nada disto chega ao ADM, à API ou ao relatório.
-            var safe = TeamsDiagnosticScrubber.Scrub(errors, knownSecrets);
-            if (safe.Length > 0)
-                _log?.LogWarning(
-                    "Adaptador do Microsoft Teams escreveu {Bytes} caractere(s) em erro-padrão. Diagnóstico sanitizado: {Detalhe}",
-                    errors.Length, safe);
-        }
+        // O que o processo escreveu em erro-padrão é DIAGNÓSTICO DO OPERADOR, nunca conteúdo do relatório — e é
+        // texto de TERCEIRO: o módulo pode repetir ali o cabeçalho de autorização, o token da chamada ou o corpo
+        // bruto da resposta. Por isso o texto é SANITIZADO (reescrito) antes de sair daqui, e não apenas
+        // truncado: um corte por tamanho preservaria exatamente o começo, que é onde o segredo costuma estar.
+        var safe = TeamsDiagnosticScrubber.Scrub(errors, knownSecrets);
+
+        if (safe.Length > 0)
+            _log?.LogWarning(
+                "Adaptador do Microsoft Teams escreveu {Bytes} caractere(s) em erro-padrão. Diagnóstico sanitizado: {Detalhe}",
+                errors.Length, safe);
 
         if (output.Length == 0)
+            // Sem resultado, o erro-padrão JÁ SANITIZADO é a única pista da causa — e sem ela o operador fica com
+            // "terminou com código 1" e mais nada. O texto entra aqui porque passou pela sanitização; o que chega
+            // ao ADM e ao relatório continua sendo a mensagem montada pelo coletor, nunca este diagnóstico.
             throw new TeamsAdminTransportException(
-                $"O adaptador do Microsoft Teams terminou com código {process.ExitCode} sem devolver resultado.");
+                $"O adaptador do Microsoft Teams terminou com código {process.ExitCode} sem devolver resultado."
+                + (safe.Length > 0 ? " Diagnóstico do processo: " + safe : " O processo não escreveu diagnóstico algum."));
 
         return Parse(output);
     }
