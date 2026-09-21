@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using AegisScore.Domain;
@@ -55,6 +55,27 @@ public static class KnightCollectorCapabilities
         KnightCapability.TeamsPolicyAssignments,
     };
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-03] O que o coletor do Exchange Online tenta em cada coleta. São DOZE comandos de
+    /// leitura do módulo oficial; cada um é uma capacidade, e a falha de um não invalida os outros — o controle
+    /// que dependia dele fica não avaliado com o COMANDO nomeado.
+    /// </summary>
+    private static readonly IReadOnlySet<KnightCapability> Exchange = new HashSet<KnightCapability>
+    {
+        KnightCapability.ExchangeOrganizationConfig,
+        KnightCapability.ExchangeTransportConfig,
+        KnightCapability.ExchangeSharingPolicies,
+        KnightCapability.ExchangeOwaMailboxPolicies,
+        KnightCapability.ExchangeTransportRules,
+        KnightCapability.ExchangeRoleAssignmentPolicies,
+        KnightCapability.ExchangeExternalSenderIdentification,
+        KnightCapability.ExchangeOutboundSpamFilterPolicies,
+        KnightCapability.ExchangeMailboxes,
+        KnightCapability.ExchangeMailboxSignIn,
+        KnightCapability.ExchangeCasMailboxes,
+        KnightCapability.ExchangeAuditBypassAssociations,
+    };
+
     private static readonly IReadOnlySet<KnightCapability> Google = new HashSet<KnightCapability>
     {
         KnightCapability.DirectoryUsers,
@@ -68,6 +89,7 @@ public static class KnightCollectorCapabilities
     {
         KnightSourceType.MicrosoftEntraId => Entra,
         KnightSourceType.MicrosoftTeams => Teams,
+        KnightSourceType.MicrosoftExchangeOnline => Exchange,
         KnightSourceType.GoogleWorkspace => Google,
         _ => new HashSet<KnightCapability>(),
     };

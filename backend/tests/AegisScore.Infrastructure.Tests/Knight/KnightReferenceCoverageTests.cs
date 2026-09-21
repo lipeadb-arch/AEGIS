@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using AegisScore.Application.Knight;
@@ -112,17 +112,20 @@ public sealed class KnightReferenceCoverageTests
         var coverage = KnightReferenceCatalog.Coverage();
         var m365 = coverage.ByPlatform.Single(p => p.Key == nameof(KnightPlatform.Microsoft365));
         m365.Total.Should().Be(89);
-        m365.Implemented.Should().Be(15);
-        m365.Partial.Should().Be(1);
+        // [AEGIS-KNIGHT-COVERAGE-03] 15 do Teams + 17 do Exchange Online.
+        m365.Implemented.Should().Be(32);
+        m365.Partial.Should().Be(1, "8.6.1 do Teams — a outra metade do critério vive no Defender para Office 365");
         m365.RequiresAccess.Should().Be(1, "8.4.1 do Teams — ver Teams_TemAs17ReferenciasClassificadas...");
-        m365.Pending.Should().Be(72,
-            "Exchange Online, Defender para Office 365, Purview, SharePoint/OneDrive, Fabric, Intune, Forms e Sway são os próximos blocos");
+        m365.Pending.Should().Be(55,
+            "Defender para Office 365, Purview, SharePoint/OneDrive, Fabric, Intune, Forms e Sway são os próximos blocos");
 
         var pendentes = coverage.Controls
             .Where(c => KnightServices.Describe(c.Control.Service)?.Platform == KnightPlatform.Microsoft365
                         && c.Disposition == KnightReferenceDisposition.Pending)
             .ToList();
         pendentes.Should().OnlyContain(c => c.Control.Service != KnightService.Teams);
+        pendentes.Should().OnlyContain(c => c.Control.Service != KnightService.ExchangeOnline,
+            "as 17 referências de Exchange Online saíram de pendentes neste bloco");
         pendentes.Should().OnlyContain(c => c.Note!.Contains("próximos blocos"));
     }
 

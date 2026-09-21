@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -143,6 +143,56 @@ public enum KnightCapability
     /// ALCANCE de uma política personalizada sem enumerar usuário a usuário.
     /// </summary>
     TeamsPolicyAssignments = 35,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-03] Configuração do Exchange Online (somente leitura) --------------------
+    // Coletadas pelo módulo oficial Exchange Online PowerShell com autenticação de APLICATIVO por token de
+    // acesso (ver ExchangeKnightCollector). Cada capacidade é UM comando de leitura; a falha de uma não
+    // invalida as outras, e os controles que dependem dela ficam não avaliados COM O COMANDO NOMEADO.
+
+    /// <summary>Configuração da organização (<c>Get-OrganizationConfig</c>).</summary>
+    ExchangeOrganizationConfig = 36,
+
+    /// <summary>Configuração de transporte da organização (<c>Get-TransportConfig</c>).</summary>
+    ExchangeTransportConfig = 37,
+
+    /// <summary>Políticas de compartilhamento (<c>Get-SharingPolicy</c>).</summary>
+    ExchangeSharingPolicies = 38,
+
+    /// <summary>Políticas de caixa de correio do Outlook na web (<c>Get-OwaMailboxPolicy</c>).</summary>
+    ExchangeOwaMailboxPolicies = 39,
+
+    /// <summary>Regras de transporte, ou regras de fluxo de emails (<c>Get-TransportRule</c>).</summary>
+    ExchangeTransportRules = 40,
+
+    /// <summary>Políticas de atribuição de função de usuário final (<c>Get-RoleAssignmentPolicy</c>).</summary>
+    ExchangeRoleAssignmentPolicies = 41,
+
+    /// <summary>Identificação de remetentes externos no Outlook (<c>Get-ExternalInOutlook</c>).</summary>
+    ExchangeExternalSenderIdentification = 42,
+
+    /// <summary>
+    /// Políticas de filtro de spam de SAÍDA (<c>Get-HostedOutboundSpamFilterPolicy</c>). É onde vive o modo de
+    /// encaminhamento automático — um dos mecanismos que o critério de encaminhamento exige ler. A leitura
+    /// entra aqui porque o critério de Exchange depende dela; o catálogo do Microsoft Defender para Office 365
+    /// continua fora deste bloco.
+    /// </summary>
+    ExchangeOutboundSpamFilterPolicies = 43,
+
+    /// <summary>Enumeração das caixas de correio (<c>Get-Mailbox</c>) — compartilhadas, auditoria e encaminhamento.</summary>
+    ExchangeMailboxes = 44,
+
+    /// <summary>
+    /// Enumeração das CONTAS (<c>Get-User</c>), para o estado de entrada. Separada de
+    /// <see cref="ExchangeMailboxes"/> porque é outra leitura: sem ela, "caixa compartilhada" não vira
+    /// "conta bloqueada" por suposição.
+    /// </summary>
+    ExchangeMailboxSignIn = 45,
+
+    /// <summary>Configurações de acesso de cliente por caixa (<c>Get-CASMailbox</c>) — substituições de SMTP AUTH.</summary>
+    ExchangeCasMailboxes = 46,
+
+    /// <summary>Associações de DESVIO de auditoria (<c>Get-MailboxAuditBypassAssociation</c>).</summary>
+    ExchangeAuditBypassAssociations = 47,
 }
 
 /// <summary>
@@ -243,6 +293,32 @@ public sealed record KnightTeamsConfiguration(
     // de KnightEntraIdConfiguration: o segredo nunca pode aparecer num dump/log acidental.
     public override string ToString() =>
         $"KnightTeamsConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = *** }}";
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-03] Configuração do coletor real do Exchange Online — as MESMAS client credentials do
+/// conector Microsoft já configurado (nenhuma credencial nova, nenhum certificado a emitir). O transporte é o
+/// módulo oficial Exchange Online PowerShell, autenticando como APLICATIVO por TOKEN DE ACESSO.
+///
+/// <para><b>O token é de OUTRO recurso.</b> O Exchange Online PowerShell exige um token emitido para
+/// <c>https://outlook.office365.com</c>; o token do Microsoft Graph e o da administração do Teams NÃO valem
+/// aqui e não são reaproveitados. A autoridade de login e o identificador de recurso são CONSTANTES oficiais
+/// no adaptador — o locatário nunca fornece um destino.</para>
+///
+/// <para><b>O domínio inicial não é opcional.</b> A conexão de aplicativo exige o parâmetro de organização, e o
+/// valor documentado é o domínio <c>.onmicrosoft.com</c> principal — não o identificador do locatário. Ele é
+/// resolvido na PRÓPRIA aquisição (ver <c>ExchangeKnightCollector</c>), nunca herdado de uma coleta anterior.</para>
+/// </summary>
+public sealed record KnightExchangeOnlineConfiguration(
+    string AzureTenantId,
+    string ClientId,
+    string ClientSecret) : KnightSourceConfiguration, IMicrosoftGraphCredentials
+{
+    public override KnightSourceType Source => KnightSourceType.MicrosoftExchangeOnline;
+
+    // Mesmo motivo de KnightEntraIdConfiguration: o ToString() de um record imprimiria o segredo.
+    public override string ToString() =>
+        $"KnightExchangeOnlineConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = *** }}";
 }
 
 /// <summary>

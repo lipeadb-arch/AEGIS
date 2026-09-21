@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -126,9 +126,9 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             result = acquisition.CollectionResult;
             identityAcquisitionId = acquisition.AcquisitionId;
         }
-        else if (source == KnightSourceType.MicrosoftTeams)
+        else if (source is KnightSourceType.MicrosoftTeams or KnightSourceType.MicrosoftExchangeOnline)
         {
-            // [AEGIS-KNIGHT-COVERAGE-02] O Teams percorre o MESMO caminho de evidência do Entra ID — coleta →
+            // [AEGIS-KNIGHT-COVERAGE-02/03] O Teams e o Exchange Online percorrem o MESMO caminho de evidência do Entra ID — coleta →
             // ADM → releitura → avaliação —, por uma aquisição de CONFIGURAÇÃO: os documentos são persistidos e
             // a regra lê o que foi gravado, nunca o objeto transitório do coletor. A aquisição é de outra FONTE,
             // então não toca as identidades nem o snapshot agregado do Entra ID.

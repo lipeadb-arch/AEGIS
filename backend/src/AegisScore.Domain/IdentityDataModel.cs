@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace AegisScore.Domain;
@@ -151,6 +151,59 @@ public enum ConfigurationObjectKind
 
     /// <summary>Atribuição de uma política do Teams a um GRUPO (o que amplia o alcance além da política padrão).</summary>
     TeamsPolicyAssignment = 22,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-03] Configuração do Exchange Online -------------------------------------
+    // Mesmo desenho dos blocos anteriores. Duas naturezas convivem aqui, e a distinção é deliberada:
+    //   • CONFIGURAÇÕES e POLÍTICAS — um documento por objeto, com a identidade que a fonte devolve;
+    //   • INVENTÁRIOS — um único documento que resume uma ENUMERAÇÃO (caixas de correio, contas, associações),
+    //     com o total lido, a completude da enumeração e a lista LIMITADA dos registros que interessam ao
+    //     critério. Guardar um documento por caixa de correio inflaria o ADM sem acrescentar evidência; o que o
+    //     achado precisa dizer é quantas foram lidas, se a leitura terminou e quais violam o critério.
+
+    /// <summary>Configuração da organização do Exchange Online (auditoria, Customer Lockbox, MailTips, Bookings, autenticação moderna, envios diretos).</summary>
+    ExchangeOrganizationConfiguration = 23,
+
+    /// <summary>Configuração de transporte da organização (SMTP AUTH no nível da organização).</summary>
+    ExchangeTransportConfiguration = 24,
+
+    /// <summary>Uma política de compartilhamento do Exchange Online (o que é compartilhado com domínios externos).</summary>
+    ExchangeSharingPolicy = 25,
+
+    /// <summary>Uma política de caixa de correio do Outlook na web (padrão ou personalizada).</summary>
+    ExchangeOwaMailboxPolicy = 26,
+
+    /// <summary>Uma regra de transporte (regra de fluxo de emails) da organização.</summary>
+    ExchangeTransportRule = 27,
+
+    /// <summary>Uma política de atribuição de função de usuário final (o que o usuário pode fazer na própria caixa).</summary>
+    ExchangeRoleAssignmentPolicy = 28,
+
+    /// <summary>Identificação de remetentes externos no Outlook (marca visual de e-mail externo).</summary>
+    ExchangeExternalSenderIdentification = 29,
+
+    /// <summary>Uma política de filtro de spam de SAÍDA (onde vive o modo de encaminhamento automático).</summary>
+    ExchangeOutboundSpamFilterPolicy = 30,
+
+    /// <summary>Inventário das caixas de correio COMPARTILHADAS e do estado de entrada da conta correspondente.</summary>
+    ExchangeSharedMailboxInventory = 31,
+
+    /// <summary>Inventário das ações de auditoria configuradas por caixa de correio, por tipo de acesso.</summary>
+    ExchangeMailboxAuditInventory = 32,
+
+    /// <summary>Inventário do encaminhamento configurado nas caixas de correio.</summary>
+    ExchangeMailboxForwardingInventory = 33,
+
+    /// <summary>Inventário das substituições de SMTP AUTH por caixa de correio (e de quantas herdam a organização).</summary>
+    ExchangeSmtpAuthOverrideInventory = 34,
+
+    /// <summary>Inventário das associações de DESVIO de auditoria de caixa de correio.</summary>
+    ExchangeAuditBypassInventory = 35,
+
+    /// <summary>Quantas caixas de correio usam cada política de atribuição de função e de compartilhamento (alcance).</summary>
+    ExchangePolicyReachInventory = 36,
+
+    /// <summary>Quantas caixas de correio usam cada política do Outlook na web (alcance).</summary>
+    ExchangeOwaPolicyReachInventory = 37,
 }
 
 /// <summary>

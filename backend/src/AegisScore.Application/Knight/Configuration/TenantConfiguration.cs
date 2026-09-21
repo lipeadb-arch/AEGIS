@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -417,6 +417,41 @@ public static class KnightConfigurationKinds
             TeamsAppPermissionPolicyConfiguration.SchemaVersion, typeof(TeamsAppPermissionPolicyConfiguration)),
         new Spec(ConfigurationObjectKind.TeamsPolicyAssignment, KnightCapability.TeamsPolicyAssignments,
             TeamsPolicyAssignment.SchemaVersion, typeof(TeamsPolicyAssignment)),
+
+        // ---- [AEGIS-KNIGHT-COVERAGE-03] Exchange Online ---------------------------------------------------
+        // Mais de um contrato pode nascer da MESMA capacidade (a enumeração de caixas alimenta o inventário de
+        // compartilhadas, o de auditoria, o de encaminhamento e o de alcance). Isso é deliberado: são leituras
+        // do mesmo comando, e a falha desse comando deixa os quatro sem dado — que é exatamente o correto.
+        new Spec(ConfigurationObjectKind.ExchangeOrganizationConfiguration, KnightCapability.ExchangeOrganizationConfig,
+            ExchangeOrganizationConfiguration.SchemaVersion, typeof(ExchangeOrganizationConfiguration)),
+        new Spec(ConfigurationObjectKind.ExchangeTransportConfiguration, KnightCapability.ExchangeTransportConfig,
+            ExchangeTransportConfiguration.SchemaVersion, typeof(ExchangeTransportConfiguration)),
+        new Spec(ConfigurationObjectKind.ExchangeSharingPolicy, KnightCapability.ExchangeSharingPolicies,
+            ExchangeSharingPolicyConfiguration.SchemaVersion, typeof(ExchangeSharingPolicyConfiguration)),
+        new Spec(ConfigurationObjectKind.ExchangeOwaMailboxPolicy, KnightCapability.ExchangeOwaMailboxPolicies,
+            ExchangeOwaMailboxPolicyConfiguration.SchemaVersion, typeof(ExchangeOwaMailboxPolicyConfiguration)),
+        new Spec(ConfigurationObjectKind.ExchangeTransportRule, KnightCapability.ExchangeTransportRules,
+            ExchangeTransportRuleConfiguration.SchemaVersion, typeof(ExchangeTransportRuleConfiguration)),
+        new Spec(ConfigurationObjectKind.ExchangeRoleAssignmentPolicy, KnightCapability.ExchangeRoleAssignmentPolicies,
+            ExchangeRoleAssignmentPolicyConfiguration.SchemaVersion, typeof(ExchangeRoleAssignmentPolicyConfiguration)),
+        new Spec(ConfigurationObjectKind.ExchangeExternalSenderIdentification, KnightCapability.ExchangeExternalSenderIdentification,
+            ExchangeExternalSenderIdentification.SchemaVersion, typeof(ExchangeExternalSenderIdentification)),
+        new Spec(ConfigurationObjectKind.ExchangeOutboundSpamFilterPolicy, KnightCapability.ExchangeOutboundSpamFilterPolicies,
+            ExchangeOutboundSpamPolicyConfiguration.SchemaVersion, typeof(ExchangeOutboundSpamPolicyConfiguration)),
+        new Spec(ConfigurationObjectKind.ExchangeSharedMailboxInventory, KnightCapability.ExchangeMailboxes,
+            ExchangeSharedMailboxInventory.SchemaVersion, typeof(ExchangeSharedMailboxInventory)),
+        new Spec(ConfigurationObjectKind.ExchangeMailboxAuditInventory, KnightCapability.ExchangeMailboxes,
+            ExchangeMailboxAuditInventory.SchemaVersion, typeof(ExchangeMailboxAuditInventory)),
+        new Spec(ConfigurationObjectKind.ExchangeMailboxForwardingInventory, KnightCapability.ExchangeMailboxes,
+            ExchangeMailboxForwardingInventory.SchemaVersion, typeof(ExchangeMailboxForwardingInventory)),
+        new Spec(ConfigurationObjectKind.ExchangePolicyReachInventory, KnightCapability.ExchangeMailboxes,
+            ExchangePolicyReachInventory.SchemaVersion, typeof(ExchangePolicyReachInventory)),
+        new Spec(ConfigurationObjectKind.ExchangeSmtpAuthOverrideInventory, KnightCapability.ExchangeCasMailboxes,
+            ExchangeSmtpAuthOverrideInventory.SchemaVersion, typeof(ExchangeSmtpAuthOverrideInventory)),
+        new Spec(ConfigurationObjectKind.ExchangeOwaPolicyReachInventory, KnightCapability.ExchangeCasMailboxes,
+            ExchangeOwaPolicyReachInventory.SchemaVersion, typeof(ExchangeOwaPolicyReachInventory)),
+        new Spec(ConfigurationObjectKind.ExchangeAuditBypassInventory, KnightCapability.ExchangeAuditBypassAssociations,
+            ExchangeAuditBypassInventory.SchemaVersion, typeof(ExchangeAuditBypassInventory)),
     };
 
     public static Spec? For(ConfigurationObjectKind kind) => All.FirstOrDefault(s => s.Kind == kind);

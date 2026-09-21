@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -55,7 +55,7 @@ public static class KnightConnectorSources
             ? Array.Empty<KnightSourceType>()
             : provider switch
             {
-                ConnectorProvider.Microsoft => new[] { KnightSourceType.MicrosoftEntraId, KnightSourceType.MicrosoftTeams },
+                ConnectorProvider.Microsoft => new[] { KnightSourceType.MicrosoftEntraId, KnightSourceType.MicrosoftTeams, KnightSourceType.MicrosoftExchangeOnline },
                 ConnectorProvider.Google => new[] { KnightSourceType.GoogleWorkspace },
                 _ => Array.Empty<KnightSourceType>(),
             };
@@ -88,6 +88,7 @@ public static class KnightConnectorSources
     {
         KnightSourceType.MicrosoftEntraId => "entra",
         KnightSourceType.MicrosoftTeams => "teams",
+        KnightSourceType.MicrosoftExchangeOnline => "exchange",
         KnightSourceType.GoogleWorkspace => "google",
         KnightSourceType.Demo => "demo",
         _ => source.ToString().ToLowerInvariant(),

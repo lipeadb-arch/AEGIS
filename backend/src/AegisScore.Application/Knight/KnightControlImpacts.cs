@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace AegisScore.Application.Knight;
@@ -107,6 +107,25 @@ public static class KnightControlImpacts
         ["AK-TEAMS-015"] = "Um colaborador convidado para uma reunião externa pode receber, pelo chat dela, links e arquivos de participantes que a organização não conhece, num canal cuja composição, retenção e auditoria pertencem a quem hospeda.",
         ["AK-TEAMS-016"] = "Conversas internas podem ficar guardadas em arquivos de vídeo compartilháveis, sujeitos a repasse e a pedidos de apresentação em disputas, sem que quem falou tenha decidido reter aquilo.",
         ["AK-TEAMS-017"] = "Uma campanha de golpe por chat pode atingir várias pessoas sem que nenhuma consiga transformar a suspeita em alerta pelo próprio Teams; o que chegar à equipe de segurança dependerá de outras fontes de detecção ou de relato por fora da ferramenta.",
+
+        // ---- [AEGIS-KNIGHT-COVERAGE-03] Exchange Online ----------------------------------------------------
+        ["AK-EXO-001"] = "Quem obtiver a senha da conta da caixa compartilhada entra com ela e lê toda a correspondência que a caixa guarda — sem que a entrada fique atrelada a nenhuma pessoa responsável.",
+        ["AK-EXO-002"] = "A agenda das pessoas da organização — com quem se reúnem, quando estão fora e o que o título das reuniões revela — fica legível para fora, servindo de preparação para uma abordagem dirigida.",
+        ["AK-EXO-003"] = "Um pedido de acesso da engenharia do fornecedor ao conteúdo da organização pode ser concedido sem que ninguém do cliente autorize, e sem o registro dessa autorização.",
+        ["AK-EXO-004"] = "Nomes, funções e a disponibilidade da equipe ficam visíveis numa página pública, e pessoas de fora podem ocupar horários da agenda de quem trabalha na organização.",
+        ["AK-EXO-005"] = "Acesso a mensagens, exclusões e criação de regras deixam de ter registro: uma investigação sobre uma caixa comprometida não encontra o que examinar.",
+        ["AK-EXO-006"] = "Falta o registro do tipo de acesso que não foi configurado — do dono, do delegado ou do administrador —, e é justamente esse o rastro que uma investigação procura para saber quem alcançou a caixa.",
+        ["AK-EXO-007"] = "As ações da conta dispensada sobre qualquer caixa de correio não geram registro; se a credencial dela for usada por terceiros, não haverá rastro do que foi acessado.",
+        ["AK-EXO-008"] = "A correspondência da caixa atingida continua chegando a um endereço de fora mesmo depois de a senha ser trocada, mantendo o acesso ao que for enviado dali em diante.",
+        ["AK-EXO-009"] = "Mensagens que declarem o domínio ou endereço isento chegam às caixas da organização sem passar pela filtragem de spam — o filtro é justamente o que faria a triagem delas.",
+        ["AK-EXO-010"] = "Uma mensagem de fora chega com a mesma aparência de uma interna, e quem a lê decide se confia sem o sinal que distinguiria as duas.",
+        ["AK-EXO-011"] = "Correspondência de trabalho pode ser lida e repassada a terceiros por um componente que ninguém examinou, e retirá-lo depende primeiro de alguém descobrir que ele foi adicionado.",
+        ["AK-EXO-012"] = "Mensagens e anexos da organização podem ser copiados para uma conta pessoal dentro do próprio cliente, e esse caminho não passa por nenhum controle de saída de dados.",
+        ["AK-EXO-013"] = "Uma credencial vazada leva direto à caixa de correio da pessoa — mensagens, anexos e contatos —, e essa entrada não encontra pelo caminho nenhuma verificação adicional que pudesse detê-la.",
+        ["AK-EXO-014"] = "Uma mensagem destinada a fora da organização, ou a um público amplo, pode ser enviada sem que o remetente perceba o alcance dela — o aviso que evitaria o erro não aparece.",
+        ["AK-EXO-015"] = "Anexos podem sair do armazenamento da organização para um serviço de terceiros, onde a retenção, a classificação e a auditoria dela não alcançam.",
+        ["AK-EXO-016"] = "Mensagens de golpe podem sair com o endereço real de alguém da equipe, aprovadas pelos registros de domínio e recebidas por clientes e parceiros com a credibilidade do remetente verdadeiro.",
+        ["AK-EXO-017"] = "Qualquer remetente pode entregar mensagens às caixas internas declarando um endereço da organização, e elas chegam com a aparência de correspondência interna.",
 
         ["AK-GWS-001"] = "Sem 2SV inscrita, a conta não tem segundo fator para apresentar: onde a entrada for aceita só com a senha, quem a tiver administra o Workspace.",
         ["AK-GWS-002"] = "Cada usuário sem 2SV depende da senha nos acessos que não exigirem segundo fator; uma credencial vazada leva ao e-mail e aos arquivos daquele usuário.",

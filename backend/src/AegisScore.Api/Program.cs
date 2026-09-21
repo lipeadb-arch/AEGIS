@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -15,6 +15,7 @@ using AegisScore.Api.Health;
 using AegisScore.Api.Workers;
 using AegisScore.Application.Abstractions;
 using AegisScore.Connectors.Microsoft;
+using AegisScore.Connectors.Microsoft.Knight.Exchange;
 using AegisScore.Connectors.Microsoft.Knight.Teams;
 using AegisScore.Connectors.Google;
 using AegisScore.Infrastructure;
@@ -32,6 +33,16 @@ if (TeamsRuntimeDiagnostics.Requested(args))
     return await TeamsRuntimeDiagnostics.RunFromConfigurationAsync(
         new ConfigurationBuilder().AddEnvironmentVariables().Build()
             .GetSection(TeamsRuntimeDiagnostics.ConfigurationSection),
+        Console.Out);
+
+// [AEGIS-KNIGHT-COVERAGE-03] O mesmo diagnóstico, para o adaptador do Exchange Online. Com uma ressalva que a
+// própria saída imprime: os comandos de leitura do Exchange só existem DEPOIS de uma conexão com o locatário —
+// eles são importados por ela. Esta verificação prova o runtime e os comandos DO MÓDULO; o contrato dos comandos
+// de sessão é declarado, e nunca apresentado como verificado.
+if (ExchangeRuntimeDiagnostics.Requested(args))
+    return await ExchangeRuntimeDiagnostics.RunFromConfigurationAsync(
+        new ConfigurationBuilder().AddEnvironmentVariables().Build()
+            .GetSection(ExchangeRuntimeDiagnostics.ConfigurationSection),
         Console.Out);
 
 var builder = WebApplication.CreateBuilder(args);
@@ -179,7 +190,9 @@ builder.Services.AddSingleton<IAuthorizationHandler, FederatedExchangeHandler>()
 // Stack adapters (add AWS/SIEM/EDR connector packages here).
 // [AEGIS-KNIGHT-COVERAGE-02] A seção Knight:Teams configura o adaptador de coleta do Microsoft Teams
 // (executável do PowerShell, módulo pré-instalado na imagem, tempo limite). É do AMBIENTE, não do locatário.
-builder.Services.AddMicrosoftConnectors(builder.Configuration.GetSection("Knight:Teams"));
+builder.Services.AddMicrosoftConnectors(
+    builder.Configuration.GetSection("Knight:Teams"),
+    builder.Configuration.GetSection("Knight:Exchange"));
 builder.Services.AddGoogleConnectors();
 
 // Document Hub: worker que lê os documentos enfileirados e mapeia os controles NIST.
