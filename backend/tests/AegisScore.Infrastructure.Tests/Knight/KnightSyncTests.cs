@@ -409,6 +409,7 @@ public sealed class KnightSyncTests : IDisposable
         public Task<KnightSyncRunResult> RunForSyncRequestAsync(KnightSourceType source, KnightSyncBinding binding, CancellationToken ct = default) =>
             Task.FromResult(new KnightSyncRunResult(KnightSyncRunOutcome.Registered, _run(Tenant)));
         public Task<KnightLatestAssessment> GetLatestAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<KnightLatestBySource> GetLatestBySourceAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<KnightSourcesStatus> GetSourcesStatusAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<KnightAffectedObjectsPage?> GetAffectedObjectsAsync(Guid runId, string indicatorId, int page, int pageSize, string? search,
@@ -434,6 +435,7 @@ public sealed class KnightSyncTests : IDisposable
             return _inner.RunForSyncRequestAsync(source, binding, ct);
         }
         public Task<KnightLatestAssessment> GetLatestAsync(CancellationToken ct = default) => _inner.GetLatestAsync(ct);
+        public Task<KnightLatestBySource> GetLatestBySourceAsync(CancellationToken ct = default) => _inner.GetLatestBySourceAsync(ct);
         public Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default) => _inner.GetByIdAsync(id, ct);
         public Task<KnightSourcesStatus> GetSourcesStatusAsync(CancellationToken ct = default) => _inner.GetSourcesStatusAsync(ct);
         public Task<KnightAffectedObjectsPage?> GetAffectedObjectsAsync(Guid runId, string indicatorId, int page, int pageSize, string? search,

@@ -102,6 +102,9 @@ public sealed class PriorityWorkspaceTests
             return Task.FromResult(new KnightLatestAssessment(Latest, UnfinishedAttempt));
         }
 
+        public Task<KnightLatestBySource> GetLatestBySourceAsync(CancellationToken ct = default) =>
+            throw new NotSupportedException();
+
         public Task<KnightAssessment> RunDemoAssessmentAsync(CancellationToken ct = default) =>
             throw new InvalidOperationException("A Central de Prioridades NUNCA executa uma avaliação KNIGHT.");
 

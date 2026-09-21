@@ -1,8 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Knight.Catalog;
+using AegisScore.Application.Knight.Configuration;
 using AegisScore.Application.Knight.Reference;
 using AegisScore.Application.Posture;
 using AegisScore.Domain;
@@ -50,6 +51,131 @@ public sealed class KnightReferenceCoverageTests
         entra.ManualOnly.Should().Be(2);
         entra.Pending.Should().Be(0);
         entra.RequiresAccess.Should().Be(0);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] As 17 referências de Microsoft Teams, uma a uma. Números TRAVADOS: mudar a
+    /// classificação exige revisar este teste — e explicar por quê no PR.
+    /// </summary>
+    [Fact]
+    public void Teams_TemAs17ReferenciasClassificadas_ComACoberturaQueOMetodoOperacionalSustenta()
+    {
+        var coverage = KnightReferenceCatalog.Coverage();
+        var teams = coverage.ByService.Single(s => s.Key == nameof(KnightService.Teams));
+
+        teams.Total.Should().Be(17);
+        teams.Implemented.Should().Be(15);
+        teams.Partial.Should().Be(1);
+        teams.Pending.Should().Be(0);
+        teams.ApiLimitation.Should().Be(0);
+        teams.ManualOnly.Should().Be(0);
+        teams.RequiresAccess.Should().Be(1,
+            "8.4.1 não é avaliado: a leitura que diria qual modelo governa os aplicativos não é suportada com "
+            + "autenticação de aplicativo, que é a forma de acesso desta coleta");
+
+        var parciais = coverage.Controls
+            .Where(c => c.Control.Service == KnightService.Teams && c.Disposition == KnightReferenceDisposition.Partial)
+            .ToList();
+        parciais.Select(p => p.Control.Section).Should().BeEquivalentTo(new[] { "8.6.1" });
+        parciais.Single(p => p.Control.Section == "8.6.1").Note.Should().Contain("Defender para Office 365");
+
+        // [Revisão dirigida] 8.4.1 saiu de PARCIAL. A condição de aplicabilidade que o mantinha como parcial foi
+        // construída sobre Get-AllM365TeamsApps — comando que a Microsoft lista nominalmente entre os NÃO
+        // SUPORTADOS com autenticação de aplicativo. A condição nunca rodaria no fluxo real, e contar o controle
+        // como “parcialmente avaliado” declararia uma cobertura que o método operacional não sustenta.
+        // A disposição real é “exige acesso que o conector não tem”, e a nota nomeia a causa — não uma permissão.
+        var apps = coverage.Controls.Single(c => c.Control.Section == "8.4.1" && c.Control.Service == KnightService.Teams);
+        apps.Disposition.Should().Be(KnightReferenceDisposition.RequiresAccess);
+        apps.IndicatorIds.Should().BeEmpty("um controle que nunca conclui não pode figurar como quem avalia a referência");
+        apps.Note.Should().Contain("NÃO SUPORTADOS com autenticação").And.Contain("Não é falta de permissão");
+
+        // 8.5.3 é equivalência INTEGRAL: o critério avaliado é o da referência. O vínculo registra que o AEGIS
+        // também aceita o valor estritamente mais restritivo, e que “pessoas convidadas” NÃO é aceito.
+        var lobby = coverage.Controls.Single(c => c.Control.Section == "8.5.3" && c.Control.Service == KnightService.Teams);
+        lobby.Disposition.Should().Be(KnightReferenceDisposition.Implemented);
+        lobby.Note.Should().Contain("mais restritivo").And.Contain("InvitedUsers");
+
+        // Cada referência de Teams AVALIADA é citada por um — e só um — controle do KNIGHT. A do 8.4.1 não é
+        // citada por nenhum, justamente porque não é avaliada (a asserção dedicada acima exige que fique vazia).
+        foreach (var c in coverage.Controls
+                     .Where(c => c.Control.Service == KnightService.Teams && c.Control.Section != "8.4.1"))
+            c.IndicatorIds.Should().ContainSingle(id => id.StartsWith("AK-TEAMS-"), c.Control.Key);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] O bloco do Teams NÃO pode ser apresentado como "Microsoft 365 coberto": os
+    /// demais serviços continuam pendentes, com o motivo, e isso é o que a plataforma reporta.
+    /// </summary>
+    [Fact]
+    public void Microsoft365_ForaDoTeams_ContinuaPendente_ComOMotivoDoProximoBloco()
+    {
+        var coverage = KnightReferenceCatalog.Coverage();
+        var m365 = coverage.ByPlatform.Single(p => p.Key == nameof(KnightPlatform.Microsoft365));
+        m365.Total.Should().Be(89);
+        m365.Implemented.Should().Be(15);
+        m365.Partial.Should().Be(1);
+        m365.RequiresAccess.Should().Be(1, "8.4.1 do Teams — ver Teams_TemAs17ReferenciasClassificadas...");
+        m365.Pending.Should().Be(72,
+            "Exchange Online, Defender para Office 365, Purview, SharePoint/OneDrive, Fabric, Intune, Forms e Sway são os próximos blocos");
+
+        var pendentes = coverage.Controls
+            .Where(c => KnightServices.Describe(c.Control.Service)?.Platform == KnightPlatform.Microsoft365
+                        && c.Disposition == KnightReferenceDisposition.Pending)
+            .ToList();
+        pendentes.Should().OnlyContain(c => c.Control.Service != KnightService.Teams);
+        pendentes.Should().OnlyContain(c => c.Note!.Contains("próximos blocos"));
+    }
+
+    [Fact]
+    public void ControlesDoTeams_SoConsomemCapacidadesDoColetorReal()
+    {
+        foreach (var d in TeamsConfigurationControls.Definitions)
+        {
+            KnightCollectorCapabilities.IsActive(d).Should().BeTrue(d.Id);
+            d.Service.Should().Be(KnightService.Teams);
+            d.Sources.Should().BeEquivalentTo(new[] { KnightSourceType.MicrosoftTeams },
+                $"{d.Id} lê a configuração do Teams — aplicá-lo ao Entra ID o deixaria não avaliado para sempre");
+            // Um controle sem vínculo de referência é EXCEÇÃO, e só se justifica quando o controle não conclui:
+            // vincular uma referência a uma regra que não roda declararia cobertura inexistente. Hoje há um caso,
+            // e ele é nominal — qualquer outro controle precisa citar a referência que avalia.
+            if (d.Id == "AK-TEAMS-007")
+                d.References.Should().BeEmpty(
+                    "AK-TEAMS-007 preserva a configuração como evidência mas não conclui: a leitura que diria se "
+                    + "ela governa não é suportada com autenticação de aplicativo. A disposição do 8.4.1 está "
+                    + "declarada em KnightReferenceDispositions, fora do fluxo de avaliação.");
+            else
+                d.References.Should().NotBeEmpty(d.Id);
+        }
+    }
+
+    /// <summary>
+    /// [Revisão dirigida] DEFEITO REPRODUZIDO: o motivo de “não avaliado” de AK-TEAMS-007 passou de 500
+    /// caracteres e o PostgreSQL recusou a gravação (22001). O SQLite das baterias locais NÃO valida tamanho, e
+    /// por isso o defeito só apareceu no banco real — um texto que não cabe no banco não chega a ninguém.
+    ///
+    /// Esta verificação vale para TODOS os controles, e não só para o que quebrou: qualquer texto que a avaliação
+    /// possa gravar precisa caber na coluna que o guarda. O limite vem do mapeamento (KnightIndicator), não de um
+    /// número escolhido aqui.
+    /// </summary>
+    [Fact]
+    public void TextosQueAAvaliacaoGrava_CabemNaColunaQueOsGuarda()
+    {
+        const int limiteDoIndicador = 500;
+        const string prefixo = "Não avaliado: ";   // o que a apresentação acrescenta ao motivo
+
+        var contexto = new KnightEvaluationContext(KnightFactSet.Empty, Array.Empty<KnightCapabilityStatus>(),
+            null, KnightTenantConfiguration.Empty, Array.Empty<KnightAffectedObjectEvidence>(), DateTimeOffset.UtcNow);
+
+        foreach (var d in KnightCatalog.Indicators.Where(d => d.Evaluate is not null))
+        {
+            // Sem coleta alguma, todo controle cai no seu motivo de não avaliado — é o texto mais longo que ele
+            // publica, e o que o banco recusou.
+            var motivo = d.Evaluate!(contexto).NotEvaluatedReason;
+            if (motivo is null) continue;
+
+            (prefixo.Length + motivo.Length).Should().BeLessThanOrEqualTo(limiteDoIndicador,
+                $"{d.Id} grava este motivo, e o PostgreSQL recusa o que não couber: \"{motivo}\"");
+        }
     }
 
     [Fact]

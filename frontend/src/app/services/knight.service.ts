@@ -7,6 +7,7 @@ import {
   KnightAffectedSummary,
   KnightAssessment,
   KnightLatest,
+  KnightLatestBySource,
   KnightReferenceCoverage,
   KnightSources,
   KnightSourceType,
@@ -16,6 +17,8 @@ import {
 const SOURCE_SLUG: Record<KnightSourceType, string> = {
   Demo: 'demo',
   MicrosoftEntraId: 'entra',
+  // [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams: fonte própria, credencial do mesmo conector Microsoft.
+  MicrosoftTeams: 'teams',
   GoogleWorkspace: 'google',
 };
 
@@ -121,6 +124,19 @@ export class KnightService {
         unfinishedAttempt: body?.unfinishedAttempt ?? null,
       })),
       catchError(this.normalize('Não foi possível consultar a última avaliação disponível.')),
+    );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-COVERAGE-02] A última avaliação concluída de CADA fonte (`GET /latest-by-source`), com a
+   * tentativa não finalizada que a sucede. É o que a tela lê quando há mais de uma fonte avaliada: apresentar
+   * apenas a sincronização mais recente esconderia a avaliação da outra. Somente leitura: NÃO dispara coleta.
+   */
+  getLatestBySource(): Observable<KnightLatestBySource> {
+    return this.http.get<KnightLatestBySource>(`${this.base}/latest-by-source`).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      map((body) => ({ sources: body?.sources ?? [] })),
+      catchError(this.normalize('Não foi possível carregar as avaliações por fonte.')),
     );
   }
 

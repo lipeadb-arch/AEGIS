@@ -126,6 +126,18 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             result = acquisition.CollectionResult;
             identityAcquisitionId = acquisition.AcquisitionId;
         }
+        else if (source == KnightSourceType.MicrosoftTeams)
+        {
+            // [AEGIS-KNIGHT-COVERAGE-02] O Teams percorre o MESMO caminho de evidência do Entra ID — coleta →
+            // ADM → releitura → avaliação —, por uma aquisição de CONFIGURAÇÃO: os documentos são persistidos e
+            // a regra lê o que foi gravado, nunca o objeto transitório do coletor. A aquisição é de outra FONTE,
+            // então não toca as identidades nem o snapshot agregado do Entra ID.
+            var acquisition = await _identityEvidence.CollectConfigurationAsync(source, ct);
+            if (acquisition.CollectionResult is null)
+                throw new KnightSourceNotConfiguredException(source);
+            result = acquisition.CollectionResult;
+            identityAcquisitionId = acquisition.AcquisitionId;
+        }
         else
         {
             var configuration = await _config.ResolveAsync(tenantId, source, ct);
@@ -405,6 +417,62 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
 
         return new KnightLatestAssessment(latest is null ? null
             : ToAssessment(latest, await EvidenceCountsAsync(latest.Id, ct), await AffectedKindsAsync(latest.Id, ct)), unfinished);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] A última avaliação concluída de CADA fonte.
+    ///
+    /// Antes deste pacote havia uma fonte real avaliada por tenant, e "a última avaliação" era uma pergunta com
+    /// uma resposta só. Com o Microsoft Teams como fonte própria, a resposta passou a ser POR FONTE: uma
+    /// sincronização do Teams que termine depois da do Entra ID não torna a avaliação do Entra ID velha nem
+    /// inválida — ela continua sendo o que se sabe sobre o Entra ID. Devolver só a mais recente faria a tela
+    /// trocar um assessment pelo outro a cada sincronização.
+    ///
+    /// Não há nota somada entre fontes: cada uma traz a própria nota, a própria cobertura e a própria data, e é
+    /// assim que a tela e os exportadores as apresentam.
+    /// </summary>
+    public async Task<KnightLatestBySource> GetLatestBySourceAsync(CancellationToken ct = default)
+    {
+        var headers = await _db.KnightAssessmentRuns.AsNoTracking()
+            .Select(r => new { r.Id, r.Status, r.SourceType, r.Mode, r.StartedAt, r.Source })
+            .ToListAsync(ct);
+
+        var result = new List<KnightSourceLatest>();
+        foreach (var group in headers.GroupBy(r => r.SourceType).OrderBy(g => (int)g.Key))
+        {
+            var latestHeader = group
+                .Where(r => r.Status == KnightRunStatus.Completed)
+                .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.Id)
+                .FirstOrDefault();
+
+            // A mesma regra da leitura de fonte única, aplicada DENTRO da fonte: a tentativa só é pendência
+            // enquanto nenhum resultado daquela fonte a sucedeu.
+            var unfinished = group
+                .Where(r => r.Status != KnightRunStatus.Completed)
+                .Where(r => latestHeader is null || r.StartedAt > latestHeader.StartedAt)
+                .OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.Id)
+                .Select(r => new KnightUnfinishedRun(r.Id, r.Status, r.SourceType, r.Mode, r.StartedAt))
+                .FirstOrDefault();
+
+            KnightAssessment? assessment = null;
+            if (latestHeader is not null)
+            {
+                var run = await _db.KnightAssessmentRuns
+                    .AsNoTracking().Include(r => r.Indicators)
+                    .FirstOrDefaultAsync(r => r.Id == latestHeader.Id, ct);
+                if (run is not null)
+                    assessment = ToAssessment(run, await EvidenceCountsAsync(run.Id, ct), await AffectedKindsAsync(run.Id, ct));
+            }
+
+            if (assessment is null && unfinished is null) continue;
+
+            var label = latestHeader?.Source
+                ?? group.OrderByDescending(r => r.StartedAt).Select(r => r.Source).FirstOrDefault()
+                ?? group.Key.ToString();
+            result.Add(new KnightSourceLatest(group.Key, label, assessment, unfinished));
+        }
+
+        return new KnightLatestBySource(result);
     }
 
     public async Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default)

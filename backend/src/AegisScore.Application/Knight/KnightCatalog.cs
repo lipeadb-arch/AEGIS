@@ -96,7 +96,12 @@ public static class KnightCatalog
     // controles de referência que ele avalia. Os critérios e limiares de AK-ENTRA-001..015 e AK-GWS-001..006 NÃO
     // mudam — só ganham referências. Mudar o conjunto de controles muda o denominador da nota e da cobertura: por
     // isso a versão sobe, fotografias v3 continuam com o catálogo v3 congelado e o comparador recusa v3 × v4.
-    public const string Version = "ak-knight-v4";
+    // v5 [AEGIS-KNIGHT-COVERAGE-02]: acrescenta os controles de CONFIGURAÇÃO do Microsoft Teams (AK-TEAMS-001 em
+    // diante), avaliados sobre a coleta da fonte MicrosoftTeams relida do ADM. Eles NÃO se aplicam ao Entra ID nem ao
+    // Google Workspace (cada controle declara a fonte), então o denominador de uma execução do Entra não muda — mas o
+    // CONJUNTO de controles do catálogo muda, e é o conjunto que define a cobertura de implementação da referência.
+    // Por isso a versão sobe: fotografias v4 continuam com o catálogo v4 congelado e o comparador recusa v4 × v5.
+    public const string Version = "ak-knight-v5";
 
     // ---- Limiares centralizados (única fonte da verdade dos números da regra) ----
 
@@ -197,7 +202,10 @@ public static class KnightCatalog
 
     /// <summary>Todos os indicadores (multicoletor). Ordem estável = ordem de exibição por padrão.</summary>
     public static IReadOnlyList<KnightIndicatorDefinition> Indicators { get; } =
-        BaseIndicators().Concat(EntraConfigurationControls.Definitions).ToList();
+        BaseIndicators()
+            .Concat(EntraConfigurationControls.Definitions)
+            .Concat(TeamsConfigurationControls.Definitions)
+            .ToList();
 
     private const string M365Ref = "CIS-M365-7.0.0:";
     private const string AzRef = "CIS-AZ-6.0.0:";

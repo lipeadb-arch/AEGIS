@@ -106,6 +106,11 @@ public sealed class DatabaseUpgradePostgresTests
             // fotografia: três colunas anuláveis, SEM backfill — fotografias anteriores mantêm o hash e não ganham
             // texto de um catálogo que elas não usaram.
             "20260919134306_KnightCoverage01_ReferenceCoverageImpact",
+            // [AEGIS-KNIGHT-COVERAGE-02] O índice único parcial dos pedidos de sincronização passa a incluir a
+            // FONTE: um conector (o Microsoft) alimenta o Entra ID e o Microsoft Teams, e uma coleta em andamento
+            // numa fonte não pode bloquear a da outra. Só troca de índice — nenhuma coluna, nenhum backfill, e os
+            // pedidos já gravados continuam válidos.
+            "20260920060846_KnightCoverage02_TeamsSyncPerSource",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

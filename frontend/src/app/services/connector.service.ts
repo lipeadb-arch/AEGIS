@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, map, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -124,9 +124,12 @@ export class ConnectorService {
    * pedido DURÁVEL e responde 202 com o identificador — um segundo clique devolve o MESMO pedido. A coleta, o
    * ADM e a avaliação acontecem no servidor; a tela só acompanha.
    */
-  syncKnight(connectorId: string): Observable<KnightSyncRequest> {
+  /// [AEGIS-KNIGHT-COVERAGE-02] `source` indica QUAL fonte sincronizar quando o conector alimenta mais de uma
+  /// ("entra", "teams"). Omitida, vale a fonte padrão do conector — o comportamento anterior, preservado.
+  syncKnight(connectorId: string, source?: string): Observable<KnightSyncRequest> {
+    const params = source ? new HttpParams().set('source', source) : undefined;
     return this.http
-      .post<KnightSyncRequest>(`${this.base}/connectors/${connectorId}/sync`, {})
+      .post<KnightSyncRequest>(`${this.base}/connectors/${connectorId}/sync`, {}, { params })
       .pipe(catchError((err) => throwError(() => this.describe(err))));
   }
 
@@ -138,9 +141,10 @@ export class ConnectorService {
   }
 
   /** O pedido mais recente do conector, ou `null` quando nunca houve (204). Somente leitura. */
-  getLatestKnightSync(connectorId: string): Observable<KnightSyncRequest | null> {
+  getLatestKnightSync(connectorId: string, source?: string): Observable<KnightSyncRequest | null> {
+    const params = source ? new HttpParams().set('source', source) : undefined;
     return this.http
-      .get<KnightSyncRequest>(`${this.base}/connectors/${connectorId}/sync-requests/latest`, { observe: 'response' })
+      .get<KnightSyncRequest>(`${this.base}/connectors/${connectorId}/sync-requests/latest`, { observe: 'response', params })
       .pipe(
         map((r) => (r.status === 204 ? null : r.body)),
         catchError((err) => throwError(() => this.describe(err))),

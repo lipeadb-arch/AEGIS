@@ -62,7 +62,7 @@ public sealed class KnightEntraConfigurationFlowTests : IDisposable
         await using var db = NewContext(TenantA);
         var run = await RunAsync(db, TenantA, new EntraConfigurationScenario(EntraConfigurationScenario.Variant.Compliant));
 
-        run.CatalogVersion.Should().Be("ak-knight-v4");
+        run.CatalogVersion.Should().Be("ak-knight-v5");
         run.SourceState.Should().Be(KnightSourceState.PartialCollection, "só as duas capacidades de risco de identidade devolvem 403 neste cenário");
         var entity = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id);
         entity.IdentityAcquisitionId.Should().NotBeNull("a avaliação leu a aquisição persistida do ADM");
@@ -70,7 +70,14 @@ public sealed class KnightEntraConfigurationFlowTests : IDisposable
         // A configuração do locatário foi PERSISTIDA como evidência da aquisição, com contrato e versão.
         var kinds = await db.IdentityConfigurationObservations
             .Where(c => c.AcquisitionId == entity.IdentityAcquisitionId).Select(c => c.Kind).Distinct().ToListAsync();
-        kinds.Should().Contain(KnightConfigurationKinds.All.Select(s => s.Kind));
+        // Os tipos de configuração que o coletor do ENTRA produz — o catálogo de tipos também abriga os de
+        // outras fontes (Microsoft Teams), que não têm por que aparecer numa aquisição do diretório.
+        var doEntra = KnightConfigurationKinds.All
+            .Where(spec => KnightCollectorCapabilities.Produces(KnightSourceType.MicrosoftEntraId).Contains(spec.Capability))
+            .Select(spec => spec.Kind).ToList();
+        kinds.Should().Contain(doEntra);
+        kinds.Should().NotContain(ConfigurationObjectKind.TeamsMeetingPolicy,
+            "uma aquisição do Entra ID não carrega configuração do Microsoft Teams");
 
         Dump(run);
         var notPassed = run.Indicators.Where(i => ConfigurationControlIds.Contains(i.IndicatorId) && i.Status != KnightIndicatorStatus.Passed)
@@ -130,6 +137,9 @@ public sealed class KnightEntraConfigurationFlowTests : IDisposable
         var implemented = coverage.Controls
             .Where(c => c.Disposition is KnightReferenceDisposition.Implemented or KnightReferenceDisposition.Partial)
             .SelectMany(c => c.IndicatorIds.Select(id => (Reference: c.Control.Key, Id: id)))
+            // Esta bateria corre o cenário do ENTRA ID. As referências sustentadas por outras fontes têm a
+            // mesma prova na bateria da fonte delas (ver KnightTeamsConfigurationFlowTests).
+            .Where(x => x.Id.StartsWith("AK-ENTRA-", StringComparison.Ordinal))
             .ToList();
         implemented.Should().NotBeEmpty();
 

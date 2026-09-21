@@ -41,6 +41,20 @@ public static class KnightCollectorCapabilities
         KnightCapability.ServicePrincipalSettings,
     };
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] O que o coletor do Microsoft Teams tenta em cada coleta. São SEIS comandos de
+    /// leitura do módulo oficial; cada um é uma capacidade, e a falha de um não invalida os outros.
+    /// </summary>
+    private static readonly IReadOnlySet<KnightCapability> Teams = new HashSet<KnightCapability>
+    {
+        KnightCapability.TeamsClientConfiguration,
+        KnightCapability.TeamsFederationConfiguration,
+        KnightCapability.TeamsMeetingPolicies,
+        KnightCapability.TeamsMessagingPolicies,
+        KnightCapability.TeamsAppPermissionPolicies,
+        KnightCapability.TeamsPolicyAssignments,
+    };
+
     private static readonly IReadOnlySet<KnightCapability> Google = new HashSet<KnightCapability>
     {
         KnightCapability.DirectoryUsers,
@@ -53,6 +67,7 @@ public static class KnightCollectorCapabilities
     public static IReadOnlySet<KnightCapability> Produces(KnightSourceType source) => source switch
     {
         KnightSourceType.MicrosoftEntraId => Entra,
+        KnightSourceType.MicrosoftTeams => Teams,
         KnightSourceType.GoogleWorkspace => Google,
         _ => new HashSet<KnightCapability>(),
     };

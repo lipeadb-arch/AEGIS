@@ -142,6 +142,25 @@ public sealed record KnightLatestAssessment(
     KnightAssessment? Assessment,
     KnightUnfinishedRun? UnfinishedAttempt);
 
+/// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-02] A última avaliação de UMA fonte, com a fonte identificada. É o bloco da leitura
+/// COMPOSTA: o KNIGHT deixou de ter uma "última avaliação" única quando passou a avaliar mais de uma fonte.
+/// Apresentar só a mais recente faria a avaliação do Microsoft Entra ID desaparecer da tela assim que uma
+/// sincronização do Microsoft Teams terminasse — e o contrário também.
+/// </summary>
+public sealed record KnightSourceLatest(
+    KnightSourceType Source,
+    string Label,
+    KnightAssessment? Assessment,
+    KnightUnfinishedRun? UnfinishedAttempt);
+
+/// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-02] A fotografia CORRENTE do assessment: a última avaliação concluída de CADA fonte
+/// que já produziu alguma. Não há soma de notas entre fontes — cada fonte tem a própria nota, a própria
+/// cobertura e a própria data —, e a tela é obrigada a dizer de qual aquisição veio cada número.
+/// </summary>
+public sealed record KnightLatestBySource(IReadOnlyList<KnightSourceLatest> Sources);
+
 /// <summary>Disponibilidade das fontes para o tenant — o que a UI usa para oferecer Demo × execução real.</summary>
 public sealed record KnightSourceInfo(KnightSourceType Source, string Label, bool Configured, bool Enabled);
 
@@ -188,6 +207,12 @@ public interface IAegisKnightAssessmentService
     /// do resultado, nem esconde que ela existe.
     /// </summary>
     Task<KnightLatestAssessment> GetLatestAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] A última avaliação concluída de CADA fonte que já produziu alguma, com a
+    /// tentativa não finalizada que a sucede, quando houver. Somente leitura: não dispara coleta.
+    /// </summary>
+    Task<KnightLatestBySource> GetLatestBySourceAsync(CancellationToken ct = default);
 
     /// <summary>Assessment por Id, restrito ao tenant do contexto (<c>null</c> quando inexistente ou de outro tenant).</summary>
     Task<KnightAssessment?> GetByIdAsync(Guid id, CancellationToken ct = default);

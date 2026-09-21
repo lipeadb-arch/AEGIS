@@ -140,6 +140,33 @@ public class KnightAssessmentsController : ControllerBase
             latest.UnfinishedAttempt is null ? null : ToDto(latest.UnfinishedAttempt)));
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-02] A última avaliação concluída de CADA fonte, com a tentativa não finalizada que
+    /// a sucede. É o que a tela do KNIGHT lê: com mais de uma fonte avaliada (Microsoft Entra ID e Microsoft
+    /// Teams), apresentar apenas a sincronização mais recente esconderia a avaliação da outra fonte.
+    ///
+    /// Cada bloco traz a própria nota, a própria cobertura e a própria data — não há nota somada entre fontes.
+    /// Somente leitura: abrir a tela NÃO dispara coleta.
+    /// </summary>
+    /// <response code="200">Lista por fonte (vazia quando o tenant nunca avaliou nada).</response>
+    /// <response code="401">Tenant não resolvido no contexto.</response>
+    [HttpGet("latest-by-source")]
+    public async Task<ActionResult<KnightLatestBySourceDto>> GetLatestBySource(CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+
+        var latest = await _service.GetLatestBySourceAsync(ct);
+        return Ok(new KnightLatestBySourceDto(latest.Sources
+            .Select(s => new KnightSourceLatestDto(
+                s.Source.ToString(),
+                KnightConnectorSources.Slug(s.Source),
+                s.Label,
+                s.Assessment is null ? null : ToDto(s.Assessment),
+                s.UnfinishedAttempt is null ? null : ToDto(s.UnfinishedAttempt)))
+            .ToList()));
+    }
+
     /// <summary>Assessment por Id (401 sem tenant; 404 inexistente/de outro tenant com tenant válido).</summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<KnightAssessmentDto>> GetById(Guid id, CancellationToken ct)
@@ -232,6 +259,9 @@ public class KnightAssessmentsController : ControllerBase
             case "microsoftentraid": sourceType = KnightSourceType.MicrosoftEntraId; return true;
             case "google":
             case "googleworkspace": sourceType = KnightSourceType.GoogleWorkspace; return true;
+            // [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams: fonte própria, credencial do mesmo conector Microsoft.
+            case "teams":
+            case "microsoftteams": sourceType = KnightSourceType.MicrosoftTeams; return true;
             default: sourceType = default; return false;
         }
     }

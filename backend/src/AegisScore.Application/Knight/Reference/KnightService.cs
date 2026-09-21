@@ -117,6 +117,7 @@ public static class KnightServices
     public static KnightService DefaultFor(KnightSourceType source) => source switch
     {
         KnightSourceType.MicrosoftEntraId => KnightService.EntraId,
+        KnightSourceType.MicrosoftTeams => KnightService.Teams,
         KnightSourceType.GoogleWorkspace => KnightService.GoogleWorkspace,
         KnightSourceType.Demo => KnightService.Demo,
         _ => KnightService.Unspecified,

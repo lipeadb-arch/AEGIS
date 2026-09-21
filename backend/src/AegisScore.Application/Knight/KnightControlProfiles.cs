@@ -86,6 +86,7 @@ public static class KnightControlProfiles
 
     private static readonly IReadOnlyDictionary<string, KnightControlProfile> ById = BaseProfiles()
         .Concat(EntraConfigurationProfiles.All)
+        .Concat(TeamsConfigurationProfiles.All)
         .Select(p => p with { Impact = KnightControlImpacts.For(p.IndicatorId) })
         .ToDictionary(p => p.IndicatorId, StringComparer.Ordinal);
 
@@ -242,6 +243,7 @@ public static class KnightControlProfiles
     public static string ProviderOf(KnightSourceType source) => source switch
     {
         KnightSourceType.MicrosoftEntraId => "Microsoft",
+        KnightSourceType.MicrosoftTeams => "Microsoft",
         KnightSourceType.GoogleWorkspace => "Google",
         KnightSourceType.Demo => "Demonstração",
         _ => source.ToString(),
@@ -284,6 +286,7 @@ public static class KnightControlProfiles
         return source switch
         {
             KnightSourceType.MicrosoftEntraId => "Microsoft Entra ID",
+            KnightSourceType.MicrosoftTeams => "Microsoft Teams",
             KnightSourceType.GoogleWorkspace => "Google Workspace",
             _ => source.ToString(),
         };

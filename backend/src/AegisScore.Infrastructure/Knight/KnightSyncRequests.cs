@@ -39,8 +39,10 @@ public sealed class KnightSyncRequests : IKnightSyncRequests
     {
         _ = _tenant.TenantId ?? throw new TenantSecurityException("Pedido de sincronização sem tenant resolvido (fail-closed).");
 
-        // Fast-path idempotente: um pedido ATIVO para o conector é devolvido, nunca duplicado.
-        var active = await ActiveAsync(connectorId, ct);
+        // Fast-path idempotente: um pedido ATIVO para o par (conector, fonte) é devolvido, nunca duplicado.
+        // [AEGIS-KNIGHT-COVERAGE-02] A chave inclui a FONTE: o mesmo conector Microsoft alimenta o Entra ID e o
+        // Teams, e uma coleta em andamento numa fonte não pode bloquear a outra.
+        var active = await ActiveAsync(connectorId, source, ct);
         if (active is not null) return new KnightSyncEnqueueResult(await ToViewAsync(active, ct), true);
 
         var now = _clock.GetUtcNow();
@@ -63,9 +65,10 @@ public sealed class KnightSyncRequests : IKnightSyncRequests
         {
             // Só é idempotência se a causa for MESMO o índice único parcial (outro clique venceu a corrida).
             _db.Entry(request).State = EntityState.Detached;
-            active = await ActiveAsync(connectorId, ct);
+            active = await ActiveAsync(connectorId, source, ct);
             if (active is null) throw;
-            _log?.LogDebug(ex, "Pedido de sincronização ativo já existia para o conector {Connector}.", connectorId);
+            _log?.LogDebug(ex, "Pedido de sincronização ativo já existia para o conector {Connector} na fonte {Fonte}.",
+                connectorId, source);
             return new KnightSyncEnqueueResult(await ToViewAsync(active, ct), true);
         }
 
@@ -79,12 +82,13 @@ public sealed class KnightSyncRequests : IKnightSyncRequests
         return r is null ? null : await ToViewAsync(r, ct);
     }
 
-    public async Task<KnightSyncRequestView?> GetLatestAsync(Guid connectorId, CancellationToken ct = default)
+    public async Task<KnightSyncRequestView?> GetLatestAsync(
+        Guid connectorId, KnightSourceType? source = null, CancellationToken ct = default)
     {
         // Ordenação no cliente: o SQLite dos testes não ordena DateTimeOffset; o histórico por conector é pequeno.
-        var rows = await _db.KnightSyncRequests.AsNoTracking()
-            .Where(x => x.ConnectorConfigId == connectorId)
-            .ToListAsync(ct);
+        var query = _db.KnightSyncRequests.AsNoTracking().Where(x => x.ConnectorConfigId == connectorId);
+        if (source is { } wanted) query = query.Where(x => x.SourceType == wanted);
+        var rows = await query.ToListAsync(ct);
         var latest = rows.OrderByDescending(x => x.RequestedAt).ThenByDescending(x => x.Id).FirstOrDefault();
         return latest is null ? null : await ToViewAsync(latest, ct);
     }
@@ -96,9 +100,9 @@ public sealed class KnightSyncRequests : IKnightSyncRequests
             .ToListAsync(ct))
         .ToHashSet();
 
-    private Task<KnightSyncRequest?> ActiveAsync(Guid connectorId, CancellationToken ct) =>
+    private Task<KnightSyncRequest?> ActiveAsync(Guid connectorId, KnightSourceType source, CancellationToken ct) =>
         _db.KnightSyncRequests.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.ConnectorConfigId == connectorId
+            .FirstOrDefaultAsync(x => x.ConnectorConfigId == connectorId && x.SourceType == source
                 && (x.Status == KnightSyncStatus.Pending || x.Status == KnightSyncStatus.Running), ct);
 
     private async Task<KnightSyncRequestView> ToViewAsync(KnightSyncRequest r, CancellationToken ct)

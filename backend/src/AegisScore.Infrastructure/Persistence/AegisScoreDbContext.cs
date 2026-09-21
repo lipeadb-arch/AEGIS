@@ -1332,9 +1332,12 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(x => new { x.Status, x.AvailableAt });
             e.HasIndex(x => new { x.Status, x.LeaseExpiresAt });
             e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.RequestedAt });
-            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId })
+            // [AEGIS-KNIGHT-COVERAGE-02] A unicidade passa a ser por (tenant, conector, FONTE): o mesmo conector
+            // Microsoft alimenta o Entra ID e o Microsoft Teams, e uma coleta em andamento numa fonte não pode
+            // impedir a da outra. O índice anterior (sem a fonte) é substituído pela migration deste pacote.
+            e.HasIndex(x => new { x.TenantId, x.ConnectorConfigId, x.SourceType })
                 .IsUnique()
-                .HasDatabaseName("UX_KnightSyncRequest_ActivePerConnector")
+                .HasDatabaseName("UX_KnightSyncRequest_ActivePerConnectorSource")
                 .HasFilter("\"Status\" IN (0, 1)");
             e.HasOne<ConnectorConfig>()
                 .WithMany()

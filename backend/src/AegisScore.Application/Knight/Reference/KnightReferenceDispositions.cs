@@ -72,6 +72,17 @@ public static class KnightReferenceDispositions
         ["CIS-AZ-6.0.0:5.3.1"] = Manual(
             "Depende de como as pessoas usam as contas administrativas no dia a dia, o que nenhuma configuração expressa. "
             + "Indícios automatizados relacionados: AK-ENTRA-003 (caixa de correio) e AK-ENTRA-048 (licenças de produtividade)."),
+
+        // ---- Microsoft Teams: existe leitura oficial, mas não com a autenticação deste conector ---------------
+        ["CIS-M365-7.0.0:8.4.1"] = Access(
+            "O comando oficial que lê as políticas de permissão de aplicativos (Get-CsTeamsAppPermissionPolicy) só se aplica a "
+            + "locatários NÃO migrados para o gerenciamento centrado em aplicativos (ACM/UAM); depois da migração essas políticas não "
+            + "podem mais ser acessadas, editadas nem usadas. Dizer se o locatário migrou exigiria Get-AllM365TeamsApps, "
+            + "Get-M365TeamsApp ou Get-M365UnifiedTenantSettings — os três listados nominalmente pela Microsoft entre os comandos NÃO "
+            + "SUPORTADOS com autenticação baseada em aplicativo, que é a forma de acesso desta coleta. Não é falta de permissão: "
+            + "nenhum papel adicional torna um comando não suportado suportado. O AEGIS coleta e preserva a configuração legada como "
+            + "evidência em AK-TEAMS-007, sem veredito. Concluir dependeria de uma sessão administrativa delegada — outra forma de "
+            + "acesso ao locatário, que é decisão do cliente."),
     };
 
     private const string Sspr =
@@ -81,6 +92,7 @@ public static class KnightReferenceDispositions
 
     private static Declared Api(string note) => new(KnightReferenceDisposition.ApiLimitation, note);
     private static Declared Manual(string note) => new(KnightReferenceDisposition.ManualOnly, note);
+    private static Declared Access(string note) => new(KnightReferenceDisposition.RequiresAccess, note);
 
     public static Declared? For(string key) => ByKey.TryGetValue(key, out var d) ? d : null;
 

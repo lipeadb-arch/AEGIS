@@ -15,11 +15,24 @@ using AegisScore.Api.Health;
 using AegisScore.Api.Workers;
 using AegisScore.Application.Abstractions;
 using AegisScore.Connectors.Microsoft;
+using AegisScore.Connectors.Microsoft.Knight.Teams;
 using AegisScore.Connectors.Google;
 using AegisScore.Infrastructure;
 using AegisScore.Infrastructure.Auth;
 using AegisScore.Infrastructure.DataProtection;
 using AegisScore.Infrastructure.Persistence;
+
+// [AEGIS-KNIGHT-COVERAGE-02] Verificação de RUNTIME do adaptador de coleta do Microsoft Teams. É DIAGNÓSTICO de
+// ambiente, não um modo de execução do produto: roda antes de qualquer host, não abre porta, não toca o banco,
+// não lê configuração de cliente, não autentica e não conecta em locatário nenhum. Existe para provar — na imagem
+// de implantação e pelo MESMO caminho que a coleta usa, incluindo o PSModulePath que o adaptador monta — que o
+// PowerShell, o módulo fixado e os comandos estão no lugar. Encerra com 0 quando o runtime está provado, 1 no
+// resto dos casos.
+if (TeamsRuntimeDiagnostics.Requested(args))
+    return await TeamsRuntimeDiagnostics.RunFromConfigurationAsync(
+        new ConfigurationBuilder().AddEnvironmentVariables().Build()
+            .GetSection(TeamsRuntimeDiagnostics.ConfigurationSection),
+        Console.Out);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -164,7 +177,9 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddSingleton<IAuthorizationHandler, FederatedExchangeHandler>();
 
 // Stack adapters (add AWS/SIEM/EDR connector packages here).
-builder.Services.AddMicrosoftConnectors();
+// [AEGIS-KNIGHT-COVERAGE-02] A seção Knight:Teams configura o adaptador de coleta do Microsoft Teams
+// (executável do PowerShell, módulo pré-instalado na imagem, tempo limite). É do AMBIENTE, não do locatário.
+builder.Services.AddMicrosoftConnectors(builder.Configuration.GetSection("Knight:Teams"));
 builder.Services.AddGoogleConnectors();
 
 // Document Hub: worker que lê os documentos enfileirados e mapeia os controles NIST.
@@ -400,3 +415,6 @@ app.MapControllers();
 app.MapFallbackToFile("index.html").AllowAnonymous();
 
 app.Run();
+
+// Com o diagnostico de runtime acima, o ponto de entrada devolve int: 0 = encerramento normal da API.
+return 0;

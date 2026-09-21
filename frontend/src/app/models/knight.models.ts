@@ -28,13 +28,16 @@ export type KnightCategory =
   | 'TenantConfiguration'
   | 'AuthenticationPolicy'
   | 'ApplicationGovernance'
-  | 'DeviceGovernance';
+  | 'DeviceGovernance'
+  // [AEGIS-KNIGHT-COVERAGE-02] Colaboração e comunicação (Microsoft Teams): com quem se fala, quem entra numa
+  // reunião, o que sai da organização por um canal de conversa.
+  | 'CollaborationSecurity';
 
 /** Estado de conexão exibido no badge: separação inequívoca entre Demo, Não configurado e Conectado. */
 export type KnightConnectionState = 'Demo' | 'NotConfigured' | 'Connected';
 
 /** Fonte concreta de coleta (multicoletor). */
-export type KnightSourceType = 'Demo' | 'MicrosoftEntraId' | 'GoogleWorkspace';
+export type KnightSourceType = 'Demo' | 'MicrosoftEntraId' | 'MicrosoftTeams' | 'GoogleWorkspace';
 
 /** Estado da coleta/fonte de uma execução (ou de disponibilidade). */
 export type KnightSourceState =
@@ -195,6 +198,24 @@ export interface KnightLatest {
 }
 
 /**
+ * [AEGIS-KNIGHT-COVERAGE-02] A última avaliação de UMA fonte (espelha KnightSourceLatestDto). Com mais de uma
+ * fonte avaliada, "a última avaliação" deixou de ter resposta única: mostrar só a sincronização mais recente
+ * esconderia a avaliação da outra fonte. Cada bloco traz a própria nota, cobertura e data — nunca somadas.
+ */
+export interface KnightSourceLatest {
+  source: KnightSourceType;
+  slug: string;
+  label: string;
+  assessment: KnightAssessment | null;
+  unfinishedAttempt: KnightUnfinishedRun | null;
+}
+
+/** Resposta de `GET /latest-by-source`: um bloco por fonte que já produziu alguma avaliação. */
+export interface KnightLatestBySource {
+  sources: KnightSourceLatest[];
+}
+
+/**
  * Badge: demo → DEMONSTRAÇÃO; real → CONECTADO. Sem assessment, o badge segue a FONTE: conector real configurado
  * ainda sem sincronização é CONECTADO (a tela diz que falta a primeira avaliação); sem fonte, NÃO CONFIGURADO.
  */
@@ -251,6 +272,7 @@ const CATEGORY_LABEL: Record<KnightCategory, string> = {
   AuthenticationPolicy: 'Política de autenticação',
   ApplicationGovernance: 'Governança de aplicações',
   DeviceGovernance: 'Governança de dispositivos',
+  CollaborationSecurity: 'Colaboração e comunicação',
 };
 
 export function categoryLabel(category: KnightCategory): string {
@@ -281,6 +303,7 @@ export function scoreDisplay(score: number | null): string {
 const SOURCE_TYPE_LABEL: Record<KnightSourceType, string> = {
   Demo: 'Demonstração',
   MicrosoftEntraId: 'Microsoft Entra ID',
+  MicrosoftTeams: 'Microsoft Teams',
   GoogleWorkspace: 'Google Workspace',
 };
 

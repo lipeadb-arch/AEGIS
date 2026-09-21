@@ -118,6 +118,31 @@ public enum KnightCapability
 
     /// <summary>Estado de aplicações de serviço conhecidas do locatário (<c>Application.Read.All</c>).</summary>
     ServicePrincipalSettings = 29,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-02] Configuração do Microsoft Teams (somente leitura) ----------------------
+    // Coletadas pelo módulo oficial Teams PowerShell com autenticação de APLICATIVO (ver TeamsKnightCollector).
+    // Cada capacidade é UM comando de leitura; a falha de uma não invalida as outras.
+
+    /// <summary>Configuração do cliente do Teams (<c>Get-CsTeamsClientConfiguration</c>).</summary>
+    TeamsClientConfiguration = 30,
+
+    /// <summary>Configuração de federação do locatário (<c>Get-CsTenantFederationConfiguration</c>).</summary>
+    TeamsFederationConfiguration = 31,
+
+    /// <summary>Políticas de reunião, a padrão da organização e as personalizadas (<c>Get-CsTeamsMeetingPolicy</c>).</summary>
+    TeamsMeetingPolicies = 32,
+
+    /// <summary>Políticas de mensagens (<c>Get-CsTeamsMessagingPolicy</c>).</summary>
+    TeamsMessagingPolicies = 33,
+
+    /// <summary>Políticas de permissão de aplicativos (<c>Get-CsTeamsAppPermissionPolicy</c>).</summary>
+    TeamsAppPermissionPolicies = 34,
+
+    /// <summary>
+    /// Atribuições de políticas do Teams a GRUPOS (<c>Get-CsGroupPolicyAssignment</c>). É o que permite dizer o
+    /// ALCANCE de uma política personalizada sem enumerar usuário a usuário.
+    /// </summary>
+    TeamsPolicyAssignments = 35,
 }
 
 /// <summary>
@@ -197,6 +222,27 @@ public sealed record KnightEntraIdConfiguration(
     // Sobrescrevemos para o segredo NUNCA aparecer num dump/log acidental do objeto. (Gap: ToString de record.)
     public override string ToString() =>
         $"KnightEntraIdConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = *** }}";
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-02] Configuração do coletor real do Microsoft Teams — as MESMAS client credentials do
+/// conector Microsoft já configurado (nenhuma credencial nova é pedida ao cliente). O transporte não é o
+/// Microsoft Graph: é o módulo oficial Teams PowerShell, que a documentação autoriza a autenticar como
+/// APLICATIVO por tokens de acesso. Dois tokens são necessários e são de RECURSOS DIFERENTES — o do Graph NÃO é
+/// reaproveitado no recurso do Teams. As autoridades de login e os identificadores de recurso são CONSTANTES
+/// oficiais no adaptador; o locatário nunca fornece destino.
+/// </summary>
+public sealed record KnightTeamsConfiguration(
+    string AzureTenantId,
+    string ClientId,
+    string ClientSecret) : KnightSourceConfiguration, IMicrosoftGraphCredentials
+{
+    public override KnightSourceType Source => KnightSourceType.MicrosoftTeams;
+
+    // Um record imprime TODAS as propriedades no ToString() — inclusive o segredo. Sobrescrito pelo mesmo motivo
+    // de KnightEntraIdConfiguration: o segredo nunca pode aparecer num dump/log acidental.
+    public override string ToString() =>
+        $"KnightTeamsConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = *** }}";
 }
 
 /// <summary>

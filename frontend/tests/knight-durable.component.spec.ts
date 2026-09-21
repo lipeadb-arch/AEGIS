@@ -3,7 +3,7 @@
  * do NAVEGADOR.
  *
  * O que este spec trava:
- *   (1) a leitura composta (`getLatestState`) separa o resultado concluído da tentativa não finalizada, e o
+ *   (1) a leitura composta (por fonte, `getLatestBySource`) separa o resultado concluído da tentativa não finalizada, e o
  *       aviso da tentativa muda conforme exista, ou não, uma avaliação concluída abaixo;
  *   (2) tempo limite da execução NÃO vira erro genérico, NÃO apaga a avaliação anterior e NÃO dispara outra
  *       coleta sozinho;
@@ -86,6 +86,8 @@ class FakeKnight {
   getSources() { return this.call('getSources'); }
   getLatest() { return this.call('getLatest'); }
   getLatestState() { return this.call('getLatestState'); }
+  // [AEGIS-KNIGHT-COVERAGE-02] A tela passou a ler POR FONTE; `getLatestState` só entra como recuo.
+  getLatestBySource() { return this.call('getLatestBySource'); }
   getById() { return this.call('getById'); }
   runDemo() { return this.call('runDemo'); }
   runSource() { return this.call('runSource'); }
@@ -147,11 +149,25 @@ function mountRaw(query: Record<string, string> = {}): Mounted {
   return { c, api, router, query: map };
 }
 
-/** Monta a tela e resolve a 1ª leitura (composta) com o que o teste pedir. */
+/** Monta a tela e resolve a 1ª leitura (por fonte) com o que o teste pedir. */
 function mount(latest: KnightLatest): Mounted {
   const m = mountRaw();
-  reply(m.api.last('getLatestState'), latest);
+  replyLatest(m.api.last('getLatestBySource'), latest);
   return m;
+}
+
+/**
+ * [AEGIS-KNIGHT-COVERAGE-02] A leitura por fonte devolve UM bloco por fonte. Estes testes tratam do ciclo de
+ * vida de uma execução (concluída × não finalizada), que independe de quantas fontes existem: um bloco basta.
+ */
+function replyLatest(c: Call, latest: KnightLatest): void {
+  const origem = latest.assessment?.sourceType ?? latest.unfinishedAttempt?.sourceType ?? 'MicrosoftEntraId';
+  reply(c, {
+    sources:
+      latest.assessment || latest.unfinishedAttempt
+        ? [{ source: origem, slug: 'entra', label: 'Microsoft Entra ID', ...latest }]
+        : [],
+  });
 }
 
 function reply(c: Call, value: unknown): void {
@@ -436,7 +452,7 @@ test('uma execução bem-sucedida limpa a tentativa pendente', () => {
 test('acesso por ID a uma execução não finalizada: exibida para inspeção, marcada como não finalizada', () => {
   const { c, api } = mountRaw({ run: RUN_ORFA });
 
-  eq(api.of('getLatestState').length, 0, 'com ?run= a tela lê exatamente aquela execução');
+  eq(api.of('getLatestBySource').length, 0, 'com ?run= a tela lê exatamente aquela execução');
   reply(api.last('getById'), orfa());
 
   eq(c.assessment()?.id, RUN_ORFA, 'o acesso histórico por ID é preservado');

@@ -403,6 +403,20 @@ public static class KnightConfigurationKinds
             EntraServicePrincipalState.SchemaVersion, typeof(EntraServicePrincipalState)),
         new Spec(ConfigurationObjectKind.ApplicationCredentialInventory, KnightCapability.ApplicationInventory,
             EntraApplicationCredentialInventory.SchemaVersion, typeof(EntraApplicationCredentialInventory)),
+
+        // ---- [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams ----------------------------------------------------
+        new Spec(ConfigurationObjectKind.TeamsClientConfiguration, KnightCapability.TeamsClientConfiguration,
+            TeamsClientConfiguration.SchemaVersion, typeof(TeamsClientConfiguration)),
+        new Spec(ConfigurationObjectKind.TeamsFederationConfiguration, KnightCapability.TeamsFederationConfiguration,
+            TeamsFederationConfiguration.SchemaVersion, typeof(TeamsFederationConfiguration)),
+        new Spec(ConfigurationObjectKind.TeamsMeetingPolicy, KnightCapability.TeamsMeetingPolicies,
+            TeamsMeetingPolicyConfiguration.SchemaVersion, typeof(TeamsMeetingPolicyConfiguration)),
+        new Spec(ConfigurationObjectKind.TeamsMessagingPolicy, KnightCapability.TeamsMessagingPolicies,
+            TeamsMessagingPolicyConfiguration.SchemaVersion, typeof(TeamsMessagingPolicyConfiguration)),
+        new Spec(ConfigurationObjectKind.TeamsAppPermissionPolicy, KnightCapability.TeamsAppPermissionPolicies,
+            TeamsAppPermissionPolicyConfiguration.SchemaVersion, typeof(TeamsAppPermissionPolicyConfiguration)),
+        new Spec(ConfigurationObjectKind.TeamsPolicyAssignment, KnightCapability.TeamsPolicyAssignments,
+            TeamsPolicyAssignment.SchemaVersion, typeof(TeamsPolicyAssignment)),
     };
 
     public static Spec? For(ConfigurationObjectKind kind) => All.FirstOrDefault(s => s.Kind == kind);
