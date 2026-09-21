@@ -51,32 +51,16 @@ internal sealed class TeamsCollectionScenario : ITeamsAdminReader
         ReadOmitted,
     }
 
-    /// <summary>Qual modelo de governo de aplicativos a coleta demonstra (ver <c>TeamsAppGovernance</c>).</summary>
-    internal enum AppModel
-    {
-        /// <summary>Catálogo lido, nenhuma disponibilidade por aplicativo: as políticas legadas governam.</summary>
-        LegacyProven,
-
-        /// <summary>Disponibilidade definida por aplicativo: o locatário está no modelo ACM/UAM.</summary>
-        Migrated,
-
-        /// <summary>A leitura do modelo falhou — não é possível dizer qual modelo governa.</summary>
-        Unknown,
-    }
-
     private readonly Variant _variant;
-    private readonly AppModel _appModel;
     private readonly string? _autoAdmittedUsers;
     private readonly string? _designatedPresenterRoleMode;
 
     internal TeamsCollectionScenario(
         Variant variant,
-        AppModel appModel = AppModel.LegacyProven,
         string? autoAdmittedUsers = null,
         string? designatedPresenterRoleMode = null)
     {
         _variant = variant;
-        _appModel = appModel;
         _autoAdmittedUsers = autoAdmittedUsers;
         _designatedPresenterRoleMode = designatedPresenterRoleMode;
     }
@@ -176,7 +160,6 @@ internal sealed class TeamsCollectionScenario : ITeamsAdminReader
                 },
             }),
 
-            AppAvailability(),
 
             Read("TeamsPolicyAssignments", "Get-CsGroupPolicyAssignment", new[]
             {
@@ -202,41 +185,6 @@ internal sealed class TeamsCollectionScenario : ITeamsAdminReader
             reads,
         });
     }
-
-    /// <summary>
-    /// Leitura do modelo de disponibilidade de aplicativos (ACM/UAM). É ela que demonstra QUAL modelo governa o
-    /// acesso a aplicativos — e, portanto, se a política de permissão legada ainda é autoritativa.
-    /// </summary>
-    private object AppAvailability() => _appModel switch
-    {
-        AppModel.Unknown => Failed("TeamsAppAvailability", "Get-AllM365TeamsApps", "InsufficientPermission",
-            "AuthorizationFailed/UnauthorizedAccessException"),
-
-        AppModel.Migrated => Read("TeamsAppAvailability", "Get-AllM365TeamsApps", new[]
-        {
-            new Dictionary<string, object?>
-            {
-                ["appsRead"] = 40,
-                ["appsWithAssignment"] = 40,
-                ["assignedToEveryone"] = 31,
-                ["assignedToUsersAndGroups"] = 6,
-                ["assignedToNoOne"] = 3,
-            },
-        }),
-
-        // Catálogo lido e NENHUM aplicativo com disponibilidade própria: o modelo legado governa.
-        _ => Read("TeamsAppAvailability", "Get-AllM365TeamsApps", new[]
-        {
-            new Dictionary<string, object?>
-            {
-                ["appsRead"] = 40,
-                ["appsWithAssignment"] = 0,
-                ["assignedToEveryone"] = 0,
-                ["assignedToUsersAndGroups"] = 0,
-                ["assignedToNoOne"] = 0,
-            },
-        }),
-    };
 
     private object[] MeetingPolicies(Variant variant)
     {

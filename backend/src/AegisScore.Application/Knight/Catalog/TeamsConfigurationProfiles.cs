@@ -32,6 +32,9 @@ public static class TeamsConfigurationProfiles
     private static readonly KnightControlReference DocAppCentric = Doc(
         "Gerenciamento centrado em aplicativos (ACM) para o acesso a aplicativos do Teams",
         "https://learn.microsoft.com/en-us/microsoftteams/app-centric-management");
+    private static readonly KnightControlReference DocAppAuth = Doc(
+        "Autenticação baseada em aplicativo no módulo do Teams — comandos NÃO suportados",
+        "https://learn.microsoft.com/en-us/microsoftteams/teams-powershell-application-authentication");
     private static readonly KnightControlReference DocMeetingPolicy = Doc(
         "Políticas de reunião do Microsoft Teams",
         "https://learn.microsoft.com/en-us/microsoftteams/settings-policies-reference");
@@ -121,13 +124,13 @@ public static class TeamsConfigurationProfiles
             "Permitir tudo e bloquear caso a caso só alcança aplicativos que alguém já identificou como indesejados. Um aplicativo "
             + "adicionado a uma equipe passa a ler o conteúdo dos canais a que tem acesso.",
             "Políticas de permissão com lista de PERMITIDOS nos três catálogos: aplicativos da Microsoft, de terceiros e personalizados.",
-            "O comando oficial de leitura só se aplica a locatários NÃO migrados para o gerenciamento centrado em aplicativos "
-            + "(ACM/UAM). Por isso o controle só conclui quando a coleta demonstra que as políticas de permissão ainda governam o "
-            + "acesso a aplicativos: em locatário migrado — e quando o modelo em vigor não pode ser determinado — a configuração "
-            + "legada é preservada como evidência, sem veredito. " + ReachCaveat,
-            Docs(DocAppPermission, DocAppCentric, DocGroupAssignment),
-            Caps(KnightCapability.TeamsAppPermissionPolicies, KnightCapability.TeamsAppAvailability,
-                 KnightCapability.TeamsPolicyAssignments)),
+            "Este critério NÃO É AVALIADO pelo AEGIS hoje, e a limitação é da interface oficial: o comando de leitura das "
+            + "políticas de permissão só se aplica a locatários NÃO migrados para o gerenciamento centrado em aplicativos (ACM/UAM), "
+            + "e todos os comandos que diriam se o locatário migrou estão na lista oficial de não suportados com autenticação de "
+            + "aplicativo — a forma de acesso usada por esta coleta. A configuração legada é coletada e preservada como evidência, "
+            + "sem veredito. " + ReachCaveat,
+            Docs(DocAppPermission, DocAppCentric, DocAppAuth, DocGroupAssignment),
+            Caps(KnightCapability.TeamsAppPermissionPolicies, KnightCapability.TeamsPolicyAssignments)),
 
         new KnightControlProfile("AK-TEAMS-008", KnightSecurityDomain.Collaboration,
             "Participantes anônimos podem entrar em reuniões da organização.",

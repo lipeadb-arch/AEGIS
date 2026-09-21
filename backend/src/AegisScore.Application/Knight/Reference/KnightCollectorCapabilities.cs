@@ -52,7 +52,6 @@ public static class KnightCollectorCapabilities
         KnightCapability.TeamsMeetingPolicies,
         KnightCapability.TeamsMessagingPolicies,
         KnightCapability.TeamsAppPermissionPolicies,
-        KnightCapability.TeamsAppAvailability,
         KnightCapability.TeamsPolicyAssignments,
     };
 

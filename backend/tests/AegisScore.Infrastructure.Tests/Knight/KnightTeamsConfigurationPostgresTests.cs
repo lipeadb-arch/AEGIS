@@ -124,16 +124,14 @@ public sealed class KnightTeamsConfigurationPostgresTests
             outcome.Status.Should().Be(KnightIndicatorStatus.Exposed);
             outcome.Affected.Single().Detail.Should().Contain("11111111-2222-3333-4444-555555555555");
 
-            // [Revisão dirigida] A condição de aplicabilidade de AK-TEAMS-007 depende de um contrato NOVO no
-            // ADM. Aqui ele vem do jsonb REAL: o modelo de governo é resolvido a partir do que o PostgreSQL
-            // devolveu, e não de um objeto montado em memória.
-            var governo = TeamsAppGovernance.Resolve(contexto);
-            governo.Model.Should().Be(TeamsAppGovernanceModel.LegacyPermissionPolicies);
-            governo.Observed!.AppsRead.Should().Be(40);
-            governo.Observed.AppsWithAssignment.Should().Be(0);
-            TeamsConfigurationControls.Definitions.Single(d => d.Id == "AK-TEAMS-007").Evaluate!(contexto)
-                .Status.Should().Be(KnightIndicatorStatus.Passed,
-                    "neste cenário o modelo legado é o que governa, e os catálogos estão restritos a listas de permitidos");
+            // [Revisão dirigida] AK-TEAMS-007 não conclui — nem mesmo com a configuração legada relida do jsonb
+            // REAL, que aqui está no valor que antes aprovava. A leitura que diria se essa configuração ainda
+            // governa (modelo ACM/UAM) não é suportada com autenticação de aplicativo, então não há veredito.
+            var aplicativos = TeamsConfigurationControls.Definitions.Single(d => d.Id == "AK-TEAMS-007").Evaluate!(contexto);
+            aplicativos.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+            aplicativos.NotEvaluatedReason.Should().Contain("NÃO SUPORTADOS com autenticação de aplicativo");
+            aplicativos.EvidenceObjects.Should().Contain(e => e.Detail!.Contains("preservada como evidência"),
+                "a configuração lida do banco continua valendo como evidência, ainda que não sustente veredito");
 
             var snapshot = await db.PostureSnapshots.AsNoTracking()
                 .Include(s => s.Controls).Include(s => s.Indicators).Include(s => s.ActionItems).Include(s => s.Objects)

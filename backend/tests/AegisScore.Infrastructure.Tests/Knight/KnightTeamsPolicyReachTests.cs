@@ -425,79 +425,56 @@ public sealed class KnightTeamsPolicyReachTests
     }
 
     // ======================================================================================================
-    //  [Revisão dirigida] AK-TEAMS-007 só conclui quando a política legada AINDA governa os aplicativos
+    //  [Revisão dirigida] AK-TEAMS-007 NÃO CONCLUI: a leitura que diria qual modelo governa não é acessível
     // ======================================================================================================
 
     private static KnightConfigurationDocument AppPolicy(string identity, string globalType) =>
         KnightTenantConfiguration.Document(TeamsAppPermissionPolicyConfiguration.PolicyType + ":" + identity, null,
             new TeamsAppPermissionPolicyConfiguration(identity, "AllowedAppList", 12, globalType, 4, "AllowedAppList", 2));
 
-    private static KnightConfigurationDocument Availability(int appsRead, int withAssignment) =>
-        KnightTenantConfiguration.Document(TeamsAppAvailabilityModel.ExternalId, null,
-            new TeamsAppAvailabilityModel(appsRead, withAssignment, withAssignment, 0, 0));
-
     private static readonly KnightCapabilityStatus AppPolicies = Cap(KnightCapability.TeamsAppPermissionPolicies);
-    private static readonly KnightCapabilityStatus AppAvailability = Cap(KnightCapability.TeamsAppAvailability);
-
-    /// <summary>Locatário LEGADO comprovado: nenhum aplicativo com disponibilidade própria → avalia normalmente.</summary>
-    [Fact]
-    public void TenantLegadoComprovado_AvaliaAPoliticaDePermissaoDeAplicativos()
-    {
-        var aprovado = Eval("AK-TEAMS-007", Ctx(
-            new[] { AppPolicy("Global", "AllowedAppList"), Availability(40, 0) }, AppPolicies, AppAvailability, Assignments));
-        aprovado.Status.Should().Be(KnightIndicatorStatus.Passed);
-
-        var exposto = Eval("AK-TEAMS-007", Ctx(
-            new[] { AppPolicy("Global", "BlockedAppList"), Availability(40, 0) }, AppPolicies, AppAvailability, Assignments));
-        exposto.Status.Should().Be(KnightIndicatorStatus.Exposed);
-    }
 
     /// <summary>
-    /// DEFEITO REPRODUZIDO: locatário MIGRADO para ACM/UAM recebia APROVAÇÃO por uma política de permissão que,
-    /// segundo a documentação oficial, não pode mais ser acessada, editada nem usada naquele locatário. Agora o
-    /// controle não conclui; preserva a configuração como evidência e diz o que falta para avaliar.
-    /// https://learn.microsoft.com/en-us/powershell/module/microsoftteams/get-csteamsapppermissionpolicy
+    /// DEFEITO REPRODUZIDO (1ª revisão): uma política de permissão “com lista de permitidos” APROVAVA o critério,
+    /// embora a documentação oficial diga que, em locatário migrado para ACM/UAM, essas políticas não podem mais
+    /// ser acessadas, editadas nem usadas — ou seja, o que foi lido pode não governar nada.
+    ///
+    /// DEFEITO REPRODUZIDO (2ª revisão): a condição de aplicabilidade foi construída sobre Get-AllM365TeamsApps,
+    /// comando que a documentação oficial lista entre os NÃO SUPORTADOS com autenticação de aplicativo — a única
+    /// que este conector usa. A leitura nunca funcionaria no fluxo real; só nos dublês do teste.
+    /// https://learn.microsoft.com/en-us/microsoftteams/teams-powershell-application-authentication
+    ///
+    /// O desfecho correto, hoje, é um só: NÃO AVALIADO — para QUALQUER valor da configuração legada, inclusive o
+    /// que antes aprovava e o que antes reprovava. A configuração é preservada como evidência.
     /// </summary>
-    [Fact]
-    public void TenantMigradoParaAcm_NaoConcluiPelaConfiguracaoLegada_MasAPreservaComoEvidencia()
+    [Theory]
+    [InlineData("AllowedAppList")]   // antes: aprovava
+    [InlineData("BlockedAppList")]   // antes: reprovava
+    public void AcessoAAplicativos_NaoConclui_QualquerQueSejaAConfiguracaoLegada(string globalType)
     {
-        var o = Eval("AK-TEAMS-007", Ctx(
-            new[] { AppPolicy("Global", "AllowedAppList"), Availability(40, 40) }, AppPolicies, AppAvailability, Assignments));
-
-        o.Status.Should().Be(KnightIndicatorStatus.NotApplicable);
-        o.Status.Should().NotBe(KnightIndicatorStatus.Passed);
-        o.NotEvaluatedReason.Should().Contain("centrado em aplicativos").And.Contain("disponibilidade");
-        o.EvidenceObjects.Should().Contain(e => e.Detail!.Contains("preservada como evidência"));
-    }
-
-    /// <summary>Estado DESCONHECIDO (a leitura do modelo não concluiu): também não conclui pela legada.</summary>
-    [Fact]
-    public void ModeloDeGovernoDesconhecido_NaoConcluiPelaConfiguracaoLegada()
-    {
-        var o = Eval("AK-TEAMS-007", Ctx(
-            new[] { AppPolicy("Global", "AllowedAppList") },
-            AppPolicies,
-            Cap(KnightCapability.TeamsAppAvailability, KnightCapabilityOutcome.InsufficientPermission,
-                "Permissão insuficiente para esta leitura."),
-            Assignments));
+        var o = Eval("AK-TEAMS-007", Ctx(new[] { AppPolicy("Global", globalType) }, AppPolicies, Assignments));
 
         o.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
-        o.NotEvaluatedReason.Should().Contain("não foi possível determinar qual modelo governa")
-            .And.Contain("Get-AllM365TeamsApps");
+        o.Status.Should().NotBe(KnightIndicatorStatus.Passed);
+        o.Status.Should().NotBe(KnightIndicatorStatus.Exposed);
+
+        // O motivo nomeia a causa REAL — incompatibilidade de autenticação — e não uma falta de permissão.
+        o.NotEvaluatedReason.Should().Contain("não é possível determinar qual modelo governa")
+            .And.Contain("NÃO SUPORTADOS com autenticação de aplicativo");
+        o.NotEvaluatedReason.Should().NotContain("Leitor do Teams");
+        o.NotEvaluatedReason.Should().NotContain("permissão insuficiente");
+
+        // E a configuração lida não é descartada: ela vira evidência, com a ressalva de que não sustenta veredito.
         o.EvidenceObjects.Should().Contain(e => e.Detail!.Contains("preservada como evidência"));
     }
 
     /// <summary>
-    /// A presença de políticas legadas NÃO é, por si só, prova de que o locatário não migrou: sem a leitura do
-    /// modelo novo, o resultado é indeterminado — nunca aprovação.
+    /// Ausência de políticas legadas também não conclui: não é migração comprovada nem conformidade.
     /// </summary>
     [Fact]
-    public void PoliticasLegadasDevolvidas_NaoProvamPorSiSoQueOTenantNaoMigrou()
+    public void AcessoAAplicativos_SemPoliticaAlguma_TambemNaoConclui()
     {
-        var o = Eval("AK-TEAMS-007", Ctx(
-            new[] { AppPolicy("Global", "AllowedAppList"), AppPolicy("Tag:Piloto", "AllowedAppList") },
-            AppPolicies, Assignments));
-
+        var o = Eval("AK-TEAMS-007", Ctx(Array.Empty<KnightConfigurationDocument>(), AppPolicies, Assignments));
         o.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
     }
 

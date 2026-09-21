@@ -97,7 +97,7 @@ internal static class TeamsDiagnosticScrubber
 
         if (Jwt.IsMatch(id)) return Marker;
         foreach (var segment in id.Split(IdentifierSeparators, StringSplitOptions.RemoveEmptyEntries))
-            if (OpaqueSegment.IsMatch(segment))
+            if (IsOpaque(segment))
                 return Marker;
 
         return id;
@@ -105,8 +105,24 @@ internal static class TeamsDiagnosticScrubber
 
     private static readonly char[] IdentifierSeparators = ['/', '.', '-', ':', '_'];
 
-    /// <summary>Um SEGMENTO contínuo longo o bastante para ser um segredo codificado, e não uma palavra.</summary>
-    private static readonly Regex OpaqueSegment = new(@"^[A-Za-z0-9+=]{24,}$", RegexOptions.Compiled);
+    /// <summary>
+    /// Um SEGMENTO contínuo longo o bastante para ser um segredo codificado — e que não seja uma PALAVRA.
+    ///
+    /// [Revisão dirigida] Só o comprimento não serve como critério: nomes técnicos legítimos passam de 24
+    /// caracteres com folga (UnauthorizedAccessException tem 27), e redigi-los apaga justamente o diagnóstico que
+    /// o operador precisa — sanitizar não pode custar a causa. Um segredo codificado, por outro lado, praticamente
+    /// nunca é só letras em CamelCase: base64 e hexadecimal trazem dígitos, “+”, “=” ou uma caixa uniforme.
+    ///
+    /// Por isso o segmento é redigido quando é longo E NÃO tem a forma de nome composto (letras, com maiúsculas e
+    /// minúsculas misturadas). O critério é conservador nos dois sentidos: uma cadeia longa só de dígitos, só de
+    /// maiúsculas ou com sinais de codificação continua saindo como <see cref="Marker"/>.
+    /// </summary>
+    private static bool IsOpaque(string segment) =>
+        segment.Length >= 24 && !NameLikeSegment.IsMatch(segment);
+
+    /// <summary>Nome composto: só letras, com pelo menos uma maiúscula e pelo menos uma minúscula.</summary>
+    private static readonly Regex NameLikeSegment = new(
+        @"^(?=.*[a-z])(?=.*[A-Z])[A-Za-z]+$", RegexOptions.Compiled);
 
     private static readonly Regex Jwt = new(
         @"eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]*", RegexOptions.Compiled);

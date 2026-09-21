@@ -25,6 +25,25 @@ namespace AegisScore.Infrastructure.Tests.Knight;
 /// </summary>
 public sealed class TeamsAdapterTransportTests
 {
+    /// <summary>Como o script se comporta no CENÁRIO SINTÉTICO de coleta (o caminho de ERRO do adaptador).</summary>
+    public enum Coleta
+    {
+        /// <summary>Falhou e classificou: é o único desfecho aceitável.</summary>
+        FalhaClassificada,
+
+        /// <summary>Falhou sem categoria: o operador fica sem saber o que houve.</summary>
+        SemCategoria,
+
+        /// <summary>Caiu no documento mínimo de emergência: a montagem do resultado quebrou.</summary>
+        DocumentoMinimo,
+
+        /// <summary>Devolveu o token recebido dentro do diagnóstico.</summary>
+        VazaMarcador,
+
+        /// <summary>Estabeleceu conexão — impossível com marcadores, e inaceitável nesta verificação.</summary>
+        Conecta,
+    }
+
     private const string ResourceName = "AegisScore.Knight.Teams.Collect.ps1";
 
     private static string Script()
@@ -45,13 +64,27 @@ public sealed class TeamsAdapterTransportTests
         foreach (var comando in new[]
         {
             "Get-CsTeamsClientConfiguration", "Get-CsTenantFederationConfiguration", "Get-CsTeamsMeetingPolicy",
-            "Get-CsTeamsMessagingPolicy", "Get-CsTeamsAppPermissionPolicy", "Get-AllM365TeamsApps",
-            "Get-CsGroupPolicyAssignment",
+            "Get-CsTeamsMessagingPolicy", "Get-CsTeamsAppPermissionPolicy", "Get-CsGroupPolicyAssignment",
         })
             script.Should().Contain(comando);
 
         foreach (var proibido in new[] { "Set-Cs", "New-Cs", "Remove-Cs", "Grant-Cs", "Update-Cs", "Invoke-RestMethod", "Invoke-WebRequest" })
             script.Should().NotContain(proibido, $"o adaptador é somente leitura e não fala com endereço nenhum por conta própria ({proibido})");
+
+        // [Revisão dirigida] Nenhum comando da lista oficial de NÃO SUPORTADOS com autenticação de aplicativo — que
+        // é a única forma usada por este conector. Chamá-los produziria falha por motivo errado e diagnóstico
+        // enganoso ("sem permissão" no lugar de "não suportado"). A ausência é verificada no EXECUTADO: nas linhas
+        // de comando, não nos comentários que explicam por que eles não estão aqui.
+        // https://learn.microsoft.com/en-us/microsoftteams/teams-powershell-application-authentication
+        var executado = string.Join("\n", script.Split('\n')
+            .Where(l => !l.TrimStart().StartsWith("#", StringComparison.Ordinal)));
+        foreach (var incompativel in new[]
+        {
+            "Get-AllM365TeamsApps", "Get-M365TeamsApp", "Update-M365TeamsApp", "Get-M365UnifiedTenantSettings",
+            "Get-M365UnifiedCustomPendingApps", "New-Team", "Get-MultiGeoRegion", "Set-CsOnlineApplicationInstance",
+        })
+            executado.Should().NotContain(incompativel,
+                $"{incompativel} não é suportado com autenticação de aplicativo e não pode estar no fluxo operacional");
 
         // A sessão é sempre encerrada, e a conexão é a de APLICATIVO por tokens (não por certificado).
         script.Should().Contain("Disconnect-MicrosoftTeams");
@@ -138,33 +171,138 @@ public sealed class TeamsAdapterTransportTests
         script.Should().Contain("DocumentoDeResultadoIndisponivel");
     }
 
+    // ======================================================================================================
+    //  [Revisão dirigida] O DIAGNÓSTICO da falha de transporte, com um processo auxiliar CONTROLADO
+    //
+    //  O auxiliar é um programa de verdade, escrito pelo teste: ele recebe (ou não) a entrada padrão, escreve um
+    //  diagnóstico SINTÉTICO conhecido em erro-padrão e termina sem resultado. Assim o teste sabe exatamente o
+    //  que entrou, e pode exigir o que sai: a causa útil preservada e os marcadores de segredo ausentes.
+    //  Nenhuma credencial real é usada — os “segredos” são marcadores inventados aqui.
+    // ======================================================================================================
+
+    /// <summary>Marcadores SINTÉTICOS. Nenhum deles é credencial de nada; existem só para serem procurados.</summary>
+    private const string TokenSintetico =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZWdpcy1tYXJjYWRvci1zaW50ZXRpY28ifQ.YWVnaXNNYXJjYWRvclNpbnRldGljb0Fzc2luYXR1cmE";
+    private const string SegredoOpaco = "AEGISMARCADORSINTETICOxQ7bT2mK9wL4vR8nZ1cY6dH3sJ0pA5uF";
+    private const string CausaUtil = "Get-CsTeamsMeetingPolicy nao respondeu";
+
     /// <summary>
-    /// Quando o processo termina sem resultado, o diagnóstico SANITIZADO do erro-padrão entra na falha de
-    /// transporte: sem ele o operador fica com o código de saída e mais nada. O texto já passou pela
-    /// sanitização, e não é ele que chega ao ADM nem ao relatório — o coletor monta a mensagem do cliente.
+    /// Escreve um programa auxiliar e devolve o caminho dele. O adaptador chama o executável com argumentos de
+    /// PowerShell, que este programa simplesmente ignora — e é o que se quer: o comportamento sob teste é o do
+    /// ADAPTADOR diante de um processo que termina sem resultado, não o de nenhum interpretador.
+    /// </summary>
+    private static string Auxiliar(string nome, bool consomeEntrada, string erroPadrao, int codigoDeSaida)
+    {
+        var pasta = Directory.CreateDirectory(
+            Path.Combine(Path.GetTempPath(), "aegis-teams-aux-" + Guid.NewGuid().ToString("n"))).FullName;
+        var linhas = erroPadrao.Split('\n').Where(l => l.Trim().Length > 0).Select(l => l.Trim()).ToList();
+
+        if (OperatingSystem.IsWindows())
+        {
+            var cmd = Path.Combine(pasta, nome + ".cmd");
+            File.WriteAllText(cmd,
+                "@echo off\r\n"
+                + (consomeEntrada ? "more > nul\r\n" : "")
+                + string.Concat(linhas.Select(l => "1>&2 echo " + l + "\r\n"))
+                + "exit /b " + codigoDeSaida + "\r\n",
+                new UTF8Encoding(false));
+            return cmd;
+        }
+
+        var sh = Path.Combine(pasta, nome + ".sh");
+        File.WriteAllText(sh,
+            "#!/bin/sh\n"
+            + (consomeEntrada ? "cat > /dev/null\n" : "")
+            + string.Concat(linhas.Select(l => "echo \"" + l + "\" >&2\n"))
+            + "exit " + codigoDeSaida + "\n",
+            new UTF8Encoding(false));
+        File.SetUnixFileMode(sh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return sh;
+    }
+
+    /// <summary>
+    /// O caminho normal da falha: o auxiliar CONSOME a entrada, escreve um diagnóstico com segredos sintéticos
+    /// misturados à causa útil e sai com código próprio. O adaptador deve entregar a causa e nomear o código —
+    /// e nenhum dos marcadores pode sobreviver, incluindo o token que a própria chamada entregou ao processo.
     /// </summary>
     [Fact]
-    public async Task ProcessoSemResultado_TrazODiagnosticoSanitizadoNaFalhaDeTransporte()
+    public async Task ProcessoSemResultado_TrazACausaUtilSanitizada_ESemNenhumSegredo()
     {
-        // Um executável que EXISTE, recusa os argumentos do adaptador e termina na hora — sem jamais ler a
-        // entrada padrão. É o que acontece de verdade quando o runtime da imagem não aceita o pedido.
-        //
-        // Há uma CORRIDA entre a escrita dos tokens e a morte do processo, e ela cai de um lado em cada
-        // sistema: no shell POSIX do CI a escrita perde e o cano rompe (foi assim que o defeito apareceu — o
-        // adaptador trocava a causa real por “a comunicação falhou” e perdia código de saída e diagnóstico);
-        // no Windows a escrita costuma ganhar e o caminho normal é exercitado. O teste cobre os DOIS finais
-        // porque exige a mesma garantia em ambos: a falha nomeia o código de saída e traz o diagnóstico.
+        var diagnostico =
+            "Authorization: Bearer " + TokenSintetico + "\n"
+            + CausaUtil + " (client_secret=" + SegredoOpaco + ")\n"
+            + "token de entrada ecoado: " + TokenSintetico;
+
         var reader = new PowerShellTeamsAdminReader(new TeamsPowerShellOptions
         {
-            Executable = OperatingSystem.IsWindows()
-                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "where.exe")
-                : "/bin/sh",
-            Timeout = TimeSpan.FromSeconds(10),
+            Executable = Auxiliar("consome", consomeEntrada: true, diagnostico, codigoDeSaida: 7),
+            Timeout = TimeSpan.FromSeconds(30),
+        });
+
+        var erro = await FluentActions
+            .Awaiting(() => reader.ReadAsync(new TeamsAdminCredentials("locatario-sintetico", TokenSintetico, SegredoOpaco)))
+            .Should().ThrowAsync<TeamsAdminTransportException>();
+        var mensagem = erro.Which.Message;
+
+        // 1) A CAUSA ÚTIL chega a quem opera — é ela que diz o que investigar.
+        mensagem.Should().Contain("código 7", "sem o código de saída, o diagnóstico não identifica o desfecho do processo");
+        mensagem.Should().Contain("sem devolver resultado");
+        mensagem.Should().Contain(CausaUtil, "a causa é justamente o que não pode ser perdido na sanitização");
+
+        // 2) NENHUM marcador sintético sobrevive — nem por igualdade (tokens da chamada), nem por forma.
+        foreach (var marcador in new[] { TokenSintetico, SegredoOpaco, "AEGISMARCADORSINTETICO" })
+            mensagem.Should().NotContain(marcador, "segredo não atravessa a fronteira do diagnóstico");
+        mensagem.Should().NotContain("Bearer ey", "o cabeçalho de autorização não sai em texto");
+        mensagem.Should().Contain("[REDIGIDO]", "o que foi removido é declarado, não some em silêncio");
+    }
+
+    /// <summary>
+    /// [Revisão dirigida] O processo que termina ANTES de consumir a entrada. Foi assim que o CI reprovou: o
+    /// adaptador escreve os tokens, o cano rompe, e o IOException era tratado ANTES da espera pelo processo —
+    /// trocando a causa real (“terminou com código N” + diagnóstico) por “a comunicação falhou”.
+    ///
+    /// O rompimento aqui é DETERMINÍSTICO nos dois sistemas: o auxiliar nunca lê a entrada e a credencial
+    /// sintética é maior que o buffer do cano, então a escrita não tem como se completar. A garantia exigida é a
+    /// mesma do caso anterior — causa útil preservada, segredo nenhum.
+    /// </summary>
+    [Fact]
+    public async Task ProcessoQueTerminaAntesDeConsumirAEntrada_PreservaACausa_ENaoAComunicacaoFalhou()
+    {
+        var tokenEnorme = TokenSintetico + new string('A', 256 * 1024);
+
+        var reader = new PowerShellTeamsAdminReader(new TeamsPowerShellOptions
+        {
+            Executable = Auxiliar("ignora", consomeEntrada: false,
+                CausaUtil + " (client_secret=" + SegredoOpaco + ")", codigoDeSaida: 3),
+            Timeout = TimeSpan.FromSeconds(30),
+        });
+
+        var erro = await FluentActions
+            .Awaiting(() => reader.ReadAsync(new TeamsAdminCredentials("locatario-sintetico", tokenEnorme, SegredoOpaco)))
+            .Should().ThrowAsync<TeamsAdminTransportException>();
+        var mensagem = erro.Which.Message;
+
+        mensagem.Should().NotContain("A comunicação com o processo de coleta do Microsoft Teams falhou",
+            "o cano rompido diz que o processo já terminou — não é a causa, é a consequência dela");
+        mensagem.Should().Contain("código 3").And.Contain("sem devolver resultado");
+        mensagem.Should().Contain(CausaUtil);
+        foreach (var marcador in new[] { TokenSintetico, SegredoOpaco, "AEGISMARCADORSINTETICO" })
+            mensagem.Should().NotContain(marcador);
+    }
+
+    /// <summary>Processo que termina sem resultado E sem diagnóstico: o adaptador diz isso, em vez de calar.</summary>
+    [Fact]
+    public async Task ProcessoSemResultadoESemDiagnostico_DizQueNaoHouveDiagnostico()
+    {
+        var reader = new PowerShellTeamsAdminReader(new TeamsPowerShellOptions
+        {
+            Executable = Auxiliar("mudo", consomeEntrada: true, "", codigoDeSaida: 4),
+            Timeout = TimeSpan.FromSeconds(30),
         });
 
         var erro = await FluentActions.Awaiting(() => reader.CheckRuntimeAsync())
             .Should().ThrowAsync<TeamsAdminTransportException>();
-        erro.Which.Message.Should().Contain("sem devolver resultado");
+        erro.Which.Message.Should().Contain("código 4").And.Contain("não escreveu diagnóstico algum");
     }
 
     [Fact]
@@ -244,6 +382,8 @@ public sealed class TeamsAdapterTransportTests
 
         codigo.Should().Be(0);
         saida.ToString().Should().Contain(TeamsRuntimeDiagnostics.SuccessMarker).And.Contain("MicrosoftTeams=7.9.0");
+        saida.ToString().Should().Contain("module-check=OK").And.Contain("coleta-sintetica=OK",
+            "a marca de sucesso só é impressa depois dos DOIS cenários — o de sucesso e o de erro");
     }
 
     [Fact]
@@ -274,6 +414,67 @@ public sealed class TeamsAdapterTransportTests
 
         codigo.Should().Be(1);
         saida.ToString().Should().Contain("FALHA no transporte");
+    }
+
+    /// <summary>
+    /// [Revisão dirigida] DEFEITO REPRODUZIDO: o identificador técnico do erro era redigido só por ser longo, e
+    /// nomes de exceção legítimos passam de 24 caracteres com folga. O diagnóstico saía “[REDIGIDO]” e o operador
+    /// perdia a única pista da causa — sanitizar não pode custar a informação que justifica sanitizar.
+    ///
+    /// O que continua sendo redigido: cadeias com cara de segredo codificado. O que passa: nome composto.
+    /// </summary>
+    [Theory]
+    [InlineData("UnauthorizedAccessException", true)]                       // 27 caracteres, nome de tipo
+    [InlineData("DocumentoDeResultadoIndisponivel", true)]                  // 32 caracteres, sentinela do script
+    [InlineData("TooManyRequests/HttpRequestException", true)]              // dois nomes com separador
+    [InlineData("CommandNotFound", true)]
+    [InlineData("AQABAAEAAADnfolhJpSnRYB1SVj4xhFRm1x9k2LpQ7vT4wXyZ0aB", false)]  // dígitos: base64
+    [InlineData("0123456789012345678901234567890123", false)]              // só dígitos
+    [InlineData("ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEF", false)]                // caixa uniforme
+    [InlineData("ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI9cCI6", false)]            // base64 com “=”
+    public void IdentificadorTecnico_PreservaNomeDeErro_ERedigeSegredoCodificado(string id, bool preservado)
+    {
+        var saida = PowerShellTeamsAdminReader.Parse(
+            $$"""{"connected":false,"connectionErrorCategory":"Error","connectionErrorId":"{{id}}","reads":[]}""");
+
+        if (preservado)
+            saida.ConnectionErrorId.Should().Be(id, "é um nome técnico, não um segredo — e é ele que diz a causa");
+        else
+            saida.ConnectionErrorId.Should().Be("[REDIGIDO]", "tem forma de segredo codificado");
+    }
+
+    /// <summary>
+    /// [Revisão dirigida] A verificação não para no module-check: ela executa o script no CAMINHO DE ERRO, com
+    /// marcadores no lugar dos tokens, e exige um documento de resultado íntegro. É esse cenário que demonstra
+    /// comportamento — e cada forma de quebrá-lo reprova, sem exceção.
+    /// </summary>
+    [Theory]
+    [InlineData(Coleta.SemCategoria, "não classificou a falha")]
+    [InlineData(Coleta.DocumentoMinimo, "documento mínimo de emergência")]
+    [InlineData(Coleta.VazaMarcador, "marcador sintético de segredo apareceu")]
+    [InlineData(Coleta.Conecta, "não pode resultar em conexão estabelecida")]
+    public async Task CenarioSintetico_CadaQuebraDoContratoDeSaida_Reprova(Coleta coleta, string motivo)
+    {
+        var saida = new StringWriter();
+        var codigo = await TeamsRuntimeDiagnostics.RunAsync(new RuntimeFake("7.9.0", 0, coleta), saida);
+
+        codigo.Should().Be(1);
+        saida.ToString().Should().Contain(motivo).And.NotContain(TeamsRuntimeDiagnostics.SuccessMarker);
+
+        // O module-check passou: a reprovação é do cenário sintético, e a saída deixa isso claro.
+        saida.ToString().Should().Contain("module-check=OK").And.NotContain("coleta-sintetica=OK");
+    }
+
+    /// <summary>Sem documento algum no cenário sintético, a verificação reprova dizendo que o contrato quebrou.</summary>
+    [Fact]
+    public async Task CenarioSintetico_SemDocumentoDeResultado_Reprova()
+    {
+        var saida = new StringWriter();
+        var codigo = await TeamsRuntimeDiagnostics.RunAsync(new SemColeta(), saida);
+
+        codigo.Should().Be(1);
+        saida.ToString().Should().Contain("não devolveu documento de resultado")
+            .And.NotContain(TeamsRuntimeDiagnostics.SuccessMarker);
     }
 
     /// <summary>A verificação lê as opções REAIS do ambiente — é isso que a torna equivalente ao caminho de coleta.</summary>
@@ -343,14 +544,43 @@ public sealed class TeamsAdapterTransportTests
 
     // ---- Duplas de teste ------------------------------------------------------------------------------
 
-    private sealed class RuntimeFake : ITeamsAdminReader
+    internal sealed class RuntimeFake : ITeamsAdminReader
     {
         private readonly string? _modulo;
         private readonly int _ausentes;
-        public RuntimeFake(string? modulo, int ausentes) { _modulo = modulo; _ausentes = ausentes; }
+        private readonly Coleta _coleta;
 
-        public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
-            CheckRuntimeAsync(ct);
+        public RuntimeFake(string? modulo, int ausentes, Coleta coleta = Coleta.FalhaClassificada)
+        {
+            _modulo = modulo;
+            _ausentes = ausentes;
+            _coleta = coleta;
+        }
+
+        public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default)
+        {
+            ArgumentNullException.ThrowIfNull(credentials);
+            var json = JsonSerializer.Serialize(new
+            {
+                runtime = new { powerShell = "7.4.7", module = _modulo, platform = "Unix" },
+                connected = _coleta == Coleta.Conecta,
+                connectionErrorCategory = _coleta switch
+                {
+                    Coleta.SemCategoria or Coleta.Conecta => null,
+                    Coleta.DocumentoMinimo => "Error",
+                    _ => "Authentication",
+                },
+                connectionErrorId = _coleta switch
+                {
+                    Coleta.SemCategoria or Coleta.Conecta => null,
+                    Coleta.DocumentoMinimo => "DocumentoDeResultadoIndisponivel",
+                    Coleta.VazaMarcador => credentials.GraphToken,
+                    _ => "InvalidAccessToken/AuthenticationException",
+                },
+                reads = Array.Empty<object>(),
+            });
+            return Task.FromResult(PowerShellTeamsAdminReader.Parse(json));
+        }
 
         public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default)
         {
@@ -358,7 +588,7 @@ public sealed class TeamsAdapterTransportTests
             {
                 "Connect-MicrosoftTeams", "Disconnect-MicrosoftTeams", "Get-CsTeamsClientConfiguration",
                 "Get-CsTenantFederationConfiguration", "Get-CsTeamsMeetingPolicy", "Get-CsTeamsMessagingPolicy",
-                "Get-CsTeamsAppPermissionPolicy", "Get-AllM365TeamsApps", "Get-CsGroupPolicyAssignment",
+                "Get-CsTeamsAppPermissionPolicy", "Get-CsGroupPolicyAssignment",
             };
             var reads = comandos.Select((c, i) => new
             {
@@ -380,6 +610,17 @@ public sealed class TeamsAdapterTransportTests
             });
             return Task.FromResult(PowerShellTeamsAdminReader.Parse(json));
         }
+    }
+
+    /// <summary>Module-check passa, mas a coleta sintética não devolve documento — o contrato quebrou no erro.</summary>
+    private sealed class SemColeta : ITeamsAdminReader
+    {
+        private readonly RuntimeFake _ok = new("7.9.0", 0);
+
+        public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) => _ok.CheckRuntimeAsync(ct);
+
+        public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            throw new TeamsAdminTransportException("O adaptador do Microsoft Teams terminou com código 1 sem devolver resultado.");
     }
 
     private sealed class SemRuntime : ITeamsAdminReader

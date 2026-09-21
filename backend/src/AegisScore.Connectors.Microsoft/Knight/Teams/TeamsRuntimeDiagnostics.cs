@@ -24,10 +24,15 @@ namespace AegisScore.Connectors.Microsoft.Knight.Teams;
 ///   • a materialização do script EMBUTIDO no assembly, com as permissões que o produto aplica;
 ///   • o processo de PowerShell iniciado com o executável configurado e o <c>PSModulePath</c> que o produto monta;
 ///   • a entrega do pedido pela ENTRADA PADRÃO e a leitura da resposta pelo analisador do produto;
-///   • a importação OFFLINE do módulo fixado e a existência de cada comando que a coleta executa.
+///   • a importação OFFLINE do módulo fixado e a existência de cada comando que a coleta executa;
+///   • [Revisão dirigida] a EXECUÇÃO REAL do script no caminho de ERRO, com um cenário sintético: uma tentativa de
+///     conexão com credenciais que são marcadores inventados. Procurar a palavra “catch” no arquivo não demonstra
+///     comportamento algum; aqui o script roda e precisa devolver um documento de resultado legível, com categoria
+///     e sem nenhum dos marcadores. É isto que prova, no runtime da imagem, que o contrato de saída se sustenta
+///     quando algo dá errado — e que a montagem desse documento não quebra na conversão da lista de leituras.
 ///
-/// O que ela NÃO faz: não autentica, não conecta em locatário nenhum, não pede credencial e não lê configuração de
-/// cliente algum. É validação de ambiente — não é homologação.
+/// O que ela NÃO faz: não autentica em locatário algum (os marcadores não autenticam em lugar nenhum e o passo roda
+/// SEM REDE), não pede credencial e não lê configuração de cliente. É validação de ambiente — não é homologação.
 /// </summary>
 public static class TeamsRuntimeDiagnostics
 {
@@ -112,6 +117,76 @@ public static class TeamsRuntimeDiagnostics
             return 1;
         }
 
+        output.WriteLine("module-check=OK");
+
+        return await RunSyntheticFailureAsync(reader, output, ct);
+    }
+
+    /// <summary>Marcadores SINTÉTICOS. Não são credencial de nada: existem para serem procurados na saída.</summary>
+    private const string SyntheticToken = "AEGIS-MARCADOR-SINTETICO-NAO-E-CREDENCIAL-7Q2bT9kM4wL1vR8n";
+
+    /// <summary>
+    /// [Revisão dirigida] Executa o script REAL no caminho de erro e verifica o contrato de saída.
+    ///
+    /// O cenário: uma coleta pedida com dois marcadores no lugar dos tokens, num processo sem rede. A conexão não
+    /// tem como acontecer — e é justamente esse o ponto. O que se exige do script é que, tendo falhado, ele ainda
+    /// assim devolva um DOCUMENTO de resultado íntegro: com a categoria do erro, sem exceção vazando e sem
+    /// nenhum dos marcadores na saída. Um erro dentro do próprio tratamento de erro apareceria aqui.
+    /// </summary>
+    private static async Task<int> RunSyntheticFailureAsync(
+        ITeamsAdminReader reader, TextWriter output, CancellationToken ct)
+    {
+        TeamsAdminOutput result;
+        try
+        {
+            result = await reader.ReadAsync(
+                new TeamsAdminCredentials("00000000-0000-0000-0000-000000000000", SyntheticToken, SyntheticToken), ct);
+        }
+        catch (TeamsAdminTransportException ex)
+        {
+            // Sem documento: o script quebrou o contrato de saída no caminho de erro.
+            output.WriteLine("FALHA no cenário sintético: o adaptador não devolveu documento de resultado. " + ex.Message);
+            return 1;
+        }
+
+        output.WriteLine(
+            $"cenário sintético: conectado={result.Connected} categoria={result.ConnectionErrorCategory ?? "(nenhuma)"} "
+            + $"diagnóstico={result.ConnectionErrorId ?? "(nenhum)"} leituras={result.Reads.Count}");
+
+        if (result.Connected)
+        {
+            output.WriteLine("FALHA: o cenário sintético não pode resultar em conexão estabelecida.");
+            return 1;
+        }
+
+        if (string.IsNullOrWhiteSpace(result.ConnectionErrorCategory))
+        {
+            output.WriteLine("FALHA: o script não classificou a falha — sem categoria, o operador não sabe o que houve.");
+            return 1;
+        }
+
+        // O documento MÍNIMO existe como última linha de defesa. Se foi ELE que saiu, a montagem normal quebrou:
+        // é exatamente o defeito da conversão da lista de leituras, e não pode passar por sucesso.
+        if (string.Equals(result.ConnectionErrorId, "DocumentoDeResultadoIndisponivel", StringComparison.Ordinal))
+        {
+            output.WriteLine(
+                "FALHA: o script caiu no documento mínimo de emergência — a montagem do resultado quebrou no "
+                + "caminho de erro. A coleta não funcionaria neste runtime.");
+            return 1;
+        }
+
+        var saida = string.Join(" ", new[]
+        {
+            result.ConnectionErrorCategory, result.ConnectionErrorId,
+            string.Join(" ", result.Reads.Select(r => r.Command + " " + r.ErrorCategory + " " + r.ErrorId)),
+        });
+        if (saida.Contains(SyntheticToken, StringComparison.Ordinal))
+        {
+            output.WriteLine("FALHA: o marcador sintético de segredo apareceu na saída do adaptador.");
+            return 1;
+        }
+
+        output.WriteLine("coleta-sintetica=OK");
         output.WriteLine(SuccessMarker);
         return 0;
     }

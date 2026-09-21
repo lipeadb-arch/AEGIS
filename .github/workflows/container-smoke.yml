@@ -266,7 +266,13 @@ jobs:
           echo "--- usuário efetivo da aplicação e executável disponível ---"
           docker run --rm --entrypoint /bin/sh "$IMAGE" -c 'id -u; test -x /usr/bin/pwsh && echo pwsh-executavel'
 
-          echo "--- adaptador de coleta: script embutido em modo module-check, sem rede e sem locatário ---"
+          # O adaptador REAL roda aqui: opções do ambiente -> script embutido -> processo -> PSModulePath ->
+          # entrada padrão -> importação offline. Dois cenários, ambos SEM REDE e sem locatário nenhum:
+          #   module-check    - o módulo importa e cada comando da coleta existe (caminho de SUCESSO);
+          #   coleta-sintetica - o script roda com marcadores no lugar dos tokens e, tendo falhado, ainda
+          #                      devolve um documento de resultado íntegro (caminho de ERRO).
+          # O segundo cenário é o que demonstra comportamento: procurar "catch" no arquivo não demonstra nada.
+          echo "--- adaptador de coleta: execução real do script embutido, sem rede e sem locatário ---"
           set +e
           OUT="$(docker run --rm --network none --entrypoint dotnet "$IMAGE" \
             /app/AegisScore.Api.dll --knight-teams-runtime-check 2>&1)"
@@ -274,7 +280,15 @@ jobs:
           set -e
           echo "$OUT"
           if [ "$CODE" -ne 0 ]; then echo "runtime do Teams NAO validado (codigo $CODE)"; exit 1; fi
-          case "$OUT" in *"adaptador=OK"*) ;; *) echo "runtime do Teams NAO validado"; exit 1;; esac
+          for MARCA in "module-check=OK" "coleta-sintetica=OK" "adaptador=OK"; do
+            case "$OUT" in *"$MARCA"*) ;; *) echo "runtime do Teams NAO validado: falta $MARCA"; exit 1;; esac
+          done
+
+          # O marcador sintético de segredo não pode aparecer em NADA do que o processo escreveu.
+          case "$OUT" in
+            *"AEGIS-MARCADOR-SINTETICO"*)
+              echo "runtime do Teams NAO validado: marcador de segredo vazou para a saida"; exit 1;;
+          esac
 
       # 3) Smoke do container: rede + Postgres descartáveis, PKCS#12 sintético (grupo 1000, 0640),
       #    montado em /etc/secrets, app com valores 100% sintéticos. TLS interno desabilitado só aqui.

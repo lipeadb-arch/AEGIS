@@ -265,48 +265,18 @@ function Read-AppPermissionPolicies {
     }
 }
 
-function Read-AppAvailability {
-    <#
-        Modelo de DISPONIBILIDADE DE APLICATIVOS do gerenciamento centrado em aplicativos (ACM) / unificado (UAM).
-        É o que permite dizer QUAL modelo governa o acesso a aplicativos: a documentação oficial do
-        Get-CsTeamsAppPermissionPolicy declara que ele "só é aplicável a locatários que NÃO foram migrados para
-        ACM ou UAM", e a do ACM declara que, depois da migração, as políticas de permissão não podem mais ser
-        acessadas, editadas nem usadas.
-
-        O resultado é AGREGADO aqui, de propósito: o comando devolve, por aplicativo, o identificador e o
-        AssignedBy (o identificador de quem fez a última alteração — dado pessoal). Nada disso é necessário para
-        decidir qual modelo governa, então nada disso sai deste processo. Só contagens atravessam.
-    #>
-    Invoke-Read 'TeamsAppAvailability' 'Get-AllM365TeamsApps' {
-        $apps = @(Get-AllM365TeamsApps)
-        $total = $apps.Count
-        $withAssignment = 0
-        $everyone = 0
-        $usersAndGroups = 0
-        $noOne = 0
-
-        foreach ($app in $apps) {
-            $availability = Get-Prop $app 'AvailableTo'
-            if ($null -eq $availability) { continue }
-            $type = Get-Text $availability 'AssignmentType'
-            if ($null -eq $type) { continue }
-            $withAssignment++
-            switch -Regex ($type) {
-                '^(?i)everyone$' { $everyone++ }
-                '^(?i)usersandgroups$' { $usersAndGroups++ }
-                '^(?i)noone$' { $noOne++ }
-            }
-        }
-
-        @{
-            appsRead                = $total
-            appsWithAssignment      = $withAssignment
-            assignedToEveryone      = $everyone
-            assignedToUsersAndGroups = $usersAndGroups
-            assignedToNoOne         = $noOne
-        }
-    }
-}
+# NAO HA leitura do modelo ACM/UAM neste adaptador, e a ausencia e deliberada.
+#
+# Dizer QUAL modelo governa o acesso a aplicativos exigiria Get-AllM365TeamsApps (ou Get-M365TeamsApp /
+# Get-M365UnifiedTenantSettings). A documentacao oficial de autenticacao BASEADA EM APLICATIVO do modulo do
+# Teams lista todos esses comandos entre os NAO SUPORTADOS - e autenticacao por aplicativo e a unica que este
+# conector usa. Nao e falta de papel de diretorio: o comando nao funciona com esta forma de autenticacao, e
+# nenhum papel a mais muda isso.
+# https://learn.microsoft.com/en-us/microsoftteams/teams-powershell-application-authentication
+#
+# Chamar o comando assim mesmo produziria uma falha por motivo errado e um diagnostico enganoso. Por isso a
+# leitura nao existe aqui, e o criterio que dependeria dela (AK-TEAMS-007) permanece NAO AVALIADO, com a
+# dependencia declarada no proprio achado.
 
 function Read-PolicyAssignments {
     Invoke-Read 'TeamsPolicyAssignments' 'Get-CsGroupPolicyAssignment' {
@@ -351,7 +321,7 @@ try {
         $names = @(
             'Connect-MicrosoftTeams', 'Disconnect-MicrosoftTeams', 'Get-CsTeamsClientConfiguration',
             'Get-CsTenantFederationConfiguration', 'Get-CsTeamsMeetingPolicy', 'Get-CsTeamsMessagingPolicy',
-            'Get-CsTeamsAppPermissionPolicy', 'Get-AllM365TeamsApps', 'Get-CsGroupPolicyAssignment')
+            'Get-CsTeamsAppPermissionPolicy', 'Get-CsGroupPolicyAssignment')
         foreach ($n in $names) {
             $found = $null -ne (Get-Command $n -Module MicrosoftTeams -ErrorAction SilentlyContinue)
             $script:Reads.Add(@{
@@ -360,7 +330,7 @@ try {
                 errorId = $(if ($found) { $null } else { 'CommandNotFound' })
             })
         }
-        $result.reads = @($script:Reads)
+        $result.reads = $script:Reads.ToArray()
         $result | ConvertTo-Json -Depth 12 -Compress
         exit 0
     }
@@ -390,7 +360,6 @@ try {
         Read-MeetingPolicies
         Read-MessagingPolicies
         Read-AppPermissionPolicies
-        Read-AppAvailability
         Read-PolicyAssignments
     }
     finally {
@@ -399,7 +368,7 @@ try {
         try { Disconnect-MicrosoftTeams -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { }
     }
 
-    $result.reads = @($script:Reads)
+    $result.reads = $script:Reads.ToArray()
     $result | ConvertTo-Json -Depth 12 -Compress
     exit 0
 }
@@ -414,7 +383,7 @@ catch {
         $result.connected = $false
         $result.connectionErrorCategory = Get-ErrorCategory $registro
         $result.connectionErrorId = Get-ErrorId $registro
-        $result.reads = @($script:Reads)
+        $result.reads = $script:Reads.ToArray()
         $result | ConvertTo-Json -Depth 12 -Compress
     }
     catch {

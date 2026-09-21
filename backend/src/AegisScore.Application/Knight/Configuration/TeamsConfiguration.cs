@@ -169,95 +169,41 @@ public sealed record TeamsPolicyAssignment(
 }
 
 /// <summary>
-/// Resumo do modelo de DISPONIBILIDADE DE APLICATIVOS do locatário, lido por <c>Get-AllM365TeamsApps</c> — o
-/// comando oficial do gerenciamento centrado em aplicativos (ACM) / gerenciamento unificado (UAM).
+/// O que falta para avaliar o acesso a aplicativos do Teams — e por que ESTE conector não pode avaliá-lo.
 ///
-/// Por que este documento existe: a documentação oficial do <c>Get-CsTeamsAppPermissionPolicy</c> afirma que ele
-/// "só é aplicável a locatários que NÃO foram migrados para ACM ou UAM", e a do próprio ACM afirma que, depois da
-/// migração, "não é possível acessar, editar ou usar políticas de permissão". Sem saber qual dos dois modelos
-/// governa, aprovar um locatário pela configuração legada é aprovar uma configuração que pode não estar em vigor.
+/// O comando de leitura das políticas de permissão (<c>Get-CsTeamsAppPermissionPolicy</c>) é documentado como
+/// aplicável APENAS a locatários que não foram migrados para o gerenciamento centrado em aplicativos (ACM) ou
+/// unificado (UAM); depois da migração, essas políticas não podem mais ser acessadas, editadas nem usadas. Logo,
+/// encontrar políticas não prova que elas governem: pode ser resíduo do modelo antigo.
 ///
-/// O que é preservado é AGREGADO de propósito: contagens. Identificador de aplicativo e, principalmente, o
-/// identificador do usuário que fez a última alteração (<c>AssignedBy</c>) NÃO atravessam esta fronteira — não são
-/// necessários para decidir qual modelo governa, e o ADM não é lugar para dado pessoal que o critério não usa.
-/// </summary>
-/// <param name="AppsRead">Aplicativos que o comando devolveu no catálogo do locatário.</param>
-/// <param name="AppsWithAssignment">
-/// Quantos deles carregam uma DEFINIÇÃO DE DISPONIBILIDADE por aplicativo (<c>AvailableTo.AssignmentType</c>) —
-/// a forma de governo do ACM/UAM. É este número, e não a existência de políticas legadas, que demonstra o modelo.
-/// </param>
-public sealed record TeamsAppAvailabilityModel(
-    int AppsRead,
-    int AppsWithAssignment,
-    int AssignedToEveryone,
-    int AssignedToUsersAndGroups,
-    int AssignedToNoOne)
-{
-    public const string SchemaVersion = "aegis-config-teams-app-availability-v1";
-    public const string ExternalId = "teamsAppAvailabilityModel";
-}
-
-/// <summary>Qual modelo governa o acesso a aplicativos no locatário, segundo a coleta.</summary>
-public enum TeamsAppGovernanceModel
-{
-    /// <summary>A coleta não permite dizer qual modelo governa. NUNCA aprova pela configuração legada.</summary>
-    Undetermined = 0,
-
-    /// <summary>As POLÍTICAS DE PERMISSÃO legadas governam: o modelo por aplicativo não respondeu por este locatário.</summary>
-    LegacyPermissionPolicies = 1,
-
-    /// <summary>O modelo por aplicativo (ACM/UAM) governa: as políticas de permissão legadas não são autoritativas.</summary>
-    AppCentricOrUnified = 2,
-}
-
-/// <summary>
-/// Resolve o modelo de governo de aplicativos a partir do que a coleta trouxe. É deliberadamente conservador:
-/// só afirma o modelo legado quando o comando do ACM/UAM FOI executado e não devolveu nenhuma disponibilidade por
-/// aplicativo. Leitura ausente, recusada ou vazia = indeterminado.
+/// Dizer qual modelo governa exigiria ler o modelo NOVO — <c>Get-AllM365TeamsApps</c>, <c>Get-M365TeamsApp</c> ou
+/// <c>Get-M365UnifiedTenantSettings</c>. A documentação oficial de AUTENTICAÇÃO BASEADA EM APLICATIVO do módulo do
+/// Teams lista os três, nominalmente, entre os comandos NÃO SUPORTADOS — e autenticação por aplicativo é a única
+/// forma que este conector usa. Isso não é falta de papel de diretório: nenhum papel adicional torna um comando
+/// não suportado suportado, e pedir mais acesso ao cliente não resolveria nada.
+/// https://learn.microsoft.com/en-us/microsoftteams/teams-powershell-application-authentication
+///
+/// Consequência assumida: o critério fica NÃO AVALIADO, com a dependência declarada no achado. A configuração
+/// legada continua sendo coletada e preservada como evidência — ela existe e foi lida —, mas não sustenta
+/// veredito. Aprovar por ela seria aprovar uma configuração que pode não estar em vigor.
 /// </summary>
 public static class TeamsAppGovernance
 {
-    /// <summary>Requisito que falta para completar a avaliação quando o modelo não pôde ser determinado.</summary>
+    /// <summary>Motivo pelo qual o modelo em vigor não pode ser determinado por esta coleta.</summary>
+    public const string Reason =
+        "a leitura que diria qual modelo governa os aplicativos deste locatário — o gerenciamento centrado em "
+        + "aplicativos (ACM/UAM) ou as políticas de permissão legadas — não está disponível para o AEGIS: os "
+        + "comandos oficiais que a fariam (Get-AllM365TeamsApps, Get-M365TeamsApp, Get-M365UnifiedTenantSettings) "
+        + "são documentados como NÃO SUPORTADOS com autenticação de aplicativo, que é a forma usada por este "
+        + "conector. Encontrar políticas de permissão não demonstra que elas governem: podem ser resíduo do "
+        + "modelo anterior à migração.";
+
+    /// <summary>O que precisaria existir para completar a avaliação — sem permissão nova e sem endpoint próprio.</summary>
     public const string Requirement =
-        "Para concluir este critério é preciso ler o modelo que governa os aplicativos do locatário: o comando "
-        + "oficial Get-AllM365TeamsApps, com o mesmo papel de leitura já exigido pela coleta. Sem essa leitura, a "
-        + "configuração legada de permissão de aplicativos é preservada como evidência, mas não sustenta veredito.";
-
-    public static (TeamsAppGovernanceModel Model, string Reason, TeamsAppAvailabilityModel? Observed) Resolve(
-        KnightEvaluationContext context)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        var read = context.Configuration.Read<TeamsAppAvailabilityModel>();
-
-        if (!read.Collected)
-            return (TeamsAppGovernanceModel.Undetermined,
-                read.MissingReason
-                ?? "a leitura do modelo de disponibilidade de aplicativos não foi concluída nesta aquisição.",
-                null);
-
-        if (read.Items.Count == 0)
-            return (TeamsAppGovernanceModel.Undetermined,
-                "a leitura do modelo de disponibilidade de aplicativos concluiu sem devolver o catálogo do locatário.",
-                null);
-
-        var model = read.Items[0];
-
-        if (model.AppsRead <= 0)
-            return (TeamsAppGovernanceModel.Undetermined,
-                "o catálogo de aplicativos do locatário voltou vazio: não é possível dizer qual modelo governa o acesso a aplicativos.",
-                model);
-
-        if (model.AppsWithAssignment > 0)
-            return (TeamsAppGovernanceModel.AppCentricOrUnified,
-                $"{model.AppsWithAssignment} de {model.AppsRead} aplicativos do catálogo têm a disponibilidade definida "
-                + "por aplicativo (gerenciamento centrado em aplicativos / unificado).",
-                model);
-
-        return (TeamsAppGovernanceModel.LegacyPermissionPolicies,
-            $"nenhum dos {model.AppsRead} aplicativos do catálogo tem disponibilidade definida por aplicativo: "
-            + "o acesso continua governado pelas políticas de permissão.",
-            model);
-    }
+        "Completar este critério depende de uma leitura do modelo de aplicativos compatível com autenticação de "
+        + "aplicativo. Enquanto a Microsoft não oferecer essa leitura, concluir exigiria uma sessão administrativa "
+        + "delegada, que é outra forma de acesso ao locatário — decisão do cliente, fora do que esta coleta faz. "
+        + "Nenhuma permissão adicional muda esse quadro.";
 }
 
 /// <summary>

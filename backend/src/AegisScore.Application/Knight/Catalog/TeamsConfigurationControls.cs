@@ -130,35 +130,24 @@ public static class TeamsConfigurationControls
     // ---- Condição de aplicabilidade: quem governa os aplicativos do locatário -------------------------
 
     /// <summary>
-    /// [AEGIS-KNIGHT-COVERAGE-02] Só avalia a política de permissão de aplicativos quando a coleta DEMONSTRA que
-    /// ela ainda é a configuração autoritativa do locatário.
+    /// [Revisão dirigida] AK-TEAMS-007 NÃO CONCLUI, e não é uma escolha de cautela: é o que a evidência permite.
     ///
-    /// Por que a condição existe: a documentação oficial do <c>Get-CsTeamsAppPermissionPolicy</c> afirma que ele
-    /// "só é aplicável a locatários que NÃO foram migrados para ACM ou UAM", e a documentação do gerenciamento
-    /// centrado em aplicativos afirma que, depois da migração, "não é possível acessar, editar ou usar políticas
-    /// de permissão". Uma nota de equivalência parcial no vínculo da referência não impede nada: sem condição, um
-    /// locatário migrado — em que a configuração lida não governa coisa alguma — recebia APROVAÇÃO por uma
-    /// configuração fora de vigor.
+    /// O comando que lê as políticas de permissão é documentado como aplicável só a locatários NÃO migrados para
+    /// ACM/UAM. Saber se este locatário migrou exigiria ler o modelo novo, e todos os comandos que fariam essa
+    /// leitura estão na lista oficial de NÃO SUPORTADOS com autenticação de aplicativo — a única que este conector
+    /// usa. Ver <see cref="TeamsAppGovernance"/>.
     ///
-    /// O que a condição NÃO faz: não deduz "não migrado" pelo fato de o comando ter devolvido políticas. Um
-    /// comando de leitura pode responder com o resíduo do modelo antigo. A demonstração vem da leitura do modelo
-    /// NOVO (<c>Get-AllM365TeamsApps</c>, ver <see cref="TeamsAppGovernance"/>):
-    ///   • disponibilidade definida POR APLICATIVO → o modelo novo governa → não conclui pela configuração legada;
-    ///   • catálogo lido e NENHUMA disponibilidade por aplicativo → o modelo legado governa → avalia normalmente;
-    ///   • leitura ausente, recusada ou vazia → indeterminado → não conclui.
-    ///
-    /// Nos dois casos em que não conclui, a configuração legada é PRESERVADA como evidência (ela existe e foi
-    /// lida) e o requisito que falta é declarado. Nenhuma permissão nova é pedida por causa disto: se o papel de
-    /// leitura já concedido não cobrir o comando, a leitura falha e o resultado é "indeterminado" — que é
-    /// exatamente o desfecho conservador, e não um motivo para exigir mais acesso ao cliente.
+    /// Por isso não existe aqui um caminho que avalie: nem "aprovou porque veio política" (o comando pode devolver
+    /// resíduo do modelo antigo), nem "reprovou porque não veio" (ausência não é migração). O que existe é a
+    /// configuração legada PRESERVADA como evidência — ela foi lida e o achado diz onde está — com o veredito
+    /// suspenso e a dependência real declarada. O parâmetro <paramref name="evaluate"/> guarda a regra do critério,
+    /// pronta para o dia em que houver leitura compatível; ela não é chamada enquanto não houver.
     /// </summary>
     private static KnightControlOutcome WhenLegacyAppPoliciesGovern(
         KnightEvaluationContext c, Func<KnightEvaluationContext, KnightControlOutcome> evaluate)
     {
-        var (model, reason, observed) = TeamsAppGovernance.Resolve(c);
-        if (model == TeamsAppGovernanceModel.LegacyPermissionPolicies) return evaluate(c);
+        ArgumentNullException.ThrowIfNull(c);
 
-        // A configuração legada lida continua sendo evidência: ela foi encontrada, e o achado diz onde.
         var evidence = new List<KnightIndicatorObject>();
         var policies = c.Configuration.Read<TeamsAppPermissionPolicyConfiguration>();
         if (policies.Collected)
@@ -168,29 +157,16 @@ public static class TeamsConfigurationControls
                     "TeamsAppPermissionPolicy/CatalogAppsType@" + (TeamsPolicyIdentities.Name(p.Identity) ?? "sem-identificacao"),
                     "Política de permissão de aplicativos — " + TeamsPolicyIdentities.Label(p.Identity),
                     "Configuração preservada como evidência: " + Join(p.Catalogs.Select(t => t.Label + ": " + (t.Type ?? "não informado")))
-                    + ". Ela NÃO foi usada para concluir o critério porque a coleta não demonstra que as políticas de permissão "
+                    + ". Ela NÃO foi usada para concluir o critério porque a coleta não pode demonstrar que as políticas de permissão "
                     + "ainda governam o acesso a aplicativos deste locatário.",
                     "Catálogos de aplicativos: " + Join(p.Catalogs.Select(t => t.Label + " = " + (t.Type ?? "não informado")))));
         }
 
-        if (observed is not null)
-            evidence.Add(KnightObjects.Setting("TeamsAppAvailability/Model",
-                "Modelo de disponibilidade de aplicativos do locatário",
-                $"{N(observed.AppsWithAssignment)} de {N(observed.AppsRead)} aplicativos com disponibilidade definida por aplicativo",
-                "modelo de governo de aplicativos identificado"));
-
-        return model == TeamsAppGovernanceModel.AppCentricOrUnified
-            ? KnightControlOutcome.NotApplicable(
-                "o locatário governa o acesso a aplicativos pelo gerenciamento centrado em aplicativos (ACM/UAM), e não pelas "
-                + "políticas de permissão: " + reason + " A configuração legada foi preservada como evidência, mas não descreve o "
-                + "que está em vigor. Para avaliar este critério neste locatário é preciso ler a disponibilidade POR APLICATIVO do "
-                + "modelo novo — leitura prevista para o bloco seguinte de Microsoft 365.",
-                evidence)
-            : KnightControlOutcome.NotEvaluated(
-                "não foi possível determinar qual modelo governa o acesso a aplicativos deste locatário — "
-                + reason + " Concluir pela configuração legada aprovaria uma configuração que pode não estar em vigor. "
-                + TeamsAppGovernance.Requirement,
-                evidence);
+        return KnightControlOutcome.NotEvaluated(
+            "não é possível determinar qual modelo governa o acesso a aplicativos deste locatário — "
+            + TeamsAppGovernance.Reason + " Concluir pela configuração legada aprovaria (ou reprovaria) uma configuração que "
+            + "pode não estar em vigor. " + TeamsAppGovernance.Requirement,
+            evidence);
     }
 
     // ---- Leitor das configurações de instância ÚNICA do locatário -------------------------------------
@@ -452,13 +428,11 @@ public static class TeamsConfigurationControls
                 "Aplicativos do Teams podem ser adicionados sem passar por uma lista de permitidos: o padrão é liberar e bloquear caso a caso, "
                 + "o que só alcança aplicativos que alguém já identificou como indesejados.",
                 "Os catálogos de aplicativos do Teams estão restritos a listas de permitidos.")),
-            Ref(M365 + "8.4.1", KnightReferenceMatch.Partial,
-                "Equivalência parcial: o critério é avaliado pelas políticas de permissão de aplicativos lidas pelo comando oficial, e "
-                + "SOMENTE quando a coleta demonstra que essas políticas ainda governam o acesso a aplicativos do locatário. A documentação "
-                + "declara que o comando só se aplica a locatários NÃO migrados para o gerenciamento centrado em aplicativos (ACM/UAM) e que, "
-                + "depois da migração, as políticas de permissão não podem mais ser acessadas, editadas nem usadas. Em locatário migrado — e "
-                + "quando a coleta não permite dizer qual modelo governa — o controle NÃO conclui: a configuração legada fica preservada como "
-                + "evidência, com a limitação, e falta ler a disponibilidade por aplicativo do modelo novo, prevista para um bloco seguinte.")),
+            // Sem vínculo de referência: 8.4.1 NÃO é avaliado por este controle. Um vínculo aqui faria a cobertura
+            // declarar o controle como avaliado (integral ou parcialmente) só porque existe uma regra escrita — e a
+            // regra não roda: falta a leitura que diria se a configuração lida governa. A disposição real do 8.4.1
+            // está declarada em KnightReferenceDispositions ("exige acesso que o conector não tem"), com o motivo.
+            Array.Empty<KnightReferenceLink>()),
 
         // ==== Reuniões ====
 

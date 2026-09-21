@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using AegisScore.Application.Knight;
@@ -57,31 +57,36 @@ public sealed class KnightReferenceCoverageTests
     /// classificação exige revisar este teste — e explicar por quê no PR.
     /// </summary>
     [Fact]
-    public void Teams_TemAs17ReferenciasClassificadas_ComAsDuasParciaisDeclaradas()
+    public void Teams_TemAs17ReferenciasClassificadas_ComACoberturaQueOMetodoOperacionalSustenta()
     {
         var coverage = KnightReferenceCatalog.Coverage();
         var teams = coverage.ByService.Single(s => s.Key == nameof(KnightService.Teams));
 
         teams.Total.Should().Be(17);
         teams.Implemented.Should().Be(15);
-        teams.Partial.Should().Be(2);
+        teams.Partial.Should().Be(1);
         teams.Pending.Should().Be(0);
         teams.ApiLimitation.Should().Be(0);
         teams.ManualOnly.Should().Be(0);
-        teams.RequiresAccess.Should().Be(0);
+        teams.RequiresAccess.Should().Be(1,
+            "8.4.1 não é avaliado: a leitura que diria qual modelo governa os aplicativos não é suportada com "
+            + "autenticação de aplicativo, que é a forma de acesso desta coleta");
 
-        // As duas parciais dizem, no próprio vínculo, o que falta para serem integrais.
         var parciais = coverage.Controls
             .Where(c => c.Control.Service == KnightService.Teams && c.Disposition == KnightReferenceDisposition.Partial)
             .ToList();
-        parciais.Select(p => p.Control.Section).Should().BeEquivalentTo(new[] { "8.4.1", "8.6.1" });
+        parciais.Select(p => p.Control.Section).Should().BeEquivalentTo(new[] { "8.6.1" });
         parciais.Single(p => p.Control.Section == "8.6.1").Note.Should().Contain("Defender para Office 365");
 
-        // 8.4.1 continua PARCIAL, mas por um motivo mais forte: a limitação ACM/UAM virou CONDIÇÃO de
-        // aplicabilidade. O vínculo precisa dizer que o controle NÃO conclui no locatário migrado — uma nota que
-        // só descrevesse a limitação não explicaria por que a equivalência não é integral.
-        parciais.Single(p => p.Control.Section == "8.4.1").Note
-            .Should().Contain("ACM").And.Contain("NÃO conclui");
+        // [Revisão dirigida] 8.4.1 saiu de PARCIAL. A condição de aplicabilidade que o mantinha como parcial foi
+        // construída sobre Get-AllM365TeamsApps — comando que a Microsoft lista nominalmente entre os NÃO
+        // SUPORTADOS com autenticação de aplicativo. A condição nunca rodaria no fluxo real, e contar o controle
+        // como “parcialmente avaliado” declararia uma cobertura que o método operacional não sustenta.
+        // A disposição real é “exige acesso que o conector não tem”, e a nota nomeia a causa — não uma permissão.
+        var apps = coverage.Controls.Single(c => c.Control.Section == "8.4.1" && c.Control.Service == KnightService.Teams);
+        apps.Disposition.Should().Be(KnightReferenceDisposition.RequiresAccess);
+        apps.IndicatorIds.Should().BeEmpty("um controle que nunca conclui não pode figurar como quem avalia a referência");
+        apps.Note.Should().Contain("NÃO SUPORTADOS com autenticação").And.Contain("Não é falta de permissão");
 
         // 8.5.3 é equivalência INTEGRAL: o critério avaliado é o da referência. O vínculo registra que o AEGIS
         // também aceita o valor estritamente mais restritivo, e que “pessoas convidadas” NÃO é aceito.
@@ -89,8 +94,10 @@ public sealed class KnightReferenceCoverageTests
         lobby.Disposition.Should().Be(KnightReferenceDisposition.Implemented);
         lobby.Note.Should().Contain("mais restritivo").And.Contain("InvitedUsers");
 
-        // Cada referência de Teams é citada por um — e só um — controle do KNIGHT.
-        foreach (var c in coverage.Controls.Where(c => c.Control.Service == KnightService.Teams))
+        // Cada referência de Teams AVALIADA é citada por um — e só um — controle do KNIGHT. A do 8.4.1 não é
+        // citada por nenhum, justamente porque não é avaliada (a asserção dedicada acima exige que fique vazia).
+        foreach (var c in coverage.Controls
+                     .Where(c => c.Control.Service == KnightService.Teams && c.Control.Section != "8.4.1"))
             c.IndicatorIds.Should().ContainSingle(id => id.StartsWith("AK-TEAMS-"), c.Control.Key);
     }
 
@@ -105,7 +112,8 @@ public sealed class KnightReferenceCoverageTests
         var m365 = coverage.ByPlatform.Single(p => p.Key == nameof(KnightPlatform.Microsoft365));
         m365.Total.Should().Be(89);
         m365.Implemented.Should().Be(15);
-        m365.Partial.Should().Be(2);
+        m365.Partial.Should().Be(1);
+        m365.RequiresAccess.Should().Be(1, "8.4.1 do Teams — ver Teams_TemAs17ReferenciasClassificadas...");
         m365.Pending.Should().Be(72,
             "Exchange Online, Defender para Office 365, Purview, SharePoint/OneDrive, Fabric, Intune, Forms e Sway são os próximos blocos");
 
@@ -126,7 +134,16 @@ public sealed class KnightReferenceCoverageTests
             d.Service.Should().Be(KnightService.Teams);
             d.Sources.Should().BeEquivalentTo(new[] { KnightSourceType.MicrosoftTeams },
                 $"{d.Id} lê a configuração do Teams — aplicá-lo ao Entra ID o deixaria não avaliado para sempre");
-            d.References.Should().NotBeEmpty(d.Id);
+            // Um controle sem vínculo de referência é EXCEÇÃO, e só se justifica quando o controle não conclui:
+            // vincular uma referência a uma regra que não roda declararia cobertura inexistente. Hoje há um caso,
+            // e ele é nominal — qualquer outro controle precisa citar a referência que avalia.
+            if (d.Id == "AK-TEAMS-007")
+                d.References.Should().BeEmpty(
+                    "AK-TEAMS-007 preserva a configuração como evidência mas não conclui: a leitura que diria se "
+                    + "ela governa não é suportada com autenticação de aplicativo. A disposição do 8.4.1 está "
+                    + "declarada em KnightReferenceDispositions, fora do fluxo de avaliação.");
+            else
+                d.References.Should().NotBeEmpty(d.Id);
         }
     }
 

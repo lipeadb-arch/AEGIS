@@ -72,7 +72,6 @@ public sealed class TeamsKnightCollector : IKnightCollector
         KnightCapability.TeamsMeetingPolicies,
         KnightCapability.TeamsMessagingPolicies,
         KnightCapability.TeamsAppPermissionPolicies,
-        KnightCapability.TeamsAppAvailability,
         KnightCapability.TeamsPolicyAssignments,
     };
 
@@ -260,16 +259,6 @@ public sealed class TeamsKnightCollector : IKnightCollector
                             Text(e, "globalCatalogAppsType"), Int(e, "globalCatalogAppsCount"),
                             Text(e, "privateCatalogAppsType"), Int(e, "privateCatalogAppsCount")));
                 }
-                break;
-
-            case KnightCapability.TeamsAppAvailability:
-                foreach (var e in items.EnumerateArray())
-                    yield return KnightTenantConfiguration.Document(
-                        TeamsAppAvailabilityModel.ExternalId,
-                        "Modelo de disponibilidade de aplicativos do locatário",
-                        new TeamsAppAvailabilityModel(
-                            Int(e, "appsRead"), Int(e, "appsWithAssignment"), Int(e, "assignedToEveryone"),
-                            Int(e, "assignedToUsersAndGroups"), Int(e, "assignedToNoOne")));
                 break;
 
             case KnightCapability.TeamsPolicyAssignments:

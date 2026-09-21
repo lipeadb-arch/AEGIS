@@ -83,9 +83,6 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
             ConfigurationObjectKind.TeamsClientConfiguration, ConfigurationObjectKind.TeamsFederationConfiguration,
             ConfigurationObjectKind.TeamsMeetingPolicy, ConfigurationObjectKind.TeamsMessagingPolicy,
             ConfigurationObjectKind.TeamsAppPermissionPolicy, ConfigurationObjectKind.TeamsPolicyAssignment,
-            // O modelo de disponibilidade de aplicativos (ACM/UAM) é o que demonstra se a política de permissão
-            // legada ainda governa este locatário — sem ele, AK-TEAMS-007 não conclui.
-            ConfigurationObjectKind.TeamsAppAvailability,
         });
         persisted.Should().OnlyContain(p => p.SchemaVersion.StartsWith("aegis-config-teams-"));
         persisted.Where(p => p.Kind == ConfigurationObjectKind.TeamsMeetingPolicy).Should().HaveCount(2,
@@ -100,9 +97,16 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
 
         var teams = run.Indicators.Where(i => TeamsControlIds.Contains(i.IndicatorId)).ToList();
         teams.Should().HaveCount(TeamsControlIds.Count);
-        teams.Where(i => i.Status is KnightIndicatorStatus.Exposed or KnightIndicatorStatus.NotEvaluated)
+
+        // AK-TEAMS-007 fica de fora por um motivo declarado, e ele é do MÉTODO, não deste cenário: a leitura que
+        // diria se a política de permissão ainda governa os aplicativos não é suportada com autenticação de
+        // aplicativo. Um ambiente conforme não muda isso — por isso ele não aparece aqui como aprovado nem como
+        // reprovado. Ver AkTeams007_NaoConclui_ComACausaRealDeclarada_ESemDegradarAColeta.
+        teams.Single(i => i.IndicatorId == "AK-TEAMS-007").Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        teams.Where(i => i.IndicatorId != "AK-TEAMS-007")
+            .Where(i => i.Status is KnightIndicatorStatus.Exposed or KnightIndicatorStatus.NotEvaluated)
             .Select(i => $"{i.IndicatorId}={i.Status}: {i.Evidence}")
-            .Should().BeEmpty("no cenário conforme cada critério tem evidência suficiente");
+            .Should().BeEmpty("no cenário conforme cada critério AVALIÁVEL tem evidência suficiente");
 
         // Com a comunicação com contas não gerenciadas desligada, a restrição de ENTRADA não se aplica — e
         // "não se aplica" não é aprovação disfarçada.
@@ -120,10 +124,16 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
         var run = await RunAsync(db, TenantA, TeamsCollectionScenario.Variant.NonCompliant);
         Dump(run);
 
+        // AK-TEAMS-007 não reprova nem no ambiente inadequado: sem saber se a configuração lida governa, reprovar
+        // seria tão infundado quanto aprovar. A exceção é nominal e o motivo é o do método (ver o cenário conforme).
+        run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-007").Status
+            .Should().Be(KnightIndicatorStatus.NotEvaluated);
+
         var naoReprovados = run.Indicators
-            .Where(i => TeamsControlIds.Contains(i.IndicatorId) && i.Status != KnightIndicatorStatus.Exposed)
+            .Where(i => TeamsControlIds.Contains(i.IndicatorId) && i.IndicatorId != "AK-TEAMS-007")
+            .Where(i => i.Status != KnightIndicatorStatus.Exposed)
             .Select(i => $"{i.IndicatorId}={i.Status}: {i.Evidence}").ToList();
-        naoReprovados.Should().BeEmpty("no cenário inadequado cada critério é violado de forma comprovável");
+        naoReprovados.Should().BeEmpty("no cenário inadequado cada critério AVALIÁVEL é violado de forma comprovável");
 
         var svc = ServiceFor(db, TenantA, TeamsCollectionScenario.Variant.NonCompliant);
 
@@ -235,7 +245,11 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
             .SelectMany(c => c.IndicatorIds.Select(id => (Reference: c.Control.Key, Id: id)))
             .Where(x => x.Id.StartsWith("AK-TEAMS-", StringComparison.Ordinal))
             .ToList();
-        implementadas.Should().HaveCount(17, "são as 17 referências de Microsoft Teams do catálogo");
+        // 16 das 17 referências de Microsoft Teams do catálogo. A 17ª (8.4.1) NÃO é avaliada: a leitura que diria
+        // qual modelo governa os aplicativos não é suportada com autenticação de aplicativo, então ela está
+        // declarada como "exige acesso que o conector não tem" e não é citada por controle nenhum.
+        implementadas.Should().HaveCount(16);
+        implementadas.Should().NotContain(x => x.Reference.EndsWith(":8.4.1", StringComparison.Ordinal));
 
         var lacunas = new List<string>();
         foreach (var (reference, id) in implementadas)
@@ -300,7 +314,16 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
         model.ByPlatform.Should().NotBeNull();
         model.ByPlatform!.Should().ContainSingle(r => r.Label == "Microsoft 365");
         model.Controls.Should().OnlyContain(c => c.Service == "Microsoft Teams" && c.Platform == "Microsoft 365");
-        model.Controls.Should().OnlyContain(c => c.Impact != null && c.References.Any(r => r.Framework.StartsWith("CIS ")));
+        model.Controls.Should().OnlyContain(c => c.Impact != null);
+        // Todo controle cita a referência que avalia — menos o que não avalia nenhuma. Ver a justificativa em
+        // ControlesDoTeams_SoConsomemCapacidadesDoColetorReal.
+        model.Controls.Where(c => c.Id != "AK-TEAMS-007")
+            .Should().OnlyContain(c => c.References.Any(r => r.Framework.StartsWith("CIS ")));
+        // O relatório cita o framework do controle (o vínculo é que não existe): a lista de referências do
+        // AK-TEAMS-007 não traz nenhum controle CIS, e o motivo aparece no texto de não avaliado.
+        var aplicativos = model.Controls.Single(c => c.Id == "AK-TEAMS-007");
+        aplicativos.References.Should().NotContain(r => r.Framework.StartsWith("CIS "));
+        aplicativos.NotEvaluatedReason.Should().Contain("NÃO SUPORTADOS com autenticação de aplicativo");
 
         // A contagem de ocorrências do relatório é a soma dos afetados dos controles reprovados — e não outra.
         var occurrences = model.Controls.Where(c => c.Status is "Exposed" or "Mitigated")
@@ -433,49 +456,43 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
     }
 
     /// <summary>
-    /// Locatário MIGRADO para ACM/UAM: AK-TEAMS-007 não conclui pela política de permissão legada, mas a
-    /// preserva como evidência e diz o requisito que falta. O restante da avaliação segue normal.
+    /// [Revisão dirigida] AK-TEAMS-007 pelo fluxo COMPLETO (coletor → ADM → avaliação): mesmo num locatário
+    /// inteiramente conforme, com a política de permissão restrita a listas de permitidos, o critério NÃO
+    /// CONCLUI — e o motivo nomeia a causa real, que é a incompatibilidade do comando de leitura do modelo
+    /// ACM/UAM com a autenticação de aplicativo, não uma permissão faltando.
+    ///
+    /// Também se verifica aqui que a coleta continua COMPLETA: a leitura incompatível não é mais tentada, então
+    /// não há capacidade recusada. Um critério sem veredito não é um defeito de coleta.
     /// </summary>
     [Fact]
-    public async Task TenantMigrado_AkTeams007_NaoAprovaPelaConfiguracaoLegada_MasAPreserva()
+    public async Task AkTeams007_NaoConclui_ComACausaRealDeclarada_ESemDegradarAColeta()
     {
         await SeedAsync(TenantA);
         await using var db = NewContext(TenantA);
 
         var run = await ServiceFor(db, TenantA,
-                new TeamsCollectionScenario(TeamsCollectionScenario.Variant.Compliant,
-                    TeamsCollectionScenario.AppModel.Migrated))
-            .RunAssessmentAsync(KnightSourceType.MicrosoftTeams);
-        Dump(run);
-
-        var apps = run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-007");
-        apps.Status.Should().Be(KnightIndicatorStatus.NotApplicable);
-        apps.Status.Should().NotBe(KnightIndicatorStatus.Passed);
-        apps.NotEvaluatedReason.Should().Contain("centrado em aplicativos");
-
-        // Os outros controles do cenário conforme continuam aprovando: a condição é só deste critério.
-        run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-010").Status.Should().Be(KnightIndicatorStatus.Passed);
-    }
-
-    /// <summary>Modelo de governo DESCONHECIDO: também não conclui, e o requisito é declarado.</summary>
-    [Fact]
-    public async Task ModeloDeGovernoDeAplicativosDesconhecido_AkTeams007_NaoConclui()
-    {
-        await SeedAsync(TenantA);
-        await using var db = NewContext(TenantA);
-
-        var run = await ServiceFor(db, TenantA,
-                new TeamsCollectionScenario(TeamsCollectionScenario.Variant.Compliant,
-                    TeamsCollectionScenario.AppModel.Unknown))
+                new TeamsCollectionScenario(TeamsCollectionScenario.Variant.Compliant))
             .RunAssessmentAsync(KnightSourceType.MicrosoftTeams);
         Dump(run);
 
         var apps = run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-007");
         apps.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
-        apps.NotEvaluatedReason.Should().Contain("Get-AllM365TeamsApps");
+        apps.NotEvaluatedReason.Should().Contain("NÃO SUPORTADOS com autenticação de aplicativo");
+        apps.NotEvaluatedReason.Should().NotContain("Leitor do Teams");
 
-        // A coleta inteira é PARCIAL, porque uma leitura esperada foi recusada.
-        run.SourceState.Should().Be(KnightSourceState.PartialCollection);
+        // A configuração legada foi coletada, persistida e preservada como evidência do achado — verificada na
+        // fotografia publicada, que é o que chega ao relatório.
+        var publicado = await PostureFor(db, TenantA).PublishAsync(
+            PostureSnapshotType.Knight, KnightSourceType.MicrosoftTeams, run.Id);
+        var fotografia = await db.PostureSnapshots.AsNoTracking().Include(f => f.Objects)
+            .SingleAsync(f => f.Id == publicado.Summary.Id);
+        fotografia.Objects.Where(o => o.IndicatorId == "AK-TEAMS-007")
+            .Should().Contain(o => o.Detail!.Contains("preservada como evidência"));
+
+        // Os outros controles do cenário conforme continuam aprovando, e a coleta não foi degradada.
+        run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-010").Status.Should().Be(KnightIndicatorStatus.Passed);
+        run.SourceState.Should().Be(KnightSourceState.Completed);
+        run.Capabilities.Should().OnlyContain(c => c.Outcome == KnightCapabilityOutcome.Collected);
     }
 
     /// <summary>
