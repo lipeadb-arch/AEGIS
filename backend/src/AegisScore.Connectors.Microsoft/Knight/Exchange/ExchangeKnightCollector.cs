@@ -599,19 +599,19 @@ public sealed class ExchangeKnightCollector : IKnightCollector
     /// </summary>
     private static string ConnectionReason(KnightCapabilityOutcome outcome) => outcome switch
     {
+        // O TAMANHO importa: este texto vira o motivo de NÃO AVALIAÇÃO de cada controle e a coluna tem 500
+        // caracteres. O SQLite dos testes rápidos ignora o limite; o PostgreSQL não — e é lá que ele é provado.
         KnightCapabilityOutcome.InsufficientPermission =>
-            "A conexão de aplicativo com o Exchange Online foi recusada por autorização. A recusa não identifica a causa; "
-            + "verifique, nesta ordem: (1) a permissão de aplicativo Exchange.ManageAsApp (API Office 365 Exchange Online) "
-            + "está consentida pelo administrador; (2) a aplicação tem um papel de diretório atribuído — para leitura, o "
-            + "papel Leitor Global cobre as leituras deste coletor; (3) o papel usado pelo Microsoft Teams não vale aqui, e "
-            + "a permissão sozinha não autoriza comando algum; (4) o domínio de organização enviado é o do locatário; e "
-            + "(5) o método de autenticação: esta conexão usa token obtido por segredo de cliente, e o AEGIS não tem "
-            + "confirmação documental de que o serviço o aceite — se (1) a (4) estiverem corretos, é este item que resta.",
+            "A conexão com o Exchange Online foi recusada por autorização, e a recusa não identifica a causa. "
+            + "Verifique: (1) consentimento de Exchange.ManageAsApp; (2) papel de diretório na aplicação — para "
+            + "leitura, Leitor Global; o papel do Microsoft Teams não vale aqui, e a permissão sozinha não autoriza "
+            + "comando algum; (3) o domínio de organização enviado; (4) o método — usamos token obtido por segredo "
+            + "de cliente, sem confirmação documental de que o serviço o aceite.",
         KnightCapabilityOutcome.AuthenticationFailure =>
-            "A conexão de aplicativo com o Exchange Online falhou na autenticação. A falha não identifica a causa; verifique "
-            + "o segredo da aplicação, se o token foi emitido para o recurso do Exchange Online (o do Microsoft Graph não é "
-            + "aceito nesta conexão) e se o serviço aceita token obtido por segredo de cliente — o AEGIS não tem confirmação "
-            + "documental desse último ponto.",
+            "A conexão com o Exchange Online falhou na autenticação, e a falha não identifica a causa. Verifique o "
+            + "segredo da aplicação, se o token foi emitido para o recurso do Exchange Online (o do Microsoft Graph "
+            + "não é aceito aqui) e se o serviço aceita token obtido por segredo de cliente — o AEGIS não tem "
+            + "confirmação documental deste último ponto.",
         KnightCapabilityOutcome.Throttled =>
             "O Exchange Online aplicou limite de taxa ao estabelecer a conexão. Nenhuma leitura foi tentada; a coleta pode ser "
             + "repetida mais tarde.",
