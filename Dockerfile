@@ -61,8 +61,10 @@ ENV TEAMS_MODULE_VERSION=${TEAMS_MODULE_VERSION}
 #
 # LIMITAÇÃO DECLARADA, não contornada: a Microsoft lista Ubuntu como o Linux suportado para este módulo, e a
 # imagem do AEGIS é Debian 12. O gate de runtime da imagem (abaixo, e no CI) EXECUTA a importação do módulo e
-# o script real do produto para que essa incompatibilidade, se existir, apareça no build — e não numa coleta
-# no ambiente do cliente. O gate é offline: ele NÃO prova autorização em locatário nenhum.
+# o script real do produto, de modo que uma incompatibilidade DE CARREGAMENTO apareça no build em vez de numa
+# coleta no ambiente do cliente. O que ele prova termina aí: importar com sucesso NÃO prova compatibilidade
+# integral nesta distribuição, não autentica, não carrega os comandos que só entram na sessão depois da
+# conexão e não faz coleta alguma. O gate é offline e não prova autorização em locatário nenhum.
 ARG EXCHANGE_MODULE_VERSION=3.9.2
 ENV EXCHANGE_MODULE_VERSION=${EXCHANGE_MODULE_VERSION}
 

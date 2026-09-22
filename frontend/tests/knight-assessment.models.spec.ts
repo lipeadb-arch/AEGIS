@@ -260,7 +260,7 @@ test('limitação: permissão ≠ licença, com controles prejudicados e orienta
   });
   const v = limitationViews(a);
   eq(v.length, 2, 'só capacidades não coletadas');
-  eq(v[0].cause, 'Permissão ausente', 'causa de permissão');
+  eq(v[0].cause, 'Autorização recusada', 'a causa exibida é o que foi observado, não o que se supõe faltar');
   eq(v[0].label, 'Políticas de acesso condicional', 'rótulo legível');
   eq(v[0].affectedControls.join(','), 'AK-ENTRA-005', 'controle não avaliado que dependia da capacidade');
   eq(v[1].cause, 'Licença insuficiente', 'causa de licença');

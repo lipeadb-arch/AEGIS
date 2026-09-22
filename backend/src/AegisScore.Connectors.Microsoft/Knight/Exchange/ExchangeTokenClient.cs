@@ -40,25 +40,37 @@ namespace AegisScore.Connectors.Microsoft.Knight.Exchange;
 ///     O mesmo artigo descreve o certificado como a forma de obter esse token.
 ///   </description></item>
 ///   <item><description>
-///     <b>INFERÊNCIA, não documentação.</b> De (2) segue que um token de credenciais de cliente para o mesmo
-///     recurso, emitido para a mesma aplicação, carrega as mesmas reivindicações de papel e é aceito pela
-///     mesma validação. A Microsoft NÃO publica uma afirmação explícita de que o segredo de cliente é um meio
-///     suportado para este comando. Logo: o certificado é tratado aqui como um caminho de obtenção, e não
-///     como requisito do serviço — mas isso é conclusão do AEGIS, e não citação.
+///     <b>HIPÓTESE do AEGIS, a ser testada — não documentação e não conclusão.</b> De (2) o AEGIS SUPÕE que um
+///     token de credenciais de cliente, emitido para a MESMA aplicação e o MESMO recurso, carregue as mesmas
+///     reivindicações de papel e seja aceito. Duas coisas impedem de afirmar isso: a Microsoft não publica
+///     declaração de que o segredo de cliente seja um meio suportado para este comando, e <b>ter as mesmas
+///     permissões não implica que todo método de autenticação seja aceito</b> — o serviço pode exigir a prova
+///     de posse que só o certificado dá, e essa exigência não apareceria em nenhuma leitura de documentação.
+///     A hipótese é falseável e tem um teste definido: conectar contra um locatário real. Enquanto esse teste
+///     não for feito, o método é uma APOSTA FUNDAMENTADA, e não um caminho demonstrado.
 ///   </description></item>
 ///   <item><description>
 ///     <b>NÃO VALIDADO.</b> Nenhuma conexão real foi estabelecida. Os testes deste pacote são SINTÉTICOS: eles
-///     exercitam o contrato do documento de saída, a tradução para o ADM, a avaliação e as exportações, e o
-///     gate da imagem exercita a importação do módulo OFFLINE. Nada disso demonstra que o locatário aceita o
-///     token: essa é a primeira verificação da homologação, e permanece como LIMITAÇÃO declarada. Se a recusa
-///     vier, ela chega classificada como autorização (não como falha de autenticação) e o produto informa as
-///     duas concessões que faltam — permissão de API e papel de diretório.
+///     exercitam o contrato do documento de saída, a tradução para o ADM, a avaliação e as exportações. O gate
+///     da imagem exercita a importação do módulo OFFLINE — o que ele demonstra é que o módulo fixado CARREGA
+///     nesta imagem e que os comandos de conexão existem nela; ele NÃO demonstra compatibilidade integral com
+///     Debian, não autentica, não carrega os comandos que só entram na sessão depois da conexão e não realiza
+///     coleta alguma. Nada disso demonstra que o locatário aceita o token: essa é a primeira verificação da
+///     homologação, e permanece como LIMITAÇÃO declarada.
 ///   </description></item>
 /// </list>
 ///
-/// <para>O caminho por certificado não foi descartado: ele é a alternativa imediata caso a homologação
-/// demonstre que o segredo não serve. O que NÃO se faz é exigir do cliente a emissão, a distribuição e a
-/// rotação de um certificado antes de haver necessidade demonstrada.</para>
+/// <para><b>Se a conexão for recusada.</b> Uma recusa é ambígua por natureza e o produto não lhe atribui causa:
+/// ele informa o que o serviço devolveu e lista as verificações a fazer — consentimento de
+/// <c>Exchange.ManageAsApp</c>, atribuição de papel de diretório à aplicação, domínio da organização usado, e
+/// suporte do método de autenticação em si. Afirmar, a partir de uma recusa, que faltam exatamente a permissão
+/// de API e o papel de diretório seria inventar a causa a partir do sintoma.</para>
+///
+/// <para><b>Certificado: alternativa futura, não fallback.</b> Não existe caminho por certificado implementado
+/// aqui — não há troca automática nem degradação graciosa. Se a homologação demonstrar que o segredo não
+/// serve, adotar o certificado exige mudança de código e de configuração, e passa a ser trabalho planejado. O
+/// que NÃO se faz é exigir do cliente a emissão, a distribuição e a rotação de um certificado antes de haver
+/// necessidade demonstrada.</para>
 ///
 /// <para><b>Por que o domínio é resolvido aqui, e agora.</b> O parâmetro de organização da conexão pede o
 /// domínio <c>.onmicrosoft.com</c> principal, não o identificador do locatário — e o conector guarda o

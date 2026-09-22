@@ -252,6 +252,15 @@ public sealed class ExchangeAdapterTransportTests
             .And.Contain("não comprova autorização",
                 "um gate offline não pode ser lido como prova de que a coleta vai funcionar no locatário");
         texto.Should().Contain(ExchangeRuntimeDiagnostics.SuccessMarker);
+
+        // E o ALCANCE sai junto do sucesso. Importar o módulo prova carregamento e comandos locais; não prova
+        // compatibilidade integral com esta distribuição, autenticação, comandos de sessão nem coleta alguma.
+        // Sem estas linhas, o marcador verde seria lido como "o Exchange está validado nesta imagem".
+        texto.Should().Contain(ExchangeRuntimeDiagnostics.ScopeMarker);
+        texto.Should().Contain("NÃO PROVADO:")
+            .And.Contain("Debian")
+            .And.Contain("autenticação")
+            .And.Contain("coleta real");
     }
 
     [Fact]

@@ -219,7 +219,14 @@ internal sealed class PostgresProbe : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        NpgsqlConnection.ClearAllPools();
+        // [investigacao dirigida] Limpar o pool DESTA sonda, e nao todos. ClearAllPools e uma operacao do
+        // PROCESSO: ela alcancava os bancos descartaveis de todas as outras classes que estivessem rodando em
+        // paralelo, num instante que nenhuma delas controla. Quem precisa ficar sem conexoes abertas e o banco
+        // que sera derrubado na linha seguinte — e so ele. Interferencia entre classes que nao compartilham
+        // dado algum e ruido puro num diagnostico de concorrencia.
+        await using (var doPool = new NpgsqlConnection(_dbConn))
+            NpgsqlConnection.ClearPool(doPool);
+
         await using var conn = new NpgsqlConnection(_adminConn);
         await conn.OpenAsync();
         await using var cmd = conn.CreateCommand();

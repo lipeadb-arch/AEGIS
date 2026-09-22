@@ -590,19 +590,28 @@ public sealed class ExchangeKnightCollector : IKnightCollector
     /// <summary>
     /// Mensagem da falha de CONEXÃO, montada pela CATEGORIA. Nunca reproduz texto da fonte.
     ///
-    /// A mensagem de permissão insuficiente nomeia o que o operador precisa conferir, e nomeia as DUAS coisas —
-    /// permissão de API e papel de diretório —, porque a recusa mais comum aqui é ter só a primeira.
+    /// <para><b>O que estas mensagens NÃO fazem: atribuir causa.</b> Uma recusa de autorização é compatível com
+    /// várias causas — consentimento ausente, papel de diretório ausente, papel presente mas sem alcance, domínio
+    /// de organização errado, ou o próprio método de autenticação não ser aceito. O sintoma não distingue entre
+    /// elas. Por isso o texto informa o que o serviço RECUSOU e enumera as verificações a fazer, em vez de
+    /// declarar o que falta: apontar uma causa específica a partir de uma falha ambígua mandaria o operador
+    /// consertar o que talvez já esteja certo, e esconderia a causa verdadeira.</para>
     /// </summary>
     private static string ConnectionReason(KnightCapabilityOutcome outcome) => outcome switch
     {
         KnightCapabilityOutcome.InsufficientPermission =>
-            "A conexão de aplicativo com o Exchange Online foi recusada por autorização insuficiente. São necessárias DUAS "
-            + "concessões distintas: a permissão de aplicativo Exchange.ManageAsApp (API Office 365 Exchange Online), com "
-            + "consentimento do administrador, E um papel de diretório atribuído à aplicação — para leitura, o papel Leitor "
-            + "Global. A permissão sozinha não autoriza comando algum, e o papel usado pelo Microsoft Teams não vale aqui.",
+            "A conexão de aplicativo com o Exchange Online foi recusada por autorização. A recusa não identifica a causa; "
+            + "verifique, nesta ordem: (1) a permissão de aplicativo Exchange.ManageAsApp (API Office 365 Exchange Online) "
+            + "está consentida pelo administrador; (2) a aplicação tem um papel de diretório atribuído — para leitura, o "
+            + "papel Leitor Global cobre as leituras deste coletor; (3) o papel usado pelo Microsoft Teams não vale aqui, e "
+            + "a permissão sozinha não autoriza comando algum; (4) o domínio de organização enviado é o do locatário; e "
+            + "(5) o método de autenticação: esta conexão usa token obtido por segredo de cliente, e o AEGIS não tem "
+            + "confirmação documental de que o serviço o aceite — se (1) a (4) estiverem corretos, é este item que resta.",
         KnightCapabilityOutcome.AuthenticationFailure =>
-            "A conexão de aplicativo com o Exchange Online falhou na autenticação. Confira o segredo da aplicação e se o token "
-            + "foi emitido para o recurso do Exchange Online — o token do Microsoft Graph não é aceito nesta conexão.",
+            "A conexão de aplicativo com o Exchange Online falhou na autenticação. A falha não identifica a causa; verifique "
+            + "o segredo da aplicação, se o token foi emitido para o recurso do Exchange Online (o do Microsoft Graph não é "
+            + "aceito nesta conexão) e se o serviço aceita token obtido por segredo de cliente — o AEGIS não tem confirmação "
+            + "documental desse último ponto.",
         KnightCapabilityOutcome.Throttled =>
             "O Exchange Online aplicou limite de taxa ao estabelecer a conexão. Nenhuma leitura foi tentada; a coleta pode ser "
             + "repetida mais tarde.",
@@ -619,8 +628,9 @@ public sealed class ExchangeKnightCollector : IKnightCollector
         var head = outcome switch
         {
             KnightCapabilityOutcome.InsufficientPermission =>
-                "Autorização insuficiente para esta leitura. O papel de diretório atribuído à aplicação não alcança este comando; "
-                + "para leitura ampla, o papel Leitor Global cobre as leituras deste coletor.",
+                "Autorização recusada nesta leitura. A conexão foi estabelecida, então o que falta é alcance sobre ESTE comando; "
+                + "verifique o papel de diretório atribuído à aplicação — para leitura ampla, o papel Leitor Global cobre as "
+                + "leituras deste coletor. A recusa não diz qual papel está atribuído, e o AEGIS não deduz isso dela.",
             KnightCapabilityOutcome.AuthenticationFailure => "Falha de autenticação da aplicação nesta leitura.",
             KnightCapabilityOutcome.Throttled => "Limite de taxa do Exchange Online nesta leitura.",
             KnightCapabilityOutcome.LimitedByLicense => "O locatário não tem a licença que este recurso exige.",

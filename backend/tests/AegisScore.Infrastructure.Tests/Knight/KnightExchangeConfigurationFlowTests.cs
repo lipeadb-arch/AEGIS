@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -385,6 +386,80 @@ public sealed class KnightExchangeConfigurationFlowTests : IDisposable
 
         // HTML, CSV e PDF saem da MESMA fotografia: o número de controles não diverge entre eles.
         model.Controls.Should().HaveCount(snapshot.Indicators.Count);
+
+        // Evidência de ENTREGA, opcional e fora do repositório: quando AEGIS_EXPORT_OUT aponta um diretório,
+        // os três formatos saem em arquivo — os MESMOS bytes que as asserções acima acabaram de examinar,
+        // pelo mesmo exportador. Sem a variável, o teste não escreve nada. O que se gera aqui são dados
+        // SINTÉTICOS deste cenário, e o cabeçalho do relatório já os identifica como tal.
+        var destino = Environment.GetEnvironmentVariable("AEGIS_EXPORT_OUT");
+        if (!string.IsNullOrWhiteSpace(destino))
+        {
+            Directory.CreateDirectory(destino);
+            var baseNome = Path.Combine(destino, "knight-exchange-online");
+            await File.WriteAllBytesAsync(baseNome + ".html", Encoding.UTF8.GetBytes(html));
+            await File.WriteAllBytesAsync(baseNome + ".csv", Encoding.UTF8.GetBytes(csv));
+            await File.WriteAllBytesAsync(baseNome + ".pdf", pdf);
+            _output.WriteLine($"artefatos: {baseNome}.html | {baseNome}.csv | {baseNome}.pdf");
+
+            // Um segundo conjunto, de propósito, a partir de uma coleta PARCIAL: uma leitura recusada e uma
+            // enumeração truncada. É o conjunto em que "não avaliado" e "parcial" existem para ser conferidos
+            // entre os formatos — o cenário reprovado acima não tem nenhum dos dois, e conferir coerência só
+            // onde tudo é igual não prova nada sobre os estados que diferenciam este produto.
+            var parcial = await RunAsync(db, TenantA, ExchangeCollectionScenario.Variant.MailboxesDenied);
+            var pubParcial = await PostureFor(db, TenantA).PublishAsync(
+                PostureSnapshotType.Knight, KnightSourceType.MicrosoftExchangeOnline, parcial.Id);
+            var baseParcial = Path.Combine(destino, "knight-exchange-online-parcial");
+            foreach (var (formato, extensao) in new[]
+                     {
+                         (PostureExportFormat.Html, ".html"),
+                         (PostureExportFormat.Csv, ".csv"),
+                         (PostureExportFormat.Pdf, ".pdf"),
+                     })
+            {
+                var saida = (await exporter.ExportAsync(pubParcial.Summary.Id, formato))!;
+                await File.WriteAllBytesAsync(baseParcial + extensao, saida.Content);
+            }
+
+            _output.WriteLine($"artefatos (coleta parcial): {baseParcial}.html | {baseParcial}.csv | {baseParcial}.pdf");
+        }
+    }
+
+    /// <summary>
+    /// A tabela de limitações do relatório nomeia a LEITURA que faltou. Sem rótulo, ela mostrava o símbolo do
+    /// código — "ExchangeMailboxes" —, que não diz nada a quem lê o relatório, e o requisito de autorização
+    /// vinha vazio. O texto do requisito diz as DUAS coisas que o Exchange exige, sem inventar consentimento
+    /// por comando: no Exchange a permissão habilita a conexão e o papel de diretório autoriza cada leitura.
+    /// </summary>
+    [Fact]
+    public async Task LimitacaoNoRelatorio_NomeiaALeituraEmPortugues_ENaoOSimboloDoCodigo()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+        var run = await RunAsync(db, TenantA, ExchangeCollectionScenario.Variant.MailboxesDenied);
+
+        var published = await PostureFor(db, TenantA).PublishAsync(
+            PostureSnapshotType.Knight, KnightSourceType.MicrosoftExchangeOnline, run.Id);
+        var snapshot = await db.PostureSnapshots.AsNoTracking()
+            .Include(x => x.Controls).Include(x => x.Indicators).Include(x => x.ActionItems).Include(x => x.Objects)
+            .SingleAsync(x => x.Id == published.Summary.Id);
+
+        var limitacao = KnightReportModelBuilder.Build(snapshot, true).Limitations
+            .Single(l => l.Capability == nameof(KnightCapability.ExchangeMailboxes));
+
+        limitacao.CapabilityLabel.Should().Be("Caixas de correio");
+        limitacao.CapabilityLabel.Should().NotBe(nameof(KnightCapability.ExchangeMailboxes),
+            "o relatório é lido por quem não tem o código aberto ao lado");
+        limitacao.RequiredPermission.Should().NotBeNullOrWhiteSpace()
+            .And.Subject.Should().Contain("Exchange.ManageAsApp").And.Contain("papel de diretório");
+
+        // O PDF lia a string CONGELADA da fotografia, que carrega o nome do símbolo do código. O mesmo fato
+        // saía legível no HTML e técnico no PDF, para o mesmo leitor. A linha do PDF agora nasce da mesma
+        // lista estruturada — e nomeia os controles que ficaram sem veredito por causa dela.
+        var linha = PostureSnapshotPdfWriter.LimitationLine(limitacao);
+        linha.Should().StartWith("Caixas de correio: Autorização recusada nesta leitura");
+        linha.Should().NotContain(nameof(KnightCapability.ExchangeMailboxes));
+        linha.Should().NotContain(nameof(KnightCapabilityOutcome.InsufficientPermission));
+        linha.Should().Contain("sem veredito:").And.Contain("AK-EXO-001");
     }
 
     /// <summary>
@@ -612,11 +687,14 @@ public sealed class KnightExchangeConfigurationFlowTests : IDisposable
     // ======================================================================================================
 
     /// <summary>
-    /// A recusa mais provável deste conector: a permissão de API existe, o papel de diretório não. A mensagem
-    /// publicada precisa distinguir as duas concessões — e dizer que o papel do Teams não serve aqui.
+    /// Uma recusa de autorização é AMBÍGUA: consentimento ausente, papel de diretório ausente, papel sem
+    /// alcance, domínio errado ou o próprio método de autenticação não ser aceito produzem o mesmo sintoma.
+    /// A mensagem publicada tem de enumerar as verificações — e NÃO pode eleger uma causa, porque mandar o
+    /// operador consertar o item errado esconde o certo. Este teste prova as duas metades: a lista está lá, e
+    /// a afirmação de causa não está.
     /// </summary>
     [Fact]
-    public async Task ConexaoRecusadaPorAutorizacao_ExplicaAsDuasConcessoes_ENaoAvaliaNada()
+    public async Task ConexaoRecusadaPorAutorizacao_ListaAsVerificacoes_SemEleger_Causa_ENaoAvaliaNada()
     {
         await SeedAsync(TenantA);
         await using var db = NewContext(TenantA);
@@ -632,6 +710,16 @@ public sealed class KnightExchangeConfigurationFlowTests : IDisposable
         detalhe.Should().Contain("Leitor Global");
         detalhe.Should().Contain("Microsoft Teams não vale aqui",
             "copiar o papel do Teams é o erro mais fácil de cometer aqui, e a mensagem precisa preveni-lo");
+
+        // O método de autenticação entra na lista: ele é a hipótese que o AEGIS não conseguiu confirmar em
+        // documentação, e omiti-lo deixaria o operador procurando para sempre no lugar errado.
+        detalhe.Should().Contain("segredo de cliente");
+
+        // E a mensagem se declara incapaz de apontar a causa. Sem esta linha, a enumeração seria lida como
+        // diagnóstico — "faltam estas coisas" — que é precisamente o que a recusa NÃO informa.
+        detalhe.Should().Contain("não identifica a causa");
+        detalhe.Should().NotContain("São necessárias DUAS",
+            "o texto antigo declarava o que faltava a partir de um sintoma que não distingue as causas");
     }
 
     [Fact]

@@ -320,6 +320,16 @@ jobs:
             *) echo "runtime do Exchange NAO validado: falta a ressalva sobre os comandos de sessao"; exit 1;;
           esac
 
+          # E o gate tem de declarar o PRÓPRIO alcance. Importar o módulo prova carregamento e comandos locais;
+          # não prova compatibilidade integral com Debian, autenticação, comandos de sessão nem coleta real. Se
+          # essa declaração sumir da saída, o passo falha — o verde passaria a afirmar o que não verificou.
+          for RESSALVA in "alcance-do-gate: offline, sem locatário" "NÃO PROVADO:"; do
+            case "$OUT" in
+              *"$RESSALVA"*) ;;
+              *) echo "runtime do Exchange NAO validado: falta a declaracao de alcance ($RESSALVA)"; exit 1;;
+            esac
+          done
+
           # O marcador sintético de token não pode aparecer em NADA do que o processo escreveu.
           case "$OUT" in
             *"AEGIS-MARCADOR-SINTETICO"*)

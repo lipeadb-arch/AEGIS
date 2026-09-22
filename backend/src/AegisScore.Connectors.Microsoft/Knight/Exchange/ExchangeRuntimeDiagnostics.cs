@@ -31,6 +31,12 @@ public static class ExchangeRuntimeDiagnostics
     /// <summary>Marca que o CI procura na saída. Só é impressa quando TUDO passou.</summary>
     public const string SuccessMarker = "adaptador-exchange=OK";
 
+    /// <summary>
+    /// Cabeçalho do alcance declarado. O CI EXIGE esta linha: um gate que perde a própria ressalva passa a ser
+    /// lido como prova do que não provou, e é exatamente assim que um verde offline vira promessa de coleta.
+    /// </summary>
+    public const string ScopeMarker = "alcance-do-gate: offline, sem locatário";
+
     /// <summary>Seção de configuração das opções do adaptador (a mesma que a API usa ao registrar o serviço).</summary>
     public const string ConfigurationSection = "Knight:Exchange";
 
@@ -193,6 +199,18 @@ public static class ExchangeRuntimeDiagnostics
         }
 
         output.WriteLine("coleta-sintetica=OK");
+
+        // O ALCANCE do gate sai junto com o sucesso, e de propósito: um marcador verde lido sem esta lista vira
+        // "o Exchange está validado nesta imagem", que é falso. O que foi provado aqui é pequeno e específico.
+        output.WriteLine(ScopeMarker);
+        output.WriteLine(
+            "  PROVADO: o módulo fixado CARREGA nesta imagem; os comandos do módulo existem nesta versão; o "
+            + "adaptador real executa o script no processo real; o token sintético não vaza para saída alguma.");
+        output.WriteLine(
+            "  NÃO PROVADO: compatibilidade integral do módulo com esta distribuição (a lista oficial de Linux "
+            + "suportado é Ubuntu, e esta imagem é Debian); autenticação; aceitação do token pelo locatário; os "
+            + "comandos de sessão, que só existem depois da conexão; e qualquer coleta real de configuração.");
+
         output.WriteLine(SuccessMarker);
         return 0;
     }

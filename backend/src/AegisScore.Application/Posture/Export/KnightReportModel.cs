@@ -358,7 +358,11 @@ public static class KnightReportModelBuilder
 
     private static string CauseLabel(KnightCapabilityOutcome o) => o switch
     {
-        KnightCapabilityOutcome.InsufficientPermission => "Permissão ausente",
+        // [AEGIS-KNIGHT-COVERAGE-03] O rótulo é o que foi OBSERVADO. A recusa não distingue entre consentimento
+        // ausente, papel de diretório sem alcance, domínio errado e método de autenticação não aceito — e no
+        // Exchange Online a permissão de API sozinha não autoriza comando nenhum. O requisito concreto sai no
+        // campo ao lado (RequiredPermission), que é requisito, e não diagnóstico.
+        KnightCapabilityOutcome.InsufficientPermission => "Autorização recusada",
         KnightCapabilityOutcome.LimitedByLicense => "Licença insuficiente",
         KnightCapabilityOutcome.Throttled => "Limite de taxa do provedor",
         KnightCapabilityOutcome.AuthenticationFailure => "Falha de autenticação",
@@ -429,6 +433,30 @@ public static class KnightCapabilityLabels
         KnightCapability.AccessReviews => "Revisões de acesso",
         KnightCapability.NamedLocations => "Locais nomeados",
         KnightCapability.ServicePrincipalSettings => "Aplicações de serviço do Microsoft 365",
+
+        // [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams.
+        KnightCapability.TeamsClientConfiguration => "Configuração do cliente do Teams",
+        KnightCapability.TeamsFederationConfiguration => "Federação e acesso externo do Teams",
+        KnightCapability.TeamsMeetingPolicies => "Políticas de reunião do Teams",
+        KnightCapability.TeamsMessagingPolicies => "Políticas de mensagens do Teams",
+        KnightCapability.TeamsAppPermissionPolicies => "Políticas de permissão de aplicativos do Teams",
+        KnightCapability.TeamsPolicyAssignments => "Atribuições de política do Teams a grupos",
+
+        // [AEGIS-KNIGHT-COVERAGE-03] Exchange Online. Sem estes rótulos, a tabela de limitações do relatório
+        // mostrava o nome do símbolo do código ("ExchangeCasMailboxes") para quem lê o relatório.
+        KnightCapability.ExchangeOrganizationConfig => "Configuração da organização do Exchange",
+        KnightCapability.ExchangeTransportConfig => "Configuração de transporte do Exchange",
+        KnightCapability.ExchangeSharingPolicies => "Políticas de compartilhamento",
+        KnightCapability.ExchangeOwaMailboxPolicies => "Políticas do Outlook na web",
+        KnightCapability.ExchangeTransportRules => "Regras de transporte (fluxo de emails)",
+        KnightCapability.ExchangeRoleAssignmentPolicies => "Políticas de atribuição de função ao usuário final",
+        KnightCapability.ExchangeExternalSenderIdentification => "Identificação de remetentes externos",
+        KnightCapability.ExchangeOutboundSpamFilterPolicies => "Políticas de filtro de spam de saída",
+        KnightCapability.ExchangeMailboxes => "Caixas de correio",
+        KnightCapability.ExchangeMailboxSignIn => "Estado de entrada das contas",
+        KnightCapability.ExchangeCasMailboxes => "Acesso de cliente por caixa de correio",
+        KnightCapability.ExchangeAuditBypassAssociations => "Desvios de auditoria de caixa de correio",
+
         _ => c.ToString(),
     };
 
@@ -468,6 +496,14 @@ public static class KnightCapabilityLabels
             KnightCapability.DriveSharingAudit or KnightCapability.OAuthTokenAudit => "admin.reports.audit.readonly",
             _ => null,
         },
+
+        // [AEGIS-KNIGHT-COVERAGE-03] No Exchange Online a autorização NÃO é uma permissão de API por leitura: a
+        // permissão habilita a conexão de aplicativo, e o que autoriza CADA comando é o papel de diretório que
+        // viaja no token. Por isso a linha é a mesma para todas as capacidades — e diz as duas coisas, sem
+        // sugerir que exista um consentimento específico por comando.
+        KnightSourceType.MicrosoftExchangeOnline =>
+            "Exchange.ManageAsApp (aplicativo) e um papel de diretório atribuído à aplicação — para leitura, Leitor Global",
+
         _ => null,
     };
 }
