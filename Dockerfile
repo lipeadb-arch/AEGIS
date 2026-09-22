@@ -32,7 +32,7 @@ COPY --from=frontend /src/frontend/dist/aegis-score-frontend/browser/ ./backend/
 RUN dotnet publish backend/src/AegisScore.Api/AegisScore.Api.csproj -c Release -o /app/api \
     && dotnet publish backend/src/AegisScore.DbMigrator/AegisScore.DbMigrator.csproj -c Release -o /app/migrator
 
-# ---- Stage 2b: runtime do PowerShell + módulo OFICIAL do Microsoft Teams ----
+# ---- Stage 2b: runtime do PowerShell + módulos OFICIAIS de Teams e Exchange Online ----
 #
 # [AEGIS-KNIGHT-COVERAGE-02] A configuração do Microsoft Teams do locatário NÃO tem leitura na versão estável
 # (v1.0) do Microsoft Graph: o caminho oficial é o módulo Microsoft Teams PowerShell, com autenticação de
@@ -47,15 +47,32 @@ RUN dotnet publish backend/src/AegisScore.Api/AegisScore.Api.csproj -c Release -
 # Sem este estágio a imagem continua subindo: o coletor do Teams declara a falha de transporte ("o runtime do
 # PowerShell não pôde ser iniciado"), os controles de Teams ficam NÃO AVALIADOS com o motivo, e nada mais é
 # afetado. O que ele nunca faz é devolver coleta vazia como se fosse ambiente sem problema.
-FROM mcr.microsoft.com/powershell:lts-7.4-debian-12 AS teamsps
+FROM mcr.microsoft.com/powershell:lts-7.4-debian-12 AS knightps
 ARG TEAMS_MODULE_VERSION=7.9.0
 ENV TEAMS_MODULE_VERSION=${TEAMS_MODULE_VERSION}
+
+# [AEGIS-KNIGHT-COVERAGE-03] O mesmo estágio passa a carregar o módulo OFICIAL do Exchange Online, pelo mesmo
+# motivo: a configuração do Exchange do locatário não tem leitura equivalente na versão estável do Microsoft
+# Graph, e o caminho documentado para aplicativo é o ExchangeOnlineManagement.
+#
+# A versão é FIXADA em 3.9.2, e a escolha tem uma razão concreta: o módulo publica a faixa de PowerShell que
+# suporta, e 3.9.2 é a mais recente compatível com o PowerShell 7.4 desta imagem. Subir de faixa exigiria
+# trocar a imagem base do PowerShell, o que mexeria também no Teams — fica para quando houver motivo.
+#
+# LIMITAÇÃO DECLARADA, não contornada: a Microsoft lista Ubuntu como o Linux suportado para este módulo, e a
+# imagem do AEGIS é Debian 12. O gate de runtime da imagem (abaixo, e no CI) EXECUTA a importação do módulo e
+# o script real do produto para que essa incompatibilidade, se existir, apareça no build — e não numa coleta
+# no ambiente do cliente. O gate é offline: ele NÃO prova autorização em locatário nenhum.
+ARG EXCHANGE_MODULE_VERSION=3.9.2
+ENV EXCHANGE_MODULE_VERSION=${EXCHANGE_MODULE_VERSION}
+
 # Aspas SIMPLES de propósito: o `$env:` é do PowerShell e não pode ser expandido pelo shell do build.
 RUN pwsh -NoLogo -NoProfile -NonInteractive -Command \
       'Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; \
        New-Item -ItemType Directory -Force -Path /opt/aegis/psmodules | Out-Null; \
        Save-Module -Name MicrosoftTeams -RequiredVersion $env:TEAMS_MODULE_VERSION -Path /opt/aegis/psmodules -Repository PSGallery -ErrorAction Stop; \
-       Get-ChildItem /opt/aegis/psmodules/MicrosoftTeams | Select-Object -ExpandProperty Name'
+       Save-Module -Name ExchangeOnlineManagement -RequiredVersion $env:EXCHANGE_MODULE_VERSION -Path /opt/aegis/psmodules -Repository PSGallery -ErrorAction Stop; \
+       Get-ChildItem /opt/aegis/psmodules/MicrosoftTeams, /opt/aegis/psmodules/ExchangeOnlineManagement | Select-Object -ExpandProperty Name'
 
 # ---- Stage 3: runtime enxuto, não-root -------------------------------------
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
@@ -73,13 +90,21 @@ RUN apt-get update \
 # copiado e o executável é LOCALIZADO — em vez de um caminho fixo que quebra ao trocar de tag. E o binário é
 # EXECUTADO aqui mesmo: se faltar alguma dependência nativa nesta imagem base, o build falha agora, e não numa
 # coleta em produção.
-COPY --from=teamsps /opt/microsoft/powershell /opt/microsoft/powershell
-COPY --from=teamsps /opt/aegis/psmodules /opt/aegis/psmodules
+COPY --from=knightps /opt/microsoft/powershell /opt/microsoft/powershell
+COPY --from=knightps /opt/aegis/psmodules /opt/aegis/psmodules
 RUN set -eux; \
     PWSH="$(find /opt/microsoft/powershell -maxdepth 2 -name pwsh -type f | head -n1)"; \
     test -n "$PWSH"; \
     ln -sf "$PWSH" /usr/bin/pwsh; \
-    /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+    /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'; \
+    /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -Command \
+      '$env:PSModulePath = "/opt/aegis/psmodules:" + $env:PSModulePath; \
+       Import-Module ExchangeOnlineManagement -ErrorAction Stop; \
+       $m = Get-Module ExchangeOnlineManagement; \
+       "ExchangeOnlineManagement=" + $m.Version.ToString(); \
+       foreach ($c in @("Connect-ExchangeOnline", "Disconnect-ExchangeOnline")) { \
+         if (-not (Get-Command $c -Module ExchangeOnlineManagement -ErrorAction SilentlyContinue)) { throw ("comando ausente: " + $c) } \
+       }'
 
 WORKDIR /app
 COPY --from=backend /app/api ./
@@ -110,6 +135,8 @@ ENV ASPNETCORE_ENVIRONMENT=Production \
 # além da do próprio locatário) e sem escrever no diretório do usuário não-root.
 ENV Knight__Teams__Executable=/usr/bin/pwsh \
     Knight__Teams__ModulePath=/opt/aegis/psmodules \
+    Knight__Exchange__Executable=/usr/bin/pwsh \
+    Knight__Exchange__ModulePath=/opt/aegis/psmodules \
     POWERSHELL_TELEMETRY_OPTOUT=1 \
     POWERSHELL_UPDATECHECK=Off
 

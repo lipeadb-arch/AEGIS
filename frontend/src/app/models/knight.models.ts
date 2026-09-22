@@ -37,7 +37,12 @@ export type KnightCategory =
 export type KnightConnectionState = 'Demo' | 'NotConfigured' | 'Connected';
 
 /** Fonte concreta de coleta (multicoletor). */
-export type KnightSourceType = 'Demo' | 'MicrosoftEntraId' | 'MicrosoftTeams' | 'GoogleWorkspace';
+export type KnightSourceType =
+  | 'Demo'
+  | 'MicrosoftEntraId'
+  | 'MicrosoftTeams'
+  | 'MicrosoftExchangeOnline'
+  | 'GoogleWorkspace';
 
 /** Estado da coleta/fonte de uma execução (ou de disponibilidade). */
 export type KnightSourceState =
@@ -304,6 +309,7 @@ const SOURCE_TYPE_LABEL: Record<KnightSourceType, string> = {
   Demo: 'Demonstração',
   MicrosoftEntraId: 'Microsoft Entra ID',
   MicrosoftTeams: 'Microsoft Teams',
+  MicrosoftExchangeOnline: 'Exchange Online',
   GoogleWorkspace: 'Google Workspace',
 };
 

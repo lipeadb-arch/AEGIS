@@ -19,6 +19,8 @@ const SOURCE_SLUG: Record<KnightSourceType, string> = {
   MicrosoftEntraId: 'entra',
   // [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams: fonte própria, credencial do mesmo conector Microsoft.
   MicrosoftTeams: 'teams',
+  // [AEGIS-KNIGHT-COVERAGE-03] Exchange Online: fonte propria, mesma credencial do conector Microsoft.
+  MicrosoftExchangeOnline: 'exchange',
   GoogleWorkspace: 'google',
 };
 

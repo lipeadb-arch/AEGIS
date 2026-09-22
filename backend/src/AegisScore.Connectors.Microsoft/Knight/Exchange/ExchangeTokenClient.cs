@@ -20,11 +20,45 @@ namespace AegisScore.Connectors.Microsoft.Knight.Exchange;
 /// emitido. Cada um é pedido com o seu próprio escopo, pelo fluxo de credenciais de cliente, com as MESMAS
 /// credenciais do conector Microsoft já configurado — nenhuma credencial nova é pedida ao cliente.</para>
 ///
-/// <para><b>Por que não é preciso certificado.</b> A documentação de autenticação de aplicativo do módulo
-/// descreve o certificado como a forma de OBTER o token, e explica que a autorização da sessão vem do papel de
-/// diretório que viaja DENTRO do token. Um token obtido por segredo de cliente carrega o mesmo papel. O
-/// certificado, portanto, é um caminho de obtenção — não um requisito do serviço. Isso evita pedir ao cliente
-/// que emita, distribua e rotacione um certificado só para uma leitura.</para>
+/// <para><b>Evidência que sustenta este método, e o que ela NÃO cobre.</b> A decisão foi tomada a partir da
+/// documentação oficial, e o registro abaixo separa o que está DOCUMENTADO do que é INFERÊNCIA — porque a
+/// existência do parâmetro, sozinha, não comprova o fluxo:</para>
+///
+/// <list type="number">
+///   <item><description>
+///     <b>DOCUMENTADO.</b> A referência de <c>Connect-ExchangeOnline</c>
+///     (learn.microsoft.com/powershell/module/exchangepowershell/connect-exchangeonline) descreve o parâmetro
+///     <c>-AccessToken</c>, disponível a partir da versão 3.1.0-Preview1 do módulo, e determina que, para um
+///     token de APLICATIVO, ele seja usado junto de <c>-Organization</c>. A versão fixada na imagem (3.9.2) é
+///     posterior a essa, e o gate de runtime confere que o comando existe nela.
+///   </description></item>
+///   <item><description>
+///     <b>DOCUMENTADO.</b> O artigo de autenticação apenas de aplicativo
+///     (learn.microsoft.com/powershell/exchange/app-only-auth-powershell-v2), na seção que explica o
+///     funcionamento, afirma que o RBAC da sessão é configurado a partir da informação de PAPEL DE DIRETÓRIO
+///     disponível NO TOKEN. A autorização, portanto, viaja dentro do token — não no meio usado para obtê-lo.
+///     O mesmo artigo descreve o certificado como a forma de obter esse token.
+///   </description></item>
+///   <item><description>
+///     <b>INFERÊNCIA, não documentação.</b> De (2) segue que um token de credenciais de cliente para o mesmo
+///     recurso, emitido para a mesma aplicação, carrega as mesmas reivindicações de papel e é aceito pela
+///     mesma validação. A Microsoft NÃO publica uma afirmação explícita de que o segredo de cliente é um meio
+///     suportado para este comando. Logo: o certificado é tratado aqui como um caminho de obtenção, e não
+///     como requisito do serviço — mas isso é conclusão do AEGIS, e não citação.
+///   </description></item>
+///   <item><description>
+///     <b>NÃO VALIDADO.</b> Nenhuma conexão real foi estabelecida. Os testes deste pacote são SINTÉTICOS: eles
+///     exercitam o contrato do documento de saída, a tradução para o ADM, a avaliação e as exportações, e o
+///     gate da imagem exercita a importação do módulo OFFLINE. Nada disso demonstra que o locatário aceita o
+///     token: essa é a primeira verificação da homologação, e permanece como LIMITAÇÃO declarada. Se a recusa
+///     vier, ela chega classificada como autorização (não como falha de autenticação) e o produto informa as
+///     duas concessões que faltam — permissão de API e papel de diretório.
+///   </description></item>
+/// </list>
+///
+/// <para>O caminho por certificado não foi descartado: ele é a alternativa imediata caso a homologação
+/// demonstre que o segredo não serve. O que NÃO se faz é exigir do cliente a emissão, a distribuição e a
+/// rotação de um certificado antes de haver necessidade demonstrada.</para>
 ///
 /// <para><b>Por que o domínio é resolvido aqui, e agora.</b> O parâmetro de organização da conexão pede o
 /// domínio <c>.onmicrosoft.com</c> principal, não o identificador do locatário — e o conector guarda o

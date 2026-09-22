@@ -237,7 +237,7 @@ jobs:
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~EvidenceIngestionTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests|FullyQualifiedName~CrossSourceCorrelationTests|FullyQualifiedName~DevicePriorityTests|FullyQualifiedName~DeviceCasePlanTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests|FullyQualifiedName~KnightTeamsCollectorTests|FullyQualifiedName~KnightTeamsPolicyReachTests|FullyQualifiedName~KnightTeamsConfigurationFlowTests|FullyQualifiedName~TeamsAdapterTransportTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~EvidenceIngestionTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests|FullyQualifiedName~CrossSourceCorrelationTests|FullyQualifiedName~DevicePriorityTests|FullyQualifiedName~DeviceCasePlanTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests|FullyQualifiedName~KnightTeamsCollectorTests|FullyQualifiedName~KnightTeamsPolicyReachTests|FullyQualifiedName~KnightTeamsConfigurationFlowTests|FullyQualifiedName~TeamsAdapterTransportTests|FullyQualifiedName~KnightExchangeConfigurationFlowTests|FullyQualifiedName~ExchangeAdapterTransportTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
@@ -288,6 +288,42 @@ jobs:
           case "$OUT" in
             *"AEGIS-MARCADOR-SINTETICO"*)
               echo "runtime do Teams NAO validado: marcador de segredo vazou para a saida"; exit 1;;
+          esac
+
+      # 2c) [AEGIS-KNIGHT-COVERAGE-03] O MESMO gate para o adaptador do Exchange Online, com uma distinção que
+      #     o próprio programa imprime e que este passo confere: os comandos verificados aqui são os do MÓDULO
+      #     (existem depois do Import-Module). Os comandos de LEITURA do Exchange só entram na sessão depois de
+      #     uma conexão bem-sucedida com um locatário — este gate NÃO os verifica e NÃO prova autorização
+      #     nenhuma. Ele prova três coisas menores e necessárias: o módulo fixado importa nesta imagem Debian,
+      #     o script embutido roda no processo real, e o token sintético não vaza para saída alguma.
+      - name: Exchange Online collection runtime inside the image (real adapter path, non-root, offline)
+        run: |
+          set -euo pipefail
+
+          echo "--- adaptador do Exchange: execução real do script embutido, sem rede e sem locatário ---"
+          set +e
+          OUT="$(docker run --rm --network none --entrypoint dotnet "$IMAGE" \
+            /app/AegisScore.Api.dll --knight-exchange-runtime-check 2>&1)"
+          CODE=$?
+          set -e
+          echo "$OUT"
+          if [ "$CODE" -ne 0 ]; then echo "runtime do Exchange NAO validado (codigo $CODE)"; exit 1; fi
+          for MARCA in "module-check=OK" "coleta-sintetica=OK" "adaptador-exchange=OK"; do
+            case "$OUT" in *"$MARCA"*) ;; *) echo "runtime do Exchange NAO validado: falta $MARCA"; exit 1;; esac
+          done
+
+          # A honestidade do gate é parte do gate: a saída tem de DIZER que os comandos de sessão não foram
+          # verificados aqui. Se esse aviso sumir, o passo falha — um gate offline lido como prova de
+          # autorização no locatário é exatamente o erro que este pacote se comprometeu a não cometer.
+          case "$OUT" in
+            *"NÃO verificados aqui"*) ;;
+            *) echo "runtime do Exchange NAO validado: falta a ressalva sobre os comandos de sessao"; exit 1;;
+          esac
+
+          # O marcador sintético de token não pode aparecer em NADA do que o processo escreveu.
+          case "$OUT" in
+            *"AEGIS-MARCADOR-SINTETICO"*)
+              echo "runtime do Exchange NAO validado: marcador de token vazou para a saida"; exit 1;;
           esac
 
       # 3) Smoke do container: rede + Postgres descartáveis, PKCS#12 sintético (grupo 1000, 0640),
@@ -593,4 +629,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~DeviceResolutionPostgresTests|FullyQualifiedName~CrossSourceCorrelationPostgresTests|FullyQualifiedName~DevicePriorityPostgresTests|FullyQualifiedName~DeviceCasePlanHttpTests|FullyQualifiedName~KnightDurableAssessmentPostgresTests|FullyQualifiedName~KnightLatestHttpTests|FullyQualifiedName~KnightUnfinishedRunPlanHttpTests|FullyQualifiedName~KnightMulticloudPostgresTests|FullyQualifiedName~KnightSyncHttpTests|FullyQualifiedName~KnightEntraConfigurationPostgresTests|FullyQualifiedName~KnightTeamsConfigurationPostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~DeviceResolutionPostgresTests|FullyQualifiedName~CrossSourceCorrelationPostgresTests|FullyQualifiedName~DevicePriorityPostgresTests|FullyQualifiedName~DeviceCasePlanHttpTests|FullyQualifiedName~KnightDurableAssessmentPostgresTests|FullyQualifiedName~KnightLatestHttpTests|FullyQualifiedName~KnightUnfinishedRunPlanHttpTests|FullyQualifiedName~KnightMulticloudPostgresTests|FullyQualifiedName~KnightSyncHttpTests|FullyQualifiedName~KnightEntraConfigurationPostgresTests|FullyQualifiedName~KnightTeamsConfigurationPostgresTests|FullyQualifiedName~KnightExchangeConfigurationPostgresTests"
