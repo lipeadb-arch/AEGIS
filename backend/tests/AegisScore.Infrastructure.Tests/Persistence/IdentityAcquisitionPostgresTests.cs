@@ -327,10 +327,53 @@ public sealed class IdentityAcquisitionPostgresTests
         }
 
         var coletorAntigo = new ColetorSintetico(ObjetosComPrefixo("Estado ANTIGO", "obj-1", "obj-2"), Instante(1));
-        var antiga = Task.Run(() => ColetarPeloServicoAsync(esperaLonga, tenant, coletorAntigo));
+
+        // [investigacao dirigida] O cenario so existe se a concorrente CHEGAR ao banco. Enfileirar a
+        // concorrente no ThreadPool coloca a montagem do cenario atras de tudo o que as outras classes de
+        // teste ja enfileiraram; uma espera frustrada, ali, nao diz nada sobre a secao critica. O marco
+        // abaixo separa as duas coisas: "nao comecou" (contencao do processo de teste) e "comecou e nao
+        // bloqueou" (ausencia de protecao no produto), que sao diagnosticos opostos.
+        var partiu = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cronometro = System.Diagnostics.Stopwatch.StartNew();
+
+        // Sonda do ThreadPool: um item TRIVIAL enfileirado no mesmo instante. O que ele mede e quanto tempo
+        // um item novo leva para COMECAR neste processo agora — ou seja, o atraso que a concorrente sofreria
+        // se fosse agendada pela fila comum. E a medida que sustenta a escolha da thread dedicada abaixo, no
+        // MESMO run em que o cenario e montado, em vez de uma suposicao sobre o ambiente.
+        var sondaDoPool = Task.Run(() => cronometro.ElapsedMilliseconds);
+
+        var antiga = Task.Factory.StartNew(
+            () =>
+            {
+                partiu.TrySetResult();
+                return ColetarPeloServicoAsync(esperaLonga, tenant, coletorAntigo);
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).Unwrap();
+
+        // O orcamento da espera pela TRAVA so comeca quando a concorrente esta viva. Medir a partir do
+        // enfileiramento misturaria dois intervalos de naturezas diferentes — o tempo do processo de teste
+        // para dar partida e o tempo do banco para conceder ou negar a trava — e faria uma falha de agendamento
+        // ser lida como ausencia de secao critica. Se a partida nao acontecer, isso tambem REPROVA: o produto
+        // nao foi exercitado, e a mensagem diz exatamente isso em vez de acusar o que nao foi testado.
+        try
+        {
+            await partiu.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        }
+        catch (TimeoutException)
+        {
+            throw new InvalidOperationException(
+                "a coleta concorrente não chegou a COMEÇAR em 60 s: o cenário não foi montado e o produto não "
+                + "foi exercitado neste run. Isto é falha do processo de teste, não veredito sobre a serialização."
+                + Environment.NewLine + DiagnosticoDoProcesso(partiu.Task, sondaDoPool, cronometro));
+        }
 
         await AguardarSessoesEmEsperaAsync(
-            portao, 1, "a coleta antiga precisa ficar parada no portão ANTES de decidir qualquer coisa", antiga);
+            portao, 1, "a coleta antiga precisa ficar parada no portão ANTES de decidir qualquer coisa",
+            () => DiagnosticoDoProcesso(partiu.Task, sondaDoPool, cronometro), antiga);
+
+        _output.WriteLine(DiagnosticoDoProcesso(partiu.Task, sondaDoPool, cronometro));
 
         // 3) Portão liberado: a antiga tenta concluir DEPOIS da nova, e é a última a gravar.
         await travando.CommitAsync();
@@ -570,7 +613,8 @@ public sealed class IdentityAcquisitionPostgresTests
     /// existisse, ninguém bloquearia e o cenário falharia ao ser montado — em vez de passar por acaso.
     /// </summary>
     private static async Task AguardarSessoesEmEsperaAsync(
-        NpgsqlConnection observador, int esperadas, string porque, params Task[] emCurso)
+        NpgsqlConnection observador, int esperadas, string porque,
+        Func<string> diagnosticoDoProcesso, params Task[] emCurso)
     {
         var limite = DateTime.UtcNow.AddSeconds(30);
         var ultima = -1;
@@ -605,7 +649,31 @@ public sealed class IdentityAcquisitionPostgresTests
             $"{porque}: esperava {esperadas} sessão(ões) bloqueada(s) em trava, observei {ultima}. "
             + "Sem bloqueio não há seção crítica — e o cenário de regressão temporal não pôde ser montado."
             + Environment.NewLine + $"Tarefas: {string.Join(", ", emCurso.Select(t => t.Status.ToString()))}"
+            + Environment.NewLine + diagnosticoDoProcesso()
             + Environment.NewLine + await DiagnosticoDeSessoesAsync(observador));
+    }
+
+    /// <summary>
+    /// Retrato do PROCESSO DE TESTE. Uma espera frustrada tem duas causas possiveis e incompativeis: a
+    /// concorrente nao chegou a comecar (contencao de agendamento dentro do processo, que nao diz nada
+    /// sobre o produto) ou comecou e nao bloqueou (ausencia de secao critica, que reprova o produto). Sem
+    /// este retrato, as duas dao a MESMA mensagem — e a segunda seria lida como a primeira.
+    /// </summary>
+    private static string DiagnosticoDoProcesso(
+        Task partida, Task<long> sondaDoPool, System.Diagnostics.Stopwatch cronometro)
+    {
+        var quando = partida.IsCompletedSuccessfully
+            ? "a concorrente COMEÇOU a executar"
+            : "a concorrente NÃO começou a executar (contenção do processo de teste, não do banco)";
+
+        var sonda = sondaDoPool.IsCompletedSuccessfully
+            ? $"{sondaDoPool.Result} ms"
+            : $"ainda não começou depois de {cronometro.ElapsedMilliseconds} ms";
+
+        return $"Processo de teste: {quando}; {cronometro.ElapsedMilliseconds} ms desde o enfileiramento. "
+               + $"Sonda do ThreadPool (item trivial enfileirado no mesmo instante): {sonda}. "
+               + $"ThreadPool: threads={ThreadPool.ThreadCount}, "
+               + $"pendentes={ThreadPool.PendingWorkItemCount}, concluídos={ThreadPool.CompletedWorkItemCount}.";
     }
 
     /// <summary>Retrato das sessões do banco — existe para que uma espera frustrada diga POR QUE frustrou.</summary>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace AegisScore.Domain;
@@ -47,6 +47,17 @@ public enum KnightSourceType
     /// uma falha aqui não pode apagar, nem substituir, a avaliação do Entra ID.
     /// </summary>
     MicrosoftTeams = 3,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-03] Exchange Online (somente leitura), pelo módulo oficial Exchange Online
+    /// PowerShell com autenticação de APLICATIVO. Fonte SEPARADA do Entra ID e do Teams pelo mesmo motivo dos
+    /// blocos anteriores: a credencial é a mesma aplicação registrada, mas o RECURSO para o qual o token é
+    /// emitido é outro (<c>https://outlook.office365.com</c>), a permissão de API é outra
+    /// (<c>Exchange.ManageAsApp</c>) e a autorização depende de um papel de diretório PRÓPRIO — o papel que
+    /// serve ao Teams não serve aqui. Uma falha nesta fonte não pode apagar nem substituir a avaliação das
+    /// outras.
+    /// </summary>
+    MicrosoftExchangeOnline = 4,
 }
 
 /// <summary>

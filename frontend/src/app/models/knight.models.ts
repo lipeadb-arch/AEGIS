@@ -37,7 +37,12 @@ export type KnightCategory =
 export type KnightConnectionState = 'Demo' | 'NotConfigured' | 'Connected';
 
 /** Fonte concreta de coleta (multicoletor). */
-export type KnightSourceType = 'Demo' | 'MicrosoftEntraId' | 'MicrosoftTeams' | 'GoogleWorkspace';
+export type KnightSourceType =
+  | 'Demo'
+  | 'MicrosoftEntraId'
+  | 'MicrosoftTeams'
+  | 'MicrosoftExchangeOnline'
+  | 'GoogleWorkspace';
 
 /** Estado da coleta/fonte de uma execução (ou de disponibilidade). */
 export type KnightSourceState =
@@ -304,6 +309,7 @@ const SOURCE_TYPE_LABEL: Record<KnightSourceType, string> = {
   Demo: 'Demonstração',
   MicrosoftEntraId: 'Microsoft Entra ID',
   MicrosoftTeams: 'Microsoft Teams',
+  MicrosoftExchangeOnline: 'Exchange Online',
   GoogleWorkspace: 'Google Workspace',
 };
 
@@ -387,6 +393,26 @@ const CAPABILITY_LABEL: Record<string, string> = {
   AccessReviews: 'Revisões de acesso',
   NamedLocations: 'Locais nomeados',
   ServicePrincipalSettings: 'Aplicações de serviço do Microsoft 365',
+  // [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams — os mesmos nomes do relatório exportado.
+  TeamsClientConfiguration: 'Configuração do cliente do Teams',
+  TeamsFederationConfiguration: 'Federação e acesso externo do Teams',
+  TeamsMeetingPolicies: 'Políticas de reunião do Teams',
+  TeamsMessagingPolicies: 'Políticas de mensagens do Teams',
+  TeamsAppPermissionPolicies: 'Políticas de permissão de aplicativos do Teams',
+  TeamsPolicyAssignments: 'Atribuições de política do Teams a grupos',
+  // [AEGIS-KNIGHT-COVERAGE-03] Exchange Online — idem.
+  ExchangeOrganizationConfig: 'Configuração da organização do Exchange',
+  ExchangeTransportConfig: 'Configuração de transporte do Exchange',
+  ExchangeSharingPolicies: 'Políticas de compartilhamento',
+  ExchangeOwaMailboxPolicies: 'Políticas do Outlook na web',
+  ExchangeTransportRules: 'Regras de transporte (fluxo de emails)',
+  ExchangeRoleAssignmentPolicies: 'Políticas de atribuição de função ao usuário final',
+  ExchangeExternalSenderIdentification: 'Identificação de remetentes externos',
+  ExchangeOutboundSpamFilterPolicies: 'Políticas de filtro de spam de saída',
+  ExchangeMailboxes: 'Caixas de correio',
+  ExchangeMailboxSignIn: 'Estado de entrada das contas',
+  ExchangeCasMailboxes: 'Acesso de cliente por caixa de correio',
+  ExchangeAuditBypassAssociations: 'Desvios de auditoria de caixa de correio',
 };
 
 /** Capacidade desconhecida degrada para o próprio identificador — nunca some da tela. */
@@ -1018,7 +1044,11 @@ export interface KnightLimitationView {
 
 const CAUSE: Record<string, [string, string]> = {
   InsufficientPermission: [
-    'Permissão ausente',
+    // [AEGIS-KNIGHT-COVERAGE-03] O rótulo diz o que foi OBSERVADO, não o que falta. Uma recusa de autorização
+    // é compatível com consentimento ausente, papel sem alcance, domínio errado e método de autenticação não
+    // aceito — e no Exchange Online a permissão sozinha nunca autoriza comando algum. "Permissão ausente"
+    // elegia uma dessas causas e mandava o operador consertar o que talvez já estivesse certo.
+    'Autorização recusada',
     'Conceder a permissão indicada ao aplicativo do conector (consentimento de administrador) e sincronizar novamente em Integrações.',
   ],
   LimitedByLicense: [

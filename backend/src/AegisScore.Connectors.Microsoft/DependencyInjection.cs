@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging;
@@ -8,6 +8,7 @@ using AegisScore.Application.Services;
 using AegisScore.Connectors.Microsoft.Defender;
 using AegisScore.Connectors.Microsoft.Intune;
 using AegisScore.Connectors.Microsoft.Knight;
+using AegisScore.Connectors.Microsoft.Knight.Exchange;
 using AegisScore.Connectors.Microsoft.Knight.Teams;
 using AegisScore.Connectors.Microsoft.Sentinel;
 
@@ -24,8 +25,15 @@ public static class DependencyInjection
     /// (<c>Knight:Teams</c>): executável do PowerShell, caminho do módulo pré-instalado na imagem e tempo
     /// limite. É configuração do AMBIENTE DE IMPLANTAÇÃO — nunca do locatário. Ausente, valem os padrões.
     /// </param>
+    /// <param name="exchangePowerShell">
+    /// [AEGIS-KNIGHT-COVERAGE-03] Seção de configuração do adaptador de coleta do Exchange Online
+    /// (<c>Knight:Exchange</c>): executável do PowerShell, caminho do módulo pré-instalado na imagem, tempo limite
+    /// e TETO DE ENUMERAÇÃO. Também é configuração do AMBIENTE DE IMPLANTAÇÃO — nunca do locatário.
+    /// </param>
     public static IServiceCollection AddMicrosoftConnectors(
-        this IServiceCollection services, IConfiguration? teamsPowerShell = null)
+        this IServiceCollection services,
+        IConfiguration? teamsPowerShell = null,
+        IConfiguration? exchangePowerShell = null)
     {
         // [AEGIS-MVP-POSTURE-02] Coletor REAL do Microsoft Secure Score (sinais + exposições de configuração).
         // Reusa o transporte VALIDADO do Graph (IEntraGraphClient) e o protetor de segredos existente. SCOPED (não
@@ -96,6 +104,25 @@ public static class DependencyInjection
             sp.GetRequiredService<TeamsPowerShellOptions>(),
             sp.GetService<ILogger<PowerShellTeamsAdminReader>>()));
         services.AddScoped<IKnightCollector, TeamsKnightCollector>();
+
+        // [AEGIS-KNIGHT-COVERAGE-03] AEGIS KNIGHT → coletor REAL do Exchange Online (somente leitura). Mesmas duas
+        // peças do Teams, com as diferenças que importam:
+        //   • IExchangeTokenClient — obtém UM token, emitido para o recurso do Exchange Online (o token do Graph
+        //     não vale aqui), e resolve o domínio inicial do locatário, que a conexão de aplicativo exige;
+        //   • IExchangeAdminReader — executa o script EMBUTIDO num processo isolado e descartável por coleta,
+        //     pelo MESMO transporte do adaptador do Teams.
+        // As opções são do AMBIENTE (executável, caminho do módulo na imagem, tempo limite, teto de enumeração).
+        services.AddHttpClient<IExchangeTokenClient, ExchangeTokenClient>().AddStandardResilienceHandler();
+        services.AddSingleton(_ =>
+        {
+            var options = new ExchangePowerShellOptions();
+            exchangePowerShell?.Bind(options);
+            return options;
+        });
+        services.AddSingleton<IExchangeAdminReader>(sp => new PowerShellExchangeAdminReader(
+            sp.GetRequiredService<ExchangePowerShellOptions>(),
+            sp.GetService<ILogger<PowerShellExchangeAdminReader>>()));
+        services.AddScoped<IKnightCollector, ExchangeKnightCollector>();
         return services;
     }
 }

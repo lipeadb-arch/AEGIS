@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
@@ -70,6 +70,20 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
                     ? new KnightSourceNotConfigured(source)   // segredo ilegível/incompleto = não configurado (fail-closed)
                     : new KnightTeamsConfiguration(teamsSettings.TenantIdValue!, teamsSettings.ClientId!, teamsSettings.ClientSecret!);
 
+            // [AEGIS-KNIGHT-COVERAGE-03] Exchange Online reusa o MESMO conector Microsoft já configurado: a
+            // aplicação registrada é a mesma. O que muda é o RECURSO para o qual o token é emitido
+            // (https://outlook.office365.com), a permissão de API (Exchange.ManageAsApp) e o papel de diretório
+            // exigido — o papel usado pelo Teams NÃO serve aqui. Nenhuma credencial nova é pedida ao cliente, e um
+            // conector desabilitado não coleta.
+            case KnightSourceType.MicrosoftExchangeOnline:
+                var exoCfg = await FindEntraConnectorAsync(ct);
+                if (exoCfg is null || !exoCfg.Enabled)
+                    return new KnightSourceNotConfigured(source);
+                var exoSettings = TryDecrypt(exoCfg);
+                return exoSettings is null
+                    ? new KnightSourceNotConfigured(source)   // segredo ilegível/incompleto = não configurado (fail-closed)
+                    : new KnightExchangeOnlineConfiguration(exoSettings.TenantIdValue!, exoSettings.ClientId!, exoSettings.ClientSecret!);
+
             case KnightSourceType.GoogleWorkspace:
                 var gcfg = await FindGoogleConnectorAsync(ct);
                 if (gcfg is null || !gcfg.Enabled)
@@ -98,6 +112,11 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
             // Microsoft: configurar o Entra ID já o torna disponível. Coletar exige, além disso, o papel Leitor do
             // Teams atribuído à aplicação — o que só a primeira coleta revela, e ela o diz com o motivo.
             new KnightSourceAvailability(KnightSourceType.MicrosoftTeams, "Microsoft Teams", entraConfigured, entra?.Enabled ?? false),
+            // [AEGIS-KNIGHT-COVERAGE-03] O Exchange Online aparece como fonte PRÓPRIA, com a mesma credencial do
+            // conector Microsoft: configurar o Entra ID já o torna disponível. Coletar exige, além disso, a
+            // permissão Exchange.ManageAsApp E um papel de diretório atribuído à aplicação — o que só a primeira
+            // coleta revela, e ela o diz com o motivo.
+            new KnightSourceAvailability(KnightSourceType.MicrosoftExchangeOnline, "Exchange Online", entraConfigured, entra?.Enabled ?? false),
             new KnightSourceAvailability(KnightSourceType.GoogleWorkspace, "Google Workspace", googleConfigured, google?.Enabled ?? false),
         };
     }

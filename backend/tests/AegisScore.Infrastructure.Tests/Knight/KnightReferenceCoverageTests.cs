@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using AegisScore.Application.Knight;
@@ -106,23 +106,91 @@ public sealed class KnightReferenceCoverageTests
     /// [AEGIS-KNIGHT-COVERAGE-02] O bloco do Teams NÃO pode ser apresentado como "Microsoft 365 coberto": os
     /// demais serviços continuam pendentes, com o motivo, e isso é o que a plataforma reporta.
     /// </summary>
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-03] As 17 referências de Exchange Online, classificadas pelo que o método
+    /// operacional REALMENTE sustenta.
+    ///
+    /// Diferente do bloco do Teams, aqui não há referência barrada pela forma de acesso: todos os comandos que os
+    /// critérios exigem são executáveis com a autenticação de aplicativo deste conector. O que EXISTE de
+    /// limitação é de outra natureza e vive na execução, não na cobertura — enumeração com teto e leitura que
+    /// pode ser recusada por papel —, e ela aparece como "não avaliado" na coleta do cliente, nunca como
+    /// cobertura de implementação a menos.
+    /// </summary>
+    [Fact]
+    public void ExchangeOnline_TemAs17ReferenciasImplementadas_SemDependerDeAcessoQueOConectorNaoTem()
+    {
+        var coverage = KnightReferenceCatalog.Coverage();
+        var exo = coverage.ByService.Single(s => s.Key == nameof(KnightService.ExchangeOnline));
+
+        exo.Total.Should().Be(17);
+        exo.Implemented.Should().Be(17);
+        exo.Partial.Should().Be(0);
+        exo.Pending.Should().Be(0);
+        exo.ApiLimitation.Should().Be(0);
+        exo.ManualOnly.Should().Be(0);
+        exo.RequiresAccess.Should().Be(0,
+            "os comandos que estes critérios exigem funcionam com a autenticação de aplicativo deste conector");
+
+        // As seções são exatamente as 17 da referência — nem uma a mais inventada, nem uma a menos esquecida.
+        coverage.Controls
+            .Where(c => c.Control.Service == KnightService.ExchangeOnline)
+            .Select(c => c.Control.Section)
+            .Should().BeEquivalentTo(new[]
+            {
+                "1.2.2", "1.3.3", "1.3.6", "1.3.9",
+                "6.1.1", "6.1.2", "6.1.3",
+                "6.2.1", "6.2.2", "6.2.3",
+                "6.3.1", "6.3.2",
+                "6.5.1", "6.5.2", "6.5.3", "6.5.4", "6.5.5",
+            });
+
+        // Cada referência é citada por um — e só um — controle do KNIGHT.
+        foreach (var c in coverage.Controls.Where(c => c.Control.Service == KnightService.ExchangeOnline))
+        {
+            c.IndicatorIds.Should().ContainSingle(c.Control.Key);
+            c.IndicatorIds.Single().Should().StartWith("AK-EXO-");
+        }
+    }
+
+    /// <summary>
+    /// Os controles do Exchange Online só consomem capacidades que o COLETOR REAL produz, declaram o serviço e a
+    /// fonte certos e citam a referência que avaliam. Uma regra escrita sobre capacidade que ninguém produz nunca
+    /// rodaria fora do teste — e não pode contar como cobertura.
+    /// </summary>
+    [Fact]
+    public void ControlesDoExchange_SoConsomemCapacidadesDoColetorReal()
+    {
+        ExchangeConfigurationControls.Definitions.Should().HaveCount(17);
+        foreach (var d in ExchangeConfigurationControls.Definitions)
+        {
+            KnightCollectorCapabilities.IsActive(d).Should().BeTrue(d.Id);
+            d.Service.Should().Be(KnightService.ExchangeOnline);
+            d.Sources.Should().BeEquivalentTo(new[] { KnightSourceType.MicrosoftExchangeOnline },
+                $"{d.Id} lê a configuração do Exchange Online — aplicá-lo a outra fonte o deixaria não avaliado para sempre");
+            d.References.Should().ContainSingle(d.Id);
+        }
+    }
+
     [Fact]
     public void Microsoft365_ForaDoTeams_ContinuaPendente_ComOMotivoDoProximoBloco()
     {
         var coverage = KnightReferenceCatalog.Coverage();
         var m365 = coverage.ByPlatform.Single(p => p.Key == nameof(KnightPlatform.Microsoft365));
         m365.Total.Should().Be(89);
-        m365.Implemented.Should().Be(15);
-        m365.Partial.Should().Be(1);
+        // [AEGIS-KNIGHT-COVERAGE-03] 15 do Teams + 17 do Exchange Online.
+        m365.Implemented.Should().Be(32);
+        m365.Partial.Should().Be(1, "8.6.1 do Teams — a outra metade do critério vive no Defender para Office 365");
         m365.RequiresAccess.Should().Be(1, "8.4.1 do Teams — ver Teams_TemAs17ReferenciasClassificadas...");
-        m365.Pending.Should().Be(72,
-            "Exchange Online, Defender para Office 365, Purview, SharePoint/OneDrive, Fabric, Intune, Forms e Sway são os próximos blocos");
+        m365.Pending.Should().Be(55,
+            "Defender para Office 365, Purview, SharePoint/OneDrive, Fabric, Intune, Forms e Sway são os próximos blocos");
 
         var pendentes = coverage.Controls
             .Where(c => KnightServices.Describe(c.Control.Service)?.Platform == KnightPlatform.Microsoft365
                         && c.Disposition == KnightReferenceDisposition.Pending)
             .ToList();
         pendentes.Should().OnlyContain(c => c.Control.Service != KnightService.Teams);
+        pendentes.Should().OnlyContain(c => c.Control.Service != KnightService.ExchangeOnline,
+            "as 17 referências de Exchange Online saíram de pendentes neste bloco");
         pendentes.Should().OnlyContain(c => c.Note!.Contains("próximos blocos"));
     }
 

@@ -505,7 +505,7 @@ public sealed class KnightConditionalAccessTests
     [Fact]
     public void Catalogo_V3_TituloDoRegistroDeMfaAfirmaSoOQueMede()
     {
-        KnightCatalog.Version.Should().Be("ak-knight-v5");
+        KnightCatalog.Version.Should().Be("ak-knight-v6");
         var d = KnightCatalog.Indicators.Single(i => i.Id == "AK-ENTRA-001");
         d.Title.Should().Contain("registrado").And.NotContain("efetiva");
         Eval("AK-ENTRA-001",

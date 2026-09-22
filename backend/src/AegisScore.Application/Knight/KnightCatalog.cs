@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -101,7 +101,13 @@ public static class KnightCatalog
     // Google Workspace (cada controle declara a fonte), então o denominador de uma execução do Entra não muda — mas o
     // CONJUNTO de controles do catálogo muda, e é o conjunto que define a cobertura de implementação da referência.
     // Por isso a versão sobe: fotografias v4 continuam com o catálogo v4 congelado e o comparador recusa v4 × v5.
-    public const string Version = "ak-knight-v5";
+    // v6 [AEGIS-KNIGHT-COVERAGE-03]: acrescenta os controles de CONFIGURAÇÃO do Exchange Online (AK-EXO-001 em
+    // diante), avaliados sobre a coleta da fonte MicrosoftExchangeOnline relida do ADM. Pelo mesmo motivo do bloco
+    // anterior, a versão SOBE: eles não se aplicam às outras fontes (cada controle declara a sua), então o
+    // denominador de uma execução do Entra ou do Teams não muda — mas o CONJUNTO de controles do catálogo muda, e é
+    // o conjunto que define a cobertura de implementação da referência. Fotografias v5 continuam com o catálogo v5
+    // congelado e o comparador recusa v5 × v6.
+    public const string Version = "ak-knight-v6";
 
     // ---- Limiares centralizados (única fonte da verdade dos números da regra) ----
 
@@ -205,6 +211,7 @@ public static class KnightCatalog
         BaseIndicators()
             .Concat(EntraConfigurationControls.Definitions)
             .Concat(TeamsConfigurationControls.Definitions)
+            .Concat(ExchangeConfigurationControls.Definitions)
             .ToList();
 
     private const string M365Ref = "CIS-M365-7.0.0:";

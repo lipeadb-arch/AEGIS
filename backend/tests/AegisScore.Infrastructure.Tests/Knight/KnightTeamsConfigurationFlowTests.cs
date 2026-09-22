@@ -69,7 +69,7 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
 
         run.SourceType.Should().Be(KnightSourceType.MicrosoftTeams);
         run.SourceState.Should().Be(KnightSourceState.Completed);
-        run.CatalogVersion.Should().Be("ak-knight-v5");
+        run.CatalogVersion.Should().Be("ak-knight-v6");
 
         var entity = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id);
         entity.IdentityAcquisitionId.Should().NotBeNull("a avaliação leu a aquisição persistida do ADM");

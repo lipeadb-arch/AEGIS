@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
@@ -262,6 +262,11 @@ public class KnightAssessmentsController : ControllerBase
             // [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams: fonte própria, credencial do mesmo conector Microsoft.
             case "teams":
             case "microsoftteams": sourceType = KnightSourceType.MicrosoftTeams; return true;
+            // [AEGIS-KNIGHT-COVERAGE-03] Exchange Online: fonte própria, credencial do mesmo conector Microsoft,
+            // token de OUTRO recurso e papel de diretório próprio.
+            case "exchange":
+            case "exchangeonline":
+            case "microsoftexchangeonline": sourceType = KnightSourceType.MicrosoftExchangeOnline; return true;
             default: sourceType = default; return false;
         }
     }

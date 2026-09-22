@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using AegisScore.Domain;
@@ -118,6 +118,7 @@ public static class KnightServices
     {
         KnightSourceType.MicrosoftEntraId => KnightService.EntraId,
         KnightSourceType.MicrosoftTeams => KnightService.Teams,
+        KnightSourceType.MicrosoftExchangeOnline => KnightService.ExchangeOnline,
         KnightSourceType.GoogleWorkspace => KnightService.GoogleWorkspace,
         KnightSourceType.Demo => KnightService.Demo,
         _ => KnightService.Unspecified,

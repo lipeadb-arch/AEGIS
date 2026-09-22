@@ -883,15 +883,51 @@ public static class PostureSnapshotPdfWriter
             $"{s.CollectionLimitations.Count} capacidade(s) da fonte não foram coletadas nesta avaliação. " +
             "Os indicadores que dependem delas ficam sem veredito — o que reduz a cobertura e NÃO significa conformidade:");
 
-        foreach (var l in s.CollectionLimitations)
+        // [AEGIS-KNIGHT-COVERAGE-03] A MESMA lista estruturada que o HTML usa. A string congelada em
+        // CollectionLimitations carrega o nome do SÍMBOLO do código ("ExchangeMailboxes: InsufficientPermission"),
+        // e o PDF a imprimia literalmente — o mesmo fato saía legível num formato e técnico no outro, para o
+        // mesmo leitor. Fotografias antigas, que não têm a lista estruturada, seguem pela string congelada:
+        // perder a limitação seria pior do que exibi-la crua.
+        var limitacoes = KnightReportModelBuilder.Build(s, integrityVerified: true).Limitations;
+
+        if (limitacoes.Count == 0)
         {
-            var li = section.AddParagraph("•  " + l);
-            li.Format.Font.Size = 8;
-            li.Format.Font.Color = Muted;
-            li.Format.LeftIndent = Unit.FromMillimeter(4);
+            foreach (var l in s.CollectionLimitations)
+            {
+                var li = section.AddParagraph("•  " + l);
+                li.Format.Font.Size = 8;
+                li.Format.Font.Color = Muted;
+                li.Format.LeftIndent = Unit.FromMillimeter(4);
+            }
+        }
+        else
+        {
+            foreach (var l in limitacoes)
+            {
+                var li = section.AddParagraph("•  " + LimitationLine(l));
+                li.Format.Font.Size = 8;
+                li.Format.Font.Color = Muted;
+                li.Format.LeftIndent = Unit.FromMillimeter(4);
+            }
         }
 
         section.AddParagraph().Format.SpaceAfter = Unit.FromMillimeter(2);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-03] Uma limitação, em UMA linha legível: a leitura pelo nome, a causa pelo que foi
+    /// observado, o detalhe da fonte, o requisito de autorização e os controles que ficaram sem veredito. É
+    /// método próprio para poder ser verificado sem abrir o PDF — o texto é o que importa, não o desenho.
+    /// </summary>
+    internal static string LimitationLine(ReportLimitation l)
+    {
+        // O rótulo da causa não se repete quando o detalhe da fonte já começa por ele.
+        var detalheRepeteACausa = l.Detail is { } d && d.StartsWith(l.CauseLabel, StringComparison.Ordinal);
+        var texto = detalheRepeteACausa ? l.CapabilityLabel : $"{l.CapabilityLabel} — {l.CauseLabel}";
+        if (!string.IsNullOrWhiteSpace(l.Detail)) texto += ": " + l.Detail;
+        if (!string.IsNullOrWhiteSpace(l.RequiredPermission)) texto += $" (requer: {l.RequiredPermission})";
+        if (l.AffectedControls.Count > 0) texto += $" · sem veredito: {string.Join(", ", l.AffectedControls)}";
+        return texto;
     }
 
     /// <summary>Parágrafo de corpo do relatório — o texto de gestão, com as variações de ênfase usadas aqui.</summary>
