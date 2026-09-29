@@ -773,6 +773,9 @@ public sealed class KnightExchangeConfigurationFlowTests : IDisposable
                 })));
 
         public Task<ExchangeAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) => ReadAsync(null!, ct);
+
+        public Task<ExchangeAdminOutput> TestConnectionAsync(ExchangeAdminCredentials credentials, CancellationToken ct = default) =>
+            ReadAsync(credentials, ct);
     }
 
     private static async Task<KnightTenantConfiguration> ReadConfigurationAsync(AegisScoreDbContext db, Guid acquisitionId)

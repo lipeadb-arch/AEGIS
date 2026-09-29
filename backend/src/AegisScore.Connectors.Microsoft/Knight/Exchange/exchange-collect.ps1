@@ -457,6 +457,13 @@ try {
     if ([string]::IsNullOrWhiteSpace($accessToken)) { throw 'Token de acesso ausente na entrada.' }
     if ([string]::IsNullOrWhiteSpace($organization)) { throw 'Domínio da organização ausente na entrada.' }
 
+    # [AEGIS-KNIGHT-ACCESS-01] `test`: a MESMA conexão de aplicativo do modo `collect`, mas restrita a UM
+    # comando representativo (Get-OrganizationConfig) em vez das doze capacidades. É a verificação que a tela
+    # de Integrações usa para dar retorno rápido — conecta de verdade e lê de verdade, sem esperar pela
+    # enumeração de caixas de correio nem persistir avaliação nenhuma. Não substitui uma sincronização.
+    $testOnly = ($mode -eq 'test')
+    $commandsToImport = if ($testOnly) { @('Get-OrganizationConfig') } else { $script:SessionCommands }
+
     try {
         # -CommandName restringe o que a conexão importa ao conjunto FIXO que esta coleta executa: menos
         # tempo de conexão e menos superfície na sessão. Um comando que não venha por aqui falha na leitura
@@ -466,7 +473,7 @@ try {
         Connect-ExchangeOnline `
             -AccessToken $accessToken `
             -Organization $organization `
-            -CommandName $script:SessionCommands `
+            -CommandName $commandsToImport `
             -ShowBanner:$false `
             -SkipLoadingFormatData `
             -ErrorAction Stop | Out-Null
@@ -482,18 +489,23 @@ try {
     }
 
     try {
-        Read-OrganizationConfig
-        Read-TransportConfig
-        Read-SharingPolicies
-        Read-OwaMailboxPolicies
-        Read-TransportRules
-        Read-RoleAssignmentPolicies
-        Read-ExternalSenderIdentification
-        Read-OutboundSpamFilterPolicies
-        Read-Mailboxes
-        Read-AccountSignIn
-        Read-CasMailboxes
-        Read-AuditBypassAssociations
+        if ($testOnly) {
+            Read-OrganizationConfig
+        }
+        else {
+            Read-OrganizationConfig
+            Read-TransportConfig
+            Read-SharingPolicies
+            Read-OwaMailboxPolicies
+            Read-TransportRules
+            Read-RoleAssignmentPolicies
+            Read-ExternalSenderIdentification
+            Read-OutboundSpamFilterPolicies
+            Read-Mailboxes
+            Read-AccountSignIn
+            Read-CasMailboxes
+            Read-AuditBypassAssociations
+        }
     }
     finally {
         # A sessão é encerrada SEMPRE: o processo é descartável, mas a conexão com o locatário não pode

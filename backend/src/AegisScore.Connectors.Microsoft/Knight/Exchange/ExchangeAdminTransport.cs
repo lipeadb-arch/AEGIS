@@ -100,4 +100,17 @@ public interface IExchangeAdminReader
     /// verificação aprovada.</para>
     /// </summary>
     Task<ExchangeAdminOutput> CheckRuntimeAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-ACCESS-01] Verificação RÁPIDA de conexão: a mesma conexão de aplicativo do <see cref="ReadAsync"/>,
+    /// restrita a UM comando representativo (<c>Get-OrganizationConfig</c>) em vez das doze capacidades. A sessão é
+    /// encerrada ao fim, sempre — igual à coleta.
+    ///
+    /// <para><b>Por que isto existe, e o que NÃO substitui.</b> A emissão de um token não prova que o Exchange Online
+    /// aceite este método de autenticação: só uma conexão de verdade prova isso. Esta verificação conecta e lê de
+    /// verdade — não é um "ping" de token —, mas é mais RÁPIDA que uma coleta completa, porque a tela de Integrações
+    /// precisa de retorno em segundos, não do tempo de enumerar caixas de correio. Ela não substitui uma
+    /// sincronização: nenhum documento de configuração é produzido aqui, e nenhuma avaliação é registrada.</para>
+    /// </summary>
+    Task<ExchangeAdminOutput> TestConnectionAsync(ExchangeAdminCredentials credentials, CancellationToken ct = default);
 }

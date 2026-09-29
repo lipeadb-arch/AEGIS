@@ -66,6 +66,18 @@ public sealed class PowerShellExchangeAdminReader : IExchangeAdminReader
     public Task<ExchangeAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) =>
         RunAsync(JsonSerializer.Serialize(new { mode = "module-check" }), null, ct);
 
+    public Task<ExchangeAdminOutput> TestConnectionAsync(ExchangeAdminCredentials credentials, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        var payload = JsonSerializer.Serialize(new
+        {
+            mode = "test",
+            organization = credentials.Organization,
+            accessToken = credentials.AccessToken,
+        });
+        return RunAsync(payload, [credentials.AccessToken], ct);
+    }
+
     private async Task<ExchangeAdminOutput> RunAsync(
         string stdinPayload, IReadOnlyList<string?>? knownSecrets, CancellationToken ct)
     {

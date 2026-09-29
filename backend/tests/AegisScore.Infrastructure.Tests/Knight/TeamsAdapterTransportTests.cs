@@ -610,6 +610,9 @@ public sealed class TeamsAdapterTransportTests
             });
             return Task.FromResult(PowerShellTeamsAdminReader.Parse(json));
         }
+
+        public Task<TeamsAdminOutput> TestConnectionAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            ReadAsync(credentials, ct);
     }
 
     /// <summary>Module-check passa, mas a coleta sintética não devolve documento — o contrato quebrou no erro.</summary>
@@ -621,6 +624,9 @@ public sealed class TeamsAdapterTransportTests
 
         public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
             throw new TeamsAdminTransportException("O adaptador do Microsoft Teams terminou com código 1 sem devolver resultado.");
+
+        public Task<TeamsAdminOutput> TestConnectionAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            ReadAsync(credentials, ct);
     }
 
     private sealed class SemRuntime : ITeamsAdminReader
@@ -630,5 +636,8 @@ public sealed class TeamsAdapterTransportTests
 
         public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) =>
             throw new TeamsAdminTransportException("O runtime do PowerShell não pôde ser iniciado neste ambiente.");
+
+        public Task<TeamsAdminOutput> TestConnectionAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            CheckRuntimeAsync(ct);
     }
 }

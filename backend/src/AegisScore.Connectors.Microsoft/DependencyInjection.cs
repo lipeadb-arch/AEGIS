@@ -123,6 +123,12 @@ public static class DependencyInjection
             sp.GetRequiredService<ExchangePowerShellOptions>(),
             sp.GetService<ILogger<PowerShellExchangeAdminReader>>()));
         services.AddScoped<IKnightCollector, ExchangeKnightCollector>();
+
+        // [AEGIS-KNIGHT-ACCESS-01] "Testar conexão" (IEvidenceConnector) para Microsoft/IdentityPosture: antes
+        // desta linha não havia NENHUM adaptador registrado para essa combinação, e o botão da tela de
+        // Integrações devolvia 501 para a credencial que alimenta as três fontes do KNIGHT. SCOPED pelo mesmo
+        // motivo dos demais (depende de typed HttpClients via IEntraGraphClient/ITeamsTokenClient/IExchangeTokenClient).
+        services.AddScoped<IEvidenceConnector, KnightIdentityPostureConnector>();
         return services;
     }
 }

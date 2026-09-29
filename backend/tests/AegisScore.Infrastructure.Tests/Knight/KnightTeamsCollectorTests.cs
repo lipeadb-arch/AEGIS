@@ -305,6 +305,9 @@ public sealed class KnightTeamsCollectorTests
         }
 
         public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) => ReadAsync(null!, ct);
+
+        public Task<TeamsAdminOutput> TestConnectionAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            ReadAsync(credentials, ct);
     }
 
     /// <summary>
@@ -330,6 +333,9 @@ public sealed class KnightTeamsCollectorTests
         }
 
         public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) => ReadAsync(null!, ct);
+
+        public Task<TeamsAdminOutput> TestConnectionAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            ReadAsync(credentials, ct);
     }
 
     private sealed class FakeTokens : ITeamsTokenClient
@@ -350,5 +356,8 @@ public sealed class KnightTeamsCollectorTests
                 "O runtime do PowerShell não pôde ser iniciado neste ambiente. A coleta do Microsoft Teams não foi tentada.");
 
         public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) => ReadAsync(null!, ct);
+
+        public Task<TeamsAdminOutput> TestConnectionAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            ReadAsync(credentials, ct);
     }
 }

@@ -76,6 +76,9 @@ internal sealed class TeamsCollectionScenario : ITeamsAdminReader
     public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) =>
         Task.FromResult(PowerShellTeamsAdminReader.Parse(new TeamsCollectionScenario(Variant.Compliant).Json()));
 
+    public Task<TeamsAdminOutput> TestConnectionAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+        ReadAsync(credentials, ct);
+
     // ---- Documento do adaptador ------------------------------------------------------------------------
 
     /// <summary>Atalho para os testes que só querem o documento de uma variante, com os padrões.</summary>

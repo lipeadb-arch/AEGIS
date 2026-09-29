@@ -569,6 +569,9 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
                 })));
 
         public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) => ReadAsync(null!, ct);
+
+        public Task<TeamsAdminOutput> TestConnectionAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            ReadAsync(credentials, ct);
     }
 
     private Task<KnightAssessment> RunAsync(AegisScoreDbContext db, Guid tenant, TeamsCollectionScenario.Variant variant) =>
