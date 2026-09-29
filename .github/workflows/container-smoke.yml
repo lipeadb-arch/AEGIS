@@ -240,6 +240,10 @@ jobs:
       #     PostureSnapshotConsolidatedTests (publicação, composição congelada, hash re-derivável, isolamento por
       #     tenant, exportação HTML/CSV/PDF reconciliada). Sem estas linhas elas não executariam. O passo vai de
       #     926 a 937 (medido localmente com este MESMO filtro, em Release).
+      #     [AEGIS-KNIGHT-CONSOLIDATED-02] Fechamento: 7 fatos NOVOS nas duas classes acima (seleção explícita
+      #     vazia distinta de "nenhum pedido"; publicação pina a execução exibida e recusa uma inválida/de outro
+      #     tenant/de outra fonte em vez de substituir pela mais recente). Classes já estavam no filtro — o passo
+      #     vai de 937 a 944 (confirmado no PR #81: 944 no CI real).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
