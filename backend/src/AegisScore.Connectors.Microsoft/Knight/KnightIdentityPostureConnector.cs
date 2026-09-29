@@ -180,6 +180,11 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         {
             return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
         }
+        catch (Exception ex) when (IsTransportFailure(ex, ct))
+        {
+            _log?.LogWarning(ex, "Falha de transporte ao verificar {Label}.", label);
+            return new Probe(false, $"{label}: {TransportFailureMessage}");
+        }
     }
 
     private async Task<Probe> ProbeTeamsAsync(IMicrosoftGraphCredentials cfg, CancellationToken ct)
@@ -195,21 +200,24 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         {
             return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
         }
+        catch (Exception ex) when (IsTransportFailure(ex, ct))
+        {
+            _log?.LogWarning(ex, "Falha de transporte ao verificar {Label}.", label);
+            return new Probe(false, $"{label}: {TransportFailureMessage}");
+        }
 
         try
         {
             var output = await _teamsReader.TestConnectionAsync(credentials, ct);
             if (!output.Connected)
-                return new Probe(false,
-                    $"{label}: {ConnectionFailureReason(output.ConnectionErrorCategory)} Confira o papel Leitor "
-                    + "do Teams (ou Leitor Global) atribuído à aplicação.");
+                return new Probe(false, $"{label}: {TeamsConnectionFailureReason(output.ConnectionErrorCategory)}");
 
             var probe = output.Reads.FirstOrDefault();
             if (probe is null || !probe.Ok)
                 return new Probe(false,
                     $"{label}: conexão estabelecida, mas a leitura de verificação "
-                    + $"({probe?.Command ?? "Get-CsTeamsClientConfiguration"}) foi recusada. Confira o papel "
-                    + "Leitor do Teams (ou Leitor Global) atribuído à aplicação.");
+                    + $"({probe?.Command ?? "Get-CsTeamsClientConfiguration"}) foi "
+                    + TeamsReadFailureReason(probe?.ErrorCategory));
 
             var suffix = output.Runtime.Module is { Length: > 0 } m ? $" (módulo Teams PowerShell {m})" : "";
             return new Probe(true, $"{label}: credencial aceita, conexão estabelecida e leitura confirmada{suffix}.");
@@ -219,6 +227,11 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
             return new Probe(false,
                 $"{label}: o adaptador de coleta não pôde ser executado neste ambiente. Nenhuma conclusão sobre "
                 + "a credencial é possível.");
+        }
+        catch (Exception ex) when (IsTransportFailure(ex, ct))
+        {
+            _log?.LogWarning(ex, "Falha de transporte ao verificar {Label}.", label);
+            return new Probe(false, $"{label}: {TransportFailureMessage}");
         }
     }
 
@@ -235,23 +248,24 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         {
             return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
         }
+        catch (Exception ex) when (IsTransportFailure(ex, ct))
+        {
+            _log?.LogWarning(ex, "Falha de transporte ao verificar {Label}.", label);
+            return new Probe(false, $"{label}: {TransportFailureMessage}");
+        }
 
         try
         {
             var output = await _exchangeReader.TestConnectionAsync(credentials, ct);
             if (!output.Connected)
-                return new Probe(false,
-                    $"{label}: {ConnectionFailureReason(output.ConnectionErrorCategory)} Confira "
-                    + "Exchange.ManageAsApp, o papel de diretório Leitor Global e se o serviço aceita o método de "
-                    + "autenticação usado (token obtido por segredo de cliente — sem confirmação documental de que "
-                    + "o serviço o aceite).");
+                return new Probe(false, $"{label}: {ExchangeConnectionFailureReason(output.ConnectionErrorCategory)}");
 
             var probe = output.Reads.FirstOrDefault();
             if (probe is null || !probe.Ok)
                 return new Probe(false,
                     $"{label}: conexão estabelecida, mas a leitura de verificação "
-                    + $"({probe?.Command ?? "Get-OrganizationConfig"}) foi recusada. Confira o papel de diretório "
-                    + "Leitor Global atribuído à aplicação.");
+                    + $"({probe?.Command ?? "Get-OrganizationConfig"}) foi "
+                    + ExchangeReadFailureReason(probe?.ErrorCategory));
 
             var suffix = output.Runtime.Module is { Length: > 0 } m ? $" (módulo Exchange Online PowerShell {m})" : "";
             return new Probe(true,
@@ -263,6 +277,11 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
             return new Probe(false,
                 $"{label}: o adaptador de coleta não pôde ser executado neste ambiente. Nenhuma conclusão sobre "
                 + "a credencial é possível.");
+        }
+        catch (Exception ex) when (IsTransportFailure(ex, ct))
+        {
+            _log?.LogWarning(ex, "Falha de transporte ao verificar {Label}.", label);
+            return new Probe(false, $"{label}: {TransportFailureMessage}");
         }
     }
 
@@ -278,17 +297,80 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
     };
 
     /// <summary>
-    /// Mensagem da recusa de CONEXÃO montada pela CATEGORIA — nunca atribui uma causa específica a uma recusa
-    /// ambígua, mesma regra dos coletores completos. <paramref name="category"/> vem do adaptador, no mesmo
-    /// vocabulário de <see cref="KnightCapabilityOutcome"/>.
+    /// Mensagem da recusa de CONEXÃO do Teams pela CATEGORIA. Só orienta conferir o papel de diretório quando a
+    /// categoria É autorização — apontar isso para uma recusa por licença ou limite de taxa seria inventar uma
+    /// causa que a resposta do serviço não confirma.
     /// </summary>
-    private static string ConnectionFailureReason(string? category) => category switch
+    private static string TeamsConnectionFailureReason(string? category) => category switch
     {
-        nameof(KnightCapabilityOutcome.AuthenticationFailure) => "A conexão falhou na autenticação.",
+        nameof(KnightCapabilityOutcome.AuthenticationFailure) =>
+            "A conexão falhou na autenticação — confira o segredo da aplicação e os dois tokens emitidos.",
         nameof(KnightCapabilityOutcome.InsufficientPermission) =>
-            "A conexão foi recusada por autorização, e a recusa não identifica a causa.",
-        nameof(KnightCapabilityOutcome.Throttled) => "O serviço aplicou limite de taxa ao estabelecer a conexão.",
-        nameof(KnightCapabilityOutcome.LimitedByLicense) => "A conexão foi recusada por licença do locatário.",
-        _ => "A conexão não foi estabelecida, e a recusa não identifica a causa.",
+            "A conexão foi recusada por autorização — confira o papel Leitor do Teams (ou Leitor Global) atribuído à aplicação.",
+        nameof(KnightCapabilityOutcome.Throttled) =>
+            "O serviço aplicou limite de taxa ao estabelecer a conexão; não é uma questão de permissão ou papel.",
+        nameof(KnightCapabilityOutcome.LimitedByLicense) =>
+            "A conexão foi recusada por licença do locatário; não é uma questão de permissão ou papel.",
+        _ => "A conexão não foi estabelecida, e a recusa não identifica a causa — confira permissão, papel, domínio e método de autenticação.",
     };
+
+    /// <summary>Mesma regra de <see cref="TeamsConnectionFailureReason"/> para uma LEITURA (não a conexão) recusada.</summary>
+    private static string TeamsReadFailureReason(string? category) => category switch
+    {
+        nameof(KnightCapabilityOutcome.InsufficientPermission) =>
+            "recusada por autorização. Confira o papel Leitor do Teams (ou Leitor Global) atribuído à aplicação.",
+        nameof(KnightCapabilityOutcome.LimitedByLicense) =>
+            "recusada por licença do locatário; não é resolvida concedendo mais papel.",
+        nameof(KnightCapabilityOutcome.Throttled) =>
+            "recusada por limite de taxa do serviço; tente novamente em instantes.",
+        nameof(KnightCapabilityOutcome.Unavailable) =>
+            "recusada porque o serviço reportou esta capacidade como indisponível neste locatário.",
+        _ => "recusada, e a causa não pôde ser determinada a partir da resposta do serviço.",
+    };
+
+    /// <summary>
+    /// Recusa de CONEXÃO do Exchange pela CATEGORIA. Diferente do Teams: para <c>AuthenticationFailure</c>,
+    /// <c>InsufficientPermission</c> e categoria desconhecida, o Exchange PERMANECE no enquadramento ambíguo
+    /// ("confira tudo"), porque o método por segredo de cliente ainda não foi confirmado contra um locatário real
+    /// — uma recusa categorizada pelo script como "autorização" pode, na verdade, ser o serviço rejeitando o
+    /// MÉTODO, e afirmar que é só permissão inventaria a causa a partir do sintoma (ver
+    /// <see cref="ExchangeTokenClient"/>). Só <c>Throttled</c> e <c>LimitedByLicense</c> são mecanicamente
+    /// inequívocos o bastante para não precisar dessa cautela extra.
+    /// </summary>
+    private static string ExchangeConnectionFailureReason(string? category) => category switch
+    {
+        nameof(KnightCapabilityOutcome.Throttled) =>
+            "O serviço aplicou limite de taxa ao estabelecer a conexão; não é uma questão de permissão, papel ou método de autenticação.",
+        nameof(KnightCapabilityOutcome.LimitedByLicense) =>
+            "A conexão foi recusada por licença do locatário; não é uma questão de permissão, papel ou método de autenticação.",
+        _ => "A conexão foi recusada, e a recusa não identifica a causa com segurança — confira Exchange.ManageAsApp, o "
+            + "papel Leitor Global e se o serviço aceita o método de autenticação usado (token obtido por segredo "
+            + "de cliente — sem confirmação documental de que o serviço o aceite).",
+    };
+
+    /// <summary>Mesma regra de <see cref="TeamsReadFailureReason"/>, com o vocabulário do Exchange Online.</summary>
+    private static string ExchangeReadFailureReason(string? category) => category switch
+    {
+        nameof(KnightCapabilityOutcome.InsufficientPermission) =>
+            "recusada por autorização. Confira o papel de diretório Leitor Global atribuído à aplicação.",
+        nameof(KnightCapabilityOutcome.LimitedByLicense) =>
+            "recusada por licença do locatário; não é resolvida concedendo mais papel.",
+        nameof(KnightCapabilityOutcome.Throttled) =>
+            "recusada por limite de taxa do serviço; tente novamente em instantes.",
+        nameof(KnightCapabilityOutcome.Unavailable) =>
+            "recusada porque o serviço reportou esta capacidade como indisponível neste locatário.",
+        _ => "recusada, e a causa não pôde ser determinada a partir da resposta do serviço.",
+    };
+
+    private const string TransportFailureMessage =
+        "a verificação não pôde ser concluída por falha de rede ou tempo limite ao contatar o serviço; causa não determinada.";
+
+    /// <summary>
+    /// Distingue uma falha de TRANSPORTE (rede, DNS, tempo limite do próprio HttpClient) — que deve virar um
+    /// diagnóstico seguro desta fonte, sem impedir as demais — de um CANCELAMENTO real pedido pelo usuário, que
+    /// precisa continuar se propagando em vez de virar um resultado "Failed" silencioso. Uma falha inesperada de
+    /// qualquer outro tipo também cai aqui: uma sonda isolada nunca pode derrubar o teste das outras duas fontes.
+    /// </summary>
+    private static bool IsTransportFailure(Exception ex, CancellationToken ct) =>
+        ex is not OperationCanceledException || !ct.IsCancellationRequested;
 }

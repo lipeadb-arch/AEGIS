@@ -124,6 +124,59 @@ public sealed class KnightIdentityPostureConnectorTests
     }
 
     [Fact]
+    public async Task TeamsLeituraRecusadaPorLicenca_NaoOrientaConcessaoDePapel()
+    {
+        var health = await ConnectorFor(
+            teamsReader: new FakeTeamsReader(connected: true, readOk: false, readErrorCategory: "LimitedByLicense"))
+            .TestAsync(Config(), CancellationToken.None);
+
+        health.Status.Should().Be(ConnectorStatus.Degraded);
+        health.Message.Should().Contain("Microsoft Teams:").And.Contain("licença");
+        health.Message.Should().NotContain("Confira o papel",
+            "uma recusa por licença não é resolvida concedendo mais papel — orientar isso seria uma causa inventada");
+    }
+
+    [Fact]
+    public async Task ExchangeConexaoRecusadaPorLimiteDeTaxa_NaoOrientaConcessaoDePapel()
+    {
+        var health = await ConnectorFor(
+            exchangeReader: new FakeExchangeReader(connected: false, readOk: false, category: "Throttled"))
+            .TestAsync(Config(), CancellationToken.None);
+
+        health.Status.Should().Be(ConnectorStatus.Degraded);
+        health.Message.Should().Contain("Exchange Online:").And.Contain("limite de taxa");
+        health.Message.Should().NotContain("Confira",
+            "uma recusa por limite de taxa não é resolvida conferindo permissão, papel ou domínio — é só questão de tentar de novo");
+    }
+
+    [Fact]
+    public async Task EntraFalhaDeTransporte_NaoDerrubaOTeste_DemaisFontesContinuam()
+    {
+        var health = await ConnectorFor(graph: new FakeGraph(throwRaw: new System.Net.Http.HttpRequestException("conexão recusada")))
+            .TestAsync(Config(), CancellationToken.None);
+
+        health.Status.Should().Be(ConnectorStatus.Degraded, "Teams e Exchange continuam respondendo mesmo com falha de rede no Entra");
+        health.Message.Should().Contain("Microsoft Entra ID:")
+            .And.Contain("rede")
+            .And.Contain("causa não determinada");
+        health.Message.Should().Contain("Microsoft Teams").And.Contain("Exchange Online",
+            "uma falha isolada numa fonte não pode impedir o diagnóstico das outras duas");
+    }
+
+    [Fact]
+    public async Task CancelamentoRealSolicitadoPeloUsuario_PropagaEmVezDeVirarFailed()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = async () => await ConnectorFor(graph: new FakeGraph(throwOnCancellation: true))
+            .TestAsync(Config(), cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "cancelamento pedido pelo usuário nunca pode virar um resultado Failed silencioso");
+    }
+
+    [Fact]
     public void ConectorEstaRegistradoParaMicrosoftIdentityPosture()
     {
         var connector = ConnectorFor();
@@ -159,12 +212,23 @@ public sealed class KnightIdentityPostureConnectorTests
     private sealed class FakeGraph : IEntraGraphClient
     {
         private readonly EntraGraphErrorKind? _fail;
-        public FakeGraph(EntraGraphErrorKind? fail = null) => _fail = fail;
+        private readonly Exception? _throwRaw;
+        private readonly bool _throwOnCancellation;
+        public FakeGraph(EntraGraphErrorKind? fail = null, Exception? throwRaw = null, bool throwOnCancellation = false)
+        {
+            _fail = fail;
+            _throwRaw = throwRaw;
+            _throwOnCancellation = throwOnCancellation;
+        }
 
-        public Task<string> AcquireTokenAsync(IMicrosoftGraphCredentials config, CancellationToken ct) =>
-            _fail is { } kind
-                ? throw new EntraGraphException(kind, "token endpoint recusou", 401, endpointPath: "/oauth2/v2.0/token")
-                : Task.FromResult("graph-token-sintetico");
+        public Task<string> AcquireTokenAsync(IMicrosoftGraphCredentials config, CancellationToken ct)
+        {
+            if (_throwOnCancellation) ct.ThrowIfCancellationRequested();
+            if (_throwRaw is not null) throw _throwRaw;
+            if (_fail is { } kind)
+                throw new EntraGraphException(kind, "token endpoint recusou", 401, endpointPath: "/oauth2/v2.0/token");
+            return Task.FromResult("graph-token-sintetico");
+        }
 
         public async IAsyncEnumerable<JsonElement> GetPagedAsync(
             string token, IMicrosoftGraphCredentials config, string relativeUrl,
@@ -189,10 +253,12 @@ public sealed class KnightIdentityPostureConnectorTests
     {
         private readonly bool _connected;
         private readonly bool _readOk;
-        public FakeTeamsReader(bool connected, bool readOk)
+        private readonly string _readErrorCategory;
+        public FakeTeamsReader(bool connected, bool readOk, string readErrorCategory = "InsufficientPermission")
         {
             _connected = connected;
             _readOk = readOk;
+            _readErrorCategory = readErrorCategory;
         }
 
         public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
@@ -211,7 +277,7 @@ public sealed class KnightIdentityPostureConnectorTests
                         command = "Get-CsTeamsClientConfiguration",
                         ok = _readOk,
                         items = Array.Empty<object>(),
-                        errorCategory = _readOk ? null : "InsufficientPermission",
+                        errorCategory = _readOk ? null : _readErrorCategory,
                         errorId = (string?)null,
                     },
                 }
