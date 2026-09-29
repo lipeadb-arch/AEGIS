@@ -42,7 +42,13 @@ export type KnightSourceType =
   | 'MicrosoftEntraId'
   | 'MicrosoftTeams'
   | 'MicrosoftExchangeOnline'
-  | 'GoogleWorkspace';
+  | 'GoogleWorkspace'
+  /**
+   * [AEGIS-KNIGHT-CONSOLIDATED-01] NÃO é uma fonte de coleta: marca uma avaliação/relatório que COMPÕE, sem
+   * somar, avaliações concluídas de várias fontes reais (Entra ID + Teams + Exchange Online). Cada indicador
+   * combinado preserva o próprio `sourceType` real.
+   */
+  | 'Consolidated';
 
 /** Estado da coleta/fonte de uma execução (ou de disponibilidade). */
 export type KnightSourceState =
@@ -178,6 +184,33 @@ export interface KnightAssessment {
   capabilities: KnightCapability[];
   advisory: KnightAdvisory | null;
   advisoryFromAi: boolean; // true = IA; false = fallback determinístico
+  /**
+   * [AEGIS-KNIGHT-CONSOLIDATED-01] Presente SÓ quando `sourceType === 'Consolidated'`: a composição das três
+   * fontes candidatas (Entra ID, Teams, Exchange Online) — incluídas, disponíveis mas não escolhidas, ou nunca
+   * avaliadas. Ausente em toda avaliação de fonte única.
+   */
+  sources?: KnightConsolidatedSource[];
+}
+
+/**
+ * [AEGIS-KNIGHT-CONSOLIDATED-01] Composição de UMA fonte candidata no relatório consolidado (espelha
+ * KnightConsolidatedSourceDto). Nota e cobertura são SEMPRE as da própria fonte — nunca somadas às demais.
+ */
+export interface KnightConsolidatedSource {
+  source: KnightSourceType;
+  slug: string;
+  label: string;
+  included: boolean;
+  /** "Included" | "Available" (avaliação concluída, não escolhida) | "NotAssessed" (nunca concluiu uma avaliação). */
+  availabilityState: 'Included' | 'Available' | 'NotAssessed';
+  sourceRunId: string | null;
+  sourceState: KnightSourceState | null;
+  catalogVersion: string | null;
+  capturedAt: string | null; // ISO 8601
+  score: number | null;
+  coverage: number | null;
+  counts: KnightCounts | null;
+  collectionLimitations: string[];
 }
 
 /**
@@ -311,6 +344,7 @@ const SOURCE_TYPE_LABEL: Record<KnightSourceType, string> = {
   MicrosoftTeams: 'Microsoft Teams',
   MicrosoftExchangeOnline: 'Exchange Online',
   GoogleWorkspace: 'Google Workspace',
+  Consolidated: 'Consolidado',
 };
 
 export function sourceTypeLabel(source: KnightSourceType): string {

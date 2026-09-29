@@ -174,6 +174,16 @@ public class PostureSnapshot : Entity, ITenantOwned
     public ICollection<PostureSnapshotObject> Objects { get; set; } = new List<PostureSnapshotObject>();
 
     /// <summary>
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Composição CONGELADA de um relatório KNIGHT consolidado (JSON de
+    /// <c>KnightConsolidatedSourceEntry[]</c>): uma entrada por fonte CANDIDATA (Entra ID, Teams, Exchange
+    /// Online), dizendo se entrou na composição, a execução exata usada, a versão do catálogo daquela fonte, a
+    /// data da coleta e a nota/cobertura/contagens PRÓPRIAS dela — nunca somadas. Uma fonte sem avaliação
+    /// concluída, ou disponível porém não escolhida, aparece aqui sem virar aprovação. Nulo em fotografias de
+    /// fonte única (<see cref="SourceType"/> diferente de <see cref="KnightSourceType.Consolidated"/>).
+    /// </summary>
+    public string? CompositionJson { get; set; }
+
+    /// <summary>
     /// [AEGIS-MVP-PRODUCT-03] Ações CONGELADAS no instante da publicação. Uma fotografia antiga continua
     /// mostrando as ações como estavam então: injetar o estado atual dos planos num relatório histórico
     /// faria o documento assinado mudar de conteúdo depois de emitido.

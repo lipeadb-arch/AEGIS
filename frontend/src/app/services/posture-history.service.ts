@@ -2,16 +2,25 @@ import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http'
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, map, throwError, timeout } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { KnightSourceType } from '../models/knight.models';
 import {
   PostureComparisonResult,
   PostureExportFormat,
   PostureSnapshotDetail,
   PostureSnapshotSummary,
   PostureSnapshotType,
+  PublishConsolidatedKnightSnapshotRequest,
   PublishPostureSnapshotRequest,
   fallbackExportFilename,
   parseContentDispositionFilename,
 } from '../models/posture-history.models';
+
+/** Mesmos apelidos curtos aceitos pelo servidor ("entra"/"teams"/"exchange") — nunca o nome completo do enum. */
+const SOURCE_SLUG: Partial<Record<KnightSourceType, string>> = {
+  MicrosoftEntraId: 'entra',
+  MicrosoftTeams: 'teams',
+  MicrosoftExchangeOnline: 'exchange',
+};
 
 /** Arquivo exportado, pronto para download como Blob (nunca carregado como string). */
 export interface PostureExportFile {
@@ -65,6 +74,33 @@ export class PostureHistoryService {
             return throwError(() => new Error('Não há postura a registrar. Execute uma avaliação antes de publicar.'));
         }
         return this.normalize('Não foi possível publicar a fotografia.')(err);
+      }),
+    );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-CONSOLIDATED-02] Publica o relatório KNIGHT consolidado (Entra ID + Teams + Exchange Online)
+   * PINANDO a execução exata de cada fonte incluída — a composição EXIBIDA no instante da publicação, nunca "a
+   * mais recente" recalculada pelo servidor. Mesmo controle de papel e os mesmos 403/409 da publicação por
+   * fonte; o 409 aqui também cobre uma execução pinada que deixou de estar disponível/concluída/deste tenant.
+   */
+  publishConsolidated(request: PublishConsolidatedKnightSnapshotRequest): Observable<PostureSnapshotDetail> {
+    const body = {
+      selection: request.selection.map((s) => ({ source: SOURCE_SLUG[s.source] ?? s.source, runId: s.runId })),
+    };
+    return this.http.post<PostureSnapshotDetail>(`${this.base}/consolidated`, body).pipe(
+      timeout(this.PUBLISH_TIMEOUT_MS),
+      catchError((err: unknown) => {
+        if (err instanceof HttpErrorResponse) {
+          if (err.status === 403)
+            return throwError(() => new Error('Seu papel não permite publicar fotografias (requer Manager ou TenantAdmin).'));
+          if (err.status === 409)
+            return throwError(() => new Error(
+              'Não foi possível publicar: nenhuma fonte foi selecionada, ou alguma avaliação exibida deixou de ' +
+                'estar disponível. Atualize a tela e tente novamente.',
+            ));
+        }
+        return this.normalize('Não foi possível publicar o relatório consolidado.')(err);
       }),
     );
   }

@@ -87,7 +87,12 @@ public sealed record KnightReportModel(
     IReadOnlyList<ReportPriority> Priorities, IReadOnlyList<ReportTopObject> TopObjects,
     IReadOnlyList<ReportLimitation> Limitations, IReadOnlyList<string> LegacyLimitations,
     ReportAdvisory? Advisory, IReadOnlyList<string> Notes, IReadOnlyList<string> FrameworkOptions,
-    ReportReferenceCoverage? ReferenceCoverage = null, IReadOnlyList<ReportDistributionRow>? ByPlatform = null);
+    ReportReferenceCoverage? ReferenceCoverage = null, IReadOnlyList<ReportDistributionRow>? ByPlatform = null,
+    /// <summary>
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Composição das fontes candidatas (Entra ID, Teams, Exchange Online) — nula
+    /// fora de fotografias consolidadas. Cada fonte traz a NOTA E COBERTURA PRÓPRIAS, nunca somadas às demais.
+    /// </summary>
+    IReadOnlyList<KnightConsolidatedSourceEntry>? Composition = null);
 
 public static class KnightReportModelBuilder
 {
@@ -193,6 +198,13 @@ public static class KnightReportModelBuilder
                 + "consultiva não foram congelados nela e por isso não aparecem aqui. Domínio e serviço foram derivados da categoria e da fonte congeladas.");
         if (sourceType == KnightSourceType.Demo)
             notes.Add("Avaliação de DEMONSTRAÇÃO com dados 100% sintéticos — não representa nenhum ambiente real.");
+        var composition = KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson);
+        if (sourceType == KnightSourceType.Consolidated)
+            notes.Add("Este relatório COMPÕE avaliações concluídas de mais de uma fonte do mesmo tenant, cada uma "
+                + "com a própria versão de catálogo e data de coleta (ver \"Composição das fontes\"). A nota KNIGHT "
+                + "acima aplica a mesma fórmula sobre a união dos controles das fontes INCLUÍDAS — não é a média das "
+                + "notas de cada fonte. Uma fonte disponível e não incluída, ou sem avaliação concluída, aparece na "
+                + "composição sem virar aprovação.");
         if (isV2 && s.ProfileCatalogVersion is { } pv && !string.Equals(pv, s.CatalogVersion, StringComparison.Ordinal))
             notes.Add($"Os textos descritivos (problema, impacto, configuração esperada) são do catálogo {pv}; o veredito foi produzido pelo catálogo {s.CatalogVersion}. O critério da regra só é exibido quando os dois coincidem.");
         if (controls.Any(c => c.Impact is not null))
@@ -209,7 +221,8 @@ public static class KnightReportModelBuilder
             s.SchemaVersion, s.CatalogVersion, s.FormulaVersion, s.ProfileCatalogVersion, s.ContentHash, integrityVerified);
 
         return new KnightReportModel(header, kpis, controls, byDomain, byService, priorities, topObjects, limitations,
-            isV2 ? Array.Empty<string>() : s.CollectionLimitations.ToList(), advisory, notes, frameworks, coverage, byPlatform);
+            isV2 ? Array.Empty<string>() : s.CollectionLimitations.ToList(), advisory, notes, frameworks, coverage, byPlatform,
+            composition);
     }
 
     private static ReportReferenceCoverage? BuildCoverage(string? json)
@@ -503,6 +516,13 @@ public static class KnightCapabilityLabels
         // sugerir que exista um consentimento específico por comando.
         KnightSourceType.MicrosoftExchangeOnline =>
             "Exchange.ManageAsApp (aplicativo) e um papel de diretório atribuído à aplicação — para leitura, Leitor Global",
+
+        // [AEGIS-KNIGHT-CONSOLIDATED-01] A fotografia consolidada não tem UMA fonte — o requisito é inferido pelo
+        // próprio nome da capacidade, que já é namespaced por fonte (Exchange*/Teams*/o restante é do Entra ID).
+        // O Teams nunca teve requisito aqui (nenhum caso acima o cobre) — permanece assim.
+        KnightSourceType.Consolidated => c.ToString().StartsWith("Exchange", StringComparison.Ordinal)
+            ? RequiredPermission(c, KnightSourceType.MicrosoftExchangeOnline)
+            : RequiredPermission(c, KnightSourceType.MicrosoftEntraId),
 
         _ => null,
     };

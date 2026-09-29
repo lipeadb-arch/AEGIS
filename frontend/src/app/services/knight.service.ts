@@ -13,7 +13,7 @@ import {
   KnightSourceType,
 } from '../models/knight.models';
 
-/** Slug de rota para cada fonte real/demo (espelha o parser do controller). */
+/** Slug de rota para cada fonte real/demo (espelha o parser do controller). "Consolidated" nunca vai na URL. */
 const SOURCE_SLUG: Record<KnightSourceType, string> = {
   Demo: 'demo',
   MicrosoftEntraId: 'entra',
@@ -22,6 +22,7 @@ const SOURCE_SLUG: Record<KnightSourceType, string> = {
   // [AEGIS-KNIGHT-COVERAGE-03] Exchange Online: fonte propria, mesma credencial do conector Microsoft.
   MicrosoftExchangeOnline: 'exchange',
   GoogleWorkspace: 'google',
+  Consolidated: 'consolidated',
 };
 
 /**
@@ -139,6 +140,23 @@ export class KnightService {
       timeout(this.READ_TIMEOUT_MS),
       map((body) => ({ sources: body?.sources ?? [] })),
       catchError(this.normalize('Não foi possível carregar as avaliações por fonte.')),
+    );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-CONSOLIDATED-01] Leitura AO VIVO do relatório consolidado (`GET /consolidated`): combina a
+   * última avaliação concluída de cada fonte pedida (Entra ID/Teams/Exchange Online) pela MESMA fórmula
+   * knight-score-v1 sobre a união dos indicadores — nunca a média das notas por fonte. `sources` é sempre a
+   * seleção EXATA e EXPLÍCITA do chamador (marcada com `explicit=true`) — uma lista vazia significa "nenhuma
+   * fonte marcada", nunca o padrão de "todas". Somente leitura: NÃO dispara coleta nem persiste nada —
+   * publicar o relatório exportável é uma ação à parte.
+   */
+  getConsolidated(sources: KnightSourceType[]): Observable<KnightAssessment> {
+    let params = new HttpParams().set('explicit', 'true');
+    for (const s of sources) params = params.append('sources', SOURCE_SLUG[s]);
+    return this.http.get<KnightAssessment>(`${this.base}/consolidated`, { params }).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível carregar o relatório consolidado.')),
     );
   }
 

@@ -891,7 +891,13 @@ public record KnightAssessmentDto(
     IReadOnlyList<KnightIndicatorDto> Indicators,
     IReadOnlyList<KnightCapabilityDto> Capabilities,
     KnightAdvisoryDto? Advisory,
-    bool AdvisoryFromAi);
+    bool AdvisoryFromAi,
+    /// <summary>
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Presente SÓ quando <c>SourceType == "Consolidated"</c>: a composição das
+    /// três fontes candidatas (Entra ID, Teams, Exchange Online) — incluídas, disponíveis mas não escolhidas, ou
+    /// nunca avaliadas. Nula em toda avaliação de fonte única.
+    /// </summary>
+    IReadOnlyList<KnightConsolidatedSourceDto>? Sources = null);
 
 /// <summary>
 /// [AEGIS-KNIGHT-DURABLE-01] Uma execução KNIGHT que NÃO concluiu, na visão da API — só o cabeçalho.
@@ -934,6 +940,45 @@ public record KnightSourceLatestDto(
 /// fontes: cada bloco traz a própria nota, a própria cobertura e a própria data.
 /// </summary>
 public record KnightLatestBySourceDto(IReadOnlyList<KnightSourceLatestDto> Sources);
+
+// ---- [AEGIS-KNIGHT-CONSOLIDATED-01] Relatório KNIGHT consolidado (Entra ID + Teams + Exchange Online) -------
+
+/// <summary>
+/// Composição de UMA fonte candidata no relatório consolidado. <paramref name="AvailabilityState"/> é
+/// <c>"Included"</c>, <c>"Available"</c> (avaliação concluída, mas não escolhida) ou <c>"NotAssessed"</c> (nunca
+/// concluiu uma avaliação). Nota e cobertura são SEMPRE as da própria fonte — nunca somadas às demais.
+/// </summary>
+public record KnightConsolidatedSourceDto(
+    string Source,
+    string Slug,
+    string Label,
+    bool Included,
+    string AvailabilityState,
+    Guid? SourceRunId,
+    string? SourceState,
+    string? CatalogVersion,
+    DateTimeOffset? CapturedAt,
+    double? Score,
+    double? Coverage,
+    KnightCountsDto? Counts,
+    IReadOnlyList<string> CollectionLimitations);
+
+/// <summary>
+/// [AEGIS-KNIGHT-CONSOLIDATED-02] Uma fonte→execução PINADA pelo cliente ao publicar o relatório consolidado —
+/// a execução EXATA que a tela mostrava como incluída no instante da publicação. O servidor revalida tenant
+/// (Global Query Filter, fail-closed), <see cref="Source"/> e conclusão; NUNCA substitui uma execução inválida
+/// pela mais recente. Nomes aceitos: "entra"/"teams"/"exchange" (e sinônimos — ver <c>KnightSourceNames</c>).
+/// </summary>
+public record KnightConsolidatedSourceSelectionDto(string Source, Guid RunId);
+
+/// <summary>
+/// Requisição de publicação do relatório KNIGHT consolidado. <paramref name="Selection"/> NULA preserva o
+/// comportamento legado (compatibilidade): a última avaliação concluída de cada fonte candidata, todas
+/// incluídas. Uma lista PRESENTE, mesmo vazia, é a escolha EXPLÍCITA e EXATA do chamador — a composição
+/// EXIBIDA no instante da publicação, fonte a fonte; zero itens produz composição vazia (bloqueada na
+/// publicação), nunca o padrão silencioso. O cliente nunca fornece score/cobertura/contagens.
+/// </summary>
+public record PublishConsolidatedKnightSnapshotRequest(IReadOnlyList<KnightConsolidatedSourceSelectionDto>? Selection = null);
 
 /// <summary>
 /// [AEGIS-AUD-035] Requisição de PUBLICAÇÃO de uma fotografia auditável de postura. O cliente só escolhe o

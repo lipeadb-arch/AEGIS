@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using AegisScore.Application.Knight;
 using AegisScore.Domain;
 
 namespace AegisScore.Application.Posture;
@@ -146,7 +147,12 @@ public sealed record PostureSnapshotDetailDto(
     /// <summary>[AEGIS-MVP-PRODUCT-03] Limitações de COLETA congeladas — o que a avaliação não conseguiu ver.</summary>
     IReadOnlyList<string>? CollectionLimitations = null,
     /// <summary>[AEGIS-MVP-PRODUCT-03] Ações congeladas no instante da publicação.</summary>
-    IReadOnlyList<PostureSnapshotActionItemDto>? ActionItems = null);
+    IReadOnlyList<PostureSnapshotActionItemDto>? ActionItems = null,
+    /// <summary>
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Composição das fontes candidatas de um relatório KNIGHT consolidado —
+    /// nula fora deste tipo de fotografia. Ver <see cref="KnightConsolidatedSourceEntry"/>.
+    /// </summary>
+    IReadOnlyList<KnightConsolidatedSourceEntry>? Composition = null);
 
 /// <summary>Uma mudança de um item (controle/indicador) entre duas fotografias.</summary>
 public sealed record PostureItemChangeDto(string Code, string Title, string PreviousStatus, string CurrentStatus);
@@ -219,6 +225,28 @@ public interface IPostureSnapshotService
     /// </summary>
     Task<PostureSnapshotDetailDto> PublishAsync(
         PostureSnapshotType type, KnightSourceType? source, Guid? runId = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Publica uma fotografia KNIGHT que COMPÕE, sem somar, as execuções PINADAS
+    /// em <paramref name="selection"/> (restrita às candidatas — Entra ID, Teams, Exchange Online). As três
+    /// candidatas SEMPRE aparecem na composição congelada, incluídas ou não — uma fonte sem avaliação, ou
+    /// disponível e não escolhida, nunca vira aprovação silenciosa.
+    ///
+    /// [AEGIS-KNIGHT-CONSOLIDATED-02] <paramref name="selection"/> NULA preserva o comportamento legado (a
+    /// última avaliação CONCLUÍDA de cada candidata, todas incluídas) — só para compatibilidade de chamadores
+    /// anteriores a esta pinagem. Uma coleção PRESENTE, mesmo vazia, é a escolha EXPLÍCITA e EXATA do chamador:
+    /// zero itens é "nenhuma fonte marcada" e não reverte ao padrão em silêncio. Cada item fixa a EXECUÇÃO
+    /// exibida — tenant (Global Query Filter, fail-closed), fonte e conclusão são revalidados aqui, e uma
+    /// execução que deixou de satisfazer alguma delas recusa a publicação (NUNCA é substituída pela mais
+    /// recente da mesma fonte).
+    ///
+    /// Lança <see cref="PostureSnapshotNotAvailableException"/> quando NENHUMA fonte foi selecionada/tem
+    /// avaliação concluída, ou quando alguma execução pinada não está mais disponível, não é da fonte
+    /// declarada, não está concluída ou não pertence a este tenant. O cliente nunca fornece
+    /// score/cobertura/contagens.
+    /// </summary>
+    Task<PostureSnapshotDetailDto> PublishConsolidatedKnightAsync(
+        IReadOnlyCollection<KnightConsolidatedSourceSelection>? selection, CancellationToken ct = default);
 
     /// <summary>Lista as fotografias do tenant (mais recentes primeiro), opcionalmente filtradas por tipo.</summary>
     Task<IReadOnlyList<PostureSnapshotSummaryDto>> ListAsync(PostureSnapshotType? type, CancellationToken ct = default);

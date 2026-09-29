@@ -207,6 +207,33 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       </div>
     </div>
 
+    @if (composition(); as comp) {
+      <div class="panel">
+        <div class="hd"><h3>Composição do relatório consolidado</h3></div>
+        <p class="muted small">
+          Cada fonte tem a própria nota, cobertura e data — não são somadas. Uma fonte disponível e não incluída,
+          ou sem avaliação concluída, aparece aqui sem virar aprovação.
+        </p>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Fonte</th><th>Situação</th><th>Nota</th><th>Cobertura</th><th>Catálogo</th><th>Coleta</th></tr></thead>
+            <tbody>
+              @for (s of comp; track s.source) {
+                <tr>
+                  <td>{{ s.label }}</td>
+                  <td><span class="avail" [class]="s.availabilityState">{{ availabilityLabel(s.availabilityState) }}</span></td>
+                  <td>{{ s.score === null ? '—' : round(s.score) }}</td>
+                  <td>{{ s.coverage === null ? '—' : pct(s.coverage) }}</td>
+                  <td>{{ s.catalogVersion || '—' }}</td>
+                  <td>{{ s.capturedAt ? (s.capturedAt | date: 'dd/MM/yyyy HH:mm') : '—' }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    }
+
     <div class="panel">
       <div class="hd"><h3>Fontes, datas e limitações de cobertura</h3></div>
       <p class="small">
@@ -312,6 +339,10 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       .sev { padding: 1px 8px; border: 1px solid currentColor; border-radius: var(--radius-pill); font-size: var(--fs-caps); font-weight: 600; }
       .sev.Critical { color: var(--red-text); } .sev.High { color: #ff9a3d; } .sev.Medium { color: var(--amber); }
       .sev.Low { color: var(--cyan); } .sev.Informational { color: var(--text-2); }
+      .avail { padding: 1px 8px; border-radius: var(--radius-pill); font-size: var(--fs-caps); font-weight: 600; }
+      .avail.Included { color: var(--cyan); background: color-mix(in srgb, var(--cyan) 16%, transparent); }
+      .avail.Available { color: var(--amber); background: color-mix(in srgb, var(--amber) 16%, transparent); }
+      .avail.NotAssessed { color: var(--text-2); background: var(--hover); }
       .prio { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
       .prio li span { display: block; margin-top: 2px; }
       .metric-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -355,6 +386,8 @@ export class KnightOverviewComponent {
 
   /** Três unidades que não se confundem: controles, ocorrências (objeto × controle) e objetos únicos. */
   readonly unitsLine = computed(() => knightUnitsLine(this.summary()));
+  /** [AEGIS-KNIGHT-CONSOLIDATED-01] Presente só quando a avaliação exibida é o relatório consolidado. */
+  readonly composition = computed(() => this.assessment().sources ?? null);
 
   countOf(st: KnightIndicatorStatus): number {
     return this.assessment().indicators.filter((i) => i.status === st).length;
@@ -374,5 +407,16 @@ export class KnightOverviewComponent {
 
   rowLabel(label: string, counts: Record<KnightIndicatorStatus, number>, total: number): string {
     return `${label}: ${counts.Exposed} reprovado(s), ${counts.Passed} aprovado(s), ${counts.NotEvaluated + counts.Error} não avaliado(s) ou erro, de ${total}`;
+  }
+
+  availabilityLabel(state: 'Included' | 'Available' | 'NotAssessed'): string {
+    switch (state) {
+      case 'Included':
+        return 'Incluída';
+      case 'Available':
+        return 'Disponível, não incluída';
+      case 'NotAssessed':
+        return 'Sem avaliação concluída';
+    }
   }
 }

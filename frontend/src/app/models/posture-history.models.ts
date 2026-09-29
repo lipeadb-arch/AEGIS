@@ -2,6 +2,8 @@
 // fotografia é IMUTÁVEL e o score é o do INSTRUMENTO (AEGIS Score/NIST OU KNIGHT), nunca combinado. Funções
 // PURAS de apresentação (pt-BR). "Não avaliado" é SEMPRE distinto de 0 e de NonCompliant.
 
+import { KnightConsolidatedSource, KnightSourceType } from './knight.models';
+
 export type PostureSnapshotType = 'AegisScoreNist' | 'Knight';
 
 /** Referência sanitizada de evidência (só metadado; nunca conteúdo bruto). */
@@ -126,6 +128,11 @@ export interface PostureSnapshotDetail {
   collectionLimitations?: string[] | null;
   /** [AEGIS-MVP-PRODUCT-03] Ações congeladas no instante da publicação (nunca o estado atual dos planos). */
   actionItems?: PostureSnapshotActionItem[] | null;
+  /**
+   * [AEGIS-KNIGHT-CONSOLIDATED-01] Composição das fontes candidatas de um relatório KNIGHT consolidado — só
+   * presente nesse tipo de fotografia.
+   */
+  composition?: KnightConsolidatedSource[] | null;
 }
 
 export interface PostureItemChange {
@@ -172,6 +179,25 @@ export interface PublishPostureSnapshotRequest {
    * recente — o que faria o relatório sair de uma coleta diferente da que está aberta na tela.
    */
   runId?: string;
+}
+
+/**
+ * [AEGIS-KNIGHT-CONSOLIDATED-02] Uma fonte→execução PINADA na publicação — a execução EXATA que a tela mostrava
+ * como incluída no instante da publicação. O servidor revalida tenant, fonte e conclusão; nunca substitui uma
+ * execução inválida pela mais recente.
+ */
+export interface KnightConsolidatedSourceSelection {
+  source: KnightSourceType;
+  runId: string;
+}
+
+/**
+ * [AEGIS-KNIGHT-CONSOLIDATED-01] Requisição de publicação do relatório KNIGHT consolidado. `selection` é a
+ * composição EXATA e EXIBIDA no instante da publicação — cada item trava a execução daquela fonte. Uma lista
+ * vazia é a seleção explícita "nenhuma fonte", bloqueada no servidor (nunca o padrão silencioso de "todas").
+ */
+export interface PublishConsolidatedKnightSnapshotRequest {
+  selection: KnightConsolidatedSourceSelection[];
 }
 
 // ---- Apresentação (pt-BR) -----------------------------------------------------------------------

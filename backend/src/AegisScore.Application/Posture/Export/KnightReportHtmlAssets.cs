@@ -126,6 +126,7 @@ if(D.topObjects.length===0)to.appendChild(el('p',{cls:'empty',text:D.kpis.unique
 else{var tb=el('tbody');D.topObjects.forEach(function(o){tb.appendChild(el('tr',null,[el('td',null,[el('div',{text:o.label}),el('div',{cls:'mono',text:o.externalId})]),el('td',{text:o.kindLabel}),el('td',{text:String(o.controlCount)}),el('td',{cls:'mono',text:o.controlIds.join(', ')})]));});
 to.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,[el('th',{text:'Item'}),el('th',{text:'Tipo'}),el('th',{text:'Controles'}),el('th',{text:'Quais'})])]),tb])]));}
 box.appendChild(to);
+if(D.composition&&D.composition.length)box.appendChild(composition());
 box.appendChild(sources());
 if(D.advisory)box.appendChild(advisory());
 box.appendChild(integrity());
@@ -137,6 +138,16 @@ rows.forEach(function(r){var tot=r.passed+r.failed+r.mitigated+r.notEvaluated+r.
 var f={};f[key]=r.key;var desc=r.label+': '+r.failed+' reprovado(s), '+r.passed+' aprovado(s), '+(r.notEvaluated+r.errors)+' não avaliado(s)/erro, de '+tot;
 b.appendChild(el('button',{cls:'bar',type:'button','aria-label':desc,title:desc,onclick:function(){go(f);}},[el('span',{cls:'lbl',text:r.label}),tr,el('span',{cls:'num',text:String(tot)})]));});
 p.appendChild(b);var lg=el('div',{cls:'legend'});STATUS.forEach(function(s){var i=el('i',{cls:'seg '+s[0]});lg.appendChild(el('span',null,[i,s[1]]));});p.appendChild(lg);return p;}
+function composition(){var p=el('div',{cls:'panel'},[el('h2',{text:'Composição do relatório consolidado'}),
+el('p',{cls:'sub',text:'Cada fonte tem a própria nota, cobertura e data — não são somadas. Uma fonte disponível e não incluída, ou sem avaliação concluída, aparece aqui sem virar aprovação.'})]);
+var tb=el('tbody');D.composition.forEach(function(s){var sit=s.included?['s-Passed','Incluída']:(s.availabilityState==='NotAssessed'?['s-NotEvaluated','Sem avaliação concluída']:['s-Mitigated','Disponível, não incluída']);
+tb.appendChild(el('tr',null,[el('td',{text:s.label}),el('td',null,[pill(sit[0],sit[1])]),
+el('td',{text:s.score===null||s.score===undefined?'—':String(Math.round(s.score))}),
+el('td',{text:s.coverage===null||s.coverage===undefined?'—':pct(s.coverage)}),
+el('td',{text:s.catalogVersion||'—'}),el('td',{text:dt(s.capturedAt)}),
+el('td',{text:(s.collectionLimitations&&s.collectionLimitations.length)?s.collectionLimitations.length+' limitação(ões)':'—'})]));});
+p.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,['Fonte','Situação','Nota','Cobertura','Catálogo','Coleta','Limitações'].map(function(x){return el('th',{text:x});}))]),tb])]));
+return p;}
 function sources(){var h=D.header,p=el('div',{cls:'panel'},[el('h2',{text:'Fontes, datas e limitações de cobertura'})]);
 p.appendChild(el('div',{cls:'kv'},[el('span',{cls:'k',text:'Fonte'}),el('span',{text:h.sourceLabel+' · provedor '+h.provider+(h.isDemo?' (demonstração sintética)':'')}),
 el('span',{cls:'k',text:'Coleta mais recente'}),el('span',{text:dt(h.dataRecency)}),el('span',{cls:'k',text:'Fotografia publicada em'}),el('span',{text:dt(h.capturedAt)}),

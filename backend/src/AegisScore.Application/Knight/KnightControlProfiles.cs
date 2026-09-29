@@ -248,6 +248,8 @@ public static class KnightControlProfiles
         KnightSourceType.MicrosoftExchangeOnline => "Microsoft",
         KnightSourceType.GoogleWorkspace => "Google",
         KnightSourceType.Demo => "Demonstração",
+        // [AEGIS-KNIGHT-CONSOLIDATED-01] Sem provedor único — a fotografia compõe várias fontes (ver CompositionJson).
+        KnightSourceType.Consolidated => "AEGIS KNIGHT",
         _ => source.ToString(),
     };
 

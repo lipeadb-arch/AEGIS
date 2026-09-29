@@ -592,6 +592,279 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         return snapshot;
     }
 
+    // ---- [AEGIS-KNIGHT-CONSOLIDATED-01] Publicação consolidada ----------------------------------------
+
+    public async Task<PostureSnapshotDetailDto> PublishConsolidatedKnightAsync(
+        IReadOnlyCollection<KnightConsolidatedSourceSelection>? selection, CancellationToken ct = default)
+    {
+        var tenantId = _tenant.TenantId
+            ?? throw new TenantSecurityException("Publicação de fotografia sem tenant resolvido no contexto (fail-closed).");
+
+        var snapshot = await BuildConsolidatedKnightSnapshotAsync(selection, ct);
+
+        // [AEGIS-MVP-PRODUCT-03] Mesmo congelamento de cliente do fluxo por fonte.
+        snapshot.ClientName = await _db.Tenants.AsNoTracking()
+            .Where(t => t.Id == tenantId).Select(t => t.Name).FirstOrDefaultAsync(ct);
+
+        // [AEGIS-KNIGHT-CONSOLIDATED-01] Planos de ação NÃO são congelados aqui: a proveniência que
+        // FreezeActionItemsAsync exige (uma origem — SourceType + Mode — de UMA execução) não existe quando a
+        // fotografia compõe várias execuções de fontes diferentes. Congelar ações do relatório consolidado é
+        // trabalho de outro pacote, não uma omissão silenciosa: fica registrado aqui e no PR.
+
+        snapshot.TenantId = tenantId;
+        foreach (var i in snapshot.Indicators) i.TenantId = tenantId;
+        foreach (var o in snapshot.Objects) o.TenantId = tenantId;
+
+        snapshot.ContentHash = PostureSnapshotHasher.Compute(snapshot);
+
+        _db.PostureSnapshots.Add(snapshot);
+        await _db.SaveChangesAsync(ct);
+
+        return ToDetail(snapshot);
+    }
+
+    /// <summary>
+    /// Monta (sem persistir) uma fotografia que compõe as execuções PINADAS em <paramref name="selection"/> —
+    /// ou, quando <paramref name="selection"/> é NULA (compatibilidade), a última avaliação CONCLUÍDA de cada
+    /// candidata (<see cref="KnightConsolidatedCandidates.Sources"/>), todas incluídas. As três candidatas
+    /// sempre entram na composição congelada, incluídas ou não; só as INCLUÍDAS contribuem indicadores, objetos
+    /// e para a nota. [AEGIS-KNIGHT-CONSOLIDATED-02] Uma fonte PINADA é revalidada aqui (existe, é da fonte
+    /// declarada, está concluída — o tenant já é fail-closed pelo Global Query Filter de <c>ITenantOwned</c>) e
+    /// NUNCA substituída pela mais recente quando a validação falha.
+    /// </summary>
+    private async Task<PostureSnapshot> BuildConsolidatedKnightSnapshotAsync(
+        IReadOnlyCollection<KnightConsolidatedSourceSelection>? selection, CancellationToken ct)
+    {
+        var candidates = KnightConsolidatedCandidates.Sources;
+
+        // Cada fonte pedida aparece no MÁXIMO uma vez — duas execuções pinadas para a mesma fonte seriam uma
+        // composição ambígua (qual das duas contaria?). O controller já rejeita isso antes de chegar aqui;
+        // revalidado para quem chama o serviço diretamente.
+        Dictionary<KnightSourceType, Guid>? pinned = null;
+        if (selection is not null)
+        {
+            pinned = new Dictionary<KnightSourceType, Guid>();
+            foreach (var s in selection)
+            {
+                if (!candidates.Contains(s.Source))
+                    throw new PostureSnapshotNotAvailableException(
+                        $"Fonte '{s.Source}' não é candidata do relatório consolidado (só Entra ID, Teams e Exchange Online).");
+                if (!pinned.TryAdd(s.Source, s.RunId))
+                    throw new PostureSnapshotNotAvailableException(
+                        $"Mais de uma execução foi indicada para {KnightConsolidatedCandidates.StaticLabel(s.Source)}.");
+            }
+        }
+
+        async Task<KnightAssessmentRun?> FetchFullRunAsync(Guid id) =>
+            await _db.KnightAssessmentRuns.AsNoTracking()
+                .Include(r => r.Indicators).ThenInclude(i => i.AffectedObjects)
+                .AsSplitQuery()
+                .FirstOrDefaultAsync(r => r.Id == id, ct);
+
+        async Task<Guid?> LatestCompletedRunIdAsync(KnightSourceType src)
+        {
+            // Mesma ordenação em memória de sempre — o SQLite dos testes não traduz ORDER BY de
+            // DateTimeOffset, e o conjunto por tenant/fonte é pequeno.
+            var runsOfSource = await _db.KnightAssessmentRuns.AsNoTracking()
+                .Where(r => r.Status == KnightRunStatus.Completed && r.SourceType == src)
+                .Select(r => new { r.Id, r.StartedAt }).ToListAsync(ct);
+            return runsOfSource.OrderByDescending(r => r.StartedAt).ThenByDescending(r => r.Id)
+                .Select(r => (Guid?)r.Id).FirstOrDefault();
+        }
+
+        var snapshot = new PostureSnapshot
+        {
+            Type = PostureSnapshotType.Knight,
+            SchemaVersion = PostureSnapshotSchema.KnightReportVersion,
+            FormulaVersion = KnightScoreFormula.Version,
+            // [AEGIS-KNIGHT-CONSOLIDATED-01] Não há UMA versão de catálogo: cada fonte tem a própria, congelada
+            // por fonte em CompositionJson. Este valor só identifica que a fotografia é uma composição.
+            CatalogVersion = "ak-knight-consolidated",
+            SourceType = KnightSourceType.Consolidated,
+            CapturedAt = DateTimeOffset.UtcNow,
+            ProfileCatalogVersion = KnightCatalog.Version,
+            ReferenceCoverageJson = KnightReferenceCoverageSnapshot.Serialize(KnightReferenceCatalog.Coverage()),
+        };
+
+        var entries = new List<KnightConsolidatedSourceEntry>();
+        var includedIndicators = new List<KnightIndicatorResult>();
+        var includedLabels = new List<string>();
+        var includedSourceTypes = new List<KnightSourceType>();
+        var mergedLimitations = new List<string>();
+        var mergedCapabilities = new List<KnightCapabilityStatus>();
+        DateTimeOffset? recency = null;
+
+        foreach (var source in candidates)
+        {
+            KnightAssessmentRun? run;
+            bool included;
+
+            if (pinned is not null && pinned.TryGetValue(source, out var pinnedRunId))
+            {
+                // [AEGIS-KNIGHT-CONSOLIDATED-02] Fonte PINADA: a execução EXATA que a tela exibia como
+                // incluída. Tenant já é fail-closed pelo Global Query Filter (ITenantOwned) — uma execução de
+                // outro tenant é indistinguível de inexistente aqui. Fonte e conclusão são revalidadas
+                // explicitamente; uma falha em qualquer uma delas recusa a publicação — NUNCA cai para a mais
+                // recente da mesma fonte, que poderia ser um conteúdo diferente do que a pessoa viu e mandou
+                // publicar.
+                run = await FetchFullRunAsync(pinnedRunId);
+                if (run is null || run.SourceType != source || run.Status != KnightRunStatus.Completed)
+                    throw new PostureSnapshotNotAvailableException(
+                        $"A avaliação indicada para {KnightConsolidatedCandidates.StaticLabel(source)} não está " +
+                        "mais disponível, não pertence a este tenant ou não está concluída. Reabra o relatório " +
+                        "consolidado e publique novamente a partir da composição exibida.");
+                included = true;
+            }
+            else
+            {
+                var latestId = await LatestCompletedRunIdAsync(source);
+                run = latestId is null ? null : await FetchFullRunAsync(latestId.Value);
+                // Sem seleção alguma (compatibilidade): toda candidata com execução concluída entra. Com
+                // seleção explícita, uma candidata NÃO pinada nunca contribui — só aparece como disponível.
+                included = pinned is null && run is not null;
+            }
+
+            if (run is null)
+            {
+                entries.Add(new KnightConsolidatedSourceEntry(
+                    source, KnightConsolidatedCandidates.StaticLabel(source), false, "NotAssessed",
+                    null, null, null, null, null, null, null, null, null, null, null, null, Array.Empty<string>()));
+                continue;
+            }
+
+            var at = run.CompletedAt ?? (run.Indicators.Count > 0 ? run.Indicators.Max(i => i.CollectedAt) : run.StartedAt);
+            var limitations = BuildCollectionLimitations(run.CapabilitiesJson);
+
+            entries.Add(new KnightConsolidatedSourceEntry(
+                source, run.Source, included, included ? "Included" : "Available",
+                run.Id, run.SourceState.ToString(), run.CatalogVersion, at,
+                run.Score, run.Coverage, run.PassedCount, run.ExposedCount, run.MitigatedCount,
+                run.NotEvaluatedCount, run.ErrorCount, run.NotApplicableCount, limitations));
+
+            if (!included) continue;
+
+            includedSourceTypes.Add(source);
+            includedLabels.Add(run.Source);
+            mergedLimitations.AddRange(limitations);
+            if (!string.IsNullOrWhiteSpace(run.CapabilitiesJson))
+                mergedCapabilities.AddRange(KnightCapabilitiesJson.Deserialize(run.CapabilitiesJson));
+            recency = recency is null || at < recency ? at : recency;
+
+            foreach (var i in run.Indicators)
+            {
+                includedIndicators.Add(i);
+                var presentation = KnightControlPresentations.For(
+                    i.IndicatorId, i.Category, i.Severity, i.Status, i.SourceType, i.NistCodes, i.MitreTechniques, run.CatalogVersion);
+
+                snapshot.Indicators.Add(new PostureSnapshotIndicator
+                {
+                    IndicatorId = i.IndicatorId,
+                    Title = i.Title,
+                    Category = i.Category,
+                    Severity = i.Severity,
+                    Status = i.Status,
+                    Evidence = i.Evidence,
+                    AffectedObjectCount = i.AffectedObjectCount,
+                    NistCodes = i.NistCodes.ToList(),
+                    MitreTechniques = i.MitreTechniques.ToList(),
+                    SourceType = i.SourceType,
+                    CollectedAt = i.CollectedAt,
+                    Recommendation = i.Recommendation,
+                    NotEvaluatedReason = i.NotEvaluatedReason,
+                    Domain = presentation.Domain,
+                    Service = presentation.Service,
+                    Provider = presentation.Provider,
+                    Description = presentation.Description,
+                    Rationale = presentation.Rationale,
+                    ExpectedConfiguration = presentation.ExpectedConfiguration,
+                    DoesNotProve = presentation.DoesNotProve,
+                    Criterion = presentation.Criterion,
+                    References = presentation.References
+                        .Select(r => new PostureControlReference(r.Framework, r.Version, r.Code, r.Url)).ToList(),
+                    RequiredCapabilities = presentation.RequiredCapabilities.ToList(),
+                    HasAffectedDetail = i.HasAffectedDetail,
+                    AffectedDetailComplete = i.AffectedDetailComplete,
+                    AffectedDetailLimitation = i.AffectedDetailLimitation,
+                    Impact = presentation.Impact,
+                    Platform = presentation.Platform,
+                });
+
+                foreach (var o in i.AffectedObjects
+                             .OrderBy(o => o.Relation).ThenBy(o => o.ExternalId, StringComparer.Ordinal))
+                {
+                    snapshot.Objects.Add(new PostureSnapshotObject
+                    {
+                        IndicatorId = i.IndicatorId,
+                        Relation = o.Relation,
+                        Kind = o.Kind,
+                        ExternalId = o.ExternalId,
+                        DisplayName = o.DisplayName,
+                        UserPrincipalName = o.UserPrincipalName,
+                        Roles = o.Roles.ToList(),
+                        Detail = o.Detail,
+                        ObservedConfiguration = o.ObservedConfiguration,
+                    });
+                }
+            }
+        }
+
+        if (includedIndicators.Count == 0)
+        {
+            // Seleção explícita e vazia (a pessoa desmarcou todas as fontes de propósito) é um caso distinto de
+            // "nenhuma candidata tem avaliação concluída" — a mensagem não deve sugerir sincronizar quando o
+            // bloqueio é a própria escolha de publicar sem fonte alguma marcada.
+            if (pinned is not null && pinned.Count == 0)
+                throw new PostureSnapshotNotAvailableException(
+                    "Nenhuma fonte foi selecionada para compor o relatório consolidado. Marque ao menos uma fonte " +
+                    "avaliada antes de publicar.");
+
+            throw new PostureSnapshotNotAvailableException(
+                "Nenhuma das fontes pedidas (Microsoft Entra ID, Microsoft Teams, Exchange Online) tem avaliação " +
+                "KNIGHT concluída para compor o relatório consolidado. Sincronize ao menos uma fonte em Integrações " +
+                "antes de publicar.");
+        }
+
+        // Mesma fórmula knight-score-v1, aplicada sobre a UNIÃO dos indicadores das fontes INCLUÍDAS — não a
+        // média das notas por fonte (ver AEGIS_STATE.md e o comentário de KnightConsolidated.cs).
+        var score = KnightScoreFormula.Compute(includedIndicators.Select(i => (i.Severity, i.Status)));
+
+        double achievedWeighted = 0, evaluatedWeight = 0, eligibleWeight = 0;
+        foreach (var i in includedIndicators)
+        {
+            if (i.Status == KnightIndicatorStatus.NotApplicable) continue;
+            var weight = KnightScoreFormula.WeightFor(i.Severity);
+            eligibleWeight += weight;
+            var factor = KnightScoreFormula.FactorFor(i.Status);
+            if (factor is null) continue;
+            evaluatedWeight += weight;
+            achievedWeighted += weight * factor.Value;
+        }
+
+        snapshot.SemanticFamily = "knight:consolidated:" + string.Join("+", includedSourceTypes.OrderBy(s => s.ToString(), StringComparer.Ordinal));
+        snapshot.SourceLabel = "Consolidado — " + string.Join(", ", includedLabels);
+        snapshot.Score = score.Score;
+        snapshot.AchievedPoints = (int)Math.Round(achievedWeighted, MidpointRounding.AwayFromZero);
+        snapshot.PossiblePoints = (int)Math.Round(evaluatedWeight, MidpointRounding.AwayFromZero);
+        snapshot.EligiblePoints = (int)Math.Round(eligibleWeight, MidpointRounding.AwayFromZero);
+        snapshot.Coverage = score.Coverage;
+        snapshot.EvaluatedItems = score.EvaluatedCount;
+        snapshot.EligibleItems = score.ApplicableCount;
+        snapshot.CompliantCount = score.PassedCount;
+        snapshot.NonCompliantCount = score.ExposedCount;
+        snapshot.MitigatedCount = score.MitigatedCount;
+        snapshot.NotEvaluatedCount = score.NotEvaluatedCount;
+        snapshot.ErrorCount = score.ErrorCount;
+        snapshot.NotApplicableCount = score.NotApplicableCount;
+        snapshot.DataRecency = recency;
+        snapshot.CollectionLimitations = mergedLimitations;
+        snapshot.CapabilitiesJson = mergedCapabilities.Count == 0
+            ? null
+            : System.Text.Json.JsonSerializer.Serialize(mergedCapabilities, KnightCapabilitiesJson.Options);
+        snapshot.CompositionJson = KnightConsolidatedCompositionJson.Serialize(entries);
+
+        return snapshot;
+    }
+
     /// <summary>
     /// [AEGIS-MVP-PRODUCT-03] Traduz o estado por capacidade da execução numa lista LEGÍVEL de limitações de
     /// coleta — só as que NÃO foram coletadas. Uma coleta íntegra produz lista vazia (e o hash das fotografias
@@ -778,7 +1051,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
 
         return new PostureSnapshotDetailDto(
             ToSummary(s), s.AchievedPoints, s.PossiblePoints, s.EligiblePoints, controls, indicators,
-            s.CollectionLimitations.ToList(), actions);
+            s.CollectionLimitations.ToList(), actions,
+            KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson));
     }
 
     /// <summary>Projeção leve de um sinal (com a capability do seu conector) para reconstruir a proveniência decisiva.</summary>
