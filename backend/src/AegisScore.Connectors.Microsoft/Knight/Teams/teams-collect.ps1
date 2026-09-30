@@ -355,12 +355,21 @@ try {
     }
 
     try {
-        Read-ClientConfiguration
-        Read-FederationConfiguration
-        Read-MeetingPolicies
-        Read-MessagingPolicies
-        Read-AppPermissionPolicies
-        Read-PolicyAssignments
+        # [AEGIS-KNIGHT-ACCESS-01] `test`: a MESMA conexão de aplicativo do modo `collect`, mas com UMA leitura
+        # representativa em vez de seis. É a verificação que a tela de Integrações usa para dar retorno rápido
+        # — conecta de verdade e lê de verdade, sem esperar pelas demais capacidades. Não substitui uma
+        # sincronização: a lista completa só é tentada fora do modo `test`.
+        if ($mode -eq 'test') {
+            Read-ClientConfiguration
+        }
+        else {
+            Read-ClientConfiguration
+            Read-FederationConfiguration
+            Read-MeetingPolicies
+            Read-MessagingPolicies
+            Read-AppPermissionPolicies
+            Read-PolicyAssignments
+        }
     }
     finally {
         # A sessão é encerrada SEMPRE: o processo é descartável, mas a conexão com o locatário não pode

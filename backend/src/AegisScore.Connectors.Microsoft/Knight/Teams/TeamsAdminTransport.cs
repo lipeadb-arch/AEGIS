@@ -78,4 +78,17 @@ public interface ITeamsAdminReader
     /// conecta em locatário nenhum e não precisa de credencial — serve para provar o ambiente de implantação.
     /// </summary>
     Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-ACCESS-01] Verificação RÁPIDA de conexão: a mesma conexão de aplicativo do <see cref="ReadAsync"/>,
+    /// restrita a UMA leitura representativa (<c>Get-CsTeamsClientConfiguration</c>) em vez das seis capacidades. A
+    /// sessão é encerrada ao fim, sempre — igual à coleta.
+    ///
+    /// <para><b>Por que isto existe, e o que NÃO substitui.</b> A emissão dos dois tokens não prova que a
+    /// administração do Teams os aceite: só uma conexão de verdade prova isso. Esta verificação conecta e lê de
+    /// verdade — não é um "ping" de token —, mas é mais RÁPIDA que uma coleta completa, para a tela de Integrações dar
+    /// retorno em segundos. Não substitui uma sincronização: nenhum documento é produzido, nenhuma avaliação é
+    /// registrada.</para>
+    /// </summary>
+    Task<TeamsAdminOutput> TestConnectionAsync(TeamsAdminCredentials credentials, CancellationToken ct = default);
 }

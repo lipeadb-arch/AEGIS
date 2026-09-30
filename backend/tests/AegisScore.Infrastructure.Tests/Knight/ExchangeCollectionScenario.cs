@@ -102,6 +102,9 @@ internal sealed class ExchangeCollectionScenario : IExchangeAdminReader
     public Task<ExchangeAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) =>
         Task.FromResult(PowerShellExchangeAdminReader.Parse(new ExchangeCollectionScenario(Variant.Compliant).Json()));
 
+    public Task<ExchangeAdminOutput> TestConnectionAsync(ExchangeAdminCredentials credentials, CancellationToken ct = default) =>
+        ReadAsync(credentials, ct);
+
     internal static string Json(Variant variant) => new ExchangeCollectionScenario(variant).Json();
 
     // ---- Documento do adaptador ------------------------------------------------------------------------

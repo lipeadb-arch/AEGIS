@@ -69,6 +69,19 @@ public sealed class PowerShellTeamsAdminReader : ITeamsAdminReader
     public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) =>
         RunAsync(JsonSerializer.Serialize(new { mode = "module-check" }), null, ct);
 
+    public Task<TeamsAdminOutput> TestConnectionAsync(TeamsAdminCredentials credentials, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        var payload = JsonSerializer.Serialize(new
+        {
+            mode = "test",
+            tenantId = credentials.TenantId,
+            graphToken = credentials.GraphToken,
+            teamsToken = credentials.TeamsToken,
+        });
+        return RunAsync(payload, [credentials.GraphToken, credentials.TeamsToken], ct);
+    }
+
     // ---- Processo -------------------------------------------------------------------------------------
 
     private async Task<TeamsAdminOutput> RunAsync(

@@ -314,6 +314,9 @@ public sealed class ExchangeAdapterTransportTests
                 enumerationLimit = 5000,
                 reads = Array.Empty<object>(),
             })));
+
+        public Task<ExchangeAdminOutput> TestConnectionAsync(ExchangeAdminCredentials credentials, CancellationToken ct = default) =>
+            ReadAsync(credentials, ct);
     }
 
     private static string Trecho(string texto, string inicio, string fim)
