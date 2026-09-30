@@ -1,7 +1,9 @@
+using System.Linq;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Knight;
 using AegisScore.Application.Posture;
 using AegisScore.Application.Posture.Export;
 using AegisScore.Domain;
@@ -71,6 +73,58 @@ public class PostureSnapshotsController : ControllerBase
             // existente (a mais recente, opcionalmente da fonte) é preservado. Uma avaliação pedida e
             // indisponível vira 409 — jamais a substituição silenciosa pela mais recente.
             var detail = await _service.PublishAsync(type, source, request.RunId, ct);
+            return CreatedAtAction(nameof(GetById), new { id = detail.Summary.Id }, detail);
+        }
+        catch (PostureSnapshotNotAvailableException ex)
+        {
+            return Conflict(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Publica uma fotografia KNIGHT que COMPÕE, sem somar, as execuções
+    /// PINADAS em <paramref name="request"/>.<c>Selection</c> — a composição que a tela mostrava como incluída
+    /// no instante da publicação, fonte a fonte. [AEGIS-KNIGHT-CONSOLIDATED-02] Cada item fixa a execução EXATA
+    /// (nunca "a mais recente"): tenant (Global Query Filter), fonte e conclusão são revalidados no servidor, e
+    /// uma execução que deixou de satisfazer alguma delas recusa a publicação em vez de ser silenciosamente
+    /// substituída. <c>Selection</c> nula preserva o comportamento legado (última concluída de cada candidata).
+    /// As três candidatas sempre aparecem na composição congelada — incluídas ou não. Mesmo controle de acesso
+    /// da publicação por fonte.
+    /// </summary>
+    /// <response code="201">Fotografia consolidada publicada.</response>
+    /// <response code="400">Alguma fonte pedida não é reconhecida, não é candidata do relatório consolidado, ou aparece duplicada.</response>
+    /// <response code="401">Tenant não resolvido no contexto.</response>
+    /// <response code="403">Papel do tenant insuficiente (Analyst não publica).</response>
+    /// <response code="409">Nenhuma fonte foi selecionada, ou alguma execução pinada não está mais disponível/concluída/deste tenant.</response>
+    [HttpPost("consolidated")]
+    [Authorize(Roles = "Manager,TenantAdmin")]
+    public async Task<ActionResult<PostureSnapshotDetailDto>> PublishConsolidated(
+        [FromBody] PublishConsolidatedKnightSnapshotRequest? request, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+
+        List<KnightConsolidatedSourceSelection>? selection = null;
+        if (request?.Selection is not null)
+        {
+            selection = new List<KnightConsolidatedSourceSelection>();
+            foreach (var item in request.Selection)
+            {
+                if (!KnightSourceNames.TryParse(item.Source, out var source))
+                    return BadRequest($"Fonte KNIGHT desconhecida: '{item.Source}'.");
+                if (!KnightConsolidatedCandidates.Sources.Contains(source))
+                    return BadRequest($"Fonte '{item.Source}' não é candidata do relatório consolidado (só Entra ID, Teams e Exchange Online).");
+                if (item.RunId == Guid.Empty)
+                    return BadRequest($"Execução ausente para a fonte '{item.Source}'.");
+                if (selection.Any(s => s.Source == source))
+                    return BadRequest($"Mais de uma execução foi indicada para a fonte '{item.Source}'.");
+                selection.Add(new KnightConsolidatedSourceSelection(source, item.RunId));
+            }
+        }
+
+        try
+        {
+            var detail = await _service.PublishConsolidatedKnightAsync(selection, ct);
             return CreatedAtAction(nameof(GetById), new { id = detail.Summary.Id }, detail);
         }
         catch (PostureSnapshotNotAvailableException ex)
@@ -183,17 +237,6 @@ public class PostureSnapshotsController : ControllerBase
         }
     }
 
-    private static bool TryParseSource(string source, out KnightSourceType sourceType)
-    {
-        switch ((source ?? "").Trim().ToLowerInvariant())
-        {
-            case "demo": sourceType = KnightSourceType.Demo; return true;
-            case "entra":
-            case "entraid":
-            case "microsoftentraid": sourceType = KnightSourceType.MicrosoftEntraId; return true;
-            case "google":
-            case "googleworkspace": sourceType = KnightSourceType.GoogleWorkspace; return true;
-            default: sourceType = default; return false;
-        }
-    }
+    private static bool TryParseSource(string source, out KnightSourceType sourceType) =>
+        KnightSourceNames.TryParse(source, out sourceType);
 }

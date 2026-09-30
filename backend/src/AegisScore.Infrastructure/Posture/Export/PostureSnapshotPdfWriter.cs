@@ -386,6 +386,11 @@ public static class PostureSnapshotPdfWriter
 
     private static void AddKnightBody(Section section, PostureSnapshot s)
     {
+        // [AEGIS-KNIGHT-CONSOLIDATED-01] Antes dos achados: DE QUE fontes esta nota vem. Sem isto, um relatório
+        // consolidado abriria com uma nota sem dizer se ela cobre uma fonte só ou as três.
+        if (s.SourceType == KnightSourceType.Consolidated)
+            AddConsolidatedComposition(section, s);
+
         // [AEGIS-MVP-PRODUCT-03] Ordem do CORPO PRINCIPAL, em linguagem de gestão: o que foi encontrado, o que
         // está sendo feito a respeito e o que ficou efetivamente comprovado. O detalhe técnico (tabela de
         // indicadores, mapeamentos, versões) vai para o APÊNDICE, depois — quem decide não lê tabela primeiro.
@@ -393,6 +398,44 @@ public static class PostureSnapshotPdfWriter
         AddKnightActions(section, s);
         AddKnightValidations(section, s);
         AddKnightAppendix(section, s);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] De que fontes vem a nota consolidada: cada uma com a PRÓPRIA nota,
+    /// cobertura e data — nunca somadas — e as candidatas disponíveis mas não incluídas, ou nunca avaliadas,
+    /// aparecem sem virar aprovação.
+    /// </summary>
+    private static void AddConsolidatedComposition(Section section, PostureSnapshot s)
+    {
+        var composition = KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson);
+        if (composition is null || composition.Count == 0) return;
+
+        Heading(section, "Composição do relatório consolidado");
+        Body(section,
+            "Combina avaliações concluídas de mais de uma fonte do mesmo tenant. A nota acima aplica a fórmula " +
+            "knight-score-v1 sobre a união dos controles das fontes INCLUÍDAS — não é a média das notas por fonte.",
+            muted: true);
+
+        var table = section.AddTable();
+        StyleTable(table);
+        table.AddColumn(Unit.FromCentimeter(4.2));
+        table.AddColumn(Unit.FromCentimeter(3.6));
+        table.AddColumn(Unit.FromCentimeter(1.6));
+        table.AddColumn(Unit.FromCentimeter(1.8));
+        table.AddColumn(Unit.FromCentimeter(3.4));
+        HeaderRow(table, "Fonte", "Situação", "Nota", "Cobertura", "Coleta");
+        foreach (var e in composition)
+        {
+            var row = table.AddRow();
+            var situacao = e.Included ? "Incluída"
+                : e.AvailabilityState == "NotAssessed" ? "Sem avaliação concluída" : "Disponível, não incluída";
+            Cell(row, 0, e.Label);
+            Cell(row, 1, situacao);
+            Cell(row, 2, e.Score is { } sc ? Math.Round(sc).ToString(Pt) : "—", align: ParagraphAlignment.Center);
+            Cell(row, 3, e.Coverage is { } cv ? cv.ToString("0.#", Pt) + "%" : "—", align: ParagraphAlignment.Center);
+            Cell(row, 4, e.CapturedAt is { } at ? at.ToUniversalTime().ToString("dd/MM/yyyy", Pt) + " UTC" : "—");
+        }
+        section.AddParagraph().Format.SpaceAfter = Unit.FromMillimeter(2);
     }
 
     /// <summary>

@@ -52,6 +52,12 @@ public static class PostureSnapshotHasher
     /// </summary>
     private const string KnightReportVersion = "posture-hash-ext-knight-report-v2";
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Composição do relatório consolidado — escrita SÓ quando existe conteúdo
+    /// (fotografias sem composição, ou seja, toda fotografia anterior a este pacote, mantêm o hash idêntico).
+    /// </summary>
+    private const string ConsolidatedExtensionVersion = "posture-hash-ext-knight-consolidated-v1";
+
     /// <summary>Computa o hash SHA-256 (hex minúsculo, 64 chars) do conteúdo canônico da fotografia.</summary>
     public static string Compute(PostureSnapshot s)
     {
@@ -259,6 +265,9 @@ public static class PostureSnapshotHasher
                 w.Int(indicators.Count);
                 foreach (var i in indicators) w.Str(i.IndicatorId).Str(i.Impact).Str(i.Platform);
             }
+
+            if (!string.IsNullOrEmpty(s.CompositionJson))
+                w.Str(ConsolidatedExtensionVersion).Str(s.CompositionJson);
         }
 
         return w.ToString();

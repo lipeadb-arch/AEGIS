@@ -111,6 +111,10 @@ public sealed class DatabaseUpgradePostgresTests
             // numa fonte não pode bloquear a da outra. Só troca de índice — nenhuma coluna, nenhum backfill, e os
             // pedidos já gravados continuam válidos.
             "20260920060846_KnightCoverage02_TeamsSyncPerSource",
+            // [AEGIS-KNIGHT-CONSOLIDATED-01] Composição do relatório KNIGHT consolidado: uma coluna aditiva e
+            // anulável (texto), SEM backfill — fotografias anteriores (de fonte única) continuam com o hash
+            // idêntico e nunca ganham uma composição que não existiu.
+            "20260924012046_KnightConsolidated01_CompositionJson",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

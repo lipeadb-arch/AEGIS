@@ -1398,6 +1398,8 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.ProfileCatalogVersion).HasMaxLength(50);
             // [AEGIS-KNIGHT-COVERAGE-01] TEXT pelo mesmo motivo dos demais JSON congelados: o hash assina a string.
             e.Property(x => x.ReferenceCoverageJson).HasColumnType("text");
+            // [AEGIS-KNIGHT-CONSOLIDATED-01] TEXT pelo mesmo motivo: o hash assina a string, e jsonb normalizaria.
+            e.Property(x => x.CompositionJson).HasColumnType("text");
             e.HasMany(x => x.Objects).WithOne(o => o.Snapshot)
                 .HasForeignKey(o => new { o.SnapshotId, o.TenantId })
                 .HasPrincipalKey(x => new { x.Id, x.TenantId })

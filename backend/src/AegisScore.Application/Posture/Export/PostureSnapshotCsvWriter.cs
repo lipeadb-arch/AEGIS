@@ -127,7 +127,11 @@ public static class PostureSnapshotCsvWriter
                 csv.Text(s.Id.ToString("D")).Text(s.ContentHash).Text(s.Type.ToString()).TimestampValue(s.CapturedAt)
                    .Text(s.SchemaVersion).Text(s.FormulaVersion).Text(s.CatalogVersion)
                    .Text(state).Number(s.Score).Number(s.Coverage)
-                   .Text(s.SourceType?.ToString()).Text(s.SourceLabel)
+                   // [AEGIS-KNIGHT-CONSOLIDATED-01] SourceType é do INDICADOR, não da fotografia: numa fotografia
+                   // consolidada s.SourceType é "Consolidated" para toda a fotografia, mas cada linha precisa
+                   // dizer de qual fonte real (Entra ID/Teams/Exchange) ela veio. Numa fotografia de fonte única
+                   // os dois valores sempre coincidiam, então esta coluna não muda para nenhum relatório existente.
+                   .Text(i.SourceType.ToString()).Text(s.SourceLabel)
                    .Text(i.IndicatorId).Text(i.Title).Text(i.Category.ToString()).Text(i.Severity.ToString()).Text(i.Status.ToString())
                    .Number(i.AffectedObjectCount).TimestampValue(i.CollectedAt)
                    .Text(string.Join(" ", i.NistCodes)).Text(string.Join(" ", i.MitreTechniques)).Text(i.Evidence)

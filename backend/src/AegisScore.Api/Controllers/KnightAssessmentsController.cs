@@ -167,6 +167,42 @@ public class KnightAssessmentsController : ControllerBase
             .ToList()));
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Leitura AO VIVO do relatório consolidado (Entra ID + Teams + Exchange
+    /// Online): combina a última avaliação CONCLUÍDA de cada fonte pedida em <paramref name="sources"/> pela
+    /// MESMA fórmula knight-score-v1 sobre a união dos indicadores — nunca a média das notas por fonte. Sem o
+    /// parâmetro <paramref name="explicitSelection"/>, ausência de <paramref name="sources"/> é o padrão CLARO
+    /// (todas as candidatas com avaliação concluída) — string de consulta não distingue "ausente" de "vazio",
+    /// então <paramref name="explicitSelection"/><c>=true</c> é como o chamador afirma "esta é a seleção exata,
+    /// mesmo vazia" (ex.: a pessoa desmarcou todas as fontes de propósito) sem reverter ao padrão em silêncio.
+    /// NUNCA persiste nem dispara coleta: publicar um relatório congelado exportável é
+    /// <c>POST /api/v1/posture/snapshots/consolidated</c>.
+    /// </summary>
+    /// <response code="200">Composição consolidada (mesmo sem nenhuma fonte disponível — a ausência é o conteúdo).</response>
+    /// <response code="400">Alguma fonte pedida não é reconhecida.</response>
+    /// <response code="401">Tenant não resolvido no contexto.</response>
+    [HttpGet("consolidated")]
+    public async Task<ActionResult<KnightAssessmentDto>> GetConsolidated(
+        [FromQuery] string[]? sources, [FromQuery(Name = "explicit")] bool explicitSelection, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+
+        var parsed = new List<KnightSourceType>();
+        foreach (var name in sources ?? Array.Empty<string>())
+        {
+            if (!KnightSourceNames.TryParse(name, out var s))
+                return BadRequest($"Fonte desconhecida: '{name}'.");
+            parsed.Add(s);
+        }
+
+        IReadOnlyCollection<KnightSourceType>? requested = explicitSelection ? parsed : (parsed.Count > 0 ? parsed : null);
+
+        var latest = await _service.GetLatestBySourceAsync(ct);
+        var combined = KnightConsolidatedBuilder.Build(latest, requested);
+        return Ok(ToConsolidatedDto(combined));
+    }
+
     /// <summary>Assessment por Id (401 sem tenant; 404 inexistente/de outro tenant com tenant válido).</summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<KnightAssessmentDto>> GetById(Guid id, CancellationToken ct)
@@ -249,27 +285,39 @@ public class KnightAssessmentsController : ControllerBase
 
     // ---- Mapeamento ----------------------------------------------------------------------------------
 
-    private static bool TryParseSource(string source, out KnightSourceType sourceType)
+    private static bool TryParseSource(string source, out KnightSourceType sourceType) =>
+        KnightSourceNames.TryParse(source, out sourceType);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Reaproveita o mesmo CONTRATO <see cref="KnightAssessmentDto"/> das
+    /// avaliações de fonte única — o cliente já sabe renderizá-lo — só que sintético (Id vazio, nunca uma
+    /// execução persistida) e com <see cref="KnightAssessmentDto.Sources"/> preenchido. É o que permite as MESMAS
+    /// telas (Visão geral, Controles e findings) funcionarem para o relatório consolidado sem duplicar UI.
+    /// </summary>
+    private static KnightAssessmentDto ToConsolidatedDto(KnightConsolidatedAssessment a)
     {
-        switch ((source ?? "").Trim().ToLowerInvariant())
-        {
-            case "demo": sourceType = KnightSourceType.Demo; return true;
-            case "entra":
-            case "entraid":
-            case "microsoftentraid": sourceType = KnightSourceType.MicrosoftEntraId; return true;
-            case "google":
-            case "googleworkspace": sourceType = KnightSourceType.GoogleWorkspace; return true;
-            // [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams: fonte própria, credencial do mesmo conector Microsoft.
-            case "teams":
-            case "microsoftteams": sourceType = KnightSourceType.MicrosoftTeams; return true;
-            // [AEGIS-KNIGHT-COVERAGE-03] Exchange Online: fonte própria, credencial do mesmo conector Microsoft,
-            // token de OUTRO recurso e papel de diretório próprio.
-            case "exchange":
-            case "exchangeonline":
-            case "microsoftexchangeonline": sourceType = KnightSourceType.MicrosoftExchangeOnline; return true;
-            default: sourceType = default; return false;
-        }
+        var sources = a.Sources.Select(ToDto).ToList();
+        var includedLabels = sources.Where(s => s.Included).Select(s => s.Label).ToList();
+        var sourceLabel = includedLabels.Count > 0 ? "Consolidado — " + string.Join(", ", includedLabels) : "Consolidado";
+        var counts = new KnightCountsDto(a.PassedCount, a.ExposedCount, a.MitigatedCount, a.NotEvaluatedCount, a.ErrorCount, a.NotApplicableCount);
+        var at = a.DataRecency ?? DateTimeOffset.UtcNow;
+
+        return new KnightAssessmentDto(
+            Guid.Empty, KnightAssessmentMode.Live.ToString(), false, KnightSourceType.Consolidated.ToString(),
+            KnightSourceState.Completed.ToString(), sourceLabel, KnightRunStatus.Completed.ToString(),
+            "ak-knight-consolidated", a.FormulaVersion, at, a.DataRecency,
+            a.Score, a.Coverage, counts, a.Indicators.Select(ToDto).ToList(),
+            a.Capabilities.Select(c => new KnightCapabilityDto(c.Capability.ToString(), c.Outcome.ToString(), c.Detail)).ToList(),
+            null, false, sources);
     }
+
+    private static KnightConsolidatedSourceDto ToDto(KnightConsolidatedSourceEntry e) => new(
+        e.Source.ToString(), KnightConnectorSources.Slug(e.Source), e.Label, e.Included, e.AvailabilityState,
+        e.SourceRunId, e.SourceState, e.CatalogVersion, e.CapturedAt, e.Score, e.Coverage,
+        e.PassedCount is null ? null : new KnightCountsDto(
+            e.PassedCount.Value, e.ExposedCount!.Value, e.MitigatedCount!.Value,
+            e.NotEvaluatedCount!.Value, e.ErrorCount!.Value, e.NotApplicableCount!.Value),
+        e.CollectionLimitations);
 
     private static KnightUnfinishedRunDto ToDto(KnightUnfinishedRun r) => new(
         r.Id, r.Status.ToString(), r.SourceType.ToString(), r.Mode.ToString(), r.StartedAt);

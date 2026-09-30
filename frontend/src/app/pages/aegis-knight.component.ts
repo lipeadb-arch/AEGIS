@@ -81,10 +81,16 @@ import { PostureExportFormat } from '../models/posture-history.models';
                congelaria a mais recente — e o relatório sairia de uma coleta diferente da que está na tela. -->
           <!-- [AEGIS-KNIGHT-DURABLE-01] Só uma avaliação CONCLUÍDA é publicável — o servidor recusa as demais. -->
           @if (assessment(); as pub) {
-            @if (!unfinishedView()) {
-            <button type="button" class="btn real" (click)="publishReport(pub.id)" [disabled]="publishing()">
-              {{ publishing() ? 'Publicando…' : 'Publicar relatório desta avaliação' }}
-            </button>
+            @if (!unfinishedView() && consolidatedMode()) {
+              <button type="button" class="btn real" (click)="publishConsolidatedReport()"
+                      [disabled]="publishing() || !consolidatedPublishable()"
+                      [title]="consolidatedPublishable() ? '' : 'Marque ao menos uma fonte avaliada para publicar.'">
+                {{ publishing() ? 'Publicando…' : 'Publicar relatório consolidado' }}
+              </button>
+            } @else if (!unfinishedView()) {
+              <button type="button" class="btn real" (click)="publishReport(pub.id)" [disabled]="publishing()">
+                {{ publishing() ? 'Publicando…' : 'Publicar relatório desta avaliação' }}
+              </button>
             }
           }
         </div>
@@ -159,15 +165,22 @@ import { PostureExportFormat } from '../models/posture-history.models';
              uma não descarta a outra: a que não está na tela continua existindo, com a data da coleta dela. -->
         @if (hasMultipleSources()) {
           <nav class="panel sources" aria-label="Fonte avaliada">
-            <p class="sources-title">Fontes avaliadas</p>
+            <div class="sources-hd">
+              <p class="sources-title">Fontes avaliadas</p>
+              @if (!consolidatedMode()) {
+                <button type="button" class="btn ghost" (click)="showConsolidated()">Ver relatório consolidado</button>
+              } @else {
+                <button type="button" class="btn ghost" (click)="exitConsolidated()">Ver por fonte</button>
+              }
+            </div>
             <ul>
               @for (s of latestBySource(); track s.source) {
                 <li>
                   <button
                     type="button"
                     class="src"
-                    [class.on]="shownSource() === s.source"
-                    [attr.aria-current]="shownSource() === s.source ? 'true' : null"
+                    [class.on]="!consolidatedMode() && shownSource() === s.source"
+                    [attr.aria-current]="!consolidatedMode() && shownSource() === s.source ? 'true' : null"
                     (click)="selectSource(s.source)"
                   >
                     <b>{{ s.label }}</b>
@@ -180,10 +193,29 @@ import { PostureExportFormat } from '../models/posture-history.models';
                 </li>
               }
             </ul>
-            <p class="sources-note">
-              Cada fonte tem nota, cobertura e data próprias — elas não são somadas. O relatório publicado é o
-              da fonte aberta aqui.
-            </p>
+            @if (consolidatedMode()) {
+              <div class="consolidated-picker">
+                <p class="sources-title">Compor com</p>
+                @for (c of consolidatedCandidates(); track c.source) {
+                  <label class="pick" [class.off]="!c.hasAssessment">
+                    <input type="checkbox" [checked]="isSourceIncluded(c.source)" [disabled]="!c.hasAssessment || consolidatedLoading()"
+                           (change)="toggleConsolidatedSource(c.source)" />
+                    {{ c.label }}
+                    @if (!c.hasAssessment) { <span class="when">sem avaliação concluída</span> }
+                  </label>
+                }
+              </div>
+              <p class="sources-note">
+                A nota consolidada aplica a mesma fórmula do KNIGHT sobre os controles das fontes marcadas acima —
+                não é a média das notas por fonte. Uma fonte sem avaliação, ou desmarcada, aparece na composição
+                sem virar aprovação.
+              </p>
+            } @else {
+              <p class="sources-note">
+                Cada fonte tem nota, cobertura e data próprias — elas não são somadas. O relatório publicado é o
+                da fonte aberta aqui.
+              </p>
+            }
           </nav>
         }
 
@@ -448,6 +480,34 @@ import { PostureExportFormat } from '../models/posture-history.models';
         font-size: 0.82rem;
         color: var(--muted);
       }
+      .sources-hd {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--sp-2);
+      }
+      .consolidated-picker {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--sp-3);
+      }
+      .consolidated-picker .pick {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.85rem;
+        color: var(--text);
+        cursor: pointer;
+      }
+      .consolidated-picker .pick.off {
+        color: var(--muted);
+        cursor: not-allowed;
+      }
+      .consolidated-picker .when {
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
       .page-head h1 {
         display: flex;
         flex-wrap: wrap;
@@ -705,6 +765,152 @@ export class AegisKnightComponent implements OnInit {
 
   /** Só vale oferecer a troca quando há mais de uma fonte com resultado. */
   readonly hasMultipleSources = computed(() => this.latestBySource().length > 1);
+
+  // ---- [AEGIS-KNIGHT-CONSOLIDATED-01] Relatório consolidado (Entra ID + Teams + Exchange Online) ------------
+  // Reaproveita as MESMAS abas/telas do assessment de fonte única: a leitura ao vivo do servidor já devolve o
+  // contrato KnightAssessment (sintético, id vazio), com `sources` preenchido para a composição. Nada aqui
+  // dispara coleta — é leitura sobre o que já foi sincronizado.
+
+  private static readonly CONSOLIDATED_CANDIDATES: KnightSourceType[] = [
+    'MicrosoftEntraId',
+    'MicrosoftTeams',
+    'MicrosoftExchangeOnline',
+  ];
+
+  readonly consolidatedMode = signal(false);
+  readonly consolidatedLoading = signal(false);
+  /** Fontes marcadas para compor o relatório — inicializada com todas as que têm avaliação concluída. */
+  readonly consolidatedSelection = signal<KnightSourceType[]>([]);
+  /** A fonte exibida antes de entrar no modo consolidado — para onde "Ver por fonte" volta. */
+  private sourceBeforeConsolidated: KnightSourceType | null = null;
+  /**
+   * [AEGIS-KNIGHT-CONSOLIDATED-02] Identifica o pedido de leitura consolidada EM VOO. Uma mudança de seleção,
+   * uma nova entrada no modo consolidado ou a SAÍDA dele avança este contador — uma resposta cujo número não é
+   * mais o atual pertence a um pedido superado e é descartada, mesmo chegando depois de a tela já mostrar outra
+   * coisa (outra seleção, outra fonte, ou nem estar mais em modo consolidado).
+   */
+  private consolidatedRequestSeq = 0;
+
+  /**
+   * A publicação só é possível com uma composição ESTÁVEL: nenhuma leitura em voo (a resposta ainda pode trocar
+   * o que está na tela) e ao menos uma fonte efetivamente INCLUÍDA na avaliação EXIBIDA — nunca a seleção dos
+   * checkboxes por si só, que pode estar momentaneamente à frente da resposta do servidor.
+   */
+  readonly consolidatedPublishable = computed(
+    () => !this.consolidatedLoading() && (this.assessment()?.sources ?? []).some((s) => s.included && !!s.sourceRunId),
+  );
+
+  readonly consolidatedCandidates = computed(() => {
+    const bySource = new Map(this.latestBySource().map((s) => [s.source, s]));
+    return AegisKnightComponent.CONSOLIDATED_CANDIDATES.map((source) => {
+      const bloco = bySource.get(source);
+      return {
+        source,
+        label: bloco?.label ?? sourceTypeLabel(source),
+        hasAssessment: !!bloco?.assessment,
+      };
+    });
+  });
+
+  isSourceIncluded(source: KnightSourceType): boolean {
+    return this.consolidatedSelection().includes(source);
+  }
+
+  /** Entra no modo consolidado: seleção padrão CLARA (todas as candidatas com avaliação concluída). */
+  showConsolidated(): void {
+    if (this.consolidatedMode()) return;
+    this.sourceBeforeConsolidated = this.shownSource();
+    this.consolidatedMode.set(true);
+    this.consolidatedSelection.set(this.consolidatedCandidates().filter((c) => c.hasAssessment).map((c) => c.source));
+    this.selected.set(null);
+    this.loadConsolidated();
+  }
+
+  /** Sai do modo consolidado e volta a mostrar a fonte que estava aberta antes. */
+  exitConsolidated(): void {
+    if (!this.consolidatedMode()) return;
+    // Invalida qualquer leitura consolidada em voo ANTES de trocar de tela: uma resposta atrasada não pode
+    // preencher `assessment` depois que a pessoa já saiu do modo consolidado.
+    this.consolidatedRequestSeq++;
+    this.consolidatedLoading.set(false);
+    const alvo = this.sourceBeforeConsolidated ?? this.latestBySource()[0]?.source;
+    if (alvo) this.selectSource(alvo);
+    else this.consolidatedMode.set(false);
+  }
+
+  toggleConsolidatedSource(source: KnightSourceType): void {
+    const atual = this.consolidatedSelection();
+    this.consolidatedSelection.set(
+      atual.includes(source) ? atual.filter((s) => s !== source) : [...atual, source],
+    );
+    this.loadConsolidated();
+  }
+
+  /**
+   * [AEGIS-KNIGHT-CONSOLIDATED-02] Lê a composição consolidada da seleção ATUAL. Protegida contra respostas
+   * OBSOLETAS: cada chamada recebe um número de pedido próprio, e só a resposta do pedido mais recente grava em
+   * `assessment` — uma troca de seleção, uma nova entrada no modo consolidado ou a saída dele descarta qualquer
+   * resposta anterior ainda em voo, mesmo que ela chegue depois.
+   */
+  private loadConsolidated(): void {
+    const seq = ++this.consolidatedRequestSeq;
+    this.consolidatedLoading.set(true);
+    this.error.set(null);
+    this.publishedId.set(null);
+    this.publishNotice.set(null);
+    this.knight.getConsolidated(this.consolidatedSelection()).subscribe({
+      next: (a) => {
+        if (seq !== this.consolidatedRequestSeq) return; // pedido superado — outra seleção/saída já aconteceu
+        this.consolidatedLoading.set(false);
+        this.assessment.set(a);
+        this.unfinishedAttempt.set(null);
+        this.selected.set(null);
+        // [AEGIS-KNIGHT-CONSOLIDATED-01] Sem execução real persistida (id sintético): o resumo de afetados e os
+        // planos de ação são leituras POR EXECUÇÃO e não se aplicam aqui — a visão consolidada é só leitura.
+        this.loadSummary(null);
+        this.summaryState.set('ok');
+        this.activePlans.set([]);
+      },
+      error: (e: Error) => {
+        if (seq !== this.consolidatedRequestSeq) return;
+        this.consolidatedLoading.set(false);
+        this.error.set(e.message);
+      },
+    });
+  }
+
+  /**
+   * Publica o relatório consolidado PINANDO a execução exata de cada fonte que a tela mostra como incluída
+   * agora — nunca a seleção dos checkboxes isolada, que pode estar à frente da resposta do servidor. Bloqueada
+   * enquanto a composição está carregando ou sem nenhuma fonte incluída (ver `consolidatedPublishable`).
+   */
+  publishConsolidatedReport(): void {
+    if (!this.consolidatedPublishable()) return;
+    const selection = (this.assessment()?.sources ?? [])
+      .filter((s) => s.included && s.sourceRunId)
+      .map((s) => ({ source: s.source, runId: s.sourceRunId! }));
+    if (selection.length === 0) return;
+
+    this.publishing.set(true);
+    this.publishNotice.set(null);
+    this.error.set(null);
+    this.publishedId.set(null);
+    this.downloadError.set(null);
+    this.history.publishConsolidated({ selection }).subscribe({
+      next: (d) => {
+        this.publishing.set(false);
+        this.publishedId.set(d.summary.id);
+        this.publishNotice.set(
+          `Relatório consolidado publicado (${d.summary.id}). O conteúdo foi congelado: reexportá-lo depois ` +
+            'traz exatamente o que foi publicado agora. HTML, CSV e PDF saem desta mesma fotografia.',
+        );
+      },
+      error: (e: Error) => {
+        this.publishing.set(false);
+        this.error.set(e.message);
+      },
+    });
+  }
 
   readonly sources = signal<KnightSources | null>(null);
   readonly loading = signal(true); // 1ª carga (fontes + último)
@@ -1268,8 +1474,13 @@ export class AegisKnightComponent implements OnInit {
    */
   selectSource(source: KnightSourceType): void {
     const bloco = this.latestBySource().find((s) => s.source === source);
-    if (!bloco || this.shownSource() === source) return;
+    if (!bloco || (this.shownSource() === source && !this.consolidatedMode())) return;
 
+    // Saindo do modo consolidado (ou nem estando nele): invalida qualquer leitura consolidada ainda em voo,
+    // para que uma resposta atrasada não sobrescreva a fonte escolhida agora.
+    this.consolidatedRequestSeq++;
+    this.consolidatedLoading.set(false);
+    this.consolidatedMode.set(false);
     this.shownSource.set(source);
     this.assessment.set(bloco.assessment);
     this.unfinishedAttempt.set(bloco.unfinishedAttempt);
