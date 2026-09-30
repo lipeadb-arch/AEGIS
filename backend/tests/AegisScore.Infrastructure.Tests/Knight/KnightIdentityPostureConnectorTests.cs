@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -161,6 +162,32 @@ public sealed class KnightIdentityPostureConnectorTests
             .And.Contain("causa não determinada");
         health.Message.Should().Contain("Microsoft Teams").And.Contain("Exchange Online",
             "uma falha isolada numa fonte não pode impedir o diagnóstico das outras duas");
+    }
+
+    [Fact]
+    public async Task EntraFalhaInternaInesperada_MensagemNeutra_NaoViraFalhaDeRede()
+    {
+        var health = await ConnectorFor(graph: new FakeGraph(throwRaw: new InvalidOperationException("estado interno sintético")))
+            .TestAsync(Config(), CancellationToken.None);
+
+        health.Status.Should().Be(ConnectorStatus.Degraded, "Teams e Exchange continuam respondendo");
+        var entra = health.Message!.Split('\n').Single(l => l.StartsWith("Microsoft Entra ID:"));
+        entra.Should().Contain("falha inesperada");
+        entra.Should().NotContain("falha de rede",
+            "um erro interno do AEGIS não pode ser apresentado como falha de rede ou tempo limite");
+        health.Message.Should().Contain("Microsoft Teams: credencial aceita")
+            .And.Contain("Exchange Online: credencial aceita");
+        health.Message.Should().NotContain("estado interno sintético",
+            "a mensagem de uma exceção inesperada não atravessa para o diagnóstico");
+    }
+
+    [Fact]
+    public async Task ResultadoPositivo_DeixaClaroQueSoALeituraDeVerificacaoFoiConfirmada()
+    {
+        var health = await ConnectorFor().TestAsync(Config(), CancellationToken.None);
+
+        health.Message.Should().Contain("apenas a conexão e a leitura de verificação")
+            .And.Contain("sincronização");
     }
 
     [Fact]

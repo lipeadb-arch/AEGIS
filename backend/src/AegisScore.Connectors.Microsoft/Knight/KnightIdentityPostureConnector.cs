@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -106,8 +108,15 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
             : probes.Any(p => p.Ok) ? ConnectorStatus.Degraded
             : ConnectorStatus.Failed;
 
-        return new ConnectorHealth(status, string.Join("\n", probes.Select(p => p.Message)));
+        var lines = probes.Select(p => p.Message).ToList();
+        if (probes.Any(p => p.Ok))
+            lines.Add(ScopeOfVerificationNote);
+        return new ConnectorHealth(status, string.Join("\n", lines));
     }
+
+    private const string ScopeOfVerificationNote =
+        "Este teste confirma apenas a conexão e a leitura de verificação de cada fonte; as demais leituras "
+        + "(e portanto a cobertura do assessment) só são verificadas pela sincronização.";
 
     // ---- IEvidenceConnector: ZERO sinais -------------------------------------------------------------
 
@@ -180,10 +189,9 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         {
             return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
         }
-        catch (Exception ex) when (IsTransportFailure(ex, ct))
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
         {
-            _log?.LogWarning(ex, "Falha de transporte ao verificar {Label}.", label);
-            return new Probe(false, $"{label}: {TransportFailureMessage}");
+            return FailedProbe(label, ex);
         }
     }
 
@@ -200,10 +208,9 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         {
             return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
         }
-        catch (Exception ex) when (IsTransportFailure(ex, ct))
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
         {
-            _log?.LogWarning(ex, "Falha de transporte ao verificar {Label}.", label);
-            return new Probe(false, $"{label}: {TransportFailureMessage}");
+            return FailedProbe(label, ex);
         }
 
         try
@@ -228,10 +235,9 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
                 $"{label}: o adaptador de coleta não pôde ser executado neste ambiente. Nenhuma conclusão sobre "
                 + "a credencial é possível.");
         }
-        catch (Exception ex) when (IsTransportFailure(ex, ct))
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
         {
-            _log?.LogWarning(ex, "Falha de transporte ao verificar {Label}.", label);
-            return new Probe(false, $"{label}: {TransportFailureMessage}");
+            return FailedProbe(label, ex);
         }
     }
 
@@ -248,10 +254,9 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         {
             return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
         }
-        catch (Exception ex) when (IsTransportFailure(ex, ct))
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
         {
-            _log?.LogWarning(ex, "Falha de transporte ao verificar {Label}.", label);
-            return new Probe(false, $"{label}: {TransportFailureMessage}");
+            return FailedProbe(label, ex);
         }
 
         try
@@ -278,10 +283,9 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
                 $"{label}: o adaptador de coleta não pôde ser executado neste ambiente. Nenhuma conclusão sobre "
                 + "a credencial é possível.");
         }
-        catch (Exception ex) when (IsTransportFailure(ex, ct))
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
         {
-            _log?.LogWarning(ex, "Falha de transporte ao verificar {Label}.", label);
-            return new Probe(false, $"{label}: {TransportFailureMessage}");
+            return FailedProbe(label, ex);
         }
     }
 
@@ -365,12 +369,37 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
     private const string TransportFailureMessage =
         "a verificação não pôde ser concluída por falha de rede ou tempo limite ao contatar o serviço; causa não determinada.";
 
+    private const string UnexpectedFailureMessage =
+        "a verificação terminou com uma falha inesperada do AEGIS; nenhuma conclusão sobre a credencial, a permissão "
+        + "ou o serviço é possível a partir dela.";
+
+    /// <summary>Cancelamento pedido pelo chamador: sempre se propaga, nunca vira um resultado "Failed".</summary>
+    private static bool IsRequestedCancellation(Exception ex, CancellationToken ct) =>
+        ex is OperationCanceledException && ct.IsCancellationRequested;
+
     /// <summary>
-    /// Distingue uma falha de TRANSPORTE (rede, DNS, tempo limite do próprio HttpClient) — que deve virar um
-    /// diagnóstico seguro desta fonte, sem impedir as demais — de um CANCELAMENTO real pedido pelo usuário, que
-    /// precisa continuar se propagando em vez de virar um resultado "Failed" silencioso. Uma falha inesperada de
-    /// qualquer outro tipo também cai aqui: uma sonda isolada nunca pode derrubar o teste das outras duas fontes.
+    /// Falhas CONHECIDAS de transporte: erro de rede/DNS/TLS do HttpClient, tempo limite (o do próprio HttpClient
+    /// chega como <see cref="OperationCanceledException"/> sem cancelamento do chamador — este método só é
+    /// consultado depois de <see cref="IsRequestedCancellation"/> ter excluído o cancelamento real) e E/S.
     /// </summary>
-    private static bool IsTransportFailure(Exception ex, CancellationToken ct) =>
-        ex is not OperationCanceledException || !ct.IsCancellationRequested;
+    private static bool IsKnownTransportFailure(Exception ex) =>
+        ex is HttpRequestException or TimeoutException or OperationCanceledException or IOException;
+
+    /// <summary>
+    /// Resultado seguro de UMA fonte para uma exceção não tipada: transporte conhecido vira "rede ou tempo
+    /// limite"; qualquer outra coisa é uma falha interna e recebe mensagem neutra, sem atribuir causa ao
+    /// serviço. Só o TIPO da exceção vai ao log — a mensagem de uma exceção inesperada não é conteúdo confiável
+    /// para registrar ao lado de uma credencial.
+    /// </summary>
+    private Probe FailedProbe(string label, Exception ex)
+    {
+        if (IsKnownTransportFailure(ex))
+        {
+            _log?.LogWarning("Falha de transporte ao verificar {Label}: {ExceptionType}.", label, ex.GetType().Name);
+            return new Probe(false, $"{label}: {TransportFailureMessage}");
+        }
+
+        _log?.LogError("Falha inesperada ao verificar {Label}: {ExceptionType}.", label, ex.GetType().Name);
+        return new Probe(false, $"{label}: {UnexpectedFailureMessage}");
+    }
 }
