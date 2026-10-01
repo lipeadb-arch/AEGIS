@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AegisScore.Application.Knight;
 
@@ -136,8 +137,13 @@ public static class KnightControlImpacts
     };
 
     /// <summary>Impacto potencial do controle, ou <c>null</c> quando o controle não tem texto catalogado.</summary>
-    public static string? For(string indicatorId) =>
-        ById.TryGetValue((indicatorId ?? "").Trim(), out var t) ? t : null;
+    public static string? For(string indicatorId)
+    {
+        var id = (indicatorId ?? "").Trim();
+        return ById.TryGetValue(id, out var t) ? t
+            : Catalog.M365ServiceProfiles.Impacts.TryGetValue(id, out var m) ? m
+            : null;
+    }
 
-    public static IReadOnlyCollection<string> Ids => (IReadOnlyCollection<string>)ById.Keys;
+    public static IReadOnlyCollection<string> Ids => ById.Keys.Concat(Catalog.M365ServiceProfiles.Impacts.Keys).ToList();
 }

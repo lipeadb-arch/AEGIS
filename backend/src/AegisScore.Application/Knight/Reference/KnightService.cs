@@ -119,6 +119,13 @@ public static class KnightServices
         KnightSourceType.MicrosoftEntraId => KnightService.EntraId,
         KnightSourceType.MicrosoftTeams => KnightService.Teams,
         KnightSourceType.MicrosoftExchangeOnline => KnightService.ExchangeOnline,
+        KnightSourceType.MicrosoftDefenderForOffice365 => KnightService.DefenderForOffice365,
+        KnightSourceType.MicrosoftPurview => KnightService.Purview,
+        KnightSourceType.MicrosoftSharePoint => KnightService.SharePointOnline,
+        KnightSourceType.MicrosoftIntune => KnightService.Intune,
+        KnightSourceType.MicrosoftFabric => KnightService.Fabric,
+        // O Azure cobre vários serviços: cada controle declara o próprio.
+        KnightSourceType.MicrosoftAzure => KnightService.AzureSubscription,
         KnightSourceType.GoogleWorkspace => KnightService.GoogleWorkspace,
         KnightSourceType.Demo => KnightService.Demo,
         _ => KnightService.Unspecified,

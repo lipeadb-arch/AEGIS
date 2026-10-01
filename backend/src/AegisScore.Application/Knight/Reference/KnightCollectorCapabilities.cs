@@ -76,6 +76,62 @@ public static class KnightCollectorCapabilities
         KnightCapability.ExchangeAuditBypassAssociations,
     };
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Intune: duas leituras do Microsoft Graph (configuração do serviço e restrições de
+    /// registro).
+    /// </summary>
+    private static readonly IReadOnlySet<KnightCapability> Intune = new HashSet<KnightCapability>
+    {
+        KnightCapability.IntuneServiceSettings,
+        KnightCapability.IntuneEnrollmentRestrictions,
+    };
+
+    /// <summary>
+    /// SharePoint/OneDrive: a leitura do Microsoft Graph e a da API administrativa do SharePoint. A segunda é TENTADA em
+    /// toda coleta — sem certificado, o coletor registra "não tentada" com o motivo, e os controles que dependem dela
+    /// ficam não avaliados dizendo por quê.
+    /// </summary>
+    private static readonly IReadOnlySet<KnightCapability> SharePoint = new HashSet<KnightCapability>
+    {
+        KnightCapability.SharePointTenantSettings,
+        KnightCapability.SharePointAdminTenant,
+    };
+
+    private static readonly IReadOnlySet<KnightCapability> Fabric = new HashSet<KnightCapability>
+    {
+        KnightCapability.FabricTenantSettings,
+    };
+
+    /// <summary>
+    /// Defender para Office 365: treze leituras do módulo oficial do Exchange Online e a consulta DNS (SPF e DMARC)
+    /// feita pelo AEGIS sobre os domínios aceitos lidos na mesma coleta.
+    /// </summary>
+    private static readonly IReadOnlySet<KnightCapability> DefenderO365 = new HashSet<KnightCapability>
+    {
+        KnightCapability.DefenderAtpPolicy,
+        KnightCapability.DefenderSafeLinks,
+        KnightCapability.DefenderSafeAttachments,
+        KnightCapability.DefenderMalwareFilter,
+        KnightCapability.DefenderInboundSpam,
+        KnightCapability.DefenderOutboundSpam,
+        KnightCapability.DefenderConnectionFilter,
+        KnightCapability.DefenderAntiPhish,
+        KnightCapability.DefenderDkim,
+        KnightCapability.DefenderAcceptedDomains,
+        KnightCapability.DefenderDnsRecords,
+        KnightCapability.DefenderTeamsProtection,
+        KnightCapability.DefenderPriorityAccounts,
+        KnightCapability.DefenderPresetPolicies,
+    };
+
+    /// <summary>Purview: auditoria (sessão do Exchange Online) e DLP/rótulos (sessão do Security &amp; Compliance).</summary>
+    private static readonly IReadOnlySet<KnightCapability> Purview = new HashSet<KnightCapability>
+    {
+        KnightCapability.PurviewAuditConfig,
+        KnightCapability.PurviewDlpPolicies,
+        KnightCapability.PurviewLabelPolicies,
+    };
+
     private static readonly IReadOnlySet<KnightCapability> Google = new HashSet<KnightCapability>
     {
         KnightCapability.DirectoryUsers,
@@ -90,6 +146,11 @@ public static class KnightCollectorCapabilities
         KnightSourceType.MicrosoftEntraId => Entra,
         KnightSourceType.MicrosoftTeams => Teams,
         KnightSourceType.MicrosoftExchangeOnline => Exchange,
+        KnightSourceType.MicrosoftIntune => Intune,
+        KnightSourceType.MicrosoftSharePoint => SharePoint,
+        KnightSourceType.MicrosoftFabric => Fabric,
+        KnightSourceType.MicrosoftDefenderForOffice365 => DefenderO365,
+        KnightSourceType.MicrosoftPurview => Purview,
         KnightSourceType.GoogleWorkspace => Google,
         _ => new HashSet<KnightCapability>(),
     };

@@ -107,7 +107,11 @@ public static class KnightCatalog
     // denominador de uma execução do Entra ou do Teams não muda — mas o CONJUNTO de controles do catálogo muda, e é
     // o conjunto que define a cobertura de implementação da referência. Fotografias v5 continuam com o catálogo v5
     // congelado e o comparador recusa v5 × v6.
-    public const string Version = "ak-knight-v6";
+    // v7 [AEGIS-KNIGHT-COVERAGE-04]: acrescenta os controles de CONFIGURAÇÃO do restante do Microsoft 365 (Defender para
+    // Office 365, Purview, SharePoint e OneDrive, Intune, Fabric) e dos recursos do Azure, cada um aplicável só à
+    // própria fonte. Mesmo motivo dos blocos anteriores: o denominador de uma execução das fontes existentes não muda,
+    // mas o CONJUNTO de controles muda — fotografias v6 continuam com o catálogo v6 congelado e o comparador recusa v6 × v7.
+    public const string Version = "ak-knight-v7";
 
     // ---- Limiares centralizados (única fonte da verdade dos números da regra) ----
 
@@ -212,6 +216,12 @@ public static class KnightCatalog
             .Concat(EntraConfigurationControls.Definitions)
             .Concat(TeamsConfigurationControls.Definitions)
             .Concat(ExchangeConfigurationControls.Definitions)
+            // [AEGIS-KNIGHT-COVERAGE-04] Demais serviços do Microsoft 365.
+            .Concat(DefenderForOffice365Controls.Definitions)
+            .Concat(PurviewControls.Definitions)
+            .Concat(SharePointControls.Definitions)
+            .Concat(IntuneControls.Definitions)
+            .Concat(FabricControls.Definitions)
             .ToList();
 
     private const string M365Ref = "CIS-M365-7.0.0:";

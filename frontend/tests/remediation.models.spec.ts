@@ -330,6 +330,12 @@ test('a procedência é dita em palavras, não deduzida de um identificador', ()
     'não registrada',
     'ausência de procedência é dita, não preenchida com um palpite',
   );
+  // [AEGIS-KNIGHT-COVERAGE-04] Plano de outra fonte real nunca é rotulado como demonstração.
+  contains(
+    originLabel(plan({ originSourceType: 'MicrosoftPurview', originMode: 'Live' })),
+    'Microsoft Purview · coleta real',
+    'a fonte real do achado, pelo catálogo único de fontes',
+  );
 });
 
 // ---- (8) Controles de escrita só para os papéis autorizados -------------------------------------

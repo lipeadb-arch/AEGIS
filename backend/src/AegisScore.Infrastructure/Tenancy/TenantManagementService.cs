@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Knight;
 using AegisScore.Application.Services;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Connectors;
@@ -302,12 +303,27 @@ public sealed class TenantManagementService : ITenantManagementService
         var tenantId = (command.TenantId ?? "").Trim();
         var clientId = (command.ClientId ?? "").Trim();
         var clientSecret = command.ClientSecret ?? "";
-        if (tenantId.Length == 0 || clientId.Length == 0 || string.IsNullOrWhiteSpace(clientSecret))
+        if (tenantId.Length == 0 || clientId.Length == 0)
             throw new MicrosoftHubValidationException(
-                "Informe Directory (tenant) ID, Application (client) ID e Client secret da conexão Microsoft.");
+                "Informe Directory (tenant) ID e Application (client) ID da conexão Microsoft.");
 
         if (command.Services is null || command.Services.Count == 0)
             throw new MicrosoftHubValidationException("Selecione ao menos um serviço Microsoft para conectar.");
+
+        // [AEGIS-KNIGHT-COVERAGE-04] Certificado e escopo do Azure — só do conector do AEGIS KNIGHT, validados ANTES de
+        // qualquer escrita. O certificado guardado é mantido quando a tela não manda outro (ela nunca o recebe de volta).
+        var knightSelected = command.Services.Any(s => s.Capability == ConnectorCapability.IdentityPosture);
+        var knightExtras = knightSelected ? await ResolveKnightExtrasAsync(command, ct) : null;
+        if (string.IsNullOrWhiteSpace(clientSecret))
+        {
+            if (knightExtras?.CertificatePfxBase64 is null)
+                throw new MicrosoftHubValidationException(
+                    "Informe o Client secret ou um certificado da aplicação (PFX com a chave privada).");
+            if (command.Services.Any(s => s.Capability != ConnectorCapability.IdentityPosture))
+                throw new MicrosoftHubValidationException(
+                    "Sem Client secret, só o AEGIS KNIGHT pode ser conectado: os demais serviços Microsoft desta versão "
+                    + "pedem token por segredo de cliente.");
+        }
 
         // Valida TODA a seleção ANTES de escrever qualquer filho: uma seleção inválida não pode deixar
         // conectores meio-configurados.
@@ -342,7 +358,8 @@ public sealed class TenantManagementService : ITenantManagementService
             var provider = ProviderFor(svc.Capability);
             var settings = BuildMicrosoftChildSettings(
                 tenantId, clientId, clientSecret,
-                svc.Capability == ConnectorCapability.Siem ? svc.WorkspaceId!.Trim() : null);
+                svc.Capability == ConnectorCapability.Siem ? svc.WorkspaceId!.Trim() : null,
+                svc.Capability == ConnectorCapability.IdentityPosture ? knightExtras : null);
 
             var displayName = string.IsNullOrWhiteSpace(svc.DisplayName)
                 ? DefaultDisplayNameFor(svc.Capability)
@@ -383,10 +400,10 @@ public sealed class TenantManagementService : ITenantManagementService
     /// com <c>PropertyNameCaseInsensitive</c>. Nunca escreve workspaceId nos serviços que não são Sentinel.
     /// </summary>
     private static string BuildMicrosoftChildSettings(
-        string tenantId, string clientId, string clientSecret, string? workspaceId)
+        string tenantId, string clientId, string clientSecret, string? workspaceId, KnightExtras? knight = null)
     {
         // Dictionary ordenado por inserção → JSON estável e legível; JsonSerializer escapa os valores.
-        var map = new Dictionary<string, string>
+        var map = new Dictionary<string, object>
         {
             ["tenantId"] = tenantId,
             ["clientId"] = clientId,
@@ -394,7 +411,129 @@ public sealed class TenantManagementService : ITenantManagementService
         };
         if (!string.IsNullOrWhiteSpace(workspaceId))
             map["workspaceId"] = workspaceId!;
+        if (knight is not null)
+        {
+            if (knight.CertificatePfxBase64 is not null)
+            {
+                map["certificatePfxBase64"] = knight.CertificatePfxBase64;
+                if (!string.IsNullOrEmpty(knight.CertificatePassword)) map["certificatePassword"] = knight.CertificatePassword!;
+            }
+            if (knight.AzureSubscriptionIds.Count > 0) map["azureSubscriptionIds"] = knight.AzureSubscriptionIds;
+        }
         return JsonSerializer.Serialize(map);
+    }
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-04] O que só o conector do AEGIS KNIGHT guarda além da credencial comum.</summary>
+    private sealed record KnightExtras(string? CertificatePfxBase64, string? CertificatePassword, IReadOnlyList<string> AzureSubscriptionIds)
+    {
+        public override string ToString() => $"KnightExtras {{ certificado = {(CertificatePfxBase64 is null ? "não" : "sim")}, assinaturas = {AzureSubscriptionIds.Count} }}";
+    }
+
+    /// <summary>Settings guardados do conector do KNIGHT (o que interessa aqui: certificado e escopo do Azure).</summary>
+    private sealed record StoredKnightSettings(
+        string? TenantId = null, string? AzureTenantId = null, string? ClientId = null, string? ClientSecret = null,
+        string? CertificatePfxBase64 = null, string? CertificatePassword = null, string[]? AzureSubscriptionIds = null)
+    {
+        public override string ToString() => "StoredKnightSettings { *** }";
+    }
+
+    private static readonly JsonSerializerOptions CaseInsensitive = new() { PropertyNameCaseInsensitive = true };
+
+    private async Task<StoredKnightSettings?> ReadStoredKnightSettingsAsync(CancellationToken ct)
+    {
+        var stored = await _db.Connectors.AsNoTracking()
+            .Where(c => c.Provider == ConnectorProvider.Microsoft && c.Capability == ConnectorCapability.IdentityPosture)
+            .Select(c => c.EncryptedSettings)
+            .FirstOrDefaultAsync(ct);
+        if (string.IsNullOrWhiteSpace(stored)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<StoredKnightSettings>(_secrets.Unprotect(stored), CaseInsensitive);
+        }
+        catch (Exception ex) when (ex is JsonException or System.Security.Cryptography.CryptographicException or FormatException)
+        {
+            // Settings ilegíveis: nada a manter. Nada sensível vai ao log.
+            _log.LogWarning("Settings do conector do AEGIS KNIGHT ilegíveis; certificado e escopo guardados não puderam ser lidos.");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Certificado (novo, mantido ou removido) e escopo do Azure do conector do KNIGHT, validados. Um certificado novo
+    /// precisa abrir com a senha, ter chave privada RSA e estar dentro da validade — a mensagem nunca repete conteúdo.
+    /// </summary>
+    private async Task<KnightExtras> ResolveKnightExtrasAsync(ConfigureMicrosoftHubCommand command, CancellationToken ct)
+    {
+        var stored = await ReadStoredKnightSettingsAsync(ct);
+
+        string? pfx = null, password = null;
+        if (!string.IsNullOrWhiteSpace(command.CertificatePfxBase64))
+        {
+            var candidate = new MicrosoftClientCertificate(command.CertificatePfxBase64.Trim(), command.CertificatePassword);
+            MicrosoftCertificateSummary summary;
+            try
+            {
+                summary = MicrosoftCertificates.Describe(candidate);
+            }
+            catch (MicrosoftCertificateException ex)
+            {
+                throw new MicrosoftHubValidationException("Certificado da aplicação recusado: " + ex.Message);
+            }
+            if (!summary.HasRsaPrivateKey)
+                throw new MicrosoftHubValidationException("Certificado da aplicação recusado: o arquivo não traz a chave privada RSA.");
+            if (!summary.CurrentlyValid)
+                throw new MicrosoftHubValidationException(
+                    $"Certificado da aplicação recusado: fora da validade (de {summary.NotBefore:dd/MM/yyyy} a {summary.NotAfter:dd/MM/yyyy}).");
+            pfx = candidate.PfxBase64;
+            password = candidate.Password;
+        }
+        else if (!command.RemoveCertificate && !string.IsNullOrWhiteSpace(stored?.CertificatePfxBase64))
+        {
+            pfx = stored!.CertificatePfxBase64;
+            password = stored.CertificatePassword;
+        }
+
+        IReadOnlyList<string> subscriptions;
+        if (command.AzureSubscriptionIds is null)
+            subscriptions = stored?.AzureSubscriptionIds ?? Array.Empty<string>();
+        else
+        {
+            var cleaned = command.AzureSubscriptionIds.Select(x => (x ?? "").Trim()).Where(x => x.Length > 0).ToList();
+            var invalid = cleaned.Count(x => !Guid.TryParse(x, out _));
+            if (invalid > 0)
+                throw new MicrosoftHubValidationException(
+                    $"Assinatura do Azure inválida ({invalid}): informe o identificador (GUID) de cada assinatura.");
+            subscriptions = cleaned.Select(x => Guid.Parse(x).ToString()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        return new KnightExtras(pfx, password, subscriptions);
+    }
+
+    public async Task<MicrosoftCredentialSummary> GetMicrosoftCredentialSummaryAsync(CancellationToken ct = default)
+    {
+        _ = _tenant.TenantId
+            ?? throw new TenantSecurityException("Leitura da conexão Microsoft sem tenant resolvido no contexto (fail-closed).");
+        var s = await ReadStoredKnightSettingsAsync(ct);
+        if (s is null)
+            return new MicrosoftCredentialSummary(false, null, null, false, null, null, Array.Empty<string>());
+
+        MicrosoftCertificateSummary? cert = null;
+        string? problem = null;
+        if (!string.IsNullOrWhiteSpace(s.CertificatePfxBase64))
+        {
+            try
+            {
+                cert = MicrosoftCertificates.Describe(new MicrosoftClientCertificate(s.CertificatePfxBase64!, s.CertificatePassword));
+                if (!cert.CurrentlyValid) problem = "O certificado guardado está fora da validade.";
+            }
+            catch (MicrosoftCertificateException ex)
+            {
+                problem = ex.Message;
+            }
+        }
+        var directory = !string.IsNullOrWhiteSpace(s.TenantId) ? s.TenantId : s.AzureTenantId;
+        return new MicrosoftCredentialSummary(true, directory, s.ClientId, !string.IsNullOrWhiteSpace(s.ClientSecret), cert, problem,
+            s.AzureSubscriptionIds ?? Array.Empty<string>());
     }
 
     /// <summary>

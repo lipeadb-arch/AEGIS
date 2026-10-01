@@ -94,6 +94,8 @@ public sealed class ConnectorAdminActionsTests
             throw new NotImplementedException();
         public Task<IReadOnlyList<ConnectorConfigurationResult>> ConfigureMicrosoftHubAsync(ConfigureMicrosoftHubCommand c, CancellationToken ct = default) =>
             throw new NotImplementedException();
+        public Task<MicrosoftCredentialSummary> GetMicrosoftCredentialSummaryAsync(CancellationToken ct = default) =>
+            throw new NotImplementedException();
         public Task<IReadOnlyList<ConnectorSummary>> ListConnectorsAsync(CancellationToken ct = default) =>
             throw new NotImplementedException();
         public Task<bool> RecordSyncResultAsync(Guid id, IReadOnlyList<EvidenceSignal> s, ConnectorStatus st, CancellationToken ct = default) =>

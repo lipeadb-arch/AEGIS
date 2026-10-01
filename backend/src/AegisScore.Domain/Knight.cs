@@ -67,6 +67,29 @@ public enum KnightSourceType
     /// indicador congelado preserva o próprio <see cref="KnightIndicatorResult.SourceType"/> real.
     /// </summary>
     Consolidated = 5,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-04] Demais serviços do Microsoft 365 e recursos do Azure --------------------
+    // Cada valor é uma FONTE de coleta própria, pelo mesmo motivo do Teams e do Exchange: a credencial é a mesma
+    // aplicação registrada, mas o recurso do token, a permissão e o papel exigidos são outros — e a falha de uma
+    // fonte não pode apagar nem substituir a avaliação das demais.
+
+    /// <summary>Microsoft Defender para Office 365 (políticas de proteção de e-mail e colaboração), pela sessão do Exchange Online.</summary>
+    MicrosoftDefenderForOffice365 = 6,
+
+    /// <summary>Microsoft Purview (auditoria, DLP e rótulos), pelas sessões do Exchange Online e do Security &amp; Compliance.</summary>
+    MicrosoftPurview = 7,
+
+    /// <summary>SharePoint Online e OneDrive (configurações do locatário), pelo Microsoft Graph e pela API de administração do SharePoint.</summary>
+    MicrosoftSharePoint = 8,
+
+    /// <summary>Microsoft Intune (configurações do serviço), pelo Microsoft Graph.</summary>
+    MicrosoftIntune = 9,
+
+    /// <summary>Microsoft Fabric / Power BI (configurações do locatário), pela API de administração do Fabric.</summary>
+    MicrosoftFabric = 10,
+
+    /// <summary>Recursos do Azure (assinaturas no escopo da aplicação), pelo Azure Resource Manager, somente leitura.</summary>
+    MicrosoftAzure = 11,
 }
 
 /// <summary>
@@ -184,6 +207,15 @@ public enum KnightIndicatorCategory
     /// convidados ao DIRETÓRIO.
     /// </summary>
     CollaborationSecurity = 9,
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Proteção contra ameaças (e-mail, anexos, links, phishing, malware).</summary>
+    ThreatProtection = 10,
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Proteção de dados (compartilhamento, DLP, rótulos, auditoria).</summary>
+    DataProtection = 11,
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Configuração de recursos de infraestrutura em nuvem (Azure).</summary>
+    CloudInfrastructure = 12,
 }
 
 /// <summary>

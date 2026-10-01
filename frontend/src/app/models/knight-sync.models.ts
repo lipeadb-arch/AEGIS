@@ -1,3 +1,5 @@
+import { KNIGHT_SOURCES } from './knight.models';
+
 // [AEGIS-KNIGHT-MULTICLOUD-01] Sincronização do AEGIS KNIGHT iniciada em Configurações → Integrações.
 //
 // O pedido é DURÁVEL e IDENTIFICADO desde o primeiro instante (202 com `id`): a tela acompanha AQUELE pedido até
@@ -70,16 +72,8 @@ export interface KnightConnectorSource {
 export function knightSourcesOf(provider: string): KnightConnectorSource[] {
   switch (provider) {
     case 'Microsoft':
-      return [
-        { slug: 'entra', label: 'Microsoft Entra ID', requirement: null },
-        {
-          slug: 'teams',
-          label: 'Microsoft Teams',
-          requirement:
-            'Exige, além da credencial acima, o papel Leitor do Teams (ou Leitor Global) atribuído a esta ' +
-            'aplicação no Microsoft Entra ID.',
-        },
-      ];
+      // [AEGIS-KNIGHT-COVERAGE-04] Todas as fontes do conector Microsoft, do catálogo único (antes só Entra e Teams).
+      return KNIGHT_SOURCES.filter((d) => d.microsoftConnector).map((d) => ({ slug: d.slug, label: d.label, requirement: d.requirement }));
     case 'Google':
       return [{ slug: 'google', label: 'Google Workspace', requirement: null }];
     default:

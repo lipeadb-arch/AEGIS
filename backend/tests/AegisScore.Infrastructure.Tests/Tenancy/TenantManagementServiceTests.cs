@@ -884,6 +884,102 @@ public sealed class TenantManagementServiceTests : IDisposable
         new(ConnectorProvider.Microsoft, ConnectorCapability.SecureScore, displayName,
             ConnectorAuthType.OAuthClientCredentials, settings, syncIntervalMinutes);
 
+    // ---- [AEGIS-KNIGHT-COVERAGE-04] Certificado e escopo do Azure do AEGIS KNIGHT -------------------------
+
+    private static readonly string Sub1 = "11111111-1111-1111-1111-111111111111";
+
+    [Fact]
+    public async Task ConfigureMicrosoftHub_CertificadoEEscopo_SoNoConectorDoKnight_EResumoSemSegredo()
+    {
+        await using var db = NewContext(TenantA);
+        var protector = new FakeProtector();
+        var svc = ServiceFor(db, TenantA, protector);
+        var cert = AegisScore.Infrastructure.Tests.Knight.M365ServicesScenario.ClientCertificate;
+
+        await svc.ConfigureMicrosoftHubAsync(HubCommand(
+            HubService(ConnectorCapability.SecureScore), HubService(ConnectorCapability.IdentityPosture)) with
+        {
+            CertificatePfxBase64 = cert.PfxBase64, CertificatePassword = cert.Password, AzureSubscriptionIds = new[] { Sub1, " " + Sub1.ToUpperInvariant() },
+        });
+
+        var saved = await db.Connectors.ToListAsync();
+        var knight = protector.Unprotect(saved.Single(c => c.Capability == ConnectorCapability.IdentityPosture).EncryptedSettings);
+        var score = protector.Unprotect(saved.Single(c => c.Capability == ConnectorCapability.SecureScore).EncryptedSettings);
+        knight.Should().Contain("certificatePfxBase64").And.Contain(Sub1);
+        score.Should().NotContain("certificate").And.NotContain("azureSubscriptionIds", "o certificado e o escopo são só do KNIGHT");
+
+        var summary = await svc.GetMicrosoftCredentialSummaryAsync();
+        summary.Configured.Should().BeTrue();
+        summary.HasSecret.Should().BeTrue();
+        summary.Certificate!.Thumbprint.Should().Be(AegisScore.Infrastructure.Tests.Knight.M365ServicesScenario.Certificate.Thumbprint);
+        summary.AzureSubscriptionIds.Should().Equal(Sub1);
+        System.Text.Json.JsonSerializer.Serialize(summary).Should().NotContain(cert.PfxBase64[..40]).And.NotContain("secret-ccc")
+            .And.NotContain(cert.Password!);
+    }
+
+    [Fact]
+    public async Task ConfigureMicrosoftHub_SemNovoCertificado_MantemOGuardado_ERemoverApaga()
+    {
+        await using var db = NewContext(TenantA);
+        var protector = new FakeProtector();
+        var svc = ServiceFor(db, TenantA, protector);
+        var cert = AegisScore.Infrastructure.Tests.Knight.M365ServicesScenario.ClientCertificate;
+        await svc.ConfigureMicrosoftHubAsync(HubCommand(HubService(ConnectorCapability.IdentityPosture)) with
+        {
+            CertificatePfxBase64 = cert.PfxBase64, CertificatePassword = cert.Password, AzureSubscriptionIds = new[] { Sub1 },
+        });
+
+        // A tela nunca recebe o certificado de volta: salvar de novo sem ele MANTÉM o guardado (e o escopo, quando omitido).
+        await svc.ConfigureMicrosoftHubAsync(HubCommand(HubService(ConnectorCapability.IdentityPosture)));
+        (await svc.GetMicrosoftCredentialSummaryAsync()).Certificate.Should().NotBeNull();
+        (await svc.GetMicrosoftCredentialSummaryAsync()).AzureSubscriptionIds.Should().Equal(Sub1);
+
+        await svc.ConfigureMicrosoftHubAsync(HubCommand(HubService(ConnectorCapability.IdentityPosture)) with
+        {
+            RemoveCertificate = true, AzureSubscriptionIds = Array.Empty<string>(),
+        });
+        var after = await svc.GetMicrosoftCredentialSummaryAsync();
+        after.Certificate.Should().BeNull();
+        after.AzureSubscriptionIds.Should().BeEmpty("lista vazia = todas as assinaturas que a aplicação enxerga");
+    }
+
+    [Fact]
+    public async Task ConfigureMicrosoftHub_CertificadoInvalidoOuEscopoInvalido_RejeitaSemEscrita()
+    {
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+        var cert = AegisScore.Infrastructure.Tests.Knight.M365ServicesScenario.ClientCertificate;
+
+        var senhaErrada = await FluentActions.Awaiting(() => svc.ConfigureMicrosoftHubAsync(
+                HubCommand(HubService(ConnectorCapability.IdentityPosture)) with { CertificatePfxBase64 = cert.PfxBase64, CertificatePassword = "errada" }))
+            .Should().ThrowAsync<MicrosoftHubValidationException>();
+        senhaErrada.Which.Message.Should().Contain("senha").And.NotContain("errada");
+
+        await FluentActions.Awaiting(() => svc.ConfigureMicrosoftHubAsync(
+                HubCommand(HubService(ConnectorCapability.IdentityPosture)) with { AzureSubscriptionIds = new[] { "assinatura-producao" } }))
+            .Should().ThrowAsync<MicrosoftHubValidationException>().WithMessage("*GUID*");
+
+        (await db.Connectors.CountAsync()).Should().Be(0, "nada é gravado quando a entrada é recusada");
+    }
+
+    [Fact]
+    public async Task ConfigureMicrosoftHub_SoComCertificado_AceitaOKnight_ERecusaServicoQuePedeSegredo()
+    {
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
+        var cert = AegisScore.Infrastructure.Tests.Knight.M365ServicesScenario.ClientCertificate;
+
+        await FluentActions.Awaiting(() => svc.ConfigureMicrosoftHubAsync(
+                HubCommandSecret("", HubService(ConnectorCapability.IdentityPosture), HubService(ConnectorCapability.SecureScore)) with
+                { CertificatePfxBase64 = cert.PfxBase64, CertificatePassword = cert.Password }))
+            .Should().ThrowAsync<MicrosoftHubValidationException>().WithMessage("*só o AEGIS KNIGHT*");
+
+        var ok = await svc.ConfigureMicrosoftHubAsync(HubCommandSecret("", HubService(ConnectorCapability.IdentityPosture)) with
+            { CertificatePfxBase64 = cert.PfxBase64, CertificatePassword = cert.Password });
+        ok.Should().ContainSingle();
+        (await svc.GetMicrosoftCredentialSummaryAsync()).HasSecret.Should().BeFalse();
+    }
+
     private static MicrosoftHubServiceSelection HubService(
         ConnectorCapability capability, string? workspaceId = null) =>
         new(capability, SyncIntervalMinutes: 360, WorkspaceId: workspaceId);

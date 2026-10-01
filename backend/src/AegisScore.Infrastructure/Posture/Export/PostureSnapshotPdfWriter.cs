@@ -1114,17 +1114,8 @@ public static class PostureSnapshotPdfWriter
         _ => status.ToString(),
     };
 
-    private static string KnightCategoryText(KnightIndicatorCategory category) => category switch
-    {
-        KnightIndicatorCategory.PrivilegedAccess => "Acesso privilegiado",
-        KnightIndicatorCategory.IdentityGovernance => "Governança de identidade",
-        KnightIndicatorCategory.TenantConfiguration => "Configuração do locatário",
-        KnightIndicatorCategory.AuthenticationPolicy => "Política de autenticação",
-        KnightIndicatorCategory.ApplicationGovernance => "Governança de aplicações",
-        KnightIndicatorCategory.DeviceGovernance => "Governança de dispositivos",
-        KnightIndicatorCategory.AccountHygiene => "Higiene de contas",
-        _ => category.ToString(),
-    };
+    // [AEGIS-KNIGHT-COVERAGE-04] Rótulo único em português (antes, três categorias vazavam em inglês na tabela do PDF).
+    private static string KnightCategoryText(KnightIndicatorCategory category) => KnightCategoryLabels.Label(category);
 
     private static string SeverityText(SeverityLevel level) => level switch
     {

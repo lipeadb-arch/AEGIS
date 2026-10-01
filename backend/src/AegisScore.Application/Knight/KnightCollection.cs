@@ -193,6 +193,133 @@ public enum KnightCapability
 
     /// <summary>Associações de DESVIO de auditoria (<c>Get-MailboxAuditBypassAssociation</c>).</summary>
     ExchangeAuditBypassAssociations = 47,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-04] Microsoft Defender para Office 365 (sessão do Exchange Online) ----------
+    // Os comandos de leitura das políticas de proteção executam na MESMA sessão de aplicativo do Exchange Online:
+    // nenhuma permissão nova. Cada capacidade é um grupo de leituras da mesma política (política + regra que a aplica).
+
+    /// <summary>Configuração global do Defender para Office 365 (<c>Get-AtpPolicyForO365</c>).</summary>
+    DefenderAtpPolicy = 48,
+
+    /// <summary>Links Seguros: políticas e regras (<c>Get-SafeLinksPolicy</c>, <c>Get-SafeLinksRule</c>).</summary>
+    DefenderSafeLinks = 49,
+
+    /// <summary>Anexos Seguros: políticas e regras (<c>Get-SafeAttachmentPolicy</c>, <c>Get-SafeAttachmentRule</c>).</summary>
+    DefenderSafeAttachments = 50,
+
+    /// <summary>Antimalware: políticas e regras (<c>Get-MalwareFilterPolicy</c>, <c>Get-MalwareFilterRule</c>).</summary>
+    DefenderMalwareFilter = 51,
+
+    /// <summary>Antispam de entrada: políticas e regras (<c>Get-HostedContentFilterPolicy</c>, <c>Get-HostedContentFilterRule</c>).</summary>
+    DefenderInboundSpam = 52,
+
+    /// <summary>Filtro de conexão (<c>Get-HostedConnectionFilterPolicy</c>).</summary>
+    DefenderConnectionFilter = 53,
+
+    /// <summary>Antispam de saída: políticas e regras (<c>Get-HostedOutboundSpamFilterPolicy</c>, <c>Get-HostedOutboundSpamFilterRule</c>).</summary>
+    DefenderOutboundSpam = 54,
+
+    /// <summary>Antiphishing: políticas e regras (<c>Get-AntiPhishPolicy</c>, <c>Get-AntiPhishRule</c>).</summary>
+    DefenderAntiPhish = 55,
+
+    /// <summary>Assinatura DKIM por domínio (<c>Get-DkimSigningConfig</c>).</summary>
+    DefenderDkim = 56,
+
+    /// <summary>Domínios aceitos da organização (<c>Get-AcceptedDomain</c>).</summary>
+    DefenderAcceptedDomains = 57,
+
+    /// <summary>Registros DNS públicos SPF e DMARC dos domínios aceitos (consulta DNS, fora do Microsoft 365).</summary>
+    DefenderDnsRecords = 58,
+
+    /// <summary>Proteção do Teams — ZAP (<c>Get-TeamsProtectionPolicy</c>).</summary>
+    DefenderTeamsProtection = 59,
+
+    /// <summary>Contas prioritárias: proteção habilitada e contas marcadas (<c>Get-EmailTenantSettings</c>, <c>Get-User -IsVIP</c>).</summary>
+    DefenderPriorityAccounts = 60,
+
+    /// <summary>Políticas de segurança predefinidas (<c>Get-EOPProtectionPolicyRule</c>, <c>Get-ATPProtectionPolicyRule</c>).</summary>
+    DefenderPresetPolicies = 61,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-04] Microsoft Purview ------------------------------------------------------
+
+    /// <summary>Ingestão do log de auditoria unificado (<c>Get-AdminAuditLogConfig</c>, sessão do Exchange Online).</summary>
+    PurviewAuditConfig = 62,
+
+    /// <summary>Políticas de DLP (<c>Get-DlpCompliancePolicy</c>, sessão do Security &amp; Compliance).</summary>
+    PurviewDlpPolicies = 63,
+
+    /// <summary>Políticas de rótulos de confidencialidade (<c>Get-LabelPolicy</c>, sessão do Security &amp; Compliance).</summary>
+    PurviewLabelPolicies = 64,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-04] SharePoint e OneDrive -----------------------------------------------
+
+    /// <summary>Configurações do locatário pelo Microsoft Graph (<c>GET /admin/sharepoint/settings</c>).</summary>
+    SharePointTenantSettings = 65,
+
+    /// <summary>Configurações do locatário pela API de administração do SharePoint (<c>SPO.Tenant</c>) — exige certificado.</summary>
+    SharePointAdminTenant = 66,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-04] Microsoft Intune ---------------------------------------------------
+
+    /// <summary>Configurações do serviço de conformidade (<c>GET /deviceManagement/settings</c>).</summary>
+    IntuneServiceSettings = 67,
+
+    /// <summary>Restrições de registro de dispositivos (<c>GET /deviceManagement/deviceEnrollmentConfigurations</c>).</summary>
+    IntuneEnrollmentRestrictions = 68,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-04] Microsoft Fabric ---------------------------------------------------
+
+    /// <summary>Configurações do locatário do Fabric (<c>GET /v1/admin/tenantsettings</c>).</summary>
+    FabricTenantSettings = 69,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-04] Azure Resource Manager (somente leitura) -----------------------------
+    // Cada capacidade é uma FAMÍLIA de leituras sobre todas as assinaturas do escopo. A falha numa assinatura não
+    // invalida as outras: o que foi lido continua demonstrando violação, mas a aprovação exige o escopo inteiro.
+
+    /// <summary>Descoberta das assinaturas no escopo (<c>GET /subscriptions</c>).</summary>
+    AzureSubscriptions = 70,
+
+    /// <summary>Autorização: atribuições e definições de papel e bloqueios de recurso.</summary>
+    AzureAuthorization = 71,
+
+    /// <summary>Atribuições de política (inclusive a iniciativa padrão do Defender para Nuvem).</summary>
+    AzurePolicy = 72,
+
+    /// <summary>Microsoft Defender para Nuvem: planos, contatos, configurações e integrações.</summary>
+    AzureDefenderForCloud = 73,
+
+    /// <summary>Azure Monitor: configurações de diagnóstico da assinatura, alertas do log de atividades e Application Insights.</summary>
+    AzureMonitor = 74,
+
+    /// <summary>Rede: NSGs, redes virtuais, Network Watcher, logs de fluxo, IPs públicos, gateways e perímetros.</summary>
+    AzureNetworking = 75,
+
+    /// <summary>Contas de armazenamento e seus serviços (blob e arquivos).</summary>
+    AzureStorage = 76,
+
+    /// <summary>Key Vaults, chaves e segredos (metadados pelo Resource Manager — nenhum valor é lido).</summary>
+    AzureKeyVault = 77,
+
+    /// <summary>Políticas de certificado dos Key Vaults (plano de dados — exige papel próprio no cofre).</summary>
+    AzureKeyVaultCertificates = 78,
+
+    /// <summary>Computação: máquinas virtuais, discos, extensões, Container Instances e Batch.</summary>
+    AzureCompute = 79,
+
+    /// <summary>App Service e Functions: aplicativos, slots, configurações, planos e ambientes (ASE).</summary>
+    AzureAppService = 80,
+
+    /// <summary>Bancos de dados: SQL, instâncias gerenciadas, PostgreSQL, MySQL, Cosmos DB, Redis e Data Factory.</summary>
+    AzureDatabases = 81,
+
+    /// <summary>Workspaces do Azure Databricks (configuração pelo Resource Manager).</summary>
+    AzureDatabricks = 82,
+
+    /// <summary>Configurações de diagnóstico dos recursos (logs de recurso).</summary>
+    AzureResourceDiagnostics = 83,
+
+    /// <summary>Configurações de diagnóstico do Microsoft Entra ID e do Intune (escopo do locatário).</summary>
+    AzureTenantDiagnostics = 84,
 }
 
 /// <summary>
@@ -235,6 +362,22 @@ public interface IMicrosoftGraphCredentials
     string AzureTenantId { get; }
     string ClientId { get; }
     string ClientSecret { get; }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Certificado da aplicação, quando o conector o guarda. Com ele o token é pedido por
+    /// ASSERÇÃO DE CLIENTE assinada — a forma que a Microsoft documenta para a autenticação de aplicativo do Exchange
+    /// Online, do Security &amp; Compliance e da administração do SharePoint. Sem ele, o segredo continua valendo.
+    /// </summary>
+    MicrosoftClientCertificate? ClientCertificate => null;
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-04] Certificado de aplicação (PFX com a chave privada, em base64, e a senha do arquivo),
+/// DECIFRADO em memória a partir do conector. Nunca é gravado nem registrado: o <c>ToString</c> não imprime nada dele.
+/// </summary>
+public sealed record MicrosoftClientCertificate(string PfxBase64, string? Password)
+{
+    public override string ToString() => "MicrosoftClientCertificate { PfxBase64 = ***, Password = *** }";
 }
 
 /// <summary>Configuração RESOLVIDA de uma fonte para um tenant. Subtipos tipados por fonte; nunca um dict solto.</summary>
@@ -264,14 +407,15 @@ public sealed record KnightDemoConfiguration : KnightSourceConfiguration
 public sealed record KnightEntraIdConfiguration(
     string AzureTenantId,
     string ClientId,
-    string ClientSecret) : KnightSourceConfiguration, IMicrosoftGraphCredentials
+    string ClientSecret,
+    MicrosoftClientCertificate? ClientCertificate = null) : KnightSourceConfiguration, IMicrosoftGraphCredentials
 {
     public override KnightSourceType Source => KnightSourceType.MicrosoftEntraId;
 
     // Um record gera ToString()/PrintMembers() que imprimem TODAS as propriedades — inclusive o ClientSecret.
     // Sobrescrevemos para o segredo NUNCA aparecer num dump/log acidental do objeto. (Gap: ToString de record.)
     public override string ToString() =>
-        $"KnightEntraIdConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = *** }}";
+        $"KnightEntraIdConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = ***, ClientCertificate = {(ClientCertificate is null ? "não" : "***")} }}";
 }
 
 /// <summary>
@@ -285,14 +429,15 @@ public sealed record KnightEntraIdConfiguration(
 public sealed record KnightTeamsConfiguration(
     string AzureTenantId,
     string ClientId,
-    string ClientSecret) : KnightSourceConfiguration, IMicrosoftGraphCredentials
+    string ClientSecret,
+    MicrosoftClientCertificate? ClientCertificate = null) : KnightSourceConfiguration, IMicrosoftGraphCredentials
 {
     public override KnightSourceType Source => KnightSourceType.MicrosoftTeams;
 
     // Um record imprime TODAS as propriedades no ToString() — inclusive o segredo. Sobrescrito pelo mesmo motivo
     // de KnightEntraIdConfiguration: o segredo nunca pode aparecer num dump/log acidental.
     public override string ToString() =>
-        $"KnightTeamsConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = *** }}";
+        $"KnightTeamsConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = ***, ClientCertificate = {(ClientCertificate is null ? "não" : "***")} }}";
 }
 
 /// <summary>
@@ -312,13 +457,38 @@ public sealed record KnightTeamsConfiguration(
 public sealed record KnightExchangeOnlineConfiguration(
     string AzureTenantId,
     string ClientId,
-    string ClientSecret) : KnightSourceConfiguration, IMicrosoftGraphCredentials
+    string ClientSecret,
+    MicrosoftClientCertificate? ClientCertificate = null) : KnightSourceConfiguration, IMicrosoftGraphCredentials
 {
     public override KnightSourceType Source => KnightSourceType.MicrosoftExchangeOnline;
 
     // Mesmo motivo de KnightEntraIdConfiguration: o ToString() de um record imprimiria o segredo.
     public override string ToString() =>
-        $"KnightExchangeOnlineConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = *** }}";
+        $"KnightExchangeOnlineConfiguration {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = ***, ClientCertificate = {(ClientCertificate is null ? "não" : "***")} }}";
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-04] Configuração das demais fontes Microsoft (Defender para Office 365, Purview, SharePoint,
+/// Intune, Fabric e Azure): as MESMAS credenciais do conector Microsoft já configurado — nenhuma aplicação nova. O que
+/// muda por fonte é o recurso do token, a permissão e o papel exigidos, e cada coletor os declara.
+/// <para><paramref name="AzureSubscriptionIds"/> é o ESCOPO explícito do Azure: vazio significa "todas as assinaturas
+/// que a aplicação enxerga", e o relatório diz qual foi o escopo avaliado.</para>
+/// </summary>
+public sealed record KnightMicrosoftServiceConfiguration(
+    KnightSourceType SourceType,
+    string AzureTenantId,
+    string ClientId,
+    string ClientSecret,
+    MicrosoftClientCertificate? ClientCertificate = null,
+    IReadOnlyList<string>? AzureSubscriptionIds = null) : KnightSourceConfiguration, IMicrosoftGraphCredentials
+{
+    public override KnightSourceType Source => SourceType;
+
+    /// <summary>Assinaturas pedidas explicitamente (vazio = todas as visíveis à aplicação).</summary>
+    public IReadOnlyList<string> SubscriptionScope => AzureSubscriptionIds ?? Array.Empty<string>();
+
+    public override string ToString() =>
+        $"KnightMicrosoftServiceConfiguration {{ Source = {SourceType}, AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = ***, ClientCertificate = {(ClientCertificate is null ? "não" : "***")} }}";
 }
 
 /// <summary>

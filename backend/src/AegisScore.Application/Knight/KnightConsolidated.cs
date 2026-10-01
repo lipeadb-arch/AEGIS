@@ -27,21 +27,12 @@ namespace AegisScore.Application.Knight;
 /// </summary>
 public static class KnightConsolidatedCandidates
 {
-    public static readonly IReadOnlyList<KnightSourceType> Sources = new[]
-    {
-        KnightSourceType.MicrosoftEntraId,
-        KnightSourceType.MicrosoftTeams,
-        KnightSourceType.MicrosoftExchangeOnline,
-    };
+    // [AEGIS-KNIGHT-COVERAGE-04] A lista deixou de ser fixa em três: vem do catálogo único de fontes. Fotografias
+    // antigas continuam com a composição que congelaram (três entradas) — nada é recalculado nelas.
+    public static readonly IReadOnlyList<KnightSourceType> Sources = KnightSourceCatalog.ConsolidationCandidates;
 
     /// <summary>Rótulo ESTÁVEL de uma fonte candidata mesmo quando ela nunca produziu avaliação alguma (sem <see cref="KnightSourceLatest"/> para copiar).</summary>
-    public static string StaticLabel(KnightSourceType source) => source switch
-    {
-        KnightSourceType.MicrosoftEntraId => "Microsoft Entra ID",
-        KnightSourceType.MicrosoftTeams => "Microsoft Teams",
-        KnightSourceType.MicrosoftExchangeOnline => "Exchange Online",
-        _ => source.ToString(),
-    };
+    public static string StaticLabel(KnightSourceType source) => KnightSourceCatalog.Label(source);
 }
 
 /// <summary>
@@ -50,24 +41,7 @@ public static class KnightConsolidatedCandidates
 /// </summary>
 public static class KnightSourceNames
 {
-    public static bool TryParse(string? value, out KnightSourceType source)
-    {
-        switch ((value ?? "").Trim().ToLowerInvariant())
-        {
-            case "demo": source = KnightSourceType.Demo; return true;
-            case "entra":
-            case "entraid":
-            case "microsoftentraid": source = KnightSourceType.MicrosoftEntraId; return true;
-            case "google":
-            case "googleworkspace": source = KnightSourceType.GoogleWorkspace; return true;
-            case "teams":
-            case "microsoftteams": source = KnightSourceType.MicrosoftTeams; return true;
-            case "exchange":
-            case "exchangeonline":
-            case "microsoftexchangeonline": source = KnightSourceType.MicrosoftExchangeOnline; return true;
-            default: source = default; return false;
-        }
-    }
+    public static bool TryParse(string? value, out KnightSourceType source) => KnightSourceCatalog.TryParse(value, out source);
 }
 
 /// <summary>

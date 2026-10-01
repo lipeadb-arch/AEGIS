@@ -14,6 +14,8 @@
     <!-- [AEGIS-KNIGHT-COVERAGE-03] Adaptador de coleta do Exchange Online: mesma regra - script FIXO, embutido
          no assembly, unica coisa que o processo do PowerShell executa. -->
     <EmbeddedResource Include="Knight\Exchange\exchange-collect.ps1" LogicalName="AegisScore.Knight.Exchange.Collect.ps1" />
+    <!-- [AEGIS-KNIGHT-COVERAGE-04] Adaptador de proteção (Defender para Office 365 e Purview): mesma regra. -->
+    <EmbeddedResource Include="Knight\Protection\m365-protection-collect.ps1" LogicalName="AegisScore.Knight.Protection.Collect.ps1" />
   </ItemGroup>
   <ItemGroup>
     <!-- Só o teto de paginação do EntraGraphClient é internal-visível ao teste: permite exercitar o limite

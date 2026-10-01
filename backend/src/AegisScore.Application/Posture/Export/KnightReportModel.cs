@@ -55,7 +55,10 @@ public sealed record ReportControl(
     int EvidenceCount, bool? DetailPreserved, bool? DetailComplete, string? DetailLimitation, int Weight,
     double? Factor, double? Achieved, double? Possible, IReadOnlyList<ReportReference> References,
     IReadOnlyList<ReportObject> Objects, IReadOnlyList<ReportAction> Actions, IReadOnlyList<string> RequiredCapabilities,
-    string? Impact = null, string? Platform = null, string? AffectedComposition = null, string? ProvenReach = null);
+    string? Impact = null, string? Platform = null, string? AffectedComposition = null, string? ProvenReach = null,
+    // [AEGIS-KNIGHT-COVERAGE-04] As mesmas capacidades, em português, para quem lê. Os códigos acima continuam sendo a
+    // chave que liga uma limitação aos controles que ela prejudica.
+    IReadOnlyList<string>? RequiredCapabilityLabels = null);
 
 /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Uma linha da cobertura de implementação congelada (total, plataforma ou serviço).</summary>
 public sealed record ReportCoverageRow(
@@ -298,7 +301,10 @@ public static class KnightReportModelBuilder
             isV2 ? i.Impact : null,
             isV2 ? i.Platform : null,
             composition,
-            reach);
+            reach,
+            i.RequiredCapabilities
+                .Select(c => Enum.TryParse<KnightCapability>(c, out var cap) ? KnightCapabilityLabels.Label(cap) : c)
+                .ToList());
     }
 
     private static IReadOnlyList<ReportDistributionRow> Distribution(
@@ -470,6 +476,30 @@ public static class KnightCapabilityLabels
         KnightCapability.ExchangeCasMailboxes => "Acesso de cliente por caixa de correio",
         KnightCapability.ExchangeAuditBypassAssociations => "Desvios de auditoria de caixa de correio",
 
+        // [AEGIS-KNIGHT-COVERAGE-04] Defender para Office 365, Purview, SharePoint/OneDrive, Intune e Fabric.
+        KnightCapability.DefenderAtpPolicy => "Anexos Seguros para SharePoint, OneDrive e Teams",
+        KnightCapability.DefenderSafeLinks => "Políticas e regras de Links Seguros",
+        KnightCapability.DefenderSafeAttachments => "Políticas e regras de Anexos Seguros",
+        KnightCapability.DefenderMalwareFilter => "Políticas e regras antimalware",
+        KnightCapability.DefenderInboundSpam => "Políticas e regras antispam de entrada",
+        KnightCapability.DefenderConnectionFilter => "Filtro de conexão",
+        KnightCapability.DefenderOutboundSpam => "Políticas e regras antispam de saída",
+        KnightCapability.DefenderAntiPhish => "Políticas e regras antiphishing",
+        KnightCapability.DefenderDkim => "Assinatura DKIM por domínio",
+        KnightCapability.DefenderAcceptedDomains => "Domínios aceitos",
+        KnightCapability.DefenderDnsRecords => "Registros SPF e DMARC (consulta DNS)",
+        KnightCapability.DefenderTeamsProtection => "Proteção do Teams (ZAP)",
+        KnightCapability.DefenderPriorityAccounts => "Contas prioritárias",
+        KnightCapability.DefenderPresetPolicies => "Políticas de segurança predefinidas",
+        KnightCapability.PurviewAuditConfig => "Configuração do log de auditoria unificado",
+        KnightCapability.PurviewDlpPolicies => "Políticas de prevenção contra perda de dados (DLP)",
+        KnightCapability.PurviewLabelPolicies => "Políticas de rótulos de confidencialidade",
+        KnightCapability.SharePointTenantSettings => "Configurações do SharePoint (Microsoft Graph)",
+        KnightCapability.SharePointAdminTenant => "Configurações administrativas do SharePoint e OneDrive",
+        KnightCapability.IntuneServiceSettings => "Configurações de conformidade do Intune",
+        KnightCapability.IntuneEnrollmentRestrictions => "Restrições de registro de dispositivos",
+        KnightCapability.FabricTenantSettings => "Configurações do locatário do Fabric",
+
         _ => c.ToString(),
     };
 
@@ -520,10 +550,39 @@ public static class KnightCapabilityLabels
         // [AEGIS-KNIGHT-CONSOLIDATED-01] A fotografia consolidada não tem UMA fonte — o requisito é inferido pelo
         // próprio nome da capacidade, que já é namespaced por fonte (Exchange*/Teams*/o restante é do Entra ID).
         // O Teams nunca teve requisito aqui (nenhum caso acima o cobre) — permanece assim.
-        KnightSourceType.Consolidated => c.ToString().StartsWith("Exchange", StringComparison.Ordinal)
+        // [AEGIS-KNIGHT-COVERAGE-04] O Defender para Office 365 lê pela mesma conexão de aplicativo do Exchange Online.
+        // O Purview divide: a auditoria vem dessa conexão; DLP e rótulos vêm da conexão do Security & Compliance, cuja
+        // permissão fica na API "Microsoft Exchange Online Protection".
+        KnightSourceType.MicrosoftDefenderForOffice365 => c == KnightCapability.DefenderDnsRecords
+            ? null
+            : RequiredPermission(c, KnightSourceType.MicrosoftExchangeOnline),
+        KnightSourceType.MicrosoftPurview => c == KnightCapability.PurviewAuditConfig
             ? RequiredPermission(c, KnightSourceType.MicrosoftExchangeOnline)
-            : RequiredPermission(c, KnightSourceType.MicrosoftEntraId),
+            : "Exchange.ManageAsApp na API Microsoft Exchange Online Protection (aplicativo) e um papel com leitura de conformidade — Leitor Global ou Leitor de Conformidade",
+        KnightSourceType.MicrosoftSharePoint => c switch
+        {
+            KnightCapability.SharePointTenantSettings => "SharePointTenantSettings.Read.All (aplicativo)",
+            KnightCapability.SharePointAdminTenant => "Sites.FullControl.All na API do SharePoint (aplicativo), com autenticação por certificado",
+            _ => null,
+        },
+        KnightSourceType.MicrosoftIntune => c switch
+        {
+            KnightCapability.IntuneServiceSettings => "DeviceManagementConfiguration.Read.All (aplicativo)",
+            KnightCapability.IntuneEnrollmentRestrictions => "DeviceManagementServiceConfig.Read.All (aplicativo)",
+            _ => null,
+        },
+        KnightSourceType.MicrosoftFabric =>
+            "Configuração do Fabric “entidades de serviço podem acessar APIs de administração somente leitura” ligada para um grupo de segurança que contenha a aplicação",
+
+        KnightSourceType.Consolidated => SourceOfCapability(c) is { } owner ? RequiredPermission(c, owner) : null,
 
         _ => null,
     };
+
+    /// <summary>A fonte cujo coletor produz a capacidade (as capacidades são exclusivas de cada fonte).</summary>
+    private static KnightSourceType? SourceOfCapability(KnightCapability c) =>
+        KnightSourceCatalog.All.Select(d => d.Source)
+            .Where(s => s != KnightSourceType.Demo)
+            .Cast<KnightSourceType?>()
+            .FirstOrDefault(s => KnightCollectorCapabilities.Produces(s!.Value).Contains(c));
 }

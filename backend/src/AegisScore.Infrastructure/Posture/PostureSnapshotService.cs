@@ -102,13 +102,30 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         // [AEGIS-MVP-PRODUCT-03] A PROCEDÊNCIA da avaliação congelada decide quais ações pertencem a este
         // relatório. Filtrar só pelo indicador deixaria uma ação nascida do cenário de DEMONSTRAÇÃO entrar no
         // relatório de uma coleta REAL — apresentada, no PDF, exatamente como trabalho real sobre o cliente.
-        var origin = snapshot.SourceRunId is not { } sourceRunId
-            ? null
-            : await _db.KnightAssessmentRuns.AsNoTracking()
-                .Where(r => r.Id == sourceRunId)
-                .Select(r => new { r.SourceType, r.Mode })
-                .FirstOrDefaultAsync(ct);
-        if (origin is null) return;
+        //
+        // [AEGIS-KNIGHT-COVERAGE-04] Numa fotografia CONSOLIDADA não há uma execução única: a procedência de cada
+        // achado é a da execução da SUA fonte na composição (fonte + modo). Uma ação entra quando nasceu da mesma
+        // fonte e do mesmo modo do achado — a mesma ação da visão por fonte, sem duplicata e sem misturar fontes.
+        var runIds = snapshot.SourceRunId is { } sourceRunId
+            ? new List<Guid> { sourceRunId }
+            : snapshot.SourceType == KnightSourceType.Consolidated
+                ? (KnightConsolidatedCompositionJson.Deserialize(snapshot.CompositionJson) ?? Array.Empty<KnightConsolidatedSourceEntry>())
+                    .Where(e => e.Included && e.SourceRunId is not null).Select(e => e.SourceRunId!.Value).ToList()
+                : new List<Guid>();
+        if (runIds.Count == 0) return;
+        var origins = await _db.KnightAssessmentRuns.AsNoTracking()
+            .Where(r => runIds.Contains(r.Id))
+            .Select(r => new { r.SourceType, r.Mode })
+            .ToListAsync(ct);
+        if (origins.Count == 0) return;
+        var originSources = origins.Select(o => o.SourceType).Distinct().ToList();
+        var allowed = origins.Select(o => (o.SourceType, o.Mode)).ToHashSet();
+
+        // A fonte do achado: a da fotografia de fonte única, ou a do próprio indicador no consolidado.
+        var sourceOfIndicator = snapshot.Indicators
+            .GroupBy(i => i.IndicatorId, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => snapshot.SourceType == KnightSourceType.Consolidated ? g.First().SourceType : origins[0].SourceType,
+                StringComparer.Ordinal);
 
         var plans = await _db.ActionPlans.AsNoTracking()
             .Include(p => p.Validations)
@@ -117,9 +134,12 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             // dependeria de uma folga arbitrária de relógio para não confundir os dois instantes.
             .Include(p => p.Events)
             .Where(p => p.KnightIndicatorId != null
-                        && p.OriginSourceType == origin.SourceType
-                        && p.OriginMode == origin.Mode)
+                        && p.OriginSourceType != null && originSources.Contains(p.OriginSourceType.Value))
             .ToListAsync(ct);
+        plans = plans
+            .Where(p => p.OriginMode is { } mode && allowed.Contains((p.OriginSourceType!.Value, mode))
+                        && sourceOfIndicator.TryGetValue(p.KnightIndicatorId!, out var own) && own == p.OriginSourceType)
+            .ToList();
 
         foreach (var p in plans
             .Where(p => indicatorIds.Contains(p.KnightIndicatorId!))
@@ -606,13 +626,13 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         snapshot.ClientName = await _db.Tenants.AsNoTracking()
             .Where(t => t.Id == tenantId).Select(t => t.Name).FirstOrDefaultAsync(ct);
 
-        // [AEGIS-KNIGHT-CONSOLIDATED-01] Planos de ação NÃO são congelados aqui: a proveniência que
-        // FreezeActionItemsAsync exige (uma origem — SourceType + Mode — de UMA execução) não existe quando a
-        // fotografia compõe várias execuções de fontes diferentes. Congelar ações do relatório consolidado é
-        // trabalho de outro pacote, não uma omissão silenciosa: fica registrado aqui e no PR.
+        // [AEGIS-KNIGHT-COVERAGE-04] Ações CONGELADAS também no consolidado: a procedência de cada achado é a da
+        // execução da sua fonte na composição (ver FreezeActionItemsAsync).
+        await FreezeActionItemsAsync(snapshot, ct);
 
         snapshot.TenantId = tenantId;
         foreach (var i in snapshot.Indicators) i.TenantId = tenantId;
+        foreach (var a in snapshot.ActionItems) a.TenantId = tenantId;
         foreach (var o in snapshot.Objects) o.TenantId = tenantId;
 
         snapshot.ContentHash = PostureSnapshotHasher.Compute(snapshot);

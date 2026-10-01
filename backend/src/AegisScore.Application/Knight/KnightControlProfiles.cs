@@ -88,6 +88,7 @@ public static class KnightControlProfiles
         .Concat(EntraConfigurationProfiles.All)
         .Concat(TeamsConfigurationProfiles.All)
         .Concat(ExchangeConfigurationProfiles.All)
+        .Concat(M365ServiceProfiles.All)
         .Select(p => p with { Impact = KnightControlImpacts.For(p.IndicatorId) })
         .ToDictionary(p => p.IndicatorId, StringComparer.Ordinal);
 
@@ -243,14 +244,9 @@ public static class KnightControlProfiles
     /// <summary>Provedor que opera o serviço da FONTE — nunca "Microsoft" por omissão.</summary>
     public static string ProviderOf(KnightSourceType source) => source switch
     {
-        KnightSourceType.MicrosoftEntraId => "Microsoft",
-        KnightSourceType.MicrosoftTeams => "Microsoft",
-        KnightSourceType.MicrosoftExchangeOnline => "Microsoft",
-        KnightSourceType.GoogleWorkspace => "Google",
-        KnightSourceType.Demo => "Demonstração",
         // [AEGIS-KNIGHT-CONSOLIDATED-01] Sem provedor único — a fotografia compõe várias fontes (ver CompositionJson).
         KnightSourceType.Consolidated => "AEGIS KNIGHT",
-        _ => source.ToString(),
+        _ => KnightSourceCatalog.Describe(source)?.Provider ?? source.ToString(),
     };
 
     /// <summary>
@@ -287,14 +283,7 @@ public static class KnightControlProfiles
             return described.Label;
         var p = For(indicatorId);
         if (p?.ServiceOverride is { } s && source == KnightSourceType.GoogleWorkspace) return s;
-        return source switch
-        {
-            KnightSourceType.MicrosoftEntraId => "Microsoft Entra ID",
-            KnightSourceType.MicrosoftTeams => "Microsoft Teams",
-            KnightSourceType.MicrosoftExchangeOnline => "Exchange Online",
-            KnightSourceType.GoogleWorkspace => "Google Workspace",
-            _ => source.ToString(),
-        };
+        return KnightSourceCatalog.Label(source);
     }
 
     /// <summary>Domínio do controle; sem perfil, deriva da categoria (todas as categorias atuais são de identidade/IAM).</summary>

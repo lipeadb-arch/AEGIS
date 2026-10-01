@@ -204,6 +204,82 @@ public enum ConfigurationObjectKind
 
     /// <summary>Quantas caixas de correio usam cada política do Outlook na web (alcance).</summary>
     ExchangeOwaPolicyReachInventory = 37,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-04] Demais serviços do Microsoft 365 --------------------------------------
+
+    /// <summary>Configurações do serviço de conformidade do Intune.</summary>
+    IntuneComplianceSettings = 38,
+
+    /// <summary>Uma configuração de restrição de registro de dispositivos do Intune.</summary>
+    IntuneEnrollmentRestriction = 39,
+
+    /// <summary>Configurações do SharePoint e OneDrive pelo Microsoft Graph.</summary>
+    SharePointTenantSettings = 40,
+
+    /// <summary>Configurações do SharePoint e OneDrive pela API de administração do SharePoint.</summary>
+    SharePointAdminTenant = 41,
+
+    /// <summary>Uma configuração do locatário do Microsoft Fabric.</summary>
+    FabricTenantSetting = 42,
+
+    /// <summary>Configuração global do Defender para Office 365 (SharePoint, OneDrive e Teams; Documentos Seguros).</summary>
+    DefenderAtpPolicy = 43,
+
+    /// <summary>Uma política de Links Seguros e a regra que a aplica.</summary>
+    DefenderSafeLinksPolicy = 44,
+
+    /// <summary>Uma política de Anexos Seguros e a regra que a aplica.</summary>
+    DefenderSafeAttachmentPolicy = 45,
+
+    /// <summary>Uma política antimalware e a regra que a aplica.</summary>
+    DefenderMalwarePolicy = 46,
+
+    /// <summary>Uma política antispam de entrada e a regra que a aplica.</summary>
+    DefenderInboundSpamPolicy = 47,
+
+    /// <summary>Uma política antispam de saída e a regra que a aplica.</summary>
+    DefenderOutboundSpamPolicy = 48,
+
+    /// <summary>A política de filtro de conexão.</summary>
+    DefenderConnectionFilterPolicy = 49,
+
+    /// <summary>Uma política antiphishing e a regra que a aplica.</summary>
+    DefenderAntiPhishPolicy = 50,
+
+    /// <summary>A assinatura DKIM de um domínio.</summary>
+    DefenderDkimSigning = 51,
+
+    /// <summary>Um domínio aceito da organização.</summary>
+    DefenderAcceptedDomain = 52,
+
+    /// <summary>Os registros DNS públicos SPF e DMARC de um domínio.</summary>
+    DefenderDnsRecord = 53,
+
+    /// <summary>A política de proteção do Teams (ZAP).</summary>
+    DefenderTeamsProtection = 54,
+
+    /// <summary>A proteção de contas prioritárias e as contas marcadas.</summary>
+    DefenderPriorityAccounts = 55,
+
+    /// <summary>Uma regra das políticas de segurança predefinidas (padrão ou estrita).</summary>
+    DefenderPresetRule = 56,
+
+    /// <summary>A configuração de ingestão do log de auditoria unificado.</summary>
+    PurviewAuditConfig = 57,
+
+    /// <summary>Uma política de DLP.</summary>
+    PurviewDlpPolicy = 58,
+
+    /// <summary>Uma política de rótulos de confidencialidade.</summary>
+    PurviewLabelPolicy = 59,
+
+    // ---- [AEGIS-KNIGHT-COVERAGE-04] Azure Resource Manager ----------------------------------------------
+
+    /// <summary>Uma assinatura do Azure no escopo e o desfecho de cada família de leitura nela.</summary>
+    AzureSubscription = 60,
+
+    /// <summary>Um recurso do Azure (propriedades e configurações filhas lidas pelo Resource Manager).</summary>
+    AzureResource = 61,
 }
 
 /// <summary>

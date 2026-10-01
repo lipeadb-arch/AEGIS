@@ -11,6 +11,8 @@ using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Knight;
 using AegisScore.Connectors.Microsoft.Knight.Exchange;
+using AegisScore.Connectors.Microsoft.Knight.Protection;
+using AegisScore.Connectors.Microsoft.Knight.Services;
 using AegisScore.Connectors.Microsoft.Knight.Teams;
 using AegisScore.Domain;
 
@@ -64,6 +66,9 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
     private readonly ITeamsAdminReader _teamsReader;
     private readonly IExchangeTokenClient _exchangeTokens;
     private readonly IExchangeAdminReader _exchangeReader;
+    private readonly IMicrosoftAppTokenClient? _appTokens;
+    private readonly IMicrosoftRestClient? _rest;
+    private readonly IProtectionAdminReader? _protection;
     private readonly ILogger<KnightIdentityPostureConnector>? _log;
 
     public KnightIdentityPostureConnector(
@@ -73,7 +78,10 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         ITeamsAdminReader teamsReader,
         IExchangeTokenClient exchangeTokens,
         IExchangeAdminReader exchangeReader,
-        ILogger<KnightIdentityPostureConnector>? log = null)
+        ILogger<KnightIdentityPostureConnector>? log = null,
+        IMicrosoftAppTokenClient? appTokens = null,
+        IMicrosoftRestClient? rest = null,
+        IProtectionAdminReader? protection = null)
     {
         _protector = protector;
         _graph = graph;
@@ -81,6 +89,9 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         _teamsReader = teamsReader;
         _exchangeTokens = exchangeTokens;
         _exchangeReader = exchangeReader;
+        _appTokens = appTokens;
+        _rest = rest;
+        _protection = protection;
         _log = log;
     }
 
@@ -99,16 +110,37 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         // Sequencial, não paralelo: Teams e Exchange sobem o PRÓPRIO processo PowerShell descartável cada um.
         // Testá-los ao mesmo tempo dobraria a carga de processo por clique sem reduzir o tempo total de forma que
         // valha a complexidade — um clique em "Testar conexão" já é uma ação deliberada do operador.
-        var entra = await ProbeEntraAsync(credentials, ct);
-        var teams = await ProbeTeamsAsync(credentials, ct);
-        var exchange = await ProbeExchangeAsync(credentials, ct);
-
-        var probes = new[] { entra, teams, exchange };
-        var status = probes.All(p => p.Ok) ? ConnectorStatus.Healthy
-            : probes.Any(p => p.Ok) ? ConnectorStatus.Degraded
+        var probes = new List<Probe>
+        {
+            await ProbeEntraAsync(credentials, ct),
+            await ProbeTeamsAsync(credentials, ct),
+            await ProbeExchangeAsync(credentials, ct),
+        };
+        // [AEGIS-KNIGHT-COVERAGE-04] As fontes seguintes usam a MESMA credencial; cada uma com UMA leitura real.
+        if (_protection is not null)
+        {
+            probes.Add(await ProbeProtectionAsync(credentials, ProtectionAdminRequest.Defender, ct));
+            probes.Add(await ProbeProtectionAsync(credentials, ProtectionAdminRequest.Purview, ct));
+        }
+        probes.Add(await ProbeGraphReadAsync(credentials, "SharePoint e OneDrive (Microsoft Graph)",
+            "admin/sharepoint/settings", "SharePointTenantSettings.Read.All", ct));
+        probes.Add(await ProbeSharePointAdminAsync(credentials, ct));
+        probes.Add(await ProbeGraphReadAsync(credentials, "Microsoft Intune",
+            "deviceManagement?$select=settings", "DeviceManagementConfiguration.Read.All", ct));
+        if (_appTokens is not null && _rest is not null)
+            probes.Add(await ProbeRestAsync(credentials, "Microsoft Fabric", FabricKnightCollector.Scope, FabricKnightCollector.TenantSettingsUrl,
+                "a configuração “entidades de serviço podem usar as APIs de administração somente leitura” e o grupo de segurança da aplicação", ct));
+        // Uma leitura NÃO TENTADA (ex.: a API administrativa do SharePoint sem certificado) não conta como falha nem
+        // como sucesso: o estado é o das leituras tentadas, e a linha dela diz o que falta.
+        var attempted = probes.Where(p => !p.Skipped).ToList();
+        var status = attempted.All(p => p.Ok) ? ConnectorStatus.Healthy
+            : attempted.Any(p => p.Ok) ? ConnectorStatus.Degraded
             : ConnectorStatus.Failed;
 
         var lines = probes.Select(p => p.Message).ToList();
+        lines.Add(credentials.ClientCertificate is null
+            ? "Autenticação usada: segredo de cliente."
+            : "Autenticação usada: certificado da aplicação (asserção assinada).");
         if (probes.Any(p => p.Ok))
             lines.Add(ScopeOfVerificationNote);
         return new ConnectorHealth(status, string.Join("\n", lines));
@@ -147,9 +179,12 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
             if (s is null
                 || string.IsNullOrWhiteSpace(s.TenantIdValue)
                 || string.IsNullOrWhiteSpace(s.ClientId)
-                || string.IsNullOrWhiteSpace(s.ClientSecret))
+                || (string.IsNullOrWhiteSpace(s.ClientSecret) && string.IsNullOrWhiteSpace(s.CertificatePfxBase64)))
                 return null;
-            return new GraphCredentials(s.TenantIdValue!, s.ClientId!, s.ClientSecret!);
+            var certificate = string.IsNullOrWhiteSpace(s.CertificatePfxBase64)
+                ? null
+                : new MicrosoftClientCertificate(s.CertificatePfxBase64!.Trim(), s.CertificatePassword);
+            return new GraphCredentials(s.TenantIdValue!, s.ClientId!, s.ClientSecret ?? "", certificate);
         }
         catch (Exception ex)
         {
@@ -160,21 +195,25 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
     }
 
     private sealed record MicrosoftSettings(
-        string? TenantId = null, string? AzureTenantId = null, string? ClientId = null, string? ClientSecret = null)
+        string? TenantId = null, string? AzureTenantId = null, string? ClientId = null, string? ClientSecret = null,
+        string? CertificatePfxBase64 = null, string? CertificatePassword = null)
     {
         public string? TenantIdValue => !string.IsNullOrWhiteSpace(TenantId) ? TenantId : AzureTenantId;
+
+        public override string ToString() => "MicrosoftSettings { *** }";
     }
 
     /// <summary>Record imprime todas as propriedades no ToString(): aqui isso seria vazar o segredo de cliente.</summary>
-    private sealed record GraphCredentials(string AzureTenantId, string ClientId, string ClientSecret) : IMicrosoftGraphCredentials
+    private sealed record GraphCredentials(string AzureTenantId, string ClientId, string ClientSecret, MicrosoftClientCertificate? ClientCertificate)
+        : IMicrosoftGraphCredentials
     {
         public override string ToString() =>
-            $"GraphCredentials {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = *** }}";
+            $"GraphCredentials {{ AzureTenantId = {AzureTenantId}, ClientId = {ClientId}, ClientSecret = ***, ClientCertificate = *** }}";
     }
 
     // ---- Sondas por fonte -------------------------------------------------------------------------------
 
-    private readonly record struct Probe(bool Ok, string Message);
+    private readonly record struct Probe(bool Ok, string Message, bool Skipped = false);
 
     private async Task<Probe> ProbeEntraAsync(IMicrosoftGraphCredentials cfg, CancellationToken ct)
     {
@@ -263,7 +302,7 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         {
             var output = await _exchangeReader.TestConnectionAsync(credentials, ct);
             if (!output.Connected)
-                return new Probe(false, $"{label}: {ExchangeConnectionFailureReason(output.ConnectionErrorCategory)}");
+                return new Probe(false, $"{label}: {ExchangeConnectionFailureReason(output.ConnectionErrorCategory, cfg.ClientCertificate is not null)}");
 
             var probe = output.Reads.FirstOrDefault();
             if (probe is null || !probe.Ok)
@@ -273,15 +312,148 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
                     + ExchangeReadFailureReason(probe?.ErrorCategory));
 
             var suffix = output.Runtime.Module is { Length: > 0 } m ? $" (módulo Exchange Online PowerShell {m})" : "";
-            return new Probe(true,
-                $"{label}: credencial aceita, conexão estabelecida e leitura confirmada{suffix}. Esta é a PRIMEIRA "
-                + "verificação real de que o método por segredo de cliente funciona neste locatário.");
+            return new Probe(true, cfg.ClientCertificate is null
+                ? $"{label}: credencial aceita, conexão estabelecida e leitura confirmada{suffix}. Esta é a PRIMEIRA "
+                  + "verificação real de que o método por segredo de cliente funciona neste locatário."
+                : $"{label}: credencial aceita por certificado, conexão estabelecida e leitura confirmada{suffix}.");
         }
         catch (ExchangeAdminTransportException)
         {
             return new Probe(false,
                 $"{label}: o adaptador de coleta não pôde ser executado neste ambiente. Nenhuma conclusão sobre "
                 + "a credencial é possível.");
+        }
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
+        {
+            return FailedProbe(label, ex);
+        }
+    }
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Uma leitura do Microsoft Graph que destrava uma fonte nova.</summary>
+    private async Task<Probe> ProbeGraphReadAsync(IMicrosoftGraphCredentials cfg, string label, string url, string permission, CancellationToken ct)
+    {
+        try
+        {
+            var token = await _graph.AcquireTokenAsync(cfg, ct);
+            await _graph.GetJsonAsync(token, cfg, url, ct);
+            return new Probe(true, $"{label}: leitura de verificação confirmada.");
+        }
+        catch (EntraGraphException ex) when (ex.Kind == EntraGraphErrorKind.InsufficientPermission)
+        {
+            return new Probe(false, $"{label}: autorização recusada — confira {permission} (aplicativo) e o consentimento do administrador.");
+        }
+        catch (EntraGraphException ex)
+        {
+            return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
+        }
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
+        {
+            return FailedProbe(label, ex);
+        }
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] A API administrativa do SharePoint: só com certificado. Sem ele, o teste diz que a
+    /// leitura não foi tentada — não é uma falha da credencial.
+    /// </summary>
+    private async Task<Probe> ProbeSharePointAdminAsync(IMicrosoftGraphCredentials cfg, CancellationToken ct)
+    {
+        const string label = "SharePoint e OneDrive (API administrativa)";
+        if (cfg.ClientCertificate is null)
+            return new Probe(false, $"{label}: não tentada — exige certificado da aplicação; sem ele, 8 controles do SharePoint e OneDrive ficam não avaliados.", Skipped: true);
+        if (_appTokens is null || _rest is null)
+            return new Probe(false, $"{label}: não verificável nesta instalação.", Skipped: true);
+        try
+        {
+            var token = await _graph.AcquireTokenAsync(cfg, ct);
+            var org = await _graph.GetJsonAsync(token, cfg, OrganizationProbeUrl, ct);
+            string? initial = null;
+            if (org.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.Array)
+                foreach (var o in v.EnumerateArray())
+                    if (o.TryGetProperty("verifiedDomains", out var ds) && ds.ValueKind == JsonValueKind.Array)
+                        foreach (var d in ds.EnumerateArray())
+                            if (d.TryGetProperty("isInitial", out var i) && i.ValueKind == JsonValueKind.True && d.TryGetProperty("name", out var n))
+                                initial = n.GetString();
+            var host = SharePointKnightCollector.AdminHost(initial);
+            if (host is null)
+                return new Probe(false, $"{label}: o domínio inicial do locatário não permite derivar o host de administração.");
+            return await ProbeRestAsync(cfg, label, $"https://{host}/.default", $"https://{host}/_api/SPO.Tenant",
+                "Sites.FullControl.All na API do SharePoint (aplicativo) e o certificado registrado na aplicação", ct);
+        }
+        catch (EntraGraphException ex)
+        {
+            return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
+        }
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
+        {
+            return FailedProbe(label, ex);
+        }
+    }
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Token para o recurso e UMA leitura REST (Fabric, administração do SharePoint).</summary>
+    private async Task<Probe> ProbeRestAsync(IMicrosoftGraphCredentials cfg, string label, string scope, string url, string requirement, CancellationToken ct)
+    {
+        try
+        {
+            var token = await _appTokens!.AcquireAsync(cfg, scope, ct);
+            await _rest!.GetAsync(token, url, ct);
+            return new Probe(true, $"{label}: leitura de verificação confirmada.");
+        }
+        catch (EntraGraphException ex) when (ex.Kind == EntraGraphErrorKind.InsufficientPermission)
+        {
+            return new Probe(false, $"{label}: autorização recusada, e a recusa não identifica a causa — confira {requirement}.");
+        }
+        catch (EntraGraphException ex)
+        {
+            return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
+        }
+        catch (MicrosoftCertificateException ex)
+        {
+            return new Probe(false, $"{label}: {ex.Message}");
+        }
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
+        {
+            return FailedProbe(label, ex);
+        }
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Defender para Office 365 (sessão do Exchange Online) ou Purview (sessões do Exchange
+    /// Online e do Security &amp; Compliance), pelo modo de teste do adaptador: conexão e UMA leitura.
+    /// </summary>
+    private async Task<Probe> ProbeProtectionAsync(IMicrosoftGraphCredentials cfg, string profile, CancellationToken ct)
+    {
+        var purview = profile == ProtectionAdminRequest.Purview;
+        var label = purview ? "Microsoft Purview" : "Microsoft Defender para Office 365";
+        try
+        {
+            var exo = await _exchangeTokens.AcquireAsync(cfg, ct);
+            string? complianceToken = null;
+            if (purview && _appTokens is not null)
+                complianceToken = await _appTokens.AcquireAsync(cfg, ProtectionCollectorBase.ComplianceScope, ct);
+            var output = await _protection!.TestConnectionAsync(new ProtectionAdminRequest(profile, exo.Organization, exo.AccessToken, complianceToken), ct);
+            if (!output.Exchange.Connected)
+                return new Probe(false, $"{label}: {ExchangeConnectionFailureReason(output.Exchange.ConnectionErrorCategory, cfg.ClientCertificate is not null)}");
+            if (purview && !output.ComplianceConnected)
+                return new Probe(false, $"{label}: {ProtectionCollectorBase.ConnectionReason(
+                    ProtectionCollectorBase.ParseOutcome(output.ComplianceErrorCategory) ?? KnightCapabilityOutcome.AuthenticationFailure,
+                    compliance: true, certificate: cfg.ClientCertificate is not null)}");
+            var failed = output.Exchange.Reads.FirstOrDefault(r => !r.Ok);
+            if (failed is not null)
+                return new Probe(false, $"{label}: conexão estabelecida, mas a leitura de verificação ({failed.Command}) foi {ExchangeReadFailureReason(failed.ErrorCategory)}");
+            return new Probe(true, $"{label}: conexão estabelecida e leitura de verificação confirmada.");
+        }
+        catch (EntraGraphException ex)
+        {
+            return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
+        }
+        catch (ExchangeAdminTransportException)
+        {
+            return new Probe(false, $"{label}: o adaptador de coleta não pôde ser executado neste ambiente. Nenhuma conclusão sobre a credencial é possível.");
+        }
+        catch (MicrosoftCertificateException ex)
+        {
+            return new Probe(false, $"{label}: {ex.Message}");
         }
         catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
         {
@@ -341,12 +513,15 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
     /// <see cref="ExchangeTokenClient"/>). Só <c>Throttled</c> e <c>LimitedByLicense</c> são mecanicamente
     /// inequívocos o bastante para não precisar dessa cautela extra.
     /// </summary>
-    private static string ExchangeConnectionFailureReason(string? category) => category switch
+    private static string ExchangeConnectionFailureReason(string? category, bool certificate = false) => category switch
     {
         nameof(KnightCapabilityOutcome.Throttled) =>
             "O serviço aplicou limite de taxa ao estabelecer a conexão; não é uma questão de permissão, papel ou método de autenticação.",
         nameof(KnightCapabilityOutcome.LimitedByLicense) =>
             "A conexão foi recusada por licença do locatário; não é uma questão de permissão, papel ou método de autenticação.",
+        _ when certificate =>
+            "A conexão foi recusada, e a recusa não identifica a causa com segurança — confira Exchange.ManageAsApp, o "
+            + "papel Leitor Global, o domínio de organização e se o certificado enviado é o mesmo registrado na aplicação.",
         _ => "A conexão foi recusada, e a recusa não identifica a causa com segurança — confira Exchange.ManageAsApp, o "
             + "papel Leitor Global e se o serviço aceita o método de autenticação usado (token obtido por segredo "
             + "de cliente — sem confirmação documental de que o serviço o aceite).",

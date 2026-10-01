@@ -31,7 +31,12 @@ export type KnightCategory =
   | 'DeviceGovernance'
   // [AEGIS-KNIGHT-COVERAGE-02] Colaboração e comunicação (Microsoft Teams): com quem se fala, quem entra numa
   // reunião, o que sai da organização por um canal de conversa.
-  | 'CollaborationSecurity';
+  | 'CollaborationSecurity'
+  // [AEGIS-KNIGHT-COVERAGE-04] Proteção contra ameaças (Defender), proteção de dados (Purview, compartilhamento) e
+  // infraestrutura de nuvem (Azure).
+  | 'ThreatProtection'
+  | 'DataProtection'
+  | 'CloudInfrastructure';
 
 /** Estado de conexão exibido no badge: separação inequívoca entre Demo, Não configurado e Conectado. */
 export type KnightConnectionState = 'Demo' | 'NotConfigured' | 'Connected';
@@ -42,6 +47,13 @@ export type KnightSourceType =
   | 'MicrosoftEntraId'
   | 'MicrosoftTeams'
   | 'MicrosoftExchangeOnline'
+  // [AEGIS-KNIGHT-COVERAGE-04] Demais serviços do Microsoft 365 e o Azure — mesma credencial do conector Microsoft.
+  | 'MicrosoftDefenderForOffice365'
+  | 'MicrosoftPurview'
+  | 'MicrosoftSharePoint'
+  | 'MicrosoftIntune'
+  | 'MicrosoftFabric'
+  | 'MicrosoftAzure'
   | 'GoogleWorkspace'
   /**
    * [AEGIS-KNIGHT-CONSOLIDATED-01] NÃO é uma fonte de coleta: marca uma avaliação/relatório que COMPÕE, sem
@@ -311,6 +323,9 @@ const CATEGORY_LABEL: Record<KnightCategory, string> = {
   ApplicationGovernance: 'Governança de aplicações',
   DeviceGovernance: 'Governança de dispositivos',
   CollaborationSecurity: 'Colaboração e comunicação',
+  ThreatProtection: 'Proteção contra ameaças',
+  DataProtection: 'Proteção de dados',
+  CloudInfrastructure: 'Infraestrutura de nuvem',
 };
 
 export function categoryLabel(category: KnightCategory): string {
@@ -338,17 +353,87 @@ export function scoreDisplay(score: number | null): string {
   return score === null ? '—' : String(Math.round(score));
 }
 
-const SOURCE_TYPE_LABEL: Record<KnightSourceType, string> = {
-  Demo: 'Demonstração',
-  MicrosoftEntraId: 'Microsoft Entra ID',
-  MicrosoftTeams: 'Microsoft Teams',
-  MicrosoftExchangeOnline: 'Exchange Online',
-  GoogleWorkspace: 'Google Workspace',
-  Consolidated: 'Consolidado',
-};
+/**
+ * [AEGIS-KNIGHT-COVERAGE-04] Catálogo ÚNICO das fontes do KNIGHT na tela — espelho de `KnightSourceCatalog` no
+ * servidor (mesma ordem, rótulo e apelido de rota). Rótulos, apelidos, candidatas do consolidado e fontes de cada
+ * conector derivam daqui: uma fonte nova entra em um lugar só, e nenhuma lista paralela fica para trás.
+ */
+export interface KnightSourceDescriptor {
+  source: Exclude<KnightSourceType, 'Consolidated'>;
+  label: string;
+  slug: string;
+  provider: 'Microsoft' | 'Google' | 'Demonstração';
+  /** Alimentada pelo conector Microsoft (mesma aplicação registrada). */
+  microsoftConnector: boolean;
+  /** Pode compor o relatório consolidado. */
+  consolidable: boolean;
+  /** O que a coleta desta fonte exige além da credencial comum (null quando nada além). */
+  requirement: string | null;
+}
+
+export const KNIGHT_SOURCES: KnightSourceDescriptor[] = [
+  { source: 'MicrosoftEntraId', label: 'Microsoft Entra ID', slug: 'entra', provider: 'Microsoft', microsoftConnector: true, consolidable: true, requirement: null },
+  {
+    source: 'MicrosoftTeams', label: 'Microsoft Teams', slug: 'teams', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
+    requirement: 'Exige, além da credencial acima, o papel Leitor do Teams (ou Leitor Global) atribuído a esta aplicação no Microsoft Entra ID.',
+  },
+  {
+    source: 'MicrosoftExchangeOnline', label: 'Exchange Online', slug: 'exchange', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
+    requirement: 'Exige Exchange.ManageAsApp (API Office 365 Exchange Online) e o papel Leitor Global atribuído à aplicação.',
+  },
+  {
+    source: 'MicrosoftDefenderForOffice365', label: 'Microsoft Defender para Office 365', slug: 'defender-office365', provider: 'Microsoft',
+    microsoftConnector: true, consolidable: true,
+    requirement: 'Usa a mesma sessão do Exchange Online. SPF e DMARC são lidos no DNS público. Parte das políticas exige licença do Defender para Office 365.',
+  },
+  {
+    source: 'MicrosoftPurview', label: 'Microsoft Purview', slug: 'purview', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
+    requirement: 'DLP e rótulos exigem Exchange.ManageAsApp na API Microsoft Exchange Online Protection (sessão do Security & Compliance).',
+  },
+  {
+    source: 'MicrosoftSharePoint', label: 'SharePoint e OneDrive', slug: 'sharepoint', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
+    requirement: 'SharePointTenantSettings.Read.All; as configurações administrativas exigem certificado e Sites.FullControl.All (API SharePoint).',
+  },
+  {
+    source: 'MicrosoftIntune', label: 'Microsoft Intune', slug: 'intune', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
+    requirement: 'DeviceManagementConfiguration.Read.All e DeviceManagementServiceConfig.Read.All.',
+  },
+  {
+    source: 'MicrosoftFabric', label: 'Microsoft Fabric (Power BI)', slug: 'fabric', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
+    requirement: 'Um administrador do Fabric precisa permitir que entidades de serviço usem as APIs de administração somente leitura, para um grupo que contenha a aplicação.',
+  },
+  // MicrosoftAzure entra aqui junto com o coletor do Azure no servidor (mesmo catálogo, mesma ordem).
+  { source: 'GoogleWorkspace', label: 'Google Workspace', slug: 'google', provider: 'Google', microsoftConnector: false, consolidable: false, requirement: null },
+  { source: 'Demo', label: 'Demonstração', slug: 'demo', provider: 'Demonstração', microsoftConnector: false, consolidable: false, requirement: null },
+];
+
+/**
+ * [AEGIS-KNIGHT-COVERAGE-04] Execução que produziu um achado. Numa avaliação de fonte única, é ela mesma. No relatório
+ * consolidado (composição sem identificador próprio), é a execução da FONTE do indicador que entrou na composição —
+ * é por ela que se leem afetados e evidências e é ela a origem de um plano de ação, o mesmo da visão por fonte.
+ */
+export function findingRunIdOf(
+  assessment: { id: string; sourceType: KnightSourceType; sources?: { source: KnightSourceType; included: boolean; sourceRunId: string | null }[] },
+  indicatorSource: KnightSourceType,
+): string {
+  if (assessment.sourceType !== 'Consolidated') return assessment.id;
+  return assessment.sources?.find((s) => s.source === indicatorSource && s.included && !!s.sourceRunId)?.sourceRunId ?? assessment.id;
+}
+
+export function describeSource(source: KnightSourceType): KnightSourceDescriptor | undefined {
+  return KNIGHT_SOURCES.find((d) => d.source === source);
+}
+
+/** Candidatas do relatório consolidado, na ordem de apresentação. */
+export const CONSOLIDATION_CANDIDATES: KnightSourceType[] = KNIGHT_SOURCES.filter((d) => d.consolidable).map((d) => d.source);
+
+/** Apelido de rota da fonte ("Consolidated" nunca vai na URL de uma fonte). */
+export function sourceSlug(source: KnightSourceType): string {
+  return source === 'Consolidated' ? 'consolidated' : describeSource(source)?.slug ?? source.toLowerCase();
+}
 
 export function sourceTypeLabel(source: KnightSourceType): string {
-  return SOURCE_TYPE_LABEL[source];
+  return source === 'Consolidated' ? 'Consolidado' : describeSource(source)?.label ?? source;
 }
 
 const SOURCE_STATE_LABEL: Record<KnightSourceState, string> = {
@@ -447,6 +532,29 @@ const CAPABILITY_LABEL: Record<string, string> = {
   ExchangeMailboxSignIn: 'Estado de entrada das contas',
   ExchangeCasMailboxes: 'Acesso de cliente por caixa de correio',
   ExchangeAuditBypassAssociations: 'Desvios de auditoria de caixa de correio',
+  // [AEGIS-KNIGHT-COVERAGE-04] Defender para Office 365, Purview, SharePoint/OneDrive, Intune e Fabric — idem.
+  DefenderAtpPolicy: 'Anexos Seguros para SharePoint, OneDrive e Teams',
+  DefenderSafeLinks: 'Políticas e regras de Links Seguros',
+  DefenderSafeAttachments: 'Políticas e regras de Anexos Seguros',
+  DefenderMalwareFilter: 'Políticas e regras antimalware',
+  DefenderInboundSpam: 'Políticas e regras antispam de entrada',
+  DefenderConnectionFilter: 'Filtro de conexão',
+  DefenderOutboundSpam: 'Políticas e regras antispam de saída',
+  DefenderAntiPhish: 'Políticas e regras antiphishing',
+  DefenderDkim: 'Assinatura DKIM por domínio',
+  DefenderAcceptedDomains: 'Domínios aceitos',
+  DefenderDnsRecords: 'Registros SPF e DMARC (consulta DNS)',
+  DefenderTeamsProtection: 'Proteção do Teams (ZAP)',
+  DefenderPriorityAccounts: 'Contas prioritárias',
+  DefenderPresetPolicies: 'Políticas de segurança predefinidas',
+  PurviewAuditConfig: 'Configuração do log de auditoria unificado',
+  PurviewDlpPolicies: 'Políticas de prevenção contra perda de dados (DLP)',
+  PurviewLabelPolicies: 'Políticas de rótulos de confidencialidade',
+  SharePointTenantSettings: 'Configurações do SharePoint (Microsoft Graph)',
+  SharePointAdminTenant: 'Configurações administrativas do SharePoint e OneDrive',
+  IntuneServiceSettings: 'Configurações de conformidade do Intune',
+  IntuneEnrollmentRestrictions: 'Restrições de registro de dispositivos',
+  FabricTenantSettings: 'Configurações do locatário do Fabric',
 };
 
 /** Capacidade desconhecida degrada para o próprio identificador — nunca some da tela. */
@@ -886,7 +994,7 @@ export function axesOf(i: KnightIndicator): { domain: string; domainLabel: strin
   const p = i.presentation;
   if (p) return { domain: p.domain, domainLabel: p.domainLabel, service: p.service, provider: p.provider, platform: p.platform ?? p.service };
   const service = sourceTypeLabel(i.sourceType);
-  const provider = i.sourceType === 'MicrosoftEntraId' ? 'Microsoft' : i.sourceType === 'GoogleWorkspace' ? 'Google' : 'Demonstração';
+  const provider = describeSource(i.sourceType)?.provider ?? 'Demonstração';
   return { domain: 'Identity', domainLabel: 'Identidade', service, provider, platform: service };
 }
 

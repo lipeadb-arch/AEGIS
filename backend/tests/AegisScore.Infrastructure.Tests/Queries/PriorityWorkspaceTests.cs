@@ -127,6 +127,9 @@ public sealed class PriorityWorkspaceTests
 
         public Task<KnightAffectedSummary?> GetAffectedSummaryAsync(Guid runId, CancellationToken ct = default) =>
             Task.FromResult<KnightAffectedSummary?>(null);
+
+        public Task<KnightAffectedSummary?> GetAffectedSummaryAsync(System.Collections.Generic.IReadOnlyCollection<Guid> runIds, CancellationToken ct = default) =>
+            Task.FromResult<KnightAffectedSummary?>(null);
     }
 
     // ---- Builders de DTOs canônicos ---------------------------------------------------------------------

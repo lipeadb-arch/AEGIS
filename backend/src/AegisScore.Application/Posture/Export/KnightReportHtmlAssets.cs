@@ -229,7 +229,7 @@ b.appendChild(sec('O que fazer',what));
 var fw=c.references.filter(function(r){return r.isFramework;}).map(function(r){return r.framework+(r.version?' '+r.version:'')+': '+r.code;});
 b.appendChild(sec('Evidência técnica e proveniência',[el('div',{cls:'kv'},[el('span',{cls:'k',text:'Plataforma · serviço · domínio'}),el('span',{text:(c.platform||c.provider)+' · '+c.service+' · '+c.domainLabel}),
 el('span',{cls:'k',text:'Coletado em'}),el('span',{text:dt(c.collectedAt)}),el('span',{cls:'k',text:'Critério da regra'}),el('span',{text:c.criterion||'não exibido (catálogo da avaliação difere do catálogo dos textos, ou fotografia v1)'}),
-el('span',{cls:'k',text:'Frameworks e benchmarks'}),el('span',{text:fw.length?fw.join(' · '):'—'}),el('span',{cls:'k',text:'Capacidades de coleta usadas'}),el('span',{cls:'mono',text:c.requiredCapabilities.join(', ')||'—'}),
+el('span',{cls:'k',text:'Frameworks e benchmarks'}),el('span',{text:fw.length?fw.join(' · '):'—'}),el('span',{cls:'k',text:'Capacidades de coleta usadas'}),el('span',{text:(c.requiredCapabilityLabels||c.requiredCapabilities).join(', ')||'—'}),
 el('span',{cls:'k',text:'Contribuição para a nota'}),el('span',{text:c.factor===null?'Fora da nota (não avaliado, erro ou não aplicável) — reduz a cobertura, não a nota.':'Peso '+c.weight+' × fator '+String(c.factor).replace('.',',')+' = '+String(c.achieved).replace('.',',')+' de '+c.possible+' ponto(s).'})])]));
 return b;}
 function objects(c){var wrap=el('div');var aff=c.objects.filter(function(o){return o.relation==='Affected';}),ev=c.objects.filter(function(o){return o.relation!=='Affected';});

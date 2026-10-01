@@ -21,6 +21,7 @@ import {
   isProblemState,
   sourceStateLabel,
   sourceTypeLabel,
+  CONSOLIDATION_CANDIDATES,
 } from '../models/knight.models';
 import { IdentityRiskPanelComponent } from '../components/identity/identity-risk-panel.component';
 import { KnightFindingDetailComponent } from '../components/knight/finding-detail.component';
@@ -71,7 +72,8 @@ import { PostureExportFormat } from '../models/posture-history.models';
             exposição, as contas, aplicações e configurações envolvidas e o que fazer. Vereditos por regras; interpretação assistida por IA.
           </p>
           <p class="page-meta">
-            Cobertura atual: identidade (Microsoft Entra ID, Google Workspace) · a coleta é feita em Configurações → Integrações
+            Fontes: Microsoft Entra ID, Microsoft 365 (Teams, Exchange Online, Defender para Office 365, Purview, SharePoint e
+            OneDrive, Intune, Fabric) e Google Workspace · a coleta é feita em Configurações → Integrações
           </p>
         </div>
         <div class="page-actions">
@@ -771,11 +773,8 @@ export class AegisKnightComponent implements OnInit {
   // contrato KnightAssessment (sintético, id vazio), com `sources` preenchido para a composição. Nada aqui
   // dispara coleta — é leitura sobre o que já foi sincronizado.
 
-  private static readonly CONSOLIDATED_CANDIDATES: KnightSourceType[] = [
-    'MicrosoftEntraId',
-    'MicrosoftTeams',
-    'MicrosoftExchangeOnline',
-  ];
+  // [AEGIS-KNIGHT-COVERAGE-04] As candidatas vêm do catálogo único de fontes — nunca uma lista fixa de três.
+  private static readonly CONSOLIDATED_CANDIDATES: KnightSourceType[] = CONSOLIDATION_CANDIDATES;
 
   readonly consolidatedMode = signal(false);
   readonly consolidatedLoading = signal(false);
@@ -865,11 +864,11 @@ export class AegisKnightComponent implements OnInit {
         this.assessment.set(a);
         this.unfinishedAttempt.set(null);
         this.selected.set(null);
-        // [AEGIS-KNIGHT-CONSOLIDATED-01] Sem execução real persistida (id sintético): o resumo de afetados e os
-        // planos de ação são leituras POR EXECUÇÃO e não se aplicam aqui — a visão consolidada é só leitura.
-        this.loadSummary(null);
-        this.summaryState.set('ok');
-        this.activePlans.set([]);
+        // [AEGIS-KNIGHT-COVERAGE-04] A composição não tem execução própria, mas cada achado tem a da SUA fonte: o
+        // resumo de afetados é o das execuções incluídas e as ações são as da fonte do achado — as mesmas da visão
+        // por fonte, sem duplicata.
+        this.loadSummary(a);
+        this.reloadPlans();
       },
       error: (e: Error) => {
         if (seq !== this.consolidatedRequestSeq) return;
@@ -982,12 +981,22 @@ export class AegisKnightComponent implements OnInit {
       this.summary.set(null);
       return;
     }
-    if (this.summaryRun === a.id && this.summaryState() !== 'error') return;
-    const runId = a.id;
+    // [AEGIS-KNIGHT-COVERAGE-04] No consolidado não há execução própria: o resumo é o da COMPOSIÇÃO — as execuções
+    // reais das fontes incluídas, com cada objeto contado uma vez.
+    const composition = a.sourceType === 'Consolidated'
+      ? (a.sources ?? []).filter((s) => s.included && !!s.sourceRunId).map((s) => s.sourceRunId!)
+      : null;
+    const runId = composition ? 'composicao:' + composition.join(',') : a.id;
+    if (this.summaryRun === runId && this.summaryState() !== 'error') return;
     this.summaryRun = runId;
     this.summary.set(null);
+    if (composition && composition.length === 0) {
+      this.summaryState.set('ok');
+      return;
+    }
     this.summaryState.set('loading');
-    this.knight.getAffectedSummary(runId).subscribe({
+    const request = composition ? this.knight.getCompositionAffectedSummary(composition) : this.knight.getAffectedSummary(runId);
+    request.subscribe({
       next: (s) => {
         if (this.summaryRun !== runId) return;
         this.summary.set(s);
@@ -1031,9 +1040,22 @@ export class AegisKnightComponent implements OnInit {
    * dois problemas distintos, e misturá-los faria uma ação de treinamento aparecer como trabalho real em
    * curso — além de bloquear a criação da ação real.
    */
-  readonly originSource = computed<KnightOriginSource | null>(
-    () => (this.assessment()?.sourceType as KnightOriginSource | undefined) ?? null,
-  );
+  readonly originSource = computed<KnightOriginSource | null>(() => {
+    const t = this.assessment()?.sourceType;
+    return !t || t === 'Consolidated' ? null : t;
+  });
+
+  /**
+   * [AEGIS-KNIGHT-COVERAGE-04] A procedência de UM achado: a da avaliação exibida, ou — no relatório consolidado — a
+   * fonte real do indicador. É por ela que a ação ativa é encontrada e que uma ação indicada é aceita.
+   */
+  private planSourceOf(indicatorId: string | null): KnightOriginSource | null {
+    const a = this.assessment();
+    if (!a || !indicatorId) return this.originSource();
+    if (a.sourceType !== 'Consolidated') return this.originSource();
+    const t = a.indicators.find((i) => i.indicatorId === indicatorId)?.sourceType;
+    return !t || t === 'Consolidated' ? null : t;
+  }
   readonly originMode = computed<KnightOriginMode | null>(() => {
     const a = this.assessment();
     return a ? (a.isDemo ? 'Demo' : 'Live') : null;
@@ -1042,7 +1064,7 @@ export class AegisKnightComponent implements OnInit {
   /** Ação ATIVA do achado aberto, NESTA procedência, se houver. */
   readonly activePlan = computed<ActionPlan | null>(() => {
     const id = this.selected();
-    return id ? activePlanFor(this.activePlans(), id, this.originSource(), this.originMode()) : null;
+    return id ? activePlanFor(this.activePlans(), id, this.planSourceOf(id), this.originMode()) : null;
   });
 
   /**
@@ -1083,8 +1105,11 @@ export class AegisKnightComponent implements OnInit {
   private reloadPlans(): void {
     const fonte = this.originSource();
     const modo = this.originMode();
-    if (!fonte || !modo) return;
-    this.remediation.list({ activeOnly: true, sourceType: fonte, mode: modo }).subscribe({
+    const consolidado = this.assessment()?.sourceType === 'Consolidated';
+    if ((!fonte && !consolidado) || !modo) return;
+    // No consolidado, as ações de TODAS as fontes reais desta procedência (coleta real × demonstração); cada achado
+    // escolhe a da própria fonte em `activePlan`.
+    this.remediation.list(consolidado ? { activeOnly: true, mode: modo } : { activeOnly: true, sourceType: fonte!, mode: modo }).subscribe({
       next: (plans) => this.activePlans.set(plans),
       error: () => {
         /* seção secundária: preserva a lista anterior em vez de fingir que não há ação alguma */
@@ -1125,7 +1150,7 @@ export class AegisKnightComponent implements OnInit {
         // O endereço, o achado ou a procedência mudaram enquanto a leitura estava em voo: esta resposta
         // pertence a outra tela e não escreve nesta.
         if (contexto !== this.planContext(id)) return;
-        const recusa = pinnedPlanRejection(p, this.selected(), this.originSource(), this.originMode());
+        const recusa = pinnedPlanRejection(p, this.selected(), this.planSourceOf(this.selected()), this.originMode());
         this.pinned.set(
           recusa ? { kind: 'indisponivel', id, reason: recusa } : { kind: 'carregada', id, plan: p },
         );

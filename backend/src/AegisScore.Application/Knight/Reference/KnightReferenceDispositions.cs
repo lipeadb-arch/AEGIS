@@ -73,6 +73,28 @@ public static class KnightReferenceDispositions
             "Depende de como as pessoas usam as contas administrativas no dia a dia, o que nenhuma configuração expressa. "
             + "Indícios automatizados relacionados: AK-ENTRA-003 (caixa de correio) e AK-ENTRA-048 (licenças de produtividade)."),
 
+        // ---- [AEGIS-KNIGHT-COVERAGE-04] Microsoft 365: sem leitura na API estável ----------------------------
+        // Métodos examinados (documentação oficial, 30/09/2026): o recurso admin do Microsoft Graph na versão estável (v1.0) e
+        // na beta, e a lista de cargas de trabalho do Tenant Configuration Management (TCM, v1.0), que é o método oficial
+        // de leitura declarativa de configuração entre serviços.
+        ["CIS-M365-7.0.0:1.3.5"] = Api(
+            "Dado ausente: a proteção interna contra phishing do Microsoft Forms (isInOrgFormsPhishingScanEnabled). Métodos examinados: "
+            + "o recurso admin da " + StableGraph + " não tem contêiner do Forms; a leitura existe só na versão beta (adminForms → "
+            + "formsSettings), cujo uso em produção a Microsoft não suporta; o Tenant Configuration Management não lista o Forms entre "
+            + "as cargas de trabalho suportadas. Verificação manual no centro de administração do Microsoft 365 → Configurações da "
+            + "organização → Microsoft Forms."),
+        ["CIS-M365-7.0.0:1.3.8"] = Api(
+            "Dado ausente: a configuração de compartilhamento externo do Sway. Métodos examinados: o recurso admin do Microsoft Graph, "
+            + "na versão estável (v1.0) e na beta, não tem contêiner do Sway; o Tenant Configuration Management não lista o Sway entre as "
+            + "cargas de trabalho suportadas. Verificação manual no centro de administração do Microsoft 365 → Configurações da "
+            + "organização → Sway."),
+
+        // ---- [AEGIS-KNIGHT-COVERAGE-04] Microsoft 365: critério organizacional -------------------------------
+        ["CIS-M365-7.0.0:2.2.1"] = Manual(
+            "O critério pede que a atividade das contas de acesso de emergência seja monitorada. Dizer quais contas são de emergência "
+            + "é uma decisão organizacional (ver AK-ENTRA-015), e o monitoramento pode viver fora do Microsoft 365 (SIEM, SOC). "
+            + "Nenhuma configuração lida pelo AEGIS prova que um alerta sobre ESSAS contas existe e é tratado."),
+
         // ---- Microsoft Teams: existe leitura oficial, mas não com a autenticação deste conector ---------------
         ["CIS-M365-7.0.0:8.4.1"] = Access(
             "O comando oficial que lê as políticas de permissão de aplicativos (Get-CsTeamsAppPermissionPolicy) só se aplica a "
@@ -100,6 +122,30 @@ public static class KnightReferenceDispositions
     public static IReadOnlyDictionary<string, Declared> All => ByKey;
 
     /// <summary>Nota padrão de um controle pendente, pelo serviço (o que falta para implementá-lo).</summary>
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Referências PENDENTES com pesquisa em andamento: o que já foi examinado e o que ainda
+    /// falta demonstrar. Continuam pendentes — uma busca que não encontrou a leitura não é prova de que ela não existe.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> Research = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["CIS-M365-7.0.0:2.4.3"] =
+            "Pesquisa pendente. Dado buscado: os conectores de aplicativos do Defender for Cloud Apps (Microsoft 365 e Azure) e as "
+            + "integrações com o Defender for Endpoint e o Defender for Identity. Examinado: a API REST do Defender for Cloud Apps "
+            + "documenta só atividades, alertas, enriquecimento de dados, entidades e arquivos — nenhum recurso de configuração de "
+            + "conector. Falta examinar os tipos de recurso da carga “Microsoft Defender” do Tenant Configuration Management.",
+        ["CIS-M365-7.0.0:2.4.5"] =
+            "Pesquisa pendente. Dado buscado: a configuração de correção automatizada da investigação e resposta automatizadas (AIR) do "
+            + "Defender para Office 365. Examinado: os comandos Get do módulo do Exchange Online já usados pelo AEGIS não a expõem. "
+            + "Falta examinar a API do Microsoft Defender XDR e os tipos de recurso da carga “Microsoft Defender” do Tenant "
+            + "Configuration Management antes de classificar a referência.",
+    };
+
+    /// <summary>Motivo de uma referência pendente: a pesquisa em andamento, quando houver; senão, o do serviço.</summary>
+    public static string PendingNote(KnightReferenceControl control) =>
+        Research.TryGetValue(control.Key, out var research) ? research : PendingNote(control.Service);
+
+    public static IReadOnlyCollection<string> ResearchKeys => (IReadOnlyCollection<string>)Research.Keys;
+
     public static string PendingNote(KnightService service) =>
         (KnightServices.Describe(service)?.Platform) switch
         {

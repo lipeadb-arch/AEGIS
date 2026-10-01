@@ -17,6 +17,8 @@
  */
 import type { DevicePriorityBand, DevicePriorityCase, DevicePriorityFactor } from './device-priority.models';
 import type { CrossSourceNote } from './cross-source.models';
+import type { KnightSourceType } from './knight.models';
+import { sourceTypeLabel } from './knight.models';
 
 /** Etapa OPERACIONAL. `Vencido` é legado: atraso hoje vem do prazo (`isOverdue`), não de uma etapa. */
 export type ActionPlanStatus = 'Aberto' | 'EmAndamento' | 'AguardandoValidacao' | 'Concluido' | 'Vencido';
@@ -71,7 +73,8 @@ export interface ActionPlanValidation {
 }
 
 /** Fonte concreta da coleta — o mesmo eixo que o KNIGHT usa. */
-export type KnightOriginSource = 'Demo' | 'MicrosoftEntraId' | 'GoogleWorkspace';
+/** [AEGIS-KNIGHT-COVERAGE-04] Qualquer fonte real do catálogo (ou a demonstração) — nunca a composição consolidada. */
+export type KnightOriginSource = Exclude<KnightSourceType, 'Consolidated'>;
 
 /**
  * [AEGIS-JOURNEY-01] De onde o plano nasceu. Valor técnico do contrato — a tela nunca o exibe cru; usa `originLabel`.
@@ -590,12 +593,9 @@ export function originLabel(p: ActionPlan): string {
       : 'Vulnerabilidade em dispositivo · registro de origem indisponível';
   }
   if (!p.originSourceType) return 'Origem não registrada';
-  const fonte =
-    p.originSourceType === 'MicrosoftEntraId'
-      ? 'Microsoft Entra ID'
-      : p.originSourceType === 'GoogleWorkspace'
-        ? 'Google Workspace'
-        : 'Provedor de demonstração';
+  // [AEGIS-KNIGHT-COVERAGE-04] Rótulo do catálogo único: antes, um plano do Teams ou do Exchange aparecia como
+  // "Provedor de demonstração".
+  const fonte = p.originSourceType === 'Demo' ? 'Provedor de demonstração' : sourceTypeLabel(p.originSourceType);
   return p.originMode === 'Demo' ? `${fonte} · cenário de demonstração` : `${fonte} · coleta real`;
 }
 

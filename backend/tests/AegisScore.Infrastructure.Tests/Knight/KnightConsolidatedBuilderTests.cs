@@ -22,7 +22,9 @@ public sealed class KnightConsolidatedBuilderTests
 
         result.IncludedSources.Should().BeEmpty();
         result.Score.Should().BeNull();
-        result.Sources.Should().HaveCount(3);
+        // [AEGIS-KNIGHT-COVERAGE-04] Toda fonte candidata aparece, na ordem do catálogo — não só as três primeiras.
+        result.Sources.Select(s => s.Source).Should().Equal(KnightSourceCatalog.ConsolidationCandidates);
+        result.Sources.Should().HaveCount(8, "as oito fontes do conector Microsoft que têm coletor");
         result.Sources.Should().OnlyContain(s => s.AvailabilityState == "NotAssessed" && !s.Included);
     }
 
@@ -130,12 +132,12 @@ public sealed class KnightConsolidatedBuilderTests
             new KnightSourceLatest(KnightSourceType.MicrosoftEntraId, "Microsoft Entra ID", entra, null),
         });
 
-        // "google" não é candidata do relatório consolidado (só Entra/Teams/Exchange) — pedir só ela não deve
+        // "google" não é candidata do relatório consolidado (só as fontes do conector Microsoft) — pedir só ela não deve
         // esvaziar silenciosamente a composição de quem TEM avaliação concluída entre as candidatas.
         var result = KnightConsolidatedBuilder.Build(latest, new[] { KnightSourceType.GoogleWorkspace });
 
         result.IncludedSources.Should().BeEmpty("nenhuma candidata foi pedida — Google não é candidata desta entrega");
-        result.Sources.Should().HaveCount(3);
+        result.Sources.Should().HaveCount(KnightSourceCatalog.ConsolidationCandidates.Count);
     }
 
     private static KnightAssessment Assessment(KnightSourceType source, string label, params KnightIndicatorView[] indicators)
