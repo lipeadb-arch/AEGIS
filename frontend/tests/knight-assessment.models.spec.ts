@@ -36,6 +36,9 @@ import {
   KnightReferenceCoverage,
   CONSOLIDATION_CANDIDATES,
   findingRunIdOf,
+  consolidatedCollection,
+  readableLimitation,
+  sourceStateLabel,
   sourceSlug,
   sourceTypeLabel,
   categoryLabel,
@@ -380,6 +383,23 @@ test('achado do consolidado aponta para a execução REAL da fonte — detalhes 
   eq(findingRunIdOf(consolidado, 'MicrosoftPurview'), 'run-purview', 'a execução da fonte do indicador');
   eq(findingRunIdOf(consolidado, 'MicrosoftEntraId'), 'run-entra', 'cada indicador, a sua fonte');
   eq(findingRunIdOf({ id: 'run-unica', sourceType: 'MicrosoftEntraId' }, 'MicrosoftEntraId'), 'run-unica', 'fonte única: a própria avaliação');
+});
+
+test('consolidado: execução concluída não é coleta completa quando uma fonte incluída é parcial', () => {
+  const src = (label: string, sourceState: 'Completed' | 'PartialCollection', included: boolean, lim: string[] = []) => ({
+    source: 'MicrosoftEntraId' as const, slug: 'entra', label, included, availabilityState: (included ? 'Included' : 'Available') as 'Included' | 'Available',
+    sourceRunId: 'r', sourceState, catalogVersion: 'v', capturedAt: null, score: 50, coverage: 100, counts: null, collectionLimitations: lim,
+  });
+  const parcial = consolidatedCollection([src('Microsoft Entra ID', 'Completed', true), src('Microsoft Azure', 'PartialCollection', true, ['AzureStorage: InsufficientPermission — leitura recusada']), src('Microsoft Teams', 'PartialCollection', false)]);
+  eq(parcial.complete, false, 'uma fonte incluída parcial torna o conjunto parcial');
+  eq(parcial.incomplete.join(','), 'Microsoft Azure', 'só as fontes INCLUÍDAS contam; a disponível e não incluída fica de fora');
+  ok(parcial.text.startsWith('Coleta parcial em 1 de 2 fontes incluídas (Microsoft Azure)'), 'a frase nomeia a fonte');
+  eq(consolidatedCollection([src('Microsoft Entra ID', 'Completed', true)]).complete, true, 'todas íntegras = coleta completa');
+  eq(sourceStateLabel('Throttled'), 'Limite de requisições', 'sem rótulo em inglês');
+  const legivel = readableLimitation('AzureStorage: InsufficientPermission — leitura recusada');
+  ok(!legivel.includes('AzureStorage') && !legivel.includes('InsufficientPermission'), 'identificadores viram rótulos: ' + legivel);
+  ok(legivel.endsWith(': Permissão insuficiente — leitura recusada'), 'desfecho em português e detalhe preservado');
+  eq(readableLimitation('texto livre'), 'texto livre', 'texto fora do formato fica como está');
 });
 
 console.log(`\n${count - failures}/${count} testes passaram (knight-assessment.models).`);

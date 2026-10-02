@@ -3,17 +3,22 @@ import { Component, computed, input, output } from '@angular/core';
 import {
   KnightAffectedSummary,
   KnightAssessment,
+  KnightConsolidatedSource,
+  KnightSourceState,
   KnightControlFilters,
   KnightIndicatorStatus,
   KnightReferenceCoverage,
   affectedKindLabel,
+  consolidatedCollection,
   distributionBy,
+  readableLimitation,
   findingTitle,
   knightUnitsLine,
   limitationViews,
   overviewKpis,
   priorityControls,
   severityLabel,
+  sourceStateLabel,
   sourceTypeLabel,
   statusLabel,
   threeMeasures,
@@ -214,9 +219,10 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
           Cada fonte tem a própria nota, cobertura e data — não são somadas. Uma fonte disponível e não incluída,
           ou sem avaliação concluída, aparece aqui sem virar aprovação.
         </p>
+        <p class="small" [class.warn-text]="!collection(comp).complete"><b>Estado da coleta:</b> {{ collection(comp).text }}</p>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Fonte</th><th>Situação</th><th>Nota</th><th>Cobertura</th><th>Catálogo</th><th>Coleta</th></tr></thead>
+            <thead><tr><th>Fonte</th><th>Situação</th><th>Nota</th><th>Cobertura</th><th>Catálogo</th><th>Coleta</th><th>Estado da coleta</th><th>Limitações da fonte</th></tr></thead>
             <tbody>
               @for (s of comp; track s.source) {
                 <tr>
@@ -226,6 +232,12 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
                   <td>{{ s.coverage === null ? '—' : pct(s.coverage) }}</td>
                   <td>{{ s.catalogVersion || '—' }}</td>
                   <td>{{ s.capturedAt ? (s.capturedAt | date: 'dd/MM/yyyy HH:mm') : '—' }}</td>
+                  <td>{{ s.sourceState ? stateLabel(s.sourceState) : '—' }}</td>
+                  <td>
+                    @if (s.collectionLimitations.length) {
+                      <ul class="lim">@for (l of s.collectionLimitations; track $index) { <li>{{ readable(l) }}</li> }</ul>
+                    } @else { — }
+                  </td>
                 </tr>
               }
             </tbody>
@@ -316,6 +328,8 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       .chips, .legend { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
       .legend { margin-top: var(--sp-2); font-size: var(--fs-meta); color: var(--text-2); }
       .small { font-size: var(--fs-meta); }
+      .warn-text { color: var(--amber); }
+      ul.lim { margin: 0; padding-left: 16px; font-size: var(--fs-meta); }
       .bar { display: grid; grid-template-columns: 150px minmax(0, 1fr) 40px; gap: var(--sp-2); align-items: center; width: 100%;
         padding: 4px 0; border: 0; background: none; color: var(--text); text-align: left; cursor: pointer; }
       .bar:hover .track { box-shadow: 0 0 0 1px var(--cyan); }
@@ -407,6 +421,18 @@ export class KnightOverviewComponent {
 
   rowLabel(label: string, counts: Record<KnightIndicatorStatus, number>, total: number): string {
     return `${label}: ${counts.Exposed} reprovado(s), ${counts.Passed} aprovado(s), ${counts.NotEvaluated + counts.Error} não avaliado(s) ou erro, de ${total}`;
+  }
+
+  readable(raw: string): string {
+    return readableLimitation(raw);
+  }
+
+  stateLabel(state: KnightSourceState): string {
+    return sourceStateLabel(state);
+  }
+
+  collection(sources: KnightConsolidatedSource[]): { complete: boolean; incomplete: string[]; text: string } {
+    return consolidatedCollection(sources);
   }
 
   availabilityLabel(state: 'Included' | 'Available' | 'NotAssessed'): string {

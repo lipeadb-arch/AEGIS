@@ -447,13 +447,30 @@ const SOURCE_STATE_LABEL: Record<KnightSourceState, string> = {
   PartialCollection: 'Coleta parcial',
   InsufficientPermission: 'Permissão insuficiente',
   AuthenticationFailure: 'Falha de autenticação',
-  Throttled: 'Throttling',
+  Throttled: 'Limite de requisições',
   Unavailable: 'Indisponível',
   Error: 'Erro',
 };
 
 export function sourceStateLabel(state: KnightSourceState): string {
   return SOURCE_STATE_LABEL[state];
+}
+
+/**
+ * [AEGIS-KNIGHT-COVERAGE-04] Completude da COLETA de um consolidado, separada do término da execução: a composição
+ * sempre termina, mas só é coleta completa quando todas as fontes incluídas foram coletadas sem limitação. Mesma
+ * regra do backend (KnightConsolidatedCollection), para tela, HTML e PDF dizerem a mesma coisa.
+ */
+export function consolidatedCollection(sources: KnightConsolidatedSource[]): { complete: boolean; incomplete: string[]; text: string } {
+  const included = sources.filter((s) => s.included);
+  const incomplete = included
+    .filter((s) => s.sourceState !== 'Completed' || (s.collectionLimitations?.length ?? 0) > 0)
+    .map((s) => s.label);
+  const text = incomplete.length === 0
+    ? `Coleta completa nas ${included.length} fontes incluídas.`
+    : `Coleta parcial em ${incomplete.length} de ${included.length} fontes incluídas (${incomplete.join(', ')}). ` +
+      'A composição terminou; os controles sem dado dessas fontes ficam não avaliados e as limitações de cada uma estão na composição.';
+  return { complete: incomplete.length === 0 && included.length > 0, incomplete, text };
 }
 
 /** Um estado de coleta que NÃO é a conclusão íntegra — a UI o destaca (permissão/parcial/falha). */
@@ -466,7 +483,7 @@ const CAPABILITY_OUTCOME_LABEL: Record<KnightCapabilityOutcome, string> = {
   InsufficientPermission: 'Permissão insuficiente',
   Unavailable: 'Indisponível',
   NotAttempted: 'Não tentado',
-  Throttled: 'Throttling',
+  Throttled: 'Limite de requisições',
   AuthenticationFailure: 'Falha de autenticação',
   Error: 'Erro',
   LimitedByLicense: 'Licença insuficiente',
@@ -577,6 +594,16 @@ const CAPABILITY_LABEL: Record<string, string> = {
 /** Capacidade desconhecida degrada para o próprio identificador — nunca some da tela. */
 export function capabilityLabel(capability: string): string {
   return CAPABILITY_LABEL[capability] ?? capability;
+}
+
+/**
+ * [AEGIS-KNIGHT-COVERAGE-04] Limitação congelada na composição ("Capacidade: Desfecho — detalhe", identificadores) em
+ * texto legível — os mesmos rótulos da tabela de limitações; o detalhe fica como foi registrado.
+ */
+export function readableLimitation(raw: string): string {
+  const m = /^([A-Za-z0-9]+): ([A-Za-z]+)( — .*)?$/s.exec(raw);
+  if (!m || !(m[2] in CAPABILITY_OUTCOME_LABEL)) return raw;
+  return `${capabilityLabel(m[1])}: ${capabilityOutcomeLabel(m[2] as KnightCapabilityOutcome)}${m[3] ?? ''}`;
 }
 
 /** Capacidades com problema (não coletadas) — o que a UI mostra como limitação de cobertura. */

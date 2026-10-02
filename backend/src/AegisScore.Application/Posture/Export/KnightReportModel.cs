@@ -22,7 +22,8 @@ namespace AegisScore.Application.Posture.Export;
 public sealed record ReportHeader(
     Guid SnapshotId, Guid? RunId, string? ClientName, string SourceLabel, string SourceType, string Provider,
     bool IsDemo, DateTimeOffset CapturedAt, DateTimeOffset? DataRecency, string SchemaVersion, string CatalogVersion,
-    string FormulaVersion, string? ProfileCatalogVersion, string ContentHash, bool IntegrityVerified);
+    string FormulaVersion, string? ProfileCatalogVersion, string ContentHash, bool IntegrityVerified,
+    string? CollectionState = null, string? CollectionStateLabel = null, string? CollectionSummary = null);
 
 public sealed record ReportCount(string Key, string Label, int Count);
 
@@ -201,7 +202,7 @@ public static class KnightReportModelBuilder
                 + "consultiva não foram congelados nela e por isso não aparecem aqui. Domínio e serviço foram derivados da categoria e da fonte congeladas.");
         if (sourceType == KnightSourceType.Demo)
             notes.Add("Avaliação de DEMONSTRAÇÃO com dados 100% sintéticos — não representa nenhum ambiente real.");
-        var composition = KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson);
+        var composition = ReadableComposition(KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson));
         if (sourceType == KnightSourceType.Consolidated)
             notes.Add("Este relatório COMPÕE avaliações concluídas de mais de uma fonte do mesmo tenant, cada uma "
                 + "com a própria versão de catálogo e data de coleta (ver \"Composição das fontes\"). A nota KNIGHT "
@@ -221,7 +222,11 @@ public static class KnightReportModelBuilder
         var header = new ReportHeader(
             s.Id, s.SourceRunId, s.ClientName, s.SourceLabel ?? KnightControlProfiles.ProviderOf(sourceType), sourceType.ToString(),
             KnightControlProfiles.ProviderOf(sourceType), sourceType == KnightSourceType.Demo, s.CapturedAt, s.DataRecency,
-            s.SchemaVersion, s.CatalogVersion, s.FormulaVersion, s.ProfileCatalogVersion, s.ContentHash, integrityVerified);
+            s.SchemaVersion, s.CatalogVersion, s.FormulaVersion, s.ProfileCatalogVersion, s.ContentHash, integrityVerified,
+            // [AEGIS-KNIGHT-COVERAGE-04] Consolidado: completude da coleta vem da composição congelada (por fonte).
+            composition is { Count: > 0 } ? KnightConsolidatedCollection.StateOf(composition).ToString() : null,
+            composition is { Count: > 0 } ? KnightConsolidatedCollection.Label(KnightConsolidatedCollection.StateOf(composition).ToString()) : null,
+            composition is { Count: > 0 } ? KnightConsolidatedCollection.Describe(composition) : null);
 
         return new KnightReportModel(header, kpis, controls, byDomain, byService, priorities, topObjects, limitations,
             isV2 ? Array.Empty<string>() : s.CollectionLimitations.ToList(), advisory, notes, frameworks, coverage, byPlatform,
@@ -374,6 +379,25 @@ public static class KnightReportModelBuilder
 
     /// <summary>Rótulo do tipo — a MESMA definição usada pela tela (via API), HTML, CSV e PDF.</summary>
     public static string KindLabel(KnightAffectedObjectKind k) => KnightObjectNouns.Label(k);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] A composição congela cada limitação como "Capacidade: Desfecho — detalhe" (identificadores).
+    /// Para leitura, os identificadores viram os MESMOS rótulos da tabela de limitações; o detalhe fica como foi registrado.
+    /// </summary>
+    public static string ReadableLimitation(string raw)
+    {
+        var sep = raw.IndexOf(": ", StringComparison.Ordinal);
+        if (sep <= 0) return raw;
+        var rest = raw[(sep + 2)..];
+        var dash = rest.IndexOf(" — ", StringComparison.Ordinal);
+        var outcomeText = dash < 0 ? rest : rest[..dash];
+        if (!Enum.TryParse<KnightCapability>(raw[..sep], out var cap) || !Enum.TryParse<KnightCapabilityOutcome>(outcomeText, out var outcome))
+            return raw;
+        return $"{KnightCapabilityLabels.Label(cap)}: {CauseLabel(outcome)}" + (dash < 0 ? "" : rest[dash..]);
+    }
+
+    public static IReadOnlyList<KnightConsolidatedSourceEntry>? ReadableComposition(IReadOnlyList<KnightConsolidatedSourceEntry>? composition) =>
+        composition?.Select(e => e with { CollectionLimitations = e.CollectionLimitations.Select(ReadableLimitation).ToList() }).ToList();
 
     private static string CauseLabel(KnightCapabilityOutcome o) => o switch
     {

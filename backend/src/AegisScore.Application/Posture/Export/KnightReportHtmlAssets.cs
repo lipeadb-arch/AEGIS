@@ -138,6 +138,7 @@ rows.forEach(function(r){var tot=r.passed+r.failed+r.mitigated+r.notEvaluated+r.
 var f={};f[key]=r.key;var desc=r.label+': '+r.failed+' reprovado(s), '+r.passed+' aprovado(s), '+(r.notEvaluated+r.errors)+' não avaliado(s)/erro, de '+tot;
 b.appendChild(el('button',{cls:'bar',type:'button','aria-label':desc,title:desc,onclick:function(){go(f);}},[el('span',{cls:'lbl',text:r.label}),tr,el('span',{cls:'num',text:String(tot)})]));});
 p.appendChild(b);var lg=el('div',{cls:'legend'});STATUS.forEach(function(s){var i=el('i',{cls:'seg '+s[0]});lg.appendChild(el('span',null,[i,s[1]]));});p.appendChild(lg);return p;}
+var SST={Completed:'Coleta concluída',PartialCollection:'Coleta parcial',InsufficientPermission:'Permissão insuficiente',AuthenticationFailure:'Falha de autenticação',Throttled:'Limite de requisições',Unavailable:'Indisponível',Error:'Erro'};
 function composition(){var p=el('div',{cls:'panel'},[el('h2',{text:'Composição do relatório consolidado'}),
 el('p',{cls:'sub',text:'Cada fonte tem a própria nota, cobertura e data — não são somadas. Uma fonte disponível e não incluída, ou sem avaliação concluída, aparece aqui sem virar aprovação.'})]);
 var tb=el('tbody');D.composition.forEach(function(s){var sit=s.included?['s-Passed','Incluída']:(s.availabilityState==='NotAssessed'?['s-NotEvaluated','Sem avaliação concluída']:['s-Mitigated','Disponível, não incluída']);
@@ -145,12 +146,15 @@ tb.appendChild(el('tr',null,[el('td',{text:s.label}),el('td',null,[pill(sit[0],s
 el('td',{text:s.score===null||s.score===undefined?'—':String(Math.round(s.score))}),
 el('td',{text:s.coverage===null||s.coverage===undefined?'—':pct(s.coverage)}),
 el('td',{text:s.catalogVersion||'—'}),el('td',{text:dt(s.capturedAt)}),
-el('td',{text:(s.collectionLimitations&&s.collectionLimitations.length)?s.collectionLimitations.length+' limitação(ões)':'—'})]));});
-p.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,['Fonte','Situação','Nota','Cobertura','Catálogo','Coleta','Limitações'].map(function(x){return el('th',{text:x});}))]),tb])]));
+el('td',{text:s.sourceState?(SST[s.sourceState]||s.sourceState):'—'}),
+el('td',null,(s.collectionLimitations&&s.collectionLimitations.length)?[el('ul',null,s.collectionLimitations.map(function(x){return el('li',{text:x});}))]:[el('span',{text:'—'})])]));});
+if(D.header.collectionSummary)p.appendChild(el('p',{cls:'sub',text:D.header.collectionSummary}));
+p.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,['Fonte','Situação','Nota','Cobertura','Catálogo','Coleta','Estado da coleta','Limitações da fonte'].map(function(x){return el('th',{text:x});}))]),tb])]));
 return p;}
 function sources(){var h=D.header,p=el('div',{cls:'panel'},[el('h2',{text:'Fontes, datas e limitações de cobertura'})]);
 p.appendChild(el('div',{cls:'kv'},[el('span',{cls:'k',text:'Fonte'}),el('span',{text:h.sourceLabel+' · provedor '+h.provider+(h.isDemo?' (demonstração sintética)':'')}),
-el('span',{cls:'k',text:'Coleta mais recente'}),el('span',{text:dt(h.dataRecency)}),el('span',{cls:'k',text:'Fotografia publicada em'}),el('span',{text:dt(h.capturedAt)}),
+el('span',{cls:'k',text:'Coleta mais recente'}),el('span',{text:dt(h.dataRecency)}),
+h.collectionStateLabel?el('span',{cls:'k',text:'Estado da coleta'}):null,h.collectionStateLabel?el('span',{text:h.collectionStateLabel+' — '+h.collectionSummary}):null,el('span',{cls:'k',text:'Fotografia publicada em'}),el('span',{text:dt(h.capturedAt)}),
 el('span',{cls:'k',text:'Escopo desta avaliação'}),el('span',{text:'Controles avaliados a partir de '+h.sourceLabel+'. Serviços ainda não coletados não aparecem como avaliados; o que falta está na cobertura do catálogo de referência.'})]));
 if(D.limitations.length===0&&D.legacyLimitations.length===0)p.appendChild(el('p',{cls:'sub',text:'Nenhuma limitação de coleta registrada: todas as capacidades desta fonte foram lidas.'}));
 if(D.limitations.length){var tb=el('tbody');D.limitations.forEach(function(l){tb.appendChild(el('tr',null,[el('td',{text:l.capabilityLabel}),el('td',{text:l.causeLabel}),

@@ -8,6 +8,7 @@ import {
   KnightAffectedSummary,
   KnightReferenceCoverage,
   KnightAssessment,
+  KnightConsolidatedSource,
   KnightControlFilters,
   KnightIndicator,
   isFinding,
@@ -19,6 +20,7 @@ import {
   connectionBadgeLabel,
   connectionStateOf,
   isProblemState,
+  consolidatedCollection,
   sourceStateLabel,
   sourceTypeLabel,
   CONSOLIDATION_CANDIDATES,
@@ -277,6 +279,10 @@ import { PostureExportFormat } from '../models/posture-history.models';
               <span>Iniciada em: <b>{{ a.startedAt | date: 'dd/MM/yyyy HH:mm' }}</b></span>
               <span class="sep">·</span>
               <span>Execução: <b>não finalizada</b></span>
+            } @else if (a.sourceType === 'Consolidated') {
+              <span>Execução: <b>concluída</b></span>
+              <span class="sep">·</span>
+              <span>Dados de: <b>{{ (a.completedAt || a.startedAt) | date: 'dd/MM/yyyy HH:mm' }}</b></span>
             } @else {
               <span>Avaliação concluída: <b>{{ (a.completedAt || a.startedAt) | date: 'dd/MM/yyyy HH:mm' }}</b></span>
             }
@@ -287,6 +293,12 @@ import { PostureExportFormat } from '../models/posture-history.models';
               <b>Modo demonstração.</b> Dados 100% sintéticos (domínio <code>demo.example.com</code>). O Aegis
               <b>não</b> está conectado ao Entra ID, AD local ou Okta.
             </p>
+          } @else if (a.sourceType === 'Consolidated' && a.sources) {
+            @if (isProblemState(a.sourceState)) {
+              <p class="demo-note real-problem">
+                <b>Execução concluída, coleta parcial.</b> {{ consolidatedText(a.sources) }}
+              </p>
+            }
           } @else if (isProblemState(a.sourceState)) {
             <p class="demo-note real-problem">
               <b>Coleta real com limitação.</b> Esta é uma coleta da fonte <b>{{ a.source }}</b> (não é Demo) —
@@ -924,6 +936,9 @@ export class AegisKnightComponent implements OnInit {
   protected readonly sourceTypeLabel = sourceTypeLabel;
   protected readonly sourceStateLabel = sourceStateLabel;
   protected readonly isProblemState = isProblemState;
+  protected consolidatedText(sources: KnightConsolidatedSource[]): string {
+    return consolidatedCollection(sources).text;
+  }
 
   readonly badgeState = computed(() =>
     connectionStateOf(this.assessment(), this.entraConfigured() || this.googleConfigured()),

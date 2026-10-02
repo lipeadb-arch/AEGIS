@@ -407,7 +407,7 @@ public static class PostureSnapshotPdfWriter
     /// </summary>
     private static void AddConsolidatedComposition(Section section, PostureSnapshot s)
     {
-        var composition = KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson);
+        var composition = KnightReportModelBuilder.ReadableComposition(KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson));
         if (composition is null || composition.Count == 0) return;
 
         Heading(section, "Composição do relatório consolidado");
@@ -415,15 +415,19 @@ public static class PostureSnapshotPdfWriter
             "Combina avaliações concluídas de mais de uma fonte do mesmo tenant. A nota acima aplica a fórmula " +
             "knight-score-v1 sobre a união dos controles das fontes INCLUÍDAS — não é a média das notas por fonte.",
             muted: true);
+        // [AEGIS-KNIGHT-COVERAGE-04] Término da composição × completude da coleta, por fonte.
+        Body(section, "Estado da coleta: " + KnightConsolidatedCollection.Label(KnightConsolidatedCollection.StateOf(composition).ToString())
+            + " — " + KnightConsolidatedCollection.Describe(composition));
 
         var table = section.AddTable();
         StyleTable(table);
-        table.AddColumn(Unit.FromCentimeter(4.2));
-        table.AddColumn(Unit.FromCentimeter(3.6));
-        table.AddColumn(Unit.FromCentimeter(1.6));
+        table.AddColumn(Unit.FromCentimeter(3.8));
+        table.AddColumn(Unit.FromCentimeter(3.0));
+        table.AddColumn(Unit.FromCentimeter(1.4));
         table.AddColumn(Unit.FromCentimeter(1.8));
-        table.AddColumn(Unit.FromCentimeter(3.4));
-        HeaderRow(table, "Fonte", "Situação", "Nota", "Cobertura", "Coleta");
+        table.AddColumn(Unit.FromCentimeter(2.6));
+        table.AddColumn(Unit.FromCentimeter(2.8));
+        HeaderRow(table, "Fonte", "Situação", "Nota", "Cobertura", "Coleta", "Estado da coleta");
         foreach (var e in composition)
         {
             var row = table.AddRow();
@@ -434,8 +438,11 @@ public static class PostureSnapshotPdfWriter
             Cell(row, 2, e.Score is { } sc ? Math.Round(sc).ToString(Pt) : "—", align: ParagraphAlignment.Center);
             Cell(row, 3, e.Coverage is { } cv ? cv.ToString("0.#", Pt) + "%" : "—", align: ParagraphAlignment.Center);
             Cell(row, 4, e.CapturedAt is { } at ? at.ToUniversalTime().ToString("dd/MM/yyyy", Pt) + " UTC" : "—");
+            Cell(row, 5, KnightConsolidatedCollection.Label(e.SourceState));
         }
         section.AddParagraph().Format.SpaceAfter = Unit.FromMillimeter(2);
+        foreach (var e in composition.Where(e => e.Included && e.CollectionLimitations.Count > 0))
+            Body(section, $"Limitações de {e.Label}: " + string.Join(" · ", e.CollectionLimitations), muted: true);
     }
 
     /// <summary>

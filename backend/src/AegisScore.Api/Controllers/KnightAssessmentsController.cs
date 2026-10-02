@@ -323,7 +323,8 @@ public class KnightAssessmentsController : ControllerBase
 
         return new KnightAssessmentDto(
             Guid.Empty, KnightAssessmentMode.Live.ToString(), false, KnightSourceType.Consolidated.ToString(),
-            KnightSourceState.Completed.ToString(), sourceLabel, KnightRunStatus.Completed.ToString(),
+            // A execução (composição) terminou; a COLETA só é completa se todas as fontes incluídas forem íntegras.
+            KnightConsolidatedCollection.StateOf(a.Sources).ToString(), sourceLabel, KnightRunStatus.Completed.ToString(),
             "ak-knight-consolidated", a.FormulaVersion, at, a.DataRecency,
             a.Score, a.Coverage, counts, a.Indicators.Select(ToDto).ToList(),
             a.Capabilities.Select(c => new KnightCapabilityDto(c.Capability.ToString(), c.Outcome.ToString(), c.Detail)).ToList(),
