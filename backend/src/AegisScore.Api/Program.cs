@@ -16,6 +16,7 @@ using AegisScore.Api.Workers;
 using AegisScore.Application.Abstractions;
 using AegisScore.Connectors.Microsoft;
 using AegisScore.Connectors.Microsoft.Knight.Exchange;
+using AegisScore.Connectors.Microsoft.Knight.Protection;
 using AegisScore.Connectors.Microsoft.Knight.Teams;
 using AegisScore.Connectors.Google;
 using AegisScore.Infrastructure;
@@ -43,6 +44,14 @@ if (ExchangeRuntimeDiagnostics.Requested(args))
     return await ExchangeRuntimeDiagnostics.RunFromConfigurationAsync(
         new ConfigurationBuilder().AddEnvironmentVariables().Build()
             .GetSection(ExchangeRuntimeDiagnostics.ConfigurationSection),
+        Console.Out);
+
+// [AEGIS-KNIGHT-COVERAGE-04] O mesmo diagnóstico para o adaptador de proteção (Defender para Office 365 e Purview), que
+// usa o runtime do Exchange Online: módulo, comandos de conexão das DUAS sessões e o cenário sintético dos dois perfis.
+if (ProtectionRuntimeDiagnostics.Requested(args))
+    return await ProtectionRuntimeDiagnostics.RunFromConfigurationAsync(
+        new ConfigurationBuilder().AddEnvironmentVariables().Build()
+            .GetSection(ProtectionRuntimeDiagnostics.ConfigurationSection),
         Console.Out);
 
 var builder = WebApplication.CreateBuilder(args);

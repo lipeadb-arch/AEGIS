@@ -2,7 +2,7 @@ import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http'
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, map, throwError, timeout } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { KnightSourceType } from '../models/knight.models';
+import { KNIGHT_SOURCES, KnightSourceType } from '../models/knight.models';
 import {
   PostureComparisonResult,
   PostureExportFormat,
@@ -15,12 +15,10 @@ import {
   parseContentDispositionFilename,
 } from '../models/posture-history.models';
 
-/** Mesmos apelidos curtos aceitos pelo servidor ("entra"/"teams"/"exchange") — nunca o nome completo do enum. */
-const SOURCE_SLUG: Partial<Record<KnightSourceType, string>> = {
-  MicrosoftEntraId: 'entra',
-  MicrosoftTeams: 'teams',
-  MicrosoftExchangeOnline: 'exchange',
-};
+/** Mesmos apelidos curtos aceitos pelo servidor — nunca o nome completo do enum (catálogo único de fontes). */
+const SOURCE_SLUG: Partial<Record<KnightSourceType, string>> = Object.fromEntries(
+  KNIGHT_SOURCES.filter((d) => d.microsoftConnector).map((d) => [d.source, d.slug]),
+);
 
 /** Arquivo exportado, pronto para download como Blob (nunca carregado como string). */
 export interface PostureExportFile {

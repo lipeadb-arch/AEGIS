@@ -642,10 +642,12 @@ public sealed class RemediationService : IRemediationService
             .FirstOrDefaultAsync(ct);
 
     /// <summary>Descrição curta da procedência, para a trilha dizer de qual coleta a ação nasceu.</summary>
+    // [AEGIS-KNIGHT-COVERAGE-04] O histórico é lido por pessoas: a fonte vai pelo rótulo do catálogo, nunca pelo nome
+    // do código ("MicrosoftDefenderForOffice365").
     private static string DescribeOrigin(KnightSourceType source, KnightAssessmentMode mode) =>
         mode == KnightAssessmentMode.Demo
-            ? $"fonte {source}, cenário de DEMONSTRAÇÃO"
-            : $"fonte {source}, coleta real";
+            ? $"fonte {KnightSourceCatalog.Label(source)}, cenário de DEMONSTRAÇÃO"
+            : $"fonte {KnightSourceCatalog.Label(source)}, coleta real";
 
     /// <summary>
     /// Carrega a ação para escrita e valida a versão que o cliente leu. Versão divergente = alguém escreveu

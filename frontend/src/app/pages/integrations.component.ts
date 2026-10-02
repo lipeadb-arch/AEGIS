@@ -1,4 +1,5 @@
 import { Component, DestroyRef, computed, effect, inject, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
@@ -16,6 +17,7 @@ import {
   syncKey,
   syncView,
 } from '../models/knight-sync.models';
+import { KNIGHT_SOURCES } from '../models/knight.models';
 import {
   buildMicrosoftHubRequest,
   buildSiemSyncMessage,
@@ -33,8 +35,10 @@ import {
   MICROSOFT_HUB_SERVICES,
   PERMISSION_CATALOG_CAVEAT,
   permissionUsageLabel,
+  MicrosoftCredentialSummary,
   MicrosoftServiceKey,
   MicrosoftServiceSelection,
+  parseSubscriptionIds,
   ProviderSpec,
   providerByKey,
   statusLabel,
@@ -65,7 +69,7 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
 @Component({
   selector: 'app-integrations',
   standalone: true,
-  imports: [ReactiveFormsModule, RouterLink],
+  imports: [ReactiveFormsModule, RouterLink, DatePipe],
   template: `
     <section class="stack">
       <!-- Sem <h1> redundante: a aba "Integrações" do shell de Configurações já rotula esta seção. -->
@@ -342,6 +346,61 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
             }
           </div>
         </fieldset>
+
+        @if (knightSelected()) {
+          <fieldset class="creds">
+            <legend>AEGIS KNIGHT · certificado da aplicação{{ azureAvailable ? ' e escopo do Azure' : '' }}</legend>
+            <p class="muted small">
+              O certificado é a forma de autenticação que a Microsoft documenta para o Exchange Online, o Security &amp;
+              Compliance e a API administrativa do SharePoint (que não aceita segredo). Com certificado, o KNIGHT pede
+              todos os tokens por asserção assinada; o segredo fica dispensável. O arquivo e a senha são cifrados no
+              servidor e nunca voltam para a tela.
+            </p>
+            @if (credentialSummary(); as cs) {
+              <p class="small" data-testid="knight-credential-summary">
+                @if (cs.certificate; as c) {
+                  Certificado guardado: impressão digital <code>{{ c.thumbprint }}</code>, válido até
+                  {{ c.notAfter | date: 'dd/MM/yyyy' }}{{ c.currentlyValid ? '' : ' — fora da validade' }}.
+                } @else if (cs.configured) {
+                  Nenhum certificado guardado{{ cs.hasSecret ? ' — os tokens usam o segredo de cliente.' : '.' }}
+                }
+                @if (cs.certificateProblem) {
+                  <em class="err">{{ cs.certificateProblem }}</em>
+                }
+              </p>
+            }
+            <div class="grid">
+              <label class="field">
+                <span>Certificado (.pfx com a chave privada)</span>
+                <input type="file" accept=".pfx,.p12,application/x-pkcs12" (change)="onCertificateFile($event)" />
+                @if (hubCertificate(); as f) {
+                  <em class="hint">Selecionado: {{ f.name }} (será validado no servidor ao salvar).</em>
+                }
+              </label>
+              <label class="field">
+                <span>Senha do certificado</span>
+                <input type="password" formControlName="certificatePassword" autocomplete="new-password" spellcheck="false" />
+              </label>
+              @if (credentialSummary()?.certificate) {
+                <label class="field">
+                  <span>Remover o certificado guardado</span>
+                  <input type="checkbox" formControlName="removeCertificate" />
+                </label>
+              }
+              @if (azureAvailable) {
+                <label class="field">
+                  <span>Assinaturas do Azure avaliadas (uma por linha)</span>
+                  <textarea formControlName="azureSubscriptions" rows="3"
+                    placeholder="00000000-0000-0000-0000-000000000000"></textarea>
+                  <em class="hint">
+                    Em branco: todas as assinaturas que a aplicação enxerga (papel Leitor do Azure RBAC). Informe os
+                    identificadores para limitar o escopo.
+                  </em>
+                </label>
+              }
+            </div>
+          </fieldset>
+        }
 
         @if (sentinelSelected()) {
           <fieldset class="creds">
@@ -1070,9 +1129,13 @@ export class IntegrationsComponent {
   protected readonly hubForm: FormGroup = this.fb.group({
     tenantId: ['', Validators.required],
     clientId: ['', Validators.required],
-    clientSecret: ['', Validators.required],
+    // [AEGIS-KNIGHT-COVERAGE-04] Opcional quando só o AEGIS KNIGHT é conectado com certificado — o servidor decide.
+    clientSecret: [''],
     syncIntervalMinutes: [360, [Validators.required, Validators.min(5), Validators.max(10080)]],
     workspaceId: [''],
+    certificatePassword: [''],
+    removeCertificate: [false],
+    azureSubscriptions: [''],
     services: this.fb.group({
       SecureScore: [false],
       IdentityPosture: [false],
@@ -1084,6 +1147,49 @@ export class IntegrationsComponent {
   /** True quando o Sentinel está marcado — só então o campo workspaceId aparece/é exigido. */
   protected sentinelSelected(): boolean {
     return !!this.hubForm.get(['services', 'Sentinel'])!.value;
+  }
+
+  // ---- [AEGIS-KNIGHT-COVERAGE-04] Certificado e escopo do Azure do AEGIS KNIGHT ----
+  /** Arquivo de certificado escolhido (base64), ainda não enviado. Nunca vem do servidor. */
+  protected readonly hubCertificate = signal<{ name: string; base64: string } | null>(null);
+  /** Resumo NÃO sensível do que está guardado (impressão digital, validade, escopo). */
+  protected readonly credentialSummary = signal<MicrosoftCredentialSummary | null>(null);
+
+  /** O escopo do Azure só aparece quando a fonte Azure existe no catálogo (isto é, quando há coletor). */
+  protected readonly azureAvailable = KNIGHT_SOURCES.some((s) => s.source === 'MicrosoftAzure');
+
+  protected knightSelected(): boolean {
+    return !!this.hubForm.get(['services', 'IdentityPosture'])!.value;
+  }
+
+  protected onCertificateFile(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) {
+      this.hubCertificate.set(null);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const bytes = new Uint8Array(reader.result as ArrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      this.hubCertificate.set({ name: file.name, base64: btoa(binary) });
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  private loadCredentialSummary(): void {
+    this.api.microsoftCredential().subscribe({
+      next: (s) => {
+        this.credentialSummary.set(s);
+        // O escopo guardado aparece no campo: salvar de novo envia exatamente o que está na tela.
+        if (s.configured && !this.hubForm.get('azureSubscriptions')!.dirty)
+          this.hubForm.get('azureSubscriptions')!.setValue(s.azureSubscriptionIds.join('\n'));
+      },
+      // Sem permissão (não TenantAdmin) ou sem conexão: o formulário continua funcionando sem o resumo.
+      error: () => this.credentialSummary.set(null),
+    });
   }
 
   constructor() {
@@ -1118,6 +1224,7 @@ export class IntegrationsComponent {
         this.connectors.set(list);
         this.loading.set(false);
         this.loadKnightState(list);
+        this.loadCredentialSummary();
       },
       error: (err: Error) => {
         this.loadError.set(err.message);
@@ -1210,11 +1317,27 @@ export class IntegrationsComponent {
 
     // Ao menos um serviço + a credencial comum válida.
     if (this.hubForm.get('tenantId')!.invalid || this.hubForm.get('clientId')!.invalid ||
-        this.hubForm.get('clientSecret')!.invalid || this.hubForm.get('syncIntervalMinutes')!.invalid ||
-        selectedKeys.length === 0) {
+        this.hubForm.get('syncIntervalMinutes')!.invalid || selectedKeys.length === 0) {
       this.hubForm.markAllAsTouched();
       this.hubState.set('error');
       this.hubError.set('Informe a credencial comum e selecione ao menos um serviço Microsoft.');
+      return;
+    }
+
+    // [AEGIS-KNIGHT-COVERAGE-04] Segredo OU certificado (novo, ou o guardado sem pedido de remoção). O servidor é a
+    // autoridade final — inclusive sobre quais serviços aceitam só certificado.
+    const knight = selectedKeys.includes('IdentityPosture');
+    const newCertificate = knight ? this.hubCertificate() : null;
+    const storedCertificate = knight && !!this.credentialSummary()?.certificate && !raw.removeCertificate;
+    if (!((raw.clientSecret as string) ?? '').trim() && !newCertificate && !storedCertificate) {
+      this.hubState.set('error');
+      this.hubError.set('Informe o Client secret ou um certificado da aplicação (PFX com a chave privada).');
+      return;
+    }
+    const subscriptions = parseSubscriptionIds(this.azureAvailable ? (raw.azureSubscriptions as string) : '');
+    if (knight && subscriptions.invalid.length > 0) {
+      this.hubState.set('error');
+      this.hubError.set(`Assinatura do Azure inválida (${subscriptions.invalid.length}): informe o identificador (GUID) de cada assinatura.`);
       return;
     }
 
@@ -1243,8 +1366,15 @@ export class IntegrationsComponent {
     }));
 
     const body = buildMicrosoftHubRequest(
-      { tenantId: raw.tenantId as string, clientId: raw.clientId as string, clientSecret: raw.clientSecret as string },
+      { tenantId: raw.tenantId as string, clientId: raw.clientId as string, clientSecret: (raw.clientSecret as string) ?? '' },
       selections,
+      {
+        certificatePfxBase64: newCertificate?.base64 ?? null,
+        certificatePassword: (raw.certificatePassword as string) || null,
+        removeCertificate: !!raw.removeCertificate,
+        // Sem a fonte Azure, o escopo guardado não é tocado (omitido = mantido).
+        azureSubscriptionIds: this.azureAvailable ? subscriptions.ids : null,
+      },
     );
 
     this.hubState.set('saving');
@@ -1254,6 +1384,10 @@ export class IntegrationsComponent {
         this.hubState.set('done');
         // Limpa APENAS o segredo do DOM (nunca volta do servidor); mantém tenant/client e a seleção.
         this.hubForm.get('clientSecret')!.reset('');
+        this.hubForm.get('certificatePassword')!.reset('');
+        this.hubForm.get('removeCertificate')!.reset(false);
+        this.hubForm.get('azureSubscriptions')!.markAsPristine();
+        this.hubCertificate.set(null);
         this.hubRevealSecret.set(false);
         this.reload();
       },

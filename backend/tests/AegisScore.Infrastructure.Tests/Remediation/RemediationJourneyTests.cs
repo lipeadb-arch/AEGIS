@@ -83,6 +83,10 @@ public sealed class RemediationJourneyTests : IDisposable
         ex.Which.ExistingActionPlanId.Should().Be(criada!.Id, "a tela precisa saber QUAL ação abrir");
 
         (await svc.ListAsync(new ActionPlanFilter("AK-ENTRA-001"))).Should().HaveCount(1);
+
+        // [AEGIS-KNIGHT-COVERAGE-04] O histórico é lido por pessoas: a fonte vai pelo rótulo, não pelo nome do código.
+        criada.Events.Single(e => e.Kind == ActionPlanEventKind.Created).Note.Should()
+            .Contain("fonte Demonstração (sintético), cenário de DEMONSTRAÇÃO").And.NotContain("fonte Demo,");
     }
 
     [Fact]

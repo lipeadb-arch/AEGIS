@@ -55,7 +55,9 @@ public sealed class PostureSnapshotConsolidatedTests : IDisposable
         detail.Summary.FormulaVersion.Should().Be("knight-score-v1");
         detail.Indicators.Should().HaveCount(3, "os dois indicadores do Entra ID + o do Teams — nenhum contado duas vezes");
 
-        detail.Composition.Should().HaveCount(3, "Entra ID, Teams e Exchange Online são sempre listados");
+        // [AEGIS-KNIGHT-COVERAGE-04] Toda fonte candidata é listada — incluída, disponível ou nunca avaliada —, na ordem do catálogo.
+        detail.Composition.Select(c => c.Source).Should().Equal(KnightSourceCatalog.ConsolidationCandidates,
+            "as fontes do conector Microsoft são sempre listadas, mesmo as que nunca foram avaliadas");
         var entra = detail.Composition!.Single(s => s.Source == KnightSourceType.MicrosoftEntraId);
         var teams = detail.Composition!.Single(s => s.Source == KnightSourceType.MicrosoftTeams);
         var exchange = detail.Composition!.Single(s => s.Source == KnightSourceType.MicrosoftExchangeOnline);
@@ -257,7 +259,9 @@ public sealed class PostureSnapshotConsolidatedTests : IDisposable
         var snapshot = await db.PostureSnapshots.AsNoTracking()
             .Include(s => s.Indicators).Include(s => s.Objects).SingleAsync(s => s.Id == detail.Summary.Id);
         var model = KnightReportModelBuilder.Build(snapshot, integrityVerified: true);
-        model.Composition.Should().HaveCount(3);
+        model.Composition.Should().HaveCount(KnightSourceCatalog.ConsolidationCandidates.Count);
+        model.Composition.Count(c => c.AvailabilityState == "NotAssessed").Should().Be(KnightSourceCatalog.ConsolidationCandidates.Count - 2,
+            "as fontes sem avaliação aparecem como não avaliadas, sem nota — nunca como zero");
         model.Header.SourceType.Should().Be("Consolidated");
         model.Header.IsDemo.Should().BeFalse("uma fotografia consolidada real não é rotulada como demonstração");
 
@@ -280,6 +284,37 @@ public sealed class PostureSnapshotConsolidatedTests : IDisposable
         var pdfBytes = (await exporter.ExportAsync(snapshot.Id, PostureExportFormat.Pdf))!.Content;
         pdfBytes.Should().NotBeEmpty();
         pdfBytes.Take(4).ToArray().Should().Equal(new byte[] { 0x25, 0x50, 0x44, 0x46 }, "assinatura %PDF");
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] A ação aberta para um achado — seja na visão por fonte, seja no consolidado — nasce da
+    /// execução REAL da fonte, e o relatório consolidado a congela pelo indicador e pela procedência dessa fonte: a
+    /// mesma ação, uma vez, sem a composição precisar de uma execução própria.
+    /// </summary>
+    [Fact]
+    public async Task Publish_Consolidated_FreezesTheSourceRunActionPlan_OnceAndBoundToItsSource()
+    {
+        await using var db = NewContext(TenantA);
+        var entraRun = await SeedEntraRunAsync(db);
+        await SeedTeamsRunAsync(db);
+
+        var remediation = new AegisScore.Infrastructure.Remediation.RemediationService(db, new SystemTenantContext(TenantA), TimeProvider.System,
+            new AegisScore.Infrastructure.Queries.DevicePriorityQuery(db, TimeProvider.System,
+                Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions())));
+        var plano = await remediation.CreateForFindingAsync(
+            new AegisScore.Application.Remediation.CreateFindingActionPlanCommand(entraRun, "AK-ENTRA-001", "Registrar segundo fator",
+                "Ação proposta (sintética).", "Equipe de Identidade", "TI", null),
+            new AegisScore.Application.Remediation.RemediationActor(Guid.NewGuid(), "Analista Demo"));
+
+        var detail = await ServiceFor(db, TenantA).PublishConsolidatedKnightAsync(null);
+
+        var snapshot = await db.PostureSnapshots.AsNoTracking()
+            .Include(s => s.Controls).Include(s => s.Indicators).Include(s => s.ActionItems).Include(s => s.Objects)
+            .SingleAsync(s => s.Id == detail.Summary.Id);
+        snapshot.ActionItems.Should().ContainSingle("a ação do achado do Entra ID entra uma vez no consolidado")
+            .Which.ActionPlanId.Should().Be(plano!.Id);
+        snapshot.ActionItems.Single().IndicatorId.Should().Be("AK-ENTRA-001");
+        PostureSnapshotHasher.Verify(snapshot).Should().BeTrue("a ação congelada faz parte do conteúdo assinado");
     }
 
     // ---- infraestrutura do teste -------------------------------------------------------------------

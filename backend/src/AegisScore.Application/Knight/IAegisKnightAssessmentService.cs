@@ -236,4 +236,10 @@ public interface IAegisKnightAssessmentService
     /// se repetem entre controles expostos. Somente leitura; <c>null</c> quando a avaliação não existe no tenant.
     /// </summary>
     Task<KnightAffectedSummary?> GetAffectedSummaryAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Resumo de afetados da composição do relatório consolidado: as execuções reais das fontes
+    /// incluídas, com um objeto presente em duas fontes contado uma vez. <c>null</c> quando nenhuma execução existe.
+    /// </summary>
+    Task<KnightAffectedSummary?> GetAffectedSummaryAsync(IReadOnlyCollection<Guid> runIds, CancellationToken ct = default);
 }

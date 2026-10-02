@@ -25,6 +25,7 @@ import {
   sourceTypeLabel,
   statusLabel,
   totalPages,
+  findingRunIdOf,
 } from '../../models/knight.models';
 import { KnightService } from '../../services/knight.service';
 import {
@@ -316,7 +317,7 @@ import { KnightActionPlanComponent } from './action-plan.component';
               [indicatorId]="indicator().indicatorId"
               [affectedCount]="indicator().affectedObjectCount"
               [originRunId]="planOriginRunId()"
-              [currentRunId]="assessment().id"
+              [currentRunId]="findingRunId()"
               [runFinalized]="runFinalized()"
               [existing]="plan()"
               (changed)="planChanged.emit($event)" />
@@ -520,7 +521,15 @@ export class KnightFindingDetailComponent {
    * olhando quando decide agir. Um plano já existente conserva a sua própria origem, que não é reescrita
    * quando o analista abre uma coleta mais nova.
    */
-  readonly planOriginRunId = computed(() => this.plan()?.originRunId ?? this.assessment().id);
+  readonly planOriginRunId = computed(() => this.plan()?.originRunId ?? this.findingRunId());
+
+  /**
+   * [AEGIS-KNIGHT-COVERAGE-04] A execução REAL que produziu este achado. No relatório consolidado a avaliação exibida
+   * é uma composição sem identificador próprio: detalhes, afetados, evidências e a origem de um plano novo apontam
+   * para a execução da FONTE do indicador — a mesma que a visão por fonte usa. Assim o plano criado no consolidado é
+   * o mesmo plano da fonte, sem duplicata.
+   */
+  readonly findingRunId = computed(() => findingRunIdOf(this.assessment(), this.indicator().sourceType));
 
   readonly tab = signal<'resumo' | 'afetados' | 'evidencia' | 'plano'>('resumo');
   readonly affected = signal<KnightAffectedObjects | null>(null);
@@ -594,7 +603,7 @@ export class KnightFindingDetailComponent {
 
   /** Configurações que sustentaram o veredito — sempre DESTA avaliação e DESTE controle; resposta de outro contexto é descartada. */
   private loadEvidence(): void {
-    const runId = this.assessment().id;
+    const runId = this.findingRunId();
     const indicatorId = this.indicator().indicatorId;
     const key = `${runId}|${indicatorId}`;
     if (this.evidenceKey === key && (this.evidence() || this.evidenceLoading())) return;
@@ -623,7 +632,7 @@ export class KnightFindingDetailComponent {
 
   /** Busca a página do achado aberto, sempre vinculada à avaliação exibida. Leitura pura: não coleta nada. */
   load(page = 1): void {
-    const runId = this.assessment().id;
+    const runId = this.findingRunId();
     const indicatorId = this.indicator().indicatorId;
     const term = this.search();
     const key = affectedRequestKey(runId, indicatorId, page, term);

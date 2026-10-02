@@ -401,6 +401,8 @@ export type MicrosoftPermissionUsage =
   | 'NewForIdentityRisk'
   /** [AEGIS-KNIGHT-COVERAGE-01] Necessária para os controles de configuração do locatário (somente leitura). */
   | 'NewForConfiguration'
+  /** [AEGIS-KNIGHT-COVERAGE-04] Necessária para os demais serviços do Microsoft 365 avaliados pelo KNIGHT. */
+  | 'NewForM365Services'
   /** Deliberadamente NÃO exigida — com a justificativa técnica registrada em `action`. */
   | 'NotRequired';
 
@@ -533,6 +535,72 @@ export const ENTRA_IDENTITY_CAPABILITIES: MicrosoftCapabilitySpec[] = [
   },
 ];
 
+/**
+ * [AEGIS-KNIGHT-COVERAGE-04] O que os coletores dos demais serviços do Microsoft 365 consomem — cada linha é uma
+ * leitura IMPLEMENTADA. Onde a Microsoft só documenta uma permissão mais ampla que leitura, a linha diz isso e diz o
+ * que fica sem avaliação sem ela.
+ */
+export const KNIGHT_M365_SERVICE_CAPABILITIES: MicrosoftCapabilitySpec[] = [
+  {
+    name: 'Defender para Office 365 e auditoria (Exchange Online)',
+    purpose:
+      'Políticas de Links Seguros, Anexos Seguros, antimalware, antispam, antiphishing, DKIM, domínios aceitos, contas prioritárias e o estado do log de auditoria unificado — pela mesma sessão de aplicativo do Exchange Online. SPF e DMARC são consultados no DNS público.',
+    permission: 'Exchange.ManageAsApp (API Office 365 Exchange Online) + papel Leitor Global',
+    usage: 'NewForM365Services',
+    licenseNote: 'Anexos Seguros, Links Seguros e a proteção do Teams exigem Microsoft Defender para Office 365 (Plano 1 ou 2).',
+    action: 'Nada novo se o Exchange Online já estiver conectado — os comandos rodam na mesma sessão.',
+  },
+  {
+    name: 'DLP e rótulos de confidencialidade (Purview)',
+    purpose: 'Políticas de prevenção contra perda de dados e de publicação de rótulos, pela sessão de aplicativo do Security & Compliance.',
+    permission: 'Exchange.ManageAsApp (API Microsoft Exchange Online Protection)',
+    usage: 'NewForM365Services',
+    licenseNote: null,
+    action: 'Conceda a permissão na API “Microsoft Exchange Online Protection”; o papel Leitor Global já atende. É outra sessão, com outro token.',
+  },
+  {
+    name: 'SharePoint e OneDrive (Microsoft Graph)',
+    purpose: 'Compartilhamento externo, recompartilhamento por convidados, domínios permitidos, autenticação legada e sincronização em dispositivos não gerenciados.',
+    permission: 'SharePointTenantSettings.Read.All',
+    usage: 'NewForM365Services',
+    licenseNote: null,
+    action: 'Conceda a permissão à aplicação e sincronize novamente em Integrações.',
+  },
+  {
+    name: 'SharePoint e OneDrive (API administrativa)',
+    purpose:
+      'OneDrive, links padrão, expiração de convidados, reautenticação, download de arquivo infectado e integração B2B — a única leitura oficial dessas configurações. O AEGIS só executa leitura, mas a Microsoft não oferece permissão de aplicativo mais restrita para esta API.',
+    permission: 'Sites.FullControl.All (API SharePoint) + certificado da aplicação',
+    usage: 'NewForM365Services',
+    licenseNote: null,
+    action: 'Opcional. Sem ela (ou sem certificado), 8 controles do SharePoint e OneDrive ficam não avaliados, com o motivo.',
+  },
+  {
+    name: 'Intune — dispositivos sem política de conformidade',
+    purpose: 'Se dispositivos sem política de conformidade atribuída são tratados como conformes.',
+    permission: 'DeviceManagementConfiguration.Read.All',
+    usage: 'NewForM365Services',
+    licenseNote: 'Requer Microsoft Intune.',
+    action: 'Conceda a permissão à aplicação e sincronize novamente em Integrações.',
+  },
+  {
+    name: 'Intune — restrições de registro',
+    purpose: 'Restrição de registro padrão por plataforma (dispositivos pessoais).',
+    permission: 'DeviceManagementServiceConfig.Read.All',
+    usage: 'NewForM365Services',
+    licenseNote: 'Requer Microsoft Intune.',
+    action: 'Conceda a permissão à aplicação e sincronize novamente em Integrações.',
+  },
+  {
+    name: 'Microsoft Fabric (Power BI)',
+    purpose: 'Configurações do locatário do Fabric (convidados, publicação na web, compartilhamento, rótulos, entidades de serviço).',
+    permission: 'Configuração do Fabric “entidades de serviço podem usar APIs de administração somente leitura” + grupo de segurança com a aplicação',
+    usage: 'NewForM365Services',
+    licenseNote: null,
+    action: 'Não é permissão do Entra ID: um administrador do Fabric liga a configuração no portal de administração para um grupo que contenha a aplicação.',
+  },
+];
+
 /** Permissões de uma matriz filtradas por uso — base das três listas da tela. */
 export function permissionsByUsage(
   caps: MicrosoftCapabilitySpec[],
@@ -558,6 +626,7 @@ const USAGE_LABEL: Record<MicrosoftPermissionUsage, string> = {
   Consumed: 'Já consumida',
   NewForIdentityRisk: 'Nova — risco de identidade',
   NewForConfiguration: 'Nova — configuração do locatário',
+  NewForM365Services: 'Nova — serviços do Microsoft 365',
   NotRequired: 'Não necessária neste pacote',
 };
 
@@ -592,10 +661,11 @@ export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
     providerValue: 0,
     label: 'Microsoft Entra ID · AEGIS KNIGHT',
     description:
-      'Configuração e postura de identidade avaliadas pelo AEGIS KNIGHT (somente leitura). Sincronize neste conector depois de salvar.',
+      'Configuração avaliada pelo AEGIS KNIGHT, somente leitura: Entra ID, Teams, Exchange Online, Defender para Office 365, ' +
+      'Purview, SharePoint e OneDrive, Intune e Fabric. Sincronize neste conector depois de salvar.',
     needsWorkspaceId: false,
-    appPermissions: requiredPermissions(ENTRA_IDENTITY_CAPABILITIES),
-    capabilities: ENTRA_IDENTITY_CAPABILITIES,
+    appPermissions: requiredPermissions([...ENTRA_IDENTITY_CAPABILITIES, ...KNIGHT_M365_SERVICE_CAPABILITIES]),
+    capabilities: [...ENTRA_IDENTITY_CAPABILITIES, ...KNIGHT_M365_SERVICE_CAPABILITIES],
   },
   {
     key: 'VulnerabilityScanner',
@@ -696,6 +766,47 @@ export interface MicrosoftHubRequest {
   clientId: string;
   clientSecret: string;
   services: MicrosoftHubServiceInput[];
+  /** [AEGIS-KNIGHT-COVERAGE-04] Só com o AEGIS KNIGHT marcado: certificado NOVO (PFX em base64) e a senha dele. */
+  certificatePfxBase64?: string;
+  certificatePassword?: string;
+  /** Remove o certificado guardado. Sem certificado novo e sem remoção, o guardado é mantido. */
+  removeCertificate?: boolean;
+  /** Assinaturas do Azure avaliadas (vazio = todas as que a aplicação enxerga). Omitido = mantém o escopo guardado. */
+  azureSubscriptionIds?: string[];
+}
+
+/** [AEGIS-KNIGHT-COVERAGE-04] O que só o conector do AEGIS KNIGHT guarda além da credencial comum. */
+export interface KnightCredentialExtras {
+  certificatePfxBase64?: string | null;
+  certificatePassword?: string | null;
+  removeCertificate?: boolean;
+  azureSubscriptionIds?: string[] | null;
+}
+
+/** [AEGIS-KNIGHT-COVERAGE-04] Resumo NÃO sensível da credencial guardada (nunca o segredo, o PFX ou a senha). */
+export interface MicrosoftCredentialSummary {
+  configured: boolean;
+  directoryTenantId: string | null;
+  clientId: string | null;
+  hasSecret: boolean;
+  certificate: { thumbprint: string; notBefore: string; notAfter: string; currentlyValid: boolean } | null;
+  certificateProblem: string | null;
+  azureSubscriptionIds: string[];
+}
+
+/**
+ * [AEGIS-KNIGHT-COVERAGE-04] Lê a lista de assinaturas digitada (uma por linha, ou separadas por vírgula/espaço):
+ * devolve os GUIDs normalizados, sem repetição, e os valores que não são GUID (o backend também recusa).
+ */
+export function parseSubscriptionIds(text: string | null | undefined): { ids: string[]; invalid: string[] } {
+  const parts = (text ?? '').split(/[\s,;]+/).map((s) => s.trim()).filter((s) => s.length > 0);
+  const ids: string[] = [];
+  const invalid: string[] = [];
+  for (const p of parts) {
+    if (!isGuid(p)) invalid.push(p);
+    else if (!ids.includes(p.toLowerCase())) ids.push(p.toLowerCase());
+  }
+  return { ids, invalid };
 }
 
 /**
@@ -706,6 +817,7 @@ export interface MicrosoftHubRequest {
 export function buildMicrosoftHubRequest(
   creds: { tenantId: string; clientId: string; clientSecret: string },
   selections: MicrosoftServiceSelection[],
+  knight?: KnightCredentialExtras,
 ): MicrosoftHubRequest {
   const services: MicrosoftHubServiceInput[] = selections.map((sel) => {
     const spec = microsoftServiceByKey(sel.key);
@@ -719,12 +831,23 @@ export function buildMicrosoftHubRequest(
     if (spec.needsWorkspaceId) input.workspaceId = (sel.workspaceId ?? '').trim();
     return input;
   });
-  return {
+  const body: MicrosoftHubRequest = {
     tenantId: creds.tenantId.trim(),
     clientId: creds.clientId.trim(),
     clientSecret: creds.clientSecret,
     services,
   };
+  // [AEGIS-KNIGHT-COVERAGE-04] Certificado e escopo do Azure só acompanham o AEGIS KNIGHT — nunca os demais serviços.
+  if (knight && selections.some((s) => s.key === 'IdentityPosture')) {
+    if (knight.certificatePfxBase64) {
+      body.certificatePfxBase64 = knight.certificatePfxBase64;
+      if (knight.certificatePassword) body.certificatePassword = knight.certificatePassword;
+    } else if (knight.removeCertificate) {
+      body.removeCertificate = true;
+    }
+    if (knight.azureSubscriptionIds) body.azureSubscriptionIds = knight.azureSubscriptionIds;
+  }
+  return body;
 }
 
 /** Formato GUID canônico (8-4-4-4-12 hex). Valida o workspaceId do Sentinel na borda do formulário (o backend

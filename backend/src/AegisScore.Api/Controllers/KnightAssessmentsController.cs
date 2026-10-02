@@ -277,11 +277,30 @@ public class KnightAssessmentsController : ControllerBase
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
         var s = await _service.GetAffectedSummaryAsync(runId, ct);
         if (s is null) return NotFound();
-        return Ok(new KnightAffectedSummaryDto(
-            s.RunId, s.ExposedControls, s.Occurrences, s.UniqueObjects, s.Complete, s.IncompleteIndicatorIds,
-            s.Top.Select(t => new KnightAffectedSummaryItemDto(
-                t.ExternalId, t.Kind.ToString(), t.DisplayName, t.UserPrincipalName, t.ControlCount, t.IndicatorIds)).ToList()));
+        return Ok(SummaryDto(s));
     }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Resumo dos objetos afetados de uma COMPOSIÇÃO (relatório consolidado): as execuções
+    /// reais das fontes incluídas (<c>?runs=</c>, repetido), com um objeto presente em duas fontes contado uma vez.
+    /// Somente leitura; execução de outro tenant não existe aqui.
+    /// </summary>
+    [HttpGet("affected-summary")]
+    public async Task<ActionResult<KnightAffectedSummaryDto>> GetCompositionAffectedSummary([FromQuery] Guid[] runs, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        if (runs is null || runs.Length == 0) return BadRequest("Informe ao menos uma execução (runs).");
+        if (runs.Length > 20) return BadRequest("No máximo 20 execuções por composição.");
+        var s = await _service.GetAffectedSummaryAsync(runs, ct);
+        if (s is null) return NotFound();
+        return Ok(SummaryDto(s));
+    }
+
+    private static KnightAffectedSummaryDto SummaryDto(KnightAffectedSummary s) => new(
+        s.RunId, s.ExposedControls, s.Occurrences, s.UniqueObjects, s.Complete, s.IncompleteIndicatorIds,
+        s.Top.Select(t => new KnightAffectedSummaryItemDto(
+            t.ExternalId, t.Kind.ToString(), t.DisplayName, t.UserPrincipalName, t.ControlCount, t.IndicatorIds)).ToList());
 
     // ---- Mapeamento ----------------------------------------------------------------------------------
 

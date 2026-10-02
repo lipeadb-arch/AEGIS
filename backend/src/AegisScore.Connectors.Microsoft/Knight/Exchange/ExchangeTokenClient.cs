@@ -157,13 +157,8 @@ public sealed class ExchangeTokenClient : IExchangeTokenClient
     private async Task<string> AcquireExchangeTokenAsync(IMicrosoftGraphCredentials config, CancellationToken ct)
     {
         var url = $"{LoginBaseUrl}/{Uri.EscapeDataString(config.AzureTenantId)}/oauth2/v2.0/token";
-        using var form = new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["client_id"] = config.ClientId,
-            ["client_secret"] = config.ClientSecret,
-            ["scope"] = ExchangeScope,
-            ["grant_type"] = "client_credentials",
-        });
+        // [AEGIS-KNIGHT-COVERAGE-04] Segredo OU certificado: o corpo vem do formulário compartilhado.
+        using var form = new FormUrlEncodedContent(EntraGraphClient.CredentialFields(config, ExchangeScope));
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = form };
         using var response = await _http.SendAsync(request, ct);

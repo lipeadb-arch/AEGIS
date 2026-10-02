@@ -9,6 +9,8 @@ using AegisScore.Connectors.Microsoft.Defender;
 using AegisScore.Connectors.Microsoft.Intune;
 using AegisScore.Connectors.Microsoft.Knight;
 using AegisScore.Connectors.Microsoft.Knight.Exchange;
+using AegisScore.Connectors.Microsoft.Knight.Protection;
+using AegisScore.Connectors.Microsoft.Knight.Services;
 using AegisScore.Connectors.Microsoft.Knight.Teams;
 using AegisScore.Connectors.Microsoft.Sentinel;
 
@@ -123,6 +125,35 @@ public static class DependencyInjection
             sp.GetRequiredService<ExchangePowerShellOptions>(),
             sp.GetService<ILogger<PowerShellExchangeAdminReader>>()));
         services.AddScoped<IKnightCollector, ExchangeKnightCollector>();
+
+        // [AEGIS-KNIGHT-COVERAGE-04] Demais serviços do Microsoft 365 e Azure. Mesma credencial do conector Microsoft
+        // (segredo ou certificado), um coletor por fonte:
+        //   • IMicrosoftAppTokenClient — token de aplicativo para qualquer recurso oficial (Fabric, administração do
+        //     SharePoint, Security & Compliance, Azure Resource Manager);
+        //   • IMicrosoftRestClient — GET somente leitura com destino restrito aos hosts oficiais;
+        //   • IProtectionAdminReader — o adaptador PowerShell embutido do Defender para Office 365 e do Purview;
+        //   • IDnsTxtResolver — registros SPF e DMARC públicos dos domínios aceitos.
+        services.AddHttpClient<IMicrosoftAppTokenClient, MicrosoftAppTokenClient>().AddStandardResilienceHandler();
+        services.AddHttpClient<IMicrosoftRestClient, MicrosoftRestClient>().AddStandardResilienceHandler();
+        services.AddSingleton(sp =>
+        {
+            // O adaptador de proteção usa o MESMO runtime do Exchange Online (executável e módulo na imagem).
+            var exo = sp.GetRequiredService<ExchangePowerShellOptions>();
+            return new ProtectionPowerShellOptions
+            {
+                Executable = exo.Executable, ModulePath = exo.ModulePath, Timeout = exo.Timeout,
+                MaxOutputBytes = exo.MaxOutputBytes, EnumerationLimit = exo.EnumerationLimit,
+            };
+        });
+        services.AddSingleton<IProtectionAdminReader>(sp => new PowerShellProtectionAdminReader(
+            sp.GetRequiredService<ProtectionPowerShellOptions>(),
+            sp.GetService<ILogger<PowerShellProtectionAdminReader>>()));
+        services.AddSingleton<IDnsTxtResolver, DnsTxtResolver>();
+        services.AddScoped<IKnightCollector, DefenderForOffice365KnightCollector>();
+        services.AddScoped<IKnightCollector, PurviewKnightCollector>();
+        services.AddScoped<IKnightCollector, SharePointKnightCollector>();
+        services.AddScoped<IKnightCollector, IntuneKnightCollector>();
+        services.AddScoped<IKnightCollector, FabricKnightCollector>();
 
         // [AEGIS-KNIGHT-ACCESS-01] "Testar conexão" (IEvidenceConnector) para Microsoft/IdentityPosture: antes
         // desta linha não havia NENHUM adaptador registrado para essa combinação, e o botão da tela de

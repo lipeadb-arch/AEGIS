@@ -11,19 +11,8 @@ import {
   KnightReferenceCoverage,
   KnightSources,
   KnightSourceType,
+  sourceSlug,
 } from '../models/knight.models';
-
-/** Slug de rota para cada fonte real/demo (espelha o parser do controller). "Consolidated" nunca vai na URL. */
-const SOURCE_SLUG: Record<KnightSourceType, string> = {
-  Demo: 'demo',
-  MicrosoftEntraId: 'entra',
-  // [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams: fonte própria, credencial do mesmo conector Microsoft.
-  MicrosoftTeams: 'teams',
-  // [AEGIS-KNIGHT-COVERAGE-03] Exchange Online: fonte propria, mesma credencial do conector Microsoft.
-  MicrosoftExchangeOnline: 'exchange',
-  GoogleWorkspace: 'google',
-  Consolidated: 'consolidated',
-};
 
 /**
  * [AEGIS-KNIGHT-DURABLE-01] O NAVEGADOR deixou de esperar — o que aconteceu no servidor NÃO é conhecido. A
@@ -65,7 +54,7 @@ export class KnightService {
 
   /** Dispara um assessment da FONTE indicada (ex.: coleta real do Entra ID). */
   runSource(source: KnightSourceType): Observable<KnightAssessment> {
-    return this.http.post<KnightAssessment>(`${this.base}/run/${SOURCE_SLUG[source]}`, {}).pipe(
+    return this.http.post<KnightAssessment>(`${this.base}/run/${sourceSlug(source)}`, {}).pipe(
       timeout(this.RUN_TIMEOUT_MS),
       catchError((err: unknown) => {
         if (err instanceof TimeoutError) return throwError(() => this.runTimeout());
@@ -153,7 +142,7 @@ export class KnightService {
    */
   getConsolidated(sources: KnightSourceType[]): Observable<KnightAssessment> {
     let params = new HttpParams().set('explicit', 'true');
-    for (const s of sources) params = params.append('sources', SOURCE_SLUG[s]);
+    for (const s of sources) params = params.append('sources', sourceSlug(s));
     return this.http.get<KnightAssessment>(`${this.base}/consolidated`, { params }).pipe(
       timeout(this.READ_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível carregar o relatório consolidado.')),
@@ -204,6 +193,19 @@ export class KnightService {
    */
   getAffectedSummary(runId: string): Observable<KnightAffectedSummary> {
     return this.http.get<KnightAffectedSummary>(`${this.base}/${runId}/affected-summary`).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível carregar o resumo de objetos afetados.')),
+    );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-COVERAGE-04] O mesmo resumo para a COMPOSIÇÃO do relatório consolidado: as execuções reais das fontes
+   * incluídas, com um objeto presente em duas fontes contado uma vez. Somente leitura.
+   */
+  getCompositionAffectedSummary(runIds: string[]): Observable<KnightAffectedSummary> {
+    let params = new HttpParams();
+    for (const id of runIds) params = params.append('runs', id);
+    return this.http.get<KnightAffectedSummary>(`${this.base}/affected-summary`, { params }).pipe(
       timeout(this.READ_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível carregar o resumo de objetos afetados.')),
     );

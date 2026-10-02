@@ -244,10 +244,21 @@ jobs:
       #     vazia distinta de "nenhum pedido"; publicação pina a execução exibida e recusa uma inválida/de outro
       #     tenant/de outra fonte em vez de substituir pela mais recente). Classes já estavam no filtro — o passo
       #     vai de 937 a 944 (confirmado no PR #81: 944 no CI real).
+      #     [AEGIS-KNIGHT-COVERAGE-04] Defender para Office 365, Purview, SharePoint/OneDrive, Intune e Fabric, e a
+      #     autenticação por certificado. São ADICIONADAS ao filtro 4 classes NOVAS: KnightM365ServicesFlowTests
+      #     (coleta sintética → coletores reais → ADM → releitura → avaliação, conforme e inadequado por fonte, e as
+      #     armadilhas: DNS sem resposta, população de domínios incompleta, regra desligada, Security & Compliance
+      #     recusado, Fabric recusado, SharePoint sem certificado, tokens por asserção assinada), MicrosoftAppCredentialTests
+      #     (asserção RFC 7523 verificada com a chave pública, certificado inválido sem vazar conteúdo), DnsTxtResolverTests
+      #     (pedido e resposta DNS), KnightAccessProbesM365Tests ("Testar conexão" das fontes novas) e
+      #     ProtectionRuntimeDiagnosticsTests (o gate de runtime do adaptador de proteção, passo 2d). Entra também
+      #     TenantManagementServiceTests, que já existia e nunca rodava no CI: o pacote alterou o hub Microsoft
+      #     (certificado, escopo do Azure e resumo não sensível). Sem estas linhas elas não executariam. O passo
+      #     vai a 1060 execuções (medido localmente com este MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~EvidenceIngestionTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests|FullyQualifiedName~CrossSourceCorrelationTests|FullyQualifiedName~DevicePriorityTests|FullyQualifiedName~DeviceCasePlanTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests|FullyQualifiedName~KnightTeamsCollectorTests|FullyQualifiedName~KnightTeamsPolicyReachTests|FullyQualifiedName~KnightTeamsConfigurationFlowTests|FullyQualifiedName~TeamsAdapterTransportTests|FullyQualifiedName~KnightExchangeConfigurationFlowTests|FullyQualifiedName~ExchangeAdapterTransportTests|FullyQualifiedName~PostureSnapshotConsolidatedTests|FullyQualifiedName~KnightConsolidatedBuilderTests|FullyQualifiedName~KnightIdentityPostureConnectorTests"
+          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~EvidenceIngestionTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests|FullyQualifiedName~CrossSourceCorrelationTests|FullyQualifiedName~DevicePriorityTests|FullyQualifiedName~DeviceCasePlanTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests|FullyQualifiedName~KnightTeamsCollectorTests|FullyQualifiedName~KnightTeamsPolicyReachTests|FullyQualifiedName~KnightTeamsConfigurationFlowTests|FullyQualifiedName~TeamsAdapterTransportTests|FullyQualifiedName~KnightExchangeConfigurationFlowTests|FullyQualifiedName~ExchangeAdapterTransportTests|FullyQualifiedName~PostureSnapshotConsolidatedTests|FullyQualifiedName~KnightConsolidatedBuilderTests|FullyQualifiedName~KnightIdentityPostureConnectorTests|FullyQualifiedName~KnightM365ServicesFlowTests|FullyQualifiedName~MicrosoftAppCredentialTests|FullyQualifiedName~DnsTxtResolverTests|FullyQualifiedName~KnightAccessProbesM365Tests|FullyQualifiedName~ProtectionRuntimeDiagnosticsTests|FullyQualifiedName~TenantManagementServiceTests"
 
       # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
@@ -344,6 +355,29 @@ jobs:
           case "$OUT" in
             *"AEGIS-MARCADOR-SINTETICO"*)
               echo "runtime do Exchange NAO validado: marcador de token vazou para a saida"; exit 1;;
+          esac
+
+      # 2d) [AEGIS-KNIGHT-COVERAGE-04] O MESMO gate para o adaptador de proteção (Defender para Office 365 e Purview), que
+      #     usa o runtime do Exchange Online. Prova que o script embutido roda no processo real, que os comandos de
+      #     conexão das DUAS sessões (Exchange Online e Security & Compliance) existem no módulo fixado e que, sem rede, o
+      #     script devolve documento íntegro nos dois perfis sem vazar os tokens sintéticos. NÃO prova autenticação nem
+      #     os comandos de leitura, que só existem depois da conexão — e a saída diz isso.
+      - name: Protection (Defender for Office 365 / Purview) collection runtime inside the image (real adapter path, non-root, offline)
+        run: |
+          set -euo pipefail
+          set +e
+          OUT="$(docker run --rm --network none --entrypoint dotnet "$IMAGE" \
+            /app/AegisScore.Api.dll --knight-protection-runtime-check 2>&1)"
+          CODE=$?
+          set -e
+          echo "$OUT"
+          if [ "$CODE" -ne 0 ]; then echo "runtime de protecao NAO validado (codigo $CODE)"; exit 1; fi
+          for MARCA in "module-check=OK" "coleta-sintetica=OK" "adaptador-protecao=OK" "alcance-do-gate: offline, sem locatário" "NÃO PROVADO:"; do
+            case "$OUT" in *"$MARCA"*) ;; *) echo "runtime de protecao NAO validado: falta $MARCA"; exit 1;; esac
+          done
+          case "$OUT" in
+            *"AEGIS-MARCADOR-SINTETICO"*)
+              echo "runtime de protecao NAO validado: marcador de token vazou para a saida"; exit 1;;
           esac
 
       # 3) Smoke do container: rede + Postgres descartáveis, PKCS#12 sintético (grupo 1000, 0640),
@@ -641,6 +675,10 @@ jobs:
       # desempatadas pelo índice único parcial) é NOVA: sem esta linha ela não executaria. DatabaseUpgradePostgresTests
       # passa a atravessar também Journey01_DeviceCaseActionPlanOrigin (mesmo caso). O passo vai de 78 a 81 (medido
       # localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
+      # [AEGIS-KNIGHT-COVERAGE-04] Entra a classe NOVA KnightM365ServicesPostgresTests: as cinco fontes novas do
+      # Microsoft 365 gravam em jsonb e voltam com o MESMO veredito, os textos cabem nas colunas (o SQLite ignora
+      # HasMaxLength) e o consolidado das cinco exporta HTML, CSV e PDF. Sem esta linha ela não executaria. O passo
+      # vai de 101 a 102 (medido localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
@@ -649,4 +687,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~DeviceResolutionPostgresTests|FullyQualifiedName~CrossSourceCorrelationPostgresTests|FullyQualifiedName~DevicePriorityPostgresTests|FullyQualifiedName~DeviceCasePlanHttpTests|FullyQualifiedName~KnightDurableAssessmentPostgresTests|FullyQualifiedName~KnightLatestHttpTests|FullyQualifiedName~KnightUnfinishedRunPlanHttpTests|FullyQualifiedName~KnightMulticloudPostgresTests|FullyQualifiedName~KnightSyncHttpTests|FullyQualifiedName~KnightEntraConfigurationPostgresTests|FullyQualifiedName~KnightTeamsConfigurationPostgresTests|FullyQualifiedName~KnightExchangeConfigurationPostgresTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~DeviceResolutionPostgresTests|FullyQualifiedName~CrossSourceCorrelationPostgresTests|FullyQualifiedName~DevicePriorityPostgresTests|FullyQualifiedName~DeviceCasePlanHttpTests|FullyQualifiedName~KnightDurableAssessmentPostgresTests|FullyQualifiedName~KnightLatestHttpTests|FullyQualifiedName~KnightUnfinishedRunPlanHttpTests|FullyQualifiedName~KnightMulticloudPostgresTests|FullyQualifiedName~KnightSyncHttpTests|FullyQualifiedName~KnightEntraConfigurationPostgresTests|FullyQualifiedName~KnightTeamsConfigurationPostgresTests|FullyQualifiedName~KnightExchangeConfigurationPostgresTests|FullyQualifiedName~KnightM365ServicesPostgresTests"

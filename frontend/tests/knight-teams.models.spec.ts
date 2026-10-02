@@ -63,11 +63,15 @@ function avaliacao(startedAt: string): KnightAssessment {
 
 console.log('knight-teams.models.spec');
 
-test('o conector Microsoft alimenta Entra ID e Microsoft Teams, nesta ordem', () => {
+test('o conector Microsoft alimenta todas as fontes do catálogo, na ordem do servidor', () => {
+  // [AEGIS-KNIGHT-COVERAGE-04] Antes eram duas (Entra ID e Teams) — o Exchange Online ficava sem linha de
+  // sincronização. Agora a lista vem do catálogo único, espelho do KnightSourceCatalog do servidor.
   const fontes = knightSourcesOf('Microsoft');
-  eq(fontes.length, 2, 'duas fontes');
+  eq(fontes.map((f) => f.slug).join(','), 'entra,teams,exchange,defender-office365,purview,sharepoint,intune,fabric',
+    'as oito fontes do conector Microsoft com coletor');
   eq(fontes[0].slug, 'entra', 'a fonte padrão vem primeiro');
   eq(fontes[1].slug, 'teams', 'Teams é a segunda');
+  ok(fontes.slice(1).every((f) => (f.requirement ?? '').length > 0), 'cada fonte além do Entra ID diz o que exige além da credencial');
   eq(fontes[0].requirement, null, 'o Entra ID não exige nada além da credencial');
   ok(
     (fontes[1].requirement ?? '').includes('Leitor do Teams'),

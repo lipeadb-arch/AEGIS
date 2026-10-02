@@ -34,6 +34,11 @@ import {
   statusLabel,
   threeMeasures,
   KnightReferenceCoverage,
+  CONSOLIDATION_CANDIDATES,
+  findingRunIdOf,
+  sourceSlug,
+  sourceTypeLabel,
+  categoryLabel,
 } from '../src/app/models/knight.models';
 
 // ---- micro-harness (sem dependências externas) -------------------------------------------------
@@ -335,6 +340,32 @@ test('três medidas separadas: catálogo (integral e parcial), cobertura da aval
   eq(m.assessmentCoverage, MIXED.coverage, 'cobertura da avaliação é a da coleta');
   eq(m.approval, overviewKpis(MIXED).approvalPercent, 'aprovação é a dos avaliados');
   eq(threeMeasures(MIXED, null).catalogFull, null, 'sem cobertura carregada, não inventa número');
+});
+
+// ---- [AEGIS-KNIGHT-COVERAGE-04] catálogo único de fontes e procedência no consolidado ------------------
+
+test('o consolidado aceita as oito fontes do conector Microsoft, não só três', () => {
+  eq(CONSOLIDATION_CANDIDATES.length, 8, 'oito candidatas');
+  eq(CONSOLIDATION_CANDIDATES[0], 'MicrosoftEntraId', 'a ordem é a do servidor');
+  ok(!CONSOLIDATION_CANDIDATES.includes('GoogleWorkspace'), 'Google não compõe o consolidado Microsoft');
+  eq(sourceSlug('MicrosoftDefenderForOffice365'), 'defender-office365', 'apelido de rota igual ao do servidor');
+  eq(sourceTypeLabel('MicrosoftSharePoint'), 'SharePoint e OneDrive', 'rótulo em português');
+  eq(categoryLabel('ThreatProtection'), 'Proteção contra ameaças', 'categoria nova rotulada — nada em inglês na tela');
+});
+
+test('achado do consolidado aponta para a execução REAL da fonte — detalhes e plano sem id sintético', () => {
+  const consolidado = {
+    id: '00000000-0000-0000-0000-000000000000',
+    sourceType: 'Consolidated' as const,
+    sources: [
+      { source: 'MicrosoftEntraId' as const, included: true, sourceRunId: 'run-entra' },
+      { source: 'MicrosoftPurview' as const, included: true, sourceRunId: 'run-purview' },
+      { source: 'MicrosoftTeams' as const, included: false, sourceRunId: 'run-teams' },
+    ],
+  };
+  eq(findingRunIdOf(consolidado, 'MicrosoftPurview'), 'run-purview', 'a execução da fonte do indicador');
+  eq(findingRunIdOf(consolidado, 'MicrosoftEntraId'), 'run-entra', 'cada indicador, a sua fonte');
+  eq(findingRunIdOf({ id: 'run-unica', sourceType: 'MicrosoftEntraId' }, 'MicrosoftEntraId'), 'run-unica', 'fonte única: a própria avaliação');
 });
 
 console.log(`\n${count - failures}/${count} testes passaram (knight-assessment.models).`);

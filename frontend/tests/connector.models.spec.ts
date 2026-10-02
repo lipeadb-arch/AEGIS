@@ -8,6 +8,7 @@
  */
 import {
   buildMicrosoftHubRequest,
+  parseSubscriptionIds,
   buildSiemSyncMessage,
   CHRONICLE_LOCATIONS,
   ConnectorConfig,
@@ -93,6 +94,32 @@ test('credencial comum é informada uma vez e vale para todos os serviços selec
   eq(body.clientSecret, 's-1', 'clientSecret único (não aparado — pode conter espaços significativos)');
   eq(body.services.length, 3, 'um item por serviço selecionado');
   eq(body.services[2].syncIntervalMinutes, 120, 'intervalo por serviço preservado');
+});
+
+// ---- [AEGIS-KNIGHT-COVERAGE-04] certificado e escopo do Azure SÓ no AEGIS KNIGHT ------------------
+
+test('certificado e assinaturas acompanham o pedido só quando o AEGIS KNIGHT está marcado', () => {
+  const extras = { certificatePfxBase64: 'UEZY', certificatePassword: 'senha', azureSubscriptionIds: ['11111111-1111-1111-1111-111111111111'] };
+  const comKnight = buildMicrosoftHubRequest(CREDS, [{ key: 'IdentityPosture', syncIntervalMinutes: 360 }], extras);
+  eq(comKnight.certificatePfxBase64, 'UEZY', 'certificado novo vai no pedido');
+  eq(comKnight.certificatePassword, 'senha', 'senha acompanha o certificado');
+  eq(comKnight.azureSubscriptionIds!.length, 1, 'escopo do Azure vai no pedido');
+  eq(comKnight.removeCertificate, undefined, 'certificado novo não é pedido de remoção');
+
+  const semKnight = buildMicrosoftHubRequest(CREDS, [{ key: 'SecureScore', syncIntervalMinutes: 360 }], extras);
+  eq(semKnight.certificatePfxBase64, undefined, 'sem o KNIGHT, o certificado nunca sai do navegador');
+  eq(semKnight.azureSubscriptionIds, undefined, 'sem o KNIGHT, o escopo do Azure não vai');
+
+  const remover = buildMicrosoftHubRequest(CREDS, [{ key: 'IdentityPosture', syncIntervalMinutes: 360 }], { removeCertificate: true });
+  eq(remover.removeCertificate, true, 'remoção explícita do certificado guardado');
+  eq(remover.certificatePfxBase64, undefined, 'remoção não carrega arquivo');
+});
+
+test('parseSubscriptionIds normaliza GUIDs e separa o que não é GUID', () => {
+  const r = parseSubscriptionIds('11111111-1111-1111-1111-111111111111\n 22222222-2222-2222-2222-22222222222A , producao;11111111-1111-1111-1111-111111111111');
+  eq(r.ids.join(','), '11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-22222222222a', 'GUIDs em minúsculas, sem repetição');
+  eq(r.invalid.join(','), 'producao', 'o que não é GUID é devolvido para a mensagem de erro');
+  eq(parseSubscriptionIds('').ids.length, 0, 'vazio = todas as assinaturas visíveis');
 });
 
 // ---- 2) workspaceId SOMENTE no Sentinel --------------------------------------------------------

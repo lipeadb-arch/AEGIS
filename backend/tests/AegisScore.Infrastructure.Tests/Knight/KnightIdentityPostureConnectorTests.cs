@@ -270,13 +270,13 @@ public sealed class KnightIdentityPostureConnectorTests
                 """{"value":[{"verifiedDomains":[{"isInitial":true,"name":"demo.onmicrosoft.example.com"}]}]}""").RootElement);
     }
 
-    private sealed class FakeTeamsTokens : ITeamsTokenClient
+    internal sealed class FakeTeamsTokens : ITeamsTokenClient
     {
         public Task<TeamsAdminCredentials> AcquireAsync(IMicrosoftGraphCredentials credentials, CancellationToken ct = default) =>
             Task.FromResult(new TeamsAdminCredentials(credentials.AzureTenantId, "graph-sintetico", "teams-sintetico"));
     }
 
-    private sealed class FakeTeamsReader : ITeamsAdminReader
+    internal sealed class FakeTeamsReader : ITeamsAdminReader
     {
         private readonly bool _connected;
         private readonly bool _readOk;
@@ -333,13 +333,13 @@ public sealed class KnightIdentityPostureConnectorTests
             ReadAsync(credentials, ct);
     }
 
-    private sealed class FakeExchangeTokens : IExchangeTokenClient
+    internal sealed class FakeExchangeTokens : IExchangeTokenClient
     {
         public Task<ExchangeAdminCredentials> AcquireAsync(IMicrosoftGraphCredentials credentials, CancellationToken ct = default) =>
             Task.FromResult(new ExchangeAdminCredentials("demo.onmicrosoft.example.com", "exo-token-sintetico"));
     }
 
-    private sealed class FakeExchangeReader : IExchangeAdminReader
+    internal sealed class FakeExchangeReader : IExchangeAdminReader
     {
         private readonly bool _connected;
         private readonly bool _readOk;

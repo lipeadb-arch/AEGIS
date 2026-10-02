@@ -55,7 +55,8 @@ public static class KnightConnectorSources
             ? Array.Empty<KnightSourceType>()
             : provider switch
             {
-                ConnectorProvider.Microsoft => new[] { KnightSourceType.MicrosoftEntraId, KnightSourceType.MicrosoftTeams, KnightSourceType.MicrosoftExchangeOnline },
+                // [AEGIS-KNIGHT-COVERAGE-04] Todas as fontes do conector Microsoft vêm do catálogo único de fontes.
+                ConnectorProvider.Microsoft => KnightSourceCatalog.MicrosoftConnectorSources,
                 ConnectorProvider.Google => new[] { KnightSourceType.GoogleWorkspace },
                 _ => Array.Empty<KnightSourceType>(),
             };
@@ -84,15 +85,7 @@ public static class KnightConnectorSources
     }
 
     /// <summary>Apelido curto usado nas rotas e na tela ("entra", "teams", "google").</summary>
-    public static string Slug(KnightSourceType source) => source switch
-    {
-        KnightSourceType.MicrosoftEntraId => "entra",
-        KnightSourceType.MicrosoftTeams => "teams",
-        KnightSourceType.MicrosoftExchangeOnline => "exchange",
-        KnightSourceType.GoogleWorkspace => "google",
-        KnightSourceType.Demo => "demo",
-        _ => source.ToString().ToLowerInvariant(),
-    };
+    public static string Slug(KnightSourceType source) => KnightSourceCatalog.Slug(source);
 }
 
 /// <summary>

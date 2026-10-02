@@ -171,8 +171,26 @@ public record CreateConnectorRequest(
 public record ConfigureMicrosoftHubRequest(
     string TenantId,
     string ClientId,
-    string ClientSecret,
-    IReadOnlyList<MicrosoftHubServiceRequest> Services);
+    string? ClientSecret,
+    IReadOnlyList<MicrosoftHubServiceRequest> Services,
+    // [AEGIS-KNIGHT-COVERAGE-04] Só para o AEGIS KNIGHT: certificado novo (PFX em base64), senha, remoção do guardado e
+    // escopo do Azure. Nada disso volta pela API.
+    string? CertificatePfxBase64 = null,
+    string? CertificatePassword = null,
+    bool RemoveCertificate = false,
+    IReadOnlyList<string>? AzureSubscriptionIds = null);
+
+/// <summary>[AEGIS-KNIGHT-COVERAGE-04] Resumo não sensível da credencial do AEGIS KNIGHT.</summary>
+public record MicrosoftCredentialSummaryDto(
+    bool Configured,
+    string? DirectoryTenantId,
+    string? ClientId,
+    bool HasSecret,
+    MicrosoftCertificateSummaryDto? Certificate,
+    string? CertificateProblem,
+    IReadOnlyList<string> AzureSubscriptionIds);
+
+public record MicrosoftCertificateSummaryDto(string Thumbprint, DateTimeOffset NotBefore, DateTimeOffset NotAfter, bool CurrentlyValid);
 
 /// <summary>Um serviço Microsoft selecionado. <see cref="WorkspaceId"/> só é exigido/usado para <c>Siem</c> (Sentinel).</summary>
 public record MicrosoftHubServiceRequest(

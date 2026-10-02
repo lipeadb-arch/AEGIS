@@ -126,7 +126,9 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             result = acquisition.CollectionResult;
             identityAcquisitionId = acquisition.AcquisitionId;
         }
-        else if (source is KnightSourceType.MicrosoftTeams or KnightSourceType.MicrosoftExchangeOnline)
+        // [AEGIS-KNIGHT-COVERAGE-04] Toda fonte de CONFIGURAÇÃO do conector Microsoft (Teams, Exchange, Defender para
+        // Office 365, Purview, SharePoint, Intune, Fabric e Azure) segue este mesmo caminho.
+        else if (KnightSourceCatalog.Describe(source)?.MicrosoftConnector == true)
         {
             // [AEGIS-KNIGHT-COVERAGE-02/03] O Teams e o Exchange Online percorrem o MESMO caminho de evidência do Entra ID — coleta →
             // ADM → releitura → avaliação —, por uma aquisição de CONFIGURAÇÃO: os documentos são persistidos e
@@ -502,15 +504,32 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         .ToDictionary(x => x.Key, x => x.Count, StringComparer.Ordinal);
 
     /// <inheritdoc />
-    public async Task<KnightAffectedSummary?> GetAffectedSummaryAsync(Guid runId, CancellationToken ct = default)
+    public Task<KnightAffectedSummary?> GetAffectedSummaryAsync(Guid runId, CancellationToken ct = default) =>
+        SummaryOfRunsAsync(runId, new[] { runId }, ct);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Resumo de afetados de uma COMPOSIÇÃO (relatório consolidado): as execuções REAIS das
+    /// fontes incluídas, com o mesmo agrupamento — um objeto que aparece em duas fontes é UM item, com os controles das
+    /// duas. Execução de outro tenant não existe aqui (filtro global): fica fora, sem erro.
+    /// </summary>
+    public async Task<KnightAffectedSummary?> GetAffectedSummaryAsync(IReadOnlyCollection<Guid> runIds, CancellationToken ct = default)
+    {
+        var ids = runIds.Distinct().ToList();
+        if (ids.Count == 0) return null;
+        var existing = await _db.KnightAssessmentRuns.AsNoTracking().Where(r => ids.Contains(r.Id)).Select(r => r.Id).ToListAsync(ct);
+        if (existing.Count == 0) return null;
+        return await SummaryOfRunsAsync(existing.Count == 1 ? existing[0] : Guid.Empty, existing, ct);
+    }
+
+    private async Task<KnightAffectedSummary?> SummaryOfRunsAsync(Guid runId, IReadOnlyCollection<Guid> runIds, CancellationToken ct)
     {
         var indicators = await _db.KnightIndicatorResults.AsNoTracking()
-            .Where(i => i.RunId == runId)
+            .Where(i => runIds.Contains(i.RunId))
             .Select(i => new { i.Id, i.IndicatorId, i.Status, i.Severity, i.AffectedObjectCount, i.HasAffectedDetail, i.AffectedDetailComplete })
             .ToListAsync(ct);
         if (indicators.Count == 0)
         {
-            var exists = await _db.KnightAssessmentRuns.AsNoTracking().AnyAsync(r => r.Id == runId, ct);
+            var exists = await _db.KnightAssessmentRuns.AsNoTracking().AnyAsync(r => runIds.Contains(r.Id), ct);
             return exists ? new KnightAffectedSummary(runId, 0, 0, 0, true, Array.Empty<string>(), Array.Empty<KnightAffectedSummaryItem>()) : null;
         }
 
@@ -522,15 +541,17 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         // Controle exposto com objetos contados mas sem lista completa preservada: o número de únicos vira PISO.
         var incomplete = exposed
             .Where(i => i.AffectedObjectCount > 0 && !(i.HasAffectedDetail && i.AffectedDetailComplete))
-            .Select(i => i.IndicatorId).OrderBy(x => x, StringComparer.Ordinal).ToList();
+            .Select(i => i.IndicatorId).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
 
         var rows = await _db.KnightAffectedObjects.AsNoTracking()
-            .Where(o => o.RunId == runId && o.Relation == KnightObjectRelation.Affected)
+            .Where(o => runIds.Contains(o.RunId) && o.Relation == KnightObjectRelation.Affected)
             .Select(o => new { o.IndicatorId, o.ExternalId, o.Kind, o.DisplayName, o.UserPrincipalName })
             .ToListAsync(ct);
         rows = rows.Where(r => exposedIds.Contains(r.IndicatorId)).ToList();
 
-        var severityById = exposed.ToDictionary(i => i.IndicatorId, i => KnightScoreFormula.WeightFor(i.Severity), StringComparer.Ordinal);
+        // Numa composição, o mesmo controle pode vir de mais de uma execução: o peso é o do controle, uma vez.
+        var severityById = exposed.GroupBy(i => i.IndicatorId, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => KnightScoreFormula.WeightFor(g.First().Severity), StringComparer.Ordinal);
         var grouped = rows
             .GroupBy(r => (r.Kind, Id: r.ExternalId.ToLowerInvariant()))
             .Select(g =>

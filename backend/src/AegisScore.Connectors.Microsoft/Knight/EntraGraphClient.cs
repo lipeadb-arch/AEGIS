@@ -96,16 +96,27 @@ public sealed class EntraGraphClient : IEntraGraphClient
         _maxPages = maxPages > 0 ? maxPages : DefaultMaxPages;
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Campos do pedido de token; um certificado ilegível vira falha de AUTENTICAÇÃO declarada,
+    /// nunca uma exceção sem categoria.
+    /// </summary>
+    internal static Dictionary<string, string> CredentialFields(IMicrosoftGraphCredentials config, string scope)
+    {
+        try
+        {
+            return MicrosoftClientCredentialForm.Fields(config, scope);
+        }
+        catch (MicrosoftCertificateException ex)
+        {
+            throw new EntraGraphException(EntraGraphErrorKind.AuthFailure, ex.Message, endpointPath: "/oauth2/v2.0/token");
+        }
+    }
+
     public async Task<string> AcquireTokenAsync(IMicrosoftGraphCredentials config, CancellationToken ct)
     {
         var url = $"{LoginBaseUrl}/{Uri.EscapeDataString(config.AzureTenantId)}/oauth2/v2.0/token";
-        var form = new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["client_id"] = config.ClientId,
-            ["client_secret"] = config.ClientSecret,
-            ["scope"] = $"{GraphBaseUrl}/.default",
-            ["grant_type"] = "client_credentials",
-        });
+        // [AEGIS-KNIGHT-COVERAGE-04] Segredo OU certificado: o corpo vem do formulário compartilhado.
+        var form = new FormUrlEncodedContent(CredentialFields(config, $"{GraphBaseUrl}/.default"));
 
         using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = form };
         using var resp = await _http.SendAsync(req, ct);

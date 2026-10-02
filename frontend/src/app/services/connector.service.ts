@@ -5,6 +5,7 @@ import { environment } from '../../environments/environment';
 import {
   ConnectorConfig,
   ConnectorHealth,
+  MicrosoftCredentialSummary,
   MicrosoftHubRequest,
   SaveConnectorRequest,
   SyncResult,
@@ -55,6 +56,16 @@ export class ConnectorService {
   saveMicrosoftHub(body: MicrosoftHubRequest): Observable<ConnectorConfig[]> {
     return this.http
       .post<ConnectorConfig[]>(`${this.base}/tenants/connectors/microsoft`, body)
+      .pipe(catchError((err) => throwError(() => this.describe(err))));
+  }
+
+  /**
+   * [AEGIS-KNIGHT-COVERAGE-04] Resumo não sensível da credencial do AEGIS KNIGHT: métodos guardados, impressão digital
+   * e validade do certificado, escopo do Azure. Nunca o segredo, o PFX ou a senha.
+   */
+  microsoftCredential(): Observable<MicrosoftCredentialSummary> {
+    return this.http
+      .get<MicrosoftCredentialSummary>(`${this.base}/tenants/connectors/microsoft/credential`)
       .pipe(catchError((err) => throwError(() => this.describe(err))));
   }
 

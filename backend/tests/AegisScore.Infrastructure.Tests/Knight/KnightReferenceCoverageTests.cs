@@ -171,27 +171,80 @@ public sealed class KnightReferenceCoverageTests
         }
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] As 89 referências do Microsoft 365, serviço a serviço. Números TRAVADOS: mudar a
+    /// classificação exige revisar este teste — e explicar por quê no PR. As duas pendentes são PESQUISA em andamento,
+    /// com o que já foi examinado e o que falta: uma busca que não encontrou a leitura não vira "sem API".
+    /// </summary>
     [Fact]
-    public void Microsoft365_ForaDoTeams_ContinuaPendente_ComOMotivoDoProximoBloco()
+    public void Microsoft365_TodasAsReferenciasClassificadas_PendenteSoComPesquisaDeclarada()
     {
         var coverage = KnightReferenceCatalog.Coverage();
         var m365 = coverage.ByPlatform.Single(p => p.Key == nameof(KnightPlatform.Microsoft365));
         m365.Total.Should().Be(89);
-        // [AEGIS-KNIGHT-COVERAGE-03] 15 do Teams + 17 do Exchange Online.
-        m365.Implemented.Should().Be(32);
-        m365.Partial.Should().Be(1, "8.6.1 do Teams — a outra metade do critério vive no Defender para Office 365");
+        m365.Implemented.Should().Be(81);
+        m365.Partial.Should().Be(2, "8.6.1 do Teams e 2.1.11 do Defender (lista de extensões própria do AEGIS)");
         m365.RequiresAccess.Should().Be(1, "8.4.1 do Teams — ver Teams_TemAs17ReferenciasClassificadas...");
-        m365.Pending.Should().Be(55,
-            "Defender para Office 365, Purview, SharePoint/OneDrive, Fabric, Intune, Forms e Sway são os próximos blocos");
+        m365.ApiLimitation.Should().Be(2, "Forms (só na beta) e Sway (sem leitura no Graph nem no TCM)");
+        m365.ManualOnly.Should().Be(1, "2.2.1 — quais contas são de emergência é decisão organizacional");
+        m365.Pending.Should().Be(2);
 
         var pendentes = coverage.Controls
             .Where(c => KnightServices.Describe(c.Control.Service)?.Platform == KnightPlatform.Microsoft365
                         && c.Disposition == KnightReferenceDisposition.Pending)
             .ToList();
-        pendentes.Should().OnlyContain(c => c.Control.Service != KnightService.Teams);
-        pendentes.Should().OnlyContain(c => c.Control.Service != KnightService.ExchangeOnline,
-            "as 17 referências de Exchange Online saíram de pendentes neste bloco");
-        pendentes.Should().OnlyContain(c => c.Note!.Contains("próximos blocos"));
+        pendentes.Select(c => c.Control.Section).Should().BeEquivalentTo(new[] { "2.4.3", "2.4.5" });
+        pendentes.Should().OnlyContain(c => c.Note!.StartsWith("Pesquisa pendente.") && c.Note.Contains("Examinad") && c.Note.Contains("Falta examinar"));
+
+        void Service(KnightService s, int total, int implemented, int partial = 0, int api = 0, int manual = 0, int pending = 0)
+        {
+            var g = coverage.ByService.Single(x => x.Key == s.ToString());
+            (g.Total, g.Implemented, g.Partial, g.ApiLimitation, g.ManualOnly, g.Pending)
+                .Should().Be((total, implemented, partial, api, manual, pending), s.ToString());
+        }
+        Service(KnightService.DefenderForOffice365, 21, 17, partial: 1, manual: 1, pending: 2);
+        Service(KnightService.Purview, 5, 5);
+        Service(KnightService.SharePointOnline, 13, 13);
+        Service(KnightService.Intune, 2, 2);
+        Service(KnightService.Fabric, 12, 12);
+        Service(KnightService.Forms, 1, 0, api: 1);
+        Service(KnightService.Sway, 1, 0, api: 1);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Os controles dos cinco serviços novos só consomem capacidades que o COLETOR REAL da
+    /// fonte produz, declaram o serviço e a fonte certos, e cada referência avaliada é citada por um — e só um — controle.
+    /// </summary>
+    [Fact]
+    public void ControlesDosServicosM365_SoConsomemCapacidadesDoColetorReal_ECadaReferenciaTemUmDono()
+    {
+        var blocos = new (IReadOnlyList<KnightIndicatorDefinition> Defs, KnightSourceType Source, KnightService Service, string Prefix, int Count)[]
+        {
+            (IntuneControls.Definitions, KnightSourceType.MicrosoftIntune, KnightService.Intune, "AK-INT-", 2),
+            (SharePointControls.Definitions, KnightSourceType.MicrosoftSharePoint, KnightService.SharePointOnline, "AK-SPO-", 13),
+            (FabricControls.Definitions, KnightSourceType.MicrosoftFabric, KnightService.Fabric, "AK-FAB-", 12),
+            (DefenderForOffice365Controls.Definitions, KnightSourceType.MicrosoftDefenderForOffice365, KnightService.DefenderForOffice365, "AK-MDO-", 18),
+            (PurviewControls.Definitions, KnightSourceType.MicrosoftPurview, KnightService.Purview, "AK-PUR-", 5),
+        };
+        var coverage = KnightReferenceCatalog.Coverage();
+        foreach (var (defs, source, service, prefix, count) in blocos)
+        {
+            defs.Should().HaveCount(count, prefix);
+            foreach (var d in defs)
+            {
+                d.Id.Should().StartWith(prefix);
+                KnightCatalog.Indicators.Should().Contain(x => x.Id == d.Id, "o controle precisa estar no catálogo ativo");
+                KnightCollectorCapabilities.IsActive(d).Should().BeTrue(d.Id);
+                d.Service.Should().Be(service, d.Id);
+                d.Sources.Should().BeEquivalentTo(new[] { source }, d.Id);
+                d.References.Should().ContainSingle(d.Id);
+                KnightControlProfiles.RequiredCapabilitiesOf(d.Id)
+                    .Should().OnlyContain(c => KnightCollectorCapabilities.Produces(source).Contains(c), d.Id);
+            }
+            foreach (var c in coverage.Controls.Where(c => c.Control.Service == service
+                         && c.Disposition is KnightReferenceDisposition.Implemented or KnightReferenceDisposition.Partial))
+                c.IndicatorIds.Should().ContainSingle(id => id.StartsWith(prefix), c.Control.Key);
+        }
     }
 
     [Fact]

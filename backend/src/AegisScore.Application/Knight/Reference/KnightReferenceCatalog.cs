@@ -204,7 +204,7 @@ public static class KnightReferenceCatalog
             statuses.Add(new KnightReferenceStatus(c,
                 declared?.Disposition ?? KnightReferenceDisposition.Pending,
                 Array.Empty<string>(),
-                declared?.Note ?? KnightReferenceDispositions.PendingNote(c.Service)));
+                declared?.Note ?? KnightReferenceDispositions.PendingNote(c)));
         }
 
         KnightReferenceCoverageGroup Group(string key, string label, IEnumerable<KnightReferenceStatus> items)

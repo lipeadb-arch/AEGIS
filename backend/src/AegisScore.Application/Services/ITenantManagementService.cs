@@ -68,7 +68,41 @@ public record ConfigureMicrosoftHubCommand(
     string TenantId,
     string ClientId,
     string ClientSecret,
-    IReadOnlyList<MicrosoftHubServiceSelection> Services);
+    IReadOnlyList<MicrosoftHubServiceSelection> Services)
+{
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Certificado NOVO da aplicação (PFX em base64, com a chave privada). Só o conector do
+    /// AEGIS KNIGHT o guarda — é o único cujos coletores pedem token por asserção assinada. Ausente = mantém o que já
+    /// estava guardado (a tela nunca recebe o certificado de volta para reenviar).
+    /// </summary>
+    public string? CertificatePfxBase64 { get; init; }
+
+    /// <summary>Senha do PFX novo (quando houver). Nunca volta pela API.</summary>
+    public string? CertificatePassword { get; init; }
+
+    /// <summary>Remove o certificado guardado (volta ao segredo de cliente).</summary>
+    public bool RemoveCertificate { get; init; }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Assinaturas do Azure avaliadas pelo KNIGHT (identificadores GUID). <c>null</c> = mantém
+    /// o escopo guardado; lista vazia = todas as assinaturas que a aplicação enxerga.
+    /// </summary>
+    public IReadOnlyList<string>? AzureSubscriptionIds { get; init; }
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-04] Resumo NÃO sensível da credencial guardada no conector do AEGIS KNIGHT: que métodos de
+/// autenticação existem, a impressão digital e a validade do certificado e o escopo do Azure. Nunca o segredo, o PFX
+/// ou a senha.
+/// </summary>
+public sealed record MicrosoftCredentialSummary(
+    bool Configured,
+    string? DirectoryTenantId,
+    string? ClientId,
+    bool HasSecret,
+    AegisScore.Application.Knight.MicrosoftCertificateSummary? Certificate,
+    string? CertificateProblem,
+    IReadOnlyList<string> AzureSubscriptionIds);
 
 // ---- Resultados de saída ----------------------------------------------------
 
@@ -273,6 +307,11 @@ public interface ITenantManagementService
     /// <exception cref="TenantSecurityException">Sem tenant resolvido no contexto (fail-closed).</exception>
     Task<IReadOnlyList<ConnectorConfigurationResult>> ConfigureMicrosoftHubAsync(
         ConfigureMicrosoftHubCommand command, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Resumo não sensível da credencial do conector do AEGIS KNIGHT (tenant ambiente).
+    /// </summary>
+    Task<MicrosoftCredentialSummary> GetMicrosoftCredentialSummaryAsync(CancellationToken ct = default);
 
     /// <summary>
     /// Lista os conectores do tenant ambiente (Global Query Filter). Somente leitura e SEM segredo —

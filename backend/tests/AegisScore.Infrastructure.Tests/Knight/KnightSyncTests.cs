@@ -415,6 +415,7 @@ public sealed class KnightSyncTests : IDisposable
         public Task<KnightAffectedObjectsPage?> GetAffectedObjectsAsync(Guid runId, string indicatorId, int page, int pageSize, string? search,
             CancellationToken ct = default, KnightObjectRelation relation = KnightObjectRelation.Affected) => throw new NotSupportedException();
         public Task<KnightAffectedSummary?> GetAffectedSummaryAsync(Guid runId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<KnightAffectedSummary?> GetAffectedSummaryAsync(IReadOnlyCollection<Guid> runIds, CancellationToken ct = default) => throw new NotSupportedException();
     }
 
     /// <summary>Resolvido no escopo do worker: repassa ao fake o tenant que o ITenantContext daquele escopo devolve.</summary>
@@ -441,6 +442,7 @@ public sealed class KnightSyncTests : IDisposable
         public Task<KnightAffectedObjectsPage?> GetAffectedObjectsAsync(Guid runId, string indicatorId, int page, int pageSize, string? search,
             CancellationToken ct = default, KnightObjectRelation relation = KnightObjectRelation.Affected) => _inner.GetAffectedObjectsAsync(runId, indicatorId, page, pageSize, search, ct, relation);
         public Task<KnightAffectedSummary?> GetAffectedSummaryAsync(Guid runId, CancellationToken ct = default) => _inner.GetAffectedSummaryAsync(runId, ct);
+        public Task<KnightAffectedSummary?> GetAffectedSummaryAsync(IReadOnlyCollection<Guid> runIds, CancellationToken ct = default) => _inner.GetAffectedSummaryAsync(runIds, ct);
     }
 
     /// <summary>Fila real cuja finalização do pedido falha (banco indisponível naquele instante).</summary>

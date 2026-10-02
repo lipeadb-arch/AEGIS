@@ -171,11 +171,17 @@ public class TenantsController : ControllerBase
         {
             results = await _onboarding.ConfigureMicrosoftHubAsync(
                 new ConfigureMicrosoftHubCommand(
-                    req.TenantId, req.ClientId, req.ClientSecret,
+                    req.TenantId, req.ClientId, req.ClientSecret ?? "",
                     (req.Services ?? Array.Empty<MicrosoftHubServiceRequest>())
                         .Select(s => new MicrosoftHubServiceSelection(
                             s.Capability, s.SyncIntervalMinutes, s.WorkspaceId, s.DisplayName))
-                        .ToList()),
+                        .ToList())
+                {
+                    CertificatePfxBase64 = req.CertificatePfxBase64,
+                    CertificatePassword = req.CertificatePassword,
+                    RemoveCertificate = req.RemoveCertificate,
+                    AzureSubscriptionIds = req.AzureSubscriptionIds,
+                },
                 ct);
         }
         catch (MicrosoftHubValidationException ex)
@@ -192,5 +198,19 @@ public class TenantsController : ControllerBase
                 r.HasCredentials, r.HasIngestionKey))
             .ToList();
         return Ok(dtos);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Resumo NÃO sensível da credencial do AEGIS KNIGHT: métodos de autenticação guardados,
+    /// impressão digital e validade do certificado, escopo do Azure. Nunca o segredo, o PFX ou a senha.
+    /// </summary>
+    [HttpGet("connectors/microsoft/credential")]
+    [Authorize(Roles = "TenantAdmin")]
+    public async Task<ActionResult<MicrosoftCredentialSummaryDto>> MicrosoftCredential(CancellationToken ct)
+    {
+        var s = await _onboarding.GetMicrosoftCredentialSummaryAsync(ct);
+        return Ok(new MicrosoftCredentialSummaryDto(s.Configured, s.DirectoryTenantId, s.ClientId, s.HasSecret,
+            s.Certificate is { } c ? new MicrosoftCertificateSummaryDto(c.Thumbprint, c.NotBefore, c.NotAfter, c.CurrentlyValid) : null,
+            s.CertificateProblem, s.AzureSubscriptionIds));
     }
 }
