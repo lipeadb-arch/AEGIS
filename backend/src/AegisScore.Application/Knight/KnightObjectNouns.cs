@@ -46,6 +46,17 @@ public static class KnightObjectNouns
         return char.ToUpperInvariant(s[0]) + s[1..];
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-PRESENTATION-01] Rótulo do tipo na coluna "Tipo": um recurso de nuvem diz QUAL (assinatura, conta de
+    /// armazenamento, aplicativo do App Service…), lido do identificador congelado; sem tipo reconhecido, o rótulo genérico.
+    /// </summary>
+    public static string Label(KnightAffectedObjectKind kind, string? externalId)
+    {
+        if (kind == KnightAffectedObjectKind.CloudResource && Catalog.AzureLabels.TypeOfResourceId(externalId) is { Length: > 0 } t)
+            return char.ToUpperInvariant(t[0]) + t[1..];
+        return Label(kind);
+    }
+
     private static bool IsIdentity(KnightAffectedObjectKind k) =>
         k is KnightAffectedObjectKind.User or KnightAffectedObjectKind.Guest or KnightAffectedObjectKind.ServicePrincipal
             or KnightAffectedObjectKind.Group or KnightAffectedObjectKind.Unknown;

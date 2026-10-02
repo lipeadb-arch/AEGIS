@@ -800,9 +800,16 @@ public record KnightReferenceCoverageDto(
     IReadOnlyList<KnightReferenceCoverageGroupDto> ByPlatform, IReadOnlyList<KnightReferenceCoverageGroupDto> ByService,
     IReadOnlyList<KnightReferenceControlStatusDto> Controls);
 
+/// <summary>[AEGIS-KNIGHT-PRESENTATION-01] Glossário único dos termos técnicos (o mesmo das exportações).</summary>
+public record KnightGlossaryTermDto(string Term, string Meaning, string Explanation);
+
+public record KnightGlossaryDto(IReadOnlyList<KnightGlossaryTermDto> Terms, string IdentifierExplanation);
+
 /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Objeto que se repete entre controles expostos.</summary>
 public record KnightAffectedSummaryItemDto(
-    string ExternalId, string Kind, string? DisplayName, string? UserPrincipalName, int ControlCount, IReadOnlyList<string> IndicatorIds);
+    string ExternalId, string Kind, string? DisplayName, string? UserPrincipalName, int ControlCount, IReadOnlyList<string> IndicatorIds,
+    // [AEGIS-KNIGHT-PRESENTATION-01] Tipo específico (ex.: "Conta de armazenamento"), o mesmo das exportações.
+    string? KindLabel = null);
 
 /// <summary>[AEGIS-KNIGHT-MULTICLOUD-01] Ocorrências × objetos únicos × controles expostos de uma avaliação.</summary>
 public record KnightAffectedSummaryDto(

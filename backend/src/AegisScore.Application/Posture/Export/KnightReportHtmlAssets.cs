@@ -23,7 +23,7 @@ header.top .wrap{padding-top:18px;padding-bottom:14px}
 .brand{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:700}
 h1{margin:4px 0 2px;font-size:24px}h2{font-size:17px;margin:0 0 10px}h3{font-size:14px;margin:14px 0 6px}
 .sub{color:var(--ink2);margin:0}.meta{color:var(--muted);font-size:12px;margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 14px}
-.tabs{display:flex;gap:4px;margin:16px 0 0;border-bottom:1px solid var(--line)}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;margin:16px 0 0;border-bottom:1px solid var(--line)}
 .tabs button{background:none;border:0;border-bottom:3px solid transparent;padding:10px 14px;font:inherit;font-weight:600;color:var(--ink2);cursor:pointer}
 .tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:14px}
@@ -64,6 +64,16 @@ th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04
 .ctl-body{padding:0 14px 14px;border-top:1px solid var(--line)}.sec{margin-top:12px}.sec h3{color:var(--accent);text-transform:uppercase;font-size:12px;letter-spacing:.06em}
 .kv{display:grid;grid-template-columns:200px minmax(0,1fr);gap:4px 12px;font-size:13px}.kv .k{color:var(--muted)}
 @media (max-width:700px){.kv{grid-template-columns:minmax(0,1fr)}.bar{grid-template-columns:100px minmax(0,1fr) 36px}}
+.refs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.ref{display:block;width:100%;text-align:left;background:none;border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:inherit;color:var(--ink);cursor:pointer}
+.ref:hover{border-color:var(--accent)}.ref .rt{display:block}.ref .rc{display:block;font-family:Consolas,Menlo,monospace;font-size:11px;color:var(--muted)}
+.linkbtn{background:none;border:0;padding:4px 0;font:inherit;font-size:13px;color:var(--accent);text-decoration:underline;cursor:pointer}
+.gl dt{font-weight:700}.gl dd{margin:0 0 8px}.gl .mean{color:var(--ink2)}.gid{border-top:1px solid var(--line);padding:8px 0}
+.gfind{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted);max-width:420px}
+.gfind input{font:inherit;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
+@media (max-width:600px){table.stack thead{display:none}table.stack tr{display:block;border-bottom:1px solid var(--line);padding:6px 0}
+table.stack td{display:block;border:0;padding:3px 0}table.stack td[data-l]::before{content:attr(data-l);display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.tabs button{padding:8px 10px}}
 .empty{color:var(--muted);font-style:italic}footer{color:var(--muted);font-size:12px;margin-top:24px;overflow-wrap:anywhere}
 @media print{.tabs,.filters,.btn,.no-print{display:none!important}[hidden]{display:block!important}.panel,.ctl{break-inside:avoid}body{background:#fff}}
 """;
@@ -86,7 +96,22 @@ function pill(cls,text){return el('span',{cls:'pill '+cls,text:text});}
 function pct(v){return v===null||v===undefined?'—':(Math.round(v*10)/10).toString().replace('.',',')+'%';}
 var main=document.getElementById('app');
 function setTab(t){ST.tab=t;var b=document.querySelectorAll('.tabs button');for(var i=0;i<b.length;i++){var on=b[i].getAttribute('data-tab')===t;b[i].setAttribute('aria-selected',on?'true':'false');b[i].tabIndex=on?0:-1;}
-document.getElementById('tab-overview').hidden=t!=='overview';document.getElementById('tab-controls').hidden=t!=='controls';}
+['overview','controls','glossary'].forEach(function(x){document.getElementById('tab-'+x).hidden=t!==x;});}
+// [AEGIS-KNIGHT-PRESENTATION-01] Controle citado fora do detalhe: título CONGELADO na fotografia como informação principal,
+// código como secundária; clique, Enter ou Espaço abrem o detalhe. Sem título na fotografia, o código fica e isso é dito.
+var CT={};D.controls.forEach(function(c){CT[c.id]=c;});
+var GL={};(D.glossary||[]).forEach(function(g){GL[g.term]=g;});
+var uid=0;
+function ctlRef(id,title){var t=title||(CT[id]&&CT[id].title)||null;
+return el('button',{cls:'ref',type:'button','aria-label':(t?t+' ('+id+')':'Controle '+id)+': abrir o detalhe',onclick:function(){go({},id);}},[el('span',{cls:'rt',text:t||'Título não disponível nesta fotografia'}),el('span',{cls:'rc',text:id})]);}
+function ctlRefs(refs,preview){var ul=el('ul',{cls:'refs',id:'refs-'+(++uid)}),extra=[];
+refs.forEach(function(r,i){var li=el('li',null,[ctlRef(r.id,r.title)]);if(i>=preview){li.hidden=true;extra.push(li);}ul.appendChild(li);});
+var box=el('div',null,[ul]);if(!extra.length)return box;
+var more='Mostrar todos os '+refs.length+' controles',less='Mostrar só os '+preview+' primeiros';
+var b=el('button',{cls:'linkbtn no-print',type:'button','aria-expanded':'false','aria-controls':ul.id,text:more,onclick:function(){var o=b.getAttribute('aria-expanded')==='true';
+extra.forEach(function(li){li.hidden=o;});b.setAttribute('aria-expanded',o?'false':'true');b.textContent=o?more:less;if(!o){var f=extra[0].querySelector('button');if(f)f.focus();}}});
+box.appendChild(b);return box;}
+function refsOf(ids){return ids.map(function(id){return{id:id,title:null};});}
 function go(filters,open){ST.f={q:'',status:'',severity:'',platform:'',service:'',domain:'',framework:''};for(var k in filters)ST.f[k]=filters[k];syncFilterInputs();renderList(open);setTab('controls');
 var h=document.getElementById('tab-controls');if(open){var c=document.getElementById('ctl-'+open);if(c){c.scrollIntoView();var b=c.querySelector('button');if(b)b.focus();}}else h.scrollIntoView();}
 // ---------- Visão geral ----------
@@ -123,8 +148,10 @@ else{var ol=el('ol');D.priorities.forEach(function(p){ol.appendChild(el('li',nul
 box.appendChild(pr);
 var to=el('div',{cls:'panel'},[el('h2',{text:'Contas, aplicações e demais itens mais recorrentes'}),el('p',{cls:'sub',text:'Itens afetados (contas, aplicações, grupos, papéis, políticas…) que aparecem em mais controles reprovados ou mitigados.'})]);
 if(D.topObjects.length===0)to.appendChild(el('p',{cls:'empty',text:D.kpis.uniqueAffected===null?'Esta fotografia não congelou os itens afetados.':'Nenhum item afetado preservado.'}));
-else{var tb=el('tbody');D.topObjects.forEach(function(o){tb.appendChild(el('tr',null,[el('td',null,[el('div',{text:o.label}),el('div',{cls:'mono',text:o.externalId})]),el('td',{text:o.kindLabel}),el('td',{text:String(o.controlCount)}),el('td',{cls:'mono',text:o.controlIds.join(', ')})]));});
-to.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,[el('th',{text:'Item'}),el('th',{text:'Tipo'}),el('th',{text:'Controles'}),el('th',{text:'Quais'})])]),tb])]));}
+else{var tb=el('tbody'),H=['Conta ou recurso afetado','Tipo','Quantidade de controles','Controles relacionados'];D.topObjects.forEach(function(o){tb.appendChild(el('tr',null,[el('td',{'data-l':H[0]},[el('div',{text:o.label}),el('div',{cls:'mono',text:o.externalId})]),el('td',{'data-l':H[1],text:o.kindLabel}),el('td',{'data-l':H[2],text:String(o.controlCount)}),
+el('td',{'data-l':H[3]},[ctlRefs(o.controls||refsOf(o.controlIds),3)])]));});
+to.appendChild(el('p',{cls:'sub',text:'Cada controle relacionado mostra o título registrado nesta fotografia e o código; clique para abrir o detalhe.'}));
+to.appendChild(el('div',{cls:'tw'},[el('table',{cls:'stack'},[el('thead',null,[el('tr',null,H.map(function(x){return el('th',{text:x});}))]),tb])]));}
 box.appendChild(to);
 if(D.composition&&D.composition.length)box.appendChild(composition());
 box.appendChild(sources());
@@ -159,7 +186,7 @@ el('span',{cls:'k',text:'Escopo desta avaliação'}),el('span',{text:'Controles 
 if(D.limitations.length===0&&D.legacyLimitations.length===0)p.appendChild(el('p',{cls:'sub',text:'Nenhuma limitação de coleta registrada: todas as capacidades desta fonte foram lidas.'}));
 if(D.limitations.length){var tb=el('tbody');D.limitations.forEach(function(l){tb.appendChild(el('tr',null,[el('td',{text:l.capabilityLabel}),el('td',{text:l.causeLabel}),
 el('td',null,[el('div',{text:l.detail||'—'}),l.requiredPermission?el('div',{cls:'mono',text:'Permissão exigida pela chamada implementada: '+l.requiredPermission}):null]),
-el('td',{cls:'mono',text:l.affectedControls.length?l.affectedControls.join(', '):'nenhum controle ficou sem avaliação por isso'}),el('td',{text:l.guidance}),el('td',{text:dt(l.attemptedAt)})]));});
+el('td',null,[l.affectedControls.length?ctlRefs(refsOf(l.affectedControls),3):el('span',{text:'nenhum controle ficou sem avaliação por isso'})]),el('td',{text:l.guidance}),el('td',{text:dt(l.attemptedAt)})]));});
 p.appendChild(el('h3',{text:'Limitações de coleta'}));p.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,['Capacidade','Causa','Detalhe','Controles prejudicados','O que fazer','Tentativa'].map(function(x){return el('th',{text:x});}))]),tb])]));}
 if(D.legacyLimitations.length){p.appendChild(el('h3',{text:'Limitações de coleta (registro da fotografia)'}));var ul=el('ul');D.legacyLimitations.forEach(function(x){ul.appendChild(el('li',{text:x}));});p.appendChild(ul);}
 return p;}
@@ -235,7 +262,29 @@ b.appendChild(sec('Evidência técnica e proveniência',[el('div',{cls:'kv'},[el
 el('span',{cls:'k',text:'Coletado em'}),el('span',{text:dt(c.collectedAt)}),el('span',{cls:'k',text:'Critério da regra'}),el('span',{text:c.criterion||'não exibido (catálogo da avaliação difere do catálogo dos textos, ou fotografia v1)'}),
 el('span',{cls:'k',text:'Frameworks e benchmarks'}),el('span',{text:fw.length?fw.join(' · '):'—'}),el('span',{cls:'k',text:'Capacidades de coleta usadas'}),el('span',{text:(c.requiredCapabilityLabels||c.requiredCapabilities).join(', ')||'—'}),
 el('span',{cls:'k',text:'Contribuição para a nota'}),el('span',{text:c.factor===null?'Fora da nota (não avaliado, erro ou não aplicável) — reduz a cobertura, não a nota.':'Peso '+c.weight+' × fator '+String(c.factor).replace('.',',')+' = '+String(c.achieved).replace('.',',')+' de '+c.possible+' ponto(s).'})])]));
+var gt=(c.glossaryTerms||[]).filter(function(x){return GL[x];});
+if(gt.length)b.appendChild(sec('Termos técnicos deste controle',[termList(gt)]));
 return b;}
+function termList(terms){var dl=el('dl',{cls:'gl'});terms.forEach(function(x){var g=GL[x];dl.appendChild(el('dt',{text:g.term}));dl.appendChild(el('dd',null,[el('span',{cls:'mean',text:g.meaning+'. '}),g.explanation]));});return dl;}
+// ---------- Glossário ----------
+function glossaryTab(){var box=el('div',{id:'tab-glossary',role:'tabpanel','aria-labelledby':'t-glossary'});box.hidden=true;
+var ip=el('div',{cls:'panel'},[el('h2',{text:'Identificadores internos (códigos AK-…)'}),el('p',{cls:'sub',text:D.identifierExplanation||''})]);
+var res=el('div',{role:'status','aria-live':'polite'}),lim=20;
+var iq=el('input',{id:'g-id',type:'search',placeholder:'Ex.: AK-AZ-IAM-004 ou parte do título',oninput:function(){lim=20;find();},
+onkeydown:function(e){if(e.key==='Enter'){var x=CT[iq.value.trim().toUpperCase()];if(x){go({},x.id);e.preventDefault();}}}});
+function find(){res.textContent='';var t=iq.value.trim().toLowerCase();if(!t)return;
+var m=D.controls.filter(function(c){return c.id.toLowerCase().indexOf(t)>=0||c.title.toLowerCase().indexOf(t)>=0;});
+if(!m.length){res.appendChild(el('p',{cls:'empty',text:'Nenhum controle desta avaliação corresponde a “'+iq.value.trim()+'”.'}));return;}
+res.appendChild(el('p',{cls:'sub',text:m.length+' controle(s) encontrado(s). Enter com o código completo abre o controle.'}));
+m.slice(0,lim).forEach(function(c){res.appendChild(el('div',{cls:'gid'},[ctlRef(c.id,c.title),el('p',{cls:'sub',text:'O que avalia: '+(c.description||'descrição não congelada nesta fotografia; vale o título registrado acima.')})]));});
+if(m.length>lim)res.appendChild(el('button',{cls:'linkbtn',type:'button',text:'Mostrar todos os '+m.length+' resultados',onclick:function(){lim=m.length;find();}}));}
+ip.appendChild(el('label',{cls:'gfind','for':'g-id'},['Consultar um código ou título',iq]));ip.appendChild(res);box.appendChild(ip);
+var g=D.glossary||[],tp=el('div',{cls:'panel'},[el('h2',{text:'Termos técnicos'}),el('p',{cls:'sub',text:'Siglas que aparecem nos textos desta avaliação, com o significado e uma explicação curta. As definições vêm do glossário único do AEGIS — as mesmas da aplicação e do PDF.'})]);
+if(!g.length){tp.appendChild(el('p',{cls:'empty',text:'Nenhuma sigla do glossário aparece nos textos desta fotografia.'}));box.appendChild(tp);return box;}
+var list=el('div'),tq=el('input',{id:'g-term',type:'search',placeholder:'Sigla ou palavra (ex.: MFA, rede)',oninput:function(){draw();}});
+function draw(){list.textContent='';var t=tq.value.trim().toLowerCase();var m=g.filter(function(x){return!t||[x.term,x.meaning,x.explanation].join(' ').toLowerCase().indexOf(t)>=0;});
+if(!m.length){list.appendChild(el('p',{cls:'empty',text:'Nenhum termo corresponde à pesquisa.'}));return;}list.appendChild(termList(m.map(function(x){return x.term;})));}
+tp.appendChild(el('label',{cls:'gfind','for':'g-term'},['Pesquisar no glossário',tq]));tp.appendChild(list);draw();box.appendChild(tp);return box;}
 function objects(c){var wrap=el('div');var aff=c.objects.filter(function(o){return o.relation==='Affected';}),ev=c.objects.filter(function(o){return o.relation!=='Affected';});
 var info=[];if(c.affectedCount>0)info.push('Afetados segundo a regra: '+(c.affectedComposition||c.affectedCount));if(c.evidenceCount>0)info.push(c.evidenceCount+' evidência(s) de configuração');
 if(c.detailPreserved===null)wrap.appendChild(el('p',{cls:'note',text:'Esta fotografia (v1) não congelou os itens. A lista de hoje não serve de prova para um resultado anterior.'}));
@@ -253,9 +302,10 @@ more.textContent='Mostrar todos ('+rows.length+')';more.hidden=rows.length<=show
 if(q)wrap.appendChild(q);wrap.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,['Relação','Tipo','Item','Por que está aqui','Configuração encontrada'].map(function(x){return el('th',{text:x});}))]),tb])]));wrap.appendChild(more);draw();return wrap;}
 // ---------- Montagem ----------
 var tabs=el('div',{cls:'tabs',role:'tablist','aria-label':'Seções do relatório'});
-[['overview','Visão geral'],['controls','Controles e findings']].forEach(function(t,i){tabs.appendChild(el('button',{id:'t-'+t[0],type:'button',role:'tab','data-tab':t[0],'aria-controls':'tab-'+t[0],'aria-selected':i===0?'true':'false',text:t[1],
-onclick:function(){setTab(t[0]);},onkeydown:function(e){if(e.key==='ArrowRight'||e.key==='ArrowLeft'){var n=t[0]==='overview'?'controls':'overview';setTab(n);document.getElementById('t-'+n).focus();e.preventDefault();}}}));});
-main.appendChild(tabs);main.appendChild(overview());main.appendChild(controlsTab());renderList();setTab('overview');
+var TABS=[['overview','Visão geral'],['controls','Controles e findings'],['glossary','Glossário']];
+TABS.forEach(function(t,i){tabs.appendChild(el('button',{id:'t-'+t[0],type:'button',role:'tab','data-tab':t[0],'aria-controls':'tab-'+t[0],'aria-selected':i===0?'true':'false',text:t[1],
+onclick:function(){setTab(t[0]);},onkeydown:function(e){if(e.key==='ArrowRight'||e.key==='ArrowLeft'){var n=TABS[(i+(e.key==='ArrowRight'?1:TABS.length-1))%TABS.length][0];setTab(n);document.getElementById('t-'+n).focus();e.preventDefault();}}}));});
+main.appendChild(tabs);main.appendChild(overview());main.appendChild(controlsTab());main.appendChild(glossaryTab());renderList();setTab('overview');
 var ns=document.getElementById('nojs');if(ns)ns.hidden=true;
 })();
 """;

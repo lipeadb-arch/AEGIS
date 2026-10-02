@@ -24,11 +24,16 @@ import {
   sourceStateLabel,
   sourceTypeLabel,
   CONSOLIDATION_CANDIDATES,
+  KnightGlossary,
 } from '../models/knight.models';
 import { IdentityRiskPanelComponent } from '../components/identity/identity-risk-panel.component';
 import { KnightFindingDetailComponent } from '../components/knight/finding-detail.component';
 import { KnightOverviewComponent } from '../components/knight/knight-overview.component';
 import { KnightControlsComponent } from '../components/knight/knight-controls.component';
+import { KnightGlossaryComponent } from '../components/knight/knight-glossary.component';
+
+/** [AEGIS-KNIGHT-PRESENTATION-01] Abas da avaliação. */
+type KnightPageTab = 'overview' | 'controls' | 'glossary';
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
 import { IdentityRiskService } from '../services/identity-risk.service';
 import { KnightRunTimeoutError, KnightService } from '../services/knight.service';
@@ -59,7 +64,7 @@ import { PostureExportFormat } from '../models/posture-history.models';
 @Component({
   selector: 'app-aegis-knight',
   standalone: true,
-  imports: [DatePipe, RouterLink, IdentityRiskPanelComponent, KnightFindingDetailComponent, KnightOverviewComponent, KnightControlsComponent],
+  imports: [DatePipe, RouterLink, IdentityRiskPanelComponent, KnightFindingDetailComponent, KnightOverviewComponent, KnightControlsComponent, KnightGlossaryComponent],
   template: `
     <section class="page knight">
       <header class="page-head">
@@ -316,6 +321,9 @@ import { PostureExportFormat } from '../models/posture-history.models';
                     (click)="setTab('controls')" (keydown)="tabKey($event)">
               Controles e findings <span class="tab-count">{{ findingsCount() }}</span>
             </button>
+            <button type="button" role="tab" id="knight-tab-glossary" [class.on]="tab() === 'glossary'"
+                    [attr.aria-selected]="tab() === 'glossary'" [attr.tabindex]="tab() === 'glossary' ? 0 : -1"
+                    (click)="setTab('glossary')" (keydown)="tabKey($event)">Glossário</button>
           </div>
 
           @if (tab() === 'overview') {
@@ -369,6 +377,10 @@ import { PostureExportFormat } from '../models/posture-history.models';
                 }
               </div>
             </div>
+          } @else if (tab() === 'glossary') {
+            <div role="tabpanel" aria-labelledby="knight-tab-glossary" class="tabpanel">
+              <app-knight-glossary [assessment]="a" [glossary]="glossary()" [state]="glossaryState()" (open)="openControl($event)" />
+            </div>
           } @else {
             <div role="tabpanel" aria-labelledby="knight-tab-controls" class="tabpanel ctl-layout">
               <app-knight-controls [assessment]="a" [filters]="filters()" [selected]="selected()"
@@ -379,6 +391,7 @@ import { PostureExportFormat } from '../models/posture-history.models';
                   [assessment]="a"
                   [runFinalized]="!unfinishedView()"
                   [indicator]="ind"
+                  [glossary]="glossary()?.terms ?? []"
                   [activePlan]="activePlan()"
                   [plan]="focusedPlan()"
                   [planState]="pinned()"
@@ -946,7 +959,10 @@ export class AegisKnightComponent implements OnInit {
   readonly badgeLabel = computed(() => connectionBadgeLabel(this.badgeState()));
 
   // ---- [AEGIS-KNIGHT-MULTICLOUD-01] Abas, filtros e resumo de objetos afetados ----------------------
-  readonly tab = signal<'overview' | 'controls'>('overview');
+  readonly tab = signal<KnightPageTab>('overview');
+  /** [AEGIS-KNIGHT-PRESENTATION-01] Glossário único do servidor — lido uma vez; o mesmo das exportações. */
+  readonly glossary = signal<KnightGlossary | null>(null);
+  readonly glossaryState = signal<'loading' | 'ok' | 'error'>('loading');
   readonly filters = signal<KnightControlFilters>(EMPTY_FILTERS);
   /** Findings = reprovados + mitigados (atenção) — o número na aba. */
   readonly findingsCount = computed(() => (this.assessment()?.indicators ?? []).filter(isFinding).length);
@@ -957,17 +973,32 @@ export class AegisKnightComponent implements OnInit {
   /** [AEGIS-KNIGHT-COVERAGE-01] Cobertura do catálogo (leitura do catálogo no servidor — não coleta nada). */
   readonly referenceCoverage = signal<KnightReferenceCoverage | null>(null);
 
-  setTab(t: 'overview' | 'controls'): void {
+  setTab(t: KnightPageTab): void {
     if (this.tab() === t) return;
     this.tab.set(t);
+    if (t === 'glossary') this.loadGlossary();
     this.syncQueryParam(this.selected());
   }
 
-  /** Setas esquerda/direita alternam as abas (padrão WAI-ARIA de tablist). */
+  private loadGlossary(): void {
+    if (this.glossary()) return;
+    this.glossaryState.set('loading');
+    this.knight.getGlossary().subscribe({
+      next: (g) => {
+        this.glossary.set(g);
+        this.glossaryState.set('ok');
+      },
+      error: () => this.glossaryState.set('error'),
+    });
+  }
+
+  /** Setas esquerda/direita percorrem as abas em ciclo (padrão WAI-ARIA de tablist). */
   tabKey(ev: KeyboardEvent): void {
     if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
     ev.preventDefault();
-    const next = this.tab() === 'overview' ? 'controls' : 'overview';
+    const order: KnightPageTab[] = ['overview', 'controls', 'glossary'];
+    const step = ev.key === 'ArrowRight' ? 1 : order.length - 1;
+    const next = order[(order.indexOf(this.tab()) + step) % order.length];
     this.setTab(next);
     const el = typeof document !== 'undefined' ? document.getElementById(`knight-tab-${next}`) : null;
     el?.focus();
@@ -1322,7 +1353,7 @@ export class AegisKnightComponent implements OnInit {
         finding: indicatorId,
         run: this.pinnedRun(),
         plan: this.pinnedPlanId(),
-        tab: this.tab() === 'controls' ? 'controls' : null,
+        tab: this.tab() === 'overview' ? null : this.tab(),
       },
       queryParamsHandling: 'merge',
       replaceUrl: true,
@@ -1367,6 +1398,7 @@ export class AegisKnightComponent implements OnInit {
   ngOnInit(): void {
     // Somente LEITURA ao abrir — fontes + último assessment. NÃO executa análise automaticamente.
     this.reload();
+    this.loadGlossary();
   }
 
   /**
@@ -1385,7 +1417,7 @@ export class AegisKnightComponent implements OnInit {
     this.linkNotice.set(null);
     this.findingNotice.set(null);
     const q = this.route.snapshot.queryParamMap;
-    this.tab.set(q.get('tab') === 'controls' || q.get('finding') ? 'controls' : 'overview');
+    this.tab.set(q.get('finding') || q.get('tab') === 'controls' ? 'controls' : q.get('tab') === 'glossary' ? 'glossary' : 'overview');
 
     this.loading.set(true);
     this.error.set(null);

@@ -194,6 +194,26 @@ public static class AzureLabels
 
     public static string Type(string type) => Types.TryGetValue(type, out var l) ? l : type;
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-PRESENTATION-01] O tipo de um recurso a partir do identificador do Azure Resource Manager CONGELADO
+    /// (formato oficial "/subscriptions/{id}/resourceGroups/{rg}/providers/{namespace}/{tipo}/{nome}[/{subtipo}/{nome}]").
+    /// Só tipos com rótulo conhecido; qualquer outro formato devolve nulo e quem chama mantém o rótulo genérico.
+    /// </summary>
+    public static string? TypeOfResourceId(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        var s = id.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (s.Length < 2 || !s[0].Equals("subscriptions", StringComparison.OrdinalIgnoreCase)) return null;
+        if (s.Length == 2) return Types[AzureView.SubscriptionType];
+        var p = Array.FindLastIndex(s, x => x.Equals("providers", StringComparison.OrdinalIgnoreCase));
+        if (p < 0)
+            return s.Length == 4 && s[2].Equals("resourceGroups", StringComparison.OrdinalIgnoreCase) ? "grupo de recursos" : null;
+        var rest = s.Skip(p + 1).ToArray();
+        if (rest.Length < 3 || rest.Length % 2 == 0) return null;
+        var type = rest[0] + "/" + string.Join("/", rest.Skip(1).Where((_, i) => i % 2 == 0));
+        return Types.TryGetValue(type, out var l) ? l : null;
+    }
+
     public static string Subscription(AzureSubscriptionInventory s) =>
         string.IsNullOrWhiteSpace(s.DisplayName) ? s.SubscriptionId : $"{s.DisplayName} ({s.SubscriptionId})";
 }
