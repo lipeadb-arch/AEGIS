@@ -174,10 +174,10 @@ p.appendChild(el('p',{cls:'sub',text:'Este arquivo contém a avaliação complet
 D.notes.forEach(function(n){p.appendChild(el('p',{cls:'note',text:n}));});return p;}
 function coverage(){var c=D.referenceCoverage,p=el('div',{cls:'panel'},[el('h2',{text:'Cobertura do catálogo de referência'}),
 el('p',{cls:'sub',text:'Três medidas diferentes, que não se somam: (1) cobertura do catálogo — o que o AEGIS consegue avaliar, propriedade do produto; (2) cobertura desta avaliação — o que a coleta conseguiu avaliar neste ambiente ('+pct(D.kpis.coverage)+'); (3) aprovação — o que foi avaliado e está conforme ('+pct(D.kpis.approvalPercent)+').'}),
-el('p',{cls:'sub',text:c.frameworks.join(' · ')+' · catálogo '+c.catalogVersion+'. Integral = critério da referência; parcial = critério equivalente, não idêntico. Limitação da API oficial, verificação manual e acesso que o conector não tem nunca contam como avaliados.'})]);
+el('p',{cls:'sub',text:c.frameworks.join(' · ')+' · catálogo '+c.catalogVersion+'. Integral = critério da referência; parcial = critério equivalente, não idêntico. Sem método na API oficial, leitura só em versão preview (não usada: o AEGIS usa só versões estáveis), verificação manual e acesso que o conector não tem nunca contam como avaliados.'})]);
 var tb=el('tbody');[c.total].concat(c.byPlatform).forEach(function(r){tb.appendChild(el('tr',null,[el('td',{text:r.label}),el('td',{text:String(r.total)}),
-el('td',{text:r.implemented+' ('+pct(r.fullPercent)+')'}),el('td',{text:r.partial+' ('+pct(r.partialPercent)+')'}),el('td',{text:String(r.pending)}),el('td',{text:String(r.apiLimitation)}),el('td',{text:String(r.manualOnly)}),el('td',{text:String(r.requiresAccess)})]));});
-p.appendChild(el('div',{cls:'tw'},[el('table',{cls:'cov'},[el('thead',null,[el('tr',null,['Recorte','Total','Integral','Parcial','Pendente','Limitação da API','Manual','Outro acesso'].map(function(x){return el('th',{text:x});}))]),tb])]));
+el('td',{text:r.implemented+' ('+pct(r.fullPercent)+')'}),el('td',{text:r.partial+' ('+pct(r.partialPercent)+')'}),el('td',{text:String(r.pending)}),el('td',{text:String(r.previewOnly||0)}),el('td',{text:String(r.apiLimitation)}),el('td',{text:String(r.manualOnly)}),el('td',{text:String(r.requiresAccess)})]));});
+p.appendChild(el('div',{cls:'tw'},[el('table',{cls:'cov'},[el('thead',null,[el('tr',null,['Recorte','Total','Integral','Parcial','Pendente','Só em preview','Sem método na API','Manual','Outro acesso'].map(function(x){return el('th',{text:x});}))]),tb])]));
 p.appendChild(el('p',{cls:'sub',text:'“Com alguma avaliação automatizada” (integral + parcial): '+pct(c.total.anyAutomatedPercent)+' — não é cobertura completa.'}));return p;}
 // ---------- Controles e findings ----------
 var listBox,recorte,inputs={};

@@ -82,7 +82,10 @@ public sealed record ConditionalAccessPolicyConfiguration(
     string? PersistentBrowserMode = null,
     bool? ApplicationEnforcedRestrictions = null,
     IReadOnlyList<string>? AuthenticationStrengthCombinations = null,
-    bool SessionAndConditionsCaptured = false)
+    bool SessionAndConditionsCaptured = false,
+    // [AEGIS-KNIGHT-COVERAGE-04] Proteção de token nas sessões de entrada (sessionControls.secureSignInSession, v1.0).
+    // Nulo = coleta anterior a este campo (não avaliado); false = a política não exige.
+    bool? SecureSignInSessionEnabled = null)
 {
     /// <summary>Nome e versão do contrato de normalização persistido com o objeto.</summary>
     public const string SchemaVersion = "aegis-config-entra-ca-policy-v2";

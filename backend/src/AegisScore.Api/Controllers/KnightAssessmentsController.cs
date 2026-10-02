@@ -78,7 +78,7 @@ public class KnightAssessmentsController : ControllerBase
         var c = KnightReferenceCatalog.Coverage();
         static KnightReferenceCoverageGroupDto G(KnightReferenceCoverageGroup g) => new(
             g.Key, g.Label, g.Total, g.Implemented, g.Partial, g.Pending, g.ManualOnly, g.RequiresAccess, g.ApiLimitation,
-            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent);
+            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent, g.PreviewOnly);
         return Ok(new KnightReferenceCoverageDto(
             c.CatalogVersion, c.ReferenceCommit,
             c.Frameworks.Select(f => $"{f.Name} {f.Version}").ToList(),

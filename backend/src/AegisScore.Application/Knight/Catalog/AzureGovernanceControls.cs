@@ -500,6 +500,32 @@ public static class AzureGovernanceControls
                 "As {0} assinatura(s) com hub IoT têm o Defender para IoT."),
             Ref(AzureRefs.Az + "8.2.1", KnightReferenceMatch.Partial,
                 "Avalia a existência da solução de segurança de IoT na assinatura dos hubs; não confere quais hubs cada solução cobre.")),
+
+        // [AEGIS-KNIGHT-COVERAGE-04] Antes pesquisa pendente: a avaliação do Defender para Nuvem é lida por máquina
+        // ({vm}/providers/Microsoft.Security/assessments/{chave}, versão estável 2021-06-01) — a mesma que a política interna
+        // f85bf3e0 audita, com Healthy e NotApplicable como conformes.
+        Control(KnightService.DefenderForCloud, "AK-AZ-MDC-020", "Máquinas virtuais com atualizações do sistema pendentes", Cloud, SeverityLevel.Medium,
+            "Instalar as atualizações de sistema, segurança e críticas pendentes nas máquinas virtuais (Azure Update Manager ou ferramenta própria).",
+            "Avaliação “atualizações do sistema devem ser instaladas” do Defender para Nuvem com estado Healthy (ou NotApplicable) em cada máquina virtual.",
+            new AzureCheck(KnightCapability.AzureCompute, "máquina virtual", v => v.OfType("Microsoft.Compute/virtualMachines"),
+                (r, _) =>
+                {
+                    const string expected = "avaliação de atualizações do sistema: saudável";
+                    if (r.Str("updates:status") is { } st)
+                        return KnightItemCheck.Of(null, st == "NotFound"
+                            ? "o Defender para Nuvem não tem a avaliação de atualizações para esta máquina (plano ou avaliação de atualizações não ativos)"
+                            : $"avaliação não lida ({st})", expected);
+                    var code = r.Str("updates:properties.status.code");
+                    var label = code?.ToLowerInvariant() switch
+                    {
+                        "healthy" => "saudável", "unhealthy" => "atualizações pendentes", "notapplicable" => "não se aplica à máquina", _ => code ?? "não informado",
+                    };
+                    return KnightItemCheck.Of(code is null ? null : !string.Equals(code, "Unhealthy", StringComparison.OrdinalIgnoreCase),
+                        $"avaliação de atualizações do sistema: {label}", expected);
+                },
+                "{0} de {1} máquina(s) virtual(is) têm atualizações do sistema pendentes.",
+                "As {0} máquina(s) virtual(is) estão sem atualizações do sistema pendentes."),
+            Ref(AzureRefs.Az + "8.1.10")),
     };
 }
 

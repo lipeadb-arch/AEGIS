@@ -166,6 +166,9 @@ public sealed class KnightAzureFlowTests : IDisposable
 
         json.Should().NotContain(AzureScenario.Secret);
         json.Should().NotContain("environmentVariables").And.NotContain("connectionStrings").And.NotContain("primaryKey");
+        // [AEGIS-KNIGHT-COVERAGE-04] Serviços vinculados do Data Factory: só o resumo da origem das credenciais chega ao ADM.
+        json.Should().Contain("\"factorySecrets\":1").And.Contain("\"plainCredentials\":1");
+        json.Should().NotContain("Server=tcp:sql-demo").And.NotContain("User ID=app").And.NotContain("typeProperties");
         (await Observations(db, run.Id)).Count(d => d.ExternalId == "/providers/Microsoft.Authorization/roleAssignments/root-uaa").Should().Be(1);
     }
 
@@ -249,9 +252,10 @@ public sealed class KnightAzureFlowTests : IDisposable
         foreach (var g in azure.GroupBy(c => c.Disposition).OrderBy(g => g.Key))
             _output.WriteLine($"{g.Key}: {g.Count()}");
 
-        azure.Where(c => c.Disposition == KnightReferenceDisposition.Pending)
-            .Should().OnlyContain(c => c.Note!.StartsWith("Pesquisa pendente.", StringComparison.Ordinal),
-                "uma referência do Azure sem controle nem disposição precisa dizer o que foi examinado e o que falta");
+        azure.Where(c => c.Disposition == KnightReferenceDisposition.Pending).Should().BeEmpty(
+            "as sete pesquisas do Azure foram fechadas: controle, avaliação parcial ou verificação manual declarada");
+        azure.Count(c => c.Disposition == KnightReferenceDisposition.PreviewOnly).Should().Be(12, "diagnóstico e contatos de segurança: só em versão preview");
+        azure.Count(c => c.Disposition == KnightReferenceDisposition.ApiLimitation).Should().Be(1, "diagnóstico do Intune: nem a preview tem a operação");
         azure.Where(c => c.Disposition is KnightReferenceDisposition.Implemented or KnightReferenceDisposition.Partial)
             .Should().OnlyContain(c => c.IndicatorIds.All(id => id.StartsWith("AK-AZ-", StringComparison.Ordinal)));
         azure.Count(c => c.Disposition is KnightReferenceDisposition.Implemented or KnightReferenceDisposition.Partial)

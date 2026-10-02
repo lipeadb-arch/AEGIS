@@ -114,7 +114,11 @@ public static class KnightCatalog
     // v8 [AEGIS-KNIGHT-COVERAGE-04, Azure]: acrescenta os controles de CONFIGURAÇÃO dos recursos do Azure (AK-AZ-*),
     // avaliados sobre a coleta da fonte MicrosoftAzure (Resource Manager) relida do ADM. Pelo mesmo motivo, fotografias
     // v7 continuam com o catálogo v7 congelado e o comparador recusa v7 × v8.
-    public const string Version = "ak-knight-v8";
+    // v9 [AEGIS-KNIGHT-COVERAGE-04, fechamento]: acrescenta AK-ENTRA-070 (proteção de token, leitura v1.0 que estava
+    // classificada por engano como ausente) e os controles do Azure que fecharam pesquisas pendentes (zonas DNS privadas
+    // do App Service e do Batch, camada do plano, atualizações do sistema pelo Defender para Nuvem, credenciais do Data
+    // Factory). Fotografias v8 continuam com o catálogo v8 congelado e o comparador recusa v8 × v9.
+    public const string Version = "ak-knight-v9";
 
     // ---- Limiares centralizados (única fonte da verdade dos números da regra) ----
 

@@ -188,6 +188,8 @@ public static class AzureLabels
         ["Microsoft.KeyVault/vaults/secrets"] = "segredo",
         ["Microsoft.KeyVault/vaults/certificates"] = "certificado",
         ["Microsoft.Batch/batchAccounts/pools"] = "pool do Batch",
+        ["Microsoft.Network/privateEndpoints"] = "endpoint privado",
+        ["Microsoft.Web/serverfarms"] = "plano do App Service",
     };
 
     public static string Type(string type) => Types.TryGetValue(type, out var l) ? l : type;
@@ -314,6 +316,36 @@ public static class AzureRuleKit
         return KnightItemCheck.Of(n > 0 ? true : any ? false : null,
             n > 0 ? $"{n} conexão(ões) de endpoint privado aprovada(s)" : any ? "nenhuma conexão de endpoint privado aprovada" : "conexões de endpoint privado não informadas",
             "ao menos uma conexão de endpoint privado aprovada");
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Zona DNS privada dos endpoints privados APROVADOS de um recurso: cada conexão aprovada aponta
+    /// para um recurso Microsoft.Network/privateEndpoints, e o grupo de zonas DNS dele precisa conter a zona documentada para o
+    /// serviço (<paramref name="zone"/>). Endpoint fora das assinaturas lidas ou grupo de zonas não lido = desconhecido.
+    /// </summary>
+    public static KnightItemCheck PrivateDnsZone(IEnumerable<JsonElement> connections, AzureView v, string zone)
+    {
+        var expected = $"zona DNS privada {zone} em cada endpoint privado aprovado";
+        var approved = connections.Where(e =>
+            string.Equals(AzureJson.Str(e, "properties.privateLinkServiceConnectionState.status"), "Approved", StringComparison.OrdinalIgnoreCase)).ToList();
+        var missing = new List<string>();
+        var unknown = new List<string>();
+        foreach (var conn in approved)
+        {
+            var peId = AzureJson.Str(conn, "properties.privateEndpoint.id");
+            var name = peId?.Split('/').LastOrDefault() ?? AzureJson.Str(conn, "name") ?? "?";
+            var pe = v.ById(peId);
+            if (pe is null) { unknown.Add($"{name} (fora das assinaturas lidas)"); continue; }
+            if (pe.Str("dns:status") is { } st) { unknown.Add($"{name} (zonas DNS não lidas: {st})"); continue; }
+            var zones = pe.Items("dns:items").SelectMany(g => AzureJson.Items(g, "properties.privateDnsZoneConfigs"))
+                .Select(c => AzureJson.Str(c, "properties.privateDnsZoneId")?.Split('/').LastOrDefault())
+                .Where(z => z is not null).ToList();
+            if (!zones.Any(z => string.Equals(z, zone, StringComparison.OrdinalIgnoreCase)))
+                missing.Add(zones.Count == 0 ? $"{name} (sem grupo de zonas DNS)" : $"{name} (zonas: {string.Join(", ", zones)})");
+        }
+        if (missing.Count > 0) return KnightItemCheck.Of(false, "sem a zona esperada: " + KnightRuleKit.List(missing, 3), expected);
+        if (unknown.Count > 0) return KnightItemCheck.Of(null, "não conferido: " + KnightRuleKit.List(unknown, 3), expected);
+        return KnightItemCheck.Of(true, $"{approved.Count} endpoint(s) privado(s) com a zona {zone}", expected);
     }
 
     /// <summary>Identidade gerenciada (atribuída pelo sistema ou pelo usuário) declarada no recurso.</summary>

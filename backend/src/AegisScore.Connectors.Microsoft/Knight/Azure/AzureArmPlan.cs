@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using AegisScore.Application.Knight;
 
 namespace AegisScore.Connectors.Microsoft.Knight.Azure;
@@ -36,7 +38,10 @@ internal sealed record ArmChild(
     string[] Keep,
     ArmChildMode Mode = ArmChildMode.Object,
     ArmChild[]? ItemChildren = null,
-    Func<string, bool>? ItemNameFilter = null);
+    Func<string, bool>? ItemNameFilter = null,
+    // [AEGIS-KNIGHT-COVERAGE-04] Lista cujo item NÃO pode ser copiado nem por caminho (pode conter segredo): o item vira um
+    // resumo calculado no coletor, e só o resumo é gravado.
+    Func<JsonElement, JsonObject>? Summarize = null);
 
 /// <summary>
 /// Uma leitura de família. <see cref="ListPath"/> é relativo à assinatura (<c>providers/Microsoft.Storage/storageAccounts</c>)
@@ -90,8 +95,10 @@ internal static class AzureArmPlan
         new("ftp", "/basicPublishingCredentialsPolicies/ftp", Web, K("properties.allow")),
         new("scm", "/basicPublishingCredentialsPolicies/scm", Web, K("properties.allow")),
         new("auth", "/config/authsettingsV2", Web, K("properties.platform.enabled")),
-        // Os endpoints privados de um aplicativo são uma SUBCOLEÇÃO (não vêm no recurso do site).
-        new("pe", "/privateEndpointConnections", Web, K("name", "properties.privateLinkServiceConnectionState.status"), ArmChildMode.ListToFact),
+        // Os endpoints privados de um aplicativo são uma SUBCOLEÇÃO (não vêm no recurso do site). O id do endpoint liga a
+        // conexão ao recurso Microsoft.Network/privateEndpoints e aos grupos de zonas DNS dele.
+        new("pe", "/privateEndpointConnections", Web, K("name", "properties.privateLinkServiceConnectionState.status",
+            "properties.privateEndpoint.id"), ArmChildMode.ListToFact),
     };
 
     public static IReadOnlyList<ArmRead> Reads { get; } = new ArmRead[]
@@ -161,6 +168,16 @@ internal static class AzureArmPlan
             "providers/Microsoft.Network/networkWatchers", Net, Array.Empty<string>(),
             new[] { new ArmChild("flowLogs", "/flowLogs", Net, K("properties.targetResourceId", "properties.enabled",
                 "properties.retentionPolicy", "properties.flowAnalyticsConfiguration"), ArmChildMode.ListToFact) }),
+        // [AEGIS-KNIGHT-COVERAGE-04] Endpoints privados e os grupos de zonas DNS privadas de cada um (Microsoft.Network,
+        // versão estável): é o que diz se o nome do serviço resolve para o endereço privado dentro da rede.
+        new(KnightCapability.AzureNetworking, "endpoints privados",
+            "providers/Microsoft.Network/privateEndpoints", Net, Array.Empty<string>(),
+            new[] { new ArmChild("dns", "/privateDnsZoneGroups", Net, K("name", "properties.privateDnsZoneConfigs"), ArmChildMode.ListToFact) },
+            Inline: new[]
+            {
+                new ArmInline("links", "properties.privateLinkServiceConnections", K("properties.privateLinkServiceId", "properties.groupIds")),
+                new ArmInline("manualLinks", "properties.manualPrivateLinkServiceConnections", K("properties.privateLinkServiceId", "properties.groupIds")),
+            }),
         new(KnightCapability.AzureNetworking, "Azure Bastion",
             "providers/Microsoft.Network/bastionHosts", Net, Array.Empty<string>(), Array.Empty<ArmChild>()),
         new(KnightCapability.AzureNetworking, "gateways de rede virtual", "", GenericResourcesApi,
@@ -203,8 +220,15 @@ internal static class AzureArmPlan
             "providers/Microsoft.Compute/virtualMachines", "2024-07-01",
             K("properties.storageProfile.osDisk.managedDisk.id", "properties.storageProfile.osDisk.vhd.uri",
               "properties.storageProfile.osDisk.encryptionSettings.enabled", "properties.securityProfile"),
-            new[] { new ArmChild("ext", "/extensions", "2024-07-01", K("name", "properties.publisher", "properties.type",
-                "properties.provisioningState"), ArmChildMode.ListToFact) }),
+            new[]
+            {
+                new ArmChild("ext", "/extensions", "2024-07-01", K("name", "properties.publisher", "properties.type",
+                    "properties.provisioningState"), ArmChildMode.ListToFact),
+                // [AEGIS-KNIGHT-COVERAGE-04] A avaliação do Defender para Nuvem "atualizações do sistema devem ser instaladas"
+                // da máquina (a mesma que a política interna f85bf3e0 audita). 404 = a avaliação não existe para a máquina.
+                new ArmChild("updates", "/providers/Microsoft.Security/assessments/" + SystemUpdatesAssessment, "2021-06-01",
+                    K("properties.status.code", "properties.status.cause", "properties.displayName")),
+            }),
         new(KnightCapability.AzureCompute, "discos gerenciados",
             "providers/Microsoft.Compute/disks", "2023-10-02",
             K("managedBy", "properties.encryption.type", "properties.diskState", "properties.networkAccessPolicy",
@@ -276,7 +300,11 @@ internal static class AzureArmPlan
             new[] { new ArmChild("policies", "/accessPolicies", "2024-03-01", K("name", "properties.type"), ArmChildMode.ListToFact) }),
         new(KnightCapability.AzureDatabases, "fábricas do Data Factory",
             "providers/Microsoft.DataFactory/factories", "2018-06-01",
-            K("properties.encryption.vaultBaseUrl", "properties.encryption.keyName", "identity.type"), Array.Empty<ArmChild>()),
+            K("properties.encryption.vaultBaseUrl", "properties.encryption.keyName", "identity.type"),
+            // [AEGIS-KNIGHT-COVERAGE-04] Serviços vinculados: só o RESUMO de onde vem cada credencial (Key Vault, segredo
+            // guardado na fábrica, credencial criptografada, texto) — nenhum valor, cadeia de conexão ou nome de segredo.
+            new[] { new ArmChild("linked", "/linkedservices", "2018-06-01", Array.Empty<string>(), ArmChildMode.ListToFact,
+                Summarize: LinkedServiceCredentials) }),
         new(KnightCapability.AzureDatabases, "clusters do Redis Enterprise",
             "providers/Microsoft.Cache/redisEnterprise", "2025-07-01",
             K("properties.minimumTlsVersion", "properties.publicNetworkAccess", "properties.privateEndpointConnections",
@@ -292,6 +320,73 @@ internal static class AzureArmPlan
               "properties.encryption", "properties.parameters.encryption", "properties.publicNetworkAccess",
               "properties.requiredNsgRules", "properties.privateEndpointConnections"), Array.Empty<ArmChild>()),
     };
+
+    /// <summary>
+    /// Chave da avaliação "System updates should be installed on your machines (powered by Update Center)" do Defender para
+    /// Nuvem — a mesma que a política interna f85bf3e0-d513-442e-89c3-1784ad63382b audita em Microsoft.Compute/virtualMachines.
+    /// </summary>
+    public const string SystemUpdatesAssessment = "e1145ab1-eb4f-43d8-911b-36ddf771d13f";
+
+    /// <summary>Campos que, como TEXTO, guardam credencial (nomes da documentação dos conectores do Data Factory).</summary>
+    private static readonly HashSet<string> CredentialFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "password", "accountKey", "servicePrincipalKey", "servicePrincipalCredential", "clientSecret", "sasToken", "sasUri",
+        "accessToken", "apiToken", "secretAccessKey", "sessionToken", "connectionString", "credString", "encryptedCredential",
+        "key", "pwd", "privateKey", "passPhrase", "clientKey", "securityToken", "applicationKey", "functionKey",
+    };
+
+    private static readonly string[] SecretMarkers =
+        { "password=", "pwd=", "accountkey=", "sharedaccesskey=", "sharedaccesssignature=", "sig=", "secret=" };
+
+    /// <summary>
+    /// Resumo de UM serviço vinculado do Data Factory: tipo e quantas credenciais vêm de cada origem. Uma referência
+    /// AzureKeyVaultSecret é a forma esperada; SecureString (segredo guardado na própria fábrica), encryptedCredential
+    /// (credencial criptografada pelo runtime de integração) e texto com credencial não são. O valor nunca sai daqui.
+    /// </summary>
+    internal static JsonObject LinkedServiceCredentials(JsonElement item)
+    {
+        int kv = 0, secure = 0, plain = 0, encrypted = 0;
+        var fields = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var type = item.TryGetProperty("properties", out var props) && props.ValueKind == JsonValueKind.Object
+                   && props.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
+
+        void Walk(JsonElement e, string? name, int depth)
+        {
+            if (depth > 8) return;
+            switch (e.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    var kind = e.TryGetProperty("type", out var k) && k.ValueKind == JsonValueKind.String ? k.GetString() : null;
+                    if (string.Equals(kind, "AzureKeyVaultSecret", StringComparison.OrdinalIgnoreCase)) { kv++; if (name is not null) fields.Add(name); return; }
+                    if (string.Equals(kind, "SecureString", StringComparison.OrdinalIgnoreCase)) { secure++; if (name is not null) fields.Add(name); return; }
+                    foreach (var p in e.EnumerateObject()) Walk(p.Value, p.Name, depth + 1);
+                    return;
+                case JsonValueKind.Array:
+                    foreach (var x in e.EnumerateArray()) Walk(x, name, depth + 1);
+                    return;
+                case JsonValueKind.String when name is not null && CredentialFields.Contains(name):
+                    var v = e.GetString() ?? "";
+                    if (v.Length == 0 || v.StartsWith("@", StringComparison.Ordinal)) return; // vazio ou expressão (parâmetro)
+                    if (string.Equals(name, "encryptedCredential", StringComparison.OrdinalIgnoreCase)) { encrypted++; fields.Add(name); return; }
+                    if (string.Equals(name, "connectionString", StringComparison.OrdinalIgnoreCase)
+                        && !SecretMarkers.Any(m => v.Contains(m, StringComparison.OrdinalIgnoreCase))) return; // sem credencial no texto
+                    plain++; fields.Add(name);
+                    return;
+            }
+        }
+
+        if (props.ValueKind == JsonValueKind.Object && props.TryGetProperty("typeProperties", out var tp)) Walk(tp, null, 0);
+        return new JsonObject
+        {
+            ["name"] = item.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null,
+            ["type"] = type,
+            ["keyVaultRefs"] = kv,
+            ["factorySecrets"] = secure,
+            ["encryptedCredentials"] = encrypted,
+            ["plainCredentials"] = plain,
+            ["credentialFields"] = new JsonArray(fields.Select(f => (JsonNode?)JsonValue.Create(f)).ToArray()),
+        };
+    }
 
     /// <summary>Lê cada parâmetro de servidor pelo nome (só o valor), e uma leitura extra opcional.</summary>
     private static ArmChild[] ConfigChildren(string api, string[] names, ArmChild? extra = null)

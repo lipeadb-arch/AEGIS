@@ -137,6 +137,11 @@ public static class AzureProfiles
     private static readonly KnightControlReference DocCosmosRbac = Doc("Conectar ao Cosmos DB com controle de acesso por papel", L + "azure/cosmos-db/how-to-connect-role-based-access-control");
     private static readonly KnightControlReference DocCosmosCmk = Doc("Chaves gerenciadas pelo cliente no Cosmos DB", L + "azure/cosmos-db/how-to-setup-customer-managed-keys");
     private static readonly KnightControlReference DocAdfCmk = Doc("Chave gerenciada pelo cliente no Data Factory", L + "azure/data-factory/enable-customer-managed-key");
+    private static readonly KnightControlReference DocAdfKv = Doc("Guardar credenciais no Azure Key Vault (Data Factory)", L + "azure/data-factory/store-credentials-in-key-vault");
+    private static readonly KnightControlReference DocPeDns = Doc("Valores de zona DNS privada dos endpoints privados", L + "azure/private-link/private-endpoint-dns");
+    private static readonly KnightControlReference DocFuncNet = Doc("Opções de rede do Azure Functions", L + "azure/azure-functions/functions-networking-options");
+    private static readonly KnightControlReference DocMdcCompute = Doc("Recomendações de computação do Defender para Nuvem", L + "azure/defender-for-cloud/recommendations-reference-compute");
+    private static readonly KnightControlReference DocUpdateManager = Doc("Visão geral do Azure Update Manager", L + "azure/update-manager/overview");
     private static readonly KnightControlReference DocAdfIdentity = Doc("Identidade gerenciada do Data Factory", L + "azure/data-factory/data-factory-service-identity");
     private static readonly KnightControlReference DocMySqlCmk = Doc("Chave gerenciada pelo cliente no MySQL", L + "azure/mysql/security/security-customer-managed-key");
     private static readonly KnightControlReference DocMySqlEntra = Doc("Autenticação do Entra no MySQL", L + "azure/mysql/security/security-entra-authentication");
@@ -386,6 +391,13 @@ public static class AzureProfiles
             "Verifica a existência da solução na assinatura dos hubs; não confere a cobertura hub a hub.",
             "Um dispositivo IoT comprometido pode ser usado como ponto de entrada ou enviar dados falsos sem alerta.",
             Docs(DocIot), KnightCapability.AzureDefenderForCloud);
+        P("AK-AZ-MDC-020", KnightSecurityDomain.CloudProtection,
+            "Máquinas virtuais com atualizações de sistema, segurança ou críticas pendentes segundo o Defender para Nuvem.",
+            "Falhas corrigidas pelos fabricantes e ainda não aplicadas são as mais exploradas, porque o caminho de ataque já é público.",
+            "Avaliação de atualizações do sistema com estado saudável (ou não aplicável) em cada máquina.",
+            "Depende do Defender para Nuvem avaliar a máquina; sem a avaliação, o controle não aprova nem reprova. Não avalia máquinas fora do Azure.",
+            "Uma máquina com correção de segurança pendente pode ser invadida por uma falha já conhecida e documentada.",
+            Docs(DocMdcCompute, DocUpdateManager), KnightCapability.AzureCompute);
 
         // ======== Rede =======================================================================================
         Port("AK-AZ-NET-001", "RDP", "TCP 3389",
@@ -820,6 +832,13 @@ public static class AzureProfiles
             "Exige o recurso registrado na assinatura e tamanhos de VM compatíveis.",
             "Dados em discos temporários e caches da máquina ficam sem criptografia no host físico.",
             Docs(DocDiskEncryption), KnightCapability.AzureCompute);
+        P("AK-AZ-CMP-017", KnightSecurityDomain.Network,
+            "Endpoints privados das contas do Batch sem a zona DNS privada do serviço.",
+            "Sem a zona privatelink.batch.azure.com, o nome da conta continua resolvendo para o endereço público dentro da rede, e o tráfego não usa o endpoint privado.",
+            "Grupo de zonas DNS com privatelink.batch.azure.com em cada endpoint privado aprovado.",
+            "Um servidor DNS próprio da organização, que também resolve o nome, não é visível pelo Resource Manager.",
+            "Clientes e nós podem acessar a conta pelo caminho público mesmo com o endpoint privado criado.",
+            Docs(DocPeDns, DocBatchPe), KnightCapability.AzureCompute, KnightCapability.AzureNetworking);
 
         // ======== App Service ================================================================================
         Runtime("AK-AZ-APP-001", "Java",
@@ -978,6 +997,20 @@ public static class AzureProfiles
             "Verifica a existência da configuração; não avalia as cifras escolhidas.",
             "Conexões podem ser estabelecidas com cifras mais fracas do que a política da organização permite.",
             Docs(DocAseSettings), KnightCapability.AzureAppService);
+        P("AK-AZ-APP-025", KnightSecurityDomain.Network,
+            "Endpoints privados dos aplicativos sem a zona DNS privada do App Service.",
+            "Sem a zona privatelink.azurewebsites.net, o nome do aplicativo resolve para o endereço público dentro da rede: o endpoint privado existe, mas não é usado.",
+            "Grupo de zonas DNS com privatelink.azurewebsites.net em cada endpoint privado aprovado.",
+            "Um servidor DNS próprio da organização, que também resolve o nome, não é visível pelo Resource Manager.",
+            "O tráfego interno para o aplicativo continua saindo pelo caminho público, e fechar o acesso público quebra o acesso interno.",
+            Docs(DocPeDns, DocAppPe), KnightCapability.AzureAppService, KnightCapability.AzureNetworking);
+        P("AK-AZ-APP-026", KnightSecurityDomain.Network,
+            "Planos do App Service em camada que não suporta endpoint privado.",
+            "Aplicativos nesses planos só podem ser alcançados pelo endereço público: o isolamento por Private Link não está disponível sem mudar de camada.",
+            "Plano Basic ou superior (ou Functions Premium/Flex Consumption), conforme a documentação.",
+            "Uma camada fora da lista documentada não aprova nem reprova. Nem todo aplicativo precisa de endpoint privado.",
+            "Aplicativos internos hospedados nesses planos ficam necessariamente expostos à internet.",
+            Docs(DocAppPe, DocFuncNet), KnightCapability.AzureAppService);
 
         // ======== Bancos de dados ============================================================================
         P("AK-AZ-DB-001", KnightSecurityDomain.Identity,
@@ -1310,6 +1343,13 @@ public static class AzureProfiles
             null,
             "Conexões às instâncias gerenciadas podem ser rebaixadas e interceptadas.",
             Docs(DocSqlMiTls), KnightCapability.AzureDatabases);
+        P("AK-AZ-DB-055", KnightSecurityDomain.Identity,
+            "Serviços vinculados do Data Factory guardam credencial fora do Key Vault.",
+            "Segredos guardados na própria fábrica não têm rotação, auditoria de acesso e revogação centralizadas como no Key Vault.",
+            "Credenciais por referência AzureKeyVaultSecret ou identidade gerenciada; nenhum SecureString, encryptedCredential ou credencial em texto.",
+            "O AEGIS grava só a origem de cada credencial, nunca o valor. Credencial em cadeia de conexão é reconhecida pelos marcadores de senha ou chave no texto.",
+            "Quem altera ou exporta a fábrica leva junto credenciais de bancos e serviços que ela acessa.",
+            Docs(DocAdfKv), KnightCapability.AzureDatabases);
 
         // ======== Databricks =================================================================================
         P("AK-AZ-DBR-001", KnightSecurityDomain.Network,

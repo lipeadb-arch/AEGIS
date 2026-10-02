@@ -264,6 +264,10 @@ jobs:
       #     KnightAccessProbesM365Tests (Azure sem assinatura visível) e +1 em KnightConsolidatedBuilderTests (rótulo do
       #     consolidado com nove fontes cabe na coluna de 200). O passo vai de 1060 a 1073 execuções (medido localmente
       #     com este MESMO filtro, em Release).
+      #     [AEGIS-KNIGHT-COVERAGE-04 · fechamento] Filtro inalterado: +2 em PostureSnapshotConsolidatedTests (consolidado
+      #     com fonte parcial diz "coleta parcial" na fotografia, no HTML e no PDF), +1 em KnightConfigurationRulesTests
+      #     (proteção de token) e +1 em KnightReferenceCoverageTests ("só em preview" × "sem método"). O passo vai de
+      #     1073 a 1077 execuções (medido localmente com este MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj

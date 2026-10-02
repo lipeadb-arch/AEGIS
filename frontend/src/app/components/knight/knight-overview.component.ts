@@ -298,18 +298,19 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       </div>
       @if (coverage(); as c) {
         <p class="muted small">
-          Catálogo: o que o AEGIS consegue avaliar (propriedade do produto, {{ c.frameworks.join(' · ') }}). Limitação da API
-          oficial, verificação manual e acesso que o conector não tem nunca contam como avaliados.
+          Catálogo: o que o AEGIS consegue avaliar (propriedade do produto, {{ c.frameworks.join(' · ') }}). Sem método na API
+          oficial, leitura só em versão preview (não usada: o AEGIS usa só versões estáveis), verificação manual e acesso que o
+          conector não tem nunca contam como avaliados.
         </p>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Plataforma</th><th>Total</th><th>Integral</th><th>Parcial</th><th>Pendente</th><th>Limitação da API</th><th>Manual</th><th>Outro acesso</th></tr></thead>
+            <thead><tr><th>Plataforma</th><th>Total</th><th>Integral</th><th>Parcial</th><th>Pendente</th><th>Só em preview</th><th>Sem método na API</th><th>Manual</th><th>Outro acesso</th></tr></thead>
             <tbody>
               @for (g of c.byPlatform; track g.key) {
                 <tr>
                   <td>{{ g.label }}</td><td>{{ g.total }}</td>
                   <td>{{ g.implemented }} ({{ pct(g.fullPercent) }})</td><td>{{ g.partial }} ({{ pct(g.partialPercent) }})</td>
-                  <td>{{ g.pending }}</td><td>{{ g.apiLimitation }}</td><td>{{ g.manualOnly }}</td><td>{{ g.requiresAccess }}</td>
+                  <td>{{ g.pending }}</td><td>{{ g.previewOnly ?? 0 }}</td><td>{{ g.apiLimitation }}</td><td>{{ g.manualOnly }}</td><td>{{ g.requiresAccess }}</td>
                 </tr>
               }
             </tbody>

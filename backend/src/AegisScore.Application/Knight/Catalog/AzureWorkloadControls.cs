@@ -82,6 +82,36 @@ internal static class AzureApp
             "ao menos uma conexão de endpoint privado aprovada");
     }
 
+    /// <summary>Conexões de endpoint privado lidas na subcoleção do aplicativo ("pe:items").</summary>
+    public static IReadOnlyList<JsonElement> PrivateEndpointConnections(AzureResource r) => r.Items("pe:items");
+
+    public static bool HasApprovedPrivateEndpoint(AzureResource r) =>
+        PrivateEndpointConnections(r).Any(e =>
+            string.Equals(AzureJson.Str(e, "properties.privateLinkServiceConnectionState.status"), "Approved", StringComparison.OrdinalIgnoreCase));
+
+    // Camadas do plano com endpoint privado, pela documentação da Microsoft: App Service (Basic, Standard, PremiumV2,
+    // PremiumV3, PremiumV4, IsolatedV2, Functions Premium) e Azure Functions (Flex Consumption, Elastic Premium,
+    // Dedicated). Premium0V3/PremiumMV3 são ofertas da PremiumV3 e IsolatedMV2 da IsolatedV2. Sem suporte documentado:
+    // Free e Shared (fora da lista) e o plano de Consumo (Dynamic: "Private endpoints aren't supported on the Consumption plan").
+    private static readonly HashSet<string> PrivateEndpointTiers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Basic", "Standard", "PremiumV2", "PremiumV3", "Premium0V3", "PremiumMV3", "PremiumV4", "IsolatedV2", "IsolatedMV2",
+        "ElasticPremium", "FlexConsumption",
+    };
+
+    private static readonly HashSet<string> NoPrivateEndpointTiers = new(StringComparer.OrdinalIgnoreCase) { "Free", "Shared", "Dynamic" };
+
+    public static KnightItemCheck PlanSupportsPrivateEndpoint(AzureResource plan)
+    {
+        var tier = plan.Str("sku.tier");
+        const string expected = "camada com suporte a endpoint privado (Basic ou superior; Functions Premium ou Flex Consumption)";
+        var found = $"camada {tier ?? "não informada"}{(plan.Str("sku.name") is { } n ? $" ({n})" : "")}";
+        if (tier is null) return KnightItemCheck.Of(null, found, expected);
+        if (PrivateEndpointTiers.Contains(tier)) return KnightItemCheck.Of(true, found, expected);
+        if (NoPrivateEndpointTiers.Contains(tier)) return KnightItemCheck.Of(false, found + " — sem suporte a endpoint privado", expected);
+        return KnightItemCheck.Of(null, found + " — camada fora da lista documentada; não aprova nem reprova", expected);
+    }
+
     public static string? ClusterSetting(AzureResource ase, string name) =>
         ase.Items("properties.clusterSettings")
             .Where(e => string.Equals(AzureJson.Str(e, "name"), name, StringComparison.OrdinalIgnoreCase))
@@ -316,6 +346,28 @@ public static class AzureWorkloadControls
                 "{0} de {1} aplicativo(s) web não têm endpoint privado aprovado.",
                 "Os {0} aplicativo(s) web têm endpoint privado aprovado."),
             Ref(AzureRefs.Azc + "2.1.16#aplicativo")),
+
+        // [AEGIS-KNIGHT-COVERAGE-04] Antes pesquisa pendente: o grupo de zonas DNS de cada endpoint privado é lido em
+        // Microsoft.Network/privateEndpoints/privateDnsZoneGroups (versão estável) e ligado ao aplicativo pelo id do endpoint.
+        Control(KnightService.AzureAppService, "AK-AZ-APP-025", "Endpoints privados do App Service sem zona DNS privada", Cloud, SeverityLevel.Medium,
+            "Associar a zona DNS privada privatelink.azurewebsites.net (grupo de zonas DNS) a cada endpoint privado dos aplicativos.",
+            "Cada endpoint privado aprovado do aplicativo tem grupo de zonas DNS com a zona privatelink.azurewebsites.net.",
+            new AzureCheck(KnightCapability.AzureAppService, "aplicativo com endpoint privado",
+                v => AzureApp.Sites(v).Where(AzureApp.HasApprovedPrivateEndpoint),
+                (r, v) => PrivateDnsZone(AzureApp.PrivateEndpointConnections(r), v, "privatelink.azurewebsites.net"),
+                "{0} de {1} aplicativo(s) com endpoint privado não têm a zona DNS privada do App Service.",
+                "Os {0} aplicativo(s) com endpoint privado têm a zona DNS privada do App Service.",
+                new[] { KnightCapability.AzureNetworking }),
+            Ref(AzureRefs.Azc + "2.1.17", KnightReferenceMatch.Partial,
+                "Avalia as zonas DNS privadas do Azure ligadas aos endpoints; um servidor DNS próprio da organização, que a referência também aceita, não é visível pelo Resource Manager.")),
+
+        Control(KnightService.AzureAppService, "AK-AZ-APP-026", "Planos do App Service sem suporte a endpoint privado", Cloud, SeverityLevel.Low,
+            "Hospedar os aplicativos que precisam de acesso privado em planos Basic ou superiores (ou Functions Premium/Flex Consumption).",
+            "Camada do plano (sku.tier) entre as que a Microsoft documenta com suporte a endpoint privado.",
+            App("plano do App Service", v => v.OfType("Microsoft.Web/serverfarms"), (r, _) => AzureApp.PlanSupportsPrivateEndpoint(r),
+                "{0} de {1} plano(s) do App Service estão em camada sem suporte a endpoint privado.",
+                "Os {0} plano(s) do App Service estão em camada com suporte a endpoint privado."),
+            Ref(AzureRefs.Azc + "s/n#plano-endpoint-privado")),
 
         Control(KnightService.AzureAppService, "AK-AZ-APP-016", "App Service sem integração com rede virtual", Cloud, SeverityLevel.Medium,
             "Integrar os aplicativos, funções e slots a uma sub-rede de rede virtual para o tráfego de saída.",
@@ -608,6 +660,17 @@ public static class AzureWorkloadControls
                 "As {0} máquina(s) virtual(is) têm criptografia no host."),
             Ref(AzureRefs.Azc + "20.11")),
 
+        Control(KnightService.AzureCompute, "AK-AZ-CMP-017", "Endpoints privados do Batch sem zona DNS privada", Cloud, SeverityLevel.Medium,
+            "Associar a zona DNS privada privatelink.batch.azure.com (grupo de zonas DNS) a cada endpoint privado das contas do Batch.",
+            "Cada endpoint privado aprovado da conta do Batch tem grupo de zonas DNS com a zona privatelink.batch.azure.com.",
+            new AzureCheck(KnightCapability.AzureCompute, "conta do Batch com endpoint privado",
+                v => v.OfType("Microsoft.Batch/batchAccounts").Where(b => ApprovedPrivateEndpoints(b) > 0),
+                (r, v) => PrivateDnsZone(r.Items("properties.privateEndpointConnections"), v, "privatelink.batch.azure.com"),
+                "{0} de {1} conta(s) do Batch com endpoint privado não têm a zona DNS privada do Batch.",
+                "As {0} conta(s) do Batch com endpoint privado têm a zona DNS privada do Batch.",
+                new[] { KnightCapability.AzureNetworking }),
+            Ref(AzureRefs.Azc + "15.6")),
+
         // ======== Bancos de dados: Cache for Redis e Redis Enterprise =========================================
         Control(KnightService.AzureDatabases, "AK-AZ-DB-001", "Cache for Redis sem autenticação do Entra ID", Cloud, SeverityLevel.Medium,
             "Habilitar a autenticação do Microsoft Entra ID (aad-enabled) nos caches do Redis.",
@@ -726,7 +789,12 @@ public static class AzureWorkloadControls
                 },
                 "{0} de {1} cluster(s) do Redis Enterprise aceitam autenticação por chave de acesso.",
                 "Os {0} cluster(s) do Redis Enterprise não aceitam chave de acesso."),
-            Ref(AzureRefs.Azd + "2.9#redis-enterprise")),
+            Ref(AzureRefs.Azd + "2.9#redis-enterprise"),
+            // [AEGIS-KNIGHT-COVERAGE-04] Antes pesquisa pendente. Na Azure Managed Redis (Microsoft.Cache/redisEnterprise) o
+            // Entra ID é o padrão e a versão estável 2025-07-01 não tem propriedade para ligá-lo ou desligá-lo: o que a
+            // configuração decide é se as chaves de acesso continuam aceitas AO LADO dele.
+            Ref(AzureRefs.Azd + "2.1#redis-enterprise", KnightReferenceMatch.Partial,
+                "Na Azure Managed Redis a autenticação do Entra ID é o padrão e não tem chave liga/desliga na API estável; o critério verificável é não aceitar também as chaves de acesso. A atribuição de identidades às políticas de acesso dos bancos não é avaliada.")),
 
         Control(KnightService.AzureDatabases, "AK-AZ-DB-014", "Cache for Redis fora do canal de atualização estável", Cloud, SeverityLevel.High,
             "Manter os caches de produção no canal de atualização Stable.",
@@ -1042,6 +1110,32 @@ public static class AzureWorkloadControls
                 "{0} de {1} instância(s) gerenciada(s) aceitam TLS abaixo de 1.2.",
                 "As {0} instância(s) gerenciada(s) exigem TLS 1.2 ou superior."),
             Ref(AzureRefs.Azd + "9.8#instancia-gerenciada")),
+
+        // [AEGIS-KNIGHT-COVERAGE-04] Antes pesquisa pendente: os serviços vinculados são lidos (versão estável 2018-06-01) e
+        // o coletor grava só o RESUMO da origem de cada credencial — nenhum valor, cadeia de conexão ou nome de segredo.
+        Control(KnightService.AzureDatabases, "AK-AZ-DB-055", "Credenciais do Data Factory fora do Key Vault", Cloud, SeverityLevel.Medium,
+            "Guardar as credenciais dos serviços vinculados do Data Factory no Azure Key Vault (referência AzureKeyVaultSecret) ou usar identidade gerenciada.",
+            "Nenhum serviço vinculado com segredo guardado na fábrica (SecureString), credencial criptografada (encryptedCredential) ou credencial em texto.",
+            Db("fábrica do Data Factory", v => v.OfType("Microsoft.DataFactory/factories"), (r, _) =>
+                {
+                    const string expected = "credenciais dos serviços vinculados no Key Vault (ou sem credencial)";
+                    if (r.Str("linked:status") is { } st) return KnightItemCheck.Of(null, $"serviços vinculados não lidos ({st})", expected);
+                    if (!r.Has("linked:items")) return KnightItemCheck.Of(null, "serviços vinculados não informados", expected);
+                    var items = r.Items("linked:items")
+                        .Where(x => !string.Equals(AzureJson.Str(x, "type"), "AzureKeyVault", StringComparison.OrdinalIgnoreCase)).ToList();
+                    var offenders = items.Where(x => (AzureJson.Int(x, "factorySecrets") ?? 0) + (AzureJson.Int(x, "encryptedCredentials") ?? 0)
+                            + (AzureJson.Int(x, "plainCredentials") ?? 0) > 0)
+                        .Select(x => $"{AzureJson.Str(x, "name") ?? "?"} ({AzureJson.Str(x, "type") ?? "?"})").ToList();
+                    var kv = items.Sum(x => AzureJson.Int(x, "keyVaultRefs") ?? 0);
+                    return KnightItemCheck.Of(offenders.Count == 0,
+                        offenders.Count == 0
+                            ? $"{items.Count} serviço(s) vinculado(s); {kv} credencial(is) por referência ao Key Vault"
+                            : $"credencial fora do Key Vault em: {List(offenders, 3)}",
+                        expected);
+                },
+                "{0} de {1} fábrica(s) do Data Factory guardam credencial fora do Key Vault.",
+                "As {0} fábrica(s) do Data Factory não guardam credencial fora do Key Vault."),
+            Ref(AzureRefs.Azd + "4.3")),
 
         // ======== Databricks =================================================================================
         Control(KnightService.AzureDatabricks, "AK-AZ-DBR-001", "Databricks fora de rede virtual do cliente", Cloud, SeverityLevel.Medium,

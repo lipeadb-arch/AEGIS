@@ -618,6 +618,7 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         var frequency = Obj(session, "signInFrequency");
         var persistent = Obj(session, "persistentBrowser");
         var appRestrictions = Obj(session, "applicationEnforcedRestrictions");
+        var secureSignIn = Obj(session, "secureSignInSession");
         var flows = Obj(cond, "authenticationFlows");
 
         return new ConditionalAccessPolicyConfiguration(
@@ -651,7 +652,8 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
             PersistentBrowserMode: persistent.ValueKind == JsonValueKind.Object ? Str(persistent, "mode") : null,
             ApplicationEnforcedRestrictions: appRestrictions.ValueKind == JsonValueKind.Object ? Bool(appRestrictions, "isEnabled") : false,
             AuthenticationStrengthCombinations: strength.ValueKind == JsonValueKind.Object ? ArrayStrings(strength, "allowedCombinations") : null,
-            SessionAndConditionsCaptured: true);
+            SessionAndConditionsCaptured: true,
+            SecureSignInSessionEnabled: secureSignIn.ValueKind == JsonValueKind.Object && Bool(secureSignIn, "isEnabled") == true);
     }
 
     private static int? Int(JsonElement e, string prop) =>

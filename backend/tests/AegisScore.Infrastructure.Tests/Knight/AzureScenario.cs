@@ -90,6 +90,28 @@ public sealed class AzureScenario
         ? new[] { new { name = "pe-demo", properties = new { privateLinkServiceConnectionState = new { status = "Approved" } } } }
         : Array.Empty<object>();
 
+    private static object PeTo(string name, string peId) => new[]
+    {
+        new { name, properties = new { privateEndpoint = new { id = peId }, privateLinkServiceConnectionState = new { status = "Approved" } } },
+    };
+
+    /// <summary>Endpoint privado (Microsoft.Network/privateEndpoints) e o grupo de zonas DNS dele (vazio = sem zona).</summary>
+    private object PrivateEndpoint(string sub, string name, string target, string? zone)
+    {
+        var id = Id(sub, "Microsoft.Network", "privateEndpoints", name);
+        List($"{id}/privateDnsZoneGroups", zone is null
+            ? Array.Empty<object>()
+            : new object[] { new { id = $"{id}/privateDnsZoneGroups/default", name = "default", properties = new { privateDnsZoneConfigs = new[]
+                {
+                    new { name = zone.Replace('.', '-'), properties = new { privateDnsZoneId = $"/subscriptions/{sub}/resourceGroups/{Rg}/providers/Microsoft.Network/privateDnsZones/{zone}",
+                        recordSets = new[] { new { fqdn = $"{target.Split('/').Last()}.{zone}", ipAddresses = new[] { "10.1.0.20" } } } } },
+                } } } });
+        return Res(id, "Microsoft.Network/privateEndpoints", new
+        {
+            privateLinkServiceConnections = new[] { new { name, properties = new { privateLinkServiceId = target, groupIds = new[] { "sites" } } } },
+        });
+    }
+
     private static object Res(string id, string type, object properties, string? kind = null, object? identity = null, object? sku = null,
         string location = "brazilsouth")
     {
@@ -120,7 +142,7 @@ public sealed class AzureScenario
                  {
                      "Microsoft.Network/networkSecurityGroups", "Microsoft.Network/virtualNetworks", "Microsoft.Network/publicIPAddresses",
                      "Microsoft.Network/applicationGateways", "Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies",
-                     "Microsoft.Network/networkWatchers", "Microsoft.Storage/storageAccounts", "Microsoft.KeyVault/vaults",
+                     "Microsoft.Network/networkWatchers", "Microsoft.Network/privateEndpoints", "Microsoft.Storage/storageAccounts", "Microsoft.KeyVault/vaults",
                      "Microsoft.Compute/virtualMachines", "Microsoft.Compute/disks", "Microsoft.ContainerInstance/containerGroups",
                      "Microsoft.Batch/batchAccounts", "Microsoft.Web/sites", "Microsoft.Web/serverfarms", "Microsoft.Web/hostingEnvironments",
                      "Microsoft.Sql/servers", "Microsoft.Sql/managedInstances", "Microsoft.DBforPostgreSQL/flexibleServers",
@@ -399,6 +421,12 @@ public sealed class AzureScenario
                 : (object)new { vhd = new { uri = "https://stclientedemo.blob.core.windows.net/vhds/vm-demo.vhd" }, encryptionSettings = new { enabled = false } } },
             securityProfile = Ok ? new { securityType = "TrustedLaunch", encryptionAtHost = true } : null,
         }));
+        Route($"{vm}/providers/Microsoft.Security/assessments/e1145ab1-eb4f-43d8-911b-36ddf771d13f", new
+        {
+            id = $"{vm}/providers/Microsoft.Security/assessments/e1145ab1-eb4f-43d8-911b-36ddf771d13f", name = "e1145ab1-eb4f-43d8-911b-36ddf771d13f",
+            properties = new { displayName = "System updates should be installed on your machines (powered by Update Center)",
+                status = Ok ? new { code = "Healthy", cause = (string?)null } : new { code = "Unhealthy", cause = (string?)"2 atualizações críticas pendentes (sintético)" } },
+        });
         List($"{vm}/extensions", Ok
             ? new { id = $"{vm}/extensions/MDE.Windows", name = "MDE.Windows",
                 properties = new { publisher = "Microsoft.Azure.AzureDefenderForServers", type = "MDE.Windows", provisioningState = "Succeeded" } }
@@ -424,12 +452,32 @@ public sealed class AzureScenario
                 containers = new[] { new { name = "app", properties = new { environmentVariables = new[] { new { name = "SENHA_BANCO", value = Secret } } } } },
             }, identity: Ok ? new { type = "SystemAssigned" } : null));
         var batch = Id(sub, "Microsoft.Batch", "batchAccounts", "batchdemo");
-        List($"{s}/Microsoft.Batch/batchAccounts", Res(batch, "Microsoft.Batch/batchAccounts", new
+        var batchPe = Id(sub, "Microsoft.Network", "privateEndpoints", "pe-batch");
+        var batches = new List<object>
         {
-            encryption = new { keySource = Ok ? "Microsoft.KeyVault" : "Microsoft.Batch" },
-            allowedAuthenticationModes = Ok ? new[] { "AAD" } : new[] { "SharedKey", "AAD" },
-            publicNetworkAccess = Ok ? "Disabled" : "Enabled", privateEndpointConnections = Pe(Ok),
-        }));
+            Res(batch, "Microsoft.Batch/batchAccounts", new
+            {
+                encryption = new { keySource = Ok ? "Microsoft.KeyVault" : "Microsoft.Batch" },
+                allowedAuthenticationModes = Ok ? new[] { "AAD" } : new[] { "SharedKey", "AAD" },
+                publicNetworkAccess = Ok ? "Disabled" : "Enabled", privateEndpointConnections = Ok ? PeTo("pe-batch", batchPe) : Pe(false),
+            }),
+        };
+        if (!Ok)
+        {
+            // Inadequado: uma conta com endpoint privado APROVADO, mas cujo grupo de zonas não tem a zona do Batch.
+            var batch2 = Id(sub, "Microsoft.Batch", "batchAccounts", "batchinterno");
+            batches.Add(Res(batch2, "Microsoft.Batch/batchAccounts", new
+            {
+                encryption = new { keySource = "Microsoft.Batch" }, allowedAuthenticationModes = new[] { "SharedKey" },
+                publicNetworkAccess = "Enabled", privateEndpointConnections = PeTo("pe-batch", batchPe),
+            }));
+            List($"{batch2}/pools");
+        }
+        List($"{s}/Microsoft.Batch/batchAccounts", batches.ToArray());
+        List($"{s}/Microsoft.Network/privateEndpoints",
+            PrivateEndpoint(sub, "pe-batch", Ok ? batch : Id(sub, "Microsoft.Batch", "batchAccounts", "batchinterno"),
+                Ok ? "privatelink.batch.azure.com" : "privatelink.blob.core.windows.net"),
+            PrivateEndpoint(sub, "pe-app", Id(sub, "Microsoft.Web", "sites", "app-demo"), Ok ? "privatelink.azurewebsites.net" : null));
         List($"{batch}/pools", new
         {
             id = $"{batch}/pools/pool-demo", name = "pool-demo",
@@ -459,7 +507,7 @@ public sealed class AzureScenario
         Site("func-demo", "functionapp,linux", "Python|3.11", "Python|3.7");
         List($"{s}/Microsoft.Web/sites", sites.ToArray());
         List($"{s}/Microsoft.Web/serverfarms", Res(Id(sub, "Microsoft.Web", "serverfarms", "plan-demo"), "Microsoft.Web/serverfarms", new { },
-            sku: new { name = "P1v3", tier = "PremiumV3" }));
+            sku: Ok ? new { name = "P1v3", tier = "PremiumV3" } : new { name = "F1", tier = "Free" }));
         List($"{s}/Microsoft.Web/hostingEnvironments", Res(Id(sub, "Microsoft.Web", "hostingEnvironments", "ase-demo"), "Microsoft.Web/hostingEnvironments", new
         {
             internalLoadBalancingMode = Ok ? "Web, Publishing" : "None",
@@ -543,6 +591,21 @@ public sealed class AzureScenario
         {
             encryption = Ok ? new { vaultBaseUrl = "https://kv-demo-rbac.vault.azure.net", keyName = "chave-adf" } : null,
         }, identity: Ok ? new { type = "SystemAssigned" } : null));
+        var adf = Id(sub, "Microsoft.DataFactory", "factories", "adf-demo");
+        List($"{adf}/linkedservices",
+            new { id = $"{adf}/linkedservices/ls-kv", name = "ls-kv", properties = new { type = "AzureKeyVault", typeProperties = new { baseUrl = "https://kv-demo-rbac.vault.azure.net" } } },
+            Ok
+                ? new { id = $"{adf}/linkedservices/ls-sql", name = "ls-sql", properties = new { type = "AzureSqlDatabase", typeProperties = (object)new
+                    {
+                        connectionString = "Server=tcp:sql-demo.database.windows.net;Database=db-app;",
+                        password = new { type = "AzureKeyVaultSecret", secretName = "senha-sql", store = new { referenceName = "ls-kv", type = "LinkedServiceReference" } },
+                    } } }
+                : new { id = $"{adf}/linkedservices/ls-sql", name = "ls-sql", properties = new { type = "AzureSqlDatabase", typeProperties = (object)new
+                    {
+                        // Credencial em texto e segredo guardado na fábrica: NUNCA podem chegar ao ADM.
+                        connectionString = $"Server=tcp:sql-demo.database.windows.net;Database=db-app;User ID=app;Password={Secret};",
+                        servicePrincipalKey = new { type = "SecureString", value = Secret },
+                    } } });
 
         // ---- Databricks ------------------------------------------------------------------------------------------
         List($"{s}/Microsoft.Databricks/workspaces", Res(Id(sub, "Microsoft.Databricks", "workspaces", "dbw-demo"), "Microsoft.Databricks/workspaces", Ok
@@ -616,8 +679,9 @@ public sealed class AzureScenario
         Route($"{id}/basicPublishingCredentialsPolicies/ftp", new { properties = new { allow = !Ok } });
         Route($"{id}/basicPublishingCredentialsPolicies/scm", new { properties = new { allow = !Ok } });
         Route($"{id}/config/authsettingsV2", new { properties = new { platform = new { enabled = Ok } } });
-        List($"{id}/privateEndpointConnections", Ok
-            ? new object[] { new { name = "pe-app", properties = new { privateLinkServiceConnectionState = new { status = "Approved" } } } }
+        var peApp = $"/subscriptions/{id.Split('/')[2]}/resourceGroups/{Rg}/providers/Microsoft.Network/privateEndpoints/pe-app";
+        List($"{id}/privateEndpointConnections", Ok || id.EndsWith("/sites/app-demo", StringComparison.Ordinal)
+            ? new object[] { new { name = "pe-app", properties = new { privateEndpoint = new { id = peApp }, privateLinkServiceConnectionState = new { status = "Approved" } } } }
             : Array.Empty<object>());
     }
 

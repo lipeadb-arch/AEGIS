@@ -413,6 +413,26 @@ public static class EntraConfigurationControls
             return gaps.Count == 0 ? null : string.Join("; ", gaps);
         });
 
+    // [AEGIS-KNIGHT-COVERAGE-04] Aplicações em que a Microsoft documenta a proteção de token nas sessões de entrada.
+    private const string ExchangeOnlineAppId = "00000002-0000-0ff1-ce00-000000000000";
+    private const string SharePointOnlineAppId = "00000003-0000-0ff1-ce00-000000000000";
+
+    private static readonly CaRequirement TokenProtection = new(
+        "proteção de token nas sessões de entrada",
+        r => r.Policy.SecureSignInSessionEnabled == true,
+        r =>
+        {
+            var p = r.Policy;
+            var all = p.IncludeApplications.Contains("All", StringComparer.OrdinalIgnoreCase);
+            var exo = all || p.IncludeApplications.Contains(ExchangeOnlineAppId, StringComparer.OrdinalIgnoreCase)
+                      || p.IncludeApplications.Contains("Office365", StringComparer.OrdinalIgnoreCase);
+            var spo = all || p.IncludeApplications.Contains(SharePointOnlineAppId, StringComparer.OrdinalIgnoreCase)
+                      || p.IncludeApplications.Contains("Office365", StringComparer.OrdinalIgnoreCase);
+            var excluded = p.ExcludeApplications.Any(a => a.Equals(ExchangeOnlineAppId, StringComparison.OrdinalIgnoreCase)
+                || a.Equals(SharePointOnlineAppId, StringComparison.OrdinalIgnoreCase) || a.Equals("Office365", StringComparison.OrdinalIgnoreCase));
+            return exo && spo && !excluded ? null : "não alcança o Exchange Online e o SharePoint Online";
+        });
+
     private static readonly CaRequirement IdleSessionRestriction = new(
         "restrições impostas pelo aplicativo (sessão ociosa) no navegador",
         r => r.Policy.ApplicationEnforcedRestrictions == true,
@@ -1293,6 +1313,19 @@ public static class EntraConfigurationControls
                 "O acesso pelo navegador aplica as restrições de sessão impostas pelo aplicativo.", "Não há política habilitada que aplique restrições de sessão impostas pelo aplicativo no navegador."),
             Ref(M365 + "1.3.2", KnightReferenceMatch.Partial,
                 "A referência também exige a configuração de tempo limite de sessão ociosa do Microsoft 365 (3 horas ou menos), lida no serviço SharePoint e OneDrive, ainda não implementada.")),
+
+        // [AEGIS-KNIGHT-COVERAGE-04] Antes declarada "sem leitura na versão estável": a v1.0 do Microsoft Graph expõe
+        // conditionalAccessSessionControls.secureSignInSession, e a coleta de acesso condicional já lê as políticas.
+        Control("AK-ENTRA-070", "Sessões de entrada sem proteção de token", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.Medium,
+            "Criar política de acesso condicional que exija proteção de token nas sessões de entrada do Exchange Online e do SharePoint Online.",
+            "Política habilitada para todos os usuários, alcançando o Exchange Online e o SharePoint Online, com o controle de sessão “exigir proteção de token para sessões de entrada”.",
+            c => c.Directory?.ConditionalAccessPolicies is { } ps && ps.Any(p => p.SecureSignInSessionEnabled is null)
+                ? KnightControlOutcome.NotEvaluated("a coleta desta avaliação não registrou o controle de sessão de proteção de token (coleta anterior a este controle).")
+                : AllUsersRequirement(c, TokenProtection,
+                    "As sessões de entrada no Exchange Online e no SharePoint Online exigem proteção de token.",
+                    "Não há política habilitada que exija proteção de token nas sessões de entrada."),
+            Ref(M365 + "5.2.2.16", KnightReferenceMatch.Partial,
+                "A referência pede que a política seja considerada e aplicada aos usuários e plataformas que a organização escolher; o AEGIS verifica se há política habilitada para todos os usuários nas aplicações suportadas.")),
     };
 
     /// <summary>

@@ -926,7 +926,8 @@ export interface KnightControlPresentation {
 
 /* ---- [AEGIS-KNIGHT-COVERAGE-01] Cobertura do catálogo de referência (propriedade do produto) ---------------- */
 
-export type KnightReferenceDisposition = 'Implemented' | 'Partial' | 'Pending' | 'ManualOnly' | 'RequiresAccess' | 'ApiLimitation';
+/** ApiLimitation = nenhum método publicado (nem estável nem preview); PreviewOnly = a leitura existe só em versão beta/preview. */
+export type KnightReferenceDisposition = 'Implemented' | 'Partial' | 'Pending' | 'ManualOnly' | 'RequiresAccess' | 'ApiLimitation' | 'PreviewOnly';
 
 export interface KnightReferenceCoverageGroup {
   key: string;
@@ -938,6 +939,8 @@ export interface KnightReferenceCoverageGroup {
   manualOnly: number;
   requiresAccess: number;
   apiLimitation: number;
+  /** Leitura existente só em versão beta/preview (não usada: o AEGIS usa só versões estáveis). Ausente em respostas antigas. */
+  previewOnly?: number;
   fullPercent: number;
   partialPercent: number;
   anyAutomatedPercent: number;

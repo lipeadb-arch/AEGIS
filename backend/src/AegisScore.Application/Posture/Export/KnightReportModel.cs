@@ -64,7 +64,7 @@ public sealed record ReportControl(
 /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Uma linha da cobertura de implementação congelada (total, plataforma ou serviço).</summary>
 public sealed record ReportCoverageRow(
     string Key, string Label, int Total, int Implemented, int Partial, int Pending, int ManualOnly, int RequiresAccess,
-    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent);
+    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent, int PreviewOnly = 0);
 
 /// <summary>
 /// [AEGIS-KNIGHT-COVERAGE-01] Cobertura de IMPLEMENTAÇÃO do catálogo de referência, congelada na fotografia. É uma
@@ -238,7 +238,7 @@ public static class KnightReportModelBuilder
         if (KnightReferenceCoverageSnapshot.Deserialize(json) is not { } c) return null;
         static ReportCoverageRow Row(KnightReferenceCoverageGroup g) => new(
             g.Key, g.Label, g.Total, g.Implemented, g.Partial, g.Pending, g.ManualOnly, g.RequiresAccess, g.ApiLimitation,
-            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent);
+            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent, g.PreviewOnly);
         return new ReportReferenceCoverage(
             c.CatalogVersion, c.ReferenceCommit,
             c.Frameworks.Select(f => $"{f.Name} {f.Version} ({f.Controls} controles)").ToList(),

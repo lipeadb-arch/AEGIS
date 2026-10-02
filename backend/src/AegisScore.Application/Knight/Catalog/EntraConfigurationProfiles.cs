@@ -10,6 +10,8 @@ public static class EntraConfigurationProfiles
 {
     private static KnightControlReference Doc(string title, string url) => new("Microsoft Learn", null, title, url);
 
+    private static readonly KnightControlReference DocTokenProtection = Doc("Proteção de token no acesso condicional",
+        "https://learn.microsoft.com/en-us/entra/identity/conditional-access/concept-token-protection");
     private static readonly KnightControlReference DocDefaultPermissions = Doc("Permissões padrão de usuários no Microsoft Entra ID",
         "https://learn.microsoft.com/en-us/entra/fundamentals/users-default-permissions");
     private static readonly KnightControlReference DocUserConsent = Doc("Configurar o consentimento de usuários a aplicações",
@@ -406,5 +408,12 @@ public static class EntraConfigurationProfiles
             "Tempo limite de sessão ociosa configurado e política com restrições impostas pelo aplicativo no navegador.",
             "A configuração de tempo limite do Microsoft 365, parte do critério de referência, ainda não é lida.",
             Docs(DocSession), Caps(KnightCapability.ConditionalAccessPolicies)),
+
+        new KnightControlProfile("AK-ENTRA-070", KnightSecurityDomain.Identity,
+            "Nenhuma política exige proteção de token nas sessões de entrada.",
+            "Sem a vinculação ao dispositivo, um token de sessão roubado do computador do usuário funciona igualmente em qualquer outra máquina.",
+            "Política habilitada para todos os usuários com o controle de sessão de proteção de token no Exchange Online e no SharePoint Online.",
+            "A proteção só vale nas plataformas e aplicações que a Microsoft documenta como suportadas; dispositivos não registrados ficam sem acesso quando a política se aplica a eles.",
+            Docs(DocTokenProtection), Caps(KnightCapability.ConditionalAccessPolicies)),
     };
 }

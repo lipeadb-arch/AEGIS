@@ -825,14 +825,14 @@ public static class PostureSnapshotPdfWriter
         Heading(section, "Cobertura do catálogo de referência (propriedade do produto)");
         Body(section,
             "Mede o que o AEGIS consegue avaliar, não o ambiente do cliente. Integral = critério da referência; " +
-            "parcial = critério equivalente, não idêntico. Limitação de API, verificação manual e acesso não disponível " +
+            "parcial = critério equivalente, não idêntico. Leitura só em versão preview (não usada), sem método na API, verificação manual e acesso não disponível " +
             "nunca contam como avaliados. " + string.Join(" · ", cov.Frameworks) + $" · catálogo {cov.CatalogVersion}.", muted: true);
 
         var table = section.AddTable();
         StyleTable(table);
-        table.AddColumn(Unit.FromCentimeter(4.4));
-        foreach (var _ in Enumerable.Range(0, 7)) table.AddColumn(Unit.FromCentimeter(1.8));
-        HeaderRow(table, "Recorte", "Total", "Integral", "Parcial", "Pendente", "Lim. API", "Manual", "Outro acesso");
+        table.AddColumn(Unit.FromCentimeter(3.6));
+        foreach (var _ in Enumerable.Range(0, 8)) table.AddColumn(Unit.FromCentimeter(1.65));
+        HeaderRow(table, "Recorte", "Total", "Integral", "Parcial", "Pendente", "Só preview", "Sem método", "Manual", "Outro acesso");
         foreach (var r in new[] { cov.Total }.Concat(cov.ByPlatform))
         {
             var row = table.AddRow();
@@ -841,9 +841,10 @@ public static class PostureSnapshotPdfWriter
             Cell(row, 2, $"{r.Implemented} ({r.FullPercent.ToString("0.#", Pt)}%)", align: ParagraphAlignment.Center);
             Cell(row, 3, $"{r.Partial} ({r.PartialPercent.ToString("0.#", Pt)}%)", align: ParagraphAlignment.Center);
             Cell(row, 4, r.Pending.ToString(Pt), align: ParagraphAlignment.Center);
-            Cell(row, 5, r.ApiLimitation.ToString(Pt), align: ParagraphAlignment.Center);
-            Cell(row, 6, r.ManualOnly.ToString(Pt), align: ParagraphAlignment.Center);
-            Cell(row, 7, r.RequiresAccess.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 5, r.PreviewOnly.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 6, r.ApiLimitation.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 7, r.ManualOnly.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 8, r.RequiresAccess.ToString(Pt), align: ParagraphAlignment.Center);
         }
     }
 

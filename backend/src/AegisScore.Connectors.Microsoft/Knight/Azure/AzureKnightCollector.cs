@@ -282,7 +282,7 @@ public sealed class AzureKnightCollector : KnightRestCollectorBase
                         await foreach (var item in _rest.GetPagedAsync(token, url, ct))
                         {
                             if (++n > 2000) { parent.Facts[child.Key + ":truncated"] = JsonSerializer.SerializeToElement(true); break; }
-                            list.Add(Reduce(item, child.Keep));
+                            list.Add(child.Summarize is { } summarize ? summarize(item) : Reduce(item, child.Keep));
                         }
                         parent.Facts[child.Key + ":items"] = JsonSerializer.SerializeToElement(list);
                         break;
