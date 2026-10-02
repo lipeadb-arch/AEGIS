@@ -142,8 +142,10 @@ public static class KnightControlImpacts
         var id = (indicatorId ?? "").Trim();
         return ById.TryGetValue(id, out var t) ? t
             : Catalog.M365ServiceProfiles.Impacts.TryGetValue(id, out var m) ? m
+            : Catalog.AzureProfiles.Impacts.TryGetValue(id, out var a) ? a
             : null;
     }
 
-    public static IReadOnlyCollection<string> Ids => ById.Keys.Concat(Catalog.M365ServiceProfiles.Impacts.Keys).ToList();
+    public static IReadOnlyCollection<string> Ids =>
+        ById.Keys.Concat(Catalog.M365ServiceProfiles.Impacts.Keys).Concat(Catalog.AzureProfiles.Impacts.Keys).ToList();
 }

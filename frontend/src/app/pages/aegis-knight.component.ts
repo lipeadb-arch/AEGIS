@@ -73,7 +73,8 @@ import { PostureExportFormat } from '../models/posture-history.models';
           </p>
           <p class="page-meta">
             Fontes: Microsoft Entra ID, Microsoft 365 (Teams, Exchange Online, Defender para Office 365, Purview, SharePoint e
-            OneDrive, Intune, Fabric) e Google Workspace · a coleta é feita em Configurações → Integrações
+            OneDrive, Intune, Fabric), Microsoft Azure (Resource Manager) e Google Workspace · a coleta é feita em Configurações →
+            Integrações
           </p>
         </div>
         <div class="page-actions">

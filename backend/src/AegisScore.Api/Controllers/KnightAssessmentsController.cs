@@ -317,7 +317,7 @@ public class KnightAssessmentsController : ControllerBase
     {
         var sources = a.Sources.Select(ToDto).ToList();
         var includedLabels = sources.Where(s => s.Included).Select(s => s.Label).ToList();
-        var sourceLabel = includedLabels.Count > 0 ? "Consolidado — " + string.Join(", ", includedLabels) : "Consolidado";
+        var sourceLabel = KnightConsolidatedLabel.For(includedLabels);
         var counts = new KnightCountsDto(a.PassedCount, a.ExposedCount, a.MitigatedCount, a.NotEvaluatedCount, a.ErrorCount, a.NotApplicableCount);
         var at = a.DataRecency ?? DateTimeOffset.UtcNow;
 

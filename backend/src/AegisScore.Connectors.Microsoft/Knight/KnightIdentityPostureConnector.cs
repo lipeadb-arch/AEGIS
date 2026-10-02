@@ -130,6 +130,8 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         if (_appTokens is not null && _rest is not null)
             probes.Add(await ProbeRestAsync(credentials, "Microsoft Fabric", FabricKnightCollector.Scope, FabricKnightCollector.TenantSettingsUrl,
                 "a configuração “entidades de serviço podem usar as APIs de administração somente leitura” e o grupo de segurança da aplicação", ct));
+        if (_appTokens is not null && _rest is not null)
+            probes.Add(await ProbeAzureAsync(credentials, ct));
         // Uma leitura NÃO TENTADA (ex.: a API administrativa do SharePoint sem certificado) não conta como falha nem
         // como sucesso: o estado é o das leituras tentadas, e a linha dela diz o que falta.
         var attempted = probes.Where(p => !p.Skipped).ToList();
@@ -402,6 +404,38 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         catch (EntraGraphException ex) when (ex.Kind == EntraGraphErrorKind.InsufficientPermission)
         {
             return new Probe(false, $"{label}: autorização recusada, e a recusa não identifica a causa — confira {requirement}.");
+        }
+        catch (EntraGraphException ex)
+        {
+            return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
+        }
+        catch (MicrosoftCertificateException ex)
+        {
+            return new Probe(false, $"{label}: {ex.Message}");
+        }
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
+        {
+            return FailedProbe(label, ex);
+        }
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Azure: token do Resource Manager e a listagem das assinaturas visíveis. Conectar sem
+    /// enxergar nenhuma assinatura não é sucesso — é a falta do papel Leitor, e a linha diz isso.
+    /// </summary>
+    private async Task<Probe> ProbeAzureAsync(IMicrosoftGraphCredentials cfg, CancellationToken ct)
+    {
+        const string label = "Microsoft Azure";
+        try
+        {
+            var token = await _appTokens!.AcquireAsync(cfg, Azure.AzureArmPlan.ArmScope, ct);
+            var n = 0;
+            await foreach (var _ in _rest!.GetPagedAsync(token,
+                               $"{Azure.AzureArmPlan.ArmHost}/subscriptions?api-version={Azure.AzureArmPlan.SubscriptionsApi}", ct))
+                n++;
+            return n == 0
+                ? new Probe(false, $"{label}: conexão aceita, mas nenhuma assinatura visível — atribua o papel Leitor do Azure RBAC à aplicação nas assinaturas a avaliar.")
+                : new Probe(true, $"{label}: leitura de verificação confirmada — {n} assinatura(s) visível(is) à aplicação.");
         }
         catch (EntraGraphException ex)
         {

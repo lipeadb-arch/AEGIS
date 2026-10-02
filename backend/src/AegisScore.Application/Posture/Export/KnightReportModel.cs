@@ -334,7 +334,7 @@ public static class KnightReportModelBuilder
                 return new ReportLimitation(
                     name, KnightCapabilityLabels.Label(c.Capability), c.Outcome.ToString(), CauseLabel(c.Outcome), c.Detail,
                     c.Outcome == KnightCapabilityOutcome.InsufficientPermission ? KnightCapabilityLabels.RequiredPermission(c.Capability, s.SourceType) : null,
-                    affected, Guidance(c.Outcome), s.DataRecency is { } t ? Iso(t) : null);
+                    affected, Guidance(c.Capability, c.Outcome), s.DataRecency is { } t ? Iso(t) : null);
             })
             .ToList();
     }
@@ -391,8 +391,12 @@ public static class KnightReportModelBuilder
         _ => o.ToString(),
     };
 
-    private static string Guidance(KnightCapabilityOutcome o) => o switch
+    private static string Guidance(KnightCapability c, KnightCapabilityOutcome o) => o switch
     {
+        // [AEGIS-KNIGHT-COVERAGE-04] No Azure a autorização é uma ATRIBUIÇÃO DE PAPEL no escopo recusado (Azure RBAC ou o
+        // plano de dados do cofre), não um consentimento de administrador.
+        KnightCapabilityOutcome.InsufficientPermission when c.ToString().StartsWith("Azure", StringComparison.Ordinal) =>
+            "Atribuir à aplicação o papel indicado no escopo recusado (Azure RBAC na assinatura, ou no cofre) e sincronizar novamente em Configurações → Integrações.",
         KnightCapabilityOutcome.InsufficientPermission =>
             "Conceder a permissão indicada ao aplicativo do conector (consentimento de administrador) e sincronizar novamente em Configurações → Integrações.",
         KnightCapabilityOutcome.LimitedByLicense =>
@@ -500,6 +504,22 @@ public static class KnightCapabilityLabels
         KnightCapability.IntuneEnrollmentRestrictions => "Restrições de registro de dispositivos",
         KnightCapability.FabricTenantSettings => "Configurações do locatário do Fabric",
 
+        // [AEGIS-KNIGHT-COVERAGE-04] Azure Resource Manager.
+        KnightCapability.AzureSubscriptions => "Assinaturas do Azure no escopo",
+        KnightCapability.AzureAuthorization => "Atribuições de papel, papéis personalizados e bloqueios",
+        KnightCapability.AzurePolicy => "Atribuições de política do Azure",
+        KnightCapability.AzureDefenderForCloud => "Planos e configurações do Defender para Nuvem",
+        KnightCapability.AzureMonitor => "Alertas do log de atividades e Application Insights",
+        KnightCapability.AzureNetworking => "Rede do Azure (NSGs, redes virtuais, gateways, logs de fluxo)",
+        KnightCapability.AzureStorage => "Contas de armazenamento e serviços de blob e arquivos",
+        KnightCapability.AzureKeyVault => "Cofres de chaves, chaves e segredos (metadados)",
+        KnightCapability.AzureKeyVaultCertificates => "Políticas de certificado dos cofres (plano de dados)",
+        KnightCapability.AzureCompute => "Máquinas virtuais, discos, contêineres e Batch",
+        KnightCapability.AzureAppService => "App Service, Functions, slots e ambientes",
+        KnightCapability.AzureDatabases => "Bancos de dados (SQL, PostgreSQL, MySQL, Cosmos DB, Redis, Data Factory)",
+        KnightCapability.AzureDatabricks => "Workspaces do Azure Databricks",
+        KnightCapability.AzureTenantDiagnostics => "Configurações de diagnóstico do Microsoft Entra ID",
+
         _ => c.ToString(),
     };
 
@@ -573,6 +593,18 @@ public static class KnightCapabilityLabels
         },
         KnightSourceType.MicrosoftFabric =>
             "Configuração do Fabric “entidades de serviço podem acessar APIs de administração somente leitura” ligada para um grupo de segurança que contenha a aplicação",
+        // [AEGIS-KNIGHT-COVERAGE-04] Azure: a autorização é do Azure RBAC, não do Microsoft Graph — salvo o estado das contas
+        // com papel (Graph) e o plano de dados dos cofres. O diagnóstico do Entra ID é um recurso do locatário.
+        KnightSourceType.MicrosoftAzure => c switch
+        {
+            KnightCapability.AzureKeyVaultCertificates =>
+                "Leitura de certificados no plano de dados de cada cofre — papel Leitor do Key Vault (cofres com RBAC) ou permissões get/list de certificados na política de acesso",
+            KnightCapability.AzureTenantDiagnostics =>
+                "Leitura de microsoft.aadiam/diagnosticSettings no escopo do locatário (papel do Entra ID com acesso às configurações de diagnóstico)",
+            KnightCapability.AzureAuthorization =>
+                "Papel Leitor do Azure RBAC nas assinaturas do escopo; o estado das contas com papel exige User.Read.All (Microsoft Graph, aplicativo)",
+            _ => "Papel Leitor do Azure RBAC nas assinaturas do escopo (ou no grupo de gerenciamento que as contém)",
+        },
 
         KnightSourceType.Consolidated => SourceOfCapability(c) is { } owner ? RequiredPermission(c, owner) : null,
 

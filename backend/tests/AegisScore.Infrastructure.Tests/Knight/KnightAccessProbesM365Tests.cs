@@ -52,8 +52,9 @@ public sealed class KnightAccessProbesM365Tests
 
         health.Status.Should().Be(ConnectorStatus.Healthy, health.Message);
         foreach (var fonte in new[] { "Microsoft Defender para Office 365", "Microsoft Purview", "SharePoint e OneDrive (Microsoft Graph)",
-                     "SharePoint e OneDrive (API administrativa)", "Microsoft Intune", "Microsoft Fabric" })
+                     "SharePoint e OneDrive (API administrativa)", "Microsoft Intune", "Microsoft Fabric", "Microsoft Azure" })
             health.Message.Should().Contain(fonte + ": ", fonte);
+        health.Message.Should().Contain("Microsoft Azure: leitura de verificação confirmada — 1 assinatura(s) visível(is)");
         health.Message.Should().Contain("Autenticação usada: certificado da aplicação");
         scenario.TokenBodies.Should().OnlyContain(b => b.Contains("client_assertion=") && !b.Contains("client_secret="),
             "o conector guarda só o certificado: nenhum pedido pode levar segredo");
@@ -81,6 +82,17 @@ public sealed class KnightAccessProbesM365Tests
 
         health.Status.Should().Be(ConnectorStatus.Degraded);
         health.Message.Should().Contain("Microsoft Fabric: autorização recusada").And.Contain("APIs de administração somente leitura");
+    }
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Conectar ao Resource Manager sem enxergar assinatura não é sucesso: falta o papel Leitor.</summary>
+    [Fact]
+    public async Task AzureSemAssinaturaVisivel_Degraded_ComOPapelQueFalta()
+    {
+        var scenario = new M365ServicesScenario(M365ServicesScenario.Variant.NoAzureSubscriptions);
+        var health = await ConnectorFor(scenario, certificate: true).TestAsync(Config(), CancellationToken.None);
+
+        health.Status.Should().Be(ConnectorStatus.Degraded);
+        health.Message.Should().Contain("Microsoft Azure: conexão aceita, mas nenhuma assinatura visível").And.Contain("papel Leitor do Azure RBAC");
     }
 
     [Fact]

@@ -402,7 +402,10 @@ export const KNIGHT_SOURCES: KnightSourceDescriptor[] = [
     source: 'MicrosoftFabric', label: 'Microsoft Fabric (Power BI)', slug: 'fabric', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
     requirement: 'Um administrador do Fabric precisa permitir que entidades de serviço usem as APIs de administração somente leitura, para um grupo que contenha a aplicação.',
   },
-  // MicrosoftAzure entra aqui junto com o coletor do Azure no servidor (mesmo catálogo, mesma ordem).
+  {
+    source: 'MicrosoftAzure', label: 'Microsoft Azure', slug: 'azure', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
+    requirement: 'Exige o papel Leitor do Azure RBAC nas assinaturas do escopo (ou no grupo de gerenciamento). Certificados dos cofres exigem papel no plano de dados (Leitor do Key Vault).',
+  },
   { source: 'GoogleWorkspace', label: 'Google Workspace', slug: 'google', provider: 'Google', microsoftConnector: false, consolidable: false, requirement: null },
   { source: 'Demo', label: 'Demonstração', slug: 'demo', provider: 'Demonstração', microsoftConnector: false, consolidable: false, requirement: null },
 ];
@@ -555,6 +558,20 @@ const CAPABILITY_LABEL: Record<string, string> = {
   IntuneServiceSettings: 'Configurações de conformidade do Intune',
   IntuneEnrollmentRestrictions: 'Restrições de registro de dispositivos',
   FabricTenantSettings: 'Configurações do locatário do Fabric',
+  AzureSubscriptions: 'Assinaturas do Azure no escopo',
+  AzureAuthorization: 'Atribuições de papel, papéis personalizados e bloqueios',
+  AzurePolicy: 'Atribuições de política do Azure',
+  AzureDefenderForCloud: 'Planos e configurações do Defender para Nuvem',
+  AzureMonitor: 'Alertas do log de atividades e Application Insights',
+  AzureNetworking: 'Rede do Azure (NSGs, redes virtuais, gateways, logs de fluxo)',
+  AzureStorage: 'Contas de armazenamento e serviços de blob e arquivos',
+  AzureKeyVault: 'Cofres de chaves, chaves e segredos (metadados)',
+  AzureKeyVaultCertificates: 'Políticas de certificado dos cofres (plano de dados)',
+  AzureCompute: 'Máquinas virtuais, discos, contêineres e Batch',
+  AzureAppService: 'App Service, Functions, slots e ambientes',
+  AzureDatabases: 'Bancos de dados (SQL, PostgreSQL, MySQL, Cosmos DB, Redis, Data Factory)',
+  AzureDatabricks: 'Workspaces do Azure Databricks',
+  AzureTenantDiagnostics: 'Configurações de diagnóstico do Microsoft Entra ID',
 };
 
 /** Capacidade desconhecida degrada para o próprio identificador — nunca some da tela. */
@@ -587,7 +604,8 @@ export type KnightAffectedObjectKind =
   | 'Policy'
   | 'DirectoryRole'
   | 'TenantSetting'
-  | 'Domain';
+  | 'Domain'
+  | 'CloudResource';
 
 /**
  * Estado do DETALHE de um achado numa avaliação:
@@ -640,6 +658,7 @@ const AFFECTED_KIND_LABEL: Record<KnightAffectedObjectKind, string> = {
   DirectoryRole: 'Papel de diretório',
   TenantSetting: 'Configuração do locatário',
   Domain: 'Domínio',
+  CloudResource: 'Recurso de nuvem',
 };
 
 export function affectedKindLabel(kind: KnightAffectedObjectKind): string {
@@ -1207,7 +1226,11 @@ const CAUSE: Record<string, [string, string]> = {
 /** Capacidades não coletadas → causa, controles prejudicados (não avaliados que dependem dela) e orientação. */
 export function limitationViews(a: KnightAssessment): KnightLimitationView[] {
   return problemCapabilities(a.capabilities).map((c) => {
-    const [cause, guidance] = CAUSE[c.outcome] ?? ['Não coletado', 'Sincronizar novamente em Integrações.'];
+    const [cause, generic] = CAUSE[c.outcome] ?? ['Não coletado', 'Sincronizar novamente em Integrações.'];
+    // [AEGIS-KNIGHT-COVERAGE-04] No Azure a autorização é uma atribuição de papel no escopo recusado, não consentimento.
+    const guidance = c.outcome === 'InsufficientPermission' && c.capability.startsWith('Azure')
+      ? 'Atribuir à aplicação o papel indicado no escopo recusado (Azure RBAC na assinatura, ou no cofre) e sincronizar novamente em Integrações.'
+      : generic;
     return {
       capability: c.capability,
       label: capabilityLabel(c.capability),

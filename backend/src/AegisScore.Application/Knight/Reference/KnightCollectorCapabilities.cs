@@ -132,6 +132,29 @@ public static class KnightCollectorCapabilities
         KnightCapability.PurviewLabelPolicies,
     };
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Azure: descoberta das assinaturas e uma família de leituras do Resource Manager por
+    /// capacidade (papel Leitor), mais o plano de dados dos cofres (certificados) e o diagnóstico do Entra ID no escopo do
+    /// locatário. Cada família tem o desfecho por assinatura no inventário da assinatura.
+    /// </summary>
+    private static readonly IReadOnlySet<KnightCapability> Azure = new HashSet<KnightCapability>
+    {
+        KnightCapability.AzureSubscriptions,
+        KnightCapability.AzureAuthorization,
+        KnightCapability.AzurePolicy,
+        KnightCapability.AzureDefenderForCloud,
+        KnightCapability.AzureMonitor,
+        KnightCapability.AzureNetworking,
+        KnightCapability.AzureStorage,
+        KnightCapability.AzureKeyVault,
+        KnightCapability.AzureKeyVaultCertificates,
+        KnightCapability.AzureCompute,
+        KnightCapability.AzureAppService,
+        KnightCapability.AzureDatabases,
+        KnightCapability.AzureDatabricks,
+        KnightCapability.AzureTenantDiagnostics,
+    };
+
     private static readonly IReadOnlySet<KnightCapability> Google = new HashSet<KnightCapability>
     {
         KnightCapability.DirectoryUsers,
@@ -151,6 +174,7 @@ public static class KnightCollectorCapabilities
         KnightSourceType.MicrosoftFabric => Fabric,
         KnightSourceType.MicrosoftDefenderForOffice365 => DefenderO365,
         KnightSourceType.MicrosoftPurview => Purview,
+        KnightSourceType.MicrosoftAzure => Azure,
         KnightSourceType.GoogleWorkspace => Google,
         _ => new HashSet<KnightCapability>(),
     };

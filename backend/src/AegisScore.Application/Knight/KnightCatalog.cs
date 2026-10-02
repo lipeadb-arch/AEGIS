@@ -108,10 +108,13 @@ public static class KnightCatalog
     // o conjunto que define a cobertura de implementação da referência. Fotografias v5 continuam com o catálogo v5
     // congelado e o comparador recusa v5 × v6.
     // v7 [AEGIS-KNIGHT-COVERAGE-04]: acrescenta os controles de CONFIGURAÇÃO do restante do Microsoft 365 (Defender para
-    // Office 365, Purview, SharePoint e OneDrive, Intune, Fabric) e dos recursos do Azure, cada um aplicável só à
-    // própria fonte. Mesmo motivo dos blocos anteriores: o denominador de uma execução das fontes existentes não muda,
-    // mas o CONJUNTO de controles muda — fotografias v6 continuam com o catálogo v6 congelado e o comparador recusa v6 × v7.
-    public const string Version = "ak-knight-v7";
+    // Office 365, Purview, SharePoint e OneDrive, Intune, Fabric), cada um aplicável só à própria fonte. Mesmo motivo
+    // dos blocos anteriores: o denominador de uma execução das fontes existentes não muda, mas o CONJUNTO de controles
+    // muda — fotografias v6 continuam com o catálogo v6 congelado e o comparador recusa v6 × v7.
+    // v8 [AEGIS-KNIGHT-COVERAGE-04, Azure]: acrescenta os controles de CONFIGURAÇÃO dos recursos do Azure (AK-AZ-*),
+    // avaliados sobre a coleta da fonte MicrosoftAzure (Resource Manager) relida do ADM. Pelo mesmo motivo, fotografias
+    // v7 continuam com o catálogo v7 congelado e o comparador recusa v7 × v8.
+    public const string Version = "ak-knight-v8";
 
     // ---- Limiares centralizados (única fonte da verdade dos números da regra) ----
 
@@ -222,6 +225,10 @@ public static class KnightCatalog
             .Concat(SharePointControls.Definitions)
             .Concat(IntuneControls.Definitions)
             .Concat(FabricControls.Definitions)
+            // [AEGIS-KNIGHT-COVERAGE-04] Recursos do Azure (Resource Manager).
+            .Concat(AzureGovernanceControls.Definitions)
+            .Concat(AzureInfrastructureControls.Definitions)
+            .Concat(AzureWorkloadControls.Definitions)
             .ToList();
 
     private const string M365Ref = "CIS-M365-7.0.0:";

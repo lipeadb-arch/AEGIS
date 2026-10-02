@@ -45,8 +45,8 @@ public static class KnightSourceCatalog
         Ms(KnightSourceType.MicrosoftSharePoint, "SharePoint e OneDrive", "sharepoint", "microsoftsharepoint", "onedrive"),
         Ms(KnightSourceType.MicrosoftIntune, "Microsoft Intune", "intune", "microsoftintune"),
         Ms(KnightSourceType.MicrosoftFabric, "Microsoft Fabric (Power BI)", "fabric", "microsoftfabric", "powerbi"),
-        // MicrosoftAzure entra neste catálogo junto com o coletor do Azure: uma fonte listada sem coletor seria uma
-        // opção de sincronização que falha sempre.
+        // Azure: mesma aplicação registrada, outra autorização — papel Leitor do Azure RBAC nas assinaturas do escopo.
+        Ms(KnightSourceType.MicrosoftAzure, "Microsoft Azure", "azure", "microsoftazure"),
         new(KnightSourceType.GoogleWorkspace, "Google Workspace", "google", "Google", new[] { "googleworkspace" },
             MicrosoftConnector: false, Consolidable: false),
         new(KnightSourceType.Demo, "Demonstração (sintético)", "demo", "Demonstração", Array.Empty<string>(),

@@ -145,7 +145,8 @@ public static class IdentityKnightBoundary
         KnightAffectedObjectKind.Unknown => IdentityEntityKind.Unknown,
         // Políticas, papéis e configurações do tenant não são identidades: nunca entram nos conjuntos do ADM.
         KnightAffectedObjectKind.Policy or KnightAffectedObjectKind.DirectoryRole
-            or KnightAffectedObjectKind.TenantSetting or KnightAffectedObjectKind.Domain => IdentityEntityKind.Unknown,
+            or KnightAffectedObjectKind.TenantSetting or KnightAffectedObjectKind.Domain
+            or KnightAffectedObjectKind.CloudResource => IdentityEntityKind.Unknown,
         _ => IdentityEntityKind.Unknown,
     };
 

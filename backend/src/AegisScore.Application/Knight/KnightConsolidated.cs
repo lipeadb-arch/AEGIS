@@ -101,6 +101,29 @@ public sealed record KnightConsolidatedAssessment(
 public sealed record KnightConsolidatedSourceSelection(KnightSourceType Source, Guid RunId);
 
 /// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-04] Rótulo do consolidado. Com nove fontes, a lista inteira passa do limite da coluna da
+/// fotografia (200): o rótulo diz quantas fontes são e nomeia as que cabem — a lista COMPLETA continua na composição
+/// congelada, que é a autoridade sobre o que entrou.
+/// </summary>
+public static class KnightConsolidatedLabel
+{
+    public const int MaxLength = 200;
+
+    public static string For(IReadOnlyList<string> includedLabels, int max = MaxLength)
+    {
+        if (includedLabels.Count == 0) return "Consolidado";
+        var full = "Consolidado — " + string.Join(", ", includedLabels);
+        if (full.Length <= max) return full;
+        for (var shown = includedLabels.Count - 1; shown >= 1; shown--)
+        {
+            var text = $"Consolidado — {includedLabels.Count} fontes: {string.Join(", ", includedLabels.Take(shown))} e mais {includedLabels.Count - shown}";
+            if (text.Length <= max) return text;
+        }
+        return $"Consolidado — {includedLabels.Count} fontes";
+    }
+}
+
+/// <summary>
 /// Combina <see cref="KnightAssessment"/>s já lidos (por <c>GetLatestBySourceAsync</c>) num
 /// <see cref="KnightConsolidatedAssessment"/> — função PURA, sem EF/rede, para ser testável sem banco.
 /// </summary>

@@ -41,6 +41,8 @@ public sealed class M365ServicesScenario
         InertPolicy,
         /// <summary>Mais domínios aceitos que o teto de consulta DNS da coleta.</summary>
         ManyDomains,
+        /// <summary>[Azure] A aplicação conecta ao Resource Manager, mas não enxerga nenhuma assinatura.</summary>
+        NoAzureSubscriptions,
     }
 
     public const string InitialDomain = "clientedemo.onmicrosoft.com";
@@ -95,6 +97,10 @@ public sealed class M365ServicesScenario
         if (url.Contains("/organization", StringComparison.OrdinalIgnoreCase))
             return (HttpStatusCode.OK, $$"""{"value":[{"verifiedDomains":[{"name":"{{InitialDomain}}","isInitial":true},{"name":"{{OwnDomain}}","isInitial":false}]}]}""");
         if (url.StartsWith("https://clientedemo-admin.sharepoint.com/_api/SPO.Tenant", StringComparison.OrdinalIgnoreCase)) return (HttpStatusCode.OK, SharePointAdmin());
+        if (url.StartsWith("https://management.azure.com/subscriptions?", StringComparison.OrdinalIgnoreCase))
+            return (HttpStatusCode.OK, _v == Variant.NoAzureSubscriptions
+                ? """{"value":[]}"""
+                : """{"value":[{"subscriptionId":"00000000-aaaa-4000-8000-00000000000a","displayName":"Assinatura Demo","state":"Enabled"}]}""");
         if (url.StartsWith("https://api.fabric.microsoft.com/v1/admin/tenantsettings", StringComparison.OrdinalIgnoreCase))
         {
             if (_v == Variant.FabricForbidden)

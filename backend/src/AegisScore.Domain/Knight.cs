@@ -473,6 +473,9 @@ public enum KnightAffectedObjectKind
 
     /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Domínio do diretório (ex.: política de expiração de senha por domínio).</summary>
     Domain = 9,
+
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Recurso de nuvem (assinatura, conta de armazenamento, servidor, cofre…). Não é identidade.</summary>
+    CloudResource = 10,
 }
 
 /// <summary>

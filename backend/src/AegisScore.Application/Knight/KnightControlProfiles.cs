@@ -89,6 +89,7 @@ public static class KnightControlProfiles
         .Concat(TeamsConfigurationProfiles.All)
         .Concat(ExchangeConfigurationProfiles.All)
         .Concat(M365ServiceProfiles.All)
+        .Concat(AzureProfiles.All)
         .Select(p => p with { Impact = KnightControlImpacts.For(p.IndicatorId) })
         .ToDictionary(p => p.IndicatorId, StringComparer.Ordinal);
 
