@@ -28,6 +28,7 @@ public static class KnightObjectNouns
         KnightAffectedObjectKind.DirectoryRole => ("papel de diretório", "papéis de diretório"),
         KnightAffectedObjectKind.TenantSetting => ("configuração do locatário", "configurações do locatário"),
         KnightAffectedObjectKind.Domain => ("domínio", "domínios"),
+        KnightAffectedObjectKind.CloudResource => ("recurso de nuvem", "recursos de nuvem"),
         _ => ("item de tipo não identificado", "itens de tipo não identificado"),
     };
 

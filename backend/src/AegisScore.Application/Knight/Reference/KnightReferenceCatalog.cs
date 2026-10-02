@@ -76,8 +76,18 @@ public enum KnightReferenceDisposition
     /// <summary>Há método oficial de leitura, mas com acesso que o conector atual não tem.</summary>
     RequiresAccess = 4,
 
-    /// <summary>Sem leitura na versão estável da API oficial (só beta ou só portal).</summary>
+    /// <summary>
+    /// SEM MÉTODO: nenhuma API publicada do fornecedor expõe o dado — nem a estável nem a beta/preview (só o portal). A nota
+    /// diz quais métodos foram examinados.
+    /// </summary>
     ApiLimitation = 5,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] SÓ EM PREVIEW: a leitura existe, mas apenas em versão beta/preview da API, que o fornecedor
+    /// não suporta em produção. O AEGIS usa só versões estáveis; a nota diz qual versão preview tem o método. Não é
+    /// "sem API" — é uma decisão de estabilidade que pode ser revista.
+    /// </summary>
+    PreviewOnly = 6,
 }
 
 /// <summary>Um controle de referência e a sua situação no produto, com os controles KNIGHT que o avaliam.</summary>
@@ -101,7 +111,8 @@ public sealed record KnightReferenceCoverageGroup(
     int Pending,
     int ManualOnly,
     int RequiresAccess,
-    int ApiLimitation)
+    int ApiLimitation,
+    int PreviewOnly = 0)
 {
     /// <summary>Percentual avaliado INTEGRALMENTE (critério da referência).</summary>
     public double FullPercent => Percent(Implemented);
@@ -214,7 +225,8 @@ public static class KnightReferenceCatalog
             return new KnightReferenceCoverageGroup(key, label, list.Count,
                 N(KnightReferenceDisposition.Implemented), N(KnightReferenceDisposition.Partial),
                 N(KnightReferenceDisposition.Pending), N(KnightReferenceDisposition.ManualOnly),
-                N(KnightReferenceDisposition.RequiresAccess), N(KnightReferenceDisposition.ApiLimitation));
+                N(KnightReferenceDisposition.RequiresAccess), N(KnightReferenceDisposition.ApiLimitation),
+                N(KnightReferenceDisposition.PreviewOnly));
         }
 
         var byService = statuses
@@ -248,7 +260,8 @@ public static class KnightReferenceCatalog
         KnightReferenceDisposition.Pending => "Pendente",
         KnightReferenceDisposition.ManualOnly => "Verificação manual",
         KnightReferenceDisposition.RequiresAccess => "Exige acesso que o conector não tem",
-        KnightReferenceDisposition.ApiLimitation => "Limitação da API oficial",
+        KnightReferenceDisposition.ApiLimitation => "Sem método na API oficial",
+        KnightReferenceDisposition.PreviewOnly => "Leitura só em versão preview",
         _ => d.ToString(),
     };
 

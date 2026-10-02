@@ -402,7 +402,10 @@ export const KNIGHT_SOURCES: KnightSourceDescriptor[] = [
     source: 'MicrosoftFabric', label: 'Microsoft Fabric (Power BI)', slug: 'fabric', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
     requirement: 'Um administrador do Fabric precisa permitir que entidades de serviço usem as APIs de administração somente leitura, para um grupo que contenha a aplicação.',
   },
-  // MicrosoftAzure entra aqui junto com o coletor do Azure no servidor (mesmo catálogo, mesma ordem).
+  {
+    source: 'MicrosoftAzure', label: 'Microsoft Azure', slug: 'azure', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
+    requirement: 'Exige o papel Leitor do Azure RBAC nas assinaturas do escopo (ou no grupo de gerenciamento). Certificados dos cofres exigem papel no plano de dados (Leitor do Key Vault).',
+  },
   { source: 'GoogleWorkspace', label: 'Google Workspace', slug: 'google', provider: 'Google', microsoftConnector: false, consolidable: false, requirement: null },
   { source: 'Demo', label: 'Demonstração', slug: 'demo', provider: 'Demonstração', microsoftConnector: false, consolidable: false, requirement: null },
 ];
@@ -444,13 +447,30 @@ const SOURCE_STATE_LABEL: Record<KnightSourceState, string> = {
   PartialCollection: 'Coleta parcial',
   InsufficientPermission: 'Permissão insuficiente',
   AuthenticationFailure: 'Falha de autenticação',
-  Throttled: 'Throttling',
+  Throttled: 'Limite de requisições',
   Unavailable: 'Indisponível',
   Error: 'Erro',
 };
 
 export function sourceStateLabel(state: KnightSourceState): string {
   return SOURCE_STATE_LABEL[state];
+}
+
+/**
+ * [AEGIS-KNIGHT-COVERAGE-04] Completude da COLETA de um consolidado, separada do término da execução: a composição
+ * sempre termina, mas só é coleta completa quando todas as fontes incluídas foram coletadas sem limitação. Mesma
+ * regra do backend (KnightConsolidatedCollection), para tela, HTML e PDF dizerem a mesma coisa.
+ */
+export function consolidatedCollection(sources: KnightConsolidatedSource[]): { complete: boolean; incomplete: string[]; text: string } {
+  const included = sources.filter((s) => s.included);
+  const incomplete = included
+    .filter((s) => s.sourceState !== 'Completed' || (s.collectionLimitations?.length ?? 0) > 0)
+    .map((s) => s.label);
+  const text = incomplete.length === 0
+    ? `Coleta completa nas ${included.length} fontes incluídas.`
+    : `Coleta parcial em ${incomplete.length} de ${included.length} fontes incluídas (${incomplete.join(', ')}). ` +
+      'A composição terminou; os controles sem dado dessas fontes ficam não avaliados e as limitações de cada uma estão na composição.';
+  return { complete: incomplete.length === 0 && included.length > 0, incomplete, text };
 }
 
 /** Um estado de coleta que NÃO é a conclusão íntegra — a UI o destaca (permissão/parcial/falha). */
@@ -463,7 +483,7 @@ const CAPABILITY_OUTCOME_LABEL: Record<KnightCapabilityOutcome, string> = {
   InsufficientPermission: 'Permissão insuficiente',
   Unavailable: 'Indisponível',
   NotAttempted: 'Não tentado',
-  Throttled: 'Throttling',
+  Throttled: 'Limite de requisições',
   AuthenticationFailure: 'Falha de autenticação',
   Error: 'Erro',
   LimitedByLicense: 'Licença insuficiente',
@@ -555,11 +575,35 @@ const CAPABILITY_LABEL: Record<string, string> = {
   IntuneServiceSettings: 'Configurações de conformidade do Intune',
   IntuneEnrollmentRestrictions: 'Restrições de registro de dispositivos',
   FabricTenantSettings: 'Configurações do locatário do Fabric',
+  AzureSubscriptions: 'Assinaturas do Azure no escopo',
+  AzureAuthorization: 'Atribuições de papel, papéis personalizados e bloqueios',
+  AzurePolicy: 'Atribuições de política do Azure',
+  AzureDefenderForCloud: 'Planos e configurações do Defender para Nuvem',
+  AzureMonitor: 'Alertas do log de atividades e Application Insights',
+  AzureNetworking: 'Rede do Azure (NSGs, redes virtuais, gateways, logs de fluxo)',
+  AzureStorage: 'Contas de armazenamento e serviços de blob e arquivos',
+  AzureKeyVault: 'Cofres de chaves, chaves e segredos (metadados)',
+  AzureKeyVaultCertificates: 'Políticas de certificado dos cofres (plano de dados)',
+  AzureCompute: 'Máquinas virtuais, discos, contêineres e Batch',
+  AzureAppService: 'App Service, Functions, slots e ambientes',
+  AzureDatabases: 'Bancos de dados (SQL, PostgreSQL, MySQL, Cosmos DB, Redis, Data Factory)',
+  AzureDatabricks: 'Workspaces do Azure Databricks',
+  AzureTenantDiagnostics: 'Configurações de diagnóstico do Microsoft Entra ID',
 };
 
 /** Capacidade desconhecida degrada para o próprio identificador — nunca some da tela. */
 export function capabilityLabel(capability: string): string {
   return CAPABILITY_LABEL[capability] ?? capability;
+}
+
+/**
+ * [AEGIS-KNIGHT-COVERAGE-04] Limitação congelada na composição ("Capacidade: Desfecho — detalhe", identificadores) em
+ * texto legível — os mesmos rótulos da tabela de limitações; o detalhe fica como foi registrado.
+ */
+export function readableLimitation(raw: string): string {
+  const m = /^([A-Za-z0-9]+): ([A-Za-z]+)( — .*)?$/s.exec(raw);
+  if (!m || !(m[2] in CAPABILITY_OUTCOME_LABEL)) return raw;
+  return `${capabilityLabel(m[1])}: ${capabilityOutcomeLabel(m[2] as KnightCapabilityOutcome)}${m[3] ?? ''}`;
 }
 
 /** Capacidades com problema (não coletadas) — o que a UI mostra como limitação de cobertura. */
@@ -587,7 +631,8 @@ export type KnightAffectedObjectKind =
   | 'Policy'
   | 'DirectoryRole'
   | 'TenantSetting'
-  | 'Domain';
+  | 'Domain'
+  | 'CloudResource';
 
 /**
  * Estado do DETALHE de um achado numa avaliação:
@@ -640,6 +685,7 @@ const AFFECTED_KIND_LABEL: Record<KnightAffectedObjectKind, string> = {
   DirectoryRole: 'Papel de diretório',
   TenantSetting: 'Configuração do locatário',
   Domain: 'Domínio',
+  CloudResource: 'Recurso de nuvem',
 };
 
 export function affectedKindLabel(kind: KnightAffectedObjectKind): string {
@@ -880,7 +926,8 @@ export interface KnightControlPresentation {
 
 /* ---- [AEGIS-KNIGHT-COVERAGE-01] Cobertura do catálogo de referência (propriedade do produto) ---------------- */
 
-export type KnightReferenceDisposition = 'Implemented' | 'Partial' | 'Pending' | 'ManualOnly' | 'RequiresAccess' | 'ApiLimitation';
+/** ApiLimitation = nenhum método publicado (nem estável nem preview); PreviewOnly = a leitura existe só em versão beta/preview. */
+export type KnightReferenceDisposition = 'Implemented' | 'Partial' | 'Pending' | 'ManualOnly' | 'RequiresAccess' | 'ApiLimitation' | 'PreviewOnly';
 
 export interface KnightReferenceCoverageGroup {
   key: string;
@@ -892,6 +939,8 @@ export interface KnightReferenceCoverageGroup {
   manualOnly: number;
   requiresAccess: number;
   apiLimitation: number;
+  /** Leitura existente só em versão beta/preview (não usada: o AEGIS usa só versões estáveis). Ausente em respostas antigas. */
+  previewOnly?: number;
   fullPercent: number;
   partialPercent: number;
   anyAutomatedPercent: number;
@@ -1207,7 +1256,11 @@ const CAUSE: Record<string, [string, string]> = {
 /** Capacidades não coletadas → causa, controles prejudicados (não avaliados que dependem dela) e orientação. */
 export function limitationViews(a: KnightAssessment): KnightLimitationView[] {
   return problemCapabilities(a.capabilities).map((c) => {
-    const [cause, guidance] = CAUSE[c.outcome] ?? ['Não coletado', 'Sincronizar novamente em Integrações.'];
+    const [cause, generic] = CAUSE[c.outcome] ?? ['Não coletado', 'Sincronizar novamente em Integrações.'];
+    // [AEGIS-KNIGHT-COVERAGE-04] No Azure a autorização é uma atribuição de papel no escopo recusado, não consentimento.
+    const guidance = c.outcome === 'InsufficientPermission' && c.capability.startsWith('Azure')
+      ? 'Atribuir à aplicação o papel indicado no escopo recusado (Azure RBAC na assinatura, ou no cofre) e sincronizar novamente em Integrações.'
+      : generic;
     return {
       capability: c.capability,
       label: capabilityLabel(c.capability),

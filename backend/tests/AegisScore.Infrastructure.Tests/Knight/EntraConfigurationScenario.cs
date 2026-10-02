@@ -519,6 +519,9 @@ internal sealed class EntraConfigurationScenario
           {"id":"p-ociosa","displayName":"Sessão ociosa no navegador","state":"enabled",
            "conditions":{"users":{"includeUsers":["All"]},"applications":{"includeApplications":["Office365"]},"clientAppTypes":["browser"]},
            "grantControls":null,"sessionControls":{"applicationEnforcedRestrictions":{"isEnabled":true}}},
+          {"id":"p-token","displayName":"Proteção de token nas sessões","state":"enabled",
+           "conditions":{"users":{"includeUsers":["All"]},"applications":{"includeApplications":["00000002-0000-0ff1-ce00-000000000000","00000003-0000-0ff1-ce00-000000000000"]},"platforms":{"includePlatforms":["windows"]},"clientAppTypes":["mobileAppsAndDesktopClients"]},
+           "grantControls":null,"sessionControls":{"secureSignInSession":{"isEnabled":true}}},
           {"id":"p-paises","displayName":"Bloquear países sem operação","state":"enabled",
            "conditions":{"users":{"includeUsers":["All"]},"applications":{"includeApplications":["All"]},"clientAppTypes":["all"],"locations":{"includeLocations":["{{{{CountryLocation}}}}"],"excludeLocations":[]}},
            "grantControls":{"operator":"OR","builtInControls":["block"]}}

@@ -22,7 +22,8 @@ namespace AegisScore.Application.Posture.Export;
 public sealed record ReportHeader(
     Guid SnapshotId, Guid? RunId, string? ClientName, string SourceLabel, string SourceType, string Provider,
     bool IsDemo, DateTimeOffset CapturedAt, DateTimeOffset? DataRecency, string SchemaVersion, string CatalogVersion,
-    string FormulaVersion, string? ProfileCatalogVersion, string ContentHash, bool IntegrityVerified);
+    string FormulaVersion, string? ProfileCatalogVersion, string ContentHash, bool IntegrityVerified,
+    string? CollectionState = null, string? CollectionStateLabel = null, string? CollectionSummary = null);
 
 public sealed record ReportCount(string Key, string Label, int Count);
 
@@ -63,7 +64,7 @@ public sealed record ReportControl(
 /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Uma linha da cobertura de implementação congelada (total, plataforma ou serviço).</summary>
 public sealed record ReportCoverageRow(
     string Key, string Label, int Total, int Implemented, int Partial, int Pending, int ManualOnly, int RequiresAccess,
-    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent);
+    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent, int PreviewOnly = 0);
 
 /// <summary>
 /// [AEGIS-KNIGHT-COVERAGE-01] Cobertura de IMPLEMENTAÇÃO do catálogo de referência, congelada na fotografia. É uma
@@ -201,7 +202,7 @@ public static class KnightReportModelBuilder
                 + "consultiva não foram congelados nela e por isso não aparecem aqui. Domínio e serviço foram derivados da categoria e da fonte congeladas.");
         if (sourceType == KnightSourceType.Demo)
             notes.Add("Avaliação de DEMONSTRAÇÃO com dados 100% sintéticos — não representa nenhum ambiente real.");
-        var composition = KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson);
+        var composition = ReadableComposition(KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson));
         if (sourceType == KnightSourceType.Consolidated)
             notes.Add("Este relatório COMPÕE avaliações concluídas de mais de uma fonte do mesmo tenant, cada uma "
                 + "com a própria versão de catálogo e data de coleta (ver \"Composição das fontes\"). A nota KNIGHT "
@@ -221,7 +222,11 @@ public static class KnightReportModelBuilder
         var header = new ReportHeader(
             s.Id, s.SourceRunId, s.ClientName, s.SourceLabel ?? KnightControlProfiles.ProviderOf(sourceType), sourceType.ToString(),
             KnightControlProfiles.ProviderOf(sourceType), sourceType == KnightSourceType.Demo, s.CapturedAt, s.DataRecency,
-            s.SchemaVersion, s.CatalogVersion, s.FormulaVersion, s.ProfileCatalogVersion, s.ContentHash, integrityVerified);
+            s.SchemaVersion, s.CatalogVersion, s.FormulaVersion, s.ProfileCatalogVersion, s.ContentHash, integrityVerified,
+            // [AEGIS-KNIGHT-COVERAGE-04] Consolidado: completude da coleta vem da composição congelada (por fonte).
+            composition is { Count: > 0 } ? KnightConsolidatedCollection.StateOf(composition).ToString() : null,
+            composition is { Count: > 0 } ? KnightConsolidatedCollection.Label(KnightConsolidatedCollection.StateOf(composition).ToString()) : null,
+            composition is { Count: > 0 } ? KnightConsolidatedCollection.Describe(composition) : null);
 
         return new KnightReportModel(header, kpis, controls, byDomain, byService, priorities, topObjects, limitations,
             isV2 ? Array.Empty<string>() : s.CollectionLimitations.ToList(), advisory, notes, frameworks, coverage, byPlatform,
@@ -233,7 +238,7 @@ public static class KnightReportModelBuilder
         if (KnightReferenceCoverageSnapshot.Deserialize(json) is not { } c) return null;
         static ReportCoverageRow Row(KnightReferenceCoverageGroup g) => new(
             g.Key, g.Label, g.Total, g.Implemented, g.Partial, g.Pending, g.ManualOnly, g.RequiresAccess, g.ApiLimitation,
-            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent);
+            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent, g.PreviewOnly);
         return new ReportReferenceCoverage(
             c.CatalogVersion, c.ReferenceCommit,
             c.Frameworks.Select(f => $"{f.Name} {f.Version} ({f.Controls} controles)").ToList(),
@@ -334,7 +339,7 @@ public static class KnightReportModelBuilder
                 return new ReportLimitation(
                     name, KnightCapabilityLabels.Label(c.Capability), c.Outcome.ToString(), CauseLabel(c.Outcome), c.Detail,
                     c.Outcome == KnightCapabilityOutcome.InsufficientPermission ? KnightCapabilityLabels.RequiredPermission(c.Capability, s.SourceType) : null,
-                    affected, Guidance(c.Outcome), s.DataRecency is { } t ? Iso(t) : null);
+                    affected, Guidance(c.Capability, c.Outcome), s.DataRecency is { } t ? Iso(t) : null);
             })
             .ToList();
     }
@@ -375,6 +380,25 @@ public static class KnightReportModelBuilder
     /// <summary>Rótulo do tipo — a MESMA definição usada pela tela (via API), HTML, CSV e PDF.</summary>
     public static string KindLabel(KnightAffectedObjectKind k) => KnightObjectNouns.Label(k);
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] A composição congela cada limitação como "Capacidade: Desfecho — detalhe" (identificadores).
+    /// Para leitura, os identificadores viram os MESMOS rótulos da tabela de limitações; o detalhe fica como foi registrado.
+    /// </summary>
+    public static string ReadableLimitation(string raw)
+    {
+        var sep = raw.IndexOf(": ", StringComparison.Ordinal);
+        if (sep <= 0) return raw;
+        var rest = raw[(sep + 2)..];
+        var dash = rest.IndexOf(" — ", StringComparison.Ordinal);
+        var outcomeText = dash < 0 ? rest : rest[..dash];
+        if (!Enum.TryParse<KnightCapability>(raw[..sep], out var cap) || !Enum.TryParse<KnightCapabilityOutcome>(outcomeText, out var outcome))
+            return raw;
+        return $"{KnightCapabilityLabels.Label(cap)}: {CauseLabel(outcome)}" + (dash < 0 ? "" : rest[dash..]);
+    }
+
+    public static IReadOnlyList<KnightConsolidatedSourceEntry>? ReadableComposition(IReadOnlyList<KnightConsolidatedSourceEntry>? composition) =>
+        composition?.Select(e => e with { CollectionLimitations = e.CollectionLimitations.Select(ReadableLimitation).ToList() }).ToList();
+
     private static string CauseLabel(KnightCapabilityOutcome o) => o switch
     {
         // [AEGIS-KNIGHT-COVERAGE-03] O rótulo é o que foi OBSERVADO. A recusa não distingue entre consentimento
@@ -391,8 +415,12 @@ public static class KnightReportModelBuilder
         _ => o.ToString(),
     };
 
-    private static string Guidance(KnightCapabilityOutcome o) => o switch
+    private static string Guidance(KnightCapability c, KnightCapabilityOutcome o) => o switch
     {
+        // [AEGIS-KNIGHT-COVERAGE-04] No Azure a autorização é uma ATRIBUIÇÃO DE PAPEL no escopo recusado (Azure RBAC ou o
+        // plano de dados do cofre), não um consentimento de administrador.
+        KnightCapabilityOutcome.InsufficientPermission when c.ToString().StartsWith("Azure", StringComparison.Ordinal) =>
+            "Atribuir à aplicação o papel indicado no escopo recusado (Azure RBAC na assinatura, ou no cofre) e sincronizar novamente em Configurações → Integrações.",
         KnightCapabilityOutcome.InsufficientPermission =>
             "Conceder a permissão indicada ao aplicativo do conector (consentimento de administrador) e sincronizar novamente em Configurações → Integrações.",
         KnightCapabilityOutcome.LimitedByLicense =>
@@ -500,6 +528,22 @@ public static class KnightCapabilityLabels
         KnightCapability.IntuneEnrollmentRestrictions => "Restrições de registro de dispositivos",
         KnightCapability.FabricTenantSettings => "Configurações do locatário do Fabric",
 
+        // [AEGIS-KNIGHT-COVERAGE-04] Azure Resource Manager.
+        KnightCapability.AzureSubscriptions => "Assinaturas do Azure no escopo",
+        KnightCapability.AzureAuthorization => "Atribuições de papel, papéis personalizados e bloqueios",
+        KnightCapability.AzurePolicy => "Atribuições de política do Azure",
+        KnightCapability.AzureDefenderForCloud => "Planos e configurações do Defender para Nuvem",
+        KnightCapability.AzureMonitor => "Alertas do log de atividades e Application Insights",
+        KnightCapability.AzureNetworking => "Rede do Azure (NSGs, redes virtuais, gateways, logs de fluxo)",
+        KnightCapability.AzureStorage => "Contas de armazenamento e serviços de blob e arquivos",
+        KnightCapability.AzureKeyVault => "Cofres de chaves, chaves e segredos (metadados)",
+        KnightCapability.AzureKeyVaultCertificates => "Políticas de certificado dos cofres (plano de dados)",
+        KnightCapability.AzureCompute => "Máquinas virtuais, discos, contêineres e Batch",
+        KnightCapability.AzureAppService => "App Service, Functions, slots e ambientes",
+        KnightCapability.AzureDatabases => "Bancos de dados (SQL, PostgreSQL, MySQL, Cosmos DB, Redis, Data Factory)",
+        KnightCapability.AzureDatabricks => "Workspaces do Azure Databricks",
+        KnightCapability.AzureTenantDiagnostics => "Configurações de diagnóstico do Microsoft Entra ID",
+
         _ => c.ToString(),
     };
 
@@ -573,6 +617,18 @@ public static class KnightCapabilityLabels
         },
         KnightSourceType.MicrosoftFabric =>
             "Configuração do Fabric “entidades de serviço podem acessar APIs de administração somente leitura” ligada para um grupo de segurança que contenha a aplicação",
+        // [AEGIS-KNIGHT-COVERAGE-04] Azure: a autorização é do Azure RBAC, não do Microsoft Graph — salvo o estado das contas
+        // com papel (Graph) e o plano de dados dos cofres. O diagnóstico do Entra ID é um recurso do locatário.
+        KnightSourceType.MicrosoftAzure => c switch
+        {
+            KnightCapability.AzureKeyVaultCertificates =>
+                "Leitura de certificados no plano de dados de cada cofre — papel Leitor do Key Vault (cofres com RBAC) ou permissões get/list de certificados na política de acesso",
+            KnightCapability.AzureTenantDiagnostics =>
+                "Leitura de microsoft.aadiam/diagnosticSettings no escopo do locatário (papel do Entra ID com acesso às configurações de diagnóstico)",
+            KnightCapability.AzureAuthorization =>
+                "Papel Leitor do Azure RBAC nas assinaturas do escopo; o estado das contas com papel exige User.Read.All (Microsoft Graph, aplicativo)",
+            _ => "Papel Leitor do Azure RBAC nas assinaturas do escopo (ou no grupo de gerenciamento que as contém)",
+        },
 
         KnightSourceType.Consolidated => SourceOfCapability(c) is { } owner ? RequiredPermission(c, owner) : null,
 

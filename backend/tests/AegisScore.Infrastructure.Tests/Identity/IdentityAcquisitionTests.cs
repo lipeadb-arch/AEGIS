@@ -484,7 +484,9 @@ public sealed class IdentityAcquisitionTests : IDisposable
         // [AEGIS-KNIGHT-MULTICLOUD-01] Os tipos de CONFIGURAÇÃO (política, papel, configuração do tenant) não são
         // identidades: não têm correspondente no ADM de identidade e nunca entram nos conjuntos — mapeiam para
         // Unknown de forma explícita. A reversibilidade vale para todos os tipos de identidade.
-        var configuracao = new[] { KnightAffectedObjectKind.Policy, KnightAffectedObjectKind.DirectoryRole, KnightAffectedObjectKind.TenantSetting, KnightAffectedObjectKind.Domain };
+        // [AEGIS-KNIGHT-COVERAGE-04] O recurso de nuvem (Azure) também não é identidade.
+        var configuracao = new[] { KnightAffectedObjectKind.Policy, KnightAffectedObjectKind.DirectoryRole, KnightAffectedObjectKind.TenantSetting,
+            KnightAffectedObjectKind.Domain, KnightAffectedObjectKind.CloudResource };
         foreach (var kind in Enum.GetValues<KnightAffectedObjectKind>())
         {
             if (configuracao.Contains(kind))

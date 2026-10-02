@@ -407,7 +407,7 @@ public static class PostureSnapshotPdfWriter
     /// </summary>
     private static void AddConsolidatedComposition(Section section, PostureSnapshot s)
     {
-        var composition = KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson);
+        var composition = KnightReportModelBuilder.ReadableComposition(KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson));
         if (composition is null || composition.Count == 0) return;
 
         Heading(section, "Composição do relatório consolidado");
@@ -415,15 +415,19 @@ public static class PostureSnapshotPdfWriter
             "Combina avaliações concluídas de mais de uma fonte do mesmo tenant. A nota acima aplica a fórmula " +
             "knight-score-v1 sobre a união dos controles das fontes INCLUÍDAS — não é a média das notas por fonte.",
             muted: true);
+        // [AEGIS-KNIGHT-COVERAGE-04] Término da composição × completude da coleta, por fonte.
+        Body(section, "Estado da coleta: " + KnightConsolidatedCollection.Label(KnightConsolidatedCollection.StateOf(composition).ToString())
+            + " — " + KnightConsolidatedCollection.Describe(composition));
 
         var table = section.AddTable();
         StyleTable(table);
-        table.AddColumn(Unit.FromCentimeter(4.2));
-        table.AddColumn(Unit.FromCentimeter(3.6));
-        table.AddColumn(Unit.FromCentimeter(1.6));
+        table.AddColumn(Unit.FromCentimeter(3.8));
+        table.AddColumn(Unit.FromCentimeter(3.0));
+        table.AddColumn(Unit.FromCentimeter(1.4));
         table.AddColumn(Unit.FromCentimeter(1.8));
-        table.AddColumn(Unit.FromCentimeter(3.4));
-        HeaderRow(table, "Fonte", "Situação", "Nota", "Cobertura", "Coleta");
+        table.AddColumn(Unit.FromCentimeter(2.6));
+        table.AddColumn(Unit.FromCentimeter(2.8));
+        HeaderRow(table, "Fonte", "Situação", "Nota", "Cobertura", "Coleta", "Estado da coleta");
         foreach (var e in composition)
         {
             var row = table.AddRow();
@@ -434,8 +438,11 @@ public static class PostureSnapshotPdfWriter
             Cell(row, 2, e.Score is { } sc ? Math.Round(sc).ToString(Pt) : "—", align: ParagraphAlignment.Center);
             Cell(row, 3, e.Coverage is { } cv ? cv.ToString("0.#", Pt) + "%" : "—", align: ParagraphAlignment.Center);
             Cell(row, 4, e.CapturedAt is { } at ? at.ToUniversalTime().ToString("dd/MM/yyyy", Pt) + " UTC" : "—");
+            Cell(row, 5, KnightConsolidatedCollection.Label(e.SourceState));
         }
         section.AddParagraph().Format.SpaceAfter = Unit.FromMillimeter(2);
+        foreach (var e in composition.Where(e => e.Included && e.CollectionLimitations.Count > 0))
+            Body(section, $"Limitações de {e.Label}: " + string.Join(" · ", e.CollectionLimitations), muted: true);
     }
 
     /// <summary>
@@ -818,14 +825,14 @@ public static class PostureSnapshotPdfWriter
         Heading(section, "Cobertura do catálogo de referência (propriedade do produto)");
         Body(section,
             "Mede o que o AEGIS consegue avaliar, não o ambiente do cliente. Integral = critério da referência; " +
-            "parcial = critério equivalente, não idêntico. Limitação de API, verificação manual e acesso não disponível " +
+            "parcial = critério equivalente, não idêntico. Leitura só em versão preview (não usada), sem método na API, verificação manual e acesso não disponível " +
             "nunca contam como avaliados. " + string.Join(" · ", cov.Frameworks) + $" · catálogo {cov.CatalogVersion}.", muted: true);
 
         var table = section.AddTable();
         StyleTable(table);
-        table.AddColumn(Unit.FromCentimeter(4.4));
-        foreach (var _ in Enumerable.Range(0, 7)) table.AddColumn(Unit.FromCentimeter(1.8));
-        HeaderRow(table, "Recorte", "Total", "Integral", "Parcial", "Pendente", "Lim. API", "Manual", "Outro acesso");
+        table.AddColumn(Unit.FromCentimeter(3.6));
+        foreach (var _ in Enumerable.Range(0, 8)) table.AddColumn(Unit.FromCentimeter(1.65));
+        HeaderRow(table, "Recorte", "Total", "Integral", "Parcial", "Pendente", "Só preview", "Sem método", "Manual", "Outro acesso");
         foreach (var r in new[] { cov.Total }.Concat(cov.ByPlatform))
         {
             var row = table.AddRow();
@@ -834,9 +841,10 @@ public static class PostureSnapshotPdfWriter
             Cell(row, 2, $"{r.Implemented} ({r.FullPercent.ToString("0.#", Pt)}%)", align: ParagraphAlignment.Center);
             Cell(row, 3, $"{r.Partial} ({r.PartialPercent.ToString("0.#", Pt)}%)", align: ParagraphAlignment.Center);
             Cell(row, 4, r.Pending.ToString(Pt), align: ParagraphAlignment.Center);
-            Cell(row, 5, r.ApiLimitation.ToString(Pt), align: ParagraphAlignment.Center);
-            Cell(row, 6, r.ManualOnly.ToString(Pt), align: ParagraphAlignment.Center);
-            Cell(row, 7, r.RequiresAccess.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 5, r.PreviewOnly.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 6, r.ApiLimitation.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 7, r.ManualOnly.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 8, r.RequiresAccess.ToString(Pt), align: ParagraphAlignment.Center);
         }
     }
 

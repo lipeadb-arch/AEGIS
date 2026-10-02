@@ -287,6 +287,65 @@ public sealed class PostureSnapshotConsolidatedTests : IDisposable
     }
 
     /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Término da composição × completude da coleta: com uma fonte incluída em coleta parcial,
+    /// a fotografia publicada diz "coleta parcial" (não "coleta concluída"), nomeia a fonte e preserva as limitações
+    /// DELA na composição congelada — no modelo do relatório, no HTML e no PDF.
+    /// </summary>
+    [Fact]
+    public async Task Publish_ComUmaFonteParcial_FotografiaDizColetaParcial_ENomeiaAFonteEAsLimitacoes()
+    {
+        await using var db = NewContext(TenantA);
+        await SeedEntraRunAsync(db);
+        var teamsRun = await SeedTeamsRunAsync(db);
+        var run = await db.KnightAssessmentRuns.SingleAsync(r => r.Id == teamsRun);
+        run.SourceState = KnightSourceState.PartialCollection;
+        run.CapabilitiesJson = System.Text.Json.JsonSerializer.Serialize(new[]
+        {
+            new KnightCapabilityStatus(KnightCapability.TeamsMeetingPolicies, KnightCapabilityOutcome.Collected),
+            new KnightCapabilityStatus(KnightCapability.TeamsFederationConfiguration, KnightCapabilityOutcome.InsufficientPermission, "leitura recusada (sintético)"),
+        }, KnightCapabilitiesJson.Options);
+        await db.SaveChangesAsync();
+
+        var detail = await ServiceFor(db, TenantA).PublishConsolidatedKnightAsync(null);
+        var snapshot = await db.PostureSnapshots.AsNoTracking()
+            .Include(s => s.Indicators).Include(s => s.Objects).SingleAsync(s => s.Id == detail.Summary.Id);
+
+        var teams = detail.Composition!.Single(s => s.Source == KnightSourceType.MicrosoftTeams);
+        teams.SourceState.Should().Be("PartialCollection");
+        teams.CollectionLimitations.Should().ContainSingle().Which.Should().Contain("TeamsFederationConfiguration");
+        KnightConsolidatedCollection.StateOf(detail.Composition!).Should().Be(KnightSourceState.PartialCollection);
+
+        var model = KnightReportModelBuilder.Build(snapshot, integrityVerified: true);
+        model.Header.CollectionState.Should().Be("PartialCollection");
+        model.Header.CollectionStateLabel.Should().Be("Coleta parcial");
+        model.Header.CollectionSummary.Should().StartWith("Coleta parcial em 1 de 2 fontes incluídas (Microsoft Teams)");
+        model.Composition!.Single(c => c.Source == KnightSourceType.MicrosoftTeams).CollectionLimitations.Should().Equal(
+            "Federação e acesso externo do Teams: Autorização recusada — leitura recusada (sintético)");
+
+        var exporter = new PostureSnapshotExporter(db);
+        var html = Encoding.UTF8.GetString((await exporter.ExportAsync(snapshot.Id, PostureExportFormat.Html))!.Content);
+        html.Should().Contain("\"collectionState\":\"PartialCollection\"").And.Contain("Estado da coleta")
+            .And.NotContain("TeamsFederationConfiguration: InsufficientPermission", "a limitação sai com os rótulos em português");
+        (await exporter.ExportAsync(snapshot.Id, PostureExportFormat.Pdf))!.Content.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void Collection_TodasIntegras_EhCompleta_UmaComLimitacao_EhParcial()
+    {
+        static KnightConsolidatedSourceEntry E(string label, string state, params string[] limits) => new(
+            KnightSourceType.MicrosoftEntraId, label, true, "Included", Guid.NewGuid(), state, "v", DateTimeOffset.UtcNow,
+            50, 100, 1, 1, 0, 0, 0, 0, limits);
+        var ok = new[] { E("A", "Completed"), E("B", "Completed") };
+        KnightConsolidatedCollection.StateOf(ok).Should().Be(KnightSourceState.Completed);
+        KnightConsolidatedCollection.Describe(ok).Should().Be("Coleta completa nas 2 fontes incluídas.");
+
+        var withLimit = new[] { E("A", "Completed"), E("B", "Completed", "X: InsufficientPermission") };
+        KnightConsolidatedCollection.StateOf(withLimit).Should().Be(KnightSourceState.PartialCollection,
+            "estado 'concluída' com limitação registrada não é coleta completa");
+        KnightConsolidatedCollection.Describe(withLimit).Should().Contain("(B)");
+    }
+
+    /// <summary>
     /// [AEGIS-KNIGHT-COVERAGE-04] A ação aberta para um achado — seja na visão por fonte, seja no consolidado — nasce da
     /// execução REAL da fonte, e o relatório consolidado a congela pelo indicador e pela procedência dessa fonte: a
     /// mesma ação, uma vez, sem a composição precisar de uma execução própria.

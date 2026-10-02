@@ -861,7 +861,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         }
 
         snapshot.SemanticFamily = "knight:consolidated:" + string.Join("+", includedSourceTypes.OrderBy(s => s.ToString(), StringComparer.Ordinal));
-        snapshot.SourceLabel = "Consolidado — " + string.Join(", ", includedLabels);
+        snapshot.SourceLabel = KnightConsolidatedLabel.For(includedLabels.ToList());
         snapshot.Score = score.Score;
         snapshot.AchievedPoints = (int)Math.Round(achievedWeighted, MidpointRounding.AwayFromZero);
         snapshot.PossiblePoints = (int)Math.Round(evaluatedWeight, MidpointRounding.AwayFromZero);

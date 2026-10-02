@@ -146,6 +146,28 @@ public sealed class KnightConfigurationRulesTests
         Ctx(Array.Empty<KnightConfigurationDocument>(), new[] { Cap(KnightCapability.ConditionalAccessPolicies) },
             new KnightDirectoryConfiguration(policies, Array.Empty<DirectoryRoleConfiguration>()));
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Proteção de token (secureSignInSession, v1.0): política coletada antes deste campo não
+    /// avalia; política que exige a proteção mas não alcança o SharePoint Online não conta.
+    /// </summary>
+    [Fact]
+    public void ProtecaoDeToken_ColetaAnterior_NaoAvalia_EPoliticaSemSharePoint_NaoConta()
+    {
+        Eval("AK-ENTRA-070", CaCtx(Policy("p", new[] { "All" }))).Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+
+        var soExchange = Policy("p-exo", new[] { "All" }) with
+        {
+            IncludeApplications = new[] { "00000002-0000-0ff1-ce00-000000000000" }, BuiltInControls = Array.Empty<string>(),
+            SecureSignInSessionEnabled = true,
+        };
+        var o = Eval("AK-ENTRA-070", CaCtx(soExchange));
+        o.Status.Should().Be(KnightIndicatorStatus.Exposed);
+        o.Evidence.Should().Contain("não conta");
+
+        var completa = soExchange with { IncludeApplications = new[] { "All" } };
+        Eval("AK-ENTRA-070", CaCtx(completa)).Status.Should().Be(KnightIndicatorStatus.Passed);
+    }
+
     [Fact]
     public void PoliticasColetadasNoFormatoAnterior_NaoAvaliamCriteriosDeSessaoOuFluxo()
     {

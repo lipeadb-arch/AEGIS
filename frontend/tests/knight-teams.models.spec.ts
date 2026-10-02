@@ -67,8 +67,9 @@ test('o conector Microsoft alimenta todas as fontes do catálogo, na ordem do se
   // [AEGIS-KNIGHT-COVERAGE-04] Antes eram duas (Entra ID e Teams) — o Exchange Online ficava sem linha de
   // sincronização. Agora a lista vem do catálogo único, espelho do KnightSourceCatalog do servidor.
   const fontes = knightSourcesOf('Microsoft');
-  eq(fontes.map((f) => f.slug).join(','), 'entra,teams,exchange,defender-office365,purview,sharepoint,intune,fabric',
-    'as oito fontes do conector Microsoft com coletor');
+  eq(fontes.map((f) => f.slug).join(','), 'entra,teams,exchange,defender-office365,purview,sharepoint,intune,fabric,azure',
+    'as nove fontes do conector Microsoft com coletor (o Azure entra junto com o coletor do Resource Manager)');
+  ok((fontes[8].requirement ?? '').includes('Leitor do Azure RBAC'), 'o Azure diz o papel que exige além da credencial');
   eq(fontes[0].slug, 'entra', 'a fonte padrão vem primeiro');
   eq(fontes[1].slug, 'teams', 'Teams é a segunda');
   ok(fontes.slice(1).every((f) => (f.requirement ?? '').length > 0), 'cada fonte além do Entra ID diz o que exige além da credencial');

@@ -31,7 +31,7 @@ public sealed class KnightReferenceCoverageTests
     public void Cobertura_SeparaIntegralDeParcial_ENaoSomaAsDuasComoCompleta()
     {
         var t = KnightReferenceCatalog.Coverage().Total;
-        (t.Implemented + t.Partial + t.Pending + t.ManualOnly + t.RequiresAccess + t.ApiLimitation).Should().Be(t.Total);
+        (t.Implemented + t.Partial + t.Pending + t.ManualOnly + t.RequiresAccess + t.ApiLimitation + t.PreviewOnly).Should().Be(t.Total);
         t.FullPercent.Should().Be(Math.Round(100.0 * t.Implemented / t.Total, 1, MidpointRounding.AwayFromZero));
         t.PartialPercent.Should().Be(Math.Round(100.0 * t.Partial / t.Total, 1, MidpointRounding.AwayFromZero));
         t.AnyAutomatedPercent.Should().BeGreaterThan(t.FullPercent, "há controles parciais, e eles não entram na cobertura integral");
@@ -46,8 +46,12 @@ public sealed class KnightReferenceCoverageTests
         // A revisão de convidados (CIS-M365-7.0.0:5.3.2) é PARCIAL: a avaliação comprova os convidados de todos os
         // grupos do Microsoft 365, que é o alcance da própria configuração, e a diferença está declarada no vínculo.
         entra.Implemented.Should().Be(55);
-        entra.Partial.Should().Be(8);
-        entra.ApiLimitation.Should().Be(18);
+        // [AEGIS-KNIGHT-COVERAGE-04] +1 parcial: a proteção de token (5.2.2.16), antes declarada sem leitura, é avaliada por
+        // AK-ENTRA-070 (secureSignInSession existe na v1.0). As 17 restantes separadas entre "só em preview" (a leitura existe
+        // na beta) e "sem método" (não existe nem na beta) — conferido nos metadados publicados do Microsoft Graph.
+        entra.Partial.Should().Be(9);
+        entra.PreviewOnly.Should().Be(7);
+        entra.ApiLimitation.Should().Be(10);
         entra.ManualOnly.Should().Be(2);
         entra.Pending.Should().Be(0);
         entra.RequiresAccess.Should().Be(0);
@@ -185,29 +189,23 @@ public sealed class KnightReferenceCoverageTests
         m365.Implemented.Should().Be(81);
         m365.Partial.Should().Be(2, "8.6.1 do Teams e 2.1.11 do Defender (lista de extensões própria do AEGIS)");
         m365.RequiresAccess.Should().Be(1, "8.4.1 do Teams — ver Teams_TemAs17ReferenciasClassificadas...");
-        m365.ApiLimitation.Should().Be(2, "Forms (só na beta) e Sway (sem leitura no Graph nem no TCM)");
+        m365.ApiLimitation.Should().Be(3, "Sway, Defender for Cloud Apps (2.4.3) e correção automatizada do AIR (2.4.5): nenhum método publicado");
+        m365.PreviewOnly.Should().Be(1, "Forms: a leitura existe só na versão beta do Microsoft Graph");
         m365.ManualOnly.Should().Be(1, "2.2.1 — quais contas são de emergência é decisão organizacional");
-        m365.Pending.Should().Be(2);
+        m365.Pending.Should().Be(0, "as duas pesquisas pendentes foram fechadas com os métodos examinados");
 
-        var pendentes = coverage.Controls
-            .Where(c => KnightServices.Describe(c.Control.Service)?.Platform == KnightPlatform.Microsoft365
-                        && c.Disposition == KnightReferenceDisposition.Pending)
-            .ToList();
-        pendentes.Select(c => c.Control.Section).Should().BeEquivalentTo(new[] { "2.4.3", "2.4.5" });
-        pendentes.Should().OnlyContain(c => c.Note!.StartsWith("Pesquisa pendente.") && c.Note.Contains("Examinad") && c.Note.Contains("Falta examinar"));
-
-        void Service(KnightService s, int total, int implemented, int partial = 0, int api = 0, int manual = 0, int pending = 0)
+        void Service(KnightService s, int total, int implemented, int partial = 0, int api = 0, int manual = 0, int pending = 0, int preview = 0)
         {
             var g = coverage.ByService.Single(x => x.Key == s.ToString());
-            (g.Total, g.Implemented, g.Partial, g.ApiLimitation, g.ManualOnly, g.Pending)
-                .Should().Be((total, implemented, partial, api, manual, pending), s.ToString());
+            (g.Total, g.Implemented, g.Partial, g.ApiLimitation, g.ManualOnly, g.Pending, g.PreviewOnly)
+                .Should().Be((total, implemented, partial, api, manual, pending, preview), s.ToString());
         }
-        Service(KnightService.DefenderForOffice365, 21, 17, partial: 1, manual: 1, pending: 2);
+        Service(KnightService.DefenderForOffice365, 21, 17, partial: 1, manual: 1, api: 2);
         Service(KnightService.Purview, 5, 5);
         Service(KnightService.SharePointOnline, 13, 13);
         Service(KnightService.Intune, 2, 2);
         Service(KnightService.Fabric, 12, 12);
-        Service(KnightService.Forms, 1, 0, api: 1);
+        Service(KnightService.Forms, 1, 0, preview: 1);
         Service(KnightService.Sway, 1, 0, api: 1);
     }
 
@@ -308,7 +306,8 @@ public sealed class KnightReferenceCoverageTests
             KnightReferenceCatalog.Find(key).Should().NotBeNull(key);
             linked.Should().NotContain(key, $"{key} não pode ser declarado {declared.Disposition} e citado por um controle ao mesmo tempo");
             declared.Note.Should().NotBeNullOrWhiteSpace();
-            declared.Disposition.Should().BeOneOf(KnightReferenceDisposition.ApiLimitation, KnightReferenceDisposition.ManualOnly, KnightReferenceDisposition.RequiresAccess);
+            declared.Disposition.Should().BeOneOf(KnightReferenceDisposition.ApiLimitation, KnightReferenceDisposition.PreviewOnly,
+                KnightReferenceDisposition.ManualOnly, KnightReferenceDisposition.RequiresAccess);
         }
     }
 
@@ -321,6 +320,34 @@ public sealed class KnightReferenceCoverageTests
             d.Note.Should().Contain("Verificação manual", key);
             d.Note.Should().NotContainAny("main.iam.ad.ext.azure.com", "api.interfaces.records.teams");
         }
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] "Sem versão estável" não é "sem API": quando a leitura existe em versão beta/preview, a
+    /// referência é "só em preview" e a nota diz isso; "sem método" só quando nem a beta/preview tem a operação.
+    /// </summary>
+    [Fact]
+    public void SoEmPreview_EDiferenteDeSemMetodo_ENotaDizQualDosDois()
+    {
+        foreach (var (key, d) in KnightReferenceDispositions.All)
+        {
+            if (d.Disposition == KnightReferenceDisposition.PreviewOnly)
+            {
+                d.Note.Should().StartWith("Leitura disponível só em versão", key);
+                d.Note.Should().MatchRegex("beta|preview", key);
+                d.Note.Should().Contain("Verificação manual", key);
+            }
+            else if (d.Disposition == KnightReferenceDisposition.ApiLimitation)
+            {
+                d.Note.Should().StartWith("Sem método publicado", key);
+                d.Note.Should().NotContain("só em versão", key);
+            }
+        }
+        var t = KnightReferenceCatalog.Coverage().Total;
+        t.PreviewOnly.Should().Be(20, "7 do Entra ID, 1 do Microsoft 365 (Forms) e 12 do Azure (diagnóstico e contatos de segurança)");
+        t.ApiLimitation.Should().Be(14, "10 do Entra ID, 3 do Microsoft 365 e 1 do Azure (diagnóstico do Intune)");
+        t.Pending.Should().Be(0, "as nove pesquisas foram fechadas");
+        KnightReferenceDispositions.ResearchKeys.Should().BeEmpty();
     }
 
     [Fact]

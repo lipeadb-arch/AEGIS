@@ -24,8 +24,27 @@ public sealed class KnightConsolidatedBuilderTests
         result.Score.Should().BeNull();
         // [AEGIS-KNIGHT-COVERAGE-04] Toda fonte candidata aparece, na ordem do catálogo — não só as três primeiras.
         result.Sources.Select(s => s.Source).Should().Equal(KnightSourceCatalog.ConsolidationCandidates);
-        result.Sources.Should().HaveCount(8, "as oito fontes do conector Microsoft que têm coletor");
+        result.Sources.Should().HaveCount(9, "as nove fontes do conector Microsoft que têm coletor, com o Azure");
         result.Sources.Should().OnlyContain(s => s.AvailabilityState == "NotAssessed" && !s.Included);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COVERAGE-04] Com as nove fontes Microsoft, a lista inteira passa do limite da coluna da fotografia
+    /// (200) — o PostgreSQL recusaria a publicação. O rótulo diz quantas são e nomeia as que cabem; a composição congelada
+    /// continua sendo a lista completa.
+    /// </summary>
+    [Fact]
+    public void Label_NoveFontes_CabeNaColuna_EDizQuantasSao()
+    {
+        var all = KnightSourceCatalog.All.Where(d => d.Consolidable).Select(d => d.Label).ToList();
+        all.Should().HaveCount(9);
+        ("Consolidado — " + string.Join(", ", all)).Length.Should().BeGreaterThan(KnightConsolidatedLabel.MaxLength, "o caso que quebrava a publicação");
+
+        var label = KnightConsolidatedLabel.For(all);
+        label.Length.Should().BeLessThanOrEqualTo(KnightConsolidatedLabel.MaxLength);
+        label.Should().StartWith("Consolidado — 9 fontes: Microsoft Entra ID").And.MatchRegex(@" e mais \d+$");
+        KnightConsolidatedLabel.For(all.Take(2).ToList()).Should().Be("Consolidado — Microsoft Entra ID, Microsoft Teams", "o que cabe é dito por inteiro");
+        KnightConsolidatedLabel.For(Array.Empty<string>()).Should().Be("Consolidado");
     }
 
     [Fact]

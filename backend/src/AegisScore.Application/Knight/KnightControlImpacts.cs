@@ -89,6 +89,7 @@ public static class KnightControlImpacts
         ["AK-ENTRA-067"] = "Um acesso obtido por roubo de sessão pode durar muito tempo, ampliando o que pode ser lido ou alterado na conta.",
         ["AK-ENTRA-068"] = "Uma sessão já autenticada pode ser levada para um dispositivo fora do controle da organização, e o acesso continua valendo lá, com os dados da conta.",
         ["AK-ENTRA-069"] = "Uma sessão deixada aberta num computador compartilhado ou não gerenciado continua válida: quem sentar depois abre e-mail e documentos da conta sem autenticar.",
+        ["AK-ENTRA-070"] = "Um token de sessão copiado do computador de um usuário por malware pode ser reaproveitado em outra máquina para ler e-mail e arquivos da conta até expirar.",
 
         // ---- [AEGIS-KNIGHT-COVERAGE-02] Microsoft Teams ----
         ["AK-TEAMS-001"] = "Documentos de trabalho podem ficar guardados fora do ambiente da organização, acessíveis por contas pessoais que a organização não administra e não consegue revogar.",
@@ -142,8 +143,10 @@ public static class KnightControlImpacts
         var id = (indicatorId ?? "").Trim();
         return ById.TryGetValue(id, out var t) ? t
             : Catalog.M365ServiceProfiles.Impacts.TryGetValue(id, out var m) ? m
+            : Catalog.AzureProfiles.Impacts.TryGetValue(id, out var a) ? a
             : null;
     }
 
-    public static IReadOnlyCollection<string> Ids => ById.Keys.Concat(Catalog.M365ServiceProfiles.Impacts.Keys).ToList();
+    public static IReadOnlyCollection<string> Ids =>
+        ById.Keys.Concat(Catalog.M365ServiceProfiles.Impacts.Keys).Concat(Catalog.AzureProfiles.Impacts.Keys).ToList();
 }

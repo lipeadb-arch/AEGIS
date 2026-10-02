@@ -315,10 +315,10 @@ public enum KnightCapability
     /// <summary>Workspaces do Azure Databricks (configuração pelo Resource Manager).</summary>
     AzureDatabricks = 82,
 
-    /// <summary>Configurações de diagnóstico dos recursos (logs de recurso).</summary>
-    AzureResourceDiagnostics = 83,
+    // 83 fica reservado: as configurações de diagnóstico dos RECURSOS não têm listagem na versão estável da API do Azure
+    // Monitor (só a configuração legada "service"), e uma capacidade sem leitura real não é declarada.
 
-    /// <summary>Configurações de diagnóstico do Microsoft Entra ID e do Intune (escopo do locatário).</summary>
+    /// <summary>Configurações de diagnóstico do Microsoft Entra ID (escopo do locatário, <c>microsoft.aadiam</c>).</summary>
     AzureTenantDiagnostics = 84,
 }
 

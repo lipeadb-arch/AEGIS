@@ -78,7 +78,7 @@ public class KnightAssessmentsController : ControllerBase
         var c = KnightReferenceCatalog.Coverage();
         static KnightReferenceCoverageGroupDto G(KnightReferenceCoverageGroup g) => new(
             g.Key, g.Label, g.Total, g.Implemented, g.Partial, g.Pending, g.ManualOnly, g.RequiresAccess, g.ApiLimitation,
-            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent);
+            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent, g.PreviewOnly);
         return Ok(new KnightReferenceCoverageDto(
             c.CatalogVersion, c.ReferenceCommit,
             c.Frameworks.Select(f => $"{f.Name} {f.Version}").ToList(),
@@ -317,13 +317,14 @@ public class KnightAssessmentsController : ControllerBase
     {
         var sources = a.Sources.Select(ToDto).ToList();
         var includedLabels = sources.Where(s => s.Included).Select(s => s.Label).ToList();
-        var sourceLabel = includedLabels.Count > 0 ? "Consolidado — " + string.Join(", ", includedLabels) : "Consolidado";
+        var sourceLabel = KnightConsolidatedLabel.For(includedLabels);
         var counts = new KnightCountsDto(a.PassedCount, a.ExposedCount, a.MitigatedCount, a.NotEvaluatedCount, a.ErrorCount, a.NotApplicableCount);
         var at = a.DataRecency ?? DateTimeOffset.UtcNow;
 
         return new KnightAssessmentDto(
             Guid.Empty, KnightAssessmentMode.Live.ToString(), false, KnightSourceType.Consolidated.ToString(),
-            KnightSourceState.Completed.ToString(), sourceLabel, KnightRunStatus.Completed.ToString(),
+            // A execução (composição) terminou; a COLETA só é completa se todas as fontes incluídas forem íntegras.
+            KnightConsolidatedCollection.StateOf(a.Sources).ToString(), sourceLabel, KnightRunStatus.Completed.ToString(),
             "ak-knight-consolidated", a.FormulaVersion, at, a.DataRecency,
             a.Score, a.Coverage, counts, a.Indicators.Select(ToDto).ToList(),
             a.Capabilities.Select(c => new KnightCapabilityDto(c.Capability.ToString(), c.Outcome.ToString(), c.Detail)).ToList(),

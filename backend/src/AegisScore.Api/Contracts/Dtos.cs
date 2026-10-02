@@ -783,7 +783,7 @@ public record KnightControlPresentationDto(
 /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Uma linha de cobertura do catálogo de referência (total, plataforma ou serviço).</summary>
 public record KnightReferenceCoverageGroupDto(
     string Key, string Label, int Total, int Implemented, int Partial, int Pending, int ManualOnly, int RequiresAccess,
-    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent);
+    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent, int PreviewOnly = 0);
 
 /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Situação de UM controle de referência no produto.</summary>
 public record KnightReferenceControlStatusDto(

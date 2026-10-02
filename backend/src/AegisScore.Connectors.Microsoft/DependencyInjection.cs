@@ -10,6 +10,7 @@ using AegisScore.Connectors.Microsoft.Intune;
 using AegisScore.Connectors.Microsoft.Knight;
 using AegisScore.Connectors.Microsoft.Knight.Exchange;
 using AegisScore.Connectors.Microsoft.Knight.Protection;
+using AegisScore.Connectors.Microsoft.Knight.Azure;
 using AegisScore.Connectors.Microsoft.Knight.Services;
 using AegisScore.Connectors.Microsoft.Knight.Teams;
 using AegisScore.Connectors.Microsoft.Sentinel;
@@ -154,6 +155,8 @@ public static class DependencyInjection
         services.AddScoped<IKnightCollector, SharePointKnightCollector>();
         services.AddScoped<IKnightCollector, IntuneKnightCollector>();
         services.AddScoped<IKnightCollector, FabricKnightCollector>();
+        // [AEGIS-KNIGHT-COVERAGE-04] Azure Resource Manager (papel Leitor), plano de dados dos cofres e Graph (estado das contas).
+        services.AddScoped<IKnightCollector, AzureKnightCollector>();
 
         // [AEGIS-KNIGHT-ACCESS-01] "Testar conexão" (IEvidenceConnector) para Microsoft/IdentityPosture: antes
         // desta linha não havia NENHUM adaptador registrado para essa combinação, e o botão da tela de

@@ -36,9 +36,14 @@ import {
   KnightReferenceCoverage,
   CONSOLIDATION_CANDIDATES,
   findingRunIdOf,
+  consolidatedCollection,
+  readableLimitation,
+  sourceStateLabel,
   sourceSlug,
   sourceTypeLabel,
   categoryLabel,
+  capabilityLabel,
+  affectedKindLabel,
 } from '../src/app/models/knight.models';
 
 // ---- micro-harness (sem dependências externas) -------------------------------------------------
@@ -279,6 +284,14 @@ test('capacidade desconhecida degrada para identificador e causa genérica', () 
   eq(v[0].cause, 'Erro de coleta', 'erro');
 });
 
+test('recusa no Azure orienta atribuição de papel, não consentimento de administrador', () => {
+  const az = limitationViews(assessment([], { capabilities: [{ capability: 'AzureStorage', outcome: 'InsufficientPermission', detail: null }] }));
+  ok(az[0].guidance.includes('Azure RBAC'), 'papel do Azure RBAC no escopo recusado');
+  ok(!az[0].guidance.includes('consentimento'), 'o Azure não usa consentimento de administrador');
+  const graph = limitationViews(assessment([], { capabilities: [{ capability: 'GuestAccounts', outcome: 'InsufficientPermission', detail: null }] }));
+  ok(graph[0].guidance.includes('consentimento de administrador'), 'o Graph continua com consentimento');
+});
+
 // ---- contribuição e rótulos -------------------------------------------------------------------------
 test('contribuição: peso × fator; fora da nota quando não avaliado; ausente em resposta antiga', () => {
   eq(contributionText(ind({ presentation: pres({ weight: 4, factor: 0.5, achievedPoints: 2, possiblePoints: 4 }) })),
@@ -344,8 +357,12 @@ test('três medidas separadas: catálogo (integral e parcial), cobertura da aval
 
 // ---- [AEGIS-KNIGHT-COVERAGE-04] catálogo único de fontes e procedência no consolidado ------------------
 
-test('o consolidado aceita as oito fontes do conector Microsoft, não só três', () => {
-  eq(CONSOLIDATION_CANDIDATES.length, 8, 'oito candidatas');
+test('o consolidado aceita as nove fontes do conector Microsoft, não só três', () => {
+  eq(CONSOLIDATION_CANDIDATES.length, 9, 'nove candidatas, com o Azure');
+  eq(CONSOLIDATION_CANDIDATES[8], 'MicrosoftAzure', 'o Azure entra junto com o coletor, na ordem do servidor');
+  eq(sourceTypeLabel('MicrosoftAzure'), 'Microsoft Azure', 'rótulo da fonte');
+  eq(capabilityLabel('AzureKeyVaultCertificates'), 'Políticas de certificado dos cofres (plano de dados)', 'capacidade do Azure em português');
+  eq(affectedKindLabel('CloudResource'), 'Recurso de nuvem', 'recurso de nuvem não vira "tipo não identificado"');
   eq(CONSOLIDATION_CANDIDATES[0], 'MicrosoftEntraId', 'a ordem é a do servidor');
   ok(!CONSOLIDATION_CANDIDATES.includes('GoogleWorkspace'), 'Google não compõe o consolidado Microsoft');
   eq(sourceSlug('MicrosoftDefenderForOffice365'), 'defender-office365', 'apelido de rota igual ao do servidor');
@@ -366,6 +383,23 @@ test('achado do consolidado aponta para a execução REAL da fonte — detalhes 
   eq(findingRunIdOf(consolidado, 'MicrosoftPurview'), 'run-purview', 'a execução da fonte do indicador');
   eq(findingRunIdOf(consolidado, 'MicrosoftEntraId'), 'run-entra', 'cada indicador, a sua fonte');
   eq(findingRunIdOf({ id: 'run-unica', sourceType: 'MicrosoftEntraId' }, 'MicrosoftEntraId'), 'run-unica', 'fonte única: a própria avaliação');
+});
+
+test('consolidado: execução concluída não é coleta completa quando uma fonte incluída é parcial', () => {
+  const src = (label: string, sourceState: 'Completed' | 'PartialCollection', included: boolean, lim: string[] = []) => ({
+    source: 'MicrosoftEntraId' as const, slug: 'entra', label, included, availabilityState: (included ? 'Included' : 'Available') as 'Included' | 'Available',
+    sourceRunId: 'r', sourceState, catalogVersion: 'v', capturedAt: null, score: 50, coverage: 100, counts: null, collectionLimitations: lim,
+  });
+  const parcial = consolidatedCollection([src('Microsoft Entra ID', 'Completed', true), src('Microsoft Azure', 'PartialCollection', true, ['AzureStorage: InsufficientPermission — leitura recusada']), src('Microsoft Teams', 'PartialCollection', false)]);
+  eq(parcial.complete, false, 'uma fonte incluída parcial torna o conjunto parcial');
+  eq(parcial.incomplete.join(','), 'Microsoft Azure', 'só as fontes INCLUÍDAS contam; a disponível e não incluída fica de fora');
+  ok(parcial.text.startsWith('Coleta parcial em 1 de 2 fontes incluídas (Microsoft Azure)'), 'a frase nomeia a fonte');
+  eq(consolidatedCollection([src('Microsoft Entra ID', 'Completed', true)]).complete, true, 'todas íntegras = coleta completa');
+  eq(sourceStateLabel('Throttled'), 'Limite de requisições', 'sem rótulo em inglês');
+  const legivel = readableLimitation('AzureStorage: InsufficientPermission — leitura recusada');
+  ok(!legivel.includes('AzureStorage') && !legivel.includes('InsufficientPermission'), 'identificadores viram rótulos: ' + legivel);
+  ok(legivel.endsWith(': Permissão insuficiente — leitura recusada'), 'desfecho em português e detalhe preservado');
+  eq(readableLimitation('texto livre'), 'texto livre', 'texto fora do formato fica como está');
 });
 
 console.log(`\n${count - failures}/${count} testes passaram (knight-assessment.models).`);

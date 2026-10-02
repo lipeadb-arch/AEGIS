@@ -403,6 +403,8 @@ export type MicrosoftPermissionUsage =
   | 'NewForConfiguration'
   /** [AEGIS-KNIGHT-COVERAGE-04] Necessária para os demais serviços do Microsoft 365 avaliados pelo KNIGHT. */
   | 'NewForM365Services'
+  /** [AEGIS-KNIGHT-COVERAGE-04] Atribuição de papel do Azure RBAC (não é permissão de API do Entra ID). */
+  | 'NewForAzure'
   /** Deliberadamente NÃO exigida — com a justificativa técnica registrada em `action`. */
   | 'NotRequired';
 
@@ -601,6 +603,30 @@ export const KNIGHT_M365_SERVICE_CAPABILITIES: MicrosoftCapabilitySpec[] = [
   },
 ];
 
+/**
+ * [AEGIS-KNIGHT-COVERAGE-04] Azure: a autorização é ATRIBUIÇÃO DE PAPEL do Azure RBAC, feita no portal do Azure
+ * (Controle de acesso — IAM) para o mesmo service principal — não consentimento de permissão de API.
+ */
+export const KNIGHT_AZURE_CAPABILITIES: MicrosoftCapabilitySpec[] = [
+  {
+    name: 'Recursos do Azure (Resource Manager)',
+    purpose:
+      'Assinaturas, atribuições de papel, bloqueios, políticas, Defender para Nuvem, alertas do log de atividades, rede, armazenamento, Key Vault (metadados), computação, App Service, bancos de dados e Databricks — somente leitura, nas assinaturas do escopo.',
+    permission: 'Papel Leitor do Azure RBAC nas assinaturas avaliadas (ou no grupo de gerenciamento)',
+    usage: 'NewForAzure',
+    licenseNote: null,
+    action: 'Atribua o papel Leitor à aplicação no portal do Azure e informe, abaixo, as assinaturas a avaliar (em branco: todas as visíveis).',
+  },
+  {
+    name: 'Certificados do Key Vault (plano de dados)',
+    purpose: 'Validade dos certificados guardados nos cofres (política do certificado). Nenhum segredo ou material de chave é lido.',
+    permission: 'Leitor do Key Vault (cofres com RBAC) ou get/list de certificados (cofres com política de acesso)',
+    usage: 'NewForAzure',
+    licenseNote: null,
+    action: 'Opcional. Sem ele, só o controle de validade de certificados fica não avaliado, com o motivo.',
+  },
+];
+
 /** Permissões de uma matriz filtradas por uso — base das três listas da tela. */
 export function permissionsByUsage(
   caps: MicrosoftCapabilitySpec[],
@@ -627,6 +653,7 @@ const USAGE_LABEL: Record<MicrosoftPermissionUsage, string> = {
   NewForIdentityRisk: 'Nova — risco de identidade',
   NewForConfiguration: 'Nova — configuração do locatário',
   NewForM365Services: 'Nova — serviços do Microsoft 365',
+  NewForAzure: 'Nova — Azure (papel do Azure RBAC)',
   NotRequired: 'Não necessária neste pacote',
 };
 
@@ -662,10 +689,10 @@ export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
     label: 'Microsoft Entra ID · AEGIS KNIGHT',
     description:
       'Configuração avaliada pelo AEGIS KNIGHT, somente leitura: Entra ID, Teams, Exchange Online, Defender para Office 365, ' +
-      'Purview, SharePoint e OneDrive, Intune e Fabric. Sincronize neste conector depois de salvar.',
+      'Purview, SharePoint e OneDrive, Intune, Fabric e recursos do Azure. Sincronize neste conector depois de salvar.',
     needsWorkspaceId: false,
-    appPermissions: requiredPermissions([...ENTRA_IDENTITY_CAPABILITIES, ...KNIGHT_M365_SERVICE_CAPABILITIES]),
-    capabilities: [...ENTRA_IDENTITY_CAPABILITIES, ...KNIGHT_M365_SERVICE_CAPABILITIES],
+    appPermissions: requiredPermissions([...ENTRA_IDENTITY_CAPABILITIES, ...KNIGHT_M365_SERVICE_CAPABILITIES, ...KNIGHT_AZURE_CAPABILITIES]),
+    capabilities: [...ENTRA_IDENTITY_CAPABILITIES, ...KNIGHT_M365_SERVICE_CAPABILITIES, ...KNIGHT_AZURE_CAPABILITIES],
   },
   {
     key: 'VulnerabilityScanner',

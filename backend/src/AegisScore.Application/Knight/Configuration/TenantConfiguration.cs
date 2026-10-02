@@ -498,6 +498,12 @@ public static class KnightConfigurationKinds
             PurviewDlpPolicy.SchemaVersion, typeof(PurviewDlpPolicy)),
         new Spec(ConfigurationObjectKind.PurviewLabelPolicy, KnightCapability.PurviewLabelPolicies,
             PurviewLabelPolicy.SchemaVersion, typeof(PurviewLabelPolicy)),
+        // [AEGIS-KNIGHT-COVERAGE-04] Azure: os dois documentos dependem da DESCOBERTA das assinaturas; o desfecho de cada
+        // família de leitura, por assinatura, fica no próprio inventário da assinatura.
+        new Spec(ConfigurationObjectKind.AzureSubscription, KnightCapability.AzureSubscriptions,
+            AzureSubscriptionInventory.SchemaVersion, typeof(AzureSubscriptionInventory)),
+        new Spec(ConfigurationObjectKind.AzureResource, KnightCapability.AzureSubscriptions,
+            AzureResource.SchemaVersion, typeof(AzureResource)),
     };
 
     public static Spec? For(ConfigurationObjectKind kind) => All.FirstOrDefault(s => s.Kind == kind);

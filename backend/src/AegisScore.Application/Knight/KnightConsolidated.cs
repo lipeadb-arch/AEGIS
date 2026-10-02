@@ -101,6 +101,83 @@ public sealed record KnightConsolidatedAssessment(
 public sealed record KnightConsolidatedSourceSelection(KnightSourceType Source, Guid RunId);
 
 /// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-04] Estado da COLETA de um relatório consolidado, separado do término da execução. A
+/// composição termina sempre (ela só lê avaliações já concluídas), mas a coleta só é completa quando TODAS as fontes
+/// incluídas foram coletadas integralmente — uma fonte parcial torna o conjunto parcial, e quais fontes são parciais
+/// fica dito, com as limitações de cada uma preservadas na composição.
+/// </summary>
+public static class KnightConsolidatedCollection
+{
+    /// <summary>Completed só com todas as fontes incluídas íntegras; qualquer outra situação é coleta parcial.</summary>
+    public static KnightSourceState StateOf(IEnumerable<KnightConsolidatedSourceEntry> entries)
+    {
+        var included = entries.Where(e => e.Included).ToList();
+        if (included.Count == 0) return KnightSourceState.PartialCollection;
+        return included.All(IsComplete) ? KnightSourceState.Completed : KnightSourceState.PartialCollection;
+    }
+
+    /// <summary>Fontes incluídas cuja coleta não foi integral (estado diferente de concluída, ou com limitação registrada).</summary>
+    public static IReadOnlyList<KnightConsolidatedSourceEntry> Incomplete(IEnumerable<KnightConsolidatedSourceEntry> entries) =>
+        entries.Where(e => e.Included && !IsComplete(e)).ToList();
+
+    /// <summary>Frase única usada na tela, no HTML e no PDF: término da execução × completude da coleta.</summary>
+    public static string Describe(IReadOnlyList<KnightConsolidatedSourceEntry> entries)
+    {
+        var included = entries.Count(e => e.Included);
+        var incomplete = Incomplete(entries);
+        if (incomplete.Count == 0)
+            return $"Coleta completa nas {included} fontes incluídas.";
+        return $"Coleta parcial em {incomplete.Count} de {included} fontes incluídas ("
+            + string.Join(", ", incomplete.Select(e => e.Label))
+            + "). A composição terminou; os controles sem dado dessas fontes ficam não avaliados e as limitações de cada uma estão na composição.";
+    }
+
+    private static bool IsComplete(KnightConsolidatedSourceEntry e) =>
+        string.Equals(e.SourceState, nameof(KnightSourceState.Completed), StringComparison.Ordinal)
+        && e.CollectionLimitations.Count == 0;
+
+    /// <summary>Rótulo em português do estado de coleta de uma fonte (o mesmo da tela).</summary>
+    public static string Label(string? state) => state switch
+    {
+        nameof(KnightSourceState.Completed) => "Coleta concluída",
+        nameof(KnightSourceState.PartialCollection) => "Coleta parcial",
+        nameof(KnightSourceState.InsufficientPermission) => "Permissão insuficiente",
+        nameof(KnightSourceState.AuthenticationFailure) => "Falha de autenticação",
+        nameof(KnightSourceState.Throttled) => "Limite de requisições",
+        nameof(KnightSourceState.Unavailable) => "Indisponível",
+        nameof(KnightSourceState.Error) => "Erro",
+        nameof(KnightSourceState.Collecting) => "Coletando",
+        nameof(KnightSourceState.Configured) => "Configurado",
+        nameof(KnightSourceState.NotConfigured) => "Não configurado",
+        null or "" => "—",
+        _ => state,
+    };
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-COVERAGE-04] Rótulo do consolidado. Com nove fontes, a lista inteira passa do limite da coluna da
+/// fotografia (200): o rótulo diz quantas fontes são e nomeia as que cabem — a lista COMPLETA continua na composição
+/// congelada, que é a autoridade sobre o que entrou.
+/// </summary>
+public static class KnightConsolidatedLabel
+{
+    public const int MaxLength = 200;
+
+    public static string For(IReadOnlyList<string> includedLabels, int max = MaxLength)
+    {
+        if (includedLabels.Count == 0) return "Consolidado";
+        var full = "Consolidado — " + string.Join(", ", includedLabels);
+        if (full.Length <= max) return full;
+        for (var shown = includedLabels.Count - 1; shown >= 1; shown--)
+        {
+            var text = $"Consolidado — {includedLabels.Count} fontes: {string.Join(", ", includedLabels.Take(shown))} e mais {includedLabels.Count - shown}";
+            if (text.Length <= max) return text;
+        }
+        return $"Consolidado — {includedLabels.Count} fontes";
+    }
+}
+
+/// <summary>
 /// Combina <see cref="KnightAssessment"/>s já lidos (por <c>GetLatestBySourceAsync</c>) num
 /// <see cref="KnightConsolidatedAssessment"/> — função PURA, sem EF/rede, para ser testável sem banco.
 /// </summary>
