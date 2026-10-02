@@ -1000,6 +1000,8 @@ export interface KnightAffectedSummaryItem {
   userPrincipalName: string | null;
   controlCount: number;
   indicatorIds: string[];
+  /** [AEGIS-KNIGHT-PRESENTATION-01] Tipo específico calculado no servidor (ex.: "Conta de armazenamento"). */
+  kindLabel?: string | null;
 }
 
 /** Ocorrências × objetos únicos × controles expostos de uma avaliação. */
@@ -1281,4 +1283,56 @@ export function contributionText(i: KnightIndicator): string {
   if (p.factor === null) return 'Fora da nota (não avaliado, erro ou não aplicável): reduz a cobertura, não a nota.';
   const fmt = (n: number | null) => String(n ?? 0).replace('.', ',');
   return `Peso ${p.weight} × fator ${fmt(p.factor)} = ${fmt(p.achievedPoints)} de ${p.possiblePoints} ponto(s).`;
+}
+
+// ---- [AEGIS-KNIGHT-PRESENTATION-01] Glossário e controles citados ---------------------------------------
+
+/** Um termo técnico do glossário ÚNICO do servidor (o mesmo do HTML e do PDF). */
+export interface KnightGlossaryTerm {
+  term: string;
+  meaning: string;
+  explanation: string;
+}
+
+export interface KnightGlossary {
+  terms: KnightGlossaryTerm[];
+  identifierExplanation: string;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Siglas do glossário que aparecem nos textos — a MESMA regra do servidor (KnightGlossary.UsedIn): palavra inteira,
+ * sensível a maiúsculas, com plural em "s"; hífen conta como parte da palavra ("AK-AZ-IAM-004" não é "IAM").
+ */
+export function glossaryTermsIn(texts: (string | null | undefined)[], terms: KnightGlossaryTerm[]): KnightGlossaryTerm[] {
+  const all = texts.filter((t): t is string => !!t && !!t.trim()).join('\n');
+  if (!all) return [];
+  return terms.filter((t) => new RegExp(`(?<![\\p{L}\\p{N}_-])${escapeRegExp(t.term)}s?(?![\\p{L}\\p{N}_-])`, 'u').test(all));
+}
+
+/** Os textos de UM controle em que as siglas são procuradas (os mesmos campos que o servidor usa). */
+export function indicatorTexts(i: KnightIndicator): (string | null | undefined)[] {
+  const p = i.presentation;
+  const ax = axesOf(i);
+  return [
+    findingTitle(i), i.title, p?.description, p?.rationale, p?.impact, p?.expectedConfiguration, p?.doesNotProve, p?.criterion,
+    i.recommendation, i.notEvaluatedReason, i.evidence, ax.service, ax.domainLabel, ...frameworksOf(i),
+  ];
+}
+
+/** Controle citado fora do próprio detalhe: código e título DESTA avaliação; `null` quando ela não tem o controle. */
+export interface KnightControlRef {
+  id: string;
+  title: string | null;
+}
+
+export function controlRefs(ids: string[], a: KnightAssessment): KnightControlRef[] {
+  const byId = new Map(a.indicators.map((i) => [i.indicatorId, i]));
+  return ids.map((id) => {
+    const i = byId.get(id);
+    return { id, title: i ? findingTitle(i) || i.title || null : null };
+  });
 }

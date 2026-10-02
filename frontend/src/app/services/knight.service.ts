@@ -6,6 +6,7 @@ import {
   KnightAffectedObjects,
   KnightAffectedSummary,
   KnightAssessment,
+  KnightGlossary,
   KnightLatest,
   KnightLatestBySource,
   KnightReferenceCoverage,
@@ -81,6 +82,14 @@ export class KnightService {
     return this.http.get<KnightReferenceCoverage>(`${this.base}/reference-coverage`).pipe(
       timeout(this.READ_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível carregar a cobertura do catálogo de referência.')),
+    );
+  }
+
+  /** [AEGIS-KNIGHT-PRESENTATION-01] Glossário único dos termos técnicos (o mesmo das exportações). Leitura de código. */
+  getGlossary(): Observable<KnightGlossary> {
+    return this.http.get<KnightGlossary>(`${this.base}/glossary`).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível carregar o glossário.')),
     );
   }
 

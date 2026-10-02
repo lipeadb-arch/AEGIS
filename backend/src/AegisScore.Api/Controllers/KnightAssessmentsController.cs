@@ -94,6 +94,20 @@ public class KnightAssessmentsController : ControllerBase
             }).ToList()));
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-PRESENTATION-01] Glossário ÚNICO dos termos técnicos — a mesma lista que entra nas exportações.
+    /// Leitura pura de código: não consulta nem coleta nada do cliente.
+    /// </summary>
+    [HttpGet("glossary")]
+    public ActionResult<KnightGlossaryDto> GetGlossary()
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        return Ok(new KnightGlossaryDto(
+            KnightGlossary.Terms.Select(t => new KnightGlossaryTermDto(t.Term, t.Meaning, t.Explanation)).ToList(),
+            KnightGlossary.IdentifierExplanation));
+    }
+
     /// <summary>Disponibilidade das fontes para o tenant (Demo sempre; reais conforme configuração).</summary>
     [HttpGet("sources")]
     public async Task<ActionResult<KnightSourcesDto>> GetSources(CancellationToken ct)
@@ -300,7 +314,8 @@ public class KnightAssessmentsController : ControllerBase
     private static KnightAffectedSummaryDto SummaryDto(KnightAffectedSummary s) => new(
         s.RunId, s.ExposedControls, s.Occurrences, s.UniqueObjects, s.Complete, s.IncompleteIndicatorIds,
         s.Top.Select(t => new KnightAffectedSummaryItemDto(
-            t.ExternalId, t.Kind.ToString(), t.DisplayName, t.UserPrincipalName, t.ControlCount, t.IndicatorIds)).ToList());
+            t.ExternalId, t.Kind.ToString(), t.DisplayName, t.UserPrincipalName, t.ControlCount, t.IndicatorIds,
+            KnightObjectNouns.Label(t.Kind, t.ExternalId))).ToList());
 
     // ---- Mapeamento ----------------------------------------------------------------------------------
 

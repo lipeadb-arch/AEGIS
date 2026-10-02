@@ -94,6 +94,8 @@ class FakeKnight {
   getAffected() { return this.call('getAffected'); }
   getAffectedSummary() { return this.call('getAffectedSummary'); }
   getReferenceCoverage() { return this.call('getReferenceCoverage'); }
+  // [AEGIS-KNIGHT-PRESENTATION-01] Glossário único: leitura de código no servidor, nunca coleta.
+  getGlossary() { return this.call('getGlossary'); }
   of(m: string): Call[] { return this.calls.filter((c) => c.m === m); }
   last(m: string): Call {
     const c = this.of(m).at(-1);

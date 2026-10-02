@@ -6,10 +6,12 @@ import {
   KnightConsolidatedSource,
   KnightSourceState,
   KnightControlFilters,
+  KnightControlRef,
   KnightIndicatorStatus,
   KnightReferenceCoverage,
   affectedKindLabel,
   consolidatedCollection,
+  controlRefs,
   distributionBy,
   readableLimitation,
   findingTitle,
@@ -23,6 +25,7 @@ import {
   statusLabel,
   threeMeasures,
 } from '../../models/knight.models';
+import { KnightControlRefsComponent } from './knight-control-refs.component';
 
 const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated', 'Error', 'NotEvaluated', 'NotApplicable'];
 
@@ -35,7 +38,7 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
 @Component({
   selector: 'app-knight-overview',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, KnightControlRefsComponent],
   template: `
     @let a = assessment();
     @let k = kpis();
@@ -194,15 +197,18 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
         } @else if (summary()!.top.length === 0) {
           <p class="muted">Nenhum item afetado preservado nesta avaliação.</p>
         } @else {
+          <p class="muted small">Cada controle relacionado mostra o título desta avaliação e o código; clique para abrir o detalhe.</p>
           <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>Item</th><th>Tipo</th><th>Controles</th></tr></thead>
+            <table class="data-table stack">
+              <thead><tr><th>Conta ou recurso afetado</th><th>Tipo</th><th>Quantidade de controles</th><th>Controles relacionados</th></tr></thead>
               <tbody>
                 @for (o of summary()!.top; track o.kind + o.externalId) {
                   <tr>
-                    <td>{{ o.displayName || o.userPrincipalName || o.externalId }}<span class="meta">{{ o.indicatorIds.join(', ') }}</span></td>
-                    <td>{{ kindLabel(o.kind) }}</td>
-                    <td>{{ o.controlCount }}</td>
+                    <td data-l="Conta ou recurso afetado">{{ o.displayName || o.userPrincipalName || o.externalId }}
+                      @if (o.displayName || o.userPrincipalName) { <span class="meta">{{ o.externalId }}</span> }</td>
+                    <td data-l="Tipo">{{ o.kindLabel || kindLabel(o.kind) }}</td>
+                    <td data-l="Quantidade de controles">{{ o.controlCount }}</td>
+                    <td data-l="Controles relacionados"><app-knight-control-refs [refs]="refs(o.indicatorIds)" (open)="open.emit($event)" /></td>
                   </tr>
                 }
               </tbody>
@@ -257,15 +263,19 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
         <p class="muted small">Nenhuma limitação de coleta registrada: todas as capacidades desta fonte foram lidas.</p>
       } @else {
         <div class="table-wrap">
-          <table class="data-table">
+          <table class="data-table stack">
             <thead><tr><th>Capacidade</th><th>Causa</th><th>Controles prejudicados</th><th>O que fazer</th></tr></thead>
             <tbody>
               @for (l of limitations(); track l.capability) {
                 <tr>
-                  <td>{{ l.label }}@if (l.detail) { <span class="meta">{{ l.detail }}</span> }</td>
-                  <td>{{ l.cause }}</td>
-                  <td>{{ l.affectedControls.length ? l.affectedControls.join(', ') : 'nenhum controle ficou sem avaliação por isso' }}</td>
-                  <td>{{ l.guidance }}</td>
+                  <td data-l="Capacidade">{{ l.label }}@if (l.detail) { <span class="meta">{{ l.detail }}</span> }</td>
+                  <td data-l="Causa">{{ l.cause }}</td>
+                  <td data-l="Controles prejudicados">
+                    @if (l.affectedControls.length) {
+                      <app-knight-control-refs [refs]="refs(l.affectedControls)" (open)="open.emit($event)" />
+                    } @else { nenhum controle ficou sem avaliação por isso }
+                  </td>
+                  <td data-l="O que fazer">{{ l.guidance }}</td>
                 </tr>
               }
             </tbody>
@@ -361,6 +371,14 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       .prio { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
       .prio li span { display: block; margin-top: 2px; }
       .metric-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      td .meta { display: block; font-family: var(--mono); font-size: var(--fs-caps); color: var(--muted); overflow-wrap: anywhere; }
+      @media (max-width: 600px) {
+        table.stack, table.stack tbody { display: block; width: 100%; }
+        table.stack thead { display: none; }
+        table.stack tr { display: block; padding: 6px 0; border-bottom: 1px solid var(--line); }
+        table.stack td { display: block; border: 0; padding: 3px 0; }
+        table.stack td[data-l]::before { content: attr(data-l); display: block; font-size: var(--fs-caps); color: var(--muted); text-transform: uppercase; }
+      }
       @media (max-width: 700px) { .metric-grid.three { grid-template-columns: minmax(0, 1fr); } }
       @media (max-width: 900px) {
         .ov-grid { grid-template-columns: minmax(0, 1fr); }
@@ -422,6 +440,11 @@ export class KnightOverviewComponent {
 
   rowLabel(label: string, counts: Record<KnightIndicatorStatus, number>, total: number): string {
     return `${label}: ${counts.Exposed} reprovado(s), ${counts.Passed} aprovado(s), ${counts.NotEvaluated + counts.Error} não avaliado(s) ou erro, de ${total}`;
+  }
+
+  /** [AEGIS-KNIGHT-PRESENTATION-01] Códigos → título desta avaliação + código, para a lista clicável. */
+  refs(ids: string[]): KnightControlRef[] {
+    return controlRefs(ids, this.assessment());
   }
 
   readable(raw: string): string {

@@ -59,7 +59,9 @@ public sealed record ReportControl(
     string? Impact = null, string? Platform = null, string? AffectedComposition = null, string? ProvenReach = null,
     // [AEGIS-KNIGHT-COVERAGE-04] As mesmas capacidades, em português, para quem lê. Os códigos acima continuam sendo a
     // chave que liga uma limitação aos controles que ela prejudica.
-    IReadOnlyList<string>? RequiredCapabilityLabels = null);
+    IReadOnlyList<string>? RequiredCapabilityLabels = null,
+    // [AEGIS-KNIGHT-PRESENTATION-01] Siglas do glossário que aparecem nos textos congelados deste controle.
+    IReadOnlyList<string>? GlossaryTerms = null);
 
 /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Uma linha da cobertura de implementação congelada (total, plataforma ou serviço).</summary>
 public sealed record ReportCoverageRow(
@@ -76,7 +78,14 @@ public sealed record ReportReferenceCoverage(
 
 public sealed record ReportPriority(string ControlId, string Title, string Severity, string SeverityLabel, int AffectedCount, string Criterion);
 
-public sealed record ReportTopObject(string ExternalId, string Kind, string KindLabel, string Label, int ControlCount, IReadOnlyList<string> ControlIds);
+/// <summary>
+/// [AEGIS-KNIGHT-PRESENTATION-01] Um controle citado fora do próprio detalhe: o código e o título CONGELADO na fotografia.
+/// <see cref="Title"/> nulo = a fotografia não tem esse controle; o código fica, e o relatório diz que o título não está disponível.
+/// </summary>
+public sealed record ReportControlRef(string Id, string? Title);
+
+public sealed record ReportTopObject(string ExternalId, string Kind, string KindLabel, string Label, int ControlCount, IReadOnlyList<string> ControlIds,
+    IReadOnlyList<ReportControlRef>? Controls = null);
 
 public sealed record ReportLimitation(
     string Capability, string CapabilityLabel, string Outcome, string CauseLabel, string? Detail,
@@ -96,7 +105,10 @@ public sealed record KnightReportModel(
     /// [AEGIS-KNIGHT-CONSOLIDATED-01] Composição das fontes candidatas (Entra ID, Teams, Exchange Online) — nula
     /// fora de fotografias consolidadas. Cada fonte traz a NOTA E COBERTURA PRÓPRIAS, nunca somadas às demais.
     /// </summary>
-    IReadOnlyList<KnightConsolidatedSourceEntry>? Composition = null);
+    IReadOnlyList<KnightConsolidatedSourceEntry>? Composition = null,
+    /// <summary>[AEGIS-KNIGHT-PRESENTATION-01] Termos do glossário único que aparecem nos textos desta fotografia.</summary>
+    IReadOnlyList<KnightGlossaryTerm>? Glossary = null,
+    string? IdentifierExplanation = null);
 
 public static class KnightReportModelBuilder
 {
@@ -127,6 +139,12 @@ public static class KnightReportModelBuilder
                 objectsByIndicator.TryGetValue(i.IndicatorId, out var objs) ? objs : new List<PostureSnapshotObject>(),
                 actionsByIndicator.TryGetValue(i.IndicatorId, out var acts) ? acts : new List<PostureSnapshotActionItem>()))
             .ToList();
+        // [AEGIS-KNIGHT-PRESENTATION-01] As siglas saem dos textos CONGELADOS do controle — nunca do catálogo de hoje.
+        controls = controls.Select(c => c with
+        {
+            GlossaryTerms = KnightGlossary.UsedIn(GlossaryTexts(c)).Select(t => t.Term).ToList(),
+        }).ToList();
+        var titles = controls.ToDictionary(c => c.Id, c => c.Title, StringComparer.Ordinal);
 
         var failedOrAttention = controls.Where(c => c.Status is "Exposed" or "Mitigated").ToList();
 
@@ -173,7 +191,8 @@ public static class KnightReportModelBuilder
             {
                 var o = g.First().o;
                 var ids = g.Select(x => x.Id).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
-                return new ReportTopObject(o.ExternalId, o.Kind, o.KindLabel, o.DisplayName ?? o.UserPrincipalName ?? o.ExternalId, ids.Count, ids);
+                return new ReportTopObject(o.ExternalId, o.Kind, o.KindLabel, o.DisplayName ?? o.UserPrincipalName ?? o.ExternalId, ids.Count, ids,
+                    ids.Select(id => RefOf(titles, id)).ToList());
             })
             .OrderByDescending(t => t.ControlCount).ThenBy(t => t.Label, StringComparer.OrdinalIgnoreCase)
             .Take(10).ToList();
@@ -230,8 +249,19 @@ public static class KnightReportModelBuilder
 
         return new KnightReportModel(header, kpis, controls, byDomain, byService, priorities, topObjects, limitations,
             isV2 ? Array.Empty<string>() : s.CollectionLimitations.ToList(), advisory, notes, frameworks, coverage, byPlatform,
-            composition);
+            composition,
+            KnightGlossary.UsedIn(controls.SelectMany(GlossaryTexts)),
+            KnightGlossary.IdentifierExplanation);
     }
+
+    /// <summary>Código + título congelado; título nulo quando a fotografia não tem o controle (nunca o catálogo atual).</summary>
+    public static ReportControlRef RefOf(IReadOnlyDictionary<string, string> titles, string id) =>
+        new(id, titles.TryGetValue(id, out var t) && !string.IsNullOrWhiteSpace(t) ? t : null);
+
+    private static IEnumerable<string?> GlossaryTexts(ReportControl c) =>
+        new[] { c.Title, c.Description, c.Rationale, c.Impact, c.ExpectedConfiguration, c.DoesNotProve, c.Criterion, c.Recommendation,
+                c.NotEvaluatedReason, c.Evidence, c.Service, c.DomainLabel }
+            .Concat(c.Frameworks);
 
     private static ReportReferenceCoverage? BuildCoverage(string? json)
     {
@@ -295,7 +325,7 @@ public static class KnightReportModelBuilder
                 .Select(o => new ReportObject(
                     o.Relation.ToString(),
                     o.Relation == KnightObjectRelation.Affected ? "Afetado" : "Evidência de configuração",
-                    o.Kind.ToString(), KindLabel(o.Kind), o.ExternalId, o.DisplayName, o.UserPrincipalName,
+                    o.Kind.ToString(), KnightObjectNouns.Label(o.Kind, o.ExternalId), o.ExternalId, o.DisplayName, o.UserPrincipalName,
                     o.Roles.ToList(), o.Detail, o.ObservedConfiguration))
                 .ToList(),
             actions.Select(a => new ReportAction(

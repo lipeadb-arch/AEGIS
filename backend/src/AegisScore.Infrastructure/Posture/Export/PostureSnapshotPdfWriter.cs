@@ -398,7 +398,49 @@ public static class PostureSnapshotPdfWriter
         AddKnightActions(section, s);
         AddKnightValidations(section, s);
         AddKnightAppendix(section, s);
+        AddKnightGlossary(section, s);
     }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-PRESENTATION-01] Glossário UMA vez, no fim: só as siglas que aparecem nos textos desta fotografia, com as
+    /// definições do glossário único (as mesmas da tela e do HTML), e a explicação dos códigos internos.
+    /// </summary>
+    private static void AddKnightGlossary(Section section, PostureSnapshot s)
+    {
+        var model = KnightReportModelBuilder.Build(s, integrityVerified: true);
+        Heading(section, "Glossário");
+        Body(section, model.IdentifierExplanation ?? KnightGlossary.IdentifierExplanation, muted: true);
+        var terms = model.Glossary ?? Array.Empty<KnightGlossaryTerm>();
+        if (terms.Count == 0)
+        {
+            Body(section, "Nenhuma sigla do glossário aparece nos textos desta fotografia.", muted: true);
+            return;
+        }
+
+        var table = section.AddTable();
+        StyleTable(table);
+        table.AddColumn(Unit.FromCentimeter(1.8));
+        table.AddColumn(Unit.FromCentimeter(5.6));
+        table.AddColumn(Unit.FromCentimeter(9.6));
+        HeaderRow(table, "Sigla", "Significado", "Explicação");
+        var zebra = false;
+        foreach (var t in terms)
+        {
+            var row = table.AddRow();
+            if (zebra) ShadeRow(row);
+            zebra = !zebra;
+            Cell(row, 0, t.Term, bold: true);
+            Cell(row, 1, t.Meaning);
+            Cell(row, 2, t.Explanation);
+        }
+    }
+
+    /// <summary>[AEGIS-KNIGHT-PRESENTATION-01] "Título (código)" com o título CONGELADO; sem título na fotografia, o código e o aviso.</summary>
+    internal static string ControlWithTitle(IReadOnlyDictionary<string, string> titles, string id) =>
+        KnightReportModelBuilder.RefOf(titles, id) is { Title: { } t } ? $"{t} ({id})" : $"{id} (título não disponível nesta fotografia)";
+
+    private static Dictionary<string, string> TitlesOf(PostureSnapshot s) =>
+        s.Indicators.GroupBy(i => i.IndicatorId, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().Title, StringComparer.Ordinal);
 
     /// <summary>
     /// [AEGIS-KNIGHT-CONSOLIDATED-01] De que fontes vem a nota consolidada: cada uma com a PRÓPRIA nota,
@@ -526,6 +568,7 @@ public static class PostureSnapshotPdfWriter
         HeaderRow(table, "Ação", "Responsável / área", "Prazo", "Situação", "Próxima providência");
 
         var zebra = false;
+        var titles = TitlesOf(s);
         foreach (var a in s.ActionItems
             .OrderBy(a => a.IndicatorId, StringComparer.Ordinal).ThenBy(a => a.Title, StringComparer.Ordinal))
         {
@@ -537,7 +580,7 @@ public static class PostureSnapshotPdfWriter
             var tp = cell.AddParagraph(a.Title);
             tp.Format.Font.Bold = true;
             tp.Format.Font.Size = 7.8;
-            var idp = cell.AddParagraph("achado " + a.IndicatorId);
+            var idp = cell.AddParagraph("achado: " + ControlWithTitle(titles, a.IndicatorId));
             idp.Format.Font.Size = 6.5;
             idp.Format.Font.Color = Muted;
 
@@ -953,9 +996,10 @@ public static class PostureSnapshotPdfWriter
         }
         else
         {
+            var titles = TitlesOf(s);
             foreach (var l in limitacoes)
             {
-                var li = section.AddParagraph("•  " + LimitationLine(l));
+                var li = section.AddParagraph("•  " + LimitationLine(l, titles));
                 li.Format.Font.Size = 8;
                 li.Format.Font.Color = Muted;
                 li.Format.LeftIndent = Unit.FromMillimeter(4);
@@ -970,14 +1014,18 @@ public static class PostureSnapshotPdfWriter
     /// observado, o detalhe da fonte, o requisito de autorização e os controles que ficaram sem veredito. É
     /// método próprio para poder ser verificado sem abrir o PDF — o texto é o que importa, não o desenho.
     /// </summary>
-    internal static string LimitationLine(ReportLimitation l)
+    internal static string LimitationLine(ReportLimitation l, IReadOnlyDictionary<string, string>? titles = null)
     {
         // O rótulo da causa não se repete quando o detalhe da fonte já começa por ele.
         var detalheRepeteACausa = l.Detail is { } d && d.StartsWith(l.CauseLabel, StringComparison.Ordinal);
         var texto = detalheRepeteACausa ? l.CapabilityLabel : $"{l.CapabilityLabel} — {l.CauseLabel}";
         if (!string.IsNullOrWhiteSpace(l.Detail)) texto += ": " + l.Detail;
         if (!string.IsNullOrWhiteSpace(l.RequiredPermission)) texto += $" (requer: {l.RequiredPermission})";
-        if (l.AffectedControls.Count > 0) texto += $" · sem veredito: {string.Join(", ", l.AffectedControls)}";
+        // [AEGIS-KNIGHT-PRESENTATION-01] Com os títulos congelados, cada controle aparece pelo título e o código ao lado.
+        if (l.AffectedControls.Count > 0)
+            texto += " · sem veredito: " + (titles is null
+                ? string.Join(", ", l.AffectedControls)
+                : string.Join("; ", l.AffectedControls.Select(id => ControlWithTitle(titles, id))));
         return texto;
     }
 

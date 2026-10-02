@@ -38,6 +38,9 @@ import {
   findingRunIdOf,
   consolidatedCollection,
   readableLimitation,
+  glossaryTermsIn,
+  controlRefs,
+  KnightGlossaryTerm,
   sourceStateLabel,
   sourceSlug,
   sourceTypeLabel,
@@ -400,6 +403,23 @@ test('consolidado: execução concluída não é coleta completa quando uma font
   ok(!legivel.includes('AzureStorage') && !legivel.includes('InsufficientPermission'), 'identificadores viram rótulos: ' + legivel);
   ok(legivel.endsWith(': Permissão insuficiente — leitura recusada'), 'desfecho em português e detalhe preservado');
   eq(readableLimitation('texto livre'), 'texto livre', 'texto fora do formato fica como está');
+});
+
+test('glossário: mesma regra do servidor — palavra inteira, maiúsculas, plural, e código AK-… não é sigla', () => {
+  const terms: KnightGlossaryTerm[] = ['API', 'IAM', 'MFA', 'RBAC'].map((t) => ({ term: t, meaning: t, explanation: t }));
+  eq(glossaryTermsIn(['Exige MFA e expõe APIs', 'Código AK-AZ-IAM-004', 'rbac em minúsculas', null], terms).map((t) => t.term).join(','), 'API,MFA',
+    'mesmo resultado do teste do servidor (KnightPresentationTests)');
+  eq(glossaryTermsIn(['AK-AZ-IAM-004'], terms).length, 0, 'código interno não é interpretado por prefixo');
+  eq(glossaryTermsIn([], terms).length, 0, 'sem texto, sem sigla');
+});
+
+test('controles citados: título desta avaliação + código; ausente na avaliação = título nulo, código preservado', () => {
+  const a = { indicators: [{ indicatorId: 'AK-ENTRA-001', title: 'Contas privilegiadas sem MFA', status: 'Exposed' }] } as unknown as KnightAssessment;
+  const refs = controlRefs(['AK-ENTRA-001', 'AK-NAO-EXISTE'], a);
+  eq(refs[0].id, 'AK-ENTRA-001', 'código preservado');
+  ok(!!refs[0].title, 'o título vem da própria avaliação');
+  eq(refs[1].title, null, 'controle fora da avaliação: título indisponível, nunca inventado');
+  eq(refs[1].id, 'AK-NAO-EXISTE', 'o código continua');
 });
 
 console.log(`\n${count - failures}/${count} testes passaram (knight-assessment.models).`);

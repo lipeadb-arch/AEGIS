@@ -6,8 +6,11 @@ import {
   KnightAffectedObject,
   KnightAffectedObjects,
   KnightAssessment,
+  KnightGlossaryTerm,
   KnightIndicator,
   affectedKindLabel,
+  glossaryTermsIn,
+  indicatorTexts,
   affectedLabel,
   affectedNotice,
   affectedRequestKey,
@@ -164,6 +167,13 @@ import { KnightActionPlanComponent } from './action-plan.component';
               <span class="k">Por que não foi avaliado</span>
               <span class="v">{{ indicator().notEvaluatedReason }}</span>
             </div>
+          }
+
+          @if (terms().length) {
+            <h4 class="sec">Termos técnicos deste controle</h4>
+            @for (t of terms(); track t.term) {
+              <div class="kv"><span class="k">{{ t.term }}</span><span class="v">{{ t.meaning }}. {{ t.explanation }}</span></div>
+            }
           }
         </div>
       }
@@ -465,6 +475,9 @@ export class KnightFindingDetailComponent {
   readonly planState = input<PinnedPlanState>({ kind: 'livre' });
   /** Abrir já na aba do plano — usado quando o endereço identifica a ação, não só o achado. */
   readonly focusPlan = input(false);
+  /** [AEGIS-KNIGHT-PRESENTATION-01] Glossário único (do servidor); a seção lista só as siglas deste controle. */
+  readonly glossary = input<KnightGlossaryTerm[]>([]);
+  readonly terms = computed(() => glossaryTermsIn(indicatorTexts(this.indicator()), this.glossary()));
   readonly closed = output<void>();
   /** Emite quando o plano muda, para a página recarregar o mapa de ações ativas. */
   readonly planChanged = output<ActionPlan>();
