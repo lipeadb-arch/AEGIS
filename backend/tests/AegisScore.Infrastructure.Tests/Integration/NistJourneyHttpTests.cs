@@ -64,7 +64,7 @@ public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
             using (var fn = await GetJsonAsync(manager, $"{Base}/{assessmentId}/scopes/{scopeId}/functions/id"))
             {
                 var categories = fn.RootElement.GetProperty("categories").EnumerateArray().ToList();
-                categories.Select(c => c.GetProperty("code").GetString()).Should().Equal("ID.AM", "ID.IM", "ID.RA");
+                categories.Select(c => c.GetProperty("code").GetString()).Should().Equal(new[] { "ID.AM", "ID.RA", "ID.IM" }, "ordem oficial do CSF 2.0");
                 categories.SelectMany(c => c.GetProperty("subcategories").EnumerateArray())
                     .Should().OnlyContain(s => s.GetProperty("state").GetString() == "NotEvaluated");
                 fn.RootElement.GetProperty("profile").GetProperty("current").ValueKind.Should().Be(JsonValueKind.Null, "sem nota não é zero");

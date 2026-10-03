@@ -46,6 +46,19 @@ public sealed class NistAssessmentService : INistAssessmentService
 
     private static readonly string[] FunctionOrder = { "GV", "ID", "PR", "DE", "RS", "RC" };
 
+    /// <summary>Ordem OFICIAL das categorias no CSF 2.0 (o catálogo não guarda ordem; o código sozinho é alfabético).</summary>
+    private static readonly string[] CategoryOrder =
+    {
+        "GV.OC", "GV.RM", "GV.RR", "GV.PO", "GV.OV", "GV.SC",
+        "ID.AM", "ID.RA", "ID.IM",
+        "PR.AA", "PR.AT", "PR.DS", "PR.PS", "PR.IR",
+        "DE.CM", "DE.AE",
+        "RS.MA", "RS.AN", "RS.CO", "RS.MI",
+        "RC.RP", "RC.CO",
+    };
+
+    private static int CategoryRank(string code) => Array.IndexOf(CategoryOrder, code) is var i && i >= 0 ? i : CategoryOrder.Length;
+
     private static readonly KnightIndicatorStatus[] EvaluatedKnightStatuses =
         { KnightIndicatorStatus.Passed, KnightIndicatorStatus.Exposed, KnightIndicatorStatus.Mitigated };
 
@@ -190,7 +203,7 @@ public sealed class NistAssessmentService : INistAssessmentService
         var subs = fn.Categories.SelectMany(c => c.Subcategories).ToList();
         var profile = _maturity.AggregateProfile(subs.Select(s => ProfileScoreOf(s, ctx)));
 
-        var categories = fn.Categories.OrderBy(c => c.Code, StringComparer.Ordinal).Select(c =>
+        var categories = fn.Categories.OrderBy(c => CategoryRank(c.Code)).ThenBy(c => c.Code, StringComparer.Ordinal).Select(c =>
         {
             var catProfile = profile.Categories.FirstOrDefault(p => p.RefCode == c.Code)
                 ?? new ProfileScore(SnapshotLevel.Category, c.Code, null, null, null, 0, 0, 0, 0, 0);
@@ -228,7 +241,7 @@ public sealed class NistAssessmentService : INistAssessmentService
             assessmentId, scopeId, ctx.Assessment.MethodologyVersion,
             ProfileView(profile.Overall, EvaluatedIn("ALL")),
             profile.Functions.OrderBy(f => Array.IndexOf(FunctionOrder, f.RefCode)).Select(f => ProfileView(f, EvaluatedIn(f.RefCode))).ToList(),
-            profile.Categories.Select(c => ProfileView(c, EvaluatedIn(c.RefCode))).ToList(),
+            profile.Categories.OrderBy(c => CategoryRank(c.RefCode)).Select(c => ProfileView(c, EvaluatedIn(c.RefCode))).ToList(),
             gaps,
             indeterminate);
     }

@@ -100,8 +100,8 @@ public sealed class NistAssessmentServiceTests : IDisposable
             total.Should().Be(106, "cada função traz o catálogo completo, inclusive o que ainda não foi avaliado");
 
             var gv = await svc.GetFunctionAsync(a, s, "GV");
-            gv.Categories.Select(c => c.Code).Should().Contain(new[] { "GV.OC", "GV.RM", "GV.RR", "GV.PO", "GV.OV", "GV.SC" },
-                "Govern não se resume à biblioteca de documentos");
+            gv.Categories.Select(c => c.Code).Should().Equal(new[] { "GV.OC", "GV.RM", "GV.RR", "GV.PO", "GV.OV", "GV.SC" },
+                "Govern não se resume à biblioteca de documentos, e as categorias seguem a ordem oficial do CSF 2.0");
             gv.Categories.First(c => c.Code == "GV.OC").Subcategories.First().Title.Should().Be("Alinhar a segurança à missão da organização");
 
             var saved = await svc.SaveEvaluationAsync(a, s, "gv.oc-01", Eval(2, 4, owner: "Diretoria de Riscos", gaps: "Sem registro formal da missão."), Gestor);
