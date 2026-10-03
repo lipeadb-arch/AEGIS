@@ -235,10 +235,10 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                         @if (src.requirement) { <span class="sync-detail">{{ src.requirement }}</span> }
                         <span class="sync-actions">
                           @if (v.runId) {
-                            <a class="ghost sm" routerLink="/identity" [queryParams]="{ run: v.runId }">Abrir avaliação</a>
+                            <a class="ghost sm" routerLink="/knight" [queryParams]="{ run: v.runId }">Abrir avaliação</a>
                           }
                           @if (v.previousRunId) {
-                            <a class="ghost sm" routerLink="/identity" [queryParams]="{ run: v.previousRunId }">Ver avaliação anterior</a>
+                            <a class="ghost sm" routerLink="/knight" [queryParams]="{ run: v.previousRunId }">Ver avaliação anterior</a>
                           }
                           @if (watchExpired()[key(c.id, src.slug)]) {
                             <span class="sync-detail">

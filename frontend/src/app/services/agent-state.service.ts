@@ -35,22 +35,22 @@ const CONTEXTS: Record<AgentContext, NistContext> = {
 };
 
 /**
- * 1º segmento da rota → contexto do Agente. Só as rotas com Função dedicada são mapeadas;
- * o dashboard e qualquer rota desconhecida caem em 'General' (fallback neutro).
- * Obs.: a rota real do pilar Identify é `/assets`.
+ * [AEGIS-NIST-JOURNEY-01] Rota → contexto do Agente. No AEGIS NIST a Função vem do 2º segmento (/nist/gv, /nist/id/ativos,
+ * /nist/pr/postura…); fora dele, do 1º. O AEGIS KNIGHT mantém o foco Protect (no CSF 2.0, identidade e acesso são PR.AA).
+ * Dashboards, histórico e rotas desconhecidas caem em 'General' (fallback neutro). Os endereços antigos (/assets,
+ * /governance, /protect…) redirecionam antes de chegar aqui.
  */
 const ROUTE_TO_CONTEXT: Record<string, AgentContext> = {
-  governance: 'Govern',
-  assets: 'Identify',
-  // [AEGIS-MVP-VULN-01] Vulnerabilidades = gestão de vulnerabilidades (ID.RA) → foco Identify no Copiloto.
-  vulnerabilities: 'Identify',
-  // Postura de identidade (Entra ID) → Protect: no NIST CSF 2.0 a gestão de identidade e acesso é PR.AA
-  // (Protect), não o pilar Identify (que é inventário/ID.AM). O System Prompt de PR foca em MFA/identidade.
-  identity: 'Protect',
-  protect: 'Protect',
-  detect: 'Detect',
-  respond: 'Respond',
-  recover: 'Recover',
+  knight: 'Protect',
+};
+
+const NIST_SLUG_TO_CONTEXT: Record<string, AgentContext> = {
+  gv: 'Govern',
+  id: 'Identify',
+  pr: 'Protect',
+  de: 'Detect',
+  rs: 'Respond',
+  rc: 'Recover',
 };
 
 /**
@@ -102,10 +102,11 @@ export class AgentStateService {
     });
   }
 
-  /** Deriva o contexto do 1º segmento da URL; rotas sem Função dedicada → 'General'. */
+  /** Deriva o contexto da URL (no NIST, pela Função do 2º segmento); rotas sem Função dedicada → 'General'. */
   private contextForUrl(url: string): AgentContext {
-    const seg = url.split(/[?#]/)[0].split('/').filter(Boolean)[0] ?? '';
-    return ROUTE_TO_CONTEXT[seg] ?? 'General';
+    const segs = url.split(/[?#]/)[0].split('/').filter(Boolean);
+    if (segs[0] === 'nist') return NIST_SLUG_TO_CONTEXT[(segs[1] ?? '').toLowerCase()] ?? 'General';
+    return ROUTE_TO_CONTEXT[segs[0] ?? ''] ?? 'General';
   }
 
   // ---- Drawer -------------------------------------------------------------

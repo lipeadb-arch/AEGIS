@@ -137,12 +137,12 @@ test('plano do endereço só ocupa o painel do SEU caso', () => {
 
 test('cada origem leva à sua tela, com o plano no endereço', () => {
   const l = planLink(plan())!;
-  eq(l.commands[0], '/priorities', 'caso de dispositivo abre a Central');
+  eq(l.commands[0], '/nist/id/prioridades', 'caso de dispositivo abre a Central (dentro do AEGIS NIST)');
   eq(l.queryParams['device'], ASSET, 'dispositivo no endereço');
   eq(l.queryParams['cve'], 'CVE-2024-3001', 'CVE no endereço');
   eq(l.queryParams['plan'], 'p-1', 'plano no endereço');
   const k = planLink(plan({ originKind: 'KnightFinding', deviceOrigin: null, knightIndicatorId: 'AK-ENTRA-001', originRunId: 'r-1' }))!;
-  eq(k.commands[0], '/identity', 'achado do KNIGHT abre o KNIGHT');
+  eq(k.commands[0], '/knight', 'achado do KNIGHT abre o KNIGHT');
   eq(k.queryParams['run'], 'r-1', 'avaliação de origem preservada');
   eq(planLink(plan({ originKind: 'RiskTreatment', deviceOrigin: null })), null, 'tratamento de risco não tem destino aqui');
   eq(planSubject(plan()), 'CVE-2024-3001', 'identificador do caso');

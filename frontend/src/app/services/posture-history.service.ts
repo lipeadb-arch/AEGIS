@@ -6,6 +6,7 @@ import { KNIGHT_SOURCES, KnightSourceType } from '../models/knight.models';
 import {
   PostureComparisonResult,
   PostureExportFormat,
+  PostureMonthlyHistory,
   PostureSnapshotDetail,
   PostureSnapshotSummary,
   PostureSnapshotType,
@@ -49,6 +50,18 @@ export class PostureHistoryService {
     return this.http.get<PostureSnapshotSummary[]>(this.base, { params }).pipe(
       timeout(this.READ_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível carregar o histórico de fotografias.')),
+    );
+  }
+
+  /**
+   * [AEGIS-NIST-JOURNEY-01] Evolução mensal por instrumento e fonte (KNIGHT e NIST separados): último publicado do mês;
+   * mês sem publicação fica sem ponto; versões incompatíveis não são ligadas (regra do servidor).
+   */
+  monthly(months = 12): Observable<PostureMonthlyHistory> {
+    const params = new HttpParams().set('months', months);
+    return this.http.get<PostureMonthlyHistory>(`${this.base}/monthly`, { params }).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível carregar a evolução mensal.')),
     );
   }
 

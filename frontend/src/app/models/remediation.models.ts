@@ -570,11 +570,11 @@ export function planLink(p: ActionPlan): PlanLink | null {
   if (isDevicePlan(p)) {
     const o = p.deviceOrigin;
     return o
-      ? { commands: ['/priorities'], queryParams: { tab: 'achados', device: o.assetId, cve: o.cveId, plan: p.id } }
+      ? { commands: ['/nist/id/prioridades'], queryParams: { tab: 'achados', device: o.assetId, cve: o.cveId, plan: p.id } }
       : null;
   }
   if (p.knightIndicatorId)
-    return { commands: ['/identity'], queryParams: { finding: p.knightIndicatorId, run: p.originRunId, plan: p.id } };
+    return { commands: ['/knight'], queryParams: { finding: p.knightIndicatorId, run: p.originRunId, plan: p.id } };
   return null;
 }
 

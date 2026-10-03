@@ -1,4 +1,6 @@
-<div class="page">
+<!-- [AEGIS-NIST-JOURNEY-01] Embutido na aba "Tendência diária" do Histórico de postura unificado. -->
+<div [class.page]="!embedded()" class="trend-host">
+  @if (!embedded()) {
   <header class="page-head">
     <div>
       <p class="page-eyebrow">Relatórios</p>
@@ -10,6 +12,9 @@
       <a class="ghost" routerLink="/history">Histórico auditável →</a>
     </div>
   </header>
+  } @else {
+  <p class="page-desc">AEGIS Score diário do ambiente (aegis-score-v1) — a leitura atual, não um registro publicado. Janela: últimos {{ trend().length }} dias.</p>
+  }
 
   @if (loadError()) {
     <div class="notice error" role="alert">

@@ -8,26 +8,35 @@
  * subcategoria) de propósito: "PR.AA-01" e um futuro "PR.AA-05" compartilham o mesmo rótulo de família.
  */
 export const NIST_CATEGORY_NAMES: Record<string, string> = {
+  // [AEGIS-NIST-JOURNEY-01] Completadas as 22 categorias do CSF 2.0: a jornada NIST apresenta o catálogo inteiro.
   // Govern
-  'GV.SC': 'Cadeia de Suprimentos',
+  'GV.OC': 'Contexto Organizacional',
+  'GV.RM': 'Estratégia de Gestão de Riscos',
   'GV.RR': 'Papéis e Responsabilidades',
   'GV.PO': 'Políticas de Segurança',
+  'GV.OV': 'Supervisão',
+  'GV.SC': 'Cadeia de Suprimentos',
   // Identify
   'ID.AM': 'Gestão de Ativos',
   'ID.RA': 'Avaliação de Riscos',
+  'ID.IM': 'Melhoria',
   // Protect
   'PR.AA': 'Identidade e Acesso',
+  'PR.AT': 'Conscientização e Treinamento',
   'PR.DS': 'Proteção de Dados',
   'PR.PS': 'Segurança de Plataforma',
   'PR.IR': 'Rede e Infraestrutura',
   // Detect
-  'DE.AE': 'Análise de Eventos',
   'DE.CM': 'Monitoramento Contínuo',
+  'DE.AE': 'Análise de Eventos',
   // Respond
   'RS.MA': 'Gestão de Incidentes',
+  'RS.AN': 'Análise de Incidentes',
+  'RS.CO': 'Comunicação e Relato de Incidentes',
   'RS.MI': 'Mitigação de Incidentes',
   // Recover
   'RC.RP': 'Plano de Recuperação',
+  'RC.CO': 'Comunicação da Recuperação',
 };
 
 /** Extrai a categoria de um código de subcategoria: "PR.AA-01" → "PR.AA". */

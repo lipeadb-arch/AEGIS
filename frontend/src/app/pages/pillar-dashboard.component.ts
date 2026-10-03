@@ -29,7 +29,10 @@ import { AegisScoreService } from '../services/aegis-score.service';
   standalone: true,
   imports: [PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent],
   template: `
-    <section class="page pillar">
+    <!-- [AEGIS-NIST-JOURNEY-01] Embutido na aba "Postura do ambiente" de cada função do AEGIS NIST: a página que o
+         contém já tem título e navegação, então o cabeçalho próprio e o recuo de página ficam de fora. -->
+    <section class="pillar" [class.page]="!embedded()">
+      @if (!embedded()) {
       <header class="page-head">
         <div>
           <p class="page-eyebrow">NIST CSF 2.0 · {{ meta().code }}</p>
@@ -38,6 +41,7 @@ import { AegisScoreService } from '../services/aegis-score.service';
           <p class="page-meta">{{ meta().blurb }}</p>
         </div>
       </header>
+      }
 
       @if (loading()) {
         <div class="panel">
@@ -269,6 +273,8 @@ export class PillarDashboardComponent implements OnInit {
 
   /** Função NIST deste painel — injetada pelo wrapper da rota (Protect/Detect/Respond/Recover). */
   readonly pillar = input.required<PillarKey>();
+  /** [AEGIS-NIST-JOURNEY-01] Sem cabeçalho próprio, dentro da aba de postura de uma função do AEGIS NIST. */
+  readonly embedded = input(false);
 
   /** Estado local em Signals (sem NgRx). */
   private readonly controls = signal<TenantControlStateDto[]>([]);

@@ -309,7 +309,7 @@ import {
                 configuração insegura nem exposição de ativo.
               </p>
             </div>
-            <a class="linknav" routerLink="/exposures">Ver todas →</a>
+            <a class="linknav" routerLink="/nist/pr/recomendacoes">Ver todas →</a>
           </div>
           @if (exposureReading().hasData && exposureReading().notice) {
             <p class="notice warn" role="status">{{ exposureReading().notice }}</p>
@@ -384,7 +384,7 @@ import {
                 }
               </p>
             </div>
-            <a class="linknav" routerLink="/vulnerabilities">Ver todas →</a>
+            <a class="linknav" routerLink="/nist/id/vulnerabilidades">Ver todas →</a>
           </div>
           @if (vulnReading().hasData && vulnReading().notice) {
             <p class="notice warn" role="status">{{ vulnReading().notice }}</p>
@@ -752,7 +752,7 @@ import {
                 deles leva à mesma avaliação, com os objetos que sustentam o resultado.
               </p>
             </div>
-            <a class="linknav" [routerLink]="['/identity']" [queryParams]="{ run: knight()!.runId }">
+            <a class="linknav" [routerLink]="['/knight']" [queryParams]="{ run: knight()!.runId }">
               Ver avaliação →
             </a>
           </div>
@@ -815,7 +815,7 @@ import {
                                indicador da avaliação MAIS RECENTE, que pode não ser a que produziu esta linha. -->
                           <a
                             class="title link"
-                            [routerLink]="['/identity']"
+                            [routerLink]="['/knight']"
                             [queryParams]="{ finding: f.indicatorId, run: knight()!.runId }">
                             {{ findingTitle(f) }}
                           </a>
@@ -829,7 +829,7 @@ import {
                           @if (f.hasAffectedDetail) {
                             <a
                               class="meta link"
-                              [routerLink]="['/identity']"
+                              [routerLink]="['/knight']"
                               [queryParams]="{ finding: f.indicatorId, run: knight()!.runId }">
                               ver afetados
                             </a>
@@ -843,7 +843,7 @@ import {
                                leva à MESMA avaliação do achado, com a origem preservada. -->
                           <a
                             class="meta link"
-                            [routerLink]="['/identity']"
+                            [routerLink]="['/knight']"
                             [queryParams]="{ finding: f.indicatorId, run: knight()!.runId }">
                             {{ planFor(f.indicatorId) ? 'Abrir plano' : 'Criar plano de ação' }}
                           </a>

@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, input, signal } from '@angular/core';
 import { environment } from '../../environments/environment';
 import { AuthService } from '../services/auth.service';
 import { PostureHistoryService } from '../services/posture-history.service';
@@ -34,8 +34,11 @@ import {
   standalone: true,
   imports: [DatePipe, KnightFrozenReportComponent],
   template: `
-    <section class="page hist">
+    <!-- [AEGIS-NIST-JOURNEY-01] Embutido na aba "Fotografias publicadas" do Histórico de postura unificado: o título e
+         o recuo de página são da tela que o contém; publicação, comparação e downloads seguem aqui, intactos. -->
+    <section class="hist" [class.page]="!embedded()">
       <header class="page-head">
+        @if (!embedded()) {
         <div class="titles">
           <p class="page-eyebrow">Relatórios</p>
           <h1>Histórico de postura</h1>
@@ -45,6 +48,9 @@ import {
           </p>
           <p class="page-meta">Histórico auditável · registros de postura imutáveis</p>
         </div>
+        } @else {
+        <div class="titles"><p class="page-desc">Registros de postura publicados e imutáveis. Compare dois registros compatíveis; instrumentos distintos nunca se somam.</p></div>
+        }
         @if (canPublish()) {
           <div class="page-actions">
             <button type="button" class="btn primary" (click)="publish('AegisScoreNist')" [disabled]="busy()">
@@ -314,6 +320,7 @@ import {
   styles: [
     `
       /* Página, cabeçalho, painéis, botões, controle segmentado, tabelas e estados: sistema visual global. */
+      .hist:not(.page) { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; }
       .btn.real {
         color: var(--cyan);
         background: var(--tint-cyan);
@@ -506,8 +513,9 @@ import {
       .when {
         display: flex;
         flex-direction: column;
+        flex: 1 1 150px;
         gap: 2px;
-        min-width: 150px;
+        min-width: 0;
       }
       .when .date {
         font-size: var(--fs-sm);
@@ -516,6 +524,8 @@ import {
       .when .src {
         font-size: var(--fs-meta);
         color: var(--muted);
+        /* [AEGIS-NIST-JOURNEY-01] A versão do catálogo NIST é um identificador longo sem espaços: sem quebra, transbordava 375 px. */
+        overflow-wrap: anywhere;
       }
       .score,
       .cov {
@@ -722,6 +732,9 @@ import {
 export class PostureHistoryComponent implements OnInit {
   private readonly svc = inject(PostureHistoryService);
   private readonly auth = inject(AuthService);
+
+  /** [AEGIS-NIST-JOURNEY-01] Dentro da aba "Fotografias publicadas" do Histórico de postura unificado. */
+  readonly embedded = input(false);
 
   readonly snapshots = signal<PostureSnapshotSummary[]>([]);
   readonly loading = signal(true);

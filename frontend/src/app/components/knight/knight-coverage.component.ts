@@ -188,7 +188,7 @@ const VIEWS: { value: KnightReferenceView; label: string }[] = [
                           <em class="hint">
                             @if (documentsState() === 'error') { Os documentos não puderam ser carregados agora. }
                             @else if (documentsState() === 'ok' && documents().length === 0) { Nenhum documento enviado ainda. }
-                            Envie o documento em <a routerLink="/governance">Evidências e documentos</a>; o título e o SHA-256 ficam gravados no registro.
+                            Envie o documento em <a routerLink="/nist/gv/documentos">Biblioteca de documentos do AEGIS NIST</a>; o título e o SHA-256 ficam gravados no registro.
                           </em>
                         </label>
                       </div>
