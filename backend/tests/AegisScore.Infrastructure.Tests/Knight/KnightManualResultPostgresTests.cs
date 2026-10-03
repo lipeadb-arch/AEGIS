@@ -53,8 +53,10 @@ public sealed class KnightManualResultPostgresTests
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
         {
             await db.GetInfrastructure().GetRequiredService<IMigrator>().MigrateAsync(Baseline);
-            (await db.Database.GetPendingMigrationsAsync()).Should().Equal(new[] { NewMigration },
-                "da baseline publicada, a única migration pendente deste pacote é a do resultado manual");
+            // [AEGIS-NIST-JOURNEY-01] Pacotes posteriores se EMPILHAM depois desta migration: ela continua sendo a
+            // primeira pendente a partir da baseline publicada.
+            (await db.Database.GetPendingMigrationsAsync()).First().Should().Be(NewMigration,
+                "da baseline publicada, a primeira migration pendente é a do resultado manual");
             foreach (var t in new[] { tenantA, tenantB })
                 db.Tenants.Add(new Tenant { Id = t, Name = "Cliente Demo", Slug = $"t-{t:N}", Status = TenantStatus.Active });
             await db.SaveChangesAsync();

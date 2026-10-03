@@ -21,6 +21,33 @@ public record MaturityResult(
     IReadOnlyList<AggregateScore> Categories);
 
 /// <summary>
+/// [AEGIS-NIST-JOURNEY-01] Uma subcategoria no perfil atual × alvo: níveis ANULÁVEIS (ausência ≠ 0) e "não se aplica".
+/// </summary>
+public record SubcategoryProfileScore(string SubcategoryCode, int? CurrentScore, int? TargetScore, bool NotApplicable);
+
+/// <summary>
+/// [AEGIS-NIST-JOURNEY-01] Agregado do perfil: médias anuláveis e as contagens que dizem sobre o que cada número foi
+/// calculado (<paramref name="Subcategories"/> no catálogo do nível; com atual; com alvo; com lacuna determinável).
+/// </summary>
+public record ProfileScore(
+    SnapshotLevel Level,
+    string RefCode,
+    double? Current,
+    double? Target,
+    double? Gap,
+    int Subcategories,
+    int WithCurrent,
+    int WithTarget,
+    int WithGap,
+    int NotApplicable);
+
+/// <summary>[AEGIS-NIST-JOURNEY-01] Perfil atual × alvo completo (geral, funções e categorias).</summary>
+public record MaturityProfile(
+    ProfileScore Overall,
+    IReadOnlyList<ProfileScore> Functions,
+    IReadOnlyList<ProfileScore> Categories);
+
+/// <summary>
 /// Aggregates subcategory maturity into Category → Function → Overall scores.
 /// Mirrors the workbook "Pivots": each level is the average of the level below
 /// (category = mean of its subcategories, function = mean of its categories,
@@ -75,6 +102,71 @@ public class MaturityScoringService
         yield return Map(result.Overall);
         foreach (var f in result.Functions) yield return Map(f);
         foreach (var c in result.Categories) yield return Map(c);
+    }
+
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-01] Perfil atual × alvo com AUSÊNCIA explícita — a mesma hierarquia de <see cref="Aggregate"/>
+    /// (categoria = média das subcategorias, função = média das categorias, geral = média das funções), sem a armadilha
+    /// do cálculo antigo, em que uma categoria sem nenhuma nota virava 0 e puxava a função para baixo.
+    ///
+    /// Regras:
+    /// <list type="bullet">
+    /// <item>atual e alvo são médias SEPARADAS dos níveis existentes; sem nenhum nível, o valor é <c>null</c> (nunca 0);</item>
+    /// <item>a lacuna é a média das lacunas das subcategorias que têm OS DOIS níveis — nunca a diferença entre duas médias
+    /// calculadas sobre conjuntos diferentes; sem nenhum par, é <c>null</c> (indeterminada);</item>
+    /// <item>subcategorias "não se aplica" ficam fora de todas as médias e são contadas à parte;</item>
+    /// <item>as contagens dizem sobre quantas subcategorias cada número foi calculado.</item>
+    /// </list>
+    /// </summary>
+    public MaturityProfile AggregateProfile(IEnumerable<SubcategoryProfileScore> scores)
+    {
+        var subs = scores.ToList();
+
+        var categories = subs
+            .GroupBy(s => CategoryOf(s.SubcategoryCode))
+            .Select(g => ProfileFromSubcategories(SnapshotLevel.Category, g.Key, g.ToList()))
+            .OrderBy(c => c.RefCode, StringComparer.Ordinal)
+            .ToList();
+
+        var functions = categories
+            .GroupBy(c => FunctionOf(c.RefCode))
+            .Select(g => ProfileFromAggregates(SnapshotLevel.Function, g.Key, g.ToList()))
+            .OrderBy(f => f.RefCode, StringComparer.Ordinal)
+            .ToList();
+
+        var overall = ProfileFromAggregates(SnapshotLevel.Overall, "ALL", functions);
+        return new MaturityProfile(overall, functions, categories);
+    }
+
+    private static ProfileScore ProfileFromSubcategories(SnapshotLevel level, string code, IReadOnlyList<SubcategoryProfileScore> items)
+    {
+        var applicable = items.Where(i => !i.NotApplicable).ToList();
+        var current = applicable.Where(i => i.CurrentScore.HasValue).Select(i => i.CurrentScore!.Value).ToList();
+        var target = applicable.Where(i => i.TargetScore.HasValue).Select(i => i.TargetScore!.Value).ToList();
+        var gaps = applicable.Where(i => i.CurrentScore.HasValue && i.TargetScore.HasValue)
+            .Select(i => i.TargetScore!.Value - i.CurrentScore!.Value).ToList();
+
+        return new ProfileScore(level, code,
+            current.Count == 0 ? null : Round(current.Average()),
+            target.Count == 0 ? null : Round(target.Average()),
+            gaps.Count == 0 ? null : Round(gaps.Average()),
+            items.Count, current.Count, target.Count, gaps.Count, items.Count - applicable.Count);
+    }
+
+    private static ProfileScore ProfileFromAggregates(SnapshotLevel level, string code, IReadOnlyList<ProfileScore> items)
+    {
+        static double? MeanOf(IEnumerable<double?> xs)
+        {
+            var v = xs.Where(x => x.HasValue).Select(x => x!.Value).ToList();
+            return v.Count == 0 ? null : Round(v.Average());
+        }
+
+        return new ProfileScore(level, code,
+            MeanOf(items.Select(i => i.Current)),
+            MeanOf(items.Select(i => i.Target)),
+            MeanOf(items.Select(i => i.Gap)),
+            items.Sum(i => i.Subcategories), items.Sum(i => i.WithCurrent), items.Sum(i => i.WithTarget),
+            items.Sum(i => i.WithGap), items.Sum(i => i.NotApplicable));
     }
 
     private static AggregateScore FromSubcategories(SnapshotLevel level, string code, IEnumerable<SubcategoryScore> items)

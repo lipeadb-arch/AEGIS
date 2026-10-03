@@ -155,6 +155,21 @@ public class PostureSnapshotsController : ControllerBase
         return Ok(await _service.ListAsync(filter, ct));
     }
 
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-01] Evolução MENSAL por instrumento e fonte (KNIGHT e NIST em séries separadas), a partir das
+    /// fotografias publicadas: cada mês é a última publicação do mês; mês sem publicação fica sem ponto; fotografias de
+    /// fórmula, catálogo ou esquema diferentes não são ligadas (mesma regra da comparação).
+    /// </summary>
+    [HttpGet("monthly")]
+    public async Task<ActionResult<PostureMonthlyHistoryDto>> Monthly(
+        [FromQuery] int months, [FromServices] TimeProvider clock, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        var all = await _service.ListAsync(null, ct);
+        return Ok(PostureMonthlyHistory.Build(all, clock.GetUtcNow(), months <= 0 ? 12 : months));
+    }
+
     /// <summary>Detalhe de uma fotografia do tenant (401 sem tenant; 404 inexistente/de outro tenant).</summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<PostureSnapshotDetailDto>> GetById(Guid id, CancellationToken ct)

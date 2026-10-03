@@ -200,6 +200,8 @@ public static class DependencyInjection
         services.AddScoped<IAegisKnightAssessmentService, AegisKnightAssessmentService>();
         // [AEGIS-KNIGHT-CLOSURE-01] Resultado manual estruturado dos controles de referência sem avaliação automatizada.
         services.AddScoped<AegisScore.Application.Knight.Reference.IKnightManualResultService, KnightManualResultService>();
+        // [AEGIS-NIST-JOURNEY-01] Jornada persistida do AEGIS NIST (avaliação, escopo, subcategoria, evidência, perfil).
+        services.AddScoped<AegisScore.Application.Nist.INistAssessmentService, AegisScore.Infrastructure.Nist.NistAssessmentService>();
 
         // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidence Fabric de identidade: o ÚNICO ponto de aquisição real do Entra ID
         // (reusa o coletor do KNIGHT + transporte/credencial existentes) e de persistência do snapshot normalizado.

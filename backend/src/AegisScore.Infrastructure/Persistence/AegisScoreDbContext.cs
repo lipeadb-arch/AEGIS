@@ -826,6 +826,47 @@ public class AegisScoreDbContext : DbContext
         b.Entity<Assessment>().HasIndex(x => x.TenantId);
         b.Entity<AssessmentScope>().HasIndex(x => new { x.TenantId, x.AssessmentId });
         b.Entity<Evidence>().HasIndex(x => x.TenantId);
+
+        // [AEGIS-NIST-JOURNEY-01] Jornada NIST persistida: limites de texto no próprio esquema, uma avaliação por
+        // (escopo, subcategoria) como invariante de BANCO — duas criações simultâneas não geram duas "verdades" para a
+        // mesma subcategoria — e concorrência otimista pela versão (o WHERE do UPDATE pega a corrida que passou pela
+        // checagem explícita no serviço).
+        b.Entity<Assessment>(e =>
+        {
+            // Name (coluna preexistente) segue sem limite no esquema — o limite novo é aplicado no serviço, para não
+            // reescrever o tipo de uma coluna com dados já gravados.
+            e.Property(x => x.Description).HasMaxLength(2000);
+            e.Property(x => x.MethodologyVersion).HasMaxLength(60).HasDefaultValue(AssessmentMethodology.Version);
+        });
+        b.Entity<AssessmentScope>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(200).HasDefaultValue("");
+            e.Property(x => x.Description).HasMaxLength(2000);
+        });
+        b.Entity<SubcategoryEvaluation>(e =>
+        {
+            e.HasIndex(x => new { x.AssessmentScopeId, x.SubcategoryId }).IsUnique()
+                .HasDatabaseName("UX_Evaluations_ScopeSubcategory");
+            e.HasIndex(x => x.TenantId);
+            e.Property(x => x.Version).IsConcurrencyToken();
+            e.Property(x => x.OwnerName).HasMaxLength(200);
+            e.Property(x => x.ReviewedByName).HasMaxLength(200);
+            e.Property(x => x.Gaps).HasMaxLength(4000);
+            e.Property(x => x.RiskImpact).HasMaxLength(2000);
+            e.Property(x => x.ImprovementGuidance).HasMaxLength(4000);
+        });
+        b.Entity<Evidence>(e =>
+        {
+            e.HasIndex(x => new { x.TenantId, x.AssessmentScopeId, x.SubcategoryCode });
+            e.Property(x => x.Title).HasMaxLength(300);
+            e.Property(x => x.Notes).HasMaxLength(2000);
+            e.Property(x => x.OriginRef).HasMaxLength(200);
+            e.Property(x => x.OriginLabel).HasMaxLength(300);
+            e.Property(x => x.OriginScope).HasMaxLength(500);
+            e.Property(x => x.RecordedByName).HasMaxLength(200);
+            e.Property(x => x.RemovedByName).HasMaxLength(200);
+        });
+
         b.Entity<RiskAppetite>().HasIndex(x => x.TenantId);
         b.Entity<IcrScore>().HasIndex(x => x.TenantId);
         b.Entity<GovernanceDocument>().HasIndex(x => x.TenantId);
@@ -1520,6 +1561,9 @@ public class AegisScoreDbContext : DbContext
         b.Entity<Assessment>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<AssessmentScope>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<Evidence>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-NIST-JOURNEY-01] A avaliação de subcategoria filtra pelo PRÓPRIO TenantId (antes dependia só do escopo
+        // pai, e o endpoint de gravação nem conferia o escopo): leitura e escrita fail-closed como os demais filhos.
+        b.Entity<SubcategoryEvaluation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<ConnectorConfig>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<EvidenceSignal>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         // [AEGIS-MVP-POSTURE-02] Exposições de postura são ITenantOwned (fail-closed): um tenant jamais lê as de outro.

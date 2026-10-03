@@ -43,6 +43,27 @@ public enum EvidenceType { Document = 0, Link = 1, ApiSignal = 2, Screenshot = 3
 
 public enum EvidenceSource { SelfDeclared = 0, AiInferred = 1, ApiValidated = 2, Analyst = 3 }
 
+/// <summary>
+/// [AEGIS-NIST-JOURNEY-01] Origem de uma evidência vinculada a uma subcategoria avaliada. Cada origem tem o próprio
+/// critério de vínculo, validado no servidor: documento e execução precisam ser do tenant; o achado técnico do KNIGHT
+/// só entra numa subcategoria que o catálogo do KNIGHT mapeia explicitamente para ela; o inventário só sustenta
+/// resultados de gestão de ativos (ID.AM).
+/// </summary>
+public enum EvidenceOriginKind
+{
+    /// <summary>Registro do analista: link, entrevista, observação, captura.</summary>
+    Manual = 0,
+
+    /// <summary>Documento da biblioteca de governança do tenant.</summary>
+    GovernanceDocument = 1,
+
+    /// <summary>Resultado de um controle técnico do AEGIS KNIGHT (execução concluída).</summary>
+    KnightIndicator = 2,
+
+    /// <summary>Retrato do inventário de ativos no instante do vínculo.</summary>
+    AssetInventory = 3,
+}
+
 public enum EvaluatedBy { Analyst = 0, Ai = 1 }
 
 /// <summary>Estado de conformidade de um controle NIST para um tenant (núcleo do Aegis Score).</summary>
