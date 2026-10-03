@@ -412,12 +412,27 @@ public static class DefenderForOffice365Controls
             recommendation, criterion, evaluate, refs);
 
     /// <summary>Extensões de alto risco que o AEGIS exige no filtro de anexos (lista própria, fundamentada nos tipos executáveis e de macro).</summary>
+    /// <summary>
+    /// [AEGIS-KNIGHT-CLOSURE-01] Extensões de alto risco do critério 2.1.11 do CIS Microsoft 365, como o repositório de
+    /// referência fixado no catálogo as publica (l2extensions.json, commit 7cfa390, 184 extensões). Antes o AEGIS usava uma
+    /// lista própria de 53, e a avaliação era parcial; com a lista da referência, o critério avaliado é o da referência.
+    /// </summary>
     public static IReadOnlyList<string> HighRiskExtensions { get; } = new[]
     {
-        "ace", "ani", "apk", "app", "appx", "arj", "bat", "cab", "cmd", "com", "deb", "dex", "dll", "docm", "elf", "exe",
-        "hta", "img", "iso", "jar", "jnlp", "kext", "lha", "lib", "lnk", "lzh", "macho", "msc", "msi", "msix", "msp", "mst",
-        "pif", "ppa", "ppam", "reg", "rev", "scf", "scr", "sct", "sys", "uif", "vb", "vbe", "vbs", "vxd", "wsc", "wsf",
-        "wsh", "xll", "xlsm", "xz", "z",
+        "7z", "a3x", "ace", "ade", "adp", "ani", "app", "appinstaller", "applescript", "application", "appref-ms", "appx", "appxbundle", "arj",
+        "asd", "asx", "bas", "bat", "bgi", "bz2", "cab", "chm", "cmd", "com", "cpl", "crt", "cs", "csh",
+        "daa", "dbf", "dcr", "deb", "desktopthemepackfile", "dex", "diagcab", "dif", "dir", "dll", "dmg", "doc", "docm", "dot",
+        "dotm", "elf", "eml", "exe", "fxp", "gadget", "gz", "hlp", "hta", "htc", "htm", "html", "hwpx", "ics",
+        "img", "inf", "ins", "iqy", "iso", "isp", "jar", "jnlp", "js", "jse", "kext", "ksh", "lha", "lib",
+        "library-ms", "lnk", "lzh", "macho", "mam", "mda", "mdb", "mde", "mdt", "mdw", "mdz", "mht", "mhtml", "mof",
+        "msc", "msi", "msix", "msp", "msrcincident", "mst", "ocx", "odt", "ops", "oxps", "pcd", "pif", "plg", "pot",
+        "potm", "ppa", "ppam", "ppkg", "pps", "ppsm", "ppt", "pptm", "prf", "prg", "ps1", "ps11", "ps11xml", "ps1xml",
+        "ps2", "ps2xml", "psc1", "psc2", "pub", "py", "pyc", "pyo", "pyw", "pyz", "pyzw", "rar", "reg", "rev",
+        "rtf", "scf", "scpt", "scr", "sct", "searchConnector-ms", "service", "settingcontent-ms", "sh", "shb", "shs", "shtm", "shtml", "sldm",
+        "slk", "so", "spl", "stm", "svg", "swf", "sys", "tar", "theme", "themepack", "timer", "uif", "url", "uue",
+        "vb", "vbe", "vbs", "vhd", "vhdx", "vxd", "wbk", "website", "wim", "wiz", "ws", "wsc", "wsf", "wsh",
+        "xla", "xlam", "xlc", "xll", "xlm", "xls", "xlsb", "xlsm", "xlt", "xltm", "xlw", "xnk", "xps", "xsl",
+        "xz", "z",
     };
 
     private static string Reach(DefenderPolicyReach r) =>
@@ -626,20 +641,20 @@ public static class DefenderForOffice365Controls
 
         Control("AK-MDO-011", "Filtro de anexos não bloqueia tipos de arquivo de alto risco", KnightIndicatorCategory.ThreatProtection, SeverityLevel.High,
             "Incluir no filtro de anexos das políticas antimalware os tipos executáveis, de script, de macro e de imagem de disco de alto risco.",
-            $"Toda política antimalware efetiva com o filtro ligado e contendo as {HighRiskExtensions.Count} extensões de alto risco da lista do AEGIS.",
+            $"Toda política antimalware efetiva com o filtro ligado e contendo as {HighRiskExtensions.Count} extensões de alto risco da referência.",
             c => Effective<DefenderMalwarePolicy>(c, p => p.Reach.Effective, p => p.Identity, p => p.Name, p => p.Reach,
                 p =>
                 {
                     var have = p.FileTypes.Select(f => f.Trim().TrimStart('.').ToLowerInvariant()).ToHashSet();
-                    var missing = HighRiskExtensions.Where(e => !have.Contains(e)).ToList();
+                    var missing = HighRiskExtensions.Where(e => !have.Contains(e.ToLowerInvariant())).ToList();
                     return KnightItemCheck.Of(p.EnableFileFilter is null ? null : p.EnableFileFilter == true && missing.Count == 0,
                         $"filtro {YesNo(p.EnableFileFilter)}; {p.FileTypes.Count} tipo(s); faltam {missing.Count}: {List(missing, 8)}",
                         "filtro ligado com todos os tipos de alto risco");
                 },
                 "filtro de anexos com os tipos de alto risco",
                 "Nenhuma política antimalware alcança destinatários."),
-            Ref(M365Refs.M365 + "2.1.11", KnightReferenceMatch.Partial,
-                "O AEGIS exige a própria lista de extensões de alto risco; a lista da referência pode ter tipos a mais.")),
+            Ref(M365Refs.M365 + "2.1.11", note:
+                "Exige as 184 extensões da lista da referência (repositório fixado no catálogo); a própria referência declara a lista abrangente, mas não exaustiva.")),
 
         Control("AK-MDO-012", "Lista de IPs permitidos no filtro de conexão", KnightIndicatorCategory.ThreatProtection, SeverityLevel.High,
             "Remover os endereços da lista de IPs permitidos do filtro de conexão; tratar exceções por regras específicas.",

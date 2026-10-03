@@ -487,19 +487,26 @@ public static class AzureGovernanceControls
 
         Control(KnightService.DefenderForCloud, "AK-AZ-MDC-019", "Hubs IoT sem o Defender para IoT", Cloud, SeverityLevel.Low,
             "Habilitar o Microsoft Defender para IoT nos hubs IoT (solução de segurança de IoT associada).",
-            "Assinaturas com hub IoT têm ao menos uma solução de segurança de IoT (Defender para IoT).",
-            new AzureCheck(KnightCapability.AzureDefenderForCloud, "assinatura com hub IoT",
-                v => v.SubscriptionItems.Where(s => v.InSubscription("Microsoft.Devices/IotHubs", s.SubscriptionId).Any()),
-                (s, v) =>
+            "Cada hub IoT listado (properties.iotHubs) numa solução de segurança de IoT habilitada.",
+            // [AEGIS-KNIGHT-CLOSURE-01] Antes parcial (só a existência da solução na assinatura): cada solução é lida pelo id
+            // (versão estável 2019-08-01) e a lista de hubs que ela cobre decide hub a hub.
+            new AzureCheck(KnightCapability.AzureDefenderForCloud, "hub IoT", v => v.OfType("Microsoft.Devices/IotHubs"),
+                (hub, v) =>
                 {
-                    var hubs = v.InSubscription("Microsoft.Devices/IotHubs", s.SubscriptionId).Count();
-                    var sol = v.InSubscription("Microsoft.Security/iotSecuritySolutions", s.SubscriptionId).Count();
-                    return KnightItemCheck.Of(sol > 0, $"{hubs} hub(s) IoT, {sol} solução(ões) do Defender para IoT", "solução do Defender para IoT para os hubs");
+                    const string expected = "hub coberto por solução do Defender para IoT habilitada";
+                    var solutions = v.OfType("Microsoft.Security/iotSecuritySolutions").ToList();
+                    var covering = solutions.Where(s => s.Strings("properties.iotHubs").Contains(hub.Id, StringComparer.OrdinalIgnoreCase)).ToList();
+                    if (covering.Any(s => !string.Equals(s.Str("properties.status"), "Disabled", StringComparison.OrdinalIgnoreCase)))
+                        return KnightItemCheck.Of(true, "coberto por " + List(covering.Select(s => s.Name), 3), expected);
+                    if (covering.Count > 0) return KnightItemCheck.Of(false, "coberto só por solução desabilitada: " + List(covering.Select(s => s.Name), 3), expected);
+                    // Solução sem a lista de hubs (leitura pelo id falhou) não decide: o hub fica desconhecido.
+                    if (solutions.Any(s => !s.Has("properties.iotHubs")))
+                        return KnightItemCheck.Of(null, "há solução do Defender para IoT cuja lista de hubs não foi lida", expected);
+                    return KnightItemCheck.Of(false, solutions.Count == 0 ? "nenhuma solução do Defender para IoT" : "nenhuma solução cobre este hub", expected);
                 },
-                "{0} de {1} assinatura(s) com hub IoT não têm o Defender para IoT.",
-                "As {0} assinatura(s) com hub IoT têm o Defender para IoT."),
-            Ref(AzureRefs.Az + "8.2.1", KnightReferenceMatch.Partial,
-                "Avalia a existência da solução de segurança de IoT na assinatura dos hubs; não confere quais hubs cada solução cobre.")),
+                "{0} de {1} hub(s) IoT não estão cobertos pelo Defender para IoT.",
+                "Os {0} hub(s) IoT estão cobertos pelo Defender para IoT."),
+            Ref(AzureRefs.Az + "8.2.1")),
 
         // [AEGIS-KNIGHT-COVERAGE-04] Antes pesquisa pendente: a avaliação do Defender para Nuvem é lida por máquina
         // ({vm}/providers/Microsoft.Security/assessments/{chave}, versão estável 2021-06-01) — a mesma que a política interna

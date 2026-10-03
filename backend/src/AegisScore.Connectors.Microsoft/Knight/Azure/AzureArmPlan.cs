@@ -76,6 +76,9 @@ internal static class AzureArmPlan
 
     private const string Net = "2023-11-01";
     private const string Web = "2023-12-01";
+
+    /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Versão estável do App Service usada também nas referências ao Key Vault.</summary>
+    public const string AppServiceApi = Web;
     private const string Sql = "2023-08-01";
 
     private static readonly string[] Pe = { "properties.privateEndpointConnections" };
@@ -134,8 +137,9 @@ internal static class AzureArmPlan
             Array.Empty<ArmChild>(), GenericType: "Microsoft.Easm/workspaces"),
         new(KnightCapability.AzureDefenderForCloud, "hubs IoT", "", GenericResourcesApi, Array.Empty<string>(),
             Array.Empty<ArmChild>(), GenericType: "Microsoft.Devices/IotHubs"),
-        new(KnightCapability.AzureDefenderForCloud, "soluções do Defender para IoT", "", GenericResourcesApi, Array.Empty<string>(),
-            Array.Empty<ArmChild>(), GenericType: "Microsoft.Security/iotSecuritySolutions"),
+        // [AEGIS-KNIGHT-CLOSURE-01] Cada solução é lida pelo id (versão estável 2019-08-01) para saber QUAIS hubs ela cobre.
+        new(KnightCapability.AzureDefenderForCloud, "soluções do Defender para IoT", "", GenericResourcesApi, K("properties.iotHubs", "properties.status"),
+            Array.Empty<ArmChild>(), GenericType: "Microsoft.Security/iotSecuritySolutions", GetByIdApiVersion: "2019-08-01"),
 
         // ---- Azure Monitor -------------------------------------------------------------------------------
         new(KnightCapability.AzureMonitor, "alertas do log de atividades",
@@ -318,8 +322,46 @@ internal static class AzureArmPlan
             K("properties.parameters.customVirtualNetworkId", "properties.parameters.enableNoPublicIp",
               "properties.parameters.customPublicSubnetName", "properties.parameters.customPrivateSubnetName",
               "properties.encryption", "properties.parameters.encryption", "properties.publicNetworkAccess",
-              "properties.requiredNsgRules", "properties.privateEndpointConnections"), Array.Empty<ArmChild>()),
+              "properties.requiredNsgRules", "properties.privateEndpointConnections", "properties.workspaceUrl"), Array.Empty<ArmChild>()),
     };
+
+    // ---- [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão PREVIEW ----------------------------------------------------
+    // Conferido em Azure/azure-rest-api-specs: a listagem das configurações de diagnóstico (de recurso e de assinatura) só
+    // existe em versão preview da API do Azure Monitor, e os contatos de segurança do Defender para Nuvem só em versões
+    // preview do provedor Microsoft.Security. Cada uma é uma capacidade própria, lida depois das famílias estáveis; o
+    // contrato documentado é conferido item a item, e qualquer desvio vira limitação — nunca aprovação.
+
+    /// <summary>Versão preview do Azure Monitor com a listagem das configurações de diagnóstico.</summary>
+    public const string DiagnosticSettingsPreviewApi = "2021-05-01-preview";
+
+    /// <summary>Versão preview dos contatos de segurança do Defender para Nuvem (notificações por papel e por origem).</summary>
+    public const string SecurityContactsPreviewApi = "2023-12-01-preview";
+
+    /// <summary>Caminhos copiados de cada configuração de diagnóstico (categorias e destinos; nenhuma credencial).</summary>
+    public static readonly string[] DiagnosticKeep = K("name", "properties.logs", "properties.workspaceId", "properties.storageAccountId",
+        "properties.eventHubAuthorizationRuleId", "properties.marketplacePartnerId");
+
+    /// <summary>
+    /// Tipos de recurso cujas configurações de diagnóstico são lidas, e o sufixo do serviço que tem os logs (o armazenamento
+    /// emite logs pelo serviço de blob, não pela conta). Só tipos que a documentação do Azure Monitor lista com categorias de
+    /// log de recurso; o relatório diz que outros tipos não são examinados.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> ResourceLogTypes => AegisScore.Application.Knight.Catalog.AzureResourceLogs.Types;
+
+    /// <summary>Teto de leituras de diagnóstico por coleta (uma por recurso); acima dele a família fica incompleta.</summary>
+    public const int MaxResourceDiagnosticReads = 3000;
+
+    /// <summary>Referências ao Key Vault das configurações de um aplicativo (versão estável; só referência e estado).</summary>
+    public const string KeyVaultReferencesPath = "/config/configreferences/appsettings";
+
+    public static readonly string[] KeyVaultReferenceKeep = K("name", "properties.vaultName", "properties.status", "properties.source");
+
+    // ---- [AEGIS-KNIGHT-CLOSURE-01] API do PRÓPRIO workspace do Azure Databricks ------------------------------------
+    /// <summary>Identificador de recurso do Azure Databricks para o token da aplicação (documentação oficial).</summary>
+    public const string DatabricksScope = "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default";
+
+    /// <summary>Sufixo de host dos workspaces do Azure Databricks — o único aceito para a URL do workspace.</summary>
+    public const string DatabricksHostSuffix = ".azuredatabricks.net";
 
     /// <summary>
     /// Chave da avaliação "System updates should be installed on your machines (powered by Update Center)" do Defender para

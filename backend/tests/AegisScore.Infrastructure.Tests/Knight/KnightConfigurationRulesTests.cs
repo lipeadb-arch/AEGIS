@@ -38,7 +38,8 @@ public sealed class KnightConfigurationRulesTests
     {
         var evaluated = KnightIndicatorEvaluator.Evaluate(KnightFactSet.Empty, KnightSourceType.MicrosoftEntraId);
         evaluated.Where(e => e.Definition.Evaluate is not null)
-            .Should().HaveCount(EntraConfigurationControls.Definitions.Count)
+            .Should().HaveCount(EntraConfigurationControls.Definitions.Count
+                + EntraClosureControls.Definitions.Count(d => d.Sources.Contains(KnightSourceType.MicrosoftEntraId)))
             .And.OnlyContain(e => e.Status == KnightIndicatorStatus.NotEvaluated && e.NotEvaluatedReason != null);
     }
 

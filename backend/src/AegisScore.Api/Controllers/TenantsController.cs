@@ -181,6 +181,7 @@ public class TenantsController : ControllerBase
                     CertificatePassword = req.CertificatePassword,
                     RemoveCertificate = req.RemoveCertificate,
                     AzureSubscriptionIds = req.AzureSubscriptionIds,
+                    DatabricksWorkspaceApi = req.DatabricksWorkspaceApi,
                 },
                 ct);
         }
@@ -211,6 +212,6 @@ public class TenantsController : ControllerBase
         var s = await _onboarding.GetMicrosoftCredentialSummaryAsync(ct);
         return Ok(new MicrosoftCredentialSummaryDto(s.Configured, s.DirectoryTenantId, s.ClientId, s.HasSecret,
             s.Certificate is { } c ? new MicrosoftCertificateSummaryDto(c.Thumbprint, c.NotBefore, c.NotAfter, c.CurrentlyValid) : null,
-            s.CertificateProblem, s.AzureSubscriptionIds));
+            s.CertificateProblem, s.AzureSubscriptionIds, s.DatabricksWorkspaceApi));
     }
 }

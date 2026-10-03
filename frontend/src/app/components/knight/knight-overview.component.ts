@@ -268,14 +268,14 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
             <tbody>
               @for (l of limitations(); track l.capability) {
                 <tr>
-                  <td data-l="Capacidade">{{ l.label }}@if (l.detail) { <span class="meta">{{ l.detail }}</span> }</td>
+                  <td data-l="Capacidade">{{ l.label }}@if (l.detail) { <span class="meta">{{ l.detail }}</span> }@if (l.previewApi) { <span class="meta">Leitura em versão preview: {{ l.previewApi }}</span> }</td>
                   <td data-l="Causa">{{ l.cause }}</td>
                   <td data-l="Controles prejudicados">
                     @if (l.affectedControls.length) {
                       <app-knight-control-refs [refs]="refs(l.affectedControls)" (open)="open.emit($event)" />
                     } @else { nenhum controle ficou sem avaliação por isso }
                   </td>
-                  <td data-l="O que fazer">{{ l.guidance }}</td>
+                  <td data-l="O que fazer">{{ l.guidance }}@if (l.requirement) { <span class="meta">Requisito: {{ l.requirement }}</span> }</td>
                 </tr>
               }
             </tbody>
@@ -309,18 +309,19 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       @if (coverage(); as c) {
         <p class="muted small">
           Catálogo: o que o AEGIS consegue avaliar (propriedade do produto, {{ c.frameworks.join(' · ') }}). Sem método na API
-          oficial, leitura só em versão preview (não usada: o AEGIS usa só versões estáveis), verificação manual e acesso que o
-          conector não tem nunca contam como avaliados.
+          oficial, verificação manual e acesso que o conector não tem nunca contam como avaliados. Leituras em versão preview são
+          usadas e identificadas em cada controle: {{ c.total.previewBacked ?? 0 }} das referências avaliadas dependem delas.
+          Resultados de verificação manual ficam à parte, na aba Cobertura e verificação manual.
         </p>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Plataforma</th><th>Total</th><th>Integral</th><th>Parcial</th><th>Pendente</th><th>Só em preview</th><th>Sem método na API</th><th>Manual</th><th>Outro acesso</th></tr></thead>
+            <thead><tr><th>Plataforma</th><th>Total</th><th>Integral</th><th>Parcial</th><th>Depende de preview</th><th>Sem método na API</th><th>Manual</th><th>Outro acesso</th></tr></thead>
             <tbody>
               @for (g of c.byPlatform; track g.key) {
                 <tr>
                   <td>{{ g.label }}</td><td>{{ g.total }}</td>
                   <td>{{ g.implemented }} ({{ pct(g.fullPercent) }})</td><td>{{ g.partial }} ({{ pct(g.partialPercent) }})</td>
-                  <td>{{ g.pending }}</td><td>{{ g.previewOnly ?? 0 }}</td><td>{{ g.apiLimitation }}</td><td>{{ g.manualOnly }}</td><td>{{ g.requiresAccess }}</td>
+                  <td>{{ g.previewBacked ?? 0 }}</td><td>{{ g.apiLimitation }}</td><td>{{ g.manualOnly }}</td><td>{{ g.requiresAccess }}</td>
                 </tr>
               }
             </tbody>

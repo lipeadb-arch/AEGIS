@@ -50,7 +50,7 @@ public sealed class KnightM365ServicesFlowTests : IDisposable
         new object[] { KnightSourceType.MicrosoftIntune, "AK-INT-", 2 },
         new object[] { KnightSourceType.MicrosoftSharePoint, "AK-SPO-", 13 },
         new object[] { KnightSourceType.MicrosoftFabric, "AK-FAB-", 12 },
-        new object[] { KnightSourceType.MicrosoftDefenderForOffice365, "AK-MDO-", 18 },
+        new object[] { KnightSourceType.MicrosoftDefenderForOffice365, "AK-MDO-", 19 },
         new object[] { KnightSourceType.MicrosoftPurview, "AK-PUR-", 5 },
     };
 

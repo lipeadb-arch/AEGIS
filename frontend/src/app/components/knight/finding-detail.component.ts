@@ -371,6 +371,16 @@ import { KnightActionPlanComponent } from './action-plan.component';
             <div class="kv"><span class="k">Critério da regra</span><span class="v">{{ crit }}</span></div>
           }
           <div class="kv"><span class="k">Contribuição para a nota</span><span class="v">{{ contribution() }}</span></div>
+          <!-- [AEGIS-KNIGHT-CLOSURE-01] A leitura que sustenta o controle está em versão preview/beta da API do fornecedor. -->
+          @if (indicator().presentation?.previewApis?.length) {
+            <div class="kv tech">
+              <span class="k">Leitura em versão preview</span>
+              <span class="v">
+                {{ indicator().presentation!.previewApis!.join(' · ') }}. A Microsoft não garante o contrato da versão preview:
+                se a resposta mudar, o controle fica não avaliado — nunca aprovado.
+              </span>
+            </div>
+          }
           <div class="kv tech"><span class="k">Frameworks</span><span class="v">{{ frameworks().join(' · ') || '—' }}</span></div>
           <div class="kv tech">
             <span class="k">NIST / MITRE</span>

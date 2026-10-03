@@ -201,11 +201,20 @@ p.appendChild(el('p',{cls:'sub',text:'Este arquivo contém a avaliação complet
 D.notes.forEach(function(n){p.appendChild(el('p',{cls:'note',text:n}));});return p;}
 function coverage(){var c=D.referenceCoverage,p=el('div',{cls:'panel'},[el('h2',{text:'Cobertura do catálogo de referência'}),
 el('p',{cls:'sub',text:'Três medidas diferentes, que não se somam: (1) cobertura do catálogo — o que o AEGIS consegue avaliar, propriedade do produto; (2) cobertura desta avaliação — o que a coleta conseguiu avaliar neste ambiente ('+pct(D.kpis.coverage)+'); (3) aprovação — o que foi avaliado e está conforme ('+pct(D.kpis.approvalPercent)+').'}),
-el('p',{cls:'sub',text:c.frameworks.join(' · ')+' · catálogo '+c.catalogVersion+'. Integral = critério da referência; parcial = critério equivalente, não idêntico. Sem método na API oficial, leitura só em versão preview (não usada: o AEGIS usa só versões estáveis), verificação manual e acesso que o conector não tem nunca contam como avaliados.'})]);
+el('p',{cls:'sub',text:c.frameworks.join(' · ')+' · catálogo '+c.catalogVersion+'. Integral = critério da referência; parcial = critério equivalente, não idêntico. Sem método na API oficial, verificação manual e acesso que o conector não tem nunca contam como avaliados. Leituras em versão preview são usadas e identificadas em cada controle: '+String(c.total.previewBacked||0)+' das referências avaliadas dependem delas.'})]);
 var tb=el('tbody');[c.total].concat(c.byPlatform).forEach(function(r){tb.appendChild(el('tr',null,[el('td',{text:r.label}),el('td',{text:String(r.total)}),
-el('td',{text:r.implemented+' ('+pct(r.fullPercent)+')'}),el('td',{text:r.partial+' ('+pct(r.partialPercent)+')'}),el('td',{text:String(r.pending)}),el('td',{text:String(r.previewOnly||0)}),el('td',{text:String(r.apiLimitation)}),el('td',{text:String(r.manualOnly)}),el('td',{text:String(r.requiresAccess)})]));});
-p.appendChild(el('div',{cls:'tw'},[el('table',{cls:'cov'},[el('thead',null,[el('tr',null,['Recorte','Total','Integral','Parcial','Pendente','Só em preview','Sem método na API','Manual','Outro acesso'].map(function(x){return el('th',{text:x});}))]),tb])]));
-p.appendChild(el('p',{cls:'sub',text:'“Com alguma avaliação automatizada” (integral + parcial): '+pct(c.total.anyAutomatedPercent)+' — não é cobertura completa.'}));return p;}
+el('td',{text:r.implemented+' ('+pct(r.fullPercent)+')'}),el('td',{text:r.partial+' ('+pct(r.partialPercent)+')'}),el('td',{text:String(r.pending)}),el('td',{text:String(r.previewBacked||0)}),el('td',{text:String(r.apiLimitation)}),el('td',{text:String(r.manualOnly)}),el('td',{text:String(r.requiresAccess)})]));});
+p.appendChild(el('div',{cls:'tw'},[el('table',{cls:'cov'},[el('thead',null,[el('tr',null,['Recorte','Total','Integral','Parcial','Pendente','Depende de preview','Sem método na API','Manual','Outro acesso'].map(function(x){return el('th',{text:x});}))]),tb])]));
+p.appendChild(el('p',{cls:'sub',text:'“Com alguma avaliação automatizada” (integral + parcial): '+pct(c.total.anyAutomatedPercent)+' — não é cobertura completa.'}));
+var m=c.manualResults||[];p.appendChild(el('h3',{text:'Resultados de verificação manual (atestação)'}));
+if(!m.length){p.appendChild(el('p',{cls:'sub',text:'Nenhum resultado manual registrado até a publicação.'}));return p;}
+p.appendChild(el('p',{cls:'sub',text:'Registrados pela organização para controles sem avaliação automatizada. Não entram na nota, na cobertura desta avaliação nem na aprovação.'}));
+var mb=el('tbody');m.forEach(function(r){mb.appendChild(el('tr',null,[el('td',null,[el('strong',{text:r.title}),el('br'),el('span',{cls:'sub',text:r.referenceLabel+' · '+r.dispositionLabel})]),
+el('td',{text:r.resultLabel+(r.expired?' — VENCIDO':'')}),el('td',{text:r.justification}),el('td',{text:r.responsibleName}),
+el('td',{text:[r.evidenceReference,r.evidenceDocumentTitle?('Documento: '+r.evidenceDocumentTitle+(r.evidenceDocumentSha256?' (SHA-256 '+r.evidenceDocumentSha256.slice(0,12)+'…)':'')):null].filter(function(x){return x;}).join(' · ')||'—'}),
+el('td',{text:(r.recordedByName||'—')+' em '+r.recordedAt.slice(0,10)+(r.validUntil?' · válido até '+r.validUntil:'')})]));});
+p.appendChild(el('div',{cls:'tw'},[el('table',{cls:'cov'},[el('thead',null,[el('tr',null,['Controle de referência','Resultado','Justificativa','Responsável','Evidência','Registro'].map(function(x){return el('th',{text:x});}))]),mb])]));
+return p;}
 // ---------- Controles e findings ----------
 var listBox,recorte,inputs={};
 function controlsTab(){var box=el('div',{id:'tab-controls',role:'tabpanel','aria-labelledby':'t-controls'});box.hidden=true;
@@ -260,7 +269,7 @@ b.appendChild(sec('O que fazer',what));
 var fw=c.references.filter(function(r){return r.isFramework;}).map(function(r){return r.framework+(r.version?' '+r.version:'')+': '+r.code;});
 b.appendChild(sec('Evidência técnica e proveniência',[el('div',{cls:'kv'},[el('span',{cls:'k',text:'Plataforma · serviço · domínio'}),el('span',{text:(c.platform||c.provider)+' · '+c.service+' · '+c.domainLabel}),
 el('span',{cls:'k',text:'Coletado em'}),el('span',{text:dt(c.collectedAt)}),el('span',{cls:'k',text:'Critério da regra'}),el('span',{text:c.criterion||'não exibido (catálogo da avaliação difere do catálogo dos textos, ou fotografia v1)'}),
-el('span',{cls:'k',text:'Frameworks e benchmarks'}),el('span',{text:fw.length?fw.join(' · '):'—'}),el('span',{cls:'k',text:'Capacidades de coleta usadas'}),el('span',{text:(c.requiredCapabilityLabels||c.requiredCapabilities).join(', ')||'—'}),
+el('span',{cls:'k',text:'Frameworks e benchmarks'}),el('span',{text:fw.length?fw.join(' · '):'—'}),el('span',{cls:'k',text:'Capacidades de coleta usadas'}),el('span',{text:(c.requiredCapabilityLabels||c.requiredCapabilities).join(', ')||'—'}),(c.previewApis&&c.previewApis.length)?el('span',{cls:'k',text:'Leitura em versão preview'}):null,(c.previewApis&&c.previewApis.length)?el('span',{text:c.previewApis.join(' · ')+' — versão não suportada em produção pelo fornecedor; mudança de contrato deixa o controle não avaliado.'}):null,
 el('span',{cls:'k',text:'Contribuição para a nota'}),el('span',{text:c.factor===null?'Fora da nota (não avaliado, erro ou não aplicável) — reduz a cobertura, não a nota.':'Peso '+c.weight+' × fator '+String(c.factor).replace('.',',')+' = '+String(c.achieved).replace('.',',')+' de '+c.possible+' ponto(s).'})])]));
 var gt=(c.glossaryTerms||[]).filter(function(x){return GL[x];});
 if(gt.length)b.appendChild(sec('Termos técnicos deste controle',[termList(gt)]));

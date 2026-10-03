@@ -594,8 +594,7 @@ public static class TeamsConfigurationControls
                 + "por fora do Teams.",
                 "As pessoas podem relatar mensagens suspeitas pelo próprio Teams."),
             Ref(M365 + "8.6.1", KnightReferenceMatch.Partial,
-                "Equivalência parcial: avalia a metade do critério que vive no Teams (a política de mensagens). A outra metade — o destino "
-                + "das mensagens denunciadas, definido na política de envio do Microsoft Defender para Office 365 — depende da coleta desse "
-                + "serviço, prevista no bloco seguinte.")),
+                "Parte do critério que vive no Teams: a política de mensagens que permite a denúncia. A outra parte — o destino das mensagens "
+                + "denunciadas, na política de envio do Microsoft Defender para Office 365 — é avaliada no AK-MDO-019; os dois juntos cobrem a referência.")),
     };
 }

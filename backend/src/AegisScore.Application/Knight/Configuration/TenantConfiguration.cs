@@ -504,6 +504,22 @@ public static class KnightConfigurationKinds
             AzureSubscriptionInventory.SchemaVersion, typeof(AzureSubscriptionInventory)),
         new Spec(ConfigurationObjectKind.AzureResource, KnightCapability.AzureSubscriptions,
             AzureResource.SchemaVersion, typeof(AzureResource)),
+
+        // ---- [AEGIS-KNIGHT-CLOSURE-01] Versão beta do Microsoft Graph, sessão ociosa e mensagens denunciadas ---------
+        new Spec(ConfigurationObjectKind.PerUserMfaInventory, KnightCapability.PerUserMfaStates,
+            EntraPerUserMfaInventory.SchemaVersion, typeof(EntraPerUserMfaInventory)),
+        new Spec(ConfigurationObjectKind.AuthenticationMethodsPreview, KnightCapability.AuthenticationMethodsPolicyPreview,
+            EntraAuthenticationMethodsPreview.SchemaVersion, typeof(EntraAuthenticationMethodsPreview)),
+        new Spec(ConfigurationObjectKind.M365AppsAndServicesSettings, KnightCapability.M365AppsAndServicesSettings,
+            M365AppsAndServicesSettings.SchemaVersion, typeof(M365AppsAndServicesSettings)),
+        new Spec(ConfigurationObjectKind.M365FormsSettings, KnightCapability.M365FormsSettings,
+            M365FormsSettings.SchemaVersion, typeof(M365FormsSettings)),
+        new Spec(ConfigurationObjectKind.ActivityBasedTimeoutPolicy, KnightCapability.ActivityBasedTimeoutPolicy,
+            EntraActivityTimeoutPolicy.SchemaVersion, typeof(EntraActivityTimeoutPolicy)),
+        new Spec(ConfigurationObjectKind.DefenderReportSubmissionPolicy, KnightCapability.DefenderReportSubmissionPolicy,
+            DefenderReportSubmissionPolicy.SchemaVersion, typeof(DefenderReportSubmissionPolicy)),
+        new Spec(ConfigurationObjectKind.MfaCapabilityInventory, KnightCapability.MfaRegistration,
+            EntraMfaCapabilityInventory.SchemaVersion, typeof(EntraMfaCapabilityInventory)),
     };
 
     public static Spec? For(ConfigurationObjectKind kind) => All.FirstOrDefault(s => s.Kind == kind);

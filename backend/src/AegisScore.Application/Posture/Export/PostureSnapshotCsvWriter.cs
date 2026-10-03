@@ -115,6 +115,11 @@ public static class PostureSnapshotCsvWriter
            .Text("ObjectPrincipalName").Text("ObjectRoles").Text("ObjectDetail").Text("ObjectConfiguration")
            // [AEGIS-KNIGHT-COVERAGE-01] Acrescentadas AO FINAL — a ordem das colunas anteriores não muda.
            .Text("Platform").Text("Impact").Text("ProvenReach").Text("AffectedComposition")
+           // [AEGIS-KNIGHT-CLOSURE-01] Acrescentadas AO FINAL: versão preview da API usada pelo controle (vazia = só estável) e,
+           // nas linhas RowKind=ResultadoManual, o resultado de verificação manual congelado (à parte da avaliação).
+           .Text("PreviewApi").Text("Origin")
+           .Text("ManualReferenceKey").Text("ManualReferenceTitle").Text("ManualResult").Text("ManualJustification")
+           .Text("ManualResponsible").Text("ManualEvidence").Text("ManualRecordedBy").Timestamp("ManualRecordedAt").Text("ManualValidUntil")
            .EndRow();
 
         var state = EvaluationState(s.Score);
@@ -144,8 +149,37 @@ public static class PostureSnapshotCsvWriter
                    .Text(o?.RelationLabel).Text(o?.KindLabel).Text(o?.ExternalId).Text(o?.DisplayName)
                    .Text(o?.UserPrincipalName).Text(o is null ? null : string.Join(", ", o.Roles)).Text(o?.Detail).Text(o?.ObservedConfiguration)
                    .Text(c.Platform).Text(c.Impact).Text(c.ProvenReach).Text(c.AffectedComposition)
+                   .Text(c.PreviewApis is { Count: > 0 } pv ? string.Join(" | ", pv) : null).Text("Automatizado")
+                   .Text(null).Text(null).Text(null).Text(null).Text(null).Text(null).Text(null).Text(null).Text(null)
                    .EndRow();
             }
+        }
+
+        // [AEGIS-KNIGHT-CLOSURE-01] Resultados de verificação MANUAL: linhas próprias, sem IndicatorId — a reconciliação com
+        // o HTML (controles = IndicatorId distintos) continua valendo só para a avaliação automatizada.
+        foreach (var m in model.ReferenceCoverage?.ManualResults ?? Array.Empty<AegisScore.Application.Knight.Reference.KnightManualResultEntry>())
+        {
+            csv.Text(s.Id.ToString("D")).Text(s.ContentHash).Text(s.Type.ToString()).TimestampValue(s.CapturedAt)
+               .Text(s.SchemaVersion).Text(s.FormulaVersion).Text(s.CatalogVersion)
+               .Text(state).Number(s.Score).Number(s.Coverage)
+               .Text(null).Text(s.SourceLabel)
+               .Text(null).Text(null).Text(null).Text(null).Text(null)
+               .Number(0).Text(null)
+               .Text(null).Text(null).Text(null)
+               .Text(s.ClientName).Text(s.SourceRunId?.ToString("D")).Text(m.ResultLabel).Text(null)
+               .Text(null).Text(null).Text(null)
+               .Text(null).Text(null).Text(null).Text(null).Text(null)
+               .Text(null).Text(null).Text(null).Text(null).Text(null)
+               .Text("ResultadoManual")
+               .Text(null).Text(null).Text(null).Text(null)
+               .Text(null).Text(null).Text(null).Text(null)
+               .Text(null).Text(null).Text(null).Text(null)
+               .Text(null).Text("Manual")
+               .Text(m.ReferenceKey).Text(m.Title).Text(m.ResultLabel + (m.Expired ? " (vencido)" : "")).Text(m.Justification)
+               .Text(m.ResponsibleName)
+               .Text(string.Join(" · ", new[] { m.EvidenceReference, m.EvidenceDocumentTitle is null ? null : "Documento: " + m.EvidenceDocumentTitle + (m.EvidenceDocumentSha256 is null ? "" : " (SHA-256 " + m.EvidenceDocumentSha256 + ")") }.Where(x => !string.IsNullOrWhiteSpace(x))))
+               .Text(m.RecordedByName).Text(m.RecordedAt).Text(m.ValidUntil)
+               .EndRow();
         }
     }
 

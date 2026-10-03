@@ -399,7 +399,8 @@ test('as cinco permissões já consumidas continuam na matriz', () => {
   ]) {
     assert(consumed.includes(p), `permissão consumida ausente da matriz: ${p}`);
   }
-  eq(consumed.length, 5, 'exatamente cinco permissões já consumidas');
+  // [AEGIS-KNIGHT-CLOSURE-01] Policy.Read.All aparece em duas capacidades (estável e versão beta): conta a permissão, não a linha.
+  eq(new Set(consumed).size, 5, 'exatamente cinco permissões já consumidas');
 });
 
 test('UserAuthenticationMethod.Read.All está na matriz como NÃO necessária e fora das exigidas', () => {

@@ -336,6 +336,7 @@ public sealed class DefenderForOffice365KnightCollector : ProtectionCollectorBas
         KnightCapability.DefenderTeamsProtection,
         KnightCapability.DefenderPriorityAccounts,
         KnightCapability.DefenderPresetPolicies,
+        KnightCapability.DefenderReportSubmissionPolicy,
     };
 
     public override IReadOnlyList<KnightCapability> Capabilities => AdapterCapabilities;
@@ -462,6 +463,18 @@ public sealed class DefenderForOffice365KnightCollector : ProtectionCollectorBas
                     yield return KnightTenantConfiguration.Document($"{kind}:{Id(e)}", Str(e, "name"), new DefenderPresetRule(kind, Id(e),
                         Str(e, "name"), Str(e, "state"), Int(e, "priority"), Strings(e, "sentTo"), Strings(e, "sentToMemberOf"),
                         Strings(e, "recipientDomainIs")));
+                }
+                break;
+            case KnightCapability.DefenderReportSubmissionPolicy:
+                foreach (var e in Each(items))
+                {
+                    var identity = Str(e, "identity") ?? "DefaultReportSubmissionPolicy";
+                    yield return KnightTenantConfiguration.Document(identity, "Política de envio de mensagens denunciadas",
+                        new DefenderReportSubmissionPolicy(identity,
+                            Bool(e, "reportJunkToCustomizedAddress"), Bool(e, "reportNotJunkToCustomizedAddress"), Bool(e, "reportPhishToCustomizedAddress"),
+                            (int)(Int(e, "reportJunkAddresses") ?? 0), (int)(Int(e, "reportNotJunkAddresses") ?? 0), (int)(Int(e, "reportPhishAddresses") ?? 0),
+                            Bool(e, "reportChatMessageEnabled"), Bool(e, "reportChatMessageToCustomizedAddressEnabled"),
+                            (int)(Int(e, "reportChatMessageAddresses") ?? 0)));
                 }
                 break;
         }

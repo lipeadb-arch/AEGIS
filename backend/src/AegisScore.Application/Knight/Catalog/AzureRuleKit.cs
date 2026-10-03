@@ -100,6 +100,19 @@ public sealed class AzureView
     /// <summary>Estado de uma leitura de escopo do locatário (marcador gravado pelo coletor), ou null se não houve.</summary>
     public string? TenantRead(string marker) => ById("aegis:tenant/" + marker)?.Str("status");
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-CLOSURE-01] Motivo de a família NÃO ter sido lida nesta assinatura (nulo = lida). Um controle por
+    /// assinatura usa isto para tratar a assinatura não lida como desconhecida: a ausência de dado de uma leitura recusada,
+    /// indisponível ou fora do contrato nunca vira "não configurado".
+    /// </summary>
+    public string? Unread(string subscriptionId, KnightCapability family)
+    {
+        var s = Scope.FirstOrDefault(x => string.Equals(x.SubscriptionId, subscriptionId, StringComparison.OrdinalIgnoreCase));
+        var r = s?.ReadOf(family);
+        if (r is { Outcome: KnightCapabilityOutcome.Collected }) return null;
+        return $"leitura de {AzureLabels.Family(family)} não concluída nesta assinatura ({r?.Detail ?? r?.Outcome.ToString() ?? "não tentada"})";
+    }
+
     /// <summary>A família foi lida em todas as assinaturas do escopo, sem teto? Senão, o porquê.</summary>
     public (bool Complete, string? Reason) Completeness(KnightCapability family)
     {
@@ -144,6 +157,12 @@ public static class AzureLabels
         KnightCapability.AzureDatabases => "bancos de dados",
         KnightCapability.AzureDatabricks => "Databricks",
         KnightCapability.AzureTenantDiagnostics => "diagnóstico do Microsoft Entra ID",
+        // [AEGIS-KNIGHT-CLOSURE-01]
+        KnightCapability.AzureResourceDiagnostics => "configurações de diagnóstico dos recursos (versão preview)",
+        KnightCapability.AzureActivityLogExport => "exportação do log de atividades (versão preview)",
+        KnightCapability.AzureSecurityContacts => "contatos de segurança do Defender para Nuvem (versão preview)",
+        KnightCapability.AzureAppSettingsKeyVaultReferences => "referências ao Key Vault do App Service",
+        KnightCapability.AzureDatabricksWorkspaceApi => "API dos workspaces do Databricks",
         _ => family.ToString(),
     };
 
@@ -190,6 +209,11 @@ public static class AzureLabels
         ["Microsoft.Batch/batchAccounts/pools"] = "pool do Batch",
         ["Microsoft.Network/privateEndpoints"] = "endpoint privado",
         ["Microsoft.Web/serverfarms"] = "plano do App Service",
+        // [AEGIS-KNIGHT-CLOSURE-01]
+        ["Microsoft.Insights/diagnosticSettings"] = "configuração de diagnóstico",
+        ["Microsoft.Security/securityContacts"] = "contato de segurança do Defender para Nuvem",
+        ["Microsoft.Devices/IotHubs"] = "hub IoT",
+        ["Microsoft.Security/iotSecuritySolutions"] = "solução do Defender para IoT",
     };
 
     public static string Type(string type) => Types.TryGetValue(type, out var l) ? l : type;
@@ -262,8 +286,19 @@ public static class AzureRuleKit
         }
 
         var items = check.Population(v).ToList();
+        // [AEGIS-KNIGHT-CLOSURE-01] Controle por assinatura: a assinatura em que a leitura da família (ou de uma exigida) não
+        // foi concluída fica DESCONHECIDA — antes, a falta de dado era lida como "nada configurado" e reprovava.
+        var families = new[] { check.Family }.Concat(check.AlsoRequires ?? Array.Empty<KnightCapability>()).ToList();
+        KnightItemCheck Check(AzureResource r)
+        {
+            if (r.Is(AzureView.SubscriptionType))
+                foreach (var f in families)
+                    if (v.Unread(r.SubscriptionId, f) is { } why)
+                        return KnightItemCheck.Of(null, KnightRuleKit.Trim(why, 600), "leitura concluída nesta assinatura");
+            return check.Check(r, v);
+        }
         return KnightRuleKit.Population(items,
-            r => check.Check(r, v),
+            Check,
             Describe,
             (n, t) => string.Format(CultureInfo.InvariantCulture, check.ExposedText, n, t),
             t => string.Format(CultureInfo.InvariantCulture, check.PassedText, t),

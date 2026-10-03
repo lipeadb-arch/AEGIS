@@ -259,6 +259,9 @@ public sealed class M365ServicesScenario
                 $$"""[{"enablePriorityAccountProtection":{{b}},"listComplete":true,"accounts":[{"externalDirectoryObjectId":"00000000-0000-0000-0000-0000000000c1","userPrincipalName":"diretoria@{{OwnDomain}}","displayName":"Diretoria (sintético)"}]}]"""),
             Read(KnightCapability.DefenderPresetPolicies, "Get-EOPProtectionPolicyRule; Get-ATPProtectionPolicyRule",
                 $$"""[{"kind":"EOP","identity":"Strict Preset Security Policy","name":"Strict Preset Security Policy","state":"Enabled","priority":0,"sentTo":[{{(Ok ? $"\"diretoria@{OwnDomain}\"" : "")}}],"sentToMemberOf":[],"recipientDomainIs":[]}, {"kind":"ATP","identity":"Strict Preset Security Policy","name":"Strict Preset Security Policy","state":"Enabled","priority":0,"sentTo":[{{(Ok ? $"\"diretoria@{OwnDomain}\"" : "")}}],"sentToMemberOf":[],"recipientDomainIs":[]}]"""),
+            // [AEGIS-KNIGHT-CLOSURE-01] Destino das mensagens denunciadas: o adaptador só devolve quantos endereços existem.
+            Read(KnightCapability.DefenderReportSubmissionPolicy, "Get-ReportSubmissionPolicy",
+                $$"""[{"identity":"DefaultReportSubmissionPolicy","reportJunkToCustomizedAddress":{{b}},"reportNotJunkToCustomizedAddress":{{b}},"reportPhishToCustomizedAddress":{{b}},"reportJunkAddresses":{{(Ok ? 1 : 0)}},"reportNotJunkAddresses":{{(Ok ? 1 : 0)}},"reportPhishAddresses":{{(Ok ? 1 : 0)}},"reportChatMessageEnabled":{{(Ok ? "false" : "true")}},"reportChatMessageToCustomizedAddressEnabled":{{b}},"reportChatMessageAddresses":{{(Ok ? 1 : 0)}} }]"""),
         };
     }
 

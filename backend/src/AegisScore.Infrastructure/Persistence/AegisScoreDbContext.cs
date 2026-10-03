@@ -162,6 +162,8 @@ public class AegisScoreDbContext : DbContext
     public DbSet<ActionPlanEvent> ActionPlanEvents => Set<ActionPlanEvent>();
     /// <summary>[AEGIS-MVP-PRODUCT-03] Validações registradas de um plano de ação.</summary>
     public DbSet<ActionPlanValidation> ActionPlanValidations => Set<ActionPlanValidation>();
+    /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Resultados manuais estruturados dos controles de referência.</summary>
+    public DbSet<KnightManualAssessment> KnightManualAssessments => Set<KnightManualAssessment>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -936,6 +938,24 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.ActionPlanId, x.DecidedAt });
         });
 
+        // [AEGIS-KNIGHT-CLOSURE-01] Resultado manual: registro imutável por referência; o vigente é o mais recente. O
+        // documento de evidência é vínculo SEM chave estrangeira — nome e hash ficam congelados no registro, e a exclusão
+        // do documento na Central de Governança não reescreve a história do resultado.
+        b.Entity<KnightManualAssessment>(e =>
+        {
+            e.Property(x => x.ReferenceKey).HasMaxLength(120).IsRequired();
+            e.Property(x => x.Result).HasConversion<int>();
+            e.Property(x => x.Justification).HasMaxLength(2000).IsRequired();
+            e.Property(x => x.ResponsibleName).HasMaxLength(200).IsRequired();
+            e.Property(x => x.EvidenceReference).HasMaxLength(500);
+            e.Property(x => x.EvidenceDocumentTitle).HasMaxLength(300);
+            e.Property(x => x.EvidenceDocumentSha256).HasMaxLength(128);
+            e.Property(x => x.ReferenceDisposition).HasMaxLength(40).IsRequired();
+            e.Property(x => x.CatalogVersion).HasMaxLength(40).IsRequired();
+            e.Property(x => x.RecordedByName).HasMaxLength(200).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.ReferenceKey, x.RecordedAt });
+        });
+
         // Aegis Score — um ÚNICO estado por tenant × subcategoria (o índice único garante que o
         // "Group By de soma" nunca conte linhas duplicadas). FK para o catálogo global SEM coleção
         // inversa (o catálogo imutável não referencia dados de tenant); Restrict impede que um
@@ -1524,6 +1544,7 @@ public class AegisScoreDbContext : DbContext
         // demais filhos — não dependem apenas da rota pelo plano.
         b.Entity<ActionPlanEvent>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<ActionPlanValidation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<KnightManualAssessment>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<GovernanceDocument>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<DocumentControlMapping>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<SubcategoryCoverage>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

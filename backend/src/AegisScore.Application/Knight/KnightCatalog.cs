@@ -118,7 +118,11 @@ public static class KnightCatalog
     // classificada por engano como ausente) e os controles do Azure que fecharam pesquisas pendentes (zonas DNS privadas
     // do App Service e do Batch, camada do plano, atualizações do sistema pelo Defender para Nuvem, credenciais do Data
     // Factory). Fotografias v8 continuam com o catálogo v8 congelado e o comparador recusa v8 × v9.
-    public const string Version = "ak-knight-v9";
+    // v10 [AEGIS-KNIGHT-CLOSURE-01]: acrescenta os controles sobre leituras em versão PREVIEW (Microsoft Graph beta e Azure
+    // Resource Manager *-preview), o tempo limite de sessão ociosa, o destino das mensagens denunciadas, as referências ao Key
+    // Vault do App Service e a API dos workspaces do Databricks; o controle do Defender para IoT passa a conferir hub a hub.
+    // Fotografias v9 continuam com o catálogo v9 congelado e o comparador recusa v9 × v10.
+    public const string Version = "ak-knight-v10";
 
     // ---- Limiares centralizados (única fonte da verdade dos números da regra) ----
 
@@ -233,6 +237,9 @@ public static class KnightCatalog
             .Concat(AzureGovernanceControls.Definitions)
             .Concat(AzureInfrastructureControls.Definitions)
             .Concat(AzureWorkloadControls.Definitions)
+            // [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão preview, acesso adicional e complementos.
+            .Concat(AzureClosureControls.Definitions)
+            .Concat(EntraClosureControls.Definitions)
             .ToList();
 
     private const string M365Ref = "CIS-M365-7.0.0:";

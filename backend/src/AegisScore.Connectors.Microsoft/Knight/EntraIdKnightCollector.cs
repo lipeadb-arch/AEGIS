@@ -166,7 +166,7 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
 
         await RunCapabilityAsync(KnightCapability.MfaRegistration,
             new[] { KnightSignalKey.MfaRegistrationCoveragePercent, KnightSignalKey.PrivilegedAccountsWithoutMfa },
-            () => CollectMfaRegistrationAsync(token, cfg, privileged, obs, affected, authPostureBox, ct), obs, caps);
+            () => CollectMfaRegistrationAsync(token, cfg, privileged, obs, affected, authPostureBox, tenantDocs, ct), obs, caps);
 
         await RunCapabilityAsync(KnightCapability.GuestAccounts,
             new[] { KnightSignalKey.InactiveGuestAccounts },
@@ -194,6 +194,9 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
 
         // ---- [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário: capacidades INDEPENDENTES, mesmo token ------
         await CollectTenantConfigurationAsync(token, cfg, privileged, obs, caps, tenantDocs, ct);
+
+        // ---- [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão beta e sessão ociosa: capacidades próprias, mesmo token ----
+        await CollectClosureAsync(token, cfg, obs, caps, tenantDocs, ct);
 
         // ---- [AEGIS-MVP-MICROSOFT-COVERAGE-03] Risco de identidade: DUAS capacidades INDEPENDENTES -------
         // Rodam na MESMA operação lógica, com o MESMO token já adquirido acima — nunca uma segunda aquisição,
@@ -388,9 +391,15 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
     /// </summary>
     private async Task CollectMfaRegistrationAsync(
         string token, KnightEntraIdConfiguration cfg, PrivilegedAccumulator acc, List<KnightObservation> obs,
-        List<KnightAffectedObjectEvidence> affected, AuthenticationPostureBox authBox, CancellationToken ct)
+        List<KnightAffectedObjectEvidence> affected, AuthenticationPostureBox authBox, List<KnightConfigurationDocument> docs,
+        CancellationToken ct)
     {
         var total = 0;
+        // [AEGIS-KNIGHT-CLOSURE-01] Capacidade de MFA dos MEMBROS (critério 5.2.3.4), do MESMO relatório.
+        var members = 0;
+        var membersCapable = 0;
+        var unknownType = 0;
+        var membersWithout = new List<EntraMemberWithoutMfa>();
         var mfaCapable = 0;
         var mfaRegistered = 0;
         var passwordlessCapable = 0;
@@ -401,7 +410,7 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         var methods = new IdentityRiskAccumulator();
 
         var url = "reports/authenticationMethods/userRegistrationDetails"
-            + "?$select=id,isMfaCapable,isMfaRegistered,isPasswordlessCapable,methodsRegistered";
+            + "?$select=id,isMfaCapable,isMfaRegistered,isPasswordlessCapable,methodsRegistered,userType,userPrincipalName,userDisplayName";
 
         // Uma falha de página intermediária aqui é propagada (a capacidade inteira vira Missing/NotEvaluated,
         // como sempre foi) — a postura agregada só é publicada quando a leitura termina de fato.
@@ -420,6 +429,16 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
             if (capable is null) { malformed = true; capabilityUnknown++; continue; }
             if (capable.Value) mfaCapable++;
             else if (!string.IsNullOrEmpty(id)) noMfaIds.Add(id);
+
+            var type = Str(u, "userType");
+            if (type is null) unknownType++;
+            else if (string.Equals(type, "member", StringComparison.OrdinalIgnoreCase))
+            {
+                members++;
+                if (capable.Value) membersCapable++;
+                else if (membersWithout.Count < EntraMfaCapabilityInventory.MaxListed && !string.IsNullOrEmpty(id))
+                    membersWithout.Add(new EntraMemberWithoutMfa(id!, Str(u, "userPrincipalName"), Str(u, "userDisplayName")));
+            }
         }
 
         // Postura AGREGADA de métodos: publicada mesmo quando os SINAIS ficam Missing (ex.: registro malformado),
@@ -453,6 +472,8 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
 
         var pct = Math.Round(100.0 * mfaCapable / total, 1);
         obs.Add(KnightObservation.OfRatio(KnightSignalKey.MfaRegistrationCoveragePercent, pct));
+        docs.Add(KnightTenantConfiguration.Document(EntraMfaCapabilityInventory.ExternalId, "Capacidade de MFA dos membros",
+            new EntraMfaCapabilityInventory(total, members, membersCapable, unknownType, membersWithout)));
 
         if (!acc.Collected)
         {

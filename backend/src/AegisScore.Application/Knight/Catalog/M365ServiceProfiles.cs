@@ -388,10 +388,10 @@ public static class M365ServiceProfiles
             Docs(DocDmarc), Caps(KnightCapability.DefenderAcceptedDomains, KnightCapability.DefenderDnsRecords)),
 
         new KnightControlProfile("AK-MDO-011", KnightSecurityDomain.Collaboration,
-            "Há política antimalware efetiva cujo filtro de anexos não inclui todos os tipos de arquivo de alto risco da lista do AEGIS.",
+            "Há política antimalware efetiva cujo filtro de anexos não inclui todos os tipos de arquivo de alto risco da lista da referência.",
             "A lista padrão do filtro não cobre formatos usados hoje para entregar malware, como imagens de disco, atalhos e instaladores; um tipo fora da lista passa sem ser barrado pela extensão.",
-            "Toda política antimalware efetiva com o filtro ligado e contendo cada extensão de alto risco da lista do AEGIS.",
-            "Equivalência PARCIAL: o AEGIS exige a própria lista de extensões executáveis, de script, de macro e de imagem de disco; a lista da referência pode conter tipos a mais. " + MdoReach,
+            "Toda política antimalware efetiva com o filtro ligado e contendo cada uma das 184 extensões de alto risco da lista da referência.",
+            "Usa a lista da referência, que ela mesma declara abrangente, mas não exaustiva: um tipo fora dela não é avaliado. " + MdoReach,
             Docs(DocAntiMalware), Caps(KnightCapability.DefenderMalwareFilter)),
 
         new KnightControlProfile("AK-MDO-012", KnightSecurityDomain.Collaboration,

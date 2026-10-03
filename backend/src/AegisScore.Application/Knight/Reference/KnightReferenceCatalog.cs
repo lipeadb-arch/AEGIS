@@ -84,8 +84,9 @@ public enum KnightReferenceDisposition
 
     /// <summary>
     /// [AEGIS-KNIGHT-COVERAGE-04] SÓ EM PREVIEW: a leitura existe, mas apenas em versão beta/preview da API, que o fornecedor
-    /// não suporta em produção. O AEGIS usa só versões estáveis; a nota diz qual versão preview tem o método. Não é
-    /// "sem API" — é uma decisão de estabilidade que pode ser revista.
+    /// não suporta em produção, e ainda não foi implementada; a nota diz qual versão preview tem o método. Não é "sem API".
+    /// [AEGIS-KNIGHT-CLOSURE-01] As leituras preview implementadas contam como avaliadas e são identificadas por controle
+    /// (<see cref="KnightReferenceStatus.PreviewApis"/>); resposta fora do contrato vira limitação, nunca aprovação.
     /// </summary>
     PreviewOnly = 6,
 }
@@ -95,7 +96,10 @@ public sealed record KnightReferenceStatus(
     KnightReferenceControl Control,
     KnightReferenceDisposition Disposition,
     IReadOnlyList<string> IndicatorIds,
-    string? Note);
+    string? Note,
+    // [AEGIS-KNIGHT-CLOSURE-01] Versões preview (beta) das APIs que os controles que a avaliam consomem — vazia quando só
+    // versões estáveis sustentam a avaliação.
+    IReadOnlyList<string>? PreviewApis = null);
 
 /// <summary>
 /// Contagem de um recorte (total, serviço ou plataforma). A cobertura INTEGRAL conta só o que é avaliado com o
@@ -112,7 +116,9 @@ public sealed record KnightReferenceCoverageGroup(
     int ManualOnly,
     int RequiresAccess,
     int ApiLimitation,
-    int PreviewOnly = 0)
+    int PreviewOnly = 0,
+    // [AEGIS-KNIGHT-CLOSURE-01] Das avaliadas (integral + parcial), quantas dependem de leitura em versão preview.
+    int PreviewBacked = 0)
 {
     /// <summary>Percentual avaliado INTEGRALMENTE (critério da referência).</summary>
     public double FullPercent => Percent(Implemented);
@@ -195,12 +201,19 @@ public static class KnightReferenceCatalog
                 var ids = byIndicator.Select(x => x.IndicatorId).Distinct(StringComparer.Ordinal)
                     .OrderBy(x => x, StringComparer.Ordinal).ToList();
                 var exact = byIndicator.Any(x => x.Link.Match == KnightReferenceMatch.Exact);
+                // [AEGIS-KNIGHT-CLOSURE-01] Critério em dois serviços: integral quando TODOS os controles da composição estão
+                // ativos e citam a referência; faltando um, continua parcial.
+                var composite = !exact && KnightReferenceDispositions.CompositeOf(c.Key) is { } parts
+                                && parts.All(p => ids.Contains(p, StringComparer.Ordinal));
                 var note = exact
                     ? byIndicator.Select(x => x.Link.Note).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))
                     : string.Join(" ", byIndicator.Select(x => x.Link.Note).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct());
+                if (composite)
+                    note = $"Avaliado integralmente pela composição de {string.Join(" e ", ids)}: cada um avalia uma parte do critério. " + note;
+                var previews = ids.SelectMany(KnightCollectorCapabilities.PreviewApisOf).Distinct(StringComparer.Ordinal).ToList();
                 statuses.Add(new KnightReferenceStatus(c,
-                    exact ? KnightReferenceDisposition.Implemented : KnightReferenceDisposition.Partial,
-                    ids, string.IsNullOrWhiteSpace(note) ? null : note));
+                    exact || composite ? KnightReferenceDisposition.Implemented : KnightReferenceDisposition.Partial,
+                    ids, string.IsNullOrWhiteSpace(note) ? null : note.Trim(), previews));
                 continue;
             }
 
@@ -226,7 +239,9 @@ public static class KnightReferenceCatalog
                 N(KnightReferenceDisposition.Implemented), N(KnightReferenceDisposition.Partial),
                 N(KnightReferenceDisposition.Pending), N(KnightReferenceDisposition.ManualOnly),
                 N(KnightReferenceDisposition.RequiresAccess), N(KnightReferenceDisposition.ApiLimitation),
-                N(KnightReferenceDisposition.PreviewOnly));
+                N(KnightReferenceDisposition.PreviewOnly),
+                list.Count(s => s.Disposition is KnightReferenceDisposition.Implemented or KnightReferenceDisposition.Partial
+                                && s.PreviewApis is { Count: > 0 }));
         }
 
         var byService = statuses

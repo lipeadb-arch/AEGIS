@@ -178,7 +178,9 @@ public record ConfigureMicrosoftHubRequest(
     string? CertificatePfxBase64 = null,
     string? CertificatePassword = null,
     bool RemoveCertificate = false,
-    IReadOnlyList<string>? AzureSubscriptionIds = null);
+    IReadOnlyList<string>? AzureSubscriptionIds = null,
+    // [AEGIS-KNIGHT-CLOSURE-01] Leitura da API dos workspaces do Databricks (null = mantém a decisão guardada).
+    bool? DatabricksWorkspaceApi = null);
 
 /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Resumo não sensível da credencial do AEGIS KNIGHT.</summary>
 public record MicrosoftCredentialSummaryDto(
@@ -188,7 +190,8 @@ public record MicrosoftCredentialSummaryDto(
     bool HasSecret,
     MicrosoftCertificateSummaryDto? Certificate,
     string? CertificateProblem,
-    IReadOnlyList<string> AzureSubscriptionIds);
+    IReadOnlyList<string> AzureSubscriptionIds,
+    bool DatabricksWorkspaceApi = false);
 
 public record MicrosoftCertificateSummaryDto(string Thumbprint, DateTimeOffset NotBefore, DateTimeOffset NotAfter, bool CurrentlyValid);
 
@@ -778,18 +781,38 @@ public record KnightControlPresentationDto(
     /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Plataforma (Microsoft Entra ID, Microsoft 365, Microsoft Azure, Google Workspace).</summary>
     string? Platform = null,
     /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Serviço tipado (chave estável para filtro).</summary>
-    string? ServiceKey = null);
+    string? ServiceKey = null,
+    /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Versões preview (beta) das APIs que o controle consome.</summary>
+    IReadOnlyList<string>? PreviewApis = null);
 
 /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Uma linha de cobertura do catálogo de referência (total, plataforma ou serviço).</summary>
 public record KnightReferenceCoverageGroupDto(
     string Key, string Label, int Total, int Implemented, int Partial, int Pending, int ManualOnly, int RequiresAccess,
-    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent, int PreviewOnly = 0);
+    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent, int PreviewOnly = 0,
+    // [AEGIS-KNIGHT-CLOSURE-01] Das avaliadas (integral + parcial), quantas dependem de leitura em versão preview.
+    int PreviewBacked = 0);
 
 /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Situação de UM controle de referência no produto.</summary>
 public record KnightReferenceControlStatusDto(
     string Key, string Framework, string Version, string? Section, string? Variant, string Service, string ServiceLabel,
     string Platform, string Severity, string Title, string Disposition, string DispositionLabel,
-    IReadOnlyList<string> IndicatorIds, string? Note);
+    IReadOnlyList<string> IndicatorIds, string? Note,
+    // [AEGIS-KNIGHT-CLOSURE-01] Versões preview das leituras que sustentam a avaliação; se aceita resultado manual; e o
+    // resultado manual VIGENTE deste tenant (à parte da avaliação automatizada).
+    IReadOnlyList<string>? PreviewApis = null,
+    bool ManualEligible = false,
+    KnightManualResultDto? ManualResult = null);
+
+/// <summary>[AEGIS-KNIGHT-CLOSURE-01] Um resultado de verificação manual (atestação) de um controle de referência.</summary>
+public record KnightManualResultDto(
+    Guid Id, string ReferenceKey, string Result, string ResultLabel, string Justification, string ResponsibleName,
+    string? EvidenceReference, Guid? EvidenceDocumentId, string? EvidenceDocumentTitle, string? EvidenceDocumentSha256,
+    DateOnly? ValidUntil, bool Expired, string ReferenceDisposition, string CatalogVersion, string RecordedByName, DateTimeOffset RecordedAt);
+
+/// <summary>[AEGIS-KNIGHT-CLOSURE-01] Pedido de registro de resultado manual (o autor vem do token).</summary>
+public record RecordKnightManualResultRequest(
+    string ReferenceKey, string Result, string Justification, string ResponsibleName,
+    string? EvidenceReference = null, Guid? EvidenceDocumentId = null, DateOnly? ValidUntil = null);
 
 /// <summary>
 /// [AEGIS-KNIGHT-COVERAGE-01] Cobertura de IMPLEMENTAÇÃO do catálogo de referência (propriedade do produto). Não se
@@ -861,7 +884,11 @@ public record KnightAffectedObjectsDto(
     DateTimeOffset? CollectedAt);
 
 /// <summary>Estado por capacidade da fonte (o que foi coletado e o que faltou) — cobertura/limitações na UI.</summary>
-public record KnightCapabilityDto(string Capability, string Outcome, string? Detail);
+/// <summary>
+/// Desfecho de uma capacidade de coleta. [AEGIS-KNIGHT-CLOSURE-01] <c>Requirement</c> é o requisito do que o AEGIS de fato chama
+/// (o mesmo texto das exportações) e <c>PreviewApi</c> a versão preview/beta lida, quando houver — ambos opcionais e ao final.
+/// </summary>
+public record KnightCapabilityDto(string Capability, string Outcome, string? Detail, string? Requirement = null, string? PreviewApi = null);
 
 /// <summary>Disponibilidade de uma fonte KNIGHT para o tenant.</summary>
 public record KnightSourceDto(string Source, string Label, bool Configured, bool Enabled);

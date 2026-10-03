@@ -254,7 +254,11 @@ public sealed class KnightAzureFlowTests : IDisposable
 
         azure.Where(c => c.Disposition == KnightReferenceDisposition.Pending).Should().BeEmpty(
             "as sete pesquisas do Azure foram fechadas: controle, avaliação parcial ou verificação manual declarada");
-        azure.Count(c => c.Disposition == KnightReferenceDisposition.PreviewOnly).Should().Be(12, "diagnóstico e contatos de segurança: só em versão preview");
+        // [AEGIS-KNIGHT-CLOSURE-01] As 12 "só em preview" (diagnóstico e contatos de segurança) passaram a ser avaliadas pela versão
+        // preview, identificada nas informações técnicas; os 4 do Databricks e o 2.5 do App Service ganharam método.
+        azure.Count(c => c.Disposition == KnightReferenceDisposition.PreviewOnly).Should().Be(0);
+        azure.Count(c => c.Disposition == KnightReferenceDisposition.RequiresAccess).Should().Be(0);
+        azure.Count(c => c.PreviewApis is { Count: > 0 }).Should().Be(12, "diagnóstico e contatos de segurança dependem de versão preview");
         azure.Count(c => c.Disposition == KnightReferenceDisposition.ApiLimitation).Should().Be(1, "diagnóstico do Intune: nem a preview tem a operação");
         azure.Where(c => c.Disposition is KnightReferenceDisposition.Implemented or KnightReferenceDisposition.Partial)
             .Should().OnlyContain(c => c.IndicatorIds.All(id => id.StartsWith("AK-AZ-", StringComparison.Ordinal)));
@@ -288,7 +292,8 @@ public sealed class KnightAzureFlowTests : IDisposable
 
     // ======================================================================================================
 
-    internal static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId, AzureScenario scenario)
+    internal static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId, AzureScenario scenario,
+        KnightMicrosoftServiceConfiguration? configuration = null)
     {
         var tenant = new SystemTenantContext(tenantId);
         var http = new System.Net.Http.HttpClient(scenario.Handler);
@@ -296,7 +301,7 @@ public sealed class KnightAzureFlowTests : IDisposable
         {
             new AzureKnightCollector(new MicrosoftAppTokenClient(http), new MicrosoftRestClient(http), new EntraGraphClient(http)),
         });
-        var config = new Config();
+        var config = new Config(configuration ?? AzureScenario.Configuration());
         var store = new IdentityAcquisitionStore(db, tenant, TimeProvider.System);
         var evidence = new IdentityEvidenceService(db, registry, config, store, tenant);
         return new AegisKnightAssessmentService(db, registry, config, new KnightMulticloudReportTests.SemIa(), evidence, store, tenant);
@@ -306,8 +311,11 @@ public sealed class KnightAzureFlowTests : IDisposable
 
     private sealed class Config : IKnightSourceConfigurationProvider
     {
+        private readonly KnightMicrosoftServiceConfiguration _configuration;
+        public Config(KnightMicrosoftServiceConfiguration configuration) => _configuration = configuration;
+
         public Task<KnightSourceConfiguration> ResolveAsync(Guid tenantId, KnightSourceType source, System.Threading.CancellationToken ct = default) =>
-            Task.FromResult<KnightSourceConfiguration>(AzureScenario.Configuration());
+            Task.FromResult<KnightSourceConfiguration>(_configuration);
 
         public Task<IReadOnlyList<KnightSourceAvailability>> ListAvailabilityAsync(Guid tenantId, System.Threading.CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<KnightSourceAvailability>>(Array.Empty<KnightSourceAvailability>());

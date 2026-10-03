@@ -325,7 +325,7 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                     <summary>Permissões por capacidade ({{ s.capabilities!.length }})</summary>
                     <p class="muted small caveat">{{ permissionCatalogCaveat }}</p>
                     <ul>
-                      @for (c of s.capabilities; track c.permission) {
+                      @for (c of s.capabilities; track c.name) {
                         <li [class]="c.usage">
                           <span class="cap-hd">
                             <strong>{{ c.name }}</strong>
@@ -395,6 +395,17 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                   <em class="hint">
                     Em branco: todas as assinaturas que a aplicação enxerga (papel Leitor do Azure RBAC). Informe os
                     identificadores para limitar o escopo.
+                  </em>
+                </label>
+                <!-- [AEGIS-KNIGHT-CLOSURE-01] Leitura da API do PRÓPRIO workspace do Databricks: só com habilitação explícita. -->
+                <label class="field">
+                  <span>Ler a API dos workspaces do Azure Databricks</span>
+                  <input type="checkbox" formControlName="databricksWorkspaceApi" data-testid="databricks-workspace-api" />
+                  <em class="hint">
+                    Opcional. Exige adicionar a aplicação a cada workspace como entidade de serviço administradora (acesso
+                    concedido dentro do Databricks). Avalia Unity Catalog, tokens pessoais, usuários e grupos sincronizados e
+                    criptografia entre nós. Desligada: nenhum pedido é feito ao workspace e esses 4 controles ficam não
+                    avaliados, com o motivo.
                   </em>
                 </label>
               }
@@ -1136,6 +1147,7 @@ export class IntegrationsComponent {
     certificatePassword: [''],
     removeCertificate: [false],
     azureSubscriptions: [''],
+    databricksWorkspaceApi: [false],
     services: this.fb.group({
       SecureScore: [false],
       IdentityPosture: [false],
@@ -1186,6 +1198,8 @@ export class IntegrationsComponent {
         // O escopo guardado aparece no campo: salvar de novo envia exatamente o que está na tela.
         if (s.configured && !this.hubForm.get('azureSubscriptions')!.dirty)
           this.hubForm.get('azureSubscriptions')!.setValue(s.azureSubscriptionIds.join('\n'));
+        if (s.configured && !this.hubForm.get('databricksWorkspaceApi')!.dirty)
+          this.hubForm.get('databricksWorkspaceApi')!.setValue(!!s.databricksWorkspaceApi);
       },
       // Sem permissão (não TenantAdmin) ou sem conexão: o formulário continua funcionando sem o resumo.
       error: () => this.credentialSummary.set(null),
@@ -1374,6 +1388,8 @@ export class IntegrationsComponent {
         removeCertificate: !!raw.removeCertificate,
         // Sem a fonte Azure, o escopo guardado não é tocado (omitido = mantido).
         azureSubscriptionIds: this.azureAvailable ? subscriptions.ids : null,
+        // [AEGIS-KNIGHT-CLOSURE-01] Idem para a leitura do Databricks: só com a fonte Azure o valor da tela é enviado.
+        databricksWorkspaceApi: this.azureAvailable ? !!raw.databricksWorkspaceApi : null,
       },
     );
 
@@ -1387,6 +1403,7 @@ export class IntegrationsComponent {
         this.hubForm.get('certificatePassword')!.reset('');
         this.hubForm.get('removeCertificate')!.reset(false);
         this.hubForm.get('azureSubscriptions')!.markAsPristine();
+        this.hubForm.get('databricksWorkspaceApi')!.markAsPristine();
         this.hubCertificate.set(null);
         this.hubRevealSecret.set(false);
         this.reload();

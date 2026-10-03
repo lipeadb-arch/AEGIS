@@ -280,6 +280,29 @@ public enum ConfigurationObjectKind
 
     /// <summary>Um recurso do Azure (propriedades e configurações filhas lidas pelo Resource Manager).</summary>
     AzureResource = 61,
+
+    // ---- [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão beta do Microsoft Graph e complementos ----------------------
+
+    /// <summary>Inventário do estado da MFA por usuário (legado), lido usuário a usuário na versão beta.</summary>
+    PerUserMfaInventory = 62,
+
+    /// <summary>Campos da política de métodos de autenticação que só a versão beta expõe.</summary>
+    AuthenticationMethodsPreview = 63,
+
+    /// <summary>Aplicativos e serviços próprios dos usuários (configuração da organização do Microsoft 365).</summary>
+    M365AppsAndServicesSettings = 64,
+
+    /// <summary>Configurações do Microsoft Forms.</summary>
+    M365FormsSettings = 65,
+
+    /// <summary>Uma política de tempo limite por inatividade (sessão ociosa do Microsoft 365).</summary>
+    ActivityBasedTimeoutPolicy = 66,
+
+    /// <summary>A política de envio das mensagens denunciadas pelos usuários (Defender para Office 365).</summary>
+    DefenderReportSubmissionPolicy = 67,
+
+    /// <summary>Capacidade de MFA dos usuários MEMBROS, pelo mesmo relatório de registro (userRegistrationDetails).</summary>
+    MfaCapabilityInventory = 68,
 }
 
 /// <summary>
