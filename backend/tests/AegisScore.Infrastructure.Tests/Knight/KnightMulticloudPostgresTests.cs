@@ -81,7 +81,8 @@ public sealed class KnightMulticloudPostgresTests
             var configs = await db.IdentityConfigurationObservations.AsNoTracking()
                 .Where(c => c.AcquisitionId == run.IdentityAcquisitionId).ToListAsync();
             // [AEGIS-KNIGHT-COVERAGE-01] + inventário de credenciais de aplicações e estado da aplicação de armazenamento de terceiros.
-            configs.Should().HaveCount(6);
+            // [AEGIS-KNIGHT-CLOSURE-01] + capacidade de MFA dos membros (do mesmo relatório de registro de MFA).
+            configs.Should().HaveCount(7);
             configs.Should().Contain(c => c.Kind == ConfigurationObjectKind.ConditionalAccessPolicy && c.ExternalId == "p-admins"
                 && c.SchemaVersion == "aegis-config-entra-ca-policy-v2" && c.ConfigurationJson.Contains("includeRoles"));
 

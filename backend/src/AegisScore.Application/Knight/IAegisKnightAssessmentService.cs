@@ -64,7 +64,9 @@ public sealed record KnightControlPresentation(
     double? PossiblePoints,
     string? Impact = null,
     string? Platform = null,
-    string? ServiceKey = null);
+    string? ServiceKey = null,
+    // [AEGIS-KNIGHT-CLOSURE-01] Versões preview (beta) das APIs que o controle consome — vazia quando só versões estáveis.
+    IReadOnlyList<string>? PreviewApis = null);
 
 /// <summary>Um objeto afetado em vários controles de uma avaliação — a base dos "principais objetos afetados".</summary>
 public sealed record KnightAffectedSummaryItem(

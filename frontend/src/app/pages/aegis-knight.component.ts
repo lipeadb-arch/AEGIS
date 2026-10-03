@@ -31,9 +31,10 @@ import { KnightFindingDetailComponent } from '../components/knight/finding-detai
 import { KnightOverviewComponent } from '../components/knight/knight-overview.component';
 import { KnightControlsComponent } from '../components/knight/knight-controls.component';
 import { KnightGlossaryComponent } from '../components/knight/knight-glossary.component';
+import { KnightCoverageComponent } from '../components/knight/knight-coverage.component';
 
 /** [AEGIS-KNIGHT-PRESENTATION-01] Abas da avaliação. */
-type KnightPageTab = 'overview' | 'controls' | 'glossary';
+type KnightPageTab = 'overview' | 'controls' | 'coverage' | 'glossary';
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
 import { IdentityRiskService } from '../services/identity-risk.service';
 import { KnightRunTimeoutError, KnightService } from '../services/knight.service';
@@ -64,7 +65,7 @@ import { PostureExportFormat } from '../models/posture-history.models';
 @Component({
   selector: 'app-aegis-knight',
   standalone: true,
-  imports: [DatePipe, RouterLink, IdentityRiskPanelComponent, KnightFindingDetailComponent, KnightOverviewComponent, KnightControlsComponent, KnightGlossaryComponent],
+  imports: [DatePipe, RouterLink, IdentityRiskPanelComponent, KnightFindingDetailComponent, KnightOverviewComponent, KnightControlsComponent, KnightGlossaryComponent, KnightCoverageComponent],
   template: `
     <section class="page knight">
       <header class="page-head">
@@ -321,6 +322,9 @@ import { PostureExportFormat } from '../models/posture-history.models';
                     (click)="setTab('controls')" (keydown)="tabKey($event)">
               Controles e findings <span class="tab-count">{{ findingsCount() }}</span>
             </button>
+            <button type="button" role="tab" id="knight-tab-coverage" [class.on]="tab() === 'coverage'"
+                    [attr.aria-selected]="tab() === 'coverage'" [attr.tabindex]="tab() === 'coverage' ? 0 : -1"
+                    (click)="setTab('coverage')" (keydown)="tabKey($event)">Cobertura e verificação manual</button>
             <button type="button" role="tab" id="knight-tab-glossary" [class.on]="tab() === 'glossary'"
                     [attr.aria-selected]="tab() === 'glossary'" [attr.tabindex]="tab() === 'glossary' ? 0 : -1"
                     (click)="setTab('glossary')" (keydown)="tabKey($event)">Glossário</button>
@@ -376,6 +380,11 @@ import { PostureExportFormat } from '../models/posture-history.models';
                   </p>
                 }
               </div>
+            </div>
+          } @else if (tab() === 'coverage') {
+            <div role="tabpanel" aria-labelledby="knight-tab-coverage" class="tabpanel">
+              <app-knight-coverage [coverage]="referenceCoverage()" [state]="coverageState()" [assessment]="a"
+                                   (open)="openControl($event)" (recorded)="loadCoverage()" />
             </div>
           } @else if (tab() === 'glossary') {
             <div role="tabpanel" aria-labelledby="knight-tab-glossary" class="tabpanel">
@@ -972,6 +981,20 @@ export class AegisKnightComponent implements OnInit {
   private summaryRun: string | null = null;
   /** [AEGIS-KNIGHT-COVERAGE-01] Cobertura do catálogo (leitura do catálogo no servidor — não coleta nada). */
   readonly referenceCoverage = signal<KnightReferenceCoverage | null>(null);
+  readonly coverageState = signal<'loading' | 'ok' | 'error'>('loading');
+
+  /** [AEGIS-KNIGHT-CLOSURE-01] Relê a cobertura do catálogo (com o resultado manual vigente do cliente). */
+  loadCoverage(): void {
+    this.knight.getReferenceCoverage().subscribe({
+      next: (c) => {
+        this.referenceCoverage.set(c);
+        this.coverageState.set('ok');
+      },
+      error: () => {
+        if (!this.referenceCoverage()) this.coverageState.set('error');
+      },
+    });
+  }
 
   setTab(t: KnightPageTab): void {
     if (this.tab() === t) return;
@@ -996,7 +1019,7 @@ export class AegisKnightComponent implements OnInit {
   tabKey(ev: KeyboardEvent): void {
     if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
     ev.preventDefault();
-    const order: KnightPageTab[] = ['overview', 'controls', 'glossary'];
+    const order: KnightPageTab[] = ['overview', 'controls', 'coverage', 'glossary'];
     const step = ev.key === 'ArrowRight' ? 1 : order.length - 1;
     const next = order[(order.indexOf(this.tab()) + step) % order.length];
     this.setTab(next);
@@ -1417,14 +1440,12 @@ export class AegisKnightComponent implements OnInit {
     this.linkNotice.set(null);
     this.findingNotice.set(null);
     const q = this.route.snapshot.queryParamMap;
-    this.tab.set(q.get('finding') || q.get('tab') === 'controls' ? 'controls' : q.get('tab') === 'glossary' ? 'glossary' : 'overview');
+    this.tab.set(q.get('finding') || q.get('tab') === 'controls' ? 'controls'
+      : q.get('tab') === 'glossary' ? 'glossary' : q.get('tab') === 'coverage' ? 'coverage' : 'overview');
 
     this.loading.set(true);
     this.error.set(null);
-    this.knight.getReferenceCoverage().subscribe({
-      next: (c) => this.referenceCoverage.set(c),
-      error: () => this.referenceCoverage.set(null),
-    });
+    this.loadCoverage();
     this.knight.getSources().subscribe({
       next: (s) => this.sources.set(s),
       error: () => this.sources.set(null), // fontes é secundário; não bloqueia a tela

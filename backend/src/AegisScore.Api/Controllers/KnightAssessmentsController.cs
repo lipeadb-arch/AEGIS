@@ -23,11 +23,13 @@ public class KnightAssessmentsController : ControllerBase
 {
     private readonly IAegisKnightAssessmentService _service;
     private readonly ITenantContext _tenant;
+    private readonly IKnightManualResultService? _manual;
 
-    public KnightAssessmentsController(IAegisKnightAssessmentService service, ITenantContext tenant)
+    public KnightAssessmentsController(IAegisKnightAssessmentService service, ITenantContext tenant, IKnightManualResultService? manual = null)
     {
         _service = service;
         _tenant = tenant;
+        _manual = manual;
     }
 
     /// <summary>Executa um assessment de DEMONSTRAÇÃO (fonte Demo, sintética) e devolve o resultado completo.</summary>
@@ -71,14 +73,17 @@ public class KnightAssessmentsController : ControllerBase
     /// do cliente, e é a mesma para todos os tenants.
     /// </summary>
     [HttpGet("reference-coverage")]
-    public ActionResult<KnightReferenceCoverageDto> GetReferenceCoverage()
+    public async Task<ActionResult<KnightReferenceCoverageDto>> GetReferenceCoverage(CancellationToken ct)
     {
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
         var c = KnightReferenceCatalog.Coverage();
+        // [AEGIS-KNIGHT-CLOSURE-01] Resultado manual vigente do tenant, por referência — à parte da disposição automatizada.
+        var manual = (_manual is null ? Array.Empty<KnightManualResultView>() : await _manual.CurrentAsync(ct))
+            .ToDictionary(m => m.ReferenceKey, StringComparer.Ordinal);
         static KnightReferenceCoverageGroupDto G(KnightReferenceCoverageGroup g) => new(
             g.Key, g.Label, g.Total, g.Implemented, g.Partial, g.Pending, g.ManualOnly, g.RequiresAccess, g.ApiLimitation,
-            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent, g.PreviewOnly);
+            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent, g.PreviewOnly, g.PreviewBacked);
         return Ok(new KnightReferenceCoverageDto(
             c.CatalogVersion, c.ReferenceCommit,
             c.Frameworks.Select(f => $"{f.Name} {f.Version}").ToList(),
@@ -90,9 +95,62 @@ public class KnightAssessmentsController : ControllerBase
                     s.Control.Key, s.Control.Framework, s.Control.Version, s.Control.Section, s.Control.Variant,
                     s.Control.Service.ToString(), d?.Label ?? s.Control.Service.ToString(),
                     d is null ? "" : KnightServices.PlatformLabel(d.Platform), s.Control.Severity.ToString(), s.Control.Title,
-                    s.Disposition.ToString(), KnightReferenceCatalog.DispositionLabel(s.Disposition), s.IndicatorIds, s.Note);
+                    s.Disposition.ToString(), KnightReferenceCatalog.DispositionLabel(s.Disposition), s.IndicatorIds, s.Note,
+                    s.PreviewApis ?? Array.Empty<string>(), KnightManualResults.Eligible(s.Disposition),
+                    manual.TryGetValue(s.Control.Key, out var m) ? ManualDto(m) : null);
             }).ToList()));
     }
+
+    /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Histórico dos resultados manuais de UM controle de referência.</summary>
+    [HttpGet("manual-results/{referenceKey}")]
+    public async Task<ActionResult<IReadOnlyList<KnightManualResultDto>>> GetManualHistory(string referenceKey, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        if (_manual is null) return Ok(Array.Empty<KnightManualResultDto>());
+        return Ok((await _manual.HistoryAsync(referenceKey, ct)).Select(ManualDto).ToList());
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-CLOSURE-01] Registra o resultado de uma verificação MANUAL (atestação) para um controle de referência sem
+    /// avaliação automatizada. O autor vem do token. Não altera nota, cobertura automatizada nem aprovação.
+    /// </summary>
+    /// <response code="201">Resultado registrado.</response>
+    /// <response code="400">Pedido inválido (controle com avaliação automatizada, sem evidência, sem justificativa…).</response>
+    /// <response code="403">Papel insuficiente (Analyst não registra resultado manual).</response>
+    [HttpPost("manual-results")]
+    [Authorize(Roles = "Manager,TenantAdmin")]
+    public async Task<ActionResult<KnightManualResultDto>> RecordManual([FromBody] RecordKnightManualResultRequest request, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        if (request is null) return BadRequest("Corpo da requisição ausente.");
+        if (_manual is null) return StatusCode(StatusCodes.Status503ServiceUnavailable);
+        Guid? accountId = Guid.TryParse(User.FindFirst(AegisScore.Infrastructure.Auth.JwtTokenService.AccountClaim)?.Value, out var id) && id != Guid.Empty
+            ? id : null;
+        try
+        {
+            var saved = await _manual.RecordAsync(new RecordKnightManualResultCommand(request.ReferenceKey, request.Result, request.Justification,
+                request.ResponsibleName, request.EvidenceReference, request.EvidenceDocumentId, request.ValidUntil),
+                new AegisScore.Application.Remediation.RemediationActor(accountId, User.FindFirst("name")?.Value ?? ""), ct);
+            return StatusCode(StatusCodes.Status201Created, ManualDto(saved));
+        }
+        catch (KnightManualResultValidationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Capacidade com o requisito e a versão preview, da mesma autoridade das exportações.</summary>
+    private static KnightCapabilityDto CapabilityDto(KnightCapabilityStatus c) => new(
+        c.Capability.ToString(), c.Outcome.ToString(), c.Detail,
+        AegisScore.Application.Posture.Export.KnightCapabilityLabels.RequiredPermission(c.Capability, KnightSourceType.Consolidated),
+        KnightCollectorCapabilities.PreviewApi(c.Capability));
+
+    private static KnightManualResultDto ManualDto(KnightManualResultView m) => new(
+        m.Id, m.ReferenceKey, m.Result.ToString(), m.ResultLabel, m.Justification, m.ResponsibleName, m.EvidenceReference,
+        m.EvidenceDocumentId, m.EvidenceDocumentTitle, m.EvidenceDocumentSha256, m.ValidUntil, m.Expired, m.ReferenceDisposition,
+        m.CatalogVersion, m.RecordedByName, m.RecordedAt);
 
     /// <summary>
     /// [AEGIS-KNIGHT-PRESENTATION-01] Glossário ÚNICO dos termos técnicos — a mesma lista que entra nas exportações.
@@ -342,7 +400,7 @@ public class KnightAssessmentsController : ControllerBase
             KnightConsolidatedCollection.StateOf(a.Sources).ToString(), sourceLabel, KnightRunStatus.Completed.ToString(),
             "ak-knight-consolidated", a.FormulaVersion, at, a.DataRecency,
             a.Score, a.Coverage, counts, a.Indicators.Select(ToDto).ToList(),
-            a.Capabilities.Select(c => new KnightCapabilityDto(c.Capability.ToString(), c.Outcome.ToString(), c.Detail)).ToList(),
+            a.Capabilities.Select(c => CapabilityDto(c)).ToList(),
             null, false, sources);
     }
 
@@ -375,7 +433,7 @@ public class KnightAssessmentsController : ControllerBase
             a.PassedCount, a.ExposedCount, a.MitigatedCount,
             a.NotEvaluatedCount, a.ErrorCount, a.NotApplicableCount),
         a.Indicators.Select(ToDto).ToList(),
-        a.Capabilities.Select(c => new KnightCapabilityDto(c.Capability.ToString(), c.Outcome.ToString(), c.Detail)).ToList(),
+        a.Capabilities.Select(c => CapabilityDto(c)).ToList(),
         a.Advisory is null ? null : ToDto(a.Advisory),
         a.AdvisoryFromAi);
 
@@ -404,7 +462,7 @@ public class KnightAssessmentsController : ControllerBase
             i.Presentation.References.Select(r => new KnightControlReferenceDto(r.Framework, r.Version, r.Code, r.Url)).ToList(),
             i.Presentation.RequiredCapabilities, i.Presentation.Weight, i.Presentation.Factor,
             i.Presentation.AchievedPoints, i.Presentation.PossiblePoints,
-            i.Presentation.Impact, i.Presentation.Platform, i.Presentation.ServiceKey),
+            i.Presentation.Impact, i.Presentation.Platform, i.Presentation.ServiceKey, i.Presentation.PreviewApis),
         i.AffectedComposition);
 
     private static KnightAdvisoryDto ToDto(KnightAdvisory ad) => new(

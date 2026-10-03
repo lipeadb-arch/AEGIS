@@ -52,8 +52,12 @@ public sealed class KnightEntraConfigurationFlowTests : IDisposable
 
     public void Dispose() => _connection.Dispose();
 
+    // [AEGIS-KNIGHT-CLOSURE-01] Inclui os controles do Entra sobre as leituras em versão beta e a sessão ociosa.
     private static IReadOnlyList<string> ConfigurationControlIds =>
-        EntraConfigurationControls.Definitions.Select(d => d.Id).ToList();
+        EntraConfigurationControls.Definitions.Select(d => d.Id)
+            .Concat(EntraClosureControls.Definitions.Where(d => d.Sources.Contains(KnightSourceType.MicrosoftEntraId) && d.Service == KnightService.EntraId)
+                .Select(d => d.Id))
+            .ToList();
 
     [Fact]
     public async Task Conforme_TodosOsControlesDeConfiguracao_AprovadosPelaColetaRelidaDoAdm()
@@ -62,7 +66,7 @@ public sealed class KnightEntraConfigurationFlowTests : IDisposable
         await using var db = NewContext(TenantA);
         var run = await RunAsync(db, TenantA, new EntraConfigurationScenario(EntraConfigurationScenario.Variant.Compliant));
 
-        run.CatalogVersion.Should().Be("ak-knight-v9");
+        run.CatalogVersion.Should().Be("ak-knight-v10");
         run.SourceState.Should().Be(KnightSourceState.PartialCollection, "só as duas capacidades de risco de identidade devolvem 403 neste cenário");
         var entity = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id);
         entity.IdentityAcquisitionId.Should().NotBeNull("a avaliação leu a aquisição persistida do ADM");

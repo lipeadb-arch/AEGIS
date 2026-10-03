@@ -387,8 +387,8 @@ public static class AzureProfiles
         P("AK-AZ-MDC-019", KnightSecurityDomain.CloudProtection,
             "Assinaturas com hubs IoT não têm o Defender para IoT habilitado.",
             "Sem a solução de segurança de IoT, os dispositivos conectados ao hub ficam sem recomendações e sem detecção de comportamento anômalo.",
-            "Solução de segurança de IoT (Defender para IoT) associada aos hubs IoT.",
-            "Verifica a existência da solução na assinatura dos hubs; não confere a cobertura hub a hub.",
+            "Solução de segurança de IoT (Defender para IoT) habilitada cobrindo cada hub IoT.",
+            "Confere a lista de hubs de cada solução lida pelo Resource Manager; não verifica a configuração dos agentes nos dispositivos.",
             "Um dispositivo IoT comprometido pode ser usado como ponto de entrada ou enviar dados falsos sem alerta.",
             Docs(DocIot), KnightCapability.AzureDefenderForCloud);
         P("AK-AZ-MDC-020", KnightSecurityDomain.CloudProtection,

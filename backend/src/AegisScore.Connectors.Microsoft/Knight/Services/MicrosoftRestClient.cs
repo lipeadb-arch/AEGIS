@@ -41,7 +41,8 @@ public sealed class MicrosoftRestClient : IMicrosoftRestClient
     };
 
     /// <summary>Sufixos permitidos (host do locatário no SharePoint; cofres no Key Vault).</summary>
-    private static readonly string[] HostSuffixes = { "-admin.sharepoint.com", ".vault.azure.net" };
+    // [AEGIS-KNIGHT-CLOSURE-01] Workspaces do Azure Databricks (API REST do próprio workspace; host oficial *.azuredatabricks.net).
+    private static readonly string[] HostSuffixes = { "-admin.sharepoint.com", ".vault.azure.net", ".azuredatabricks.net" };
 
     private readonly HttpClient _http;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
@@ -157,6 +158,8 @@ public sealed class MicrosoftRestClient : IMicrosoftRestClient
                 if (e.ValueKind == JsonValueKind.String) return e.GetString();
             }
             if (root.TryGetProperty("errorCode", out var ec) && ec.ValueKind == JsonValueKind.String) return ec.GetString();
+            // [AEGIS-KNIGHT-CLOSURE-01] Formato de erro da API REST do Databricks.
+            if (root.TryGetProperty("error_code", out var dec) && dec.ValueKind == JsonValueKind.String) return dec.GetString();
             if (root.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String) return code.GetString();
         }
         catch (JsonException)

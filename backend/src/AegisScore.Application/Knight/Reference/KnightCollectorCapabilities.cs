@@ -39,6 +39,12 @@ public static class KnightCollectorCapabilities
         KnightCapability.AccessReviews,
         KnightCapability.NamedLocations,
         KnightCapability.ServicePrincipalSettings,
+        // [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão beta do Microsoft Graph e o tempo limite de sessão ociosa.
+        KnightCapability.PerUserMfaStates,
+        KnightCapability.AuthenticationMethodsPolicyPreview,
+        KnightCapability.M365AppsAndServicesSettings,
+        KnightCapability.M365FormsSettings,
+        KnightCapability.ActivityBasedTimeoutPolicy,
     };
 
     /// <summary>
@@ -122,6 +128,7 @@ public static class KnightCollectorCapabilities
         KnightCapability.DefenderTeamsProtection,
         KnightCapability.DefenderPriorityAccounts,
         KnightCapability.DefenderPresetPolicies,
+        KnightCapability.DefenderReportSubmissionPolicy,
     };
 
     /// <summary>Purview: auditoria (sessão do Exchange Online) e DLP/rótulos (sessão do Security &amp; Compliance).</summary>
@@ -153,6 +160,13 @@ public static class KnightCollectorCapabilities
         KnightCapability.AzureDatabases,
         KnightCapability.AzureDatabricks,
         KnightCapability.AzureTenantDiagnostics,
+        // [AEGIS-KNIGHT-CLOSURE-01] Versões preview (diagnóstico e contatos), referências ao Key Vault e a API dos workspaces
+        // do Databricks — esta última só tentada quando habilitada em Integrações.
+        KnightCapability.AzureResourceDiagnostics,
+        KnightCapability.AzureActivityLogExport,
+        KnightCapability.AzureSecurityContacts,
+        KnightCapability.AzureAppSettingsKeyVaultReferences,
+        KnightCapability.AzureDatabricksWorkspaceApi,
     };
 
     private static readonly IReadOnlySet<KnightCapability> Google = new HashSet<KnightCapability>
@@ -178,6 +192,26 @@ public static class KnightCollectorCapabilities
         KnightSourceType.GoogleWorkspace => Google,
         _ => new HashSet<KnightCapability>(),
     };
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-CLOSURE-01] Versão PREVIEW (beta) da API que a capacidade consome, ou nula quando a leitura usa só versões
+    /// estáveis. Mostrada nas informações técnicas dos controles e contada à parte na cobertura de implementação.
+    /// </summary>
+    public static string? PreviewApi(KnightCapability c) => c switch
+    {
+        KnightCapability.AzureResourceDiagnostics or KnightCapability.AzureActivityLogExport =>
+            "Azure Monitor, Microsoft.Insights/diagnosticSettings api-version 2021-05-01-preview",
+        KnightCapability.AzureSecurityContacts => "Defender para Nuvem, Microsoft.Security/securityContacts api-version 2023-12-01-preview",
+        KnightCapability.PerUserMfaStates => "Microsoft Graph beta, /users/{id}/authentication/requirements",
+        KnightCapability.AuthenticationMethodsPolicyPreview => "Microsoft Graph beta, /policies/authenticationMethodsPolicy",
+        KnightCapability.M365AppsAndServicesSettings => "Microsoft Graph beta, /admin/appsAndServices",
+        KnightCapability.M365FormsSettings => "Microsoft Graph beta, /admin/forms",
+        _ => null,
+    };
+
+    /// <summary>Versões preview que um controle consome (pelas capacidades do perfil), sem repetição.</summary>
+    public static IReadOnlyList<string> PreviewApisOf(string indicatorId) =>
+        KnightControlProfiles.RequiredCapabilitiesOf(indicatorId).Select(PreviewApi).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
 
     /// <summary>
     /// O controle está no fluxo ativo: aplicável a ao menos uma fonte real cujo coletor produz TODAS as capacidades

@@ -94,7 +94,8 @@ internal sealed class EntraConfigurationScenario
         if (url.Contains("userRegistrationDetails"))
         {
             var ids = new[] { "u1", "u2", "u3", "u4", "u5", "u6" };
-            return Json(new { value = ids.Select((id, i) => new { id, isMfaCapable = Ok || i % 2 == 0, isMfaRegistered = Ok || i % 2 == 0 }).ToArray() });
+            return Json(new { value = ids.Select((id, i) => new { id, isMfaCapable = Ok || i % 2 == 0, isMfaRegistered = Ok || i % 2 == 0,
+                userType = "member", userPrincipalName = id + "@demo.example.com", userDisplayName = "Pessoa " + id }).ToArray() });
         }
         if (url.Contains("/users") && url.Contains("Guest"))
             return Json(new
@@ -138,6 +139,68 @@ internal sealed class EntraConfigurationScenario
         ["signInActivity"] = new { lastSignInDateTime = Iso(Now.AddDays(-2)) },
     };
 
+    // ---- [AEGIS-KNIGHT-CLOSURE-01] Versão beta do Microsoft Graph e sessão ociosa ---------------------------------
+    // Respostas no formato DOCUMENTADO de cada leitura (inclusive o objeto dentro de "value" de /admin/appsAndServices e
+    // /admin/forms, como no exemplo oficial). Conforme: tudo como a referência pede; não conforme: cada critério violado.
+
+    internal static readonly string[] EnabledUserIds = { "u1", "u2", "u3", "u4", "u5", "u6" };
+
+    private (HttpStatusCode, string)? Closure(string url)
+    {
+        if (url.Contains("accountEnabled eq true"))
+            return Json(new { value = EnabledUserIds.Select(id => new { id, userPrincipalName = id + "@demo.example.com", displayName = "Pessoa " + id }).ToArray() });
+        if (url.Contains("/beta/users/") && url.EndsWith("/authentication/requirements"))
+        {
+            var id = url.Split('/')[^3];
+            var state = Ok ? "disabled" : id switch { "u1" => "enforced", "u2" => "enabled", _ => "disabled" };
+            return Json(new Dictionary<string, object?> { ["@odata.context"] = "https://graph.microsoft.com/beta/$metadata#users('" + id + "')/authentication/requirements", ["perUserMfaState"] = state });
+        }
+        if (url.Contains("/beta/policies/authenticationMethodsPolicy"))
+            return Json(new
+            {
+                id = "authenticationMethodsPolicy",
+                systemCredentialPreferences = new
+                {
+                    state = Ok ? "enabled" : "default",
+                    includeTargets = new[] { new { id = "all_users", targetType = "group" } },
+                    excludeTargets = Array.Empty<object>(),
+                },
+                authenticationMethodConfigurations = new object[]
+                {
+                    new
+                    {
+                        id = "MicrosoftAuthenticator", state = "enabled",
+                        featureSettings = new
+                        {
+                            companionAppAllowedState = new
+                            {
+                                state = Ok ? "disabled" : "default",
+                                includeTarget = new { targetType = "group", id = "all_users" },
+                                excludeTarget = new { targetType = "group", id = "00000000-0000-0000-0000-000000000000" },
+                            },
+                        },
+                    },
+                },
+            });
+        if (url.Contains("/beta/admin/appsAndServices"))
+            return Json(new { value = new { id = "c079f617", settings = new { isOfficeStoreEnabled = !Ok, isAppAndServicesTrialEnabled = !Ok } } });
+        if (url.Contains("/beta/admin/forms"))
+            return Json(new { value = new { id = "7ef97113", settings = new { isInOrgFormsPhishingScanEnabled = Ok, isExternalSendFormEnabled = !Ok, isExternalShareCollaborationEnabled = false } } });
+        if (url.Contains("/policies/activityBasedTimeoutPolicies"))
+            return Json(new
+            {
+                value = new[]
+                {
+                    new
+                    {
+                        id = "abt-demo", displayName = "DefaultTimeoutPolicy", isOrganizationDefault = true,
+                        definition = new[] { "{\"ActivityBasedTimeoutPolicy\":{\"Version\":1,\"ApplicationPolicies\":[{\"ApplicationId\":\"default\",\"WebSessionIdleTimeout\":\"" + (Ok ? "01:00:00" : "08:00:00") + "\"}]}}" },
+                    },
+                },
+            });
+        return null;
+    }
+
     // ---- Configuração do locatário ---------------------------------------------------------------------
 
     /// <summary>Só os recursos de configuração do locatário (para compor com outros cenários de identidade).</summary>
@@ -146,6 +209,7 @@ internal sealed class EntraConfigurationScenario
 
     private (HttpStatusCode, string)? Configuration(string url)
     {
+        if (Closure(url) is { } closure) return closure;
         if (url.Contains("/policies/authorizationPolicy"))
             return Json(new
             {

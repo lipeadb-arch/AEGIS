@@ -91,6 +91,10 @@ export interface KnightCapability {
   capability: string;
   outcome: KnightCapabilityOutcome;
   detail: string | null;
+  /** [AEGIS-KNIGHT-CLOSURE-01] Requisito do que o AEGIS de fato chama (o mesmo texto das exportações). Ausente em respostas antigas. */
+  requirement?: string | null;
+  /** [AEGIS-KNIGHT-CLOSURE-01] Versão preview/beta lida por esta capacidade, quando houver. */
+  previewApi?: string | null;
 }
 
 /** Disponibilidade de uma fonte para o tenant (espelha KnightSourceDto). */
@@ -589,6 +593,18 @@ const CAPABILITY_LABEL: Record<string, string> = {
   AzureDatabases: 'Bancos de dados (SQL, PostgreSQL, MySQL, Cosmos DB, Redis, Data Factory)',
   AzureDatabricks: 'Workspaces do Azure Databricks',
   AzureTenantDiagnostics: 'Configurações de diagnóstico do Microsoft Entra ID',
+  // [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão preview, acesso adicional e complementos — idem.
+  AzureResourceDiagnostics: 'Configurações de diagnóstico dos recursos do Azure (versão preview)',
+  AzureActivityLogExport: 'Exportação do log de atividades das assinaturas (versão preview)',
+  AzureSecurityContacts: 'Contatos e notificações do Defender para Nuvem (versão preview)',
+  AzureAppSettingsKeyVaultReferences: 'Referências ao Key Vault nas configurações do App Service',
+  AzureDatabricksWorkspaceApi: 'API dos workspaces do Azure Databricks',
+  PerUserMfaStates: 'MFA por usuário (legado) (versão beta do Microsoft Graph)',
+  AuthenticationMethodsPolicyPreview: 'Métodos de autenticação: campos da versão beta do Microsoft Graph',
+  M365AppsAndServicesSettings: 'Aplicativos e serviços próprios dos usuários (versão beta do Microsoft Graph)',
+  M365FormsSettings: 'Configurações do Microsoft Forms (versão beta do Microsoft Graph)',
+  ActivityBasedTimeoutPolicy: 'Tempo limite de sessão ociosa do Microsoft 365',
+  DefenderReportSubmissionPolicy: 'Destino das mensagens denunciadas pelos usuários',
 };
 
 /** Capacidade desconhecida degrada para o próprio identificador — nunca some da tela. */
@@ -922,11 +938,16 @@ export interface KnightControlPresentation {
   /** [AEGIS-KNIGHT-COVERAGE-01] Plataforma: Microsoft Entra ID, Microsoft 365, Microsoft Azure, Google Workspace. */
   platform?: string | null;
   serviceKey?: string | null;
+  /** [AEGIS-KNIGHT-CLOSURE-01] Versões preview/beta das leituras que sustentam o controle (vazio = só versões estáveis). */
+  previewApis?: string[];
 }
 
 /* ---- [AEGIS-KNIGHT-COVERAGE-01] Cobertura do catálogo de referência (propriedade do produto) ---------------- */
 
-/** ApiLimitation = nenhum método publicado (nem estável nem preview); PreviewOnly = a leitura existe só em versão beta/preview. */
+/**
+ * ApiLimitation = nenhum método publicado (nem estável nem preview); PreviewOnly = a leitura existe só em versão beta/preview e
+ * ainda não foi implementada (no catálogo atual, nenhuma: as leituras preview são usadas e identificadas em cada controle).
+ */
 export type KnightReferenceDisposition = 'Implemented' | 'Partial' | 'Pending' | 'ManualOnly' | 'RequiresAccess' | 'ApiLimitation' | 'PreviewOnly';
 
 export interface KnightReferenceCoverageGroup {
@@ -939,8 +960,10 @@ export interface KnightReferenceCoverageGroup {
   manualOnly: number;
   requiresAccess: number;
   apiLimitation: number;
-  /** Leitura existente só em versão beta/preview (não usada: o AEGIS usa só versões estáveis). Ausente em respostas antigas. */
+  /** Leitura existente só em versão beta/preview ainda não implementada. Ausente em respostas antigas. */
   previewOnly?: number;
+  /** [AEGIS-KNIGHT-CLOSURE-01] Das avaliadas (integral + parcial), quantas dependem de leitura em versão preview. */
+  previewBacked?: number;
   fullPercent: number;
   partialPercent: number;
   anyAutomatedPercent: number;
@@ -961,6 +984,110 @@ export interface KnightReferenceControlStatus {
   dispositionLabel: string;
   indicatorIds: string[];
   note: string | null;
+  /** [AEGIS-KNIGHT-CLOSURE-01] Versões preview das leituras que sustentam a avaliação (vazio = só estáveis). */
+  previewApis?: string[];
+  /** [AEGIS-KNIGHT-CLOSURE-01] Sem avaliação automatizada: aceita resultado de verificação manual. */
+  manualEligible?: boolean;
+  /** [AEGIS-KNIGHT-CLOSURE-01] Resultado manual VIGENTE deste cliente — à parte da avaliação automatizada. */
+  manualResult?: KnightManualResult | null;
+}
+
+/* ---- [AEGIS-KNIGHT-CLOSURE-01] Resultado de verificação manual (atestação) ------------------------------------- */
+
+export type KnightManualResultValue = 'Compliant' | 'NonCompliant' | 'NotApplicable' | 'Withdrawn';
+
+/** Um resultado manual registrado (espelha KnightManualResultDto). Nunca entra na nota nem na cobertura automatizada. */
+export interface KnightManualResult {
+  id: string;
+  referenceKey: string;
+  result: KnightManualResultValue;
+  resultLabel: string;
+  justification: string;
+  responsibleName: string;
+  evidenceReference: string | null;
+  evidenceDocumentId: string | null;
+  evidenceDocumentTitle: string | null;
+  evidenceDocumentSha256: string | null;
+  validUntil: string | null;
+  expired: boolean;
+  referenceDisposition: string;
+  catalogVersion: string;
+  recordedByName: string;
+  recordedAt: string;
+}
+
+/** Pedido de registro: o autor vem do token, nunca do corpo. */
+export interface RecordKnightManualResultRequest {
+  referenceKey: string;
+  result: KnightManualResultValue;
+  justification: string;
+  responsibleName: string;
+  evidenceReference: string | null;
+  evidenceDocumentId: string | null;
+  validUntil: string | null;
+}
+
+export const MANUAL_RESULT_OPTIONS: { value: KnightManualResultValue; label: string }[] = [
+  { value: 'Compliant', label: 'Conforme' },
+  { value: 'NonCompliant', label: 'Não conforme' },
+  { value: 'NotApplicable', label: 'Não se aplica' },
+];
+
+/** Mínimo de caracteres da justificativa (o servidor é a autoridade; a tela só antecipa o aviso). */
+export const MANUAL_JUSTIFICATION_MIN = 10;
+
+/**
+ * Validação de borda do formulário de resultado manual — o que falta, em palavras. Lista vazia = pode enviar. Retirar
+ * dispensa evidência (mas não justificativa nem responsável).
+ */
+export function manualResultProblems(r: RecordKnightManualResultRequest, today: string): string[] {
+  const out: string[] = [];
+  if ((r.justification ?? '').trim().length < MANUAL_JUSTIFICATION_MIN)
+    out.push(`Justificativa com ao menos ${MANUAL_JUSTIFICATION_MIN} caracteres: o que foi verificado e como.`);
+  if (!(r.responsibleName ?? '').trim()) out.push('Responsável pelo resultado.');
+  if (r.result !== 'Withdrawn' && !(r.evidenceReference ?? '').trim() && !r.evidenceDocumentId)
+    out.push('Evidência: uma referência (chamado, registro) ou um documento da Central de Evidências.');
+  if (r.validUntil && r.validUntil < today) out.push('A validade não pode estar no passado.');
+  return out;
+}
+
+/** Texto curto do resultado manual vigente para a lista (com "vencido" quando a validade passou). */
+export function manualResultBadge(m: KnightManualResult | null | undefined): string | null {
+  if (!m) return null;
+  return m.expired ? `${m.resultLabel} — vencido` : m.resultLabel;
+}
+
+/** Recorte da aba de cobertura: sem avaliação automatizada (aceita manual), avaliadas, com preview, com resultado manual, todas. */
+export type KnightReferenceView = 'manual' | 'automated' | 'preview' | 'withManual' | 'all';
+
+export interface KnightReferenceFilter {
+  view: KnightReferenceView;
+  platform: string;
+  q: string;
+}
+
+/** "CIS Microsoft 365 7.0.0 · 5.1.2.4 (E5)" — benchmark, versão, seção e variante, como o relatório cita. */
+export function referenceLabel(c: KnightReferenceControlStatus): string {
+  const head = [c.framework, c.version].filter((x) => !!x).join(' ');
+  const section = c.section ? ` · ${c.section}` : '';
+  return `${head}${section}${c.variant ? ` (${c.variant})` : ''}`;
+}
+
+/** Os controles de referência do recorte pedido, na ordem estável da chave. */
+export function filterReferenceControls(controls: KnightReferenceControlStatus[], f: KnightReferenceFilter): KnightReferenceControlStatus[] {
+  const q = f.q.trim().toLowerCase();
+  return controls
+    .filter((c) => !f.platform || c.platform === f.platform)
+    .filter((c) => {
+      switch (f.view) {
+        case 'manual': return !!c.manualEligible;
+        case 'automated': return c.disposition === 'Implemented' || c.disposition === 'Partial';
+        case 'preview': return (c.previewApis ?? []).length > 0;
+        case 'withManual': return !!c.manualResult;
+        default: return true;
+      }
+    })
+    .filter((c) => !q || `${referenceLabel(c)} ${c.title} ${c.serviceLabel} ${c.indicatorIds.join(' ')} ${c.note ?? ''}`.toLowerCase().includes(q));
 }
 
 export interface KnightReferenceCoverage {
@@ -1233,6 +1360,9 @@ export interface KnightLimitationView {
   detail: string | null;
   affectedControls: string[];
   guidance: string;
+  /** [AEGIS-KNIGHT-CLOSURE-01] Requisito do que o AEGIS chama (do servidor) e versão preview lida, quando houver. */
+  requirement: string | null;
+  previewApi: string | null;
 }
 
 const CAUSE: Record<string, [string, string]> = {
@@ -1260,9 +1390,17 @@ export function limitationViews(a: KnightAssessment): KnightLimitationView[] {
   return problemCapabilities(a.capabilities).map((c) => {
     const [cause, generic] = CAUSE[c.outcome] ?? ['Não coletado', 'Sincronizar novamente em Integrações.'];
     // [AEGIS-KNIGHT-COVERAGE-04] No Azure a autorização é uma atribuição de papel no escopo recusado, não consentimento.
-    const guidance = c.outcome === 'InsufficientPermission' && c.capability.startsWith('Azure')
-      ? 'Atribuir à aplicação o papel indicado no escopo recusado (Azure RBAC na assinatura, ou no cofre) e sincronizar novamente em Integrações.'
-      : generic;
+    // [AEGIS-KNIGHT-CLOSURE-01] Databricks desligado: a ação é habilitar em Integrações (e o acesso dentro do workspace).
+    // Versão preview fora do contrato: não há o que conceder — a leitura fica limitada até a Microsoft estabilizá-la.
+    const guidance = c.capability === 'AzureDatabricksWorkspaceApi' && c.outcome === 'NotAttempted'
+      ? 'Habilitar a leitura da API dos workspaces em Configurações → Integrações (AEGIS KNIGHT) e adicionar a aplicação a cada workspace como administradora; depois sincronizar novamente.'
+      : c.capability === 'AzureDatabricksWorkspaceApi' && (c.outcome === 'InsufficientPermission' || c.outcome === 'AuthenticationFailure')
+        ? 'Adicionar a aplicação ao workspace do Databricks como entidade de serviço administradora (acesso concedido dentro do Databricks) e sincronizar novamente.'
+        : c.outcome === 'Error' && c.previewApi
+          ? 'A resposta da versão preview saiu do contrato documentado: os controles que dependem dela ficam não avaliados até a leitura ser revista. Nada a conceder.'
+          : c.outcome === 'InsufficientPermission' && c.capability.startsWith('Azure')
+            ? 'Atribuir à aplicação o papel indicado no escopo recusado (Azure RBAC na assinatura, ou no cofre) e sincronizar novamente em Integrações.'
+            : generic;
     return {
       capability: c.capability,
       label: capabilityLabel(c.capability),
@@ -1272,6 +1410,8 @@ export function limitationViews(a: KnightAssessment): KnightLimitationView[] {
         .filter((i) => (i.status === 'NotEvaluated' || i.status === 'Error') && (i.presentation?.requiredCapabilities ?? []).includes(c.capability))
         .map((i) => i.indicatorId),
       guidance,
+      requirement: c.requirement ?? null,
+      previewApi: c.previewApi ?? null,
     };
   });
 }

@@ -550,7 +550,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             ProfileCatalogVersion = KnightCatalog.Version,
             // [AEGIS-KNIGHT-COVERAGE-01] Cobertura de implementação do catálogo de referência, congelada: é uma
             // medida do PRODUTO, publicada ao lado — nunca somada — da cobertura da avaliação e da aprovação.
-            ReferenceCoverageJson = KnightReferenceCoverageSnapshot.Serialize(KnightReferenceCatalog.Coverage()),
+            ReferenceCoverageJson = await FrozenReferenceCoverageAsync(ct),
         };
 
         foreach (var i in run.Indicators)
@@ -703,7 +703,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             SourceType = KnightSourceType.Consolidated,
             CapturedAt = DateTimeOffset.UtcNow,
             ProfileCatalogVersion = KnightCatalog.Version,
-            ReferenceCoverageJson = KnightReferenceCoverageSnapshot.Serialize(KnightReferenceCatalog.Coverage()),
+            ReferenceCoverageJson = await FrozenReferenceCoverageAsync(ct),
         };
 
         var entries = new List<KnightConsolidatedSourceEntry>();
@@ -1004,6 +1004,17 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         is KnightIndicatorStatus.Passed or KnightIndicatorStatus.Exposed or KnightIndicatorStatus.Mitigated;
 
     private static string EvaluationStateOf(double? score) => score is null ? "NotEvaluated" : "Evaluated";
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-CLOSURE-01] Cobertura do catálogo de referência com os resultados manuais VIGENTES do tenant, congelados
+    /// na publicação — à parte da cobertura automatizada, da nota e da aprovação.
+    /// </summary>
+    private async Task<string> FrozenReferenceCoverageAsync(CancellationToken ct)
+    {
+        var coverage = KnightReferenceCatalog.Coverage();
+        var current = await new AegisScore.Infrastructure.Knight.KnightManualResultService(_db, _tenant, TimeProvider.System).CurrentAsync(ct);
+        return KnightReferenceCoverageSnapshot.Serialize(coverage, KnightReferenceCoverageSnapshot.Entries(coverage, current));
+    }
 
     private static string SanitizeTitle(string? title)
     {

@@ -36,6 +36,10 @@ public sealed class AzureScenario
         NoSubscriptions,
         /// <summary>A listagem de assinaturas é recusada (403).</summary>
         DiscoveryDenied,
+        /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Conforme, mas as leituras em versão preview respondem fora do contrato documentado.</summary>
+        PreviewContractChanged,
+        /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Conforme, mas o workspace do Databricks recusa a aplicação (não adicionada a ele).</summary>
+        DatabricksDenied,
     }
 
     public const string SubA = "00000000-aaaa-4000-8000-00000000000a";
@@ -58,7 +62,11 @@ public sealed class AzureScenario
         Build();
     }
 
-    private bool Ok => _v is Variant.Compliant or Variant.StorageDeniedInB or Variant.VaultDataDenied;
+    private bool Ok => _v is Variant.Compliant or Variant.StorageDeniedInB or Variant.VaultDataDenied or Variant.PreviewContractChanged
+        or Variant.DatabricksDenied;
+
+    /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Host sintético do workspace do Databricks.</summary>
+    public const string DatabricksHost = "adb-0000000000000001.1.azuredatabricks.net";
 
     /// <summary>Pedidos recebidos, na ordem (URL absoluta).</summary>
     public List<string> Requests { get; } = new();
@@ -66,8 +74,9 @@ public sealed class AzureScenario
     /// <summary>Escopos pedidos nos tokens (ARM, plano de dados do cofre, Graph).</summary>
     public List<string> TokenScopes { get; } = new();
 
-    public static KnightMicrosoftServiceConfiguration Configuration() =>
-        new(KnightSourceType.MicrosoftAzure, "dir-demo-0001", "client-demo", "segredo-sintetico", null, new[] { SubA, SubB });
+    public static KnightMicrosoftServiceConfiguration Configuration(bool databricksWorkspaceApi = true) =>
+        new(KnightSourceType.MicrosoftAzure, "dir-demo-0001", "client-demo", "segredo-sintetico", null, new[] { SubA, SubB },
+            databricksWorkspaceApi);
 
     public HttpMessageHandler Handler => new StubHandler(this);
 
@@ -236,6 +245,10 @@ public sealed class AzureScenario
         Generic(sub, "Microsoft.Security/iotSecuritySolutions", Ok && sub == SubA
             ? new[] { Res(Id(sub, "Microsoft.Security", "iotSecuritySolutions", "iotsec-demo"), "Microsoft.Security/iotSecuritySolutions", new { }) }
             : Array.Empty<object>());
+        // [AEGIS-KNIGHT-CLOSURE-01] A solução é lida pelo id: a lista de hubs que ela cobre decide hub a hub.
+        if (Ok && sub == SubA)
+            Route(Id(sub, "Microsoft.Security", "iotSecuritySolutions", "iotsec-demo"), Res(Id(sub, "Microsoft.Security", "iotSecuritySolutions", "iotsec-demo"),
+                "Microsoft.Security/iotSecuritySolutions", new { status = "Enabled", iotHubs = new[] { Id(sub, "Microsoft.Devices", "IotHubs", "iot-demo") } }));
 
         // ---- Azure Monitor -----------------------------------------------------------------------------------------
         var ops = new[]
@@ -617,11 +630,12 @@ public sealed class AzureScenario
                     customPrivateSubnetName = new { value = "snet-dbr-priv" }, enableNoPublicIp = new { value = true },
                 },
                 encryption = new { entities = new { managedServices = new { keySource = "Microsoft.Keyvault" } } },
-                publicNetworkAccess = "Disabled", privateEndpointConnections = Pe(true),
+                publicNetworkAccess = "Disabled", privateEndpointConnections = Pe(true), workspaceUrl = DatabricksHost,
             }
             : (object)new
             {
                 parameters = new { enableNoPublicIp = new { value = false } }, publicNetworkAccess = "Enabled", privateEndpointConnections = Pe(false),
+                workspaceUrl = DatabricksHost,
             }));
     }
 
@@ -766,10 +780,13 @@ public sealed class AzureScenario
             var id = path.Split('/').Last();
             return GraphUser(id) is { } u ? (HttpStatusCode.OK, u) : (HttpStatusCode.NotFound, """{"error":{"code":"Request_ResourceNotFound","message":"sintético"}}""");
         }
+        if (host.EndsWith(".azuredatabricks.net", StringComparison.Ordinal))
+            return Databricks(path);
         if (host.EndsWith(".vault.azure.net", StringComparison.Ordinal))
             path = "/" + host + path;
         else if (host != "management.azure.com")
             return (HttpStatusCode.NotFound, "{}");
+        if (Closure(path) is { } closure) return closure;
 
         if (path.EndsWith("/resources", StringComparison.OrdinalIgnoreCase) && path.StartsWith("/subscriptions/", StringComparison.OrdinalIgnoreCase))
         {
@@ -784,6 +801,117 @@ public sealed class AzureScenario
             ? r
             : (HttpStatusCode.NotFound, """{"error":{"code":"ResourceNotFound","message":"rota sintética inexistente"}}""");
     }
+
+    // ---- [AEGIS-KNIGHT-CLOSURE-01] Leituras complementares -------------------------------------------------------
+
+    private const string ContractBroken = """{"settings":"formato novo, sem a lista value"}""";
+
+    /// <summary>Configurações de diagnóstico (assinatura e recursos), contatos de segurança e referências ao Key Vault.</summary>
+    private (HttpStatusCode, string)? Closure(string path)
+    {
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (path.EndsWith("/providers/Microsoft.Insights/diagnosticSettings", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_v == Variant.PreviewContractChanged) return (HttpStatusCode.OK, ContractBroken);
+            var law = $"/subscriptions/{SubA}/resourceGroups/{Rg}/providers/Microsoft.OperationalInsights/workspaces/law-demo";
+            if (parts.Length == 5) // /subscriptions/{id}/providers/Microsoft.Insights/diagnosticSettings → exportação do log de atividades
+            {
+                var sub = parts[1];
+                var st = Id(SubA, "Microsoft.Storage", "storageAccounts", "stclientedemo");
+                object Setting(string name, string[] categories, bool storage) => new
+                {
+                    id = $"/subscriptions/{sub}/providers/microsoft.insights/diagnosticSettings/{name}", name, type = "Microsoft.Insights/diagnosticSettings",
+                    properties = storage
+                        ? (object)new { storageAccountId = st, logs = categories.Select(c => new { category = c, enabled = true }).ToArray() }
+                        : new { workspaceId = law, logs = categories.Select(c => new { category = c, enabled = true }).ToArray() },
+                };
+                var all = new[] { "Administrative", "Alert", "Policy", "Security", "ServiceHealth" };
+                if (Ok) return (HttpStatusCode.OK, J(new { value = new[] { Setting("exportar-atividades", all, sub == SubA) } }));
+                return (HttpStatusCode.OK, J(new { value = sub == SubA ? new[] { Setting("so-administrativo", new[] { "Administrative" }, true) } : Array.Empty<object>() }));
+            }
+            // Recurso: os cofres, as contas do Cosmos DB e do Batch, o workspace do Databricks e os demais tipos que emitem logs.
+            return (HttpStatusCode.OK, Ok
+                ? J(new { value = new[] { new { id = path + "/diag-aegis", name = "diag-aegis", type = "Microsoft.Insights/diagnosticSettings",
+                    properties = new { workspaceId = law, logs = new object[] { new { categoryGroup = "allLogs", enabled = true }, new { category = "AuditEvent", enabled = true } } } } } })
+                : """{"value":[]}""");
+        }
+        if (path.EndsWith("/providers/Microsoft.Security/securityContacts", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_v == Variant.PreviewContractChanged) return (HttpStatusCode.OK, """{"value":[{"name":"default","emails":"sem properties"}]}""");
+            var sub = parts[1];
+            return (HttpStatusCode.OK, J(new { value = new[] { new
+            {
+                id = $"/subscriptions/{sub}/providers/Microsoft.Security/securityContacts/default", name = "default", type = "Microsoft.Security/securityContacts",
+                properties = Ok
+                    ? (object)new
+                    {
+                        emails = "seguranca@clientedemo.example.com;soc@clientedemo.example.com", phone = "+55 11 0000-0000", isEnabled = true,
+                        notificationsByRole = new { state = "On", roles = new[] { "Owner" } },
+                        notificationsSources = new object[] { new { sourceType = "Alert", minimalSeverity = "High" }, new { sourceType = "AttackPath", minimalRiskLevel = "High" } },
+                    }
+                    : new { emails = "", isEnabled = true, notificationsByRole = new { state = "Off", roles = Array.Empty<string>() }, notificationsSources = Array.Empty<object>() },
+            } } }));
+        }
+        if (path.EndsWith("/config/configreferences/appsettings", StringComparison.OrdinalIgnoreCase))
+        {
+            var site = path[..^"/config/configreferences/appsettings".Length];
+            return (HttpStatusCode.OK, J(new { value = new[] { new
+            {
+                id = $"{site}/config/configreferences/appsettings/SENHA_BANCO", name = "SENHA_BANCO",
+                properties = new { vaultName = "kv-demo-rbac", secretName = "senha-app", status = Ok ? "Resolved" : "AccessToKeyVaultDenied", source = "KeyVault",
+                    reference = "@Microsoft.KeyVault(SecretUri=https://kv-demo-rbac.vault.azure.net/secrets/senha-app/)" },
+            } } }));
+        }
+        return null;
+    }
+
+    /// <summary>API REST do workspace do Databricks (formato oficial de cada leitura).</summary>
+    private (HttpStatusCode, string) Databricks(string path)
+    {
+        if (_v == Variant.DatabricksDenied)
+            return (HttpStatusCode.Forbidden, """{"error_code":"PERMISSION_DENIED","message":"sintético"}""");
+        switch (path)
+        {
+            case "/api/2.1/unity-catalog/current-metastore-assignment":
+                return Ok
+                    ? (HttpStatusCode.OK, """{"workspace_id":1,"metastore_id":"mst-demo-0001","default_catalog_name":"main"}""")
+                    : (HttpStatusCode.NotFound, """{"error_code":"METASTORE_DOES_NOT_EXIST","message":"sintético"}""");
+            case "/api/2.0/workspace-conf":
+                return (HttpStatusCode.OK, Ok ? """{"enableTokensConfig":"true","maxTokenLifetimeDays":"90"}""" : """{"enableTokensConfig":"true","maxTokenLifetimeDays":null}""");
+            case "/api/2.0/permissions/authorization/tokens":
+                return (HttpStatusCode.OK, J(new
+                {
+                    object_id = "authorization/tokens", object_type = "tokens",
+                    access_control_list = Ok
+                        ? new object[] { new { group_name = "admins", all_permissions = new[] { new { permission_level = "CAN_MANAGE" } } },
+                                         new { group_name = "engenharia-dados", all_permissions = new[] { new { permission_level = "CAN_USE" } } } }
+                        : new object[] { new { group_name = "users", all_permissions = new[] { new { permission_level = "CAN_USE" } } } },
+                }));
+            case "/api/2.0/preview/scim/v2/Users":
+                return (HttpStatusCode.OK, J(new
+                {
+                    totalResults = 2, startIndex = 1, itemsPerPage = 2,
+                    Resources = new object[] { new { userName = "ana@clientedemo.example.com", externalId = (string?)"ext-1" },
+                        Ok ? new { userName = "bruno@clientedemo.example.com", externalId = (string?)"ext-2" } : new { userName = "conta.local@clientedemo.example.com", externalId = (string?)null } },
+                }));
+            case "/api/2.0/preview/scim/v2/Groups":
+                return (HttpStatusCode.OK, J(new { totalResults = 1, startIndex = 1, itemsPerPage = 1, Resources = new[] { new { displayName = "engenharia-dados", externalId = "grp-1" } } }));
+            case "/api/2.1/clusters/list":
+                return (HttpStatusCode.OK, J(new { clusters = new[] { new
+                {
+                    cluster_name = "etl-demo", cluster_source = "UI",
+                    // A configuração Spark pode carregar segredo: NUNCA chega ao ADM (só o booleano calculado).
+                    spark_conf = Ok
+                        ? new Dictionary<string, string> { ["spark.network.crypto.enabled"] = "true", ["spark.authenticate.secret"] = Secret }
+                        : new Dictionary<string, string> { ["spark.authenticate.secret"] = Secret },
+                    init_scripts = Array.Empty<object>(),
+                } } }));
+            case "/api/2.0/global-init-scripts":
+                return (HttpStatusCode.OK, """{"scripts":[]}""");
+        }
+        return (HttpStatusCode.NotFound, """{"error_code":"ENDPOINT_NOT_FOUND","message":"rota sintética inexistente"}""");
+    }
+
 
     private sealed class StubHandler : HttpMessageHandler
     {

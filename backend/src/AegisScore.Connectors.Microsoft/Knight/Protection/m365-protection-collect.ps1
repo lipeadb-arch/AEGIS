@@ -38,7 +38,8 @@ $script:DefenderCommands = @(
     'Get-TeamsProtectionPolicy',
     'Get-EmailTenantSettings',
     'Get-User',
-    'Get-EOPProtectionPolicyRule', 'Get-ATPProtectionPolicyRule'
+    'Get-EOPProtectionPolicyRule', 'Get-ATPProtectionPolicyRule',
+    'Get-ReportSubmissionPolicy'
 )
 
 $script:PurviewExchangeCommands = @('Get-AdminAuditLogConfig')
@@ -360,6 +361,24 @@ function Read-Defender {
             })
         }
         $all
+    }
+
+    # [AEGIS-KNIGHT-CLOSURE-01] Destino das mensagens denunciadas: os endereços NÃO saem do adaptador, só quantos existem.
+    Invoke-Read 'DefenderReportSubmissionPolicy' 'Get-ReportSubmissionPolicy' {
+        Get-ReportSubmissionPolicy | ForEach-Object {
+            @{
+                identity = (Get-Text $_ 'Identity')
+                reportJunkToCustomizedAddress = (Get-Bool $_ 'ReportJunkToCustomizedAddress')
+                reportNotJunkToCustomizedAddress = (Get-Bool $_ 'ReportNotJunkToCustomizedAddress')
+                reportPhishToCustomizedAddress = (Get-Bool $_ 'ReportPhishToCustomizedAddress')
+                reportJunkAddresses = @(Get-List $_ 'ReportJunkAddresses').Count
+                reportNotJunkAddresses = @(Get-List $_ 'ReportNotJunkAddresses').Count
+                reportPhishAddresses = @(Get-List $_ 'ReportPhishAddresses').Count
+                reportChatMessageEnabled = (Get-Bool $_ 'ReportChatMessageEnabled')
+                reportChatMessageToCustomizedAddressEnabled = (Get-Bool $_ 'ReportChatMessageToCustomizedAddressEnabled')
+                reportChatMessageAddresses = @(Get-List $_ 'ReportChatMessageAddresses').Count
+            }
+        }
     }
 }
 

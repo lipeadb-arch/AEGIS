@@ -26,21 +26,20 @@ public static class KnightReferenceDispositions
         // beta (microsoftgraph/msgraph-metadata): "só em preview" quando a leitura existe na beta; "sem método" quando não
         // existe em nenhuma das duas. A proteção de token (5.2.2.16), antes declarada sem leitura, EXISTE na v1.0
         // (conditionalAccessSessionControls.secureSignInSession) e passou a ser avaliada por AK-ENTRA-070.
-        ["CIS-M365-7.0.0:5.1.2.1"] = Preview(
-            "Leitura disponível só em versão beta: o estado da MFA por usuário (legado) é a propriedade perUserMfaState dos requisitos de "
-            + $"autenticação do usuário na versão beta do Microsoft Graph, cujo uso em produção a Microsoft não suporta; não existe na {StableGraph}, "
-            + "e exigiria uma leitura por usuário. Verificação manual no centro de administração."),
-        ["CIS-AZ-6.0.0:5.1.3"] = Preview(
-            "Leitura disponível só em versão beta: o estado da MFA por usuário (legado) é a propriedade perUserMfaState da versão beta do "
-            + $"Microsoft Graph, cujo uso em produção a Microsoft não suporta; não existe na {StableGraph}. Verificação manual no centro de administração."),
         ["CIS-AZ-6.0.0:5.1.4"] = Api(
             "Sem método publicado: a opção de lembrar a MFA em dispositivos confiáveis pertence às configurações do serviço de MFA por usuário "
             + $"(legado), que não têm leitura na {StableGraph} nem na versão beta (o nome só aparece como tipo de política nos logs de entrada). "
             + "Verificação manual no portal do serviço de MFA."),
-        ["CIS-M365-7.0.0:5.1.2.4"] = Preview(
-            "Leitura disponível só em versão beta: a restrição de acesso de não administradores ao centro de administração do Microsoft Entra é a "
-            + "propriedade restrictNonAdminAccess do recurso uxSetting (admin/entra/uxSetting) da versão beta do Microsoft Graph; a "
-            + $"{StableGraph} não a expõe. Verificação manual em Usuários → Configurações de usuário."),
+        // [AEGIS-KNIGHT-CLOSURE-01] Reclassificadas em 02/10/2026 contra a documentação publicada da versão beta: a leitura do
+        // uxSetting existe, mas a tabela de permissões oficial diz "Application: Not supported" — só acesso delegado com o papel
+        // Administrador Global; e a lista de domínios de convite não tem método documentado (só um endpoint legado não
+        // publicado). Leitura que não é método documentado não é implementada.
+        ["CIS-M365-7.0.0:5.1.2.4"] = Access(
+            "Dado ausente: a restrição de acesso de não administradores ao centro de administração do Microsoft Entra (restrictNonAdminAccess do "
+            + "recurso uxSetting). Método oficial: GET /admin/entra/uxSetting da versão beta do Microsoft Graph, que a documentação publica só para "
+            + "acesso DELEGADO de um usuário com o papel Administrador Global — a autenticação de aplicativo desta coleta não é suportada (\"Application: "
+            + "Not supported\"). Uma sessão administrativa delegada é outra forma de acesso ao locatário e decisão do cliente; sem ela, registre o "
+            + "resultado manual com a evidência de Usuários → Configurações de usuário."),
         ["CIS-M365-7.0.0:5.1.2.5"] = Api(
             "Sem método publicado: a opção de ocultar “Continuar conectado?” não consta das propriedades de identidade visual "
             + $"(loginPageTextVisibilitySettings) na {StableGraph} nem na versão beta. Verificação manual em Identidade visual da empresa."),
@@ -53,20 +52,12 @@ public static class KnightReferenceDispositions
         ["CIS-M365-7.0.0:5.1.3.3"] = Api(
             "Sem método publicado: a opção de proprietários gerenciarem solicitações de associação em Meus Grupos não é exposta pela "
             + $"{StableGraph} nem pela versão beta. Verificação manual em Grupos → Configurações gerais."),
-        ["CIS-M365-7.0.0:5.1.6.1"] = Preview(
-            "Leitura disponível só em versão beta: a lista de domínios permitidos ou bloqueados para convites só é exposta pelo endpoint "
-            + "legado policies/b2bManagementPolicies da versão beta do Microsoft Graph, não suportado em produção. Verificação manual em "
-            + "Identidades externas → Configurações de colaboração externa."),
-        ["CIS-M365-7.0.0:5.2.3.6"] = Preview(
-            "Leitura disponível só em versão beta: a MFA preferencial do sistema (systemCredentialPreferences) só é exposta pela versão beta do "
-            + "Microsoft Graph, cujo uso em produção a Microsoft não suporta. Verificação manual em Métodos de autenticação → Configurações."),
-        ["CIS-M365-7.0.0:5.2.3.10"] = Preview(
-            "Leitura disponível só em versão beta: o uso do Authenticator em aplicativos complementares (companionAppAllowedState) só é exposto "
-            + "pela versão beta do Microsoft Graph; a versão estável expõe apenas a exibição do nome do aplicativo e da localização. "
-            + "Verificação manual na política do Microsoft Authenticator."),
-        ["CIS-M365-7.0.0:1.3.4"] = Preview(
-            "Leitura disponível só em versão beta: as configurações de aplicativos e serviços próprios dos usuários (adminAppsAndServices) só são "
-            + "expostas pela versão beta do Microsoft Graph. Verificação manual no centro de administração do Microsoft 365 → Configurações da organização."),
+        ["CIS-M365-7.0.0:5.1.6.1"] = Api(
+            "Sem método documentado. Dado ausente: a lista de domínios permitidos ou bloqueados para convites de colaboração. Métodos examinados: a "
+            + "documentação oficial (Permitir ou bloquear convites a usuários B2B) configura a lista só no centro de administração; a versão estável e a "
+            + "versão beta do Microsoft Graph não têm recurso documentado para ela — a única leitura conhecida é um endpoint legado NÃO publicado "
+            + "(/beta/legacy/policies), que o AEGIS não usa. As configurações de acesso entre locatários (crossTenantAccessPolicy) são outro "
+            + "mecanismo e não substituem a lista. Verificação manual em Identidades externas → Configurações de colaboração externa."),
         ["CIS-M365-7.0.0:5.2.4.1"] = Api(Sspr),
         ["CIS-M365-7.0.0:5.2.4.2"] = Api(Sspr),
         ["CIS-M365-7.0.0:5.2.4.3"] = Api(Sspr),
@@ -85,12 +76,6 @@ public static class KnightReferenceDispositions
         // Métodos examinados (documentação oficial, 30/09/2026): o recurso admin do Microsoft Graph na versão estável (v1.0) e
         // na beta, e a lista de cargas de trabalho do Tenant Configuration Management (TCM, v1.0), que é o método oficial
         // de leitura declarativa de configuração entre serviços.
-        ["CIS-M365-7.0.0:1.3.5"] = Preview(
-            "Leitura disponível só em versão beta. Dado ausente: a proteção interna contra phishing do Microsoft Forms (isInOrgFormsPhishingScanEnabled). Métodos examinados: "
-            + "o recurso admin da " + StableGraph + " não tem contêiner do Forms; a leitura existe só na versão beta (adminForms → "
-            + "formsSettings), cujo uso em produção a Microsoft não suporta; o Tenant Configuration Management não lista o Forms entre "
-            + "as cargas de trabalho suportadas. Verificação manual no centro de administração do Microsoft 365 → Configurações da "
-            + "organização → Microsoft Forms."),
         ["CIS-M365-7.0.0:1.3.8"] = Api(
             "Sem método publicado. Dado ausente: a configuração de compartilhamento externo do Sway. Métodos examinados: o recurso admin do Microsoft Graph, "
             + "na versão estável (v1.0) e na beta, não tem contêiner do Sway; o Tenant Configuration Management não lista o Sway entre as "
@@ -133,28 +118,14 @@ public static class KnightReferenceDispositions
             + "evidência em AK-TEAMS-007, sem veredito. Concluir dependeria de uma sessão administrativa delegada — outra forma de "
             + "acesso ao locatário, que é decisão do cliente."),
 
-        // ---- [AEGIS-KNIGHT-COVERAGE-04] Azure: a operação existe só em versão preview ------------------------
-        // Conferido em 01/10/2026 em TODAS as versões estáveis publicadas em Azure/azure-rest-api-specs: 33 do provedor
-        // Microsoft.Insights e 25 do Microsoft.Security. A operação EXISTE nas versões preview citadas — é "só em preview",
-        // não "sem API". O AEGIS não usa versão preview da ARM pela mesma regra que o impede de usar a versão beta do
-        // Microsoft Graph: o fornecedor não a suporta em produção. Rever essa regra é decisão de produto, não de coleta.
-        ["CIS-AZ-6.0.0:6.1.1.1"] = Preview(SubDiag + " Verificação manual em Monitor → Log de atividades → Exportar logs de atividades."),
-        ["CIS-AZ-6.0.0:6.1.1.2"] = Preview(SubDiag + " As categorias capturadas pertencem à mesma configuração. Verificação manual em Monitor → Log de atividades → Exportar logs de atividades."),
-        ["CIS-AZ-6.0.0:6.1.1.3"] = Preview(SubDiag + " Sem ler a configuração, não se sabe qual conta de armazenamento recebe o log de atividades para conferir a chave dela. Verificação manual na configuração de exportação e na criptografia da conta de destino."),
-        ["CIS-AZ-6.0.0:6.1.1.4"] = Preview(ResourceDiag("Key Vault") + " Verificação manual em cada cofre → Configurações de diagnóstico (categoria AuditEvent)."),
-        ["CIS-AZ-6.0.0:6.1.4"] = Preview(ResourceDiag("recurso") + " Verificação manual em Monitor → Configurações de diagnóstico, recurso a recurso."),
-        ["CIS-AZD-2.0.0:3.7"] = Preview(ResourceDiag("Cosmos DB") + " Verificação manual em cada conta → Configurações de diagnóstico."),
-        ["CIS-AZC-2.0.0:15.7"] = Preview(ResourceDiag("Batch") + " Verificação manual em cada conta do Batch → Configurações de diagnóstico."),
-        ["CIS-AZ-6.0.0:2.1.7"] = Preview(ResourceDiag("Databricks") + " Verificação manual em cada workspace → Configurações de diagnóstico."),
+        // ---- Azure: sem método publicado ----------------------------------------------------------------------
+        // [AEGIS-KNIGHT-CLOSURE-01] As leituras que só existiam em versão preview (configurações de diagnóstico e contatos de
+        // segurança) passaram a ser implementadas, com a versão preview identificada nas informações técnicas.
         ["CIS-AZ-6.0.0:6.1.1.9"] = Api(
             "Sem método publicado. Dado ausente: as configurações de diagnóstico do Intune (microsoft.intune/diagnosticSettings), recurso do "
             + "Azure Resource Manager. Métodos examinados: não há versão estável do provedor Microsoft.Intune em Azure/azure-rest-api-specs, e "
             + "as duas versões preview publicadas (2015-01-14-preview e 2015-01-14-privatepreview) não têm a operação diagnosticSettings. "
             + "Verificação manual no centro de administração do Intune → Administração de locatários → Configurações de diagnóstico."),
-        ["CIS-AZ-6.0.0:8.1.12"] = Preview(SecurityContacts + " Critério: notificar os proprietários da assinatura sobre alertas. Verificação manual em Defender para Nuvem → Configurações de ambiente → Notificações por e-mail."),
-        ["CIS-AZ-6.0.0:8.1.13"] = Preview(SecurityContacts + " Critério: e-mail de contato de segurança adicional. Verificação manual em Defender para Nuvem → Configurações de ambiente → Notificações por e-mail."),
-        ["CIS-AZ-6.0.0:8.1.14"] = Preview(SecurityContacts + " Critério: notificação de alertas a partir de uma severidade. Verificação manual em Defender para Nuvem → Configurações de ambiente → Notificações por e-mail."),
-        ["CIS-AZ-6.0.0:8.1.15"] = Preview(SecurityContacts + " Critério: notificação de caminhos de ataque por nível de risco. Verificação manual em Defender para Nuvem → Configurações de ambiente → Notificações por e-mail."),
 
         // ---- [AEGIS-KNIGHT-COVERAGE-04] Azure: critério organizacional ----------------------------------------
         ["CIS-AZ-6.0.0:5.3.4"] = Manual(
@@ -203,44 +174,12 @@ public static class KnightReferenceDispositions
             + "que o expresse."),
         ["CIS-AZ-6.0.0:2.1.12"] = Manual(
             "O critério é a REVISÃO periódica dos grupos do Databricks, um processo organizacional."),
-
-        // ---- [AEGIS-KNIGHT-COVERAGE-04] Azure: existe leitura oficial, mas com outro acesso --------------------
-        ["CIS-AZC-2.0.0:2.5"] = Access(
-            "Dado ausente: as configurações de aplicativo (app settings) e cadeias de conexão, para saber se os segredos são referências ao "
-            + "Key Vault. Método oficial: POST /sites/{nome}/config/appsettings/list, que exige a ação Microsoft.Web/sites/config/list/action — "
-            + "ausente do papel Leitor, porque devolve os VALORES dos segredos. O AEGIS não pede um papel que lê segredos para avaliar postura."),
-        ["CIS-AZ-6.0.0:2.1.3"] = Access(DatabricksWorkspace("a criptografia do tráfego entre os nós (configuração de cluster ou script de inicialização)")),
-        ["CIS-AZ-6.0.0:2.1.4"] = Access(DatabricksWorkspace("a sincronização de usuários e grupos (SCIM) com o Entra ID")),
-        ["CIS-AZ-6.0.0:2.1.5"] = Access(DatabricksWorkspace("o metastore do Unity Catalog atribuído ao workspace")),
-        ["CIS-AZ-6.0.0:2.1.6"] = Access(DatabricksWorkspace("as permissões e a expiração de tokens pessoais")),
     };
-
-    private const string SubDiag =
-        "Leitura disponível só em versão preview. Dado ausente: as configurações de diagnóstico da ASSINATURA (exportação do log de atividades). Métodos examinados: a operação "
-        + "Microsoft.Insights/diagnosticSettings no escopo da assinatura existe só em versões preview da API do Azure Monitor "
-        + "(2017-05-01-preview e 2021-05-01-preview); nenhuma versão estável publicada a contém, e a referência REST da Microsoft "
-        + "abre essa API na versão 2021-05-01-preview.";
-
-    private static string ResourceDiag(string service) =>
-        $"Leitura disponível só em versão preview. Dado ausente: as configurações de diagnóstico do {service}. Métodos examinados: a listagem "
-        + "{recurso}/providers/Microsoft.Insights/diagnosticSettings existe só em versões preview da API do Azure Monitor; a única operação "
-        + "na versão estável (2016-09-01) lê exclusivamente a configuração legada de nome “service”, que não representa as configurações "
-        + "criadas hoje — ler só ela faria um recurso com logs parecer sem logs.";
-
-    private const string SecurityContacts =
-        "Leitura disponível só em versão preview. Dado ausente: os contatos de segurança e as notificações por e-mail do Defender para Nuvem (Microsoft.Security/securityContacts). "
-        + "Métodos examinados: a operação existe só em versões preview (2017-08-01-preview, 2020-01-01-preview, 2023-12-01-preview); nenhuma "
-        + "versão estável publicada do provedor Microsoft.Security a contém.";
 
     private const string VmMfa =
         "Exigir MFA no acesso privilegiado às máquinas depende de QUEM acessa e de COMO (login do Entra ID na VM, Bastion, acesso condicional "
         + "sobre o aplicativo de login das VMs). O AEGIS lê as atribuições de papel do Azure e as políticas de acesso condicional, mas ligar "
         + "as duas ao uso real do acesso às máquinas é avaliação contextual; contas locais das máquinas não são visíveis pelo Resource Manager.";
-
-    private static string DatabricksWorkspace(string what) =>
-        $"Dado ausente: {what}. Método oficial: a API REST do PRÓPRIO workspace do Databricks (https://<workspace>.azuredatabricks.net), "
-        + "que exige que a aplicação seja adicionada ao workspace como entidade de serviço com permissão de leitura ou de administrador — "
-        + "acesso concedido dentro do Databricks, que o papel Leitor do Azure não dá. É decisão do cliente conceder esse acesso.";
 
     private const string Sspr =
         "Sem método publicado: as opções de redefinição de senha self-service (escopo, número de métodos, reconfirmação e notificações) "
@@ -251,6 +190,24 @@ public static class KnightReferenceDispositions
     private static Declared Preview(string note) => new(KnightReferenceDisposition.PreviewOnly, note);
     private static Declared Manual(string note) => new(KnightReferenceDisposition.ManualOnly, note);
     private static Declared Access(string note) => new(KnightReferenceDisposition.RequiresAccess, note);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-CLOSURE-01] Referências cujo critério vive em DOIS serviços: cada controle avalia uma parte (vínculo
+    /// parcial com a nota dizendo qual), e a referência só é integral quando TODOS os controles da composição estão no fluxo
+    /// ativo. Faltando um, continua parcial.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string[]> Composites = new Dictionary<string, string[]>(StringComparer.Ordinal)
+    {
+        // Tempo limite de sessão ociosa (configuração da organização) + restrições impostas pelo aplicativo (acesso condicional).
+        ["CIS-M365-7.0.0:1.3.2"] = new[] { "AK-ENTRA-069", "AK-ENTRA-075" },
+        // Denúncia permitida na política de mensagens do Teams + destino das denúncias no Defender para Office 365.
+        ["CIS-M365-7.0.0:8.6.1"] = new[] { "AK-TEAMS-017", "AK-MDO-019" },
+    };
+
+    /// <summary>Controles que, juntos, avaliam integralmente a referência; nulo quando ela não é composta.</summary>
+    public static IReadOnlyList<string>? CompositeOf(string key) => Composites.TryGetValue(key, out var ids) ? ids : null;
+
+    public static IReadOnlyDictionary<string, string[]> AllComposites => Composites;
 
     public static Declared? For(string key) => ByKey.TryGetValue(key, out var d) ? d : null;
 

@@ -80,7 +80,7 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
                     KnightSourceType.MicrosoftExchangeOnline =>
                         new KnightExchangeOnlineConfiguration(settings.TenantIdValue!, settings.ClientId!, secret, certificate),
                     _ => new KnightMicrosoftServiceConfiguration(source, settings.TenantIdValue!, settings.ClientId!, secret,
-                        certificate, settings.SubscriptionScope),
+                        certificate, settings.SubscriptionScope, settings.DatabricksWorkspaceApi == true),
                 };
 
             case KnightSourceType.GoogleWorkspace:
@@ -158,7 +158,8 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
         string? ClientSecret = null,
         string? CertificatePfxBase64 = null,
         string? CertificatePassword = null,
-        string[]? AzureSubscriptionIds = null)
+        string[]? AzureSubscriptionIds = null,
+        bool? DatabricksWorkspaceApi = null)
     {
         /// <summary>Tenant do Entra: prioriza <c>tenantId</c> (o que a interface envia); cai para <c>azureTenantId</c>.</summary>
         public string? TenantIdValue => !string.IsNullOrWhiteSpace(TenantId) ? TenantId : AzureTenantId;

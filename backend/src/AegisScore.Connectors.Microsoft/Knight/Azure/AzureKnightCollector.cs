@@ -25,7 +25,7 @@ namespace AegisScore.Connectors.Microsoft.Knight.Azure;
 /// <para>Nada além dos caminhos da tabela é gravado. Um recurso lido parcialmente (leitura filha recusada) carrega o
 /// desfecho da filha como fato — a regra trata o valor como desconhecido, nunca como aprovado.</para>
 /// </summary>
-public sealed class AzureKnightCollector : KnightRestCollectorBase
+public sealed partial class AzureKnightCollector : KnightRestCollectorBase
 {
     internal const int MaxGraphUsers = 500;
     internal const int MaxCertificatesPerVault = 200;
@@ -61,6 +61,12 @@ public sealed class AzureKnightCollector : KnightRestCollectorBase
         KnightCapability.AzureDatabases,
         KnightCapability.AzureDatabricks,
         KnightCapability.AzureTenantDiagnostics,
+        // [AEGIS-KNIGHT-CLOSURE-01] Lidas depois das famílias estáveis (dependem dos recursos já descobertos).
+        KnightCapability.AzureActivityLogExport,
+        KnightCapability.AzureSecurityContacts,
+        KnightCapability.AzureResourceDiagnostics,
+        KnightCapability.AzureAppSettingsKeyVaultReferences,
+        KnightCapability.AzureDatabricksWorkspaceApi,
     };
 
     public override IReadOnlyList<KnightCapability> Capabilities => Families;
@@ -157,6 +163,13 @@ public sealed class AzureKnightCollector : KnightRestCollectorBase
 
         // ---- 3) Certificados dos cofres (plano de dados) ----------------------------------------------------
         await ReadVaultCertificatesAsync(cfg, resources, outcomes, ct);
+
+        // ---- 3b) [AEGIS-KNIGHT-CLOSURE-01] Versões preview, referências ao Key Vault e API do Databricks --------
+        foreach (var sub in inScope)
+            await ReadSubscriptionPreviewListsAsync(token, sub.Id, resources, outcomes[sub.Id], ct);
+        await ReadResourceDiagnosticsAsync(token, resources, outcomes, ct);
+        await ReadKeyVaultReferencesAsync(token, resources, outcomes, ct);
+        await ReadDatabricksWorkspacesAsync(cfg, configuration as KnightMicrosoftServiceConfiguration, resources, outcomes, ct);
 
         // ---- 4) Escopo do locatário e complementares --------------------------------------------------------
         var tenantDiag = await ReadTenantListAsync(token, AzureArmPlan.EntraDiagnostics, resources, ct);

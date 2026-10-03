@@ -61,12 +61,14 @@ public sealed record ReportControl(
     // chave que liga uma limitação aos controles que ela prejudica.
     IReadOnlyList<string>? RequiredCapabilityLabels = null,
     // [AEGIS-KNIGHT-PRESENTATION-01] Siglas do glossário que aparecem nos textos congelados deste controle.
-    IReadOnlyList<string>? GlossaryTerms = null);
+    IReadOnlyList<string>? GlossaryTerms = null,
+    // [AEGIS-KNIGHT-CLOSURE-01] Versões preview (beta) das APIs que o controle consome, pelas capacidades congeladas.
+    IReadOnlyList<string>? PreviewApis = null);
 
 /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Uma linha da cobertura de implementação congelada (total, plataforma ou serviço).</summary>
 public sealed record ReportCoverageRow(
     string Key, string Label, int Total, int Implemented, int Partial, int Pending, int ManualOnly, int RequiresAccess,
-    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent, int PreviewOnly = 0);
+    int ApiLimitation, double FullPercent, double PartialPercent, double AnyAutomatedPercent, int PreviewOnly = 0, int PreviewBacked = 0);
 
 /// <summary>
 /// [AEGIS-KNIGHT-COVERAGE-01] Cobertura de IMPLEMENTAÇÃO do catálogo de referência, congelada na fotografia. É uma
@@ -74,7 +76,9 @@ public sealed record ReportCoverageRow(
 /// </summary>
 public sealed record ReportReferenceCoverage(
     string CatalogVersion, string ReferenceCommit, IReadOnlyList<string> Frameworks, ReportCoverageRow Total,
-    IReadOnlyList<ReportCoverageRow> ByPlatform, IReadOnlyList<ReportCoverageRow> ByService);
+    IReadOnlyList<ReportCoverageRow> ByPlatform, IReadOnlyList<ReportCoverageRow> ByService,
+    // [AEGIS-KNIGHT-CLOSURE-01] Resultados manuais vigentes na publicação — à parte da cobertura automatizada.
+    IReadOnlyList<KnightManualResultEntry>? ManualResults = null);
 
 public sealed record ReportPriority(string ControlId, string Title, string Severity, string SeverityLabel, int AffectedCount, string Criterion);
 
@@ -235,6 +239,8 @@ public static class KnightReportModelBuilder
         var coverage = BuildCoverage(s.ReferenceCoverageJson);
         if (coverage is not null)
             notes.Add("A cobertura do catálogo de referência mede o que o AEGIS consegue avaliar (propriedade do produto). Ela é diferente da cobertura desta avaliação (o que a coleta conseguiu avaliar neste ambiente) e da aprovação (o que foi avaliado e está conforme).");
+        if (coverage?.ManualResults is { Count: > 0 } manual)
+            notes.Add($"Há {manual.Count} resultado(s) de verificação MANUAL registrados pela organização para controles de referência sem avaliação automatizada. Eles são atestações (resultado, justificativa, responsável e evidência informados por pessoas), aparecem à parte e não entram na nota, na cobertura desta avaliação nem na aprovação.");
 
         var frameworks = controls.SelectMany(c => c.Frameworks).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
 
@@ -268,11 +274,12 @@ public static class KnightReportModelBuilder
         if (KnightReferenceCoverageSnapshot.Deserialize(json) is not { } c) return null;
         static ReportCoverageRow Row(KnightReferenceCoverageGroup g) => new(
             g.Key, g.Label, g.Total, g.Implemented, g.Partial, g.Pending, g.ManualOnly, g.RequiresAccess, g.ApiLimitation,
-            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent, g.PreviewOnly);
+            g.FullPercent, g.PartialPercent, g.AnyAutomatedPercent, g.PreviewOnly, g.PreviewBacked);
         return new ReportReferenceCoverage(
             c.CatalogVersion, c.ReferenceCommit,
             c.Frameworks.Select(f => $"{f.Name} {f.Version} ({f.Controls} controles)").ToList(),
-            Row(c.Total), c.ByPlatform.Select(Row).ToList(), c.ByService.Select(Row).ToList());
+            Row(c.Total), c.ByPlatform.Select(Row).ToList(), c.ByService.Select(Row).ToList(),
+            c.ManualResults ?? Array.Empty<KnightManualResultEntry>());
     }
 
     private static ReportControl BuildControl(
@@ -339,7 +346,9 @@ public static class KnightReportModelBuilder
             reach,
             i.RequiredCapabilities
                 .Select(c => Enum.TryParse<KnightCapability>(c, out var cap) ? KnightCapabilityLabels.Label(cap) : c)
-                .ToList());
+                .ToList(),
+            null,
+            KnightCapabilityLabels.PreviewApis(i.RequiredCapabilities));
     }
 
     private static IReadOnlyList<ReportDistributionRow> Distribution(
@@ -574,8 +583,34 @@ public static class KnightCapabilityLabels
         KnightCapability.AzureDatabricks => "Workspaces do Azure Databricks",
         KnightCapability.AzureTenantDiagnostics => "Configurações de diagnóstico do Microsoft Entra ID",
 
+        // [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão preview, acesso adicional e complementos.
+        KnightCapability.AzureResourceDiagnostics => "Configurações de diagnóstico dos recursos do Azure (versão preview)",
+        KnightCapability.AzureActivityLogExport => "Exportação do log de atividades das assinaturas (versão preview)",
+        KnightCapability.AzureSecurityContacts => "Contatos e notificações do Defender para Nuvem (versão preview)",
+        KnightCapability.AzureAppSettingsKeyVaultReferences => "Referências ao Key Vault nas configurações do App Service",
+        KnightCapability.AzureDatabricksWorkspaceApi => "API dos workspaces do Azure Databricks",
+        KnightCapability.PerUserMfaStates => "MFA por usuário (legado) (versão beta do Microsoft Graph)",
+        KnightCapability.AuthenticationMethodsPolicyPreview => "Métodos de autenticação: campos da versão beta do Microsoft Graph",
+        KnightCapability.M365AppsAndServicesSettings => "Aplicativos e serviços próprios dos usuários (versão beta do Microsoft Graph)",
+        KnightCapability.M365FormsSettings => "Configurações do Microsoft Forms (versão beta do Microsoft Graph)",
+        KnightCapability.ActivityBasedTimeoutPolicy => "Tempo limite de sessão ociosa do Microsoft 365",
+        KnightCapability.DefenderReportSubmissionPolicy => "Destino das mensagens denunciadas pelos usuários",
+
         _ => c.ToString(),
     };
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-CLOSURE-01] Versão PREVIEW (beta) da API que a capacidade consome, ou nula quando a leitura usa só
+    /// versões estáveis. É a informação técnica que o relatório mostra ao lado dos controles que dependem dela: o
+    /// fornecedor não suporta essas versões em produção, e uma mudança de contrato vira limitação, nunca aprovação.
+    /// </summary>
+    public static string? PreviewApi(KnightCapability c) => KnightCollectorCapabilities.PreviewApi(c);
+
+    /// <summary>Versões preview das capacidades exigidas (identificadores congelados), sem repetição.</summary>
+    public static IReadOnlyList<string> PreviewApis(IEnumerable<string> requiredCapabilities) =>
+        requiredCapabilities
+            .Select(c => Enum.TryParse<KnightCapability>(c, out var cap) ? PreviewApi(cap) : null)
+            .OfType<string>().Distinct(StringComparer.Ordinal).ToList();
 
     /// <summary>
     /// Permissão que a chamada IMPLEMENTADA exige — exibida só quando a coleta falhou por permissão. Não é uma
@@ -604,6 +639,12 @@ public static class KnightCapabilityLabels
             KnightCapability.PrivilegedIdentityManagement => "RoleManagement.Read.Directory e RoleManagementPolicy.Read.Directory (aplicativo)",
             KnightCapability.AccessReviews => "AccessReview.Read.All (aplicativo)",
             KnightCapability.ServicePrincipalSettings => "Application.Read.All (aplicativo)",
+            // [AEGIS-KNIGHT-CLOSURE-01] As leituras beta do estado da MFA por usuário e da política de métodos usam a mesma
+            // permissão das estáveis; as configurações da organização têm permissões próprias, só de leitura.
+            KnightCapability.PerUserMfaStates or KnightCapability.AuthenticationMethodsPolicyPreview
+                or KnightCapability.ActivityBasedTimeoutPolicy => "Policy.Read.All (aplicativo)",
+            KnightCapability.M365AppsAndServicesSettings => "OrgSettings-AppsAndServices.Read.All (aplicativo)",
+            KnightCapability.M365FormsSettings => "OrgSettings-Forms.Read.All (aplicativo)",
             _ => null,
         },
         KnightSourceType.GoogleWorkspace => c switch
@@ -657,6 +698,10 @@ public static class KnightCapabilityLabels
                 "Leitura de microsoft.aadiam/diagnosticSettings no escopo do locatário (papel do Entra ID com acesso às configurações de diagnóstico)",
             KnightCapability.AzureAuthorization =>
                 "Papel Leitor do Azure RBAC nas assinaturas do escopo; o estado das contas com papel exige User.Read.All (Microsoft Graph, aplicativo)",
+            KnightCapability.AzureAppSettingsKeyVaultReferences =>
+                "Papel Leitor do Azure RBAC (Microsoft.Web/sites/config/Read); a ação Microsoft.Web/sites/config/list/action, que devolve os valores, não é usada",
+            KnightCapability.AzureDatabricksWorkspaceApi =>
+                "Leitura habilitada em Integrações e a aplicação adicionada a cada workspace do Databricks como entidade de serviço com papel de administrador do workspace (tokens, SCIM e configuração do workspace são leituras restritas a administradores)",
             _ => "Papel Leitor do Azure RBAC nas assinaturas do escopo (ou no grupo de gerenciamento que as contém)",
         },
 

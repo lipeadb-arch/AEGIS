@@ -315,11 +315,58 @@ public enum KnightCapability
     /// <summary>Workspaces do Azure Databricks (configuração pelo Resource Manager).</summary>
     AzureDatabricks = 82,
 
-    // 83 fica reservado: as configurações de diagnóstico dos RECURSOS não têm listagem na versão estável da API do Azure
-    // Monitor (só a configuração legada "service"), e uma capacidade sem leitura real não é declarada.
+    /// <summary>
+    /// [AEGIS-KNIGHT-CLOSURE-01] Configurações de diagnóstico dos RECURSOS (<c>{recurso}/providers/Microsoft.Insights/diagnosticSettings</c>).
+    /// A listagem só existe em versão PREVIEW da API do Azure Monitor (2021-05-01-preview): a capacidade é separada das
+    /// famílias estáveis para que indisponibilidade ou mudança de contrato da versão preview não derrube mais nada.
+    /// </summary>
+    AzureResourceDiagnostics = 83,
 
     /// <summary>Configurações de diagnóstico do Microsoft Entra ID (escopo do locatário, <c>microsoft.aadiam</c>).</summary>
     AzureTenantDiagnostics = 84,
+
+    // ---- [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão PREVIEW, acesso adicional e complementos ------------------
+    // Cada leitura em versão preview (Microsoft Graph beta, Azure Resource Manager *-preview) é uma capacidade PRÓPRIA:
+    // indisponibilidade, recusa ou resposta fora do contrato documentado vira limitação dessa capacidade — nunca aprovação.
+
+    /// <summary>Exportação do log de atividades: configurações de diagnóstico da ASSINATURA (Azure Monitor, 2021-05-01-preview).</summary>
+    AzureActivityLogExport = 85,
+
+    /// <summary>Contatos de segurança e notificações do Defender para Nuvem (<c>Microsoft.Security/securityContacts</c>, 2023-12-01-preview).</summary>
+    AzureSecurityContacts = 86,
+
+    /// <summary>
+    /// Referências ao Key Vault nas configurações dos aplicativos do App Service (<c>config/configreferences/appsettings</c>,
+    /// versão estável). Devolve só a referência e o estado de resolução — nunca o valor de uma configuração.
+    /// </summary>
+    AzureAppSettingsKeyVaultReferences = 87,
+
+    /// <summary>
+    /// API REST do PRÓPRIO workspace do Azure Databricks (Unity Catalog, tokens pessoais, SCIM, clusters). Só é tentada
+    /// quando habilitada explicitamente em Integrações: exige que a aplicação seja adicionada a cada workspace.
+    /// </summary>
+    AzureDatabricksWorkspaceApi = 88,
+
+    /// <summary>Estado da MFA por usuário (legado) — <c>/users/{id}/authentication/requirements</c>, Microsoft Graph beta.</summary>
+    PerUserMfaStates = 89,
+
+    /// <summary>
+    /// Campos da política de métodos de autenticação que só a versão beta do Microsoft Graph expõe (MFA preferencial do
+    /// sistema e Authenticator em aplicativos complementares).
+    /// </summary>
+    AuthenticationMethodsPolicyPreview = 90,
+
+    /// <summary>Aplicativos e serviços próprios dos usuários (<c>/admin/appsAndServices</c>, Microsoft Graph beta).</summary>
+    M365AppsAndServicesSettings = 91,
+
+    /// <summary>Configurações do Microsoft Forms (<c>/admin/forms</c>, Microsoft Graph beta).</summary>
+    M365FormsSettings = 92,
+
+    /// <summary>Tempo limite de sessão ociosa do Microsoft 365 (<c>/policies/activityBasedTimeoutPolicies</c>, versão estável).</summary>
+    ActivityBasedTimeoutPolicy = 93,
+
+    /// <summary>Destino das mensagens denunciadas pelos usuários (<c>Get-ReportSubmissionPolicy</c>, sessão do Exchange Online).</summary>
+    DefenderReportSubmissionPolicy = 94,
 }
 
 /// <summary>
@@ -473,6 +520,9 @@ public sealed record KnightExchangeOnlineConfiguration(
 /// muda por fonte é o recurso do token, a permissão e o papel exigidos, e cada coletor os declara.
 /// <para><paramref name="AzureSubscriptionIds"/> é o ESCOPO explícito do Azure: vazio significa "todas as assinaturas
 /// que a aplicação enxerga", e o relatório diz qual foi o escopo avaliado.</para>
+/// <para>[AEGIS-KNIGHT-CLOSURE-01] <paramref name="DatabricksWorkspaceApi"/> habilita, por decisão explícita em Integrações,
+/// a leitura da API REST de cada workspace do Databricks — que exige a aplicação adicionada ao workspace. Desligada, a
+/// capacidade fica "não executada" com o motivo, e os controles que dependem dela ficam não avaliados.</para>
 /// </summary>
 public sealed record KnightMicrosoftServiceConfiguration(
     KnightSourceType SourceType,
@@ -480,7 +530,8 @@ public sealed record KnightMicrosoftServiceConfiguration(
     string ClientId,
     string ClientSecret,
     MicrosoftClientCertificate? ClientCertificate = null,
-    IReadOnlyList<string>? AzureSubscriptionIds = null) : KnightSourceConfiguration, IMicrosoftGraphCredentials
+    IReadOnlyList<string>? AzureSubscriptionIds = null,
+    bool DatabricksWorkspaceApi = false) : KnightSourceConfiguration, IMicrosoftGraphCredentials
 {
     public override KnightSourceType Source => SourceType;
 

@@ -70,11 +70,11 @@ public sealed class KnightMulticloudReportTests : IDisposable
         // ---- Coleta parcial declarada, avaliação concluída a partir da aquisição persistida ----
         assessment.Status.Should().Be(KnightRunStatus.Completed);
         assessment.SourceState.Should().Be(KnightSourceState.PartialCollection, "as duas capacidades de risco devolveram 403");
-        assessment.CatalogVersion.Should().Be("ak-knight-v9");
+        assessment.CatalogVersion.Should().Be("ak-knight-v10");
         var run = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == assessment.Id);
         run.IdentityAcquisitionId.Should().NotBeNull();
         (await db.IdentityConfigurationObservations.CountAsync(c => c.AcquisitionId == run.IdentityAcquisitionId))
-            .Should().Be(6, "duas políticas, dois papéis ativos, o inventário de credenciais de aplicações e o estado da aplicação de "
+            .Should().Be(7, "duas políticas, dois papéis ativos, o inventário de credenciais de aplicações, a capacidade de MFA dos membros (do mesmo relatório de registro) e o estado da aplicação de "
                 + "armazenamento de terceiros preservados como evidência da aquisição (os demais recursos de configuração não existem neste cenário)");
 
         // ---- MFA administrativa lida papel a papel ----

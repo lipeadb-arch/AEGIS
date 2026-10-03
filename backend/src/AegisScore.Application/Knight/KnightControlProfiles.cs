@@ -90,6 +90,7 @@ public static class KnightControlProfiles
         .Concat(ExchangeConfigurationProfiles.All)
         .Concat(M365ServiceProfiles.All)
         .Concat(AzureProfiles.All)
+        .Concat(ClosureProfiles.All)
         .Select(p => p with { Impact = KnightControlImpacts.For(p.IndicatorId) })
         .ToDictionary(p => p.IndicatorId, StringComparer.Ordinal);
 
@@ -395,6 +396,7 @@ public static class KnightControlPresentations
             factor is null ? null : weight,
             profile?.Impact,
             KnightControlProfiles.PlatformOf(indicatorId, source),
-            KnightControlProfiles.ServiceKindOf(indicatorId, source).ToString());
+            KnightControlProfiles.ServiceKindOf(indicatorId, source).ToString(),
+            Reference.KnightCollectorCapabilities.PreviewApisOf(indicatorId));
     }
 }

@@ -536,6 +536,9 @@ public static class PostureSnapshotPdfWriter
             Body(section, "Onde foi encontrado: " + (c?.ProvenReach ?? n.Reach), bold: true);
             var caveat = n.Caveat ?? c?.DoesNotProve;
             if (caveat is not null) Body(section, "O que este achado não afirma: " + caveat, muted: true);
+            // [AEGIS-KNIGHT-CLOSURE-01] Informação técnica: a leitura usada está em versão preview da API do fornecedor.
+            if (c?.PreviewApis is { Count: > 0 } preview)
+                Body(section, "Leitura em versão preview: " + string.Join(" · ", preview) + ".", muted: true);
             Body(section, "O que fazer: " + KnightFindingNarratives.FirstAction(i.IndicatorId, i.Recommendation ?? c?.Recommendation ?? ""), muted: true);
         }
     }
@@ -868,14 +871,15 @@ public static class PostureSnapshotPdfWriter
         Heading(section, "Cobertura do catálogo de referência (propriedade do produto)");
         Body(section,
             "Mede o que o AEGIS consegue avaliar, não o ambiente do cliente. Integral = critério da referência; " +
-            "parcial = critério equivalente, não idêntico. Leitura só em versão preview (não usada), sem método na API, verificação manual e acesso não disponível " +
-            "nunca contam como avaliados. " + string.Join(" · ", cov.Frameworks) + $" · catálogo {cov.CatalogVersion}.", muted: true);
+            "parcial = critério equivalente, não idêntico. Sem método na API, verificação manual e acesso não disponível nunca contam como avaliados. " +
+            $"Leituras em versão preview são usadas e identificadas nos controles: {cov.Total.PreviewBacked} das referências avaliadas dependem delas. " +
+            string.Join(" · ", cov.Frameworks) + $" · catálogo {cov.CatalogVersion}.", muted: true);
 
         var table = section.AddTable();
         StyleTable(table);
         table.AddColumn(Unit.FromCentimeter(3.6));
         foreach (var _ in Enumerable.Range(0, 8)) table.AddColumn(Unit.FromCentimeter(1.65));
-        HeaderRow(table, "Recorte", "Total", "Integral", "Parcial", "Pendente", "Só preview", "Sem método", "Manual", "Outro acesso");
+        HeaderRow(table, "Recorte", "Total", "Integral", "Parcial", "Pendente", "Usa preview", "Sem método", "Manual", "Outro acesso");
         foreach (var r in new[] { cov.Total }.Concat(cov.ByPlatform))
         {
             var row = table.AddRow();
@@ -884,10 +888,37 @@ public static class PostureSnapshotPdfWriter
             Cell(row, 2, $"{r.Implemented} ({r.FullPercent.ToString("0.#", Pt)}%)", align: ParagraphAlignment.Center);
             Cell(row, 3, $"{r.Partial} ({r.PartialPercent.ToString("0.#", Pt)}%)", align: ParagraphAlignment.Center);
             Cell(row, 4, r.Pending.ToString(Pt), align: ParagraphAlignment.Center);
-            Cell(row, 5, r.PreviewOnly.ToString(Pt), align: ParagraphAlignment.Center);
+            Cell(row, 5, r.PreviewBacked.ToString(Pt), align: ParagraphAlignment.Center);
             Cell(row, 6, r.ApiLimitation.ToString(Pt), align: ParagraphAlignment.Center);
             Cell(row, 7, r.ManualOnly.ToString(Pt), align: ParagraphAlignment.Center);
             Cell(row, 8, r.RequiresAccess.ToString(Pt), align: ParagraphAlignment.Center);
+        }
+
+        // [AEGIS-KNIGHT-CLOSURE-01] Resultados de verificação MANUAL, congelados na publicação e sempre à parte.
+        Heading(section, "Resultados de verificação manual (atestação)");
+        if (cov.ManualResults is not { Count: > 0 } manual)
+        {
+            Body(section, "Nenhum resultado manual registrado até a publicação.", muted: true);
+            return;
+        }
+        Body(section, "Registrados pela organização para controles de referência sem avaliação automatizada. São atestações: não entram na nota, " +
+            "na cobertura desta avaliação nem na aprovação.", muted: true);
+        foreach (var r in manual)
+        {
+            var t = section.AddParagraph();
+            t.Format.SpaceBefore = Unit.FromMillimeter(1.6);
+            t.Format.Font.Size = 9;
+            t.Format.KeepWithNext = true;
+            t.AddFormattedText(r.Title, TextFormat.Bold);
+            t.AddText($"   ({r.ReferenceLabel} · {r.DispositionLabel})");
+            Body(section, "Resultado: " + r.ResultLabel + (r.Expired ? " — VENCIDO" : "") + (r.ValidUntil is null ? "" : $" · válido até {r.ValidUntil}"), bold: true);
+            Body(section, "Justificativa: " + r.Justification);
+            var evidence = string.Join(" · ", new[]
+            {
+                r.EvidenceReference,
+                r.EvidenceDocumentTitle is null ? null : "Documento: " + r.EvidenceDocumentTitle + (r.EvidenceDocumentSha256 is { Length: >= 12 } h ? $" (SHA-256 {h[..12]}…)" : ""),
+            }.Where(x => !string.IsNullOrWhiteSpace(x)));
+            Body(section, $"Responsável: {r.ResponsibleName} · Evidência: {(evidence.Length == 0 ? "—" : evidence)} · Registrado por {(r.RecordedByName.Length == 0 ? "—" : r.RecordedByName)} em {r.RecordedAt[..10]}", muted: true);
         }
     }
 

@@ -405,6 +405,8 @@ export type MicrosoftPermissionUsage =
   | 'NewForM365Services'
   /** [AEGIS-KNIGHT-COVERAGE-04] Atribuição de papel do Azure RBAC (não é permissão de API do Entra ID). */
   | 'NewForAzure'
+  /** [AEGIS-KNIGHT-CLOSURE-01] Leituras complementares (versão beta/preview ou acesso concedido fora do Entra ID). */
+  | 'NewForClosure'
   /** Deliberadamente NÃO exigida — com a justificativa técnica registrada em `action`. */
   | 'NotRequired';
 
@@ -535,6 +537,33 @@ export const ENTRA_IDENTITY_CAPABILITIES: MicrosoftCapabilitySpec[] = [
     action:
       'NÃO conceda por causa do AEGIS. A visão agregada equivalente já vem do relatório userRegistrationDetails, com AuditLog.Read.All.',
   },
+  // ---- [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão BETA do Microsoft Graph — todas de LEITURA ----------------
+  {
+    name: 'MFA por usuário, MFA preferencial e Authenticator (versão beta)',
+    purpose:
+      'Estado da MFA por usuário (legado) conta a conta, MFA preferencial do sistema e Authenticator em aplicativos complementares — leituras que só existem na versão beta do Microsoft Graph. Também lê o tempo limite de sessão ociosa (v1.0).',
+    permission: 'Policy.Read.All',
+    usage: 'Consumed',
+    licenseNote: null,
+    action:
+      'Nada novo: a permissão já é usada. A versão beta não tem contrato garantido pela Microsoft — se a resposta mudar, os controles ficam não avaliados, nunca aprovados.',
+  },
+  {
+    name: 'Aplicativos e serviços próprios dos usuários (versão beta)',
+    purpose: 'Se os usuários podem instalar suplementos da Office Store e iniciar avaliações de aplicativos e serviços por conta própria.',
+    permission: 'OrgSettings-AppsAndServices.Read.All',
+    usage: 'NewForClosure',
+    licenseNote: null,
+    action: 'Conceda a permissão (somente leitura) à aplicação e sincronize novamente. Sem ela, só o controle correspondente fica não avaliado.',
+  },
+  {
+    name: 'Microsoft Forms (versão beta)',
+    purpose: 'Varredura de phishing nos formulários internos e envio ou colaboração com pessoas de fora da organização.',
+    permission: 'OrgSettings-Forms.Read.All',
+    usage: 'NewForClosure',
+    licenseNote: null,
+    action: 'Conceda a permissão (somente leitura) à aplicação e sincronize novamente. Sem ela, só o controle do Forms fica não avaliado.',
+  },
 ];
 
 /**
@@ -625,6 +654,34 @@ export const KNIGHT_AZURE_CAPABILITIES: MicrosoftCapabilitySpec[] = [
     licenseNote: null,
     action: 'Opcional. Sem ele, só o controle de validade de certificados fica não avaliado, com o motivo.',
   },
+  // ---- [AEGIS-KNIGHT-CLOSURE-01] Leituras complementares do Azure ------------------------------------------------
+  {
+    name: 'Diagnóstico e contatos de segurança (versão preview)',
+    purpose:
+      'Exportação do log de atividades, logs de recurso (cofres, Cosmos DB, Batch, Databricks, App Service e outros) e contatos e notificações do Defender para Nuvem — operações publicadas só nas versões 2021-05-01-preview e 2023-12-01-preview. Endereços e telefones de contato não são gravados (só a contagem).',
+    permission: 'Papel Leitor do Azure RBAC (o mesmo dos recursos)',
+    usage: 'NewForAzure',
+    licenseNote: null,
+    action: 'Nada novo além do papel Leitor. Se a resposta da versão preview mudar, os controles ficam não avaliados, nunca aprovados.',
+  },
+  {
+    name: 'Referências ao Key Vault do App Service',
+    purpose: 'Se as configurações que apontam para o Key Vault estão resolvidas. Só cofre, estado e origem são lidos — nunca os valores.',
+    permission: 'Papel Leitor do Azure RBAC (Microsoft.Web/sites/config/Read)',
+    usage: 'NewForAzure',
+    licenseNote: null,
+    action: 'Nada novo além do papel Leitor. A ação que devolve os valores (config/list) não é usada; por isso a avaliação é parcial.',
+  },
+  {
+    name: 'API dos workspaces do Azure Databricks',
+    purpose:
+      'Unity Catalog, validade e uso de tokens pessoais, usuários e grupos sincronizados do Entra ID e criptografia entre nós dos clusters — leituras da API do próprio workspace. A configuração Spark e o conteúdo de scripts não são gravados.',
+    permission: 'Aplicação adicionada a cada workspace como entidade de serviço administradora (acesso dentro do Databricks)',
+    usage: 'NewForClosure',
+    licenseNote: 'Unity Catalog e a configuração de tokens dependem do plano Premium do Databricks.',
+    action:
+      'Opcional e explícito: habilite abaixo a leitura da API dos workspaces e adicione a aplicação em cada workspace. Desligada, nenhum pedido é feito ao workspace e 4 controles ficam não avaliados, com o motivo.',
+  },
 ];
 
 /** Permissões de uma matriz filtradas por uso — base das três listas da tela. */
@@ -640,7 +697,7 @@ export function permissionsByUsage(
  * pode sugerir a concessão de uma permissão que o produto decidiu não usar.
  */
 export function requiredPermissions(caps: MicrosoftCapabilitySpec[]): string[] {
-  return caps.filter((c) => c.usage !== 'NotRequired').map((c) => c.permission);
+  return [...new Set(caps.filter((c) => c.usage !== 'NotRequired').map((c) => c.permission))];
 }
 
 /** Capacidades cuja disponibilidade depende do plano contratado — a tela avisa antes da coleta. */
@@ -654,6 +711,7 @@ const USAGE_LABEL: Record<MicrosoftPermissionUsage, string> = {
   NewForConfiguration: 'Nova — configuração do locatário',
   NewForM365Services: 'Nova — serviços do Microsoft 365',
   NewForAzure: 'Nova — Azure (papel do Azure RBAC)',
+  NewForClosure: 'Nova — leitura complementar (opcional)',
   NotRequired: 'Não necessária neste pacote',
 };
 
@@ -800,6 +858,8 @@ export interface MicrosoftHubRequest {
   removeCertificate?: boolean;
   /** Assinaturas do Azure avaliadas (vazio = todas as que a aplicação enxerga). Omitido = mantém o escopo guardado. */
   azureSubscriptionIds?: string[];
+  /** [AEGIS-KNIGHT-CLOSURE-01] Leitura da API dos workspaces do Databricks (explícita). Omitido = mantém o que está guardado. */
+  databricksWorkspaceApi?: boolean;
 }
 
 /** [AEGIS-KNIGHT-COVERAGE-04] O que só o conector do AEGIS KNIGHT guarda além da credencial comum. */
@@ -808,6 +868,8 @@ export interface KnightCredentialExtras {
   certificatePassword?: string | null;
   removeCertificate?: boolean;
   azureSubscriptionIds?: string[] | null;
+  /** [AEGIS-KNIGHT-CLOSURE-01] Habilita (ou desliga) a leitura da API dos workspaces do Databricks. */
+  databricksWorkspaceApi?: boolean | null;
 }
 
 /** [AEGIS-KNIGHT-COVERAGE-04] Resumo NÃO sensível da credencial guardada (nunca o segredo, o PFX ou a senha). */
@@ -819,6 +881,8 @@ export interface MicrosoftCredentialSummary {
   certificate: { thumbprint: string; notBefore: string; notAfter: string; currentlyValid: boolean } | null;
   certificateProblem: string | null;
   azureSubscriptionIds: string[];
+  /** [AEGIS-KNIGHT-CLOSURE-01] Leitura da API dos workspaces do Databricks habilitada. Ausente em respostas antigas. */
+  databricksWorkspaceApi?: boolean;
 }
 
 /**
@@ -873,6 +937,7 @@ export function buildMicrosoftHubRequest(
       body.removeCertificate = true;
     }
     if (knight.azureSubscriptionIds) body.azureSubscriptionIds = knight.azureSubscriptionIds;
+    if (typeof knight.databricksWorkspaceApi === 'boolean') body.databricksWorkspaceApi = knight.databricksWorkspaceApi;
   }
   return body;
 }

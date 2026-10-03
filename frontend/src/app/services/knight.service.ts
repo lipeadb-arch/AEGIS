@@ -9,7 +9,9 @@ import {
   KnightGlossary,
   KnightLatest,
   KnightLatestBySource,
+  KnightManualResult,
   KnightReferenceCoverage,
+  RecordKnightManualResultRequest,
   KnightSources,
   KnightSourceType,
   sourceSlug,
@@ -82,6 +84,32 @@ export class KnightService {
     return this.http.get<KnightReferenceCoverage>(`${this.base}/reference-coverage`).pipe(
       timeout(this.READ_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível carregar a cobertura do catálogo de referência.')),
+    );
+  }
+
+  /** [AEGIS-KNIGHT-CLOSURE-01] Histórico dos resultados manuais de UM controle de referência (mais recente primeiro). */
+  getManualHistory(referenceKey: string): Observable<KnightManualResult[]> {
+    return this.http.get<KnightManualResult[]>(`${this.base}/manual-results/${encodeURIComponent(referenceKey)}`).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível carregar o histórico dos resultados manuais.')),
+    );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-CLOSURE-01] Registra o resultado de uma verificação MANUAL (atestação). Não altera nota, cobertura
+   * automatizada nem aprovação. A recusa da validação (400) volta com a mensagem do servidor, que diz o que corrigir.
+   */
+  recordManualResult(request: RecordKnightManualResultRequest): Observable<KnightManualResult> {
+    return this.http.post<KnightManualResult>(`${this.base}/manual-results`, request).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError((err: unknown) => {
+        if (err instanceof HttpErrorResponse) {
+          if (err.status === 400 && typeof err.error === 'string' && err.error) return throwError(() => new Error(err.error as string));
+          if (err.status === 403)
+            return throwError(() => new Error('Seu papel não permite registrar resultado manual (requer Manager ou TenantAdmin).'));
+        }
+        return this.normalize('Não foi possível registrar o resultado manual.')(err);
+      }),
     );
   }
 

@@ -115,6 +115,9 @@ public sealed class DatabaseUpgradePostgresTests
             // anulável (texto), SEM backfill — fotografias anteriores (de fonte única) continuam com o hash
             // idêntico e nunca ganham uma composição que não existiu.
             "20260924012046_KnightConsolidated01_CompositionJson",
+            // [AEGIS-KNIGHT-CLOSURE-01] Resultado manual estruturado dos controles de referência: uma tabela NOVA, sem
+            // alterar nenhuma existente e sem backfill — nenhum controle ganha atestação que ninguém registrou.
+            "20261003125320_Closure01_KnightManualAssessments",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

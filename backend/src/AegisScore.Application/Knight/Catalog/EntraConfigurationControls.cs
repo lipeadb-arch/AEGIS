@@ -1312,7 +1312,8 @@ public static class EntraConfigurationControls
             c => AllUsersRequirement(c, IdleSessionRestriction,
                 "O acesso pelo navegador aplica as restrições de sessão impostas pelo aplicativo.", "Não há política habilitada que aplique restrições de sessão impostas pelo aplicativo no navegador."),
             Ref(M365 + "1.3.2", KnightReferenceMatch.Partial,
-                "A referência também exige a configuração de tempo limite de sessão ociosa do Microsoft 365 (3 horas ou menos), lida no serviço SharePoint e OneDrive, ainda não implementada.")),
+                "Parte do critério: a política de acesso condicional com restrições impostas pelo aplicativo. A outra parte, o tempo limite de "
+                + "sessão ociosa do Microsoft 365 (3 horas ou menos), é avaliada no AK-ENTRA-075; os dois juntos cobrem a referência.")),
 
         // [AEGIS-KNIGHT-COVERAGE-04] Antes declarada "sem leitura na versão estável": a v1.0 do Microsoft Graph expõe
         // conditionalAccessSessionControls.secureSignInSession, e a coleta de acesso condicional já lê as políticas.
