@@ -1,9 +1,9 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { combineLatest } from 'rxjs';
+import { Observable, Subscription, combineLatest } from 'rxjs';
 import { GovernanceDocument } from '../../models/governance.models';
 import {
   MATURITY_LEVEL_HINTS,
@@ -18,6 +18,7 @@ import {
   draftProblem,
   evidenceOriginLabel,
   gapText,
+  newerEvaluation,
   nistCategoryLabel,
   nistFunctionBySlug,
   nistFunctionTitle,
@@ -32,8 +33,9 @@ import { NistApiError, NistService } from '../../services/nist.service';
 /**
  * [AEGIS-NIST-JOURNEY-01] Uma subcategoria do NIST CSF 2.0 dentro da avaliação: o resultado esperado, a situação atual
  * e o alvo, a justificativa, as lacunas e o risco, o responsável, as evidências (com origem, data e escopo) e a revisão.
- * Toda gravação vai ao servidor com a versão lida (conflito = 409, nada é sobrescrito). A sugestão da IA só preenche o
- * rascunho: vira avaliação apenas quando o analista grava.
+ * Toda gravação vai ao servidor com a versão em que o rascunho se baseia (conflito = 409, nada é sobrescrito); atualizar
+ * evidências não muda essa base — só o recarregamento explícito. A sugestão da IA só preenche o rascunho: vira avaliação
+ * apenas quando o analista grava. Respostas pedidas para outra subcategoria, escopo, avaliação ou tenant são descartadas.
  */
 @Component({
   selector: 'app-nist-subcategory',
@@ -119,7 +121,7 @@ import { NistApiError, NistService } from '../../services/nist.service';
             </fieldset>
             @if (canWrite()) {
               <div class="actions">
-                <button type="submit" class="primary" [disabled]="saving() || !!problem()">{{ saving() ? 'Gravando…' : 'Gravar avaliação' }}</button>
+                <button type="submit" class="primary" [disabled]="saving() || busy() || !!problem()">{{ saving() ? 'Gravando…' : 'Gravar avaliação' }}</button>
                 @if (problem(); as pb) { <span class="muted">{{ pb }}</span> }
               </div>
             }
@@ -129,8 +131,13 @@ import { NistApiError, NistService } from '../../services/nist.service';
               @if (conflict()) { <button type="button" class="ghost sm" (click)="reload()">Recarregar a versão atual</button> }</div>
           }
           @if (savedNote()) { <p class="notice" role="status">{{ savedNote() }}</p> }
+          @if (staleBase()) {
+            <p class="notice warn" role="status">Outra gravação (versão {{ d.evaluation?.version }}) ocorreu depois que este rascunho
+              foi aberto (versão {{ baseVersion }}). Ao gravar, o AEGIS acusará conflito; a sua edição continua no formulário.
+              <button type="button" class="ghost sm" (click)="reload()">Recarregar a versão atual</button></p>
+          }
           @if (d.evaluation; as e) {
-            <p class="hint">Revisão humana: {{ e.reviewedByName ?? 'autor não identificado' }}
+            <p class="hint">Revisão humana vigente no servidor: {{ e.reviewedByName ?? 'autor não identificado' }}
               @if (e.reviewedAt) { em {{ e.reviewedAt | date: 'dd/MM/yyyy HH:mm' }} } · versão {{ e.version }}</p>
           } @else { <p class="hint">Ainda sem revisão registrada.</p> }
         </section>
@@ -163,7 +170,7 @@ import { NistApiError, NistService } from '../../services/nist.service';
                 <p class="muted">{{ e.originLabel ?? '' }} · data na origem {{ e.collectedAt | date: 'dd/MM/yyyy' : 'UTC' }} · vinculada por {{ e.recordedByName ?? '—' }} em {{ e.linkedAt | date: 'dd/MM/yyyy' }}</p>
                 @if (e.originScope) { <p class="muted">Escopo da coleta: {{ e.originScope }}</p> }
                 @if (e.notes) { <p>{{ e.notes }}</p> }
-                @if (canWrite()) { <button type="button" class="ghost xs" (click)="remove(d, e.id)" [disabled]="busy()">Retirar vínculo</button> }
+                @if (canWrite()) { <button type="button" class="ghost xs" (click)="remove(d, e.id)" [disabled]="busy() || saving()">Retirar vínculo</button> }
               </li>
             }
           </ul>
@@ -182,7 +189,7 @@ import { NistApiError, NistService } from '../../services/nist.service';
                 <p class="muted">Critério: {{ a.criterion }} @if (a.limitation) { <strong>{{ a.limitation }}</strong> }</p>
                 @if (canWrite()) {
                   @if (a.alreadyLinked) { <span class="hint">Já vinculada</span> }
-                  @else if (linkable(a)) { <button type="button" class="ghost xs" (click)="linkAvailable(d, a)" [disabled]="busy()">Vincular</button> }
+                  @else if (linkable(a)) { <button type="button" class="ghost xs" (click)="linkAvailable(d, a)" [disabled]="busy() || saving()">Vincular</button> }
                 }
               </li>
             }
@@ -200,7 +207,7 @@ import { NistApiError, NistService } from '../../services/nist.service';
                       @for (doc of documents()!; track doc.id) { <option [value]="doc.id">{{ doc.title }}</option> }
                     </select></label>
                   <label class="field"><span class="field-label">O que este documento demonstra</span><input name="docnote" maxlength="2000" [(ngModel)]="docNote" /></label>
-                  <button type="button" class="primary sm" (click)="linkDocument(d)" [disabled]="busy() || !docChoice">Vincular documento</button>
+                  <button type="button" class="primary sm" (click)="linkDocument(d)" [disabled]="busy() || saving() || !docChoice">Vincular documento</button>
                 </div>
               }
             </details>
@@ -213,7 +220,7 @@ import { NistApiError, NistService } from '../../services/nist.service';
                 <label class="field"><span class="field-label">Link (opcional)</span><input name="mu" type="url" maxlength="2000" [(ngModel)]="manual.uri" placeholder="https://" /></label>
                 <label class="field"><span class="field-label">Data</span><input name="md" type="date" [(ngModel)]="manual.date" /></label>
                 <label class="field wide"><span class="field-label">Observação</span><textarea name="mn" rows="2" maxlength="2000" [(ngModel)]="manual.notes"></textarea></label>
-                <button type="button" class="primary sm" (click)="linkManual(d)" [disabled]="busy() || manual.title.trim().length === 0">Registrar evidência</button>
+                <button type="button" class="primary sm" (click)="linkManual(d)" [disabled]="busy() || saving() || manual.title.trim().length === 0">Registrar evidência</button>
               </div>
             </details>
           }
@@ -292,9 +299,22 @@ export class NistSubcategoryComponent {
 
   /** Rascunho do formulário (ngModel); os derivados (lacuna, pendência) são relidos a cada detecção de mudanças. */
   protected draft: NistEvaluationDraft = draftFrom(null);
+  /** Versão da avaliação em que o rascunho se baseia: só muda ao carregar/recarregar ou ao gravar com sucesso. */
+  protected baseVersion = 0;
   protected docChoice = '';
   protected docNote = '';
   protected manual = { title: '', type: 'Interview', uri: '', date: '', notes: '' };
+
+  /**
+   * Contexto da tela (tenant · avaliação · escopo · subcategoria). Toda resposta confere o contexto em que foi pedida:
+   * trocar de seleção descarta leituras, gravações, evidências e sugestões ainda em curso — uma escrita enviada pode
+   * terminar no servidor, mas sua resposta não repovoa outra tela. A leitura substituída também é cancelada.
+   */
+  private ctx = 0;
+  private ctxKey: string | null = null;
+  private ctxTenant: string | null = null;
+  private readTicket = 0;
+  private readSub: Subscription | null = null;
 
   protected readonly canWrite = computed(() => ['Manager', 'TenantAdmin'].includes(this.auth.activeRole() ?? ''));
   protected readonly params = computed(() => {
@@ -303,14 +323,21 @@ export class NistSubcategoryComponent {
   });
 
   constructor() {
+    inject(DestroyRef).onDestroy(() => this.leave());
     combineLatest([this.route.paramMap, this.route.queryParamMap])
       .pipe(takeUntilDestroyed())
       .subscribe(([p, q]) => {
-        this.fn.set(nistFunctionBySlug(p.get('fn')));
-        this.code.set((p.get('code') ?? '').toUpperCase());
+        const code = (p.get('code') ?? '').toUpperCase();
         const a = q.get('avaliacao');
         const s = q.get('escopo');
+        const tenant = this.auth.activeTenantId();
+        const key = [tenant, a, s, code].join('|');
+        this.fn.set(nistFunctionBySlug(p.get('fn')));
+        if (key === this.ctxKey) return;
+        this.enter(key, tenant);
+        this.code.set(code);
         if (!a || !s) {
+          this.ids.set(null);
           this.loading.set(false);
           this.error.set('Abra a subcategoria a partir de uma avaliação e de um escopo.');
           return;
@@ -318,6 +345,50 @@ export class NistSubcategoryComponent {
         this.ids.set({ assessmentId: a, scopeId: s });
         this.reload();
       });
+  }
+
+  /** Nova seleção: invalida o que estava em curso e limpa todo o estado da anterior. */
+  private enter(key: string, tenant: string | null): void {
+    this.leave();
+    this.ctxKey = key;
+    this.ctxTenant = tenant;
+    this.detail.set(null);
+    this.draft = draftFrom(null);
+    this.baseVersion = 0;
+    this.loading.set(true);
+    this.error.set(null);
+    this.saving.set(false);
+    this.busy.set(false);
+    this.saveError.set(null);
+    this.conflict.set(false);
+    this.savedNote.set(null);
+    this.evidenceError.set(null);
+    this.suggesting.set(false);
+    this.suggestion.set(null);
+    this.aiError.set(null);
+    this.documents.set(null);
+    this.docChoice = '';
+    this.docNote = '';
+    this.manual = { title: '', type: 'Interview', uri: '', date: '', notes: '' };
+  }
+
+  private leave(): void {
+    this.ctx++;
+    this.ctxKey = null;
+    this.readTicket++;
+    this.readSub?.unsubscribe();
+    this.readSub = null;
+  }
+
+  /** A resposta pedida no contexto `ctx` ainda pertence à tela (mesma seleção, mesmo tenant, tela viva)? */
+  private current(ctx: number): boolean {
+    return ctx === this.ctx && this.ctxTenant === this.auth.activeTenantId();
+  }
+
+  /** O servidor já devolveu uma versão posterior àquela em que o rascunho se baseia (outra gravação no meio). */
+  protected staleBase(): boolean {
+    const v = this.detail()?.evaluation?.version;
+    return v !== undefined && v > this.baseVersion;
   }
 
   protected gap(): number | null {
@@ -332,16 +403,25 @@ export class NistSubcategoryComponent {
     return status === 'Compliant' ? 'conforme' : status === 'MitigatedByThirdParty' ? 'mitigado por terceiro' : 'não conforme';
   }
 
+  /** Recarregamento explícito: o único caminho (além de gravar) que adota a versão do servidor como base do rascunho. */
   reload(): void {
     const i = this.ids();
     if (!i) return;
+    const ctx = this.ctx;
+    const ticket = ++this.readTicket;
+    this.readSub?.unsubscribe();
     this.loading.set(true);
     this.error.set(null);
     this.saveError.set(null);
     this.conflict.set(false);
-    this.nist.subcategory(i.assessmentId, i.scopeId, this.code()).subscribe({
-      next: (d) => this.accept(d),
+    this.savedNote.set(null);
+    this.readSub = this.nist.subcategory(i.assessmentId, i.scopeId, this.code()).subscribe({
+      next: (d) => {
+        if (!this.current(ctx) || ticket !== this.readTicket) return;
+        this.accept(d);
+      },
       error: (e: Error) => {
+        if (!this.current(ctx) || ticket !== this.readTicket) return;
         this.error.set(e.message);
         this.loading.set(false);
       },
@@ -349,17 +429,24 @@ export class NistSubcategoryComponent {
   }
 
   protected save(d: NistSubcategoryDetail): void {
-    if (this.saving() || this.problem()) return;
+    if (this.saving() || this.busy() || this.problem()) return;
+    const ctx = this.ctx;
     this.saving.set(true);
     this.saveError.set(null);
+    this.conflict.set(false);
     this.savedNote.set(null);
-    this.nist.save(d.assessmentId, d.scopeId, d.code, toSaveRequest(this.draft, d.evaluation?.version ?? 0)).subscribe({
+    this.nist.save(d.assessmentId, d.scopeId, d.code, toSaveRequest(this.draft, this.baseVersion)).subscribe({
       next: (r) => {
+        if (!this.current(ctx)) return;
         this.saving.set(false);
+        // Leitura pedida antes da gravação traria o estado anterior: descartada.
+        this.readTicket++;
+        this.readSub?.unsubscribe();
         this.accept(r);
         this.savedNote.set('Avaliação gravada.');
       },
       error: (e: NistApiError) => {
+        if (!this.current(ctx)) return;
         this.saving.set(false);
         this.conflict.set(e.status === 409);
         this.saveError.set(e.message);
@@ -368,14 +455,19 @@ export class NistSubcategoryComponent {
   }
 
   protected suggest(d: NistSubcategoryDetail): void {
+    if (this.suggesting()) return;
+    const ctx = this.ctx;
     this.suggesting.set(true);
     this.aiError.set(null);
+    this.suggestion.set(null);
     this.nist.suggest(d.assessmentId, d.scopeId, d.code).subscribe({
       next: (s) => {
+        if (!this.current(ctx)) return;
         this.suggestion.set(s);
         this.suggesting.set(false);
       },
       error: (e: Error) => {
+        if (!this.current(ctx)) return;
         this.aiError.set(e.message);
         this.suggesting.set(false);
       },
@@ -402,12 +494,16 @@ export class NistSubcategoryComponent {
   }
 
   protected loadDocuments(): void {
+    const ctx = this.ctx;
     this.governance.listDocuments().subscribe({
       next: (docs) => {
+        if (!this.current(ctx)) return;
         this.documents.set(docs);
         this.docChoice = docs[0]?.id ?? '';
       },
-      error: () => this.evidenceError.set('Não foi possível listar os documentos da biblioteca.'),
+      error: () => {
+        if (this.current(ctx)) this.evidenceError.set('Não foi possível listar os documentos da biblioteca.');
+      },
     });
   }
 
@@ -417,6 +513,7 @@ export class NistSubcategoryComponent {
 
   protected linkManual(d: NistSubcategoryDetail): void {
     const m = this.manual;
+    if (m.title.trim().length === 0) return;
     this.link(
       d,
       { kind: 'Manual', title: m.title.trim(), uri: m.uri.trim() || null, notes: m.notes.trim() || null, collectedOn: m.date || null, manualType: m.type },
@@ -425,41 +522,48 @@ export class NistSubcategoryComponent {
   }
 
   protected remove(d: NistSubcategoryDetail, evidenceId: string): void {
-    this.busy.set(true);
-    this.evidenceError.set(null);
-    this.nist.removeEvidence(d.assessmentId, d.scopeId, d.code, evidenceId).subscribe({
-      next: (r) => this.acceptEvidence(r),
-      error: (e: Error) => {
-        this.busy.set(false);
-        this.evidenceError.set(e.message);
-      },
-    });
+    this.evidenceWrite(() => this.nist.removeEvidence(d.assessmentId, d.scopeId, d.code, evidenceId));
   }
 
   private link(d: NistSubcategoryDetail, request: Parameters<NistService['linkEvidence']>[3], done?: () => void): void {
+    this.evidenceWrite(() => this.nist.linkEvidence(d.assessmentId, d.scopeId, d.code, request), done);
+  }
+
+  /** Gravação e evidência não correm juntas: cada resposta chega sobre um detalhe que a outra não está alterando. */
+  private evidenceWrite(request: () => Observable<NistSubcategoryDetail>, done?: () => void): void {
+    if (this.busy() || this.saving()) return;
+    const ctx = this.ctx;
     this.busy.set(true);
     this.evidenceError.set(null);
-    this.nist.linkEvidence(d.assessmentId, d.scopeId, d.code, request).subscribe({
+    request().subscribe({
       next: (r) => {
+        if (!this.current(ctx)) return;
         done?.();
         this.acceptEvidence(r);
       },
       error: (e: Error) => {
+        if (!this.current(ctx)) return;
         this.busy.set(false);
         this.evidenceError.set(e.message);
       },
     });
   }
 
-  /** Evidência mudou: atualiza a lista sem descartar o rascunho do formulário em edição. */
+  /**
+   * Evidência mudou: atualiza as listas sem tocar no rascunho nem na sua versão-base. A avaliação exibida nunca recua
+   * para uma versão anterior à já conhecida; se avançou (outra gravação), `staleBase` avisa e a gravação dará conflito.
+   */
   private acceptEvidence(d: NistSubcategoryDetail): void {
     this.busy.set(false);
-    this.detail.set(d);
+    const known = this.detail()?.evaluation ?? null;
+    this.detail.set({ ...d, evaluation: newerEvaluation(known, d.evaluation) });
   }
 
+  /** Carregamento, recarregamento explícito ou gravação concluída: rascunho e base passam a ser os do servidor. */
   private accept(d: NistSubcategoryDetail): void {
     this.detail.set(d);
     this.draft = draftFrom(d.evaluation);
+    this.baseVersion = d.evaluation?.version ?? 0;
     this.loading.set(false);
   }
 }

@@ -1,7 +1,8 @@
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { Subscription } from 'rxjs';
 import {
   NIST_FUNCTIONS,
   NistAssessment,
@@ -240,15 +241,34 @@ export class NistHomeComponent implements OnInit {
   protected readonly canWrite = computed(() => ['Manager', 'TenantAdmin'].includes(this.auth.activeRole() ?? ''));
   protected readonly params = computed(() => selectionParams(this.selection()));
 
+  private selectionTicket = 0;
+  private listTicket = 0;
+  private profileSub: Subscription | null = null;
+  private listSub: Subscription | null = null;
+  private destroyed = false;
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      this.destroyed = true;
+      this.profileSub?.unsubscribe();
+      this.listSub?.unsubscribe();
+    });
+  }
+
   ngOnInit(): void {
     this.load();
   }
 
   load(): void {
+    const tenant = this.auth.activeTenantId();
+    const ticket = ++this.listTicket;
+    this.listSub?.unsubscribe();
     this.loading.set(true);
     this.error.set(null);
-    this.nist.list().subscribe({
+    const current = () => this.alive(tenant) && ticket === this.listTicket;
+    this.listSub = this.nist.list().subscribe({
       next: (list) => {
+        if (!current()) return;
         this.assessments.set(list);
         const q = this.route.snapshot.queryParamMap;
         this.apply(resolveSelection(list, { assessmentId: q.get('avaliacao'), scopeId: q.get('escopo') },
@@ -256,6 +276,7 @@ export class NistHomeComponent implements OnInit {
         this.loading.set(false);
       },
       error: (e: Error) => {
+        if (!current()) return;
         this.error.set(e.message);
         this.loading.set(false);
       },
@@ -288,6 +309,8 @@ export class NistHomeComponent implements OnInit {
     if (this.busy()) return;
     this.busy.set(true);
     this.formError.set(null);
+    const tenant = this.auth.activeTenantId();
+    const ticket = this.selectionTicket;
     const f = this.form;
     this.nist
       .create({
@@ -300,13 +323,16 @@ export class NistHomeComponent implements OnInit {
       })
       .subscribe({
         next: (a) => {
+          // A avaliação existe no servidor; só é aberta se o usuário não escolheu outra enquanto aguardava.
+          if (!this.alive(tenant)) return;
           this.busy.set(false);
           this.creating.set(false);
           this.form = { name: '', description: '', startDate: '', endDate: '', scopeName: '', scopeDescription: '' };
           this.assessments.update((list) => [a, ...list]);
-          this.apply({ assessment: a, scope: a.scopes[0] ?? null });
+          if (ticket === this.selectionTicket) this.apply({ assessment: a, scope: a.scopes[0] ?? null });
         },
         error: (e: NistApiError) => {
+          if (!this.alive(tenant)) return;
           this.busy.set(false);
           this.formError.set(e.message);
         },
@@ -316,33 +342,55 @@ export class NistHomeComponent implements OnInit {
   protected addScope(a: NistAssessment): void {
     if (this.busy()) return;
     this.busy.set(true);
+    const tenant = this.auth.activeTenantId();
+    const ticket = this.selectionTicket;
     this.nist.addScope(a.id, this.scopeForm.name.trim(), this.scopeForm.description.trim() || null).subscribe({
       next: (scope) => {
+        if (!this.alive(tenant)) return;
         this.busy.set(false);
         this.addingScope.set(false);
         this.scopeForm = { name: '', description: '' };
-        const updated = { ...a, scopes: [...a.scopes, scope] };
-        this.assessments.update((list) => list.map((x) => (x.id === a.id ? updated : x)));
-        this.apply({ assessment: updated, scope });
+        this.assessments.update((list) => list.map((x) => (x.id === a.id ? { ...x, scopes: [...x.scopes, scope] } : x)));
+        const updated = this.assessments().find((x) => x.id === a.id);
+        if (updated && ticket === this.selectionTicket) this.apply({ assessment: updated, scope });
       },
       error: (e: NistApiError) => {
+        if (!this.alive(tenant)) return;
         this.busy.set(false);
         this.formError.set(e.message);
       },
     });
   }
 
+  /**
+   * Nova seleção: cancela o perfil da anterior e descarta qualquer resposta (ou erro) dela. Respostas que chegam depois de
+   * sair da tela ou de trocar o tenant não navegam nem repovoam.
+   */
   private apply(sel: NistSelection | null): void {
+    const ticket = ++this.selectionTicket;
+    this.profileSub?.unsubscribe();
+    this.profileSub = null;
     this.selection.set(sel);
     this.profile.set(null);
     this.profileError.set(null);
     if (!sel) return;
     void this.router.navigate([], { relativeTo: this.route, queryParams: selectionParams(sel), replaceUrl: true });
     if (!sel.scope) return;
-    this.memory.write(this.auth.activeTenantId(), sel.assessment.id, sel.scope.id);
-    this.nist.profile(sel.assessment.id, sel.scope.id).subscribe({
-      next: (p) => this.profile.set(p),
-      error: (e: Error) => this.profileError.set(e.message),
+    const tenant = this.auth.activeTenantId();
+    this.memory.write(tenant, sel.assessment.id, sel.scope.id);
+    const current = () => this.alive(tenant) && ticket === this.selectionTicket;
+    this.profileSub = this.nist.profile(sel.assessment.id, sel.scope.id).subscribe({
+      next: (p) => {
+        if (current()) this.profile.set(p);
+      },
+      error: (e: Error) => {
+        if (current()) this.profileError.set(e.message);
+      },
     });
+  }
+
+  /** A tela ainda existe e continua no tenant em que a requisição foi feita. */
+  private alive(tenant: string | null): boolean {
+    return !this.destroyed && tenant === this.auth.activeTenantId();
   }
 }

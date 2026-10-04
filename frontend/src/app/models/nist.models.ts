@@ -382,6 +382,13 @@ export function draftFrom(e: NistEvaluation | null): NistEvaluationDraft {
   };
 }
 
+/** A mais recente entre duas leituras da mesma avaliação (pela versão): uma resposta atrasada não rebaixa a exibida. */
+export function newerEvaluation(known: NistEvaluation | null, incoming: NistEvaluation | null): NistEvaluation | null {
+  if (!known) return incoming;
+  if (!incoming) return known;
+  return incoming.version >= known.version ? incoming : known;
+}
+
 /** Pedido de gravação a partir do rascunho: texto vazio vira nulo; "não se aplica" descarta os níveis. */
 export function toSaveRequest(d: NistEvaluationDraft, expectedVersion: number): SaveNistEvaluationRequest {
   const t = (v: string) => (v.trim() === '' ? null : v.trim());

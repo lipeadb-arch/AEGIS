@@ -1,8 +1,8 @@
 import { DatePipe } from '@angular/common';
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { combineLatest } from 'rxjs';
+import { EMPTY, Subscription, combineLatest, switchMap } from 'rxjs';
 import { DetectionCoverageComponent } from '../../components/scoring/detection-coverage.component';
 import { DevicePostureComponent } from '../../components/scoring/device-posture.component';
 import { NIST_FUNCTION_DESCRIPTIONS } from '../../models/nist-glossary';
@@ -199,7 +199,17 @@ export class NistFunctionComponent {
   protected readonly error = signal<string | null>(null);
   protected readonly params = computed(() => selectionParams(this.selection()));
 
+  private requestKey: string | null = null;
+  private ticket = 0;
+  private pending: Subscription | null = null;
+  private destroyed = false;
+
   constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      this.destroyed = true;
+      this.ticket++;
+      this.pending?.unsubscribe();
+    });
     combineLatest([this.route.paramMap, this.route.queryParamMap, this.route.data])
       .pipe(takeUntilDestroyed())
       .subscribe(([p, q, d]) => {
@@ -218,37 +228,53 @@ export class NistFunctionComponent {
     return RESOURCES[code];
   }
 
+  /**
+   * Leitura da função para (tenant · função · avaliação · escopo). Uma nova seleção cancela a leitura anterior e limpa a
+   * tela; resposta ou erro de uma leitura substituída (ou que chega depois de sair da tela) é descartado sem navegar.
+   */
   private load(f: NistFunctionMeta, assessmentId: string | null, scopeId: string | null): void {
-    const current = this.selection();
-    if (current && current.assessment.id === assessmentId && current.scope?.id === scopeId && this.view()?.code === f.code) return;
+    const tenant = this.auth.activeTenantId();
+    const key = [tenant, f.code, assessmentId, scopeId].join('|');
+    if (key === this.requestKey) return;
+    this.requestKey = key;
+    const ticket = ++this.ticket;
+    this.pending?.unsubscribe();
+    this.view.set(null);
+    this.selection.set(null);
     this.loading.set(true);
     this.error.set(null);
-    this.nist.list().subscribe({
-      next: (list) => {
-        const sel = resolveSelection(list, { assessmentId, scopeId }, this.memory.read(this.auth.activeTenantId()));
-        this.selection.set(sel);
-        if (!sel?.scope) {
+    const current = () => !this.destroyed && ticket === this.ticket && tenant === this.auth.activeTenantId();
+    this.pending = this.nist
+      .list()
+      .pipe(
+        switchMap((list) => {
+          if (!current()) return EMPTY;
+          const sel = resolveSelection(list, { assessmentId, scopeId }, this.memory.read(tenant));
+          this.selection.set(sel);
+          if (!sel?.scope) {
+            this.loading.set(false);
+            return EMPTY;
+          }
+          if (sel.assessment.id !== assessmentId || sel.scope.id !== scopeId) {
+            // A URL passa a dizer a seleção resolvida; a navegação resultante é esta mesma leitura.
+            this.requestKey = [tenant, f.code, sel.assessment.id, sel.scope.id].join('|');
+            void this.router.navigate([], { relativeTo: this.route, queryParams: selectionParams(sel), replaceUrl: true });
+          }
+          this.memory.write(tenant, sel.assessment.id, sel.scope.id);
+          return this.nist.functionView(sel.assessment.id, sel.scope.id, f.code);
+        }),
+      )
+      .subscribe({
+        next: (v) => {
+          if (!current()) return;
+          this.view.set(v);
           this.loading.set(false);
-          return;
-        }
-        if (sel.assessment.id !== assessmentId || sel.scope.id !== scopeId)
-          void this.router.navigate([], { relativeTo: this.route, queryParams: selectionParams(sel), replaceUrl: true });
-        this.memory.write(this.auth.activeTenantId(), sel.assessment.id, sel.scope.id);
-        this.nist.functionView(sel.assessment.id, sel.scope.id, f.code).subscribe({
-          next: (v) => {
-            this.view.set(v);
-            this.loading.set(false);
-          },
-          error: (e: Error) => {
-            this.error.set(e.message);
-            this.loading.set(false);
-          },
-        });
-      },
-      error: (e: Error) => {
-        this.error.set(e.message);
-        this.loading.set(false);
-      },
-    });
+        },
+        error: (e: Error) => {
+          if (!current()) return;
+          this.error.set(e.message);
+          this.loading.set(false);
+        },
+      });
   }
 }
