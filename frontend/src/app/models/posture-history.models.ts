@@ -321,3 +321,64 @@ export function signedDelta(value: number | null): string {
   const rounded = Math.round(value * 10) / 10;
   return (rounded > 0 ? '+' : '') + rounded.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
+
+// ---- [AEGIS-NIST-JOURNEY-01] Evolução mensal (GET /posture/snapshots/monthly) --------------------------------------
+
+/** Um mês de uma série: a última fotografia publicada no mês. `comparableWithPrevious` vem da regra única do servidor. */
+export interface PostureMonthlyPoint {
+  month: string; // "2026-10-01"
+  snapshotId: string;
+  capturedAt: string;
+  evaluationState: string;
+  score: number | null;
+  coverage: number;
+  evaluatedItems: number;
+  eligibleItems: number;
+  formulaVersion: string;
+  catalogVersion: string;
+  schemaVersion: string;
+  sourceLabel: string | null;
+  sourceRunId: string | null;
+  publishedInMonth: number;
+  comparableWithPrevious: boolean;
+  breakReasons: string[];
+}
+
+export interface PostureMonthlySeries {
+  type: PostureSnapshotType;
+  semanticFamily: string;
+  sourceType: string | null;
+  label: string;
+  points: PostureMonthlyPoint[];
+}
+
+export interface PostureMonthlyHistory {
+  criterion: string;
+  months: string[];
+  series: PostureMonthlySeries[];
+}
+
+/** Uma célula do eixo mensal: o ponto do mês (ou nulo — mês sem publicação, NUNCA interpolado). */
+export interface MonthlyCell {
+  month: string;
+  point: PostureMonthlyPoint | null;
+  /** Liga ao mês anterior: só quando os dois meses têm ponto, são consecutivos e comparáveis. */
+  connected: boolean;
+}
+
+/** Projeta a série no eixo de meses: mês sem ponto fica vazio; ligação só entre vizinhos comparáveis. */
+export function monthlyCells(months: readonly string[], points: readonly PostureMonthlyPoint[]): MonthlyCell[] {
+  const byMonth = new Map(points.map((p) => [p.month, p]));
+  return months.map((month, i) => {
+    const point = byMonth.get(month) ?? null;
+    const prev = i > 0 ? byMonth.get(months[i - 1]) ?? null : null;
+    return { month, point, connected: !!point && !!prev && point.comparableWithPrevious && point.score !== null && prev.score !== null };
+  });
+}
+
+/** "out/26". */
+export function monthShort(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  const names = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  return `${names[(m ?? 1) - 1]}/${String(y).slice(2)}`;
+}

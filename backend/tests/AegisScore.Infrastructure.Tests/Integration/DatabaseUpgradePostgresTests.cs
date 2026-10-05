@@ -118,6 +118,11 @@ public sealed class DatabaseUpgradePostgresTests
             // [AEGIS-KNIGHT-CLOSURE-01] Resultado manual estruturado dos controles de referência: uma tabela NOVA, sem
             // alterar nenhuma existente e sem backfill — nenhum controle ganha atestação que ninguém registrou.
             "20261003125320_Closure01_KnightManualAssessments",
+            // [AEGIS-NIST-JOURNEY-01] Jornada NIST persistida: colunas aditivas (anuláveis ou com default) em avaliação,
+            // escopo, avaliação de subcategoria e evidência; o TenantId da avaliação de subcategoria é herdado do escopo
+            // (backfill determinístico) e o índice único (escopo, subcategoria) só é criado depois de conferir que não
+            // há duplicata — havendo, a migration aborta sem alterar nada.
+            "20261003220304_Nist01_AssessmentJourney",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

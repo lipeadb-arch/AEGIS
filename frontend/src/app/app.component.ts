@@ -1,6 +1,8 @@
 import { Component, ElementRef, computed, inject, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { ActivatedRouteSnapshot, NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Crumb } from './app.routes';
+import { NIST_FUNCTIONS, nistFunctionTitle } from './models/nist.models';
 import { DrawerComponent } from './components/drawer.component';
 import { TenantSwitcherComponent } from './components/tenant-switcher.component';
 import { AuditorChatComponent } from './components/auditor-chat.component';
@@ -12,56 +14,27 @@ interface NavLink {
   path: string;
   label: string;
   icon: IconName;
-}
-interface NavGroup {
-  /** Sem rótulo = grupo de entrada (Visão geral e Prioridades). */
-  label: string | null;
-  items: NavLink[];
+  /** Subitens (AEGIS NIST → seis funções): grupo expansível. */
+  children?: { path: string; label: string; code: string }[];
 }
 
 /**
- * [AEGIS-MVP-PRODUCT-01] Navegação organizada por INTENÇÃO, não por framework: Visão geral · Prioridades · Ambiente ·
- * Assessment (AEGIS KNIGHT) · Governança e controles · Relatórios · Configurações. As seis Funções NIST vivem DENTRO de "Controles NIST"
- * e nenhuma rota foi removida — todas seguem acessíveis por link direto.
+ * [AEGIS-NIST-JOURNEY-01] Menu organizado em torno dos dois assessments: Dashboards · AEGIS KNIGHT · AEGIS NIST (com as
+ * seis funções do CSF 2.0) · Histórico de postura · Configurações. Ativos, vulnerabilidades, recomendações, prioridades,
+ * documentos, controles e tendência deixaram de ser entradas próprias: vivem dentro do NIST ou do histórico, e os
+ * endereços antigos redirecionam (ver app.routes.ts).
  */
-const NAV: NavGroup[] = [
+const NAV: NavLink[] = [
+  { path: '/dashboard', label: 'Dashboards', icon: 'overview' },
+  { path: '/knight', label: 'AEGIS KNIGHT', icon: 'shield' },
   {
-    label: null,
-    items: [
-      { path: '/dashboard', label: 'Visão geral', icon: 'overview' },
-      { path: '/priorities', label: 'Prioridades', icon: 'priorities' },
-    ],
+    path: '/nist',
+    label: 'AEGIS NIST',
+    icon: 'controls',
+    children: NIST_FUNCTIONS.map((f) => ({ path: `/nist/${f.slug}`, label: nistFunctionTitle(f), code: f.code })),
   },
-  {
-    label: 'Ambiente',
-    items: [
-      { path: '/assets', label: 'Ativos', icon: 'assets' },
-      { path: '/vulnerabilities', label: 'Vulnerabilidades', icon: 'vulnerabilities' },
-      // [AEGIS-LANGUAGE-STATES-01] Recomendações do Microsoft Secure Score: diferença de pontos da fonte não comprova,
-      // sozinha, configuração exposta. A rota /exposures é mantida (links antigos seguem válidos).
-      { path: '/exposures', label: 'Recomendações de postura', icon: 'recommendations' },
-    ],
-  },
-  // [AEGIS-KNIGHT-MULTICLOUD-01] O KNIGHT é o assessment de postura (hoje: identidade — Entra ID e Google Workspace);
-  // a rota /identity é mantida para os links já emitidos.
-  { label: 'Assessment', items: [{ path: '/identity', label: 'AEGIS KNIGHT', icon: 'identity' }] },
-  {
-    label: 'Governança e controles',
-    items: [
-      // Uma entrada para as SEIS Funções NIST: a navegação por Função é interna a esta tela.
-      { path: '/controls', label: 'Controles NIST', icon: 'controls' },
-      { path: '/governance', label: 'Evidências e documentos', icon: 'documents' },
-    ],
-  },
-  {
-    label: 'Relatórios',
-    items: [
-      // Fotografias PUBLICADAS (comparação e exportação PDF/CSV) — distintas da leitura atual das telas.
-      { path: '/history', label: 'Histórico e publicação', icon: 'history' },
-      { path: '/aegis-score', label: 'Tendência de postura', icon: 'trend' },
-    ],
-  },
-  { label: 'Configurações', items: [{ path: '/settings', label: 'Configurações', icon: 'settings' }] },
+  { path: '/history', label: 'Histórico de postura', icon: 'history' },
+  { path: '/settings', label: 'Configurações', icon: 'settings' },
 ];
 
 @Component({
@@ -91,7 +64,7 @@ const NAV: NavGroup[] = [
       </button>
 
       <!-- Logo: 'AEGIS' dentro de um escudo (SVG) com a borda dual-neon. -->
-      <a class="brand" routerLink="/dashboard" aria-label="AEGIS — Visão geral" [attr.inert]="behind() ? '' : null">
+      <a class="brand" routerLink="/dashboard" aria-label="AEGIS — Dashboards" [attr.inert]="behind() ? '' : null">
         <svg class="shield" viewBox="0 0 120 138" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <defs>
             <linearGradient id="shieldStroke" x1="8" y1="6" x2="112" y2="132" gradientUnits="userSpaceOnUse">
@@ -192,19 +165,42 @@ const NAV: NavGroup[] = [
       (keydown)="onSidebarKey($event)"
     >
       <nav class="side-nav">
-        @for (g of nav; track g.label) {
-          <div class="nav-section">
-            @if (g.label) {
-              <p class="nav-group">{{ g.label }}</p>
-            }
-            @for (i of g.items; track i.path) {
-              <a class="nav-item" [routerLink]="i.path" routerLinkActive="active" #rla="routerLinkActive"
-                [attr.aria-current]="rla.isActive ? 'page' : null">
-                <app-icon [name]="i.icon" />
-                <span class="lb">{{ i.label }}</span>
-              </a>
-            }
-          </div>
+        @for (i of nav; track i.path) {
+          @if (i.children) {
+            <div class="nav-section">
+              <div class="nav-row">
+                <a class="nav-item" [routerLink]="i.path" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }"
+                  #rlg="routerLinkActive" [attr.aria-current]="rlg.isActive ? 'page' : null">
+                  <app-icon [name]="i.icon" />
+                  <span class="lb">{{ i.label }}</span>
+                </a>
+                <button type="button" class="nav-expand" [class.open]="nistOpen()" (click)="nistOpen.set(!nistOpen())"
+                  [attr.aria-expanded]="nistOpen()" aria-controls="nav-nist"
+                  [attr.aria-label]="nistOpen() ? 'Recolher funções do NIST' : 'Expandir funções do NIST'">
+                  <app-icon name="chevron-down" />
+                </button>
+              </div>
+              @if (nistOpen()) {
+                <ul class="nav-sub" id="nav-nist">
+                  @for (c of i.children; track c.path) {
+                    <li>
+                      <a class="nav-item sub" [routerLink]="c.path" routerLinkActive="active" #rlc="routerLinkActive"
+                        [attr.aria-current]="rlc.isActive ? 'page' : null">
+                        <span class="nav-code" aria-hidden="true">{{ c.code }}</span>
+                        <span class="lb">{{ c.label }}</span>
+                      </a>
+                    </li>
+                  }
+                </ul>
+              }
+            </div>
+          } @else {
+            <a class="nav-item" [routerLink]="i.path" routerLinkActive="active" #rla="routerLinkActive"
+              [attr.aria-current]="rla.isActive ? 'page' : null">
+              <app-icon [name]="i.icon" />
+              <span class="lb">{{ i.label }}</span>
+            </a>
+          }
         }
       </nav>
 
@@ -223,6 +219,18 @@ const NAV: NavGroup[] = [
     }
 
     <main class="app-shell" id="conteudo" tabindex="-1" [attr.inert]="behind() ? '' : null">
+      <!-- [AEGIS-NIST-JOURNEY-01] Trilha das telas de apoio que passaram a viver dentro do AEGIS NIST. -->
+      @if (crumbs().length > 0) {
+        <nav class="shell-crumbs" aria-label="Você está em">
+          @for (c of crumbs(); track c.label; let last = $last) {
+            @if (c.link && !last) {
+              <a [routerLink]="c.link">{{ c.label }}</a><span aria-hidden="true">›</span>
+            } @else {
+              <span [attr.aria-current]="last ? 'page' : null">{{ c.label }}</span>
+            }
+          }
+        </nav>
+      }
       <router-outlet />
     </main>
 
@@ -399,21 +407,12 @@ const NAV: NavGroup[] = [
       .side-nav {
         display: flex;
         flex-direction: column;
-        gap: var(--sp-4);
+        gap: 2px;
       }
       .nav-section {
         display: flex;
         flex-direction: column;
         gap: 2px;
-      }
-      .nav-group {
-        margin: 0 0 6px;
-        padding: 0 var(--sp-3);
-        font-size: var(--fs-caps);
-        font-weight: 600;
-        letter-spacing: var(--tracking-caps);
-        text-transform: uppercase;
-        color: var(--muted);
       }
       .nav-item {
         position: relative;
@@ -468,6 +467,76 @@ const NAV: NavGroup[] = [
       }
       .nav-item.active .icon {
         color: var(--cyan);
+      }
+      /* [AEGIS-NIST-JOURNEY-01] Grupo expansível do AEGIS NIST (seis funções). */
+      .nav-row {
+        display: flex;
+        align-items: stretch;
+        gap: 2px;
+      }
+      .nav-row .nav-item {
+        flex: 1;
+        min-width: 0;
+      }
+      .nav-expand {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        border: 0;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .nav-expand:hover {
+        color: var(--text);
+        background: var(--hover);
+      }
+      .nav-expand:focus-visible {
+        outline: none;
+        box-shadow: inset 0 0 0 2px var(--cyan);
+      }
+      .nav-expand .icon {
+        transition: transform var(--ease);
+      }
+      .nav-expand.open .icon {
+        transform: rotate(180deg);
+      }
+      .nav-sub {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin: 2px 0 4px;
+        padding: 0 0 0 var(--sp-4);
+        list-style: none;
+      }
+      .nav-item.sub {
+        min-height: 34px;
+        padding: 6px var(--sp-3);
+        font-size: var(--fs-sm);
+      }
+      .nav-code {
+        min-width: 22px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .nav-item.sub.active .nav-code {
+        color: var(--cyan);
+      }
+      .shell-crumbs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        max-width: var(--content-max);
+        padding: var(--sp-4) var(--page-x) 0;
+        font-size: var(--fs-sm);
+        color: var(--muted);
+      }
+      .shell-crumbs a {
+        color: var(--text-2);
       }
       .sidebar-foot {
         margin-top: auto;
@@ -614,6 +683,12 @@ export class App {
 
   protected readonly nav = NAV;
 
+  /** Funções do NIST abertas no menu: abertas ao entrar no NIST; a pessoa pode recolher/expandir. */
+  protected readonly nistOpen = signal(this.router.url.startsWith('/nist'));
+
+  /** Trilha declarada na rota ativa mais profunda (telas de apoio dentro do NIST). */
+  protected readonly crumbs = signal<Crumb[]>([]);
+
   /** Menu sobreposto (telas estreitas). No desktop o menu é fixo e este estado não tem efeito visual. */
   protected readonly navOpen = signal(false);
 
@@ -644,6 +719,10 @@ export class App {
     this.router.events.pipe(takeUntilDestroyed()).subscribe((e) => {
       if (e instanceof NavigationEnd) {
         this.currentUrl.set(e.urlAfterRedirects);
+        if (e.urlAfterRedirects.startsWith('/nist')) this.nistOpen.set(true);
+        let snap: ActivatedRouteSnapshot | null = this.router.routerState.snapshot.root;
+        while (snap?.firstChild) snap = snap.firstChild;
+        this.crumbs.set((snap?.data?.['crumbs'] as Crumb[] | undefined) ?? []);
         // Escolher um destino fecha o menu sobreposto; o foco segue para o conteúdo da nova página.
         if (this.navOpen()) {
           this.navOpen.set(false);

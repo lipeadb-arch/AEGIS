@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Api.Contracts;
@@ -8,7 +9,13 @@ using AegisScore.Infrastructure.Persistence;
 
 namespace AegisScore.Api.Controllers;
 
+/// <remarks>
+/// [AEGIS-NIST-JOURNEY-01] Superfície LEGADA (não usada pelo portal; a jornada vive em <c>api/v1/nist/assessments</c>).
+/// Endurecida: gravação só para Manager/TenantAdmin, o escopo precisa ser do tenant (antes, um escopo de outro tenant
+/// recebia a avaliação) e os níveis ficam na escala 1–5.
+/// </remarks>
 [ApiController]
+[Authorize]
 [Route("api/v1/assessments")]
 public class AssessmentsController : ControllerBase
 {
@@ -24,6 +31,7 @@ public class AssessmentsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = "Manager,TenantAdmin")]
     public async Task<ActionResult<IdResponse>> Create(CreateAssessmentRequest req, CancellationToken ct)
     {
         var fvId = req.FrameworkVersionId
@@ -38,6 +46,7 @@ public class AssessmentsController : ControllerBase
     }
 
     [HttpPost("{assessmentId:guid}/scopes")]
+    [Authorize(Roles = "Manager,TenantAdmin")]
     public async Task<ActionResult<IdResponse>> AddScope(
         Guid assessmentId, CreateScopeRequest req, CancellationToken ct)
     {
@@ -59,8 +68,12 @@ public class AssessmentsController : ControllerBase
 
     /// <summary>Ask the AI engine to suggest a maturity level from answers, evidence and collected signals.</summary>
     [HttpPost("scopes/{scopeId:guid}/ai-suggest")]
+    [Authorize(Roles = "Manager,TenantAdmin")]
     public async Task<ActionResult<MaturitySuggestionDto>> AiSuggest(Guid scopeId, AiSuggestRequest req, CancellationToken ct)
     {
+        // Filtro de tenant: escopo de outro tenant (ou inexistente) é 404.
+        if (!await _db.Scopes.AnyAsync(s => s.Id == scopeId, ct))
+            return NotFound($"Escopo {scopeId} não encontrado.");
         var sub = await _db.Subcategories.AsNoTracking().FirstOrDefaultAsync(s => s.Code == req.SubcategoryCode, ct);
         if (sub is null) return NotFound($"Subcategory {req.SubcategoryCode} not found.");
 
@@ -84,8 +97,15 @@ public class AssessmentsController : ControllerBase
 
     /// <summary>Create/update the analyst-validated evaluation for one subcategory in a scope.</summary>
     [HttpPut("scopes/{scopeId:guid}/evaluations/{code}")]
+    [Authorize(Roles = "Manager,TenantAdmin")]
     public async Task<ActionResult<IdResponse>> UpsertEvaluation(Guid scopeId, string code, EvaluationUpsertRequest req, CancellationToken ct)
     {
+        // Filtro de tenant: escopo de outro tenant (ou inexistente) é 404 — nunca recebe a avaliação.
+        if (!await _db.Scopes.AnyAsync(s => s.Id == scopeId, ct))
+            return NotFound($"Escopo {scopeId} não encontrado.");
+        static bool OutOfScale(int? v) => v is int x && (x < AssessmentMethodology.MinLevel || x > AssessmentMethodology.MaxLevel);
+        if (OutOfScale(req.CurrentLevel) || OutOfScale(req.CurrentScore) || OutOfScale(req.TargetLevel) || OutOfScale(req.TargetScore))
+            return BadRequest("Níveis de maturidade vão de 1 a 5.");
         var sub = await _db.Subcategories.AsNoTracking().FirstOrDefaultAsync(s => s.Code == code, ct);
         if (sub is null) return NotFound($"Subcategory {code} not found.");
 
@@ -103,6 +123,7 @@ public class AssessmentsController : ControllerBase
         eval.TargetScore = req.TargetScore ?? req.TargetLevel;
         eval.TargetComments = req.TargetComments;
         eval.ReviewedAt = DateTimeOffset.UtcNow;
+        eval.Version += 1;
 
         await _db.SaveChangesAsync(ct);
         return new IdResponse(eval.Id);

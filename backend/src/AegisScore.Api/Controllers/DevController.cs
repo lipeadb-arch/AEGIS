@@ -91,8 +91,8 @@ public class DevController : ControllerBase
             StartDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-30)),
         };
 
-        var primaryScope = new AssessmentScope { TenantId = DemoTenantId, AssessmentId = assessment.Id, BusinessProcessId = procs[0].Id, BusinessUnitId = buSec.Id, Status = ScopeStatus.Evaluation };
-        var scope2 = new AssessmentScope { TenantId = DemoTenantId, AssessmentId = assessment.Id, BusinessProcessId = procs[1].Id, BusinessUnitId = buTi.Id, Status = ScopeStatus.Questionnaire };
+        var primaryScope = new AssessmentScope { TenantId = DemoTenantId, AssessmentId = assessment.Id, BusinessProcessId = procs[0].Id, BusinessUnitId = buSec.Id, Status = ScopeStatus.Evaluation, Name = "Gestão de Identidade e Acesso — Segurança da Informação" };
+        var scope2 = new AssessmentScope { TenantId = DemoTenantId, AssessmentId = assessment.Id, BusinessProcessId = procs[1].Id, BusinessUnitId = buTi.Id, Status = ScopeStatus.Questionnaire, Name = "Gestão de Vulnerabilidades — Tecnologia" };
 
         // ---- Subcategory evaluations (all subcategories under the primary scope) ----
         // Current maturity varies per function so the radar is not flat; target trends to 4–5.
@@ -108,6 +108,7 @@ public class DevController : ControllerBase
 
             evals.Add(new SubcategoryEvaluation
             {
+                TenantId = DemoTenantId,
                 AssessmentScopeId = primaryScope.Id,
                 SubcategoryId = s.Id,
                 CurrentLevel = current,
@@ -681,7 +682,7 @@ public class DevController : ControllerBase
 
         var scopeIds = await db.Scopes.IgnoreQueryFilters()
             .Where(s => s.TenantId == DemoTenantId).Select(s => s.Id).ToListAsync(ct);
-        db.Evaluations.RemoveRange(await db.Evaluations.Where(e => scopeIds.Contains(e.AssessmentScopeId)).ToListAsync(ct));
+        db.Evaluations.RemoveRange(await db.Evaluations.IgnoreQueryFilters().Where(e => scopeIds.Contains(e.AssessmentScopeId)).ToListAsync(ct));
 
         var riskIds = await db.Risks.IgnoreQueryFilters()
             .Where(r => r.TenantId == DemoTenantId).Select(r => r.Id).ToListAsync(ct);

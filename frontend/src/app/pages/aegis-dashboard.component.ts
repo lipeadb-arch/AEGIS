@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, effect, inject, signal, viewChild } from '@angular/core';
+import { Component, ElementRef, OnInit, effect, inject, input, signal, viewChild } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AegisScoreService } from '../services/aegis-score.service';
 import { CurrentScoreDto, TenantTrendDto } from '../models/aegis-score.models';
@@ -19,11 +19,20 @@ import { environment } from '../../environments/environment';
       :host {
         display: block;
       }
+      .trend-host {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-6);
+        min-width: 0;
+      }
     `,
   ],
 })
 export class AegisDashboardComponent implements OnInit {
   private readonly svc = inject(AegisScoreService);
+
+  /** [AEGIS-NIST-JOURNEY-01] Dentro da aba "Tendência diária" do Histórico de postura unificado. */
+  readonly embedded = input(false);
 
   /** Série temporal crua (últimos 30 dias, ordem cronológica crescente). */
   readonly trend = signal<TenantTrendDto[]>([]);
