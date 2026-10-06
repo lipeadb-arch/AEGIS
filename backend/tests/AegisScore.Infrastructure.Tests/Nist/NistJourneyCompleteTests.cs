@@ -344,6 +344,9 @@ public sealed class NistJourneyCompleteTests : IDisposable
             (await x.Db.ActionPlans.AsNoTracking().SingleAsync()).KnightIndicatorId.Should().BeNull("nenhum identificador do KNIGHT é inventado para encaixar o NIST");
             (await x.Remediation.ListAsync(new ActionPlanFilter())).Should().BeEmpty("a lista padrão (KNIGHT) não mistura planos NIST");
             (await x.Remediation.ListAsync(new ActionPlanFilter(Origin: ActionPlanOriginScope.NistFinding))).Should().ContainSingle();
+            (await x.Remediation.ListAsync(new ActionPlanFilter(Origin: ActionPlanOriginScope.All))).Should()
+                .ContainSingle("a visão consolidada de todas as origens inclui o plano do achado NIST")
+                .Which.NistOrigin!.SubcategoryCode.Should().Be("ID.AM-01");
 
             await FluentActions.Awaiting(() => x.Work.CreatePlanAsync(a, c, s, finding.Id, new NistPlanInput("Duplicado", null, null, null, null), Gestora))
                 .Should().ThrowAsync<NistAssessmentConflictException>("um único plano ativo por achado");
@@ -483,6 +486,7 @@ public sealed class NistJourneyCompleteTests : IDisposable
             html.Should().Contain("Inventário sem dono definido").And.NotContain("Título atual diferente");
             html.Should().Contain("Cliente Sintético A").And.NotContain("Nome Novo do Cliente");
             csv.Should().Contain("Inventário sem dono definido").And.NotContain("Título atual diferente");
+            csv.Should().Contain("AUTORAL do AEGIS", "o CSV também diz que a escala é do AEGIS, não exigência do NIST");
             pdf.ContentType.Should().Be("application/pdf");
             Encoding.ASCII.GetString(pdf.Content, 0, 5).Should().Be("%PDF-");
             pdf.FileName.Should().Contain("nist-maturidade");

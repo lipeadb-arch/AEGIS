@@ -44,6 +44,8 @@ public static class NistReportCsvWriter
            .Sys("Cobertura (%)", s.Coverage.ToString("0.#", CultureInfo.InvariantCulture))
            .Sys("Avaliadas", Int(s.Evaluated)).Sys("Não se aplicam", Int(s.NotApplicable))
            .Sys("Aguardando confirmação", Int(s.PendingConfirmation)).Sys("Sem avaliação", Int(s.NotEvaluated + s.InProgress))
+           // A metodologia CONGELADA na fotografia (autoral do AEGIS, não exigência do NIST) acompanha os números.
+           .Set("Observação", r.Methodology.Statement)
            .End();
 
         foreach (var f in r.Functions)

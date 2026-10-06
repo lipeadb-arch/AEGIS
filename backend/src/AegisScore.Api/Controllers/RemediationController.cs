@@ -90,8 +90,9 @@ public class RemediationController : ControllerBase
             case "":
             case "knight": scope = ActionPlanOriginScope.Knight; break;
             case "device": scope = ActionPlanOriginScope.DeviceVulnerability; break;
+            case "nist": scope = ActionPlanOriginScope.NistFinding; break;
             case "all": scope = ActionPlanOriginScope.All; break;
-            default: return BadRequest($"Origem desconhecida: '{origin}'. Use knight, device ou all.");
+            default: return BadRequest($"Origem desconhecida: '{origin}'. Use knight, device, nist ou all.");
         }
 
         var plans = await _service.ListAsync(

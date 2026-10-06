@@ -306,11 +306,13 @@ public sealed class RemediationService : IRemediationService
         {
             ActionPlanOriginScope.DeviceVulnerability =>
                 query.Where(p => p.OriginKind == ActionPlanOriginKind.DeviceVulnerability),
-            // [AEGIS-NIST-JOURNEY-02] Achados NIST só entram quando pedidos explicitamente.
+            // [AEGIS-NIST-JOURNEY-02] Achados NIST: no próprio recorte e em "todas as origens" (visão consolidada do
+            // tratamento, com a origem explícita); nunca no recorte padrão do KNIGHT.
             ActionPlanOriginScope.NistFinding =>
                 query.Where(p => p.OriginKind == ActionPlanOriginKind.NistFinding),
             ActionPlanOriginScope.All =>
-                query.Where(p => p.KnightIndicatorId != null || p.OriginKind == ActionPlanOriginKind.DeviceVulnerability),
+                query.Where(p => p.KnightIndicatorId != null || p.OriginKind == ActionPlanOriginKind.DeviceVulnerability
+                                 || p.OriginKind == ActionPlanOriginKind.NistFinding),
             _ => query.Where(p => p.KnightIndicatorId != null),
         };
 
