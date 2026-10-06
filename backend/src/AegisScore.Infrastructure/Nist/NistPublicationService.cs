@@ -26,6 +26,9 @@ namespace AegisScore.Infrastructure.Nist;
 /// <item>o relatório inteiro é congelado sob o hash: reexportar nunca consulta o estado atual;</item>
 /// <item>a maturidade (1–5) fica em colunas próprias — o score 0–100 da fotografia permanece nulo.</item>
 /// </list>
+/// A montagem faz várias consultas (contexto, contagens, evidências, procedimentos, achados, planos); todas leem UM instante
+/// do banco numa transação somente leitura REPEATABLE READ no PostgreSQL — uma alteração confirmada no meio nunca entra pela
+/// metade. A transação termina ao fim da montagem: gravar a fotografia, exportar e esperar o usuário acontecem fora dela.
 /// </summary>
 public sealed class NistPublicationService : INistPublicationService
 {
@@ -45,7 +48,13 @@ public sealed class NistPublicationService : INistPublicationService
         _language = language;
     }
 
-    public async Task<NistMaturityReport> BuildReportAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default)
+    public Task<NistMaturityReport> BuildReportAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default) =>
+        InReadSnapshotAsync(() => BuildReportCoreAsync(assessmentId, cycleId, scopeId, ct), ct);
+
+    private Task<T> InReadSnapshotAsync<T>(Func<Task<T>> read, CancellationToken ct) =>
+        AegisScore.Infrastructure.Queries.CrossSourceFactReader.InReadSnapshotAsync(_db, read, ct);
+
+    private async Task<NistMaturityReport> BuildReportCoreAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct)
     {
         RequireTenant(_tenant);
         var ctx = await LoadScopeContextAsync(_db, assessmentId, cycleId, scopeId, ct);
@@ -263,6 +272,7 @@ public sealed class NistPublicationService : INistPublicationService
         if (expected.Length != 64)
             throw new NistAssessmentValidationException("Revise a prévia antes de publicar: a impressão digital do conteúdo revisado é obrigatória.");
 
+        // Leitura consistente já encerrada aqui; a fotografia e o evento de publicação vão juntos no mesmo SaveChanges.
         var report = await BuildReportAsync(assessmentId, cycleId, scopeId, ct);
         var fingerprint = NistReportCanonical.Fingerprint(report);
         if (!string.Equals(fingerprint, expected, StringComparison.Ordinal))
@@ -341,8 +351,10 @@ public sealed class NistPublicationService : INistPublicationService
     {
         if (baseCycleId == targetCycleId)
             throw new NistAssessmentValidationException("Escolha duas rodadas diferentes para comparar.");
-        var a = await BuildReportAsync(assessmentId, baseCycleId, scopeId, ct);
-        var b = await BuildReportAsync(assessmentId, targetCycleId, scopeId, ct);
+        // As duas rodadas saem do MESMO instante do banco.
+        var (a, b) = await InReadSnapshotAsync(async () => (
+            await BuildReportCoreAsync(assessmentId, baseCycleId, scopeId, ct),
+            await BuildReportCoreAsync(assessmentId, targetCycleId, scopeId, ct)), ct);
         // A rodada mais antiga (pelo início do período) é a base: o comparativo segue o tempo, não a ordem dos parâmetros.
         var (first, second) = a.Cycle.PeriodStart <= b.Cycle.PeriodStart ? (a, b) : (b, a);
         return NistCycleComparer.Compare(first, second);

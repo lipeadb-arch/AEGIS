@@ -334,17 +334,12 @@ public record SiemAlertPostureDto(
 public record SiemPriorityCountDto(string Priority, int Count);
 
 // ---- Assessments ----
-public record CreateAssessmentRequest(string Name, Guid? FrameworkVersionId);
-public record CreateScopeRequest(Guid BusinessProcessId, Guid BusinessUnitId);
 public record AiSuggestRequest(
     string SubcategoryCode,
     IReadOnlyList<AnswerInput> Answers,
     IReadOnlyList<string> EvidenceSummaries);
 public record AnswerInput(string Question, string Answer, string? Comment);
 public record MaturitySuggestionDto(int CurrentLevel, double Confidence, string Rationale);
-public record EvaluationUpsertRequest(
-    int? CurrentLevel, int? CurrentScore, string? CurrentComments,
-    int? TargetLevel, int? TargetScore, string? TargetComments);
 
 public record AggregateDto(string Level, string RefCode, double CurrentScore, double TargetScore, double Gap, int Count);
 public record MaturityRollupDto(AggregateDto Overall, IReadOnlyList<AggregateDto> Functions, IReadOnlyList<AggregateDto> Categories);

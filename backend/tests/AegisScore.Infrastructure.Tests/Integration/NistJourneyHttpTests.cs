@@ -299,6 +299,119 @@ public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
         }
     }
 
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] A superfície LEGADA <c>api/v1/assessments</c> não nomeia a rodada nem recebe a versão-base do
+    /// cliente: gravava níveis e carimbo de revisão direto, inclusive em rodada ENCERRADA, sem autoria nem trilha. As escritas
+    /// dela são recusadas (410) com a rota da jornada; a leitura do consolidado continua. A gravação normal pela jornada, em
+    /// rodada aberta, segue funcionando.
+    /// </summary>
+    [Fact]
+    public async Task RotaLegada_NaoGravaNemEmRodadaEncerrada_EAJornadaSegueGravandoEmRodadaAberta()
+    {
+        if (_api is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var t = await _api.SeedTenantAsync("Cliente Rota Legada");
+        const string Legacy = "/api/v1/assessments";
+        using var manager = _api.As(t.Manager);
+
+        string a, c, s;
+        int cycleVersion;
+        using (var r = await manager.PostAsync(Base, AegisApiHarness.JsonBody(new { name = "Avaliação legada", initialScopeName = "Matriz" })))
+        {
+            var text = await r.Content.ReadAsStringAsync();
+            r.StatusCode.Should().Be(HttpStatusCode.Created, text);
+            using var doc = JsonDocument.Parse(text);
+            a = doc.RootElement.GetProperty("id").GetString()!;
+            s = doc.RootElement.GetProperty("scopes")[0].GetProperty("id").GetString()!;
+            var cycle = doc.RootElement.GetProperty("cycles")[0];
+            c = cycle.GetProperty("id").GetString()!;
+            cycleVersion = cycle.GetProperty("version").GetInt32();
+        }
+        var sub = $"{Base}/{a}/cycles/{c}/scopes/{s}/subcategories/ID.AM-01";
+        var legacySub = $"{Legacy}/scopes/{s}/evaluations/ID.AM-01";
+
+        using (var r = await manager.PutAsync(sub, AegisApiHarness.JsonBody(new { currentLevel = 2, targetLevel = 4, expectedVersion = 0 })))
+            r.StatusCode.Should().Be(HttpStatusCode.OK, await r.Content.ReadAsStringAsync());
+
+        async Task<(int Version, int Current, int Target, int Audit)> StateAsync()
+        {
+            using var d = await GetJsonAsync(manager, sub);
+            var e = d.RootElement.GetProperty("evaluation");
+            using var audit = await GetJsonAsync(manager, $"{Base}/{a}/audit?cycleId={c}");
+            return (e.GetProperty("version").GetInt32(), e.GetProperty("currentLevel").GetInt32(), e.GetProperty("targetLevel").GetInt32(),
+                audit.RootElement.GetArrayLength());
+        }
+
+        async Task SetCycleAsync(string status)
+        {
+            using var r = await manager.PutAsync($"{Base}/{a}/cycles/{c}/status", AegisApiHarness.JsonBody(new { status, expectedVersion = cycleVersion }));
+            var text = await r.Content.ReadAsStringAsync();
+            r.StatusCode.Should().Be(HttpStatusCode.OK, text);
+            using var doc = JsonDocument.Parse(text);
+            cycleVersion = doc.RootElement.GetProperty("version").GetInt32();
+        }
+
+        // Rodada ENCERRADA: a rota legada gravava níveis, carimbo de revisão e versão sem trilha.
+        await SetCycleAsync("Closed");
+        var closed = await StateAsync();
+        using (var r = await manager.PutAsync(legacySub, AegisApiHarness.JsonBody(new { currentLevel = 5, targetLevel = 5, currentComments = "Alterado por fora." })))
+        {
+            var text = await r.Content.ReadAsStringAsync();
+            using (new FluentAssertions.Execution.AssertionScope())
+            {
+                (await StateAsync()).Should().Be(closed, "rodada encerrada não muda por nenhum caminho");
+                r.StatusCode.Should().Be(HttpStatusCode.Gone, text);
+                if (r.StatusCode == HttpStatusCode.Gone)
+                {
+                    using var problem = JsonDocument.Parse(text);
+                    problem.RootElement.GetProperty("detail").GetString().Should()
+                        .Contain("/api/v1/nist/assessments/{avaliação}/cycles/{rodada}/scopes/{escopo}/subcategories/{código}").And.Contain("expectedVersion");
+                }
+            }
+        }
+        using (var r = await manager.PutAsync(sub, AegisApiHarness.JsonBody(new { currentLevel = 5, targetLevel = 5, expectedVersion = closed.Version })))
+        {
+            r.StatusCode.Should().Be(HttpStatusCode.BadRequest, "a jornada recusa rodada encerrada");
+            (await r.Content.ReadAsStringAsync()).Should().Contain("encerrada");
+        }
+
+        // Rodada ABERTA: a rota legada continua sem gravar — não tem como conferir a versão-base do cliente nem nomear a rodada.
+        await SetCycleAsync("Open");
+        var open = await StateAsync();
+        using (var r = await manager.PutAsync(legacySub, AegisApiHarness.JsonBody(new { currentLevel = 3, targetLevel = 4 })))
+        {
+            r.StatusCode.Should().Be(HttpStatusCode.Gone, await r.Content.ReadAsStringAsync());
+            (await StateAsync()).Should().Be(open);
+        }
+
+        // Caso normal preservado: rota explícita, rodada aberta, versão-base do cliente; autoria e trilha registradas.
+        using (var r = await manager.PutAsync(sub, AegisApiHarness.JsonBody(new { currentLevel = 3, targetLevel = 4, expectedVersion = open.Version })))
+            r.StatusCode.Should().Be(HttpStatusCode.OK, await r.Content.ReadAsStringAsync());
+        var saved = await StateAsync();
+        (saved.Version, saved.Current, saved.Target).Should().Be((open.Version + 1, 3, 4));
+        saved.Audit.Should().Be(open.Audit + 1);
+
+        // As demais escritas legadas (avaliação e escopo sem trilha) também são recusadas; nada é criado.
+        using (var r = await manager.PostAsync(Legacy, AegisApiHarness.JsonBody(new { name = "Por fora" })))
+            r.StatusCode.Should().Be(HttpStatusCode.Gone, await r.Content.ReadAsStringAsync());
+        using (var r = await manager.PostAsync($"{Legacy}/{a}/scopes",
+                   AegisApiHarness.JsonBody(new { businessProcessId = Guid.NewGuid(), businessUnitId = Guid.NewGuid() })))
+            r.StatusCode.Should().Be(HttpStatusCode.Gone, await r.Content.ReadAsStringAsync());
+        using (var list = await GetJsonAsync(manager, Base))
+        {
+            list.RootElement.GetArrayLength().Should().Be(1);
+            list.RootElement[0].GetProperty("scopes").GetArrayLength().Should().Be(1);
+        }
+
+        // Leitura legada preservada.
+        using (var m = await GetJsonAsync(manager, $"{Legacy}/{a}/maturity"))
+            m.RootElement.GetProperty("overall").GetProperty("currentScore").GetDouble().Should().Be(3);
+
+        // Papel conferido antes da recusa: Analyst continua 403.
+        using (var analyst = _api.As(t.Analyst))
+        using (var r = await analyst.PutAsync(legacySub, AegisApiHarness.JsonBody(new { currentLevel = 1 })))
+            r.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
     private static async Task<JsonDocument> GetJsonAsync(HttpClient client, string url)
     {
         using var r = await client.GetAsync(url);

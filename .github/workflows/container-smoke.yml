@@ -728,7 +728,8 @@ jobs:
       # Nist01 com rodada inicial e vínculos, plano e procedimento concorrentes decididos pelo banco, trilha append-only
       # e FK composta por tenant); NistJourneyHttpTests ganha a jornada completa pelo pipeline HTTP e DatabaseUpgrade-
       # PostgresTests atravessa Nist02_CompleteJourney. O passo vai de 109 a 113 (medido localmente com este MESMO
-      # filtro, contra PostgreSQL 18 descartável).
+      # filtro, contra PostgreSQL 18 descartável). Integridade (mesmas classes, sem mudar o filtro): a rota legada de
+      # gravação recusada pelo pipeline HTTP e a montagem do relatório com alteração concorrente entre consultas — 113 a 115.
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'

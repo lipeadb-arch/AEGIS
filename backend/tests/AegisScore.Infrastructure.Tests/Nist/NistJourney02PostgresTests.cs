@@ -216,6 +216,115 @@ public sealed class NistJourney02PostgresTests
         }
     }
 
+    /// <summary>
+    /// A montagem do relatório (prévia, publicação e comparação) faz várias consultas. Duas conexões, de forma determinística:
+    /// a montagem PARA entre consultas (depois do contexto e das contagens, antes da lista completa de evidências), a outra
+    /// conexão confirma uma alteração relacionada e a montagem retoma. O resultado precisa ser o estado de UM instante — o de
+    /// antes, inteiro — nunca a contagem de antes com a lista de depois.
+    /// </summary>
+    [Fact]
+    public async Task Relatorio_MontagemComAlteracaoConcorrente_PreviaPublicacaoEComparacaoVeemUmUnicoInstante()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var opt = pg.DbOptions();
+        var tenant = Guid.NewGuid();
+        await SeedAsync(opt, tenant);
+
+        Guid a, c1, c2, s;
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var (nist, _) = Services(db, tenant);
+            var created = await nist.CreateAsync(new CreateNistAssessmentCommand("Avaliação", null, new DateOnly(2026, 7, 1), new DateOnly(2026, 9, 30),
+                "Matriz", null, "T3 2026", "Quarterly", new DateOnly(2026, 7, 1), new DateOnly(2026, 9, 30)), Gestora);
+            (a, c1, s) = (created.Id, created.Cycles!.Single().Id, created.Scopes.Single().Id);
+            await nist.SaveEvaluationAsync(a, c1, s, "ID.AM-01", new SaveNistEvaluationCommand(2, 4, false, null, null, null, "Inventário parcial.", null, null, null, 0), Gestora);
+            c2 = (await nist.CreateCycleAsync(a, new CreateNistCycleCommand("T4 2026", "Quarterly", new DateOnly(2026, 10, 1), new DateOnly(2026, 12, 31), null, "None"), Gestora)).Id;
+            await nist.SaveEvaluationAsync(a, c2, s, "ID.AM-01", new SaveNistEvaluationCommand(3, 4, false, null, null, null, null, null, null, null, 0), Gestora);
+        }
+
+        NistPublicationService Publication(AegisScoreDbContext db) => new(db, new SystemTenantContext(tenant), TimeProvider.System);
+        async Task<T> Read<T>(Func<NistPublicationService, Task<T>> read)
+        {
+            await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+            return await read(Publication(db));
+        }
+        // A alteração concorrente usa o caminho real da jornada, noutra conexão, e é confirmada antes de a montagem retomar.
+        async Task Change(Func<NistAssessmentService, Task> act)
+        {
+            await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
+            await act(Services(db, tenant).Nist);
+        }
+        static LinkNistEvidenceCommand Evidence(string title) =>
+            new("Manual", null, null, null, title, "https://docs.example.com/evidencia", "Registro sintético.", new DateOnly(2026, 9, 1), "Link");
+        async Task<T> Paused<T>(Func<NistPublicationService, Task<T>> read, Func<NistAssessmentService, Task> change)
+        {
+            var gate = new PauseBeforeTable("Tenants");
+            await using var db = new AegisScoreDbContext(new DbContextOptionsBuilder<AegisScoreDbContext>(opt).AddInterceptors(gate).Options,
+                new SystemTenantContext(tenant));
+            var building = read(Publication(db));
+            await gate.Paused.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await Change(change);
+            gate.Resume.TrySetResult();
+            return await building;
+        }
+
+        // 1) Prévia: evidência vinculada a GV.OC-01 (sem avaliação) enquanto a montagem está parada.
+        var before = await Read(p => p.PreviewAsync(a, c1, s));
+        var previewDuring = await Paused(p => p.PreviewAsync(a, c1, s),
+            n => n.LinkEvidenceAsync(a, c1, s, "GV.OC-01", Evidence("Política de governança"), Gestora));
+        var after = await Read(p => p.PreviewAsync(a, c1, s));
+        _output.WriteLine($"antes {before.ContentFingerprint} · durante {previewDuring.ContentFingerprint} · depois {after.ContentFingerprint}");
+        after.ContentFingerprint.Should().NotBe(before.ContentFingerprint, "a alteração é material para o relatório");
+        previewDuring.ContentFingerprint.Should().Be(before.ContentFingerprint,
+            "a montagem vê um único instante do banco: o estado de antes, inteiro — nunca a contagem de antes com a lista de depois");
+
+        // 2) Publicação com a prévia vigente: a alteração confirmada no meio da montagem não entra nem mistura; a fotografia é
+        //    exatamente o conteúdo revisado e a próxima tentativa com a mesma impressão digital é recusada (o conteúdo mudou).
+        var published = await Paused(p => p.PublishAsync(a, c1, s, new PublishNistCommand(after.ContentFingerprint), Gestora),
+            n => n.LinkEvidenceAsync(a, c1, s, "GV.OC-02", Evidence("Ata do comitê"), Gestora));
+        published.ContentFingerprint.Should().Be(after.ContentFingerprint);
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var frozen = NistReportCanonical.Deserialize((await db.PostureSnapshots.AsNoTracking().SingleAsync(x => x.Id == published.SnapshotId)).NistReportJson!);
+            var gvOc = frozen.Subcategories.Where(x => x.Code is "GV.OC-01" or "GV.OC-02").ToDictionary(x => x.Code);
+            (gvOc["GV.OC-01"].State, gvOc["GV.OC-01"].Evidence.Count).Should().Be((NistSubcategoryStates.InProgress, 1));
+            (gvOc["GV.OC-02"].State, gvOc["GV.OC-02"].Evidence.Count).Should().Be((NistSubcategoryStates.NotEvaluated, 0),
+                "a evidência confirmada durante a montagem fica fora por inteiro: nem contagem, nem lista");
+        }
+        await FluentActions.Awaiting(() => Read(p => p.PublishAsync(a, c1, s, new PublishNistCommand(after.ContentFingerprint), Gestora)))
+            .Should().ThrowAsync<NistAssessmentConflictException>();
+
+        // 3) Comparação: as duas rodadas saem do mesmo instante, mesmo com a rodada-alvo alterada entre as duas montagens.
+        var compareBefore = await Read(p => p.CompareCyclesAsync(a, s, c1, c2));
+        var compareDuring = await Paused(p => p.CompareCyclesAsync(a, s, c1, c2),
+            n => n.SaveEvaluationAsync(a, c2, s, "ID.AM-02", new SaveNistEvaluationCommand(1, 4, false, null, null, null, null, null, null, null, 0), Gestora));
+        var compareAfter = await Read(p => p.CompareCyclesAsync(a, s, c1, c2));
+        System.Text.Json.JsonSerializer.Serialize(compareAfter).Should().NotBe(System.Text.Json.JsonSerializer.Serialize(compareBefore));
+        System.Text.Json.JsonSerializer.Serialize(compareDuring).Should().Be(System.Text.Json.JsonSerializer.Serialize(compareBefore),
+            "base e alvo da comparação vêm do mesmo instante");
+    }
+
+    /// <summary>Para a PRIMEIRA consulta que lê <paramref name="table"/> até o teste liberar — o ponto entre duas consultas da montagem.</summary>
+    private sealed class PauseBeforeTable(string table) : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        private int _armed = 1;
+        public TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result, System.Threading.CancellationToken ct = default)
+        {
+            if (command.CommandText.Contains($"FROM \"{table}\"", StringComparison.Ordinal) && System.Threading.Interlocked.Exchange(ref _armed, 0) == 1)
+            {
+                Paused.TrySetResult();
+                await Resume.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
+            }
+            return result;
+        }
+    }
+
     private static async Task SeedAsync(DbContextOptions<AegisScoreDbContext> opt, params Guid[] tenants)
     {
         await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(null));

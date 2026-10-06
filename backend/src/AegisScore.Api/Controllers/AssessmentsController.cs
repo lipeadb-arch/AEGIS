@@ -11,8 +11,11 @@ namespace AegisScore.Api.Controllers;
 
 /// <remarks>
 /// [AEGIS-NIST-JOURNEY-01] Superfície LEGADA (não usada pelo portal; a jornada vive em <c>api/v1/nist/assessments</c>).
-/// Endurecida: gravação só para Manager/TenantAdmin, o escopo precisa ser do tenant (antes, um escopo de outro tenant
-/// recebia a avaliação) e os níveis ficam na escala 1–5.
+/// [AEGIS-NIST-JOURNEY-02] Ela não nomeia a rodada nem recebe a versão-base do cliente, então não consegue garantir o que a
+/// jornada exige: recusa de rodada encerrada, conflito de edição, autoria e trilha. Por isso as ESCRITAS (criar avaliação,
+/// criar escopo e gravar subcategoria) respondem 410 com a rota explícita da jornada — antes, a gravação mudava níveis e
+/// carimbo de revisão até em rodada encerrada, sem trilha. As leituras (consolidado de maturidade e sugestão da IA, que
+/// nunca é gravada) continuam. Papéis são conferidos antes da recusa.
 /// </remarks>
 [ApiController]
 [Authorize]
@@ -32,46 +35,12 @@ public class AssessmentsController : ControllerBase
 
     [HttpPost]
     [Authorize(Roles = "Manager,TenantAdmin")]
-    public async Task<ActionResult<IdResponse>> Create(CreateAssessmentRequest req, CancellationToken ct)
-    {
-        var fvId = req.FrameworkVersionId
-            ?? (await _db.FrameworkVersions.AsNoTracking().FirstOrDefaultAsync(f => f.IsActive, ct))?.Id
-            ?? throw new InvalidOperationException("No active framework version.");
-
-        // Sem TenantId aqui — carimbado no SaveChangesAsync (fail-closed), como no RisksController.
-        var a = new Assessment { FrameworkVersionId = fvId, Name = req.Name };
-        _db.Assessments.Add(a);
-        // [AEGIS-NIST-JOURNEY-02] Toda avaliação nasce com uma rodada: as avaliações de subcategoria pertencem a ela.
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        _db.NistCycles.Add(new NistAssessmentCycle
-        {
-            AssessmentId = a.Id, Name = "Rodada 1", PeriodKind = NistCyclePeriodKind.Other,
-            PeriodStart = today, PeriodEnd = today, Status = NistCycleStatus.Open, Version = 1,
-        });
-        await _db.SaveChangesAsync(ct);
-        return new IdResponse(a.Id);
-    }
+    public IActionResult Create() => Retired("Avaliações são criadas em POST /api/v1/nist/assessments (com a primeira rodada e o escopo inicial).");
 
     [HttpPost("{assessmentId:guid}/scopes")]
     [Authorize(Roles = "Manager,TenantAdmin")]
-    public async Task<ActionResult<IdResponse>> AddScope(
-        Guid assessmentId, CreateScopeRequest req, CancellationToken ct)
-    {
-        // Scoped by the tenant query filter: a foreign / non-existent assessment yields 404, not a 500 FK violation.
-        if (!await _db.Assessments.AnyAsync(a => a.Id == assessmentId, ct))
-            return NotFound($"Assessment {assessmentId} não encontrado.");
-
-        var scope = new AssessmentScope
-        {
-            // Sem TenantId aqui — carimbado no SaveChangesAsync (fail-closed).
-            AssessmentId = assessmentId,
-            BusinessProcessId = req.BusinessProcessId,
-            BusinessUnitId = req.BusinessUnitId
-        };
-        _db.Scopes.Add(scope);
-        await _db.SaveChangesAsync(ct);
-        return new IdResponse(scope.Id);
-    }
+    public IActionResult AddScope(Guid assessmentId) =>
+        Retired("Escopos são criados em POST /api/v1/nist/assessments/{avaliação}/scopes.");
 
     /// <summary>Ask the AI engine to suggest a maturity level from answers, evidence and collected signals.</summary>
     [HttpPost("scopes/{scopeId:guid}/ai-suggest")]
@@ -102,47 +71,12 @@ public class AssessmentsController : ControllerBase
         return new MaturitySuggestionDto(s.CurrentLevel, s.Confidence, s.Rationale);
     }
 
-    /// <summary>Create/update the analyst-validated evaluation for one subcategory in a scope.</summary>
+    /// <summary>Gravação de subcategoria: só pela rota explícita da jornada (rodada nomeada e versão-base do cliente).</summary>
     [HttpPut("scopes/{scopeId:guid}/evaluations/{code}")]
     [Authorize(Roles = "Manager,TenantAdmin")]
-    public async Task<ActionResult<IdResponse>> UpsertEvaluation(Guid scopeId, string code, EvaluationUpsertRequest req, CancellationToken ct)
-    {
-        // Filtro de tenant: escopo de outro tenant (ou inexistente) é 404 — nunca recebe a avaliação.
-        if (!await _db.Scopes.AnyAsync(s => s.Id == scopeId, ct))
-            return NotFound($"Escopo {scopeId} não encontrado.");
-        static bool OutOfScale(int? v) => v is int x && (x < AssessmentMethodology.MinLevel || x > AssessmentMethodology.MaxLevel);
-        if (OutOfScale(req.CurrentLevel) || OutOfScale(req.CurrentScore) || OutOfScale(req.TargetLevel) || OutOfScale(req.TargetScore))
-            return BadRequest("Níveis de maturidade vão de 1 a 5.");
-        var sub = await _db.Subcategories.AsNoTracking().FirstOrDefaultAsync(s => s.Code == code, ct);
-        if (sub is null) return NotFound($"Subcategory {code} not found.");
-
-        // [AEGIS-NIST-JOURNEY-02] Esta superfície não conhece rodadas: só grava quando a avaliação tem UMA rodada. Com mais de
-        // uma, escolher uma seria arbitrário — a jornada do AEGIS NIST nomeia a rodada explicitamente.
-        var assessmentId = await _db.Scopes.AsNoTracking().Where(s => s.Id == scopeId).Select(s => s.AssessmentId).FirstAsync(ct);
-        var cycles = await _db.NistCycles.AsNoTracking().Where(c => c.AssessmentId == assessmentId).Select(c => c.Id).ToListAsync(ct);
-        if (cycles.Count != 1)
-            return Conflict("Esta avaliação tem mais de uma rodada (ou nenhuma): registre pela jornada do AEGIS NIST, que nomeia a rodada.");
-        var cycleId = cycles[0];
-
-        var eval = await _db.Evaluations.FirstOrDefaultAsync(e => e.AssessmentScopeId == scopeId && e.CycleId == cycleId && e.SubcategoryId == sub.Id, ct);
-        if (eval is null)
-        {
-            eval = new SubcategoryEvaluation { AssessmentScopeId = scopeId, CycleId = cycleId, SubcategoryId = sub.Id, EvaluatedBy = EvaluatedBy.Analyst };
-            _db.Evaluations.Add(eval);
-        }
-
-        eval.CurrentLevel = req.CurrentLevel;
-        eval.CurrentScore = req.CurrentScore ?? req.CurrentLevel;
-        eval.CurrentComments = req.CurrentComments;
-        eval.TargetLevel = req.TargetLevel;
-        eval.TargetScore = req.TargetScore ?? req.TargetLevel;
-        eval.TargetComments = req.TargetComments;
-        eval.ReviewedAt = DateTimeOffset.UtcNow;
-        eval.Version += 1;
-
-        await _db.SaveChangesAsync(ct);
-        return new IdResponse(eval.Id);
-    }
+    public IActionResult UpsertEvaluation(Guid scopeId, string code) =>
+        Retired("Grave a subcategoria em PUT /api/v1/nist/assessments/{avaliação}/cycles/{rodada}/scopes/{escopo}/subcategories/{código}, " +
+                "informando a versão lida (expectedVersion): a rota explícita recusa rodada encerrada, confere a edição concorrente e registra autoria e trilha.");
 
     /// <summary>Maturity rollup for the assessment (overall / per function / per category + gaps).</summary>
     [HttpGet("{assessmentId:guid}/maturity")]
@@ -161,6 +95,12 @@ public class AssessmentsController : ControllerBase
         var result = _maturity.Aggregate(rows.Select(x => new SubcategoryScore(x.Code, x.CurrentScore, x.TargetScore)));
         return ToDto(result);
     }
+
+    // Nada é lido nem gravado antes da recusa: a resposta não revela se o escopo ou a avaliação existem.
+    private ObjectResult Retired(string detail) => Problem(
+        statusCode: StatusCodes.Status410Gone,
+        title: "Esta rota antiga não grava mais: use a jornada do AEGIS NIST.",
+        detail: detail);
 
     internal static MaturityRollupDto ToDto(MaturityResult r)
     {
