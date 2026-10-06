@@ -115,8 +115,11 @@ public sealed class KnightManualResultService : IKnightManualResultService
 
         // O registro mais recente é o vigente: o carimbo é estritamente crescente por controle, para que dois registros no
         // mesmo instante (substituição ou retirada imediata) nunca deixem a ordem por conta do identificador.
+        // A comparação usa a precisão do PostgreSQL (microssegundos): o carimbo relido vem truncado e, comparado ao instante
+        // cheio, pareceria anterior — e os dois registros acabariam gravados no mesmo microssegundo.
         var previous = await _db.KnightManualAssessments.AsNoTracking().Where(r => r.ReferenceKey == key).Select(r => r.RecordedAt).ToListAsync(ct);
-        var recordedAt = previous.Count > 0 && previous.Max() is var last && last >= now ? last.AddMilliseconds(1) : now;
+        var nowStored = new DateTimeOffset(now.UtcTicks - now.UtcTicks % 10, TimeSpan.Zero);
+        var recordedAt = previous.Count > 0 && previous.Max() is var last && last >= nowStored ? last.AddMilliseconds(1) : now;
 
         var row = new KnightManualAssessment
         {
