@@ -68,19 +68,19 @@ public sealed class NistAssessmentServiceTests : IDisposable
         string? rationale = null, string? owner = null, string? gaps = null) =>
         new(current, target, na, null, null, rationale, gaps, null, null, owner, version);
 
-    private async Task<(Guid AssessmentId, Guid ScopeId)> CreateAsync(Guid tenant, string name = "Avaliação NIST 2026")
+    private async Task<(Guid AssessmentId, Guid CycleId, Guid ScopeId)> CreateAsync(Guid tenant, string name = "Avaliação NIST 2026")
     {
         await using var db = NewContext(tenant);
         var created = await Service(db, tenant).CreateAsync(
             new CreateNistAssessmentCommand(name, "Diagnóstico organizacional", new DateOnly(2026, 10, 1), null,
                 "Matriz e operação em nuvem", "Inclui a matriz e o ambiente Microsoft 365."), Gestor);
-        return (created.Id, created.Scopes.Single().Id);
+        return (created.Id, created.Cycles!.Single().Id, created.Scopes.Single().Id);
     }
 
     [Fact]
     public async Task Jornada_CriaAvaliacao_NavegaFuncoes_GravaESobreviveAoRecarregamento()
     {
-        var (a, s) = await CreateAsync(TenantA);
+        var (a, cy, s) = await CreateAsync(TenantA);
 
         await using (var db = NewContext(TenantA))
         {
@@ -89,7 +89,7 @@ public sealed class NistAssessmentServiceTests : IDisposable
             var total = 0;
             foreach (var fn in all)
             {
-                var view = await svc.GetFunctionAsync(a, s, fn.ToLowerInvariant());
+                var view = await svc.GetFunctionAsync(a, cy, s, fn.ToLowerInvariant());
                 view.Code.Should().Be(fn);
                 view.Categories.Should().NotBeEmpty();
                 view.Categories.SelectMany(c => c.Subcategories).Should().OnlyContain(r => r.State == NistSubcategoryStates.NotEvaluated);
@@ -99,12 +99,12 @@ public sealed class NistAssessmentServiceTests : IDisposable
             }
             total.Should().Be(106, "cada função traz o catálogo completo, inclusive o que ainda não foi avaliado");
 
-            var gv = await svc.GetFunctionAsync(a, s, "GV");
+            var gv = await svc.GetFunctionAsync(a, cy, s, "GV");
             gv.Categories.Select(c => c.Code).Should().Equal(new[] { "GV.OC", "GV.RM", "GV.RR", "GV.PO", "GV.OV", "GV.SC" },
                 "Govern não se resume à biblioteca de documentos, e as categorias seguem a ordem oficial do CSF 2.0");
             gv.Categories.First(c => c.Code == "GV.OC").Subcategories.First().Title.Should().Be("Alinhar a segurança à missão da organização");
 
-            var saved = await svc.SaveEvaluationAsync(a, s, "gv.oc-01", Eval(2, 4, owner: "Diretoria de Riscos", gaps: "Sem registro formal da missão."), Gestor);
+            var saved = await svc.SaveEvaluationAsync(a, cy, s, "gv.oc-01", Eval(2, 4, owner: "Diretoria de Riscos", gaps: "Sem registro formal da missão."), Gestor);
             saved.Evaluation!.Version.Should().Be(1);
             saved.Evaluation.Gap.Should().Be(2);
         }
@@ -112,7 +112,7 @@ public sealed class NistAssessmentServiceTests : IDisposable
         // Recarregamento: contexto NOVO, nada em memória.
         await using (var db = NewContext(TenantA))
         {
-            var detail = await Service(db, TenantA).GetSubcategoryAsync(a, s, "GV.OC-01");
+            var detail = await Service(db, TenantA).GetSubcategoryAsync(a, cy, s, "GV.OC-01");
             detail.Title.Should().Be("Alinhar a segurança à missão da organização");
             detail.OfficialOutcome.Should().StartWith("The organizational mission is understood");
             detail.MaturityScale.Should().HaveCount(5);
@@ -140,16 +140,16 @@ public sealed class NistAssessmentServiceTests : IDisposable
     [Fact]
     public async Task AusenciaNaoEhZero_LacunaIndeterminada_ENaoSeAplicaForaDasMedias()
     {
-        var (a, s) = await CreateAsync(TenantA);
+        var (a, cy, s) = await CreateAsync(TenantA);
         await using var db = NewContext(TenantA);
         var svc = Service(db, TenantA);
 
-        await svc.SaveEvaluationAsync(a, s, "PR.AA-01", Eval(current: 2), Gestor);                 // sem alvo
-        await svc.SaveEvaluationAsync(a, s, "PR.AA-02", Eval(target: 4), Gestor);                  // sem atual
-        await svc.SaveEvaluationAsync(a, s, "PR.AA-03", Eval(3, 5), Gestor);                       // par completo
-        await svc.SaveEvaluationAsync(a, s, "PR.AA-04", Eval(na: true, rationale: "Sem federação de identidade no escopo."), Gestor);
+        await svc.SaveEvaluationAsync(a, cy, s, "PR.AA-01", Eval(current: 2), Gestor);                 // sem alvo
+        await svc.SaveEvaluationAsync(a, cy, s, "PR.AA-02", Eval(target: 4), Gestor);                  // sem atual
+        await svc.SaveEvaluationAsync(a, cy, s, "PR.AA-03", Eval(3, 5), Gestor);                       // par completo
+        await svc.SaveEvaluationAsync(a, cy, s, "PR.AA-04", Eval(na: true, rationale: "Sem federação de identidade no escopo."), Gestor);
 
-        var pr = await svc.GetFunctionAsync(a, s, "PR");
+        var pr = await svc.GetFunctionAsync(a, cy, s, "PR");
         var aa = pr.Categories.First(c => c.Code == "PR.AA");
         aa.Subcategories.First(r => r.Code == "PR.AA-01").Gap.Should().BeNull("sem alvo a lacuna é indeterminada");
         aa.Subcategories.First(r => r.Code == "PR.AA-02").State.Should().Be(NistSubcategoryStates.InProgress, "alvo sem situação atual não é avaliação");
@@ -164,7 +164,7 @@ public sealed class NistAssessmentServiceTests : IDisposable
         pr.Profile.Current.Should().Be(2.5);
         pr.Categories.Where(c => c.Code != "PR.AA").Should().OnlyContain(c => c.Profile.Current == null);
 
-        var profile = await svc.GetProfileAsync(a, s);
+        var profile = await svc.GetProfileAsync(a, cy, s);
         profile.Gaps.Should().ContainSingle().Which.Code.Should().Be("PR.AA-03");
         profile.IndeterminateGaps.Should().Be(106 - 1 - 1, "sem par atual/alvo e aplicável: todas menos a completa e a não aplicável");
         profile.Overall.Current.Should().Be(2.5);
@@ -174,7 +174,7 @@ public sealed class NistAssessmentServiceTests : IDisposable
     [Fact]
     public async Task Validacao_Escala_NaoSeAplica_ConteudoVazio_NaoGravaNada()
     {
-        var (a, s) = await CreateAsync(TenantA);
+        var (a, cy, s) = await CreateAsync(TenantA);
         await using var db = NewContext(TenantA);
         var svc = Service(db, TenantA);
 
@@ -188,10 +188,10 @@ public sealed class NistAssessmentServiceTests : IDisposable
             (Eval(), "*Nada a registrar*"),
         };
         foreach (var (cmd, message) in invalid)
-            await FluentActions.Awaiting(() => svc.SaveEvaluationAsync(a, s, "DE.CM-01", cmd, Gestor))
+            await FluentActions.Awaiting(() => svc.SaveEvaluationAsync(a, cy, s, "DE.CM-01", cmd, Gestor))
                 .Should().ThrowAsync<NistAssessmentValidationException>().WithMessage(message);
 
-        await FluentActions.Awaiting(() => svc.SaveEvaluationAsync(a, s, "XX.YY-99", Eval(2, 3), Gestor))
+        await FluentActions.Awaiting(() => svc.SaveEvaluationAsync(a, cy, s, "XX.YY-99", Eval(2, 3), Gestor))
             .Should().ThrowAsync<NistAssessmentNotFoundException>();
         (await db.Evaluations.CountAsync()).Should().Be(0, "pedido recusado não grava nada");
     }
@@ -199,20 +199,20 @@ public sealed class NistAssessmentServiceTests : IDisposable
     [Fact]
     public async Task Concorrencia_VersaoDesatualizada_EhRecusada()
     {
-        var (a, s) = await CreateAsync(TenantA);
+        var (a, cy, s) = await CreateAsync(TenantA);
 
         await using (var db = NewContext(TenantA))
-            (await Service(db, TenantA).SaveEvaluationAsync(a, s, "RS.MA-01", Eval(2, 4), Gestor)).Evaluation!.Version.Should().Be(1);
+            (await Service(db, TenantA).SaveEvaluationAsync(a, cy, s, "RS.MA-01", Eval(2, 4), Gestor)).Evaluation!.Version.Should().Be(1);
 
         // Duas pessoas leram a versão 1; a primeira grava, a segunda é recusada.
         await using (var db = NewContext(TenantA))
-            (await Service(db, TenantA).SaveEvaluationAsync(a, s, "RS.MA-01", Eval(3, 4, version: 1), Gestor)).Evaluation!.Version.Should().Be(2);
+            (await Service(db, TenantA).SaveEvaluationAsync(a, cy, s, "RS.MA-01", Eval(3, 4, version: 1), Gestor)).Evaluation!.Version.Should().Be(2);
         await using (var db = NewContext(TenantA))
         {
-            await FluentActions.Awaiting(() => Service(db, TenantA).SaveEvaluationAsync(a, s, "RS.MA-01", Eval(1, 4, version: 1), Gestor))
+            await FluentActions.Awaiting(() => Service(db, TenantA).SaveEvaluationAsync(a, cy, s, "RS.MA-01", Eval(1, 4, version: 1), Gestor))
                 .Should().ThrowAsync<NistAssessmentConflictException>().WithMessage("*outra pessoa*");
             // Criação "nova" sobre uma avaliação que já existe também é conflito.
-            await FluentActions.Awaiting(() => Service(db, TenantA).SaveEvaluationAsync(a, s, "RS.MA-01", Eval(1, 4, version: 0), Gestor))
+            await FluentActions.Awaiting(() => Service(db, TenantA).SaveEvaluationAsync(a, cy, s, "RS.MA-01", Eval(1, 4, version: 0), Gestor))
                 .Should().ThrowAsync<NistAssessmentConflictException>();
             (await db.Evaluations.AsNoTracking().SingleAsync()).CurrentLevel.Should().Be(3, "a gravação vencida não sobrescreve");
         }
@@ -221,14 +221,14 @@ public sealed class NistAssessmentServiceTests : IDisposable
     [Fact]
     public async Task IsolamentoEntreTenants_AvaliacaoEscopoDocumentoEKnight()
     {
-        var (a, s) = await CreateAsync(TenantA);
-        var (a2, s2) = await CreateAsync(TenantA, "Segunda avaliação");
+        var (a, cy, s) = await CreateAsync(TenantA);
+        var (a2, cy2, s2) = await CreateAsync(TenantA, "Segunda avaliação");
         Guid docA, runA;
         await using (var db = NewContext(TenantA))
         {
             docA = await SeedDocumentAsync(db, "GV.PO-01");
             runA = await SeedKnightRunAsync(db, KnightAssessmentMode.Live, ("AK-ENTRA-001", KnightIndicatorStatus.Exposed, new[] { "PR.AA-01" }));
-            await Service(db, TenantA).SaveEvaluationAsync(a, s, "GV.PO-01", Eval(2, 3), Gestor);
+            await Service(db, TenantA).SaveEvaluationAsync(a, cy, s, "GV.PO-01", Eval(2, 3), Gestor);
         }
 
         await using (var db = NewContext(TenantB))
@@ -236,26 +236,26 @@ public sealed class NistAssessmentServiceTests : IDisposable
             var svc = Service(db, TenantB);
             (await svc.ListAsync()).Should().BeEmpty("o tenant B não enxerga a avaliação do tenant A");
             await FluentActions.Awaiting(() => svc.GetAsync(a)).Should().ThrowAsync<NistAssessmentNotFoundException>();
-            await FluentActions.Awaiting(() => svc.GetSubcategoryAsync(a, s, "GV.PO-01")).Should().ThrowAsync<NistAssessmentNotFoundException>();
-            await FluentActions.Awaiting(() => svc.SaveEvaluationAsync(a, s, "GV.PO-01", Eval(5, 5, version: 1), Gestor))
+            await FluentActions.Awaiting(() => svc.GetSubcategoryAsync(a, cy, s, "GV.PO-01")).Should().ThrowAsync<NistAssessmentNotFoundException>();
+            await FluentActions.Awaiting(() => svc.SaveEvaluationAsync(a, cy, s, "GV.PO-01", Eval(5, 5, version: 1), Gestor))
                 .Should().ThrowAsync<NistAssessmentNotFoundException>();
-            await FluentActions.Awaiting(() => svc.AddScopeAsync(a, new CreateNistScopeCommand("Intruso", null)))
+            await FluentActions.Awaiting(() => svc.AddScopeAsync(a, new CreateNistScopeCommand("Intruso", null), Gestor))
                 .Should().ThrowAsync<NistAssessmentNotFoundException>();
 
-            var (b, sb) = await CreateAsync(TenantB);
-            await FluentActions.Awaiting(() => Service(db, TenantB).LinkEvidenceAsync(b, sb, "GV.PO-01",
+            var (b, cyb, sb) = await CreateAsync(TenantB);
+            await FluentActions.Awaiting(() => Service(db, TenantB).LinkEvidenceAsync(b, cyb, sb, "GV.PO-01",
                     new LinkNistEvidenceCommand("GovernanceDocument", docA, null, null, null, null, null, null, null), Gestor))
                 .Should().ThrowAsync<NistAssessmentNotFoundException>("documento de outro tenant não existe para B");
-            await FluentActions.Awaiting(() => Service(db, TenantB).LinkEvidenceAsync(b, sb, "PR.AA-01",
+            await FluentActions.Awaiting(() => Service(db, TenantB).LinkEvidenceAsync(b, cyb, sb, "PR.AA-01",
                     new LinkNistEvidenceCommand("KnightIndicator", null, runA, "AK-ENTRA-001", null, null, null, null, null), Gestor))
                 .Should().ThrowAsync<NistAssessmentNotFoundException>("execução do KNIGHT de outro tenant não existe para B");
-            (await Service(db, TenantB).GetSubcategoryAsync(b, sb, "PR.AA-01")).AvailableEvidence
+            (await Service(db, TenantB).GetSubcategoryAsync(b, cyb, sb, "PR.AA-01")).AvailableEvidence
                 .Should().BeEmpty("a evidência disponível também é filtrada pelo tenant");
         }
 
         await using (var db = NewContext(TenantA))
         {
-            await FluentActions.Awaiting(() => Service(db, TenantA).GetSubcategoryAsync(a2, s, "GV.PO-01"))
+            await FluentActions.Awaiting(() => Service(db, TenantA).GetSubcategoryAsync(a2, cy2, s, "GV.PO-01"))
                 .Should().ThrowAsync<NistAssessmentNotFoundException>("o escopo precisa pertencer à avaliação informada");
             (await db.Evaluations.AsNoTracking().SingleAsync()).CurrentLevel.Should().Be(2, "nada do tenant B alterou a avaliação de A");
         }
@@ -264,21 +264,21 @@ public sealed class NistAssessmentServiceTests : IDisposable
     [Fact]
     public async Task EvidenciaKnight_SoComMapeamentoExplicito_ENaoAlteraNivel()
     {
-        var (a, s) = await CreateAsync(TenantA);
+        var (a, cy, s) = await CreateAsync(TenantA);
         await using var db = NewContext(TenantA);
         var run = await SeedKnightRunAsync(db, KnightAssessmentMode.Live,
             ("AK-ENTRA-001", KnightIndicatorStatus.Passed, new[] { "PR.AA-01", "PR.AA-03" }),
             ("AK-ENTRA-002", KnightIndicatorStatus.NotEvaluated, new[] { "PR.AA-01" }));
         var svc = Service(db, TenantA);
 
-        var detail = await svc.GetSubcategoryAsync(a, s, "PR.AA-01");
+        var detail = await svc.GetSubcategoryAsync(a, cy, s, "PR.AA-01");
         detail.AvailableEvidence.Should().HaveCount(2);
         var offered = detail.AvailableEvidence.Single(x => x.KnightIndicatorId == "AK-ENTRA-001");
         offered.Criterion.Should().Contain("Mapeamento explícito");
         offered.Limitation.Should().Contain("não comprova sozinha");
         offered.IsDemo.Should().BeFalse();
 
-        var linked = await svc.LinkEvidenceAsync(a, s, "PR.AA-01",
+        var linked = await svc.LinkEvidenceAsync(a, cy, s, "PR.AA-01",
             new LinkNistEvidenceCommand("KnightIndicator", null, run, "AK-ENTRA-001", null, null, "Acesso condicional aplicado.", null, null), Gestor);
         linked.Evaluation.Should().BeNull("vincular evidência técnica não define nível nem conformidade");
         var ev = linked.Evidence.Single();
@@ -289,13 +289,13 @@ public sealed class NistAssessmentServiceTests : IDisposable
         ev.Notes.Should().Contain("não comprova sozinha");
         linked.AvailableEvidence.Single(x => x.KnightIndicatorId == "AK-ENTRA-001").AlreadyLinked.Should().BeTrue();
 
-        await FluentActions.Awaiting(() => svc.LinkEvidenceAsync(a, s, "GV.OC-01",
+        await FluentActions.Awaiting(() => svc.LinkEvidenceAsync(a, cy, s, "GV.OC-01",
                 new LinkNistEvidenceCommand("KnightIndicator", null, run, "AK-ENTRA-001", null, null, null, null, null), Gestor))
             .Should().ThrowAsync<NistAssessmentValidationException>().WithMessage("*não está mapeado*");
-        await FluentActions.Awaiting(() => svc.LinkEvidenceAsync(a, s, "PR.AA-01",
+        await FluentActions.Awaiting(() => svc.LinkEvidenceAsync(a, cy, s, "PR.AA-01",
                 new LinkNistEvidenceCommand("KnightIndicator", null, run, "AK-ENTRA-002", null, null, null, null, null), Gestor))
             .Should().ThrowAsync<NistAssessmentValidationException>().WithMessage("*não tem resultado avaliado*");
-        await FluentActions.Awaiting(() => svc.LinkEvidenceAsync(a, s, "PR.AA-01",
+        await FluentActions.Awaiting(() => svc.LinkEvidenceAsync(a, cy, s, "PR.AA-01",
                 new LinkNistEvidenceCommand("KnightIndicator", null, run, "AK-ENTRA-001", null, null, null, null, null), Gestor))
             .Should().ThrowAsync<NistAssessmentConflictException>("o mesmo controle não entra duas vezes");
     }
@@ -303,39 +303,39 @@ public sealed class NistAssessmentServiceTests : IDisposable
     [Fact]
     public async Task EvidenciaDocumentalEInventario_ComProcedencia_ERetiradaPreservaRegistro()
     {
-        var (a, s) = await CreateAsync(TenantA);
+        var (a, cy, s) = await CreateAsync(TenantA);
         await using var db = NewContext(TenantA);
         var doc = await SeedDocumentAsync(db, "GV.PO-01");
         db.Assets.Add(new Asset { Name = "srv-demo-01", Category = AssetCategory.Hardware, DiscoverySource = AssetDiscoverySource.Connector });
         await db.SaveChangesAsync();
         var svc = Service(db, TenantA);
 
-        var detail = await svc.GetSubcategoryAsync(a, s, "GV.PO-01");
+        var detail = await svc.GetSubcategoryAsync(a, cy, s, "GV.PO-01");
         detail.AvailableEvidence.Should().ContainSingle(x => x.DocumentId == doc).Which.Criterion.Should().Contain("Trecho literal");
 
-        var linked = await svc.LinkEvidenceAsync(a, s, "GV.PO-01",
+        var linked = await svc.LinkEvidenceAsync(a, cy, s, "GV.PO-01",
             new LinkNistEvidenceCommand("GovernanceDocument", doc, null, null, null, null, "Política aprovada pela diretoria.", null, null), Gestor);
         var ev = linked.Evidence.Single();
         (ev.Title, ev.OriginRef, ev.RecordedByName).Should().Be(("Politica de Seguranca da Informacao", doc.ToString(), "Gestora Demo"));
         ev.CollectedAt.Should().Be(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero), "a data é a do documento");
-        (await svc.GetFunctionAsync(a, s, "GV")).Categories.SelectMany(c => c.Subcategories).Single(r => r.Code == "GV.PO-01")
+        (await svc.GetFunctionAsync(a, cy, s, "GV")).Categories.SelectMany(c => c.Subcategories).Single(r => r.Code == "GV.PO-01")
             .State.Should().Be(NistSubcategoryStates.InProgress, "evidência sem nível é avaliação em andamento, não avaliação concluída");
 
-        var manual = await svc.LinkEvidenceAsync(a, s, "GV.PO-01",
+        var manual = await svc.LinkEvidenceAsync(a, cy, s, "GV.PO-01",
             new LinkNistEvidenceCommand("Manual", null, null, null, "Entrevista com a diretoria", null, "Confirma a revisão anual.", new DateOnly(2026, 9, 20), "Interview"), Gestor);
         manual.Evidence.Should().HaveCount(2);
-        await FluentActions.Awaiting(() => svc.LinkEvidenceAsync(a, s, "GV.PO-01",
+        await FluentActions.Awaiting(() => svc.LinkEvidenceAsync(a, cy, s, "GV.PO-01",
                 new LinkNistEvidenceCommand("Manual", null, null, null, "Link", "javascript:alert(1)", null, null, null), Gestor))
             .Should().ThrowAsync<NistAssessmentValidationException>().WithMessage("*http(s)*");
 
-        await FluentActions.Awaiting(() => svc.LinkEvidenceAsync(a, s, "GV.PO-01",
+        await FluentActions.Awaiting(() => svc.LinkEvidenceAsync(a, cy, s, "GV.PO-01",
                 new LinkNistEvidenceCommand("AssetInventory", null, null, null, null, null, null, null, null), Gestor))
             .Should().ThrowAsync<NistAssessmentValidationException>().WithMessage("*ID.AM*");
-        var inventory = await svc.LinkEvidenceAsync(a, s, "ID.AM-01",
+        var inventory = await svc.LinkEvidenceAsync(a, cy, s, "ID.AM-01",
             new LinkNistEvidenceCommand("AssetInventory", null, null, null, null, null, null, null, null), Gestor);
         inventory.Evidence.Single().OriginScope.Should().Contain("1 ativo(s) ativo(s)").And.Contain("conector 1");
 
-        var removed = await svc.RemoveEvidenceAsync(a, s, "GV.PO-01", ev.Id, Gestor);
+        var removed = await svc.RemoveEvidenceAsync(a, cy, s, "GV.PO-01", ev.Id, Gestor);
         removed.Evidence.Should().ContainSingle().Which.Title.Should().Be("Entrevista com a diretoria");
         var row = await db.Evidence.AsNoTracking().SingleAsync(x => x.Id == ev.Id);
         row.RemovedAt.Should().NotBeNull("retirar o vínculo preserva o registro para auditoria");
@@ -345,38 +345,42 @@ public sealed class NistAssessmentServiceTests : IDisposable
     [Fact]
     public async Task SugestaoDaIA_NuncaGravada_EJornadaFuncionaSemIA()
     {
-        var (a, s) = await CreateAsync(TenantA);
+        var (a, cy, s) = await CreateAsync(TenantA);
         await using var db = NewContext(TenantA);
 
-        var suggestion = await Service(db, TenantA).SuggestAsync(a, s, "GV.RM-01");
+        var suggestion = await Service(db, TenantA).SuggestAsync(a, cy, s, "GV.RM-01");
         suggestion.Simulated.Should().BeTrue("sem provedor configurado a sugestão é simulada e assim declarada");
         suggestion.SuggestedCurrentLevel.Should().BeInRange(1, 5);
         (await db.Evaluations.CountAsync()).Should().Be(0, "a sugestão nunca é gravada como avaliação ou revisão humana");
 
-        await FluentActions.Awaiting(() => Service(db, TenantA, mode: AiMode.Disabled).SuggestAsync(a, s, "GV.RM-01"))
+        await FluentActions.Awaiting(() => Service(db, TenantA, mode: AiMode.Disabled).SuggestAsync(a, cy, s, "GV.RM-01"))
             .Should().ThrowAsync<NistAiUnavailableException>();
-        await FluentActions.Awaiting(() => Service(db, TenantA, ai: new FailingAi()).SuggestAsync(a, s, "GV.RM-01"))
+        await FluentActions.Awaiting(() => Service(db, TenantA, ai: new FailingAi()).SuggestAsync(a, cy, s, "GV.RM-01"))
             .Should().ThrowAsync<NistAiUnavailableException>();
 
         // Com a IA desativada, a avaliação humana segue normalmente.
-        var saved = await Service(db, TenantA, mode: AiMode.Disabled).SaveEvaluationAsync(a, s, "GV.RM-01", Eval(2, 3), Gestor);
+        var saved = await Service(db, TenantA, mode: AiMode.Disabled).SaveEvaluationAsync(a, cy, s, "GV.RM-01", Eval(2, 3), Gestor);
         saved.Evaluation!.EvaluatedBy.Should().Be("Analyst");
     }
 
     [Fact]
-    public async Task Historico_UmPontoPorEscopo_NoMesDaUltimaRevisao()
+    public async Task Historico_UmPontoPorRodadaEEscopo_NoMesDoFimDoPeriodo()
     {
-        var (a, s) = await CreateAsync(TenantA);
+        var (a, cy, s) = await CreateAsync(TenantA);
         await using var db = NewContext(TenantA);
         var svc = Service(db, TenantA);
         (await svc.HistoryAsync()).Should().BeEmpty("escopo sem revisão humana não representa mês nenhum");
 
-        await svc.SaveEvaluationAsync(a, s, "ID.AM-01", Eval(2, 4), Gestor);
+        await svc.SaveEvaluationAsync(a, cy, s, "ID.AM-01", Eval(2, 4), Gestor);
         _clock.Advance(TimeSpan.FromDays(31));
-        await svc.SaveEvaluationAsync(a, s, "ID.AM-02", Eval(3, 4), Gestor);
+        await svc.SaveEvaluationAsync(a, cy, s, "ID.AM-02", Eval(3, 4), Gestor);
 
         var item = (await svc.HistoryAsync()).Single();
-        item.ReferenceMonth.Should().Be(new DateOnly(2026, 11, 1));
+        // [AEGIS-NIST-JOURNEY-02] O ponto é da RODADA: mês do fim do período (aqui, a rodada inicial de 01/10/2026), não do
+        // dia em que alguém gravou — revisões feitas em novembro continuam pertencendo à rodada de outubro.
+        item.ReferenceMonth.Should().Be(new DateOnly(2026, 10, 1));
+        item.CycleId.Should().Be(cy);
+        item.LastReviewedAt.Should().Be(_clock.GetUtcNow());
         item.MethodologyVersion.Should().Be(AssessmentMethodology.Version);
         item.Evaluated.Should().Be(2);
         item.Current.Should().Be(2.5);

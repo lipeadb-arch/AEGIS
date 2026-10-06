@@ -48,7 +48,7 @@ public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
             r.StatusCode.Should().Be(HttpStatusCode.Forbidden, "Analyst lê, mas não cria avaliação");
         }
 
-        string assessmentId, scopeId;
+        string assessmentId, cycleId, scopeId;
         using (var manager = _api.As(a.Manager))
         {
             using (var r = await manager.PostAsync(Base, AegisApiHarness.JsonBody(create)))
@@ -58,10 +58,12 @@ public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
                 using var doc = JsonDocument.Parse(text);
                 assessmentId = doc.RootElement.GetProperty("id").GetString()!;
                 scopeId = doc.RootElement.GetProperty("scopes")[0].GetProperty("id").GetString()!;
+                // [AEGIS-NIST-JOURNEY-02] Toda avaliação nasce com uma rodada; as rotas de trabalho a nomeiam.
+                cycleId = doc.RootElement.GetProperty("cycles")[0].GetProperty("id").GetString()!;
                 doc.RootElement.GetProperty("methodologyVersion").GetString().Should().Be("aegis-methodology-v1");
             }
 
-            using (var fn = await GetJsonAsync(manager, $"{Base}/{assessmentId}/scopes/{scopeId}/functions/id"))
+            using (var fn = await GetJsonAsync(manager, $"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/functions/id"))
             {
                 var categories = fn.RootElement.GetProperty("categories").EnumerateArray().ToList();
                 categories.Select(c => c.GetProperty("code").GetString()).Should().Equal(new[] { "ID.AM", "ID.RA", "ID.IM" }, "ordem oficial do CSF 2.0");
@@ -71,35 +73,35 @@ public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
             }
 
             var save = new { currentLevel = 2, targetLevel = 4, notApplicable = false, ownerName = "Diretoria de TI", expectedVersion = 0 };
-            using (var r = await manager.PutAsync($"{Base}/{assessmentId}/scopes/{scopeId}/subcategories/ID.AM-01", AegisApiHarness.JsonBody(save)))
+            using (var r = await manager.PutAsync($"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-01", AegisApiHarness.JsonBody(save)))
                 r.StatusCode.Should().Be(HttpStatusCode.OK, await r.Content.ReadAsStringAsync());
-            using (var r = await manager.PutAsync($"{Base}/{assessmentId}/scopes/{scopeId}/subcategories/ID.AM-01", AegisApiHarness.JsonBody(save)))
+            using (var r = await manager.PutAsync($"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-01", AegisApiHarness.JsonBody(save)))
                 r.StatusCode.Should().Be(HttpStatusCode.Conflict, "a versão 0 já foi superada");
-            using (var r = await manager.PutAsync($"{Base}/{assessmentId}/scopes/{scopeId}/subcategories/ID.AM-02",
+            using (var r = await manager.PutAsync($"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-02",
                        AegisApiHarness.JsonBody(save with { currentLevel = 7 })))
                 r.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
-            using (var r = await manager.PostAsync($"{Base}/{assessmentId}/scopes/{scopeId}/subcategories/ID.AM-03/ai-suggestion", AegisApiHarness.JsonBody(new { })))
+            using (var r = await manager.PostAsync($"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-03/ai-suggestion", AegisApiHarness.JsonBody(new { })))
                 new[] { HttpStatusCode.OK, HttpStatusCode.ServiceUnavailable }.Should().Contain(r.StatusCode, "a IA pode estar simulada ou desativada");
-            using (var d = await GetJsonAsync(manager, $"{Base}/{assessmentId}/scopes/{scopeId}/subcategories/ID.AM-03"))
+            using (var d = await GetJsonAsync(manager, $"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-03"))
                 d.RootElement.GetProperty("evaluation").ValueKind.Should().Be(JsonValueKind.Null, "a sugestão nunca é gravada");
         }
 
         using (var analyst = _api.As(a.Analyst))
         {
-            using (var r = await analyst.PutAsync($"{Base}/{assessmentId}/scopes/{scopeId}/subcategories/ID.AM-01",
+            using (var r = await analyst.PutAsync($"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-01",
                        AegisApiHarness.JsonBody(new { currentLevel = 5, targetLevel = 5, expectedVersion = 1 })))
                 r.StatusCode.Should().Be(HttpStatusCode.Forbidden, "Analyst não grava avaliação");
 
             // Releitura (o equivalente HTTP do recarregamento da tela).
-            using var d = await GetJsonAsync(analyst, $"{Base}/{assessmentId}/scopes/{scopeId}/subcategories/ID.AM-01");
+            using var d = await GetJsonAsync(analyst, $"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-01");
             var e = d.RootElement.GetProperty("evaluation");
             (e.GetProperty("currentLevel").GetInt32(), e.GetProperty("targetLevel").GetInt32(), e.GetProperty("gap").GetInt32()).Should().Be((2, 4, 2));
             e.GetProperty("version").GetInt32().Should().Be(1);
             e.GetProperty("ownerName").GetString().Should().Be("Diretoria de TI");
             e.GetProperty("reviewedByName").GetString().Should().Be("Manager Cliente Demo A", "o autor vem do token, nunca do corpo");
 
-            using var p = await GetJsonAsync(analyst, $"{Base}/{assessmentId}/scopes/{scopeId}/profile");
+            using var p = await GetJsonAsync(analyst, $"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/profile");
             p.RootElement.GetProperty("overall").GetProperty("current").GetDouble().Should().Be(2);
         }
 
@@ -107,19 +109,193 @@ public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
         {
             using (var doc = await GetJsonAsync(other, Base))
                 doc.RootElement.GetArrayLength().Should().Be(0, "o tenant B não vê a avaliação de A");
-            foreach (var url in new[] { $"{Base}/{assessmentId}", $"{Base}/{assessmentId}/scopes/{scopeId}/functions/GV",
-                         $"{Base}/{assessmentId}/scopes/{scopeId}/subcategories/ID.AM-01" })
+            foreach (var url in new[] { $"{Base}/{assessmentId}", $"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/functions/GV",
+                         $"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-01" })
             {
                 using var r = await other.GetAsync(url);
                 r.StatusCode.Should().Be(HttpStatusCode.NotFound, url);
             }
-            using (var r = await other.PutAsync($"{Base}/{assessmentId}/scopes/{scopeId}/subcategories/ID.AM-01",
+            using (var r = await other.PutAsync($"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-01",
                        AegisApiHarness.JsonBody(new { currentLevel = 5, targetLevel = 5, expectedVersion = 1 })))
                 r.StatusCode.Should().Be(HttpStatusCode.NotFound, "a gravação cruzada não encontra a avaliação");
 
             using var monthly = await GetJsonAsync(other, "/api/v1/posture/snapshots/monthly?months=12");
             monthly.RootElement.GetProperty("months").GetArrayLength().Should().Be(12);
             monthly.RootElement.GetProperty("series").GetArrayLength().Should().Be(0, "sem fotografia publicada, nenhum ponto é inventado");
+        }
+    }
+
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] A jornada COMPLETA pelo pipeline HTTP real: rodada → designação de pessoas reais do tenant →
+    /// avaliação → revisão por OUTRA pessoa → procedimento com resultado → achado com plano (origem NIST) → execução,
+    /// validação humana e encerramento → prévia e publicação com impressão digital → HTML, PDF e CSV da mesma fotografia
+    /// (inclusive para Analyst) → CSV de trabalho e prévia de importação. Papéis: Analyst lê tudo e não grava nada novo;
+    /// outro tenant recebe 404 em todas as rotas novas.
+    /// </summary>
+    [Fact]
+    public async Task JornadaCompleta_RodadaAchadoPlanoPublicacaoEExportacoes_ComPapeisEIsolamento()
+    {
+        if (_api is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var t = await _api.SeedTenantAsync("Cliente Jornada");
+        var other = await _api.SeedTenantAsync("Cliente Vizinho");
+
+        string a, c, s, analystId, adminId;
+        using (var manager = _api.As(t.Manager))
+        {
+            var create = new
+            {
+                name = "Avaliação NIST 2026", initialScopeName = "Matriz", initialCycleName = "T4 2026",
+                initialCyclePeriodKind = "Quarterly", initialCyclePeriodStart = "2026-10-01", initialCyclePeriodEnd = "2026-12-31",
+            };
+            using (var r = await manager.PostAsync(Base, AegisApiHarness.JsonBody(create)))
+            {
+                var text = await r.Content.ReadAsStringAsync();
+                r.StatusCode.Should().Be(HttpStatusCode.Created, text);
+                using var doc = JsonDocument.Parse(text);
+                a = doc.RootElement.GetProperty("id").GetString()!;
+                s = doc.RootElement.GetProperty("scopes")[0].GetProperty("id").GetString()!;
+                var cycle = doc.RootElement.GetProperty("cycles")[0];
+                c = cycle.GetProperty("id").GetString()!;
+                (cycle.GetProperty("name").GetString(), cycle.GetProperty("periodKind").GetString()).Should().Be(("T4 2026", "Quarterly"));
+            }
+        }
+
+        using (var analyst = _api.As(t.Analyst))
+        using (var people = await GetJsonAsync(analyst, $"{Base}/assignees"))
+        {
+            var list = people.RootElement.EnumerateArray().ToList();
+            list.Should().HaveCount(3, "Analyst vê os usuários ativos do tenant para saber a quem o trabalho foi dado");
+            list.Select(p => p.EnumerateObject().Select(x => x.Name).ToList())
+                .Should().OnlyContain(names => !names.Contains("email"), "a lista não expõe e-mail");
+            analystId = list.Single(p => p.GetProperty("role").GetString() == "Analyst").GetProperty("userId").GetString()!;
+            adminId = list.Single(p => p.GetProperty("role").GetString() == "TenantAdmin").GetProperty("userId").GetString()!;
+        }
+
+        var sub = $"{Base}/{a}/cycles/{c}/scopes/{s}/subcategories/ID.AM-01";
+        string findingId, planId;
+        using (var manager = _api.As(t.Manager))
+        {
+            using (var r = await manager.PutAsync($"{sub}/assignment", AegisApiHarness.JsonBody(new { assessorUserId = analystId, reviewerUserId = adminId, expectedVersion = 0 })))
+                r.StatusCode.Should().Be(HttpStatusCode.OK, await r.Content.ReadAsStringAsync());
+            using (var r = await manager.PutAsync(sub, AegisApiHarness.JsonBody(new { currentLevel = 2, targetLevel = 4, gaps = "Planilha sem dono por ativo.", ownerUserId = analystId, expectedVersion = 1 })))
+                r.StatusCode.Should().Be(HttpStatusCode.OK, await r.Content.ReadAsStringAsync());
+            using (var r = await manager.PostAsync($"{sub}/review", AegisApiHarness.JsonBody(new { decision = "Approved", expectedVersion = 2 })))
+                r.StatusCode.Should().Be(HttpStatusCode.BadRequest, "quem gravou a versão vigente não a revisa");
+
+            using (var r = await manager.PostAsync($"{sub}/procedures", AegisApiHarness.JsonBody(new { method = "Examine", procedure = "Examinar a planilha de inventário." })))
+            {
+                var text = await r.Content.ReadAsStringAsync();
+                r.StatusCode.Should().Be(HttpStatusCode.Created, text);
+                using var doc = JsonDocument.Parse(text);
+                var pid = doc.RootElement.GetProperty("id").GetString();
+                using var done = await manager.PutAsync($"{sub}/procedures/{pid}", AegisApiHarness.JsonBody(new
+                {
+                    status = "Performed", outcome = "Unsatisfactory", observation = "30% dos servidores sem responsável.",
+                    performedOn = _api.Clock.GetUtcNow().UtcDateTime.AddDays(-1).ToString("yyyy-MM-dd"), expectedVersion = 1,
+                }));
+                done.StatusCode.Should().Be(HttpStatusCode.OK, await done.Content.ReadAsStringAsync());
+            }
+
+            using (var r = await manager.PostAsync($"{sub}/findings", AegisApiHarness.JsonBody(new
+            {
+                title = "Inventário sem dono", condition = "30% dos servidores sem responsável.", risk = "Ativo sem dono não é corrigido.",
+                impact = "Vulnerabilidade sem tratamento.", severity = "High", severityRationale = "Servidores de produção.", priority = "High",
+                priorityRationale = "Pré-requisito de outros controles.", recommendation = "Atribuir donos.",
+                plan = new { title = "Atribuir donos", responsible = new { userId = analystId }, dueDate = "2026-12-15" },
+            })))
+            {
+                var text = await r.Content.ReadAsStringAsync();
+                r.StatusCode.Should().Be(HttpStatusCode.Created, text);
+                using var doc = JsonDocument.Parse(text);
+                findingId = doc.RootElement.GetProperty("id").GetString()!;
+                var plan = doc.RootElement.GetProperty("plan");
+                planId = plan.GetProperty("id").GetString()!;
+                plan.GetProperty("originKind").GetString().Should().Be("NistFinding");
+                plan.GetProperty("responsiblePerson").GetString().Should().Be("Analyst Cliente Jornada");
+            }
+
+            var planUrl = $"{Base}/{a}/cycles/{c}/scopes/{s}/findings/{findingId}/plans/{planId}";
+            using (var r = await manager.PostAsync($"{planUrl}/execution", AegisApiHarness.JsonBody(new { expectedVersion = 1, notes = "Donos atribuídos.", evidenceReference = "CHG-1" })))
+                r.StatusCode.Should().Be(HttpStatusCode.OK, await r.Content.ReadAsStringAsync());
+            using (var r = await manager.PostAsync($"{planUrl}/validations", AegisApiHarness.JsonBody(new { expectedVersion = 2, evidenceReference = "Planilha revisada (DOC-9)." })))
+                r.StatusCode.Should().Be(HttpStatusCode.OK, await r.Content.ReadAsStringAsync());
+        }
+
+        using (var admin = _api.As(t.Admin))
+        using (var r = await admin.PostAsync($"{sub}/review", AegisApiHarness.JsonBody(new { decision = "Approved", note = "Coerente.", expectedVersion = 2 })))
+            r.StatusCode.Should().Be(HttpStatusCode.OK, await r.Content.ReadAsStringAsync());
+
+        using (var analyst = _api.As(t.Analyst))
+        {
+            foreach (var (url, body) in new (string, object)[]
+                     {
+                         ($"{sub}/procedures", new { method = "Test", procedure = "Testar o que quer que seja." }),
+                         ($"{Base}/{a}/cycles", new { name = "Nova", periodKind = "Other", periodStart = "2027-01-01", periodEnd = "2027-01-31", seedMode = "None" }),
+                         ($"{Base}/{a}/cycles/{c}/scopes/{s}/publications", new { expectedFingerprint = new string('0', 64) }),
+                         ($"{Base}/{a}/cycles/{c}/scopes/{s}/import/preview", new { csv = "x" }),
+                     })
+            {
+                using var r = await analyst.PostAsync(url, AegisApiHarness.JsonBody(body));
+                r.StatusCode.Should().Be(HttpStatusCode.Forbidden, $"Analyst não grava ({url}); ser designado não concede privilégio");
+            }
+            using var findings = await GetJsonAsync(analyst, $"{Base}/{a}/findings");
+            findings.RootElement.GetArrayLength().Should().Be(1, "Analyst lê os achados");
+        }
+
+        string snapshotId;
+        using (var manager = _api.As(t.Manager))
+        {
+            string fingerprint;
+            using (var preview = await GetJsonAsync(manager, $"{Base}/{a}/cycles/{c}/scopes/{s}/publication-preview"))
+                fingerprint = preview.RootElement.GetProperty("contentFingerprint").GetString()!;
+            using (var r = await manager.PostAsync($"{Base}/{a}/cycles/{c}/scopes/{s}/publications", AegisApiHarness.JsonBody(new { expectedFingerprint = new string('a', 64) })))
+                r.StatusCode.Should().Be(HttpStatusCode.Conflict, "conteúdo diferente do revisado não é publicado");
+            using (var r = await manager.PostAsync($"{Base}/{a}/cycles/{c}/scopes/{s}/publications", AegisApiHarness.JsonBody(new { expectedFingerprint = fingerprint })))
+            {
+                var text = await r.Content.ReadAsStringAsync();
+                r.StatusCode.Should().Be(HttpStatusCode.Created, text);
+                using var doc = JsonDocument.Parse(text);
+                snapshotId = doc.RootElement.GetProperty("snapshotId").GetString()!;
+            }
+            using (var r = await manager.PostAsync("/api/v1/posture/snapshots", AegisApiHarness.JsonBody(new { type = "NistMaturity" })))
+                r.StatusCode.Should().Be(HttpStatusCode.BadRequest, "a maturidade só é publicada pela jornada NIST");
+        }
+
+        using (var analyst = _api.As(t.Analyst))
+        {
+            foreach (var (format, type) in new[] { ("html", "text/html"), ("pdf", "application/pdf"), ("csv", "text/csv") })
+            {
+                using var r = await analyst.GetAsync($"/api/v1/posture/snapshots/{snapshotId}/export?format={format}");
+                r.StatusCode.Should().Be(HttpStatusCode.OK, format);
+                r.Content.Headers.ContentType!.MediaType.Should().Be(type);
+            }
+            using (var csv = await analyst.GetAsync($"{Base}/{a}/cycles/{c}/scopes/{s}/working-csv"))
+            {
+                csv.StatusCode.Should().Be(HttpStatusCode.OK);
+                (await csv.Content.ReadAsStringAsync()).Should().Contain("ID.AM-01");
+            }
+            using var monthly = await GetJsonAsync(analyst, "/api/v1/posture/snapshots/monthly?months=12");
+            monthly.RootElement.GetProperty("series").EnumerateArray().Select(x => x.GetProperty("type").GetString())
+                .Should().Contain("NistMaturity", "a maturidade entra na evolução mensal, em série própria");
+            using var audit = await GetJsonAsync(analyst, $"{Base}/{a}/audit?cycleId={c}");
+            audit.RootElement.EnumerateArray().Select(e => e.GetProperty("subject").GetString())
+                .Should().Contain(new[] { "Evaluation", "Assignment", "Review", "Procedure", "Finding", "Plan", "Publication" });
+        }
+
+        using (var outsider = _api.As(other.Manager))
+        {
+            foreach (var url in new[]
+                     {
+                         $"{Base}/{a}/findings", $"{Base}/{a}/audit", $"{Base}/{a}/publications", $"{Base}/{a}/cycles/{c}/scopes/{s}/profile",
+                         $"{Base}/{a}/cycles/{c}/scopes/{s}/findings/{findingId}", $"{Base}/{a}/cycles/{c}/scopes/{s}/working-csv",
+                         $"/api/v1/posture/snapshots/{snapshotId}/export?format=html",
+                     })
+            {
+                using var r = await outsider.GetAsync(url);
+                r.StatusCode.Should().Be(HttpStatusCode.NotFound, url);
+            }
+            using (var r = await outsider.PutAsync($"{sub}/assignment", AegisApiHarness.JsonBody(new { assessorUserId = analystId, expectedVersion = 3 })))
+                r.StatusCode.Should().Be(HttpStatusCode.NotFound);
         }
     }
 
