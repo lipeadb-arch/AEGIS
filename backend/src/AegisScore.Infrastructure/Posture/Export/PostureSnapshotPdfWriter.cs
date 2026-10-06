@@ -36,6 +36,9 @@ public static class PostureSnapshotPdfWriter
     /// <summary>Nome de família resolvido uma única vez (registra o resolvedor de fontes no processo).</summary>
     private static readonly string FontFamily = InitializeFonts();
 
+    /// <summary>[AEGIS-NIST-JOURNEY-02] A mesma família (e o mesmo resolvedor) para o PDF de maturidade NIST.</summary>
+    internal static string ReportFontFamily => FontFamily;
+
     private static readonly string[] NistFunctionOrder = { "GV", "ID", "PR", "DE", "RS", "RC" };
 
     private static readonly Dictionary<string, string> NistFunctionName = new(StringComparer.Ordinal)

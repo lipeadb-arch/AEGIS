@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using AegisScore.Application.Nist;
 using AegisScore.Application.Posture;
 using AegisScore.Application.Posture.Export;
 using AegisScore.Domain;
@@ -49,6 +50,24 @@ public sealed class PostureSnapshotExporter : IPostureSnapshotExporter
             throw new PostureSnapshotIntegrityException(
                 "A integridade da fotografia não pôde ser confirmada (hash divergente); a exportação foi bloqueada.");
 
+        // [AEGIS-NIST-JOURNEY-02] Maturidade NIST: os três formatos derivam do relatório CONGELADO (NistReportJson), que a
+        // verificação de hash acima acabou de cobrir — nada do estado atual da avaliação é consultado.
+        if (snapshot.Type == PostureSnapshotType.NistMaturity)
+        {
+            var report = NistReportCanonical.Deserialize(snapshot.NistReportJson
+                ?? throw new PostureSnapshotIntegrityException("A fotografia de maturidade não contém o relatório congelado."));
+            return format switch
+            {
+                PostureExportFormat.Pdf => new PostureExportResult(
+                    NistReportPdfWriter.Write(snapshot, report), "application/pdf", FileName(snapshot, "pdf")),
+                PostureExportFormat.Csv => new PostureExportResult(
+                    NistReportCsvWriter.Write(snapshot, report), "text/csv; charset=utf-8", FileName(snapshot, "csv")),
+                PostureExportFormat.Html => new PostureExportResult(
+                    NistReportHtmlWriter.Write(snapshot, report, integrityVerified: true), "text/html; charset=utf-8", FileName(snapshot, "html")),
+                _ => throw new ArgumentOutOfRangeException(nameof(format), format, "Formato de exportação desconhecido."),
+            };
+        }
+
         return format switch
         {
             PostureExportFormat.Pdf => new PostureExportResult(
@@ -66,7 +85,12 @@ public sealed class PostureSnapshotExporter : IPostureSnapshotExporter
     /// <summary>Nome de arquivo SEGURO (ASCII, sem separador de caminho): instrumento + id curto + instante da captura (UTC).</summary>
     private static string FileName(PostureSnapshot s, string extension)
     {
-        var instrument = s.Type == PostureSnapshotType.Knight ? "knight" : "aegis-nist";
+        var instrument = s.Type switch
+        {
+            PostureSnapshotType.Knight => "knight",
+            PostureSnapshotType.NistMaturity => "nist-maturidade",
+            _ => "aegis-nist",
+        };
         var shortId = s.Id.ToString("N")[..8];
         var stamp = s.CapturedAt.ToUniversalTime().ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         return $"aegis-postura-{instrument}-{shortId}-{stamp}.{extension}";
