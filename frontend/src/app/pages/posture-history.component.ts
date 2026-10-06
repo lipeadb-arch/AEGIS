@@ -18,6 +18,7 @@ import {
   scoreDeltaStateLabel,
   scoreDisplay,
   signedDelta,
+  maturityText,
   snapshotTypeLabel,
   verdictSourceLabel,
 } from '../models/posture-history.models';
@@ -75,6 +76,7 @@ import {
         <button type="button" [class.on]="filter() === null" [attr.aria-pressed]="filter() === null" (click)="setFilter(null)">Todas</button>
         <button type="button" [class.on]="filter() === 'AegisScoreNist'" [attr.aria-pressed]="filter() === 'AegisScoreNist'" (click)="setFilter('AegisScoreNist')">AEGIS Score / NIST</button>
         <button type="button" [class.on]="filter() === 'Knight'" [attr.aria-pressed]="filter() === 'Knight'" (click)="setFilter('Knight')">AEGIS KNIGHT</button>
+        <button type="button" [class.on]="filter() === 'NistMaturity'" [attr.aria-pressed]="filter() === 'NistMaturity'" (click)="setFilter('NistMaturity')">NIST · maturidade</button>
       </div>
 
       @if (loading()) {
@@ -181,7 +183,8 @@ import {
           @for (s of snapshots(); track s.id) {
             <div class="snap" [class.sel]="isSelected(s.id)" [class.open]="detailId() === s.id">
               <label class="pick">
-                <input type="checkbox" [checked]="isSelected(s.id)" (change)="toggleSelect(s.id)" [disabled]="!isSelected(s.id) && selected().length >= 2" />
+                <input type="checkbox" [checked]="isSelected(s.id)" (change)="toggleSelect(s.id)" [disabled]="s.type === 'NistMaturity' || (!isSelected(s.id) && selected().length >= 2)"
+                  [attr.title]="s.type === 'NistMaturity' ? 'Maturidade NIST é comparada entre rodadas no AEGIS NIST' : null" />
               </label>
               <span class="badge" [class.knight]="s.type === 'Knight'">{{ snapshotTypeLabel(s.type) }}</span>
               <div class="when">
@@ -189,13 +192,15 @@ import {
                 <span class="src">{{ s.sourceLabel || s.catalogVersion }}</span>
               </div>
               <div class="score">
-                @if (s.score !== null) {
+                @if (s.type === 'NistMaturity') {
+                  <span class="n" [class.na]="s.maturityCurrent === null || s.maturityCurrent === undefined">{{ maturityText(s.maturityCurrent) }}<i>/5</i></span>
+                } @else if (s.score !== null) {
                   <!-- O score KNIGHT é uma escala 0–100 própria, não um percentual. -->
                   <span class="n">{{ scoreDisplay(s.score) }}@if (s.type !== 'Knight') {<i>%</i>}</span>
                 } @else {
                   <span class="n na">—</span>
                 }
-                <span class="l">{{ s.score !== null ? 'score' : 'não avaliado' }}</span>
+                <span class="l">{{ s.type === 'NistMaturity' ? 'maturidade atual' : s.score !== null ? 'score' : 'não avaliado' }}</span>
               </div>
               <div class="cov"><span class="n">{{ s.coverage }}<i>%</i></span><span class="l">cobertura</span></div>
               <div class="ver">
@@ -227,10 +232,17 @@ import {
                       <div class="mrow"><span class="k">Avaliação</span><span class="v mono">{{ d.summary.sourceRunId }}</span></div>
                     }
                     @if (d.summary.sourceLabel) { <div class="mrow"><span class="k">Fonte</span><span class="v">{{ d.summary.sourceLabel }}</span></div> }
+                    @if (d.summary.type === 'NistMaturity') {
+                      <div class="mrow"><span class="k">Rodada</span><span class="v">{{ d.summary.nistCycleName ?? '—' }}</span></div>
+                      <div class="mrow"><span class="k">Maturidade</span><span class="v">atual {{ maturityText(d.summary.maturityCurrent) }} · alvo {{ maturityText(d.summary.maturityTarget) }} ·
+                        escala 1–5 autoral do AEGIS (o NIST CSF não define nota)</span></div>
+                    }
                     <div class="mrow"><span class="k">Fórmula</span><span class="v mono">{{ d.summary.formulaVersion }}</span></div>
                     <div class="mrow"><span class="k">Catálogo</span><span class="v mono">{{ d.summary.catalogVersion }}</span></div>
                     <div class="mrow"><span class="k">Schema</span><span class="v mono">{{ d.summary.schemaVersion }}</span></div>
-                    <div class="mrow"><span class="k">Pontos</span><span class="v">{{ d.achievedPoints }} / {{ d.possiblePoints }} (elegível {{ d.eligiblePoints }})</span></div>
+                    @if (d.summary.type !== 'NistMaturity') {
+                      <div class="mrow"><span class="k">Pontos</span><span class="v">{{ d.achievedPoints }} / {{ d.possiblePoints }} (elegível {{ d.eligiblePoints }})</span></div>
+                    }
                     <div class="mrow"><span class="k">Recência</span><span class="v">{{ d.summary.dataRecency ? (d.summary.dataRecency | date: 'dd/MM/yyyy HH:mm') : '—' }}</span></div>
                     <div class="mrow"><span class="k">Hash</span><span class="v mono hashfull">{{ d.summary.contentHash }}</span></div>
                   </div>
@@ -245,7 +257,7 @@ import {
                       {{ downloading() === 'csv' ? 'Baixando CSV…' : 'Baixar CSV' }}
                     </button>
                     <!-- [AEGIS-KNIGHT-MULTICLOUD-01] Relatório interativo autocontido — só para fotografias do KNIGHT. -->
-                    @if (d.summary.type === 'Knight') {
+                    @if (d.summary.type === 'Knight' || d.summary.type === 'NistMaturity') {
                       <button type="button" class="btn ghost sm" (click)="download('html', d.summary.id)" [disabled]="downloading() !== null">
                         {{ downloading() === 'html' ? 'Baixando HTML…' : 'Baixar relatório HTML' }}
                       </button>
@@ -763,6 +775,7 @@ export class PostureHistoryComponent implements OnInit {
 
   // Helpers de apresentação expostos ao template.
   protected readonly snapshotTypeLabel = snapshotTypeLabel;
+  protected readonly maturityText = maturityText;
   protected readonly itemStatusLabel = itemStatusLabel;
   protected readonly itemStatusClass = itemStatusClass;
   protected readonly verdictSourceLabel = verdictSourceLabel;

@@ -7,11 +7,16 @@ import { DetectionCoverageComponent } from '../../components/scoring/detection-c
 import { DevicePostureComponent } from '../../components/scoring/device-posture.component';
 import { NIST_FUNCTION_DESCRIPTIONS } from '../../models/nist-glossary';
 import {
+  NIST_STATES,
+  NistCategory,
   NistFunctionCode,
   NistFunctionMeta,
   NistFunctionView,
   NistSelection,
+  NistSubcategoryState,
   averageText,
+  cyclePeriodText,
+  cycleStatusLabel,
   gapText,
   levelLabel,
   nistCategoryLabel,
@@ -19,13 +24,15 @@ import {
   nistFunctionTitle,
   profileBasisText,
   resolveSelection,
+  reviewBadgeClass,
+  reviewStateLabel,
   selectionParams,
   stateBadgeClass,
   stateLabel,
 } from '../../models/nist.models';
 import { AgentStateService } from '../../services/agent-state.service';
 import { AuthService } from '../../services/auth.service';
-import { NistSelectionService, NistService } from '../../services/nist.service';
+import { NistSelectionService, NistService, ctxOf } from '../../services/nist.service';
 import { PillarDashboardComponent } from '../pillar-dashboard.component';
 
 interface SupportResource {
@@ -81,7 +88,10 @@ const RESOURCES: Record<NistFunctionCode, SupportResource[]> = {
             <h1>{{ nistFunctionTitle(f) }}</h1>
             <p class="page-desc">{{ description(f.code) }}</p>
             @if (selection(); as sel) {
-              <p class="page-meta">Avaliação: {{ sel.assessment.name }} · Escopo: {{ sel.scope?.name ?? '—' }} · <a [routerLink]="['/nist']" [queryParams]="params()">trocar</a></p>
+              <p class="page-meta">Avaliação: {{ sel.assessment.name }} ·
+                Rodada: {{ sel.cycle ? sel.cycle.name + ' (' + cyclePeriodText(sel.cycle) + ')' : '—' }}
+                @if (sel.cycle?.status === 'Closed') { <span class="badge neutral">{{ cycleStatusLabel('Closed') }}</span> }
+                · Escopo: {{ sel.scope?.name ?? '—' }} · <a [routerLink]="['/nist']" [queryParams]="params()">trocar</a></p>
             }
           </div>
           <div class="page-actions"><button type="button" class="ghost" (click)="agent.openAgent()">Perguntar ao Auditor Virtual</button></div>
@@ -115,8 +125,8 @@ const RESOURCES: Record<NistFunctionCode, SupportResource[]> = {
               <div class="panel"><div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>Carregando a função…</p></div></div>
             } @else if (error()) {
               <div class="panel"><div class="state error" role="alert"><p class="err">{{ error() }}</p></div></div>
-            } @else if (!selection()?.scope) {
-              <div class="panel"><div class="state"><p>Escolha ou crie uma avaliação e um escopo para avaliar esta função.</p>
+            } @else if (!selection()?.scope || !selection()?.cycle) {
+              <div class="panel"><div class="state"><p>Escolha ou crie uma avaliação, uma rodada e um escopo para avaliar esta função.</p>
                 <a class="primary" [routerLink]="['/nist']">Ir para a avaliação</a></div></div>
             } @else if (view()) {
               @let v = view()!;
@@ -126,9 +136,17 @@ const RESOURCES: Record<NistFunctionCode, SupportResource[]> = {
                 <div class="card"><div class="k">Alvo (média)</div><div class="v">{{ averageText(v.profile.target) }}</div></div>
                 <div class="card"><div class="k">Lacuna média</div><div class="v">{{ gapText(v.profile.gap) }}</div></div>
               </div>
-              <p class="muted">{{ profileBasisText(v.profile) }}. Ausência de nível não conta como zero.</p>
+              <p class="muted">{{ profileBasisText(v.profile) }}. Ausência de nível não conta como zero; conteúdo herdado ou importado só
+                entra nas médias depois de confirmado.</p>
 
-              @for (c of v.categories; track c.code) {
+              <nav class="filters" aria-label="Filtrar por situação">
+                <a [routerLink]="[]" [queryParams]="filterParams(null)" [class.on]="!stateFilter()" [attr.aria-current]="!stateFilter() ? 'true' : null">Todas</a>
+                @for (st of states; track st) {
+                  <a [routerLink]="[]" [queryParams]="filterParams(st)" [class.on]="stateFilter() === st" [attr.aria-current]="stateFilter() === st ? 'true' : null">{{ stateLabel(st) }} ({{ countState(v, st) }})</a>
+                }
+              </nav>
+
+              @for (c of visibleCategories(v); track c.code) {
                 <details class="panel cat" [open]="true">
                   <summary>
                     <span class="cat-name">{{ nistCategoryLabel(c.code, c.name) }}</span>
@@ -136,13 +154,19 @@ const RESOURCES: Record<NistFunctionCode, SupportResource[]> = {
                     <span class="muted">{{ c.profile.evaluated }} de {{ c.subcategories.length }} avaliadas · Atual {{ averageText(c.profile.current) }} · Alvo {{ averageText(c.profile.target) }}</span>
                   </summary>
                   <ul class="subs">
-                    @for (s of c.subcategories; track s.code) {
+                    @for (s of visibleSubs(c); track s.code) {
                       <li>
                         <a class="sub-title" [routerLink]="['/nist', f.slug, s.code]" [queryParams]="params()">{{ s.title }}</a>
                         <span class="mono code">{{ s.code }}</span>
                         <span class="badge" [class]="'badge ' + stateBadgeClass(s.state)">{{ stateLabel(s.state) }}</span>
+                        @if (s.reviewState && s.reviewState !== 'None') { <span [class]="'badge ' + reviewBadgeClass(s.reviewState)">{{ reviewStateLabel(s.reviewState) }}</span> }
                         <span class="lv">Atual {{ levelLabel(s.currentLevel) }} · Alvo {{ levelLabel(s.targetLevel) }} · Lacuna {{ gapText(s.gap) }}</span>
-                        <span class="muted">{{ s.evidenceCount }} evidência(s)@if (s.ownerName) { · {{ s.ownerName }} }@if (s.reviewedAt) { · revisada em {{ s.reviewedAt | date: 'dd/MM/yyyy' }} }</span>
+                        <span class="muted">{{ s.evidenceCount }} evidência(s) · {{ s.proceduresPerformed ?? 0 }} de {{ s.proceduresPlanned ?? 0 }} procedimento(s) realizado(s)
+                          @if (s.openFindings) { · <a [routerLink]="['/nist', f.slug, s.code]" [queryParams]="params()" fragment="achados">{{ s.openFindings }} achado(s) aberto(s)</a> }
+                          @if (s.ownerName) { · responsável {{ s.ownerName }} }
+                          @if (s.assessorName) { · avaliador {{ s.assessorName }} }
+                          @if (s.reviewerName) { · revisor {{ s.reviewerName }} }
+                          @if (s.reviewedAt) { · confirmada em {{ s.reviewedAt | date: 'dd/MM/yyyy' }} }</span>
                       </li>
                     }
                   </ul>
@@ -171,6 +195,9 @@ const RESOURCES: Record<NistFunctionCode, SupportResource[]> = {
       .sub-title { flex: 1 1 260px; min-width: 0; font-weight: 500; }
       .lv { font-size: var(--fs-sm); color: var(--text-2); }
       .subs .muted { flex-basis: 100%; font-size: var(--fs-meta); }
+      .filters { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: 0 0 var(--sp-3); }
+      .filters a { padding: 4px 10px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: var(--fs-sm); text-decoration: none; color: var(--text-2); }
+      .filters a.on { border-color: var(--text-2); color: var(--text); font-weight: 600; }
     `,
   ],
 })
@@ -190,6 +217,13 @@ export class NistFunctionComponent {
   protected readonly stateLabel = stateLabel;
   protected readonly stateBadgeClass = stateBadgeClass;
   protected readonly profileBasisText = profileBasisText;
+  protected readonly cyclePeriodText = cyclePeriodText;
+  protected readonly cycleStatusLabel = cycleStatusLabel;
+  protected readonly reviewStateLabel = reviewStateLabel;
+  protected readonly reviewBadgeClass = reviewBadgeClass;
+  protected readonly states = NIST_STATES;
+  /** Filtro de situação (drill-down dos gráficos do painel): só apresentação, a leitura é a mesma. */
+  protected readonly stateFilter = signal<NistSubcategoryState | null>(null);
 
   protected readonly fn = signal<NistFunctionMeta | null>(null);
   protected readonly tab = signal<'avaliacao' | 'postura' | 'recursos'>('avaliacao');
@@ -216,7 +250,9 @@ export class NistFunctionComponent {
         const f = nistFunctionBySlug(p.get('fn'));
         this.fn.set(f);
         this.tab.set((d['tab'] as 'postura' | 'recursos') ?? 'avaliacao');
-        if (f) this.load(f, q.get('avaliacao'), q.get('escopo'));
+        const st = q.get('situacao') as NistSubcategoryState | null;
+        this.stateFilter.set(st && NIST_STATES.includes(st) ? st : null);
+        if (f) this.load(f, q.get('avaliacao'), q.get('rodada'), q.get('escopo'));
       });
   }
 
@@ -228,13 +264,31 @@ export class NistFunctionComponent {
     return RESOURCES[code];
   }
 
+  protected filterParams(st: NistSubcategoryState | null): Record<string, string | null> {
+    return { ...this.params(), situacao: st };
+  }
+
+  protected countState(v: NistFunctionView, st: NistSubcategoryState): number {
+    return v.categories.reduce((n, c) => n + c.subcategories.filter((s) => s.state === st).length, 0);
+  }
+
+  protected visibleSubs(c: NistCategory) {
+    const st = this.stateFilter();
+    return st ? c.subcategories.filter((s) => s.state === st) : c.subcategories;
+  }
+
+  protected visibleCategories(v: NistFunctionView): NistCategory[] {
+    return this.stateFilter() ? v.categories.filter((c) => this.visibleSubs(c).length > 0) : v.categories;
+  }
+
   /**
-   * Leitura da função para (tenant · função · avaliação · escopo). Uma nova seleção cancela a leitura anterior e limpa a
-   * tela; resposta ou erro de uma leitura substituída (ou que chega depois de sair da tela) é descartado sem navegar.
+   * Leitura da função para (tenant · função · avaliação · rodada · escopo). Uma nova seleção cancela a leitura anterior e
+   * limpa a tela; resposta ou erro de uma leitura substituída (ou que chega depois de sair da tela) é descartado sem navegar
+   * — uma resposta de outra rodada nunca preenche a rodada atual.
    */
-  private load(f: NistFunctionMeta, assessmentId: string | null, scopeId: string | null): void {
+  private load(f: NistFunctionMeta, assessmentId: string | null, cycleId: string | null, scopeId: string | null): void {
     const tenant = this.auth.activeTenantId();
-    const key = [tenant, f.code, assessmentId, scopeId].join('|');
+    const key = [tenant, f.code, assessmentId, cycleId, scopeId].join('|');
     if (key === this.requestKey) return;
     this.requestKey = key;
     const ticket = ++this.ticket;
@@ -249,24 +303,31 @@ export class NistFunctionComponent {
       .pipe(
         switchMap((list) => {
           if (!current()) return EMPTY;
-          const sel = resolveSelection(list, { assessmentId, scopeId }, this.memory.read(tenant));
+          const sel = resolveSelection(list, { assessmentId, cycleId, scopeId }, this.memory.read(tenant));
           this.selection.set(sel);
-          if (!sel?.scope) {
+          const ctx = ctxOf(sel);
+          if (!sel || !ctx) {
             this.loading.set(false);
             return EMPTY;
           }
-          if (sel.assessment.id !== assessmentId || sel.scope.id !== scopeId) {
+          if (ctx.assessmentId !== assessmentId || ctx.cycleId !== cycleId || ctx.scopeId !== scopeId) {
             // A URL passa a dizer a seleção resolvida; a navegação resultante é esta mesma leitura.
-            this.requestKey = [tenant, f.code, sel.assessment.id, sel.scope.id].join('|');
-            void this.router.navigate([], { relativeTo: this.route, queryParams: selectionParams(sel), replaceUrl: true });
+            this.requestKey = [tenant, f.code, ctx.assessmentId, ctx.cycleId, ctx.scopeId].join('|');
+            void this.router.navigate([], {
+              relativeTo: this.route,
+              queryParams: { ...selectionParams(sel), situacao: this.stateFilter() },
+              replaceUrl: true,
+            });
           }
-          this.memory.write(tenant, sel.assessment.id, sel.scope.id);
-          return this.nist.functionView(sel.assessment.id, sel.scope.id, f.code);
+          this.memory.write(tenant, ctx.assessmentId, ctx.scopeId, ctx.cycleId);
+          return this.nist.functionView(ctx, f.code);
         }),
       )
       .subscribe({
         next: (v) => {
-          if (!current()) return;
+          // Defesa extra além do ticket: a resposta precisa ser da MESMA rodada e escopo pedidos.
+          const sel = this.selection();
+          if (!current() || v.scopeId !== sel?.scope?.id || (v.cycleId && v.cycleId !== sel?.cycle?.id)) return;
           this.view.set(v);
           this.loading.set(false);
         },

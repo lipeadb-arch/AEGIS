@@ -1,19 +1,36 @@
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable, catchError, throwError, timeout } from 'rxjs';
+import { Observable, catchError, map, throwError, timeout } from 'rxjs';
 import { environment } from '../../environments/environment';
 import {
   CreateNistAssessmentRequest,
+  CreateNistCycleRequest,
+  CreateNistFindingRequest,
   LinkNistEvidenceRequest,
   NistAiSuggestion,
   NistAssessment,
+  NistAssignee,
+  NistAuditEntry,
+  NistCycle,
+  NistCycleComparison,
+  NistFinding,
   NistFunctionView,
   NistHistoryItem,
+  NistImportPreview,
+  NistImportResult,
+  NistPlanRequest,
+  NistProcedure,
   NistProfile,
+  NistPublication,
+  NistPublicationPreview,
   NistScope,
   NistSubcategoryDetail,
+  NistTestMethod,
   SaveNistEvaluationRequest,
+  UpdateNistPlanRequest,
+  UpdateNistProcedureRequest,
 } from '../models/nist.models';
+import { parseContentDispositionFilename } from '../models/posture-history.models';
 
 /** Erro da API do NIST com o status preservado (409 = versão desatualizada; 403 = papel; 503 = IA indisponível). */
 export class NistApiError extends Error {
@@ -22,10 +39,24 @@ export class NistApiError extends Error {
   }
 }
 
+/** Contexto explícito de trabalho: avaliação → rodada → escopo. Toda leitura e escrita de rodada o carrega inteiro. */
+export interface NistCtx {
+  assessmentId: string;
+  cycleId: string;
+  scopeId: string;
+}
+
+/** Arquivo baixado como Blob (nunca como string). */
+export interface NistFile {
+  blob: Blob;
+  filename: string;
+}
+
 /**
- * [AEGIS-NIST-JOURNEY-01] Cliente da jornada do AEGIS NIST (/api/v1/nist/assessments). Bearer e X-Tenant vêm dos
+ * [AEGIS-NIST-JOURNEY-01/02] Cliente da jornada do AEGIS NIST (/api/v1/nist/assessments). Bearer e X-Tenant vêm dos
  * interceptors. A mensagem do servidor (pt-BR, sem dado sensível) é repassada ao componente; o status fica no erro para
- * a tela distinguir conflito de versão, papel insuficiente e IA indisponível.
+ * a tela distinguir conflito de versão, papel insuficiente e IA indisponível. A RODADA está em toda rota de trabalho:
+ * nenhuma leitura "adivinha" a rodada.
  */
 @Injectable({ providedIn: 'root' })
 export class NistService {
@@ -42,6 +73,10 @@ export class NistService {
     return this.http.get<NistHistoryItem[]>(`${this.base}/history`).pipe(this.handle('Não foi possível carregar o histórico NIST.'));
   }
 
+  assignees(): Observable<NistAssignee[]> {
+    return this.http.get<NistAssignee[]>(`${this.base}/assignees`).pipe(this.handle('Não foi possível carregar os usuários do tenant.'));
+  }
+
   create(request: CreateNistAssessmentRequest): Observable<NistAssessment> {
     return this.http.post<NistAssessment>(this.base, request).pipe(this.handle('Não foi possível criar a avaliação.'));
   }
@@ -52,50 +87,208 @@ export class NistService {
       .pipe(this.handle('Não foi possível criar o escopo.'));
   }
 
-  profile(assessmentId: string, scopeId: string): Observable<NistProfile> {
+  createCycle(assessmentId: string, request: CreateNistCycleRequest): Observable<NistCycle> {
     return this.http
-      .get<NistProfile>(`${this.base}/${assessmentId}/scopes/${scopeId}/profile`)
-      .pipe(this.handle('Não foi possível carregar o resumo da avaliação.'));
+      .post<NistCycle>(`${this.base}/${assessmentId}/cycles`, request)
+      .pipe(this.handle('Não foi possível criar a rodada.'));
   }
 
-  functionView(assessmentId: string, scopeId: string, fn: string): Observable<NistFunctionView> {
+  setCycleStatus(assessmentId: string, cycleId: string, status: 'Open' | 'Closed', expectedVersion: number): Observable<NistCycle> {
     return this.http
-      .get<NistFunctionView>(`${this.base}/${assessmentId}/scopes/${scopeId}/functions/${encodeURIComponent(fn)}`)
+      .put<NistCycle>(`${this.base}/${assessmentId}/cycles/${cycleId}/status`, { status, expectedVersion })
+      .pipe(this.handle('Não foi possível alterar a situação da rodada.'));
+  }
+
+  audit(assessmentId: string, filter: { cycleId?: string | null; scopeId?: string | null; code?: string | null } = {}): Observable<NistAuditEntry[]> {
+    return this.http
+      .get<NistAuditEntry[]>(`${this.base}/${assessmentId}/audit`, { params: this.params(filter) })
+      .pipe(this.handle('Não foi possível carregar a trilha de alterações.'));
+  }
+
+  findings(
+    assessmentId: string,
+    filter: { cycleId?: string | null; scopeId?: string | null; code?: string | null; status?: string | null } = {},
+  ): Observable<NistFinding[]> {
+    return this.http
+      .get<NistFinding[]>(`${this.base}/${assessmentId}/findings`, { params: this.params(filter) })
+      .pipe(this.handle('Não foi possível carregar os achados.'));
+  }
+
+  publications(assessmentId: string, filter: { cycleId?: string | null; scopeId?: string | null } = {}): Observable<NistPublication[]> {
+    return this.http
+      .get<NistPublication[]>(`${this.base}/${assessmentId}/publications`, { params: this.params(filter) })
+      .pipe(this.handle('Não foi possível carregar as publicações.'));
+  }
+
+  compare(assessmentId: string, scopeId: string, baseCycleId: string, targetCycleId: string): Observable<NistCycleComparison> {
+    const params = new HttpParams().set('baseCycleId', baseCycleId).set('targetCycleId', targetCycleId);
+    return this.http
+      .get<NistCycleComparison>(`${this.base}/${assessmentId}/scopes/${scopeId}/compare`, { params })
+      .pipe(this.handle('Não foi possível comparar as rodadas.'));
+  }
+
+  // ---- Rodada e escopo ----------------------------------------------------------------------------------------
+
+  profile(c: NistCtx): Observable<NistProfile> {
+    return this.http.get<NistProfile>(`${this.ctxUrl(c)}/profile`).pipe(this.handle('Não foi possível carregar o resumo da avaliação.'));
+  }
+
+  functionView(c: NistCtx, fn: string): Observable<NistFunctionView> {
+    return this.http
+      .get<NistFunctionView>(`${this.ctxUrl(c)}/functions/${encodeURIComponent(fn)}`)
       .pipe(this.handle('Não foi possível carregar a função.'));
   }
 
-  subcategory(assessmentId: string, scopeId: string, code: string): Observable<NistSubcategoryDetail> {
+  publicationPreview(c: NistCtx): Observable<NistPublicationPreview> {
     return this.http
-      .get<NistSubcategoryDetail>(this.subUrl(assessmentId, scopeId, code))
-      .pipe(this.handle('Não foi possível carregar a subcategoria.'));
+      .get<NistPublicationPreview>(`${this.ctxUrl(c)}/publication-preview`)
+      .pipe(this.handle('Não foi possível montar a prévia da publicação.'));
   }
 
-  save(assessmentId: string, scopeId: string, code: string, request: SaveNistEvaluationRequest): Observable<NistSubcategoryDetail> {
+  publish(c: NistCtx, expectedFingerprint: string): Observable<NistPublication> {
     return this.http
-      .put<NistSubcategoryDetail>(this.subUrl(assessmentId, scopeId, code), request)
-      .pipe(this.handle('Não foi possível gravar a avaliação.'));
+      .post<NistPublication>(`${this.ctxUrl(c)}/publications`, { expectedFingerprint })
+      .pipe(this.handle('Não foi possível publicar a fotografia.'));
   }
 
-  linkEvidence(assessmentId: string, scopeId: string, code: string, request: LinkNistEvidenceRequest): Observable<NistSubcategoryDetail> {
+  workingCsv(c: NistCtx): Observable<NistFile> {
+    return this.http.get(`${this.ctxUrl(c)}/working-csv`, { responseType: 'blob', observe: 'response' }).pipe(
+      timeout(this.TIMEOUT_MS),
+      map((res) => ({
+        blob: res.body ?? new Blob(),
+        filename: parseContentDispositionFilename(res.headers.get('Content-Disposition')) ?? 'nist-trabalho.csv',
+      })),
+      catchError(() => throwError(() => new NistApiError('Não foi possível baixar o CSV de trabalho.', 0))),
+    );
+  }
+
+  importPreview(c: NistCtx, csv: string, fileName: string | null): Observable<NistImportPreview> {
     return this.http
-      .post<NistSubcategoryDetail>(`${this.subUrl(assessmentId, scopeId, code)}/evidence`, request)
+      .post<NistImportPreview>(`${this.ctxUrl(c)}/import/preview`, { csv, fileName })
+      .pipe(this.handle('Não foi possível validar o arquivo.'));
+  }
+
+  importApply(c: NistCtx, csv: string, fileName: string | null, token: string): Observable<NistImportResult> {
+    return this.http
+      .post<NistImportResult>(`${this.ctxUrl(c)}/import/apply`, { csv, fileName, token })
+      .pipe(this.handle('Não foi possível aplicar a importação.'));
+  }
+
+  // ---- Subcategoria -------------------------------------------------------------------------------------------
+
+  subcategory(c: NistCtx, code: string): Observable<NistSubcategoryDetail> {
+    return this.http.get<NistSubcategoryDetail>(this.subUrl(c, code)).pipe(this.handle('Não foi possível carregar a subcategoria.'));
+  }
+
+  save(c: NistCtx, code: string, request: SaveNistEvaluationRequest): Observable<NistSubcategoryDetail> {
+    return this.http.put<NistSubcategoryDetail>(this.subUrl(c, code), request).pipe(this.handle('Não foi possível gravar a avaliação.'));
+  }
+
+  assign(c: NistCtx, code: string, assessorUserId: string | null, reviewerUserId: string | null, expectedVersion: number): Observable<NistSubcategoryDetail> {
+    return this.http
+      .put<NistSubcategoryDetail>(`${this.subUrl(c, code)}/assignment`, { assessorUserId, reviewerUserId, expectedVersion })
+      .pipe(this.handle('Não foi possível designar avaliador e revisor.'));
+  }
+
+  review(c: NistCtx, code: string, decision: 'Approved' | 'ChangesRequested', note: string | null, expectedVersion: number): Observable<NistSubcategoryDetail> {
+    return this.http
+      .post<NistSubcategoryDetail>(`${this.subUrl(c, code)}/review`, { decision, note, expectedVersion })
+      .pipe(this.handle('Não foi possível registrar a decisão do revisor.'));
+  }
+
+  linkEvidence(c: NistCtx, code: string, request: LinkNistEvidenceRequest): Observable<NistSubcategoryDetail> {
+    return this.http
+      .post<NistSubcategoryDetail>(`${this.subUrl(c, code)}/evidence`, request)
       .pipe(this.handle('Não foi possível vincular a evidência.'));
   }
 
-  removeEvidence(assessmentId: string, scopeId: string, code: string, evidenceId: string): Observable<NistSubcategoryDetail> {
+  removeEvidence(c: NistCtx, code: string, evidenceId: string): Observable<NistSubcategoryDetail> {
     return this.http
-      .delete<NistSubcategoryDetail>(`${this.subUrl(assessmentId, scopeId, code)}/evidence/${evidenceId}`)
+      .delete<NistSubcategoryDetail>(`${this.subUrl(c, code)}/evidence/${evidenceId}`)
       .pipe(this.handle('Não foi possível retirar a evidência.'));
   }
 
-  suggest(assessmentId: string, scopeId: string, code: string): Observable<NistAiSuggestion> {
+  suggest(c: NistCtx, code: string): Observable<NistAiSuggestion> {
     return this.http
-      .post<NistAiSuggestion>(`${this.subUrl(assessmentId, scopeId, code)}/ai-suggestion`, {})
+      .post<NistAiSuggestion>(`${this.subUrl(c, code)}/ai-suggestion`, {})
       .pipe(this.handle('A IA não respondeu agora. A avaliação segue normalmente sem ela.', this.AI_TIMEOUT_MS));
   }
 
-  private subUrl(assessmentId: string, scopeId: string, code: string): string {
-    return `${this.base}/${assessmentId}/scopes/${scopeId}/subcategories/${encodeURIComponent(code)}`;
+  addProcedure(c: NistCtx, code: string, method: NistTestMethod, procedure: string): Observable<NistProcedure> {
+    return this.http
+      .post<NistProcedure>(`${this.subUrl(c, code)}/procedures`, { method, procedure })
+      .pipe(this.handle('Não foi possível registrar o procedimento.'));
+  }
+
+  updateProcedure(c: NistCtx, code: string, procedureId: string, request: UpdateNistProcedureRequest): Observable<NistProcedure> {
+    return this.http
+      .put<NistProcedure>(`${this.subUrl(c, code)}/procedures/${procedureId}`, request)
+      .pipe(this.handle('Não foi possível gravar o resultado do procedimento.'));
+  }
+
+  removeProcedure(c: NistCtx, code: string, procedureId: string, expectedVersion: number): Observable<void> {
+    const params = new HttpParams().set('expectedVersion', expectedVersion);
+    return this.http
+      .delete<void>(`${this.subUrl(c, code)}/procedures/${procedureId}`, { params })
+      .pipe(this.handle('Não foi possível retirar o procedimento.'));
+  }
+
+  createFinding(c: NistCtx, code: string, request: CreateNistFindingRequest): Observable<NistFinding> {
+    return this.http
+      .post<NistFinding>(`${this.subUrl(c, code)}/findings`, request)
+      .pipe(this.handle('Não foi possível registrar o achado.'));
+  }
+
+  finding(c: NistCtx, findingId: string): Observable<NistFinding> {
+    return this.http.get<NistFinding>(this.findingUrl(c, findingId)).pipe(this.handle('Não foi possível carregar o achado.'));
+  }
+
+  setFindingStatus(c: NistCtx, findingId: string, status: string, note: string | null, expectedVersion: number): Observable<NistFinding> {
+    return this.http
+      .put<NistFinding>(`${this.findingUrl(c, findingId)}/status`, { status, note, expectedVersion })
+      .pipe(this.handle('Não foi possível alterar a situação do achado.'));
+  }
+
+  createPlan(c: NistCtx, findingId: string, request: NistPlanRequest): Observable<NistFinding> {
+    return this.http
+      .post<NistFinding>(`${this.findingUrl(c, findingId)}/plans`, request)
+      .pipe(this.handle('Não foi possível criar o plano de tratamento.'));
+  }
+
+  updatePlan(c: NistCtx, findingId: string, planId: string, request: UpdateNistPlanRequest): Observable<NistFinding> {
+    return this.http
+      .put<NistFinding>(`${this.findingUrl(c, findingId)}/plans/${planId}`, request)
+      .pipe(this.handle('Não foi possível atualizar o plano.'));
+  }
+
+  recordExecution(c: NistCtx, findingId: string, planId: string, expectedVersion: number, notes: string, evidenceReference: string | null): Observable<NistFinding> {
+    return this.http
+      .post<NistFinding>(`${this.findingUrl(c, findingId)}/plans/${planId}/execution`, { expectedVersion, notes, evidenceReference })
+      .pipe(this.handle('Não foi possível registrar a execução.'));
+  }
+
+  validatePlan(c: NistCtx, findingId: string, planId: string, expectedVersion: number, evidenceReference: string, note: string | null): Observable<NistFinding> {
+    return this.http
+      .post<NistFinding>(`${this.findingUrl(c, findingId)}/plans/${planId}/validations`, { expectedVersion, evidenceReference, note })
+      .pipe(this.handle('Não foi possível registrar a validação.'));
+  }
+
+  private ctxUrl(c: NistCtx): string {
+    return `${this.base}/${c.assessmentId}/cycles/${c.cycleId}/scopes/${c.scopeId}`;
+  }
+
+  private subUrl(c: NistCtx, code: string): string {
+    return `${this.ctxUrl(c)}/subcategories/${encodeURIComponent(code)}`;
+  }
+
+  private findingUrl(c: NistCtx, findingId: string): string {
+    return `${this.ctxUrl(c)}/findings/${findingId}`;
+  }
+
+  private params(filter: Record<string, string | null | undefined>): HttpParams {
+    let p = new HttpParams();
+    for (const [k, v] of Object.entries(filter)) if (v) p = p.set(k, v);
+    return p;
   }
 
   private handle<T>(fallback: string, ms = this.TIMEOUT_MS) {
@@ -118,10 +311,32 @@ export class NistService {
   }
 }
 
+/** Contexto de trabalho a partir da seleção (nulo enquanto faltar avaliação, rodada ou escopo). */
+export function ctxOf(
+  s: { assessment: { id: string }; cycle: { id: string } | null; scope: { id: string } | null } | null,
+): NistCtx | null {
+  return s && s.cycle && s.scope ? { assessmentId: s.assessment.id, cycleId: s.cycle.id, scopeId: s.scope.id } : null;
+}
+
+/** Dispara o download de um Blob pelo navegador (object URL sempre revogado depois). */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+}
+
 /**
- * [AEGIS-NIST-JOURNEY-01] Avaliação e escopo escolhidos, por tenant — conveniência local (o menu leva às funções sem
- * parâmetros). A fonte de verdade é a URL (?avaliacao=&escopo=); isto só lembra a última escolha. Leitura e escrita
- * protegidas: sem armazenamento disponível, a tela escolhe a avaliação mais recente.
+ * [AEGIS-NIST-JOURNEY-01/02] Avaliação, rodada e escopo escolhidos, por tenant — conveniência local (o menu leva às
+ * funções sem parâmetros). A fonte de verdade é a URL (?avaliacao=&rodada=&escopo=); isto só lembra a última escolha.
+ * Leitura e escrita protegidas: sem armazenamento disponível, a tela escolhe a avaliação e a rodada mais recentes.
  */
 @Injectable({ providedIn: 'root' })
 export class NistSelectionService {
@@ -129,20 +344,20 @@ export class NistSelectionService {
     return `aegis.nist.selection.${tenantId ?? 'none'}`;
   }
 
-  read(tenantId: string | null): { assessmentId: string; scopeId: string } | null {
+  read(tenantId: string | null): { assessmentId: string; cycleId: string | null; scopeId: string } | null {
     try {
       const raw = localStorage.getItem(this.key(tenantId));
       if (!raw) return null;
-      const v = JSON.parse(raw) as { assessmentId?: string; scopeId?: string };
-      return v.assessmentId && v.scopeId ? { assessmentId: v.assessmentId, scopeId: v.scopeId } : null;
+      const v = JSON.parse(raw) as { assessmentId?: string; cycleId?: string | null; scopeId?: string };
+      return v.assessmentId && v.scopeId ? { assessmentId: v.assessmentId, cycleId: v.cycleId ?? null, scopeId: v.scopeId } : null;
     } catch {
       return null;
     }
   }
 
-  write(tenantId: string | null, assessmentId: string, scopeId: string): void {
+  write(tenantId: string | null, assessmentId: string, scopeId: string, cycleId: string | null = null): void {
     try {
-      localStorage.setItem(this.key(tenantId), JSON.stringify({ assessmentId, scopeId }));
+      localStorage.setItem(this.key(tenantId), JSON.stringify({ assessmentId, cycleId, scopeId }));
     } catch {
       /* armazenamento indisponível: a URL continua sendo a fonte de verdade */
     }

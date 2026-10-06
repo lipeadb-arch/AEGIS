@@ -79,7 +79,16 @@ export type KnightOriginSource = Exclude<KnightSourceType, 'Consolidated'>;
 /**
  * [AEGIS-JOURNEY-01] De onde o plano nasceu. Valor técnico do contrato — a tela nunca o exibe cru; usa `originLabel`.
  */
-export type ActionPlanOriginKind = 'KnightFinding' | 'DeviceVulnerability' | 'RiskTreatment';
+export type ActionPlanOriginKind = 'KnightFinding' | 'DeviceVulnerability' | 'RiskTreatment' | 'NistFinding';
+
+/** [AEGIS-NIST-JOURNEY-02] Achado do AEGIS NIST que originou o plano (avaliação, rodada, escopo e subcategoria). */
+export interface NistPlanOriginRef {
+  findingId: string;
+  assessmentId: string;
+  cycleId: string;
+  scopeId: string;
+  subcategoryCode: string;
+}
 
 /**
  * [AEGIS-JOURNEY-01] REGISTRO DE ORIGEM de um plano de caso de dispositivo — o contexto que motivou a criação, obtido
@@ -214,6 +223,11 @@ export interface ActionPlan {
   originKind?: ActionPlanOriginKind;
   /** [AEGIS-JOURNEY-01] Registro de origem de um caso de dispositivo — nulo nas outras origens. */
   deviceOrigin?: DeviceCaseOrigin | null;
+  /** [AEGIS-NIST-JOURNEY-02] Achado NIST de origem — nulo nas outras origens. Nunca há indicador KNIGHT fictício. */
+  nistOrigin?: NistPlanOriginRef | null;
+  responsibleUserId?: string | null;
+  responsibleIsExternal?: boolean;
+  responsibleContact?: string | null;
 }
 
 export interface CreateActionPlanRequest {
@@ -567,6 +581,13 @@ export interface PlanLink {
 }
 
 export function planLink(p: ActionPlan): PlanLink | null {
+  if (p.nistOrigin) {
+    const o = p.nistOrigin;
+    return {
+      commands: ['/nist', o.subcategoryCode.split('.')[0].toLowerCase(), o.subcategoryCode],
+      queryParams: { avaliacao: o.assessmentId, rodada: o.cycleId, escopo: o.scopeId },
+    };
+  }
   if (isDevicePlan(p)) {
     const o = p.deviceOrigin;
     return o
@@ -580,12 +601,15 @@ export function planLink(p: ActionPlan): PlanLink | null {
 
 /** Identificador curto do problema na lista de planos: o achado do KNIGHT ou a CVE do caso. */
 export function planSubject(p: ActionPlan): string {
+  if (p.nistOrigin) return p.nistOrigin.subcategoryCode;
   if (isDevicePlan(p)) return p.deviceOrigin?.cveId ?? 'caso de dispositivo';
   return p.knightIndicatorId ?? '—';
 }
 
 /** Procedência da ação em uma linha — o que distingue um treino de trabalho real sobre o cliente. */
 export function originLabel(p: ActionPlan): string {
+  if (p.originKind === 'NistFinding' || p.nistOrigin)
+    return p.nistOrigin ? `Achado do AEGIS NIST · ${p.nistOrigin.subcategoryCode}` : 'Achado do AEGIS NIST';
   if (isDevicePlan(p)) {
     const o = p.deviceOrigin;
     return o

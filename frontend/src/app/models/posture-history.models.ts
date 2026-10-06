@@ -4,7 +4,11 @@
 
 import { KnightConsolidatedSource, KnightSourceType } from './knight.models';
 
-export type PostureSnapshotType = 'AegisScoreNist' | 'Knight';
+/**
+ * Instrumento da fotografia. [AEGIS-NIST-JOURNEY-02] `NistMaturity` = maturidade 1–5 de uma rodada e escopo do AEGIS NIST
+ * (metodologia autoral; o `score` 0–100 é sempre nulo nesse tipo) — nunca somada à postura nem ao KNIGHT.
+ */
+export type PostureSnapshotType = 'AegisScoreNist' | 'Knight' | 'NistMaturity';
 
 /** Referência sanitizada de evidência (só metadado; nunca conteúdo bruto). */
 export interface PostureEvidenceRef {
@@ -72,6 +76,14 @@ export interface PostureSnapshotSummary {
   clientName: string | null;
   /** [AEGIS-MVP-PRODUCT-03] Avaliação KNIGHT EXATA congelada; `null` em AEGIS Score e no histórico antigo. */
   sourceRunId: string | null;
+  /** [AEGIS-NIST-JOURNEY-02] Maturidade NIST (1–5) — só em fotografias NistMaturity; o `score` fica nulo. */
+  maturityCurrent?: number | null;
+  maturityTarget?: number | null;
+  maturityGap?: number | null;
+  nistAssessmentId?: string | null;
+  nistCycleId?: string | null;
+  nistScopeId?: string | null;
+  nistCycleName?: string | null;
 }
 
 /**
@@ -203,7 +215,12 @@ export interface PublishConsolidatedKnightSnapshotRequest {
 // ---- Apresentação (pt-BR) -----------------------------------------------------------------------
 
 export function snapshotTypeLabel(type: PostureSnapshotType): string {
-  return type === 'Knight' ? 'AEGIS KNIGHT' : 'AEGIS Score / NIST';
+  return type === 'Knight' ? 'AEGIS KNIGHT' : type === 'NistMaturity' ? 'AEGIS NIST · maturidade' : 'AEGIS Score / NIST';
+}
+
+/** Média de maturidade 1–5 com uma casa ("2,5"); ausente → "—" (nunca 0). */
+export function maturityText(v: number | null | undefined): string {
+  return v === null || v === undefined ? '—' : v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 const CONTROL_STATUS_LABEL: Record<string, string> = {
@@ -342,6 +359,12 @@ export interface PostureMonthlyPoint {
   publishedInMonth: number;
   comparableWithPrevious: boolean;
   breakReasons: string[];
+  /** [AEGIS-NIST-JOURNEY-02] Só na série de maturidade NIST (1–5). */
+  maturityCurrent?: number | null;
+  maturityTarget?: number | null;
+  applicableItems?: number | null;
+  cycleName?: string | null;
+  notes?: string[] | null;
 }
 
 export interface PostureMonthlySeries {
@@ -366,14 +389,27 @@ export interface MonthlyCell {
   connected: boolean;
 }
 
-/** Projeta a série no eixo de meses: mês sem ponto fica vazio; ligação só entre vizinhos comparáveis. */
-export function monthlyCells(months: readonly string[], points: readonly PostureMonthlyPoint[]): MonthlyCell[] {
+/**
+ * Projeta a série no eixo de meses: mês sem ponto fica vazio; ligação só entre vizinhos comparáveis. `value` diz qual
+ * grandeza a série desenha (o score 0–100, ou a maturidade 1–5 na série NIST) — ausência nunca liga.
+ */
+export function monthlyCells(
+  months: readonly string[],
+  points: readonly PostureMonthlyPoint[],
+  value: (p: PostureMonthlyPoint) => number | null | undefined = (p) => p.score,
+): MonthlyCell[] {
   const byMonth = new Map(points.map((p) => [p.month, p]));
   return months.map((month, i) => {
     const point = byMonth.get(month) ?? null;
     const prev = i > 0 ? byMonth.get(months[i - 1]) ?? null : null;
-    return { month, point, connected: !!point && !!prev && point.comparableWithPrevious && point.score !== null && prev.score !== null };
+    const has = (p: PostureMonthlyPoint | null) => !!p && value(p) !== null && value(p) !== undefined;
+    return { month, point, connected: has(point) && has(prev) && point!.comparableWithPrevious };
   });
+}
+
+/** [AEGIS-NIST-JOURNEY-02] Valor desenhado de um ponto: maturidade atual (1–5) na série NIST; score nas demais. */
+export function seriesValue(type: PostureSnapshotType, p: PostureMonthlyPoint): number | null {
+  return type === 'NistMaturity' ? p.maturityCurrent ?? null : p.score;
 }
 
 /** "out/26". */
