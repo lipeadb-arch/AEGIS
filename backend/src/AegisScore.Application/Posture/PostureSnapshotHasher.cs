@@ -58,6 +58,12 @@ public static class PostureSnapshotHasher
     /// </summary>
     private const string ConsolidatedExtensionVersion = "posture-hash-ext-knight-consolidated-v1";
 
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] Fotografia de MATURIDADE NIST: avaliação, rodada, escopo, médias 1–5 e o relatório inteiro
+    /// congelado. Escrito SÓ para o tipo NistMaturity — o hash de toda fotografia anterior permanece idêntico.
+    /// </summary>
+    private const string NistMaturityExtensionVersion = "posture-hash-ext-nist-maturity-v1";
+
     /// <summary>Computa o hash SHA-256 (hex minúsculo, 64 chars) do conteúdo canônico da fotografia.</summary>
     public static string Compute(PostureSnapshot s)
     {
@@ -268,6 +274,19 @@ public static class PostureSnapshotHasher
 
             if (!string.IsNullOrEmpty(s.CompositionJson))
                 w.Str(ConsolidatedExtensionVersion).Str(s.CompositionJson);
+        }
+
+        if (s.Type == PostureSnapshotType.NistMaturity)
+        {
+            w.Str(NistMaturityExtensionVersion)
+             .Str(s.NistAssessmentId?.ToString("D"))
+             .Str(s.NistCycleId?.ToString("D"))
+             .Str(s.NistScopeId?.ToString("D"))
+             .Str(s.NistCycleName)
+             .Dbl(s.MaturityCurrent)
+             .Dbl(s.MaturityTarget)
+             .Dbl(s.MaturityGap)
+             .Str(s.NistReportJson);
         }
 
         return w.ToString();

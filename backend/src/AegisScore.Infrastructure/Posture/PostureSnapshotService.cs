@@ -56,6 +56,10 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         {
             PostureSnapshotType.AegisScoreNist => await BuildAegisSnapshotAsync(ct),
             PostureSnapshotType.Knight => await BuildKnightSnapshotAsync(source, runId, ct),
+            // [AEGIS-NIST-JOURNEY-02] A maturidade NIST é publicada pela jornada do NIST (avaliação · rodada · escopo, com a
+            // impressão digital do conteúdo revisado) — nunca por este caminho genérico.
+            PostureSnapshotType.NistMaturity => throw new PostureSnapshotNotAvailableException(
+                "A fotografia de maturidade NIST é publicada na jornada do AEGIS NIST (avaliação · rodada · escopo)."),
             _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Tipo de fotografia desconhecido."),
         };
 
@@ -932,6 +936,13 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         // ordem em que o cliente passou os ids (evita um comparativo invertido/enganoso).
         var (previous, current) = a.CapturedAt <= b.CapturedAt ? (a, b) : (b, a);
 
+        // [AEGIS-NIST-JOURNEY-02] Maturidade NIST não tem itens de controle nem score 0–100: o comparativo genérico diria
+        // "sem mudança". A comparação de rodadas do AEGIS NIST é a autoridade para esse instrumento.
+        if (previous.Type == PostureSnapshotType.NistMaturity || current.Type == PostureSnapshotType.NistMaturity)
+            return new PostureComparisonResultDto(false,
+                new[] { "Fotografias de maturidade NIST são comparadas na evolução das rodadas do AEGIS NIST (mesma avaliação, escopo e metodologia)." },
+                ToSummary(previous), ToSummary(current), null);
+
         var prevSide = ToComparisonSide(previous);
         var currSide = ToComparisonSide(current);
 
@@ -1046,7 +1057,14 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         s.DataRecency,
         s.ContentHash,
         s.ClientName,
-        s.SourceRunId);
+        s.SourceRunId,
+        s.MaturityCurrent,
+        s.MaturityTarget,
+        s.MaturityGap,
+        s.NistAssessmentId,
+        s.NistCycleId,
+        s.NistScopeId,
+        s.NistCycleName);
 
     private static PostureSnapshotDetailDto ToDetail(PostureSnapshot s)
     {

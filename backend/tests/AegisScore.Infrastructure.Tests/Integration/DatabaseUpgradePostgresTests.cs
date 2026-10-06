@@ -123,6 +123,11 @@ public sealed class DatabaseUpgradePostgresTests
             // (backfill determinístico) e o índice único (escopo, subcategoria) só é criado depois de conferir que não
             // há duplicata — havendo, a migration aborta sem alterar nada.
             "20261003220304_Nist01_AssessmentJourney",
+            // [AEGIS-NIST-JOURNEY-02] Rodadas, procedimentos, achados e trilha: tabelas NOVAS; colunas aditivas em avaliação de
+            // subcategoria, evidência, plano de ação (origem NIST, responsável vinculado), trilha do plano e fotografia
+            // (maturidade em colunas próprias). Cada avaliação existente ganha UMA rodada inicial e as suas avaliações e
+            // evidências passam a apontar para ela — sem escolha arbitrária; sobrando registro sem rodada, a migration aborta.
+            "20261005224354_Nist02_CompleteJourney",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

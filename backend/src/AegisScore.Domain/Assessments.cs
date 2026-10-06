@@ -148,6 +148,12 @@ public class Evidence : Entity, ITenantOwned
     /// <summary>Retirada do vínculo (o registro permanece para auditoria). Nulo = vínculo vigente.</summary>
     public DateTimeOffset? RemovedAt { get; set; }
     public string? RemovedByName { get; set; }
+
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] Rodada da avaliação a que o vínculo pertence. Preenchida em toda evidência NIST (as anteriores
+    /// recebem a rodada inicial da avaliação na migration); nula nas evidências de outros fluxos.
+    /// </summary>
+    public Guid? CycleId { get; set; }
 }
 
 /// <summary>
@@ -210,4 +216,62 @@ public class SubcategoryEvaluation : Entity, ITenantOwned
     /// nível ausente não é zero (o cálculo antigo tratava ausência como 0 e produzia lacunas fictícias).
     /// </summary>
     public int? Gap => !NotApplicable && TargetScore is int t && CurrentScore is int c ? t - c : null;
+
+    // ---- [AEGIS-NIST-JOURNEY-02] Rodada, origem do conteúdo, responsáveis e revisão ----
+
+    /// <summary>Rodada da avaliação. As avaliações anteriores recebem a rodada inicial da avaliação na migration.</summary>
+    public Guid CycleId { get; set; }
+
+    /// <summary>
+    /// Origem do conteúdo vigente. Herdado de outra rodada ou importado por CSV NÃO é avaliação confirmada: fica fora das
+    /// médias até uma gravação humana na tela (ver <see cref="HumanConfirmed"/>).
+    /// </summary>
+    public NistContentOrigin ContentOrigin { get; set; } = NistContentOrigin.Analyst;
+
+    /// <summary>De onde veio o conteúdo herdado/importado ("Rodada X, versão N, revisada por Y em Z").</summary>
+    public string? OriginNote { get; set; }
+
+    /// <summary>Avaliação da rodada anterior copiada como rascunho, quando houver.</summary>
+    public Guid? SourceEvaluationId { get; set; }
+
+    /// <summary>Responsável pela prática como USUÁRIO do tenant (vínculo verificado no servidor). Nulo = texto/externo.</summary>
+    public Guid? OwnerUserId { get; set; }
+
+    /// <summary>O responsável é um contato EXTERNO (fornecedor, consultoria) — sem conta no AEGIS.</summary>
+    public bool OwnerIsExternal { get; set; }
+
+    /// <summary>Contato do responsável externo (e-mail, telefone ou organização), quando pertinente.</summary>
+    public string? OwnerContact { get; set; }
+
+    /// <summary>Avaliador designado (usuário do tenant). Designar não concede privilégio algum.</summary>
+    public Guid? AssessorUserId { get; set; }
+    public string? AssessorName { get; set; }
+
+    /// <summary>Revisor designado (usuário do tenant).</summary>
+    public Guid? ReviewerUserId { get; set; }
+    public string? ReviewerName { get; set; }
+
+    /// <summary>Decisão do revisor (aprovação ou devolução) — distinta do registro humano da avaliação.</summary>
+    public NistReviewDecision ReviewDecision { get; set; } = NistReviewDecision.None;
+
+    /// <summary>
+    /// Impressão digital do CONTEÚDO avaliado no instante da decisão do revisor. Se o conteúdo mudar depois, a decisão deixa
+    /// de valer para a versão vigente (a tela e o relatório dizem "revisão desatualizada").
+    /// </summary>
+    public string? ReviewDecisionFingerprint { get; set; }
+    public Guid? ReviewDecisionByAccountId { get; set; }
+    public string? ReviewDecisionByName { get; set; }
+    public DateTimeOffset? ReviewDecisionAt { get; set; }
+    public string? ReviewDecisionNote { get; set; }
+
+    /// <summary>A avaliação vigente foi confirmada por uma pessoa (gravação na tela), e não herdada nem importada.</summary>
+    public bool HumanConfirmed => ContentOrigin == NistContentOrigin.Analyst && ReviewedAt is not null;
+}
+
+/// <summary>[AEGIS-NIST-JOURNEY-02] Decisão do revisor sobre a avaliação de uma subcategoria.</summary>
+public enum NistReviewDecision
+{
+    None = 0,
+    Approved = 1,
+    ChangesRequested = 2,
 }

@@ -15,6 +15,7 @@ using AegisScore.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using static AegisScore.Infrastructure.Nist.NistJourneySupport;
 
 namespace AegisScore.Infrastructure.Nist;
 
@@ -22,42 +23,20 @@ namespace AegisScore.Infrastructure.Nist;
 /// [AEGIS-NIST-JOURNEY-01] Jornada persistida do AEGIS NIST sobre o modelo EXISTENTE de assessment
 /// (<see cref="Assessment"/> → <see cref="AssessmentScope"/> → <see cref="SubcategoryEvaluation"/> + <see cref="Evidence"/>).
 ///
-/// Garantias:
-/// <list type="bullet">
-/// <item>tenant implícito: tudo passa pelo filtro global; avaliação, escopo, documento e execução de outro tenant são
-/// simplesmente INEXISTENTES (404), e o carimbo fail-closed do DbContext barra qualquer escrita cruzada;</item>
-/// <item>o escopo precisa pertencer à avaliação e a subcategoria ao catálogo da avaliação;</item>
-/// <item>níveis só de 1 a 5 (metodologia aegis-methodology-v1) ou ausentes — ausência nunca vira zero;</item>
-/// <item>concorrência otimista pela versão da avaliação, reforçada pelo token no UPDATE e pelo índice único;</item>
-/// <item>evidência técnica do KNIGHT só entra numa subcategoria que o catálogo do KNIGHT mapeia EXPLICITAMENTE para ela,
-/// e vincular não muda nenhum nível — aprovar um controle técnico não comprova o resultado organizacional;</item>
-/// <item>a sugestão da IA é devolvida, nunca gravada; a jornada inteira funciona com a IA indisponível.</item>
-/// </list>
-/// Não escreve no score de postura (TenantControlState / aegis-score-v1): apenas o lê como contexto.
+/// [AEGIS-NIST-JOURNEY-02] Cada avaliação tem RODADAS (<see cref="NistAssessmentCycle"/>): leitura e gravação nomeiam
+/// avaliação · rodada · escopo, e uma rodada nova nunca sobrescreve a anterior. Conteúdo herdado ou importado aguarda
+/// confirmação humana e fica fora das médias. Responsável, avaliador e revisor são usuários ATIVOS do tenant verificados
+/// no servidor (ou contato externo / texto legado, sem conversão automática). Toda alteração relevante entra na trilha com
+/// autor, instante e valores anteriores/novos.
+///
+/// Garantias mantidas: tenant implícito e fail-closed; níveis 1–5 ou ausentes (nunca zero); concorrência pela versão;
+/// evidência do KNIGHT só por mapeamento explícito e sem mudar nível; sugestão da IA nunca gravada. Não escreve no score de
+/// postura (TenantControlState / aegis-score-v1): apenas o lê como contexto.
 /// </summary>
-public sealed class NistAssessmentService : INistAssessmentService
+public sealed partial class NistAssessmentService : INistAssessmentService
 {
-    internal const int MaxName = 200;
-    internal const int MaxDescription = 2000;
-    internal const int MaxLongText = 4000;
-    internal const int MinJustification = 10;
     private const int MaxTitle = 300;
     private const int MaxNotes = 2000;
-
-    private static readonly string[] FunctionOrder = { "GV", "ID", "PR", "DE", "RS", "RC" };
-
-    /// <summary>Ordem OFICIAL das categorias no CSF 2.0 (o catálogo não guarda ordem; o código sozinho é alfabético).</summary>
-    private static readonly string[] CategoryOrder =
-    {
-        "GV.OC", "GV.RM", "GV.RR", "GV.PO", "GV.OV", "GV.SC",
-        "ID.AM", "ID.RA", "ID.IM",
-        "PR.AA", "PR.AT", "PR.DS", "PR.PS", "PR.IR",
-        "DE.CM", "DE.AE",
-        "RS.MA", "RS.AN", "RS.CO", "RS.MI",
-        "RC.RP", "RC.CO",
-    };
-
-    private static int CategoryRank(string code) => Array.IndexOf(CategoryOrder, code) is var i && i >= 0 ? i : CategoryOrder.Length;
 
     private static readonly KnightIndicatorStatus[] EvaluatedKnightStatuses =
         { KnightIndicatorStatus.Passed, KnightIndicatorStatus.Exposed, KnightIndicatorStatus.Mitigated };
@@ -93,12 +72,12 @@ public sealed class NistAssessmentService : INistAssessmentService
     }
 
     // =============================================================================================
-    //  Avaliações e escopos
+    //  Avaliações, escopos e rodadas
     // =============================================================================================
 
     public async Task<IReadOnlyList<NistAssessmentView>> ListAsync(CancellationToken ct = default)
     {
-        RequireTenant();
+        RequireTenant(_tenant);
         var assessments = await _db.Assessments.AsNoTracking().ToListAsync(ct);
         if (assessments.Count == 0) return Array.Empty<NistAssessmentView>();
 
@@ -111,7 +90,7 @@ public sealed class NistAssessmentService : INistAssessmentService
 
     public async Task<NistAssessmentView> GetAsync(Guid assessmentId, CancellationToken ct = default)
     {
-        RequireTenant();
+        RequireTenant(_tenant);
         var a = await _db.Assessments.AsNoTracking().FirstOrDefaultAsync(x => x.Id == assessmentId, ct)
             ?? throw new NistAssessmentNotFoundException("Avaliação não encontrada.");
         return await BuildAssessmentViewAsync(a, ct);
@@ -119,7 +98,7 @@ public sealed class NistAssessmentService : INistAssessmentService
 
     public async Task<NistAssessmentView> CreateAsync(CreateNistAssessmentCommand command, RemediationActor actor, CancellationToken ct = default)
     {
-        RequireTenant();
+        RequireTenant(_tenant);
         ArgumentNullException.ThrowIfNull(command);
 
         var name = Required(command.Name, "Informe o nome da avaliação.", MaxName, "O nome da avaliação");
@@ -129,6 +108,16 @@ public sealed class NistAssessmentService : INistAssessmentService
 
         var fv = await _db.FrameworkVersions.AsNoTracking().FirstOrDefaultAsync(f => f.IsActive, ct)
             ?? throw new NistAssessmentValidationException("Não há catálogo NIST ativo para avaliar.");
+
+        var now = _clock.GetUtcNow();
+        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        var cycleStart = command.InitialCyclePeriodStart ?? command.StartDate ?? today;
+        var cycleEnd = command.InitialCyclePeriodEnd ?? command.EndDate ?? cycleStart;
+        var cycleKind = string.IsNullOrWhiteSpace(command.InitialCyclePeriodKind)
+            ? NistCyclePeriodKind.Other
+            : ParseEnum<NistCyclePeriodKind>(command.InitialCyclePeriodKind, "Período da rodada inválido (Monthly, Quarterly ou Other).");
+        ValidatePeriod(cycleKind, cycleStart, cycleEnd);
+        var cycleName = Optional(command.InitialCycleName, 120, "O nome da rodada") ?? "Rodada 1";
 
         // Sem TenantId: carimbado no SaveChanges (fail-closed).
         var assessment = new Assessment
@@ -140,32 +129,55 @@ public sealed class NistAssessmentService : INistAssessmentService
             EndDate = command.EndDate,
             Status = AssessmentStatus.Draft,
             MethodologyVersion = AssessmentMethodology.Version,
-            CreatedAt = _clock.GetUtcNow(),
+            CreatedAt = now,
         };
         _db.Assessments.Add(assessment);
 
+        var cycle = new NistAssessmentCycle
+        {
+            AssessmentId = assessment.Id,
+            Name = cycleName,
+            PeriodKind = cycleKind,
+            PeriodStart = cycleStart,
+            PeriodEnd = cycleEnd,
+            Status = NistCycleStatus.Open,
+            SeedMode = NistCycleSeedMode.None,
+            CreatedByAccountId = actor.AccountId,
+            CreatedByName = PersonName(actor),
+            Version = 1,
+            CreatedAt = now,
+        };
+        _db.NistCycles.Add(cycle);
+        Audit(_db, actor, now, assessment.Id, null, null, null, "Assessment", assessment.Id, "Created",
+            $"Avaliação \"{name}\" criada (metodologia {AssessmentMethodology.Version}).");
+        Audit(_db, actor, now, assessment.Id, cycle.Id, null, null, "Cycle", cycle.Id, "Created",
+            $"Rodada \"{cycleName}\" criada ({NistLabels.PeriodKind(cycleKind.ToString())}, {cycleStart:dd/MM/yyyy} a {cycleEnd:dd/MM/yyyy}).");
+
         if (!string.IsNullOrWhiteSpace(command.InitialScopeName))
         {
-            _db.Scopes.Add(new AssessmentScope
+            var scope = new AssessmentScope
             {
                 AssessmentId = assessment.Id,
                 Name = Required(command.InitialScopeName, "Informe o nome do escopo.", MaxName, "O nome do escopo"),
                 Description = Optional(command.InitialScopeDescription, MaxDescription, "A descrição do escopo"),
-                CreatedAt = _clock.GetUtcNow(),
-            });
+                CreatedAt = now,
+            };
+            _db.Scopes.Add(scope);
+            Audit(_db, actor, now, assessment.Id, null, scope.Id, null, "Scope", scope.Id, "Created", $"Escopo \"{scope.Name}\" criado.");
         }
 
         await _db.SaveChangesAsync(ct);
         _log.LogInformation("Avaliação NIST {AssessmentId} criada por {Actor}.", assessment.Id, actor.DisplayName);
-        return await BuildAssessmentViewAsync(assessment, ct);
+        _db.ChangeTracker.Clear();
+        return await GetAsync(assessment.Id, ct);
     }
 
-    public async Task<NistScopeView> AddScopeAsync(Guid assessmentId, CreateNistScopeCommand command, CancellationToken ct = default)
+    public async Task<NistScopeView> AddScopeAsync(Guid assessmentId, CreateNistScopeCommand command, RemediationActor actor, CancellationToken ct = default)
     {
-        RequireTenant();
+        RequireTenant(_tenant);
         ArgumentNullException.ThrowIfNull(command);
-        if (!await _db.Assessments.AnyAsync(a => a.Id == assessmentId, ct))
-            throw new NistAssessmentNotFoundException("Avaliação não encontrada.");
+        var assessment = await _db.Assessments.AsNoTracking().FirstOrDefaultAsync(a => a.Id == assessmentId, ct)
+            ?? throw new NistAssessmentNotFoundException("Avaliação não encontrada.");
 
         var name = Required(command.Name, "Informe o nome do escopo.", MaxName, "O nome do escopo");
         var normalized = name.ToUpperInvariant();
@@ -173,35 +185,224 @@ public sealed class NistAssessmentService : INistAssessmentService
         if (existing.Any(n => string.Equals((n ?? "").Trim().ToUpperInvariant(), normalized, StringComparison.Ordinal)))
             throw new NistAssessmentConflictException("Já existe um escopo com este nome nesta avaliação.");
 
+        var now = _clock.GetUtcNow();
         var scope = new AssessmentScope
         {
             AssessmentId = assessmentId,
             Name = name,
             Description = Optional(command.Description, MaxDescription, "A descrição do escopo"),
-            CreatedAt = _clock.GetUtcNow(),
+            CreatedAt = now,
         };
         _db.Scopes.Add(scope);
+        Audit(_db, actor, now, assessmentId, null, scope.Id, null, "Scope", scope.Id, "Created", $"Escopo \"{name}\" criado.");
         await _db.SaveChangesAsync(ct);
 
-        var total = await CountSubcategoriesAsync(
-            (await _db.Assessments.AsNoTracking().FirstAsync(a => a.Id == assessmentId, ct)).FrameworkVersionId, ct);
+        var total = await CountSubcategoriesAsync(assessment.FrameworkVersionId, ct);
         return new NistScopeView(scope.Id, scope.Name, scope.Description, total, 0, 0, 0, 0, null);
+    }
+
+    public async Task<NistCycleView> CreateCycleAsync(Guid assessmentId, CreateNistCycleCommand command, RemediationActor actor, CancellationToken ct = default)
+    {
+        RequireTenant(_tenant);
+        ArgumentNullException.ThrowIfNull(command);
+        if (!await _db.Assessments.AsNoTracking().AnyAsync(a => a.Id == assessmentId, ct))
+            throw new NistAssessmentNotFoundException("Avaliação não encontrada.");
+
+        var name = Required(command.Name, "Informe o nome da rodada.", 120, "O nome da rodada");
+        var kind = ParseEnum<NistCyclePeriodKind>(command.PeriodKind, "Período da rodada inválido (Monthly, Quarterly ou Other).");
+        ValidatePeriod(kind, command.PeriodStart, command.PeriodEnd);
+        var seedMode = ParseEnum<NistCycleSeedMode>(command.SeedMode, "Aproveitamento inválido (None, Reference ou Draft).");
+
+        var cycles = await _db.NistCycles.AsNoTracking().Where(c => c.AssessmentId == assessmentId).ToListAsync(ct);
+        if (cycles.Any(c => string.Equals(c.Name.Trim(), name, StringComparison.OrdinalIgnoreCase)))
+            throw new NistAssessmentConflictException("Já existe uma rodada com este nome nesta avaliação.");
+
+        NistAssessmentCycle? source = null;
+        if (seedMode == NistCycleSeedMode.None)
+        {
+            if (command.SeedFromCycleId is not null)
+                throw new NistAssessmentValidationException("Para aproveitar outra rodada, escolha \"referência\" ou \"rascunho\".");
+        }
+        else
+        {
+            var sourceId = command.SeedFromCycleId
+                ?? throw new NistAssessmentValidationException("Escolha a rodada a aproveitar.");
+            source = cycles.FirstOrDefault(c => c.Id == sourceId)
+                ?? throw new NistAssessmentNotFoundException("A rodada a aproveitar não pertence a esta avaliação.");
+        }
+
+        var now = _clock.GetUtcNow();
+        var cycle = new NistAssessmentCycle
+        {
+            AssessmentId = assessmentId,
+            Name = name,
+            PeriodKind = kind,
+            PeriodStart = command.PeriodStart,
+            PeriodEnd = command.PeriodEnd,
+            Status = NistCycleStatus.Open,
+            SeedFromCycleId = source?.Id,
+            SeedMode = seedMode,
+            CreatedByAccountId = actor.AccountId,
+            CreatedByName = PersonName(actor),
+            Version = 1,
+            CreatedAt = now,
+        };
+        _db.NistCycles.Add(cycle);
+
+        int copiedEvaluations = 0, copiedProcedures = 0;
+        if (source is not null && seedMode == NistCycleSeedMode.Draft)
+        {
+            // RASCUNHO identificado: níveis, textos e o responsável pela prática; NADA de revisão humana, evidência,
+            // resultado de teste, achado ou decisão do revisor é herdado.
+            var sourceEvals = await _db.Evaluations.AsNoTracking().Where(e => e.CycleId == source.Id).ToListAsync(ct);
+            foreach (var src in sourceEvals.Where(HasContent))
+            {
+                var note = $"Rascunho a partir da rodada \"{source.Name}\" (versão {src.Version}"
+                    + (src.HumanConfirmed && src.ReviewedAt is { } at
+                        ? $", revisão humana de {src.ReviewedByName ?? "autor não identificado"} em {Date(at)})"
+                        : ", sem revisão humana)")
+                    + ". Confirme na tela para que entre nas médias.";
+                _db.Evaluations.Add(new SubcategoryEvaluation
+                {
+                    AssessmentScopeId = src.AssessmentScopeId,
+                    CycleId = cycle.Id,
+                    SubcategoryId = src.SubcategoryId,
+                    NotApplicable = src.NotApplicable,
+                    CurrentLevel = src.CurrentLevel,
+                    CurrentScore = src.CurrentLevel,
+                    TargetLevel = src.TargetLevel,
+                    TargetScore = src.TargetLevel,
+                    CurrentComments = src.CurrentComments,
+                    TargetComments = src.TargetComments,
+                    Rationale = src.Rationale,
+                    Gaps = src.Gaps,
+                    RiskImpact = src.RiskImpact,
+                    ImprovementGuidance = src.ImprovementGuidance,
+                    OwnerName = src.OwnerName,
+                    OwnerUserId = src.OwnerUserId,
+                    OwnerIsExternal = src.OwnerIsExternal,
+                    OwnerContact = src.OwnerContact,
+                    EvaluatedBy = EvaluatedBy.Analyst,
+                    ContentOrigin = NistContentOrigin.CarriedForward,
+                    SourceEvaluationId = src.Id,
+                    OriginNote = Truncate(note, 500),
+                    Version = 1,
+                    CreatedAt = now,
+                });
+                copiedEvaluations++;
+            }
+
+            var sourceProcedures = await _db.NistProcedures.AsNoTracking()
+                .Where(p => p.CycleId == source.Id && p.RemovedAt == null).ToListAsync(ct);
+            foreach (var p in sourceProcedures)
+            {
+                _db.NistProcedures.Add(new NistTestProcedure
+                {
+                    AssessmentId = assessmentId,
+                    CycleId = cycle.Id,
+                    AssessmentScopeId = p.AssessmentScopeId,
+                    SubcategoryCode = p.SubcategoryCode,
+                    Method = p.Method,
+                    Procedure = p.Procedure,
+                    Status = NistProcedureStatus.Planned,
+                    ContentOrigin = NistContentOrigin.CarriedForward,
+                    SourceProcedureId = p.Id,
+                    OriginNote = Truncate($"Planejado na rodada \"{source.Name}\"; o resultado não é herdado.", 500),
+                    CreatedByAccountId = actor.AccountId,
+                    CreatedByName = PersonName(actor),
+                    Version = 1,
+                    CreatedAt = now,
+                });
+                copiedProcedures++;
+            }
+        }
+
+        var changes = new List<NistFieldChange>();
+        Diff(changes, "name", "nome", null, name);
+        Diff(changes, "period", "período", null, $"{NistLabels.PeriodKind(kind.ToString())}: {command.PeriodStart:dd/MM/yyyy} a {command.PeriodEnd:dd/MM/yyyy}");
+        Diff(changes, "seed", "aproveitamento", null, source is null ? NistLabels.SeedMode("None") : $"{NistLabels.SeedMode(seedMode.ToString())} — \"{source.Name}\"");
+        Audit(_db, actor, now, assessmentId, cycle.Id, null, null, "Cycle", cycle.Id, "Created",
+            $"Rodada \"{name}\" criada." + (seedMode == NistCycleSeedMode.Draft
+                ? $" Rascunho herdado: {copiedEvaluations} avaliação(ões) e {copiedProcedures} procedimento(s) planejado(s), aguardando confirmação humana."
+                : ""),
+            changes);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            throw new NistAssessmentConflictException("Outra pessoa acabou de criar uma rodada com este nome. Recarregue a avaliação.");
+        }
+        _db.ChangeTracker.Clear();
+        return (await CycleViewsAsync(assessmentId, ct)).First(c => c.Id == cycle.Id);
+    }
+
+    public async Task<NistCycleView> SetCycleStatusAsync(
+        Guid assessmentId, Guid cycleId, SetNistCycleStatusCommand command, RemediationActor actor, CancellationToken ct = default)
+    {
+        RequireTenant(_tenant);
+        ArgumentNullException.ThrowIfNull(command);
+        var target = ParseEnum<NistCycleStatus>(command.Status, "Situação da rodada inválida (Open ou Closed).");
+        var cycle = await _db.NistCycles.FirstOrDefaultAsync(c => c.Id == cycleId && c.AssessmentId == assessmentId, ct)
+            ?? throw new NistAssessmentNotFoundException("Rodada não encontrada nesta avaliação.");
+        if (cycle.Version != command.ExpectedVersion)
+            throw new NistAssessmentConflictException("A rodada foi alterada por outra pessoa. Recarregue antes de continuar.");
+        if (cycle.Status == target)
+            return (await CycleViewsAsync(assessmentId, ct)).First(c => c.Id == cycleId);
+
+        var now = _clock.GetUtcNow();
+        var from = cycle.Status;
+        cycle.Status = target;
+        cycle.ClosedAt = target == NistCycleStatus.Closed ? now : null;
+        cycle.ClosedByName = target == NistCycleStatus.Closed ? PersonName(actor) : null;
+        cycle.Version++;
+        var changes = new List<NistFieldChange>();
+        Diff(changes, "status", "situação", NistLabels.CycleStatus(from.ToString()), NistLabels.CycleStatus(target.ToString()));
+        Audit(_db, actor, now, assessmentId, cycleId, null, null, "Cycle", cycleId, target == NistCycleStatus.Closed ? "Closed" : "Reopened",
+            target == NistCycleStatus.Closed ? $"Rodada \"{cycle.Name}\" encerrada (somente leitura)." : $"Rodada \"{cycle.Name}\" reaberta.", changes);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new NistAssessmentConflictException("A rodada foi alterada por outra pessoa enquanto a sua gravação estava em curso.");
+        }
+        _db.ChangeTracker.Clear();
+        return (await CycleViewsAsync(assessmentId, ct)).First(c => c.Id == cycleId);
+    }
+
+    /// <summary>Mensal e trimestral seguem o calendário; "outro período" aceita qualquer intervalo de até 3 anos.</summary>
+    internal static void ValidatePeriod(NistCyclePeriodKind kind, DateOnly start, DateOnly end)
+    {
+        if (end < start) throw new NistAssessmentValidationException("O fim do período não pode ser anterior ao início.");
+        switch (kind)
+        {
+            case NistCyclePeriodKind.Monthly when start.Day != 1 || end != start.AddMonths(1).AddDays(-1):
+                throw new NistAssessmentValidationException("Uma rodada mensal cobre um mês do calendário (do dia 1 ao último dia).");
+            case NistCyclePeriodKind.Quarterly when start.Day != 1 || (start.Month - 1) % 3 != 0 || end != start.AddMonths(3).AddDays(-1):
+                throw new NistAssessmentValidationException("Uma rodada trimestral cobre um trimestre do calendário (jan–mar, abr–jun, jul–set ou out–dez).");
+            case NistCyclePeriodKind.Other when end > start.AddYears(3):
+                throw new NistAssessmentValidationException("O período informado pode ter no máximo 3 anos.");
+        }
     }
 
     // =============================================================================================
     //  Funções, perfil e subcategorias
     // =============================================================================================
 
-    public async Task<NistFunctionView> GetFunctionAsync(Guid assessmentId, Guid scopeId, string functionCode, CancellationToken ct = default)
+    public async Task<NistFunctionView> GetFunctionAsync(Guid assessmentId, Guid cycleId, Guid scopeId, string functionCode, CancellationToken ct = default)
     {
-        RequireTenant();
-        var ctx = await LoadScopeContextAsync(assessmentId, scopeId, ct);
+        RequireTenant(_tenant);
+        var ctx = await LoadScopeContextAsync(_db, assessmentId, cycleId, scopeId, ct);
         var code = (functionCode ?? "").Trim().ToUpperInvariant();
         var fn = ctx.Catalog.Functions.FirstOrDefault(f => string.Equals(f.Code, code, StringComparison.Ordinal))
             ?? throw new NistAssessmentNotFoundException($"Função '{functionCode}' não existe no catálogo da avaliação.");
 
         var subs = fn.Categories.SelectMany(c => c.Subcategories).ToList();
-        var profile = _maturity.AggregateProfile(subs.Select(s => ProfileScoreOf(s, ctx)));
+        var profile = _maturity.AggregateProfile(subs.Select(s => ProfileScoreOf(s.Code, ctx.Evaluation(s.Id))));
 
         var categories = fn.Categories.OrderBy(c => CategoryRank(c.Code)).ThenBy(c => c.Code, StringComparer.Ordinal).Select(c =>
         {
@@ -213,29 +414,74 @@ public sealed class NistAssessmentService : INistAssessmentService
 
         var evaluated = categories.Sum(c => c.Profile.Evaluated);
         var fnProfile = profile.Functions.FirstOrDefault() ?? profile.Overall;
-        return new NistFunctionView(assessmentId, scopeId, fn.Code, fn.Name, fn.Definition, ProfileView(fnProfile, evaluated), categories);
+        return new NistFunctionView(assessmentId, scopeId, fn.Code, fn.Name, fn.Definition, ProfileView(fnProfile, evaluated), categories, cycleId);
     }
 
-    public async Task<NistProfileView> GetProfileAsync(Guid assessmentId, Guid scopeId, CancellationToken ct = default)
+    public async Task<NistProfileView> GetProfileAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default)
     {
-        RequireTenant();
-        var ctx = await LoadScopeContextAsync(assessmentId, scopeId, ct);
-        var subs = ctx.Catalog.Functions.SelectMany(f => f.Categories).SelectMany(c => c.Subcategories).ToList();
-        var profile = _maturity.AggregateProfile(subs.Select(s => ProfileScoreOf(s, ctx)));
+        RequireTenant(_tenant);
+        var ctx = await LoadScopeContextAsync(_db, assessmentId, cycleId, scopeId, ct);
+        var subs = ctx.AllSubcategories.ToList();
+        var profile = _maturity.AggregateProfile(subs.Select(s => ProfileScoreOf(s.Code, ctx.Evaluation(s.Id))));
 
         var states = subs.ToDictionary(s => s.Code, s => StateOf(ctx.Evaluation(s.Id), ctx.EvidenceCount(s.Code)), StringComparer.Ordinal);
-        int EvaluatedIn(string prefix) => states.Count(kv => kv.Value == NistSubcategoryStates.Evaluated
-            && (prefix == "ALL" || kv.Key.StartsWith(prefix, StringComparison.Ordinal) && (kv.Key.Length == prefix.Length || kv.Key[prefix.Length] is '.' or '-')));
+        int EvaluatedIn(string prefix) => states.Count(kv => kv.Value == NistSubcategoryStates.Evaluated && InPrefix(kv.Key, prefix));
 
+        var openFindings = ctx.Findings.Where(f => f.Status == NistFindingStatus.Open)
+            .GroupBy(f => f.SubcategoryCode, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
         var gaps = subs
             .Select(s => (Sub: s, Eval: ctx.Evaluation(s.Id)))
-            .Where(x => x.Eval is { Gap: not null })
+            .Where(x => ConfirmedGap(x.Eval) is not null)
             .Select(x => new NistGapView(x.Sub.Code, TitleOf(x.Sub), x.Eval!.CurrentLevel!.Value, x.Eval.TargetLevel!.Value,
-                x.Eval.Gap!.Value, x.Eval.OwnerName, x.Eval.ImprovementGuidance))
+                x.Eval.Gap!.Value, x.Eval.OwnerName, x.Eval.ImprovementGuidance,
+                openFindings.TryGetValue(x.Sub.Code, out var n) ? n : 0, x.Eval.RiskImpact))
             .OrderByDescending(g => g.Gap).ThenBy(g => g.Code, StringComparer.Ordinal)
             .ToList();
 
-        var indeterminate = subs.Count(s => ctx.Evaluation(s.Id) is not { NotApplicable: true } && ctx.Evaluation(s.Id)?.Gap is null);
+        var indeterminate = subs.Count(s => ctx.Evaluation(s.Id) is not { HumanConfirmed: true, NotApplicable: true } && ConfirmedGap(ctx.Evaluation(s.Id)) is null);
+
+        NistStateCountsView Counts(string code, IReadOnlyCollection<NistSubcategory> set) => new(
+            code,
+            set.Count,
+            set.Count(s => states[s.Code] == NistSubcategoryStates.NotEvaluated),
+            set.Count(s => states[s.Code] == NistSubcategoryStates.InProgress),
+            set.Count(s => states[s.Code] == NistSubcategoryStates.PendingConfirmation),
+            set.Count(s => states[s.Code] == NistSubcategoryStates.Evaluated),
+            set.Count(s => states[s.Code] == NistSubcategoryStates.NotApplicable),
+            set.Count(s => ctx.Evaluation(s.Id) is { } e && ReviewStateOf(e) == NistReviewStates.Approved),
+            set.Count(s => ctx.Evaluation(s.Id) is { } e && ReviewStateOf(e) == NistReviewStates.Outdated));
+
+        var functionStates = ctx.Catalog.Functions
+            .Select(f => Counts(f.Code, f.Categories.SelectMany(c => c.Subcategories).ToList())).ToList();
+
+        var procedures = Enum.GetValues<NistTestMethod>().Select(m =>
+        {
+            var set = ctx.Procedures.Where(p => p.Method == m).ToList();
+            return new NistProcedureProgressView(m.ToString(),
+                set.Count(p => p.Status == NistProcedureStatus.Planned),
+                set.Count(p => p.Status == NistProcedureStatus.InProgress),
+                set.Count(p => p.Status == NistProcedureStatus.Performed),
+                set.Count(p => p.Status == NistProcedureStatus.NotPerformed),
+                set.Count(p => p.Outcome == NistProcedureOutcome.Satisfactory),
+                set.Count(p => p.Outcome == NistProcedureOutcome.PartiallySatisfactory),
+                set.Count(p => p.Outcome == NistProcedureOutcome.Unsatisfactory),
+                set.Count(p => p.Outcome == NistProcedureOutcome.Inconclusive));
+        }).ToList();
+
+        var plans = await PlansByFindingAsync(_db, ctx.Findings.Select(f => f.Id).ToList(), ct);
+        var current = ctx.Findings.Select(f => CurrentPlan(plans.TryGetValue(f.Id, out var l) ? l : null)).Where(p => p is not null).Select(p => p!).ToList();
+        var treatment = new NistTreatmentView(
+            ctx.Findings.Count(f => f.Status == NistFindingStatus.Open),
+            ctx.Findings.Count(f => f.Status == NistFindingStatus.RiskAccepted),
+            ctx.Findings.Count(f => f.Status == NistFindingStatus.Closed),
+            ctx.Findings.Where(f => f.Status == NistFindingStatus.Open).GroupBy(f => f.Severity.ToString())
+                .ToDictionary(g => g.Key, g => g.Count()),
+            ctx.Findings.Count(f => f.Status == NistFindingStatus.Open && !plans.ContainsKey(f.Id)),
+            current.Count(p => p.Status == ActionPlanStatus.Aberto),
+            current.Count(p => p.Status == ActionPlanStatus.EmAndamento),
+            current.Count(p => p.Status == ActionPlanStatus.AguardandoValidacao),
+            current.Count(p => p.Status == ActionPlanStatus.Concluido),
+            current.Count(p => p.IsOverdue));
 
         return new NistProfileView(
             assessmentId, scopeId, ctx.Assessment.MethodologyVersion,
@@ -243,434 +489,159 @@ public sealed class NistAssessmentService : INistAssessmentService
             profile.Functions.OrderBy(f => Array.IndexOf(FunctionOrder, f.RefCode)).Select(f => ProfileView(f, EvaluatedIn(f.RefCode))).ToList(),
             profile.Categories.OrderBy(c => CategoryRank(c.RefCode)).Select(c => ProfileView(c, EvaluatedIn(c.RefCode))).ToList(),
             gaps,
-            indeterminate);
+            indeterminate,
+            cycleId,
+            Counts("ALL", subs),
+            functionStates,
+            procedures,
+            treatment);
     }
 
-    public async Task<NistSubcategoryDetailView> GetSubcategoryAsync(Guid assessmentId, Guid scopeId, string code, CancellationToken ct = default)
+    private static bool InPrefix(string code, string prefix) =>
+        prefix == "ALL" || code.StartsWith(prefix, StringComparison.Ordinal) && (code.Length == prefix.Length || code[prefix.Length] is '.' or '-');
+
+    public async Task<NistSubcategoryDetailView> GetSubcategoryAsync(Guid assessmentId, Guid cycleId, Guid scopeId, string code, CancellationToken ct = default)
     {
-        RequireTenant();
-        var ctx = await LoadScopeContextAsync(assessmentId, scopeId, ct);
-        var sub = FindSubcategory(ctx, code);
+        RequireTenant(_tenant);
+        var ctx = await LoadScopeContextAsync(_db, assessmentId, cycleId, scopeId, ct);
+        var sub = ctx.FindSubcategory(code);
         return await BuildDetailAsync(ctx, sub, ct);
     }
 
     // =============================================================================================
-    //  Gravação da avaliação humana
-    // =============================================================================================
-
-    public async Task<NistSubcategoryDetailView> SaveEvaluationAsync(
-        Guid assessmentId, Guid scopeId, string code, SaveNistEvaluationCommand command, RemediationActor actor, CancellationToken ct = default)
-    {
-        RequireTenant();
-        ArgumentNullException.ThrowIfNull(command);
-        var ctx = await LoadScopeContextAsync(assessmentId, scopeId, ct);
-        var sub = FindSubcategory(ctx, code);
-
-        // ---- Validação (nada é gravado se algo falhar) ----
-        if (command.CurrentLevel is int cur && (cur < AssessmentMethodology.MinLevel || cur > AssessmentMethodology.MaxLevel))
-            throw new NistAssessmentValidationException("A situação atual deve ser um nível de 1 a 5 (ou ficar sem nível).");
-        if (command.TargetLevel is int tgt && (tgt < AssessmentMethodology.MinLevel || tgt > AssessmentMethodology.MaxLevel))
-            throw new NistAssessmentValidationException("O alvo deve ser um nível de 1 a 5 (ou ficar sem nível).");
-
-        var rationale = Optional(command.Rationale, MaxLongText, "A justificativa");
-        if (command.NotApplicable)
-        {
-            if (command.CurrentLevel is not null || command.TargetLevel is not null)
-                throw new NistAssessmentValidationException("Um resultado que não se aplica não recebe situação atual nem alvo.");
-            if ((rationale ?? "").Length < MinJustification)
-                throw new NistAssessmentValidationException("Explique por que o resultado não se aplica ao escopo (justificativa de pelo menos 10 caracteres).");
-        }
-
-        var currentComments = Optional(command.CurrentComments, MaxLongText, "A observação da situação atual");
-        var targetComments = Optional(command.TargetComments, MaxLongText, "A observação do alvo");
-        var gaps = Optional(command.Gaps, MaxLongText, "As lacunas");
-        var risk = Optional(command.RiskImpact, MaxDescription, "O risco/impacto");
-        var guidance = Optional(command.ImprovementGuidance, MaxLongText, "A orientação de melhoria");
-        var owner = Optional(command.OwnerName, MaxName, "O responsável");
-
-        var hasContent = command.NotApplicable || command.CurrentLevel is not null || command.TargetLevel is not null
-            || new[] { rationale, currentComments, targetComments, gaps, risk, guidance, owner }.Any(t => t is not null);
-        if (!hasContent)
-            throw new NistAssessmentValidationException("Nada a registrar: informe um nível, uma justificativa ou uma anotação.");
-
-        // ---- Concorrência: a versão lida precisa ser a vigente ----
-        var eval = await _db.Evaluations.FirstOrDefaultAsync(e => e.AssessmentScopeId == scopeId && e.SubcategoryId == sub.Id, ct);
-        var creating = eval is null;
-        if (eval is null)
-        {
-            if (command.ExpectedVersion != 0)
-                throw new NistAssessmentConflictException("Esta avaliação não existe mais na versão informada. Recarregue antes de gravar.");
-            eval = new SubcategoryEvaluation { AssessmentScopeId = scopeId, SubcategoryId = sub.Id, CreatedAt = _clock.GetUtcNow() };
-            _db.Evaluations.Add(eval);
-        }
-        else if (eval.Version != command.ExpectedVersion)
-        {
-            throw new NistAssessmentConflictException(
-                $"Esta subcategoria foi alterada por outra pessoa (versão {eval.Version}, você enviou {command.ExpectedVersion}). " +
-                "Recarregue para ver a versão atual antes de gravar.");
-        }
-
-        eval.NotApplicable = command.NotApplicable;
-        eval.CurrentLevel = command.CurrentLevel;
-        eval.CurrentScore = command.CurrentLevel;
-        eval.TargetLevel = command.TargetLevel;
-        eval.TargetScore = command.TargetLevel;
-        eval.CurrentComments = currentComments;
-        eval.TargetComments = targetComments;
-        eval.Rationale = rationale;
-        eval.Gaps = gaps;
-        eval.RiskImpact = risk;
-        eval.ImprovementGuidance = guidance;
-        eval.OwnerName = owner;
-        // Revisão HUMANA: autor vem do token, nunca do corpo. A confiança é da IA e não se aplica aqui.
-        eval.EvaluatedBy = EvaluatedBy.Analyst;
-        eval.Confidence = null;
-        eval.ReviewedById = actor.AccountId?.ToString();
-        eval.ReviewedByName = string.IsNullOrWhiteSpace(actor.DisplayName) ? null : Truncate(actor.DisplayName.Trim(), MaxName);
-        eval.ReviewedAt = _clock.GetUtcNow();
-        eval.Version += 1;
-
-        // Andamento do escopo e da avaliação: a primeira revisão tira ambos do estado inicial.
-        var scope = await _db.Scopes.FirstAsync(s => s.Id == scopeId, ct);
-        if (scope.Status is ScopeStatus.NotStarted or ScopeStatus.Questionnaire or ScopeStatus.Validation)
-            scope.Status = ScopeStatus.Evaluation;
-        var assessment = await _db.Assessments.FirstAsync(a => a.Id == assessmentId, ct);
-        if (assessment.Status == AssessmentStatus.Draft)
-            assessment.Status = AssessmentStatus.InProgress;
-
-        try
-        {
-            await _db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            throw new NistAssessmentConflictException(
-                "Esta subcategoria foi alterada por outra pessoa enquanto a sua gravação estava em curso. Recarregue antes de gravar.");
-        }
-        catch (DbUpdateException) when (creating)
-        {
-            // Índice único (escopo, subcategoria): outra pessoa criou a avaliação no mesmo instante.
-            throw new NistAssessmentConflictException(
-                "Outra pessoa acabou de registrar esta subcategoria. Recarregue para ver a avaliação existente.");
-        }
-
-        _db.ChangeTracker.Clear();
-        return await GetSubcategoryAsync(assessmentId, scopeId, sub.Code, ct);
-    }
-
-    // =============================================================================================
-    //  Evidências
-    // =============================================================================================
-
-    public async Task<NistSubcategoryDetailView> LinkEvidenceAsync(
-        Guid assessmentId, Guid scopeId, string code, LinkNistEvidenceCommand command, RemediationActor actor, CancellationToken ct = default)
-    {
-        RequireTenant();
-        ArgumentNullException.ThrowIfNull(command);
-        var ctx = await LoadScopeContextAsync(assessmentId, scopeId, ct);
-        var sub = FindSubcategory(ctx, code);
-        var now = _clock.GetUtcNow();
-
-        if (!Enum.TryParse<EvidenceOriginKind>((command.Kind ?? "").Trim(), ignoreCase: true, out var kind)
-            || !Enum.IsDefined(kind))
-            throw new NistAssessmentValidationException("Tipo de evidência inválido.");
-
-        var notes = Optional(command.Notes, MaxNotes, "A observação da evidência");
-        var evidence = new Evidence
-        {
-            AssessmentScopeId = scopeId,
-            SubcategoryCode = sub.Code,
-            OriginKind = kind,
-            RecordedByAccountId = actor.AccountId,
-            RecordedByName = string.IsNullOrWhiteSpace(actor.DisplayName) ? null : Truncate(actor.DisplayName.Trim(), MaxName),
-            CreatedAt = now,
-        };
-
-        switch (kind)
-        {
-            case EvidenceOriginKind.Manual:
-            {
-                evidence.Title = Required(command.Title, "Informe um título para a evidência.", MaxTitle, "O título");
-                evidence.Uri = NormalizeUri(command.Uri);
-                evidence.Notes = notes;
-                evidence.Type = Enum.TryParse<EvidenceType>((command.ManualType ?? "").Trim(), true, out var t)
-                        && Enum.IsDefined(t) && t != EvidenceType.ApiSignal
-                    ? t
-                    : evidence.Uri is null ? EvidenceType.Interview : EvidenceType.Link;
-                evidence.Source = EvidenceSource.Analyst;
-                evidence.OriginLabel = "Registro do analista";
-                evidence.CollectedAt = command.CollectedOn is { } d
-                    ? new DateTimeOffset(d.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero)
-                    : now;
-                if (evidence.CollectedAt > now.AddDays(1))
-                    throw new NistAssessmentValidationException("A data da evidência não pode estar no futuro.");
-                break;
-            }
-            case EvidenceOriginKind.GovernanceDocument:
-            {
-                var docId = command.DocumentId ?? throw new NistAssessmentValidationException("Escolha o documento.");
-                var doc = await _db.GovernanceDocuments.AsNoTracking().FirstOrDefaultAsync(x => x.Id == docId, ct)
-                    ?? throw new NistAssessmentNotFoundException("Documento não encontrado neste ambiente.");
-                evidence.Title = Truncate(doc.Title, MaxTitle);
-                evidence.Type = EvidenceType.Document;
-                evidence.Source = EvidenceSource.Analyst;
-                evidence.OriginRef = doc.Id.ToString();
-                evidence.OriginLabel = $"Biblioteca de documentos · {DocumentTypeLabel(doc.Type)}";
-                evidence.OriginScope = Truncate($"Situação do documento: {DocumentStatusLabel(doc.Status)}"
-                    + (doc.FileName is null ? "" : $"; arquivo {doc.FileName}"), 500);
-                evidence.Hash = doc.Sha256;
-                evidence.CollectedAt = doc.DocumentDate is { } dd
-                    ? new DateTimeOffset(dd.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero)
-                    : doc.CreatedAt;
-                evidence.Notes = notes;
-                break;
-            }
-            case EvidenceOriginKind.KnightIndicator:
-            {
-                var runId = command.KnightRunId ?? throw new NistAssessmentValidationException("Informe a avaliação do KNIGHT.");
-                var indicatorId = (command.KnightIndicatorId ?? "").Trim();
-                if (indicatorId.Length == 0) throw new NistAssessmentValidationException("Informe o controle do KNIGHT.");
-
-                var run = await _db.KnightAssessmentRuns.AsNoTracking().FirstOrDefaultAsync(r => r.Id == runId, ct)
-                    ?? throw new NistAssessmentNotFoundException("Avaliação do KNIGHT não encontrada neste ambiente.");
-                if (run.Status != KnightRunStatus.Completed)
-                    throw new NistAssessmentValidationException("Só uma avaliação do KNIGHT concluída sustenta evidência.");
-                if (run.SourceType == KnightSourceType.Consolidated)
-                    throw new NistAssessmentValidationException("Vincule o resultado da avaliação da própria fonte, não do consolidado.");
-
-                var indicator = await _db.KnightIndicatorResults.AsNoTracking()
-                    .FirstOrDefaultAsync(i => i.RunId == runId && i.IndicatorId == indicatorId, ct)
-                    ?? throw new NistAssessmentNotFoundException("Controle não encontrado nesta avaliação do KNIGHT.");
-                // Critério sustentado: mapeamento EXPLÍCITO do catálogo do KNIGHT para esta subcategoria.
-                if (!indicator.NistCodes.Any(c => string.Equals(c, sub.Code, StringComparison.OrdinalIgnoreCase)))
-                    throw new NistAssessmentValidationException(
-                        $"O controle {indicator.IndicatorId} do KNIGHT não está mapeado para {sub.Code}: só entram evidências técnicas com mapeamento explícito.");
-                if (!EvaluatedKnightStatuses.Contains(indicator.Status))
-                    throw new NistAssessmentValidationException(
-                        "Este controle não tem resultado avaliado nesta execução (não avaliado, erro ou não aplicável) e não sustenta evidência.");
-
-                evidence.Title = Truncate($"{indicator.IndicatorId} — {indicator.Title}", MaxTitle);
-                evidence.Type = EvidenceType.ApiSignal;
-                evidence.Source = run.Mode == KnightAssessmentMode.Live ? EvidenceSource.ApiValidated : EvidenceSource.SelfDeclared;
-                evidence.OriginRef = $"{run.Id}/{indicator.IndicatorId}";
-                evidence.OriginLabel = Truncate($"AEGIS KNIGHT · {run.Source} · {indicator.IndicatorId}", 300);
-                evidence.OriginScope = Truncate(KnightScopeOf(run), 500);
-                evidence.CollectedAt = run.CompletedAt ?? indicator.CollectedAt;
-                evidence.Notes = Truncate(
-                    $"Resultado técnico: {KnightStatusLabel(indicator.Status)}. Evidência técnica de apoio — não comprova sozinha o resultado organizacional."
-                    + (notes is null ? "" : $" {notes}"), MaxNotes);
-                break;
-            }
-            case EvidenceOriginKind.AssetInventory:
-            {
-                if (!sub.Code.StartsWith("ID.AM", StringComparison.Ordinal))
-                    throw new NistAssessmentValidationException("O inventário de ativos só sustenta resultados de gestão de ativos (ID.AM).");
-                var assets = await _db.Assets.AsNoTracking().Where(a => a.IsActive)
-                    .Select(a => new { a.Category, a.DiscoverySource }).ToListAsync(ct);
-                evidence.Title = $"Inventário de ativos — retrato de {now.UtcDateTime.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}";
-                evidence.Type = EvidenceType.ApiSignal;
-                evidence.Source = EvidenceSource.ApiValidated;
-                evidence.OriginRef = $"inventory@{now.UtcDateTime:yyyy-MM-ddTHH:mm:ss}Z";
-                evidence.OriginLabel = "Inventário de ativos do AEGIS";
-                evidence.OriginScope = Truncate(InventoryScopeOf(assets.Select(a => (a.Category, a.DiscoverySource)).ToList()), 500);
-                evidence.CollectedAt = now;
-                evidence.Notes = Truncate("Retrato do inventário no instante do vínculo. Mostra o que está inventariado, não que a gestão de ativos esteja completa."
-                    + (notes is null ? "" : $" {notes}"), MaxNotes);
-                break;
-            }
-        }
-
-        // Um mesmo documento ou controle técnico não é vinculado duas vezes à mesma subcategoria do escopo.
-        if (evidence.OriginRef is not null && kind != EvidenceOriginKind.AssetInventory)
-        {
-            var duplicate = await _db.Evidence.AsNoTracking().AnyAsync(e => e.AssessmentScopeId == scopeId
-                && e.SubcategoryCode == sub.Code && e.RemovedAt == null && e.OriginKind == kind && e.OriginRef == evidence.OriginRef, ct);
-            if (duplicate)
-                throw new NistAssessmentConflictException("Esta evidência já está vinculada a esta subcategoria.");
-        }
-
-        _db.Evidence.Add(evidence);
-        await _db.SaveChangesAsync(ct);
-        _db.ChangeTracker.Clear();
-        return await GetSubcategoryAsync(assessmentId, scopeId, sub.Code, ct);
-    }
-
-    public async Task<NistSubcategoryDetailView> RemoveEvidenceAsync(
-        Guid assessmentId, Guid scopeId, string code, Guid evidenceId, RemediationActor actor, CancellationToken ct = default)
-    {
-        RequireTenant();
-        var ctx = await LoadScopeContextAsync(assessmentId, scopeId, ct);
-        var sub = FindSubcategory(ctx, code);
-        var evidence = await _db.Evidence.FirstOrDefaultAsync(e => e.Id == evidenceId && e.AssessmentScopeId == scopeId
-            && e.SubcategoryCode == sub.Code && e.RemovedAt == null, ct)
-            ?? throw new NistAssessmentNotFoundException("Evidência não encontrada nesta subcategoria.");
-        evidence.RemovedAt = _clock.GetUtcNow();
-        evidence.RemovedByName = string.IsNullOrWhiteSpace(actor.DisplayName) ? null : Truncate(actor.DisplayName.Trim(), MaxName);
-        await _db.SaveChangesAsync(ct);
-        _db.ChangeTracker.Clear();
-        return await GetSubcategoryAsync(assessmentId, scopeId, sub.Code, ct);
-    }
-
-    // =============================================================================================
-    //  Sugestão da IA (nunca gravada)
-    // =============================================================================================
-
-    public async Task<NistAiSuggestionView> SuggestAsync(Guid assessmentId, Guid scopeId, string code, CancellationToken ct = default)
-    {
-        RequireTenant();
-        var ctx = await LoadScopeContextAsync(assessmentId, scopeId, ct);
-        var sub = FindSubcategory(ctx, code);
-
-        if (_ai is null || _gate is null || _gate.Mode == AiMode.Disabled)
-            throw new NistAiUnavailableException("A IA está desativada neste ambiente. A avaliação segue normalmente sem ela.");
-
-        var simulated = true;
-        if (_gate.ProviderConfigured && _aiTenant is not null)
-            simulated = !_gate.IsExternalAllowedForSlug(await _aiTenant.GetCurrentSlugAsync(ct));
-
-        var eval = ctx.Evaluation(sub.Id);
-        var linked = await ActiveEvidenceAsync(scopeId, sub.Code, ct);
-        var answers = new List<(string Question, string Answer, string? Comment)>();
-        if (eval?.CurrentComments is { } cc) answers.Add(("Observação do analista sobre a situação atual", cc, null));
-        if (eval?.Gaps is { } g) answers.Add(("Lacunas observadas", g, null));
-        var summaries = linked.Select(e => $"{e.OriginLabel ?? e.OriginKind.ToString()} — {e.Title} ({e.CollectedAt:yyyy-MM-dd}){(e.Notes is null ? "" : $": {e.Notes}")}").ToList();
-
-        MaturitySuggestion suggestion;
-        try
-        {
-            suggestion = await _ai.SuggestMaturityAsync(
-                new MaturitySuggestionRequest(sub.Code, sub.Description, answers, summaries, Array.Empty<(string, double?, int?)>()), ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Sugestão da IA indisponível para {Code}.", sub.Code);
-            throw new NistAiUnavailableException("A IA não respondeu agora. A avaliação segue normalmente sem ela.");
-        }
-
-        return new NistAiSuggestionView(
-            Math.Clamp(suggestion.CurrentLevel, AssessmentMethodology.MinLevel, AssessmentMethodology.MaxLevel),
-            Math.Clamp(suggestion.Confidence, 0, 1),
-            Truncate(suggestion.Rationale ?? "", MaxLongText),
-            simulated,
-            _clock.GetUtcNow());
-    }
-
-    // =============================================================================================
-    //  Histórico (maturidade por avaliação e escopo)
+    //  Histórico, pessoas e trilha
     // =============================================================================================
 
     public async Task<IReadOnlyList<NistAssessmentHistoryItem>> HistoryAsync(CancellationToken ct = default)
     {
-        RequireTenant();
+        RequireTenant(_tenant);
         var assessments = await _db.Assessments.AsNoTracking().ToListAsync(ct);
         if (assessments.Count == 0) return Array.Empty<NistAssessmentHistoryItem>();
         var scopes = await _db.Scopes.AsNoTracking().ToListAsync(ct);
+        var cycles = await _db.NistCycles.AsNoTracking().ToListAsync(ct);
         var evaluations = await _db.Evaluations.AsNoTracking().ToListAsync(ct);
 
         var items = new List<NistAssessmentHistoryItem>();
         foreach (var a in assessments)
         {
-            var catalog = await LoadCatalogAsync(a.FrameworkVersionId, ct);
+            var catalog = await LoadCatalogAsync(_db, a.FrameworkVersionId, ct);
             var subs = catalog.Functions.SelectMany(f => f.Categories).SelectMany(c => c.Subcategories).ToList();
+            foreach (var c in cycles.Where(x => x.AssessmentId == a.Id))
             foreach (var s in scopes.Where(x => x.AssessmentId == a.Id))
             {
-                var evals = evaluations.Where(e => e.AssessmentScopeId == s.Id)
+                var evals = evaluations.Where(e => e.AssessmentScopeId == s.Id && e.CycleId == c.Id && e.HumanConfirmed)
                     .GroupBy(e => e.SubcategoryId).ToDictionary(g => g.Key, g => g.First());
-                var last = evals.Values.Where(e => e.ReviewedAt.HasValue).Select(e => e.ReviewedAt!.Value).DefaultIfEmpty().Max();
-                if (last == default) continue; // sem revisão humana: o escopo não representa mês nenhum
-                var profile = _maturity.AggregateProfile(subs.Select(sub => evals.TryGetValue(sub.Id, out var e)
-                    ? new SubcategoryProfileScore(sub.Code, e.CurrentLevel, e.TargetLevel, e.NotApplicable)
-                    : new SubcategoryProfileScore(sub.Code, null, null, false)));
-                var utc = last.UtcDateTime;
+                if (evals.Count == 0) continue; // sem revisão humana: a rodada não representa nada neste escopo
+                var last = evals.Values.Select(e => e.ReviewedAt!.Value).Max();
+                var profile = _maturity.AggregateProfile(subs.Select(sub => ProfileScoreOf(sub.Code, evals.TryGetValue(sub.Id, out var e) ? e : null)));
                 items.Add(new NistAssessmentHistoryItem(
                     a.Id, a.Name, s.Id, ScopeName(s), a.MethodologyVersion,
-                    new DateOnly(utc.Year, utc.Month, 1),
-                    "Mês da revisão humana mais recente registrada no escopo.",
+                    new DateOnly(c.PeriodEnd.Year, c.PeriodEnd.Month, 1),
+                    "Mês de término do período da rodada; só avaliações confirmadas por revisão humana.",
                     last, subs.Count,
                     evals.Values.Count(e => !e.NotApplicable && e.CurrentLevel.HasValue),
                     evals.Values.Count(e => e.NotApplicable),
-                    profile.Overall.Current, profile.Overall.Target));
+                    profile.Overall.Current, profile.Overall.Target,
+                    c.Id, c.Name, c.PeriodStart, c.PeriodEnd));
             }
         }
         return items.OrderByDescending(i => i.ReferenceMonth).ThenByDescending(i => i.LastReviewedAt).ToList();
     }
 
+    public async Task<IReadOnlyList<NistAssigneeView>> AssigneesAsync(CancellationToken ct = default)
+    {
+        RequireTenant(_tenant);
+        var users = await _db.Users.AsNoTracking().Where(u => u.IsActive)
+            .Select(u => new { u.Id, u.DisplayName, u.Role }).ToListAsync(ct);
+        return users.OrderBy(u => u.DisplayName, StringComparer.CurrentCulture)
+            .Select(u => new NistAssigneeView(u.Id, u.DisplayName, u.Role.ToString())).ToList();
+    }
+
+    public async Task<IReadOnlyList<NistAuditEntryView>> AuditAsync(Guid assessmentId, Guid? cycleId, Guid? scopeId, string? code, CancellationToken ct = default)
+    {
+        RequireTenant(_tenant);
+        if (!await _db.Assessments.AsNoTracking().AnyAsync(a => a.Id == assessmentId, ct))
+            throw new NistAssessmentNotFoundException("Avaliação não encontrada.");
+        var normalized = string.IsNullOrWhiteSpace(code) ? null : code.Trim().ToUpperInvariant();
+
+        var q = _db.NistAuditEntries.AsNoTracking().Where(e => e.AssessmentId == assessmentId);
+        if (cycleId is { } c) q = q.Where(e => e.CycleId == c);
+        if (scopeId is { } s) q = q.Where(e => e.AssessmentScopeId == s);
+        if (normalized is not null) q = q.Where(e => e.SubcategoryCode == normalized);
+        var entries = (await q.ToListAsync(ct)).Select(e => new NistAuditEntryView(
+            e.Id, e.At, e.ActorName, e.Subject, e.SubjectId, e.Action, e.Summary, e.CycleId, e.AssessmentScopeId, e.SubcategoryCode,
+            ReadChanges(e.ChangesJson))).ToList();
+
+        // A trilha dos PLANOS vive no próprio plano (ActionPlanEvent, agora com valores anteriores/novos).
+        var plans = _db.ActionPlans.AsNoTracking().Where(p => p.OriginKind == ActionPlanOriginKind.NistFinding && p.OriginNistAssessmentId == assessmentId);
+        if (cycleId is { } pc) plans = plans.Where(p => p.OriginNistCycleId == pc);
+        if (scopeId is { } ps) plans = plans.Where(p => p.OriginNistScopeId == ps);
+        if (normalized is not null) plans = plans.Where(p => p.OriginSubcategoryCode == normalized);
+        var planInfo = await plans.Select(p => new { p.Id, p.Title, p.OriginNistCycleId, p.OriginNistScopeId, p.OriginSubcategoryCode }).ToListAsync(ct);
+        if (planInfo.Count > 0)
+        {
+            var ids = planInfo.Select(p => p.Id).ToList();
+            var events = await _db.ActionPlanEvents.AsNoTracking().Where(e => ids.Contains(e.ActionPlanId)).ToListAsync(ct);
+            foreach (var e in events)
+            {
+                var p = planInfo.First(x => x.Id == e.ActionPlanId);
+                var changes = ReadChanges(e.ChangesJson).ToList();
+                if (e.FromStatus is { } from && e.ToStatus is { } to)
+                    changes.Insert(0, new NistFieldChange("status", "etapa", RemediationReading.StatusLabel(from), RemediationReading.StatusLabel(to)));
+                entries.Add(new NistAuditEntryView(e.Id, e.At, e.ActorName, "Plan", e.ActionPlanId, e.Kind.ToString(),
+                    $"Plano \"{p.Title}\": " + (e.Note ?? PlanEventLabel(e.Kind)), p.OriginNistCycleId, p.OriginNistScopeId, p.OriginSubcategoryCode, changes));
+            }
+        }
+
+        return entries.OrderByDescending(e => e.At.UtcTicks).ThenByDescending(e => e.Id).Take(1000).ToList();
+    }
+
+    private static string PlanEventLabel(ActionPlanEventKind kind) => kind switch
+    {
+        ActionPlanEventKind.Created => "criado.",
+        ActionPlanEventKind.StatusChanged => "etapa alterada.",
+        ActionPlanEventKind.ExecutionRecorded => "execução relatada.",
+        ActionPlanEventKind.ValidationRecorded => "validação registrada.",
+        _ => "campos alterados.",
+    };
+
     // =============================================================================================
     //  Montagem
     // =============================================================================================
 
-    private sealed class ScopeContext
+    private async Task<IReadOnlyList<NistCycleView>> CycleViewsAsync(Guid assessmentId, CancellationToken ct)
     {
-        public required Assessment Assessment { get; init; }
-        public required AssessmentScope Scope { get; init; }
-        public required FrameworkVersion Catalog { get; init; }
-        public required Dictionary<Guid, SubcategoryEvaluation> Evaluations { get; init; }
-        public required Dictionary<string, int> EvidenceCounts { get; init; }
-
-        public SubcategoryEvaluation? Evaluation(Guid subcategoryId) => Evaluations.TryGetValue(subcategoryId, out var e) ? e : null;
-        public int EvidenceCount(string code) => EvidenceCounts.TryGetValue(code, out var n) ? n : 0;
-    }
-
-    private async Task<ScopeContext> LoadScopeContextAsync(Guid assessmentId, Guid scopeId, CancellationToken ct)
-    {
-        var assessment = await _db.Assessments.AsNoTracking().FirstOrDefaultAsync(a => a.Id == assessmentId, ct)
-            ?? throw new NistAssessmentNotFoundException("Avaliação não encontrada.");
-        var scope = await _db.Scopes.AsNoTracking().FirstOrDefaultAsync(s => s.Id == scopeId && s.AssessmentId == assessmentId, ct)
-            ?? throw new NistAssessmentNotFoundException("Escopo não encontrado nesta avaliação.");
-        var catalog = await LoadCatalogAsync(assessment.FrameworkVersionId, ct);
-
-        var evaluations = await _db.Evaluations.AsNoTracking().Where(e => e.AssessmentScopeId == scopeId).ToListAsync(ct);
-        var evidence = await _db.Evidence.AsNoTracking()
-            .Where(e => e.AssessmentScopeId == scopeId && e.RemovedAt == null && e.SubcategoryCode != null)
-            .Select(e => e.SubcategoryCode!).ToListAsync(ct);
-
-        return new ScopeContext
-        {
-            Assessment = assessment,
-            Scope = scope,
-            Catalog = catalog,
-            Evaluations = evaluations.GroupBy(e => e.SubcategoryId).ToDictionary(g => g.Key, g => g.First()),
-            EvidenceCounts = evidence.GroupBy(c => c, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal),
-        };
-    }
-
-    private async Task<FrameworkVersion> LoadCatalogAsync(Guid frameworkVersionId, CancellationToken ct)
-    {
-        var fv = await _db.FrameworkVersions.AsNoTracking()
-            .Include(f => f.Functions).ThenInclude(fn => fn.Categories).ThenInclude(c => c.Subcategories)
-            .Include(f => f.MaturityLevels)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(f => f.Id == frameworkVersionId, ct)
-            ?? throw new NistAssessmentNotFoundException("O catálogo desta avaliação não está disponível.");
-        fv.Functions = fv.Functions.OrderBy(f => Array.IndexOf(FunctionOrder, f.Code) is var i && i < 0 ? 99 : i).ToList();
-        return fv;
+        var cycles = await _db.NistCycles.AsNoTracking().Where(c => c.AssessmentId == assessmentId).ToListAsync(ct);
+        var publications = await _db.PostureSnapshots.AsNoTracking()
+            .Where(s => s.Type == PostureSnapshotType.NistMaturity && s.NistAssessmentId == assessmentId)
+            .Select(s => s.NistCycleId).ToListAsync(ct);
+        return cycles
+            .OrderByDescending(c => c.PeriodStart).ThenByDescending(c => c.CreatedAt.UtcTicks).ThenBy(c => c.Id)
+            .Select(c => new NistCycleView(c.Id, c.Name, c.PeriodKind.ToString(), c.PeriodStart, c.PeriodEnd, c.Status.ToString(),
+                c.SeedFromCycleId, cycles.FirstOrDefault(x => x.Id == c.SeedFromCycleId)?.Name, c.SeedMode.ToString(),
+                c.CreatedAt, c.CreatedByName, c.ClosedAt, c.ClosedByName, c.Version, publications.Count(p => p == c.Id)))
+            .ToList();
     }
 
     private Task<int> CountSubcategoriesAsync(Guid frameworkVersionId, CancellationToken ct) =>
         _db.Subcategories.CountAsync(s => s.Category!.Function!.FrameworkVersionId == frameworkVersionId, ct);
 
-    private static NistSubcategory FindSubcategory(ScopeContext ctx, string code)
-    {
-        var normalized = (code ?? "").Trim().ToUpperInvariant();
-        return ctx.Catalog.Functions.SelectMany(f => f.Categories).SelectMany(c => c.Subcategories)
-                   .FirstOrDefault(s => string.Equals(s.Code, normalized, StringComparison.Ordinal))
-               ?? throw new NistAssessmentNotFoundException($"Subcategoria '{code}' não existe no catálogo da avaliação.");
-    }
-
     private async Task<NistAssessmentView> BuildAssessmentViewAsync(Assessment a, CancellationToken ct)
     {
         var fvName = await _db.FrameworkVersions.AsNoTracking().Where(f => f.Id == a.FrameworkVersionId).Select(f => f.Name).FirstOrDefaultAsync(ct) ?? "";
         var total = await CountSubcategoriesAsync(a.FrameworkVersionId, ct);
+        var cycles = await CycleViewsAsync(a.Id, ct);
+        var progressCycle = cycles.FirstOrDefault();
         var scopes = await _db.Scopes.AsNoTracking().Where(s => s.AssessmentId == a.Id).ToListAsync(ct);
         var scopeIds = scopes.Select(s => s.Id).ToList();
-        var evals = await _db.Evaluations.AsNoTracking().Where(e => scopeIds.Contains(e.AssessmentScopeId)).ToListAsync(ct);
+        var cycleId = progressCycle?.Id ?? Guid.Empty;
+        var evals = await _db.Evaluations.AsNoTracking().Where(e => scopeIds.Contains(e.AssessmentScopeId) && e.CycleId == cycleId).ToListAsync(ct);
         var evidence = await _db.Evidence.AsNoTracking()
-            .Where(e => e.AssessmentScopeId != null && scopeIds.Contains(e.AssessmentScopeId!.Value) && e.RemovedAt == null && e.SubcategoryCode != null)
+            .Where(e => e.AssessmentScopeId != null && scopeIds.Contains(e.AssessmentScopeId!.Value) && e.CycleId == cycleId
+                        && e.RemovedAt == null && e.SubcategoryCode != null)
             .Select(e => new { ScopeId = e.AssessmentScopeId!.Value, Code = e.SubcategoryCode! }).ToListAsync(ct);
+        var lastAny = await _db.Evaluations.AsNoTracking().Where(e => scopeIds.Contains(e.AssessmentScopeId) && e.ReviewedAt != null)
+            .Select(e => e.ReviewedAt).ToListAsync(ct);
 
         var scopeViews = scopes
             .OrderBy(s => s.CreatedAt.UtcTicks).ThenBy(s => s.Id)
@@ -678,26 +649,28 @@ public sealed class NistAssessmentService : INistAssessmentService
             {
                 var se = evals.Where(e => e.AssessmentScopeId == s.Id).ToList();
                 var withEvidence = evidence.Where(x => x.ScopeId == s.Id).Select(x => x.Code).Distinct(StringComparer.Ordinal).Count();
-                var last = se.Where(e => e.ReviewedAt.HasValue).Select(e => (DateTimeOffset?)e.ReviewedAt!.Value).Max();
+                var states = se.Select(e => StateOf(e, 0)).ToList();
+                var last = se.Where(e => e.HumanConfirmed).Select(e => (DateTimeOffset?)e.ReviewedAt!.Value).Max();
                 return new NistScopeView(s.Id, ScopeName(s), s.Description, total,
-                    se.Count(e => !e.NotApplicable && e.CurrentLevel.HasValue),
-                    se.Count(e => e.NotApplicable),
-                    se.Count(e => !e.NotApplicable && !e.CurrentLevel.HasValue),
-                    withEvidence, last);
+                    states.Count(x => x == NistSubcategoryStates.Evaluated),
+                    states.Count(x => x == NistSubcategoryStates.NotApplicable),
+                    states.Count(x => x == NistSubcategoryStates.InProgress),
+                    withEvidence, last, progressCycle?.Id,
+                    states.Count(x => x == NistSubcategoryStates.PendingConfirmation));
             }).ToList();
 
-        var lastReviewed = scopeViews.Select(s => s.LastReviewedAt).Where(d => d.HasValue).Max();
+        var lastReviewed = lastAny.Where(d => d.HasValue).Max();
         return new NistAssessmentView(a.Id, a.Name, a.Description, a.Status.ToString(), a.StartDate, a.EndDate,
-            a.MethodologyVersion, fvName, a.CreatedAt, lastReviewed, scopeViews);
+            a.MethodologyVersion, fvName, a.CreatedAt, lastReviewed, scopeViews, cycles, progressCycle?.Id);
     }
 
-    private async Task<NistSubcategoryDetailView> BuildDetailAsync(ScopeContext ctx, NistSubcategory sub, CancellationToken ct)
+    private async Task<NistSubcategoryDetailView> BuildDetailAsync(NistScopeContext ctx, NistSubcategory sub, CancellationToken ct)
     {
         var category = ctx.Catalog.Functions.SelectMany(f => f.Categories).First(c => c.Id == sub.CategoryId);
         var fn = ctx.Catalog.Functions.First(f => f.Id == category.FunctionId);
         var language = _language?.Get(sub.Code);
         var eval = ctx.Evaluation(sub.Id);
-        var linked = await ActiveEvidenceAsync(ctx.Scope.Id, sub.Code, ct);
+        var linked = await ActiveEvidenceAsync(ctx.Scope.Id, ctx.Cycle.Id, sub.Code, ct);
         var available = await AvailableEvidenceAsync(sub.Code, linked, ct);
 
         NistPostureReadingView? posture = null;
@@ -706,7 +679,17 @@ public sealed class NistAssessmentService : INistAssessmentService
             posture = new NistPostureReadingView(state.Status.ToString(), state.LastVerdictSource.ToString(),
                 state.CurrentScore, sub.MaxScorePoints, state.LastEvaluatedAt);
 
-        var evidenceCount = linked.Count;
+        var activeUsers = await ActiveUserIdsAsync(_db, ct);
+        var procedures = ctx.Procedures.Where(p => p.SubcategoryCode == sub.Code)
+            .OrderBy(p => p.Method).ThenBy(p => p.CreatedAt.UtcTicks).ThenBy(p => p.Id).Select(NistWorkService.ProcedureView).ToList();
+        var findings = ctx.Findings.Where(f => f.SubcategoryCode == sub.Code).ToList();
+        var plans = await PlansByFindingAsync(_db, findings.Select(f => f.Id).ToList(), ct);
+        var findingViews = findings
+            .OrderByDescending(f => f.CreatedAt.UtcTicks).ThenBy(f => f.Id)
+            .Select(f => NistWorkService.FindingView(f, ctx.Cycle.Name, ScopeName(ctx.Scope), TitleOf(sub),
+                CurrentPlan(plans.TryGetValue(f.Id, out var l) ? l : null)))
+            .ToList();
+
         return new NistSubcategoryDetailView(
             ctx.Assessment.Id, ctx.Scope.Id, sub.Code, fn.Code, fn.Name, category.Code, category.Name,
             language?.Title ?? sub.Code,
@@ -715,18 +698,44 @@ public sealed class NistAssessmentService : INistAssessmentService
             language?.InitialAction ?? "",
             sub.Description,
             string.IsNullOrWhiteSpace(sub.ImplementationExamples) ? null : sub.ImplementationExamples,
-            eval is null ? null : EvaluationView(eval, evidenceCount),
+            eval is null ? null : EvaluationView(eval, linked.Count, activeUsers),
             linked.Select(EvidenceView).ToList(),
             available,
             posture,
             ctx.Catalog.MaturityLevels.OrderBy(l => l.Level).Select(l => new NistMaturityLevelView(l.Level, l.Name, l.Description)).ToList(),
-            ctx.Assessment.MethodologyVersion);
+            ctx.Assessment.MethodologyVersion,
+            ctx.Cycle.Id,
+            ctx.Cycle.Name,
+            ctx.Cycle.Status.ToString(),
+            procedures,
+            findingViews,
+            await ReferenceAsync(ctx, sub, ct),
+            FindingBlockedReason(ctx.Cycle, eval, ctx.Procedures.Where(p => p.SubcategoryCode == sub.Code)));
     }
 
-    private async Task<List<Evidence>> ActiveEvidenceAsync(Guid scopeId, string code, CancellationToken ct)
+    /// <summary>A mesma subcategoria na rodada de origem (referência ou rascunho) — leitura, nunca a avaliação desta rodada.</summary>
+    private async Task<NistCycleReferenceView?> ReferenceAsync(NistScopeContext ctx, NistSubcategory sub, CancellationToken ct)
+    {
+        if (ctx.Cycle.SeedFromCycleId is not { } sourceId || ctx.Cycle.SeedMode == NistCycleSeedMode.None) return null;
+        var source = await _db.NistCycles.AsNoTracking().FirstOrDefaultAsync(c => c.Id == sourceId, ct);
+        if (source is null) return null;
+        var e = await _db.Evaluations.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.CycleId == sourceId && x.AssessmentScopeId == ctx.Scope.Id && x.SubcategoryId == sub.Id, ct);
+        var evidence = await _db.Evidence.AsNoTracking().CountAsync(x => x.CycleId == sourceId && x.AssessmentScopeId == ctx.Scope.Id
+            && x.SubcategoryCode == sub.Code && x.RemovedAt == null, ct);
+        var performed = await _db.NistProcedures.AsNoTracking().CountAsync(p => p.CycleId == sourceId && p.AssessmentScopeId == ctx.Scope.Id
+            && p.SubcategoryCode == sub.Code && p.RemovedAt == null && p.Status == NistProcedureStatus.Performed, ct);
+        var findings = await _db.NistFindings.AsNoTracking().CountAsync(f => f.CycleId == sourceId && f.AssessmentScopeId == ctx.Scope.Id
+            && f.SubcategoryCode == sub.Code, ct);
+        return new NistCycleReferenceView(source.Id, source.Name, StateOf(e, evidence), e?.CurrentLevel, e?.TargetLevel,
+            e?.NotApplicable ?? false, e?.Rationale, e?.Gaps, e?.HumanConfirmed == true ? e.ReviewedByName : null,
+            e?.HumanConfirmed == true ? e.ReviewedAt : null, evidence, performed, findings);
+    }
+
+    private async Task<List<Evidence>> ActiveEvidenceAsync(Guid scopeId, Guid cycleId, string code, CancellationToken ct)
     {
         var rows = await _db.Evidence.AsNoTracking()
-            .Where(e => e.AssessmentScopeId == scopeId && e.SubcategoryCode == code && e.RemovedAt == null)
+            .Where(e => e.AssessmentScopeId == scopeId && e.CycleId == cycleId && e.SubcategoryCode == code && e.RemovedAt == null)
             .ToListAsync(ct);
         return rows.OrderByDescending(e => e.CreatedAt.UtcTicks).ThenBy(e => e.Id).ToList();
     }
@@ -834,46 +843,41 @@ public sealed class NistAssessmentService : INistAssessmentService
         return result;
     }
 
-    private SubcategoryProfileScore ProfileScoreOf(NistSubcategory s, ScopeContext ctx)
-    {
-        var e = ctx.Evaluation(s.Id);
-        return new SubcategoryProfileScore(s.Code, e?.CurrentLevel, e?.TargetLevel, e?.NotApplicable ?? false);
-    }
-
-    private NistSubcategoryRowView RowOf(NistSubcategory s, ScopeContext ctx)
+    private NistSubcategoryRowView RowOf(NistSubcategory s, NistScopeContext ctx)
     {
         var e = ctx.Evaluation(s.Id);
         var evidence = ctx.EvidenceCount(s.Code);
-        return new NistSubcategoryRowView(s.Code, TitleOf(s), StateOf(e, evidence), e?.CurrentLevel, e?.TargetLevel, e?.Gap,
-            e?.OwnerName, evidence, e?.ReviewedAt);
+        var procedures = ctx.Procedures.Where(p => p.SubcategoryCode == s.Code).ToList();
+        return new NistSubcategoryRowView(s.Code, TitleOf(s), StateOf(e, evidence),
+            e?.CurrentLevel, e?.TargetLevel, ConfirmedGap(e) ?? (e is { HumanConfirmed: false } ? e.Gap : null),
+            e?.OwnerName, evidence, e is { HumanConfirmed: true } ? e.ReviewedAt : null,
+            e is null ? NistReviewStates.None : ReviewStateOf(e),
+            procedures.Count(p => p.Status is NistProcedureStatus.Planned or NistProcedureStatus.InProgress),
+            procedures.Count(p => p.Status == NistProcedureStatus.Performed),
+            ctx.Findings.Count(f => f.SubcategoryCode == s.Code && f.Status == NistFindingStatus.Open),
+            e?.AssessorName, e?.ReviewerName);
     }
 
-    private string TitleOf(NistSubcategory s) => _language?.Get(s.Code)?.Title ?? s.Code;
-
-    internal static string StateOf(SubcategoryEvaluation? e, int evidenceCount)
-    {
-        if (e is null) return evidenceCount > 0 ? NistSubcategoryStates.InProgress : NistSubcategoryStates.NotEvaluated;
-        if (e.NotApplicable) return NistSubcategoryStates.NotApplicable;
-        if (e.CurrentLevel is not null) return NistSubcategoryStates.Evaluated;
-        var anyContent = e.TargetLevel is not null || evidenceCount > 0
-            || new[] { e.CurrentComments, e.TargetComments, e.Rationale, e.Gaps, e.RiskImpact, e.ImprovementGuidance, e.OwnerName }
-                .Any(t => !string.IsNullOrWhiteSpace(t));
-        return anyContent ? NistSubcategoryStates.InProgress : NistSubcategoryStates.NotEvaluated;
-    }
+    internal string TitleOf(NistSubcategory s) => _language?.Get(s.Code)?.Title ?? s.Code;
 
     private static NistProfileScoreView ProfileView(ProfileScore p, int evaluated) =>
         new(p.RefCode, p.Current, p.Target, p.Gap, p.Subcategories, p.WithCurrent, p.WithTarget, p.WithGap, p.NotApplicable, evaluated);
 
-    private static NistEvaluationView EvaluationView(SubcategoryEvaluation e, int evidenceCount) => new(
+    private static NistEvaluationView EvaluationView(SubcategoryEvaluation e, int evidenceCount, ISet<Guid> activeUsers) => new(
         e.Id, StateOf(e, evidenceCount), e.CurrentLevel, e.TargetLevel, e.Gap, e.NotApplicable,
         e.CurrentComments, e.TargetComments, e.Rationale, e.Gaps, e.RiskImpact, e.ImprovementGuidance, e.OwnerName,
-        e.EvaluatedBy.ToString(), e.ReviewedByName, e.ReviewedAt, e.Version);
+        e.EvaluatedBy.ToString(), e.HumanConfirmed ? e.ReviewedByName : null, e.HumanConfirmed ? e.ReviewedAt : null, e.Version,
+        e.ContentOrigin.ToString(), e.OriginNote, e.HumanConfirmed,
+        ResponsibleView(e.OwnerUserId, e.OwnerName, e.OwnerIsExternal, e.OwnerContact, activeUsers),
+        e.AssessorUserId, e.AssessorName, e.ReviewerUserId, e.ReviewerName,
+        ReviewStateOf(e), e.ReviewDecisionByName, e.ReviewDecisionAt, e.ReviewDecisionNote);
 
-    private static NistEvidenceView EvidenceView(Evidence e) => new(
+    internal static NistEvidenceView EvidenceView(Evidence e) => new(
         e.Id, e.OriginKind.ToString(), e.Type.ToString(), e.Title ?? "(sem título)", e.Notes, e.Uri, e.OriginRef, e.OriginLabel,
         e.OriginScope, e.CollectedAt, e.CreatedAt, e.RecordedByName);
 
-    private static string ScopeName(AssessmentScope s) => string.IsNullOrWhiteSpace(s.Name) ? "Escopo sem nome" : s.Name;
+    private static string? PersonName(RemediationActor actor) =>
+        string.IsNullOrWhiteSpace(actor.DisplayName) ? null : Truncate(actor.DisplayName.Trim(), MaxName);
 
     private static string KnightScopeOf(KnightAssessmentRun run) =>
         KnightScopeOf(run.SourceType, run.Mode, run.SourceState, run.CatalogVersion, run.IdentityAcquisitionId);
@@ -927,29 +931,5 @@ public sealed class NistAssessmentService : INistAssessmentService
         if (v.Length > 2000 || !Uri.TryCreate(v, UriKind.Absolute, out var u) || (u.Scheme != Uri.UriSchemeHttps && u.Scheme != Uri.UriSchemeHttp))
             throw new NistAssessmentValidationException("O link da evidência precisa ser um endereço http(s) completo.");
         return u.ToString();
-    }
-
-    private static string Required(string? value, string emptyMessage, int max, string field)
-    {
-        var v = (value ?? "").Trim();
-        if (v.Length == 0) throw new NistAssessmentValidationException(emptyMessage);
-        if (v.Length > max) throw new NistAssessmentValidationException($"{field} aceita no máximo {max} caracteres.");
-        return v;
-    }
-
-    private static string? Optional(string? value, int max, string field)
-    {
-        var v = (value ?? "").Trim();
-        if (v.Length == 0) return null;
-        if (v.Length > max) throw new NistAssessmentValidationException($"{field} aceita no máximo {max} caracteres.");
-        return v;
-    }
-
-    private static string Truncate(string value, int max) => value.Length <= max ? value : value[..max];
-
-    private void RequireTenant()
-    {
-        if (_tenant.TenantId is not Guid id || id == Guid.Empty)
-            throw new NistAssessmentNotFoundException("Tenant não resolvido no contexto.");
     }
 }

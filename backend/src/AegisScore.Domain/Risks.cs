@@ -143,6 +143,31 @@ public class ActionPlan : Entity, ITenantOwned
     /// </summary>
     public string? OriginContextJson { get; set; }
 
+    // ---- [AEGIS-NIST-JOURNEY-02] Origem num achado do AEGIS NIST e responsável vinculado ------------------------------
+    // Avaliação, rodada e escopo ficam EXPLÍCITOS no plano (não só no achado): o acompanhamento e o relatório conseguem dizer
+    // de qual rodada o plano nasceu mesmo depois de outras rodadas começarem.
+
+    /// <summary>Achado NIST de origem.</summary>
+    public Guid? OriginNistFindingId { get; set; }
+    public Guid? OriginNistAssessmentId { get; set; }
+    public Guid? OriginNistCycleId { get; set; }
+    public Guid? OriginNistScopeId { get; set; }
+
+    /// <summary>Subcategoria do achado de origem (ex.: "GV.OC-01").</summary>
+    public string? OriginSubcategoryCode { get; set; }
+
+    /// <summary>
+    /// Responsável como USUÁRIO ativo do tenant (verificado no servidor). Nulo nos planos anteriores e quando o responsável
+    /// é texto livre ou contato externo — o texto legado em <see cref="ResponsiblePerson"/> nunca é convertido em vínculo.
+    /// </summary>
+    public Guid? ResponsibleUserId { get; set; }
+
+    /// <summary>O responsável é um contato externo (sem conta no AEGIS).</summary>
+    public bool ResponsibleIsExternal { get; set; }
+
+    /// <summary>Contato do responsável externo (e-mail, telefone ou organização).</summary>
+    public string? ResponsibleContact { get; set; }
+
     /// <summary>A origem do plano: a explícita quando gravada; nos planos anteriores a ela, a derivada como sempre foi.</summary>
     public ActionPlanOriginKind ResolveOriginKind() => OriginKind
         ?? (KnightIndicatorId is not null ? ActionPlanOriginKind.KnightFinding : ActionPlanOriginKind.RiskTreatment);

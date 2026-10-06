@@ -165,6 +165,12 @@ public class AegisScoreDbContext : DbContext
     /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Resultados manuais estruturados dos controles de referência.</summary>
     public DbSet<KnightManualAssessment> KnightManualAssessments => Set<KnightManualAssessment>();
 
+    // [AEGIS-NIST-JOURNEY-02] Rodadas, procedimentos de avaliação, achados e trilha da jornada NIST (tenant-owned).
+    public DbSet<NistAssessmentCycle> NistCycles => Set<NistAssessmentCycle>();
+    public DbSet<NistTestProcedure> NistProcedures => Set<NistTestProcedure>();
+    public DbSet<NistFinding> NistFindings => Set<NistFinding>();
+    public DbSet<NistAuditEntry> NistAuditEntries => Set<NistAuditEntry>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
@@ -215,6 +221,11 @@ public class AegisScoreDbContext : DbContext
             .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
         b.Entity<SubcategoryEvaluation>().Property(x => x.EvidenceRefs)
             .HasConversion(guidList, guidListCmp).HasColumnType("jsonb");
+        // [AEGIS-NIST-JOURNEY-02] Evidências citadas por procedimento e por achado → jsonb (mesmo idioma).
+        b.Entity<NistTestProcedure>().Property(x => x.EvidenceIds)
+            .HasConversion(guidList, guidListCmp).HasColumnType("jsonb");
+        b.Entity<NistFinding>().Property(x => x.EvidenceIds)
+            .HasConversion(guidList, guidListCmp).HasColumnType("jsonb");
         b.Entity<GrcInterviewSession>().Property(x => x.TargetSubcategoryCodes)
             .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
         // AEGIS KNIGHT — listas de mapeamento por indicador → jsonb (mesmo idioma das listas do catálogo NIST).
@@ -232,6 +243,7 @@ public class AegisScoreDbContext : DbContext
 
         // Computed properties — never persisted.
         b.Entity<SubcategoryEvaluation>().Ignore(x => x.Gap);
+        b.Entity<SubcategoryEvaluation>().Ignore(x => x.HumanConfirmed);
         b.Entity<ActionPlan>().Ignore(x => x.IsOverdue);
 
         // Useful uniqueness / lookups.
@@ -845,19 +857,101 @@ public class AegisScoreDbContext : DbContext
         });
         b.Entity<SubcategoryEvaluation>(e =>
         {
-            e.HasIndex(x => new { x.AssessmentScopeId, x.SubcategoryId }).IsUnique()
-                .HasDatabaseName("UX_Evaluations_ScopeSubcategory");
+            // [AEGIS-NIST-JOURNEY-02] A unicidade passa a ser por (escopo, RODADA, subcategoria): cada rodada tem a sua
+            // avaliação, e a rodada anterior não é sobrescrita pela nova. A migration preenche a rodada inicial antes.
+            e.HasIndex(x => new { x.AssessmentScopeId, x.CycleId, x.SubcategoryId }).IsUnique()
+                .HasDatabaseName("UX_Evaluations_ScopeCycleSubcategory");
             e.HasIndex(x => x.TenantId);
+            e.HasIndex(x => new { x.TenantId, x.CycleId });
             e.Property(x => x.Version).IsConcurrencyToken();
             e.Property(x => x.OwnerName).HasMaxLength(200);
             e.Property(x => x.ReviewedByName).HasMaxLength(200);
             e.Property(x => x.Gaps).HasMaxLength(4000);
             e.Property(x => x.RiskImpact).HasMaxLength(2000);
             e.Property(x => x.ImprovementGuidance).HasMaxLength(4000);
+            e.Property(x => x.OriginNote).HasMaxLength(500);
+            e.Property(x => x.OwnerContact).HasMaxLength(200);
+            e.Property(x => x.AssessorName).HasMaxLength(200);
+            e.Property(x => x.ReviewerName).HasMaxLength(200);
+            e.Property(x => x.ReviewDecisionFingerprint).HasMaxLength(64);
+            e.Property(x => x.ReviewDecisionByName).HasMaxLength(200);
+            e.Property(x => x.ReviewDecisionNote).HasMaxLength(2000);
+            // FK tenant-safe para a rodada: o banco recusa avaliação apontando para rodada de outro tenant.
+            e.HasOne<NistAssessmentCycle>().WithMany()
+                .HasForeignKey(x => new { x.CycleId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // [AEGIS-NIST-JOURNEY-02] Rodadas: nome único por avaliação (o serviço compara sem caixa; o banco, exato), chave
+        // alternativa (Id, TenantId) como alvo das FKs tenant-safe dos registros da rodada.
+        b.Entity<NistAssessmentCycle>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(120).IsRequired();
+            e.Property(x => x.CreatedByName).HasMaxLength(200);
+            e.Property(x => x.ClosedByName).HasMaxLength(200);
+            e.Property(x => x.Version).IsConcurrencyToken();
+            e.HasIndex(x => new { x.TenantId, x.AssessmentId });
+            e.HasIndex(x => new { x.AssessmentId, x.Name }).IsUnique().HasDatabaseName("UX_NistCycles_AssessmentName");
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            e.HasOne<Assessment>().WithMany().HasForeignKey(x => x.AssessmentId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<NistTestProcedure>(e =>
+        {
+            e.Property(x => x.SubcategoryCode).HasMaxLength(15).IsRequired();
+            e.Property(x => x.Procedure).HasMaxLength(4000).IsRequired();
+            e.Property(x => x.Observation).HasMaxLength(4000);
+            e.Property(x => x.ResultRecordedByName).HasMaxLength(200);
+            e.Property(x => x.OriginNote).HasMaxLength(500);
+            e.Property(x => x.CreatedByName).HasMaxLength(200);
+            e.Property(x => x.RemovedByName).HasMaxLength(200);
+            e.Property(x => x.Version).IsConcurrencyToken();
+            e.HasIndex(x => new { x.TenantId, x.CycleId, x.AssessmentScopeId, x.SubcategoryCode });
+            e.HasOne<NistAssessmentCycle>().WithMany()
+                .HasForeignKey(x => new { x.CycleId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<NistFinding>(e =>
+        {
+            e.Property(x => x.SubcategoryCode).HasMaxLength(15).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Condition).HasMaxLength(4000).IsRequired();
+            e.Property(x => x.Risk).HasMaxLength(2000).IsRequired();
+            e.Property(x => x.Impact).HasMaxLength(2000).IsRequired();
+            e.Property(x => x.SeverityRationale).HasMaxLength(2000).IsRequired();
+            e.Property(x => x.PriorityRationale).HasMaxLength(2000).IsRequired();
+            e.Property(x => x.Recommendation).HasMaxLength(4000).IsRequired();
+            e.Property(x => x.StatusNote).HasMaxLength(2000);
+            e.Property(x => x.StatusChangedByName).HasMaxLength(200);
+            e.Property(x => x.CreatedByName).HasMaxLength(200);
+            e.Property(x => x.OriginContextJson).IsRequired();
+            e.Property(x => x.Version).IsConcurrencyToken();
+            e.HasIndex(x => new { x.TenantId, x.CycleId, x.AssessmentScopeId, x.SubcategoryCode });
+            e.HasIndex(x => new { x.TenantId, x.AssessmentId, x.Status });
+            e.HasOne<NistAssessmentCycle>().WithMany()
+                .HasForeignKey(x => new { x.CycleId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Trilha: sem FK de propósito — a história sobrevive ao registro de origem; o banco recusa UPDATE/DELETE (migration).
+        b.Entity<NistAuditEntry>(e =>
+        {
+            e.Property(x => x.SubcategoryCode).HasMaxLength(15);
+            e.Property(x => x.Subject).HasMaxLength(40).IsRequired();
+            e.Property(x => x.Action).HasMaxLength(60).IsRequired();
+            e.Property(x => x.Summary).HasMaxLength(1000).IsRequired();
+            e.Property(x => x.ActorName).HasMaxLength(200).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.AssessmentId, x.At });
+            e.HasIndex(x => new { x.TenantId, x.CycleId, x.AssessmentScopeId, x.SubcategoryCode });
         });
         b.Entity<Evidence>(e =>
         {
             e.HasIndex(x => new { x.TenantId, x.AssessmentScopeId, x.SubcategoryCode });
+            e.HasIndex(x => new { x.TenantId, x.CycleId, x.AssessmentScopeId, x.SubcategoryCode });
             e.Property(x => x.Title).HasMaxLength(300);
             e.Property(x => x.Notes).HasMaxLength(2000);
             e.Property(x => x.OriginRef).HasMaxLength(200);
@@ -948,6 +1042,15 @@ public class AegisScoreDbContext : DbContext
                 .IsUnique()
                 .HasDatabaseName("UX_ActionPlans_ActiveByDeviceCase")
                 .HasFilter("\"OriginKind\" = 2 AND \"Status\" IN (0, 1, 4)");
+
+            // [AEGIS-NIST-JOURNEY-02] Achado do AEGIS NIST: a MESMA invariante — no máximo UM plano ATIVO por achado.
+            e.Property(x => x.OriginSubcategoryCode).HasMaxLength(15);
+            e.Property(x => x.ResponsibleContact).HasMaxLength(200);
+            e.HasIndex(x => new { x.TenantId, x.OriginNistAssessmentId, x.OriginNistCycleId });
+            e.HasIndex(x => new { x.TenantId, x.OriginNistFindingId })
+                .IsUnique()
+                .HasDatabaseName("UX_ActionPlans_ActiveByNistFinding")
+                .HasFilter("\"OriginKind\" = 3 AND \"Status\" IN (0, 1, 4)");
 
             e.HasAlternateKey(x => new { x.Id, x.TenantId });
             e.HasMany(x => x.Events).WithOne(v => v.ActionPlan)
@@ -1461,6 +1564,11 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.ReferenceCoverageJson).HasColumnType("text");
             // [AEGIS-KNIGHT-CONSOLIDATED-01] TEXT pelo mesmo motivo: o hash assina a string, e jsonb normalizaria.
             e.Property(x => x.CompositionJson).HasColumnType("text");
+            // [AEGIS-NIST-JOURNEY-02] Fotografia de maturidade NIST: o relatório inteiro congelado (texto, sob o hash) e a
+            // procura das publicações de uma avaliação/rodada/escopo.
+            e.Property(x => x.NistReportJson).HasColumnType("text");
+            e.Property(x => x.NistCycleName).HasMaxLength(120);
+            e.HasIndex(x => new { x.TenantId, x.NistAssessmentId, x.NistCycleId, x.NistScopeId });
             e.HasMany(x => x.Objects).WithOne(o => o.Snapshot)
                 .HasForeignKey(o => new { o.SnapshotId, o.TenantId })
                 .HasPrincipalKey(x => new { x.Id, x.TenantId })
@@ -1589,6 +1697,11 @@ public class AegisScoreDbContext : DbContext
         b.Entity<ActionPlanEvent>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<ActionPlanValidation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<KnightManualAssessment>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-NIST-JOURNEY-02] Rodadas, procedimentos, achados e trilha do NIST — fail-closed como os demais.
+        b.Entity<NistAssessmentCycle>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<NistTestProcedure>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<NistFinding>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<NistAuditEntry>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<GovernanceDocument>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<DocumentControlMapping>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<SubcategoryCoverage>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

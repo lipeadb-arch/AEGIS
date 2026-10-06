@@ -94,7 +94,18 @@ public sealed record PostureSnapshotSummaryDto(
     /// [AEGIS-MVP-PRODUCT-03] Avaliação KNIGHT EXATA congelada. Nula em fotografias AEGIS Score/NIST e nas
     /// KNIGHT anteriores a esta entrega — nesse caso a fotografia não sabe dizer qual execução a originou.
     /// </summary>
-    Guid? SourceRunId = null);
+    Guid? SourceRunId = null,
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] Maturidade NIST (1–5) de uma fotografia NistMaturity — instrumento separado: o
+    /// <see cref="Score"/> (0–100) é sempre nulo neste tipo.
+    /// </summary>
+    double? MaturityCurrent = null,
+    double? MaturityTarget = null,
+    double? MaturityGap = null,
+    Guid? NistAssessmentId = null,
+    Guid? NistCycleId = null,
+    Guid? NistScopeId = null,
+    string? NistCycleName = null);
 
 /// <summary>
 /// [AEGIS-MVP-PRODUCT-03] Uma ação CONGELADA na fotografia. Estado do plano, resultado observado no achado e

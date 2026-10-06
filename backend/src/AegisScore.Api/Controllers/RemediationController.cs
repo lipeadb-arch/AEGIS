@@ -90,8 +90,9 @@ public class RemediationController : ControllerBase
             case "":
             case "knight": scope = ActionPlanOriginScope.Knight; break;
             case "device": scope = ActionPlanOriginScope.DeviceVulnerability; break;
+            case "nist": scope = ActionPlanOriginScope.NistFinding; break;
             case "all": scope = ActionPlanOriginScope.All; break;
-            default: return BadRequest($"Origem desconhecida: '{origin}'. Use knight, device ou all.");
+            default: return BadRequest($"Origem desconhecida: '{origin}'. Use knight, device, nist ou all.");
         }
 
         var plans = await _service.ListAsync(
@@ -349,7 +350,11 @@ public class RemediationController : ControllerBase
         p.Events.Select(e => new ActionPlanEventDto(
             e.Kind.ToString(), e.At, e.ActorName, e.FromStatus?.ToString(), e.ToStatus?.ToString(), e.Note)).ToList(),
         p.OriginKind.ToString(),
-        p.DeviceOrigin);
+        p.DeviceOrigin,
+        p.NistOrigin,
+        p.ResponsibleUserId,
+        p.ResponsibleIsExternal,
+        p.ResponsibleContact);
 
     private static ActionPlanValidationDto ToDto(ActionPlanValidationView v) => new(
         v.Method.ToString(),

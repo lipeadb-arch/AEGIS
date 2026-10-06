@@ -64,8 +64,11 @@ public class DashboardController : ControllerBase
         var clientName = tenant?.Name ?? "—";
 
         // ---- Maturity (all evaluations across the tenant's assessments) ----
+        // [AEGIS-NIST-JOURNEY-02] Só a rodada mais recente de cada avaliação (rodadas não se somam).
+        var latestCycles = await AegisScore.Infrastructure.Nist.NistCycleSelection.LatestCycleIdsAsync(_db, ct);
         var scoreRows = await (from s in _db.Scopes
                                join e in _db.Evaluations on s.Id equals e.AssessmentScopeId
+                               where latestCycles.Contains(e.CycleId)
                                join sub in _db.Subcategories on e.SubcategoryId equals sub.Id
                                select new { sub.Code, e.CurrentScore, e.TargetScore })
                               .ToListAsync(ct);

@@ -26,7 +26,15 @@ public sealed record PostureMonthlyPoint(
     Guid? SourceRunId,
     int PublishedInMonth,
     bool ComparableWithPrevious,
-    IReadOnlyList<string> BreakReasons);
+    IReadOnlyList<string> BreakReasons,
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Maturidade 1–5 (só na série de maturidade NIST; nunca o score 0–100).</summary>
+    double? MaturityCurrent = null,
+    double? MaturityTarget = null,
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Subcategorias aplicáveis (catálogo − não se aplica): o universo das médias.</summary>
+    int? ApplicableItems = null,
+    string? CycleName = null,
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Avisos do ponto: cobertura ou universo diferentes do ponto anterior, queda de nota.</summary>
+    IReadOnlyList<string>? Notes = null);
 
 /// <summary>Uma série = um instrumento e uma família semântica (NIST, ou KNIGHT de uma fonte/composição). Nunca somadas.</summary>
 public sealed record PostureMonthlySeries(
@@ -82,10 +90,16 @@ public static class PostureMonthlyHistory
                     var reasons = previous is null
                         ? Array.Empty<string>()
                         : PostureSnapshotComparer.CheckCompatibility(Side(previous), Side(rep)).ToArray();
+                    var maturity = rep.Type == MaturityType;
                     points.Add(new PostureMonthlyPoint(
                         month, rep.Id, rep.CapturedAt, rep.EvaluationState, rep.Score, rep.Coverage, rep.EvaluatedItems,
                         rep.EligibleItems, rep.FormulaVersion, rep.CatalogVersion, rep.SchemaVersion, rep.SourceLabel,
-                        rep.SourceRunId, count, previous is not null && reasons.Length == 0, reasons));
+                        rep.SourceRunId, count, previous is not null && reasons.Length == 0, reasons,
+                        maturity ? rep.MaturityCurrent : null,
+                        maturity ? rep.MaturityTarget : null,
+                        maturity ? rep.EligibleItems - rep.NotApplicableCount : null,
+                        maturity ? rep.NistCycleName : null,
+                        maturity ? MaturityNotes(previous, rep) : null));
                     previous = rep;
                 }
 
@@ -93,7 +107,7 @@ public static class PostureMonthlyHistory
                 return new PostureMonthlySeries(g.Key.Type, g.Key.SemanticFamily, latest.SourceType, LabelOf(latest), points);
             })
             .Where(s => s.Points.Count > 0)
-            .OrderBy(s => s.Type == "AegisScoreNist" ? 0 : 1)
+            .OrderBy(s => s.Type == "AegisScoreNist" ? 0 : s.Type == MaturityType ? 1 : 2)
             .ThenBy(s => s.Label, StringComparer.CurrentCulture)
             .ToList();
 
@@ -106,9 +120,33 @@ public static class PostureMonthlyHistory
         return new DateOnly(u.Year, u.Month, 1);
     }
 
-    private static string LabelOf(PostureSnapshotSummaryDto s) => s.Type == "AegisScoreNist"
-        ? $"NIST · postura do ambiente ({s.FormulaVersion})"
-        : $"KNIGHT · {s.SourceLabel ?? s.SourceType ?? "fonte"}";
+    private static string LabelOf(PostureSnapshotSummaryDto s) => s.Type switch
+    {
+        "AegisScoreNist" => $"NIST · postura do ambiente ({s.FormulaVersion})",
+        MaturityType => $"NIST · maturidade 1–5 — {s.SourceLabel ?? "avaliação"}",
+        _ => $"KNIGHT · {s.SourceLabel ?? s.SourceType ?? "fonte"}",
+    };
+
+    private const string MaturityType = "NistMaturity";
+
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] O que o leitor precisa saber antes de comparar dois meses de maturidade: a base mudou
+    /// (cobertura, universo aplicável) e queda de média não é, sozinha, piora da segurança.
+    /// </summary>
+    private static IReadOnlyList<string> MaturityNotes(PostureSnapshotSummaryDto? previous, PostureSnapshotSummaryDto current)
+    {
+        var notes = new List<string>();
+        if (previous is null) return notes;
+        if (Math.Abs(previous.Coverage - current.Coverage) > 0.05)
+            notes.Add($"Cobertura mudou de {previous.Coverage:0.#}% para {current.Coverage:0.#}%: médias sobre conjuntos diferentes.");
+        var prevUniverse = previous.EligibleItems - previous.NotApplicableCount;
+        var currUniverse = current.EligibleItems - current.NotApplicableCount;
+        if (prevUniverse != currUniverse)
+            notes.Add($"Universo aplicável mudou de {prevUniverse} para {currUniverse} subcategorias.");
+        if (previous.MaturityCurrent is { } a && current.MaturityCurrent is { } b && b < a)
+            notes.Add("A média atual caiu; isso não indica, sozinho, piora da segurança (rigor, evidência nova, cobertura ou universo).");
+        return notes;
+    }
 
     private static PostureComparisonSide Side(PostureSnapshotSummaryDto s) => new(
         s.CapturedAt, s.Type, s.SemanticFamily, s.FormulaVersion, s.CatalogVersion, s.SchemaVersion, s.Score, s.Coverage,

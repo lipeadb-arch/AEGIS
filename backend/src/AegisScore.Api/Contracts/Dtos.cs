@@ -334,17 +334,12 @@ public record SiemAlertPostureDto(
 public record SiemPriorityCountDto(string Priority, int Count);
 
 // ---- Assessments ----
-public record CreateAssessmentRequest(string Name, Guid? FrameworkVersionId);
-public record CreateScopeRequest(Guid BusinessProcessId, Guid BusinessUnitId);
 public record AiSuggestRequest(
     string SubcategoryCode,
     IReadOnlyList<AnswerInput> Answers,
     IReadOnlyList<string> EvidenceSummaries);
 public record AnswerInput(string Question, string Answer, string? Comment);
 public record MaturitySuggestionDto(int CurrentLevel, double Confidence, string Rationale);
-public record EvaluationUpsertRequest(
-    int? CurrentLevel, int? CurrentScore, string? CurrentComments,
-    int? TargetLevel, int? TargetScore, string? TargetComments);
 
 public record AggregateDto(string Level, string RefCode, double CurrentScore, double TargetScore, double Gap, int Count);
 public record MaturityRollupDto(AggregateDto Overall, IReadOnlyList<AggregateDto> Functions, IReadOnlyList<AggregateDto> Categories);
@@ -1125,7 +1120,13 @@ public record ActionPlanDto(
     /// <summary>[AEGIS-JOURNEY-01] Origem do plano ("KnightFinding", "DeviceVulnerability" ou "RiskTreatment").</summary>
     string OriginKind,
     /// <summary>[AEGIS-JOURNEY-01] Registro de origem congelado de um caso de dispositivo — nunca a leitura atual.</summary>
-    AegisScore.Application.Remediation.DeviceCaseOrigin? DeviceOrigin);
+    AegisScore.Application.Remediation.DeviceCaseOrigin? DeviceOrigin,
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Achado NIST de origem (avaliação, rodada, escopo e subcategoria), quando houver.</summary>
+    AegisScore.Application.Remediation.NistPlanOrigin? NistOrigin = null,
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Responsável vinculado a usuário do tenant ou contato externo.</summary>
+    Guid? ResponsibleUserId = null,
+    bool ResponsibleIsExternal = false,
+    string? ResponsibleContact = null);
 
 /// <summary>
 /// [AEGIS-JOURNEY-01] Criação de um plano a partir de um CASO de vulnerabilidade em dispositivo. Só identifica o caso

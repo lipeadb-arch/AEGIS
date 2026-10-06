@@ -239,6 +239,56 @@ public sealed class RemediationService : IRemediationService
         return await GetAsync(plan.Id, ct);
     }
 
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] Plano de tratamento de um achado do AEGIS NIST. A jornada NIST valida o achado ANTES de chamar
+    /// (tenant, avaliação, rodada, escopo, situação); aqui ficam as invariantes do plano: um único plano ativo por achado, o
+    /// responsável verificado e a origem explícita inteira gravada no plano.
+    /// </summary>
+    public async Task<ActionPlanView> CreateForNistFindingAsync(
+        CreateNistFindingActionPlanCommand command, RemediationActor actor, CancellationToken ct = default)
+    {
+        EnsureTenant();
+        var title = Trim(command.Title, MaxTitleLength);
+        if (string.IsNullOrWhiteSpace(title))
+            throw new ActionPlanValidationException("O título do plano é obrigatório.");
+        var code = (command.SubcategoryCode ?? "").Trim().ToUpperInvariant();
+        if (code.Length == 0 || code.Length > 15)
+            throw new ActionPlanValidationException("Subcategoria de origem inválida.");
+
+        var active = await FindActiveNistFindingAsync(command.FindingId, exceptPlanId: null, ct);
+        if (active is not null)
+            throw new ActionPlanConflictException(
+                "Já existe um plano ativo para este achado. Abra o plano existente em vez de criar outro.", active);
+
+        var now = _clock.GetUtcNow();
+        var plan = new ActionPlan
+        {
+            RiskId = null,                       // nenhum risco fictício
+            Treatment = RiskTreatmentType.Mitigar,
+            Title = title,
+            Description = Trim(command.ProposedAction, MaxTextLength),
+            ResponsibleArea = Trim(command.ResponsibleArea, MaxNameLength),
+            DueDate = command.DueDate,
+            Status = ActionPlanStatus.Aberto,
+            OriginKind = ActionPlanOriginKind.NistFinding,
+            OriginNistFindingId = command.FindingId,
+            OriginNistAssessmentId = command.AssessmentId,
+            OriginNistCycleId = command.CycleId,
+            OriginNistScopeId = command.ScopeId,
+            OriginSubcategoryCode = code,
+            CycleStartedAt = now,
+            Version = 1,
+        };
+        var changes = new List<PlanFieldChange>();
+        await ApplyResponsibleAsync(plan, command.Responsible, changes, ct);
+
+        _db.ActionPlans.Add(plan);
+        AddEvent(plan, actor, ActionPlanEventKind.Created, now, null, ActionPlanStatus.Aberto,
+            $"Plano criado a partir do achado NIST \"{Trim(command.FindingTitle, 300)}\" ({code}).", changes);
+        await SaveWithConcurrencyGuardAsync(ct, plan);
+        return (await GetAsync(plan.Id, ct))!;
+    }
+
     // ---- Leitura -------------------------------------------------------------------------------------
 
     public async Task<IReadOnlyList<ActionPlanView>> ListAsync(
@@ -256,8 +306,13 @@ public sealed class RemediationService : IRemediationService
         {
             ActionPlanOriginScope.DeviceVulnerability =>
                 query.Where(p => p.OriginKind == ActionPlanOriginKind.DeviceVulnerability),
+            // [AEGIS-NIST-JOURNEY-02] Achados NIST: no próprio recorte e em "todas as origens" (visão consolidada do
+            // tratamento, com a origem explícita); nunca no recorte padrão do KNIGHT.
+            ActionPlanOriginScope.NistFinding =>
+                query.Where(p => p.OriginKind == ActionPlanOriginKind.NistFinding),
             ActionPlanOriginScope.All =>
-                query.Where(p => p.KnightIndicatorId != null || p.OriginKind == ActionPlanOriginKind.DeviceVulnerability),
+                query.Where(p => p.KnightIndicatorId != null || p.OriginKind == ActionPlanOriginKind.DeviceVulnerability
+                                 || p.OriginKind == ActionPlanOriginKind.NistFinding),
             _ => query.Where(p => p.KnightIndicatorId != null),
         };
 
@@ -278,6 +333,11 @@ public sealed class RemediationService : IRemediationService
         var cve = DevicePriorityNarrative.NormalizeCve(filter.CveId);
         if (cve.Length > 0)
             query = query.Where(p => p.OriginCveId == cve);
+
+        if (filter.NistAssessmentId is { } nistAssessment)
+            query = query.Where(p => p.OriginNistAssessmentId == nistAssessment);
+        if (filter.NistFindingId is { } nistFinding)
+            query = query.Where(p => p.OriginNistFindingId == nistFinding);
 
         if (filter.ActiveOnly)
             query = query.Where(p =>
@@ -379,38 +439,51 @@ public sealed class RemediationService : IRemediationService
 
         var now = _clock.GetUtcNow();
         var changes = new List<string>();
+        // [AEGIS-NIST-JOURNEY-02] Valores ANTERIORES e NOVOS de cada campo alterado, gravados com o evento.
+        var diffs = new List<PlanFieldChange>();
 
         if (command.Title is not null)
         {
             var t = Trim(command.Title, MaxTitleLength);
             if (string.IsNullOrWhiteSpace(t))
                 throw new ActionPlanValidationException("O título da ação é obrigatório.");
-            if (!string.Equals(plan.Title, t, StringComparison.Ordinal)) { plan.Title = t; changes.Add("título"); }
+            if (!string.Equals(plan.Title, t, StringComparison.Ordinal))
+            { diffs.Add(new("title", "título", plan.Title, t)); plan.Title = t; changes.Add("título"); }
         }
         if (command.ProposedAction is not null)
         {
             var d = Trim(command.ProposedAction, MaxTextLength);
-            if (!string.Equals(plan.Description, d, StringComparison.Ordinal)) { plan.Description = d; changes.Add("ação proposta"); }
+            if (!string.Equals(plan.Description, d, StringComparison.Ordinal))
+            { diffs.Add(new("proposedAction", "ação proposta", plan.Description, d)); plan.Description = d; changes.Add("ação proposta"); }
         }
-        if (command.ResponsiblePerson is not null)
+        if (command.Responsible is not null)
+        {
+            var before = diffs.Count;
+            await ApplyResponsibleAsync(plan, command.Responsible, diffs, ct);
+            if (diffs.Count > before) changes.Add("responsável");
+        }
+        else if (command.ResponsiblePerson is not null)
         {
             var r = Trim(command.ResponsiblePerson, MaxNameLength);
-            if (!string.Equals(plan.ResponsiblePerson, r, StringComparison.Ordinal)) { plan.ResponsiblePerson = r; changes.Add("responsável"); }
+            if (!string.Equals(plan.ResponsiblePerson, r, StringComparison.Ordinal))
+            { diffs.Add(new("responsiblePerson", "responsável", plan.ResponsiblePerson, r)); plan.ResponsiblePerson = r; changes.Add("responsável"); }
         }
         if (command.ResponsibleArea is not null)
         {
             var a = Trim(command.ResponsibleArea, MaxNameLength);
-            if (!string.Equals(plan.ResponsibleArea, a, StringComparison.Ordinal)) { plan.ResponsibleArea = a; changes.Add("área"); }
+            if (!string.Equals(plan.ResponsibleArea, a, StringComparison.Ordinal))
+            { diffs.Add(new("responsibleArea", "área", plan.ResponsibleArea, a)); plan.ResponsibleArea = a; changes.Add("área"); }
         }
         if (command.DueDate is not null && plan.DueDate != command.DueDate)
         {
+            diffs.Add(new("dueDate", "prazo", plan.DueDate?.ToString("yyyy-MM-dd"), command.DueDate?.ToString("yyyy-MM-dd")));
             plan.DueDate = command.DueDate;
             changes.Add("prazo");
         }
 
         if (changes.Count > 0)
             AddEvent(plan, actor, ActionPlanEventKind.Edited, now, null, null,
-                "Campos alterados: " + string.Join(", ", changes) + ".");
+                "Campos alterados: " + string.Join(", ", changes) + ".", diffs);
 
         if (command.Status is { } target && target != plan.Status)
         {
@@ -425,6 +498,13 @@ public sealed class RemediationService : IRemediationService
                     "Já existe outro plano ativo para esta CVE neste dispositivo; reabrir este criaria dois ciclos " +
                     "simultâneos. Abra o plano ativo.",
                     other);
+            if (plan.Status == ActionPlanStatus.Concluido && ActionPlan.IsActiveStatus(target)
+                && plan.ResolveOriginKind() == ActionPlanOriginKind.NistFinding
+                && plan.OriginNistFindingId is { } findingId
+                && await FindActiveNistFindingAsync(findingId, plan.Id, ct) is { } otherNist)
+                throw new ActionPlanConflictException(
+                    "Já existe outro plano ativo para este achado; reabrir este criaria dois ciclos simultâneos. Abra o plano ativo.",
+                    otherNist);
             ApplyTransition(plan, target, actor, now, note: null);
         }
 
@@ -450,12 +530,18 @@ public sealed class RemediationService : IRemediationService
                 "Descreva o que foi feito. Um registro de execução sem descrição não serve para validar depois.");
 
         var now = _clock.GetUtcNow();
+        var evidenceRef = Trim(command.EvidenceReference, MaxTextLength);
+        var executionDiffs = new List<PlanFieldChange>
+        {
+            new("executionNotes", "relato de execução", plan.ExecutionNotes, notes),
+            new("executionEvidenceRef", "referência da evidência", plan.ExecutionEvidenceRef, evidenceRef),
+        };
         plan.ExecutionNotes = notes;
-        plan.ExecutionEvidenceRef = Trim(command.EvidenceReference, MaxTextLength);
+        plan.ExecutionEvidenceRef = evidenceRef;
         plan.ExecutedAt = now;
 
         AddEvent(plan, actor, ActionPlanEventKind.ExecutionRecorded, now, null, null,
-            "Execução relatada. Relato não comprova correção — a validação é um ato à parte.");
+            "Execução relatada. Relato não comprova correção — a validação é um ato à parte.", executionDiffs);
 
         // Um NOVO relato de execução recomeça a comprovação: as validações anteriores passam a descrever um
         // trabalho que não é este. Elas continuam na trilha; apenas deixam de autorizar o encerramento — e a
@@ -488,6 +574,16 @@ public sealed class RemediationService : IRemediationService
                     "dispositivo: ela compara indicadores de identidade, não CVEs. Registre uma atestação humana com " +
                     "evidência referenciada. " + RemediationReading.DeviceVerificationPending);
             indicatorId = plan.OriginCveId ?? "";
+        }
+        else if (plan.ResolveOriginKind() == ActionPlanOriginKind.NistFinding)
+        {
+            // [AEGIS-NIST-JOURNEY-02] Um achado NIST é organizacional: nenhuma coleta do KNIGHT o comprova. Só validação humana
+            // com evidência referenciada — e ela não reavalia a subcategoria.
+            if (command.ValidationRunId is not null)
+                throw new ActionPlanValidationException(
+                    "A comparação com uma avaliação do AEGIS KNIGHT não se aplica a um achado do AEGIS NIST. Registre uma " +
+                    "validação humana com evidência referenciada. " + RemediationReading.NistReassessmentNote);
+            indicatorId = plan.OriginSubcategoryCode ?? "";
         }
         else
         {
@@ -641,6 +737,75 @@ public sealed class RemediationService : IRemediationService
             .Select(p => (Guid?)p.Id)
             .FirstOrDefaultAsync(ct);
 
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Plano ATIVO já existente para o mesmo achado NIST.</summary>
+    private async Task<Guid?> FindActiveNistFindingAsync(Guid findingId, Guid? exceptPlanId, CancellationToken ct) =>
+        await _db.ActionPlans.AsNoTracking()
+            .Where(p => p.OriginKind == ActionPlanOriginKind.NistFinding
+                        && p.OriginNistFindingId == findingId
+                        && (exceptPlanId == null || p.Id != exceptPlanId)
+                        && (p.Status == ActionPlanStatus.Aberto
+                            || p.Status == ActionPlanStatus.EmAndamento
+                            || p.Status == ActionPlanStatus.AguardandoValidacao))
+            .Select(p => (Guid?)p.Id)
+            .FirstOrDefaultAsync(ct);
+
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] Aplica o responsável identificado: usuário ATIVO do mesmo tenant (o filtro global garante o
+    /// tenant; inativo ou inexistente é recusado), contato externo (nome obrigatório) ou texto livre. Registra o antes/depois.
+    /// Atribuir não concede papel algum: o responsável continua com as permissões que o seu papel já tinha.
+    /// </summary>
+    private async Task ApplyResponsibleAsync(ActionPlan plan, ActionPlanResponsible? input, List<PlanFieldChange> diffs, CancellationToken ct)
+    {
+        if (input is null) return;
+        string? name;
+        Guid? userId = null;
+        var external = false;
+        string? contact = null;
+        if (input.UserId is { } uid)
+        {
+            var user = await _db.Users.AsNoTracking().Where(u => u.Id == uid)
+                .Select(u => new { u.DisplayName, u.IsActive }).FirstOrDefaultAsync(ct);
+            if (user is null || !user.IsActive)
+                throw new ActionPlanValidationException("O responsável precisa ser um usuário ativo deste ambiente.");
+            userId = uid;
+            name = Trim(user.DisplayName, MaxNameLength);
+        }
+        else if (input.IsExternal)
+        {
+            name = Trim(input.Name, MaxNameLength);
+            if (string.IsNullOrWhiteSpace(name))
+                throw new ActionPlanValidationException("Informe o nome do responsável externo.");
+            external = true;
+            contact = Trim(input.Contact, MaxNameLength);
+        }
+        else
+        {
+            name = Trim(input.Name, MaxNameLength);
+        }
+
+        string Describe(Guid? u, bool ext, string? n, string? c) =>
+            n is null ? "(sem responsável)" : u is not null ? $"{n} (usuário)" : ext ? $"{n} (externo{(c is null ? "" : ", " + c)})" : n;
+        var before = Describe(plan.ResponsibleUserId, plan.ResponsibleIsExternal, plan.ResponsiblePerson, plan.ResponsibleContact);
+        var after = Describe(userId, external, name, contact);
+        if (!string.Equals(before, after, StringComparison.Ordinal))
+            diffs.Add(new("responsible", "responsável", before, after));
+
+        plan.ResponsiblePerson = name;
+        plan.ResponsibleUserId = userId;
+        plan.ResponsibleIsExternal = external;
+        plan.ResponsibleContact = contact;
+    }
+
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Um valor alterado de um plano (serializado em ActionPlanEvent.ChangesJson).</summary>
+    private sealed record PlanFieldChange(string Field, string Label, string? From, string? To);
+
+    private static string? SerializeChanges(IReadOnlyCollection<PlanFieldChange>? changes)
+    {
+        if (changes is null || changes.Count == 0) return null;
+        static string? Cut(string? v) => v is null ? null : v.Length <= 500 ? v : v[..500] + "…";
+        return JsonSerializer.Serialize(changes.Select(c => new { field = c.Field, label = c.Label, from = Cut(c.From), to = Cut(c.To) }));
+    }
+
     /// <summary>Descrição curta da procedência, para a trilha dizer de qual coleta a ação nasceu.</summary>
     // [AEGIS-KNIGHT-COVERAGE-04] O histórico é lido por pessoas: a fonte vai pelo rótulo do catálogo, nunca pelo nome
     // do código ("MicrosoftDefenderForOffice365").
@@ -698,6 +863,15 @@ public sealed class RemediationService : IRemediationService
                 "Outra pessoa acabou de abrir (ou reabrir) uma ação para este mesmo achado nesta fonte. " +
                 "Recarregue a lista e trabalhe na ação existente.");
         }
+        catch (DbUpdateException ex) when (IsIndexViolation(ex, ActiveNistFindingIndexName))
+        {
+            var existing = subject is { OriginNistFindingId: { } findingId }
+                ? await FindActiveNistFindingAsync(findingId, subject.Id, ct)
+                : null;
+            throw new ActionPlanConflictException(
+                "Outra pessoa acabou de abrir (ou reabrir) um plano para este mesmo achado. Abra o plano existente.",
+                existing);
+        }
         catch (DbUpdateException ex) when (IsIndexViolation(ex, ActiveDeviceCaseIndexName))
         {
             var existing = subject is { OriginAssetId: { } assetId, OriginCveId: { } cve }
@@ -727,6 +901,9 @@ public sealed class RemediationService : IRemediationService
 
     /// <summary>[AEGIS-JOURNEY-01] Nome do índice único parcial de plano ativo por caso de dispositivo.</summary>
     internal const string ActiveDeviceCaseIndexName = "UX_ActionPlans_ActiveByDeviceCase";
+
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Nome do índice único parcial de plano ativo por achado NIST.</summary>
+    internal const string ActiveNistFindingIndexName = "UX_ActionPlans_ActiveByNistFinding";
 
     /// <summary>
     /// Aplica uma transição PERMITIDA e registra a mudança na trilha. A permissão é decidida contra o que o
@@ -784,7 +961,7 @@ public sealed class RemediationService : IRemediationService
     /// </summary>
     private void AddEvent(
         ActionPlan plan, RemediationActor actor, ActionPlanEventKind kind, DateTimeOffset at,
-        ActionPlanStatus? from, ActionPlanStatus? to, string? note) =>
+        ActionPlanStatus? from, ActionPlanStatus? to, string? note, IReadOnlyCollection<PlanFieldChange>? changes = null) =>
         _db.ActionPlanEvents.Add(new ActionPlanEvent
         {
             ActionPlanId = plan.Id,
@@ -795,6 +972,7 @@ public sealed class RemediationService : IRemediationService
             FromStatus = from,
             ToStatus = to,
             Note = Trim(note, MaxEventNoteLength),
+            ChangesJson = SerializeChanges(changes),
         });
 
     /// <summary>Uma avaliação lida para comparação, com o estado da execução que a produziu.</summary>
@@ -890,7 +1068,7 @@ public sealed class RemediationService : IRemediationService
     /// recente (o histórico) e a validação APLICÁVEL ao ciclo atual (o que sustenta a decisão de hoje). Uma
     /// ação reaberta tem as duas, e são diferentes — colapsá-las faria a tela reciclar uma comprovação velha.
     /// </summary>
-    private static ActionPlanView ToView(ActionPlan p)
+    internal static ActionPlanView ToView(ActionPlan p)
     {
         var origin = p.ResolveOriginKind();
         var cycleStart = RemediationReading.CycleStartOf(p);
@@ -951,6 +1129,16 @@ public sealed class RemediationService : IRemediationService
             validations,
             events,
             origin,
-            origin == ActionPlanOriginKind.DeviceVulnerability ? ReadOrigin(p.OriginContextJson) : null);
+            origin == ActionPlanOriginKind.DeviceVulnerability ? ReadOrigin(p.OriginContextJson) : null,
+            origin == ActionPlanOriginKind.NistFinding && p.OriginNistFindingId is { } fid
+                && p.OriginNistAssessmentId is { } aid && p.OriginNistCycleId is { } cid && p.OriginNistScopeId is { } sid
+                ? new NistPlanOrigin(fid, aid, cid, sid, p.OriginSubcategoryCode ?? "")
+                : null,
+            p.ResponsibleUserId,
+            p.ResponsibleIsExternal,
+            p.ResponsibleContact,
+            // Reabertura lida da TRILHA (transição que saiu de "Concluído") — a mesma regra da fotografia.
+            p.Events.Any(e => e.Kind == ActionPlanEventKind.StatusChanged
+                              && e.FromStatus == ActionPlanStatus.Concluido && e.ToStatus != ActionPlanStatus.Concluido));
     }
 }

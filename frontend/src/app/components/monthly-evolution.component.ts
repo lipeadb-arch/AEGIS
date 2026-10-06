@@ -8,8 +8,10 @@ import {
   PostureMonthlyPoint,
   PostureMonthlySeries,
   incompatibilityLabel,
+  maturityText,
   monthShort,
   monthlyCells,
+  seriesValue,
 } from '../models/posture-history.models';
 
 interface SeriesView {
@@ -45,7 +47,7 @@ const PAD = 12;
         <figure class="serie">
           <figcaption>
             <strong>{{ v.series.label }}</strong>
-            <span class="muted">{{ v.series.type === 'Knight' ? 'AEGIS KNIGHT' : 'AEGIS NIST · postura' }} · última fórmula {{ last(v)?.formulaVersion }} · catálogo {{ last(v)?.catalogVersion }}</span>
+            <span class="muted">{{ instrument(v) }} · última fórmula {{ last(v)?.formulaVersion }} · catálogo {{ last(v)?.catalogVersion }}</span>
           </figcaption>
           <svg [attr.viewBox]="'0 0 ' + W + ' ' + H" preserveAspectRatio="none" role="img" [attr.aria-label]="aria(v)">
             <line [attr.x1]="PAD" [attr.x2]="W - PAD" [attr.y1]="H - PAD" [attr.y2]="H - PAD" class="axis" />
@@ -55,7 +57,7 @@ const PAD = 12;
           <ol class="months" [style.--n]="v.cells.length">
             @for (c of v.cells; track c.month) {
               <li [class.empty]="!c.point"><span class="m">{{ monthShort(c.month) }}</span>
-                <span class="s">{{ c.point ? scoreText(c.point.score) : '—' }}</span></li>
+                <span class="s">{{ c.point ? valueText(v, c.point) : '—' }}</span></li>
             }
           </ol>
           @if (v.restarts.length > 0) { <p class="muted">Série recomeça: {{ v.restarts.join(' · ') }}</p> }
@@ -64,10 +66,16 @@ const PAD = 12;
             <ul class="detail">
               @for (c of v.cells; track c.month) {
                 @if (c.point; as p) {
-                  <li><strong>{{ monthShort(c.month) }}</strong> · nota {{ scoreText(p.score) }} · cobertura {{ p.coverage }}% ·
+                  <li><strong>{{ monthShort(c.month) }}</strong> ·
+                    @if (v.series.type === 'NistMaturity') {
+                      rodada {{ p.cycleName ?? '—' }} · atual {{ maturity(p.maturityCurrent) }} · alvo {{ maturity(p.maturityTarget) }} ·
+                      universo aplicável {{ p.applicableItems ?? '—' }} ·
+                    } @else { nota {{ scoreText(p.score) }} · }
+                    cobertura {{ p.coverage }}% ·
                     {{ p.evaluatedItems }} de {{ p.eligibleItems }} avaliados · publicada em {{ p.capturedAt | date: 'dd/MM/yyyy' }}
                     @if (p.sourceLabel) { · {{ p.sourceLabel }} } · {{ p.formulaVersion }} / {{ p.catalogVersion }}
-                    @if (p.publishedInMonth > 1) { · {{ p.publishedInMonth }} publicações no mês (vale a última) }</li>
+                    @if (p.publishedInMonth > 1) { · {{ p.publishedInMonth }} publicações no mês (vale a última) }
+                    @for (n of p.notes ?? []; track n) { <span class="note">{{ n }}</span> }</li>
                 }
               }
             </ul>
@@ -77,14 +85,15 @@ const PAD = 12;
     }
 
     @if (nist() !== null) {
-      <h3 class="sub">AEGIS NIST · maturidade por avaliação</h3>
-      <p class="muted crit">Um ponto por escopo, no mês da revisão humana mais recente. Metodologia de maturidade (1 a 5) — não é somada à postura nem ao KNIGHT.</p>
+      <h3 class="sub">AEGIS NIST · maturidade por rodada (ainda não publicada)</h3>
+      <p class="muted crit">Leitura viva: um ponto por rodada e escopo, no mês do fim do período, só com avaliações confirmadas. Metodologia de
+        maturidade (1 a 5) — não é somada à postura nem ao KNIGHT. A série mensal acima usa apenas rodadas publicadas.</p>
       @if (nist()!.length === 0) {
         <p class="muted">Nenhuma avaliação NIST com revisão registrada. <a routerLink="/nist">Abrir o AEGIS NIST</a></p>
       } @else {
         <ul class="detail">
-          @for (i of nist()!; track i.scopeId) {
-            <li><strong>{{ monthShort(i.referenceMonth) }}</strong> · {{ i.assessmentName }} — {{ i.scopeName }} ·
+          @for (i of nist()!; track i.scopeId + (i.cycleId ?? '')) {
+            <li><strong>{{ monthShort(i.referenceMonth) }}</strong> · {{ i.assessmentName }} — {{ i.scopeName }}@if (i.cycleName) { · rodada {{ i.cycleName }} } ·
               {{ i.evaluated }} de {{ i.subcategories }} avaliadas · atual {{ averageText(i.current) }} · alvo {{ averageText(i.target) }} ·
               {{ i.methodologyVersion }} · revisão em {{ i.lastReviewedAt | date: 'dd/MM/yyyy' }}</li>
           }
@@ -110,6 +119,7 @@ const PAD = 12;
       :host { display: block; min-width: 0; }
       details summary { cursor: pointer; font-size: var(--fs-sm); margin-top: var(--sp-2); }
       .sub { margin: var(--sp-5) 0 var(--sp-2); font-size: var(--fs-panel); }
+      .note { display: block; color: var(--muted); font-size: var(--fs-meta); }
       @media (max-width: 520px) { .months li:nth-child(odd) .m { visibility: hidden; } }
     `,
   ],
@@ -130,18 +140,22 @@ export class MonthlyEvolutionComponent {
     if (!h) return [];
     const n = h.months.length;
     const x = (i: number) => (n <= 1 ? W / 2 : PAD + (i * (W - 2 * PAD)) / (n - 1));
-    const y = (score: number) => H - PAD - (Math.max(0, Math.min(100, score)) / 100) * (H - 2 * PAD);
     return h.series.map((series) => {
-      const cells = monthlyCells(h.months, series.points);
+      // Escala própria de cada instrumento: maturidade 0–5 (níveis 1–5) e score 0–100 — nunca no mesmo eixo.
+      const max = series.type === 'NistMaturity' ? 5 : 100;
+      const y = (v: number) => H - PAD - (Math.max(0, Math.min(max, v)) / max) * (H - 2 * PAD);
+      const val = (p: PostureMonthlyPoint) => seriesValue(series.type, p);
+      const cells = monthlyCells(h.months, series.points, val);
       const segments: SeriesView['segments'] = [];
       const dots: SeriesView['dots'] = [];
       const restarts: string[] = [];
       cells.forEach((c, i) => {
         if (!c.point) return;
-        if (c.point.score !== null) dots.push({ x: x(i), y: y(c.point.score), label: `${monthShort(c.month)}: ${this.scoreText(c.point.score)}` });
+        const cur = val(c.point);
+        if (cur !== null) dots.push({ x: x(i), y: y(cur), label: `${monthShort(c.month)}: ${this.valueText({ series } as SeriesView, c.point)}` });
         if (c.connected) {
           const prev = cells[i - 1].point!;
-          segments.push({ x1: x(i - 1), y1: y(prev.score!), x2: x(i), y2: y(c.point.score!) });
+          segments.push({ x1: x(i - 1), y1: y(val(prev)!), x2: x(i), y2: y(cur!) });
         }
         if (c.point.breakReasons.length > 0)
           restarts.push(`${monthShort(c.month)} (${c.point.breakReasons.map(incompatibilityLabel).join(', ')})`);
@@ -158,8 +172,22 @@ export class MonthlyEvolutionComponent {
     return score === null ? 'sem nota' : score.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
   }
 
+  protected maturity(v: number | null | undefined): string {
+    return maturityText(v);
+  }
+
+  /** Texto do valor do ponto na escala do instrumento ("2,5/5" na maturidade; "62" no score). */
+  protected valueText(v: Pick<SeriesView, 'series'>, p: PostureMonthlyPoint): string {
+    if (v.series.type !== 'NistMaturity') return this.scoreText(p.score);
+    return p.maturityCurrent === null || p.maturityCurrent === undefined ? 'sem nível' : `${maturityText(p.maturityCurrent)}/5`;
+  }
+
+  protected instrument(v: SeriesView): string {
+    return v.series.type === 'Knight' ? 'AEGIS KNIGHT · 0–100' : v.series.type === 'NistMaturity' ? 'AEGIS NIST · maturidade 1–5 (metodologia AEGIS)' : 'AEGIS NIST · postura 0–100';
+  }
+
   protected aria(v: SeriesView): string {
-    const pts = v.cells.filter((c) => c.point).map((c) => `${monthShort(c.month)} ${this.scoreText(c.point!.score)}`);
+    const pts = v.cells.filter((c) => c.point).map((c) => `${monthShort(c.month)} ${this.valueText(v, c.point!)}`);
     return `${v.series.label}: ${pts.length ? pts.join(', ') : 'sem publicação no período'}.`;
   }
 }

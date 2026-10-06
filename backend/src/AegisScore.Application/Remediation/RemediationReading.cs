@@ -41,16 +41,42 @@ public static class RemediationReading
         ActionPlanStatus.EmAndamento => isOverdue
             ? "Em andamento e fora do prazo — repactuar a data e registrar o que já foi feito."
             : "Concluir a execução e registrar o que foi feito.",
-        ActionPlanStatus.AguardandoValidacao => origin == ActionPlanOriginKind.DeviceVulnerability
-            ? DeviceAwaitingStep(applicableOutcome, latestOutcome)
-            : AwaitingStep(applicableOutcome, latestOutcome),
-        ActionPlanStatus.Concluido => origin == ActionPlanOriginKind.DeviceVulnerability
-            ? "Encerrada. Plano concluído não comprova que a CVE foi corrigida no dispositivo — a situação atual na fonte é " +
-              "apresentada à parte."
-            : "Encerrada. Nenhuma providência pendente.",
+        ActionPlanStatus.AguardandoValidacao => origin switch
+        {
+            ActionPlanOriginKind.DeviceVulnerability => DeviceAwaitingStep(applicableOutcome, latestOutcome),
+            ActionPlanOriginKind.NistFinding => NistAwaitingStep(applicableOutcome, latestOutcome),
+            _ => AwaitingStep(applicableOutcome, latestOutcome),
+        },
+        ActionPlanStatus.Concluido => origin switch
+        {
+            ActionPlanOriginKind.DeviceVulnerability =>
+                "Encerrada. Plano concluído não comprova que a CVE foi corrigida no dispositivo — a situação atual na fonte é " +
+                "apresentada à parte.",
+            ActionPlanOriginKind.NistFinding => "Encerrada. " + NistReassessmentNote,
+            _ => "Encerrada. Nenhuma providência pendente.",
+        },
         ActionPlanStatus.Vencido => "Etapa legada 'vencida' — reabrir e repactuar prazo para retomar o acompanhamento.",
         _ => "Sem providência definida.",
     };
+
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] O limite de um plano de achado NIST, dito sempre que encerramento ou validação entram em cena:
+    /// o plano não reavalia a subcategoria.
+    /// </summary>
+    public const string NistReassessmentNote =
+        "Concluir o plano não altera a maturidade, o score nem a conformidade: a reavaliação da subcategoria é um ato " +
+        "separado, registrado na avaliação com evidência.";
+
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Providência de quem relatou execução num plano de achado NIST (só validação humana).</summary>
+    private static string NistAwaitingStep(ActionPlanValidationOutcome? applicable, ActionPlanValidationOutcome? latest)
+    {
+        if (applicable == ActionPlanValidationOutcome.HumanAttested)
+            return "Validação humana registrada com evidência. Encerrar o plano assumindo isso. " + NistReassessmentNote;
+        return latest is null
+            ? "Execução relatada — registrar uma validação humana com evidência referenciada."
+            : "A validação registrada não fala por esta execução (é de um ciclo anterior ou anterior ao relato) — registrar " +
+              "nova validação humana com evidência referenciada.";
+    }
 
     /// <summary>Texto fixo do limite desta versão para casos de dispositivo — dito sempre que a validação entra em cena.</summary>
     public const string DeviceVerificationPending =
@@ -310,11 +336,16 @@ public static class RemediationReading
             return "Encerrar exige o relato do que foi feito neste ciclo. Registre a execução primeiro — " +
                    "avançar a etapa não é o mesmo que executar.";
         if (basis.ApplicableOutcome is not { } outcome)
-            return origin == ActionPlanOriginKind.DeviceVulnerability
-                ? "Encerrar exige uma decisão de validação sobre ESTA execução: registre uma atestação humana com " +
-                  "evidência referenciada. " + DeviceVerificationPending
-                : "Encerrar exige uma decisão de validação sobre ESTA execução. Valide com uma coleta " +
-                  "posterior ao trabalho relatado, ou registre uma atestação humana com evidência.";
+            return origin switch
+            {
+                ActionPlanOriginKind.DeviceVulnerability =>
+                    "Encerrar exige uma decisão de validação sobre ESTA execução: registre uma atestação humana com " +
+                    "evidência referenciada. " + DeviceVerificationPending,
+                ActionPlanOriginKind.NistFinding =>
+                    "Encerrar exige uma validação humana com evidência referenciada sobre ESTA execução. " + NistReassessmentNote,
+                _ => "Encerrar exige uma decisão de validação sobre ESTA execução. Valide com uma coleta " +
+                     "posterior ao trabalho relatado, ou registre uma atestação humana com evidência.",
+            };
         if (!SupportsClosure(outcome))
             return $"A validação aplicável a este ciclo é '{OutcomeLabel(outcome)}' — ela não sustenta o " +
                    "encerramento. Retome a execução e valide de novo.";

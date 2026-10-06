@@ -1,5 +1,5 @@
 /**
- * [AEGIS-NIST-JOURNEY-01] Telas do AEGIS NIST: respostas atrasadas e versão-base do rascunho.
+ * [AEGIS-NIST-JOURNEY-01/02] Telas do AEGIS NIST: respostas atrasadas, rodada no contexto e versão-base do rascunho.
  *
  * O que este spec trava, nos componentes reais (serviço dublê com respostas entregues na ordem que o teste escolher):
  *   (1) leitura de A substituída por B: B entregue primeiro e A depois — a tela mostra só B; erro atrasado de A não
@@ -10,7 +10,10 @@
  *       essa base (o servidor acusa conflito); só o recarregamento explícito adota a versão nova; resposta de
  *       evidência não rebaixa a versão já conhecida;
  *   (4) função e entrada do NIST: leitura substituída, perfil substituído e resposta após sair da tela não navegam
- *       nem repovoam.
+ *       nem repovoam;
+ *   (5) [JOURNEY-02] a RODADA faz parte do contexto: resposta pedida para a rodada anterior (mesma subcategoria e escopo)
+ *       não preenche a atual; link antigo sem rodada é resolvido para a rodada mais recente; procedimentos, achados e
+ *       planos atualizam o detalhe sem mudar a base do rascunho; designar/revisar exige rascunho gravado.
  *
  * Compilado por `tsc` (CommonJS, com decorators) e executado por `node`, como os demais specs de lógica.
  */
@@ -33,11 +36,13 @@ import { GovernanceService } from '../src/app/services/governance.service';
 import { AgentStateService } from '../src/app/services/agent-state.service';
 import {
   NistAssessment,
+  NistCycle,
   NistEvaluation,
   NistFunctionView,
   NistProfile,
   NistSubcategoryDetail,
 } from '../src/app/models/nist.models';
+import { NistCtx } from '../src/app/services/nist.service';
 
 // ---- micro-harness ---------------------------------------------------------------------------
 let failures = 0;
@@ -83,6 +88,10 @@ class FakeNist {
   suggest(...a: unknown[]) { return this.call('suggest', a); }
   create(...a: unknown[]) { return this.call('create', a); }
   addScope(...a: unknown[]) { return this.call('addScope', a); }
+  assignees() { return this.call('assignees', []); }
+  assign(...a: unknown[]) { return this.call('assign', a); }
+  review(...a: unknown[]) { return this.call('review', a); }
+  createCycle(...a: unknown[]) { return this.call('createCycle', a); }
   of(m: string): Call[] { return this.calls.filter((c) => c.m === m); }
   last(m: string): Call {
     const c = this.of(m).at(-1);
@@ -115,8 +124,10 @@ class FakeRoute {
   readonly params = new BehaviorSubject(convertToParamMap({}));
   readonly query = new BehaviorSubject(convertToParamMap({}));
   readonly data = new BehaviorSubject<Record<string, unknown>>({});
+  readonly frag = new BehaviorSubject<string | null>(null);
   readonly paramMap = this.params.asObservable();
   readonly queryParamMap = this.query.asObservable();
+  readonly fragment = this.frag.asObservable();
   get snapshot() {
     return { queryParamMap: this.query.value };
   }
@@ -169,6 +180,16 @@ function mount<C>(ctor: new () => C, init?: (route: FakeRoute) => void): Env<C> 
 // ---- dados sintéticos ------------------------------------------------------------------------
 const ASSESS = 'a0000000-0000-0000-0000-000000000001';
 const SCOPE = 's0000000-0000-0000-0000-000000000001';
+const CYCLE = 'c0000000-0000-0000-0000-000000000002';
+const CYCLE_OLD = 'c0000000-0000-0000-0000-000000000001';
+
+function cycle(id: string, name: string, start: string, end: string): NistCycle {
+  return {
+    id, name, periodKind: 'Monthly', periodStart: start, periodEnd: end, status: 'Open', seedFromCycleId: null, seedFromCycleName: null,
+    seedMode: 'None', createdAt: '2026-10-01T00:00:00Z', createdByName: 'Gestor Demo', closedAt: null, closedByName: null, version: 1, publications: 0,
+  };
+}
+const CYCLES = [cycle(CYCLE, 'out/2026', '2026-10-01', '2026-10-31'), cycle(CYCLE_OLD, 'set/2026', '2026-09-01', '2026-09-30')];
 
 function evaluation(version: number, over: Partial<NistEvaluation> = {}): NistEvaluation {
   return {
@@ -193,10 +214,15 @@ function evaluation(version: number, over: Partial<NistEvaluation> = {}): NistEv
   };
 }
 
-function detail(code: string, ev: NistEvaluation | null, evidence: string[] = []): NistSubcategoryDetail {
+function detail(code: string, ev: NistEvaluation | null, evidence: string[] = [], cycleId = CYCLE): NistSubcategoryDetail {
   return {
     assessmentId: ASSESS,
     scopeId: SCOPE,
+    cycleId,
+    cycleName: cycleId === CYCLE ? 'out/2026' : 'set/2026',
+    cycleStatus: 'Open',
+    procedures: [],
+    findings: [],
     code,
     functionCode: code.slice(0, 2) as NistSubcategoryDetail['functionCode'],
     functionName: 'Govern',
@@ -232,7 +258,8 @@ function detail(code: string, ev: NistEvaluation | null, evidence: string[] = []
 
 const SUB = { fn: 'gv', code: 'GV.OC-01' };
 const SUB_B = { fn: 'gv', code: 'GV.OC-02' };
-const Q = { avaliacao: ASSESS, escopo: SCOPE };
+const Q = { avaliacao: ASSESS, rodada: CYCLE, escopo: SCOPE };
+const Q_OLD = { avaliacao: ASSESS, rodada: CYCLE_OLD, escopo: SCOPE };
 
 function openSub(code: { fn: string; code: string } = SUB): Env<NistSubcategoryComponent> {
   return mount(NistSubcategoryComponent, (r) => r.go(code, Q));
@@ -359,7 +386,7 @@ test('versão: evidência com detalhe mais novo não muda a base — a gravaçã
   ok(e.v.staleBase(), 'a tela avisa que o rascunho é de uma versão anterior');
 
   e.v.save(e.v.detail());
-  const sent = e.api.last('save').args[3] as { expectedVersion: number; rationale: string };
+  const sent = e.api.last('save').args[2] as { expectedVersion: number; rationale: string };
   eq(sent.expectedVersion, 1, 'a gravação envia a versão em que o rascunho se baseia');
   eq(sent.rationale, 'rascunho de A sobre a v1', 'e o conteúdo do rascunho');
 
@@ -374,7 +401,7 @@ test('versão: retirada de evidência também preserva a base do rascunho', () =
   e.v.remove(e.v.detail(), 'ev-1');
   reply(e.api.last('removeEvidence'), detail('GV.OC-01', evaluation(2), []));
   e.v.save(e.v.detail());
-  eq((e.api.last('save').args[3] as { expectedVersion: number }).expectedVersion, 1, 'base continua na v1');
+  eq((e.api.last('save').args[2] as { expectedVersion: number }).expectedVersion, 1, 'base continua na v1');
 });
 
 test('versão: só o recarregamento explícito adota a versão nova', () => {
@@ -388,7 +415,7 @@ test('versão: só o recarregamento explícito adota a versão nova', () => {
   eq(e.v.draft.rationale, 'gravado por B', 'o rascunho passa a ser o da versão recarregada');
   eq(e.v.staleBase(), false, 'sem aviso depois de recarregar');
   e.v.save(e.v.detail());
-  eq((e.api.last('save').args[3] as { expectedVersion: number }).expectedVersion, 2, 'base agora é a v2');
+  eq((e.api.last('save').args[2] as { expectedVersion: number }).expectedVersion, 2, 'base agora é a v2');
 });
 
 test('versão: resposta de evidência com versão anterior não rebaixa a versão conhecida', () => {
@@ -403,7 +430,7 @@ test('versão: resposta de evidência com versão anterior não rebaixa a versã
   eq(e.v.detail()?.evaluation?.rationale, 'gravado', 'nem o conteúdo antigo');
   eq(e.v.detail()?.evidence.length, 1, 'a evidência nova aparece');
   e.v.save(e.v.detail());
-  eq((e.api.last('save').args[3] as { expectedVersion: number }).expectedVersion, 2, 'base continua na v2');
+  eq((e.api.last('save').args[2] as { expectedVersion: number }).expectedVersion, 2, 'base continua na v2');
 });
 
 test('versão: gravação e evidência não correm juntas (a segunda espera a primeira terminar)', () => {
@@ -433,15 +460,15 @@ test('fluxo normal: carregar, editar, vincular evidência e gravar', () => {
   eq(e.v.staleBase(), false, 'sem aviso de versão');
 
   e.v.save(e.v.detail());
-  const sent = e.api.last('save').args[3] as { expectedVersion: number; currentLevel: number };
+  const sent = e.api.last('save').args[2] as { expectedVersion: number; currentLevel: number };
   eq(sent.expectedVersion, 1, 'versão enviada');
   eq(sent.currentLevel, 3, 'nível enviado');
   reply(e.api.last('save'), detail('GV.OC-01', evaluation(2, { currentLevel: 3, rationale: 'nova justificativa' }), ['ev-1']));
   eq(e.v.detail()?.evaluation?.version, 2, 'versão nova exibida');
   eq(e.v.draft.rationale, 'nova justificativa', 'rascunho alinhado ao gravado');
-  eq(e.v.savedNote(), 'Avaliação gravada.', 'confirmação exibida');
+  eq(e.v.savedNote(), 'Avaliação gravada como registro humano desta rodada.', 'confirmação exibida');
   e.v.save(e.v.detail());
-  eq((e.api.last('save').args[3] as { expectedVersion: number }).expectedVersion, 2, 'próxima gravação parte da v2');
+  eq((e.api.last('save').args[2] as { expectedVersion: number }).expectedVersion, 2, 'próxima gravação parte da v2');
 });
 
 // ---- (4) função e entrada --------------------------------------------------------------------
@@ -451,10 +478,12 @@ function assessment(): NistAssessment {
     id: ASSESS,
     name: 'Avaliação demo',
     scopes: [{ id: SCOPE, name: 'Corporativo' }],
+    cycles: CYCLES,
+    progressCycleId: CYCLE,
   } as unknown as NistAssessment;
 }
-function fnView(code: string): NistFunctionView {
-  return { assessmentId: ASSESS, scopeId: SCOPE, code, name: code, definition: '', profile: {}, categories: [] } as unknown as NistFunctionView;
+function fnView(code: string, cycleId = CYCLE): NistFunctionView {
+  return { assessmentId: ASSESS, scopeId: SCOPE, cycleId, code, name: code, definition: '', profile: {}, categories: [] } as unknown as NistFunctionView;
 }
 
 test('função: GV pedida, troca para ID, ID chega antes e GV depois — a tela mostra só ID', () => {
@@ -492,13 +521,13 @@ test('função: lista que chega depois de sair da tela não navega', () => {
   eq(e.api.of('functionView').length, 0, 'nenhuma leitura da função');
 });
 
-function profile(name: string): NistProfile {
-  return { assessmentId: ASSESS, scopeId: name, methodologyVersion: 'v1', overall: {}, functions: [], categories: [], gaps: [], indeterminateGaps: 0 } as unknown as NistProfile;
+function profile(name: string, cycleId?: string): NistProfile {
+  return { assessmentId: ASSESS, scopeId: name, cycleId: cycleId ?? null, methodologyVersion: 'v1', overall: {}, functions: [], categories: [], gaps: [], indeterminateGaps: 0 } as unknown as NistProfile;
 }
 function twoAssessments(): NistAssessment[] {
   return [
-    { id: 'X', name: 'X', scopes: [{ id: 'sx', name: 'sx' }] },
-    { id: 'Y', name: 'Y', scopes: [{ id: 'sy', name: 'sy' }] },
+    { id: 'X', name: 'X', scopes: [{ id: 'sx', name: 'sx' }], cycles: [cycle('cx', 'X1', '2026-10-01', '2026-10-31')] },
+    { id: 'Y', name: 'Y', scopes: [{ id: 'sy', name: 'sy' }], cycles: [cycle('cy2', 'Y2', '2026-10-01', '2026-10-31'), cycle('cy1', 'Y1', '2026-09-01', '2026-09-30')], progressCycleId: 'cy2' },
   ] as unknown as NistAssessment[];
 }
 
@@ -506,9 +535,9 @@ test('entrada: escolha X e depois Y; Y chega antes e X depois — o perfil é o 
   const e = mount(NistHomeComponent);
   e.v.ngOnInit();
   reply(e.api.last('list'), twoAssessments());
-  e.v.choose('X', null);
+  e.v.choose('X', null, null);
   const px = e.api.last('profile');
-  e.v.choose('Y', null);
+  e.v.choose('Y', null, null);
   const py = e.api.last('profile');
   reply(py, profile('sy'));
   reply(px, profile('sx'));
@@ -523,9 +552,9 @@ test('entrada: erro atrasado do perfil de X não aparece com Y selecionada', () 
   const e = mount(NistHomeComponent);
   e.v.ngOnInit();
   reply(e.api.last('list'), twoAssessments());
-  e.v.choose('X', null);
+  e.v.choose('X', null, null);
   const px = e.api.last('profile');
-  e.v.choose('Y', null);
+  e.v.choose('Y', null, null);
   fail(px, new NistApiError('falha de X', 500));
   eq(e.v.profileError(), null, 'sem erro de X');
 });
@@ -535,26 +564,136 @@ test('entrada: avaliação criada que responde depois de sair da tela não naveg
   e.v.ngOnInit();
   reply(e.api.last('list'), twoAssessments());
   const before = e.router.navigations.length;
-  e.v.form = { name: 'Nova', description: '', startDate: '', endDate: '', scopeName: 'Escopo', scopeDescription: '' };
+  e.v.form = { name: 'Nova', description: '', startDate: '', endDate: '', scopeName: 'Escopo', scopeDescription: '', cycleName: '' };
   e.v.create();
   const create = e.api.last('create');
   e.destroy();
-  reply(create, { id: 'Z', name: 'Nova', scopes: [{ id: 'sz', name: 'Escopo' }] });
+  reply(create, { id: 'Z', name: 'Nova', scopes: [{ id: 'sz', name: 'Escopo' }], cycles: [cycle('cz', 'Z1', '2026-10-01', '2026-10-31')] });
   eq(e.router.navigations.length, before, 'nenhuma navegação a partir da tela destruída');
-  eq(e.api.of('profile').filter((c) => c.args[0] === 'Z').length, 0, 'nenhuma leitura do perfil da nova avaliação');
+  eq(e.api.of('profile').filter((c) => (c.args[0] as NistCtx).assessmentId === 'Z').length, 0, 'nenhuma leitura do perfil da nova avaliação');
 });
 
 test('entrada: avaliação criada enquanto o usuário escolheu outra não troca a seleção', () => {
   const e = mount(NistHomeComponent);
   e.v.ngOnInit();
   reply(e.api.last('list'), twoAssessments());
-  e.v.form = { name: 'Nova', description: '', startDate: '', endDate: '', scopeName: 'Escopo', scopeDescription: '' };
+  e.v.form = { name: 'Nova', description: '', startDate: '', endDate: '', scopeName: 'Escopo', scopeDescription: '', cycleName: '' };
   e.v.create();
   const create = e.api.last('create');
-  e.v.choose('Y', null);
-  reply(create, { id: 'Z', name: 'Nova', scopes: [{ id: 'sz', name: 'Escopo' }] });
+  e.v.choose('Y', null, null);
+  reply(create, { id: 'Z', name: 'Nova', scopes: [{ id: 'sz', name: 'Escopo' }], cycles: [cycle('cz', 'Z1', '2026-10-01', '2026-10-31')] });
   eq(e.v.selection()?.assessment.id, 'Y', 'seleção do usuário mantida');
   ok(e.v.assessments().some((a: NistAssessment) => a.id === 'Z'), 'a avaliação criada entra na lista');
+});
+
+
+// ---- (5) rodada no contexto (AEGIS-NIST-JOURNEY-02) -----------------------------------------------
+
+test('rodada: leitura da rodada anterior que chega depois da troca não preenche a rodada atual', () => {
+  const e = mount(NistSubcategoryComponent, (r) => r.go(SUB, Q_OLD));
+  const readOld = e.api.last('subcategory');
+  eq((readOld.args[0] as NistCtx).cycleId, CYCLE_OLD, 'a leitura carrega a rodada pedida');
+  e.route.go(SUB, Q);
+  const readNew = e.api.last('subcategory');
+  ok(readOld !== readNew, 'a rodada nova abriu sua própria leitura');
+  eq((readNew.args[0] as NistCtx).cycleId, CYCLE, 'na rodada nova');
+  reply(readNew, detail('GV.OC-01', evaluation(1, { rationale: 'outubro' })));
+  reply(readOld, detail('GV.OC-01', evaluation(9, { rationale: 'setembro' }), [], CYCLE_OLD));
+  eq(e.v.detail()?.cycleId, CYCLE, 'detalhe da rodada atual');
+  eq(e.v.draft.rationale, 'outubro', 'rascunho da rodada atual');
+  eq(e.v.baseVersion, 1, 'base da rodada atual');
+});
+
+test('rodada: gravação enviada na rodada anterior não repovoa a rodada atual', () => {
+  const e = mount(NistSubcategoryComponent, (r) => r.go(SUB, Q_OLD));
+  reply(e.api.last('subcategory'), detail('GV.OC-01', evaluation(1), [], CYCLE_OLD));
+  e.v.save(e.v.detail());
+  const saveOld = e.api.last('save');
+  e.route.go(SUB, Q);
+  reply(e.api.last('subcategory'), detail('GV.OC-01', evaluation(4)));
+  reply(saveOld, detail('GV.OC-01', evaluation(2, { rationale: 'gravado em setembro' }), [], CYCLE_OLD));
+  eq(e.v.detail()?.evaluation?.version, 4, 'a rodada atual continua na sua versão');
+  eq(e.v.savedNote(), null, 'sem confirmação da outra rodada');
+});
+
+test('rodada: resposta com rodada diferente da pedida é descartada mesmo no mesmo contexto', () => {
+  const e = mount(NistSubcategoryComponent, (r) => r.go(SUB, Q));
+  reply(e.api.last('subcategory'), detail('GV.OC-01', evaluation(3), [], CYCLE_OLD));
+  eq(e.v.detail(), null, 'detalhe de outra rodada não é exibido');
+});
+
+test('rodada: link antigo sem rodada é resolvido para a rodada mais recente antes de ler', () => {
+  const e = mount(NistSubcategoryComponent, (r) => r.go(SUB, { avaliacao: ASSESS, escopo: SCOPE }));
+  eq(e.api.of('subcategory').length, 0, 'nenhuma leitura sem rodada');
+  reply(e.api.last('list'), [assessment()]);
+  eq(e.router.navigations.at(-1)?.['rodada'], CYCLE, 'a URL passa a dizer a rodada');
+  eq((e.api.last('subcategory').args[0] as NistCtx).cycleId, CYCLE, 'a leitura usa a rodada resolvida');
+});
+
+test('rodada: procedimento/achado atualiza o detalhe sem mudar o rascunho nem a base', () => {
+  const e = mount(NistSubcategoryComponent, (r) => r.go(SUB, Q));
+  reply(e.api.last('subcategory'), detail('GV.OC-01', evaluation(1)));
+  e.v.draft.rationale = 'edição em curso';
+  e.v.refreshSoft();
+  const fresh = detail('GV.OC-01', evaluation(1));
+  fresh.procedures = [{ id: 'p1' } as never];
+  reply(e.api.last('subcategory'), fresh);
+  eq(e.v.detail()?.procedures?.length, 1, 'procedimentos atualizados');
+  eq(e.v.draft.rationale, 'edição em curso', 'rascunho preservado');
+  eq(e.v.baseVersion, 1, 'base preservada');
+});
+
+test('rodada: designar e revisar exigem o rascunho gravado; a resposta adota a nova versão', () => {
+  const e = mount(NistSubcategoryComponent, (r) => r.go(SUB, Q));
+  reply(e.api.last('subcategory'), detail('GV.OC-01', evaluation(2)));
+  e.v.draft.rationale = 'não gravado';
+  e.v.assign(e.v.detail());
+  e.v.review(e.v.detail(), 'Approved');
+  eq(e.api.of('assign').length + e.api.of('review').length, 0, 'nada enviado com rascunho pendente');
+  e.v.draft.rationale = 'justificativa v2';
+  e.v.assessorChoice = 'u-1';
+  e.v.assign(e.v.detail());
+  const sent = e.api.last('assign').args;
+  eq(sent[2], 'u-1', 'avaliador escolhido');
+  eq(sent[4], 2, 'versão lida');
+  reply(e.api.last('assign'), detail('GV.OC-01', evaluation(3, { assessorUserId: 'u-1', assessorName: 'Analista Demo' })));
+  eq(e.v.baseVersion, 3, 'base passa à versão devolvida');
+  e.v.review(e.v.detail(), 'Approved');
+  fail(e.api.last('review'), new NistApiError('Quem gravou a versão vigente não a revisa.', 400));
+  eq(e.v.roleError(), 'Quem gravou a versão vigente não a revisa.', 'recusa do servidor exibida');
+});
+
+test('rodada: conteúdo trazido de outra rodada aguarda confirmação e a gravação parte da sua versão', () => {
+  const e = mount(NistSubcategoryComponent, (r) => r.go(SUB, Q));
+  reply(e.api.last('subcategory'), detail('GV.OC-01', evaluation(1, { state: 'PendingConfirmation', contentOrigin: 'CarriedForward', humanConfirmed: false, reviewedAt: null })));
+  eq(e.v.detail()?.evaluation?.humanConfirmed, false, 'não é revisão humana');
+  e.v.save(e.v.detail());
+  eq((e.api.last('save').args[2] as { expectedVersion: number }).expectedVersion, 1, 'confirmação envia a versão lida');
+});
+
+test('função: resposta de outra rodada é descartada', () => {
+  const e = mount(NistFunctionComponent, (r) => r.go({ fn: 'gv' }, Q));
+  reply(e.api.last('list'), [assessment()]);
+  eq((e.api.last('functionView').args[0] as NistCtx).cycleId, CYCLE, 'a leitura carrega a rodada');
+  reply(e.api.last('functionView'), fnView('GV', CYCLE_OLD));
+  eq(e.v.view(), null, 'função de outra rodada não é exibida');
+});
+
+test('entrada: troca de rodada pede o perfil da nova rodada e descarta o da anterior', () => {
+  const e = mount(NistHomeComponent);
+  e.v.ngOnInit();
+  reply(e.api.last('list'), twoAssessments());
+  e.v.choose('Y', null, null);
+  const p2 = e.api.last('profile');
+  eq((p2.args[0] as NistCtx).cycleId, 'cy2', 'rodada do andamento (mais recente)');
+  e.v.choose('Y', 'cy1', 'sy');
+  const p1 = e.api.last('profile');
+  eq((p1.args[0] as NistCtx).cycleId, 'cy1', 'rodada escolhida');
+  reply(p2, profile('sy', 'cy2'));
+  eq(e.v.profile(), null, 'perfil da rodada anterior descartado');
+  reply(p1, profile('sy', 'cy1'));
+  eq(e.v.profile()?.cycleId, 'cy1', 'perfil da rodada escolhida');
+  eq(e.router.navigations.at(-1)?.['rodada'], 'cy1', 'a URL diz a rodada');
 });
 
 console.log(`\n${count - failures}/${count} ok`);

@@ -34,6 +34,8 @@ import {
   panelAllowsCreation,
   pinnedPlanRejection,
   planForPanel,
+  planLink,
+  planSubject,
   seededProposal,
   validationBasis,
   validationScope,
@@ -438,6 +440,20 @@ test('a proposta de MFA lembra que registro não comprova imposição', () => {
 
 test('achado sem redação própria não recebe proposta inventada', () => {
   eq(seededProposal('AK-ENTRA-999', 5), '', 'melhor um campo vazio para o humano do que uma frase fabricada');
+});
+
+
+test('[AEGIS-NIST-JOURNEY-02] plano de achado NIST: origem explícita, assunto pela subcategoria e link com a rodada', () => {
+  const p = plan({
+    knightIndicatorId: null, originRunId: null, originSourceType: null, originMode: null, originKind: 'NistFinding',
+    nistOrigin: { findingId: 'f-1', assessmentId: 'a-1', cycleId: 'c-2', scopeId: 's-1', subcategoryCode: 'ID.AM-01' },
+  });
+  eq(originLabel(p), 'Achado do AEGIS NIST · ID.AM-01', 'origem dita como achado NIST');
+  eq(planSubject(p), 'ID.AM-01', 'assunto é a subcategoria, nunca um indicador KNIGHT');
+  const l = planLink(p)!;
+  eq(l.commands.join('/'), '/nist/id/ID.AM-01', 'abre a subcategoria');
+  eq(`${l.queryParams['avaliacao']}|${l.queryParams['rodada']}|${l.queryParams['escopo']}`, 'a-1|c-2|s-1', 'avaliação, rodada e escopo explícitos');
+  notContains(JSON.stringify(l), '/knight', 'nunca leva ao KNIGHT');
 });
 
 console.log(`\n${count - failures}/${count} testes passaram (remediation.models).`);

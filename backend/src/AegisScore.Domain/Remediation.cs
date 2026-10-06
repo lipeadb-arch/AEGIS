@@ -32,6 +32,12 @@ public enum ActionPlanOriginKind
 
     /// <summary>Plano nascido de um caso de vulnerabilidade em dispositivo (ativo × CVE) da prioridade de tratamento.</summary>
     DeviceVulnerability = 2,
+
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] Plano nascido de um ACHADO de uma avaliação do AEGIS NIST (avaliação · rodada · escopo ·
+    /// subcategoria). A validação é sempre humana com evidência referenciada; concluir o plano não altera maturidade.
+    /// </summary>
+    NistFinding = 3,
 }
 
 /// <summary>Natureza de uma entrada da trilha de auditoria de um plano de ação.</summary>
@@ -85,6 +91,12 @@ public class ActionPlanEvent : Entity, ITenantOwned
 
     /// <summary>Descrição curta e sanitizada da mudança (sem segredo, sem payload bruto).</summary>
     public string? Note { get; set; }
+
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] Valores ANTERIORES e NOVOS dos campos alterados (lista JSON de { field, label, from, to },
+    /// truncados). Nulo nas entradas anteriores a este pacote e nos eventos sem mudança de campo.
+    /// </summary>
+    public string? ChangesJson { get; set; }
 }
 
 /// <summary>

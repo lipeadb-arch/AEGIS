@@ -7,12 +7,29 @@
  *   (3) a avaliação/escopo vigente vem da URL, depois da lembrança, depois da mais recente — id desconhecido é ignorado;
  *   (4) os Dashboards distinguem sem avaliação, zero, parcial, desatualizado e demonstração, e só listam findings
  *       reprovados por severidade;
- *   (5) a evolução mensal não inventa mês nem liga meses não consecutivos ou incomparáveis.
+ *   (5) a evolução mensal não inventa mês nem liga meses não consecutivos ou incomparáveis;
+ *   (6) [JOURNEY-02] a rodada vem da URL, da lembrança ou da mais recente — nunca de outra avaliação; o período segue as
+ *       regras do servidor; resultado de procedimento ≠ método; achado exige fundamentação; responsável é vínculo, contato
+ *       externo ou texto — nunca os três misturados; a maturidade 1–5 tem série própria na evolução mensal.
  */
 import {
   NIST_FUNCTIONS,
   NistAssessment,
+  NistCycle,
   averageText,
+  cyclePeriodProblem,
+  cyclePeriodText,
+  findingDraftFrom,
+  findingProblem,
+  monthPeriod,
+  planTransitionLabel,
+  procedureResultProblem,
+  quarterPeriod,
+  selectionKey,
+  stateLabel,
+  suggestNextCycle,
+  toFindingRequest,
+  toProcedureRequest,
   draftFrom,
   draftGap,
   draftProblem,
@@ -161,6 +178,98 @@ test('evolução mensal: mês sem publicação fica vazio; liga só vizinhos com
   const restart = monthlyCells(months.slice(0, 2), [point('2026-07-01', 40, false), point('2026-08-01', 45, false)]);
   eq(restart[1].connected, false, 'catálogo diferente não liga');
   eq(monthShort('2026-10-01'), 'out/26', 'rótulo do mês');
+});
+
+
+// ---- [AEGIS-NIST-JOURNEY-02] rodadas, procedimentos, achados e responsáveis --------------------------
+
+const cyc = (id: string, start: string, end: string, kind: NistCycle['periodKind'] = 'Monthly'): NistCycle => ({
+  id, name: id, periodKind: kind, periodStart: start, periodEnd: end, status: 'Open', seedFromCycleId: null, seedFromCycleName: null, seedMode: 'None',
+  createdAt: '2026-10-01T00:00:00Z', createdByName: null, closedAt: null, closedByName: null, version: 1, publications: 0,
+});
+const withCycles = (id: string, cycles: NistCycle[], progress?: string): NistAssessment => ({
+  ...assessment(id, [`${id}-s`]), cycles, progressCycleId: progress ?? null,
+});
+
+test('seleção com rodada: URL vence; desconhecida → a do andamento; rodada de outra avaliação nunca é aplicada', () => {
+  const a1 = withCycles('a1', [cyc('c12', '2026-10-01', '2026-10-31'), cyc('c11', '2026-09-01', '2026-09-30')], 'c12');
+  const a2 = withCycles('a2', [cyc('c21', '2026-10-01', '2026-10-31')]);
+  const list = [a2, a1];
+  eq(resolveSelection(list, { assessmentId: 'a1', cycleId: 'c11', scopeId: null }, null)?.cycle?.id, 'c11', 'rodada pedida');
+  eq(resolveSelection(list, { assessmentId: 'a1', cycleId: 'xx', scopeId: null }, null)?.cycle?.id, 'c12', 'desconhecida → andamento');
+  eq(resolveSelection(list, { assessmentId: 'a1', cycleId: 'c21', scopeId: null }, null)?.cycle?.id, 'c12', 'rodada de outra avaliação ignorada');
+  eq(resolveSelection(list, { assessmentId: null, scopeId: null }, { assessmentId: 'a1', cycleId: 'c11', scopeId: 'a1-s' })?.cycle?.id, 'c11', 'lembrança');
+  eq(resolveSelection(list, { assessmentId: null, scopeId: null }, null)?.cycle?.id, 'c21', 'mais recente sem progresso → primeira');
+  const sel = resolveSelection(list, { assessmentId: 'a1', cycleId: 'c11', scopeId: 'a1-s' }, null);
+  eq(selectionParams(sel).rodada, 'c11', 'URL carrega a rodada');
+  ok(selectionKey(sel) !== selectionKey(resolveSelection(list, { assessmentId: 'a1', cycleId: 'c12', scopeId: 'a1-s' }, null)), 'rodada muda a identidade do contexto');
+  eq(resolveSelection([assessment('legado', ['s'])], { assessmentId: 'legado', scopeId: 's' }, null)?.cycle, null, 'sem rodadas: sem rodada (nunca inventada)');
+});
+
+test('período da rodada: mês e trimestre civis inteiros; outro até três anos; textos', () => {
+  eq(monthPeriod(2024, 2).end, '2024-02-29', 'fevereiro bissexto');
+  eq(quarterPeriod(2026, 4).start + '|' + quarterPeriod(2026, 4).end, '2026-10-01|2026-12-31', 'T4');
+  eq(cyclePeriodProblem('Monthly', '2026-10-01', '2026-10-31'), null, 'mês inteiro');
+  ok(cyclePeriodProblem('Monthly', '2026-10-02', '2026-10-31') !== null, 'mês parcial recusado');
+  ok(cyclePeriodProblem('Quarterly', '2026-10-01', '2026-11-30') !== null, 'trimestre parcial recusado');
+  ok(cyclePeriodProblem('Other', '2026-10-10', '2026-10-01') !== null, 'fim antes do início');
+  ok(cyclePeriodProblem('Other', '2026-01-01', '2029-06-01') !== null, 'acima de três anos');
+  eq(cyclePeriodProblem('Other', '2026-10-10', '2026-11-20'), null, 'intervalo livre');
+  eq(cyclePeriodText(cyc('x', '2026-10-01', '2026-10-31')), 'out/2026', 'mensal');
+  eq(cyclePeriodText(cyc('x', '2026-10-01', '2026-12-31', 'Quarterly')), 'T4 2026', 'trimestral');
+  eq(cyclePeriodText(cyc('x', '2026-10-10', '2026-11-20', 'Other')), '10/10/2026 a 20/11/2026', 'outro');
+  const next = suggestNextCycle([cyc('a', '2026-11-01', '2026-11-30'), cyc('b', '2026-12-01', '2026-12-31')], 'Monthly', '2026-10-06');
+  eq(next.start + '|' + next.end, '2027-01-01|2027-01-31', 'próxima rodada depois da mais recente (virada de ano)');
+  eq(suggestNextCycle([], 'Quarterly', '2026-10-06').name, 'T4 2026', 'sem rodada: trimestre atual');
+});
+
+test('procedimento: escolher o método não é resultado; realizado exige data, observação e conclusão', () => {
+  const today = '2026-10-06';
+  const base = { status: 'Planned' as const, outcome: null, observation: '', performedOn: '', evidenceIds: [] };
+  eq(procedureResultProblem(base, today), null, 'planejado não exige resultado');
+  eq(procedureResultProblem({ ...base, status: 'Performed' }, today), 'Um procedimento realizado precisa da conclusão observada.', 'sem conclusão');
+  ok(procedureResultProblem({ ...base, status: 'Performed', outcome: 'Unsatisfactory', performedOn: '2026-10-07', observation: '30% sem dono.' }, today)!.includes('futuro'), 'data futura');
+  ok(procedureResultProblem({ ...base, status: 'NotPerformed', observation: 'curto' }, today) !== null, 'não realizado exige motivo');
+  const req = toProcedureRequest({ ...base, status: 'InProgress', outcome: 'Satisfactory', performedOn: '2026-10-01', observation: 'em curso' }, 4);
+  eq(req.outcome, null, 'em execução não leva conclusão');
+  eq(req.performedOn, null, 'nem data de realização');
+  eq(req.expectedVersion, 4, 'versão lida');
+});
+
+test('achado: rascunho semeado com o documentado; exige fundamentação; plano opcional com responsável vinculado', () => {
+  const d = {
+    evaluation: { gaps: 'Planilha sem dono.', riskImpact: 'Ativo sem dono não é corrigido.', improvementGuidance: 'Atribuir donos.' },
+    procedures: [{ status: 'Performed', outcome: 'Unsatisfactory', observation: '30% dos servidores sem dono.' }, { status: 'Planned', outcome: null, observation: 'x' }],
+  } as never;
+  const f = findingDraftFrom(d);
+  eq(f.condition, 'Planilha sem dono.\n30% dos servidores sem dono.', 'condição com lacuna e procedimento insatisfatório');
+  eq(f.severity, '', 'severidade nunca pré-escolhida');
+  eq(findingProblem(f), 'Descreva o problema (título do achado).', 'título exigido');
+  const full = { ...f, title: 'Inventário sem dono', impact: 'Vulnerabilidade sem tratamento.', severity: 'High' as const, severityRationale: 'curta',
+    priority: 'High' as const, priorityRationale: 'Pré-requisito de outros controles.', planTitle: 'Atribuir donos' };
+  eq(findingProblem(full), 'Justifique a severidade (pelo menos 10 caracteres).', 'severidade justificada');
+  const ready = { ...full, severityRationale: 'Servidores de produção.', planOwnerMode: 'user' as const, planOwnerUserId: '' };
+  eq(findingProblem(ready), 'Escolha o usuário responsável pelo plano.', 'usuário exigido no modo vínculo');
+  const req = toFindingRequest({ ...ready, planOwnerUserId: 'u-1', planOwnerName: 'texto ignorado' });
+  eq(req.plan?.responsible?.userId, 'u-1', 'vínculo enviado');
+  eq(req.plan?.responsible?.name, null, 'sem texto misturado ao vínculo');
+  eq(toFindingRequest({ ...ready, withPlan: false }).plan, null, 'sem plano');
+});
+
+test('responsável da prática: vínculo, externo ou texto — nunca misturados; texto legado continua texto', () => {
+  const legacy = draftFrom({ ownerName: 'Fulano (texto antigo)', owner: { kind: 'Text', name: 'Fulano (texto antigo)', userId: null, contact: null, userActive: false } } as never);
+  eq(legacy.ownerMode, 'text', 'texto legado não vira vínculo');
+  const linked = draftFrom({ ownerName: 'Analista', owner: { kind: 'User', name: 'Analista', userId: 'u-9', contact: null, userActive: true } } as never);
+  eq(linked.ownerMode, 'user', 'vínculo reconhecido');
+  const req = toSaveRequest({ ...linked, rationale: 'x' }, 2);
+  eq(req.ownerUserId, 'u-9', 'vínculo enviado');
+  eq(req.ownerName, null, 'sem texto junto do vínculo');
+  const ext = toSaveRequest({ ...linked, ownerMode: 'external', ownerName: 'Consultoria Demo', ownerContact: 'contato@demo.example.com' }, 2);
+  eq(ext.ownerIsExternal, true, 'externo');
+  eq(ext.ownerUserId, null, 'externo sem vínculo');
+  eq(draftProblem({ ...linked, ownerMode: 'external', ownerName: '' }), 'Informe o nome do contato externo responsável.', 'externo exige nome');
+  eq(stateLabel('PendingConfirmation'), 'Aguarda confirmação', 'estado de conteúdo herdado/importado');
+  eq(planTransitionLabel('Concluido', 'EmAndamento'), 'Reabrir o plano', 'reabertura nomeada');
 });
 
 console.log(`\n${count - failures}/${count} testes passaram (nist-journey.models).`);

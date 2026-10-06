@@ -230,8 +230,8 @@ import {
               <div>
                 <h2>Planos de ação</h2>
                 <p class="section-desc">
-                  Planos nascidos de achados de identidade (AEGIS KNIGHT) e de casos de vulnerabilidade em
-                  dispositivos. <strong>A etapa do plano e o que foi comprovado são coisas distintas</strong>:
+                  Planos nascidos de achados de identidade (AEGIS KNIGHT), de casos de vulnerabilidade em
+                  dispositivos e de achados do AEGIS NIST. <strong>A etapa do plano e o que foi comprovado são coisas distintas</strong>:
                   concluir um plano é decisão de gestão sobre o trabalho; só a validação registra o que foi
                   verificado — e, para casos de dispositivo, a verificação técnica automática ainda não está disponível.
                 </p>
@@ -246,8 +246,8 @@ import {
               } @else if (plans().length === 0) {
                 <div class="state empty">
                   <p class="muted">
-                    Nenhum plano de ação registrado. Crie um a partir de um achado de identidade ou de um caso na
-                    prioridade de tratamento de dispositivos.
+                    Nenhum plano de ação registrado. Crie um a partir de um achado de identidade, de um caso na
+                    prioridade de tratamento de dispositivos ou de um achado registrado numa subcategoria do AEGIS NIST.
                   </p>
                 </div>
               } @else {

@@ -6,7 +6,7 @@ import { catchError, map } from 'rxjs/operators';
 import { MonthlyEvolutionComponent } from '../components/monthly-evolution.component';
 import { knightReading, nistPostureReading, prioritizedFindings, scoreText } from '../models/dashboards.models';
 import { KnightSourceLatest, severityLabel } from '../models/knight.models';
-import { NIST_FUNCTIONS, NistAssessment, NistProfile, averageText, gapText, nistFunctionTitle, scopeCoverage } from '../models/nist.models';
+import { NIST_FUNCTIONS, NistAssessment, NistCycle, NistProfile, averageText, cycleLabel, gapText, nistFunctionTitle, scopeCoverage } from '../models/nist.models';
 import { PostureMonthlyHistory } from '../models/posture-history.models';
 import { WorkspacePosture } from '../models/workspace.models';
 import { AegisScoreService } from '../services/aegis-score.service';
@@ -123,14 +123,19 @@ interface Block<T> {
             </article>
 
             <article class="panel">
-              <div class="hd"><h3>Maturidade da avaliação</h3><span class="hint">atual × alvo · escala 1–5</span></div>
+              <div class="hd"><h3>Maturidade da avaliação</h3><span class="hint">atual × alvo · escala 1–5 do AEGIS</span></div>
               @if (maturity().error) {
                 <p class="notice error" role="alert">{{ maturity().error }}</p>
               } @else if (latestAssessment()) {
               @let la = latestAssessment()!;
-                <p><strong>{{ la.name }}</strong> · {{ la.scopes.length > 0 ? la.scopes[0].name : 'sem escopo' }}</p>
+                @let cy = latestCycle();
+                <p><strong>{{ la.name }}</strong> · {{ la.scopes.length > 0 ? la.scopes[0].name : 'sem escopo' }}
+                  @if (cy) { · rodada {{ cycleLabel(cy) }} }</p>
                 @if (la.scopes[0]; as sc) {
-                  <p class="muted">{{ sc.evaluated }} de {{ sc.subcategories }} subcategorias avaliadas · cobertura {{ coverage(sc) }} · metodologia {{ la.methodologyVersion }}</p>
+                  @if (cy && sc.cycleId === cy.id) {
+                    <p class="muted">{{ sc.evaluated }} de {{ sc.subcategories }} subcategorias avaliadas · cobertura {{ coverage(sc) }} · metodologia {{ la.methodologyVersion }}
+                      @if (sc.pendingConfirmation) { · {{ sc.pendingConfirmation }} aguardando confirmação }</p>
+                  }
                 }
                 @if (profile(); as p) {
                   <div class="nums">
@@ -140,9 +145,13 @@ interface Block<T> {
                   </div>
                   <ul class="fns">
                     @for (f of functionsMaturity(); track f.code) {
-                      <li><a [routerLink]="['/nist', f.slug]" [queryParams]="{ avaliacao: la.id, escopo: la.scopes.length > 0 ? la.scopes[0].id : null }">{{ f.title }}</a><span>{{ f.state }}</span></li>
+                      <li><a [routerLink]="['/nist', f.slug]" [queryParams]="nistParams()">{{ f.title }}</a><span>{{ f.state }}</span></li>
                     }
                   </ul>
+                  @if (p.treatment; as t) {
+                    <p class="muted"><a routerLink="/nist" [queryParams]="nistTreatmentParams()">{{ t.findingsOpen }} achado(s) aberto(s)</a>
+                      · {{ t.findingsWithoutPlan }} sem plano · {{ t.plansOverdue }} plano(s) vencido(s)</p>
+                  }
                 }
               } @else {
                 <div class="state"><p><strong>Nenhuma avaliação NIST criada.</strong> Defina a avaliação e o escopo para começar.</p>
@@ -208,6 +217,17 @@ export class DashboardsComponent implements OnInit {
 
   protected readonly knightSources = computed(() => (this.knight().value ?? []).filter((s) => s.assessment || s.unfinishedAttempt));
   protected readonly latestAssessment = computed(() => this.maturity().value?.[0] ?? null);
+  /** Rodada mais recente (a do andamento): o painel diz qual rodada mostra; nunca mistura rodadas. */
+  protected readonly latestCycle = computed<NistCycle | null>(() => {
+    const la = this.latestAssessment();
+    return la?.cycles?.find((c) => c.id === la.progressCycleId) ?? la?.cycles?.[0] ?? null;
+  });
+  protected readonly nistParams = computed(() => {
+    const la = this.latestAssessment();
+    return { avaliacao: la?.id ?? null, rodada: this.latestCycle()?.id ?? null, escopo: la?.scopes[0]?.id ?? null };
+  });
+  protected readonly nistTreatmentParams = computed(() => ({ ...this.nistParams(), aba: 'achados', status: 'Open' }));
+  protected readonly cycleLabel = cycleLabel;
   protected readonly postureReading = computed(() => nistPostureReading(this.posture().value?.overall ?? null, this.generatedAt() ?? new Date()));
   /** Séries com pelo menos dois meses publicados: um ponto isolado não é evolução. */
   protected readonly comparableSeries = computed(() => (this.monthly().value?.series ?? []).filter((s) => s.points.length >= 2).length);
@@ -257,8 +277,11 @@ export class DashboardsComponent implements OnInit {
       this.monthly.set(r.monthly);
       this.loading.set(false);
       const la = r.maturity.value?.[0];
-      if (la?.scopes[0])
-        this.nist.profile(la.id, la.scopes[0].id).subscribe({ next: (p) => this.profile.set(p), error: () => this.profile.set(null) });
+      const cy = this.latestCycle();
+      if (la?.scopes[0] && cy)
+        this.nist
+          .profile({ assessmentId: la.id, cycleId: cy.id, scopeId: la.scopes[0].id })
+          .subscribe({ next: (p) => this.profile.set(p), error: () => this.profile.set(null) });
     });
   }
 

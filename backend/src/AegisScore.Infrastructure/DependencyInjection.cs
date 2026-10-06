@@ -202,6 +202,10 @@ public static class DependencyInjection
         services.AddScoped<AegisScore.Application.Knight.Reference.IKnightManualResultService, KnightManualResultService>();
         // [AEGIS-NIST-JOURNEY-01] Jornada persistida do AEGIS NIST (avaliação, escopo, subcategoria, evidência, perfil).
         services.AddScoped<AegisScore.Application.Nist.INistAssessmentService, AegisScore.Infrastructure.Nist.NistAssessmentService>();
+        // [AEGIS-NIST-JOURNEY-02] Procedimentos, achados e planos; publicação da maturidade; importação CSV de trabalho.
+        services.AddScoped<AegisScore.Application.Nist.INistWorkService, AegisScore.Infrastructure.Nist.NistWorkService>();
+        services.AddScoped<AegisScore.Application.Nist.INistPublicationService, AegisScore.Infrastructure.Nist.NistPublicationService>();
+        services.AddScoped<AegisScore.Application.Nist.INistImportService, AegisScore.Infrastructure.Nist.NistImportService>();
 
         // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidence Fabric de identidade: o ÚNICO ponto de aquisição real do Entra ID
         // (reusa o coletor do KNIGHT + transporte/credencial existentes) e de persistência do snapshot normalizado.

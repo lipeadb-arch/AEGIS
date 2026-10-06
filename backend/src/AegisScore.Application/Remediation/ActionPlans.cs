@@ -102,7 +102,41 @@ public sealed record ActionPlanView(
     /// <summary>[AEGIS-JOURNEY-01] Origem EXPLÍCITA (ou derivada, nos planos anteriores a ela).</summary>
     ActionPlanOriginKind OriginKind = ActionPlanOriginKind.KnightFinding,
     /// <summary>[AEGIS-JOURNEY-01] Registro de origem congelado de um caso de dispositivo — nunca a leitura atual.</summary>
-    DeviceCaseOrigin? DeviceOrigin = null);
+    DeviceCaseOrigin? DeviceOrigin = null,
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Origem num achado do AEGIS NIST (avaliação · rodada · escopo · subcategoria).</summary>
+    NistPlanOrigin? NistOrigin = null,
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Responsável vinculado a um usuário ativo do tenant (nulo = texto ou externo).</summary>
+    Guid? ResponsibleUserId = null,
+    bool ResponsibleIsExternal = false,
+    string? ResponsibleContact = null,
+    /// <summary>[AEGIS-NIST-JOURNEY-02] A ação já foi reaberta (o ciclo vigente não é o primeiro).</summary>
+    bool WasReopened = false);
+
+/// <summary>[AEGIS-NIST-JOURNEY-02] Origem EXPLÍCITA de um plano nascido de um achado do AEGIS NIST.</summary>
+public sealed record NistPlanOrigin(Guid FindingId, Guid AssessmentId, Guid CycleId, Guid ScopeId, string SubcategoryCode);
+
+/// <summary>
+/// [AEGIS-NIST-JOURNEY-02] Responsável de um plano: usuário ATIVO do tenant (verificado no servidor), contato externo
+/// (nome obrigatório) ou texto livre. Texto legado nunca vira vínculo automaticamente.
+/// </summary>
+public sealed record ActionPlanResponsible(Guid? UserId, string? Name, bool IsExternal, string? Contact);
+
+/// <summary>
+/// [AEGIS-NIST-JOURNEY-02] Criação de um plano a partir de um achado do AEGIS NIST. Chamado pela jornada NIST DEPOIS de
+/// validar o achado (tenant, avaliação, rodada, escopo e situação): o plano guarda a origem inteira explícita.
+/// </summary>
+public sealed record CreateNistFindingActionPlanCommand(
+    Guid FindingId,
+    Guid AssessmentId,
+    Guid CycleId,
+    Guid ScopeId,
+    string SubcategoryCode,
+    string FindingTitle,
+    string Title,
+    string? ProposedAction,
+    ActionPlanResponsible? Responsible,
+    string? ResponsibleArea,
+    DateOnly? DueDate);
 
 /// <summary>
 /// [AEGIS-JOURNEY-01] REGISTRO DE ORIGEM de um plano nascido de um caso de vulnerabilidade em dispositivo — o contexto que
@@ -207,7 +241,12 @@ public sealed record UpdateActionPlanCommand(
     string? ResponsiblePerson,
     string? ResponsibleArea,
     DateOnly? DueDate,
-    ActionPlanStatus? Status);
+    ActionPlanStatus? Status,
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] Responsável identificado (usuário, externo ou texto). Quando presente, vence
+    /// <paramref name="ResponsiblePerson"/>; nulo = responsável inalterado.
+    /// </summary>
+    ActionPlanResponsible? Responsible = null);
 
 /// <summary>Registro da EXECUÇÃO relatada: o que foi feito e a referência da evidência. Não comprova correção.</summary>
 public sealed record RecordExecutionCommand(
@@ -248,7 +287,10 @@ public sealed record ActionPlanFilter(
     KnightAssessmentMode? Mode = null,
     ActionPlanOriginScope Origin = ActionPlanOriginScope.Knight,
     Guid? AssetId = null,
-    string? CveId = null);
+    string? CveId = null,
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Restringe aos planos de uma avaliação NIST (e, opcionalmente, de um achado).</summary>
+    Guid? NistAssessmentId = null,
+    Guid? NistFindingId = null);
 
 /// <summary>[AEGIS-JOURNEY-01] Recorte de origem da lista de planos.</summary>
 public enum ActionPlanOriginScope
@@ -261,6 +303,9 @@ public enum ActionPlanOriginScope
 
     /// <summary>As duas origens de remediação — nunca os planos de tratamento de risco.</summary>
     All = 2,
+
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Só planos de achados do AEGIS NIST (nunca misturados às outras origens por padrão).</summary>
+    NistFinding = 3,
 }
 
 /// <summary>
@@ -306,6 +351,13 @@ public interface IRemediationService
     /// <returns><c>null</c> quando o ativo não existe neste tenant.</returns>
     Task<ActionPlanView?> CreateForDeviceCaseAsync(
         CreateDeviceCaseActionPlanCommand command, RemediationActor actor, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] Cria o plano de tratamento de um achado do AEGIS NIST. Recusa (409, com o plano existente)
+    /// quando já há plano ativo para o achado. A validação do achado em si é da jornada NIST, que chama este método.
+    /// </summary>
+    Task<ActionPlanView> CreateForNistFindingAsync(
+        CreateNistFindingActionPlanCommand command, RemediationActor actor, CancellationToken ct = default);
 
     /// <summary>
     /// [AEGIS-JOURNEY-01] A situação ATUAL observada na fonte para o caso de origem de um plano de dispositivo — leitura

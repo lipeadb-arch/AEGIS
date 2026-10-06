@@ -32,6 +32,13 @@ public enum PostureSnapshotType
 
     /// <summary>Assessment do AEGIS KNIGHT (fórmula knight-score-v1) — postura de identidade/exposição.</summary>
     Knight = 1,
+
+    /// <summary>
+    /// [AEGIS-NIST-JOURNEY-02] MATURIDADE de uma avaliação do AEGIS NIST (avaliação · rodada · escopo), na escala 1–5 da
+    /// metodologia autoral do AEGIS. Terceiro instrumento, nunca somado aos outros dois: o <see cref="PostureSnapshot.Score"/>
+    /// (0–100) fica SEMPRE nulo neste tipo — os níveis vivem em <see cref="PostureSnapshot.MaturityCurrent"/> e afins.
+    /// </summary>
+    NistMaturity = 2,
 }
 
 /// <summary>
@@ -182,6 +189,34 @@ public class PostureSnapshot : Entity, ITenantOwned
     /// fonte única (<see cref="SourceType"/> diferente de <see cref="KnightSourceType.Consolidated"/>).
     /// </summary>
     public string? CompositionJson { get; set; }
+
+    // ---- [AEGIS-NIST-JOURNEY-02] Fotografia de MATURIDADE NIST — tudo ADITIVO e ANULÁVEL ------------------------------
+    // Só preenchido em fotografias NistMaturity. As demais continuam com estes campos nulos e o hash delas não muda (o bloco
+    // canônico próprio só é escrito para este tipo).
+
+    /// <summary>Avaliação, rodada e escopo EXATOS congelados.</summary>
+    public Guid? NistAssessmentId { get; set; }
+    public Guid? NistCycleId { get; set; }
+    public Guid? NistScopeId { get; set; }
+
+    /// <summary>Nome da rodada no instante da publicação (o histórico não vai buscar o nome de hoje).</summary>
+    public string? NistCycleName { get; set; }
+
+    /// <summary>Média 1–5 da situação atual confirmada (nula quando nada foi avaliado — nunca 0).</summary>
+    public double? MaturityCurrent { get; set; }
+
+    /// <summary>Média 1–5 do alvo confirmado.</summary>
+    public double? MaturityTarget { get; set; }
+
+    /// <summary>Lacuna média, só sobre subcategorias com atual e alvo.</summary>
+    public double? MaturityGap { get; set; }
+
+    /// <summary>
+    /// O relatório NIST INTEIRO congelado (JSON canônico): cliente, avaliação, rodada, escopo, catálogo, metodologia,
+    /// perfis, subcategorias, procedimentos, evidências, achados, planos, responsáveis e revisões. HTML, PDF e CSV derivam
+    /// exclusivamente dele — reexportar nunca busca texto, nome, nota ou plano atual.
+    /// </summary>
+    public string? NistReportJson { get; set; }
 
     /// <summary>
     /// [AEGIS-MVP-PRODUCT-03] Ações CONGELADAS no instante da publicação. Uma fotografia antiga continua

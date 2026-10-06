@@ -74,11 +74,15 @@ public sealed class NistJourneyPostgresTests
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenantA)))
         {
             var svc = new NistAssessmentService(db, new SystemTenantContext(tenantA), new FakeTimeProvider(DateTimeOffset.UtcNow));
-            var detail = await svc.GetSubcategoryAsync(assessment, scope, "GV.OC-01");
+            // [AEGIS-NIST-JOURNEY-02] A avaliação legada pertence à rodada inicial criada pela migration seguinte.
+            var cycle = (await db.NistCycles.AsNoTracking().SingleAsync(c => c.AssessmentId == assessment)).Id;
+            var detail = await svc.GetSubcategoryAsync(assessment, cycle, scope, "GV.OC-01");
             detail.Evaluation!.Gap.Should().Be(2);
+            detail.Evaluation.State.Should().Be(NistSubcategoryStates.PendingConfirmation,
+                "o registro legado não tem revisão humana gravada: aparece, mas aguarda confirmação e fica fora das médias");
             (await svc.ListAsync()).Single().Scopes.Single().Name.Should().Be("Escopo sem nome", "escopo antigo sem nome continua legível");
             // A primeira gravação pela jornada parte da versão legada (0).
-            (await svc.SaveEvaluationAsync(assessment, scope, "GV.OC-01",
+            (await svc.SaveEvaluationAsync(assessment, cycle, scope, "GV.OC-01",
                 new SaveNistEvaluationCommand(3, 4, false, null, null, null, null, null, null, null, 0), Gestor)).Evaluation!.Version.Should().Be(1);
         }
 
@@ -86,7 +90,7 @@ public sealed class NistJourneyPostgresTests
         {
             (await db.Evaluations.CountAsync()).Should().Be(0, "o filtro próprio da avaliação isola no banco");
             await FluentActions.Awaiting(() => new NistAssessmentService(db, new SystemTenantContext(tenantB), TimeProvider.System)
-                    .GetSubcategoryAsync(assessment, scope, "GV.OC-01"))
+                    .GetSubcategoryAsync(assessment, Guid.NewGuid(), scope, "GV.OC-01"))
                 .Should().ThrowAsync<NistAssessmentNotFoundException>();
         }
     }
@@ -147,12 +151,12 @@ public sealed class NistJourneyPostgresTests
         }
 
         NistAssessmentService Svc(AegisScoreDbContext db) => new(db, new SystemTenantContext(tenant), TimeProvider.System);
-        Guid a, s;
+        Guid a, c, s;
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
         {
             var created = await Svc(db).CreateAsync(new CreateNistAssessmentCommand("Avaliação", null, null, null, "Matriz", null), Gestor);
-            (a, s) = (created.Id, created.Scopes.Single().Id);
-            await Svc(db).SaveEvaluationAsync(a, s, "DE.CM-01", new SaveNistEvaluationCommand(2, 4, false, null, null, null, null, null, null, null, 0), Gestor);
+            (a, c, s) = (created.Id, created.Cycles!.Single().Id, created.Scopes.Single().Id);
+            await Svc(db).SaveEvaluationAsync(a, c, s, "DE.CM-01", new SaveNistEvaluationCommand(2, 4, false, null, null, null, null, null, null, null, 0), Gestor);
         }
 
         async Task<string> Attempt(string code, int level, int expected)
@@ -160,7 +164,7 @@ public sealed class NistJourneyPostgresTests
             await using var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant));
             try
             {
-                await Svc(db).SaveEvaluationAsync(a, s, code, new SaveNistEvaluationCommand(level, 4, false, null, null, null, null, null, null, null, expected), Gestor);
+                await Svc(db).SaveEvaluationAsync(a, c, s, code, new SaveNistEvaluationCommand(level, 4, false, null, null, null, null, null, null, null, expected), Gestor);
                 return "ok";
             }
             catch (NistAssessmentConflictException)
