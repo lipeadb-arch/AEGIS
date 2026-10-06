@@ -13,6 +13,7 @@ import {
   NistSelection,
   averageText,
   cycleIsClosed,
+  cycleLabel,
   cyclePeriodProblem,
   cyclePeriodText,
   cycleStatusLabel,
@@ -133,7 +134,7 @@ const today = () => new Date().toISOString().slice(0, 10);
                 </select></label>
               <label class="field"><span class="field-label">Rodada</span>
                 <select [ngModel]="sel.cycle?.id ?? ''" (ngModelChange)="choose(sel.assessment.id, $event, sel.scope?.id ?? null)" name="cycle" [disabled]="!sel.assessment.cycles?.length">
-                  @for (c of sel.assessment.cycles ?? []; track c.id) { <option [value]="c.id">{{ c.name }} · {{ cyclePeriodText(c) }}{{ c.status === 'Closed' ? ' · encerrada' : '' }}</option> }
+                  @for (c of sel.assessment.cycles ?? []; track c.id) { <option [value]="c.id">{{ cycleLabel(c) }}{{ c.status === 'Closed' ? ' · encerrada' : '' }}</option> }
                 </select></label>
               <label class="field"><span class="field-label">Escopo</span>
                 <select [ngModel]="sel.scope?.id ?? ''" (ngModelChange)="choose(sel.assessment.id, sel.cycle?.id ?? null, $event)" name="scope" [disabled]="sel.assessment.scopes.length === 0">
@@ -142,7 +143,7 @@ const today = () => new Date().toISOString().slice(0, 10);
             </div>
             @if (sel.cycle; as cy) {
               <p class="meta">
-                Rodada <strong>{{ cy.name }}</strong> · {{ periodKindLabel(cy.periodKind) }} · {{ cyclePeriodText(cy) }} ·
+                <strong>{{ cycleLabel(cy) }}</strong> · {{ periodKindLabel(cy.periodKind) }} ·
                 <span [class]="'badge ' + (cy.status === 'Closed' ? 'neutral' : 'info')">{{ cycleStatusLabel(cy.status) }}</span>
                 @if (cy.seedFromCycleName) { · origem: {{ cy.seedFromCycleName }} ({{ seedModeLabel(cy.seedMode).toLowerCase() }}) }
                 · {{ cy.publications }} publicação(ões)
@@ -288,6 +289,7 @@ export class NistHomeComponent implements OnInit {
   protected readonly gapText = gapText;
   protected readonly scopeProgressText = scopeProgressText;
   protected readonly cyclePeriodText = cyclePeriodText;
+  protected readonly cycleLabel = cycleLabel;
   protected readonly cycleStatusLabel = cycleStatusLabel;
   protected readonly periodKindLabel = periodKindLabel;
   protected readonly seedModeLabel = seedModeLabel;

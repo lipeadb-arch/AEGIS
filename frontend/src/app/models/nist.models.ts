@@ -1317,6 +1317,12 @@ export function cyclePeriodText(c: Pick<NistCycle, 'periodKind' | 'periodStart' 
   return `${dateBr(c.periodStart)} a ${dateBr(c.periodEnd)}`;
 }
 
+/** "T4 2026" quando o nome já é o período; senão "Rodada piloto · out/2026". */
+export function cycleLabel(c: Pick<NistCycle, 'name' | 'periodKind' | 'periodStart' | 'periodEnd'>): string {
+  const period = cyclePeriodText(c);
+  return c.name.trim() === period ? period : `${c.name} · ${period}`;
+}
+
 /** Mesmas regras do servidor para o período da rodada. */
 export function cyclePeriodProblem(kind: NistPeriodKind, start: string, end: string): string | null {
   if (!start || !end) return 'Informe o início e o fim do período.';

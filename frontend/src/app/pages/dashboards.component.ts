@@ -6,7 +6,7 @@ import { catchError, map } from 'rxjs/operators';
 import { MonthlyEvolutionComponent } from '../components/monthly-evolution.component';
 import { knightReading, nistPostureReading, prioritizedFindings, scoreText } from '../models/dashboards.models';
 import { KnightSourceLatest, severityLabel } from '../models/knight.models';
-import { NIST_FUNCTIONS, NistAssessment, NistCycle, NistProfile, averageText, cyclePeriodText, gapText, nistFunctionTitle, scopeCoverage } from '../models/nist.models';
+import { NIST_FUNCTIONS, NistAssessment, NistCycle, NistProfile, averageText, cycleLabel, gapText, nistFunctionTitle, scopeCoverage } from '../models/nist.models';
 import { PostureMonthlyHistory } from '../models/posture-history.models';
 import { WorkspacePosture } from '../models/workspace.models';
 import { AegisScoreService } from '../services/aegis-score.service';
@@ -130,7 +130,7 @@ interface Block<T> {
               @let la = latestAssessment()!;
                 @let cy = latestCycle();
                 <p><strong>{{ la.name }}</strong> · {{ la.scopes.length > 0 ? la.scopes[0].name : 'sem escopo' }}
-                  @if (cy) { · rodada {{ cy.name }} ({{ cyclePeriodText(cy) }}) }</p>
+                  @if (cy) { · rodada {{ cycleLabel(cy) }} }</p>
                 @if (la.scopes[0]; as sc) {
                   @if (cy && sc.cycleId === cy.id) {
                     <p class="muted">{{ sc.evaluated }} de {{ sc.subcategories }} subcategorias avaliadas · cobertura {{ coverage(sc) }} · metodologia {{ la.methodologyVersion }}
@@ -227,7 +227,7 @@ export class DashboardsComponent implements OnInit {
     return { avaliacao: la?.id ?? null, rodada: this.latestCycle()?.id ?? null, escopo: la?.scopes[0]?.id ?? null };
   });
   protected readonly nistTreatmentParams = computed(() => ({ ...this.nistParams(), aba: 'achados', status: 'Open' }));
-  protected readonly cyclePeriodText = cyclePeriodText;
+  protected readonly cycleLabel = cycleLabel;
   protected readonly postureReading = computed(() => nistPostureReading(this.posture().value?.overall ?? null, this.generatedAt() ?? new Date()));
   /** Séries com pelo menos dois meses publicados: um ponto isolado não é evolução. */
   protected readonly comparableSeries = computed(() => (this.monthly().value?.series ?? []).filter((s) => s.points.length >= 2).length);

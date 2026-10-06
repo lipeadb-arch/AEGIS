@@ -185,8 +185,9 @@ export class NistImportPanelComponent {
       error: (e: NistApiError) => {
         if (gen !== this.gen) return;
         this.busy.set(false);
+        // O servidor já diz o que aconteceu (nada gravado); só completa quando a mensagem não diz.
         this.error.set(
-          e.status === 409 ? `${e.message} Nada foi gravado: gere uma nova prévia com o arquivo atualizado.` : e.message,
+          e.status === 409 && !e.message.includes('Nada foi gravado') ? `${e.message} Nada foi gravado: gere uma nova prévia.` : e.message,
         );
         if (e.status === 409) this.preview.set(null);
       },

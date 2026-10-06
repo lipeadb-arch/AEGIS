@@ -27,7 +27,7 @@ export interface ActionPlanQuery {
   activeOnly?: boolean;
   sourceType?: KnightOriginSource | null;
   mode?: KnightOriginMode | null;
-  origin?: 'knight' | 'device' | 'all' | null;
+  origin?: 'knight' | 'device' | 'nist' | 'all' | null;
   assetId?: string | null;
   cveId?: string | null;
 }

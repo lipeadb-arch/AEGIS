@@ -10,6 +10,7 @@ import {
   NistPublicationPreview,
   averageText,
   comparisonChangeLabel,
+  cycleLabel,
   cyclePeriodText,
   gapText,
   functionSlugOf,
@@ -46,7 +47,7 @@ import { PostureHistoryService } from '../../services/posture-history.service';
           <div class="card"><div class="k">Lacuna</div><div class="v">{{ gapText(pv.summary.gap) }}</div></div>
           <div class="card"><div class="k">Cobertura</div><div class="v">{{ pct(pv.summary.coverage) }}</div></div>
         </div>
-        <p>{{ pv.summary.evaluated }} avaliadas · {{ pv.summary.notApplicable }} não se aplicam · {{ pv.summary.pendingConfirmation }} aguardando
+        <p>{{ pv.summary.evaluated }} avaliadas · {{ pv.summary.notApplicable }} não se aplica{{ pv.summary.notApplicable === 1 ? "" : "m" }} · {{ pv.summary.pendingConfirmation }} aguardando
           confirmação · {{ pv.summary.inProgress }} em andamento · {{ pv.summary.notEvaluated }} não avaliadas — de {{ pv.summary.subcategories }}.
           {{ pv.summary.proceduresPerformed }} procedimento(s) realizado(s) · {{ pv.findings }} achado(s) · {{ pv.summary.plansActive }} plano(s) ativo(s).</p>
         <div class="table-wrap"><table class="data-table">
@@ -111,9 +112,9 @@ import { PostureHistoryService } from '../../services/posture-history.service';
       } @else {
         <div class="row">
           <label class="field"><span class="field-label">Rodada base</span>
-            <select [(ngModel)]="baseId" name="cmpb">@for (c of cycles(); track c.id) { <option [value]="c.id">{{ c.name }} ({{ cyclePeriodText(c) }})</option> }</select></label>
+            <select [(ngModel)]="baseId" name="cmpb">@for (c of cycles(); track c.id) { <option [value]="c.id">{{ cycleLabel(c) }}</option> }</select></label>
           <label class="field"><span class="field-label">Rodada comparada</span>
-            <select [(ngModel)]="targetId" name="cmpt">@for (c of cycles(); track c.id) { <option [value]="c.id">{{ c.name }} ({{ cyclePeriodText(c) }})</option> }</select></label>
+            <select [(ngModel)]="targetId" name="cmpt">@for (c of cycles(); track c.id) { <option [value]="c.id">{{ cycleLabel(c) }}</option> }</select></label>
           <button type="button" class="ghost sm" (click)="compare()" [disabled]="comparing() || !baseId || !targetId || baseId === targetId">Comparar</button>
         </div>
         @if (compareError()) { <p class="notice error" role="alert">{{ compareError() }}</p> }
@@ -170,6 +171,7 @@ export class NistPublishPanelComponent {
   protected readonly averageText = averageText;
   protected readonly gapText = gapText;
   protected readonly cyclePeriodText = cyclePeriodText;
+  protected readonly cycleLabel = cycleLabel;
   protected readonly changeLabel = comparisonChangeLabel;
   protected readonly slug = functionSlugOf;
 
@@ -219,11 +221,11 @@ export class NistPublishPanelComponent {
     return `${n > 0 ? '+' : n < 0 ? '−' : ''}${s}${percent ? ' p.p.' : ''}`;
   }
 
-  protected loadPreview(): void {
+  protected loadPreview(keepError = false): void {
     const gen = this.gen;
     this.previewLoading.set(true);
     this.previewError.set(null);
-    this.publishError.set(null);
+    if (!keepError) this.publishError.set(null);
     this.track(
       this.nist.publicationPreview(this.ctx()).subscribe({
         next: (p) => {
@@ -263,7 +265,7 @@ export class NistPublishPanelComponent {
             // O conteúdo mudou depois da prévia: nada foi publicado. A nova prévia é montada para nova revisão.
             this.publishError.set(`${e.message} Nada foi publicado: revise a prévia atualizada antes de publicar.`);
             this.preview.set(null);
-            this.loadPreview();
+            this.loadPreview(true);
           } else {
             this.publishError.set(e.message);
           }

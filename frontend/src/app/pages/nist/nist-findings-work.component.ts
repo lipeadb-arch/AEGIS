@@ -120,7 +120,7 @@ const blankPlanForm = (mode: PlanForm['mode']): PlanForm => ({
           <summary>
             <span [class]="'badge ' + severityBadgeClass(fd.severity)">{{ severityLabel(fd.severity) }}</span>
             <strong>{{ fd.title }}</strong>
-            <span class="muted">prioridade {{ priorityLabel(fd.priority).toLowerCase() }} · {{ findingStatusLabel(fd.status) }} · {{ fd.treatmentLabel }}</span>
+            <span class="muted">prioridade {{ priorityLabel(fd.priority).toLowerCase() }} · achado {{ findingStatusLabel(fd.status).toLowerCase() }} · tratamento: {{ fd.treatmentLabel }}</span>
           </summary>
           <dl class="kv">
             <dt>Condição</dt><dd>{{ fd.condition }}</dd>

@@ -142,7 +142,7 @@ const STATE_KEY: Record<NistSubcategoryState, keyof NistStateCounts> = {
           <tbody>
             @for (g of p.gaps.slice(0, 12); track g.code) {
               <tr>
-                <td><a [routerLink]="['/nist', slug(g.code), g.code]" [queryParams]="params()">{{ g.title }}</a> <span class="mono muted">{{ g.code }}</span>
+                <td><a [routerLink]="['/nist', slug(g.code), g.code]" [queryParams]="params()">{{ g.title }}</a><span class="mono muted block">{{ g.code }}</span>
                   @if (g.riskImpact) { <span class="muted block">Risco: {{ g.riskImpact }}</span> }</td>
                 <td>{{ levelLabel(g.currentLevel) }}</td><td>{{ levelLabel(g.targetLevel) }}</td><td><strong>{{ gapText(g.gap) }}</strong></td>
                 <td>@if (g.openFindings) { <a [routerLink]="['/nist', slug(g.code), g.code]" [queryParams]="params()" fragment="achados">{{ g.openFindings }}</a> } @else { 0 }</td>

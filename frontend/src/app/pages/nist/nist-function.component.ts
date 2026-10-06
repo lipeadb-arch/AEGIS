@@ -15,7 +15,7 @@ import {
   NistSelection,
   NistSubcategoryState,
   averageText,
-  cyclePeriodText,
+  cycleLabel,
   cycleStatusLabel,
   gapText,
   levelLabel,
@@ -89,7 +89,7 @@ const RESOURCES: Record<NistFunctionCode, SupportResource[]> = {
             <p class="page-desc">{{ description(f.code) }}</p>
             @if (selection(); as sel) {
               <p class="page-meta">Avaliação: {{ sel.assessment.name }} ·
-                Rodada: {{ sel.cycle ? sel.cycle.name + ' (' + cyclePeriodText(sel.cycle) + ')' : '—' }}
+                Rodada: {{ sel.cycle ? cycleLabel(sel.cycle) : '—' }}
                 @if (sel.cycle?.status === 'Closed') { <span class="badge neutral">{{ cycleStatusLabel('Closed') }}</span> }
                 · Escopo: {{ sel.scope?.name ?? '—' }} · <a [routerLink]="['/nist']" [queryParams]="params()">trocar</a></p>
             }
@@ -217,7 +217,7 @@ export class NistFunctionComponent {
   protected readonly stateLabel = stateLabel;
   protected readonly stateBadgeClass = stateBadgeClass;
   protected readonly profileBasisText = profileBasisText;
-  protected readonly cyclePeriodText = cyclePeriodText;
+  protected readonly cycleLabel = cycleLabel;
   protected readonly cycleStatusLabel = cycleStatusLabel;
   protected readonly reviewStateLabel = reviewStateLabel;
   protected readonly reviewBadgeClass = reviewBadgeClass;
