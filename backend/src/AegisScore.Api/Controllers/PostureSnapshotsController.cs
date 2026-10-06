@@ -56,6 +56,8 @@ public class PostureSnapshotsController : ControllerBase
     {
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        if (request is not null && IsNistMaturity(request.Type))
+            return BadRequest("A fotografia de maturidade NIST é publicada na jornada do AEGIS NIST (avaliação · rodada · escopo).");
         if (request is null || !TryParseType(request.Type, out var type))
             return BadRequest($"Tipo de fotografia desconhecido: '{request?.Type}'.");
 
@@ -147,9 +149,12 @@ public class PostureSnapshotsController : ControllerBase
         PostureSnapshotType? filter = null;
         if (!string.IsNullOrWhiteSpace(type))
         {
-            if (!TryParseType(type!, out var parsed))
+            if (IsNistMaturity(type))
+                filter = PostureSnapshotType.NistMaturity;
+            else if (!TryParseType(type!, out var parsed))
                 return BadRequest($"Tipo de fotografia desconhecido: '{type}'.");
-            filter = parsed;
+            else
+                filter = parsed;
         }
 
         return Ok(await _service.ListAsync(filter, ct));
@@ -251,6 +256,10 @@ public class PostureSnapshotsController : ControllerBase
             default: type = default; return false;
         }
     }
+
+    /// <summary>[AEGIS-NIST-JOURNEY-02] Maturidade NIST (1–5) — instrumento próprio, listado mas publicado só pela jornada NIST.</summary>
+    private static bool IsNistMaturity(string? value) =>
+        (value ?? "").Trim().Replace("-", "").Replace("_", "").ToLowerInvariant() is "nistmaturity" or "nistmaturidade";
 
     private static bool TryParseSource(string source, out KnightSourceType sourceType) =>
         KnightSourceNames.TryParse(source, out sourceType);

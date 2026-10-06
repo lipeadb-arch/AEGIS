@@ -91,6 +91,13 @@ public class DevController : ControllerBase
             StartDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-30)),
         };
 
+        // [AEGIS-NIST-JOURNEY-02] A avaliação de demonstração nasce com a sua rodada; o seed não é revisão humana (fica
+        // "aguardando confirmação" até alguém confirmar na tela).
+        var demoCycle = new NistAssessmentCycle
+        {
+            TenantId = DemoTenantId, AssessmentId = assessment.Id, Name = "Rodada de demonstração", PeriodKind = NistCyclePeriodKind.Other,
+            PeriodStart = assessment.StartDate!.Value, PeriodEnd = DateOnly.FromDateTime(DateTime.UtcNow), Status = NistCycleStatus.Open, Version = 1,
+        };
         var primaryScope = new AssessmentScope { TenantId = DemoTenantId, AssessmentId = assessment.Id, BusinessProcessId = procs[0].Id, BusinessUnitId = buSec.Id, Status = ScopeStatus.Evaluation, Name = "Gestão de Identidade e Acesso — Segurança da Informação" };
         var scope2 = new AssessmentScope { TenantId = DemoTenantId, AssessmentId = assessment.Id, BusinessProcessId = procs[1].Id, BusinessUnitId = buTi.Id, Status = ScopeStatus.Questionnaire, Name = "Gestão de Vulnerabilidades — Tecnologia" };
 
@@ -110,6 +117,7 @@ public class DevController : ControllerBase
             {
                 TenantId = DemoTenantId,
                 AssessmentScopeId = primaryScope.Id,
+                CycleId = demoCycle.Id,
                 SubcategoryId = s.Id,
                 CurrentLevel = current,
                 CurrentScore = current,
@@ -282,6 +290,7 @@ public class DevController : ControllerBase
         db.Processes.AddRange(procs);
         db.Assets.AddRange(assets);
         db.Assessments.Add(assessment);
+        db.NistCycles.Add(demoCycle);
         db.Scopes.AddRange(primaryScope, scope2);
         db.Evaluations.AddRange(evals);
         db.Risks.AddRange(risks);

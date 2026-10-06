@@ -41,6 +41,13 @@ public class AssessmentsController : ControllerBase
         // Sem TenantId aqui — carimbado no SaveChangesAsync (fail-closed), como no RisksController.
         var a = new Assessment { FrameworkVersionId = fvId, Name = req.Name };
         _db.Assessments.Add(a);
+        // [AEGIS-NIST-JOURNEY-02] Toda avaliação nasce com uma rodada: as avaliações de subcategoria pertencem a ela.
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        _db.NistCycles.Add(new NistAssessmentCycle
+        {
+            AssessmentId = a.Id, Name = "Rodada 1", PeriodKind = NistCyclePeriodKind.Other,
+            PeriodStart = today, PeriodEnd = today, Status = NistCycleStatus.Open, Version = 1,
+        });
         await _db.SaveChangesAsync(ct);
         return new IdResponse(a.Id);
     }
@@ -109,10 +116,18 @@ public class AssessmentsController : ControllerBase
         var sub = await _db.Subcategories.AsNoTracking().FirstOrDefaultAsync(s => s.Code == code, ct);
         if (sub is null) return NotFound($"Subcategory {code} not found.");
 
-        var eval = await _db.Evaluations.FirstOrDefaultAsync(e => e.AssessmentScopeId == scopeId && e.SubcategoryId == sub.Id, ct);
+        // [AEGIS-NIST-JOURNEY-02] Esta superfície não conhece rodadas: só grava quando a avaliação tem UMA rodada. Com mais de
+        // uma, escolher uma seria arbitrário — a jornada do AEGIS NIST nomeia a rodada explicitamente.
+        var assessmentId = await _db.Scopes.AsNoTracking().Where(s => s.Id == scopeId).Select(s => s.AssessmentId).FirstAsync(ct);
+        var cycles = await _db.NistCycles.AsNoTracking().Where(c => c.AssessmentId == assessmentId).Select(c => c.Id).ToListAsync(ct);
+        if (cycles.Count != 1)
+            return Conflict("Esta avaliação tem mais de uma rodada (ou nenhuma): registre pela jornada do AEGIS NIST, que nomeia a rodada.");
+        var cycleId = cycles[0];
+
+        var eval = await _db.Evaluations.FirstOrDefaultAsync(e => e.AssessmentScopeId == scopeId && e.CycleId == cycleId && e.SubcategoryId == sub.Id, ct);
         if (eval is null)
         {
-            eval = new SubcategoryEvaluation { AssessmentScopeId = scopeId, SubcategoryId = sub.Id, EvaluatedBy = EvaluatedBy.Analyst };
+            eval = new SubcategoryEvaluation { AssessmentScopeId = scopeId, CycleId = cycleId, SubcategoryId = sub.Id, EvaluatedBy = EvaluatedBy.Analyst };
             _db.Evaluations.Add(eval);
         }
 
@@ -133,9 +148,12 @@ public class AssessmentsController : ControllerBase
     [HttpGet("{assessmentId:guid}/maturity")]
     public async Task<ActionResult<MaturityRollupDto>> Maturity(Guid assessmentId, CancellationToken ct)
     {
+        // [AEGIS-NIST-JOURNEY-02] Só a rodada mais recente: somar rodadas contaria cada subcategoria mais de uma vez.
+        var latest = await AegisScore.Infrastructure.Nist.NistCycleSelection.LatestCycleIdsAsync(_db, ct);
         var rows = await (from s in _db.Scopes
                           where s.AssessmentId == assessmentId
                           join e in _db.Evaluations on s.Id equals e.AssessmentScopeId
+                          where latest.Contains(e.CycleId)
                           join sub in _db.Subcategories on e.SubcategoryId equals sub.Id
                           select new { sub.Code, e.CurrentScore, e.TargetScore })
                          .ToListAsync(ct);
