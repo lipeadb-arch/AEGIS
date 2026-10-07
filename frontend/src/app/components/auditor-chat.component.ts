@@ -297,7 +297,7 @@ export class AuditorChatComponent {
       return;
     }
 
-    this.auditor.chat(scope, text, priorHistory).subscribe({
+    this.auditor.chat(scope, text, priorHistory, this.agent.nistSelection()).subscribe({
       next: (res) => {
         this.chatHistory.update((h) => [...h, this.toAssistantMessage(res)]);
         this.isAnalyzing.set(false);

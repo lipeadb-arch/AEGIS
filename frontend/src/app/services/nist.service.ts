@@ -7,7 +7,6 @@ import {
   CreateNistCycleRequest,
   CreateNistFindingRequest,
   LinkNistEvidenceRequest,
-  NistAiSuggestion,
   NistAssessment,
   NistAssignee,
   NistAuditEntry,
@@ -27,14 +26,26 @@ import {
   NistSubcategoryDetail,
   NistTestMethod,
   SaveNistEvaluationRequest,
+  UpdateNistFindingRequest,
   UpdateNistPlanRequest,
   UpdateNistProcedureRequest,
 } from '../models/nist.models';
+import {
+  NistAssistAvailability,
+  NistAssistContext,
+  NistAssistFocus,
+  NistAssistView,
+  NistExecutiveSummary,
+} from '../models/nist-assist.models';
 import { parseContentDispositionFilename } from '../models/posture-history.models';
 
-/** Erro da API do NIST com o status preservado (409 = versão desatualizada; 403 = papel; 503 = IA indisponível). */
+/**
+ * Erro da API do NIST com o status preservado (409 = versão desatualizada; 403 = papel; 503 = IA indisponível). [AEGIS-NIST-
+ * AI-ASSIST-01] `reason` traz o motivo dito pelo servidor: AssistanceStale (409 — sugestão de contexto anterior), Disabled,
+ * Timeout, InvalidResponse ou Unavailable (503).
+ */
 export class NistApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly reason: string | null = null) {
     super(message);
   }
 }
@@ -208,10 +219,86 @@ export class NistService {
       .pipe(this.handle('Não foi possível retirar a evidência.'));
   }
 
-  suggest(c: NistCtx, code: string): Observable<NistAiSuggestion> {
+  // ---- [AEGIS-NIST-AI-ASSIST-01] Assistência de IA ------------------------------------------------------------
+
+  assistAvailability(): Observable<NistAssistAvailability> {
+    return this.http.get<NistAssistAvailability>(`${this.base}/assist/availability`).pipe(this.handle('Não foi possível ler o estado da IA.'));
+  }
+
+  /** Contexto que a assistência usaria AGORA (fontes, impressão digital, última sugestão) — sem chamar a IA. */
+  subcategoryAssistContext(c: NistCtx, code: string): Observable<NistAssistContext> {
     return this.http
-      .post<NistAiSuggestion>(`${this.subUrl(c, code)}/ai-suggestion`, {})
+      .get<NistAssistContext>(`${this.subUrl(c, code)}/assist/context`)
+      .pipe(this.handle('Não foi possível conferir as fontes da assistência.'));
+  }
+
+  assistSubcategory(c: NistCtx, code: string, reuse = true): Observable<NistAssistView> {
+    return this.http
+      .post<NistAssistView>(`${this.subUrl(c, code)}/assist`, { reuse })
       .pipe(this.handle('A IA não respondeu agora. A avaliação segue normalmente sem ela.', this.AI_TIMEOUT_MS));
+  }
+
+  findingAssistContext(c: NistCtx, findingId: string, focus: NistAssistFocus): Observable<NistAssistContext> {
+    return this.http
+      .get<NistAssistContext>(`${this.findingUrl(c, findingId)}/assist/context`, { params: new HttpParams().set('focus', focus) })
+      .pipe(this.handle('Não foi possível conferir as fontes da assistência.'));
+  }
+
+  assistFinding(c: NistCtx, findingId: string, focus: NistAssistFocus, reuse = true): Observable<NistAssistView> {
+    return this.http
+      .post<NistAssistView>(`${this.findingUrl(c, findingId)}/assist`, { reuse, focus })
+      .pipe(this.handle('A IA não respondeu agora. O achado segue normalmente sem ela.', this.AI_TIMEOUT_MS));
+  }
+
+  executiveAssistContext(c: NistCtx): Observable<NistAssistContext> {
+    return this.http
+      .get<NistAssistContext>(`${this.ctxUrl(c)}/executive-summary/assist/context`)
+      .pipe(this.handle('Não foi possível conferir as fontes da assistência.'));
+  }
+
+  assistExecutive(c: NistCtx, reuse = true): Observable<NistAssistView> {
+    return this.http
+      .post<NistAssistView>(`${this.ctxUrl(c)}/executive-summary/assist`, { reuse })
+      .pipe(this.handle('A IA não respondeu agora. A publicação segue normalmente sem interpretação.', this.AI_TIMEOUT_MS));
+  }
+
+  /** Resumo executivo aceito (nulo quando não há). */
+  executiveSummary(c: NistCtx): Observable<NistExecutiveSummary | null> {
+    return this.http
+      .get<NistExecutiveSummary | null>(`${this.ctxUrl(c)}/executive-summary`)
+      .pipe(map((v) => v ?? null), this.handle('Não foi possível carregar o resumo executivo.'));
+  }
+
+  saveExecutiveSummary(
+    c: NistCtx,
+    request: { sections: { key: string; text: string }[]; assistanceId: string | null; expectedVersion: number; acknowledgeStale: boolean },
+  ): Observable<NistExecutiveSummary> {
+    return this.http
+      .put<NistExecutiveSummary>(`${this.ctxUrl(c)}/executive-summary`, request)
+      .pipe(this.handle('Não foi possível gravar o resumo executivo.'));
+  }
+
+  reviewExecutiveSummary(c: NistCtx, expectedVersion: number, note: string | null): Observable<NistExecutiveSummary> {
+    return this.http
+      .post<NistExecutiveSummary>(`${this.ctxUrl(c)}/executive-summary/review`, { expectedVersion, note })
+      .pipe(this.handle('Não foi possível registrar a revisão do resumo.'));
+  }
+
+  withdrawExecutiveSummary(c: NistCtx, expectedVersion: number): Observable<void> {
+    return this.http
+      .delete<void>(`${this.ctxUrl(c)}/executive-summary`, { params: new HttpParams().set('expectedVersion', expectedVersion) })
+      .pipe(this.handle('Não foi possível retirar o resumo executivo.'));
+  }
+
+  /** Planeja, de uma vez, procedimentos sugeridos escolhidos pela pessoa (planejar não é realizar). */
+  planProceduresFromAssistance(
+    c: NistCtx,
+    code: string,
+    request: { assistanceId: string; procedures: { method: string; procedure: string }[]; acknowledgeStale: boolean },
+  ): Observable<NistProcedure[]> {
+    return this.http
+      .post<NistProcedure[]>(`${this.subUrl(c, code)}/procedures/from-assistance`, request)
+      .pipe(this.handle('Não foi possível planejar os procedimentos sugeridos.'));
   }
 
   addProcedure(c: NistCtx, code: string, method: NistTestMethod, procedure: string): Observable<NistProcedure> {
@@ -241,6 +328,10 @@ export class NistService {
 
   finding(c: NistCtx, findingId: string): Observable<NistFinding> {
     return this.http.get<NistFinding>(this.findingUrl(c, findingId)).pipe(this.handle('Não foi possível carregar o achado.'));
+  }
+
+  updateFinding(c: NistCtx, findingId: string, request: UpdateNistFindingRequest): Observable<NistFinding> {
+    return this.http.put<NistFinding>(this.findingUrl(c, findingId), request).pipe(this.handle('Não foi possível atualizar o achado.'));
   }
 
   setFindingStatus(c: NistCtx, findingId: string, status: string, note: string | null, expectedVersion: number): Observable<NistFinding> {
@@ -297,13 +388,16 @@ export class NistService {
         timeout(ms),
         catchError((err: unknown) => {
           if (err instanceof HttpErrorResponse) {
-            const body = err.error as { message?: string } | string | null;
+            const body = err.error as { message?: string; reason?: string } | string | null;
             const fromServer = typeof body === 'string' ? body : body?.message;
+            const reason = typeof body === 'object' && body ? body.reason ?? null : null;
             if (err.status === 403)
               return throwError(() => new NistApiError('Seu papel permite consultar, mas não registrar (requer Manager ou TenantAdmin).', 403));
+            if (err.status === 429)
+              return throwError(() => new NistApiError('Limite de pedidos à IA por minuto atingido. Aguarde um pouco e tente de novo.', 429, 'RateLimited'));
             if ([400, 404, 409, 503].includes(err.status) && fromServer)
-              return throwError(() => new NistApiError(fromServer, err.status));
-            return throwError(() => new NistApiError(fallback, err.status));
+              return throwError(() => new NistApiError(fromServer, err.status, reason));
+            return throwError(() => new NistApiError(fallback, err.status, reason));
           }
           return throwError(() => new NistApiError(fallback, 0));
         }),

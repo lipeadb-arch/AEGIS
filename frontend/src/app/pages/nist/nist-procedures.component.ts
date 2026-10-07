@@ -41,7 +41,7 @@ const STATUSES: NistProcedureStatus[] = ['Planned', 'InProgress', 'Performed', '
       @if (procedures().length === 0) { <p class="muted">Nenhum procedimento planejado nesta rodada.</p> }
       <ul class="procs">
         @for (p of procedures(); track p.id) {
-          <li>
+          <li [id]="'proc-' + p.id" tabindex="-1">
             <p class="top"><span class="badge info">{{ methodLabel(p.method) }}</span>
               <span class="badge neutral">{{ procedureStatusLabel(p.status) }}</span>
               @if (p.outcome) { <span [class]="'badge ' + outcomeBadgeClass(p.outcome)">{{ outcomeLabel(p.outcome) }}</span> }
@@ -53,6 +53,10 @@ const STATUSES: NistProcedureStatus[] = ['Planned', 'InProgress', 'Performed', '
               @if (p.resultRecordedByName) { · resultado registrado por {{ p.resultRecordedByName }} }
               @if (p.evidenceIds.length) { · evidências: {{ evidenceTitles(p.evidenceIds) }} }</p>
             @if (p.originNote) { <p class="muted">{{ p.originNote }}</p> }
+            @if (p.assistedFrom; as af) {
+              <p class="muted">Texto planejado a partir de sugestão {{ af.mode === 'Real' ? 'da IA' : 'SIMULADA (demonstração)' }}{{ af.edited ? ', editado pela pessoa' : '' }} —
+                incorporado por {{ af.incorporatedByName ?? '—' }}. Planejar não é realizar.</p>
+            }
             @if (canEdit()) {
               @if (editing()[p.id]; as d) {
                 <form class="grid" (ngSubmit)="saveResult(p, d)" [attr.aria-label]="'Resultado do procedimento ' + methodLabel(p.method)">
