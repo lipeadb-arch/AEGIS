@@ -105,6 +105,7 @@ public static class PostureSnapshotPdfWriter
             + (history.Series.Composition is { Count: > 0 } comp ? $" · composição: {string.Join(", ", comp)}" : "") + $". {history.Series.CoverageBasis} {history.Criterion}");
         id.Format.Font.Size = 7.6;
         id.Format.Font.Color = Muted;
+        id.Format.KeepWithNext = true;   // título e identidade da série não ficam sozinhos no fim da página
         visuals.Add(section, charts.History!);
         ReportChartPdf.HistoryTable(section, history, (row, col, text, bold) =>
         {

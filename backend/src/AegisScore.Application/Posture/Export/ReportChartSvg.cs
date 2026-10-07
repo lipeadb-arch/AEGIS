@@ -422,8 +422,8 @@ public static class ReportChartSvg
 .ch-empty{font-style:italic;color:var(--muted,#5f6a80);margin:10px 0}
 .ch-data summary{cursor:pointer;font-size:12px;margin-top:8px}.ch-data table{min-width:0}
 .chart a:focus-visible{outline:3px solid #f0a500;outline-offset:1px}
-.hist-t th{white-space:nowrap}.hist-t td{min-width:90px}.hist-t td:last-child{min-width:220px}.chart-line svg{max-width:680px}.muted{color:var(--muted,#5f6a80)}.vis-h{margin:18px 0 0}
-@media (max-width:560px){.ch-txt{font-size:13.5px}.ch-sm{font-size:12.5px}.ch-val{font-size:13px}.ch-in{font-size:12px}.ch-alt{display:none}}
+.hist-t th{white-space:nowrap}.hist-t tbody th{text-transform:none;letter-spacing:0;color:var(--ink,#18202e)}.hist-t td{min-width:90px}.hist-t td:last-child{min-width:220px}.chart-line svg{max-width:560px}.chart-line .ch-sm{font-size:9.5px}.muted{color:var(--muted,#5f6a80)}.vis-h{margin:18px 0 0}
+@media (max-width:560px){.ch-txt{font-size:13.5px}.ch-sm,.chart-line .ch-sm{font-size:12.5px}.ch-val{font-size:13px}.ch-in{font-size:12px}.ch-alt{display:none}}
 @media (prefers-color-scheme:dark){.f-na{fill:#4a5468}.sw.t-na{background:#4a5468}.in-na{fill:#fff}}
 @media print{.charts{grid-template-columns:1fr 1fr}.chart{break-inside:avoid}.ch-data{display:none}}
 """;

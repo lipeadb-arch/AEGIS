@@ -70,6 +70,7 @@ internal sealed class ReportChartPdf
             var p = section.AddParagraph(text);
             p.Format.Font.Size = 7.4;
             p.Format.Font.Color = Muted;
+            p.Format.SpaceAfter = Unit.FromMillimeter(1);
         }
     }
 
@@ -340,14 +341,14 @@ internal sealed class ReportChartPdf
         t.Borders.Width = 0.25;
         t.LeftPadding = Unit.FromMillimeter(1.1);
         t.RightPadding = Unit.FromMillimeter(1.1);
-        foreach (var w in maturity ? new[] { 1.4, 1.2, 1.2, 3.2, 3.6, 2.6, 3.4 } : new[] { 1.4, 1.3, 3.6, 3.6, 2.8, 3.9 })
+        foreach (var w in maturity ? new[] { 1.3, 1.1, 1.1, 3.1, 3.3, 2.1, 4.6 } : new[] { 1.3, 1.1, 3.3, 2.0, 2.1, 6.8 })
             t.AddColumn(Unit.FromCentimeter(w));
         var head = t.AddRow();
         head.HeadingFormat = true;
         head.Shading.Color = new Color(28, 36, 56);
         var titles = maturity
             ? new[] { "Mês", "Atual", "Alvo", "Cobertura e base", "Rodada e período", "Publicação", "Variação e observações" }
-            : new[] { "Mês", "Nota", "Cobertura e base", "Coleta / composição", "Publicação", "Variação e observações" };
+            : new[] { "Mês", "Nota", "Cobertura e base", "Coleta", "Publicação", "Variação e observações" };
         for (var i = 0; i < titles.Length; i++)
         {
             var p = head.Cells[i].AddParagraph(titles[i]);
@@ -372,8 +373,7 @@ internal sealed class ReportChartPdf
             cell(row, col++, $"{p.Coverage.ToString("0.#", Pt)}% · {p.EvaluatedItems} de {p.EligibleItems}" + (maturity ? $" (aplicáveis {p.ApplicableItems})" : " aplicáveis"), false);
             cell(row, col++, maturity
                 ? (p.CycleName ?? "—") + (p.PeriodStart is { } ps && p.PeriodEnd is { } pe ? $" ({ps:dd/MM/yyyy}–{pe:dd/MM/yyyy})" : "")
-                : (p.DataRecency is { } d ? d.ToUniversalTime().ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) : "—")
-                  + (p.Composition is { Count: > 0 } comp ? " · " + string.Join(", ", comp) : ""), false);
+                : p.DataRecency is { } d ? d.ToUniversalTime().ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) : "—", false);
             cell(row, col++, p.IsThisPublication ? "esta publicação" : p.CapturedAt.ToUniversalTime().ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
                 + (p.PublishedInMonth > 1 ? $" ({p.PublishedInMonth} no mês; vale a última)" : ""), false);
             var notes = new List<string>();

@@ -222,11 +222,8 @@ public static class PostureMonthlyHistory
         var notes = new List<string>();
         if (previous is null) return notes;
         var pt = CultureInfo.GetCultureInfo("pt-BR");
-        if (!comparable)
-        {
-            notes.Add("Não comparável com o ponto anterior: a série recomeça aqui.");
-            return notes;
-        }
+        // Não comparável: os motivos da quebra (BreakReasons) já dizem por quê — nenhuma nota numérica é feita sobre bases diferentes.
+        if (!comparable) return notes;
         if (Math.Abs(previous.Coverage - current.Coverage) > 0.05)
             notes.Add($"Cobertura mudou de {previous.Coverage.ToString("0.#", pt)}% para {current.Coverage.ToString("0.#", pt)}%: valores sobre conjuntos diferentes.");
         var prevUniverse = Applicable(previous);

@@ -57,7 +57,7 @@ public static class ReportHistoryHtml
               .Append(p.EligibleItems).Append(maturity ? $" subcategorias (aplicáveis: {p.ApplicableItems})" : " controles aplicáveis").Append("</td>");
             sb.Append("<td>").Append(maturity
                 ? E((p.CycleName ?? "—") + (p.PeriodStart is { } ps && p.PeriodEnd is { } pe ? $" ({ps:dd/MM/yyyy} a {pe:dd/MM/yyyy})" : ""))
-                : E(p.DataRecency is { } dr ? Utc(dr) : "—") + (p.Composition is { Count: > 0 } c ? "<br><span class=\"muted\">" + E(string.Join(", ", c)) + "</span>" : ""))
+                : E(p.DataRecency is { } dr ? Utc(dr) : "—"))
               .Append("</td>");
             sb.Append("<td>").Append(p.IsThisPublication ? "<strong>esta publicação</strong>" : E(Utc(p.CapturedAt)))
               .Append(p.PublishedInMonth > 1 ? $"<br><span class=\"muted\">{p.PublishedInMonth} publicações no mês; vale a última</span>" : "")

@@ -114,7 +114,11 @@ public static class NistReportPdfWriter
             Heading(section, "Painel da avaliação");
             foreach (var c in charts.Executive.Concat(charts.Detail)) visuals.Add(section, c);
             Heading(section, $"Evolução mensal ({FrozenPostureHistoryBuilder.MonthLabel(history.From)} a {FrozenPostureHistoryBuilder.MonthLabel(history.Until)})");
-            Body(section, $"{history.Series.Label} · {history.Series.Instrument} · {history.Series.FormulaVersion} / {history.Series.CatalogVersion}. {history.Series.CoverageBasis} {history.Criterion}", muted: true);
+            var ident = section.AddParagraph($"{history.Series.Label} · {history.Series.Instrument} · {history.Series.FormulaVersion} / {history.Series.CatalogVersion}. {history.Series.CoverageBasis} {history.Criterion}");
+            ident.Format.Font.Size = 8.6;
+            ident.Format.Font.Color = Muted;
+            ident.Format.SpaceAfter = Unit.FromMillimeter(1.4);
+            ident.Format.KeepWithNext = true;   // a identidade da série acompanha o gráfico
             visuals.Add(section, charts.History!);
             ReportChartPdf.HistoryTable(section, history, (row, col, text, bold) => Cell(row, col, text, bold: bold));
             foreach (var related in history.RelatedSeries) Body(section, related, muted: true);
