@@ -191,6 +191,10 @@ export interface PublishPostureSnapshotRequest {
    * recente — o que faria o relatório sair de uma coleta diferente da que está aberta na tela.
    */
   runId?: string;
+  /** [AEGIS-ASSESSMENT-VISUALS-01] Período do histórico congelado e a impressão digital da prévia mostrada. */
+  historyUntil?: string | null;
+  historyMonths?: number | null;
+  expectedHistoryFingerprint?: string | null;
 }
 
 /**
@@ -210,6 +214,10 @@ export interface KnightConsolidatedSourceSelection {
  */
 export interface PublishConsolidatedKnightSnapshotRequest {
   selection: KnightConsolidatedSourceSelection[];
+  /** [AEGIS-ASSESSMENT-VISUALS-01] Período do histórico congelado e a impressão digital da prévia mostrada. */
+  historyUntil?: string | null;
+  historyMonths?: number | null;
+  expectedHistoryFingerprint?: string | null;
 }
 
 // ---- Apresentação (pt-BR) -----------------------------------------------------------------------
@@ -274,6 +282,7 @@ const INCOMPATIBILITY_LABEL: Record<string, string> = {
   DifferentFormulaVersion: 'Versões de fórmula incompatíveis',
   DifferentCatalogVersion: 'Versões de catálogo/framework incompatíveis',
   DifferentSchemaVersion: 'Versões de schema da fotografia incompatíveis',
+  DifferentCompositionCatalog: 'Catálogo de uma fonte da composição diferente',
 };
 
 export function incompatibilityLabel(reason: string): string {
@@ -365,6 +374,21 @@ export interface PostureMonthlyPoint {
   applicableItems?: number | null;
   cycleName?: string | null;
   notes?: string[] | null;
+  /**
+   * [AEGIS-ASSESSMENT-VISUALS-01] Variação na escala do instrumento em relação ao ponto ANTERIOR da série — só quando os dois são
+   * comparáveis; `deltaFrom` diz o mês do ponto de referência (pode haver meses sem publicação no meio).
+   */
+  delta?: number | null;
+  deltaFrom?: string | null;
+  /** Instante dos dados (coleta KNIGHT; última revisão NIST) — distinto da publicação. */
+  dataRecency?: string | null;
+  /** Período avaliado (rodada NIST). */
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  /** Fontes incluídas de um consolidado KNIGHT. */
+  composition?: string[] | null;
+  /** O ponto é a própria publicação que congelou o histórico (prévia ou relatório). */
+  isThisPublication?: boolean;
 }
 
 export interface PostureMonthlySeries {
@@ -373,12 +397,103 @@ export interface PostureMonthlySeries {
   sourceType: string | null;
   label: string;
   points: PostureMonthlyPoint[];
+  /** [AEGIS-ASSESSMENT-VISUALS-01] Instrumento e escala por extenso, escala numérica e base da cobertura. */
+  instrument?: string | null;
+  scaleMin?: number | null;
+  scaleMax?: number | null;
+  coverageBasis?: string | null;
+  nistAssessmentId?: string | null;
+  nistScopeId?: string | null;
 }
 
 export interface PostureMonthlyHistory {
   criterion: string;
   months: string[];
   series: PostureMonthlySeries[];
+}
+
+/** [AEGIS-ASSESSMENT-VISUALS-01] Identidade e recorte da série congelada (espelha FrozenHistoryIdentity). */
+export interface FrozenHistoryIdentity {
+  type: PostureSnapshotType;
+  semanticFamily: string;
+  label: string;
+  instrument: string;
+  scaleMin: number;
+  scaleMax: number;
+  coverageBasis: string;
+  formulaVersion: string;
+  catalogVersion: string;
+  sourceType: string | null;
+  sourceLabel: string | null;
+  composition: string[] | null;
+  nistAssessmentId: string | null;
+  nistScopeId: string | null;
+}
+
+/**
+ * [AEGIS-ASSESSMENT-VISUALS-01] Série anual que a publicação congela (ou que a prévia mostra). `basisFingerprint` é a impressão
+ * digital do que foi apresentado: a publicação a confere e responde 409 se a série mudou — nunca grava outra em silêncio.
+ */
+export interface FrozenPostureHistory {
+  schema: string;
+  criterion: string;
+  from: string;
+  until: string;
+  months: string[];
+  series: FrozenHistoryIdentity;
+  points: PostureMonthlyPoint[];
+  publicationMonth: string;
+  includesThisPublication: boolean;
+  relatedSeries: string[];
+  basisFingerprint: string;
+}
+
+/** [AEGIS-ASSESSMENT-VISUALS-01] Período pedido: último mês ("aaaa-mm") e quantidade de meses. Nulos = padrão (12 até agora). */
+export interface HistoryWindowRequest {
+  until: string | null;
+  months: number | null;
+}
+
+/** A série congelada como série mensal comum (o mesmo componente desenha as duas). */
+export function frozenAsSeries(h: FrozenPostureHistory): PostureMonthlySeries {
+  return {
+    type: h.series.type,
+    semanticFamily: h.series.semanticFamily,
+    sourceType: h.series.sourceType,
+    label: h.series.label,
+    points: h.points,
+    instrument: h.series.instrument,
+    scaleMin: h.series.scaleMin,
+    scaleMax: h.series.scaleMax,
+    coverageBasis: h.series.coverageBasis,
+    nistAssessmentId: h.series.nistAssessmentId,
+    nistScopeId: h.series.nistScopeId,
+  };
+}
+
+const MONTH_NAMES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+/** "aaaa-mm" de um mês do eixo ("2026-09-01") ou de uma data. */
+export function monthKey(month: string): string {
+  return month.slice(0, 7);
+}
+
+/** Últimos `count` meses terminando no mês de `now` (o mais recente primeiro), como opções de fim de período. */
+export function monthOptions(now: Date, count = 24): { value: string; label: string }[] {
+  const out: { value: string; label: string }[] = [];
+  for (let i = 0; i < count; i++) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const value = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    out.push({ value, label: `${MONTH_NAMES[d.getUTCMonth()]}/${d.getUTCFullYear()}` });
+  }
+  return out;
+}
+
+/** Variação com sinal e o mês de referência ("+3,0 desde ago/26"); "—" sem variação comparável. */
+export function deltaText(p: Pick<PostureMonthlyPoint, 'delta' | 'deltaFrom'>, decimals: number): string {
+  if (p.delta === null || p.delta === undefined || !p.deltaFrom) return '—';
+  const v = p.delta.toLocaleString('pt-BR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  return `${p.delta > 0 ? '+' : ''}${v} desde ${monthShort(p.deltaFrom)}`;
 }
 
 /** Uma célula do eixo mensal: o ponto do mês (ou nulo — mês sem publicação, NUNCA interpolado). */

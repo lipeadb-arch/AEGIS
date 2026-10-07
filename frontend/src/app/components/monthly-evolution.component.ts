@@ -1,86 +1,138 @@
 import { DatePipe } from '@angular/common';
-import { Component, computed, input } from '@angular/core';
+import { Component, computed, input, output } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { ChartSpec, historyLine } from '../models/charts.models';
 import { NistHistoryItem, averageText } from '../models/nist.models';
 import {
-  MonthlyCell,
+  HistoryWindowRequest,
   PostureMonthlyHistory,
   PostureMonthlyPoint,
   PostureMonthlySeries,
+  deltaText,
   incompatibilityLabel,
   maturityText,
+  monthOptions,
   monthShort,
-  monthlyCells,
-  seriesValue,
 } from '../models/posture-history.models';
+import { ChartComponent } from './chart.component';
 
 interface SeriesView {
   series: PostureMonthlySeries;
-  cells: MonthlyCell[];
-  /** Segmentos a desenhar (só entre meses consecutivos e comparáveis). */
-  segments: { x1: number; y1: number; x2: number; y2: number }[];
-  dots: { x: number; y: number; label: string }[];
-  restarts: string[];
+  chart: ChartSpec;
+  rows: { month: string; point: PostureMonthlyPoint | null }[];
 }
 
-const W = 600;
-const H = 120;
-const PAD = 12;
-
 /**
- * [AEGIS-NIST-JOURNEY-01] Evolução MENSAL: uma série por instrumento e fonte (KNIGHT e NIST nunca somados). Mês sem
- * publicação fica sem ponto e sem linha; a linha só liga meses vizinhos comparáveis (mesma fórmula, catálogo e esquema,
- * decidido no servidor). A maturidade NIST por avaliação vem à parte, porque é outra metodologia.
+ * [AEGIS-NIST-JOURNEY-01 · AEGIS-ASSESSMENT-VISUALS-01] Evolução MENSAL: um gráfico por instrumento e série (KNIGHT 0–100 e
+ * NIST 1–5 nunca no mesmo eixo, nem somados) e a tabela mês a mês com valor, base, período avaliado, publicação, variação
+ * (só entre pontos comparáveis) e observações. Mês sem publicação fica sem ponto e sem linha; pontos incompatíveis não são
+ * ligados. Com `period`, mostra o seletor de período (fim e quantidade de meses) e avisa a escolha por `periodChange`.
  */
 @Component({
   selector: 'app-monthly-evolution',
   standalone: true,
-  imports: [DatePipe, RouterLink],
+  imports: [DatePipe, RouterLink, ChartComponent],
   template: `
+    @if (period(); as p) {
+      <div class="period" role="group" aria-label="Período da evolução">
+        <label class="field">
+          <span class="field-label">Período</span>
+          <select [value]="'' + (p.months ?? 12)" (change)="emit(p, { months: +$any($event.target).value })">
+            <option value="6">6 meses</option>
+            <option value="12">12 meses</option>
+            <option value="24">24 meses</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Até</span>
+          <select [value]="p.until ?? ''" (change)="emit(p, { until: $any($event.target).value || null })">
+            <option value="">Mês atual</option>
+            @for (m of untilOptions; track m.value) { <option [value]="m.value">{{ m.label }}</option> }
+          </select>
+        </label>
+      </div>
+    }
     @let h = history();
     @if (h) {
-      <p class="muted crit">{{ h.criterion }}</p>
+      <p class="muted crit">{{ h.criterion }}@if (h.months.length) { Período: {{ monthShort(h.months[0]) }} a {{ monthShort(h.months[h.months.length - 1]) }}. }</p>
       @if (views().length === 0) {
-        <p class="muted">Nenhuma fotografia publicada nos últimos {{ h.months.length }} meses. Publique um registro no histórico para começar a série.</p>
+        <p class="muted">Nenhuma fotografia publicada no período escolhido. Publique um registro no KNIGHT ou no NIST para começar a série.</p>
       }
       @for (v of views(); track v.series.semanticFamily) {
-        <figure class="serie">
-          <figcaption>
-            <strong>{{ v.series.label }}</strong>
-            <span class="muted">{{ instrument(v) }} · última fórmula {{ last(v)?.formulaVersion }} · catálogo {{ last(v)?.catalogVersion }}</span>
-          </figcaption>
-          <svg [attr.viewBox]="'0 0 ' + W + ' ' + H" preserveAspectRatio="none" role="img" [attr.aria-label]="aria(v)">
-            <line [attr.x1]="PAD" [attr.x2]="W - PAD" [attr.y1]="H - PAD" [attr.y2]="H - PAD" class="axis" />
-            @for (s of v.segments; track $index) { <line [attr.x1]="s.x1" [attr.y1]="s.y1" [attr.x2]="s.x2" [attr.y2]="s.y2" class="seg" /> }
-            @for (d of v.dots; track $index) { <circle [attr.cx]="d.x" [attr.cy]="d.y" r="4" class="dot"><title>{{ d.label }}</title></circle> }
-          </svg>
-          <ol class="months" [style.--n]="v.cells.length">
-            @for (c of v.cells; track c.month) {
-              <li [class.empty]="!c.point"><span class="m">{{ monthShort(c.month) }}</span>
-                <span class="s">{{ c.point ? valueText(v, c.point) : '—' }}</span></li>
-            }
-          </ol>
-          @if (v.restarts.length > 0) { <p class="muted">Série recomeça: {{ v.restarts.join(' · ') }}</p> }
-          <details>
-            <summary>Detalhe mês a mês</summary>
-            <ul class="detail">
-              @for (c of v.cells; track c.month) {
-                @if (c.point; as p) {
-                  <li><strong>{{ monthShort(c.month) }}</strong> ·
-                    @if (v.series.type === 'NistMaturity') {
-                      rodada {{ p.cycleName ?? '—' }} · atual {{ maturity(p.maturityCurrent) }} · alvo {{ maturity(p.maturityTarget) }} ·
-                      universo aplicável {{ p.applicableItems ?? '—' }} ·
-                    } @else { nota {{ scoreText(p.score) }} · }
-                    cobertura {{ p.coverage }}% ·
-                    {{ p.evaluatedItems }} de {{ p.eligibleItems }} avaliados · publicada em {{ p.capturedAt | date: 'dd/MM/yyyy' }}
-                    @if (p.sourceLabel) { · {{ p.sourceLabel }} } · {{ p.formulaVersion }} / {{ p.catalogVersion }}
-                    @if (p.publishedInMonth > 1) { · {{ p.publishedInMonth }} publicações no mês (vale a última) }
-                    @for (n of p.notes ?? []; track n) { <span class="note">{{ n }}</span> }</li>
-                }
-              }
-            </ul>
+        <section class="serie" [attr.aria-label]="v.series.label">
+          <header class="serie-head">
+            <h3>{{ v.series.label }}</h3>
+            <p class="muted">{{ v.series.instrument ?? instrument(v.series) }} · última fórmula {{ last(v)?.formulaVersion }} · catálogo {{ last(v)?.catalogVersion }}</p>
+          </header>
+          <app-chart [spec]="v.chart" [compact]="true" [hideTable]="true" />
+          <details class="mm" [open]="openTables()">
+            <summary>Mês a mês ({{ v.series.points.length }} mês(es) com publicação em {{ v.rows.length }})</summary>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Mês</th>
+                    <th scope="col">{{ isMaturity(v) ? 'Atual' : 'Nota' }}</th>
+                    @if (isMaturity(v)) { <th scope="col">Alvo</th> }
+                    <th scope="col">Cobertura e base</th>
+                    <th scope="col">{{ isMaturity(v) ? 'Rodada e período avaliado' : 'Coleta' }}</th>
+                    <th scope="col">Publicação</th>
+                    <th scope="col">Variação</th>
+                    <th scope="col">Observações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (r of v.rows; track r.month) {
+                    @if (r.point; as p) {
+                      <tr>
+                        <th scope="row">{{ monthShort(r.month) }}</th>
+                        <td>{{ isMaturity(v) ? maturity(p.maturityCurrent) : scoreText(p.score) }}</td>
+                        @if (isMaturity(v)) { <td>{{ maturity(p.maturityTarget) }}</td> }
+                        <td>{{ pctText(p.coverage) }} · {{ p.evaluatedItems }} de {{ p.eligibleItems }}
+                          <span class="dim">{{ isMaturity(v) ? 'aplicáveis: ' + (p.applicableItems ?? '—') : 'controles aplicáveis' }}</span></td>
+                        <td>
+                          @if (isMaturity(v)) {
+                            {{ p.cycleName ?? '—' }}
+                            @if (p.periodStart && p.periodEnd) { <span class="dim">{{ p.periodStart | date: 'dd/MM/yyyy' : 'UTC' }} a {{ p.periodEnd | date: 'dd/MM/yyyy' : 'UTC' }}</span> }
+                          } @else {
+                            {{ p.dataRecency ? (p.dataRecency | date: 'dd/MM/yyyy') : '—' }}
+                          }
+                        </td>
+                        <td>
+                          @if (p.isThisPublication) {
+                            <strong>esta publicação</strong>
+                          } @else {
+                            {{ p.capturedAt | date: 'dd/MM/yyyy' }}
+                            @if (p.sourceRunId) {
+                              <a class="dim inline" routerLink="/knight" [queryParams]="{ run: p.sourceRunId }">avaliação</a>
+                            } @else if (v.series.nistAssessmentId) {
+                              <a class="dim inline" routerLink="/nist" [queryParams]="{ avaliacao: v.series.nistAssessmentId, escopo: v.series.nistScopeId }">avaliação</a>
+                            }
+                          }
+                          @if (p.publishedInMonth > 1) { <span class="dim">{{ p.publishedInMonth }} no mês; vale a última</span> }
+                        </td>
+                        <td>{{ p.breakReasons.length ? 'não comparável' : deltaText(p, isMaturity(v) ? 2 : 1) }}</td>
+                        <td class="obs">
+                          @if (p.breakReasons.length) { <span class="note">Recomeça: {{ breaks(p) }}.</span> }
+                          @for (n of p.notes ?? []; track n) { <span class="note">{{ n }}</span> }
+                          @if (!p.breakReasons.length && !(p.notes ?? []).length) { — }
+                        </td>
+                      </tr>
+                    } @else {
+                      <tr class="empty-row">
+                        <th scope="row">{{ monthShort(r.month) }}</th>
+                        <td [attr.colspan]="isMaturity(v) ? 7 : 6" class="dimtxt">Sem publicação neste mês</td>
+                      </tr>
+                    }
+                  }
+                </tbody>
+              </table>
+            </div>
+            <p class="muted foot">A variação só aparece entre pontos comparáveis da mesma série e não indica, sozinha, a causa
+              (correção, mudança no ambiente ou de cobertura). Para ver o que mudou, compare as fotografias em
+              <a routerLink="/history" [queryParams]="{ vista: 'fotografias' }">Fotografias publicadas</a>.</p>
           </details>
-        </figure>
+        </section>
       }
     }
 
@@ -103,66 +155,60 @@ const PAD = 12;
   `,
   styles: [
     `
-      .crit { margin: 0 0 var(--sp-3); font-size: var(--fs-sm); }
-      .serie { margin: 0 0 var(--sp-5); min-width: 0; }
-      figcaption { display: flex; flex-direction: column; gap: 2px; margin-bottom: var(--sp-2); overflow-wrap: anywhere; }
-      figcaption .muted { font-size: var(--fs-meta); }
-      svg { width: 100%; height: 120px; display: block; }
-      .axis { stroke: var(--line-strong); stroke-width: 1; }
-      .seg { stroke: var(--cyan); stroke-width: 2; vector-effect: non-scaling-stroke; }
-      .dot { fill: var(--violet-text); }
-      .months { list-style: none; padding: 0; margin: 4px 0 0; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 2px; }
-      .months li { display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--text-2); min-width: 0; }
-      .months li.empty { color: var(--muted); }
-      .months .m { color: var(--muted); }
-      .detail { margin: var(--sp-2) 0 0; padding-left: var(--sp-4); font-size: var(--fs-sm); display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
       :host { display: block; min-width: 0; }
-      details summary { cursor: pointer; font-size: var(--fs-sm); margin-top: var(--sp-2); }
+      .period { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-bottom: var(--sp-3); }
+      .period .field { min-width: 140px; }
+      .crit { margin: 0 0 var(--sp-3); font-size: var(--fs-sm); }
+      .serie { margin: 0 0 var(--sp-6); min-width: 0; }
+      .serie-head h3 { margin: 0; font-size: var(--fs-panel); overflow-wrap: anywhere; }
+      .serie-head .muted { margin: 2px 0 0; font-size: var(--fs-meta); overflow-wrap: anywhere; }
+      .mm summary { cursor: pointer; font-size: var(--fs-sm); margin-top: var(--sp-2); color: var(--text-2); }
+      .data-table { font-size: var(--fs-meta); }
+      .data-table tbody th[scope='row'] { white-space: nowrap; text-transform: none; letter-spacing: 0; vertical-align: top; color: var(--text); }
+      .data-table td { vertical-align: top; }
+      .dim { display: block; color: var(--muted); font-size: var(--fs-meta); }
+      .dim.inline { display: inline; margin-left: 6px; }
+      .dimtxt { color: var(--muted); font-style: italic; }
+      .obs { min-width: 200px; }
+      .note { display: block; color: var(--text-2); }
+      .foot { margin-top: var(--sp-2); font-size: var(--fs-meta); }
+      .detail { margin: var(--sp-2) 0 0; padding-left: var(--sp-4); font-size: var(--fs-sm); display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
       .sub { margin: var(--sp-5) 0 var(--sp-2); font-size: var(--fs-panel); }
-      .note { display: block; color: var(--muted); font-size: var(--fs-meta); }
-      @media (max-width: 520px) { .months li:nth-child(odd) .m { visibility: hidden; } }
     `,
   ],
 })
 export class MonthlyEvolutionComponent {
   readonly history = input<PostureMonthlyHistory | null>(null);
-  /** Maturidade NIST por avaliação; nulo = não mostrar o bloco. */
+  /** Maturidade NIST por avaliação (leitura viva, à parte); nulo = não mostrar o bloco. */
   readonly nist = input<NistHistoryItem[] | null>(null);
+  /** Período atual (mostra o seletor quando informado). */
+  readonly period = input<HistoryWindowRequest | null>(null);
+  /** Tabelas mês a mês abertas por padrão (prévia da publicação). */
+  readonly openTables = input(false);
+  readonly periodChange = output<HistoryWindowRequest>();
 
-  protected readonly W = W;
-  protected readonly H = H;
-  protected readonly PAD = PAD;
   protected readonly monthShort = monthShort;
   protected readonly averageText = averageText;
+  protected readonly deltaText = deltaText;
+  /** Fins de período possíveis: os 23 meses anteriores ao atual (o atual é "Mês atual"). */
+  protected readonly untilOptions = monthOptions(new Date(), 24).slice(1);
 
   protected readonly views = computed<SeriesView[]>(() => {
     const h = this.history();
     if (!h) return [];
-    const n = h.months.length;
-    const x = (i: number) => (n <= 1 ? W / 2 : PAD + (i * (W - 2 * PAD)) / (n - 1));
     return h.series.map((series) => {
-      // Escala própria de cada instrumento: maturidade 0–5 (níveis 1–5) e score 0–100 — nunca no mesmo eixo.
-      const max = series.type === 'NistMaturity' ? 5 : 100;
-      const y = (v: number) => H - PAD - (Math.max(0, Math.min(max, v)) / max) * (H - 2 * PAD);
-      const val = (p: PostureMonthlyPoint) => seriesValue(series.type, p);
-      const cells = monthlyCells(h.months, series.points, val);
-      const segments: SeriesView['segments'] = [];
-      const dots: SeriesView['dots'] = [];
-      const restarts: string[] = [];
-      cells.forEach((c, i) => {
-        if (!c.point) return;
-        const cur = val(c.point);
-        if (cur !== null) dots.push({ x: x(i), y: y(cur), label: `${monthShort(c.month)}: ${this.valueText({ series } as SeriesView, c.point)}` });
-        if (c.connected) {
-          const prev = cells[i - 1].point!;
-          segments.push({ x1: x(i - 1), y1: y(val(prev)!), x2: x(i), y2: y(cur!) });
-        }
-        if (c.point.breakReasons.length > 0)
-          restarts.push(`${monthShort(c.month)} (${c.point.breakReasons.map(incompatibilityLabel).join(', ')})`);
-      });
-      return { series, cells, segments, dots, restarts };
+      const byMonth = new Map(series.points.map((p) => [p.month, p]));
+      return { series, chart: historyLine(series, h.months), rows: h.months.map((month) => ({ month, point: byMonth.get(month) ?? null })) };
     });
   });
+
+  protected emit(p: HistoryWindowRequest, change: Partial<HistoryWindowRequest>): void {
+    this.periodChange.emit({ months: p.months, until: p.until, ...change });
+  }
+
+  protected isMaturity(v: SeriesView): boolean {
+    return v.series.type === 'NistMaturity';
+  }
 
   protected last(v: SeriesView): PostureMonthlyPoint | null {
     return v.series.points.length > 0 ? v.series.points[v.series.points.length - 1] : null;
@@ -173,21 +219,22 @@ export class MonthlyEvolutionComponent {
   }
 
   protected maturity(v: number | null | undefined): string {
-    return maturityText(v);
+    return v === null || v === undefined ? 'sem nível' : `${maturityText(v)}/5`;
   }
 
-  /** Texto do valor do ponto na escala do instrumento ("2,5/5" na maturidade; "62" no score). */
-  protected valueText(v: Pick<SeriesView, 'series'>, p: PostureMonthlyPoint): string {
-    if (v.series.type !== 'NistMaturity') return this.scoreText(p.score);
-    return p.maturityCurrent === null || p.maturityCurrent === undefined ? 'sem nível' : `${maturityText(p.maturityCurrent)}/5`;
+  protected pctText(v: number): string {
+    return `${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`;
   }
 
-  protected instrument(v: SeriesView): string {
-    return v.series.type === 'Knight' ? 'AEGIS KNIGHT · 0–100' : v.series.type === 'NistMaturity' ? 'AEGIS NIST · maturidade 1–5 (metodologia AEGIS)' : 'AEGIS NIST · postura 0–100';
+  protected breaks(p: PostureMonthlyPoint): string {
+    return p.breakReasons.map(incompatibilityLabel).join(', ');
   }
 
-  protected aria(v: SeriesView): string {
-    const pts = v.cells.filter((c) => c.point).map((c) => `${monthShort(c.month)} ${this.valueText(v, c.point!)}`);
-    return `${v.series.label}: ${pts.length ? pts.join(', ') : 'sem publicação no período'}.`;
+  protected instrument(s: PostureMonthlySeries): string {
+    return s.type === 'Knight'
+      ? 'AEGIS KNIGHT · 0–100'
+      : s.type === 'NistMaturity'
+        ? 'AEGIS NIST · maturidade 1–5 (metodologia AEGIS)'
+        : 'AEGIS Score (postura do ambiente) · 0–100';
   }
 }

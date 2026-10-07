@@ -48,8 +48,9 @@ import {
   planForPanel,
 } from '../models/remediation.models';
 import { RemediationService } from '../services/remediation.service';
-import { PostureHistoryService } from '../services/posture-history.service';
-import { PostureExportFormat } from '../models/posture-history.models';
+import { HistoryChangedError, PostureHistoryService } from '../services/posture-history.service';
+import { FrozenPostureHistory, HistoryWindowRequest, KnightConsolidatedSourceSelection, PostureExportFormat } from '../models/posture-history.models';
+import { HistoryPreviewComponent } from '../components/history-preview.component';
 
 /**
  * AegisKnightComponent — SMART. Assessment de postura do AEGIS KNIGHT.
@@ -65,7 +66,7 @@ import { PostureExportFormat } from '../models/posture-history.models';
 @Component({
   selector: 'app-aegis-knight',
   standalone: true,
-  imports: [DatePipe, RouterLink, IdentityRiskPanelComponent, KnightFindingDetailComponent, KnightOverviewComponent, KnightControlsComponent, KnightGlossaryComponent, KnightCoverageComponent],
+  imports: [DatePipe, RouterLink, IdentityRiskPanelComponent, KnightFindingDetailComponent, KnightOverviewComponent, KnightControlsComponent, KnightGlossaryComponent, KnightCoverageComponent, HistoryPreviewComponent],
   template: `
     <section class="page knight">
       <header class="page-head">
@@ -121,6 +122,18 @@ import { PostureExportFormat } from '../models/posture-history.models';
             <span>{{ error() }}</span>
             <button type="button" class="btn ghost" (click)="clearError()">Fechar</button>
           </div>
+        }
+
+        <!-- [AEGIS-ASSESSMENT-VISUALS-01] Publicar mostra antes o histórico que o relatório vai congelar; a confirmação
+             confere a impressão digital desta prévia (o servidor recusa uma série diferente). -->
+        @if (pubPreview(); as pp) {
+          <app-history-preview [history]="pp.history" [loading]="pp.loading" [error]="pp.error" [window]="pp.window"
+                               [notice]="pp.notice" (windowChange)="changePublishWindow($event)">
+            <button type="button" class="btn real" (click)="confirmPublish()" [disabled]="publishing() || pp.loading || !pp.history">
+              {{ publishing() ? 'Publicando…' : 'Confirmar publicação com este histórico' }}
+            </button>
+            <button type="button" class="btn ghost" (click)="cancelPublish()" [disabled]="publishing()">Cancelar</button>
+          </app-history-preview>
         }
 
         @if (publishNotice(); as pmsg) {
@@ -924,25 +937,27 @@ export class AegisKnightComponent implements OnInit {
       .filter((s) => s.included && s.sourceRunId)
       .map((s) => ({ source: s.source, runId: s.sourceRunId! }));
     if (selection.length === 0) return;
+    this.openPublishPreview({ kind: 'consolidated', selection });
+  }
 
+  /** Publica a composição pinada conferindo o histórico da prévia. */
+  private publishConsolidatedWith(selection: KnightConsolidatedSourceSelection[], history: FrozenPostureHistory, window: HistoryWindowRequest): void {
     this.publishing.set(true);
     this.publishNotice.set(null);
     this.error.set(null);
     this.publishedId.set(null);
     this.downloadError.set(null);
-    this.history.publishConsolidated({ selection }).subscribe({
+    this.history.publishConsolidated({ selection, historyUntil: window.until, historyMonths: window.months, expectedHistoryFingerprint: history.basisFingerprint }).subscribe({
       next: (d) => {
         this.publishing.set(false);
+        this.pubPreview.set(null);
         this.publishedId.set(d.summary.id);
         this.publishNotice.set(
           `Relatório consolidado publicado (${d.summary.id}). O conteúdo foi congelado: reexportá-lo depois ` +
             'traz exatamente o que foi publicado agora. HTML, CSV e PDF saem desta mesma fotografia.',
         );
       },
-      error: (e: Error) => {
-        this.publishing.set(false);
-        this.error.set(e.message);
-      },
+      error: (e: Error) => this.publishFailed(e),
     });
   }
 
@@ -1265,14 +1280,20 @@ export class AegisKnightComponent implements OnInit {
    * para o servidor, que recusa (409) se a avaliação não existir, em vez de silenciosamente congelar outra.
    */
   publishReport(runId: string): void {
+    this.openPublishPreview({ kind: 'run', runId });
+  }
+
+  /** Publica a avaliação aberta conferindo o histórico da prévia. */
+  private publishRunWith(runId: string, history: FrozenPostureHistory, window: HistoryWindowRequest): void {
     this.publishing.set(true);
     this.publishNotice.set(null);
     this.error.set(null);
     this.publishedId.set(null);
     this.downloadError.set(null);
-    this.history.publish({ type: 'Knight', runId }).subscribe({
+    this.history.publish({ type: 'Knight', runId, historyUntil: window.until, historyMonths: window.months, expectedHistoryFingerprint: history.basisFingerprint }).subscribe({
       next: (d) => {
         this.publishing.set(false);
+        this.pubPreview.set(null);
         // A publicação só vale para a avaliação que continua aberta — outra resposta não oferece download.
         if (this.assessment()?.id === runId) this.publishedId.set(d.summary.id);
         this.publishNotice.set(
@@ -1280,11 +1301,79 @@ export class AegisKnightComponent implements OnInit {
             'reexportá-lo depois traz exatamente o que foi publicado agora. HTML, CSV e PDF saem desta mesma fotografia.',
         );
       },
+      error: (e: Error) => this.publishFailed(e),
+    });
+  }
+
+  // ---- [AEGIS-ASSESSMENT-VISUALS-01] Prévia do histórico congelado na publicação ----------------------------------
+
+  /** Publicação em preparo: o que será publicado, a prévia do histórico e o período escolhido. */
+  readonly pubPreview = signal<{
+    target: { kind: 'run'; runId: string } | { kind: 'consolidated'; selection: KnightConsolidatedSourceSelection[] };
+    history: FrozenPostureHistory | null;
+    loading: boolean;
+    error: string | null;
+    notice: string | null;
+    window: HistoryWindowRequest;
+  } | null>(null);
+  private previewSeq = 0;
+
+  private openPublishPreview(target: { kind: 'run'; runId: string } | { kind: 'consolidated'; selection: KnightConsolidatedSourceSelection[] }): void {
+    this.publishNotice.set(null);
+    this.publishedId.set(null);
+    this.error.set(null);
+    this.pubPreview.set({ target, history: null, loading: true, error: null, notice: null, window: { months: 12, until: null } });
+    this.loadPublishPreview();
+  }
+
+  /** (Re)lê a prévia; uma resposta de um pedido anterior (outro período ou outra avaliação) é descartada. */
+  private loadPublishPreview(notice: string | null = null): void {
+    const pp = this.pubPreview();
+    if (!pp) return;
+    const seq = ++this.previewSeq;
+    this.pubPreview.set({ ...pp, history: null, loading: true, error: null, notice });
+    const req = pp.target.kind === 'run'
+      ? this.history.historyPreview(pp.target.runId, pp.window)
+      : this.history.consolidatedHistoryPreview(pp.target.selection, pp.window);
+    req.subscribe({
+      next: (h) => {
+        const cur = this.pubPreview();
+        if (seq === this.previewSeq && cur) this.pubPreview.set({ ...cur, history: h, loading: false });
+      },
       error: (e: Error) => {
-        this.publishing.set(false);
-        this.error.set(e.message);
+        const cur = this.pubPreview();
+        if (seq === this.previewSeq && cur) this.pubPreview.set({ ...cur, loading: false, error: e.message });
       },
     });
+  }
+
+  changePublishWindow(window: HistoryWindowRequest): void {
+    const pp = this.pubPreview();
+    if (!pp) return;
+    this.pubPreview.set({ ...pp, window });
+    this.loadPublishPreview();
+  }
+
+  confirmPublish(): void {
+    const pp = this.pubPreview();
+    if (!pp?.history || this.publishing()) return;
+    if (pp.target.kind === 'run') this.publishRunWith(pp.target.runId, pp.history, pp.window);
+    else this.publishConsolidatedWith(pp.target.selection, pp.history, pp.window);
+  }
+
+  cancelPublish(): void {
+    this.previewSeq++;
+    this.pubPreview.set(null);
+  }
+
+  /** A série mudou entre a prévia e a confirmação: nada foi publicado; a prévia nova aparece com o aviso. */
+  private publishFailed(e: Error): void {
+    this.publishing.set(false);
+    if (e instanceof HistoryChangedError && this.pubPreview()) {
+      this.loadPublishPreview(`${e.message} A prévia abaixo já mostra a série atual.`);
+      return;
+    }
+    this.error.set(e.message);
   }
 
 
@@ -1489,6 +1578,7 @@ export class AegisKnightComponent implements OnInit {
         this.publishedId.set(null);
         this.loadSummary(a);
         this.applyDeepLink(a);
+        this.applyFilterLink(!requested);
         // Só agora a PROCEDÊNCIA é conhecida — ler a fila antes traria ações de outra fonte/modo.
         this.reloadPlans();
         this.reloadPinnedPlan();
@@ -1542,6 +1632,27 @@ export class AegisKnightComponent implements OnInit {
     }
     this.selected.set(wanted);
     this.tab.set('controls');
+  }
+
+  /**
+   * [AEGIS-ASSESSMENT-VISUALS-01] Um gráfico dos Dashboards aponta para um RECORTE dos controles (?status=Exposed&service=…) e,
+   * no consolidado, para o modo consolidado (?modo=consolidado). Valores desconhecidos são ignorados — nunca viram outro filtro.
+   */
+  private applyFilterLink(latestView: boolean): void {
+    const q = this.route.snapshot.queryParamMap;
+    if (latestView && q.get('modo') === 'consolidado' && this.consolidatedCandidates().some((c) => c.hasAssessment)) this.showConsolidated();
+    const statuses = ['findings', 'Passed', 'Exposed', 'Mitigated', 'NotEvaluated', 'Error', 'NotApplicable'];
+    const severities = ['Critical', 'High', 'Medium', 'Low', 'Informational'];
+    const status = q.get('status');
+    const severity = q.get('severity');
+    const f: Partial<KnightControlFilters> = {
+      status: status && statuses.includes(status) ? (status as KnightControlFilters['status']) : '',
+      severity: severity && severities.includes(severity) ? (severity as KnightControlFilters['severity']) : '',
+      service: q.get('service') ?? '',
+      domain: q.get('domain') ?? '',
+      platform: q.get('platform') ?? '',
+    };
+    if (f.status || f.severity || f.service || f.domain || f.platform) this.openControls(f);
   }
 
   clearError(): void {

@@ -1,10 +1,10 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { map } from 'rxjs';
+import { EMPTY, Subject, catchError, map, switchMap } from 'rxjs';
 import { MonthlyEvolutionComponent } from '../components/monthly-evolution.component';
 import { NistHistoryItem } from '../models/nist.models';
-import { PostureMonthlyHistory } from '../models/posture-history.models';
+import { HistoryWindowRequest, PostureMonthlyHistory } from '../models/posture-history.models';
 import { NistService } from '../services/nist.service';
 import { PostureHistoryService } from '../services/posture-history.service';
 import { AegisDashboardComponent } from './aegis-dashboard.component';
@@ -53,7 +53,7 @@ type View = 'mensal' | 'fotografias' | 'tendencia';
             } @else if (!monthly()) {
               <div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>Carregando a evolução mensal…</p></div>
             } @else {
-              <app-monthly-evolution [history]="monthly()" [nist]="nistItems()" />
+              <app-monthly-evolution [history]="monthly()" [nist]="nistItems()" [period]="period()" (periodChange)="setPeriod($event)" />
             }
           </section>
         }
@@ -73,17 +73,37 @@ export class HistoryPageComponent {
   });
 
   protected readonly monthly = signal<PostureMonthlyHistory | null>(null);
+  /** [AEGIS-ASSESSMENT-VISUALS-01] Período escolhido; cada troca descarta a resposta anterior ainda em voo. */
+  protected readonly period = signal<HistoryWindowRequest>({ months: 12, until: null });
+  private readonly periodRequests = new Subject<HistoryWindowRequest>();
   protected readonly nistItems = signal<NistHistoryItem[] | null>(null);
   protected readonly error = signal<string | null>(null);
 
   constructor() {
-    this.history.monthly(12).pipe(takeUntilDestroyed()).subscribe({
-      next: (h) => this.monthly.set(h),
-      error: (e: Error) => this.error.set(e.message),
-    });
+    this.periodRequests
+      .pipe(
+        switchMap((p) =>
+          this.history.monthly(p.months ?? 12, p.until).pipe(
+            catchError((e: Error) => {
+              this.error.set(e.message);
+              return EMPTY;
+            }),
+          ),
+        ),
+        takeUntilDestroyed(),
+      )
+      .subscribe((h) => this.monthly.set(h));
+    this.periodRequests.next(this.period());
     this.nist.history().pipe(takeUntilDestroyed()).subscribe({
       next: (items) => this.nistItems.set(items),
       error: () => this.nistItems.set([]),
     });
+  }
+
+  protected setPeriod(p: HistoryWindowRequest): void {
+    this.period.set(p);
+    this.monthly.set(null);
+    this.error.set(null);
+    this.periodRequests.next(p);
   }
 }

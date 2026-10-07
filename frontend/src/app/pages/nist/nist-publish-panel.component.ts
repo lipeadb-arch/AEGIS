@@ -15,7 +15,8 @@ import {
   gapText,
   functionSlugOf,
 } from '../../models/nist.models';
-import { PostureExportFormat } from '../../models/posture-history.models';
+import { HistoryWindowRequest, PostureExportFormat } from '../../models/posture-history.models';
+import { HistoryPreviewComponent } from '../../components/history-preview.component';
 import { NistApiError, NistCtx, NistService, saveBlob } from '../../services/nist.service';
 import { PostureHistoryService } from '../../services/posture-history.service';
 
@@ -29,7 +30,7 @@ import { PostureHistoryService } from '../../services/posture-history.service';
 @Component({
   selector: 'app-nist-publish-panel',
   standalone: true,
-  imports: [FormsModule, DatePipe, RouterLink],
+  imports: [FormsModule, DatePipe, RouterLink, HistoryPreviewComponent],
   template: `
     <section class="panel" aria-labelledby="pub-h">
       <div class="hd"><h3 id="pub-h">Publicar a rodada</h3><span class="hint">fotografia imutável · maturidade 1–5 (AEGIS)</span></div>
@@ -65,7 +66,10 @@ import { PostureHistoryService } from '../../services/posture-history.service';
         @if (pv.limitations.length) {
           <details><summary>Limitações declaradas no relatório ({{ pv.limitations.length }})</summary><ul>@for (l of pv.limitations; track l) { <li>{{ l }}</li> }</ul></details>
         }
-        <p class="hint">Impressão digital do conteúdo revisado: <span class="mono">{{ pv.contentFingerprint.slice(0, 16) }}…</span></p>
+        <!-- [AEGIS-ASSESSMENT-VISUALS-01] O histórico mensal que o relatório vai congelar, com o período escolhido. -->
+        <app-history-preview [history]="pv.history ?? null" [loading]="previewLoading()" [window]="historyWindow()" (windowChange)="setHistoryWindow($event)" />
+        <p class="hint">Impressão digital do conteúdo revisado: <span class="mono">{{ pv.contentFingerprint.slice(0, 16) }}…</span>
+          @if (pv.history) { · do histórico: <span class="mono">{{ pv.history.basisFingerprint.slice(0, 16) }}…</span> }</p>
         <div class="actions">
           @if (canWrite()) {
             <button type="button" class="primary" (click)="publish(pv)" [disabled]="publishing()">{{ publishing() ? 'Publicando…' : 'Publicar exatamente esta versão' }}</button>
@@ -221,20 +225,32 @@ export class NistPublishPanelComponent {
     return `${n > 0 ? '+' : n < 0 ? '−' : ''}${s}${percent ? ' p.p.' : ''}`;
   }
 
+  /** [AEGIS-ASSESSMENT-VISUALS-01] Período do histórico mostrado na prévia e congelado na publicação. */
+  protected readonly historyWindow = signal<HistoryWindowRequest>({ months: 12, until: null });
+
+  protected setHistoryWindow(w: HistoryWindowRequest): void {
+    this.historyWindow.set(w);
+    this.loadPreview();
+  }
+
+  private previewSeq = 0;
+
   protected loadPreview(keepError = false): void {
     const gen = this.gen;
+    // Troca de período com uma prévia ainda em voo: só a resposta do último pedido preenche a tela.
+    const seq = ++this.previewSeq;
     this.previewLoading.set(true);
     this.previewError.set(null);
     if (!keepError) this.publishError.set(null);
     this.track(
-      this.nist.publicationPreview(this.ctx()).subscribe({
+      this.nist.publicationPreview(this.ctx(), this.historyWindow()).subscribe({
         next: (p) => {
-          if (gen !== this.gen) return;
+          if (gen !== this.gen || seq !== this.previewSeq) return;
           this.preview.set(p);
           this.previewLoading.set(false);
         },
         error: (e: Error) => {
-          if (gen !== this.gen) return;
+          if (gen !== this.gen || seq !== this.previewSeq) return;
           this.previewError.set(e.message);
           this.previewLoading.set(false);
         },
@@ -249,7 +265,8 @@ export class NistPublishPanelComponent {
     this.publishError.set(null);
     this.published.set(null);
     this.track(
-      this.nist.publish(this.ctx(), pv.contentFingerprint).subscribe({
+      // As DUAS impressões digitais da prévia: conteúdo avaliativo e histórico (cada uma recusa a publicação se mudou).
+      this.nist.publish(this.ctx(), pv.contentFingerprint, pv.history?.basisFingerprint ?? null, this.historyWindow()).subscribe({
         next: (p) => {
           if (gen !== this.gen) return;
           this.publishing.set(false);
