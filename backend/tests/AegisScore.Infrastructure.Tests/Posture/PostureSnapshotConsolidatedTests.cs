@@ -272,11 +272,18 @@ public sealed class PostureSnapshotConsolidatedTests : IDisposable
         html.Should().Contain("default-src 'none'");
 
         var csvText = Encoding.UTF8.GetString((await exporter.ExportAsync(snapshot.Id, PostureExportFormat.Csv))!.Content).TrimStart('﻿');
-        var csvLines = csvText.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
-        var header = csvLines[0].Split(';');
+        // [AEGIS-ASSESSMENT-VISUALS-01] Leitura com aspas (texto livre pode conter ';') e cada tipo de linha pelo seu Origin:
+        // a reconciliação de controles vale nas linhas da avaliação automatizada; painel e histórico têm linhas próprias.
+        var csv = CsvTestReader.Parse(csvText);
+        var header = csv[0];
         var sourceCol = Array.IndexOf(header, "SourceType");
         var idCol = Array.IndexOf(header, "IndicatorId");
-        var rows = csvLines.Skip(1).Select(l => l.Split(';')).ToList();
+        var originCol = Array.IndexOf(header, "Origin");
+        csv.Skip(1).Should().OnlyContain(r => r.Length == header.Length, "toda linha tem as mesmas colunas do cabeçalho");
+        csv.Skip(1).Select(r => r[originCol]).Distinct().Should().BeEquivalentTo(new[] { "Automatizado", "Painel", "Histórico" });
+        csv.Skip(1).Where(r => r[originCol] != "Automatizado").Should().OnlyContain(r => r[idCol] == "", "painel e histórico não são controles");
+        var rows = csv.Skip(1).Where(r => r[originCol] == "Automatizado").ToList();
+        rows.Should().OnlyContain(r => r[idCol] != "");
         rows.Select(r => r[idCol]).Distinct().Should().HaveCount(snapshot.Indicators.Count, "controles = IndicatorId distintos, igual ao HTML");
         rows.Select(r => r[sourceCol]).Distinct().Should().BeEquivalentTo(new[] { "MicrosoftEntraId", "MicrosoftTeams" },
             "cada linha carrega a fonte REAL do indicador, não 'Consolidated'");

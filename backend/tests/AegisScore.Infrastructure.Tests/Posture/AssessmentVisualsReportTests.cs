@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -120,22 +121,59 @@ public sealed class AssessmentVisualsReportTests
     {
         var k = AssessmentVisualsFixtures.Knight(true);
         var model = KnightReportModelBuilder.Build(k, true);
-        var charts = ReportChartBuilder.ForKnight(model, FrozenPostureHistoryBuilder.Deserialize(k.HistoryJson));
-        var csv = Text(PostureSnapshotCsvWriter.Write(k)).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        var history = FrozenPostureHistoryBuilder.Deserialize(k.HistoryJson)!;
+        var charts = ReportChartBuilder.ForKnight(model, history);
+        var csv = CsvTestReader.Parse(Text(PostureSnapshotCsvWriter.Write(k)));
 
-        var header = csv[0].Split(';');
+        using var _ = new AssertionScope();
+        var header = csv[0];
         header.Should().HaveCount(63 + ReportCsvVisuals.HeadersId.Length);
         header[^ReportCsvVisuals.HeadersId.Length..].Should().Equal(ReportCsvVisuals.HeadersId);
-        var expectedChartRows = charts.Executive.Concat(charts.Detail).Sum(c => c.Categories.Count * c.Series.Count);
-        csv.Count(l => l.Split(';')[39] == "Grafico").Should().Be(expectedChartRows);
-        csv.Count(l => l.Split(';')[39] == "Historico").Should().Be(12);
-        csv.Skip(1).Should().OnlyContain(l => l.Split(';').Length == header.Length || l.Contains('"'), "a tabela continua retangular");
+        csv.Skip(1).Should().OnlyContain(r => r.Length == header.Length, "a tabela continua retangular");
+        int Col(string name) => Array.IndexOf(header, name);
+
+        // Cada tipo de linha tem RowKind e Origin próprios; painel e histórico não têm IndicatorId (não são controles).
+        var chartRows = csv.Skip(1).Where(r => r[Col("RowKind")] == "Grafico").ToList();
+        var historyRows = csv.Skip(1).Where(r => r[Col("RowKind")] == "Historico").ToList();
+        int originCol = Col("Origin"), indicatorCol = Col("IndicatorId"), snapshotCol = Col("SnapshotId");
+        var snapshotId = k.Id.ToString("D");
+        chartRows.Should().OnlyContain(r => r[originCol] == "Painel" && r[indicatorCol] == "" && r[snapshotCol] == snapshotId);
+        historyRows.Should().OnlyContain(r => r[originCol] == "Histórico" && r[indicatorCol] == "" && r[snapshotCol] == snapshotId);
+        csv.Skip(1).Where(r => r[Col("Origin")] == "Automatizado").Select(r => r[Col("IndicatorId")]).Distinct()
+            .Should().HaveCount(k.Indicators.Count, "as linhas de controle continuam reconciliando com o relatório");
+
+        // Valores do painel = exatamente os desenhados (categoria × série), na ordem dos gráficos.
+        var expectedCharts = ReportCsvVisuals.ChartRows(charts).Select(c => c.Select(x => x.Value ?? "").ToArray()).ToList();
+        chartRows.Select(r => r[^ReportCsvVisuals.HeadersId.Length..]).Should().BeEquivalentTo(expectedCharts, o => o.WithStrictOrdering());
+        var donut = charts.Executive.Single(c => c.Id == "knight-cobertura");
+        chartRows.Where(r => r[Col("ChartId")] == "knight-cobertura").Select(r => double.Parse(r[Col("ChartValue")], CultureInfo.InvariantCulture))
+            .Should().Equal(donut.Series[0].Values.Select(v => v!.Value));
+
+        // Histórico = os 12 meses do período congelado; mês sem publicação dito, nunca zero; o último é esta publicação.
+        historyRows.Select(r => r[Col("HistoryMonth")]).Should().Equal(history.Months.Select(m => m.ToString("yyyy-MM", CultureInfo.InvariantCulture)));
+        foreach (var r in historyRows)
+        {
+            var p = history.Points.SingleOrDefault(x => x.Month.ToString("yyyy-MM", CultureInfo.InvariantCulture) == r[Col("HistoryMonth")]);
+            if (p is null) { r[Col("HistoryValue")].Should().BeEmpty(); r[Col("HistoryNotes")].Should().Be("Sem publicação neste mês"); continue; }
+            r[Col("HistoryValue")].Should().Be(p.Score?.ToString("0.#", CultureInfo.InvariantCulture) ?? "");
+            r[Col("HistoryIsThisPublication")].Should().Be(p.IsThisPublication ? "true" : "false");
+            r[Col("HistorySnapshotId")].Should().Be(p.IsThisPublication ? "" : p.SnapshotId.ToString("D"));
+        }
+        historyRows.Last()[Col("HistoryValue")].Should().Be(k.Score?.ToString("0.#", CultureInfo.InvariantCulture));
 
         var n = AssessmentVisualsFixtures.Nist(true);
-        var ncsv = Text(NistReportCsvWriter.Write(n, AssessmentVisualsFixtures.NistReport())).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
-        ncsv[0].Split(';').Should().HaveCount(NistReportCsvWriter.Headers.Length + ReportCsvVisuals.HeadersPt.Length);
-        ncsv.Count(l => l.StartsWith("Histórico;", StringComparison.Ordinal)).Should().Be(12);
-        ncsv.Count(l => l.StartsWith("Gráfico;", StringComparison.Ordinal)).Should().BeGreaterThan(20);
+        var nr = AssessmentVisualsFixtures.NistReport();
+        var nh = FrozenPostureHistoryBuilder.Deserialize(n.HistoryJson)!;
+        var ncsv = CsvTestReader.Parse(Text(NistReportCsvWriter.Write(n, nr)));
+        ncsv[0].Should().HaveCount(NistReportCsvWriter.Headers.Length + ReportCsvVisuals.HeadersPt.Length);
+        ncsv.Skip(1).Should().OnlyContain(r => r.Length == ncsv[0].Length, "a tabela continua retangular");
+        var nChart = ncsv.Skip(1).Where(r => r[0] == "Gráfico").Select(r => r[^ReportCsvVisuals.HeadersPt.Length..]).ToList();
+        nChart.Should().BeEquivalentTo(ReportCsvVisuals.ChartRows(ReportChartBuilder.ForNist(nr, nh)).Select(c => c.Select(x => x.Value ?? "").ToArray()),
+            o => o.WithStrictOrdering());
+        var nHist = ncsv.Skip(1).Where(r => r[0] == "Histórico").ToList();
+        nHist.Select(r => r[Array.IndexOf(ncsv[0], "Mês")]).Should().Equal(nh.Months.Select(m => m.ToString("yyyy-MM", CultureInfo.InvariantCulture)));
+        nHist.Last()[Array.IndexOf(ncsv[0], "Valor no mês")].Should().Be(n.MaturityCurrent!.Value.ToString("0.##", CultureInfo.InvariantCulture),
+            "o último mês é esta publicação, com a maturidade atual da fotografia");
     }
 
     [Fact]

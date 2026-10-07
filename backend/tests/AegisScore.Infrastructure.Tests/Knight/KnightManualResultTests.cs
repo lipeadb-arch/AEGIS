@@ -243,7 +243,9 @@ public sealed class KnightManualResultTests : IDisposable
         manualRows.Should().HaveCount(2);
         manualRows.Should().OnlyContain(r => r[indicatorCol] == "" && r[originCol] == "Manual" && r[justificationCol] == Justification);
         manualRows.Select(r => r[Col("ManualResult")]).Should().BeEquivalentTo("Conforme (verificação manual)", "Não conforme (verificação manual)");
-        var automated = csv.Skip(1).Where(r => r[Col("RowKind")] != "ResultadoManual").ToList();
+        // [AEGIS-ASSESSMENT-VISUALS-01] Painel e histórico congelados também têm linhas próprias (Origin "Painel"/"Histórico").
+        var automated = csv.Skip(1).Where(r => r[Col("RowKind")] is not ("ResultadoManual" or "Grafico" or "Historico")).ToList();
+        csv.Skip(1).Where(r => r[Col("RowKind")] is "Grafico" or "Historico").Should().OnlyContain(r => r[originCol] == "Painel" || r[originCol] == "Histórico");
         automated.Should().OnlyContain(r => r[originCol] == "Automatizado");
         automated.Select(r => r[Col("IndicatorId")]).Distinct().Should().HaveCount(mAfter.Controls.Count,
             "a reconciliação de controles conta IndicatorId distintos, e a linha manual não tem IndicatorId");

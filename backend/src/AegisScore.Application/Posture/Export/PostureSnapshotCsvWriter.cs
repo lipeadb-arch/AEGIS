@@ -189,8 +189,8 @@ public static class PostureSnapshotCsvWriter
         if (history is not null)
         {
             var charts = ReportChartBuilder.ForKnight(model, history);
-            foreach (var cells in ReportCsvVisuals.ChartRows(charts)) VisualRow(csv, s, state, "Grafico", cells);
-            foreach (var cells in ReportCsvVisuals.HistoryRows(history)) VisualRow(csv, s, state, "Historico", cells);
+            foreach (var cells in ReportCsvVisuals.ChartRows(charts)) VisualRow(csv, s, state, "Grafico", "Painel", cells);
+            foreach (var cells in ReportCsvVisuals.HistoryRows(history)) VisualRow(csv, s, state, "Historico", "Histórico", cells);
         }
     }
 
@@ -202,9 +202,10 @@ public static class PostureSnapshotCsvWriter
 
     /// <summary>
     /// [AEGIS-ASSESSMENT-VISUALS-01] Linha de painel/histórico: identificação da fotografia nas colunas iniciais, RowKind
-    /// ("Grafico" ou "Historico") na sua coluna e os valores nas colunas acrescentadas ao final; o resto vazio.
+    /// ("Grafico" ou "Historico") e Origin ("Painel" ou "Histórico") nas suas colunas e os valores nas colunas acrescentadas ao
+    /// final; o resto vazio. A reconciliação de controles continua nas linhas com Origin "Automatizado", como a do resultado manual.
     /// </summary>
-    private static void VisualRow(CsvBuilder csv, PostureSnapshot s, string state, string kind, IReadOnlyList<ReportCsvVisuals.Cell> cells)
+    private static void VisualRow(CsvBuilder csv, PostureSnapshot s, string state, string kind, string origin, IReadOnlyList<ReportCsvVisuals.Cell> cells)
     {
         csv.Text(s.Id.ToString("D")).Text(s.ContentHash).Text(s.Type.ToString()).TimestampValue(s.CapturedAt)
            .Text(s.SchemaVersion).Text(s.FormulaVersion).Text(s.CatalogVersion)
@@ -212,7 +213,9 @@ public static class PostureSnapshotCsvWriter
            .Text(s.SourceType?.ToString()).Text(s.SourceLabel);
         Pad(csv, 27);                        // IndicatorId … References (colunas 13–39)
         csv.Text(kind);                      // RowKind (coluna 40)
-        Pad(csv, 23);                        // ObjectRelation … ManualValidUntil (colunas 41–63)
+        Pad(csv, 13);                        // ObjectRelation … PreviewApi (colunas 41–53)
+        csv.Text(origin);                    // Origin (coluna 54)
+        Pad(csv, 9);                         // ManualReferenceKey … ManualValidUntil (colunas 55–63)
         foreach (var c in cells)
             if (c.System) csv.SystemValue(c.Value); else csv.Text(c.Value);
         csv.EndRow();

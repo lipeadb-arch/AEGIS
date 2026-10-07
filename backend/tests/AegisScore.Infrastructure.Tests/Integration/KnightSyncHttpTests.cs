@@ -115,7 +115,7 @@ public sealed class KnightSyncHttpTests : IClassFixture<AegisApiFixture>
             r.StatusCode.Should().Be(HttpStatusCode.OK);
             r.Content.Headers.ContentType!.MediaType.Should().Be("text/html");
             var html = await r.Content.ReadAsStringAsync();
-            html.Should().Contain("default-src 'none'").And.Contain("Controles e findings").And.NotContain("<link");
+            html.Should().Contain("default-src 'none'").And.Contain("Controles e achados").And.NotContain("<link");
             r.Content.Headers.ContentDisposition!.FileNameStar.Should().EndWith(".html");
         }
         using (var r = await analyst.GetAsync($"/api/v1/posture/snapshots/{snapshot}/export?format=csv"))

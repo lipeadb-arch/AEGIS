@@ -153,7 +153,8 @@ public sealed class KnightMulticloudReportTests : IDisposable
         var csv = ParseCsv(Encoding.UTF8.GetString(csvBytes).TrimStart('﻿'));
         var header = csv[0];
         int Col(string n) => Array.IndexOf(header, n);
-        var rows = csv.Skip(1).ToList();
+        // [AEGIS-ASSESSMENT-VISUALS-01] A reconciliação vale nas linhas da avaliação automatizada (painel e histórico têm Origin próprio).
+        var rows = csv.Skip(1).Where(r => r[Col("Origin")] == "Automatizado").ToList();
         rows.Select(r => r[Col("IndicatorId")]).Distinct().Count().Should().Be(snapshot.Indicators.Count);
 
         var model = KnightReportModelBuilder.Build(snapshot, true);

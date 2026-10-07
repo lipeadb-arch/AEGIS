@@ -286,6 +286,12 @@ jobs:
       #     publicação com impressão digital e HTML/PDF/CSV da mesma fotografia, evolução mensal e importação CSV com
       #     prévia). Sem esta linha ela não executaria. O passo vai de 1122 a 1130 execuções (medido localmente com este
       #     MESMO filtro, em Release).
+      #     [AEGIS-ASSESSMENT-VISUALS-01] + FrozenPostureHistoryTests (histórico congelado na publicação: período escolhido,
+      #     ponto da própria publicação, impressão digital da prévia, composição/escopo distintos não ligados) e
+      #     + AssessmentVisualsReportTests (painel e evolução mensal reconciliados em HTML, PDF e CSV; fotografia antiga
+      #     sem painel e com o mesmo hash). Sem estas linhas elas não executariam. +1 em NistJourneyCompleteTests (409
+      #     quando o histórico muda entre a prévia e a publicação). O passo vai de 1130 a 1146 execuções (medido localmente
+      #     com este MESMO filtro, em Release).
       - name: Dashboard, SIEM, device management and identity connector tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
@@ -730,6 +736,11 @@ jobs:
       # PostgresTests atravessa Nist02_CompleteJourney. O passo vai de 109 a 113 (medido localmente com este MESMO
       # filtro, contra PostgreSQL 18 descartável). Integridade (mesmas classes, sem mudar o filtro): a rota legada de
       # gravação recusada pelo pipeline HTTP e a montagem do relatório com alteração concorrente entre consultas — 113 a 115.
+      # [AEGIS-ASSESSMENT-VISUALS-01] Entra a classe NOVA AssessmentVisualsPostgresTests (atualização pelo migrator real sem
+      # tocar fotografias existentes; histórico congelado relido do PostgreSQL com o hash íntegro, relatório com a série e
+      # gatilho de imutabilidade recusando alterar o histórico; isolamento por tenant);
+      # DatabaseUpgradePostgresTests atravessa também AssessmentVisuals01_FrozenHistory (fotografia legada sem histórico e
+      # com o mesmo hash). O passo vai de 115 a 116 (medido localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'

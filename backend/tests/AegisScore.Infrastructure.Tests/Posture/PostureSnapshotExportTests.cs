@@ -176,7 +176,15 @@ public sealed class PostureSnapshotExportTests : IDisposable
 
         var (header, rows) = ParseCsv(csv!.Content);
         header.Should().Contain(new[] { "IndicatorId", "Severity", "Status", "NistCodes", "MitreTechniques", "Evidence" });
-        rows.Should().HaveCount(2);
+        // [AEGIS-ASSESSMENT-VISUALS-01] A publicação congela o histórico: as linhas do painel e do histórico vêm com Origin próprio
+        // e sem IndicatorId; os dois indicadores continuam sendo exatamente as linhas da avaliação automatizada.
+        int originCol = Array.IndexOf(header, "Origin"), indicatorCol = Array.IndexOf(header, "IndicatorId");
+        rows.Should().OnlyContain(r => r.Length == header.Length);
+        rows.Select(r => r[originCol]).Distinct().Should().BeEquivalentTo(new[] { "Automatizado", "Painel", "Histórico" });
+        var controls = rows.Where(r => r[originCol] == "Automatizado").ToList();
+        controls.Should().HaveCount(2);
+        controls.Select(r => r[indicatorCol]).Should().BeEquivalentTo("AK-ENTRA-001", "AK-ENTRA-003");
+        rows.Where(r => r[originCol] != "Automatizado").Should().OnlyContain(r => r[indicatorCol] == "");
         rows.Select(r => r[Array.IndexOf(header, "SourceType")]).Should().OnlyContain(v => v == "MicrosoftEntraId");
     }
 
