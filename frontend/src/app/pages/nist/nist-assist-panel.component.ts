@@ -17,7 +17,7 @@ import {
   basisBadgeClass,
   sourceAnchorId,
 } from '../../models/nist-assist.models';
-import { functionSlugOf } from '../../models/nist.models';
+import { MATURITY_LEVEL_LABELS, functionSlugOf } from '../../models/nist.models';
 import { AuthService } from '../../services/auth.service';
 import { NistApiError, NistCtx, NistService } from '../../services/nist.service';
 
@@ -128,7 +128,7 @@ let availabilityCache: { tenant: string | null; at: number; value: NistAssistAva
           @if (allowLevel()) {
             <h4>Sugestão de nível <span class="hint">escala 1–5 autoral do AEGIS{{ v.level ? ' · ' + v.level.methodologyVersion : '' }}</span></h4>
             @if (v.level; as lv) {
-              <p><strong>{{ lv.level }} · {{ lv.levelName }}</strong> — {{ lv.rationale }}
+              <p><strong>{{ lv.level }} · {{ levelLabels[lv.level] ?? lv.levelName }}</strong> — {{ lv.rationale }}
                 @for (k of lv.sources; track k) {
                   @let src = sourceOf(v, k);
                   <button type="button" class="chip" (click)="openSource(src)" [disabled]="!src" [attr.aria-label]="'Abrir a fonte ' + k">{{ k }}</button>
@@ -240,6 +240,7 @@ export class NistAssistPanelComponent {
 
   protected readonly availabilityBadgeClass = availabilityBadgeClass;
   protected readonly basisBadgeClass = basisBadgeClass;
+  protected readonly levelLabels: Record<number, string> = MATURITY_LEVEL_LABELS;
 
   protected readonly availability = signal<NistAssistAvailability | null>(null);
   protected readonly view = signal<NistAssistView | null>(null);
