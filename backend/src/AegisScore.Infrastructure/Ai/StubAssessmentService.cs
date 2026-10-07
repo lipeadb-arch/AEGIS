@@ -307,6 +307,11 @@ public sealed class StubAssessmentService : IAiAssessmentService
         "3. Colete a telemetria ou o documento que comprove a implementação efetiva.\n" +
         "4. Reavalie o controle no AEGIS com a nova evidência.");
 
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] Assistência NIST simulada: demonstração por regras fixas, marcada "[Simulado]".</summary>
+    public Task<AegisScore.Application.Nist.NistAssistDraft> AssistNistAsync(
+        AegisScore.Application.Nist.NistAssistPrompt request, CancellationToken ct)
+        => Task.FromResult(StubNistAssist.Draft(request));
+
     // ---- helpers ----
 
     /// <summary>Extrai (na ordem, sem repetir) os códigos NIST do histórico; se não houver, usa o roteiro padrão.</summary>

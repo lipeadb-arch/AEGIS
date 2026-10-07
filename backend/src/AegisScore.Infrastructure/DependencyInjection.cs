@@ -206,6 +206,10 @@ public static class DependencyInjection
         services.AddScoped<AegisScore.Application.Nist.INistWorkService, AegisScore.Infrastructure.Nist.NistWorkService>();
         services.AddScoped<AegisScore.Application.Nist.INistPublicationService, AegisScore.Infrastructure.Nist.NistPublicationService>();
         services.AddScoped<AegisScore.Application.Nist.INistImportService, AegisScore.Infrastructure.Nist.NistImportService>();
+        // [AEGIS-NIST-AI-ASSIST-01] Assistência contextual de IA da jornada NIST — sobre o IAiAssessmentService roteado pelo gate
+        // existente (nenhum provedor, chatbot ou camada paralela). Uma geração por item por vez na réplica.
+        services.AddSingleton<AegisScore.Infrastructure.Nist.NistAssistInFlight>();
+        services.AddScoped<AegisScore.Application.Nist.INistAssistService, AegisScore.Infrastructure.Nist.NistAssistService>();
 
         // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidence Fabric de identidade: o ÚNICO ponto de aquisição real do Entra ID
         // (reusa o coletor do KNIGHT + transporte/credencial existentes) e de persistência do snapshot normalizado.
