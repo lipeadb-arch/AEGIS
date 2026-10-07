@@ -29,7 +29,7 @@ namespace AegisScore.Infrastructure.Tests.Nist;
 ///   • escala 1–5, "não se aplica" com justificativa, concorrência pela versão;
 ///   • nada atravessa tenants (avaliação, escopo, documento, execução do KNIGHT);
 ///   • evidência do KNIGHT só com mapeamento explícito e sem mudar nível; documento e inventário com procedência;
-///   • a sugestão da IA nunca é gravada, e a jornada funciona com a IA desativada ou falhando.
+///   • a jornada não depende da IA (a assistência de IA é do NistAssistService e tem testes próprios).
 /// </summary>
 public sealed class NistAssessmentServiceTests : IDisposable
 {
@@ -61,8 +61,9 @@ public sealed class NistAssessmentServiceTests : IDisposable
     private AegisScoreDbContext NewContext(Guid? tenantId) =>
         new(new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(_connection).Options, new SystemTenantContext(tenantId));
 
-    private NistAssessmentService Service(AegisScoreDbContext db, Guid tenant, IAiAssessmentService? ai = null, AiMode mode = AiMode.Simulated) =>
-        new(db, new SystemTenantContext(tenant), _clock, Language, ai ?? new StubAssessmentService(), new FixedGate(mode), new FixedSlug());
+    // [AEGIS-NIST-AI-ASSIST-01] A jornada não depende da IA: a assistência é outro serviço (NistAssistService).
+    private NistAssessmentService Service(AegisScoreDbContext db, Guid tenant) =>
+        new(db, new SystemTenantContext(tenant), _clock, Language);
 
     private static SaveNistEvaluationCommand Eval(int? current = null, int? target = null, int version = 0, bool na = false,
         string? rationale = null, string? owner = null, string? gaps = null) =>
@@ -343,27 +344,6 @@ public sealed class NistAssessmentServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task SugestaoDaIA_NuncaGravada_EJornadaFuncionaSemIA()
-    {
-        var (a, cy, s) = await CreateAsync(TenantA);
-        await using var db = NewContext(TenantA);
-
-        var suggestion = await Service(db, TenantA).SuggestAsync(a, cy, s, "GV.RM-01");
-        suggestion.Simulated.Should().BeTrue("sem provedor configurado a sugestão é simulada e assim declarada");
-        suggestion.SuggestedCurrentLevel.Should().BeInRange(1, 5);
-        (await db.Evaluations.CountAsync()).Should().Be(0, "a sugestão nunca é gravada como avaliação ou revisão humana");
-
-        await FluentActions.Awaiting(() => Service(db, TenantA, mode: AiMode.Disabled).SuggestAsync(a, cy, s, "GV.RM-01"))
-            .Should().ThrowAsync<NistAiUnavailableException>();
-        await FluentActions.Awaiting(() => Service(db, TenantA, ai: new FailingAi()).SuggestAsync(a, cy, s, "GV.RM-01"))
-            .Should().ThrowAsync<NistAiUnavailableException>();
-
-        // Com a IA desativada, a avaliação humana segue normalmente.
-        var saved = await Service(db, TenantA, mode: AiMode.Disabled).SaveEvaluationAsync(a, cy, s, "GV.RM-01", Eval(2, 3), Gestor);
-        saved.Evaluation!.EvaluatedBy.Should().Be("Analyst");
-    }
-
-    [Fact]
     public async Task Historico_UmPontoPorRodadaEEscopo_NoMesDoFimDoPeriodo()
     {
         var (a, cy, s) = await CreateAsync(TenantA);
@@ -424,37 +404,5 @@ public sealed class NistAssessmentServiceTests : IDisposable
             });
         await db.SaveChangesAsync();
         return run.Id;
-    }
-
-    private sealed class FixedGate : IAiFreeTierGate
-    {
-        public FixedGate(AiMode mode) => Mode = mode;
-        public AiMode Mode { get; }
-        public bool ProviderConfigured => false;
-        public bool IsExternalAllowedForSlug(string? tenantSlug) => false;
-    }
-
-    private sealed class FixedSlug : IAiTenantResolver
-    {
-        public void OverrideTenant(Guid tenantId) { }
-        public Task<string?> GetCurrentSlugAsync(CancellationToken ct = default) => Task.FromResult<string?>("demo");
-    }
-
-    /// <summary>IA que falha na sugestão (provedor fora do ar); o resto delega ao simulado.</summary>
-    private sealed class FailingAi : IAiAssessmentService
-    {
-        private readonly StubAssessmentService _stub = new();
-        public Task<MaturitySuggestion> SuggestMaturityAsync(MaturitySuggestionRequest request, CancellationToken ct) =>
-            throw new System.Net.Http.HttpRequestException("provedor indisponível");
-        public Task<DocumentAnalysis> AnalyzeDocumentAsync(DocumentAnalysisRequest request, CancellationToken ct) => _stub.AnalyzeDocumentAsync(request, ct);
-        public Task<DocumentControlVerdict> EvaluateDocumentControlAsync(DocumentControlEvaluationRequest request, CancellationToken ct) =>
-            _stub.EvaluateDocumentControlAsync(request, ct);
-        public Task<InterviewTurn> ConductInterviewTurnAsync(InterviewContext context, CancellationToken ct) => _stub.ConductInterviewTurnAsync(context, ct);
-        public Task<IReadOnlyList<ActionPlanSuggestion>> GenerateActionPlanAsync(ActionPlanRequest request, CancellationToken ct) =>
-            _stub.GenerateActionPlanAsync(request, ct);
-        public Task<string> GenerateExecutiveReportAsync(ExecutiveReportRequest request, CancellationToken ct) => _stub.GenerateExecutiveReportAsync(request, ct);
-        public Task<IReadOnlyList<NormalizedSignal>> NormalizeSignalsAsync(RawSignalBatch batch, CancellationToken ct) => _stub.NormalizeSignalsAsync(batch, ct);
-        public Task<AuditorReply> ChatAsync(AuditorChatRequest request, CancellationToken ct) => _stub.ChatAsync(request, ct);
-        public Task<AdvisoryDraft> GenerateAdvisoryAsync(AdvisoryGenerationRequest request, CancellationToken ct) => _stub.GenerateAdvisoryAsync(request, ct);
     }
 }

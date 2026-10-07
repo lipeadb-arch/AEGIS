@@ -17,7 +17,7 @@ namespace AegisScore.Infrastructure.Tests.Integration;
 ///   • Manager cria avaliação com escopo, navega uma função com o catálogo completo e grava atual × alvo; o autor vem do token;
 ///   • a releitura traz o que foi gravado (recarregamento); versão desatualizada é 409; nível fora da escala é 400;
 ///   • outro tenant recebe 404 para avaliação, escopo e gravação, e lista vazia;
-///   • a sugestão da IA nunca vira avaliação; a evolução mensal responde mesmo sem fotografias.
+///   • a sugestão da IA (assistência) nunca vira avaliação; a evolução mensal responde mesmo sem fotografias.
 /// </summary>
 public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
 {
@@ -81,7 +81,10 @@ public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
                        AegisApiHarness.JsonBody(save with { currentLevel = 7 })))
                 r.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
+            // [AEGIS-NIST-AI-ASSIST-01] A assistência estruturada substituiu a sugestão antiga (um fluxo só).
             using (var r = await manager.PostAsync($"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-03/ai-suggestion", AegisApiHarness.JsonBody(new { })))
+                r.StatusCode.Should().BeOneOf(new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed }, "a rota antiga de sugestão não existe mais");
+            using (var r = await manager.PostAsync($"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-03/assist", AegisApiHarness.JsonBody(new { })))
                 new[] { HttpStatusCode.OK, HttpStatusCode.ServiceUnavailable }.Should().Contain(r.StatusCode, "a IA pode estar simulada ou desativada");
             using (var d = await GetJsonAsync(manager, $"{Base}/{assessmentId}/cycles/{cycleId}/scopes/{scopeId}/subcategories/ID.AM-03"))
                 d.RootElement.GetProperty("evaluation").ValueKind.Should().Be(JsonValueKind.Null, "a sugestão nunca é gravada");
