@@ -4,6 +4,8 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using AegisScore.Application.Nist;
+using AegisScore.Application.Posture;
+using AegisScore.Application.Posture.Export;
 using AegisScore.Domain;
 using MigraDoc.DocumentObjectModel;
 using MigraDoc.DocumentObjectModel.Tables;
@@ -100,6 +102,27 @@ public static class NistReportPdfWriter
             Cell(row, 5, f.NotApplicable.ToString(Pt), align: ParagraphAlignment.Center);
             Cell(row, 6, f.PendingConfirmation.ToString(Pt), align: ParagraphAlignment.Center);
             Cell(row, 7, (f.NotEvaluated + f.InProgress).ToString(Pt), align: ParagraphAlignment.Center);
+        }
+
+        // [AEGIS-ASSESSMENT-VISUALS-01] Painel e evolução mensal SÓ nas fotografias que congelaram o histórico (as anteriores
+        // saem como antes). Os gráficos são os MESMOS dados do HTML; o histórico vem congelado, nunca das publicações de hoje.
+        var history = FrozenPostureHistoryBuilder.Deserialize(snapshot.HistoryJson);
+        var visuals = history is null ? null : new ReportChartPdf(PostureSnapshotPdfWriter.ReportFontFamily);
+        if (history is not null && visuals is not null)
+        {
+            var charts = ReportChartBuilder.ForNist(r, history);
+            Heading(section, "Painel da avaliação");
+            foreach (var c in charts.Executive.Concat(charts.Detail)) visuals.Add(section, c);
+            Heading(section, $"Evolução mensal ({FrozenPostureHistoryBuilder.MonthLabel(history.From)} a {FrozenPostureHistoryBuilder.MonthLabel(history.Until)})");
+            var ident = section.AddParagraph($"{history.Series.Label} · {history.Series.Instrument} · {history.Series.FormulaVersion} / {history.Series.CatalogVersion}. {history.Series.CoverageBasis} {history.Criterion}");
+            ident.Format.Font.Size = 8.6;
+            ident.Format.Font.Color = Muted;
+            ident.Format.SpaceAfter = Unit.FromMillimeter(1.4);
+            ident.Format.KeepWithNext = true;   // a identidade da série acompanha o gráfico
+            visuals.Add(section, charts.History!);
+            ReportChartPdf.HistoryTable(section, history, (row, col, text, bold) => Cell(row, col, text, bold: bold));
+            foreach (var related in history.RelatedSeries) Body(section, related, muted: true);
+            Body(section, "A variação só é calculada entre pontos comparáveis da mesma série; ela não indica, sozinha, a causa.", muted: true);
         }
 
         Heading(section, "Lacunas prioritárias");
@@ -236,6 +259,7 @@ public static class NistReportPdfWriter
 
         var renderer = new PdfDocumentRenderer { Document = doc };
         renderer.RenderDocument();
+        visuals?.Draw(renderer);
         using var ms = new MemoryStream();
         renderer.PdfDocument.Save(ms);
         return ms.ToArray();

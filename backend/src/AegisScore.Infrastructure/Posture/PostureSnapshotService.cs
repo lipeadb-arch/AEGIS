@@ -47,7 +47,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
     // ---- Publicação ----------------------------------------------------------------------------------
 
     public async Task<PostureSnapshotDetailDto> PublishAsync(
-        PostureSnapshotType type, KnightSourceType? source, Guid? runId = null, CancellationToken ct = default)
+        PostureSnapshotType type, KnightSourceType? source, Guid? runId = null, CancellationToken ct = default,
+        HistoryWindow? historyWindow = null, string? expectedHistoryFingerprint = null)
     {
         var tenantId = _tenant.TenantId
             ?? throw new TenantSecurityException("Publicação de fotografia sem tenant resolvido no contexto (fail-closed).");
@@ -73,6 +74,10 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         // fotografia — uma ação de um indicador que a avaliação congelada nem avaliou não tem o que ilustrar.
         if (type == PostureSnapshotType.Knight)
             await FreezeActionItemsAsync(snapshot, ct);
+
+        // [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal CONGELADO (só KNIGHT; o AEGIS Score legado segue sem painel visual).
+        if (type == PostureSnapshotType.Knight)
+            await FreezeHistoryAsync(snapshot, historyWindow ?? HistoryWindow.Default, expectedHistoryFingerprint, ct);
 
         // Tenant ambiente VALIDADO atribuído ao agregado ANTES do hash (o hash cobre o TenantId). O stamping
         // fail-closed do DbContext reconfirma no SaveChanges; jamais se aceita TenantId vindo do cliente.
@@ -619,7 +624,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
     // ---- [AEGIS-KNIGHT-CONSOLIDATED-01] Publicação consolidada ----------------------------------------
 
     public async Task<PostureSnapshotDetailDto> PublishConsolidatedKnightAsync(
-        IReadOnlyCollection<KnightConsolidatedSourceSelection>? selection, CancellationToken ct = default)
+        IReadOnlyCollection<KnightConsolidatedSourceSelection>? selection, CancellationToken ct = default,
+        HistoryWindow? historyWindow = null, string? expectedHistoryFingerprint = null)
     {
         var tenantId = _tenant.TenantId
             ?? throw new TenantSecurityException("Publicação de fotografia sem tenant resolvido no contexto (fail-closed).");
@@ -633,6 +639,9 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         // [AEGIS-KNIGHT-COVERAGE-04] Ações CONGELADAS também no consolidado: a procedência de cada achado é a da
         // execução da sua fonte na composição (ver FreezeActionItemsAsync).
         await FreezeActionItemsAsync(snapshot, ct);
+
+        // [AEGIS-ASSESSMENT-VISUALS-01] Histórico da MESMA composição, congelado (outras composições são ditas, não ligadas).
+        await FreezeHistoryAsync(snapshot, historyWindow ?? HistoryWindow.Default, expectedHistoryFingerprint, ct);
 
         snapshot.TenantId = tenantId;
         foreach (var i in snapshot.Indicators) i.TenantId = tenantId;
@@ -650,7 +659,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
     /// <summary>
     /// Monta (sem persistir) uma fotografia que compõe as execuções PINADAS em <paramref name="selection"/> —
     /// ou, quando <paramref name="selection"/> é NULA (compatibilidade), a última avaliação CONCLUÍDA de cada
-    /// candidata (<see cref="KnightConsolidatedCandidates.Sources"/>), todas incluídas. As três candidatas
+    /// candidata (<see cref="KnightConsolidatedCandidates.Sources"/>), todas incluídas. Todas as candidatas
     /// sempre entram na composição congelada, incluídas ou não; só as INCLUÍDAS contribuem indicadores, objetos
     /// e para a nota. [AEGIS-KNIGHT-CONSOLIDATED-02] Uma fonte PINADA é revalidada aqui (existe, é da fonte
     /// declarada, está concluída — o tenant já é fail-closed pelo Global Query Filter de <c>ITenantOwned</c>) e
@@ -672,7 +681,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             {
                 if (!candidates.Contains(s.Source))
                     throw new PostureSnapshotNotAvailableException(
-                        $"Fonte '{s.Source}' não é candidata do relatório consolidado (só Entra ID, Teams e Exchange Online).");
+                        $"Fonte '{s.Source}' não é elegível para o relatório consolidado.");
                 if (!pinned.TryAdd(s.Source, s.RunId))
                     throw new PostureSnapshotNotAvailableException(
                         $"Mais de uma execução foi indicada para {KnightConsolidatedCandidates.StaticLabel(s.Source)}.");
@@ -843,7 +852,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                     "avaliada antes de publicar.");
 
             throw new PostureSnapshotNotAvailableException(
-                "Nenhuma das fontes pedidas (Microsoft Entra ID, Microsoft Teams, Exchange Online) tem avaliação " +
+                "Nenhuma das fontes pedidas tem avaliação " +
                 "KNIGHT concluída para compor o relatório consolidado. Sincronize ao menos uma fonte em Integrações " +
                 "antes de publicar.");
         }
@@ -902,6 +911,43 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 ? $"{c.Capability}: {c.Outcome}"
                 : $"{c.Capability}: {c.Outcome} — {SanitizeTitle(c.Detail)}")
             .ToList();
+
+    // ---- [AEGIS-ASSESSMENT-VISUALS-01] Histórico congelado e prévia -------------------------------------
+
+    /// <summary>
+    /// Congela na fotografia a série mensal do mesmo instrumento e família, calculada sobre as fotografias JÁ publicadas
+    /// (nada depois da publicação). Com a impressão digital da prévia, recusa (409) uma série diferente da apresentada.
+    /// </summary>
+    private async Task FreezeHistoryAsync(PostureSnapshot snapshot, HistoryWindow window, string? expectedFingerprint, CancellationToken ct)
+    {
+        var history = await BuildHistoryAsync(snapshot, window, ct);
+        FrozenPostureHistoryBuilder.EnsureMatches(history, expectedFingerprint);
+        snapshot.HistoryJson = FrozenPostureHistoryBuilder.Serialize(history);
+    }
+
+    private async Task<FrozenPostureHistory> BuildHistoryAsync(PostureSnapshot snapshot, HistoryWindow window, CancellationToken ct)
+    {
+        var published = await ListAsync(snapshot.Type, ct);
+        return FrozenPostureHistoryBuilder.Build(ToSummary(snapshot), published, window);
+    }
+
+    public async Task<FrozenPostureHistory> PreviewKnightHistoryAsync(
+        KnightSourceType? source, Guid? runId, HistoryWindow window, CancellationToken ct = default)
+    {
+        _ = _tenant.TenantId ?? throw new TenantSecurityException("Prévia de histórico sem tenant resolvido no contexto (fail-closed).");
+        var snapshot = await BuildKnightSnapshotAsync(source, runId, ct);
+        snapshot.Id = Guid.Empty;   // a nova fotografia ainda não existe: o ponto dela é "esta publicação"
+        return await BuildHistoryAsync(snapshot, window, ct);
+    }
+
+    public async Task<FrozenPostureHistory> PreviewConsolidatedHistoryAsync(
+        IReadOnlyCollection<KnightConsolidatedSourceSelection>? selection, HistoryWindow window, CancellationToken ct = default)
+    {
+        _ = _tenant.TenantId ?? throw new TenantSecurityException("Prévia de histórico sem tenant resolvido no contexto (fail-closed).");
+        var snapshot = await BuildConsolidatedKnightSnapshotAsync(selection, ct);
+        snapshot.Id = Guid.Empty;
+        return await BuildHistoryAsync(snapshot, window, ct);
+    }
 
     // ---- Leitura -------------------------------------------------------------------------------------
 
@@ -983,7 +1029,7 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             s.CapturedAt, s.Type.ToString(), s.SemanticFamily, s.FormulaVersion, s.CatalogVersion, s.SchemaVersion,
             s.Score, s.Coverage,
             s.CompliantCount, s.NonCompliantCount, s.MitigatedCount, s.NotEvaluatedCount, s.ErrorCount, s.NotApplicableCount,
-            items);
+            items, ToSummary(s).CompositionKey);
     }
 
     /// <summary>Rank de qualidade AEGIS (maior = melhor): Compliant &gt; Mitigado &gt; NonCompliant.</summary>
@@ -1033,38 +1079,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         return t.Length <= MaxDocumentTitleLength ? t : t[..MaxDocumentTitleLength];
     }
 
-    private static PostureSnapshotSummaryDto ToSummary(PostureSnapshot s) => new(
-        s.Id,
-        s.Type.ToString(),
-        s.SchemaVersion,
-        s.FormulaVersion,
-        s.CatalogVersion,
-        s.SemanticFamily,
-        s.SourceType?.ToString(),
-        s.SourceLabel,
-        s.CapturedAt,
-        EvaluationStateOf(s.Score),
-        s.Score,
-        s.Coverage,
-        s.EvaluatedItems,
-        s.EligibleItems,
-        s.CompliantCount,
-        s.NonCompliantCount,
-        s.MitigatedCount,
-        s.NotEvaluatedCount,
-        s.ErrorCount,
-        s.NotApplicableCount,
-        s.DataRecency,
-        s.ContentHash,
-        s.ClientName,
-        s.SourceRunId,
-        s.MaturityCurrent,
-        s.MaturityTarget,
-        s.MaturityGap,
-        s.NistAssessmentId,
-        s.NistCycleId,
-        s.NistScopeId,
-        s.NistCycleName);
+    /// <summary>[AEGIS-ASSESSMENT-VISUALS-01] Resumo único (lista, evolução mensal e histórico congelado).</summary>
+    private static PostureSnapshotSummaryDto ToSummary(PostureSnapshot s) => PostureSnapshotSummaries.Of(s);
 
     private static PostureSnapshotDetailDto ToDetail(PostureSnapshot s)
     {
@@ -1101,7 +1117,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         return new PostureSnapshotDetailDto(
             ToSummary(s), s.AchievedPoints, s.PossiblePoints, s.EligiblePoints, controls, indicators,
             s.CollectionLimitations.ToList(), actions,
-            KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson));
+            KnightConsolidatedCompositionJson.Deserialize(s.CompositionJson),
+            FrozenPostureHistoryBuilder.Deserialize(s.HistoryJson));
     }
 
     /// <summary>Projeção leve de um sinal (com a capability do seu conector) para reconstruir a proveniência decisiva.</summary>

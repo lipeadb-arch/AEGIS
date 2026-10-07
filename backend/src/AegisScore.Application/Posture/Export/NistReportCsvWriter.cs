@@ -33,11 +33,14 @@ public static class NistReportCsvWriter
 
     public static byte[] Write(PostureSnapshot snapshot, NistMaturityReport r)
     {
+        // [AEGIS-ASSESSMENT-VISUALS-01] Colunas do painel e do histórico AO FINAL, só nas fotografias com histórico congelado.
+        var history = FrozenPostureHistoryBuilder.Deserialize(snapshot.HistoryJson);
+        var headers = history is null ? Headers : Headers.Concat(ReportCsvVisuals.HeadersPt).ToArray();
         var csv = new CsvBuilder();
-        foreach (var h in Headers) csv.Text(h);
+        foreach (var h in headers) csv.Text(h);
         csv.EndRow();
 
-        var row = new Row(csv, snapshot, r);
+        var row = new Row(csv, snapshot, r, headers);
         var s = r.Summary;
         row.Start("Resumo", null, "Rodada inteira", null, null)
            .Sys("Média atual", Num(s.Current)).Sys("Média alvo", Num(s.Target)).Sys("Lacuna média", Num(s.Gap))
@@ -103,6 +106,15 @@ public static class NistReportCsvWriter
                .End();
         }
 
+        if (history is not null)
+        {
+            var charts = ReportChartBuilder.ForNist(r, history);
+            foreach (var cells in ReportCsvVisuals.ChartRows(charts))
+                row.Start("Gráfico", null, null, null, null).Visual(cells).End();
+            foreach (var cells in ReportCsvVisuals.HistoryRows(history))
+                row.Start("Histórico", null, null, null, null).Visual(cells).End();
+        }
+
         return csv.ToUtf8WithBom();
     }
 
@@ -121,19 +133,28 @@ public static class NistReportCsvWriter
     private static string? Int(int? v) => v?.ToString(CultureInfo.InvariantCulture);
     private static string? Iso(DateTimeOffset? v) => v is { } x ? PostureSnapshotCsvWriter.Iso(x) : null;
 
-    /// <summary>Uma linha da tabela, preenchida por NOME de coluna (as demais ficam vazias) — a ordem é a de <see cref="Headers"/>.</summary>
+    /// <summary>Uma linha da tabela, preenchida por NOME de coluna (as demais ficam vazias) — a ordem é a dos cabeçalhos do arquivo.</summary>
     private sealed class Row
     {
         private readonly CsvBuilder _csv;
         private readonly PostureSnapshot _s;
         private readonly NistMaturityReport _r;
+        private readonly string[] _headers;
         private readonly Dictionary<string, (string? Value, bool System)> _cells = new(StringComparer.Ordinal);
 
-        public Row(CsvBuilder csv, PostureSnapshot s, NistMaturityReport r)
+        public Row(CsvBuilder csv, PostureSnapshot s, NistMaturityReport r, string[] headers)
         {
             _csv = csv;
             _s = s;
             _r = r;
+            _headers = headers;
+        }
+
+        /// <summary>[AEGIS-ASSESSMENT-VISUALS-01] Células do painel/histórico, na ordem de <see cref="ReportCsvVisuals.HeadersPt"/>.</summary>
+        public Row Visual(IReadOnlyList<ReportCsvVisuals.Cell> cells)
+        {
+            for (var i = 0; i < cells.Count; i++) Put(ReportCsvVisuals.HeadersPt[i], cells[i].Value, cells[i].System);
+            return this;
         }
 
         public Row Start(string kind, string? code, string? title, string? fn, string? category)
@@ -156,14 +177,14 @@ public static class NistReportCsvWriter
 
         private Row Put(string column, string? value, bool system)
         {
-            if (Array.IndexOf(Headers, column) < 0) throw new ArgumentException($"Coluna desconhecida: {column}");
+            if (Array.IndexOf(_headers, column) < 0) throw new ArgumentException($"Coluna desconhecida: {column}");
             _cells[column] = (value, system);
             return this;
         }
 
         public void End()
         {
-            foreach (var h in Headers)
+            foreach (var h in _headers)
             {
                 if (!_cells.TryGetValue(h, out var c)) _csv.Text(null);
                 else if (c.System) _csv.SystemValue(c.Value);

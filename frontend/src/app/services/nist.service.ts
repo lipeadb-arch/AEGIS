@@ -30,7 +30,7 @@ import {
   UpdateNistPlanRequest,
   UpdateNistProcedureRequest,
 } from '../models/nist.models';
-import { parseContentDispositionFilename } from '../models/posture-history.models';
+import { HistoryWindowRequest, parseContentDispositionFilename } from '../models/posture-history.models';
 
 /** Erro da API do NIST com o status preservado (409 = versão desatualizada; 403 = papel; 503 = IA indisponível). */
 export class NistApiError extends Error {
@@ -139,15 +139,26 @@ export class NistService {
       .pipe(this.handle('Não foi possível carregar a função.'));
   }
 
-  publicationPreview(c: NistCtx): Observable<NistPublicationPreview> {
+  /** [AEGIS-ASSESSMENT-VISUALS-01] `window` escolhe o período do histórico mostrado e congelado (padrão: 12 meses até agora). */
+  publicationPreview(c: NistCtx, window: HistoryWindowRequest | null = null): Observable<NistPublicationPreview> {
+    let params = new HttpParams();
+    if (window?.until) params = params.set('historyUntil', window.until);
+    if (window?.months) params = params.set('historyMonths', window.months);
     return this.http
-      .get<NistPublicationPreview>(`${this.ctxUrl(c)}/publication-preview`)
+      .get<NistPublicationPreview>(`${this.ctxUrl(c)}/publication-preview`, { params })
       .pipe(this.handle('Não foi possível montar a prévia da publicação.'));
   }
 
-  publish(c: NistCtx, expectedFingerprint: string): Observable<NistPublication> {
+  /** Publica conferindo as DUAS impressões digitais da prévia: a do conteúdo avaliativo e a do histórico. */
+  publish(c: NistCtx, expectedFingerprint: string, expectedHistoryFingerprint: string | null = null,
+          window: HistoryWindowRequest | null = null): Observable<NistPublication> {
     return this.http
-      .post<NistPublication>(`${this.ctxUrl(c)}/publications`, { expectedFingerprint })
+      .post<NistPublication>(`${this.ctxUrl(c)}/publications`, {
+        expectedFingerprint,
+        expectedHistoryFingerprint,
+        historyUntil: window?.until ?? null,
+        historyMonths: window?.months ?? null,
+      })
       .pipe(this.handle('Não foi possível publicar a fotografia.'));
   }
 

@@ -251,7 +251,8 @@ public sealed class NistPublicationService : INistPublicationService
         }
     }
 
-    public async Task<NistPublicationPreview> PreviewAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default)
+    public async Task<NistPublicationPreview> PreviewAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default,
+        HistoryWindow? historyWindow = null)
     {
         var report = await BuildReportAsync(assessmentId, cycleId, scopeId, ct);
         var warnings = new List<string>();
@@ -259,8 +260,25 @@ public sealed class NistPublicationService : INistPublicationService
             warnings.Add("Nenhuma subcategoria tem avaliação confirmada: a fotografia registrará ausência de avaliação (sem médias).");
         if (report.Summary.PendingConfirmation > 0)
             warnings.Add($"{report.Summary.PendingConfirmation} subcategoria(s) aguardam confirmação humana e entram na fotografia como pendentes, fora das médias.");
+        // [AEGIS-ASSESSMENT-VISUALS-01] A série que a publicação congelaria: o ponto desta rodada sai do próprio conteúdo revisado.
+        var provisional = NewSnapshot(report, assessmentId, cycleId, scopeId, _tenant.TenantId!.Value,
+            NistReportCanonical.Micro(_clock.GetUtcNow()), report);
+        provisional.Id = Guid.Empty;
+        var history = await BuildHistoryAsync(provisional, historyWindow ?? HistoryWindow.Default, ct);
         return new NistPublicationPreview(assessmentId, cycleId, scopeId, NistReportCanonical.Fingerprint(report), report.Summary,
-            report.Functions, report.Findings.Count, report.Limitations, warnings);
+            report.Functions, report.Findings.Count, report.Limitations, warnings, history);
+    }
+
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] Série mensal da mesma avaliação e escopo, sobre as fotografias de maturidade JÁ publicadas
+    /// do tenant (query filter fail-closed) — nunca as publicadas depois desta.
+    /// </summary>
+    private async Task<FrozenPostureHistory> BuildHistoryAsync(PostureSnapshot snapshot, HistoryWindow window, CancellationToken ct)
+    {
+        var rows = await _db.PostureSnapshots.AsNoTracking()
+            .Where(x => x.Type == PostureSnapshotType.NistMaturity)
+            .ToListAsync(ct);
+        return FrozenPostureHistoryBuilder.Build(PostureSnapshotSummaries.Of(snapshot), rows.Select(PostureSnapshotSummaries.Of).ToList(), window);
     }
 
     public async Task<NistPublicationView> PublishAsync(
@@ -285,7 +303,40 @@ public sealed class NistPublicationService : INistPublicationService
         var frozen = report with { Publication = new NistReportPublication(now, actorName, fingerprint) };
         var s = report.Summary;
 
-        var snapshot = new PostureSnapshot
+        var snapshot = NewSnapshot(report, assessmentId, cycleId, scopeId, tenantId, now, frozen);
+        // [AEGIS-ASSESSMENT-VISUALS-01] Histórico congelado com o ponto desta publicação; diferente do apresentado na prévia → 409.
+        var history = await BuildHistoryAsync(snapshot, command.HistoryWindow ?? HistoryWindow.Default, ct);
+        try
+        {
+            FrozenPostureHistoryBuilder.EnsureMatches(history, command.ExpectedHistoryFingerprint);
+        }
+        catch (HistoryChangedException ex)
+        {
+            throw new NistAssessmentConflictException(ex.Message);
+        }
+        snapshot.HistoryJson = FrozenPostureHistoryBuilder.Serialize(history);
+        snapshot.ContentHash = PostureSnapshotHasher.Compute(snapshot);
+        _db.PostureSnapshots.Add(snapshot);
+
+        var changes = new List<NistFieldChange>();
+        Diff(changes, "snapshot", "fotografia", null, snapshot.Id.ToString("D"));
+        Diff(changes, "contentHash", "hash do conteúdo", null, snapshot.ContentHash);
+        Diff(changes, "fingerprint", "impressão digital revisada", null, fingerprint);
+        Diff(changes, "history", "histórico congelado", null, $"{history.From:yyyy-MM} a {history.Until:yyyy-MM} · {history.Points.Count} ponto(s) · {history.BasisFingerprint}");
+        Audit(_db, actor, now, assessmentId, cycleId, scopeId, null, "Publication", snapshot.Id, "Published",
+            $"Fotografia de maturidade publicada: rodada \"{report.Cycle.Name}\", escopo \"{report.Scope.Name}\" — atual {NistReportCanonical.Level(s.Current)}, " +
+            $"alvo {NistReportCanonical.Level(s.Target)}, cobertura {s.Coverage:0.#}%.", changes);
+        await _db.SaveChangesAsync(ct);
+        _db.ChangeTracker.Clear();
+        return ViewOf(snapshot, frozen);
+    }
+
+    /// <summary>A fotografia de maturidade da rodada (sem hash). Na prévia, <paramref name="frozen"/> é o relatório sem publicação.</summary>
+    private static PostureSnapshot NewSnapshot(
+        NistMaturityReport report, Guid assessmentId, Guid cycleId, Guid scopeId, Guid tenantId, DateTimeOffset now, NistMaturityReport frozen)
+    {
+        var s = report.Summary;
+        return new PostureSnapshot
         {
             TenantId = tenantId,
             Type = PostureSnapshotType.NistMaturity,
@@ -317,19 +368,6 @@ public sealed class NistPublicationService : INistPublicationService
             NistReportJson = NistReportCanonical.Serialize(frozen),
             CreatedAt = now,
         };
-        snapshot.ContentHash = PostureSnapshotHasher.Compute(snapshot);
-        _db.PostureSnapshots.Add(snapshot);
-
-        var changes = new List<NistFieldChange>();
-        Diff(changes, "snapshot", "fotografia", null, snapshot.Id.ToString("D"));
-        Diff(changes, "contentHash", "hash do conteúdo", null, snapshot.ContentHash);
-        Diff(changes, "fingerprint", "impressão digital revisada", null, fingerprint);
-        Audit(_db, actor, now, assessmentId, cycleId, scopeId, null, "Publication", snapshot.Id, "Published",
-            $"Fotografia de maturidade publicada: rodada \"{report.Cycle.Name}\", escopo \"{report.Scope.Name}\" — atual {NistReportCanonical.Level(s.Current)}, " +
-            $"alvo {NistReportCanonical.Level(s.Target)}, cobertura {s.Coverage:0.#}%.", changes);
-        await _db.SaveChangesAsync(ct);
-        _db.ChangeTracker.Clear();
-        return ViewOf(snapshot, frozen);
     }
 
     public async Task<IReadOnlyList<NistPublicationView>> ListAsync(Guid assessmentId, Guid? cycleId, Guid? scopeId, CancellationToken ct = default)

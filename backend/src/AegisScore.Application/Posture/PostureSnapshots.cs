@@ -105,7 +105,19 @@ public sealed record PostureSnapshotSummaryDto(
     Guid? NistAssessmentId = null,
     Guid? NistCycleId = null,
     Guid? NistScopeId = null,
-    string? NistCycleName = null);
+    string? NistCycleName = null,
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] Composição de um relatório KNIGHT consolidado: as fontes INCLUÍDAS (rótulos) e a chave
+    /// "fonte=catálogo" de cada uma. Nulas fora do consolidado. A chave entra na regra de comparabilidade: a mesma composição
+    /// com o catálogo de uma fonte trocado não forma uma série homogênea.
+    /// </summary>
+    IReadOnlyList<string>? CompositionLabels = null,
+    string? CompositionKey = null,
+    /// <summary>[AEGIS-ASSESSMENT-VISUALS-01] Período avaliado (rodada NIST), distinto da data de publicação. Nulo no KNIGHT.</summary>
+    DateOnly? PeriodStart = null,
+    DateOnly? PeriodEnd = null,
+    /// <summary>[AEGIS-ASSESSMENT-VISUALS-01] A fotografia congelou o histórico mensal na publicação (formato visual).</summary>
+    bool HasFrozenHistory = false);
 
 /// <summary>
 /// [AEGIS-MVP-PRODUCT-03] Uma ação CONGELADA na fotografia. Estado do plano, resultado observado no achado e
@@ -163,7 +175,12 @@ public sealed record PostureSnapshotDetailDto(
     /// [AEGIS-KNIGHT-CONSOLIDATED-01] Composição das fontes candidatas de um relatório KNIGHT consolidado —
     /// nula fora deste tipo de fotografia. Ver <see cref="KnightConsolidatedSourceEntry"/>.
     /// </summary>
-    IReadOnlyList<KnightConsolidatedSourceEntry>? Composition = null);
+    IReadOnlyList<KnightConsolidatedSourceEntry>? Composition = null,
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal CONGELADO na publicação (nulo nas fotografias anteriores a este recurso,
+    /// que nunca são enriquecidas depois).
+    /// </summary>
+    FrozenPostureHistory? History = null);
 
 /// <summary>Uma mudança de um item (controle/indicador) entre duas fotografias.</summary>
 public sealed record PostureItemChangeDto(string Code, string Title, string PreviousStatus, string CurrentStatus);
@@ -235,11 +252,12 @@ public interface IPostureSnapshotService
     /// NUNCA fornece score/cobertura/contagens.
     /// </summary>
     Task<PostureSnapshotDetailDto> PublishAsync(
-        PostureSnapshotType type, KnightSourceType? source, Guid? runId = null, CancellationToken ct = default);
+        PostureSnapshotType type, KnightSourceType? source, Guid? runId = null, CancellationToken ct = default,
+        HistoryWindow? historyWindow = null, string? expectedHistoryFingerprint = null);
 
     /// <summary>
     /// [AEGIS-KNIGHT-CONSOLIDATED-01] Publica uma fotografia KNIGHT que COMPÕE, sem somar, as execuções PINADAS
-    /// em <paramref name="selection"/> (restrita às candidatas — Entra ID, Teams, Exchange Online). As três
+    /// em <paramref name="selection"/> (restrita às candidatas elegíveis do catálogo). Todas as
     /// candidatas SEMPRE aparecem na composição congelada, incluídas ou não — uma fonte sem avaliação, ou
     /// disponível e não escolhida, nunca vira aprovação silenciosa.
     ///
@@ -257,7 +275,19 @@ public interface IPostureSnapshotService
     /// score/cobertura/contagens.
     /// </summary>
     Task<PostureSnapshotDetailDto> PublishConsolidatedKnightAsync(
-        IReadOnlyCollection<KnightConsolidatedSourceSelection>? selection, CancellationToken ct = default);
+        IReadOnlyCollection<KnightConsolidatedSourceSelection>? selection, CancellationToken ct = default,
+        HistoryWindow? historyWindow = null, string? expectedHistoryFingerprint = null);
+
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] Prévia do histórico mensal que a publicação KNIGHT congelaria (mesma execução e período),
+    /// com a impressão digital que a publicação confere. Somente leitura: não grava nada.
+    /// </summary>
+    Task<FrozenPostureHistory> PreviewKnightHistoryAsync(
+        KnightSourceType? source, Guid? runId, HistoryWindow window, CancellationToken ct = default);
+
+    /// <summary>[AEGIS-ASSESSMENT-VISUALS-01] Idem, para a composição consolidada pinada.</summary>
+    Task<FrozenPostureHistory> PreviewConsolidatedHistoryAsync(
+        IReadOnlyCollection<KnightConsolidatedSourceSelection>? selection, HistoryWindow window, CancellationToken ct = default);
 
     /// <summary>Lista as fotografias do tenant (mais recentes primeiro), opcionalmente filtradas por tipo.</summary>
     Task<IReadOnlyList<PostureSnapshotSummaryDto>> ListAsync(PostureSnapshotType? type, CancellationToken ct = default);

@@ -28,7 +28,12 @@ public sealed record PostureComparisonSide(
     int NotEvaluatedCount,
     int ErrorCount,
     int NotApplicableCount,
-    IReadOnlyList<PostureComparableItem> Items);
+    IReadOnlyList<PostureComparableItem> Items,
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] "fonte=catálogo" das fontes INCLUÍDAS num KNIGHT consolidado (nula fora dele). O catálogo
+    /// geral do consolidado é constante, então trocar o catálogo de UMA fonte só aparece aqui.
+    /// </summary>
+    string? CompositionKey = null);
 
 /// <summary>
 /// [AEGIS-AUD-037] Motor PURO de comparação de fotografias — sem EF/rede/relógio, testável isoladamente.
@@ -45,6 +50,8 @@ public static class PostureSnapshotComparer
     public const string ReasonDifferentFormula = "DifferentFormulaVersion";
     public const string ReasonDifferentCatalog = "DifferentCatalogVersion";
     public const string ReasonDifferentSchema = "DifferentSchemaVersion";
+    /// <summary>[AEGIS-ASSESSMENT-VISUALS-01] Mesmas fontes num consolidado, mas o catálogo de alguma delas mudou.</summary>
+    public const string ReasonDifferentComposition = "DifferentCompositionCatalog";
 
     /// <summary>Retorna os motivos de incompatibilidade (vazio ⇒ compatível). Ordinal — versões são identificadores.</summary>
     public static IReadOnlyList<string> CheckCompatibility(PostureComparisonSide a, PostureComparisonSide b)
@@ -55,6 +62,9 @@ public static class PostureSnapshotComparer
         if (!Eq(a.FormulaVersion, b.FormulaVersion)) reasons.Add(ReasonDifferentFormula);
         if (!Eq(a.CatalogVersion, b.CatalogVersion)) reasons.Add(ReasonDifferentCatalog);
         if (!Eq(a.SchemaVersion, b.SchemaVersion)) reasons.Add(ReasonDifferentSchema);
+        // Só quando os dois lados declaram a composição: fotografias anteriores ao recurso não inventam incompatibilidade.
+        if (a.CompositionKey is not null && b.CompositionKey is not null && !Eq(a.CompositionKey, b.CompositionKey))
+            reasons.Add(ReasonDifferentComposition);
         return reasons;
     }
 

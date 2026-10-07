@@ -7,6 +7,7 @@
 // requisições e memória de navegação a carregam explicitamente; conteúdo herdado ou importado aguarda confirmação humana.
 
 import { NIST_CATEGORY_NAMES } from './nist-glossary';
+import type { FrozenPostureHistory } from './posture-history.models';
 
 export type NistFunctionCode = 'GV' | 'ID' | 'PR' | 'DE' | 'RS' | 'RC';
 
@@ -680,6 +681,11 @@ export interface NistPublicationPreview {
   findings: number;
   limitations: string[];
   warnings: string[];
+  /**
+   * [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal (mesma avaliação e escopo) que a publicação congelaria, com a impressão digital
+   * PRÓPRIA — separada da do conteúdo avaliativo. A publicação devolve as duas.
+   */
+  history?: FrozenPostureHistory | null;
 }
 
 export interface NistPublication {

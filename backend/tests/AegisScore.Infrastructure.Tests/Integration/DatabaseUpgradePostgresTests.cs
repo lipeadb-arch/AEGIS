@@ -128,6 +128,9 @@ public sealed class DatabaseUpgradePostgresTests
             // (maturidade em colunas próprias). Cada avaliação existente ganha UMA rodada inicial e as suas avaliações e
             // evidências passam a apontar para ela — sem escolha arbitrária; sobrando registro sem rodada, a migration aborta.
             "20261005224354_Nist02_CompleteJourney",
+            // [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal congelado na publicação: uma coluna aditiva e anulável (texto) na
+            // fotografia, SEM backfill — fotografias anteriores ficam sem histórico, com o hash idêntico e exportadas como antes.
+            "20261007135256_AssessmentVisuals01_FrozenHistory",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;
@@ -191,6 +194,7 @@ public sealed class DatabaseUpgradePostgresTests
 
             var foto = await db.PostureSnapshots.AsNoTracking().SingleAsync(s => s.Id == snapshotId);
             foto.ContentHash.Should().Be(hashLegado, "a fotografia é append-only: a migração não a reescreve");
+            foto.HistoryJson.Should().BeNull("a fotografia legada não ganha um histórico que não foi congelado na publicação");
             foto.Score.Should().Be(23);
             (await db.PostureSnapshotIndicators.AsNoTracking().CountAsync(i => i.SnapshotId == snapshotId))
                 .Should().Be(1, "os itens congelados da fotografia legada continuam íntegros");

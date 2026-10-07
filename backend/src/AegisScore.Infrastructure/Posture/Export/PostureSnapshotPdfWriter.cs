@@ -8,6 +8,7 @@ using MigraDoc.DocumentObjectModel.Tables;
 using MigraDoc.Rendering;
 using PdfSharp.Fonts;
 using AegisScore.Application.Knight;
+using AegisScore.Application.Posture;
 using AegisScore.Application.Posture.Export;
 using AegisScore.Application.Remediation;
 using AegisScore.Domain;
@@ -70,6 +71,7 @@ public static class PostureSnapshotPdfWriter
         AddHeaderBlock(section, s);
         AddMetadata(section, s);
         AddExecutiveSummary(section, s);
+        var visuals = s.Type == PostureSnapshotType.Knight ? AddKnightVisuals(section, s) : null;
 
         if (s.Type == PostureSnapshotType.Knight)
             AddKnightBody(section, s);
@@ -78,10 +80,46 @@ public static class PostureSnapshotPdfWriter
 
         var renderer = new PdfDocumentRenderer { Document = doc };
         renderer.RenderDocument();
+        visuals?.Draw(renderer);
 
         using var ms = new MemoryStream();
         renderer.PdfDocument.Save(ms);
         return ms.ToArray();
+    }
+
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] Painel visual e evolução mensal — SÓ quando a fotografia congelou o histórico na publicação
+    /// (as anteriores saem como antes). Mesmos dados do HTML: o modelo único do relatório e o histórico congelado.
+    /// </summary>
+    private static ReportChartPdf? AddKnightVisuals(Section section, PostureSnapshot s)
+    {
+        var history = FrozenPostureHistoryBuilder.Deserialize(s.HistoryJson);
+        if (history is null) return null;
+        var model = KnightReportModelBuilder.Build(s, integrityVerified: true);
+        var charts = ReportChartBuilder.ForKnight(model, history);
+        var visuals = new ReportChartPdf(FontFamily);
+        Heading(section, "Painel da avaliação");
+        foreach (var c in charts.Executive.Concat(charts.Detail)) visuals.Add(section, c);
+        Heading(section, $"Evolução mensal ({FrozenPostureHistoryBuilder.MonthLabel(history.From)} a {FrozenPostureHistoryBuilder.MonthLabel(history.Until)})");
+        var id = section.AddParagraph($"{history.Series.Label} · {history.Series.Instrument} · fórmula {history.Series.FormulaVersion} · catálogo {history.Series.CatalogVersion}"
+            + (history.Series.Composition is { Count: > 0 } comp ? $" · composição: {string.Join(", ", comp)}" : "") + $". {history.Series.CoverageBasis} {history.Criterion}");
+        id.Format.Font.Size = 7.6;
+        id.Format.Font.Color = Muted;
+        id.Format.KeepWithNext = true;   // título e identidade da série não ficam sozinhos no fim da página
+        visuals.Add(section, charts.History!);
+        ReportChartPdf.HistoryTable(section, history, (row, col, text, bold) =>
+        {
+            var p = row.Cells[col].AddParagraph(text);
+            p.Format.Font.Size = 7.2;
+            p.Format.Font.Bold = bold;
+        });
+        foreach (var related in history.RelatedSeries)
+        {
+            var p = section.AddParagraph(related);
+            p.Format.Font.Size = 7.4;
+            p.Format.Font.Color = Muted;
+        }
+        return visuals;
     }
 
     // ---- Cabeçalho + metadados -----------------------------------------------------------------------
@@ -390,7 +428,7 @@ public static class PostureSnapshotPdfWriter
     private static void AddKnightBody(Section section, PostureSnapshot s)
     {
         // [AEGIS-KNIGHT-CONSOLIDATED-01] Antes dos achados: DE QUE fontes esta nota vem. Sem isto, um relatório
-        // consolidado abriria com uma nota sem dizer se ela cobre uma fonte só ou as três.
+        // consolidado abriria com uma nota sem dizer se ela cobre uma fonte só ou várias.
         if (s.SourceType == KnightSourceType.Consolidated)
             AddConsolidatedComposition(section, s);
 

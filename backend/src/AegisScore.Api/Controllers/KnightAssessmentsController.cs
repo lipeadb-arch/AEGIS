@@ -240,7 +240,7 @@ public class KnightAssessmentsController : ControllerBase
     }
 
     /// <summary>
-    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Leitura AO VIVO do relatório consolidado (Entra ID + Teams + Exchange
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Leitura AO VIVO do relatório consolidado (fontes elegíveis do catálogo; antes Entra ID + Teams + Exchange
     /// Online): combina a última avaliação CONCLUÍDA de cada fonte pedida em <paramref name="sources"/> pela
     /// MESMA fórmula knight-score-v1 sobre a união dos indicadores — nunca a média das notas por fonte. Sem o
     /// parâmetro <paramref name="explicitSelection"/>, ausência de <paramref name="sources"/> é o padrão CLARO

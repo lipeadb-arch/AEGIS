@@ -26,7 +26,11 @@ public static class NistReportHtmlWriter
 
     public static byte[] Write(PostureSnapshot snapshot, NistMaturityReport r, bool integrityVerified)
     {
-        var css = PostureSnapshotHtmlWriter.NormalizeNewlines(Css);
+        // [AEGIS-ASSESSMENT-VISUALS-01] Painel visual e histórico SÓ quando a fotografia congelou o histórico na publicação. As
+        // anteriores saem exatamente como antes (mesmos bytes, mesmo CSS e mesma CSP) — nunca enriquecidas depois.
+        var history = FrozenPostureHistoryBuilder.Deserialize(snapshot.HistoryJson);
+        var charts = history is null ? null : ReportChartBuilder.ForNist(r, history);
+        var css = PostureSnapshotHtmlWriter.NormalizeNewlines(charts is null ? Css : Css + "\n" + ReportChartSvg.Css);
         var js = PostureSnapshotHtmlWriter.NormalizeNewlines(Js);
         var csp = "default-src 'none'; img-src data:; style-src '" + Sha256(css) + "'; script-src '" + Sha256(js)
             + "'; base-uri 'none'; form-action 'none'";
@@ -71,23 +75,31 @@ public static class NistReportHtmlWriter
           .Append("</div>");
         sb.Append("<p class=\"note\">").Append(E(NistMethodologyText.InstrumentsNote)).Append("</p>");
 
-        // Atual × alvo por função (barras sobre a escala 1–5; ausência dita, nunca desenhada como zero).
-        sb.Append("<h3>Atual × alvo nas seis funções</h3><div class=\"bars\" role=\"list\">");
-        foreach (var f in r.Functions)
+        if (charts is not null)
         {
-            sb.Append("<a class=\"bar-row\" role=\"listitem\" href=\"#fn-").Append(E(f.Code)).Append("\">")
-              .Append("<span class=\"bar-label\"><b>").Append(E(f.Code)).Append("</b> ").Append(E(f.Name)).Append("</span>")
-              .Append("<span class=\"bar-track\" aria-hidden=\"true\">");
-            // Largura por data-w: a CSP não admite estilo inline; o script aplica a largura (sem script, o texto ao lado basta).
-            if (f.Current is { } c) sb.Append("<span class=\"bar cur\" data-w=\"").Append(Pct(c)).Append("\"></span>");
-            if (f.Target is { } t) sb.Append("<span class=\"bar tgt\" data-w=\"").Append(Pct(t)).Append("\"></span>");
-            sb.Append("</span><span class=\"bar-val\">")
-              .Append(f.Current is null && f.Target is null
-                  ? "sem avaliação confirmada"
-                  : $"atual {NistReportCanonical.Level(f.Current)} · alvo {NistReportCanonical.Level(f.Target)} · {f.Evaluated}/{f.Subcategories} avaliadas")
-              .Append("</span></a>");
+            // [AEGIS-ASSESSMENT-VISUALS-01] Painel: atual × alvo, situação das subcategorias e achados — clique leva ao detalhe.
+            sb.Append("<h3 id=\"painel\">Painel da avaliação</h3>").Append(ReportChartSvg.Grid(charts.Executive, Anchor));
         }
-        sb.Append("</div><p class=\"legend\"><span class=\"sw cur\"></span> atual <span class=\"sw tgt\"></span> alvo — escala 1 a 5 da metodologia do AEGIS.</p>");
+        else
+        {
+            // Atual × alvo por função (barras sobre a escala 1–5; ausência dita, nunca desenhada como zero).
+            sb.Append("<h3>Atual × alvo nas seis funções</h3><div class=\"bars\" role=\"list\">");
+            foreach (var f in r.Functions)
+            {
+                sb.Append("<a class=\"bar-row\" role=\"listitem\" href=\"#fn-").Append(E(f.Code)).Append("\">")
+                  .Append("<span class=\"bar-label\"><b>").Append(E(f.Code)).Append("</b> ").Append(E(f.Name)).Append("</span>")
+                  .Append("<span class=\"bar-track\" aria-hidden=\"true\">");
+                // Largura por data-w: a CSP não admite estilo inline; o script aplica a largura (sem script, o texto ao lado basta).
+                if (f.Current is { } c) sb.Append("<span class=\"bar cur\" data-w=\"").Append(Pct(c)).Append("\"></span>");
+                if (f.Target is { } t) sb.Append("<span class=\"bar tgt\" data-w=\"").Append(Pct(t)).Append("\"></span>");
+                sb.Append("</span><span class=\"bar-val\">")
+                  .Append(f.Current is null && f.Target is null
+                      ? "sem avaliação confirmada"
+                      : $"atual {NistReportCanonical.Level(f.Current)} · alvo {NistReportCanonical.Level(f.Target)} · {f.Evaluated}/{f.Subcategories} avaliadas")
+                  .Append("</span></a>");
+            }
+            sb.Append("</div><p class=\"legend\"><span class=\"sw cur\"></span> atual <span class=\"sw tgt\"></span> alvo — escala 1 a 5 da metodologia do AEGIS.</p>");
+        }
 
         sb.Append("<h3>Funções</h3><div class=\"tw\"><table><thead><tr><th scope=\"col\">Função</th><th scope=\"col\">Atual</th><th scope=\"col\">Alvo</th>")
           .Append("<th scope=\"col\">Lacuna</th><th scope=\"col\">Avaliadas</th><th scope=\"col\">Não se aplicam</th><th scope=\"col\">Aguardando confirmação</th><th scope=\"col\">Sem avaliação</th></tr></thead><tbody>");
@@ -125,6 +137,12 @@ public static class NistReportHtmlWriter
                   .Append(Td(f.Plan?.StatusLabel ?? "Sem plano")).Append(Td(f.Plan is null ? "—" : Person(f.Plan.Responsible)))
                   .Append(Td(f.Plan?.DueDate is { } dd ? D(dd) : "—")).Append(Td(f.TreatmentLabel)).Append("</tr>");
             sb.Append("</tbody></table></div><p class=\"muted\">Concluir um plano não altera maturidade, score nem conformidade: a reavaliação da subcategoria é um ato separado.</p>");
+        }
+
+        if (charts is not null)
+        {
+            sb.Append("<h3 id=\"detalhe-visual\">Perfil, andamento e lacunas</h3>").Append(ReportChartSvg.Grid(charts.Detail, Anchor));
+            ReportHistoryHtml.Append(sb, history!, charts.History!);
         }
 
         sb.Append("<h3>Limitações desta fotografia</h3>");
@@ -291,6 +309,9 @@ public static class NistReportHtmlWriter
     // ---- Apoio ----
 
     private static string E(string? s) => Enc.Encode(s ?? "");
+
+    /// <summary>[AEGIS-ASSESSMENT-VISUALS-01] Destino do detalhe de um gráfico: âncora interna do próprio relatório.</summary>
+    private static string? Anchor(string target) => target.StartsWith('#') ? "href=\"" + E(target) + "\"" : null;
     private static string D(DateOnly d) => d.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
     private static string Utc(DateTimeOffset? v) => v is { } x ? x.ToUniversalTime().ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture) + " UTC" : "—";
     private static string Lv(int? v) => v?.ToString(CultureInfo.InvariantCulture) ?? "—";

@@ -182,8 +182,8 @@ public class PostureSnapshot : Entity, ITenantOwned
 
     /// <summary>
     /// [AEGIS-KNIGHT-CONSOLIDATED-01] Composição CONGELADA de um relatório KNIGHT consolidado (JSON de
-    /// <c>KnightConsolidatedSourceEntry[]</c>): uma entrada por fonte CANDIDATA (Entra ID, Teams, Exchange
-    /// Online), dizendo se entrou na composição, a execução exata usada, a versão do catálogo daquela fonte, a
+    /// <c>KnightConsolidatedSourceEntry[]</c>): uma entrada por fonte CANDIDATA (as elegíveis do catálogo; as
+    /// fotografias antigas guardam as três de então), dizendo se entrou na composição, a execução exata usada, a versão do catálogo daquela fonte, a
     /// data da coleta e a nota/cobertura/contagens PRÓPRIAS dela — nunca somadas. Uma fonte sem avaliação
     /// concluída, ou disponível porém não escolhida, aparece aqui sem virar aprovação. Nulo em fotografias de
     /// fonte única (<see cref="SourceType"/> diferente de <see cref="KnightSourceType.Consolidated"/>).
@@ -217,6 +217,14 @@ public class PostureSnapshot : Entity, ITenantOwned
     /// exclusivamente dele — reexportar nunca busca texto, nome, nota ou plano atual.
     /// </summary>
     public string? NistReportJson { get; set; }
+
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal do MESMO instrumento e série (fonte ou composição KNIGHT; avaliação e
+    /// escopo NIST), CONGELADO na publicação pela regra mensal única, com o período escolhido e o ponto desta própria
+    /// publicação. Assinado pelo hash. HTML, PDF e CSV mostram esta série — reexportar nunca consulta as fotografias de hoje.
+    /// Nulo nas fotografias anteriores a este recurso, que continuam exportadas exatamente como antes (sem painel visual).
+    /// </summary>
+    public string? HistoryJson { get; set; }
 
     /// <summary>
     /// [AEGIS-MVP-PRODUCT-03] Ações CONGELADAS no instante da publicação. Uma fotografia antiga continua

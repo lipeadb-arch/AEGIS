@@ -407,6 +407,61 @@ public sealed class NistJourneyCompleteTests : IDisposable
     //  Publicação e relatórios
     // ===================================================================================================
 
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] A prévia mostra o histórico mensal que a publicação congelará (mesma avaliação e escopo); a
+    /// publicação confere a impressão digital PRÓPRIA do histórico (separada da do conteúdo) e recusa uma série diferente da
+    /// apresentada; o período escolhido pode deixar o mês da publicação de fora; reexportar a primeira fotografia não muda.
+    /// </summary>
+    [Fact]
+    public async Task Publicacao_CongelaOHistoricoDaPrevia_RecusaSerieDiferente_EFotografiaAntigaNaoMuda()
+    {
+        var (a, c, s) = await CreateAsync(TenantA);
+        await using (var x = For(TenantA))
+            await x.Nist.SaveEvaluationAsync(a, c, s, "ID.AM-01", Eval(2, 4, 0), Gestora);
+
+        NistPublicationPreview first;
+        NistPublicationView v1;
+        await using (var x = For(TenantA))
+        {
+            first = await x.Publication.PreviewAsync(a, c, s);
+            first.History.Should().NotBeNull();
+            first.History!.Series.NistAssessmentId.Should().Be(a);
+            first.History.Series.NistScopeId.Should().Be(s);
+            first.History.Points.Should().ContainSingle(p => p.IsThisPublication).Which.MaturityCurrent.Should().Be(2);
+            first.History.Points.Single().PeriodStart.Should().Be(new DateOnly(2026, 7, 1), "o período avaliado é o da rodada, distinto da publicação");
+            v1 = await x.Publication.PublishAsync(a, c, s, new PublishNistCommand(first.ContentFingerprint, first.History.BasisFingerprint), Gestora);
+        }
+
+        await using (var x = For(TenantA))
+        {
+            var again = await x.Publication.PreviewAsync(a, c, s);
+            again.ContentFingerprint.Should().Be(first.ContentFingerprint, "o conteúdo avaliado não mudou");
+            again.History!.BasisFingerprint.Should().NotBe(first.History.BasisFingerprint, "a série agora contém a primeira publicação");
+            await FluentActions.Awaiting(() => x.Publication.PublishAsync(a, c, s,
+                    new PublishNistCommand(again.ContentFingerprint, first.History.BasisFingerprint), Gestora))
+                .Should().ThrowAsync<NistAssessmentConflictException>().WithMessage("*histórico mudou*");
+            (await x.Db.PostureSnapshots.CountAsync()).Should().Be(1, "nada foi publicado com a série antiga");
+
+            var earlier = await x.Publication.PreviewAsync(a, c, s, default, new HistoryWindow(new DateOnly(2026, 9, 1), 6));
+            earlier.History!.IncludesThisPublication.Should().BeFalse("o período escolhido termina em setembro; a publicação é de outubro");
+            var v2 = await x.Publication.PublishAsync(a, c, s,
+                new PublishNistCommand(earlier.ContentFingerprint, earlier.History.BasisFingerprint, new HistoryWindow(new DateOnly(2026, 9, 1), 6)), Gestora);
+            var stored2 = await x.Db.PostureSnapshots.AsNoTracking().SingleAsync(z => z.Id == v2.SnapshotId);
+            FrozenPostureHistoryBuilder.Deserialize(stored2.HistoryJson)!.Until.Should().Be(new DateOnly(2026, 9, 1));
+        }
+
+        await using (var x = For(TenantA))
+        {
+            var stored1 = await x.Db.PostureSnapshots.AsNoTracking().SingleAsync(z => z.Id == v1.SnapshotId);
+            PostureSnapshotHasher.Verify(stored1).Should().BeTrue();
+            var h1 = FrozenPostureHistoryBuilder.Deserialize(stored1.HistoryJson)!;
+            h1.BasisFingerprint.Should().Be(first.History.BasisFingerprint, "a série congelada é a que a prévia apresentou");
+            h1.Points.Should().ContainSingle().Which.SnapshotId.Should().Be(v1.SnapshotId);
+            var html = Encoding.UTF8.GetString((await new PostureSnapshotExporter(x.Db).ExportAsync(v1.SnapshotId, PostureExportFormat.Html))!.Content);
+            html.Should().Contain("Evolução mensal").And.Contain("esta publicação");
+        }
+    }
+
     [Fact]
     public async Task Publicacao_ConfereOConteudoRevisado_CongelaTudo_EOsTresFormatosSaoDaMesmaFotografia()
     {

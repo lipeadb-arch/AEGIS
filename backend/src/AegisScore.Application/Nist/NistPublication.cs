@@ -22,9 +22,22 @@ public sealed record NistPublicationPreview(
     IReadOnlyList<NistReportProfile> Functions,
     int Findings,
     IReadOnlyList<string> Limitations,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal que a publicação congelaria (mesma avaliação e escopo, período escolhido),
+    /// com a impressão digital PRÓPRIA (<see cref="FrozenPostureHistory.BasisFingerprint"/>) — separada da do conteúdo revisado.
+    /// </summary>
+    AegisScore.Application.Posture.FrozenPostureHistory? History = null);
 
-public sealed record PublishNistCommand(string ExpectedFingerprint);
+/// <param name="ExpectedFingerprint">Impressão digital do conteúdo revisado (obrigatória).</param>
+/// <param name="ExpectedHistoryFingerprint">
+/// [AEGIS-ASSESSMENT-VISUALS-01] Impressão digital do histórico apresentado na prévia. Diferente do recalculado → 409, nada
+/// publicado. Ausente (chamada sem prévia de histórico) → congela-se o período pedido, sem conferência.
+/// </param>
+public sealed record PublishNistCommand(
+    string ExpectedFingerprint,
+    string? ExpectedHistoryFingerprint = null,
+    AegisScore.Application.Posture.HistoryWindow? HistoryWindow = null);
 
 public sealed record NistPublicationView(
     Guid SnapshotId,
@@ -50,7 +63,8 @@ public interface INistPublicationService
 {
     /// <summary>Relatório vivo da rodada (o mesmo documento que seria congelado).</summary>
     Task<NistMaturityReport> BuildReportAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default);
-    Task<NistPublicationPreview> PreviewAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default);
+    Task<NistPublicationPreview> PreviewAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default,
+        AegisScore.Application.Posture.HistoryWindow? historyWindow = null);
     Task<NistPublicationView> PublishAsync(Guid assessmentId, Guid cycleId, Guid scopeId, PublishNistCommand command, RemediationActor actor, CancellationToken ct = default);
     Task<IReadOnlyList<NistPublicationView>> ListAsync(Guid assessmentId, Guid? cycleId, Guid? scopeId, CancellationToken ct = default);
 

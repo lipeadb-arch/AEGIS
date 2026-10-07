@@ -4,6 +4,9 @@ import { Observable, catchError, map, throwError, timeout } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { KNIGHT_SOURCES, KnightSourceType } from '../models/knight.models';
 import {
+  FrozenPostureHistory,
+  HistoryWindowRequest,
+  KnightConsolidatedSourceSelection,
   PostureComparisonResult,
   PostureExportFormat,
   PostureMonthlyHistory,
@@ -20,6 +23,21 @@ import {
 const SOURCE_SLUG: Partial<Record<KnightSourceType, string>> = Object.fromEntries(
   KNIGHT_SOURCES.filter((d) => d.microsoftConnector).map((d) => [d.source, d.slug]),
 );
+
+/**
+ * [AEGIS-ASSESSMENT-VISUALS-01] 409 porque a série do histórico mudou desde a prévia (outra publicação entrou, o mês virou).
+ * Nada foi publicado: a tela relê a prévia e mostra a série nova antes de nova confirmação.
+ */
+export class HistoryChangedError extends Error {
+  constructor(message: string) {
+    super(message || 'O histórico mudou desde a prévia. Revise a prévia novamente antes de publicar.');
+    this.name = 'HistoryChangedError';
+  }
+}
+
+function isHistoryChange(err: HttpErrorResponse): boolean {
+  return typeof err.error === 'string' && err.error.includes('histórico mudou');
+}
 
 /** Arquivo exportado, pronto para download como Blob (nunca carregado como string). */
 export interface PostureExportFile {
@@ -57,8 +75,10 @@ export class PostureHistoryService {
    * [AEGIS-NIST-JOURNEY-01] Evolução mensal por instrumento e fonte (KNIGHT e NIST separados): último publicado do mês;
    * mês sem publicação fica sem ponto; versões incompatíveis não são ligadas (regra do servidor).
    */
-  monthly(months = 12): Observable<PostureMonthlyHistory> {
-    const params = new HttpParams().set('months', months);
+  /** [AEGIS-ASSESSMENT-VISUALS-01] `until` ("aaaa-mm") escolhe o último mês do período; nulo = mês corrente. */
+  monthly(months = 12, until: string | null = null): Observable<PostureMonthlyHistory> {
+    let params = new HttpParams().set('months', months);
+    if (until) params = params.set('until', until);
     return this.http.get<PostureMonthlyHistory>(`${this.base}/monthly`, { params }).pipe(
       timeout(this.READ_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível carregar a evolução mensal.')),
@@ -81,6 +101,7 @@ export class PostureHistoryService {
         if (err instanceof HttpErrorResponse) {
           if (err.status === 403)
             return throwError(() => new Error('Seu papel não permite publicar fotografias (requer Manager ou TenantAdmin).'));
+          if (err.status === 409 && isHistoryChange(err)) return throwError(() => new HistoryChangedError(err.error as string));
           if (err.status === 409)
             return throwError(() => new Error('Não há postura a registrar. Execute uma avaliação antes de publicar.'));
         }
@@ -90,7 +111,7 @@ export class PostureHistoryService {
   }
 
   /**
-   * [AEGIS-KNIGHT-CONSOLIDATED-02] Publica o relatório KNIGHT consolidado (Entra ID + Teams + Exchange Online)
+   * [AEGIS-KNIGHT-CONSOLIDATED-02] Publica o relatório KNIGHT consolidado (fontes elegíveis do catálogo)
    * PINANDO a execução exata de cada fonte incluída — a composição EXIBIDA no instante da publicação, nunca "a
    * mais recente" recalculada pelo servidor. Mesmo controle de papel e os mesmos 403/409 da publicação por
    * fonte; o 409 aqui também cobre uma execução pinada que deixou de estar disponível/concluída/deste tenant.
@@ -98,6 +119,9 @@ export class PostureHistoryService {
   publishConsolidated(request: PublishConsolidatedKnightSnapshotRequest): Observable<PostureSnapshotDetail> {
     const body = {
       selection: request.selection.map((s) => ({ source: SOURCE_SLUG[s.source] ?? s.source, runId: s.runId })),
+      historyUntil: request.historyUntil ?? null,
+      historyMonths: request.historyMonths ?? null,
+      expectedHistoryFingerprint: request.expectedHistoryFingerprint ?? null,
     };
     return this.http.post<PostureSnapshotDetail>(`${this.base}/consolidated`, body).pipe(
       timeout(this.PUBLISH_TIMEOUT_MS),
@@ -105,6 +129,7 @@ export class PostureHistoryService {
         if (err instanceof HttpErrorResponse) {
           if (err.status === 403)
             return throwError(() => new Error('Seu papel não permite publicar fotografias (requer Manager ou TenantAdmin).'));
+          if (err.status === 409 && isHistoryChange(err)) return throwError(() => new HistoryChangedError(err.error as string));
           if (err.status === 409)
             return throwError(() => new Error(
               'Não foi possível publicar: nenhuma fonte foi selecionada, ou alguma avaliação exibida deixou de ' +
@@ -113,6 +138,33 @@ export class PostureHistoryService {
         }
         return this.normalize('Não foi possível publicar o relatório consolidado.')(err);
       }),
+    );
+  }
+
+  /**
+   * [AEGIS-ASSESSMENT-VISUALS-01] Prévia do histórico que a publicação KNIGHT congelaria para a avaliação EXATA aberta, no período
+   * escolhido. A impressão digital volta na publicação: se a série mudar no meio, o servidor recusa (409) em vez de gravar outra.
+   */
+  historyPreview(runId: string, window: HistoryWindowRequest): Observable<FrozenPostureHistory> {
+    let params = new HttpParams().set('runId', runId);
+    if (window.until) params = params.set('until', window.until);
+    if (window.months) params = params.set('months', window.months);
+    return this.http.get<FrozenPostureHistory>(`${this.base}/history-preview`, { params }).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível montar a prévia do histórico.')),
+    );
+  }
+
+  /** [AEGIS-ASSESSMENT-VISUALS-01] Idem, para a composição consolidada PINADA (a mesma seleção da publicação). */
+  consolidatedHistoryPreview(selection: KnightConsolidatedSourceSelection[], window: HistoryWindowRequest): Observable<FrozenPostureHistory> {
+    const body = {
+      selection: selection.map((s) => ({ source: SOURCE_SLUG[s.source] ?? s.source, runId: s.runId })),
+      historyUntil: window.until,
+      historyMonths: window.months,
+    };
+    return this.http.post<FrozenPostureHistory>(`${this.base}/consolidated/history-preview`, body).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível montar a prévia do histórico.')),
     );
   }
 
