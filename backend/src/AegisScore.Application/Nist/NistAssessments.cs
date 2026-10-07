@@ -104,7 +104,9 @@ public sealed record SaveNistEvaluationCommand(
     /// <summary>[AEGIS-NIST-JOURNEY-02] Responsável pela prática como usuário do tenant (vence o texto).</summary>
     Guid? OwnerUserId = null,
     bool OwnerIsExternal = false,
-    string? OwnerContact = null);
+    string? OwnerContact = null,
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] Campos aplicados de uma sugestão da IA (justificativa, lacunas, risco, melhoria, nível).</summary>
+    NistAssistanceReference? Assistance = null);
 
 /// <summary>[AEGIS-NIST-JOURNEY-02] Designação de avaliador e revisor (usuários ativos do tenant; nulo = sem designação).</summary>
 public sealed record AssignNistRolesCommand(Guid? AssessorUserId, Guid? ReviewerUserId, int ExpectedVersion);
@@ -334,7 +336,9 @@ public sealed record NistEvaluationView(
     string ReviewState = NistReviewStates.None,
     string? ReviewDecisionByName = null,
     DateTimeOffset? ReviewDecisionAt = null,
-    string? ReviewDecisionNote = null);
+    string? ReviewDecisionNote = null,
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] Campos cujo texto VIGENTE veio de uma sugestão da IA (editado ou não pela pessoa).</summary>
+    IReadOnlyList<NistAssistedFieldView>? AssistedFields = null);
 
 public sealed record NistEvidenceView(
     Guid Id,
@@ -423,9 +427,6 @@ public sealed record NistSubcategoryDetailView(
     /// <summary>Por que um achado ainda não pode ser registrado aqui (nulo quando pode).</summary>
     string? FindingBlockedReason = null);
 
-/// <summary>Sugestão da IA — NUNCA gravada como avaliação nem como revisão humana.</summary>
-public sealed record NistAiSuggestionView(int SuggestedCurrentLevel, double Confidence, string Rationale, bool Simulated, DateTimeOffset GeneratedAt);
-
 public sealed record NistAssessmentHistoryItem(
     Guid AssessmentId,
     string AssessmentName,
@@ -483,9 +484,26 @@ public class NistAssessmentConflictException : Exception
     public NistAssessmentConflictException(string message) : base(message) { }
 }
 
+/// <summary>
+/// [AEGIS-NIST-AI-ASSIST-01] A sugestão foi gerada sobre um contexto que mudou: incorporar exige gerar outra ou declarar a
+/// revisão diante do estado atual. É um conflito (409) com motivo próprio, distinto do conflito de versão.
+/// </summary>
+public sealed class NistAssistStaleException : NistAssessmentConflictException
+{
+    public NistAssistStaleException(string message) : base(message) { }
+}
+
 public class NistAiUnavailableException : Exception
 {
     public NistAiUnavailableException(string message) : base(message) { }
+
+    /// <summary>
+    /// [AEGIS-NIST-AI-ASSIST-01] Por que não houve assistência: Disabled (IA desativada), Unavailable (provedor fora do ar
+    /// ou cota), Timeout, InvalidResponse (resposta fora do contrato, descartada). A jornada manual segue em todos.
+    /// </summary>
+    public NistAiUnavailableException(string message, string reason) : base(message) => Reason = reason;
+
+    public string Reason { get; } = "Unavailable";
 }
 
 /// <summary>
@@ -510,7 +528,6 @@ public interface INistAssessmentService
     Task<NistSubcategoryDetailView> ReviewAsync(Guid assessmentId, Guid cycleId, Guid scopeId, string code, ReviewNistEvaluationCommand command, RemediationActor actor, CancellationToken ct = default);
     Task<NistSubcategoryDetailView> LinkEvidenceAsync(Guid assessmentId, Guid cycleId, Guid scopeId, string code, LinkNistEvidenceCommand command, RemediationActor actor, CancellationToken ct = default);
     Task<NistSubcategoryDetailView> RemoveEvidenceAsync(Guid assessmentId, Guid cycleId, Guid scopeId, string code, Guid evidenceId, RemediationActor actor, CancellationToken ct = default);
-    Task<NistAiSuggestionView> SuggestAsync(Guid assessmentId, Guid cycleId, Guid scopeId, string code, CancellationToken ct = default);
 
     Task<IReadOnlyList<NistAssessmentHistoryItem>> HistoryAsync(CancellationToken ct = default);
     Task<IReadOnlyList<NistAssigneeView>> AssigneesAsync(CancellationToken ct = default);

@@ -22,7 +22,9 @@ public sealed record NistPublicationPreview(
     IReadOnlyList<NistReportProfile> Functions,
     int Findings,
     IReadOnlyList<string> Limitations,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] O resumo executivo aceito entra nesta publicação (vale para esta base).</summary>
+    bool InterpretationIncluded = false);
 
 public sealed record PublishNistCommand(string ExpectedFingerprint);
 
@@ -50,6 +52,12 @@ public interface INistPublicationService
 {
     /// <summary>Relatório vivo da rodada (o mesmo documento que seria congelado).</summary>
     Task<NistMaturityReport> BuildReportAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-NIST-AI-ASSIST-01] A BASE determinística do relatório (sem interpretação e sem publicação): o que o resumo executivo
+    /// explica e cuja impressão digital diz se um resumo aceito ainda vale.
+    /// </summary>
+    Task<NistMaturityReport> BuildBasisReportAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default);
     Task<NistPublicationPreview> PreviewAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default);
     Task<NistPublicationView> PublishAsync(Guid assessmentId, Guid cycleId, Guid scopeId, PublishNistCommand command, RemediationActor actor, CancellationToken ct = default);
     Task<IReadOnlyList<NistPublicationView>> ListAsync(Guid assessmentId, Guid? cycleId, Guid? scopeId, CancellationToken ct = default);
