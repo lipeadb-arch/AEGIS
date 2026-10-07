@@ -38,7 +38,7 @@ public static class NistAssistBasis
     {
         Fact => "Fato sustentado",
         AnalystReport => "Relato do analista",
-        Unconfirmed => "Herdado/importado — não confirmado",
+        Unconfirmed => "Não confirmado (herdado, importado ou análise sem trecho)",
         Reference => "Referência (catálogo e metodologia)",
         NotExamined => "Documento não examinado",
         _ => "Orientação geral",

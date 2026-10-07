@@ -215,8 +215,12 @@ public sealed class NistAssistServiceTests : IDisposable
             {
                 sections = new Dictionary<string, object>
                 {
-                    ["supporting"] = new[] { Item("O documento estabelece a revisão anual da política.", Key(ctx, "Document")) },
-                    ["unproven"] = new[] { Item("O conteúdo do documento não foi examinado.", Key(ctx, "Document")) },
+                    ["supporting"] = new[]
+                    {
+                        Item("O documento estabelece a revisão anual da política.", KeyByTitle(ctx, "Política só cadastrada")),
+                        Item("A análise anterior menciona backups.", KeyByTitle(ctx, "Norma com análise antiga")),
+                    },
+                    ["unproven"] = new[] { Item("O conteúdo do documento não foi examinado.", KeyByTitle(ctx, "Política só cadastrada")) },
                 },
                 level = new { value = 4, sources = new[] { Key(ctx, "Document"), Key(ctx, "Document", 1) }, rationale = "Documento aprovado." },
             }),
@@ -228,7 +232,9 @@ public sealed class NistAssistServiceTests : IDisposable
         var docs = view.Sources.Where(x => x.Kind == "Document").ToList();
         docs.Should().ContainSingle(x => x.Basis == NistAssistBasis.NotExamined && !x.ContentExamined && x.Detail!.Contains("NÃO foi examinado"));
         docs.Should().ContainSingle(x => x.Basis == NistAssistBasis.Unconfirmed && x.Limitation!.Contains("não sustenta fato"));
-        Section(view, "supporting").Items.Should().BeEmpty("documento só cadastrado não sustenta afirmação sobre o ambiente");
+        // Documento só cadastrado não sustenta afirmação sobre o ambiente; resumo antigo sem trecho literal sustenta só como NÃO confirmado.
+        Section(view, "supporting").Items.Should().ContainSingle().Which.Should().Match<NistAssistItemView>(
+            i => i.Text == "A análise anterior menciona backups." && i.Basis == NistAssistBasis.Unconfirmed);
         Section(view, "unproven").Items.Single().Basis.Should().Be(NistAssistBasis.NotExamined);
         view.Level.Should().BeNull("nenhuma fonte confirmada sustenta o nível");
         view.LevelNote.Should().Contain("nenhuma fonte confirmada");
@@ -917,6 +923,9 @@ public sealed class NistAssistServiceTests : IDisposable
     private static object Item(string text, params string[] sources) => new { text, sources };
 
     private static string Json(object o) => JsonSerializer.Serialize(o);
+
+    private static string KeyByTitle(JsonElement ctx, string title) =>
+        ctx.GetProperty("sources").EnumerateArray().Single(s => s.GetProperty("title").GetString() == title).GetProperty("key").GetString()!;
 
     private static string Key(JsonElement ctx, string kind, int n = 0) =>
         ctx.GetProperty("sources").EnumerateArray().Where(s => s.GetProperty("kind").GetString() == kind).ElementAt(n).GetProperty("key").GetString()!;
