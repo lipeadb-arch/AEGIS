@@ -84,6 +84,21 @@ public static class NistReportPdfWriter
                       $"(planejados sem resultado: {s.ProceduresPlanned}). Achados abertos: {s.FindingsOpen}; planos ativos: {s.PlansActive}, atrasados: {s.PlansOverdue}.");
         Body(section, NistMethodologyText.InstrumentsNote, muted: true);
 
+        // [AEGIS-NIST-AI-ASSIST-01] Resumo executivo aceito, com a procedência (só quando existe).
+        if (r.Interpretation is { } it)
+        {
+            Heading(section, "Interpretação executiva");
+            Body(section, it.Notice, muted: true);
+            foreach (var sec in it.Sections)
+            {
+                Body(section, sec.Title, bold: true);
+                foreach (var line in sec.Text.Split('\n'))
+                    if (!string.IsNullOrWhiteSpace(line)) Body(section, line.Trim());
+            }
+            var pv = Kv(section);
+            foreach (var (label, value) in it.Provenance()) KvRow(pv, label, value);
+        }
+
         var fn = Table(section, 4.6, 1.5, 1.5, 1.5, 2.2, 1.6, 2.0, 2.0);
         Header(fn, "Função", "Atual", "Alvo", "Lacuna", "Avaliadas", "Não se aplicam", "Aguardando confirmação", "Sem avaliação");
         var zebra = false;
@@ -204,6 +219,7 @@ public static class NistReportPdfWriter
                 KvRow(t, "Prioridade", $"{f.PriorityLabel} — {f.PriorityRationale}");
                 KvRow(t, "Recomendação", f.Recommendation);
                 KvRow(t, "Situação", f.StatusLabel + (f.StatusNote is null ? "" : " — " + f.StatusNote));
+                if (f.Assistance is { } fa) KvRow(t, "Conteúdo assistido por IA", fa.Describe());
                 if (f.Plan is { } p)
                 {
                     KvRow(t, "Plano", $"{p.Title} · {p.StatusLabel}{(p.WasReopened ? " (reaberto)" : "")} · {Person(p.Responsible)} · prazo {(p.DueDate is { } dd ? D(dd) : "—")}");
@@ -259,6 +275,7 @@ public static class NistReportPdfWriter
         Opt(t, "Lacunas observadas", x.Gaps);
         Opt(t, "Risco ou impacto", x.RiskImpact);
         Opt(t, "Orientação de melhoria", x.ImprovementGuidance);
+        if (x.Assistance is { } xa) KvRow(t, "Conteúdo assistido por IA", xa.Describe());
         foreach (var p in x.Procedures)
             KvRow(t, $"Método: {p.MethodLabel}", $"{p.Procedure} — {p.StatusLabel}" + (p.OutcomeLabel is null ? "" : $", conclusão {p.OutcomeLabel}")
                 + (p.PerformedOn is { } on ? $" em {D(on)}" : "") + (p.Observation is null ? "" : $". Observado: {p.Observation}"));

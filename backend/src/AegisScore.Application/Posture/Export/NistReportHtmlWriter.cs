@@ -70,6 +70,8 @@ public static class NistReportHtmlWriter
           .Append(Card("Planos", s.PlansActive.ToString(Pt) + " ativos", $"{s.PlansCompleted} concluídos · {s.PlansOverdue} atrasados"))
           .Append("</div>");
         sb.Append("<p class=\"note\">").Append(E(NistMethodologyText.InstrumentsNote)).Append("</p>");
+        // [AEGIS-NIST-AI-ASSIST-01] Resumo executivo ACEITO (só quando existe; relatório sem ele sai como antes).
+        if (r.Interpretation is { } it) AppendInterpretation(sb, it);
 
         // Atual × alvo por função (barras sobre a escala 1–5; ausência dita, nunca desenhada como zero).
         sb.Append("<h3>Atual × alvo nas seis funções</h3><div class=\"bars\" role=\"list\">");
@@ -206,6 +208,7 @@ public static class NistReportHtmlWriter
           .Append(Dt("Avaliação humana", x.RecordedByName is null ? "sem confirmação humana" : $"{x.RecordedByName} em {Utc(x.RecordedAt)} (versão {x.Version})"))
           .Append(Dt("Revisão", x.ReviewStateLabel + (x.ReviewDecisionByName is null ? "" : $" — {x.ReviewDecisionByName} em {Utc(x.ReviewDecisionAt)}") + (x.ReviewDecisionNote is null ? "" : $": {x.ReviewDecisionNote}")))
           .Append(x.ContentOrigin == "Analyst" && x.OriginNote is null ? "" : Dt("Origem do conteúdo", NistLabels.ContentOrigin(x.ContentOrigin) + (x.OriginNote is null ? "" : " — " + x.OriginNote)))
+          .Append(x.Assistance is { } xa ? Dt("Conteúdo assistido por IA", xa.Describe()) : "")
           .Append(Opt("Justificativa", x.Rationale)).Append(Opt("Observações (atual)", x.CurrentComments)).Append(Opt("Observações (alvo)", x.TargetComments))
           .Append(Opt("Lacunas observadas", x.Gaps)).Append(Opt("Risco ou impacto", x.RiskImpact)).Append(Opt("Orientação de melhoria", x.ImprovementGuidance))
           .Append("</dl>");
@@ -268,6 +271,7 @@ public static class NistReportHtmlWriter
           .Append(Dt("Recomendação", f.Recommendation)).Append(Dt("Situação do achado", f.StatusLabel + (f.StatusNote is null ? "" : " — " + f.StatusNote)))
           .Append(Dt("Origem", f.OriginCurrentLevel is null && f.OriginTargetLevel is null ? "lacuna documentada" : $"atual {Lv(f.OriginCurrentLevel)} · alvo {Lv(f.OriginTargetLevel)} no registro"))
           .Append(Dt("Registrado", Utc(f.CreatedAt) + (f.CreatedByName is null ? "" : " por " + f.CreatedByName)));
+        if (f.Assistance is { } fa) sb.Append(Dt("Conteúdo assistido por IA", fa.Describe()));
         if (f.EvidenceIds.Count > 0 && sub is not null)
             sb.Append(Dt("Evidências", string.Join(" | ", f.EvidenceIds.Select(id => sub.Evidence.FirstOrDefault(e => e.Id == id)?.Title ?? "evidência não vigente"))));
         sb.Append("</dl>");
@@ -286,6 +290,21 @@ public static class NistReportHtmlWriter
         }
         else sb.Append("<p class=\"muted\">Sem plano de tratamento registrado.</p>");
         sb.Append("</div></details>");
+    }
+
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] Interpretação executiva aceita, com a procedência — só classes de estilo já existentes.</summary>
+    private static void AppendInterpretation(StringBuilder sb, NistReportInterpretation it)
+    {
+        sb.Append("<h3 id=\"interpretacao\">Interpretação executiva</h3><p class=\"note\">").Append(E(it.Notice)).Append("</p>");
+        foreach (var s in it.Sections)
+        {
+            sb.Append("<h4>").Append(E(s.Title)).Append("</h4>");
+            foreach (var line in s.Text.Split('\n'))
+                if (!string.IsNullOrWhiteSpace(line)) sb.Append("<p>").Append(E(line.Trim())).Append("</p>");
+        }
+        sb.Append("<dl class=\"kv\">");
+        foreach (var (label, value) in it.Provenance()) sb.Append(Dt(label, value));
+        sb.Append("</dl>");
     }
 
     // ---- Apoio ----
