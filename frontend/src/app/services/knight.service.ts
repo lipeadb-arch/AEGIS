@@ -171,7 +171,7 @@ export class KnightService {
 
   /**
    * [AEGIS-KNIGHT-CONSOLIDATED-01] Leitura AO VIVO do relatório consolidado (`GET /consolidated`): combina a
-   * última avaliação concluída de cada fonte pedida (Entra ID/Teams/Exchange Online) pela MESMA fórmula
+   * última avaliação concluída de cada fonte pedida (entre as elegíveis do catálogo) pela MESMA fórmula
    * knight-score-v1 sobre a união dos indicadores — nunca a média das notas por fonte. `sources` é sempre a
    * seleção EXATA e EXPLÍCITA do chamador (marcada com `explicit=true`) — uma lista vazia significa "nenhuma
    * fonte marcada", nunca o padrão de "todas". Somente leitura: NÃO dispara coleta nem persiste nada —

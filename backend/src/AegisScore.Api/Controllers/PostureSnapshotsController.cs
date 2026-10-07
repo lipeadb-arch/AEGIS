@@ -69,13 +69,70 @@ public class PostureSnapshotsController : ControllerBase
             source = parsed;
         }
 
+        if (!HistoryWindow.TryCreate(request.HistoryUntil, request.HistoryMonths, out var window, out var invalid))
+            return BadRequest(invalid);
+
         try
         {
             // [AEGIS-MVP-PRODUCT-03] Com runId, publica EXATAMENTE aquela avaliação. Sem ele, o comportamento
             // existente (a mais recente, opcionalmente da fonte) é preservado. Uma avaliação pedida e
             // indisponível vira 409 — jamais a substituição silenciosa pela mais recente.
-            var detail = await _service.PublishAsync(type, source, request.RunId, ct);
+            var detail = await _service.PublishAsync(type, source, request.RunId, ct, window, request.ExpectedHistoryFingerprint);
             return CreatedAtAction(nameof(GetById), new { id = detail.Summary.Id }, detail);
+        }
+        catch (PostureSnapshotNotAvailableException ex)
+        {
+            return Conflict(ex.Message);
+        }
+        catch (HistoryChangedException ex)
+        {
+            return Conflict(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] Prévia do histórico mensal que a publicação KNIGHT congelaria para a execução indicada
+    /// (<paramref name="runId"/>, ou a mais recente da <paramref name="source"/>), no período escolhido. Devolve a série e a
+    /// impressão digital que a publicação confere (409 se a série mudou). Somente leitura; qualquer papel que lê o histórico.
+    /// </summary>
+    [HttpGet("history-preview")]
+    public async Task<ActionResult<FrozenPostureHistory>> HistoryPreview(
+        [FromQuery] Guid? runId, [FromQuery] string? source, [FromQuery] string? until, [FromQuery] int? months, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        KnightSourceType? parsed = null;
+        if (!string.IsNullOrWhiteSpace(source))
+        {
+            if (!TryParseSource(source!, out var s)) return BadRequest($"Fonte KNIGHT desconhecida: '{source}'.");
+            parsed = s;
+        }
+        if (!HistoryWindow.TryCreate(until, months, out var window, out var invalid))
+            return BadRequest(invalid);
+        try
+        {
+            return Ok(await _service.PreviewKnightHistoryAsync(parsed, runId, window, ct));
+        }
+        catch (PostureSnapshotNotAvailableException ex)
+        {
+            return Conflict(ex.Message);
+        }
+    }
+
+    /// <summary>[AEGIS-ASSESSMENT-VISUALS-01] Idem, para a composição consolidada PINADA (mesmo corpo da publicação).</summary>
+    [HttpPost("consolidated/history-preview")]
+    public async Task<ActionResult<FrozenPostureHistory>> ConsolidatedHistoryPreview(
+        [FromBody] PublishConsolidatedKnightSnapshotRequest? request, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        if (!TrySelection(request, out var selection, out var bad))
+            return BadRequest(bad);
+        if (!HistoryWindow.TryCreate(request?.HistoryUntil, request?.HistoryMonths, out var window, out var invalid))
+            return BadRequest(invalid);
+        try
+        {
+            return Ok(await _service.PreviewConsolidatedHistoryAsync(selection, window, ct));
         }
         catch (PostureSnapshotNotAvailableException ex)
         {
@@ -90,7 +147,7 @@ public class PostureSnapshotsController : ControllerBase
     /// (nunca "a mais recente"): tenant (Global Query Filter), fonte e conclusão são revalidados no servidor, e
     /// uma execução que deixou de satisfazer alguma delas recusa a publicação em vez de ser silenciosamente
     /// substituída. <c>Selection</c> nula preserva o comportamento legado (última concluída de cada candidata).
-    /// As três candidatas sempre aparecem na composição congelada — incluídas ou não. Mesmo controle de acesso
+    /// Todas as fontes elegíveis sempre aparecem na composição congelada — incluídas ou não. Mesmo controle de acesso
     /// da publicação por fonte.
     /// </summary>
     /// <response code="201">Fotografia consolidada publicada.</response>
@@ -106,33 +163,60 @@ public class PostureSnapshotsController : ControllerBase
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
 
-        List<KnightConsolidatedSourceSelection>? selection = null;
-        if (request?.Selection is not null)
-        {
-            selection = new List<KnightConsolidatedSourceSelection>();
-            foreach (var item in request.Selection)
-            {
-                if (!KnightSourceNames.TryParse(item.Source, out var source))
-                    return BadRequest($"Fonte KNIGHT desconhecida: '{item.Source}'.");
-                if (!KnightConsolidatedCandidates.Sources.Contains(source))
-                    return BadRequest($"Fonte '{item.Source}' não é candidata do relatório consolidado (só Entra ID, Teams e Exchange Online).");
-                if (item.RunId == Guid.Empty)
-                    return BadRequest($"Execução ausente para a fonte '{item.Source}'.");
-                if (selection.Any(s => s.Source == source))
-                    return BadRequest($"Mais de uma execução foi indicada para a fonte '{item.Source}'.");
-                selection.Add(new KnightConsolidatedSourceSelection(source, item.RunId));
-            }
-        }
+        if (!TrySelection(request, out var selection, out var bad))
+            return BadRequest(bad);
+        if (!HistoryWindow.TryCreate(request?.HistoryUntil, request?.HistoryMonths, out var window, out var invalid))
+            return BadRequest(invalid);
 
         try
         {
-            var detail = await _service.PublishConsolidatedKnightAsync(selection, ct);
+            var detail = await _service.PublishConsolidatedKnightAsync(selection, ct, window, request?.ExpectedHistoryFingerprint);
             return CreatedAtAction(nameof(GetById), new { id = detail.Summary.Id }, detail);
         }
         catch (PostureSnapshotNotAvailableException ex)
         {
             return Conflict(ex.Message);
         }
+        catch (HistoryChangedException ex)
+        {
+            return Conflict(ex.Message);
+        }
+    }
+
+    /// <summary>Valida a seleção pinada do consolidado (fonte conhecida, elegível, com execução e sem repetição).</summary>
+    private static bool TrySelection(
+        PublishConsolidatedKnightSnapshotRequest? request, out List<KnightConsolidatedSourceSelection>? selection, out string error)
+    {
+        selection = null;
+        error = "";
+        if (request?.Selection is null) return true;
+        selection = new List<KnightConsolidatedSourceSelection>();
+        foreach (var item in request.Selection)
+        {
+            if (!KnightSourceNames.TryParse(item.Source, out var source))
+            {
+                error = $"Fonte KNIGHT desconhecida: '{item.Source}'.";
+                return false;
+            }
+            if (!KnightConsolidatedCandidates.Sources.Contains(source))
+            {
+                // [AEGIS-ASSESSMENT-VISUALS-01] A lista vem do catálogo único de fontes (nove fontes Microsoft elegíveis).
+                error = $"Fonte '{item.Source}' não é elegível para o relatório consolidado ({string.Join(", ", KnightConsolidatedCandidates.Sources.Select(KnightConsolidatedCandidates.StaticLabel))}).";
+                return false;
+            }
+            if (item.RunId == Guid.Empty)
+            {
+                error = $"Execução ausente para a fonte '{item.Source}'.";
+                return false;
+            }
+            if (selection.Any(s => s.Source == source))
+            {
+                error = $"Mais de uma execução foi indicada para a fonte '{item.Source}'.";
+                return false;
+            }
+            selection.Add(new KnightConsolidatedSourceSelection(source, item.RunId));
+        }
+        return true;
     }
 
     /// <summary>Lista as fotografias do tenant (mais recentes primeiro), opcionalmente filtradas por tipo.</summary>
@@ -165,14 +249,20 @@ public class PostureSnapshotsController : ControllerBase
     /// fotografias publicadas: cada mês é a última publicação do mês; mês sem publicação fica sem ponto; fotografias de
     /// fórmula, catálogo ou esquema diferentes não são ligadas (mesma regra da comparação).
     /// </summary>
+    /// <remarks>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] <c>until</c> ("aaaa-mm") escolhe o último mês do período; <c>months</c> (1–36) o tamanho.
+    /// O mês corrente só aparece quando pertence ao período pedido.
+    /// </remarks>
     [HttpGet("monthly")]
     public async Task<ActionResult<PostureMonthlyHistoryDto>> Monthly(
-        [FromQuery] int months, [FromServices] TimeProvider clock, CancellationToken ct)
+        [FromQuery] int months, [FromQuery] string? until, [FromServices] TimeProvider clock, CancellationToken ct)
     {
         if (_tenant.TenantId is not Guid)
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        if (!HistoryWindow.TryParseMonth(until, out var last))
+            return BadRequest($"Mês final inválido: '{until}'. Use o formato aaaa-mm.");
         var all = await _service.ListAsync(null, ct);
-        return Ok(PostureMonthlyHistory.Build(all, clock.GetUtcNow(), months <= 0 ? 12 : months));
+        return Ok(PostureMonthlyHistory.Build(all, clock.GetUtcNow(), months <= 0 ? PostureMonthlyHistory.DefaultMonths : months, last));
     }
 
     /// <summary>Detalhe de uma fotografia do tenant (401 sem tenant; 404 inexistente/de outro tenant).</summary>

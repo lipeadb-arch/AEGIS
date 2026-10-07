@@ -1567,6 +1567,8 @@ public class AegisScoreDbContext : DbContext
             // [AEGIS-NIST-JOURNEY-02] Fotografia de maturidade NIST: o relatório inteiro congelado (texto, sob o hash) e a
             // procura das publicações de uma avaliação/rodada/escopo.
             e.Property(x => x.NistReportJson).HasColumnType("text");
+            // [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal congelado (JSON canônico, sob o hash). Nulo nas fotografias antigas.
+            e.Property(x => x.HistoryJson).HasColumnType("text");
             e.Property(x => x.NistCycleName).HasMaxLength(120);
             e.HasIndex(x => new { x.TenantId, x.NistAssessmentId, x.NistCycleId, x.NistScopeId });
             e.HasMany(x => x.Objects).WithOne(o => o.Snapshot)

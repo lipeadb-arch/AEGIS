@@ -941,7 +941,7 @@ public record KnightAssessmentDto(
     bool AdvisoryFromAi,
     /// <summary>
     /// [AEGIS-KNIGHT-CONSOLIDATED-01] Presente SÓ quando <c>SourceType == "Consolidated"</c>: a composição das
-    /// três fontes candidatas (Entra ID, Teams, Exchange Online) — incluídas, disponíveis mas não escolhidas, ou
+    /// fontes elegíveis do catálogo (nove fontes Microsoft) — incluídas, disponíveis mas não escolhidas, ou
     /// nunca avaliadas. Nula em toda avaliação de fonte única.
     /// </summary>
     IReadOnlyList<KnightConsolidatedSourceDto>? Sources = null);
@@ -988,7 +988,7 @@ public record KnightSourceLatestDto(
 /// </summary>
 public record KnightLatestBySourceDto(IReadOnlyList<KnightSourceLatestDto> Sources);
 
-// ---- [AEGIS-KNIGHT-CONSOLIDATED-01] Relatório KNIGHT consolidado (Entra ID + Teams + Exchange Online) -------
+// ---- [AEGIS-KNIGHT-CONSOLIDATED-01] Relatório KNIGHT consolidado (fontes elegíveis do catálogo) ----------------
 
 /// <summary>
 /// Composição de UMA fonte candidata no relatório consolidado. <paramref name="AvailabilityState"/> é
@@ -1025,7 +1025,12 @@ public record KnightConsolidatedSourceSelectionDto(string Source, Guid RunId);
 /// EXIBIDA no instante da publicação, fonte a fonte; zero itens produz composição vazia (bloqueada na
 /// publicação), nunca o padrão silencioso. O cliente nunca fornece score/cobertura/contagens.
 /// </summary>
-public record PublishConsolidatedKnightSnapshotRequest(IReadOnlyList<KnightConsolidatedSourceSelectionDto>? Selection = null);
+public record PublishConsolidatedKnightSnapshotRequest(
+    IReadOnlyList<KnightConsolidatedSourceSelectionDto>? Selection = null,
+    // [AEGIS-ASSESSMENT-VISUALS-01] Período do histórico congelado ("yyyy-MM" e meses) e a impressão digital da prévia.
+    string? HistoryUntil = null,
+    int? HistoryMonths = null,
+    string? ExpectedHistoryFingerprint = null);
 
 /// <summary>
 /// [AEGIS-AUD-035] Requisição de PUBLICAÇÃO de uma fotografia auditável de postura. O cliente só escolhe o
@@ -1038,7 +1043,13 @@ public record PublishConsolidatedKnightSnapshotRequest(IReadOnlyList<KnightConso
 /// execução — nunca a mais recente. Ausente, o comportamento existente é preservado (a última do tenant,
 /// opcionalmente da fonte indicada).
 /// </param>
-public record PublishPostureSnapshotRequest(string Type, string? Source, Guid? RunId = null);
+public record PublishPostureSnapshotRequest(
+    string Type, string? Source, Guid? RunId = null,
+    // [AEGIS-ASSESSMENT-VISUALS-01] Período do histórico congelado e a impressão digital da prévia (ver history-preview).
+    // Sem a impressão (chamada que não passou pela prévia), congela-se o período pedido — padrão: 12 meses até a publicação.
+    string? HistoryUntil = null,
+    int? HistoryMonths = null,
+    string? ExpectedHistoryFingerprint = null);
 
 // ---- [AEGIS-MVP-PRODUCT-03] Planos de ação de um achado do AEGIS KNIGHT -------------------------------
 // Enums viajam como NOME (nunca ordinal) — o mesmo idioma dos demais contratos de leitura. A superfície é

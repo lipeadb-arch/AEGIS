@@ -803,7 +803,7 @@ export class AegisKnightComponent implements OnInit {
   /** Só vale oferecer a troca quando há mais de uma fonte com resultado. */
   readonly hasMultipleSources = computed(() => this.latestBySource().length > 1);
 
-  // ---- [AEGIS-KNIGHT-CONSOLIDATED-01] Relatório consolidado (Entra ID + Teams + Exchange Online) ------------
+  // ---- [AEGIS-KNIGHT-CONSOLIDATED-01] Relatório consolidado (fontes elegíveis do catálogo) ----------------------
   // Reaproveita as MESMAS abas/telas do assessment de fonte única: a leitura ao vivo do servidor já devolve o
   // contrato KnightAssessment (sintético, id vazio), com `sources` preenchido para a composição. Nada aqui
   // dispara coleta — é leitura sobre o que já foi sincronizado.

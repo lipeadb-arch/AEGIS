@@ -90,7 +90,7 @@ export class PostureHistoryService {
   }
 
   /**
-   * [AEGIS-KNIGHT-CONSOLIDATED-02] Publica o relatório KNIGHT consolidado (Entra ID + Teams + Exchange Online)
+   * [AEGIS-KNIGHT-CONSOLIDATED-02] Publica o relatório KNIGHT consolidado (fontes elegíveis do catálogo)
    * PINANDO a execução exata de cada fonte incluída — a composição EXIBIDA no instante da publicação, nunca "a
    * mais recente" recalculada pelo servidor. Mesmo controle de papel e os mesmos 403/409 da publicação por
    * fonte; o 409 aqui também cobre uma execução pinada que deixou de estar disponível/concluída/deste tenant.

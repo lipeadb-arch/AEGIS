@@ -57,7 +57,7 @@ export type KnightSourceType =
   | 'GoogleWorkspace'
   /**
    * [AEGIS-KNIGHT-CONSOLIDATED-01] NÃO é uma fonte de coleta: marca uma avaliação/relatório que COMPÕE, sem
-   * somar, avaliações concluídas de várias fontes reais (Entra ID + Teams + Exchange Online). Cada indicador
+   * somar, avaliações concluídas de várias fontes reais (as fontes Microsoft elegíveis do catálogo). Cada indicador
    * combinado preserva o próprio `sourceType` real.
    */
   | 'Consolidated';
@@ -202,7 +202,7 @@ export interface KnightAssessment {
   advisoryFromAi: boolean; // true = IA; false = fallback determinístico
   /**
    * [AEGIS-KNIGHT-CONSOLIDATED-01] Presente SÓ quando `sourceType === 'Consolidated'`: a composição das três
-   * fontes candidatas (Entra ID, Teams, Exchange Online) — incluídas, disponíveis mas não escolhidas, ou nunca
+   * fontes candidatas (as nove fontes Microsoft elegíveis) — incluídas, disponíveis mas não escolhidas, ou nunca
    * avaliadas. Ausente em toda avaliação de fonte única.
    */
   sources?: KnightConsolidatedSource[];

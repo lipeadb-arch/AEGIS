@@ -64,6 +64,12 @@ public static class PostureSnapshotHasher
     /// </summary>
     private const string NistMaturityExtensionVersion = "posture-hash-ext-nist-maturity-v1";
 
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal congelado na publicação. Escrito SÓ quando existe — toda fotografia
+    /// anterior a este recurso mantém o hash idêntico e continua exportável como antes.
+    /// </summary>
+    private const string HistoryExtensionVersion = "posture-hash-ext-history-v1";
+
     /// <summary>Computa o hash SHA-256 (hex minúsculo, 64 chars) do conteúdo canônico da fotografia.</summary>
     public static string Compute(PostureSnapshot s)
     {
@@ -288,6 +294,9 @@ public static class PostureSnapshotHasher
              .Dbl(s.MaturityGap)
              .Str(s.NistReportJson);
         }
+
+        if (!string.IsNullOrEmpty(s.HistoryJson))
+            w.Str(HistoryExtensionVersion).Str(s.HistoryJson);
 
         return w.ToString();
     }

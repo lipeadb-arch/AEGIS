@@ -12,8 +12,8 @@ namespace AegisScore.Application.Knight;
 // e sem inventar um "score combinado entre instrumentos" (esse continua proibido — ver PostureSnapshot.cs). O
 // que muda aqui é mais estreito: a fórmula knight-score-v1 já é uma soma ponderada por severidade sobre uma
 // LISTA de indicadores; nada na fórmula pressupõe que a lista venha de uma fonte só. Aplicá-la sobre a UNIÃO dos
-// indicadores de Entra ID + Teams + Exchange Online produz uma nota legítima — bem diferente de tirar a média
-// simples das três notas — desde que cada indicador apareça EXATAMENTE uma vez. Como os catálogos são
+// indicadores das fontes INCLUÍDAS (qualquer das elegíveis do catálogo) produz uma nota legítima — bem diferente de tirar
+// a média simples das notas por fonte — desde que cada indicador apareça EXATAMENTE uma vez. Como os catálogos são
 // namespaced por fonte (AK-ENTRA-*, AK-TEAMS-*, AK-EXO-*), não há colisão de IndicatorId entre fontes e,
 // portanto, nenhum resultado é contado duas vezes.
 //
@@ -22,8 +22,9 @@ namespace AegisScore.Application.Knight;
 // combinadas.
 
 /// <summary>
-/// As três fontes candidatas do relatório consolidado (Microsoft 365 restante e Azure ficam de fora desta
-/// entrega — ver AEGIS_STATE.md). A ORDEM é a de apresentação em toda superfície (API, HTML, CSV, PDF).
+/// As fontes candidatas do relatório consolidado — as nove fontes Microsoft elegíveis do catálogo único de fontes. A ORDEM
+/// é a de apresentação em toda superfície (API, HTML, CSV, PDF). Toda fonte selecionada e com avaliação concluída entra no
+/// cálculo; nenhuma aparece só decorativamente na composição.
 /// </summary>
 public static class KnightConsolidatedCandidates
 {
@@ -73,7 +74,7 @@ public sealed record KnightConsolidatedSourceEntry(
 /// <summary>
 /// Leitura AO VIVO (nunca persistida, nunca dispara coleta) do relatório KNIGHT consolidado: a última avaliação
 /// concluída de cada fonte ESCOLHIDA, combinada pela MESMA fórmula knight-score-v1 sobre a união dos
-/// indicadores, mais a composição das três fontes candidatas (escolhidas, disponíveis ou nunca avaliadas).
+/// indicadores, mais a composição de todas as fontes candidatas (escolhidas, disponíveis ou nunca avaliadas).
 /// </summary>
 public sealed record KnightConsolidatedAssessment(
     IReadOnlyList<KnightSourceType> IncludedSources,

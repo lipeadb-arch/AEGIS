@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using AegisScore.Application.Nist;
+using AegisScore.Application.Posture;
 using AegisScore.Application.Remediation;
 using AegisScore.Infrastructure.Auth;
 
@@ -145,9 +146,15 @@ public sealed class NistAssessmentsController : ControllerBase
         Run<NistFunctionView>(async () => Ok(await _service.GetFunctionAsync(assessmentId, cycleId, scopeId, functionCode, ct)));
 
     /// <summary>Prévia da publicação: o relatório que seria congelado e a impressão digital do conteúdo revisado.</summary>
+    /// <remarks>[AEGIS-ASSESSMENT-VISUALS-01] <c>historyUntil</c> ("aaaa-mm") e <c>historyMonths</c> (1–36) escolhem o período do histórico.</remarks>
     [HttpGet(CyclePath + "/publication-preview")]
-    public Task<ActionResult<NistPublicationPreview>> PublicationPreview(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct) =>
-        Run<NistPublicationPreview>(async () => Ok(await _publication.PreviewAsync(assessmentId, cycleId, scopeId, ct)));
+    public Task<ActionResult<NistPublicationPreview>> PublicationPreview(
+        Guid assessmentId, Guid cycleId, Guid scopeId, [FromQuery] string? historyUntil, [FromQuery] int? historyMonths, CancellationToken ct) =>
+        Run<NistPublicationPreview>(async () =>
+        {
+            if (!HistoryWindow.TryCreate(historyUntil, historyMonths, out var window, out var bad)) return BadRequest(Message(bad));
+            return Ok(await _publication.PreviewAsync(assessmentId, cycleId, scopeId, ct, window));
+        });
 
     /// <response code="201">Fotografia publicada (exporte por /api/v1/posture/snapshots/{id}/export?format=html|pdf|csv).</response>
     /// <response code="409">O conteúdo mudou desde a prévia revisada — nada foi publicado.</response>
@@ -157,7 +164,9 @@ public sealed class NistAssessmentsController : ControllerBase
         Run<NistPublicationView>(async () =>
         {
             if (request is null) return BadRequest(Message("Corpo da requisição ausente."));
-            var view = await _publication.PublishAsync(assessmentId, cycleId, scopeId, new PublishNistCommand(request.ExpectedFingerprint ?? ""), CurrentActor(), ct);
+            if (!HistoryWindow.TryCreate(request.HistoryUntil, request.HistoryMonths, out var window, out var bad)) return BadRequest(Message(bad));
+            var view = await _publication.PublishAsync(assessmentId, cycleId, scopeId,
+                new PublishNistCommand(request.ExpectedFingerprint ?? "", request.ExpectedHistoryFingerprint, window), CurrentActor(), ct);
             return StatusCode(StatusCodes.Status201Created, view);
         });
 
@@ -505,6 +514,11 @@ public sealed record NistPlanExecutionRequest(int ExpectedVersion, string? Notes
 
 public sealed record NistPlanValidationRequest(int ExpectedVersion, string? EvidenceReference, string? Note);
 
-public sealed record PublishNistRequest(string? ExpectedFingerprint);
+public sealed record PublishNistRequest(
+    string? ExpectedFingerprint,
+    // [AEGIS-ASSESSMENT-VISUALS-01] Período do histórico congelado e a impressão digital do histórico da prévia.
+    string? ExpectedHistoryFingerprint = null,
+    string? HistoryUntil = null,
+    int? HistoryMonths = null);
 
 public sealed record NistImportRequest(string? Csv, string? FileName, string? Token);

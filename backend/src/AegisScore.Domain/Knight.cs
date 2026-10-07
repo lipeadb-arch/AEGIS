@@ -62,7 +62,7 @@ public enum KnightSourceType
     /// <summary>
     /// [AEGIS-KNIGHT-CONSOLIDATED-01] NÃO é uma fonte de coleta — nenhum coletor produz <see cref="KnightAssessmentRun"/>
     /// nem <see cref="IdentityAcquisition"/> com este valor. Marca uma <see cref="PostureSnapshot"/> que COMPÕE,
-    /// sem somar, avaliações concluídas de várias fontes reais (hoje Entra ID + Teams + Exchange Online) — o
+    /// sem somar, avaliações concluídas de várias fontes reais (as fontes Microsoft elegíveis do catálogo) — o
     /// detalhe de qual execução veio de qual fonte fica em <see cref="PostureSnapshot.CompositionJson"/>, e cada
     /// indicador congelado preserva o próprio <see cref="KnightIndicatorResult.SourceType"/> real.
     /// </summary>
