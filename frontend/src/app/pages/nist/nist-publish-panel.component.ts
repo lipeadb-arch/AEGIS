@@ -72,7 +72,7 @@ import { PostureHistoryService } from '../../services/posture-history.service';
           @if (pv.history) { · do histórico: <span class="mono">{{ pv.history.basisFingerprint.slice(0, 16) }}…</span> }</p>
         <div class="actions">
           @if (canWrite()) {
-            <button type="button" class="primary" (click)="publish(pv)" [disabled]="publishing()">{{ publishing() ? 'Publicando…' : 'Publicar exatamente esta versão' }}</button>
+            <button type="button" class="primary" (click)="publish()" [disabled]="publishing() || !previewCurrent()">{{ publishing() ? 'Publicando…' : 'Publicar exatamente esta versão' }}</button>
           }
           <button type="button" class="ghost sm" (click)="loadPreview()" [disabled]="previewLoading() || publishing()">Atualizar a prévia</button>
         </div>
@@ -180,6 +180,8 @@ export class NistPublishPanelComponent {
   protected readonly slug = functionSlugOf;
 
   protected readonly preview = signal<NistPublicationPreview | null>(null);
+  /** [AEGIS-ASSESSMENT-VISUALS-01] Período que a prévia EXIBIDA efetivamente apresentou (não o período escolhido depois). */
+  private readonly previewWindow = signal<HistoryWindowRequest | null>(null);
   protected readonly previewLoading = signal(false);
   protected readonly previewError = signal<string | null>(null);
   protected readonly publishing = signal(false);
@@ -235,6 +237,16 @@ export class NistPublishPanelComponent {
 
   private previewSeq = 0;
 
+  /**
+   * [AEGIS-ASSESSMENT-VISUALS-01] A confirmação só vale para uma prévia VIGENTE: nenhuma leitura em voo, nenhuma falha da
+   * última leitura e o período escolhido igual ao que a prévia exibida apresentou. Fora disso, Publicar fica bloqueado.
+   */
+  protected readonly previewCurrent = computed(() => {
+    const w = this.previewWindow();
+    const h = this.historyWindow();
+    return !!this.preview() && !this.previewLoading() && !this.previewError() && !!w && w.months === h.months && w.until === h.until;
+  });
+
   protected loadPreview(keepError = false): void {
     const gen = this.gen;
     // Troca de período com uma prévia ainda em voo: só a resposta do último pedido preenche a tela.
@@ -242,15 +254,20 @@ export class NistPublishPanelComponent {
     this.previewLoading.set(true);
     this.previewError.set(null);
     if (!keepError) this.publishError.set(null);
+    const window = this.historyWindow();
     this.track(
-      this.nist.publicationPreview(this.ctx(), this.historyWindow()).subscribe({
+      this.nist.publicationPreview(this.ctx(), window).subscribe({
         next: (p) => {
           if (gen !== this.gen || seq !== this.previewSeq) return;
           this.preview.set(p);
+          this.previewWindow.set(window);
           this.previewLoading.set(false);
         },
         error: (e: Error) => {
           if (gen !== this.gen || seq !== this.previewSeq) return;
+          // A prévia anterior (de outro período ou desatualizada) não pode ser confirmada no lugar da que falhou.
+          this.preview.set(null);
+          this.previewWindow.set(null);
           this.previewError.set(e.message);
           this.previewLoading.set(false);
         },
@@ -258,20 +275,24 @@ export class NistPublishPanelComponent {
     );
   }
 
-  protected publish(pv: NistPublicationPreview): void {
-    if (this.publishing()) return;
+  protected publish(): void {
+    // Bloqueio no MÉTODO, não só no botão: só a prévia vigente, com o período que ELA apresentou.
+    const pv = this.preview();
+    const window = this.previewWindow();
+    if (this.publishing() || !pv || !window || !this.previewCurrent()) return;
     const gen = this.gen;
     this.publishing.set(true);
     this.publishError.set(null);
     this.published.set(null);
     this.track(
       // As DUAS impressões digitais da prévia: conteúdo avaliativo e histórico (cada uma recusa a publicação se mudou).
-      this.nist.publish(this.ctx(), pv.contentFingerprint, pv.history?.basisFingerprint ?? null, this.historyWindow()).subscribe({
+      this.nist.publish(this.ctx(), pv.contentFingerprint, pv.history?.basisFingerprint ?? null, window).subscribe({
         next: (p) => {
           if (gen !== this.gen) return;
           this.publishing.set(false);
           this.published.set(p);
           this.preview.set(null);
+          this.previewWindow.set(null);
           this.publications.update((list) => [p, ...list.filter((x) => x.snapshotId !== p.snapshotId)]);
           this.publishedChange.emit(p);
         },
@@ -282,6 +303,7 @@ export class NistPublishPanelComponent {
             // O conteúdo mudou depois da prévia: nada foi publicado. A nova prévia é montada para nova revisão.
             this.publishError.set(`${e.message} Nada foi publicado: revise a prévia atualizada antes de publicar.`);
             this.preview.set(null);
+            this.previewWindow.set(null);
             this.loadPreview(true);
           } else {
             this.publishError.set(e.message);
@@ -353,6 +375,7 @@ export class NistPublishPanelComponent {
     this.subs.forEach((s) => s.unsubscribe());
     this.subs = [];
     this.preview.set(null);
+    this.previewWindow.set(null);
     this.previewLoading.set(false);
     this.previewError.set(null);
     this.publishing.set(false);

@@ -63,6 +63,9 @@ import { HistoryPreviewComponent } from '../components/history-preview.component
  * objetos e limitações — cada gráfico abre a lista filtrada) e "Controles e findings" (pesquisa e filtros
  * combináveis + o detalhe do controle com o plano de ação). A aba e o controle aberto vivem no endereço.
  */
+/** [AEGIS-ASSESSMENT-VISUALS-01] O que uma prévia de publicação vai publicar: uma execução ou a composição pinada. */
+type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; selection: KnightConsolidatedSourceSelection[] };
+
 @Component({
   selector: 'app-aegis-knight',
   standalone: true,
@@ -866,6 +869,7 @@ export class AegisKnightComponent implements OnInit {
   /** Entra no modo consolidado: seleção padrão CLARA (todas as candidatas com avaliação concluída). */
   showConsolidated(): void {
     if (this.consolidatedMode()) return;
+    this.discardPublishPreview();
     this.sourceBeforeConsolidated = this.shownSource();
     this.consolidatedMode.set(true);
     this.consolidatedSelection.set(this.consolidatedCandidates().filter((c) => c.hasAssessment).map((c) => c.source));
@@ -880,6 +884,7 @@ export class AegisKnightComponent implements OnInit {
     // preencher `assessment` depois que a pessoa já saiu do modo consolidado.
     this.consolidatedRequestSeq++;
     this.consolidatedLoading.set(false);
+    this.discardPublishPreview();
     const alvo = this.sourceBeforeConsolidated ?? this.latestBySource()[0]?.source;
     if (alvo) this.selectSource(alvo);
     else this.consolidatedMode.set(false);
@@ -901,6 +906,8 @@ export class AegisKnightComponent implements OnInit {
    */
   private loadConsolidated(): void {
     const seq = ++this.consolidatedRequestSeq;
+    // [AEGIS-ASSESSMENT-VISUALS-01] Outra composição: a prévia aberta era da composição anterior.
+    this.discardPublishPreview();
     this.consolidatedLoading.set(true);
     this.error.set(null);
     this.publishedId.set(null);
@@ -932,16 +939,14 @@ export class AegisKnightComponent implements OnInit {
    * enquanto a composição está carregando ou sem nenhuma fonte incluída (ver `consolidatedPublishable`).
    */
   publishConsolidatedReport(): void {
-    if (!this.consolidatedPublishable()) return;
-    const selection = (this.assessment()?.sources ?? [])
-      .filter((s) => s.included && s.sourceRunId)
-      .map((s) => ({ source: s.source, runId: s.sourceRunId! }));
-    if (selection.length === 0) return;
-    this.openPublishPreview({ kind: 'consolidated', selection });
+    const target = this.currentPublishTarget();
+    if (target?.kind !== 'consolidated' || target.selection.length === 0) return;
+    this.openPublishPreview(target);
   }
 
   /** Publica a composição pinada conferindo o histórico da prévia. */
   private publishConsolidatedWith(selection: KnightConsolidatedSourceSelection[], history: FrozenPostureHistory, window: HistoryWindowRequest): void {
+    const seq = ++this.publishSeq;
     this.publishing.set(true);
     this.publishNotice.set(null);
     this.error.set(null);
@@ -949,6 +954,7 @@ export class AegisKnightComponent implements OnInit {
     this.downloadError.set(null);
     this.history.publishConsolidated({ selection, historyUntil: window.until, historyMonths: window.months, expectedHistoryFingerprint: history.basisFingerprint }).subscribe({
       next: (d) => {
+        if (seq !== this.publishSeq) return this.stalePublication(d.summary.id);
         this.publishing.set(false);
         this.pubPreview.set(null);
         this.publishedId.set(d.summary.id);
@@ -957,7 +963,9 @@ export class AegisKnightComponent implements OnInit {
             'traz exatamente o que foi publicado agora. HTML, CSV e PDF saem desta mesma fotografia.',
         );
       },
-      error: (e: Error) => this.publishFailed(e),
+      error: (e: Error) => {
+        if (seq === this.publishSeq) this.publishFailed(e);
+      },
     });
   }
 
@@ -1285,6 +1293,7 @@ export class AegisKnightComponent implements OnInit {
 
   /** Publica a avaliação aberta conferindo o histórico da prévia. */
   private publishRunWith(runId: string, history: FrozenPostureHistory, window: HistoryWindowRequest): void {
+    const seq = ++this.publishSeq;
     this.publishing.set(true);
     this.publishNotice.set(null);
     this.error.set(null);
@@ -1292,6 +1301,7 @@ export class AegisKnightComponent implements OnInit {
     this.downloadError.set(null);
     this.history.publish({ type: 'Knight', runId, historyUntil: window.until, historyMonths: window.months, expectedHistoryFingerprint: history.basisFingerprint }).subscribe({
       next: (d) => {
+        if (seq !== this.publishSeq) return this.stalePublication(d.summary.id);
         this.publishing.set(false);
         this.pubPreview.set(null);
         // A publicação só vale para a avaliação que continua aberta — outra resposta não oferece download.
@@ -1301,7 +1311,9 @@ export class AegisKnightComponent implements OnInit {
             'reexportá-lo depois traz exatamente o que foi publicado agora. HTML, CSV e PDF saem desta mesma fotografia.',
         );
       },
-      error: (e: Error) => this.publishFailed(e),
+      error: (e: Error) => {
+        if (seq === this.publishSeq) this.publishFailed(e);
+      },
     });
   }
 
@@ -1309,7 +1321,7 @@ export class AegisKnightComponent implements OnInit {
 
   /** Publicação em preparo: o que será publicado, a prévia do histórico e o período escolhido. */
   readonly pubPreview = signal<{
-    target: { kind: 'run'; runId: string } | { kind: 'consolidated'; selection: KnightConsolidatedSourceSelection[] };
+    target: PublishTarget;
     history: FrozenPostureHistory | null;
     loading: boolean;
     error: string | null;
@@ -1317,8 +1329,55 @@ export class AegisKnightComponent implements OnInit {
     window: HistoryWindowRequest;
   } | null>(null);
   private previewSeq = 0;
+  /** Publicação ENVIADA vigente: uma resposta de envio anterior a uma troca do resultado exibido é tratada à parte. */
+  private publishSeq = 0;
 
-  private openPublishPreview(target: { kind: 'run'; runId: string } | { kind: 'consolidated'; selection: KnightConsolidatedSourceSelection[] }): void {
+  /**
+   * O que a tela exibe AGORA como publicável: a execução aberta ou, no consolidado, a execução exata de cada fonte
+   * incluída (nunca os checkboxes isolados). Nulo enquanto a composição carrega ou sem nada publicável.
+   */
+  private currentPublishTarget(): PublishTarget | null {
+    const a = this.assessment();
+    if (!a || this.unfinishedView()) return null;
+    if (!this.consolidatedMode()) return { kind: 'run', runId: a.id };
+    if (!this.consolidatedPublishable()) return null;
+    const selection = (a.sources ?? [])
+      .filter((s) => s.included && s.sourceRunId)
+      .map((s) => ({ source: s.source, runId: s.sourceRunId! }));
+    return { kind: 'consolidated', selection };
+  }
+
+  private static sameTarget(a: PublishTarget, b: PublishTarget | null): boolean {
+    if (!b || a.kind !== b.kind) return false;
+    if (a.kind === 'run' || b.kind === 'run') return a.kind === 'run' && b.kind === 'run' && a.runId === b.runId;
+    const key = (t: { selection: KnightConsolidatedSourceSelection[] }) =>
+      t.selection.map((s) => `${s.source}:${s.runId}`).sort().join('|');
+    return key(a) === key(b);
+  }
+
+  /**
+   * [AEGIS-ASSESSMENT-VISUALS-01] O resultado exibido mudou (outra fonte, entrada/saída do consolidado, outra composição,
+   * outra execução): a prévia aberta e qualquer resposta dela em voo deixam de valer. Uma publicação já ENVIADA pode
+   * terminar no servidor, mas a resposta dela não mexe mais na tela (ver `stalePublication`).
+   */
+  private discardPublishPreview(): void {
+    this.previewSeq++;
+    this.pubPreview.set(null);
+    if (this.publishing()) {
+      this.publishSeq++;
+      this.publishing.set(false);
+    }
+  }
+
+  /** Resposta de uma publicação enviada antes da troca: dita como da seleção ANTERIOR, sem download nem prévia apagada. */
+  private stalePublication(snapshotId: string): void {
+    this.publishNotice.set(
+      `Uma publicação enviada antes da troca do resultado exibido foi concluída (${snapshotId}). Ela corresponde ao ` +
+        'resultado exibido anteriormente — não ao atual — e está no histórico auditável.',
+    );
+  }
+
+  private openPublishPreview(target: PublishTarget): void {
     this.publishNotice.set(null);
     this.publishedId.set(null);
     this.error.set(null);
@@ -1356,7 +1415,13 @@ export class AegisKnightComponent implements OnInit {
 
   confirmPublish(): void {
     const pp = this.pubPreview();
-    if (!pp?.history || this.publishing()) return;
+    if (!pp?.history || pp.loading || this.publishing()) return;
+    // Confere no MÉTODO, não só no botão: a prévia só confirma o resultado que a tela continua exibindo.
+    if (!AegisKnightComponent.sameTarget(pp.target, this.currentPublishTarget())) {
+      this.discardPublishPreview();
+      this.error.set('O resultado exibido mudou desde a prévia: nada foi publicado. Abra a prévia novamente para o resultado atual.');
+      return;
+    }
     if (pp.target.kind === 'run') this.publishRunWith(pp.target.runId, pp.history, pp.window);
     else this.publishConsolidatedWith(pp.target.selection, pp.history, pp.window);
   }
@@ -1572,6 +1637,7 @@ export class AegisKnightComponent implements OnInit {
 
     wanted$.subscribe({
       next: ({ assessment: a, unfinishedAttempt }) => {
+        this.discardPublishPreview();
         this.assessment.set(a);
         this.unfinishedAttempt.set(unfinishedAttempt);
         this.loading.set(false);
@@ -1587,6 +1653,7 @@ export class AegisKnightComponent implements OnInit {
         this.loading.set(false);
         this.unfinishedAttempt.set(null);
         if (requested) {
+          this.discardPublishPreview();
           this.assessment.set(null);
           this.loadSummary(null);
           this.selected.set(null);
@@ -1686,6 +1753,7 @@ export class AegisKnightComponent implements OnInit {
     this.consolidatedRequestSeq++;
     this.consolidatedLoading.set(false);
     this.consolidatedMode.set(false);
+    this.discardPublishPreview();
     this.shownSource.set(source);
     this.assessment.set(bloco.assessment);
     this.unfinishedAttempt.set(bloco.unfinishedAttempt);
@@ -1719,6 +1787,7 @@ export class AegisKnightComponent implements OnInit {
     this.shownBeforeAttempt = this.assessment()?.id ?? null;
     run().subscribe({
       next: (a) => {
+        this.discardPublishPreview();
         this.assessment.set(a);
         this.publishedId.set(null);
         this.loadSummary(a);
@@ -1797,6 +1866,7 @@ export class AegisKnightComponent implements OnInit {
 
         // OUTRA avaliação ocupa a posição de última. Ela passa a ser a exibida — com procedência, data e
         // endereço próprios — mas NÃO é apresentada como a tentativa: outra execução pode tê-la produzido.
+        this.discardPublishPreview();
         this.assessment.set(a);
         this.publishedId.set(null);
         this.loadSummary(a);
