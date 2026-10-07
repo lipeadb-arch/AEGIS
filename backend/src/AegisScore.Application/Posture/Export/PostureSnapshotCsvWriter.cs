@@ -119,8 +119,12 @@ public static class PostureSnapshotCsvWriter
            // nas linhas RowKind=ResultadoManual, o resultado de verificação manual congelado (à parte da avaliação).
            .Text("PreviewApi").Text("Origin")
            .Text("ManualReferenceKey").Text("ManualReferenceTitle").Text("ManualResult").Text("ManualJustification")
-           .Text("ManualResponsible").Text("ManualEvidence").Text("ManualRecordedBy").Timestamp("ManualRecordedAt").Text("ManualValidUntil")
-           .EndRow();
+           .Text("ManualResponsible").Text("ManualEvidence").Text("ManualRecordedBy").Timestamp("ManualRecordedAt").Text("ManualValidUntil");
+        // [AEGIS-ASSESSMENT-VISUALS-01] Colunas do painel e do histórico AO FINAL, só nas fotografias com histórico congelado.
+        var history = FrozenPostureHistoryBuilder.Deserialize(s.HistoryJson);
+        if (history is not null) foreach (var h in ReportCsvVisuals.HeadersId) csv.Text(h);
+        csv.EndRow();
+        var pad = history is null ? 0 : ReportCsvVisuals.HeadersId.Length;
 
         var state = EvaluationState(s.Score);
         foreach (var c in model.Controls.OrderBy(c => c.Id, StringComparer.Ordinal))
@@ -134,7 +138,7 @@ public static class PostureSnapshotCsvWriter
                    .Text(state).Number(s.Score).Number(s.Coverage)
                    // [AEGIS-KNIGHT-CONSOLIDATED-01] SourceType é do INDICADOR, não da fotografia: numa fotografia
                    // consolidada s.SourceType é "Consolidated" para toda a fotografia, mas cada linha precisa
-                   // dizer de qual fonte real (Entra ID/Teams/Exchange) ela veio. Numa fotografia de fonte única
+                   // dizer de qual fonte real (Entra ID, Teams, Azure…) ela veio. Numa fotografia de fonte única
                    // os dois valores sempre coincidiam, então esta coluna não muda para nenhum relatório existente.
                    .Text(i.SourceType.ToString()).Text(s.SourceLabel)
                    .Text(i.IndicatorId).Text(i.Title).Text(i.Category.ToString()).Text(i.Severity.ToString()).Text(i.Status.ToString())
@@ -150,8 +154,8 @@ public static class PostureSnapshotCsvWriter
                    .Text(o?.UserPrincipalName).Text(o is null ? null : string.Join(", ", o.Roles)).Text(o?.Detail).Text(o?.ObservedConfiguration)
                    .Text(c.Platform).Text(c.Impact).Text(c.ProvenReach).Text(c.AffectedComposition)
                    .Text(c.PreviewApis is { Count: > 0 } pv ? string.Join(" | ", pv) : null).Text("Automatizado")
-                   .Text(null).Text(null).Text(null).Text(null).Text(null).Text(null).Text(null).Text(null).Text(null)
-                   .EndRow();
+                   .Text(null).Text(null).Text(null).Text(null).Text(null).Text(null).Text(null).Text(null).Text(null);
+                Pad(csv, pad).EndRow();
             }
         }
 
@@ -178,9 +182,40 @@ public static class PostureSnapshotCsvWriter
                .Text(m.ReferenceKey).Text(m.Title).Text(m.ResultLabel + (m.Expired ? " (vencido)" : "")).Text(m.Justification)
                .Text(m.ResponsibleName)
                .Text(string.Join(" · ", new[] { m.EvidenceReference, m.EvidenceDocumentTitle is null ? null : "Documento: " + m.EvidenceDocumentTitle + (m.EvidenceDocumentSha256 is null ? "" : " (SHA-256 " + m.EvidenceDocumentSha256 + ")") }.Where(x => !string.IsNullOrWhiteSpace(x))))
-               .Text(m.RecordedByName).Text(m.RecordedAt).Text(m.ValidUntil)
-               .EndRow();
+               .Text(m.RecordedByName).Text(m.RecordedAt).Text(m.ValidUntil);
+            Pad(csv, pad).EndRow();
         }
+
+        if (history is not null)
+        {
+            var charts = ReportChartBuilder.ForKnight(model, history);
+            foreach (var cells in ReportCsvVisuals.ChartRows(charts)) VisualRow(csv, s, state, "Grafico", cells);
+            foreach (var cells in ReportCsvVisuals.HistoryRows(history)) VisualRow(csv, s, state, "Historico", cells);
+        }
+    }
+
+    private static CsvBuilder Pad(CsvBuilder csv, int cells)
+    {
+        for (var i = 0; i < cells; i++) csv.Text(null);
+        return csv;
+    }
+
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] Linha de painel/histórico: identificação da fotografia nas colunas iniciais, RowKind
+    /// ("Grafico" ou "Historico") na sua coluna e os valores nas colunas acrescentadas ao final; o resto vazio.
+    /// </summary>
+    private static void VisualRow(CsvBuilder csv, PostureSnapshot s, string state, string kind, IReadOnlyList<ReportCsvVisuals.Cell> cells)
+    {
+        csv.Text(s.Id.ToString("D")).Text(s.ContentHash).Text(s.Type.ToString()).TimestampValue(s.CapturedAt)
+           .Text(s.SchemaVersion).Text(s.FormulaVersion).Text(s.CatalogVersion)
+           .Text(state).Number(s.Score).Number(s.Coverage)
+           .Text(s.SourceType?.ToString()).Text(s.SourceLabel);
+        Pad(csv, 27);                        // IndicatorId … References (colunas 13–39)
+        csv.Text(kind);                      // RowKind (coluna 40)
+        Pad(csv, 23);                        // ObjectRelation … ManualValidUntil (colunas 41–63)
+        foreach (var c in cells)
+            if (c.System) csv.SystemValue(c.Value); else csv.Text(c.Value);
+        csv.EndRow();
     }
 
     private static string EvaluationState(double? score) => score is null ? "NotEvaluated" : "Evaluated";

@@ -106,7 +106,7 @@ public sealed record KnightReportModel(
     ReportAdvisory? Advisory, IReadOnlyList<string> Notes, IReadOnlyList<string> FrameworkOptions,
     ReportReferenceCoverage? ReferenceCoverage = null, IReadOnlyList<ReportDistributionRow>? ByPlatform = null,
     /// <summary>
-    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Composição das fontes candidatas (Entra ID, Teams, Exchange Online) — nula
+    /// [AEGIS-KNIGHT-CONSOLIDATED-01] Composição das fontes candidatas (as elegíveis do catálogo) — nula
     /// fora de fotografias consolidadas. Cada fonte traz a NOTA E COBERTURA PRÓPRIAS, nunca somadas às demais.
     /// </summary>
     IReadOnlyList<KnightConsolidatedSourceEntry>? Composition = null,

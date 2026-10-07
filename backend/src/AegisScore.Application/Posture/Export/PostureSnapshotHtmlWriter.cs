@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -37,11 +38,14 @@ public static class PostureSnapshotHtmlWriter
 
         var model = KnightReportModelBuilder.Build(snapshot, integrityVerified);
         var data = JsonSerializer.Serialize(model, Json);
+        // [AEGIS-ASSESSMENT-VISUALS-01] Painel visual e histórico SÓ nas fotografias que congelaram o histórico na publicação.
+        var history = FrozenPostureHistoryBuilder.Deserialize(snapshot.HistoryJson);
+        var charts = history is null ? null : ReportChartBuilder.ForKnight(model, history);
 
         // [AEGIS-KNIGHT-COVERAGE-01] Quebras de linha NORMALIZADAS antes do hash: o navegador converte CRLF em LF ao
         // ler o documento e calcula o hash da CSP sobre o texto já normalizado. Num checkout com CRLF (Windows), o
         // hash do texto bruto não conferia e a CSP bloqueava estilo e script — o relatório abria sem funcionar.
-        var css = NormalizeNewlines(KnightReportHtmlAssets.Css);
+        var css = NormalizeNewlines(charts is null ? KnightReportHtmlAssets.Css : KnightReportHtmlAssets.Css + "\n" + ReportChartSvg.Css);
         var js = NormalizeNewlines(KnightReportHtmlAssets.Js);
         var csp = "default-src 'none'; img-src data:; style-src '" + Sha256(css) + "'; script-src '" + Sha256(js)
             + "'; base-uri 'none'; form-action 'none'";
@@ -71,6 +75,7 @@ public static class PostureSnapshotHtmlWriter
           .Append("<span>Fotografia ").Append(E(h.SnapshotId.ToString("D"))).Append("</span>")
           .Append("<span>Integridade: ").Append(h.IntegrityVerified ? "hash verificado" : "não verificada").Append("</span></div>")
           .Append("</div></header>\n<main class=\"wrap\" id=\"app\">\n")
+          .Append(charts is null ? "" : Visuals(charts, history!))
           .Append("<noscript><div class=\"panel\"><h2>Resumo</h2><p>Score KNIGHT: ")
           .Append(E(k.Score is { } sc ? Math.Round(sc).ToString(CultureInfo.InvariantCulture) : "sem avaliação"))
           .Append(" · Cobertura: ").Append(E(k.Coverage.ToString("0.#", CultureInfo.InvariantCulture))).Append("% · ")
@@ -86,6 +91,30 @@ public static class PostureSnapshotHtmlWriter
     }
 
     private static readonly HtmlEncoder Html = HtmlEncoder.Create(UnicodeRanges.All);
+
+    /// <summary>
+    /// [AEGIS-ASSESSMENT-VISUALS-01] Painel visual desenhado no servidor (lê-se sem JavaScript). O script do relatório o move
+    /// para a visão geral, logo após os indicadores, e transforma os links dos gráficos em filtros da aba de controles.
+    /// </summary>
+    private static string Visuals(ReportCharts charts, FrozenPostureHistory history)
+    {
+        var sb = new StringBuilder("<section id=\"aegis-visuals\" class=\"visuals\" aria-labelledby=\"vis-h\">");
+        sb.Append("<h2 id=\"vis-h\" class=\"vis-h\">Painel da avaliação</h2>")
+          .Append(ReportChartSvg.Grid(charts.Executive.Concat(charts.Detail), FilterLink));
+        if (charts.History is { } line) ReportHistoryHtml.Append(sb, history, line);
+        return sb.Append("</section>\n").ToString();
+    }
+
+    /// <summary>"filtro:status=Exposed&amp;domain=Identity" → âncora para a aba de controles com o filtro em data-filter.</summary>
+    private static string? FilterLink(string target)
+    {
+        if (!target.StartsWith("filtro:", StringComparison.Ordinal)) return null;
+        var pairs = target["filtro:".Length..].Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Split('=', 2))
+            .Where(p => p.Length == 2)
+            .Select(p => p[0] + "=" + Uri.EscapeDataString(p[1]));
+        return "href=\"#tab-controls\" data-filter=\"" + Html.Encode(string.Join("&", pairs)) + "\"";
+    }
 
     internal static string NormalizeNewlines(string s) => s.Replace("\r\n", "\n").Replace("\r", "\n");
 
