@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
+using AegisScore.Application.Nist;
 using AegisScore.Application.Services;
 
 namespace AegisScore.Api.Controllers;
@@ -27,11 +28,13 @@ public class AuditorController : ControllerBase
 {
     private readonly IAiAssessmentService _ai;
     private readonly IAuditorContextBuilder _context;
+    private readonly INistAssistService? _nist;
 
-    public AuditorController(IAiAssessmentService ai, IAuditorContextBuilder context)
+    public AuditorController(IAiAssessmentService ai, IAuditorContextBuilder context, INistAssistService? nist = null)
     {
         _ai = ai;
         _context = context;
+        _nist = nist;
     }
 
     /// <summary>
@@ -58,6 +61,12 @@ public class AuditorController : ControllerBase
         // No modo simulado ou fora da allowlist, este contexto NÃO trafega para nenhum motor externo (o gate
         // roteia para o stub); no modo demonstrativo, só tenants sintéticos da allowlist o enviam ao Anthropic.
         var context = await _context.BuildAsync(ct);
+
+        // [AEGIS-NIST-AI-ASSIST-01] Na jornada NIST, o Auditor conversa sobre a MESMA avaliação · rodada · escopo (e subcategoria)
+        // da tela, montada pelo servidor com o mesmo contexto da assistência. As sugestões estruturadas ficam nos painéis da
+        // jornada; aqui é conversa livre, sem gravar nada.
+        if (_nist is not null && req.Nist is { AssessmentId: { } a, CycleId: { } c, ScopeId: { } s })
+            context = context with { NistJourney = await _nist.AuditorContextAsync(new NistAuditorSelection(a, c, s, req.Nist.Code), ct) };
 
         // A IA roteia a intenção (COPILOT vs START_INTERVIEW) e o campo Message já traz a resposta/pergunta.
         // AiUnavailableException/AiQuotaExhaustedException (motor real caído/cota) viram 503 no middleware.
