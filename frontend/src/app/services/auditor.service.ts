@@ -2,7 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, catchError, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { AuditorScope } from './agent-state.service';
+import { AuditorNistSelection, AuditorScope } from './agent-state.service';
 
 /** Uma fala do histórico do Copiloto (papel + conteúdo). */
 export interface AuditorChatMessage {
@@ -69,9 +69,10 @@ export class AuditorService {
   private readonly url = `${environment.apiBase}/api/v1/auditor/chat`;
 
   /** Um turno do Copiloto no escopo informado (o backend ajusta o System Prompt por ele). */
-  chat(scope: AuditorScope, message: string, history: AuditorChatMessage[] = []): Observable<AuditorChatReply> {
+  chat(scope: AuditorScope, message: string, history: AuditorChatMessage[] = [], nist: AuditorNistSelection | null = null): Observable<AuditorChatReply> {
+    // [AEGIS-NIST-AI-ASSIST-01] Na jornada NIST, a seleção da tela vai junto; o servidor monta o contexto e a confere.
     return this.http
-      .post<AuditorChatReply>(this.url, { contextScope: scope, message, history })
+      .post<AuditorChatReply>(this.url, { contextScope: scope, message, history, nist })
       .pipe(
         catchError((err) => {
           console.error('Copiloto GRC: falha no /auditor/chat.', err);

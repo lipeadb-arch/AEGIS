@@ -46,7 +46,9 @@ public sealed record NistProcedureView(
     string? OriginNote,
     string? CreatedByName,
     DateTimeOffset CreatedAt,
-    int Version);
+    int Version,
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] O texto planejado veio de uma sugestão da IA (e segue igual ao incorporado).</summary>
+    NistAssistedFieldView? AssistedFrom = null);
 
 /// <summary>Plano criado junto com o achado (opcional).</summary>
 public sealed record NistPlanInput(
@@ -54,7 +56,9 @@ public sealed record NistPlanInput(
     string? ProposedAction,
     NistResponsibleInput? Responsible,
     string? ResponsibleArea,
-    DateOnly? DueDate);
+    DateOnly? DueDate,
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] A ação proposta veio de uma sugestão de tratamento (campo "proposedAction").</summary>
+    NistAssistanceReference? Assistance = null);
 
 public sealed record CreateNistFindingCommand(
     string Title,
@@ -81,7 +85,9 @@ public sealed record UpdateNistFindingCommand(
     string? PriorityRationale,
     string? Recommendation,
     IReadOnlyList<Guid>? EvidenceIds,
-    int ExpectedVersion);
+    int ExpectedVersion,
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] A recomendação veio de uma sugestão de tratamento (campo "recommendation").</summary>
+    NistAssistanceReference? Assistance = null);
 
 /// <summary>Situação do achado: Open, RiskAccepted ou Closed (as duas últimas com justificativa).</summary>
 public sealed record SetNistFindingStatusCommand(string Status, string? Note, int ExpectedVersion);
@@ -147,7 +153,9 @@ public sealed record NistFindingView(
     /// <summary>Plano de tratamento vigente (o ativo, ou o mais recente), quando existe.</summary>
     NistPlanView? Plan,
     /// <summary>Situação do TRATAMENTO, dita em uma frase (a do plano, ou "sem plano").</summary>
-    string TreatmentLabel);
+    string TreatmentLabel,
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] Campos cujo texto vigente veio de uma sugestão da IA (recomendação, ação do plano).</summary>
+    IReadOnlyList<NistAssistedFieldView>? AssistedFields = null);
 
 /// <summary>Uma validação de plano na visão da jornada NIST (enums como texto, rótulos em pt-BR).</summary>
 public sealed record NistPlanValidationView(
@@ -214,6 +222,8 @@ public sealed record NistFindingFilter(Guid? CycleId, Guid? ScopeId, string? Sub
 public interface INistWorkService
 {
     Task<NistProcedureView> AddProcedureAsync(Guid assessmentId, Guid cycleId, Guid scopeId, string code, AddNistProcedureCommand command, RemediationActor actor, CancellationToken ct = default);
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] Planeja, de uma vez e por decisão da pessoa, procedimentos sugeridos pela IA.</summary>
+    Task<IReadOnlyList<NistProcedureView>> PlanProceduresFromAssistanceAsync(Guid assessmentId, Guid cycleId, Guid scopeId, string code, PlanNistProceduresFromAssistanceCommand command, RemediationActor actor, CancellationToken ct = default);
     Task<NistProcedureView> UpdateProcedureAsync(Guid assessmentId, Guid cycleId, Guid scopeId, string code, Guid procedureId, UpdateNistProcedureCommand command, RemediationActor actor, CancellationToken ct = default);
     Task RemoveProcedureAsync(Guid assessmentId, Guid cycleId, Guid scopeId, string code, Guid procedureId, int expectedVersion, RemediationActor actor, CancellationToken ct = default);
 

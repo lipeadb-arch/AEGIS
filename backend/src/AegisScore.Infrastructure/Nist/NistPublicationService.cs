@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Application.Abstractions;
@@ -51,13 +52,59 @@ public sealed class NistPublicationService : INistPublicationService
     public Task<NistMaturityReport> BuildReportAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default) =>
         InReadSnapshotAsync(() => BuildReportCoreAsync(assessmentId, cycleId, scopeId, ct), ct);
 
+    public Task<NistMaturityReport> BuildBasisReportAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default) =>
+        InReadSnapshotAsync(() => BuildBasisCoreAsync(assessmentId, cycleId, scopeId, ct), ct);
+
+    internal const string StaleSummaryLimitation =
+        "Há resumo executivo aceito para esta rodada e escopo, mas preparado sobre um estado anterior: ele não entra nesta leitura. " +
+        "Revise-o e aceite de novo para incluí-lo.";
+
+    /// <summary>
+    /// [AEGIS-NIST-AI-ASSIST-01] Relatório = BASE determinística + o resumo executivo aceito, SE ele foi preparado sobre esta mesma
+    /// base. Resumo de base anterior não entra (e a limitação diz isso); ausência de resumo deixa o relatório como sempre foi.
+    /// </summary>
+    private async Task<NistMaturityReport> BuildReportCoreAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct)
+    {
+        var core = await BuildBasisCoreAsync(assessmentId, cycleId, scopeId, ct);
+        var summary = await _db.NistExecutiveSummaries.AsNoTracking().FirstOrDefaultAsync(x => x.CycleId == cycleId && x.AssessmentScopeId == scopeId, ct);
+        if (summary is null) return core;
+        if (!string.Equals(summary.BasisFingerprint, NistReportCanonical.Fingerprint(core), StringComparison.Ordinal))
+            return core with { Limitations = core.Limitations.Append(StaleSummaryLimitation).ToList() };
+
+        var generation = summary.AssistanceId is { } id ? await _db.NistAiAssistances.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct) : null;
+        var sections = JsonSerializer.Deserialize<List<NistReportInterpretationSection>>(summary.SectionsJson, SectionsJson)
+                       ?? new List<NistReportInterpretationSection>();
+        var reviewed = summary.ReviewedAt is not null && string.Equals(summary.ReviewedContentHash, summary.ContentHash, StringComparison.Ordinal);
+        var simulated = generation?.Mode == NistAssistEngineMode.Simulated;
+        var notice = (generation is null
+                         ? "Resumo executivo redigido pela pessoa."
+                         : simulated
+                             ? "DEMONSTRAÇÃO: texto preparado pelo motor SIMULADO da assistência (sem análise real) e aceito por pessoa."
+                             : "Interpretação preparada com assistência de IA e aceita por pessoa.")
+                     + " Explica os indicadores determinísticos do AEGIS desta fotografia; não calcula nem altera notas, contagens, cobertura ou classificações."
+                     + (reviewed ? "" : " Sem revisão humana posterior de outra pessoa.");
+        return core with
+        {
+            Interpretation = new NistReportInterpretation(
+                sections, generation is null ? "Manual" : "Assisted", generation?.Mode.ToString(), generation?.Id,
+                NistReportCanonical.Micro(generation?.GeneratedAt), generation?.RequestedByName, summary.AcceptedByName,
+                NistReportCanonical.Micro(summary.AcceptedAt), summary.Edited, summary.StaleAcknowledged,
+                reviewed ? summary.ReviewedByName : null, reviewed ? NistReportCanonical.Micro(summary.ReviewedAt) : null,
+                summary.BasisFingerprint, notice),
+        };
+    }
+
+    private static readonly JsonSerializerOptions SectionsJson = new(JsonSerializerDefaults.Web);
+
     private Task<T> InReadSnapshotAsync<T>(Func<Task<T>> read, CancellationToken ct) =>
         AegisScore.Infrastructure.Queries.CrossSourceFactReader.InReadSnapshotAsync(_db, read, ct);
 
-    private async Task<NistMaturityReport> BuildReportCoreAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct)
+    private async Task<NistMaturityReport> BuildBasisCoreAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct)
     {
         RequireTenant(_tenant);
         var ctx = await LoadScopeContextAsync(_db, assessmentId, cycleId, scopeId, ct);
+        // [AEGIS-NIST-AI-ASSIST-01] Procedência do conteúdo assistido ACEITO (só campos cujo texto vigente é o incorporado).
+        var assisted = await NistAssistProvenance.LoadAsync(_db, cycleId, scopeId, ct);
         var today = DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime);
         var clientName = await _db.Tenants.AsNoTracking().Where(t => t.Id == _tenant.TenantId).Select(t => t.Name).FirstOrDefaultAsync(ct);
         var seedName = ctx.Cycle.SeedFromCycleId is { } seedId
@@ -112,6 +159,11 @@ public sealed class NistPublicationService : INistPublicationService
                 var current = CurrentPlan(plans.TryGetValue(f.Id, out var l) ? l : null);
                 var view = NistWorkService.FindingView(f, ctx.Cycle.Name, ScopeName(ctx.Scope), _language?.Get(f.SubcategoryCode)?.Title ?? f.SubcategoryCode,
                     current);
+                var fieldsOf = assisted.For(NistAssistTarget.Finding, f.Id,
+                        new Dictionary<string, string?>(StringComparer.Ordinal) { ["recommendation"] = f.Recommendation })
+                    .Concat(current is null ? Array.Empty<AegisScore.Application.Nist.NistAssistedFieldView>() : assisted.For(NistAssistTarget.Plan, current.Id,
+                        new Dictionary<string, string?>(StringComparer.Ordinal) { ["proposedAction"] = current.ProposedAction }))
+                    .ToList();
                 return new NistReportFinding(
                     f.Id, f.SubcategoryCode, view.SubcategoryTitle, f.Title, f.Condition, f.Risk, f.Impact,
                     f.Severity.ToString(), NistLabels.Severity(f.Severity.ToString()), f.SeverityRationale,
@@ -119,7 +171,8 @@ public sealed class NistPublicationService : INistPublicationService
                     f.Recommendation, f.Status.ToString(), NistLabels.FindingStatus(f.Status.ToString()), f.StatusNote,
                     f.EvidenceIds.ToList(), f.CreatedByName, NistReportCanonical.Micro(f.CreatedAt),
                     view.Origin?.CurrentLevel, view.Origin?.TargetLevel, view.Origin?.Gap,
-                    current is { } plan ? PlanOf(plan) : null, view.TreatmentLabel);
+                    current is { } plan ? PlanOf(plan) : null, view.TreatmentLabel,
+                    NistAssistProvenance.Report(fieldsOf));
             }).ToList();
 
         // ---- Subcategorias (ordem oficial) ----
@@ -142,6 +195,14 @@ public sealed class NistPublicationService : INistPublicationService
                     NistReportCanonical.Micro(v.CollectedAt), NistReportCanonical.Micro(v.CreatedAt), v.RecordedByName))
                 .ToList();
             var review = e is null ? NistReviewStates.None : ReviewStateOf(e);
+            var assistedFields = (e is null ? Array.Empty<AegisScore.Application.Nist.NistAssistedFieldView>()
+                    : assisted.For(NistAssistTarget.Evaluation, e.Id, NistAssistProvenance.EvaluationTexts(e)))
+                .Concat(ctx.Procedures.Where(p => p.SubcategoryCode == x.Sub.Code)
+                    .OrderBy(p => p.Method).ThenBy(p => p.CreatedAt.UtcTicks).ThenBy(p => p.Id)
+                    .SelectMany(p => assisted.For(NistAssistTarget.Procedure, p.Id,
+                            new Dictionary<string, string?>(StringComparer.Ordinal) { ["procedure"] = p.Procedure })
+                        .Select(a => a with { Label = $"procedimento planejado ({NistLabels.Method(p.Method.ToString()).ToLowerInvariant()})" })))
+                .ToList();
             return new NistReportSubcategory(
                 x.Sub.Code, TitleOf(x.Sub), x.Fn.Code, x.Cat.Code, x.Sub.Description,
                 states[x.Sub.Code], NistLabels.State(states[x.Sub.Code]),
@@ -155,7 +216,8 @@ public sealed class NistPublicationService : INistPublicationService
                 e?.ContentOrigin.ToString() ?? "Analyst", e?.OriginNote,
                 review, NistLabels.Review(review), e?.ReviewDecisionByName, NistReportCanonical.Micro(e?.ReviewDecisionAt), e?.ReviewDecisionNote,
                 e?.Version ?? 0, procs, ev,
-                findings.Where(f => f.SubcategoryCode == x.Sub.Code).Select(f => f.Id).ToList());
+                findings.Where(f => f.SubcategoryCode == x.Sub.Code).Select(f => f.Id).ToList(),
+                NistAssistProvenance.Report(assistedFields));
         }).ToList();
 
         // ---- Lacunas prioritárias: diferença confirmada, mais achados abertos e severidade ----
@@ -256,6 +318,18 @@ public sealed class NistPublicationService : INistPublicationService
     {
         var report = await BuildReportAsync(assessmentId, cycleId, scopeId, ct);
         var warnings = new List<string>();
+        // [AEGIS-NIST-AI-ASSIST-01] O que a publicação levará (ou não) do resumo executivo aceito.
+        if (report.Interpretation is { } it)
+        {
+            if (it.Mode == nameof(NistAssistEngineMode.Simulated))
+                warnings.Add("O resumo executivo incluído veio do motor SIMULADO (demonstração): sairá marcado como tal no relatório.");
+            if (it.ReviewedByName is null)
+                warnings.Add("O resumo executivo incluído não teve revisão humana posterior de outra pessoa (sairá dito assim).");
+        }
+        else if (report.Limitations.Contains(StaleSummaryLimitation))
+        {
+            warnings.Add("O resumo executivo aceito foi preparado sobre um estado anterior da rodada e NÃO entra nesta publicação. Revise-o e aceite de novo, ou publique sem ele.");
+        }
         if (report.Summary.Evaluated == 0 && report.Summary.NotApplicable == 0)
             warnings.Add("Nenhuma subcategoria tem avaliação confirmada: a fotografia registrará ausência de avaliação (sem médias).");
         if (report.Summary.PendingConfirmation > 0)
@@ -266,7 +340,8 @@ public sealed class NistPublicationService : INistPublicationService
         provisional.Id = Guid.Empty;
         var history = await BuildHistoryAsync(provisional, historyWindow ?? HistoryWindow.Default, ct);
         return new NistPublicationPreview(assessmentId, cycleId, scopeId, NistReportCanonical.Fingerprint(report), report.Summary,
-            report.Functions, report.Findings.Count, report.Limitations, warnings, history);
+            report.Functions, report.Findings.Count, report.Limitations, warnings, history,
+            report.Interpretation is not null);
     }
 
     /// <summary>

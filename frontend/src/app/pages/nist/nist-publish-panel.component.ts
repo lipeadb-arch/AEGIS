@@ -19,6 +19,7 @@ import { HistoryWindowRequest, PostureExportFormat } from '../../models/posture-
 import { HistoryPreviewComponent } from '../../components/history-preview.component';
 import { NistApiError, NistCtx, NistService, saveBlob } from '../../services/nist.service';
 import { PostureHistoryService } from '../../services/posture-history.service';
+import { NistExecutiveSummaryComponent } from './nist-executive-summary.component';
 
 /**
  * [AEGIS-NIST-JOURNEY-02] Publicação e relatórios da rodada e escopo.
@@ -26,12 +27,16 @@ import { PostureHistoryService } from '../../services/posture-history.service';
  *   • Publicar: o servidor só congela se o conteúdo ainda for o da prévia (senão 409 — nada é publicado em silêncio).
  *   • Fotografias: HTML, PDF e CSV saem da MESMA fotografia congelada (nunca de dados atuais).
  *   • Comparação: duas rodadas da mesma avaliação e escopo; incompatibilidade e mudança de universo são ditas.
+ *   • [AEGIS-NIST-AI-ASSIST-01] Resumo executivo aceito: entra na fotografia só se ainda vale para a base revisada na prévia;
+ *     mudar o resumo invalida a prévia aberta (a impressão digital muda).
  */
 @Component({
   selector: 'app-nist-publish-panel',
   standalone: true,
-  imports: [FormsModule, DatePipe, RouterLink, HistoryPreviewComponent],
+  imports: [FormsModule, DatePipe, RouterLink, HistoryPreviewComponent, NistExecutiveSummaryComponent],
   template: `
+    <app-nist-executive-summary [ctx]="ctx()" [canWrite]="canWrite()" [params]="params()" [refresh]="summaryTick()" (changed)="summaryChanged()" />
+
     <section class="panel" aria-labelledby="pub-h">
       <div class="hd"><h3 id="pub-h">Publicar a rodada</h3><span class="hint">fotografia imutável · maturidade 1–5 (AEGIS)</span></div>
       <p class="muted">A publicação congela a rodada e o escopo selecionados — perfil, situação de cada subcategoria, procedimentos,
@@ -60,6 +65,7 @@ import { PostureHistoryService } from '../../services/posture-history.service';
             }
           </tbody>
         </table></div>
+        <p>Resumo executivo: <strong>{{ pv.interpretationIncluded ? 'incluído nesta publicação, com a procedência' : 'não incluído' }}</strong></p>
         @if (pv.warnings.length) {
           <div class="notice warn" role="status"><strong>Antes de publicar:</strong><ul>@for (w of pv.warnings; track w) { <li>{{ w }}</li> }</ul></div>
         }
@@ -193,6 +199,8 @@ export class NistPublishPanelComponent {
   protected readonly downloadError = signal<string | null>(null);
   protected readonly comparison = signal<NistCycleComparison | null>(null);
   protected readonly comparing = signal(false);
+  /** Muda a cada publicação: o painel do resumo confere se a sugestão exibida ainda vale. */
+  protected readonly summaryTick = signal(0);
   protected readonly compareError = signal<string | null>(null);
   protected baseId = '';
   protected targetId = '';
@@ -247,6 +255,15 @@ export class NistPublishPanelComponent {
     return !!this.preview() && !this.previewLoading() && !this.previewError() && !!w && w.months === h.months && w.until === h.until;
   });
 
+  /** O resumo aceito mudou: a prévia aberta não é mais a que será publicada. */
+  protected summaryChanged(): void {
+    if (this.preview()) {
+      this.preview.set(null);
+      this.previewWindow.set(null);
+      this.publishError.set('O resumo executivo mudou: monte a prévia de novo antes de publicar.');
+    }
+  }
+
   protected loadPreview(keepError = false): void {
     const gen = this.gen;
     // Troca de período com uma prévia ainda em voo: só a resposta do último pedido preenche a tela.
@@ -294,6 +311,7 @@ export class NistPublishPanelComponent {
           this.preview.set(null);
           this.previewWindow.set(null);
           this.publications.update((list) => [p, ...list.filter((x) => x.snapshotId !== p.snapshotId)]);
+          this.summaryTick.update((n) => n + 1);
           this.publishedChange.emit(p);
         },
         error: (e: NistApiError) => {

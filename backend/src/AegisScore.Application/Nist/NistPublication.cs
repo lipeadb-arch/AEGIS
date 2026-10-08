@@ -27,7 +27,9 @@ public sealed record NistPublicationPreview(
     /// [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal que a publicação congelaria (mesma avaliação e escopo, período escolhido),
     /// com a impressão digital PRÓPRIA (<see cref="FrozenPostureHistory.BasisFingerprint"/>) — separada da do conteúdo revisado.
     /// </summary>
-    AegisScore.Application.Posture.FrozenPostureHistory? History = null);
+    AegisScore.Application.Posture.FrozenPostureHistory? History = null,
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] O resumo executivo aceito entra nesta publicação (vale para esta base).</summary>
+    bool InterpretationIncluded = false);
 
 /// <param name="ExpectedFingerprint">Impressão digital do conteúdo revisado (obrigatória).</param>
 /// <param name="ExpectedHistoryFingerprint">
@@ -63,6 +65,12 @@ public interface INistPublicationService
 {
     /// <summary>Relatório vivo da rodada (o mesmo documento que seria congelado).</summary>
     Task<NistMaturityReport> BuildReportAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-NIST-AI-ASSIST-01] A BASE determinística do relatório (sem interpretação e sem publicação): o que o resumo executivo
+    /// explica e cuja impressão digital diz se um resumo aceito ainda vale.
+    /// </summary>
+    Task<NistMaturityReport> BuildBasisReportAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default);
     Task<NistPublicationPreview> PreviewAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default,
         AegisScore.Application.Posture.HistoryWindow? historyWindow = null);
     Task<NistPublicationView> PublishAsync(Guid assessmentId, Guid cycleId, Guid scopeId, PublishNistCommand command, RemediationActor actor, CancellationToken ct = default);

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using AegisScore.Application.Nist;
 using AegisScore.Domain;
 
 namespace AegisScore.Application.Abstractions;
@@ -59,6 +60,14 @@ public interface IAiAssessmentService
     /// controle; o motor real compõe o texto via LLM.
     /// </summary>
     Task<AdvisoryDraft> GenerateAdvisoryAsync(AdvisoryGenerationRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// [AEGIS-NIST-AI-ASSIST-01] Assistência contextual da jornada NIST (subcategoria, achado, resumo executivo): interpreta o
+    /// contexto AUTORIZADO montado no servidor e devolve o rascunho estruturado, citando só as chaves das fontes recebidas.
+    /// A validação semântica (citações, nível, links) é do serviço NIST; aqui só o contrato de saída. Resposta fora do
+    /// contrato → <see cref="AiInvalidResponseException"/>, nunca um rascunho "consertado".
+    /// </summary>
+    Task<NistAssistDraft> AssistNistAsync(NistAssistPrompt request, CancellationToken ct);
 }
 
 // ---- Copiloto GRC (Auditor onipresente, com escopo de contexto) --------------
@@ -116,7 +125,9 @@ public sealed record AuditorTenantContext(
     // [AEGIS-LANGUAGE-STATES-01] Estado de LEITURA de cada fonte (sem fonte / sem coleta / disponível, com a
     // ressalva de falha recente ou escopo parcial). Sem isto, uma lista vazia de exposições ou vulnerabilidades
     // chegava à IA igual a "coletado sem achados". Opcional/default null.
-    IReadOnlyList<AuditorSourceReading>? SourceReadings = null);
+    IReadOnlyList<AuditorSourceReading>? SourceReadings = null,
+    // [AEGIS-NIST-AI-ASSIST-01] Jornada NIST da tela ativa (mesmo contexto da assistência, sem nomes de pessoas). Opcional.
+    NistAuditorContext? NistJourney = null);
 
 /// <summary>
 /// [AEGIS-LANGUAGE-STATES-01] O que se pode afirmar sobre a leitura de UMA fonte — mesma derivação da Visão

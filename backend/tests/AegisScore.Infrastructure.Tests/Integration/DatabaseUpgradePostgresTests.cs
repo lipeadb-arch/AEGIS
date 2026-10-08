@@ -128,6 +128,9 @@ public sealed class DatabaseUpgradePostgresTests
             // (maturidade em colunas próprias). Cada avaliação existente ganha UMA rodada inicial e as suas avaliações e
             // evidências passam a apontar para ela — sem escolha arbitrária; sobrando registro sem rodada, a migration aborta.
             "20261005224354_Nist02_CompleteJourney",
+            // [AEGIS-NIST-AI-ASSIST-01] Assistência de IA: três tabelas NOVAS (gerações, incorporações e resumo executivo), sem
+            // alterar nenhuma existente e sem backfill — nenhum registro ganha procedência assistida que não teve.
+            "20261007000132_NistAi01_ContextualAssistance",
             // [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal congelado na publicação: uma coluna aditiva e anulável (texto) na
             // fotografia, SEM backfill — fotografias anteriores ficam sem histórico, com o hash idêntico e exportadas como antes.
             "20261007135256_AssessmentVisuals01_FrozenHistory",

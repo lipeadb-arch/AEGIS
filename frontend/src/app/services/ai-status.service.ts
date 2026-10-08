@@ -8,6 +8,7 @@ export type AiEffectiveState =
   | 'EnterpriseConfigured'
   | 'DemoConfigured'
   | 'ExternalBlockedForTenant'
+  | 'ProviderNotConfigured'
   | 'Simulated'
   | 'Unavailable';
 

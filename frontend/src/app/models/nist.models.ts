@@ -335,6 +335,32 @@ export interface NistEvaluation {
   reviewDecisionByName?: string | null;
   reviewDecisionAt?: string | null;
   reviewDecisionNote?: string | null;
+  /** [AEGIS-NIST-AI-ASSIST-01] Campos cujo texto VIGENTE veio de uma sugestão da IA (editado ou não). */
+  assistedFields?: NistAssistedField[] | null;
+}
+
+/**
+ * [AEGIS-NIST-AI-ASSIST-01] Procedência de um campo: o texto vigente veio de uma geração (motor real ou simulado), incorporado por
+ * uma pessoa pela gravação normal — nunca é aprovação nem revisão.
+ */
+export interface NistAssistedField {
+  field: string;
+  label: string;
+  assistanceId: string;
+  mode: 'Real' | 'Simulated' | string;
+  generatedAt: string;
+  requestedByName: string | null;
+  incorporatedByName: string | null;
+  incorporatedAt: string;
+  edited: boolean;
+  staleAcknowledged: boolean;
+}
+
+/** [AEGIS-NIST-AI-ASSIST-01] Referência à sugestão de origem do conteúdo aplicado, enviada com a gravação normal. */
+export interface NistAssistanceRef {
+  assistanceId: string;
+  fields: string[];
+  acknowledgeStale: boolean;
 }
 
 export type NistEvidenceOrigin = 'Manual' | 'GovernanceDocument' | 'KnightIndicator' | 'AssetInventory';
@@ -430,14 +456,6 @@ export interface NistSubcategoryDetail {
   findingBlockedReason?: string | null;
 }
 
-export interface NistAiSuggestion {
-  suggestedCurrentLevel: number;
-  confidence: number;
-  rationale: string;
-  simulated: boolean;
-  generatedAt: string;
-}
-
 export interface NistHistoryItem {
   assessmentId: string;
   assessmentName: string;
@@ -511,6 +529,8 @@ export interface NistProcedure {
   createdByName: string | null;
   createdAt: string;
   version: number;
+  /** [AEGIS-NIST-AI-ASSIST-01] O texto planejado veio de uma sugestão da IA. */
+  assistedFrom?: NistAssistedField | null;
 }
 
 export interface NistFindingOrigin {
@@ -618,6 +638,8 @@ export interface NistFinding {
   version: number;
   plan: NistPlan | null;
   treatmentLabel: string;
+  /** [AEGIS-NIST-AI-ASSIST-01] Recomendação e/ou ação do plano vindas de sugestão da IA. */
+  assistedFields?: NistAssistedField[] | null;
 }
 
 // ---- Publicação, comparação e importação -------------------------------------------------------------------------
@@ -686,6 +708,8 @@ export interface NistPublicationPreview {
    * PRÓPRIA — separada da do conteúdo avaliativo. A publicação devolve as duas.
    */
   history?: FrozenPostureHistory | null;
+  /** [AEGIS-NIST-AI-ASSIST-01] O resumo executivo aceito entra nesta publicação. */
+  interpretationIncluded?: boolean;
 }
 
 export interface NistPublication {
@@ -817,6 +841,7 @@ export interface SaveNistEvaluationRequest {
   ownerUserId?: string | null;
   ownerIsExternal?: boolean;
   ownerContact?: string | null;
+  assistance?: NistAssistanceRef | null;
 }
 
 export interface LinkNistEvidenceRequest {
@@ -854,6 +879,23 @@ export interface NistPlanRequest {
   responsible: NistResponsibleRequest | null;
   responsibleArea: string | null;
   dueDate: string | null;
+  assistance?: NistAssistanceRef | null;
+}
+
+/** Edição do achado (campos nulos permanecem). */
+export interface UpdateNistFindingRequest {
+  title?: string | null;
+  condition?: string | null;
+  risk?: string | null;
+  impact?: string | null;
+  severity?: string | null;
+  severityRationale?: string | null;
+  priority?: string | null;
+  priorityRationale?: string | null;
+  recommendation?: string | null;
+  evidenceIds?: string[] | null;
+  expectedVersion: number;
+  assistance?: NistAssistanceRef | null;
 }
 
 export interface CreateNistFindingRequest {

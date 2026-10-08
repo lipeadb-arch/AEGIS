@@ -171,6 +171,11 @@ public class AegisScoreDbContext : DbContext
     public DbSet<NistFinding> NistFindings => Set<NistFinding>();
     public DbSet<NistAuditEntry> NistAuditEntries => Set<NistAuditEntry>();
 
+    // [AEGIS-NIST-AI-ASSIST-01] Gerações da assistência de IA, incorporações (append-only) e resumo executivo aceito.
+    public DbSet<NistAiAssistance> NistAiAssistances => Set<NistAiAssistance>();
+    public DbSet<NistAiIncorporation> NistAiIncorporations => Set<NistAiIncorporation>();
+    public DbSet<NistExecutiveSummary> NistExecutiveSummaries => Set<NistExecutiveSummary>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
@@ -961,6 +966,56 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.RemovedByName).HasMaxLength(200);
         });
 
+        // [AEGIS-NIST-AI-ASSIST-01] Assistência de IA: a geração e o resumo executivo pertencem à RODADA (FK tenant-safe);
+        // a incorporação aponta para a geração do MESMO tenant. Nada aqui é avaliação: são sugestões e a sua procedência.
+        b.Entity<NistAiAssistance>(e =>
+        {
+            e.Property(x => x.SubcategoryCode).HasMaxLength(15);
+            e.Property(x => x.Focus).HasMaxLength(20);
+            e.Property(x => x.ContextFingerprint).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ContextSummary).HasMaxLength(500).IsRequired();
+            e.Property(x => x.SourcesJson).IsRequired();
+            e.Property(x => x.OutputJson).IsRequired();
+            e.Property(x => x.Availability).HasMaxLength(40).IsRequired();
+            e.Property(x => x.MethodologyVersion).HasMaxLength(50).IsRequired();
+            e.Property(x => x.RequestedByName).HasMaxLength(200);
+            e.HasIndex(x => new { x.TenantId, x.CycleId, x.AssessmentScopeId, x.Kind, x.SubcategoryCode, x.FindingId });
+            e.HasAlternateKey(x => new { x.Id, x.TenantId });
+            e.HasOne<NistAssessmentCycle>().WithMany()
+                .HasForeignKey(x => new { x.CycleId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<NistAiIncorporation>(e =>
+        {
+            e.Property(x => x.SubcategoryCode).HasMaxLength(15);
+            e.Property(x => x.FieldsJson).IsRequired();
+            e.Property(x => x.IncorporatedByName).HasMaxLength(200);
+            e.HasIndex(x => new { x.TenantId, x.TargetKind, x.TargetId });
+            e.HasIndex(x => new { x.TenantId, x.CycleId, x.AssessmentScopeId, x.SubcategoryCode });
+            e.HasOne<NistAiAssistance>().WithMany()
+                .HasForeignKey(x => new { x.AssistanceId, x.TenantId })
+                .HasPrincipalKey(a => new { a.Id, a.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<NistExecutiveSummary>(e =>
+        {
+            e.Property(x => x.SectionsJson).IsRequired();
+            e.Property(x => x.BasisFingerprint).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ContentHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ReviewedContentHash).HasMaxLength(64);
+            e.Property(x => x.AcceptedByName).HasMaxLength(200);
+            e.Property(x => x.ReviewedByName).HasMaxLength(200);
+            e.Property(x => x.ReviewNote).HasMaxLength(2000);
+            e.Property(x => x.Version).IsConcurrencyToken();
+            e.HasIndex(x => new { x.CycleId, x.AssessmentScopeId }).IsUnique().HasDatabaseName("UX_NistExecutiveSummaries_CycleScope");
+            e.HasIndex(x => x.TenantId);
+            e.HasOne<NistAssessmentCycle>().WithMany()
+                .HasForeignKey(x => new { x.CycleId, x.TenantId })
+                .HasPrincipalKey(c => new { c.Id, c.TenantId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         b.Entity<RiskAppetite>().HasIndex(x => x.TenantId);
         b.Entity<IcrScore>().HasIndex(x => x.TenantId);
         b.Entity<GovernanceDocument>().HasIndex(x => x.TenantId);
@@ -1704,6 +1759,10 @@ public class AegisScoreDbContext : DbContext
         b.Entity<NistTestProcedure>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<NistFinding>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<NistAuditEntry>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        // [AEGIS-NIST-AI-ASSIST-01] Gerações, incorporações e resumo executivo — fail-closed como os demais.
+        b.Entity<NistAiAssistance>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<NistAiIncorporation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<NistExecutiveSummary>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<GovernanceDocument>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<DocumentControlMapping>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<SubcategoryCoverage>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

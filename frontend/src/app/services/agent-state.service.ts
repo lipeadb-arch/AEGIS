@@ -16,6 +16,31 @@ export type AgentContext = NistFunction | 'General';
 /** Escopo de contexto para o backend do Copiloto GRC — o código da tela ativa (Visão Geral → 'GLOBAL'). */
 export type AuditorScope = 'GLOBAL' | 'GV' | 'ID' | 'PR' | 'DE' | 'RS' | 'RC';
 
+/**
+ * [AEGIS-NIST-AI-ASSIST-01] Seleção da jornada NIST na tela ativa (avaliação · rodada · escopo e, numa subcategoria, o código).
+ * Vai junto da conversa para o servidor montar o MESMO contexto da assistência — conferido pelo tenant do token.
+ */
+export interface AuditorNistSelection {
+  assessmentId: string;
+  cycleId: string;
+  scopeId: string;
+  code: string | null;
+}
+
+/** Lê a seleção NIST da URL (/nist/... ?avaliacao=&rodada=&escopo=); nulo fora da jornada ou sem a seleção completa. */
+export function nistSelectionFromUrl(url: string): AuditorNistSelection | null {
+  const [path, rest = ''] = url.split('?');
+  const segs = path.split('#')[0].split('/').filter(Boolean);
+  if (segs[0] !== 'nist') return null;
+  const q = new URLSearchParams(rest.split('#')[0]);
+  const assessmentId = q.get('avaliacao');
+  const cycleId = q.get('rodada');
+  const scopeId = q.get('escopo');
+  if (!assessmentId || !cycleId || !scopeId) return null;
+  const code = segs.length >= 3 && /^[A-Za-z]{2}\.[A-Za-z]{2}-\d{2}$/.test(segs[2]) ? segs[2].toUpperCase() : null;
+  return { assessmentId, cycleId, scopeId, code };
+}
+
 /** Metadados de apresentação de cada contexto (código oficial + rótulo PT-BR + se há agente real). */
 export interface NistContext {
   readonly fn: AgentContext;
@@ -79,6 +104,10 @@ export class AgentStateService {
   /** Função NIST (ou 'General') correspondente à aba atual. */
   readonly activeFunction = this._activeFunction.asReadonly();
 
+  /** [AEGIS-NIST-AI-ASSIST-01] Seleção NIST da tela ativa (nula fora da jornada). */
+  private readonly _nistSelection = signal<AuditorNistSelection | null>(nistSelectionFromUrl(this.router.url));
+  readonly nistSelection = this._nistSelection.asReadonly();
+
   /** Metadados do contexto ativo (código/rótulo/disponibilidade). */
   readonly context = computed<NistContext>(() => CONTEXTS[this._activeFunction()]);
 
@@ -98,6 +127,7 @@ export class AgentStateService {
     this.router.events.pipe(takeUntilDestroyed()).subscribe((e) => {
       if (e instanceof NavigationEnd) {
         this._activeFunction.set(this.contextForUrl(e.urlAfterRedirects));
+        this._nistSelection.set(nistSelectionFromUrl(e.urlAfterRedirects));
       }
     });
   }

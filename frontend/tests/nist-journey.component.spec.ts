@@ -43,6 +43,7 @@ import {
   NistSubcategoryDetail,
 } from '../src/app/models/nist.models';
 import { NistCtx } from '../src/app/services/nist.service';
+import { NistAssistView } from '../src/app/models/nist-assist.models';
 
 // ---- micro-harness ---------------------------------------------------------------------------
 let failures = 0;
@@ -85,7 +86,6 @@ class FakeNist {
   save(...a: unknown[]) { return this.call('save', a); }
   linkEvidence(...a: unknown[]) { return this.call('linkEvidence', a); }
   removeEvidence(...a: unknown[]) { return this.call('removeEvidence', a); }
-  suggest(...a: unknown[]) { return this.call('suggest', a); }
   create(...a: unknown[]) { return this.call('create', a); }
   addScope(...a: unknown[]) { return this.call('addScope', a); }
   assignees() { return this.call('assignees', []); }
@@ -178,6 +178,15 @@ function mount<C>(ctor: new () => C, init?: (route: FakeRoute) => void): Env<C> 
 }
 
 // ---- dados sintéticos ------------------------------------------------------------------------
+/** Sugestão sintética da assistência para a subcategoria (só o necessário à tela). */
+function assistView(code: string, applicable: Record<string, string> = { rationale: '• texto sugerido (fontes: Entrevista)' }): NistAssistView {
+  return {
+    id: `assist-${code}`, kind: 'Subcategory', focus: null, assessmentId: ASSESS, cycleId: CYCLE, scopeId: SCOPE, subcategoryCode: code,
+    findingId: null, mode: 'Simulated', availability: 'Simulated', modeLabel: 'Demonstração', generatedAt: '2026-10-06T12:00:00Z',
+    requestedByName: 'Gestora Demo', contextFingerprint: 'f', contextSummary: '', current: true, staleOnArrival: false, reused: false,
+    sources: [], sections: [], level: null, levelNote: null, procedures: [], applicable, validationNotes: [], disclaimer: '',
+  };
+}
 const ASSESS = 'a0000000-0000-0000-0000-000000000001';
 const SCOPE = 's0000000-0000-0000-0000-000000000001';
 const CYCLE = 'c0000000-0000-0000-0000-000000000002';
@@ -297,14 +306,14 @@ test('subcategoria: erro atrasado de A não aparece na tela de B', () => {
 test('subcategoria: ao navegar, o estado da seleção anterior é limpo (IA, mensagens, conflito)', () => {
   const e = openSub();
   reply(e.api.last('subcategory'), detail('GV.OC-01', evaluation(1)));
-  e.v.suggest(e.v.detail());
-  reply(e.api.last('suggest'), { suggestedCurrentLevel: 3, confidence: 0.6, rationale: 'r', simulated: true, generatedAt: '' });
+  // [AEGIS-NIST-AI-ASSIST-01] Conteúdo aplicado de uma sugestão da IA ao rascunho de A.
+  e.v.applyAssist({ view: assistView('GV.OC-01'), field: 'rationale' });
   e.v.save(e.v.detail());
   fail(e.api.last('save'), new NistApiError('versão desatualizada', 409));
-  ok(e.v.suggestion() !== null && e.v.conflict(), 'pré-condição: sugestão e conflito em A');
+  ok(e.v.appliedFields().length === 1 && e.v.conflict(), 'pré-condição: conteúdo aplicado e conflito em A');
 
   e.route.go(SUB_B, Q);
-  eq(e.v.suggestion(), null, 'sugestão de A some');
+  eq(e.v.appliedFields().length, 0, 'conteúdo aplicado de A some');
   eq(e.v.conflict(), false, 'conflito de A some');
   eq(e.v.saveError(), null, 'mensagem de gravação de A some');
   eq(e.v.detail(), null, 'detalhe de A não fica na tela de B');
@@ -352,20 +361,20 @@ test('subcategoria: conflito (409) de A que chega depois da troca não aparece e
   eq(e.v.saveError(), null, 'sem erro em B');
 });
 
-test('subcategoria: evidência e sugestão de A que chegam depois da troca não repovoam B', () => {
+test('subcategoria: evidência de A que chega depois da troca não repovoa B; sugestão de A não se aplica em B', () => {
   const e = openSub();
   reply(e.api.last('subcategory'), detail('GV.OC-01', evaluation(1)));
-  e.v.suggest(e.v.detail());
-  const sugA = e.api.last('suggest');
   e.v.linkAvailable(e.v.detail(), { originKind: 'AssetInventory', documentId: null, knightRunId: null, knightIndicatorId: null });
   const linkA = e.api.last('linkEvidence');
 
   e.route.go(SUB_B, Q);
   reply(e.api.last('subcategory'), detail('GV.OC-02', evaluation(5)));
-  reply(sugA, { suggestedCurrentLevel: 4, confidence: 0.9, rationale: 'A', simulated: false, generatedAt: '' });
   reply(linkA, detail('GV.OC-01', evaluation(1), ['ev-a']));
+  // Uma sugestão gerada para A (resposta atrasada de outro painel) não preenche o rascunho de B.
+  e.v.applyAssist({ view: assistView('GV.OC-01'), field: 'rationale' });
 
-  eq(e.v.suggestion(), null, 'sugestão de A descartada');
+  eq(e.v.appliedFields().length, 0, 'sugestão de A não entra no rascunho de B');
+  eq(e.v.draft.rationale, 'justificativa v5', 'rascunho de B intacto');
   eq(e.v.detail()?.code, 'GV.OC-02', 'detalhe de A descartado');
   eq(e.v.detail()?.evidence.length, 0, 'evidência de A não aparece em B');
   eq(e.v.busy(), false, 'B não fica bloqueada');

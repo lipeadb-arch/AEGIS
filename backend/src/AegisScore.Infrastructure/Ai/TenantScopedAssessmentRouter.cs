@@ -63,4 +63,8 @@ public sealed class TenantScopedAssessmentRouter : IAiAssessmentService
 
     public async Task<AdvisoryDraft> GenerateAdvisoryAsync(AdvisoryGenerationRequest request, CancellationToken ct)
         => await (await PickAsync(ct)).GenerateAdvisoryAsync(request, ct);
+
+    public async Task<AegisScore.Application.Nist.NistAssistDraft> AssistNistAsync(
+        AegisScore.Application.Nist.NistAssistPrompt request, CancellationToken ct)
+        => await (await PickAsync(ct)).AssistNistAsync(request, ct);
 }

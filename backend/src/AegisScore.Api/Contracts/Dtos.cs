@@ -674,7 +674,12 @@ public record AuditorChatMessageDto(string Role, string Content);
 /// resolvido do claim <c>tenant_id</c> do JWT (Zero Trust).
 /// </summary>
 public record AuditorChatRequestDto(
-    string ContextScope, string Message, IReadOnlyList<AuditorChatMessageDto>? History);
+    string ContextScope, string Message, IReadOnlyList<AuditorChatMessageDto>? History,
+    // [AEGIS-NIST-AI-ASSIST-01] Seleção NIST da tela ativa (avaliação · rodada · escopo · subcategoria opcional). Conferida no
+    // servidor pelo tenant do token: seleção de outro tenant ou inexistente é ignorada.
+    AuditorNistSelectionDto? Nist = null);
+
+public record AuditorNistSelectionDto(Guid? AssessmentId, Guid? CycleId, Guid? ScopeId, string? Code);
 
 /// <summary>
 /// Resposta do Copiloto com ROTEAMENTO DE INTENÇÃO. <paramref name="Intent"/> ("COPILOT"|"START_INTERVIEW")

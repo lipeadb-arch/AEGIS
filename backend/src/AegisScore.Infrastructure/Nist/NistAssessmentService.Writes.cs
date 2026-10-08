@@ -57,6 +57,18 @@ public sealed partial class NistAssessmentService
         if (!hasContent)
             throw new NistAssessmentValidationException("Nada a registrar: informe um nível, uma justificativa ou uma anotação.");
 
+        // [AEGIS-NIST-AI-ASSIST-01] Conteúdo aplicado de uma sugestão: a geração precisa ser deste contexto e o contexto em que
+        // foi gerada, o atual (senão 409 — a pessoa revisa ou gera outra). A versão-base do rascunho segue conferida abaixo.
+        IReadOnlyList<string> assistedFields = Array.Empty<string>();
+        (NistAiAssistance Generation, bool Stale)? assisted = null;
+        if (command.Assistance is { } reference)
+        {
+            assistedFields = NistAssistProvenance.CheckFields(reference, NistAssistProvenance.EvaluationFields.Keys);
+            assisted = await NistAssistProvenance.ResolveAsync(_db, reference, NistAssistKind.Subcategory, assessmentId, cycleId, scopeId, sub.Code, null,
+                async _ => (await new NistAssistContextBuilder(_db, _language).SubcategoryAsync(ctx, sub, ct)).Fingerprint, ct);
+            NistAssistProvenance.RequireApplicable(assisted.Value.Generation, assistedFields);
+        }
+
         // ---- Concorrência: a versão lida precisa ser a vigente ----
         var eval = await _db.Evaluations.FirstOrDefaultAsync(e => e.AssessmentScopeId == scopeId && e.CycleId == cycleId && e.SubcategoryId == sub.Id, ct);
         var creating = eval is null;
@@ -123,6 +135,14 @@ public sealed partial class NistAssessmentService
         var assessment = await _db.Assessments.FirstAsync(a => a.Id == assessmentId, ct);
         if (assessment.Status == AssessmentStatus.Draft)
             assessment.Status = AssessmentStatus.InProgress;
+
+        if (assisted is { } a)
+        {
+            var texts = NistAssistProvenance.EvaluationTexts(eval);
+            NistAssistProvenance.Record(_db, a.Generation, a.Stale, NistAssistTarget.Evaluation, eval.Id,
+                assistedFields.Select(f => new NistAssistProvenance.Incorporated(f, NistAssistProvenance.EvaluationFields[f], texts[f])).ToList(),
+                actor, eval.ReviewedAt.Value);
+        }
 
         Audit(_db, actor, eval.ReviewedAt.Value, assessmentId, cycleId, scopeId, sub.Code, "Evaluation", eval.Id,
             creating ? "Created" : wasConfirmed ? "Updated" : "Confirmed",
@@ -439,55 +459,5 @@ public sealed partial class NistAssessmentService
         await _db.SaveChangesAsync(ct);
         _db.ChangeTracker.Clear();
         return await GetSubcategoryAsync(assessmentId, cycleId, scopeId, sub.Code, ct);
-    }
-
-    // =============================================================================================
-    //  Sugestão da IA (nunca gravada)
-    // =============================================================================================
-
-    public async Task<NistAiSuggestionView> SuggestAsync(Guid assessmentId, Guid cycleId, Guid scopeId, string code, CancellationToken ct = default)
-    {
-        RequireTenant(_tenant);
-        var ctx = await LoadScopeContextAsync(_db, assessmentId, cycleId, scopeId, ct);
-        var sub = ctx.FindSubcategory(code);
-
-        if (_ai is null || _gate is null || _gate.Mode == AiMode.Disabled)
-            throw new NistAiUnavailableException("A IA está desativada neste ambiente. A avaliação segue normalmente sem ela.");
-
-        var simulated = true;
-        if (_gate.ProviderConfigured && _aiTenant is not null)
-            simulated = !_gate.IsExternalAllowedForSlug(await _aiTenant.GetCurrentSlugAsync(ct));
-
-        var eval = ctx.Evaluation(sub.Id);
-        var linked = await ActiveEvidenceAsync(scopeId, cycleId, sub.Code, ct);
-        var answers = new List<(string Question, string Answer, string? Comment)>();
-        if (eval?.CurrentComments is { } cc) answers.Add(("Observação do analista sobre a situação atual", cc, null));
-        if (eval?.Gaps is { } g) answers.Add(("Lacunas observadas", g, null));
-        foreach (var p in ctx.Procedures.Where(p => p.SubcategoryCode == sub.Code && p.Status == NistProcedureStatus.Performed && p.Observation is not null))
-            answers.Add(($"Procedimento ({NistLabels.Method(p.Method.ToString())}): {p.Procedure}", p.Observation!, NistLabels.Outcome(p.Outcome?.ToString())));
-        var summaries = linked.Select(e => $"{e.OriginLabel ?? e.OriginKind.ToString()} — {e.Title} ({e.CollectedAt:yyyy-MM-dd}){(e.Notes is null ? "" : $": {e.Notes}")}").ToList();
-
-        MaturitySuggestion suggestion;
-        try
-        {
-            suggestion = await _ai.SuggestMaturityAsync(
-                new MaturitySuggestionRequest(sub.Code, sub.Description, answers, summaries, Array.Empty<(string, double?, int?)>()), ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Sugestão da IA indisponível para {Code}.", sub.Code);
-            throw new NistAiUnavailableException("A IA não respondeu agora. A avaliação segue normalmente sem ela.");
-        }
-
-        return new NistAiSuggestionView(
-            Math.Clamp(suggestion.CurrentLevel, AssessmentMethodology.MinLevel, AssessmentMethodology.MaxLevel),
-            Math.Clamp(suggestion.Confidence, 0, 1),
-            Truncate(suggestion.Rationale ?? "", MaxLongText),
-            simulated,
-            _clock.GetUtcNow());
     }
 }

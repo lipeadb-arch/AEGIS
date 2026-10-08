@@ -16,6 +16,10 @@ namespace AegisScore.Api.Controllers;
 /// procedimentos de avaliação, achados com plano de tratamento (origem NIST), responsáveis, revisão, trilha, publicação da
 /// fotografia de maturidade e importação/exportação CSV de trabalho.
 ///
+/// [AEGIS-NIST-AI-ASSIST-01] Assistência contextual de IA (subcategoria, achado e tratamento, resumo executivo): gera SUGESTÕES
+/// identificadas sobre o contexto montado no servidor; incorporar passa pelas rotas normais de gravação, com a referência da
+/// sugestão. Com a IA desativada, não configurada ou indisponível, a jornada manual segue (503 com o motivo).
+///
 /// Tenant IMPLÍCITO (claim <c>tenant_id</c> + filtro global fail-closed): qualquer objeto de outro tenant responde 404.
 /// Leitura para qualquer papel; gravação só para Manager/TenantAdmin — designar alguém como responsável, avaliador ou
 /// revisor NÃO concede privilégio. O autor vem sempre do token. A maturidade gravada aqui NÃO é o score de postura.
@@ -32,14 +36,16 @@ public sealed class NistAssessmentsController : ControllerBase
     private readonly INistWorkService _work;
     private readonly INistPublicationService _publication;
     private readonly INistImportService _import;
+    private readonly INistAssistService _assist;
 
     public NistAssessmentsController(
-        INistAssessmentService service, INistWorkService work, INistPublicationService publication, INistImportService import)
+        INistAssessmentService service, INistWorkService work, INistPublicationService publication, INistImportService import, INistAssistService assist)
     {
         _service = service;
         _work = work;
         _publication = publication;
         _import = import;
+        _assist = assist;
     }
 
     // ---- Avaliações, escopos, rodadas, pessoas e trilha ------------------------------------------------
@@ -58,6 +64,11 @@ public sealed class NistAssessmentsController : ControllerBase
     [HttpGet("assignees")]
     public Task<ActionResult<IReadOnlyList<NistAssigneeView>>> Assignees(CancellationToken ct) =>
         Run<IReadOnlyList<NistAssigneeView>>(async () => Ok(await _service.AssigneesAsync(ct)));
+
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] Estado da IA para a assistência NIST (desativada, simulada, não configurada, real).</summary>
+    [HttpGet("assist/availability")]
+    public Task<ActionResult<NistAssistAvailabilityView>> AssistAvailability(CancellationToken ct) =>
+        Run<NistAssistAvailabilityView>(async () => Ok(await _assist.AvailabilityAsync(ct)));
 
     [HttpGet("{assessmentId:guid}")]
     public Task<ActionResult<NistAssessmentView>> Get(Guid assessmentId, CancellationToken ct) =>
@@ -222,7 +233,8 @@ public sealed class NistAssessmentsController : ControllerBase
             return Ok(await _service.SaveEvaluationAsync(assessmentId, cycleId, scopeId, code, new SaveNistEvaluationCommand(
                 request.CurrentLevel, request.TargetLevel, request.NotApplicable, request.CurrentComments, request.TargetComments,
                 request.Rationale, request.Gaps, request.RiskImpact, request.ImprovementGuidance, request.OwnerName,
-                request.ExpectedVersion, request.OwnerUserId, request.OwnerIsExternal, request.OwnerContact), CurrentActor(), ct));
+                request.ExpectedVersion, request.OwnerUserId, request.OwnerIsExternal, request.OwnerContact,
+                Assistance(request.Assistance)), CurrentActor(), ct));
         });
 
     /// <summary>Designa avaliador e revisor (usuários ativos do tenant). Designar não concede privilégio.</summary>
@@ -268,15 +280,108 @@ public sealed class NistAssessmentsController : ControllerBase
         Run<NistSubcategoryDetailView>(async () =>
             Ok(await _service.RemoveEvidenceAsync(assessmentId, cycleId, scopeId, code, evidenceId, CurrentActor(), ct)));
 
+    // ---- [AEGIS-NIST-AI-ASSIST-01] Assistência de IA ----------------------------------------------------------
+
+    /// <summary>O contexto que a assistência usaria agora (fontes, impressão digital) e a última sugestão — sem chamar a IA.</summary>
+    [HttpGet(CyclePath + "/subcategories/{code}/assist/context")]
+    public Task<ActionResult<NistAssistContextView>> SubcategoryAssistContext(Guid assessmentId, Guid cycleId, Guid scopeId, string code, CancellationToken ct) =>
+        Run<NistAssistContextView>(async () => Ok(await _assist.SubcategoryContextAsync(assessmentId, cycleId, scopeId, code, ct)));
+
     /// <summary>
-    /// Sugestão de interpretação da IA para a situação atual. NÃO é gravada: o analista revisa e decide. Com a IA
-    /// desativada ou sem resposta, 503 — e a avaliação continua possível sem ela.
+    /// Analisar as evidências: sugestão estruturada (resultado esperado, evidências favoráveis e contraditórias, lacunas,
+    /// perguntas, procedimentos, melhorias, riscos, critérios e nível só com base suficiente). Nada é gravado na avaliação.
     /// </summary>
-    [HttpPost(CyclePath + "/subcategories/{code}/ai-suggestion")]
+    /// <response code="503">IA desativada, indisponível, sem resposta no tempo ou resposta inválida (motivo em <c>reason</c>).</response>
+    [HttpPost(CyclePath + "/subcategories/{code}/assist")]
     [Authorize(Roles = Writers)]
     [EnableRateLimiting("ai-auditor")]
-    public Task<ActionResult<NistAiSuggestionView>> Suggest(Guid assessmentId, Guid cycleId, Guid scopeId, string code, CancellationToken ct) =>
-        Run<NistAiSuggestionView>(async () => Ok(await _service.SuggestAsync(assessmentId, cycleId, scopeId, code, ct)));
+    public Task<ActionResult<NistAssistView>> AssistSubcategory(
+        Guid assessmentId, Guid cycleId, Guid scopeId, string code, [FromBody] NistAssistHttpRequest? request, CancellationToken ct) =>
+        Run<NistAssistView>(async () => Ok(await _assist.AssistSubcategoryAsync(assessmentId, cycleId, scopeId, code,
+            new NistAssistRequest(request?.Reuse ?? true), CurrentActor(), ct)));
+
+    /// <summary>Planeja, de uma vez, os procedimentos sugeridos que a pessoa escolheu (planejar não é realizar).</summary>
+    [HttpPost(CyclePath + "/subcategories/{code}/procedures/from-assistance")]
+    [Authorize(Roles = Writers)]
+    public Task<ActionResult<IReadOnlyList<NistProcedureView>>> PlanProceduresFromAssistance(
+        Guid assessmentId, Guid cycleId, Guid scopeId, string code, [FromBody] PlanProceduresFromAssistanceRequest request, CancellationToken ct) =>
+        Run<IReadOnlyList<NistProcedureView>>(async () =>
+        {
+            if (request is null || request.AssistanceId is not { } id) return BadRequest(Message("Informe a sugestão de origem."));
+            var created = await _work.PlanProceduresFromAssistanceAsync(assessmentId, cycleId, scopeId, code, new PlanNistProceduresFromAssistanceCommand(
+                id, (request.Procedures ?? Array.Empty<NistAssistedProcedureRequest>()).Select(p => new NistAssistedProcedureInput(p.Method ?? "", p.Procedure ?? "")).ToList(),
+                request.AcknowledgeStale), CurrentActor(), ct);
+            return StatusCode(StatusCodes.Status201Created, created);
+        });
+
+    [HttpGet(CyclePath + "/findings/{findingId:guid}/assist/context")]
+    public Task<ActionResult<NistAssistContextView>> FindingAssistContext(
+        Guid assessmentId, Guid cycleId, Guid scopeId, Guid findingId, [FromQuery] string? focus, CancellationToken ct) =>
+        Run<NistAssistContextView>(async () => Ok(await _assist.FindingContextAsync(assessmentId, cycleId, scopeId, findingId, focus, ct)));
+
+    /// <summary>Explicar o achado (focus=Explain) ou sugerir tratamento (focus=Treatment). Não cria nem altera plano.</summary>
+    [HttpPost(CyclePath + "/findings/{findingId:guid}/assist")]
+    [Authorize(Roles = Writers)]
+    [EnableRateLimiting("ai-auditor")]
+    public Task<ActionResult<NistAssistView>> AssistFinding(
+        Guid assessmentId, Guid cycleId, Guid scopeId, Guid findingId, [FromBody] NistAssistHttpRequest? request, CancellationToken ct) =>
+        Run<NistAssistView>(async () => Ok(await _assist.AssistFindingAsync(assessmentId, cycleId, scopeId, findingId,
+            new NistAssistRequest(request?.Reuse ?? true, request?.Focus), CurrentActor(), ct)));
+
+    [HttpGet(CyclePath + "/executive-summary/assist/context")]
+    public Task<ActionResult<NistAssistContextView>> ExecutiveAssistContext(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct) =>
+        Run<NistAssistContextView>(async () => Ok(await _assist.ExecutiveContextAsync(assessmentId, cycleId, scopeId, ct)));
+
+    /// <summary>Preparar resumo executivo: interpretação dos indicadores determinísticos (a IA não os calcula).</summary>
+    [HttpPost(CyclePath + "/executive-summary/assist")]
+    [Authorize(Roles = Writers)]
+    [EnableRateLimiting("ai-auditor")]
+    public Task<ActionResult<NistAssistView>> AssistExecutive(
+        Guid assessmentId, Guid cycleId, Guid scopeId, [FromBody] NistAssistHttpRequest? request, CancellationToken ct) =>
+        Run<NistAssistView>(async () => Ok(await _assist.AssistExecutiveAsync(assessmentId, cycleId, scopeId,
+            new NistAssistRequest(request?.Reuse ?? true), CurrentActor(), ct)));
+
+    /// <summary>Resumo executivo aceito da rodada e escopo (204 quando não há).</summary>
+    [HttpGet(CyclePath + "/executive-summary")]
+    public Task<ActionResult<NistExecutiveSummaryView>> ExecutiveSummary(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct) =>
+        Run<NistExecutiveSummaryView>(async () =>
+            await _assist.GetExecutiveSummaryAsync(assessmentId, cycleId, scopeId, ct) is { } view ? Ok(view) : NoContent());
+
+    /// <summary>Aceitar (com ou sem edição) ou redigir o resumo executivo. Entra na próxima publicação enquanto a base for a mesma.</summary>
+    /// <response code="409">Versão desatualizada, ou sugestão gerada sobre um estado anterior da rodada.</response>
+    [HttpPut(CyclePath + "/executive-summary")]
+    [Authorize(Roles = Writers)]
+    public Task<ActionResult<NistExecutiveSummaryView>> SaveExecutiveSummary(
+        Guid assessmentId, Guid cycleId, Guid scopeId, [FromBody] SaveNistExecutiveSummaryRequest request, CancellationToken ct) =>
+        Run<NistExecutiveSummaryView>(async () =>
+        {
+            if (request is null) return BadRequest(Message("Corpo da requisição ausente."));
+            return Ok(await _assist.SaveExecutiveSummaryAsync(assessmentId, cycleId, scopeId, new SaveNistExecutiveSummaryCommand(
+                (request.Sections ?? Array.Empty<NistExecutiveSectionRequest>()).Select(s => new NistExecutiveSectionInput(s.Key ?? "", s.Text ?? "")).ToList(),
+                request.AssistanceId, request.ExpectedVersion, request.AcknowledgeStale), CurrentActor(), ct));
+        });
+
+    /// <summary>Revisão humana posterior do resumo, por outra pessoa que não quem o aceitou.</summary>
+    [HttpPost(CyclePath + "/executive-summary/review")]
+    [Authorize(Roles = Writers)]
+    public Task<ActionResult<NistExecutiveSummaryView>> ReviewExecutiveSummary(
+        Guid assessmentId, Guid cycleId, Guid scopeId, [FromBody] ReviewNistExecutiveSummaryRequest request, CancellationToken ct) =>
+        Run<NistExecutiveSummaryView>(async () =>
+        {
+            if (request is null) return BadRequest(Message("Corpo da requisição ausente."));
+            return Ok(await _assist.ReviewExecutiveSummaryAsync(assessmentId, cycleId, scopeId,
+                new ReviewNistExecutiveSummaryCommand(request.ExpectedVersion, request.Note), CurrentActor(), ct));
+        });
+
+    [HttpDelete(CyclePath + "/executive-summary")]
+    [Authorize(Roles = Writers)]
+    public Task<ActionResult<object>> WithdrawExecutiveSummary(
+        Guid assessmentId, Guid cycleId, Guid scopeId, [FromQuery] int expectedVersion, CancellationToken ct) =>
+        Run<object>(async () =>
+        {
+            await _assist.WithdrawExecutiveSummaryAsync(assessmentId, cycleId, scopeId, expectedVersion, CurrentActor(), ct);
+            return NoContent();
+        });
 
     // ---- Procedimentos de avaliação --------------------------------------------------------------------------
 
@@ -343,7 +448,7 @@ public sealed class NistAssessmentsController : ControllerBase
             if (request is null) return BadRequest(Message("Corpo da requisição ausente."));
             return Ok(await _work.UpdateFindingAsync(assessmentId, cycleId, scopeId, findingId, new UpdateNistFindingCommand(
                 request.Title, request.Condition, request.Risk, request.Impact, request.Severity, request.SeverityRationale, request.Priority,
-                request.PriorityRationale, request.Recommendation, request.EvidenceIds, request.ExpectedVersion), CurrentActor(), ct));
+                request.PriorityRationale, request.Recommendation, request.EvidenceIds, request.ExpectedVersion, Assistance(request.Assistance)), CurrentActor(), ct));
         });
 
     /// <summary>Situação do achado: aberto, risco aceito ou encerrado (com justificativa). A maturidade não muda por isso.</summary>
@@ -408,7 +513,10 @@ public sealed class NistAssessmentsController : ControllerBase
     // ---- Apoio ---------------------------------------------------------------------------------------
 
     private static NistPlanInput PlanInput(NistPlanRequest p) =>
-        new(p.Title ?? "", p.ProposedAction, Responsible(p.Responsible), p.ResponsibleArea, p.DueDate);
+        new(p.Title ?? "", p.ProposedAction, Responsible(p.Responsible), p.ResponsibleArea, p.DueDate, Assistance(p.Assistance));
+
+    private static NistAssistanceReference? Assistance(NistAssistanceRequest? a) =>
+        a?.AssistanceId is { } id ? new NistAssistanceReference(id, a.Fields, a.AcknowledgeStale) : null;
 
     private static NistResponsibleInput? Responsible(NistResponsibleRequest? r) =>
         r is null ? null : new NistResponsibleInput(r.UserId, r.Name, r.IsExternal, r.Contact);
@@ -429,13 +537,17 @@ public sealed class NistAssessmentsController : ControllerBase
         {
             return BadRequest(Message(ex.Message));
         }
+        catch (NistAssistStaleException ex)
+        {
+            return Conflict(new { message = ex.Message, reason = "AssistanceStale" });
+        }
         catch (NistAssessmentConflictException ex)
         {
             return Conflict(Message(ex.Message));
         }
         catch (NistAiUnavailableException ex)
         {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, Message(ex.Message));
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { message = ex.Message, reason = ex.Reason });
         }
     }
 
@@ -471,7 +583,23 @@ public sealed record SaveNistEvaluationRequest(
     int ExpectedVersion,
     Guid? OwnerUserId = null,
     bool OwnerIsExternal = false,
-    string? OwnerContact = null);
+    string? OwnerContact = null,
+    NistAssistanceRequest? Assistance = null);
+
+/// <summary>[AEGIS-NIST-AI-ASSIST-01] Sugestão de origem do conteúdo aplicado e os campos que vieram dela.</summary>
+public sealed record NistAssistanceRequest(Guid? AssistanceId, IReadOnlyList<string>? Fields, bool AcknowledgeStale = false);
+
+public sealed record NistAssistHttpRequest(bool? Reuse, string? Focus);
+
+public sealed record NistAssistedProcedureRequest(string? Method, string? Procedure);
+
+public sealed record PlanProceduresFromAssistanceRequest(Guid? AssistanceId, IReadOnlyList<NistAssistedProcedureRequest>? Procedures, bool AcknowledgeStale = false);
+
+public sealed record NistExecutiveSectionRequest(string? Key, string? Text);
+
+public sealed record SaveNistExecutiveSummaryRequest(IReadOnlyList<NistExecutiveSectionRequest>? Sections, Guid? AssistanceId, int ExpectedVersion, bool AcknowledgeStale = false);
+
+public sealed record ReviewNistExecutiveSummaryRequest(int ExpectedVersion, string? Note);
 
 public sealed record AssignNistRolesRequest(Guid? AssessorUserId, Guid? ReviewerUserId, int ExpectedVersion);
 
@@ -495,7 +623,9 @@ public sealed record UpdateNistProcedureRequest(
 
 public sealed record NistResponsibleRequest(Guid? UserId, string? Name, bool IsExternal, string? Contact);
 
-public sealed record NistPlanRequest(string? Title, string? ProposedAction, NistResponsibleRequest? Responsible, string? ResponsibleArea, DateOnly? DueDate);
+public sealed record NistPlanRequest(
+    string? Title, string? ProposedAction, NistResponsibleRequest? Responsible, string? ResponsibleArea, DateOnly? DueDate,
+    NistAssistanceRequest? Assistance = null);
 
 public sealed record CreateNistFindingRequest(
     string? Title, string? Condition, string? Risk, string? Impact, string? Severity, string? SeverityRationale, string? Priority,
@@ -503,7 +633,8 @@ public sealed record CreateNistFindingRequest(
 
 public sealed record UpdateNistFindingRequest(
     string? Title, string? Condition, string? Risk, string? Impact, string? Severity, string? SeverityRationale, string? Priority,
-    string? PriorityRationale, string? Recommendation, IReadOnlyList<Guid>? EvidenceIds, int ExpectedVersion);
+    string? PriorityRationale, string? Recommendation, IReadOnlyList<Guid>? EvidenceIds, int ExpectedVersion,
+    NistAssistanceRequest? Assistance = null);
 
 public sealed record SetNistFindingStatusRequest(string? Status, string? Note, int ExpectedVersion);
 

@@ -32,7 +32,12 @@ public sealed record NistMaturityReport(
     IReadOnlyList<NistReportGap> PriorityGaps,
     IReadOnlyList<string> Limitations,
     /// <summary>Nulo no conteúdo revisado (a impressão digital é calculada sem ele); preenchido na publicação.</summary>
-    NistReportPublication? Publication)
+    NistReportPublication? Publication,
+    /// <summary>
+    /// [AEGIS-NIST-AI-ASSIST-01] Resumo executivo ACEITO por pessoa e ainda válido para esta base, com a procedência. Ausente
+    /// (e omitido do JSON) quando não há: o relatório antigo e o relatório sem interpretação seguem idênticos.
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] NistReportInterpretation? Interpretation = null)
 {
     public const string SchemaV1 = "nist-maturity-report-v1";
 }
@@ -181,7 +186,9 @@ public sealed record NistReportSubcategory(
     int Version,
     IReadOnlyList<NistReportProcedure> Procedures,
     IReadOnlyList<NistReportEvidence> Evidence,
-    IReadOnlyList<Guid> FindingIds);
+    IReadOnlyList<Guid> FindingIds,
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] Campos com conteúdo assistido aceito (omitido do JSON quando não há).</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] NistReportAssistance? Assistance = null);
 
 public sealed record NistReportPlan(
     Guid Id,
@@ -231,7 +238,9 @@ public sealed record NistReportFinding(
     int? OriginTargetLevel,
     int? OriginGap,
     NistReportPlan? Plan,
-    string TreatmentLabel);
+    string TreatmentLabel,
+    /// <summary>[AEGIS-NIST-AI-ASSIST-01] Recomendação ou ação do plano com conteúdo assistido aceito (omitido quando não há).</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] NistReportAssistance? Assistance = null);
 
 public sealed record NistReportGap(
     string Code,
@@ -246,6 +255,68 @@ public sealed record NistReportGap(
     string TreatmentLabel);
 
 public sealed record NistReportPublication(DateTimeOffset PublishedAt, string? PublishedByName, string ContentFingerprint);
+
+/// <summary>[AEGIS-NIST-AI-ASSIST-01] Um campo do registro cujo texto vigente veio de uma sugestão da IA, com a procedência.</summary>
+public sealed record NistReportAssistedField(
+    string Field, string Label, Guid AssistanceId, string Mode, DateTimeOffset GeneratedAt, string? IncorporatedByName,
+    DateTimeOffset IncorporatedAt, bool Edited, bool StaleAcknowledged);
+
+public sealed record NistReportAssistance(IReadOnlyList<NistReportAssistedField> Fields)
+{
+    /// <summary>Uma linha legível por incorporação: campos, modo do motor, quem incorporou, quando e se editou.</summary>
+    public string Describe() => string.Join("; ", Fields
+        .GroupBy(f => (f.AssistanceId, f.IncorporatedByName, f.IncorporatedAt, f.Edited, f.StaleAcknowledged, f.Mode, f.GeneratedAt))
+        .Select(g => string.Join(", ", g.Select(f => f.Label)) + " — sugestão " + (g.Key.Mode == "Real" ? "da IA" : "SIMULADA (demonstração)") +
+                     " de " + Stamp(g.Key.GeneratedAt) + ", incorporada por " + (g.Key.IncorporatedByName ?? "autor não identificado") +
+                     " em " + Stamp(g.Key.IncorporatedAt) + (g.Key.Edited ? " (editada pela pessoa)" : " (sem edição)") +
+                     (g.Key.StaleAcknowledged ? " — sugestão desatualizada, revisada pela pessoa" : "")));
+
+    private static string Stamp(DateTimeOffset v) =>
+        v.ToUniversalTime().ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture) + " UTC";
+}
+
+/// <summary>[AEGIS-NIST-AI-ASSIST-01] Seção do resumo executivo aceito.</summary>
+public sealed record NistReportInterpretationSection(string Key, string Title, string Text);
+
+/// <summary>
+/// [AEGIS-NIST-AI-ASSIST-01] Resumo executivo aceito, congelado com a procedência: origem (assistido ou redigido pela pessoa),
+/// modo do motor, quem pediu, quem aceitou/editou e a revisão humana posterior (quando houve e ainda vale).
+/// </summary>
+public sealed record NistReportInterpretation(
+    IReadOnlyList<NistReportInterpretationSection> Sections,
+    string Origin,
+    string? Mode,
+    Guid? AssistanceId,
+    DateTimeOffset? GeneratedAt,
+    string? RequestedByName,
+    string? AcceptedByName,
+    DateTimeOffset AcceptedAt,
+    bool Edited,
+    bool StaleAcknowledged,
+    string? ReviewedByName,
+    DateTimeOffset? ReviewedAt,
+    string BasisFingerprint,
+    string Notice)
+{
+    /// <summary>Procedência em pares rótulo/valor — a mesma em HTML, PDF e CSV.</summary>
+    public IReadOnlyList<(string Label, string Value)> Provenance() => new List<(string, string)>
+    {
+        ("Origem", Origin == "Manual" ? "Redigido pela pessoa"
+            : Mode == "Real" ? "Assistido por IA (provedor autorizado), aceito por pessoa"
+            : "Assistido pelo motor SIMULADO (demonstração, sem análise real), aceito por pessoa"),
+        ("Preparado", GeneratedAt is { } g ? Stamp(g) + (RequestedByName is null ? "" : " a pedido de " + RequestedByName) : "—"),
+        ("Aceito", Stamp(AcceptedAt) + " por " + (AcceptedByName ?? "autor não identificado")
+            + (Origin == "Manual" ? "" : Edited ? " (com edição da pessoa)" : " (sem edição)")
+            + (StaleAcknowledged ? " — sugestão desatualizada, revisada pela pessoa" : "")),
+        ("Revisão humana posterior", ReviewedByName is null ? "não houve" : ReviewedByName + " em " + Stamp(ReviewedAt)),
+        ("Base do resumo", BasisFingerprint),
+    };
+
+    public string Describe() => string.Join(" · ", Provenance().Select(p => p.Label + ": " + p.Value));
+
+    private static string Stamp(DateTimeOffset? v) =>
+        v is { } x ? x.ToUniversalTime().ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture) + " UTC" : "—";
+}
 
 /// <summary>Rótulos pt-BR ÚNICOS da jornada NIST — tela, relatório e CSV dizem a mesma coisa.</summary>
 public static class NistLabels

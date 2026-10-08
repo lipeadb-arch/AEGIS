@@ -89,6 +89,72 @@ public sealed class NistWorkService : INistWorkService
         return ProcedureView(entity);
     }
 
+    /// <summary>
+    /// [AEGIS-NIST-AI-ASSIST-01] Planeja, numa única gravação, os procedimentos sugeridos que a PESSOA escolheu (podendo editar o
+    /// texto). Entram como PLANEJADOS — planejar não comprova a realização — com a procedência registrada.
+    /// </summary>
+    public async Task<IReadOnlyList<NistProcedureView>> PlanProceduresFromAssistanceAsync(
+        Guid assessmentId, Guid cycleId, Guid scopeId, string code, PlanNistProceduresFromAssistanceCommand command, RemediationActor actor, CancellationToken ct = default)
+    {
+        RequireTenant(_tenant);
+        ArgumentNullException.ThrowIfNull(command);
+        var ctx = await LoadScopeContextAsync(_db, assessmentId, cycleId, scopeId, ct);
+        EnsureOpen(ctx.Cycle);
+        var sub = ctx.FindSubcategory(code);
+        var items = command.Procedures ?? Array.Empty<NistAssistedProcedureInput>();
+        if (items.Count == 0) throw new NistAssessmentValidationException("Escolha pelo menos um procedimento sugerido para planejar.");
+        if (items.Count > 6) throw new NistAssessmentValidationException("Planeje no máximo 6 procedimentos de uma vez.");
+        var parsed = items.Select(i =>
+        {
+            var method = ParseEnum<NistTestMethod>(i.Method, "Método inválido (Examine, Interview ou Test).");
+            var text = Required(i.Procedure, "Descreva o procedimento planejado.", MaxLongText, "O procedimento");
+            if (text.Length < MinJustification) throw new NistAssessmentValidationException("Descreva o procedimento planejado (pelo menos 10 caracteres).");
+            return (Method: method, Text: text);
+        }).ToList();
+
+        var (generation, stale) = await NistAssistProvenance.ResolveAsync(_db,
+            new NistAssistanceReference(command.AssistanceId, null, command.AcknowledgeStale), NistAssistKind.Subcategory,
+            assessmentId, cycleId, scopeId, sub.Code, null,
+            async _ => (await new NistAssistContextBuilder(_db, _language).SubcategoryAsync(ctx, sub, ct)).Fingerprint, ct);
+        var suggested = NistAssistProvenance.ApplicableOf(generation).Where(kv => kv.Key.StartsWith("procedure:", StringComparison.Ordinal))
+            .Select(kv => kv.Value).ToList();
+        if (suggested.Count == 0) throw new NistAssessmentValidationException("A sugestão não traz procedimentos para planejar.");
+
+        var now = _clock.GetUtcNow();
+        var created = new List<NistTestProcedure>();
+        foreach (var (method, text) in parsed)
+        {
+            var entity = new NistTestProcedure
+            {
+                AssessmentId = assessmentId,
+                CycleId = cycleId,
+                AssessmentScopeId = scopeId,
+                SubcategoryCode = sub.Code,
+                Method = method,
+                Procedure = text,
+                Status = NistProcedureStatus.Planned,
+                OriginNote = Truncate($"Proposto pela assistência de IA ({(generation.Mode == NistAssistEngineMode.Real ? "provedor autorizado" : "simulada")}) " +
+                                      "e planejado pela pessoa. Planejar não comprova a realização.", 500),
+                CreatedByAccountId = actor.AccountId,
+                CreatedByName = Name(actor),
+                Version = 1,
+                CreatedAt = now,
+            };
+            _db.NistProcedures.Add(entity);
+            created.Add(entity);
+            var changes = new List<NistFieldChange>();
+            Diff(changes, "method", "método", null, NistLabels.Method(method.ToString()));
+            Diff(changes, "procedure", "procedimento", null, text);
+            Audit(_db, actor, now, assessmentId, cycleId, scopeId, sub.Code, "Procedure", entity.Id, "Created",
+                $"Procedimento planejado em {sub.Code} ({NistLabels.Method(method.ToString())}) a partir de sugestão da assistência.", changes);
+            var same = suggested.FirstOrDefault(s => NistAssistProvenance.Hash(s) == NistAssistProvenance.Hash(text));
+            NistAssistProvenance.Record(_db, generation, stale, NistAssistTarget.Procedure, entity.Id,
+                new[] { new NistAssistProvenance.Incorporated("procedure", "procedimento planejado", text) }, actor, now, suggestedOverride: same ?? "");
+        }
+        await SaveAsync(ct);
+        return created.Select(ProcedureView).ToList();
+    }
+
     public async Task<NistProcedureView> UpdateProcedureAsync(
         Guid assessmentId, Guid cycleId, Guid scopeId, string code, Guid procedureId, UpdateNistProcedureCommand command,
         RemediationActor actor, CancellationToken ct = default)
@@ -225,6 +291,8 @@ public sealed class NistWorkService : INistWorkService
         if (FindingBlockedReason(ctx.Cycle, eval, procedures) is { } blocked)
             throw new NistAssessmentValidationException(blocked);
 
+        if (command.Plan?.Assistance is not null)
+            throw new NistAssessmentValidationException("A sugestão de tratamento é de um achado já registrado: registre o achado e crie o plano a partir dele.");
         var fields = ValidateFinding(command.Title, command.Condition, command.Risk, command.Impact, command.Severity, command.SeverityRationale,
             command.Priority, command.PriorityRationale, command.Recommendation);
         var evidenceIds = await ValidEvidenceAsync(scopeId, cycleId, sub.Code, command.EvidenceIds ?? Array.Empty<Guid>(), ct);
@@ -298,6 +366,9 @@ public sealed class NistWorkService : INistWorkService
         ArgumentNullException.ThrowIfNull(command);
         var cycle = await LoadCycleAsync(_db, assessmentId, cycleId, ct);
         EnsureOpen(cycle);
+        (NistAiAssistance Generation, bool Stale)? assisted = command.Assistance is { } reference
+            ? await ResolveFindingAssistanceAsync(assessmentId, cycleId, scopeId, findingId, reference, new[] { "recommendation" }, ct)
+            : null;
         var finding = await LoadFindingForWriteAsync(assessmentId, cycleId, scopeId, findingId, command.ExpectedVersion, ct);
 
         var fields = ValidateFinding(
@@ -335,6 +406,9 @@ public sealed class NistWorkService : INistWorkService
         finding.Version++;
         Audit(_db, actor, _clock.GetUtcNow(), assessmentId, cycleId, scopeId, finding.SubcategoryCode, "Finding", finding.Id, "Updated",
             $"Achado alterado: {finding.Title}.", changes);
+        if (assisted is { } a)
+            NistAssistProvenance.Record(_db, a.Generation, a.Stale, NistAssistTarget.Finding, finding.Id,
+                new[] { new NistAssistProvenance.Incorporated("recommendation", "recomendação", finding.Recommendation) }, actor, _clock.GetUtcNow());
         await SaveAsync(ct);
         _db.ChangeTracker.Clear();
         return await GetFindingAsync(assessmentId, cycleId, scopeId, findingId, ct);
@@ -420,7 +494,21 @@ public sealed class NistWorkService : INistWorkService
             ?? throw new NistAssessmentNotFoundException("Achado não encontrado nesta avaliação, rodada e escopo.");
         if (finding.Status != NistFindingStatus.Open)
             throw new NistAssessmentValidationException("Só um achado aberto recebe plano de tratamento novo. Reabra o achado antes.");
-        await CreatePlanForAsync(finding, input, actor, ct);
+        if (input.Assistance is not { } reference)
+        {
+            await CreatePlanForAsync(finding, input, actor, ct);
+        }
+        else
+        {
+            var assisted = await ResolveFindingAssistanceAsync(assessmentId, cycleId, scopeId, findingId, reference, new[] { "proposedAction" }, ct);
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            var planId = await CreatePlanForAsync(finding, input, actor, ct);
+            var proposed = await _db.ActionPlans.AsNoTracking().Where(p => p.Id == planId).Select(p => p.Description).FirstAsync(ct);
+            NistAssistProvenance.Record(_db, assisted.Generation, assisted.Stale, NistAssistTarget.Plan, planId,
+                new[] { new NistAssistProvenance.Incorporated("proposedAction", "ação proposta do plano", proposed) }, actor, _clock.GetUtcNow());
+            await SaveAsync(ct);
+            await tx.CommitAsync(ct);
+        }
         _db.ChangeTracker.Clear();
         return await GetFindingAsync(assessmentId, cycleId, scopeId, findingId, ct);
     }
@@ -507,13 +595,32 @@ public sealed class NistWorkService : INistWorkService
     /// O tratamento segue além da rodada: um achado de uma rodada encerrada continua recebendo plano, execução e validação —
     /// encerrar a rodada congela a AVALIAÇÃO, não o trabalho de correção.
     /// </summary>
-    private async Task CreatePlanForAsync(NistFinding finding, NistPlanInput plan, RemediationActor actor, CancellationToken ct)
+    private async Task<Guid> CreatePlanForAsync(NistFinding finding, NistPlanInput plan, RemediationActor actor, CancellationToken ct)
     {
-        await Remediate(() => _remediation.CreateForNistFindingAsync(new CreateNistFindingActionPlanCommand(
+        var created = await Remediate(() => _remediation.CreateForNistFindingAsync(new CreateNistFindingActionPlanCommand(
             finding.Id, finding.AssessmentId, finding.CycleId, finding.AssessmentScopeId, finding.SubcategoryCode, finding.Title,
             plan.Title, plan.ProposedAction ?? finding.Recommendation,
             plan.Responsible is { } r ? new ActionPlanResponsible(r.UserId, r.Name, r.IsExternal, r.Contact) : null,
             plan.ResponsibleArea, plan.DueDate), actor, ct));
+        return created.Id;
+    }
+
+    /// <summary>
+    /// [AEGIS-NIST-AI-ASSIST-01] A sugestão de TRATAMENTO deste achado, ainda válida para o contexto atual (senão 409, a menos que a
+    /// pessoa declare a revisão). Não cria, não altera e não conclui plano: só confere o que a pessoa vai gravar.
+    /// </summary>
+    private async Task<(NistAiAssistance Generation, bool Stale)> ResolveFindingAssistanceAsync(
+        Guid assessmentId, Guid cycleId, Guid scopeId, Guid findingId, NistAssistanceReference reference, string[] allowed, CancellationToken ct)
+    {
+        var fields = NistAssistProvenance.CheckFields(reference, allowed);
+        var ctx = await LoadScopeContextAsync(_db, assessmentId, cycleId, scopeId, ct);
+        var row = ctx.Findings.FirstOrDefault(f => f.Id == findingId)
+                  ?? throw new NistAssessmentNotFoundException("Achado não encontrado nesta avaliação, rodada e escopo.");
+        var sub = ctx.FindSubcategory(row.SubcategoryCode);
+        var resolved = await NistAssistProvenance.ResolveAsync(_db, reference, NistAssistKind.Finding, assessmentId, cycleId, scopeId, row.SubcategoryCode, findingId,
+            async g => (await new NistAssistContextBuilder(_db, _language).FindingAsync(ctx, sub, row, NistAssistSections.NormalizeFocus(g.Focus), ct)).Fingerprint, ct);
+        NistAssistProvenance.RequireApplicable(resolved.Generation, fields);
+        return resolved;
     }
 
     /// <summary>O plano precisa ser DESTE achado, desta avaliação, rodada e escopo — o link nomeia os quatro.</summary>
@@ -539,12 +646,12 @@ public sealed class NistWorkService : INistWorkService
     }
 
     /// <summary>Traduz os erros do serviço de planos para a jornada NIST (mesmos status HTTP).</summary>
-    private static async Task Remediate<T>(Func<Task<T>> call)
+    private static async Task<T> Remediate<T>(Func<Task<T>> call)
     {
         try
         {
             var result = await call();
-            if (result is null) throw new NistAssessmentNotFoundException("Plano não encontrado.");
+            return result ?? throw new NistAssessmentNotFoundException("Plano não encontrado.");
         }
         catch (ActionPlanConflictException ex)
         {
@@ -576,11 +683,14 @@ public sealed class NistWorkService : INistWorkService
         var cycles = await _db.NistCycles.AsNoTracking().Where(c => cycleIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id, c => c.Name, ct);
         var scopes = await _db.Scopes.AsNoTracking().Where(s => scopeIds.Contains(s.Id)).ToListAsync(ct);
         var plans = await PlansByFindingAsync(_db, findings.Select(f => f.Id).ToList(), ct);
+        var current = findings.ToDictionary(f => f.Id, f => CurrentPlan(plans.TryGetValue(f.Id, out var l) ? l : null));
+        var assisted = await NistAssistProvenance.LoadForTargetsAsync(_db,
+            findings.Select(f => f.Id).Concat(current.Values.Where(p => p is not null).Select(p => p!.Id)).ToList(), ct);
         return findings.Select(f => FindingView(f,
             cycles.TryGetValue(f.CycleId, out var cn) ? cn : "",
             scopes.FirstOrDefault(s => s.Id == f.AssessmentScopeId) is { } sc ? ScopeName(sc) : "",
             _language?.Get(f.SubcategoryCode)?.Title ?? f.SubcategoryCode,
-            CurrentPlan(plans.TryGetValue(f.Id, out var l) ? l : null))).ToList();
+            current[f.Id]) with { AssistedFields = NistAssistProvenance.FindingFields(assisted, f, current[f.Id]) }).ToList();
     }
 
     private string TitleOf(NistSubcategory s) => _language?.Get(s.Code)?.Title ?? s.Code;

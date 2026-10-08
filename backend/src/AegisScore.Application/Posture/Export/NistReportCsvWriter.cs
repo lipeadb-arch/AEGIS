@@ -51,6 +51,13 @@ public static class NistReportCsvWriter
            .Set("Observação", r.Methodology.Statement)
            .End();
 
+        // [AEGIS-NIST-AI-ASSIST-01] Resumo executivo aceito: uma linha por seção, com a procedência (só quando existe).
+        if (r.Interpretation is { } it)
+            foreach (var sec in it.Sections)
+                row.Start("Interpretação", null, sec.Title, null, null)
+                   .Set("Observação", sec.Text).Set("Origem do conteúdo", it.Describe())
+                   .End();
+
         foreach (var f in r.Functions)
             row.Start("Função", f.Code, f.Name, f.Code, null)
                .Sys("Média atual", Num(f.Current)).Sys("Média alvo", Num(f.Target)).Sys("Lacuna média", Num(f.Gap))
@@ -65,7 +72,8 @@ public static class NistReportCsvWriter
                .Set("Não se aplica", x.NotApplicable ? "Sim" : "Não").Set("Revisão", x.ReviewStateLabel)
                .Set("Responsável", Person(x.Owner)).Set("Avaliador", x.AssessorName).Set("Revisor", x.ReviewerName)
                .Set("Registrado por", x.RecordedByName).Sys("Registrado em", Iso(x.RecordedAt))
-               .Set("Origem do conteúdo", NistLabels.ContentOrigin(x.ContentOrigin) + (x.OriginNote is null ? "" : " — " + x.OriginNote))
+               .Set("Origem do conteúdo", NistLabels.ContentOrigin(x.ContentOrigin) + (x.OriginNote is null ? "" : " — " + x.OriginNote)
+                    + (x.Assistance is { } xa ? " · Conteúdo assistido por IA: " + xa.Describe() : ""))
                .Set("Justificativa", x.Rationale).Set("Observações (atual)", x.CurrentComments).Set("Observações (alvo)", x.TargetComments)
                .Set("Lacunas", x.Gaps).Set("Risco ou impacto", x.RiskImpact).Set("Orientação de melhoria", x.ImprovementGuidance)
                .End();
@@ -103,6 +111,7 @@ public static class NistReportCsvWriter
                .Set("Tratamento", f.TreatmentLabel)
                .Set("Evidência", sub is null ? null : Titles(sub, f.EvidenceIds))
                .Set("Registrado por", f.CreatedByName).Sys("Registrado em", Iso(f.CreatedAt))
+               .Set("Origem do conteúdo", f.Assistance is { } fa ? "Conteúdo assistido por IA: " + fa.Describe() : null)
                .End();
         }
 
