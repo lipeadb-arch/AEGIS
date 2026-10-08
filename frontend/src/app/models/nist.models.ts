@@ -335,6 +335,32 @@ export interface NistEvaluation {
   reviewDecisionByName?: string | null;
   reviewDecisionAt?: string | null;
   reviewDecisionNote?: string | null;
+  /** [AEGIS-NIST-AI-ASSIST-01] Campos cujo texto VIGENTE veio de uma sugestão da IA (editado ou não). */
+  assistedFields?: NistAssistedField[] | null;
+}
+
+/**
+ * [AEGIS-NIST-AI-ASSIST-01] Procedência de um campo: o texto vigente veio de uma geração (motor real ou simulado), incorporado por
+ * uma pessoa pela gravação normal — nunca é aprovação nem revisão.
+ */
+export interface NistAssistedField {
+  field: string;
+  label: string;
+  assistanceId: string;
+  mode: 'Real' | 'Simulated' | string;
+  generatedAt: string;
+  requestedByName: string | null;
+  incorporatedByName: string | null;
+  incorporatedAt: string;
+  edited: boolean;
+  staleAcknowledged: boolean;
+}
+
+/** [AEGIS-NIST-AI-ASSIST-01] Referência à sugestão de origem do conteúdo aplicado, enviada com a gravação normal. */
+export interface NistAssistanceRef {
+  assistanceId: string;
+  fields: string[];
+  acknowledgeStale: boolean;
 }
 
 export type NistEvidenceOrigin = 'Manual' | 'GovernanceDocument' | 'KnightIndicator' | 'AssetInventory';
@@ -430,14 +456,6 @@ export interface NistSubcategoryDetail {
   findingBlockedReason?: string | null;
 }
 
-export interface NistAiSuggestion {
-  suggestedCurrentLevel: number;
-  confidence: number;
-  rationale: string;
-  simulated: boolean;
-  generatedAt: string;
-}
-
 export interface NistHistoryItem {
   assessmentId: string;
   assessmentName: string;
@@ -511,6 +529,8 @@ export interface NistProcedure {
   createdByName: string | null;
   createdAt: string;
   version: number;
+  /** [AEGIS-NIST-AI-ASSIST-01] O texto planejado veio de uma sugestão da IA. */
+  assistedFrom?: NistAssistedField | null;
 }
 
 export interface NistFindingOrigin {
@@ -618,6 +638,8 @@ export interface NistFinding {
   version: number;
   plan: NistPlan | null;
   treatmentLabel: string;
+  /** [AEGIS-NIST-AI-ASSIST-01] Recomendação e/ou ação do plano vindas de sugestão da IA. */
+  assistedFields?: NistAssistedField[] | null;
 }
 
 // ---- Publicação, comparação e importação -------------------------------------------------------------------------
@@ -686,6 +708,8 @@ export interface NistPublicationPreview {
    * PRÓPRIA — separada da do conteúdo avaliativo. A publicação devolve as duas.
    */
   history?: FrozenPostureHistory | null;
+  /** [AEGIS-NIST-AI-ASSIST-01] O resumo executivo aceito entra nesta publicação. */
+  interpretationIncluded?: boolean;
 }
 
 export interface NistPublication {
@@ -817,6 +841,7 @@ export interface SaveNistEvaluationRequest {
   ownerUserId?: string | null;
   ownerIsExternal?: boolean;
   ownerContact?: string | null;
+  assistance?: NistAssistanceRef | null;
 }
 
 export interface LinkNistEvidenceRequest {
@@ -854,6 +879,23 @@ export interface NistPlanRequest {
   responsible: NistResponsibleRequest | null;
   responsibleArea: string | null;
   dueDate: string | null;
+  assistance?: NistAssistanceRef | null;
+}
+
+/** Edição do achado (campos nulos permanecem). */
+export interface UpdateNistFindingRequest {
+  title?: string | null;
+  condition?: string | null;
+  risk?: string | null;
+  impact?: string | null;
+  severity?: string | null;
+  severityRationale?: string | null;
+  priority?: string | null;
+  priorityRationale?: string | null;
+  recommendation?: string | null;
+  evidenceIds?: string[] | null;
+  expectedVersion: number;
+  assistance?: NistAssistanceRef | null;
 }
 
 export interface CreateNistFindingRequest {
@@ -1455,4 +1497,179 @@ export function cycleIsClosed(c: Pick<NistCycle, 'status'> | null | undefined): 
 /** Função da subcategoria pelo código ("ID.AM-01" → "id"). */
 export function functionSlugOf(code: string): string {
   return code.split('.')[0].toLowerCase();
+}
+
+// ---- [AEGIS-AUDITOR-CONTEXT-01] Evidências da rodada e correlação KNIGHT × NIST (calculadas pelos registros, sem IA) -------------
+
+export interface NistKnightRun {
+  runId: string;
+  source: string;
+  sourceLabel: string;
+  mode: string;
+  sourceState: string;
+  catalogVersion: string;
+  completedAt: string | null;
+  isDemo: boolean;
+  partial: boolean;
+}
+
+/** Resultado técnico relacionado: `evidenceId` preenchido = vinculado pelo assessor; nulo = disponível para revisão. */
+export interface NistTechnicalEvidence {
+  evidenceId: string | null;
+  knightRunId: string;
+  knightIndicatorId: string;
+  title: string;
+  status: string;
+  statusLabel: string;
+  severity: string;
+  sourceLabel: string;
+  collectedAt: string | null;
+  isDemo: boolean;
+  partialCollection: boolean;
+  newerStatus: string | null;
+  newerRunId: string | null;
+  limitation: string;
+}
+
+export interface NistLinkedPlan {
+  planId: string;
+  origin: 'NistFinding' | 'KnightFinding';
+  title: string;
+  status: string;
+  statusLabel: string;
+  isOverdue: boolean;
+  isActive: boolean;
+  nistFindingId: string | null;
+  knightIndicatorId: string | null;
+}
+
+export interface NistCorrelationRow {
+  code: string;
+  title: string;
+  functionCode: string;
+  state: string;
+  currentLevel: number | null;
+  targetLevel: number | null;
+  humanConfirmed: boolean;
+  linkedTechnical: NistTechnicalEvidence[];
+  candidates: NistTechnicalEvidence[];
+  technicalNotEvaluated: number;
+  linkedEvidence: number;
+  evaluatedWithoutEvidence: boolean;
+  openFindings: number;
+  plans: NistLinkedPlan[];
+}
+
+/** Contagens sobre todas as subcategorias do escopo; controles contados uma vez mesmo vinculados a várias subcategorias. */
+export interface NistCorrelationSummary {
+  subcategoriesInScope: number;
+  subcategoriesWithKnightMapping: number;
+  linkedTechnicalLinks: number;
+  linkedTechnicalControls: number;
+  subcategoriesWithLinkedTechnical: number;
+  candidateLinks: number;
+  candidateControls: number;
+  subcategoriesWithCandidates: number;
+  subcategoriesWithTechnicalNotEvaluated: number;
+  subcategoriesEvaluatedWithoutEvidence: number;
+  plans: number;
+  plansOverdue: number;
+}
+
+export interface NistDocumentLink {
+  evidenceId: string;
+  code: string;
+  documentId: string;
+  title: string;
+  linkedAt: string;
+  recordedByName: string | null;
+}
+
+export interface NistInventoryLink {
+  evidenceId: string;
+  title: string;
+  collectedAt: string;
+  originScope: string | null;
+  recordedByName: string | null;
+}
+
+export interface NistInventoryTarget {
+  code: string;
+  title: string;
+  state: string;
+  currentLevel: number | null;
+  humanConfirmed: boolean;
+  linked: NistInventoryLink[];
+}
+
+export interface NistEvidenceOverview {
+  assessmentId: string;
+  cycleId: string;
+  scopeId: string;
+  assessmentName: string;
+  cycleName: string;
+  cycleStatus: string;
+  scopeName: string;
+  asOf: string;
+  knightRuns: NistKnightRun[];
+  summary: NistCorrelationSummary;
+  rows: NistCorrelationRow[];
+  documentLinks: NistDocumentLink[];
+  inventory: NistInventoryTarget[];
+  activeAssets: number;
+  inventorySnapshot: string;
+  limitations: string[];
+}
+
+/** Rota da subcategoria na jornada (com a seleção) — para abrir o registro de origem. */
+export function subcategoryRoute(code: string): string[] {
+  return ['/nist', code.slice(0, 2).toLowerCase(), code];
+}
+
+/** Destino no KNIGHT para um resultado técnico (a execução exata e o controle). */
+export function knightResultQuery(t: Pick<NistTechnicalEvidence, 'knightRunId' | 'knightIndicatorId'>): Record<string, string> {
+  return { run: t.knightRunId, finding: t.knightIndicatorId };
+}
+
+/** Linhas com algo a revisar primeiro: disponíveis reprovados, nível sem evidência, não avaliados; depois o restante, por código. */
+export function correlationAttention(rows: NistCorrelationRow[]): NistCorrelationRow[] {
+  const weight = (r: NistCorrelationRow) =>
+    (r.candidates.some((c) => c.status === 'Exposed') ? 4 : 0) + (r.evaluatedWithoutEvidence ? 2 : 0) + (r.candidates.length > 0 ? 1 : 0)
+    + (r.technicalNotEvaluated > 0 ? 1 : 0);
+  return [...rows].sort((a, b) => weight(b) - weight(a) || a.code.localeCompare(b.code));
+}
+
+/** O documento já está vinculado a esta subcategoria nesta rodada e escopo? */
+export function documentLinkFor(links: NistDocumentLink[], documentId: string, code: string): NistDocumentLink | null {
+  return links.find((l) => l.documentId === documentId && l.code === code) ?? null;
+}
+
+/** Seleção NIST completa a partir dos parâmetros da URL (avaliação, rodada e escopo); nula se faltar algum. */
+export function nistCtxFromParams(p: { get(name: string): string | null }): { assessmentId: string; cycleId: string; scopeId: string } | null {
+  const a = p.get('avaliacao');
+  const c = p.get('rodada');
+  const s = p.get('escopo');
+  return a && c && s ? { assessmentId: a, cycleId: c, scopeId: s } : null;
+}
+
+/**
+ * [AEGIS-AUDITOR-CONTEXT-01] Registro de ORIGEM de uma evidência (vinculada ou disponível), dentro da aplicação: a execução e o controle no
+ * KNIGHT, o documento na biblioteca (com a seleção NIST) ou o inventário (com a seleção). Registro do analista não tem origem navegável.
+ */
+export function evidenceOriginLink(
+  e: { originKind: string; originRef?: string | null; documentId?: string | null; knightRunId?: string | null; knightIndicatorId?: string | null },
+  params: Record<string, string>,
+): { commands: string[]; queryParams: Record<string, string>; label: string } | null {
+  if (e.originKind === 'KnightIndicator') {
+    const [ref, ind] = (e.originRef ?? '').split('/', 2);
+    const run = e.knightRunId ?? (ref || null);
+    const indicator = e.knightIndicatorId ?? (ind || null);
+    return run && indicator ? { commands: ['/knight'], queryParams: { run, finding: indicator }, label: 'abrir no KNIGHT' } : null;
+  }
+  if (e.originKind === 'GovernanceDocument') {
+    const doc = e.documentId ?? e.originRef ?? null;
+    return doc ? { commands: ['/nist', 'gv', 'documentos'], queryParams: { ...params, documento: doc }, label: 'abrir na biblioteca' } : null;
+  }
+  if (e.originKind === 'AssetInventory') return { commands: ['/nist', 'id', 'ativos'], queryParams: { ...params }, label: 'abrir o inventário' };
+  return null;
 }

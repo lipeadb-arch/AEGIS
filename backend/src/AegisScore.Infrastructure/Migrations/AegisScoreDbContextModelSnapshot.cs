@@ -960,6 +960,58 @@ namespace AegisScore.Infrastructure.Migrations
                     b.ToTable("AssetThreatObservations");
                 });
 
+            modelBuilder.Entity("AegisScore.Domain.AuditorConversationTurn", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FocusLabel")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Question")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("Reply")
+                        .IsRequired()
+                        .HasMaxLength(12000)
+                        .HasColumnType("character varying(12000)");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Simulated")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "AccountId", "ConversationId");
+
+                    b.HasIndex("TenantId", "ConversationId", "Sequence")
+                        .IsUnique()
+                        .HasDatabaseName("UX_AuditorConversationTurns_Sequence");
+
+                    b.ToTable("AuditorConversationTurns");
+                });
+
             modelBuilder.Entity("AegisScore.Domain.BlastRadiusAssessment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3274,6 +3326,168 @@ namespace AegisScore.Infrastructure.Migrations
                     b.ToTable("MaturitySnapshots");
                 });
 
+            modelBuilder.Entity("AegisScore.Domain.NistAiAssistance", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ApplicableJson")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("AssessmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AssessmentScopeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Availability")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("ContextFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ContextSummary")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CycleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("FindingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Focus")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTimeOffset>("GeneratedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("MethodologyVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("Mode")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("OutputJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("RequestedByAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequestedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("SourcesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("StaleOnArrival")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("SubcategoryCode")
+                        .HasMaxLength(15)
+                        .HasColumnType("character varying(15)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ValidationNotesJson")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CycleId", "TenantId");
+
+                    b.HasIndex("TenantId", "CycleId", "AssessmentScopeId", "Kind", "SubcategoryCode", "FindingId");
+
+                    b.ToTable("NistAiAssistances");
+                });
+
+            modelBuilder.Entity("AegisScore.Domain.NistAiIncorporation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AssessmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AssessmentScopeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AssistanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CycleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FieldsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("IncorporatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("IncorporatedByAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("IncorporatedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("StaleAcknowledged")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("SubcategoryCode")
+                        .HasMaxLength(15)
+                        .HasColumnType("character varying(15)");
+
+                    b.Property<Guid>("TargetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("TargetKind")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssistanceId", "TenantId");
+
+                    b.HasIndex("TenantId", "TargetKind", "TargetId");
+
+                    b.HasIndex("TenantId", "CycleId", "AssessmentScopeId", "SubcategoryCode");
+
+                    b.ToTable("NistAiIncorporations");
+                });
+
             modelBuilder.Entity("AegisScore.Domain.NistAssessmentCycle", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3447,6 +3661,98 @@ namespace AegisScore.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("Categories");
+                });
+
+            modelBuilder.Entity("AegisScore.Domain.NistExecutiveSummary", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("AcceptedByAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AcceptedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("AssessmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AssessmentScopeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AssistanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BasisFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CycleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Edited")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ReviewNote")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTimeOffset?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReviewedByAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReviewedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ReviewedContentHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SectionsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("StaleAcknowledged")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("CycleId", "AssessmentScopeId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_NistExecutiveSummaries_CycleScope");
+
+                    b.HasIndex("CycleId", "TenantId");
+
+                    b.ToTable("NistExecutiveSummaries");
                 });
 
             modelBuilder.Entity("AegisScore.Domain.NistFinding", b =>
@@ -6077,6 +6383,26 @@ namespace AegisScore.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("AegisScore.Domain.NistAiAssistance", b =>
+                {
+                    b.HasOne("AegisScore.Domain.NistAssessmentCycle", null)
+                        .WithMany()
+                        .HasForeignKey("CycleId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AegisScore.Domain.NistAiIncorporation", b =>
+                {
+                    b.HasOne("AegisScore.Domain.NistAiAssistance", null)
+                        .WithMany()
+                        .HasForeignKey("AssistanceId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("AegisScore.Domain.NistAssessmentCycle", b =>
                 {
                     b.HasOne("AegisScore.Domain.Assessment", null)
@@ -6095,6 +6421,16 @@ namespace AegisScore.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Function");
+                });
+
+            modelBuilder.Entity("AegisScore.Domain.NistExecutiveSummary", b =>
+                {
+                    b.HasOne("AegisScore.Domain.NistAssessmentCycle", null)
+                        .WithMany()
+                        .HasForeignKey("CycleId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("AegisScore.Domain.NistFinding", b =>

@@ -224,7 +224,7 @@ const NAV: NavLink[] = [
         <nav class="shell-crumbs" aria-label="Você está em">
           @for (c of crumbs(); track c.label; let last = $last) {
             @if (c.link && !last) {
-              <a [routerLink]="c.link">{{ c.label }}</a><span aria-hidden="true">›</span>
+              <a [routerLink]="c.link" [queryParams]="crumbParams()">{{ c.label }}</a><span aria-hidden="true">›</span>
             } @else {
               <span [attr.aria-current]="last ? 'page' : null">{{ c.label }}</span>
             }
@@ -688,6 +688,8 @@ export class App {
 
   /** Trilha declarada na rota ativa mais profunda (telas de apoio dentro do NIST). */
   protected readonly crumbs = signal<Crumb[]>([]);
+  /** [AEGIS-AUDITOR-CONTEXT-01] A trilha das telas de apoio do NIST volta para a jornada com a MESMA avaliação · rodada · escopo. */
+  protected readonly crumbParams = signal<Record<string, string> | null>(null);
 
   /** Menu sobreposto (telas estreitas). No desktop o menu é fixo e este estado não tem efeito visual. */
   protected readonly navOpen = signal(false);
@@ -723,6 +725,10 @@ export class App {
         let snap: ActivatedRouteSnapshot | null = this.router.routerState.snapshot.root;
         while (snap?.firstChild) snap = snap.firstChild;
         this.crumbs.set((snap?.data?.['crumbs'] as Crumb[] | undefined) ?? []);
+        const q = snap?.queryParamMap;
+        const sel = q && q.get('avaliacao') && q.get('rodada') && q.get('escopo')
+          ? { avaliacao: q.get('avaliacao')!, rodada: q.get('rodada')!, escopo: q.get('escopo')! } : null;
+        this.crumbParams.set(sel);
         // Escolher um destino fecha o menu sobreposto; o foco segue para o conteúdo da nova página.
         if (this.navOpen()) {
           this.navOpen.set(false);

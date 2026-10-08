@@ -1,5 +1,6 @@
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, computed, effect, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { EMPTY, timer } from 'rxjs';
 import { catchError, exhaustMap, filter } from 'rxjs/operators';
@@ -10,9 +11,9 @@ import {
   DOCUMENT_TYPES,
   DocumentDisplayState,
   DocumentIntegrationAvailability,
-  GovernCoverage,
   GovernanceDocument,
   GovernanceDocumentType,
+  GovernanceStatus,
   analysisErrorLabel,
   documentDisplayState,
   documentDisplayStateLabel,
@@ -22,122 +23,67 @@ import {
   isActiveAnalysisStatus,
 } from '../models/governance.models';
 import { environment } from '../../environments/environment';
-import { AgentStateService } from '../services/agent-state.service';
 import { AiModeBannerComponent } from '../components/ai-mode-banner.component';
-import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
-import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
-import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
-import { ScoringService } from '../services/scoring.service';
-import { AegisScoreService } from '../services/aegis-score.service';
-import { PILLARS, TenantControlStateDto, buildPillarView } from '../models/scoring.models';
-import { FunctionPosture, functionOf } from '../models/workspace.models';
+import { NistDocumentLink, documentLinkFor, subcategoryRoute } from '../models/nist.models';
+import { NistApiError, NistService } from '../services/nist.service';
+import { NistPageContext } from './nist/nist-page-context';
 
 type SyncState = 'idle' | 'loading' | 'done' | 'error';
 
 /**
- * GOVERN (GV) → Central de Governança. Reúne as três faces do pilar numa só tela HUD:
- *   1) POSTURA por telemetria (GV.SC/GV.RR) — reusa o ScoreGauge + ControlComplianceCard dos painéis de
- *      pilar (DRY): mesma leitura de conformidade de Protect/Detect, só que com o prefixo GV.
- *   2) INGESTÃO — integração corporativa (sync das fontes externas via Provider Pattern) + upload manual.
- *   3) HUB — a lista de documentos ingeridos e a leitura da IA.
+ * AEGIS NIST · Governar → Biblioteca de documentos. [AEGIS-AUDITOR-CONTEXT-01] Funcional na jornada atual (CSF Profile):
+ *   • INGESTÃO — integração corporativa (só quando há fonte real) + upload manual; análise assistida, consulta e gestão;
+ *   • HUB — documentos e os trechos literais por subcategoria, com procedência (data da análise, situação do documento) e limitação;
+ *   • USO COMO EVIDÊNCIA — na avaliação · rodada · escopo da URL, pelo MESMO vínculo da subcategoria (LinkEvidenceAsync), com a
+ *     confirmação do assessor; papel de escrita e rodada aberta são exigidos (o servidor confere de novo). A biblioteca é do tenant;
+ *     o vínculo é da rodada. Vincular não transforma o texto em controle implementado nem aprova a subcategoria.
  *
  * Padrão da casa: standalone, Signals para TODO o estado (sem async pipe/RxJS na view), sem @angular/forms.
  */
 @Component({
   selector: 'app-document-hub',
   standalone: true,
-  imports: [
-    DatePipe,
-    PostureSummaryComponent,
-    ControlComplianceCardComponent,
-    AegisPillarChecklistComponent,
-    AiModeBannerComponent,
-  ],
+  imports: [DatePipe, RouterLink, AiModeBannerComponent],
   template: `
     <div class="page">
       <header class="page-head">
         <div>
-          <p class="page-eyebrow">Governança e controles</p>
-          <h1>Central de governança</h1>
-          <!-- Subtítulo tático da Função Govern (mesmo texto dos painéis de pilar) -->
-          <p class="page-desc">{{ govMeta.description }}</p>
-          <p class="page-meta">NIST CSF 2.0 · Govern (GV) · evidências e documentos</p>
-        </div>
-        <div class="head-stat" title="Categorias GV com documentação que cita a execução do controle — cobertura documental, não conformidade">
-          <span class="head-stat-k">Cobertura documental GV</span>
-          <span class="head-stat-v">
-            @if (coverage(); as cov) {
-              {{ cov.coveredPct }}%
-            } @else {
-              —
-            }
-          </span>
+          <p class="page-eyebrow">AEGIS NIST · Governar</p>
+          <h1>Biblioteca de documentos</h1>
+          <p class="page-desc">
+            Políticas, normas e procedimentos do ambiente. A análise assistida aponta trechos literais por subcategoria; usar um documento
+            como evidência é decisão do assessor, na avaliação · rodada · escopo selecionados. Um documento comprova o que o texto
+            estabelece — não a implementação, a execução nem a eficácia da prática.
+          </p>
         </div>
       </header>
 
       <!-- Estado da IA + aviso do Free Tier (só dados sintéticos) — o Hub é onde documentos são enviados. -->
       <app-ai-mode-banner />
 
-      <!-- ============ 1) POSTURA DE GOVERNANÇA (telemetria GV.SC / GV.RR) ============ -->
-      <section class="panel gov-score">
-        <div class="hd">
-          <h3>Postura de Governança</h3>
-          <span class="hint">GV.SC · GV.RR — avaliado por telemetria (autoritativo)</span>
-        </div>
-
-        @if (scoringLoading()) {
-          <span class="pulse">Carregando a postura de governança…</span>
-        } @else if (scoringError()) {
-          <p class="score-err">
-            Não foi possível carregar a postura de governança agora. Recarregue a página em alguns instantes.
-          </p>
+      <!-- [AEGIS-AUDITOR-CONTEXT-01] A rodada da jornada NIST em que os documentos são usados como evidência. -->
+      <section class="panel nist-ctx" aria-labelledby="doc-ctx">
+        <div class="hd"><h3 id="doc-ctx">Uso como evidência na jornada NIST</h3>
+          @if (nist.ctx()) { <a class="hint" [routerLink]="['/nist', 'gv']" [queryParams]="nist.params()">voltar à Governança</a> }</div>
+        @if (nist.overview(); as o) {
+          <p>Avaliação <strong>{{ o.assessmentName }}</strong> · rodada <strong>{{ o.cycleName }}</strong>
+            ({{ o.cycleStatus === 'Closed' ? 'encerrada' : 'aberta' }}) · escopo <strong>{{ o.scopeName }}</strong> ·
+            <a [routerLink]="['/nist']" [queryParams]="nist.params()">trocar</a></p>
+          <p class="muted">{{ linkedDocCount() }} documento(s) vinculado(s) como evidência em {{ linkedCodeCount() }} subcategoria(s) nesta rodada.
+            @if (!nist.canWrite()) { Seu papel permite consultar, não vincular. }
+            @else if (!nist.cycleOpen()) { Rodada encerrada: os vínculos não podem ser alterados. }</p>
+        } @else if (nist.loading()) {
+          <p class="muted" role="status">Carregando a rodada selecionada…</p>
+        } @else if (nist.error()) {
+          <p class="notice error" role="alert">{{ nist.error() }}</p>
+        } @else if (nist.noAssessment()) {
+          <p class="muted">Nenhuma avaliação NIST neste ambiente: a biblioteca continua disponível; para usar um documento como evidência,
+            crie a avaliação na <a routerLink="/nist">jornada NIST</a>.</p>
         } @else {
-          <div class="gs-grid">
-            <div class="gs-left">
-              <!-- Cabeçalho de postura COMPARTILHADO (mesma projeção única do Dashboard e das demais Funções):
-                   score anulável (Não avaliado ≠ 0%) + cobertura. Nunca recalculado aqui. -->
-              @switch (govPostureState()) {
-                @case ('loaded') {
-                  <app-posture-summary [posture]="govPosture()!" label="Governança" code="GV" />
-                }
-                @case ('loading') { <span class="pulse">Carregando o resumo de postura…</span> }
-                @case ('notFound') { <span class="pulse">Sem catálogo ativo para a Função Govern.</span> }
-                @case ('error') {
-                  <div class="posture-err">
-                    <span>Não foi possível carregar o resumo de postura.</span>
-                    <button type="button" class="ghost sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
-                  </div>
-                }
-              }
-            </div>
-            <app-control-compliance-card [controls]="govView().controls" />
-          </div>
+          <p class="muted">Selecione a avaliação, a rodada e o escopo na <a routerLink="/nist">jornada NIST</a> para usar documentos como evidência.</p>
         }
+        @if (linkNote(); as ln) { <p class="notice" role="status">{{ ln }}</p> }
       </section>
-
-      <!-- ---- Cobertura documental (híbrida: documentos + entrevistas) ---- -->
-      @if (coverage(); as cov) {
-        <section class="panel coverage-strip">
-          <div class="cov-metric">
-            <span class="cov-k">Coberto (doc.)</span>
-            <span class="cov-v ok">{{ cov.coveredPct }}%</span>
-          </div>
-          <div class="cov-metric">
-            <span class="cov-k">Parcial</span>
-            <span class="cov-v warn">{{ cov.partialPct }}%</span>
-          </div>
-          <div class="cov-metric">
-            <span class="cov-k">Categorias GV</span>
-            <span class="cov-v">{{ cov.categories.length }}</span>
-          </div>
-        </section>
-      }
-
-      <!-- ---- Pendências de Governança ----
-           Posicionada de propósito ENTRE o diagnóstico e as ações: logo abaixo vêm a sincronização de
-           políticas e o upload manual, que são exatamente como se fecham estas lacunas. Ler "falta a
-           política X" e ter o botão de subir documento na sequência é o fluxo que a tela deve ter. -->
-      <app-aegis-pillar-checklist pillar="GV" heading="Pendências de Governança" />
 
       <!-- ============ 2) INGESTÃO — Integração Corporativa ============ -->
       <!-- [AEGIS-MVP-PRODUCT-01] A tela anunciava a sincronização de políticas corporativas tendo por trás
@@ -340,7 +286,7 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
 
               <!-- Parecer expandível: resumo + citações literais (controle, confiança, trecho, justificativa) -->
               @if (expandedId() === d.id) {
-                <tr class="detail-row">
+                <tr class="detail-row" [id]="'doc-' + d.id">
                   <td colspan="7">
                     <div class="parecer">
                       <div class="parecer-head">
@@ -358,20 +304,46 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
                                 <div class="cite-head">
                                   <span class="ctrl">{{ m.subcategoryCode }}</span>
                                   <span class="conf">confiança {{ pct(m.confidence) }}%</span>
+                                  @if (m.analystConfirmed) { <span class="badge ok">mapeamento confirmado pelo analista</span> }
                                 </div>
                                 <blockquote class="quote">“{{ m.evidenceQuote }}”</blockquote>
                                 @if (m.evidence) {
                                   <p class="rationale">{{ m.evidence }}</p>
                                 }
+                                <p class="prov">Procedência: análise documental{{ d.analyzedAt ? ' de ' + (d.analyzedAt | date: 'dd/MM/yyyy') : '' }} ·
+                                  situação do documento: {{ statusLabel(d.status) }}. Trecho literal: comprova o que o texto estabelece, não a execução da prática.</p>
+                                @if (nist.overview()) {
+                                  <div class="cite-actions">
+                                    <a class="linkbtn" [routerLink]="subRoute(m.subcategoryCode)" [queryParams]="nist.params()">Abrir {{ m.subcategoryCode }} na jornada</a>
+                                    @if (linkOf(d.id, m.subcategoryCode); as l) {
+                                      <span class="badge ok">Vinculado como evidência nesta rodada</span>
+                                      <a class="linkbtn" [routerLink]="subRoute(m.subcategoryCode)" [queryParams]="nist.params()" [fragment]="'ev-' + l.evidenceId">ver o vínculo</a>
+                                    } @else if (nist.canLink()) {
+                                      @if (confirming() === key(d.id, m.subcategoryCode)) {
+                                        <div class="confirm" role="group" [attr.aria-label]="'Vincular ' + d.title + ' a ' + m.subcategoryCode">
+                                          <label class="up-field"><span>O que este documento demonstra (opcional)</span>
+                                            <input type="text" maxlength="2000" [value]="linkNoteDraft()" (input)="linkNoteDraft.set($any($event.target).value)" /></label>
+                                          <button type="button" class="btn primary xs" (click)="confirmLink(d, m.subcategoryCode)" [disabled]="linking()">
+                                            {{ linking() ? 'Vinculando…' : 'Confirmar o vínculo nesta rodada' }}</button>
+                                          <button type="button" class="ghost xs" (click)="confirming.set(null)" [disabled]="linking()">Cancelar</button>
+                                          <span class="hint">O vínculo registra a procedência e não confirma o atendimento da subcategoria.</span>
+                                        </div>
+                                      } @else {
+                                        <button type="button" class="ghost xs" (click)="startLink(d.id, m.subcategoryCode)">Usar como evidência de {{ m.subcategoryCode }}</button>
+                                      }
+                                    }
+                                  </div>
+                                }
                               </li>
                             }
                           }
                         </ul>
+                        @if (linkError(); as le) { <p class="notice error" role="alert">{{ le }}</p> }
                       } @else {
                         <p class="no-evidence">
-                          Documento analisado, mas sem trecho com valor probatório literal —
-                          <b>não altera a postura de segurança</b>. Um documento só concede cobertura quando
-                          cita explicitamente a execução do controle (responsável, periodicidade ou registro).
+                          Documento analisado, mas sem trecho com valor probatório literal: não há o que vincular como evidência
+                          documental. Um documento só sustenta uma subcategoria quando cita explicitamente a prática (responsável,
+                          periodicidade ou registro) — e mesmo assim não comprova a execução.
                         </p>
                       }
                     </div>
@@ -402,56 +374,14 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
     `
       /* Página, cabeçalho, contador, filtros, painéis, avisos e botões: sistema visual global (styles.css). */
 
-      /* ---- 1) Postura de Governança (telemetria GV) ---- */
-      .gs-grid {
-        display: grid;
-        grid-template-columns: 300px minmax(0, 1fr);
-        gap: var(--sp-5);
-        align-items: start;
-      }
-      .gs-left {
-        display: flex;
-        flex-direction: column;
-        gap: var(--sp-3);
-      }
-      .score-err {
-        font-size: var(--fs-sm);
-        color: var(--red-text);
-      }
-      .posture-err {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: var(--sp-2);
-        font-size: var(--fs-sm);
-        color: var(--text-2);
-      }
-      .pulse {
-        font-size: var(--fs-sm);
-        color: var(--text-2);
-        animation: hub-pulse 1.4s ease-in-out infinite;
-      }
-      @keyframes hub-pulse {
-        0%,
-        100% {
-          opacity: 0.55;
-        }
-        50% {
-          opacity: 1;
-        }
-      }
+      /* ---- [AEGIS-AUDITOR-CONTEXT-01] Uso como evidência na jornada NIST ---- */
+      .nist-ctx p { margin: 0 0 var(--sp-2); overflow-wrap: anywhere; }
+      .prov { font-size: var(--fs-meta); color: var(--muted); margin: 0 0 6px; }
+      .cite-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: 6px; }
+      .confirm { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--sp-2); width: 100%; }
+      .confirm .up-field { flex: 1 1 260px; }
+      .confirm .hint { flex: 1 1 100%; }
 
-      .coverage-strip {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--sp-4) var(--sp-10);
-      }
-      .cov-metric {
-        display: flex;
-        flex-direction: column;
-        gap: var(--sp-1);
-      }
-      .cov-k,
       .up-field,
       .ctl {
         font-size: var(--fs-caps);
@@ -460,17 +390,6 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
         text-transform: uppercase;
         color: var(--muted);
       }
-      .cov-v {
-        font-size: 24px;
-        font-weight: 700;
-      }
-      .cov-v.ok {
-        color: var(--cyan);
-      }
-      .cov-v.warn {
-        color: var(--amber);
-      }
-
       /* ---- 2) Integração corporativa e upload ---- */
       .int-row {
         display: flex;
@@ -759,11 +678,6 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
         font-size: var(--fs-sm);
         color: var(--text-2);
       }
-      @media (max-width: 900px) {
-        .gs-grid {
-          grid-template-columns: 1fr;
-        }
-      }
       @media (max-width: 720px) {
         .up-field {
           flex: 1 1 100%;
@@ -779,20 +693,12 @@ type SyncState = 'idle' | 'loading' | 'done' | 'error';
 })
 export class DocumentHubComponent implements OnInit {
   private readonly svc = inject(GovernanceService);
-  private readonly scoring = inject(ScoringService);
-  private readonly scoreSvc = inject(AegisScoreService);
-  protected readonly agent = inject(AgentStateService);
+  private readonly nistApi = inject(NistService);
+  private readonly route = inject(ActivatedRoute);
+  /** Avaliação · rodada · escopo da jornada NIST (da URL) e a visão de evidências da rodada. */
+  protected readonly nist = new NistPageContext();
 
   constructor() {
-    // O Auditor vive no App (global). Quando uma entrevista altera a cobertura, o AgentStateService
-    // sinaliza e recarregamos o strip de cobertura documental desta tela.
-    effect(() => {
-      if (this.agent.coverageVersion() > 0) {
-        this.loadCoverage();
-        this.loadWorkspacePosture();
-      }
-    });
-
     // POLLING controlado (sem SignalR/SSE): a cada ~2s, SE houver documento ativo (Aguardando/Na fila/
     // Analisando), refaz a leitura da lista COMPLETA. `exhaustMap` impede requisições sobrepostas;
     // `catchError` tolera falha transitória sem limpar a tabela nem virar loop agressivo; o `filter` faz o
@@ -805,17 +711,89 @@ export class DocumentHubComponent implements OnInit {
         takeUntilDestroyed(),
       )
       .subscribe((list) => this.applyPolledList(list));
+
+    // Troca efetiva de avaliação, rodada, escopo ou tenant: o formulário e a operação anterior são descartados.
+    this.nist.onContextChange(() => this.resetLink());
   }
 
-  // ---- Postura de Governança (telemetria GV.SC / GV.RR) ----
-  private readonly govControls = signal<TenantControlStateDto[]>([]);
-  scoringLoading = signal(true);
-  scoringError = signal(false);
-  /** Reusa o mesmo agregador dos painéis de pilar (DRY): a lista de controles ordenada por risco. */
-  readonly govView = computed(() => buildPillarView(PILLARS.GV, this.govControls()));
-  /** Postura GV pela projeção ÚNICA (mesmo cabeçalho compartilhado das seis Funções). */
-  readonly govPosture = signal<FunctionPosture | null>(null);
-  readonly govPostureState = signal<'loading' | 'loaded' | 'notFound' | 'error'>('loading');
+  // ---- [AEGIS-AUDITOR-CONTEXT-01] Uso como evidência na rodada selecionada ----
+  /** Citação com o formulário de confirmação aberto (documento|subcategoria). */
+  readonly confirming = signal<string | null>(null);
+  readonly linkNoteDraft = signal('');
+  readonly linking = signal(false);
+  readonly linkError = signal<string | null>(null);
+  readonly linkNote = signal<string | null>(null);
+  readonly linkedDocCount = computed(() => new Set((this.nist.overview()?.documentLinks ?? []).map((l) => l.documentId)).size);
+  readonly linkedCodeCount = computed(() => new Set((this.nist.overview()?.documentLinks ?? []).map((l) => l.code)).size);
+  protected readonly subRoute = subcategoryRoute;
+  /** Identidade da gravação em curso — separada da geração das leituras: uma releitura do mesmo contexto não a invalida. */
+  private linkOp = 0;
+
+  private resetLink(): void {
+    this.linkOp++;
+    this.linking.set(false);
+    this.confirming.set(null);
+    this.linkNoteDraft.set('');
+    this.linkError.set(null);
+    this.linkNote.set(null);
+  }
+
+  /** A resposta é da gravação em curso, no mesmo tenant? Tenant trocado sem aviso de contexto: descarta e libera a tela. */
+  private ownsLink(op: number, tenant: string | null): boolean {
+    if (op !== this.linkOp) return false;
+    if (tenant !== this.nist.tenantId()) { this.resetLink(); return false; }
+    return true;
+  }
+
+  protected key(documentId: string, code: string): string {
+    return `${documentId}|${code}`;
+  }
+
+  protected linkOf(documentId: string, code: string): NistDocumentLink | null {
+    return documentLinkFor(this.nist.overview()?.documentLinks ?? [], documentId, code);
+  }
+
+  protected statusLabel(s: GovernanceStatus): string {
+    const labels: Record<string, string> = { Rascunho: 'rascunho', Vigente: 'vigente', EmRevisao: 'em revisão', Expirado: 'expirado', Descontinuado: 'descontinuado' };
+    return labels[s] ?? String(s).toLowerCase();
+  }
+
+  protected startLink(documentId: string, code: string): void {
+    this.confirming.set(this.key(documentId, code));
+    this.linkNoteDraft.set('');
+    this.linkError.set(null);
+    this.linkNote.set(null);
+  }
+
+  /**
+   * Confirmação do assessor: grava pelo vínculo da subcategoria (o mesmo caminho da jornada). A resposta só é aceita se for desta
+   * operação (a troca de contexto a descarta; uma releitura não) e do mesmo tenant; o servidor recusa duplicidade (409), papel (403) e
+   * rodada encerrada.
+   */
+  protected confirmLink(d: GovernanceDocument, code: string): void {
+    const ctx = this.nist.ctx();
+    if (!ctx || this.linking() || !this.nist.canLink()) return;
+    const op = ++this.linkOp;
+    const tenant = this.nist.tenantId();
+    this.linking.set(true);
+    this.linkError.set(null);
+    const notes = this.linkNoteDraft().trim() || null;
+    this.nistApi.linkEvidence(ctx, code, { kind: 'GovernanceDocument', documentId: d.id, notes }).subscribe({
+      next: () => {
+        if (!this.ownsLink(op, tenant)) return;
+        this.linking.set(false);
+        this.confirming.set(null);
+        this.linkNote.set(`"${d.title}" vinculado como evidência de ${code} nesta rodada. A avaliação da subcategoria continua com o assessor.`);
+        this.nist.reload();
+      },
+      error: (e: NistApiError) => {
+        if (!this.ownsLink(op, tenant)) return;
+        this.linking.set(false);
+        this.linkError.set(e.message);
+        if (e.status === 409) this.nist.reload();
+      },
+    });
+  }
 
   // ---- Integração corporativa (sync sob demanda) ----
   /** Disponibilidade REAL reportada pelo servidor; `null` enquanto a leitura não chega. */
@@ -840,7 +818,6 @@ export class DocumentHubComponent implements OnInit {
       (d) => (!type || d.type === type) && (!status || d.analysisStatus === status),
     );
   });
-  coverage = signal<GovernCoverage | null>(null);
   loading = signal(false);
   loadError = signal(false);
   busyId = signal<string | null>(null); // linha em ação (reanalyze/delete)
@@ -860,7 +837,6 @@ export class DocumentHubComponent implements OnInit {
   canUpload = computed(() => !this.uploading() && this.uploadFile() !== null);
 
   // Constantes de UI expostas ao template.
-  protected readonly govMeta = PILLARS.GV; // subtítulo tático da Função Govern (mesmo texto dos painéis de pilar)
   protected readonly documentTypes = DOCUMENT_TYPES;
   protected readonly analysisStatuses = ANALYSIS_STATUSES;
   protected readonly typeLabel = documentTypeLabel;
@@ -869,45 +845,7 @@ export class DocumentHubComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadIntegrationAvailability();
-    this.loadGovernPosture();
-    this.loadWorkspacePosture();
-    this.loadCoverage();
     this.loadDocuments();
-  }
-
-  /**
-   * Carga CENTRALIZADA do cabeçalho de postura GV pela projeção única, com estados explícitos. Chamada no
-   * init, no retry e após TODA ação do Hub que possa mudar a avaliação (sync/upload/reanálise/remoção/cobertura).
-   */
-  loadWorkspacePosture(): void {
-    this.govPostureState.set('loading');
-    this.scoreSvc.fetchWorkspace().subscribe({
-      next: (w) => {
-        const f = functionOf(w, 'GV') ?? null;
-        this.govPosture.set(f);
-        this.govPostureState.set(f ? 'loaded' : 'notFound');
-      },
-      error: () => {
-        this.govPosture.set(null);
-        this.govPostureState.set('error');
-      },
-    });
-  }
-
-  /** Postura por telemetria: os controles GV (GV.SC/GV.RR), filtrados no ScoringService pelo prefixo "GV". */
-  private loadGovernPosture(): void {
-    this.scoringLoading.set(true);
-    this.scoring.getPillarControls('GV').subscribe({
-      next: (list) => {
-        this.govControls.set(list);
-        this.scoringLoading.set(false);
-        this.scoringError.set(false);
-      },
-      error: () => {
-        this.scoringError.set(true);
-        this.scoringLoading.set(false);
-      },
-    });
   }
 
   /**
@@ -934,10 +872,7 @@ export class DocumentHubComponent implements OnInit {
         this.syncMessage.set(res.message || 'Sincronização agendada — os documentos aparecerão em instantes.');
         // Ingestão assíncrona (worker): recarrega a lista e os agregados pouco depois, para captar os novos.
         // A partir daí, se algum documento chegar ativo, o polling assume o acompanhamento até o término.
-        setTimeout(() => {
-          this.loadDocuments();
-          this.refreshAggregates();
-        }, 2500);
+        setTimeout(() => this.loadDocuments(), 2500);
       },
       error: (err) => {
         console.error('Falha ao sincronizar as políticas corporativas:', err);
@@ -961,6 +896,7 @@ export class DocumentHubComponent implements OnInit {
         this.allDocs.set(docs);
         this.loading.set(false);
         this.loadError.set(false);
+        this.openRequestedDocument();
       },
       error: (err) => {
         console.error('Falha ao carregar os documentos de governança:', err);
@@ -993,23 +929,16 @@ export class DocumentHubComponent implements OnInit {
 
     this.allDocs.set(list);
     this.loadError.set(false);
-    if (reachedTerminal) this.refreshAggregates();
+    // A análise concluída pode trazer trechos novos: a visão de evidências da rodada é relida.
+    if (reachedTerminal) this.nist.reload();
   }
 
-  /** Agregados dependentes da análise: cobertura + postura Govern (telemetria) + resumo do workspace.
-   *  Chamado na CONCLUSÃO detectada pelo polling e na EXCLUSÃO — nunca por refresh completo da página. */
-  private refreshAggregates(): void {
-    this.loadCoverage();
-    this.loadGovernPosture();
-    this.loadWorkspacePosture();
-  }
-
-  /** Cobertura é best-effort: um erro aqui não derruba a tela de documentos. */
-  private loadCoverage(): void {
-    this.svc.getCoverage().subscribe({
-      next: (cov) => this.coverage.set(cov),
-      error: () => this.coverage.set(null),
-    });
+  /** `?documento=<id>` (vindo da jornada ou do Auditor): abre o parecer desse documento, se existir na biblioteca do tenant. */
+  private openRequestedDocument(): void {
+    const id = this.route.snapshot.queryParamMap.get('documento');
+    if (!id || !this.allDocs().some((d) => d.id === id) || this.expandedId() === id) return;
+    this.expandedId.set(id);
+    setTimeout(() => document.getElementById('doc-' + id)?.scrollIntoView({ block: 'nearest' }));
   }
 
   // Os filtros agem só na VISÃO (client-side sobre a lista completa) — não refazem a busca e, sobretudo,
@@ -1147,14 +1076,15 @@ export class DocumentHubComponent implements OnInit {
   }
 
   remove(doc: GovernanceDocument): void {
-    if (!confirm(`Excluir "${doc.title}" e seus controles NIST associados? Esta ação não pode ser desfeita.`)) return;
+    const linked = (this.nist.overview()?.documentLinks ?? []).filter((l) => l.documentId === doc.id).map((l) => l.code);
+    const warning = linked.length ? ` Ele está vinculado como evidência nesta rodada (${[...new Set(linked)].join(', ')}): o vínculo fica na trilha, sem o documento.` : '';
+    if (!confirm(`Excluir "${doc.title}" e seus controles NIST associados? Esta ação não pode ser desfeita.${warning}`)) return;
     this.busyId.set(doc.id);
     this.svc.deleteDocument(doc.id).subscribe({
       next: () => {
         this.busyId.set(null);
-        // A exclusão dispara a reconciliação no backend (retração): atualiza lista E agregados de uma vez.
         this.loadDocuments();
-        this.refreshAggregates();
+        this.nist.reload();
       },
       error: (err) => {
         console.error('Falha ao excluir o documento:', err);

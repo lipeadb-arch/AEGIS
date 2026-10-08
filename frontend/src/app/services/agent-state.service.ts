@@ -1,130 +1,84 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router } from '@angular/router';
-import { CoverageChange, IdentifiedRisk } from '../models/governance.models';
-
-/** As seis Funções do NIST CSF 2.0. */
-export type NistFunction = 'Govern' | 'Identify' | 'Protect' | 'Detect' | 'Respond' | 'Recover';
+import { AuditorFocus, AuditorSessionKey, auditorFocusFromUrl, focusHint } from '../models/auditor.models';
+import { AuthService } from './auth.service';
 
 /**
- * Contexto ativo do Agente Global: uma das Funções NIST OU 'General' — a visão neutra das rotas
- * sem Função dedicada (dashboard, deep-links, rotas futuras). Substitui o antigo fallback que
- * "prendia" o agente em Govern em qualquer aba fora da Governança.
- */
-export type AgentContext = NistFunction | 'General';
-
-/** Escopo de contexto para o backend do Copiloto GRC — o código da tela ativa (Visão Geral → 'GLOBAL'). */
-export type AuditorScope = 'GLOBAL' | 'GV' | 'ID' | 'PR' | 'DE' | 'RS' | 'RC';
-
-/** Metadados de apresentação de cada contexto (código oficial + rótulo PT-BR + se há agente real). */
-export interface NistContext {
-  readonly fn: AgentContext;
-  readonly code: string; // GV, ID, PR, DE, RS, RC — ou '—' para a visão geral
-  readonly label: string; // rótulo PT-BR
-  readonly ready: boolean; // há um agente dedicado por trás? (só GOVERN hoje)
-}
-
-const CONTEXTS: Record<AgentContext, NistContext> = {
-  Govern: { fn: 'Govern', code: 'GV', label: 'Governar', ready: true },
-  Identify: { fn: 'Identify', code: 'ID', label: 'Identificar', ready: false },
-  Protect: { fn: 'Protect', code: 'PR', label: 'Proteger', ready: false },
-  Detect: { fn: 'Detect', code: 'DE', label: 'Detectar', ready: false },
-  Respond: { fn: 'Respond', code: 'RS', label: 'Responder', ready: false },
-  Recover: { fn: 'Recover', code: 'RC', label: 'Recuperar', ready: false },
-  General: { fn: 'General', code: '—', label: 'Visão Geral', ready: false },
-};
-
-/**
- * [AEGIS-NIST-JOURNEY-01] Rota → contexto do Agente. No AEGIS NIST a Função vem do 2º segmento (/nist/gv, /nist/id/ativos,
- * /nist/pr/postura…); fora dele, do 1º. O AEGIS KNIGHT mantém o foco Protect (no CSF 2.0, identidade e acesso são PR.AA).
- * Dashboards, histórico e rotas desconhecidas caem em 'General' (fallback neutro). Os endereços antigos (/assets,
- * /governance, /protect…) redirecionam antes de chegar aqui.
- */
-const ROUTE_TO_CONTEXT: Record<string, AgentContext> = {
-  knight: 'Protect',
-};
-
-const NIST_SLUG_TO_CONTEXT: Record<string, AgentContext> = {
-  gv: 'Govern',
-  id: 'Identify',
-  pr: 'Protect',
-  de: 'Detect',
-  rs: 'Respond',
-  rc: 'Recover',
-};
-
-/**
- * AgentStateService — estado global do Auditor Virtual (o "Agente Global").
+ * AgentStateService — estado global do Auditor Virtual. [AEGIS-AUDITOR-CONTEXT-01]
  *
- * Elevado do pilar de Governança para o layout raiz: um único drawer/chat vive no App e
- * este serviço decide (a) se está aberto e (b) qual o contexto NIST ativo, derivado da URL.
- * Também atua como barramento reverso: como o chat deixou de ser filho do Document Hub, as
- * mudanças de cobertura/risco produzidas pela entrevista são publicadas aqui, e as telas que
- * exibem cobertura (ex.: o strip de GOVERN) reagem a esses sinais.
- *
- * Padrão da casa: signals puros, standalone, zero-dependência de terceiros.
+ * Um único drawer/chat vive no App. Este serviço guarda:
+ *   • se o drawer está aberto;
+ *   • o FOCO da tela, derivado da URL (página, seleção do NIST, avaliação e controle do KNIGHT) — o foco não muda a identidade do
+ *     Auditor nem restringe o que ele analisa;
+ *   • a CONVERSA da tela: o identificador devolvido pelo servidor e a sessão (tenant · conta · época). Trocar de ambiente, sair ou
+ *     pedir "Nova conversa" abre outra sessão: o histórico da tela é limpo e respostas atrasadas da anterior são descartadas.
  */
 @Injectable({ providedIn: 'root' })
 export class AgentStateService {
   private readonly router = inject(Router);
+  private readonly auth = inject(AuthService);
 
-  // ---- Contexto ativo (derivado da rota) ----------------------------------
+  // ---- Foco (derivado da rota) ----------------------------------------------------------------
 
-  /**
-   * Contexto ativo. Semeado com a URL corrente (cobre o primeiro paint e deep-links) e
-   * reprojetado a cada NavigationEnd — determinístico, sem depender do timing de subscribe.
-   */
-  private readonly _activeFunction = signal<AgentContext>(this.contextForUrl(this.router.url));
+  private readonly _focus = signal<AuditorFocus>(auditorFocusFromUrl(this.router.url));
+  /** Página e seleções da tela ativa (conferidas no servidor a cada pergunta). */
+  readonly focus = this._focus.asReadonly();
+  /** Rótulo curto do foco (o servidor devolve o rótulo completo junto da resposta). */
+  readonly focusLabel = computed(() => focusHint(this._focus()));
 
-  /** Função NIST (ou 'General') correspondente à aba atual. */
-  readonly activeFunction = this._activeFunction.asReadonly();
+  // ---- Conversa (tenant · conta · época) -------------------------------------------------------
 
-  /** Metadados do contexto ativo (código/rótulo/disponibilidade). */
-  readonly context = computed<NistContext>(() => CONTEXTS[this._activeFunction()]);
+  private readonly _epoch = signal(0);
+  private readonly _conversationId = signal<string | null>(null);
+  readonly conversationId = this._conversationId.asReadonly();
 
-  /**
-   * Escopo enviado ao backend do Copiloto (POST /auditor/chat): o código da tela ativa, com a Visão Geral
-   * projetada em 'GLOBAL'. É o que ajusta dinamicamente o System Prompt da IA por Função NIST.
-   */
-  readonly contextScope = computed<AuditorScope>(() => {
-    const c = this.context();
-    return c.fn === 'General' ? 'GLOBAL' : (c.code as AuditorScope);
-  });
+  /** A sessão em que uma pergunta é feita; a resposta só entra se a sessão ainda for a mesma. */
+  readonly session = computed<AuditorSessionKey>(() => ({
+    tenantId: this.auth.activeTenantId(),
+    accountId: this.auth.accountId(),
+    epoch: this._epoch(),
+  }));
 
   constructor() {
-    // Escuta explicitamente o fim de cada navegação e reprojeta o contexto na aba corrente.
-    // takeUntilDestroyed encerra a assinatura junto com o serviço (limpo em testes/HMR);
-    // em runtime o serviço é singleton root e vive o tempo todo da app.
     this.router.events.pipe(takeUntilDestroyed()).subscribe((e) => {
-      if (e instanceof NavigationEnd) {
-        this._activeFunction.set(this.contextForUrl(e.urlAfterRedirects));
-      }
+      if (e instanceof NavigationEnd) this._focus.set(auditorFocusFromUrl(e.urlAfterRedirects));
+    });
+    // Troca de ambiente, de conta ou saída: a conversa da tela não atravessa (o servidor também a recusaria).
+    effect(() => {
+      this.auth.activeTenantId();
+      this.auth.accountId();
+      untracked(() => this.newConversation());
     });
   }
 
-  /** Deriva o contexto da URL (no NIST, pela Função do 2º segmento); rotas sem Função dedicada → 'General'. */
-  private contextForUrl(url: string): AgentContext {
-    const segs = url.split(/[?#]/)[0].split('/').filter(Boolean);
-    if (segs[0] === 'nist') return NIST_SLUG_TO_CONTEXT[(segs[1] ?? '').toLowerCase()] ?? 'General';
-    return ROUTE_TO_CONTEXT[segs[0] ?? ''] ?? 'General';
+  /** Encerra a conversa da tela: limpa o histórico exibido e invalida respostas ainda em curso. */
+  newConversation(): void {
+    this._conversationId.set(null);
+    this._epoch.update((n) => n + 1);
   }
 
-  // ---- Drawer -------------------------------------------------------------
+  /** A resposta trouxe o identificador da conversa (só vale se a sessão ainda for a da pergunta). */
+  adoptConversation(id: string, session: AuditorSessionKey): void {
+    const now = this.session();
+    if (now.tenantId === session.tenantId && now.accountId === session.accountId && now.epoch === session.epoch) this._conversationId.set(id);
+  }
 
-  /** Visibilidade do painel lateral. */
+  /** O servidor não reconhece a conversa: a próxima pergunta abre outra (o histórico exibido continua até a pessoa decidir). */
+  forgetConversation(session: AuditorSessionKey): void {
+    const now = this.session();
+    if (now.tenantId === session.tenantId && now.accountId === session.accountId && now.epoch === session.epoch) this._conversationId.set(null);
+  }
+
+  // ---- Drawer ---------------------------------------------------------------------------------
+
   readonly open = signal(false);
 
-  /** Título do drawer — agora REAGE ao contexto: "Auditor Virtual — Proteger (PR)" fora da visão geral. */
-  readonly drawerTitle = computed(() => {
-    const c = this.context();
-    return c.fn === 'General' ? 'Auditor Virtual' : `Auditor Virtual — ${c.label} (${c.code})`;
-  });
+  /** Título estável: a mesma identidade em qualquer página. */
+  readonly drawerTitle = computed(() => 'Auditor Virtual');
 
-  /** Eyebrow do drawer: contextualiza o agente na Função NIST ativa. */
-  readonly drawerSubtitle = computed(() => {
-    const c = this.context();
-    return `Agente GRC · NIST CSF · ${c.label} (${c.code})`;
-  });
+  /** Subtítulo: o foco da tela (não a personalidade). */
+  readonly drawerSubtitle = computed(() => `Foco: ${this.focusLabel()}`);
 
   openAgent(): void {
     this.open.set(true);
@@ -138,49 +92,23 @@ export class AgentStateService {
     this.open.update((v) => !v);
   }
 
-  // ---- Barramento de auditoria dirigida (tela → Copiloto) ----------------
+  // ---- Pergunta semeada por uma tela ---------------------------------------------------------------
 
   /**
-   * Prompt semeado por uma tela ao pedir uma auditoria (ex.: "Auditar Lacunas" do Identity Dashboard).
-   * O AuditorChatComponent observa este signal e envia a mensagem como se o usuário a tivesse digitado —
-   * o backend a roteia por Agentic Routing (auditar/lacuna → START_INTERVIEW), abrindo a entrevista GRC.
-   * É o mesmo padrão de barramento reverso usado por notifyCoverageChanged/notifyRiskIdentified.
+   * Prompt semeado por uma tela ("Analisar com o Auditor"). O chat o consome e envia como se a pessoa o tivesse digitado — no foco da
+   * página atual, como qualquer outra pergunta (não há fluxo de entrevista separado).
    */
   private readonly _pendingPrompt = signal<string | null>(null);
   readonly pendingPrompt = this._pendingPrompt.asReadonly();
 
-  /** Abre o Copiloto no contexto da rota atual e semeia uma mensagem de auditoria para envio automático. */
   requestAudit(prompt: string): void {
     this._pendingPrompt.set(prompt);
     this.open.set(true);
   }
 
-  /** O chat consome (e limpa) o prompt pendente após injetá-lo, para não reenviar em re-renderizações. */
   consumePendingPrompt(): string | null {
     const p = this._pendingPrompt();
     if (p !== null) this._pendingPrompt.set(null);
     return p;
-  }
-
-  // ---- Barramento reverso (entrevista → telas) ----------------------------
-
-  private readonly _coverageVersion = signal(0);
-  /** Incrementa a cada mudança de cobertura — telas de cobertura observam para recarregar. */
-  readonly coverageVersion = this._coverageVersion.asReadonly();
-
-  /** Última mudança de cobertura publicada pela entrevista. */
-  readonly lastCoverageChange = signal<CoverageChange | null>(null);
-  /** Último risco identificado — gancho para o futuro módulo de Riscos. */
-  readonly lastRiskIdentified = signal<IdentifiedRisk | null>(null);
-
-  /** Chamado pelo Auditor quando uma resposta altera a cobertura de alguma subcategoria. */
-  notifyCoverageChanged(change: CoverageChange): void {
-    this.lastCoverageChange.set(change);
-    this._coverageVersion.update((v) => v + 1);
-  }
-
-  /** Chamado pelo Auditor quando uma lacuna é materializada em Risco Identificado. */
-  notifyRiskIdentified(risk: IdentifiedRisk): void {
-    this.lastRiskIdentified.set(risk);
   }
 }

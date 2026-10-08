@@ -33,6 +33,8 @@ public sealed class AiStatusController : ControllerBase
         var state = mode switch
         {
             AiMode.Disabled => "Unavailable",
+            // [AEGIS-NIST-AI-ASSIST-01] Modo externo escolhido SEM chave: dito como tal (as funções respondem pelo motor simulado).
+            AiMode.ExternalEnterprise or AiMode.ExternalDemo when !configured => "ProviderNotConfigured",
             AiMode.ExternalEnterprise when configured && externalAllowed => "EnterpriseConfigured",
             AiMode.ExternalEnterprise when configured => "ExternalBlockedForTenant",
             AiMode.ExternalDemo when configured && externalAllowed => "DemoConfigured",
@@ -56,7 +58,7 @@ public sealed class AiStatusController : ControllerBase
 
 /// <summary>
 /// Estado da IA para a UI — retrato de configuração, não health check em tempo real.
-/// <c>EffectiveState</c>: EnterpriseConfigured | DemoConfigured | ExternalBlockedForTenant | Simulated | Unavailable.
+/// <c>EffectiveState</c>: EnterpriseConfigured | DemoConfigured | ExternalBlockedForTenant | ProviderNotConfigured | Simulated | Unavailable.
 /// </summary>
 public sealed record AiStatusDto(
     string Mode,

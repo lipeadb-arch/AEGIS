@@ -1,4 +1,4 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
+import { DatePipe } from '@angular/common';
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
@@ -8,7 +8,6 @@ import { GovernanceDocument } from '../../models/governance.models';
 import {
   MATURITY_LEVEL_HINTS,
   MATURITY_LEVEL_LABELS,
-  NistAiSuggestion,
   NistAssignee,
   NistAvailableEvidence,
   NistEvaluationDraft,
@@ -20,6 +19,7 @@ import {
   draftGap,
   draftProblem,
   evidenceOriginLabel,
+  evidenceOriginLink,
   gapText,
   levelLabel,
   newerEvaluation,
@@ -35,9 +35,18 @@ import {
   stateLabel,
   toSaveRequest,
 } from '../../models/nist.models';
+import {
+  NistAssistApplyEvent,
+  SUBCATEGORY_APPLY,
+  applyAssistToDraft,
+  assistanceRef,
+  assistedFieldsText,
+  assistedFieldsToSend,
+} from '../../models/nist-assist.models';
 import { AuthService } from '../../services/auth.service';
 import { GovernanceService } from '../../services/governance.service';
 import { NistApiError, NistCtx, NistService } from '../../services/nist.service';
+import { NistAssistPanelComponent } from './nist-assist-panel.component';
 import { NistAuditPanelComponent } from './nist-audit-panel.component';
 import { NistFindingsWorkComponent } from './nist-findings-work.component';
 import { NistProceduresComponent } from './nist-procedures.component';
@@ -48,13 +57,17 @@ import { NistProceduresComponent } from './nist-procedures.component';
  * as evidências, os achados com o tratamento, a revisão e a trilha. Toda gravação vai ao servidor com a versão em que o
  * rascunho se baseia (conflito = 409, nada é sobrescrito, a edição fica no formulário); atualizar evidências,
  * procedimentos ou achados não muda essa base — só o recarregamento explícito. Conteúdo trazido de outra rodada ou
- * importado aparece como rascunho a confirmar, nunca como revisão humana. A sugestão da IA só preenche o rascunho.
- * Respostas pedidas para outra subcategoria, rodada, escopo, avaliação ou tenant são descartadas.
+ * importado aparece como rascunho a confirmar, nunca como revisão humana. Respostas pedidas para outra subcategoria,
+ * rodada, escopo, avaliação ou tenant são descartadas.
+ *
+ * [AEGIS-NIST-AI-ASSIST-01] A assistência de IA (painel próprio) só PREENCHE o rascunho por escolha da pessoa, campo a campo;
+ * a gravação leva a referência da sugestão para a procedência. Sugestão desatualizada na gravação é 409 com motivo próprio:
+ * a pessoa gera de novo ou declara que revisou o texto diante do estado atual. O rascunho nunca é perdido.
  */
 @Component({
   selector: 'app-nist-subcategory',
   standalone: true,
-  imports: [RouterLink, FormsModule, DatePipe, DecimalPipe, NistProceduresComponent, NistFindingsWorkComponent, NistAuditPanelComponent],
+  imports: [RouterLink, FormsModule, DatePipe, NistProceduresComponent, NistFindingsWorkComponent, NistAuditPanelComponent, NistAssistPanelComponent],
   template: `
     <section class="page">
       @if (fn(); as f) {
@@ -181,7 +194,13 @@ import { NistProceduresComponent } from './nist-procedures.component';
           </form>
           @if (saveError(); as se) {
             <div class="notice error" role="alert">{{ se }}
-              @if (conflict()) { <button type="button" class="ghost sm" (click)="reload()">Recarregar a versão atual</button> }</div>
+              @if (conflict()) { <button type="button" class="ghost sm" (click)="reload()">Recarregar a versão atual</button> }
+              @if (assistStale()) {
+                <button type="button" class="ghost sm" (click)="save(d, true)" [disabled]="saving()">Revisei o texto diante do estado atual — gravar assim mesmo</button>
+              }</div>
+          }
+          @if (appliedFields().length) {
+            <p class="hint" role="status">Campos do rascunho vindos da sugestão: {{ appliedFields().join(', ') }} — a gravação registra a procedência.</p>
           }
           @if (savedNote()) { <p class="notice" role="status">{{ savedNote() }}</p> }
           @if (staleBase()) {
@@ -189,6 +208,7 @@ import { NistProceduresComponent } from './nist-procedures.component';
               foi aberto (versão {{ baseVersion }}). Ao gravar, o AEGIS acusará conflito; a sua edição continua no formulário.
               <button type="button" class="ghost sm" (click)="reload()">Recarregar a versão atual</button></p>
           }
+          @if (assistedText(e?.assistedFields); as at) { <p class="hint">Conteúdo assistido: {{ at }}</p> }
           @if (e) {
             <p class="hint">Responsável: {{ responsibleText(e.owner, e.ownerName) }} ·
               @if (e.humanConfirmed) { confirmada por {{ e.reviewedByName ?? 'autor não identificado' }}@if (e.reviewedAt) { em {{ e.reviewedAt | date: 'dd/MM/yyyy HH:mm' }} } }
@@ -231,31 +251,19 @@ import { NistProceduresComponent } from './nist-procedures.component';
 
         <app-nist-procedures [ctx]="ctx()!" [code]="d.code" [procedures]="d.procedures ?? []" [evidence]="d.evidence" [canEdit]="canEdit()" (changed)="refreshSoft()" />
 
-        <section class="panel" aria-labelledby="sc-ai">
-          <div class="hd"><h3 id="sc-ai">Sugestão da IA</h3><span class="hint">apoio à interpretação — não é revisão</span></div>
-          <p class="muted">A IA lê as observações e as evidências vinculadas e sugere uma situação atual. Nada é gravado: use a sugestão como rascunho e grave só depois de revisar.</p>
-          @if (canEdit()) {
-            <button type="button" class="ghost sm" (click)="suggest(d)" [disabled]="suggesting()">{{ suggesting() ? 'Consultando…' : 'Pedir sugestão' }}</button>
-          }
-          @if (aiError()) { <p class="notice warn" role="status">{{ aiError() }}</p> }
-          @if (suggestion(); as s) {
-            <div class="ai">
-              <p><strong>Sugestão: {{ s.suggestedCurrentLevel }} · {{ labels[s.suggestedCurrentLevel] }}</strong> · confiança {{ s.confidence * 100 | number: '1.0-0' }}%
-                @if (s.simulated) { <span class="badge warn">Simulada — sem IA real neste ambiente</span> }</p>
-              <p class="pre">{{ s.rationale }}</p>
-              <button type="button" class="ghost sm" (click)="useSuggestion(s)">Usar como rascunho da situação atual</button>
-            </div>
-          }
-        </section>
+        <app-nist-assist-panel kind="Subcategory" [ctx]="ctx()!" [code]="d.code" [canGenerate]="canWrite()" [canIncorporate]="canEdit()"
+          [refresh]="auditTick()" [applyTargets]="assistTargets" [allowLevel]="true" [allowProcedures]="canEdit()" [linkParams]="params()"
+          (apply)="applyAssist($event)" (changed)="refreshSoft()" />
 
         <section class="panel" aria-labelledby="sc-ev">
           <div class="hd"><h3 id="sc-ev">Evidências</h3><span class="hint">{{ d.evidence.length }} vinculada(s) nesta rodada</span></div>
           @if (d.evidence.length === 0) { <p class="muted">Nenhuma evidência vinculada ainda.</p> }
           <ul class="ev-list">
             @for (ev of d.evidence; track ev.id) {
-              <li>
+              <li [id]="'ev-' + ev.id" tabindex="-1">
                 <div class="ev-top"><span class="badge info">{{ evidenceOriginLabel(ev.originKind) }}</span><strong>{{ ev.title }}</strong>
-                  @if (ev.uri) { <a [href]="ev.uri" target="_blank" rel="noopener noreferrer">abrir link<span class="sr-only"> (nova aba)</span></a> }</div>
+                  @if (ev.uri) { <a [href]="ev.uri" target="_blank" rel="noopener noreferrer">abrir link<span class="sr-only"> (nova aba)</span></a> }
+                  @if (originLink(ev, params()); as ol) { <a [routerLink]="ol.commands" [queryParams]="ol.queryParams">{{ ol.label }}</a> }</div>
                 <p class="muted">{{ ev.originLabel ?? '' }} · data na origem {{ ev.collectedAt | date: 'dd/MM/yyyy' : 'UTC' }} · vinculada por {{ ev.recordedByName ?? '—' }} em {{ ev.linkedAt | date: 'dd/MM/yyyy' }}</p>
                 @if (ev.originScope) { <p class="muted">Escopo da coleta: {{ ev.originScope }}</p> }
                 @if (ev.notes) { <p>{{ ev.notes }}</p> }
@@ -265,6 +273,9 @@ import { NistProceduresComponent } from './nist-procedures.component';
           </ul>
 
           <h4>Evidências disponíveis na plataforma</h4>
+          <p class="hint">Disponível não é vinculada: vincular registra a procedência e não aprova a subcategoria.
+            <a [routerLink]="['/nist', 'gv', 'documentos']" [queryParams]="params()">Biblioteca de documentos</a>
+            @if (d.code.startsWith('ID.AM')) { · <a [routerLink]="['/nist', 'id', 'ativos']" [queryParams]="params()">Inventário de ativos</a> }</p>
           @if (d.availableEvidence.length === 0) {
             <p class="muted">Nenhuma evidência técnica ou documental mapeada para esta subcategoria.</p>
           }
@@ -273,7 +284,8 @@ import { NistProceduresComponent } from './nist-procedures.component';
               <li>
                 <div class="ev-top"><span class="badge neutral">{{ evidenceOriginLabel(a.originKind) }}</span><strong>{{ a.title }}</strong>
                   @if (a.status) { <span class="badge violet">{{ a.status }}</span> }
-                  @if (a.isDemo) { <span class="badge warn">Demonstração</span> }</div>
+                  @if (a.isDemo) { <span class="badge warn">Demonstração</span> }
+                  @if (originLink(a, params()); as ol) { <a [routerLink]="ol.commands" [queryParams]="ol.queryParams">{{ ol.label }}</a> }</div>
                 <p class="muted">{{ a.originLabel }} @if (a.collectedAt) { · {{ a.collectedAt | date: 'dd/MM/yyyy' : 'UTC' }} } @if (a.originScope) { · {{ a.originScope }} }</p>
                 <p class="muted">Critério: {{ a.criterion }} @if (a.limitation) { <strong>{{ a.limitation }}</strong> }</p>
                 @if (canEdit()) {
@@ -288,7 +300,7 @@ import { NistProceduresComponent } from './nist-procedures.component';
             <details class="add">
               <summary>Vincular documento da biblioteca</summary>
               @if (documents() === null) { <button type="button" class="ghost xs" (click)="loadDocuments()">Listar documentos</button> }
-              @else if (documents()!.length === 0) { <p class="muted">A biblioteca não tem documentos. <a routerLink="/nist/gv/documentos">Enviar documento</a></p> }
+              @else if (documents()!.length === 0) { <p class="muted">A biblioteca não tem documentos. <a [routerLink]="['/nist', 'gv', 'documentos']" [queryParams]="params()">Enviar documento</a></p> }
               @else {
                 <div class="row">
                   <label class="field"><span class="field-label">Documento</span>
@@ -353,7 +365,6 @@ import { NistProceduresComponent } from './nist-procedures.component';
       .ev-list p { margin: 0; }
       .add { margin-top: var(--sp-3); }
       .add summary { cursor: pointer; font-weight: 500; }
-      .ai { margin-top: var(--sp-3); }
       .ref { border-style: dashed; }
       h4 { margin: var(--sp-4) 0 var(--sp-2); font-size: var(--fs-body); }
     `,
@@ -381,6 +392,9 @@ export class NistSubcategoryComponent {
   protected readonly nistFunctionTitle = nistFunctionTitle;
   protected readonly nistCategoryLabel = nistCategoryLabel;
   protected readonly evidenceOriginLabel = evidenceOriginLabel;
+  protected readonly assistTargets = SUBCATEGORY_APPLY;
+  protected readonly assistedText = assistedFieldsText;
+  protected readonly originLink = evidenceOriginLink;
 
   protected readonly fn = signal<NistFunctionMeta | null>(null);
   protected readonly code = signal('');
@@ -396,9 +410,11 @@ export class NistSubcategoryComponent {
   protected readonly evidenceError = signal<string | null>(null);
   protected readonly roleError = signal<string | null>(null);
   protected readonly roleConflict = signal(false);
-  protected readonly suggesting = signal(false);
-  protected readonly suggestion = signal<NistAiSuggestion | null>(null);
-  protected readonly aiError = signal<string | null>(null);
+  /** [AEGIS-NIST-AI-ASSIST-01] A gravação foi recusada porque a sugestão aplicada envelheceu (409 com motivo próprio). */
+  protected readonly assistStale = signal(false);
+  /** Campos do rascunho aplicados de UMA sugestão (a gravação leva a referência; recarregar ou gravar limpa). */
+  protected readonly appliedFields = signal<string[]>([]);
+  private appliedAssistanceId: string | null = null;
   protected readonly documents = signal<GovernanceDocument[] | null>(null);
   protected readonly assignees = signal<NistAssignee[]>([]);
   protected readonly openFinding = signal<string | null>(null);
@@ -488,9 +504,8 @@ export class NistSubcategoryComponent {
     this.evidenceError.set(null);
     this.roleError.set(null);
     this.roleConflict.set(false);
-    this.suggesting.set(false);
-    this.suggestion.set(null);
-    this.aiError.set(null);
+    this.assistStale.set(false);
+    this.clearApplied();
     this.documents.set(null);
     this.docChoice = '';
     this.docNote = '';
@@ -621,15 +636,23 @@ export class NistSubcategoryComponent {
     });
   }
 
-  protected save(d: NistSubcategoryDetail): void {
+  /**
+   * Grava o rascunho com a versão-base dele. Se há campos aplicados de uma sugestão, a referência vai junto (procedência);
+   * `acknowledgeStale` só depois de a pessoa declarar que revisou o texto diante do estado atual.
+   */
+  protected save(d: NistSubcategoryDetail, acknowledgeStale = false): void {
     const c = this.ctx();
     if (!c || this.saving() || this.busy() || this.problem()) return;
     const gen = this.gen;
     this.saving.set(true);
     this.saveError.set(null);
     this.conflict.set(false);
+    this.assistStale.set(false);
     this.savedNote.set(null);
-    this.nist.save(c, d.code, toSaveRequest(this.draft, this.baseVersion)).subscribe({
+    const request = toSaveRequest(this.draft, this.baseVersion);
+    if (this.appliedAssistanceId)
+      request.assistance = assistanceRef(this.appliedAssistanceId, assistedFieldsToSend(this.draft, this.appliedFields()), acknowledgeStale);
+    this.nist.save(c, d.code, request).subscribe({
       next: (r) => {
         if (!this.current(gen)) return;
         this.saving.set(false);
@@ -642,10 +665,40 @@ export class NistSubcategoryComponent {
       error: (e: NistApiError) => {
         if (!this.current(gen)) return;
         this.saving.set(false);
-        this.conflict.set(e.status === 409);
+        const staleAssist = e.status === 409 && e.reason === 'AssistanceStale';
+        this.assistStale.set(staleAssist);
+        this.conflict.set(e.status === 409 && !staleAssist);
         this.saveError.set(e.message);
       },
     });
+  }
+
+  /**
+   * [AEGIS-NIST-AI-ASSIST-01] Aplica um campo da sugestão ao RASCUNHO — nada é gravado. Conteúdo de duas sugestões diferentes não
+   * se mistura num mesmo rascunho (a procedência precisa apontar uma só): grave ou recarregue antes.
+   */
+  protected applyAssist(event: NistAssistApplyEvent): void {
+    if (!this.canEdit()) return;
+    const v = event.view;
+    const c = this.ctx();
+    if (!c || v.assessmentId !== c.assessmentId || v.cycleId !== c.cycleId || v.scopeId !== c.scopeId || v.subcategoryCode !== this.code()) return;
+    if (this.appliedAssistanceId && this.appliedAssistanceId !== v.id) {
+      this.savedNote.set(null);
+      this.saveError.set('O rascunho já tem conteúdo de outra sugestão. Grave ou recarregue antes de aplicar uma sugestão diferente.');
+      return;
+    }
+    const next = applyAssistToDraft(this.draft, v, event.field);
+    if (!next) return;
+    this.draft = next;
+    this.appliedAssistanceId = v.id;
+    this.appliedFields.set([...new Set([...this.appliedFields(), event.field])]);
+    this.saveError.set(null);
+    this.savedNote.set('Sugestão aplicada ao rascunho. Revise e grave: aplicar não confirma a avaliação nem conta como revisão.');
+  }
+
+  private clearApplied(): void {
+    this.appliedAssistanceId = null;
+    this.appliedFields.set([]);
   }
 
   protected assign(d: NistSubcategoryDetail): void {
@@ -692,32 +745,6 @@ export class NistSubcategoryComponent {
         this.roleError.set(e.message);
       },
     });
-  }
-
-  protected suggest(d: NistSubcategoryDetail): void {
-    const c = this.ctx();
-    if (!c || this.suggesting()) return;
-    const gen = this.gen;
-    this.suggesting.set(true);
-    this.aiError.set(null);
-    this.suggestion.set(null);
-    this.nist.suggest(c, d.code).subscribe({
-      next: (s) => {
-        if (!this.current(gen)) return;
-        this.suggestion.set(s);
-        this.suggesting.set(false);
-      },
-      error: (e: Error) => {
-        if (!this.current(gen)) return;
-        this.aiError.set(e.message);
-        this.suggesting.set(false);
-      },
-    });
-  }
-
-  protected useSuggestion(s: NistAiSuggestion): void {
-    this.draft = { ...this.draft, notApplicable: false, currentLevel: s.suggestedCurrentLevel };
-    this.savedNote.set('Sugestão aplicada ao rascunho — revise e grave para registrar a avaliação.');
   }
 
   protected linkable(a: NistAvailableEvidence): boolean {
@@ -814,6 +841,8 @@ export class NistSubcategoryComponent {
   private accept(d: NistSubcategoryDetail): void {
     this.detail.set(d);
     this.draft = draftFrom(d.evaluation);
+    this.clearApplied();
+    this.assistStale.set(false);
     this.baseDraft = JSON.stringify(this.draft);
     this.baseVersion = d.evaluation?.version ?? 0;
     this.assessorChoice = d.evaluation?.assessorUserId ?? '';

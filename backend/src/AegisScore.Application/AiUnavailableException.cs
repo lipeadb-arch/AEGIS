@@ -22,3 +22,14 @@ public sealed class AiQuotaExhaustedException : AiUnavailableException
     public AiQuotaExhaustedException(string message) : base(message) { }
     public AiQuotaExhaustedException(string message, Exception inner) : base(message, inner) { }
 }
+
+/// <summary>
+/// [AEGIS-NIST-AI-ASSIST-01] O motor RESPONDEU, mas fora do contrato estruturado (JSON ilegível, campos ausentes).
+/// Distinto da indisponibilidade: a chamada aconteceu e consumiu cota. O consumidor descarta a resposta inteira — nunca
+/// a "conserta" para parecer válida — e diz à pessoa que a resposta foi inválida.
+/// </summary>
+public sealed class AiInvalidResponseException : Exception
+{
+    public AiInvalidResponseException(string message) : base(message) { }
+    public AiInvalidResponseException(string message, Exception inner) : base(message, inner) { }
+}

@@ -32,11 +32,28 @@ import {
   scoreText,
 } from '../models/dashboards.models';
 import { KnightAssessment, KnightSourceLatest, KnightSourceType, overviewKpis, sourceTypeLabel } from '../models/knight.models';
-import { NistAssessment, NistProfile, NistSelection, averageText, cycleLabel, gapText, resolveSelection, selectionParams } from '../models/nist.models';
+import {
+  NistAssessment,
+  NistCorrelationRow,
+  NistEvidenceOverview,
+  NistProfile,
+  NistSelection,
+  NistTechnicalEvidence,
+  averageText,
+  correlationAttention,
+  cycleLabel,
+  gapText,
+  knightResultQuery,
+  resolveSelection,
+  selectionParams,
+  stateLabel,
+  subcategoryRoute,
+} from '../models/nist.models';
 import { HistoryWindowRequest, PostureMonthlyHistory } from '../models/posture-history.models';
 import { ActionPlan } from '../models/remediation.models';
 import { WorkspacePosture } from '../models/workspace.models';
 import { AegisScoreService } from '../services/aegis-score.service';
+import { AgentStateService } from '../services/agent-state.service';
 import { AuthService } from '../services/auth.service';
 import { KnightService } from '../services/knight.service';
 import { NistSelectionService, NistService } from '../services/nist.service';
@@ -66,7 +83,10 @@ function days(iso: string | null | undefined, now: Date): number | null {
  *   • AEGIS NIST: maturidade atual × alvo (1–5), cobertura, achados abertos e tratamento — da avaliação · rodada · escopo
  *     identificados e selecionáveis (mesma regra da jornada NIST);
  *   • métricas comuns lado a lado, com as bases ditas (não se somam), e o tratamento contado uma vez por plano;
- *   • necessidades de atenção com origem e evolução mensal com período.
+ *   • necessidades de atenção com origem e evolução mensal com período;
+ *   • [AEGIS-AUDITOR-CONTEXT-01] correlação KNIGHT × NIST da rodada selecionada, calculada pelos registros: evidências técnicas vinculadas,
+ *     achados KNIGHT disponíveis para revisão, lacunas de evidência e tratamentos ligados, com links para a origem (contagens sem duplicar
+ *     um controle vinculado a várias subcategorias). A interpretação da IA é pedida ao Auditor, separada.
  * Cada bloco carrega e falha sozinho; troca de seleção descarta a resposta atrasada. Nenhum score geral combina os módulos.
  */
 @Component({
@@ -245,6 +265,83 @@ function days(iso: string | null | undefined, now: Date): number | null {
         </section>
       </div>
 
+      <!-- ============================== Correlação KNIGHT × NIST ============================== -->
+      <!-- [AEGIS-AUDITOR-CONTEXT-01] Calculada pelos registros (mapeamento explícito do catálogo do KNIGHT e vínculos do assessor), para a
+           avaliação · rodada · escopo selecionados no NIST. Não é média de notas nem interpretação de IA; abre os registros de origem. -->
+      @if (nistSel()?.scope && nistSel()?.cycle) {
+        <section class="panel" aria-labelledby="m-corr">
+          <div class="hd"><h3 id="m-corr">Correlação KNIGHT × NIST</h3>
+            <span class="hint">calculada pelos registros · {{ nistSel()!.cycle!.name }} · {{ nistSel()!.scope!.name }}</span></div>
+          @if (overview().loading) {
+            <p class="muted" role="status">Carregando a correlação da rodada…</p>
+          } @else if (overview().error) {
+            <p class="notice error" role="alert">{{ overview().error }} <button type="button" class="linkbtn" (click)="loadOverview()">Tentar novamente</button></p>
+          } @else if (overview().value) {
+            @let o = overview().value!;
+            @let sm = o.summary;
+            <dl class="corr-sum">
+              <dt>Evidências técnicas vinculadas</dt>
+              <dd><strong>{{ sm.linkedTechnicalControls }}</strong> controle(s) em {{ sm.subcategoriesWithLinkedTechnical }} subcategoria(s)
+                <span class="muted">· {{ sm.linkedTechnicalLinks }} vínculo(s)</span></dd>
+              <dt>Achados KNIGHT disponíveis para revisão</dt>
+              <dd><strong>{{ sm.candidateControls }}</strong> controle(s) em {{ sm.subcategoriesWithCandidates }} subcategoria(s)
+                <span class="muted">· ainda não vinculados</span></dd>
+              <dt>Lacunas de evidência</dt>
+              <dd><strong>{{ sm.subcategoriesEvaluatedWithoutEvidence }}</strong> com nível confirmado sem evidência ·
+                <strong>{{ sm.subcategoriesWithTechnicalNotEvaluated }}</strong> com controles técnicos sem resultado avaliado</dd>
+              <dt>Tratamentos ligados</dt>
+              <dd><strong>{{ sm.plans }}</strong> plano(s)@if (sm.plansOverdue) { · <span class="warn-text">{{ sm.plansOverdue }} atrasado(s)</span> }</dd>
+            </dl>
+            @if (o.rows.length === 0) {
+              <p class="muted">Nenhuma subcategoria com evidência técnica relacionada, nível sem evidência ou tratamento ligado nesta rodada.</p>
+            } @else {
+              <div class="table-wrap">
+                <table class="data-table corr">
+                  <caption class="sr-only">Subcategorias com relação técnica, lacuna de evidência ou tratamento</caption>
+                  <thead><tr><th scope="col">Subcategoria</th><th scope="col">Vinculadas</th><th scope="col">Disponíveis para revisão</th><th scope="col">Lacunas</th><th scope="col">Tratamentos</th></tr></thead>
+                  <tbody>
+                    @for (r of corrRows(); track r.code) {
+                      <tr>
+                        <th scope="row"><a [routerLink]="subRoute(r.code)" [queryParams]="nistQuery()">{{ r.code }}</a>
+                          <span class="muted"> · {{ stateText(r.state) }}@if (r.currentLevel !== null) { · atual {{ r.currentLevel }} }</span></th>
+                        <td>@for (t of r.linkedTechnical; track t.evidenceId) {
+                              <a [routerLink]="subRoute(r.code)" [queryParams]="nistQuery()" [fragment]="'ev-' + t.evidenceId">{{ t.knightIndicatorId }}</a>
+                              <span class="muted"> ({{ t.statusLabel }}@if (t.newerStatus) { · mais recente: {{ t.newerStatus }} })</span>@if (!$last) {, }
+                            } @empty { <span class="muted">—</span> }</td>
+                        <td>@for (t of r.candidates; track t.knightRunId + t.knightIndicatorId) {
+                              <a routerLink="/knight" [queryParams]="knightQuery(t)">{{ t.knightIndicatorId }}</a>
+                              <span class="muted"> ({{ t.statusLabel }}@if (t.isDemo) { · demonstração })</span>@if (!$last) {, }
+                            } @empty { <span class="muted">—</span> }</td>
+                        <td>
+                          @if (r.evaluatedWithoutEvidence) { <span class="badge warn">nível sem evidência</span> }
+                          @if (r.technicalNotEvaluated) { <span class="badge neutral">{{ r.technicalNotEvaluated }} sem resultado técnico</span> }
+                          @if (!r.evaluatedWithoutEvidence && !r.technicalNotEvaluated) { <span class="muted">—</span> }
+                        </td>
+                        <td>@for (p of r.plans; track p.planId) {
+                              @if (p.origin === 'KnightFinding') { <a routerLink="/knight" [queryParams]="{ plan: p.planId }">{{ p.title }}</a> }
+                              @else { <a [routerLink]="subRoute(r.code)" [queryParams]="nistQuery()" [fragment]="'achado-' + p.nistFindingId">{{ p.title }}</a> }
+                              <span class="muted"> ({{ p.statusLabel }}@if (p.isOverdue) { · atrasado })</span>@if (!$last) {; }
+                            } @empty { <span class="muted">—</span> }</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+              @if (o.rows.length > corrLimit) {
+                <button type="button" class="linkbtn" (click)="corrAll.set(!corrAll())">{{ corrAll() ? 'Mostrar só as que pedem revisão primeiro' : 'Ver todas as ' + o.rows.length + ' subcategorias' }}</button>
+              }
+            }
+            <p class="muted note">{{ o.limitations[0] }} {{ o.limitations[1] }}</p>
+            @if (o.limitations.length > 2) {
+              <details class="more"><summary>Limitações da leitura ({{ o.limitations.length - 2 }})</summary>
+                <ul class="notes">@for (l of o.limitations.slice(2); track l) { <li>{{ l }}</li> }</ul></details>
+            }
+            <p class="muted note">Interpretação: <button type="button" class="linkbtn" (click)="askAuditor()">pedir ao Auditor Virtual</button> — a resposta da IA
+              é sugestão, cita estas fontes e não altera vínculos nem resultados.</p>
+          }
+        </section>
+      }
+
       <!-- ============================== Métricas comuns ============================== -->
       <section class="panel" aria-labelledby="m-common">
         <div class="hd"><h3 id="m-common">Métricas comuns</h3><span class="hint">lado a lado, com a base de cada uma</span></div>
@@ -390,6 +487,12 @@ function days(iso: string | null | undefined, now: Date): number | null {
       .att .badge { justify-content: center; }
       .att li > div { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
       .att .muted { font-size: var(--fs-meta); }
+      .corr-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: var(--sp-2) var(--sp-4); margin: 0 0 var(--sp-3); }
+      .corr-sum dt { font-size: var(--fs-meta); color: var(--muted); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+      .corr-sum dd { margin: 2px 0 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+      .corr td, .corr th { vertical-align: top; overflow-wrap: anywhere; }
+      .corr .badge { margin: 0 4px 4px 0; }
+      .notes { margin: var(--sp-2) 0; padding-left: 18px; }
       @media (max-width: 520px) { .metrics { grid-template-columns: minmax(0, 1fr); } .att li { grid-template-columns: minmax(0, 1fr); } }
     `,
   ],
@@ -404,6 +507,7 @@ export class DashboardsComponent {
   private readonly remediation = inject(RemediationService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly agent = inject(AgentStateService);
 
   protected readonly scoreText = scoreText;
   protected readonly averageText = averageText;
@@ -427,10 +531,22 @@ export class DashboardsComponent {
   protected readonly monthly = signal<Block<PostureMonthlyHistory>>(idle());
   protected readonly period = signal<HistoryWindowRequest>({ months: 12, until: null });
   protected readonly posture = signal<Block<WorkspacePosture>>(idle());
+  /** [AEGIS-AUDITOR-CONTEXT-01] Evidências e correlação KNIGHT × NIST da rodada selecionada. */
+  protected readonly overview = signal<Block<NistEvidenceOverview>>(idle());
+  protected readonly corrAll = signal(false);
+  protected readonly corrLimit = 8;
+  protected readonly subRoute = subcategoryRoute;
+  protected readonly knightQuery = (t: NistTechnicalEvidence) => knightResultQuery(t);
+  protected readonly stateText = stateLabel;
+  protected readonly corrRows = computed<NistCorrelationRow[]>(() => {
+    const rows = correlationAttention(this.overview().value?.rows ?? []);
+    return this.corrAll() ? rows : rows.slice(0, this.corrLimit);
+  });
 
   // Sequências: cada nova leitura invalida a anterior (troca de seleção nunca mostra resposta atrasada).
   private consolidatedSeq = 0;
   private profileSeq = 0;
+  private overviewSeq = 0;
   private monthlySeq = 0;
   private subs = new Subscription();
 
@@ -645,8 +761,10 @@ export class DashboardsComponent {
       this.profile.set({ value: null, error: null, loading: false });
       return;
     }
-    if (!prev || prev.assessment.id !== sel.assessment.id || prev.cycle?.id !== sel.cycle.id || prev.scope?.id !== sel.scope.id || !this.profile().value)
+    if (!prev || prev.assessment.id !== sel.assessment.id || prev.cycle?.id !== sel.cycle.id || prev.scope?.id !== sel.scope.id || !this.profile().value) {
       this.loadProfile();
+      this.loadOverview();
+    }
   }
 
   protected selectNist(assessmentId: string, cycleId: string | null, scopeId: string | null): void {
@@ -667,6 +785,31 @@ export class DashboardsComponent {
         next: (p) => { if (seq === this.profileSeq) this.profile.set({ value: p, error: null, loading: false }); },
         error: (e: Error) => { if (seq === this.profileSeq) this.profile.set({ value: null, error: e.message || 'Não foi possível ler o perfil.', loading: false }); },
       }),
+    );
+  }
+
+  /** Correlação da rodada selecionada; troca de seleção descarta a resposta atrasada. */
+  loadOverview(): void {
+    const sel = this.nistSel();
+    if (!sel?.scope || !sel.cycle) return;
+    const seq = ++this.overviewSeq;
+    this.overview.set(idle());
+    this.corrAll.set(false);
+    const ctx = { assessmentId: sel.assessment.id, cycleId: sel.cycle.id, scopeId: sel.scope.id };
+    this.subs.add(
+      this.nist.evidenceOverview(ctx).subscribe({
+        next: (o) => { if (seq === this.overviewSeq && o.cycleId === ctx.cycleId && o.scopeId === ctx.scopeId) this.overview.set({ value: o, error: null, loading: false }); },
+        error: (e: Error) => { if (seq === this.overviewSeq) this.overview.set({ value: null, error: e.message || 'Não foi possível ler a correlação.', loading: false }); },
+      }),
+    );
+  }
+
+  /** Interpretação pela IA, separada da correlação calculada: o Auditor responde no drawer, citando as fontes da rodada. */
+  protected askAuditor(): void {
+    this.agent.requestAudit(
+      'Interprete a correlação KNIGHT × NIST desta rodada e escopo: o que as evidências técnicas vinculadas sustentam e o que não sustentam, ' +
+        'quais achados disponíveis merecem revisão primeiro e quais lacunas de evidência precisam de documento, entrevista ou teste. ' +
+        'Separe configuração observada, documentação e declaração do assessor; não proponha alterar níveis.',
     );
   }
 

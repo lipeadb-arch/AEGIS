@@ -1,5 +1,6 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { AssetService } from '../services/asset.service';
 import {
   ASSET_CATEGORIES,
@@ -19,9 +20,6 @@ import {
 import { NIST_FUNCTION_DESCRIPTIONS } from '../models/nist-glossary';
 import { riskColor } from '../lib/scales';
 import { environment } from '../../environments/environment';
-import { PostureSummaryComponent } from '../components/scoring/posture-summary.component';
-import { ControlComplianceCardComponent } from '../components/scoring/control-compliance-card.component';
-import { AegisPillarChecklistComponent } from '../components/scoring/aegis-pillar-checklist.component';
 import { CrossSourceSituationsComponent } from '../components/cross-source/cross-source-situations.component';
 import { DevicePriorityComponent } from '../components/device-priority/device-priority.component';
 import {
@@ -29,17 +27,15 @@ import {
   applyDeclaredCriticality,
   inventoryPageStep,
 } from '../models/device-priority.models';
-import { AegisScoreService } from '../services/aegis-score.service';
-import { ScoringService } from '../services/scoring.service';
-import { FunctionPosture, functionOf } from '../models/workspace.models';
-import {
-  PILLARS,
-  TenantControlStateDto,
-  buildPillarGapAnalysis,
-  buildPillarView,
-} from '../models/scoring.models';
+import { stateLabel, subcategoryRoute } from '../models/nist.models';
+import { NistApiError, NistService } from '../services/nist.service';
+import { NistPageContext } from './nist/nist-page-context';
 
 /**
+ * AEGIS NIST · Identificar → inventário de ativos. [AEGIS-AUDITOR-CONTEXT-01] Na jornada atual: o retrato do inventário entra como
+ * evidência das subcategorias de gestão de ativos (ID.AM) da rodada selecionada pelo MESMO vínculo da subcategoria (LinkEvidenceAsync),
+ * com a confirmação do assessor, papel de escrita e rodada aberta. Quantidade de ativos não demonstra inventário completo.
+ *
  * IDENTIFY (ID.AM) — inventário tático de ativos.
  * Smart data table sobre GET /api/v1/assets: filtros NIST combinados (categoria, risco,
  * criticidade, busca), paginação, e a coluna "Risco Associado" (score/nível da IA) em destaque.
@@ -48,20 +44,15 @@ import {
 @Component({
   selector: 'app-asset-inventory',
   standalone: true,
-  imports: [
-    DatePipe, PostureSummaryComponent, ControlComplianceCardComponent, AegisPillarChecklistComponent,
-    CrossSourceSituationsComponent,
-    DevicePriorityComponent,
-  ],
+  imports: [DatePipe, RouterLink, CrossSourceSituationsComponent, DevicePriorityComponent],
   template: `
     <div class="page">
       <header class="page-head">
         <div>
-          <p class="page-eyebrow">Ambiente</p>
+          <p class="page-eyebrow">AEGIS NIST · Identificar</p>
           <h1>Inventário de ativos</h1>
-          <!-- Subtítulo tático da Função Identify (mesmo padrão dos painéis de pilar / Govern) -->
           <p class="page-desc">{{ idDescription }}</p>
-          <p class="page-meta">NIST CSF 2.0 · Identify (ID.AM) · ativos cadastrados e descobertos por integrações</p>
+          <p class="page-meta">Ativos cadastrados e observados pelas integrações · apoio à gestão de ativos (ID.AM)</p>
         </div>
         <div class="head-stat">
           <span class="head-stat-k">Ativos</span>
@@ -70,60 +61,66 @@ import {
         </div>
       </header>
 
-      <!-- Seção COMUM de postura + controles da Função Identify (mesmo contrato/painel das demais Funções);
-           o inventário de ativos abaixo permanece como área especializada. -->
-      <section class="panel">
+      <!-- [AEGIS-AUDITOR-CONTEXT-01] O inventário como evidência de gestão de ativos (ID.AM) na rodada da jornada NIST. -->
+      <section class="panel" aria-labelledby="inv-nist">
         <div class="idw-head">
-          <h3>Postura Identify <span class="code">ID</span></h3>
-          <span class="hint">controles ID.* avaliados — score, cobertura, evidência e pendências</span>
+          <h3 id="inv-nist">Inventário como evidência na jornada NIST</h3>
+          @if (nist.ctx()) { <a class="hint" [routerLink]="['/nist', 'id']" [queryParams]="nist.params()">voltar à Identificação</a> }
         </div>
-
-        <div class="idw-grid">
-          <div class="idw-summary">
-            @switch (idPostureState()) {
-              @case ('loaded') { <app-posture-summary [posture]="idPosture()!" label="Identify" code="ID" /> }
-              @case ('loading') { <span class="idw-pulse">Carregando o resumo de postura…</span> }
-              @case ('notFound') { <span class="idw-pulse">Sem catálogo ativo para a Função Identify.</span> }
-              @case ('error') {
-                <div class="idw-err">
-                  <span>Não foi possível carregar o resumo de postura.</span>
-                  <button type="button" class="ghost sm" (click)="loadWorkspacePosture()">Tentar novamente</button>
-                </div>
-              }
-            }
-          </div>
-
-          <div class="idw-controls">
-            @switch (idControlsState()) {
-              @case ('loading') { <span class="idw-pulse">Carregando os controles ID…</span> }
-              @case ('error') {
-                <div class="idw-err">
-                  <span>Não foi possível carregar os controles ID.</span>
-                  <button type="button" class="ghost sm" (click)="loadIdControls()">Tentar novamente</button>
-                </div>
-              }
-              @case ('loaded') {
-                <div class="tabbar" role="tablist">
-                  <button type="button" role="tab" class="tab" [class.on]="idTab() === 'controls'"
-                    [attr.aria-selected]="idTab() === 'controls'" (click)="idTab.set('controls')">Controles</button>
-                  <button type="button" role="tab" class="tab blind" [class.on]="idTab() === 'blind'"
-                    [attr.aria-selected]="idTab() === 'blind'" (click)="idTab.set('blind')">
-                    Pontos Cegos @if (idBlindCount() > 0) { <i>{{ idBlindCount() }}</i> }
-                  </button>
-                </div>
-                @if (idTab() === 'controls') {
-                  @if (idView().controls.length > 0) {
-                    <app-control-compliance-card [controls]="idView().controls" />
-                  } @else {
-                    <p class="idw-empty">Nenhum controle ID avaliado ainda — sem evidência para exibir (não é 0%).</p>
-                  }
-                } @else {
-                  <app-aegis-pillar-checklist pillar="ID" />
+        @if (nist.overview(); as o) {
+          <p class="inv-p">Avaliação <strong>{{ o.assessmentName }}</strong> · rodada <strong>{{ o.cycleName }}</strong>
+            ({{ o.cycleStatus === 'Closed' ? 'encerrada' : 'aberta' }}) · escopo <strong>{{ o.scopeName }}</strong> ·
+            <a [routerLink]="['/nist']" [queryParams]="nist.params()">trocar</a></p>
+          <p class="inv-p">Retrato atual do inventário: {{ o.inventorySnapshot }}</p>
+          <p class="idw-empty">A quantidade de ativos cadastrados ou observados não demonstra, por si só, inventário completo nem atendimento de
+            gestão de ativos. O vínculo guarda o retrato do instante (procedência e data); a conclusão é do assessor, na subcategoria.</p>
+          <div class="table-wrap">
+            <table class="data-table">
+              <caption class="sr-only">Subcategorias de gestão de ativos e retratos do inventário vinculados nesta rodada</caption>
+              <thead><tr><th scope="col">Subcategoria</th><th scope="col">Situação NIST</th><th scope="col">Retrato vinculado</th><th scope="col"><span class="sr-only">Ação</span></th></tr></thead>
+              <tbody>
+                @for (t of o.inventory; track t.code) {
+                  <tr>
+                    <th scope="row"><a [routerLink]="subRoute(t.code)" [queryParams]="nist.params()">{{ t.code }}</a> <span class="inv-title">{{ t.title }}</span></th>
+                    <td>{{ stateLabel(t.state) }}@if (t.humanConfirmed && t.currentLevel !== null) { · nível {{ t.currentLevel }} confirmado }</td>
+                    <td>
+                      @if (t.linked.length === 0) { <span class="muted">nenhum nesta rodada</span> }
+                      @else {
+                        @let l = t.linked[0];
+                        <a [routerLink]="subRoute(t.code)" [queryParams]="nist.params()" [fragment]="'ev-' + l.evidenceId">{{ l.collectedAt | date: 'dd/MM/yyyy HH:mm' }}</a>
+                        <span class="muted"> · {{ l.recordedByName ?? '—' }}@if (t.linked.length > 1) { · {{ t.linked.length }} retratos }</span>
+                        @if (l.originScope) { <div class="inv-scope">{{ l.originScope }}</div> }
+                      }
+                    </td>
+                    <td>
+                      @if (nist.canLink()) {
+                        @if (confirming() === t.code) {
+                          <button type="button" class="btn primary xs" (click)="linkInventory(t.code)" [disabled]="linking()">{{ linking() ? 'Vinculando…' : 'Confirmar o vínculo' }}</button>
+                          <button type="button" class="ghost xs" (click)="confirming.set(null)" [disabled]="linking()">Cancelar</button>
+                        } @else {
+                          <button type="button" class="ghost xs" (click)="startLink(t.code)">Vincular o retrato atual</button>
+                        }
+                      }
+                    </td>
+                  </tr>
                 }
-              }
-            }
+              </tbody>
+            </table>
           </div>
-        </div>
+          @if (!nist.canWrite()) { <p class="idw-empty">Seu papel permite consultar, não vincular.</p> }
+          @else if (!nist.cycleOpen()) { <p class="idw-empty">Rodada encerrada: os vínculos não podem ser alterados.</p> }
+          @if (linkError(); as le) { <p class="notice error" role="alert">{{ le }}</p> }
+          @if (linkNote(); as ln) { <p class="notice" role="status">{{ ln }}</p> }
+        } @else if (nist.loading()) {
+          <span class="idw-pulse">Carregando a rodada selecionada…</span>
+        } @else if (nist.error()) {
+          <p class="notice error" role="alert">{{ nist.error() }}</p>
+        } @else if (nist.noAssessment()) {
+          <p class="idw-empty">Nenhuma avaliação NIST neste ambiente: o inventário continua disponível; para usá-lo como evidência, crie a
+            avaliação na <a routerLink="/nist">jornada NIST</a>.</p>
+        } @else {
+          <p class="idw-empty">Selecione a avaliação, a rodada e o escopo na <a routerLink="/nist">jornada NIST</a> para usar o inventário como evidência.</p>
+        }
       </section>
 
       <!-- ---- Barra de filtros combinados ---- -->
@@ -411,6 +408,11 @@ import {
       /* Página, cabeçalho, filtros, avisos, painéis e botões: sistema visual global (styles.css). */
 
       /* Seção comum Identify (postura + controles) — compacta, acima do inventário. */
+      .inv-p { margin: 0 0 var(--sp-2); overflow-wrap: anywhere; }
+      /* Os rótulos .sr-only (absolutos) ficam contidos na rolagem da tabela, sem rolagem lateral da página em 375 px. */
+      .table-wrap { position: relative; }
+      .inv-title { font-weight: 400; color: var(--text-2); }
+      .inv-scope { font-size: var(--fs-meta); color: var(--muted); overflow-wrap: anywhere; }
       .idw-head {
         display: flex;
         flex-wrap: wrap;
@@ -754,22 +756,71 @@ import {
 })
 export class AssetInventoryComponent implements OnInit {
   private readonly svc = inject(AssetService);
-  private readonly scoreSvc = inject(AegisScoreService);
-  private readonly scoring = inject(ScoringService);
+  private readonly nistApi = inject(NistService);
 
   // ---- Dados ----
   rows = signal<AssetDto[]>([]);
 
-  // ---- Seção comum Identify (postura + controles), pela projeção única + matriz de controles ----
-  /** Postura da Função Identify (ID) — cabeçalho compartilhado das seis Funções. */
-  idPosture = signal<FunctionPosture | null>(null);
-  idPostureState = signal<'loading' | 'loaded' | 'notFound' | 'error'>('loading');
-  /** Controles ID.* (matriz de conformidade filtrada pelo prefixo). */
-  private readonly idControls = signal<TenantControlStateDto[]>([]);
-  idControlsState = signal<'loading' | 'loaded' | 'error'>('loading');
-  idTab = signal<'controls' | 'blind'>('controls');
-  readonly idView = computed(() => buildPillarView(PILLARS.ID, this.idControls()));
-  readonly idBlindCount = computed(() => buildPillarGapAnalysis(PILLARS.ID, this.idControls()).blindSpots.length);
+  // ---- [AEGIS-AUDITOR-CONTEXT-01] Inventário como evidência na rodada da jornada NIST ----
+  protected readonly nist = new NistPageContext();
+  protected readonly subRoute = subcategoryRoute;
+  protected readonly stateLabel = stateLabel;
+  readonly confirming = signal<string | null>(null);
+  readonly linking = signal(false);
+  readonly linkError = signal<string | null>(null);
+  readonly linkNote = signal<string | null>(null);
+  /** Identidade da gravação em curso — separada da geração das leituras: uma releitura do mesmo contexto não a invalida. */
+  private linkOp = 0;
+
+  constructor() {
+    // Troca efetiva de avaliação, rodada, escopo ou tenant: o formulário e a operação anterior são descartados.
+    this.nist.onContextChange(() => this.resetLink());
+  }
+
+  private resetLink(): void {
+    this.linkOp++;
+    this.linking.set(false);
+    this.confirming.set(null);
+    this.linkError.set(null);
+    this.linkNote.set(null);
+  }
+
+  /** A resposta é da gravação em curso, no mesmo tenant? Tenant trocado sem aviso de contexto: descarta e libera a tela. */
+  private ownsLink(op: number, tenant: string | null): boolean {
+    if (op !== this.linkOp) return false;
+    if (tenant !== this.nist.tenantId()) { this.resetLink(); return false; }
+    return true;
+  }
+
+  protected startLink(code: string): void {
+    this.confirming.set(code);
+    this.linkError.set(null);
+    this.linkNote.set(null);
+  }
+
+  /** Confirmação do assessor: o servidor tira o retrato do inventário NO INSTANTE do vínculo (procedência e data) e o grava na subcategoria. */
+  protected linkInventory(code: string): void {
+    const ctx = this.nist.ctx();
+    if (!ctx || this.linking() || !this.nist.canLink()) return;
+    const op = ++this.linkOp;
+    const tenant = this.nist.tenantId();
+    this.linking.set(true);
+    this.linkError.set(null);
+    this.nistApi.linkEvidence(ctx, code, { kind: 'AssetInventory' }).subscribe({
+      next: () => {
+        if (!this.ownsLink(op, tenant)) return;
+        this.linking.set(false);
+        this.confirming.set(null);
+        this.linkNote.set(`Retrato do inventário vinculado a ${code} nesta rodada. A conclusão sobre a gestão de ativos continua com o assessor.`);
+        this.nist.reload();
+      },
+      error: (e: NistApiError) => {
+        if (!this.ownsLink(op, tenant)) return;
+        this.linking.set(false);
+        this.linkError.set(e.message);
+      },
+    });
+  }
   total = signal(0);
   totalPages = signal(0);
   page = signal(1);
@@ -847,36 +898,6 @@ export class AssetInventoryComponent implements OnInit {
 
   ngOnInit(): void {
     this.load();
-    this.loadWorkspacePosture();
-    this.loadIdControls();
-  }
-
-  /** Cabeçalho de postura ID pela projeção única, com estados explícitos (init + retry). */
-  loadWorkspacePosture(): void {
-    this.idPostureState.set('loading');
-    this.scoreSvc.fetchWorkspace().subscribe({
-      next: (w) => {
-        const f = functionOf(w, 'ID') ?? null;
-        this.idPosture.set(f);
-        this.idPostureState.set(f ? 'loaded' : 'notFound');
-      },
-      error: () => {
-        this.idPosture.set(null);
-        this.idPostureState.set('error');
-      },
-    });
-  }
-
-  /** Controles ID.* (matriz de conformidade), com estados explícitos (init + retry). */
-  loadIdControls(): void {
-    this.idControlsState.set('loading');
-    this.scoring.getPillarControls('ID').subscribe({
-      next: (list) => {
-        this.idControls.set(list);
-        this.idControlsState.set('loaded');
-      },
-      error: () => this.idControlsState.set('error'),
-    });
   }
 
   /** Só a resposta da ÚLTIMA leitura pedida é aplicada — filtro, página ou releitura depois de uma declaração. */

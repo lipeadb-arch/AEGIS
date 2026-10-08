@@ -34,19 +34,67 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
     private readonly IPostureExposureQuery _exposureQuery;
     private readonly IVulnerabilityQuery _vulnerabilityQuery;
     private readonly IDetectionCoverageQuery _detectionCoverageQuery;
+    private readonly IAuditorAssessmentContextBuilder? _assessments;
 
     public AuditorContextBuilder(
         AegisScoreDbContext db,
         IWorkspacePostureQuery posture,
         IPostureExposureQuery exposureQuery,
         IVulnerabilityQuery vulnerabilityQuery,
-        IDetectionCoverageQuery detectionCoverageQuery)
+        IDetectionCoverageQuery detectionCoverageQuery,
+        IAuditorAssessmentContextBuilder? assessments = null)
     {
         _db = db;
         _posture = posture;
         _exposureQuery = exposureQuery;
         _vulnerabilityQuery = vulnerabilityQuery;
         _detectionCoverageQuery = detectionCoverageQuery;
+        _assessments = assessments;
+    }
+
+    /// <summary>
+    /// [AEGIS-AUDITOR-CONTEXT-01] Postura do ambiente (o contexto de sempre) + os registros dos assessments para o foco. A seleção da tela
+    /// é conferida PRIMEIRO: de outro tenant, nada é lido nem enviado. A postura do ambiente ganha fontes citáveis (S…) com a mesma
+    /// leitura dos campos detalhados.
+    /// </summary>
+    public async Task<AuditorTenantContext> BuildAsync(AuditorFocus focus, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(focus);
+        var assessments = _assessments is null
+            ? new AuditorAssessmentContext(DateTimeOffset.UtcNow, focus.PageLabel, Array.Empty<AuditorContextSource>(), Array.Empty<string>())
+            : await _assessments.BuildAsync(focus, ct);
+        var current = await BuildAsync(ct);
+        return current with { Assessments = assessments.With(PostureSources(current)) };
+    }
+
+    /// <summary>Fontes citáveis da postura do ambiente (AEGIS Score, recomendações, vulnerabilidades, detecção) — resumo dos campos.</summary>
+    private static IEnumerable<AuditorContextSource> PostureSources(AuditorTenantContext c)
+    {
+        yield return new AuditorContextSource("S1", "Postura do ambiente", AuditorSourceNature.Indicator, "AEGIS Score — postura do ambiente",
+            c.ScoreState == "Evaluated"
+                ? $"Score {c.ScorePercentage:0.#}/100; cobertura {c.CoveragePercentage:0.#}% dos controles elegíveis; {c.CompliantControls} conforme(s), " +
+                  $"{c.NonCompliantControls} não conforme(s), {c.MitigatedControls} mitigado(s), {c.NotEvaluatedControls} não avaliado(s) (campos ScoreState/TopGaps)."
+                : $"Sem score: nenhum controle avaliado (cobertura {c.CoveragePercentage:0.#}%).",
+            c.LatestEvidenceAt?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), false,
+            "Postura do ambiente por telemetria e documentos (0–100): não é a nota do KNIGHT nem a maturidade NIST.",
+            new AuditorSourceLink("/history", new Dictionary<string, string> { ["vista"] = "tendencia" }));
+        if (c.TopExposures is { } ex)
+            yield return new AuditorContextSource("S2", "Postura do ambiente", AuditorSourceNature.ObservedConfiguration,
+                "Recomendações de postura pendentes (fonte Microsoft Secure Score)",
+                $"{ex.Count} recomendação(ões) principais no campo TopExposures (ordem da fonte).", null, false,
+                "Recomendação da fonte: diferença de pontos não comprova configuração insegura, exposição ou vulnerabilidade.",
+                new AuditorSourceLink("/nist/pr/recomendacoes"));
+        if (c.TopVulnerabilities is { } vu)
+            yield return new AuditorContextSource("S3", "Postura do ambiente", AuditorSourceNature.ObservedConfiguration,
+                "Vulnerabilidades em aberto identificadas pelas fontes",
+                $"{vu.Count} problema(s) principais no campo TopVulnerabilities (agrupados por CVE, com o alcance em ativos).", null, false,
+                "Identificação da fonte; CVSS não é risco de negócio e exploit disponível não é exploração confirmada.",
+                new AuditorSourceLink("/nist/id/vulnerabilidades"));
+        if (c.DetectionCoverage is { } dc)
+            yield return new AuditorContextSource("S4", "Postura do ambiente", AuditorSourceNature.ObservedConfiguration,
+                $"Cobertura de detecção configurada ({dc.Source})",
+                $"{dc.ActiveRules} regra(s) ativa(s), {dc.TechniquesObserved} técnica(s) MITRE observada(s) (campo DetectionCoverage).", null, false,
+                "Regra configurada não comprova detecção funcional nem conformidade.", null);
     }
 
     public async Task<AuditorTenantContext> BuildAsync(CancellationToken ct = default)

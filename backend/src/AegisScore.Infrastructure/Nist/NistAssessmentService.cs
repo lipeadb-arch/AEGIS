@@ -38,16 +38,12 @@ public sealed partial class NistAssessmentService : INistAssessmentService
     private const int MaxTitle = 300;
     private const int MaxNotes = 2000;
 
-    private static readonly KnightIndicatorStatus[] EvaluatedKnightStatuses =
-        { KnightIndicatorStatus.Passed, KnightIndicatorStatus.Exposed, KnightIndicatorStatus.Mitigated };
+    private static readonly KnightIndicatorStatus[] EvaluatedKnightStatuses = NistKnightLatestRuns.Evaluated;
 
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
     private readonly TimeProvider _clock;
     private readonly IControlLanguageCatalog? _language;
-    private readonly IAiAssessmentService? _ai;
-    private readonly IAiFreeTierGate? _gate;
-    private readonly IAiTenantResolver? _aiTenant;
     private readonly ILogger<NistAssessmentService> _log;
     private readonly MaturityScoringService _maturity = new();
 
@@ -56,18 +52,12 @@ public sealed partial class NistAssessmentService : INistAssessmentService
         ITenantContext tenant,
         TimeProvider clock,
         IControlLanguageCatalog? language = null,
-        IAiAssessmentService? ai = null,
-        IAiFreeTierGate? gate = null,
-        IAiTenantResolver? aiTenant = null,
         ILogger<NistAssessmentService>? log = null)
     {
         _db = db;
         _tenant = tenant;
         _clock = clock;
         _language = language;
-        _ai = ai;
-        _gate = gate;
-        _aiTenant = aiTenant;
         _log = log ?? NullLogger<NistAssessmentService>.Instance;
     }
 
@@ -680,14 +670,21 @@ public sealed partial class NistAssessmentService : INistAssessmentService
                 state.CurrentScore, sub.MaxScorePoints, state.LastEvaluatedAt);
 
         var activeUsers = await ActiveUserIdsAsync(_db, ct);
+        var assisted = await NistAssistProvenance.LoadAsync(_db, ctx.Cycle.Id, ctx.Scope.Id, ct);
         var procedures = ctx.Procedures.Where(p => p.SubcategoryCode == sub.Code)
-            .OrderBy(p => p.Method).ThenBy(p => p.CreatedAt.UtcTicks).ThenBy(p => p.Id).Select(NistWorkService.ProcedureView).ToList();
+            .OrderBy(p => p.Method).ThenBy(p => p.CreatedAt.UtcTicks).ThenBy(p => p.Id)
+            .Select(p => NistWorkService.ProcedureView(p) with { AssistedFrom = NistAssistProvenance.ProcedureField(assisted, p) })
+            .ToList();
         var findings = ctx.Findings.Where(f => f.SubcategoryCode == sub.Code).ToList();
         var plans = await PlansByFindingAsync(_db, findings.Select(f => f.Id).ToList(), ct);
         var findingViews = findings
             .OrderByDescending(f => f.CreatedAt.UtcTicks).ThenBy(f => f.Id)
-            .Select(f => NistWorkService.FindingView(f, ctx.Cycle.Name, ScopeName(ctx.Scope), TitleOf(sub),
-                CurrentPlan(plans.TryGetValue(f.Id, out var l) ? l : null)))
+            .Select(f =>
+            {
+                var plan = CurrentPlan(plans.TryGetValue(f.Id, out var l) ? l : null);
+                return NistWorkService.FindingView(f, ctx.Cycle.Name, ScopeName(ctx.Scope), TitleOf(sub), plan)
+                    with { AssistedFields = NistAssistProvenance.FindingFields(assisted, f, plan) };
+            })
             .ToList();
 
         return new NistSubcategoryDetailView(
@@ -698,7 +695,8 @@ public sealed partial class NistAssessmentService : INistAssessmentService
             language?.InitialAction ?? "",
             sub.Description,
             string.IsNullOrWhiteSpace(sub.ImplementationExamples) ? null : sub.ImplementationExamples,
-            eval is null ? null : EvaluationView(eval, linked.Count, activeUsers),
+            eval is null ? null : EvaluationView(eval, linked.Count, activeUsers)
+                with { AssistedFields = assisted.For(NistAssistTarget.Evaluation, eval.Id, NistAssistProvenance.EvaluationTexts(eval)) },
             linked.Select(EvidenceView).ToList(),
             available,
             posture,
@@ -751,44 +749,27 @@ public sealed partial class NistAssessmentService : INistAssessmentService
         bool IsLinked(EvidenceOriginKind kind, string? reference) =>
             linked.Any(e => e.OriginKind == kind && (kind == EvidenceOriginKind.AssetInventory || e.OriginRef == reference));
 
-        // ---- KNIGHT: execução concluída MAIS RECENTE de cada fonte; só controles com resultado avaliado ----
-        var runs = await _db.KnightAssessmentRuns.AsNoTracking()
-            .Where(r => r.Status == KnightRunStatus.Completed && r.SourceType != KnightSourceType.Consolidated)
-            .Select(r => new { r.Id, r.SourceType, r.Mode, r.Source, r.SourceState, r.CatalogVersion, r.CompletedAt, r.StartedAt, r.IdentityAcquisitionId })
-            .ToListAsync(ct);
-        var latestRuns = runs
-            .GroupBy(r => (r.SourceType, r.Mode))
-            .Select(g => g.OrderByDescending(r => (r.CompletedAt ?? r.StartedAt).UtcTicks).ThenBy(r => r.Id).First())
-            .ToList();
-        if (latestRuns.Count > 0)
+        // ---- KNIGHT: execução concluída MAIS RECENTE de cada fonte (a mesma regra da correlação da rodada) ----
+        var (latestRuns, indicators) = await NistKnightLatestRuns.LoadAsync(_db, ct);
+        foreach (var i in indicators.Where(i => i.MapsTo(code)))
         {
-            var runIds = latestRuns.Select(r => r.Id).ToList();
-            var indicators = await _db.KnightIndicatorResults.AsNoTracking()
-                .Where(i => runIds.Contains(i.RunId))
-                .Select(i => new { i.RunId, i.IndicatorId, i.Title, i.Status, i.NistCodes, i.CollectedAt })
-                .ToListAsync(ct);
-            foreach (var i in indicators
-                         .Where(i => i.NistCodes.Any(c => string.Equals(c, code, StringComparison.OrdinalIgnoreCase)))
-                         .OrderBy(i => i.IndicatorId, StringComparer.Ordinal))
-            {
-                var run = latestRuns.First(r => r.Id == i.RunId);
-                var evaluated = EvaluatedKnightStatuses.Contains(i.Status);
-                var reference = $"{run.Id}/{i.IndicatorId}";
-                result.Add(new NistAvailableEvidenceView(
-                    nameof(EvidenceOriginKind.KnightIndicator),
-                    $"{i.IndicatorId} — {i.Title}",
-                    $"AEGIS KNIGHT · {run.Source}",
-                    KnightScopeOf(run.SourceType, run.Mode, run.SourceState, run.CatalogVersion, run.IdentityAcquisitionId),
-                    run.CompletedAt ?? i.CollectedAt,
-                    KnightStatusLabel(i.Status),
-                    $"Mapeamento explícito do catálogo do KNIGHT ({run.CatalogVersion}) para {code}.",
-                    evaluated
-                        ? "Evidência técnica de apoio: cobre um aspecto técnico e não comprova sozinha o resultado organizacional."
-                        : "Sem resultado avaliado nesta execução — não pode ser vinculado.",
-                    null, run.Id, i.IndicatorId,
-                    run.Mode == KnightAssessmentMode.Demo,
-                    IsLinked(EvidenceOriginKind.KnightIndicator, reference)));
-            }
+            var run = latestRuns.First(r => r.Id == i.RunId);
+            var evaluated = EvaluatedKnightStatuses.Contains(i.Status);
+            var reference = $"{run.Id}/{i.IndicatorId}";
+            result.Add(new NistAvailableEvidenceView(
+                nameof(EvidenceOriginKind.KnightIndicator),
+                $"{i.IndicatorId} — {i.Title}",
+                $"AEGIS KNIGHT · {run.Source}",
+                KnightScopeOf(run.SourceType, run.Mode, run.SourceState, run.CatalogVersion, run.IdentityAcquisitionId),
+                run.CompletedAt ?? i.CollectedAt,
+                KnightStatusLabel(i.Status),
+                $"Mapeamento explícito do catálogo do KNIGHT ({run.CatalogVersion}) para {code}.",
+                evaluated
+                    ? "Evidência técnica de apoio: cobre um aspecto técnico e não comprova sozinha o resultado organizacional."
+                    : "Sem resultado avaliado nesta execução — não pode ser vinculado.",
+                null, run.Id, i.IndicatorId,
+                run.Mode == KnightAssessmentMode.Demo,
+                IsLinked(EvidenceOriginKind.KnightIndicator, reference)));
         }
 
         // ---- Documentos: mapeamento com trecho literal validado OU confirmado pelo analista ----
@@ -882,11 +863,11 @@ public sealed partial class NistAssessmentService : INistAssessmentService
     private static string KnightScopeOf(KnightAssessmentRun run) =>
         KnightScopeOf(run.SourceType, run.Mode, run.SourceState, run.CatalogVersion, run.IdentityAcquisitionId);
 
-    private static string KnightScopeOf(KnightSourceType source, KnightAssessmentMode mode, KnightSourceState state, string catalog, Guid? acquisition) =>
+    internal static string KnightScopeOf(KnightSourceType source, KnightAssessmentMode mode, KnightSourceState state, string catalog, Guid? acquisition) =>
         $"Fonte {source}; {(mode == KnightAssessmentMode.Demo ? "demonstração (dados sintéticos)" : "coleta real")}; " +
         $"estado da coleta {state}; catálogo {catalog}" + (acquisition is { } a ? $"; aquisição ADM {a}" : "");
 
-    private static string InventoryScopeOf(IReadOnlyList<(AssetCategory Category, AssetDiscoverySource Source)> assets)
+    internal static string InventoryScopeOf(IReadOnlyList<(AssetCategory Category, AssetDiscoverySource Source)> assets)
     {
         if (assets.Count == 0) return "Nenhum ativo ativo no inventário.";
         var bySource = assets.GroupBy(a => a.Source).OrderBy(g => g.Key)
@@ -895,7 +876,7 @@ public sealed partial class NistAssessmentService : INistAssessmentService
         return $"{assets.Count} ativo(s) ativo(s); origem: {string.Join(", ", bySource)}; categorias: {string.Join(", ", byCategory)}.";
     }
 
-    private static string KnightStatusLabel(KnightIndicatorStatus s) => s switch
+    internal static string KnightStatusLabel(KnightIndicatorStatus s) => s switch
     {
         KnightIndicatorStatus.Passed => "Aprovado",
         KnightIndicatorStatus.Exposed => "Reprovado",
@@ -905,7 +886,7 @@ public sealed partial class NistAssessmentService : INistAssessmentService
         _ => "Não se aplica",
     };
 
-    private static string DocumentTypeLabel(GovernanceDocumentType t) => t switch
+    internal static string DocumentTypeLabel(GovernanceDocumentType t) => t switch
     {
         GovernanceDocumentType.Politica => "Política",
         GovernanceDocumentType.Norma => "Norma",
@@ -915,7 +896,7 @@ public sealed partial class NistAssessmentService : INistAssessmentService
         _ => "Outro",
     };
 
-    private static string DocumentStatusLabel(GovernanceStatus s) => s switch
+    internal static string DocumentStatusLabel(GovernanceStatus s) => s switch
     {
         GovernanceStatus.Rascunho => "Rascunho",
         GovernanceStatus.Vigente => "Vigente",

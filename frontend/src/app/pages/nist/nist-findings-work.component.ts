@@ -27,9 +27,12 @@ import {
   toFindingRequest,
 } from '../../models/nist.models';
 import { NistApiError, NistCtx, NistService } from '../../services/nist.service';
+import { FINDING_APPLY, NistAssistApplyEvent, assistanceRef, assistedFieldsText } from '../../models/nist-assist.models';
+import { NistAssistanceRef } from '../../models/nist.models';
+import { NistAssistPanelComponent } from './nist-assist-panel.component';
 
 interface PlanForm {
-  mode: 'execution' | 'validation' | 'edit' | 'create' | 'status';
+  mode: 'execution' | 'validation' | 'edit' | 'create' | 'status' | 'recommendation';
   notes: string;
   evidence: string;
   title: string;
@@ -41,10 +44,13 @@ interface PlanForm {
   area: string;
   due: string;
   status: string;
+  /** [AEGIS-NIST-AI-ASSIST-01] O texto veio de uma sugestão de tratamento (procedência na gravação). */
+  assistance: NistAssistanceRef | null;
 }
 
 const blankPlanForm = (mode: PlanForm['mode']): PlanForm => ({
   mode, notes: '', evidence: '', title: '', action: '', ownerMode: 'none', ownerUserId: '', ownerName: '', ownerContact: '', area: '', due: '', status: '',
+  assistance: null,
 });
 
 /**
@@ -52,11 +58,15 @@ const blankPlanForm = (mode: PlanForm['mode']): PlanForm => ({
  * lacuna documentada (lacuna observada ou procedimento insatisfatório), com risco, impacto, severidade e prioridade
  * justificados — nunca nasce sozinho de atual × alvo. O plano é o mesmo mecanismo de planos do produto, com origem NIST:
  * etapas, execução, validação humana com evidência e reabertura. Concluir o plano não muda a maturidade.
+ *
+ * [AEGIS-NIST-AI-ASSIST-01] Cada achado tem a assistência de IA para EXPLICAR o problema ou SUGERIR tratamento. A sugestão nunca
+ * cria nem altera plano: a pessoa escolhe usá-la como recomendação do achado ou como ação proposta de um plano NOVO, revisa no
+ * formulário e grava pelo fluxo normal (a gravação leva a referência da sugestão para a procedência).
  */
 @Component({
   selector: 'app-nist-findings-work',
   standalone: true,
-  imports: [FormsModule, DatePipe],
+  imports: [FormsModule, DatePipe, NistAssistPanelComponent],
   template: `
     <section class="panel" aria-labelledby="fw-h" id="achados">
       <div class="hd"><h3 id="fw-h">Achados e tratamento</h3><span class="hint">{{ findings().length }} registrado(s) nesta rodada</span></div>
@@ -138,7 +148,11 @@ const blankPlanForm = (mode: PlanForm['mode']): PlanForm => ({
             }
             <dt>Registro</dt><dd>{{ fd.createdByName ?? '—' }} em {{ fd.createdAt | date: 'dd/MM/yyyy HH:mm' }}
               @if (fd.statusNote) { · {{ findingStatusLabel(fd.status) }}: {{ fd.statusNote }} ({{ fd.statusChangedByName ?? '—' }}) }</dd>
+            @if (assistedText(fd.assistedFields); as at) { <dt>Conteúdo assistido</dt><dd>{{ at }}</dd> }
           </dl>
+          <app-nist-assist-panel kind="Finding" [ctx]="ctx()" [code]="detail().code" [findingId]="fd.id" [canGenerate]="canWrite()"
+            [canIncorporate]="canWrite() && fd.status === 'Open'" [refresh]="fd.version + ':' + (fd.plan?.version ?? 0)" [applyTargets]="findingTargets"
+            (apply)="applyFinding(fd, $event)" />
           @if (canWrite()) {
             <div class="actions">
               @if (fd.status === 'Open') {
@@ -191,7 +205,13 @@ const blankPlanForm = (mode: PlanForm['mode']): PlanForm => ({
           @if (forms()[fd.id]; as pf) {
             <form class="grid sub" (ngSubmit)="submitForm(fd, pf)" [attr.aria-label]="formTitle(pf)">
               <p class="wide"><strong>{{ formTitle(pf) }}</strong></p>
+              @if (pf.assistance) {
+                <p class="hint wide">Texto vindo de sugestão da IA: revise antes de gravar. Gravar registra a procedência; não executa, não aprova nem conclui.</p>
+              }
               @switch (pf.mode) {
+                @case ('recommendation') {
+                  <label class="field wide"><span class="field-label">Recomendação do achado</span><textarea name="rec" rows="6" maxlength="4000" [(ngModel)]="pf.notes"></textarea></label>
+                }
                 @case ('status') {
                   <label class="field wide"><span class="field-label">Justificativa ({{ findingStatusLabel(pf.status) }})</span><textarea name="sn" rows="2" maxlength="2000" [(ngModel)]="pf.notes"></textarea></label>
                 }
@@ -227,6 +247,9 @@ const blankPlanForm = (mode: PlanForm['mode']): PlanForm => ({
                 <button type="submit" class="primary sm" [disabled]="busy() || !!formProblem(pf)">Gravar</button>
                 <button type="button" class="ghost sm" (click)="closeForm(fd.id)">Cancelar</button>
                 @if (formProblem(pf); as pb) { <span class="muted">{{ pb }}</span> }
+                @if (assistStaleFor() === fd.id && pf.assistance) {
+                  <button type="button" class="ghost sm" (click)="acknowledgeAndSubmit(fd, pf)" [disabled]="busy()">Revisei diante do estado atual — gravar assim mesmo</button>
+                }
               </div>
             </form>
           }
@@ -280,6 +303,10 @@ export class NistFindingsWorkComponent {
   protected readonly levelLabel = levelLabel;
   protected readonly dateBr = dateBr;
   protected readonly findingProblem = findingProblem;
+  protected readonly findingTargets = FINDING_APPLY;
+  protected readonly assistedText = assistedFieldsText;
+  /** [AEGIS-NIST-AI-ASSIST-01] Achado cuja gravação foi recusada por sugestão desatualizada (409 com motivo próprio). */
+  protected readonly assistStaleFor = signal<string | null>(null);
 
   protected readonly findings = computed(() => this.detail().findings ?? []);
   protected readonly evidence = computed<NistEvidence[]>(() => this.detail().evidence);
@@ -339,8 +366,45 @@ export class NistFindingsWorkComponent {
     });
   }
 
+  /**
+   * [AEGIS-NIST-AI-ASSIST-01] Usa a proposta de tratamento: como recomendação do achado ou como ação de um plano NOVO — sempre
+   * num formulário para revisar antes de gravar. Plano vigente não é alterado pela sugestão.
+   */
+  protected applyFinding(fd: NistFinding, e: NistAssistApplyEvent): void {
+    const v = e.view;
+    const c = this.ctx();
+    if (!this.canWrite() || v.findingId !== fd.id || v.assessmentId !== c.assessmentId || v.cycleId !== c.cycleId || v.scopeId !== c.scopeId) return;
+    const text = v.applicable[e.field];
+    if (text === undefined) return;
+    this.error.set(null);
+    if (e.field === 'recommendation') {
+      const f = blankPlanForm('recommendation');
+      f.notes = text;
+      f.assistance = assistanceRef(v.id, ['recommendation']);
+      this.forms.update((m) => ({ ...m, [fd.id]: f }));
+    } else if (e.field === 'proposedAction') {
+      if (fd.plan?.isActive) {
+        this.error.set('Este achado já tem plano ativo: a sugestão não altera o plano vigente. Para aproveitar o texto, edite o plano por conta própria.');
+        return;
+      }
+      const f = blankPlanForm('create');
+      f.title = `Tratar: ${fd.title}`.slice(0, 200);
+      f.action = text;
+      f.assistance = assistanceRef(v.id, ['proposedAction']);
+      this.forms.update((m) => ({ ...m, [fd.id]: f }));
+    }
+  }
+
+  protected acknowledgeAndSubmit(fd: NistFinding, f: PlanForm): void {
+    if (!f.assistance) return;
+    f.assistance = { ...f.assistance, acknowledgeStale: true };
+    this.submitForm(fd, f);
+  }
+
   protected formTitle(f: PlanForm): string {
     switch (f.mode) {
+      case 'recommendation':
+        return 'Atualizar a recomendação do achado';
       case 'status':
         return f.status === 'Open' ? 'Reabrir o achado' : f.status === 'RiskAccepted' ? 'Aceitar o risco' : 'Encerrar o achado';
       case 'execution':
@@ -356,6 +420,8 @@ export class NistFindingsWorkComponent {
 
   protected formProblem(f: PlanForm): string | null {
     switch (f.mode) {
+      case 'recommendation':
+        return f.notes.trim().length === 0 ? 'Escreva a recomendação.' : null;
       case 'status':
         return f.status !== 'Open' && f.notes.trim().length < 10 ? 'Justifique (pelo menos 10 caracteres).' : null;
       case 'execution':
@@ -378,6 +444,9 @@ export class NistFindingsWorkComponent {
     const responsible = responsibleRequest(f.ownerMode, f.ownerUserId, f.ownerName, f.ownerContact);
     const done = () => this.closeForm(fd.id);
     switch (f.mode) {
+      case 'recommendation':
+        this.run(this.nist.updateFinding(c, fd.id, { recommendation: f.notes.trim(), expectedVersion: fd.version, assistance: f.assistance }), done, fd.id);
+        return;
       case 'status':
         this.run(this.nist.setFindingStatus(c, fd.id, f.status, f.notes.trim() || null, fd.version), done);
         return;
@@ -391,8 +460,10 @@ export class NistFindingsWorkComponent {
         this.run(
           this.nist.createPlan(c, fd.id, {
             title: f.title.trim(), proposedAction: f.action.trim() || null, responsible, responsibleArea: f.area.trim() || null, dueDate: f.due || null,
+            assistance: f.assistance,
           }),
           done,
+          fd.id,
         );
         return;
       default:
@@ -412,11 +483,12 @@ export class NistFindingsWorkComponent {
     this.run(this.nist.updatePlan(this.ctx(), fd.id, pl.id, { expectedVersion: pl.version, status: to }));
   }
 
-  private run(request: Observable<unknown>, done?: () => void): void {
+  private run(request: Observable<unknown>, done?: () => void, findingId?: string): void {
     const gen = this.gen;
     this.busy.set(true);
     this.error.set(null);
     this.conflict.set(false);
+    this.assistStaleFor.set(null);
     this.sub = request.subscribe({
       next: () => {
         if (gen !== this.gen) return;
@@ -427,7 +499,9 @@ export class NistFindingsWorkComponent {
       error: (e: NistApiError) => {
         if (gen !== this.gen) return;
         this.busy.set(false);
-        this.conflict.set(e.status === 409);
+        const staleAssist = e.status === 409 && e.reason === 'AssistanceStale';
+        this.assistStaleFor.set(staleAssist ? findingId ?? null : null);
+        this.conflict.set(e.status === 409 && !staleAssist);
         this.error.set(e.message);
       },
     });
@@ -442,5 +516,6 @@ export class NistFindingsWorkComponent {
     this.busy.set(false);
     this.error.set(null);
     this.conflict.set(false);
+    this.assistStaleFor.set(null);
   }
 }

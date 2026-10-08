@@ -70,6 +70,16 @@ public sealed class AiStatusControllerTests
         dto.LimitationNotice.Should().BeNull();
     }
 
+    [Fact]
+    public async Task Status_ModoExternoSemChave_ProviderNotConfigured()
+    {
+        // [AEGIS-NIST-AI-ASSIST-01] Externo escolhido sem chave não é "simulado por escolha": é provedor não configurado.
+        var dto = await Read(Controller(AiMode.ExternalEnterprise, "", "sandbox", "sandbox"));
+
+        dto.EffectiveState.Should().Be("ProviderNotConfigured");
+        dto.ProviderConfigured.Should().BeFalse();
+    }
+
     private static AiStatusController Controller(AiMode mode, string apiKey, string slug, string allow)
     {
         var gate = new AiFreeTierGate(Options.Create(new AiOptions

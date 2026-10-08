@@ -54,7 +54,8 @@ import { AiStatus, AiStatusService } from '../services/ai-status.service';
       .st-democonfigured .chip { color: var(--cyan); }
       .st-simulated .chip { color: var(--muted); }
       .st-simulated .dot { box-shadow: none; }
-      .st-externalblockedfortenant .chip { color: var(--amber); }
+      .st-externalblockedfortenant .chip,
+      .st-providernotconfigured .chip { color: var(--amber); }
       .st-unavailable .chip { color: var(--red); }
 
       .notice {
@@ -92,6 +93,8 @@ export class AiModeBannerComponent implements OnInit {
         return 'IA demonstrativa configurada · Claude';
       case 'ExternalBlockedForTenant':
         return 'IA externa bloqueada para este tenant';
+      case 'ProviderNotConfigured':
+        return 'Provedor de IA não configurado · respostas simuladas';
       case 'Unavailable':
         return 'IA indisponível';
       case 'Simulated':
