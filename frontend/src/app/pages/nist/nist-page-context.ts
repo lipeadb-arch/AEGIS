@@ -13,7 +13,9 @@ import { NistCtx, NistSelectionService, NistService } from '../../services/nist.
  *     trilha volta para a jornada com a mesma seleção);
  *   • a visão de evidências da rodada (documentos e inventário vinculados, nome da rodada e se está aberta) é lida do servidor;
  *   • gravar exige papel de escrita E rodada aberta; o servidor confere de novo (403/409);
- *   • troca de seleção ou de tenant descarta respostas atrasadas da anterior.
+ *   • troca de seleção ou de tenant descarta respostas atrasadas da anterior;
+ *   • a GERAÇÃO identifica leituras (muda também numa releitura do mesmo contexto); quem grava usa a própria identidade de operação e
+ *     é avisado por `onContextChange` só quando avaliação, rodada, escopo ou tenant mudam de fato.
  *
  * Construído no contexto de injeção do componente.
  */
@@ -43,6 +45,7 @@ export class NistPageContext {
   private gen = 0;
   private sub: Subscription | null = null;
   private key: string | null = null;
+  private readonly contextListeners: (() => void)[] = [];
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.leave());
@@ -53,8 +56,10 @@ export class NistPageContext {
       const s = q.get('escopo');
       const key = [tenant, a, c, s].join('|');
       if (key === this.key) return;
+      const changed = this.key !== null;
       this.leave();
       this.key = key;
+      if (changed) for (const fn of this.contextListeners) fn();
       this.overview.set(null);
       this.error.set(null);
       if (a && c && s) {
@@ -65,6 +70,16 @@ export class NistPageContext {
         this.resolve(tenant, a, c, s);
       }
     });
+  }
+
+  /** Avisa quando o contexto muda de fato (não numa releitura): quem grava descarta o formulário e a operação anterior. */
+  onContextChange(fn: () => void): void {
+    this.contextListeners.push(fn);
+  }
+
+  /** O contexto (avaliação · rodada · escopo · tenant) ainda é o informado? Releituras não o alteram. */
+  contextKey(): string | null {
+    return this.key;
   }
 
   /** Relê a visão de evidências da seleção atual (depois de vincular, por exemplo). */
@@ -98,11 +113,6 @@ export class NistPageContext {
   /** Tenant ativo agora (do token). */
   tenantId(): string | null {
     return this.auth.activeTenantId();
-  }
-
-  /** Geração atual (para quem grava a partir desta seleção e precisa descartar a resposta se ela mudar). */
-  generation(): number {
-    return this.gen;
   }
 
   private resolve(tenant: string | null, a: string | null, c: string | null, s: string | null): void {

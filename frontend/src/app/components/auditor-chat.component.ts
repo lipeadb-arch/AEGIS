@@ -214,7 +214,8 @@ export class AuditorChatComponent {
       });
     });
 
-    // Nova sessão (troca de ambiente, de conta, saída ou "Nova conversa"): o histórico da tela some e a resposta em curso é descartada.
+    // Nova sessão (troca de ambiente, de conta, saída ou "Nova conversa"): o histórico da tela e o texto ainda não enviado somem e a
+    // resposta em curso é descartada. Navegar entre páginas do mesmo ambiente não muda a sessão: a conversa continua.
     effect(() => {
       this.agent.session();
       untracked(() => this.clear());
@@ -303,6 +304,7 @@ export class AuditorChatComponent {
     this.inFlight?.unsubscribe();
     this.inFlight = null;
     this.history.set([]);
+    this.draft.set('');
     this.isAnalyzing.set(false);
     this.error.set(null);
   }

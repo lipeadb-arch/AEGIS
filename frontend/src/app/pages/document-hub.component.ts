@@ -711,6 +711,9 @@ export class DocumentHubComponent implements OnInit {
         takeUntilDestroyed(),
       )
       .subscribe((list) => this.applyPolledList(list));
+
+    // Troca efetiva de avaliação, rodada, escopo ou tenant: o formulário e a operação anterior são descartados.
+    this.nist.onContextChange(() => this.resetLink());
   }
 
   // ---- [AEGIS-AUDITOR-CONTEXT-01] Uso como evidência na rodada selecionada ----
@@ -723,6 +726,24 @@ export class DocumentHubComponent implements OnInit {
   readonly linkedDocCount = computed(() => new Set((this.nist.overview()?.documentLinks ?? []).map((l) => l.documentId)).size);
   readonly linkedCodeCount = computed(() => new Set((this.nist.overview()?.documentLinks ?? []).map((l) => l.code)).size);
   protected readonly subRoute = subcategoryRoute;
+  /** Identidade da gravação em curso — separada da geração das leituras: uma releitura do mesmo contexto não a invalida. */
+  private linkOp = 0;
+
+  private resetLink(): void {
+    this.linkOp++;
+    this.linking.set(false);
+    this.confirming.set(null);
+    this.linkNoteDraft.set('');
+    this.linkError.set(null);
+    this.linkNote.set(null);
+  }
+
+  /** A resposta é da gravação em curso, no mesmo tenant? Tenant trocado sem aviso de contexto: descarta e libera a tela. */
+  private ownsLink(op: number, tenant: string | null): boolean {
+    if (op !== this.linkOp) return false;
+    if (tenant !== this.nist.tenantId()) { this.resetLink(); return false; }
+    return true;
+  }
 
   protected key(documentId: string, code: string): string {
     return `${documentId}|${code}`;
@@ -745,27 +766,28 @@ export class DocumentHubComponent implements OnInit {
   }
 
   /**
-   * Confirmação do assessor: grava pelo vínculo da subcategoria (o mesmo caminho da jornada). A resposta só é aceita se a seleção e o
-   * tenant ainda forem os mesmos; o servidor recusa duplicidade (409), papel (403) e rodada encerrada.
+   * Confirmação do assessor: grava pelo vínculo da subcategoria (o mesmo caminho da jornada). A resposta só é aceita se for desta
+   * operação (a troca de contexto a descarta; uma releitura não) e do mesmo tenant; o servidor recusa duplicidade (409), papel (403) e
+   * rodada encerrada.
    */
   protected confirmLink(d: GovernanceDocument, code: string): void {
     const ctx = this.nist.ctx();
     if (!ctx || this.linking() || !this.nist.canLink()) return;
-    const gen = this.nist.generation();
+    const op = ++this.linkOp;
     const tenant = this.nist.tenantId();
     this.linking.set(true);
     this.linkError.set(null);
     const notes = this.linkNoteDraft().trim() || null;
     this.nistApi.linkEvidence(ctx, code, { kind: 'GovernanceDocument', documentId: d.id, notes }).subscribe({
       next: () => {
-        if (!this.nist.current(gen, tenant)) return;
+        if (!this.ownsLink(op, tenant)) return;
         this.linking.set(false);
         this.confirming.set(null);
         this.linkNote.set(`"${d.title}" vinculado como evidência de ${code} nesta rodada. A avaliação da subcategoria continua com o assessor.`);
         this.nist.reload();
       },
       error: (e: NistApiError) => {
-        if (!this.nist.current(gen, tenant)) return;
+        if (!this.ownsLink(op, tenant)) return;
         this.linking.set(false);
         this.linkError.set(e.message);
         if (e.status === 409) this.nist.reload();

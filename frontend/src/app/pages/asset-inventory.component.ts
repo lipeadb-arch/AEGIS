@@ -769,6 +769,28 @@ export class AssetInventoryComponent implements OnInit {
   readonly linking = signal(false);
   readonly linkError = signal<string | null>(null);
   readonly linkNote = signal<string | null>(null);
+  /** Identidade da gravação em curso — separada da geração das leituras: uma releitura do mesmo contexto não a invalida. */
+  private linkOp = 0;
+
+  constructor() {
+    // Troca efetiva de avaliação, rodada, escopo ou tenant: o formulário e a operação anterior são descartados.
+    this.nist.onContextChange(() => this.resetLink());
+  }
+
+  private resetLink(): void {
+    this.linkOp++;
+    this.linking.set(false);
+    this.confirming.set(null);
+    this.linkError.set(null);
+    this.linkNote.set(null);
+  }
+
+  /** A resposta é da gravação em curso, no mesmo tenant? Tenant trocado sem aviso de contexto: descarta e libera a tela. */
+  private ownsLink(op: number, tenant: string | null): boolean {
+    if (op !== this.linkOp) return false;
+    if (tenant !== this.nist.tenantId()) { this.resetLink(); return false; }
+    return true;
+  }
 
   protected startLink(code: string): void {
     this.confirming.set(code);
@@ -780,20 +802,20 @@ export class AssetInventoryComponent implements OnInit {
   protected linkInventory(code: string): void {
     const ctx = this.nist.ctx();
     if (!ctx || this.linking() || !this.nist.canLink()) return;
-    const gen = this.nist.generation();
+    const op = ++this.linkOp;
     const tenant = this.nist.tenantId();
     this.linking.set(true);
     this.linkError.set(null);
     this.nistApi.linkEvidence(ctx, code, { kind: 'AssetInventory' }).subscribe({
       next: () => {
-        if (!this.nist.current(gen, tenant)) return;
+        if (!this.ownsLink(op, tenant)) return;
         this.linking.set(false);
         this.confirming.set(null);
         this.linkNote.set(`Retrato do inventário vinculado a ${code} nesta rodada. A conclusão sobre a gestão de ativos continua com o assessor.`);
         this.nist.reload();
       },
       error: (e: NistApiError) => {
-        if (!this.nist.current(gen, tenant)) return;
+        if (!this.ownsLink(op, tenant)) return;
         this.linking.set(false);
         this.linkError.set(e.message);
       },
