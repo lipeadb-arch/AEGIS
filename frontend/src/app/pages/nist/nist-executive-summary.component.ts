@@ -81,12 +81,20 @@ interface DraftSection {
         <form class="editor" (ngSubmit)="accept(false)" aria-label="Rascunho do resumo executivo">
           <p class="hint">{{ draftAssistanceId ? 'Rascunho vindo de sugestão da IA: revise e edite antes de aceitar.' : 'Rascunho redigido pela pessoa.' }}
             Aceitar não altera notas, contagens nem classificações.</p>
+          @if (baseChanged()) {
+            <div class="notice warn" role="status">
+              {{ summary() ? 'O resumo vigente mudou (versão ' + summary()!.version + ')' : 'O resumo vigente foi retirado' }} depois que este rascunho começou
+              {{ draftBase() === 0 ? '(sem resumo aceito)' : '(versão ' + draftBase() + ')' }}. Aceitar agora seria recusado para não sobrescrever a outra edição.
+              Compare com o texto vigente acima; se ainda quiser substituí-lo pelo seu rascunho, confirme.
+              <button type="button" class="ghost xs" (click)="adoptCurrentBase()" [disabled]="busy()">Substituir o vigente pelo meu rascunho</button>
+            </div>
+          }
           @for (sec of dr; track sec.key) {
             <label class="field"><span class="field-label">{{ sec.title }}</span>
               <textarea [name]="'ex-' + sec.key" rows="3" maxlength="2000" [(ngModel)]="sec.text"></textarea></label>
           }
           <div class="actions">
-            <button type="submit" class="primary sm" [disabled]="busy() || !hasText(dr)">{{ busy() ? 'Gravando…' : 'Aceitar este resumo' }}</button>
+            <button type="submit" class="primary sm" [disabled]="busy() || !hasText(dr) || baseChanged()">{{ busy() ? 'Gravando…' : 'Aceitar este resumo' }}</button>
             <button type="button" class="ghost sm" (click)="discard()" [disabled]="busy()">Descartar o rascunho</button>
           </div>
         </form>
@@ -94,7 +102,7 @@ interface DraftSection {
       @if (saveError(); as se) {
         <div class="notice error" role="alert">{{ se }}
           @if (assistStale()) { <button type="button" class="ghost xs" (click)="accept(true)" [disabled]="busy()">Revisei diante do estado atual — aceitar assim mesmo</button> }
-          @if (conflict()) { <button type="button" class="ghost xs" (click)="load()">Recarregar o resumo vigente (o seu texto continua aqui)</button> }
+          @if (conflict()) { <button type="button" class="ghost xs" (click)="load()">Recarregar o resumo vigente para comparar (o seu texto continua aqui)</button> }
         </div>
       }
       @if (note(); as n) { <p class="notice" role="status">{{ n }}</p> }
@@ -137,6 +145,13 @@ export class NistExecutiveSummaryComponent {
   protected readonly conflict = signal(false);
   protected readonly note = signal<string | null>(null);
   protected draftAssistanceId: string | null = null;
+  /**
+   * Versão do resumo vigente sobre a qual o rascunho COMEÇOU (0 = não havia resumo). Só muda quando um rascunho é criado ou quando
+   * a pessoa decide explicitamente substituir a versão vigente — recarregar o resumo nunca a atualiza em silêncio.
+   */
+  protected readonly draftBase = signal(0);
+  /** O vigente mudou (ou foi retirado) depois que o rascunho começou: aceitar seria recusado. */
+  protected readonly baseChanged = computed(() => !!this.draft() && (this.summary()?.version ?? 0) !== this.draftBase());
   protected reviewNote = '';
 
   private gen = 0;
@@ -187,6 +202,7 @@ export class NistExecutiveSummaryComponent {
     if (!this.canWrite() || v.kind !== 'ExecutiveSummary' || v.assessmentId !== c.assessmentId || v.cycleId !== c.cycleId || v.scopeId !== c.scopeId) return;
     this.draft.set(executiveDraftFrom(v.applicable));
     this.draftAssistanceId = v.id;
+    this.draftBase.set(this.summary()?.version ?? 0);
     this.clearMessages();
     this.note.set('Sugestão copiada para o rascunho do resumo. Revise, edite e aceite.');
   }
@@ -194,24 +210,36 @@ export class NistExecutiveSummaryComponent {
   protected startManual(): void {
     this.draft.set(executiveDraftFrom(null));
     this.draftAssistanceId = null;
+    this.draftBase.set(this.summary()?.version ?? 0);
     this.clearMessages();
   }
 
   protected edit(s: NistExecutiveSummary): void {
     this.draft.set(executiveDraftFrom(s.sections));
     this.draftAssistanceId = s.assistanceId;
+    this.draftBase.set(s.version);
     this.clearMessages();
   }
 
   protected discard(): void {
     this.draft.set(null);
     this.draftAssistanceId = null;
+    this.draftBase.set(0);
     this.clearMessages();
+  }
+
+  /** Decisão EXPLÍCITA da pessoa, depois de ver o vigente: o rascunho passa a substituir a versão exibida agora. */
+  protected adoptCurrentBase(): void {
+    if (!this.draft()) return;
+    this.draftBase.set(this.summary()?.version ?? 0);
+    this.clearMessages();
+    this.note.set('O seu rascunho vai substituir a versão vigente exibida acima quando você aceitar.');
   }
 
   protected accept(acknowledgeStale: boolean): void {
     const d = this.draft();
-    if (!d || this.busy() || !this.hasText(d)) return;
+    // Bloqueio no método, não só no botão: o vigente mudou desde o início do rascunho → a pessoa decide antes (adoptCurrentBase).
+    if (!d || this.busy() || !this.hasText(d) || this.baseChanged()) return;
     const gen = this.gen;
     const tenant = this.auth.activeTenantId();
     this.busy.set(true);
@@ -219,7 +247,8 @@ export class NistExecutiveSummaryComponent {
     const sections = d.filter((s) => s.text.trim() !== '').map((s) => ({ key: s.key, text: s.text.trim() }));
     this.subs.push(
       this.nist
-        .saveExecutiveSummary(this.ctx(), { sections, assistanceId: this.draftAssistanceId, expectedVersion: this.summary()?.version ?? 0, acknowledgeStale })
+        // A versão enviada é a da BASE do rascunho, nunca a recém-carregada: se o vigente mudou, o servidor recusa (409).
+        .saveExecutiveSummary(this.ctx(), { sections, assistanceId: this.draftAssistanceId, expectedVersion: this.draftBase(), acknowledgeStale })
         .subscribe({
           next: (s) => {
             if (!this.current(gen, tenant)) return;
@@ -227,6 +256,7 @@ export class NistExecutiveSummaryComponent {
             this.summary.set(s);
             this.draft.set(null);
             this.draftAssistanceId = null;
+            this.draftBase.set(0);
             this.note.set('Resumo aceito. Ele entra na próxima publicação enquanto a rodada não mudar; revise a prévia antes de publicar.');
             this.changed.emit();
           },
@@ -313,6 +343,7 @@ export class NistExecutiveSummaryComponent {
     this.loadError.set(null);
     this.draft.set(null);
     this.draftAssistanceId = null;
+    this.draftBase.set(0);
     this.busy.set(false);
     this.reviewNote = '';
     this.clearMessages();

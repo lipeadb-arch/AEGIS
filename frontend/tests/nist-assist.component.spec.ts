@@ -9,7 +9,8 @@
  *   (6) subcategoria: aplicar só muda o rascunho; a gravação leva a referência, a versão-base do rascunho e só os campos
  *       que continuam preenchidos; 409 de sugestão desatualizada preserva o rascunho e pede revisão declarada;
  *       duas sugestões não se misturam num rascunho;
- *   (7) resumo executivo: a sugestão vira rascunho editável; aceitar envia as seções, a sugestão de origem e a versão;
+ *   (7) resumo executivo: a sugestão vira rascunho editável; aceitar envia as seções, a sugestão de origem e a versão da BASE
+ *       do rascunho — recarregar depois de um conflito nunca adota a versão nova em silêncio [AEGIS-AUDITOR-CONTEXT-01];
  *       resposta após trocar de rodada é descartada.
  */
 import '@angular/compiler';
@@ -401,6 +402,42 @@ test('(7) resumo: sugestão vira rascunho editável; aceitar envia seções, ori
   eq(v.summary(), null, 'aceite da rodada anterior não aparece na nova');
   eq(changed, 0, 'nenhum aviso de mudança para a rodada nova');
   eq(v.draft(), null, 'rascunho da rodada anterior não passa para a nova');
+});
+
+test('(7b) resumo: recarregar depois de conflito NÃO adota a versão nova em silêncio; só a decisão explícita substitui o vigente', () => {
+  const api = new FakeNist();
+  const tenant = signal<string | null>('tenant-1');
+  const inj = injector(api, tenant);
+  const c = runInInjectionContext(inj, () => new NistExecutiveSummaryComponent());
+  const v = c as any;
+  setInput(c.ctx, CTX1);
+  setInput(c.canWrite, true);
+  flush(inj);
+  const v1 = { id: 's', sections: [{ key: 'situation', title: 'Situação', text: 'Texto aceito v1.' }], origin: 'Manual', version: 1, current: true, reviewCurrent: false };
+  reply(api.last('executiveSummary'), v1);
+
+  // A proposta vira rascunho sobre a versão 1; outra pessoa grava a versão 2 no meio.
+  v.useAssist({ view: view(null, { applicable: { situation: 'Proposta da IA.' } }), field: '*' });
+  eq(v.draftBase(), 1, 'o rascunho começou sobre a versão 1');
+  v.accept(false);
+  eq((api.last('saveExecutiveSummary').args[1] as { expectedVersion: number }).expectedVersion, 1, 'envia a base do rascunho');
+  fail(api.last('saveExecutiveSummary'), new NistApiError('O resumo executivo foi alterado por outra pessoa (versão 2).', 409));
+  eq(v.conflict(), true, 'conflito dito');
+
+  // Recarregar para comparar traz a versão 2, mas a base do rascunho continua 1: aceitar fica bloqueado.
+  v.load();
+  reply(api.last('executiveSummary'), { ...v1, sections: [{ key: 'situation', title: 'Situação', text: 'Edição concorrente v2.' }], version: 2 });
+  eq(v.draftBase(), 1, 'recarregar não muda a base do rascunho');
+  eq(v.baseChanged(), true, 'o vigente mudou desde o início do rascunho');
+  const calls = api.of('saveExecutiveSummary').length;
+  v.accept(false);
+  eq(api.of('saveExecutiveSummary').length, calls, 'nenhuma gravação sobrescreve a edição concorrente sem decisão');
+
+  // A pessoa decide explicitamente substituir o vigente que está vendo.
+  v.adoptCurrentBase();
+  eq(v.baseChanged(), false, 'decisão explícita registrada');
+  v.accept(false);
+  eq((api.last('saveExecutiveSummary').args[1] as { expectedVersion: number }).expectedVersion, 2, 'só agora a versão 2 é a base');
 });
 
 console.log(`\n${count - failures}/${count} ok`);

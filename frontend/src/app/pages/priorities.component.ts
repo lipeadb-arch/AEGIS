@@ -1572,7 +1572,7 @@ export class PrioritiesComponent {
    */
   protected analyzeWithAi(): void {
     this.agent.requestAudit(
-      'Analise em conjunto o AEGIS Score (controles NIST CSF avaliados), as recomendações de postura pendentes ' +
+      'Analise em conjunto a postura do ambiente (AEGIS Score), as recomendações de postura pendentes ' +
         'das fontes conectadas e as vulnerabilidades identificadas nos ativos. Aponte relações apenas quando ' +
         'houver evidência no contexto e proponha uma sequência de investigação e remediação. Não combine as ' +
         'escalas, não trate diferença de pontos como exposição confirmada nem CVSS como risco de negócio, e diga ' +

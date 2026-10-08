@@ -12,7 +12,4 @@
 export const environment = {
   production: true,
   apiBase: '',
-  // Ativo-raiz do raio de explosão no seed demo (AD Domain Controller) — usado quando o pedido de
-  // topologia no chat não cita um UUID de ativo. Espelha DevController.DemoRootAssetId.
-  blastRadiusDemoAssetId: 'bb000000-0000-0000-0000-000000000001',
 };

@@ -8,23 +8,17 @@ import {
   ConnectDocumentRequest,
   DocumentAccepted,
   DocumentIntegrationAvailability,
-  Gap,
   GovernCoverage,
   GovernanceDocument,
   GovernanceDocumentType,
-  IdentifiedRisk,
-  InterviewSession,
-  InterviewTurn,
   PolicySyncAccepted,
-  PostAnswerRequest,
-  StartInterviewRequest,
 } from '../models/governance.models';
 
 /**
- * GOVERN — cliente HTTP do pilar de Governança. Cobre as três faces do módulo:
+ * GOVERN — cliente HTTP da biblioteca de documentos:
  *   • Document Hub      → /api/v1/governance/documents   (ingestão + leitura da IA)
  *   • Cobertura híbrida → /api/v1/governance/coverage     (mapa de gaps GV)
- *   • Auditor Virtual   → /api/v1/governance/interviews   (chatbot GRC)
+ * [AEGIS-AUDITOR-CONTEXT-01] A entrevista da abordagem anterior saiu da interface: o Auditor Virtual conversa em /api/v1/auditor/chat.
  *
  * Isolamento por tenant via header X-Tenant (mesmo padrão do AssetService): o backend
  * carimba/filtra por tenant no ambiente — nenhum id de tenant trafega no corpo.
@@ -34,7 +28,6 @@ export class GovernanceService {
   private readonly http = inject(HttpClient);
 
   private readonly documents = `${environment.apiBase}/api/v1/governance/documents`;
-  private readonly interviews = `${environment.apiBase}/api/v1/governance/interviews`;
   private readonly coverageUrl = `${environment.apiBase}/api/v1/governance/coverage`;
 
   // ---- Document Hub -------------------------------------------------------
@@ -119,42 +112,6 @@ export class GovernanceService {
   /** GET /coverage — mapa de cobertura do pilar GOVERN (documentos + entrevistas). */
   getCoverage(): Observable<GovernCoverage> {
     return this.http.get<GovernCoverage>(this.coverageUrl, { headers: this.headers() });
-  }
-
-  // ---- Auditor Virtual (GRC) ---------------------------------------------
-
-  /** GET /interviews/gaps — subcategorias GV ainda não cobertas (semeia o diagnóstico). */
-  getGaps(): Observable<Gap[]> {
-    return this.http.get<Gap[]>(`${this.interviews}/gaps`, { headers: this.headers() });
-  }
-
-  /** POST /interviews — abre uma sessão e devolve a primeira pergunta investigativa da IA. */
-  startInterview(req: StartInterviewRequest): Observable<InterviewTurn> {
-    return this.http.post<InterviewTurn>(this.interviews, req, { headers: this.headers() });
-  }
-
-  /** GET /interviews/{id} — sessão + histórico de mensagens (replay do drawer de chat). */
-  getInterview(id: string): Observable<InterviewSession> {
-    return this.http.get<InterviewSession>(`${this.interviews}/${id}`, { headers: this.headers() });
-  }
-
-  /** POST /interviews/{id}/messages — registra a resposta e devolve a próxima pergunta. */
-  answerInterview(id: string, req: PostAnswerRequest): Observable<InterviewTurn> {
-    return this.http.post<InterviewTurn>(`${this.interviews}/${id}/messages`, req, {
-      headers: this.headers(),
-    });
-  }
-
-  /** POST /interviews/{id}/complete — finaliza a sessão manualmente. */
-  completeInterview(id: string): Observable<void> {
-    return this.http.post<void>(`${this.interviews}/${id}/complete`, null, { headers: this.headers() });
-  }
-
-  /** GET /interviews/{id}/outcomes — riscos identificados pela sessão (trilha de auditoria). */
-  getOutcomes(id: string): Observable<IdentifiedRisk[]> {
-    return this.http.get<IdentifiedRisk[]>(`${this.interviews}/${id}/outcomes`, {
-      headers: this.headers(),
-    });
   }
 
   /** Header comum: escopo de tenant (X-Tenant) — mesmo contrato do AssetService. */

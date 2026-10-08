@@ -19,6 +19,7 @@ import {
   draftGap,
   draftProblem,
   evidenceOriginLabel,
+  evidenceOriginLink,
   gapText,
   levelLabel,
   newerEvaluation,
@@ -261,7 +262,8 @@ import { NistProceduresComponent } from './nist-procedures.component';
             @for (ev of d.evidence; track ev.id) {
               <li [id]="'ev-' + ev.id" tabindex="-1">
                 <div class="ev-top"><span class="badge info">{{ evidenceOriginLabel(ev.originKind) }}</span><strong>{{ ev.title }}</strong>
-                  @if (ev.uri) { <a [href]="ev.uri" target="_blank" rel="noopener noreferrer">abrir link<span class="sr-only"> (nova aba)</span></a> }</div>
+                  @if (ev.uri) { <a [href]="ev.uri" target="_blank" rel="noopener noreferrer">abrir link<span class="sr-only"> (nova aba)</span></a> }
+                  @if (originLink(ev, params()); as ol) { <a [routerLink]="ol.commands" [queryParams]="ol.queryParams">{{ ol.label }}</a> }</div>
                 <p class="muted">{{ ev.originLabel ?? '' }} · data na origem {{ ev.collectedAt | date: 'dd/MM/yyyy' : 'UTC' }} · vinculada por {{ ev.recordedByName ?? '—' }} em {{ ev.linkedAt | date: 'dd/MM/yyyy' }}</p>
                 @if (ev.originScope) { <p class="muted">Escopo da coleta: {{ ev.originScope }}</p> }
                 @if (ev.notes) { <p>{{ ev.notes }}</p> }
@@ -271,6 +273,9 @@ import { NistProceduresComponent } from './nist-procedures.component';
           </ul>
 
           <h4>Evidências disponíveis na plataforma</h4>
+          <p class="hint">Disponível não é vinculada: vincular registra a procedência e não aprova a subcategoria.
+            <a [routerLink]="['/nist', 'gv', 'documentos']" [queryParams]="params()">Biblioteca de documentos</a>
+            @if (d.code.startsWith('ID.AM')) { · <a [routerLink]="['/nist', 'id', 'ativos']" [queryParams]="params()">Inventário de ativos</a> }</p>
           @if (d.availableEvidence.length === 0) {
             <p class="muted">Nenhuma evidência técnica ou documental mapeada para esta subcategoria.</p>
           }
@@ -279,7 +284,8 @@ import { NistProceduresComponent } from './nist-procedures.component';
               <li>
                 <div class="ev-top"><span class="badge neutral">{{ evidenceOriginLabel(a.originKind) }}</span><strong>{{ a.title }}</strong>
                   @if (a.status) { <span class="badge violet">{{ a.status }}</span> }
-                  @if (a.isDemo) { <span class="badge warn">Demonstração</span> }</div>
+                  @if (a.isDemo) { <span class="badge warn">Demonstração</span> }
+                  @if (originLink(a, params()); as ol) { <a [routerLink]="ol.commands" [queryParams]="ol.queryParams">{{ ol.label }}</a> }</div>
                 <p class="muted">{{ a.originLabel }} @if (a.collectedAt) { · {{ a.collectedAt | date: 'dd/MM/yyyy' : 'UTC' }} } @if (a.originScope) { · {{ a.originScope }} }</p>
                 <p class="muted">Critério: {{ a.criterion }} @if (a.limitation) { <strong>{{ a.limitation }}</strong> }</p>
                 @if (canEdit()) {
@@ -294,7 +300,7 @@ import { NistProceduresComponent } from './nist-procedures.component';
             <details class="add">
               <summary>Vincular documento da biblioteca</summary>
               @if (documents() === null) { <button type="button" class="ghost xs" (click)="loadDocuments()">Listar documentos</button> }
-              @else if (documents()!.length === 0) { <p class="muted">A biblioteca não tem documentos. <a routerLink="/nist/gv/documentos">Enviar documento</a></p> }
+              @else if (documents()!.length === 0) { <p class="muted">A biblioteca não tem documentos. <a [routerLink]="['/nist', 'gv', 'documentos']" [queryParams]="params()">Enviar documento</a></p> }
               @else {
                 <div class="row">
                   <label class="field"><span class="field-label">Documento</span>
@@ -388,6 +394,7 @@ export class NistSubcategoryComponent {
   protected readonly evidenceOriginLabel = evidenceOriginLabel;
   protected readonly assistTargets = SUBCATEGORY_APPLY;
   protected readonly assistedText = assistedFieldsText;
+  protected readonly originLink = evidenceOriginLink;
 
   protected readonly fn = signal<NistFunctionMeta | null>(null);
   protected readonly code = signal('');

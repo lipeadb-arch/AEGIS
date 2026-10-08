@@ -16,7 +16,7 @@ namespace AegisScore.Infrastructure.Tests.Integration;
 ///   • gerar não grava a avaliação; incorporar passa pela gravação normal com a referência da sugestão; sugestão envelhecida
 ///     é 409 (a edição continua no cliente);
 ///   • resumo executivo: gerar → aceitar → revisão por OUTRA pessoa → publicação → HTML com a interpretação e a procedência;
-///   • o Auditor Virtual recebe a seleção NIST da tela; seleção de outro tenant é ignorada sem erro.
+///   • o Auditor Virtual recebe a seleção NIST da tela; seleção de outro tenant é recusada (404).
 /// </summary>
 public sealed class NistAssistHttpTests : IClassFixture<AegisApiFixture>
 {
@@ -164,7 +164,7 @@ public sealed class NistAssistHttpTests : IClassFixture<AegisApiFixture>
                    {
                        contextScope = "GLOBAL", message = "E esta avaliação?", nist = new { assessmentId = a, cycleId = c, scopeId = s },
                    })))
-                r.StatusCode.Should().Be(HttpStatusCode.OK, "seleção de outro tenant é ignorada, sem vazar nada");
+                r.StatusCode.Should().Be(HttpStatusCode.NotFound, "[AEGIS-AUDITOR-CONTEXT-01] seleção de outro tenant é recusada, sem vazar nada");
         }
 
         using (var manager = _api.As(t.Manager))

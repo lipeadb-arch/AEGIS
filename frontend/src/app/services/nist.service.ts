@@ -12,6 +12,7 @@ import {
   NistAuditEntry,
   NistCycle,
   NistCycleComparison,
+  NistEvidenceOverview,
   NistFinding,
   NistFunctionView,
   NistHistoryItem,
@@ -216,6 +217,16 @@ export class NistService {
     return this.http
       .post<NistSubcategoryDetail>(`${this.subUrl(c, code)}/review`, { decision, note, expectedVersion })
       .pipe(this.handle('Não foi possível registrar a decisão do revisor.'));
+  }
+
+  /**
+   * [AEGIS-AUDITOR-CONTEXT-01] Evidências da rodada e escopo, calculadas pelos registros: correlação KNIGHT × NIST, lacunas de evidência,
+   * tratamentos ligados, documentos e retratos do inventário vinculados. Leitura — vincular continua sendo `linkEvidence`.
+   */
+  evidenceOverview(c: NistCtx): Observable<NistEvidenceOverview> {
+    return this.http
+      .get<NistEvidenceOverview>(`${this.ctxUrl(c)}/evidence-overview`)
+      .pipe(this.handle('Não foi possível carregar as evidências da rodada.'));
   }
 
   linkEvidence(c: NistCtx, code: string, request: LinkNistEvidenceRequest): Observable<NistSubcategoryDetail> {

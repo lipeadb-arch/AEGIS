@@ -116,7 +116,7 @@ const RESOURCES: Record<NistFunctionCode, SupportResource[]> = {
           @case ('recursos') {
             <div class="res-grid">
               @for (r of resources(f.code); track r.path + r.title) {
-                <a class="card res" [routerLink]="r.path"><span class="k">{{ r.title }}</span><span class="muted">{{ r.description }}</span></a>
+                <a class="card res" [routerLink]="r.path" [queryParams]="params()"><span class="k">{{ r.title }}</span><span class="muted">{{ r.description }}</span></a>
               }
             </div>
           }

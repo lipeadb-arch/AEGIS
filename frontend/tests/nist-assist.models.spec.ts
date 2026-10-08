@@ -25,7 +25,7 @@ import {
   sourceAnchorId,
 } from '../src/app/models/nist-assist.models';
 import { draftFrom, NistAssistedField } from '../src/app/models/nist.models';
-import { nistSelectionFromUrl } from '../src/app/services/agent-state.service';
+import { auditorFocusFromUrl } from '../src/app/models/auditor.models';
 
 let failures = 0;
 let count = 0;
@@ -144,15 +144,20 @@ test('(7) erro por motivo; a jornada manual segue', () => {
   eq(assistErrorText('Unavailable', 'mensagem do servidor'), 'mensagem do servidor', 'indisponível: mensagem do servidor');
 });
 
-test('(8) seleção NIST lida da URL para o Auditor: só com avaliação, rodada e escopo; código só em subcategoria', () => {
-  const q = '?avaliacao=a1&rodada=c1&escopo=s1';
-  const sub = nistSelectionFromUrl(`/nist/gv/gv.po-01${q}#achado-1`)!;
-  ok(sub.assessmentId === 'a1' && sub.cycleId === 'c1' && sub.scopeId === 's1', 'seleção');
-  eq(sub.code, 'GV.PO-01', 'código da subcategoria');
-  eq(nistSelectionFromUrl(`/nist/gv${q}`)!.code, null, 'função sem código');
-  eq(nistSelectionFromUrl(`/nist/gv/documentos${q}`)!.code, null, 'página que não é subcategoria');
-  eq(nistSelectionFromUrl('/nist/gv?avaliacao=a1'), null, 'seleção incompleta');
-  eq(nistSelectionFromUrl(`/knight${q}`), null, 'fora do NIST');
+test('(8) foco do Auditor lido da URL: seleção NIST só completa; código só em subcategoria; páginas de apoio com a seleção', () => {
+  const A = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const C = 'cccccccc-0000-4000-8000-000000000001';
+  const S = 'ssssssss'.replace(/s/g, 'e') + '-0000-4000-8000-000000000001';
+  const q = `?avaliacao=${A}&rodada=${C}&escopo=${S}`;
+  const sub = auditorFocusFromUrl(`/nist/gv/gv.po-01${q}#achado-1`);
+  ok(sub.page === 'nist' && sub.nist!.assessmentId === A && sub.nist!.cycleId === C && sub.nist!.scopeId === S, 'seleção');
+  eq(sub.nist!.code, 'GV.PO-01', 'código da subcategoria');
+  eq(auditorFocusFromUrl(`/nist/gv${q}`).nist!.code, null, 'função sem código');
+  const docs = auditorFocusFromUrl(`/nist/gv/documentos${q}`);
+  eq(docs.page, 'documents', 'biblioteca de documentos é página própria');
+  eq(docs.nist!.code, null, 'página que não é subcategoria');
+  eq(auditorFocusFromUrl('/nist/gv?avaliacao=a1').nist, null, 'seleção incompleta');
+  eq(auditorFocusFromUrl(`/knight${q}`).nist, null, 'fora do NIST');
 });
 
 console.log(`\n${count - failures}/${count} ok`);
