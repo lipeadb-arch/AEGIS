@@ -70,11 +70,11 @@ public interface IAiAssessmentService
     Task<NistAssistDraft> AssistNistAsync(NistAssistPrompt request, CancellationToken ct);
 }
 
-// ---- Copiloto GRC (Auditor onipresente, com escopo de contexto) --------------
+// ---- Auditor Virtual (identidade única em toda a aplicação; a página dá o foco) --------------
 
 /// <summary>
-/// Escopo de contexto do Copiloto GRC: a tela/Função NIST onde o usuário está. Ajusta a persona e o foco
-/// de auditoria da IA. <c>Global</c> = visão executiva geral da postura (fora de uma Função dedicada).
+/// Código da Função NIST da tela (legado de fio). [AEGIS-AUDITOR-CONTEXT-01] NÃO muda a identidade, o método nem o conhecimento do
+/// Auditor e não restringe a análise a uma função: o foco da conversa vem de <see cref="AuditorFocus"/>.
 /// </summary>
 public enum AuditorScope { Global = 0, Govern, Identify, Protect, Detect, Respond, Recover }
 
@@ -91,7 +91,9 @@ public record AuditorChatRequest(
     AuditorScope Scope,
     IReadOnlyList<AuditorMessage> History,
     string UserMessage,
-    AuditorTenantContext? Context = null);
+    AuditorTenantContext? Context = null,
+    /// <summary>[AEGIS-AUDITOR-CONTEXT-01] Página aberta e seleções conferidas no servidor (foco da conversa, nunca a persona).</summary>
+    AuditorFocus? Focus = null);
 
 /// <summary>
 /// Contexto tenant-scoped, SOMENTE LEITURA e LIMITADO, com que o Auditor Virtual fundamenta as respostas.
@@ -126,8 +128,9 @@ public sealed record AuditorTenantContext(
     // ressalva de falha recente ou escopo parcial). Sem isto, uma lista vazia de exposições ou vulnerabilidades
     // chegava à IA igual a "coletado sem achados". Opcional/default null.
     IReadOnlyList<AuditorSourceReading>? SourceReadings = null,
-    // [AEGIS-NIST-AI-ASSIST-01] Jornada NIST da tela ativa (mesmo contexto da assistência, sem nomes de pessoas). Opcional.
-    NistAuditorContext? NistJourney = null);
+    // [AEGIS-AUDITOR-CONTEXT-01] Registros dos assessments do tenant (KNIGHT, NIST — com a seleção da tela e o mesmo montador da
+    // assistência NIST —, documentos, inventário e publicações), em fontes citáveis com natureza, data e limitação. Opcional.
+    AuditorAssessmentContext? Assessments = null);
 
 /// <summary>
 /// [AEGIS-LANGUAGE-STATES-01] O que se pode afirmar sobre a leitura de UMA fonte — mesma derivação da Visão
@@ -223,40 +226,23 @@ public sealed record AuditorConnectorContext(
     DateTimeOffset? LastSyncAt);
 
 /// <summary>
-/// Intenção roteada pela IA (Agentic Routing): <c>Copilot</c> = dúvida/consulta geral respondida na hora;
-/// <c>StartInterview</c> = o usuário pediu para auditar/fechar lacunas, então a resposta JÁ É a primeira
-/// pergunta do fluxo NIST e a UI deve entrar no modo entrevista.
+/// [AEGIS-AUDITOR-CONTEXT-01] O Auditor conversa: não há mais roteamento para a entrevista da abordagem anterior. Para conduzir uma
+/// verificação, ele orienta perguntas e procedimentos na própria conversa e indica a subcategoria; gravar é ato da pessoa na tela.
 /// </summary>
-public enum AuditorIntent { Copilot = 0, StartInterview }
+public enum AuditorIntent { Copilot = 0 }
 
 /// <summary>
-/// Carga estruturada opcional da resposta (o <c>Metadata</c>) — o que a UI precisa para reagir à intenção.
-/// Em <see cref="AuditorIntent.StartInterview"/>, semeia a entrevista com a subcategoria NIST investigada.
+/// Resposta do Auditor: a fala, as chaves das fontes do contexto que ela cita (<paramref name="CitedKeys"/>, conferidas no servidor) e
+/// se veio do motor SIMULADO (<paramref name="Simulated"/> — demonstração, sem análise por IA).
 /// </summary>
-public record AuditorInterviewSeed(string? TargetSubcategoryCode);
+public record AuditorReply(
+    string Message, AuditorScope Scope, AuditorIntent Intent, object? Metadata = null,
+    bool Simulated = false, IReadOnlyList<string>? CitedKeys = null);
 
-/// <summary>
-/// Resposta do Copiloto com ROTEAMENTO DE INTENÇÃO: a fala (<paramref name="Message"/> — em StartInterview,
-/// já a 1ª pergunta), o escopo, a <paramref name="Intent"/> classificada e um <paramref name="Metadata"/>
-/// estruturado opcional (ex.: <see cref="AuditorInterviewSeed"/>) para a UI reagir.
-/// </summary>
-public record AuditorReply(string Message, AuditorScope Scope, AuditorIntent Intent, object? Metadata = null);
-
-/// <summary>Traduz a <see cref="AuditorIntent"/> de/para o código de fio ("COPILOT"/"START_INTERVIEW") —
-/// enum-string na fronteira, a UI não depende do valor numérico do enum. Default seguro: COPILOT.</summary>
+/// <summary>Código de fio da intenção (sempre "COPILOT").</summary>
 public static class AuditorIntents
 {
-    public static string ToWire(AuditorIntent intent) => intent switch
-    {
-        AuditorIntent.StartInterview => "START_INTERVIEW",
-        _ => "COPILOT",
-    };
-
-    public static AuditorIntent FromWire(string? code) => (code ?? "").Trim().ToUpperInvariant() switch
-    {
-        "START_INTERVIEW" => AuditorIntent.StartInterview,
-        _ => AuditorIntent.Copilot,
-    };
+    public static string ToWire(AuditorIntent intent) => "COPILOT";
 }
 
 /// <summary>Mapeia o código de escopo vindo da UI no enum. O escopo NÃO é fronteira de segurança (o chat é

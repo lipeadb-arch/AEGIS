@@ -37,15 +37,18 @@ public sealed class NistAssessmentsController : ControllerBase
     private readonly INistPublicationService _publication;
     private readonly INistImportService _import;
     private readonly INistAssistService _assist;
+    private readonly INistEvidenceOverviewService _overview;
 
     public NistAssessmentsController(
-        INistAssessmentService service, INistWorkService work, INistPublicationService publication, INistImportService import, INistAssistService assist)
+        INistAssessmentService service, INistWorkService work, INistPublicationService publication, INistImportService import, INistAssistService assist,
+        INistEvidenceOverviewService overview)
     {
         _service = service;
         _work = work;
         _publication = publication;
         _import = import;
         _assist = assist;
+        _overview = overview;
     }
 
     // ---- Avaliações, escopos, rodadas, pessoas e trilha ------------------------------------------------
@@ -150,6 +153,14 @@ public sealed class NistAssessmentsController : ControllerBase
     [HttpGet(CyclePath + "/profile")]
     public Task<ActionResult<NistProfileView>> Profile(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct) =>
         Run<NistProfileView>(async () => Ok(await _service.GetProfileAsync(assessmentId, cycleId, scopeId, ct)));
+
+    /// <summary>
+    /// [AEGIS-AUDITOR-CONTEXT-01] Evidências da rodada e escopo calculadas pelos registros: correlação KNIGHT × NIST (vinculado × disponível
+    /// para revisão × não avaliado), lacunas de evidência, tratamentos ligados, documentos e retratos do inventário vinculados. Leitura.
+    /// </summary>
+    [HttpGet(CyclePath + "/evidence-overview")]
+    public Task<ActionResult<NistEvidenceOverviewView>> EvidenceOverview(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct) =>
+        Run<NistEvidenceOverviewView>(async () => Ok(await _overview.GetAsync(assessmentId, cycleId, scopeId, ct)));
 
     /// <summary>Uma função com TODAS as categorias e subcategorias do catálogo, avaliadas ou não.</summary>
     [HttpGet(CyclePath + "/functions/{functionCode}")]

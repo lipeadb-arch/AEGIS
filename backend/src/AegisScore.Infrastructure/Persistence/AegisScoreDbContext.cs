@@ -175,6 +175,8 @@ public class AegisScoreDbContext : DbContext
     public DbSet<NistAiAssistance> NistAiAssistances => Set<NistAiAssistance>();
     public DbSet<NistAiIncorporation> NistAiIncorporations => Set<NistAiIncorporation>();
     public DbSet<NistExecutiveSummary> NistExecutiveSummaries => Set<NistExecutiveSummary>();
+    // [AEGIS-AUDITOR-CONTEXT-01] Conversas do Auditor Virtual (tenant + conta).
+    public DbSet<AuditorConversationTurn> AuditorConversationTurns => Set<AuditorConversationTurn>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -1016,6 +1018,17 @@ public class AegisScoreDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        // [AEGIS-AUDITOR-CONTEXT-01] Turnos da conversa do Auditor: um por sequência dentro da conversa (concorrência), lidos por
+        // tenant + conta + conversa. Textos limitados; nada de contexto montado, prompt ou resposta bruta do provedor.
+        b.Entity<AuditorConversationTurn>(e =>
+        {
+            e.Property(x => x.Question).HasMaxLength(4000).IsRequired();
+            e.Property(x => x.Reply).HasMaxLength(12000).IsRequired();
+            e.Property(x => x.FocusLabel).HasMaxLength(500);
+            e.HasIndex(x => new { x.TenantId, x.ConversationId, x.Sequence }).IsUnique().HasDatabaseName("UX_AuditorConversationTurns_Sequence");
+            e.HasIndex(x => new { x.TenantId, x.AccountId, x.ConversationId });
+        });
+
         b.Entity<RiskAppetite>().HasIndex(x => x.TenantId);
         b.Entity<IcrScore>().HasIndex(x => x.TenantId);
         b.Entity<GovernanceDocument>().HasIndex(x => x.TenantId);
@@ -1763,6 +1776,7 @@ public class AegisScoreDbContext : DbContext
         b.Entity<NistAiAssistance>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<NistAiIncorporation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<NistExecutiveSummary>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<AuditorConversationTurn>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<GovernanceDocument>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<DocumentControlMapping>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<SubcategoryCoverage>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

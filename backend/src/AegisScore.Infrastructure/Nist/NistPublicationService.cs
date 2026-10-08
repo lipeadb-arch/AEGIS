@@ -74,7 +74,8 @@ public sealed class NistPublicationService : INistPublicationService
         var generation = summary.AssistanceId is { } id ? await _db.NistAiAssistances.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct) : null;
         var sections = JsonSerializer.Deserialize<List<NistReportInterpretationSection>>(summary.SectionsJson, SectionsJson)
                        ?? new List<NistReportInterpretationSection>();
-        var reviewed = summary.ReviewedAt is not null && string.Equals(summary.ReviewedContentHash, summary.ContentHash, StringComparison.Ordinal);
+        // A revisão vale só para a aceitação vigente, de outra pessoa (base já conferida acima).
+        var reviewed = NistAssistService.ReviewIsCurrent(summary);
         var simulated = generation?.Mode == NistAssistEngineMode.Simulated;
         var notice = (generation is null
                          ? "Resumo executivo redigido pela pessoa."

@@ -269,6 +269,14 @@ public sealed class NistAssistService : INistAssistService
         entity.AcceptedByName = string.IsNullOrWhiteSpace(actor.DisplayName) ? null : Truncate(actor.DisplayName.Trim(), MaxName);
         entity.AcceptedAt = now;
         entity.ContentHash = hash;
+        // Uma revisão pertence à ACEITAÇÃO que examinou (texto, base, origem e autor): aceitar de novo — mesmo com o mesmo texto,
+        // sobre outra base ou por quem tinha revisado — exige nova revisão de outra pessoa. A trilha guarda a revisão anterior.
+        var hadReview = entity.ReviewedAt is not null;
+        entity.ReviewedByAccountId = null;
+        entity.ReviewedByName = null;
+        entity.ReviewedAt = null;
+        entity.ReviewedContentHash = null;
+        entity.ReviewNote = null;
         entity.Version += 1;
         if (creating) _db.NistExecutiveSummaries.Add(entity);
 
@@ -279,7 +287,8 @@ public sealed class NistAssistService : INistAssistService
         Diff(changes, "executiveSummary", "resumo executivo", creating ? null : previousHash, hash);
         Audit(_db, actor, now, assessmentId, cycleId, scopeId, null, "ExecutiveSummary", entity.Id, creating ? "Accepted" : "Updated",
             (generation is null ? "Resumo executivo redigido pela pessoa" : $"Resumo executivo aceito a partir de sugestão {(generation.Mode == NistAssistEngineMode.Real ? "da IA" : "SIMULADA")}" + (edited ? ", com edição" : ", sem edição")) +
-            $" (versão {entity.Version}). Não altera notas, contagens nem classificações; entra na próxima publicação enquanto a base for a mesma.", changes);
+            $" (versão {entity.Version}). Não altera notas, contagens nem classificações; entra na próxima publicação enquanto a base for a mesma." +
+            (hadReview ? " A revisão anterior deixou de valer: esta aceitação precisa de nova revisão de outra pessoa." : ""), changes);
 
         try
         {
@@ -368,9 +377,20 @@ public sealed class NistAssistService : INistAssistService
         return new NistExecutiveSummaryView(s.Id, sections, generation is null ? "Manual" : "Assisted", generation?.Mode.ToString(), s.AssistanceId,
             generation?.GeneratedAt, generation?.RequestedByName, s.AcceptedByName, s.AcceptedAt, s.Edited, s.StaleAcknowledged,
             string.Equals(s.BasisFingerprint, currentBasis, StringComparison.Ordinal),
-            s.ReviewedByName, s.ReviewedAt, s.ReviewedAt is not null && string.Equals(s.ReviewedContentHash, s.ContentHash, StringComparison.Ordinal),
+            s.ReviewedByName, s.ReviewedAt,
+            ReviewIsCurrent(s) && string.Equals(s.BasisFingerprint, currentBasis, StringComparison.Ordinal),
             s.ReviewNote, s.Version);
     }
+
+    /// <summary>
+    /// A revisão vale para a aceitação VIGENTE: examinou este mesmo conteúdo e foi feita por outra pessoa que não quem aceitou. Registros
+    /// gravados antes desta regra (revisão mantida numa nova aceitação, ou revisor que depois aceitou) deixam de contar como revisados.
+    /// </summary>
+    internal static bool ReviewIsCurrent(NistExecutiveSummary s) =>
+        s.ReviewedAt is not null
+        && s.ReviewedByAccountId is { } reviewer
+        && reviewer != s.AcceptedByAccountId
+        && string.Equals(s.ReviewedContentHash, s.ContentHash, StringComparison.Ordinal);
 
     // =============================================================================================
     //  Auditor Virtual: o mesmo contexto, sem gerar sugestão
@@ -386,7 +406,7 @@ public sealed class NistAssistService : INistAssistService
         }
         catch (NistAssessmentNotFoundException)
         {
-            return null;   // seleção de outro tenant, removida ou inventada: o Auditor segue sem contexto NIST
+            return null;   // seleção de outro tenant, removida ou inventada: o chamador a recusa (nunca a troca por outra)
         }
 
         var notes = new List<string>
@@ -396,6 +416,7 @@ public sealed class NistAssistService : INistAssistService
         };
         var code = (selection.SubcategoryCode ?? "").Trim().ToUpperInvariant();
         var sub = code.Length == 0 ? null : ctx.AllSubcategories.FirstOrDefault(s => s.Code == code);
+        if (code.Length > 0 && sub is null) return null;   // código fora do catálogo da avaliação: seleção inválida, nunca ignorada
         if (sub is not null)
         {
             var built = await Builder.SubcategoryAsync(ctx, sub, ct);
@@ -403,16 +424,34 @@ public sealed class NistAssistService : INistAssistService
                 .Select(r => $"[{r.Key}] {KindLabel(r.Kind)} — {r.Title} ({NistAssistBasis.Label(r.Basis)}{(r.Status is null ? "" : $"; {r.Status}")})" +
                              (r.IsDemo ? " — demonstração" : "") + (r.ContentExamined ? "" : " — conteúdo não examinado"))
                 .ToList();
+            var sources = built.Registry.Take(MaxAuditorSources).Select(AuditorSourceOf).ToList();
+            if (built.Registry.Count > MaxAuditorSources)
+                notes.Add($"Fontes da subcategoria resumidas: {MaxAuditorSources} de {built.Registry.Count} (abra a subcategoria para ver todas).");
             return new NistAuditorContext(ctx.Assessment.Name, ctx.Cycle.Name, ScopeName(ctx.Scope), $"{sub.Code} — {_language?.Get(sub.Code)?.Title ?? sub.Code}",
-                built.Summary, facts, notes);
+                built.Summary, facts, notes, sources);
         }
 
         var core = await _publication.BuildBasisReportAsync(selection.AssessmentId, selection.CycleId, selection.ScopeId, ct);
         var executive = NistAssistContextBuilder.Executive(core, "");
         var lines = executive.Registry.Where(r => r.Kind is "Metric" or "Finding").Take(20)
             .Select(r => r.Kind == "Metric" ? $"{r.Title}: {r.Detail}" : $"Achado: {r.Title} ({r.Status})").ToList();
-        return new NistAuditorContext(ctx.Assessment.Name, ctx.Cycle.Name, ScopeName(ctx.Scope), null, executive.Summary, lines, notes);
+        var registry = executive.Registry.Where(r => r.Kind is not "Priority").ToList();
+        var findings = registry.Where(r => r.Kind == "Finding").ToList();
+        var gaps = registry.Where(r => r.Kind == "Gap").ToList();
+        var chosen = registry.Where(r => r.Kind is "Metric" or "Limitation")
+            .Concat(gaps.Take(MaxAuditorGaps)).Concat(findings.Take(MaxAuditorFindings)).ToList();
+        if (findings.Count > MaxAuditorFindings) notes.Add($"Achados resumidos: {MaxAuditorFindings} de {findings.Count} registrados nesta rodada e escopo.");
+        if (gaps.Count > MaxAuditorGaps) notes.Add($"Lacunas resumidas: {MaxAuditorGaps} de {gaps.Count} lacunas confirmadas (as de maior distância até o alvo).");
+        return new NistAuditorContext(ctx.Assessment.Name, ctx.Cycle.Name, ScopeName(ctx.Scope), null, executive.Summary, lines, notes,
+            chosen.Select(AuditorSourceOf).ToList());
     }
+
+    private const int MaxAuditorSources = 25;
+    private const int MaxAuditorFindings = 12;
+    private const int MaxAuditorGaps = 10;
+
+    private static NistAuditorSource AuditorSourceOf(NistAssistSourceRecord r) =>
+        new(r.Key, r.Kind, r.Basis, r.Title, r.Detail, r.Date, r.Status, r.IsDemo, r.ContentExamined, r.Limitation, r.LinkTarget, r.LinkId, r.LinkCode);
 
     // =============================================================================================
     //  Geração

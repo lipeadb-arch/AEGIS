@@ -134,6 +134,9 @@ public sealed class DatabaseUpgradePostgresTests
             // [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal congelado na publicação: uma coluna aditiva e anulável (texto) na
             // fotografia, SEM backfill — fotografias anteriores ficam sem histórico, com o hash idêntico e exportadas como antes.
             "20261007135256_AssessmentVisuals01_FrozenHistory",
+            // [AEGIS-AUDITOR-CONTEXT-01] Conversas do Auditor Virtual por tenant e conta: uma tabela NOVA, sem alterar nenhuma
+            // existente e sem backfill — nenhuma conversa nasce da atualização.
+            "20261008052236_AuditorContext01_Conversations",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

@@ -13,4 +13,10 @@ namespace AegisScore.Application.Services;
 public interface IAuditorContextBuilder
 {
     Task<AuditorTenantContext> BuildAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-AUDITOR-CONTEXT-01] O mesmo contexto mais os registros dos assessments do tenant para o FOCO da tela (KNIGHT, NIST,
+    /// documentos, inventário e publicações), em fontes citáveis. Seleção de outro tenant → <see cref="AuditorFocusNotFoundException"/>.
+    /// </summary>
+    Task<AuditorTenantContext> BuildAsync(AuditorFocus focus, CancellationToken ct = default);
 }

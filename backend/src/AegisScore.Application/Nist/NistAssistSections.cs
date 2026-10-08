@@ -9,6 +9,8 @@ namespace AegisScore.Application.Nist;
 /// sustentação. <paramref name="RequiresSources"/>: afirmação sobre o ambiente — item sem fonte válida do contexto é
 /// descartado. <paramref name="SourcePrefixes"/>: que chaves contam (S = fonte, M = indicador, P = prioridade do AEGIS).
 /// <paramref name="SourceKinds"/>: quando só certos tipos de fonte sustentam a seção (riscos REGISTRADOS = achados).
+/// <paramref name="RequiresEnvironmentEvidence"/>: a seção AFIRMA algo sobre o ambiente do tenant — a referência ao catálogo
+/// (ou à metodologia) explica o requisito, mas não sustenta a afirmação: o item precisa citar ao menos um registro do tenant.
 /// </summary>
 public sealed record NistAssistSectionSpec(
     string Key,
@@ -17,7 +19,8 @@ public sealed record NistAssistSectionSpec(
     string PromptDescription,
     bool RequiresSources,
     IReadOnlyList<string> SourcePrefixes,
-    IReadOnlyList<string>? SourceKinds = null);
+    IReadOnlyList<string>? SourceKinds = null,
+    bool RequiresEnvironmentEvidence = false);
 
 public static class NistAssistSections
 {
@@ -31,11 +34,11 @@ public static class NistAssistSections
         new("outcome", "O que o resultado esperado exige", "orientação geral, a partir do catálogo",
             "Short plain explanation of what the expected outcome of this subcategory requires. General guidance; may cite the catalog source.", false, S),
         new("justification", "Rascunho de justificativa", "sobre o ambiente — cada trecho cita a fonte",
-            "Draft justification for the assessor: what the cited sources show about the current state. Every item MUST cite source keys.", true, S),
+            "Draft justification for the assessor: what the cited sources show about the current state. Every item MUST cite at least one tenant record (not only the catalog).", true, S, RequiresEnvironmentEvidence: true),
         new("supporting", "Evidências favoráveis", "o que as fontes demonstram",
-            "What the sources DEMONSTRATE in favor of the outcome. Every item MUST cite source keys.", true, S),
+            "What the sources DEMONSTRATE in favor of the outcome. Every item MUST cite at least one tenant record (not only the catalog).", true, S, RequiresEnvironmentEvidence: true),
         new("contradicting", "Evidências contraditórias ou desfavoráveis", "o que as fontes contradizem",
-            "What the sources CONTRADICT or show as missing/failed. Every item MUST cite source keys.", true, S),
+            "What the sources CONTRADICT or show as missing/failed. Every item MUST cite at least one tenant record (not only the catalog).", true, S, RequiresEnvironmentEvidence: true),
         new("unproven", "O que permanece sem comprovação", "lacunas de comprovação no contexto",
             "What remains WITHOUT proof in this context (claims not backed by examined content, documents not examined, procedures not performed).", false, S),
         new("questions", "Perguntas de entrevista", "orientação geral",
@@ -51,7 +54,7 @@ public static class NistAssistSections
     private static readonly NistAssistSectionSpec[] FindingExplain =
     {
         new("explanation", "O problema e a condição observada", "sobre o ambiente — cita o achado e as evidências",
-            "Explain the registered problem and the observed condition. Every item MUST cite source keys.", true, S),
+            "Explain the registered problem and the observed condition. Every item MUST cite the finding or the evidence (not only the catalog).", true, S, RequiresEnvironmentEvidence: true),
         new("relevance", "Por que importa", "orientação geral",
             "Why this problem matters for the expected outcome (general guidance, may cite the catalog).", false, S),
         new("impacts", "Possíveis impactos", "com fundamento citado ou como orientação geral",

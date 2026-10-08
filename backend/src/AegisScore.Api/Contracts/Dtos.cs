@@ -664,29 +664,44 @@ public record IdentityRiskDto(
     IdentityRiskDetectionsDto? Detections,
     DateTimeOffset EvaluatedAt);
 
-// ---- Auditor Virtual (Copiloto GRC onipresente, com escopo de contexto) ----
+// ---- Auditor Virtual (identidade única; a página dá o foco) ----
 /// <summary>Uma fala do histórico do chat (Role: "user"|"assistant"; Content: texto). Dado NÃO confiável.</summary>
 public record AuditorChatMessageDto(string Role, string Content);
 
 /// <summary>
-/// Turno do Copiloto GRC. <paramref name="ContextScope"/> é o código da tela ativa ("GLOBAL","GV","ID",
-/// "PR","DE","RS","RC"), que ajusta dinamicamente o System Prompt da IA. O TenantId NÃO trafega aqui — é
-/// resolvido do claim <c>tenant_id</c> do JWT (Zero Trust).
+/// [AEGIS-AUDITOR-CONTEXT-01] Um turno do Auditor Virtual. O tenant e a conta vêm do token (Zero Trust). <paramref name="Page"/> é a página
+/// aberta (foco, nunca a persona); <paramref name="Nist"/> e <paramref name="Knight"/> são as seleções da tela, conferidas no servidor (de
+/// outro tenant → 404). <paramref name="ConversationId"/> continua uma conversa DESTE tenant e DESTA conta. <paramref name="History"/> e
+/// <paramref name="ContextScope"/> são aceitos por compatibilidade e ignorados: o histórico autoritativo é o do servidor.
 /// </summary>
 public record AuditorChatRequestDto(
-    string ContextScope, string Message, IReadOnlyList<AuditorChatMessageDto>? History,
-    // [AEGIS-NIST-AI-ASSIST-01] Seleção NIST da tela ativa (avaliação · rodada · escopo · subcategoria opcional). Conferida no
-    // servidor pelo tenant do token: seleção de outro tenant ou inexistente é ignorada.
-    AuditorNistSelectionDto? Nist = null);
+    string? ContextScope, string Message, IReadOnlyList<AuditorChatMessageDto>? History,
+    AuditorNistSelectionDto? Nist = null,
+    Guid? ConversationId = null,
+    string? Page = null,
+    AuditorKnightFocusDto? Knight = null);
 
 public record AuditorNistSelectionDto(Guid? AssessmentId, Guid? CycleId, Guid? ScopeId, string? Code);
 
+/// <summary>Avaliação (e controle) do KNIGHT abertos na tela.</summary>
+public record AuditorKnightFocusDto(Guid? RunId, string? IndicatorId);
+
+/// <summary>Para onde a fonte leva na aplicação (rota interna).</summary>
+public record AuditorSourceLinkDto(string Route, IReadOnlyDictionary<string, string>? Query, string? Fragment);
+
+/// <summary>Fonte citada na resposta: módulo, natureza (configuração observada × documentação × declaração × verificação…), data e limitação.</summary>
+public record AuditorSourceDto(
+    string Key, string Module, string Nature, string NatureLabel, string Title, string? Detail, string? Date, bool IsDemo, string? Limitation,
+    AuditorSourceLinkDto? Link);
+
 /// <summary>
-/// Resposta do Copiloto com ROTEAMENTO DE INTENÇÃO. <paramref name="Intent"/> ("COPILOT"|"START_INTERVIEW")
-/// diz à UI como reagir; <paramref name="Metadata"/> é a carga estruturada opcional da intenção (em
-/// START_INTERVIEW, semeia a entrevista com a subcategoria investigada).
+/// Resposta do Auditor: a fala conferida, a conversa (tenant + conta), o modo (Real | Simulated), o foco em que foi respondida, as fontes
+/// citadas, as limitações do contexto e as notas da conferência. <paramref name="Intent"/> é sempre "COPILOT".
 /// </summary>
-public record AuditorChatResponseDto(string Reply, string Scope, string Intent, object? Metadata);
+public record AuditorChatResponseDto(
+    string Reply, string Scope, string Intent, object? Metadata,
+    Guid ConversationId, string Mode, string FocusLabel,
+    IReadOnlyList<AuditorSourceDto> Sources, IReadOnlyList<string> Limitations, IReadOnlyList<string> Notes);
 
 // ---- Risk Assessment (ID.RA) — Raio de Explosão ----
 

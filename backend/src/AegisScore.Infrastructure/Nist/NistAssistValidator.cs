@@ -48,7 +48,7 @@ internal static class NistAssistValidator
         var registry = built.Registry.ToDictionary(r => r.Key, StringComparer.Ordinal);
         var specs = NistAssistSections.For(kind, focus);
         var notes = new List<string>();
-        int invalidRefs = 0, unsupported = 0, urls = 0;
+        int invalidRefs = 0, unsupported = 0, referenceOnly = 0, urls = 0;
 
         string Clean(string? raw, int max)
         {
@@ -85,6 +85,12 @@ internal static class NistAssistValidator
                     if (spec.RequiresSources && !valid.Any(k => registry[k].Basis != NistAssistBasis.NotExamined))
                     {
                         unsupported++;
+                        continue;
+                    }
+                    // A referência ao catálogo explica o requisito; não demonstra nada sobre o ambiente do tenant.
+                    if (spec.RequiresEnvironmentEvidence && !valid.Any(k => IsTenantRecord(registry[k])))
+                    {
+                        referenceOnly++;
                         continue;
                     }
                     items.Add(new NistAssistValidatedItem(text, valid, Derive(valid.Select(k => registry[k]))));
@@ -145,6 +151,8 @@ internal static class NistAssistValidator
 
         if (invalidRefs > 0) notes.Add($"{invalidRefs} citação(ões) a fontes inexistentes, de outro contexto ou não admitidas na seção foram descartadas.");
         if (unsupported > 0) notes.Add($"{unsupported} afirmação(ões) sobre o ambiente sem fonte válida foram descartadas.");
+        if (referenceOnly > 0)
+            notes.Add($"{referenceOnly} afirmação(ões) sobre o ambiente apoiadas só no catálogo ou na metodologia foram descartadas: a referência explica o requisito, não comprova o ambiente.");
         if (urls > 0) notes.Add($"{urls} link(s) que não vieram das fontes foram removidos do texto.");
 
         if (kind == "ExecutiveSummary")
@@ -165,6 +173,10 @@ internal static class NistAssistValidator
         var output = new NistAssistOutput(sections, level, levelNote, procedures);
         return new NistAssistValidation(output, Applicable(output, built, kind, focus), notes);
     }
+
+    /// <summary>Registro do tenant (fato, relato do analista ou conteúdo ainda não confirmado) — o que pode sustentar afirmação sobre o ambiente.</summary>
+    internal static bool IsTenantRecord(NistAssistSourceRecord r) =>
+        r.Basis is NistAssistBasis.Fact or NistAssistBasis.AnalystReport or NistAssistBasis.Unconfirmed;
 
     /// <summary>A classificação do item é a da fonte MAIS FRACA citada sobre o ambiente; só referência → referência.</summary>
     internal static string Derive(IEnumerable<NistAssistSourceRecord> sources)

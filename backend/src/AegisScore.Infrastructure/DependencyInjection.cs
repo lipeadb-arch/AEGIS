@@ -187,6 +187,10 @@ public static class DependencyInjection
         // score/cobertura, lacunas, controles, evidência documental curta, conectores e recomendações. Scoped:
         // usa o DbContext + as projeções de leitura sob o Global Query Filter fail-closed do tenant.
         services.AddScoped<IAuditorContextBuilder, AuditorContextBuilder>();
+        // [AEGIS-AUDITOR-CONTEXT-01] Registros dos assessments (KNIGHT, NIST, documentos, inventário, publicações) para o foco da
+        // conversa, e a memória da conversa por tenant + conta.
+        services.AddScoped<IAuditorAssessmentContextBuilder, AuditorAssessmentContextBuilder>();
+        services.AddScoped<IAuditorConversationStore, AuditorConversationStore>();
 
         // AEGIS KNIGHT — assessment MULTICOLETOR de postura de identidade/exposição. Coletor de DEMONSTRAÇÃO
         // (sintético, sem rede) + registro/factory de coletores (montado a partir de TODOS os IKnightCollector,
@@ -210,6 +214,8 @@ public static class DependencyInjection
         // existente (nenhum provedor, chatbot ou camada paralela). Uma geração por item por vez na réplica.
         services.AddSingleton<AegisScore.Infrastructure.Nist.NistAssistInFlight>();
         services.AddScoped<AegisScore.Application.Nist.INistAssistService, AegisScore.Infrastructure.Nist.NistAssistService>();
+        // [AEGIS-AUDITOR-CONTEXT-01] Evidências e correlação KNIGHT × NIST por avaliação · rodada · escopo (leitura, sem IA).
+        services.AddScoped<AegisScore.Application.Nist.INistEvidenceOverviewService, AegisScore.Infrastructure.Nist.NistEvidenceOverviewService>();
 
         // [AEGIS-MVP-EVIDENCE-FABRIC-01] Evidence Fabric de identidade: o ÚNICO ponto de aquisição real do Entra ID
         // (reusa o coletor do KNIGHT + transporte/credencial existentes) e de persistência do snapshot normalizado.

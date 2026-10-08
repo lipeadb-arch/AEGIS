@@ -263,10 +263,21 @@ public sealed record NistExecutiveSummaryView(
 /// <summary>Seleção NIST da tela ativa, para o Auditor Virtual fundamentar a conversa (conferida no servidor).</summary>
 public sealed record NistAuditorSelection(Guid AssessmentId, Guid CycleId, Guid ScopeId, string? SubcategoryCode);
 
+/// <summary>
+/// [AEGIS-AUDITOR-CONTEXT-01] Uma fonte do contexto NIST do Auditor, como o montador da assistência a classificou (tipo, base, data,
+/// demonstração, conteúdo examinado, limitação) e com o destino na tela (<paramref name="LinkTarget"/>: Outcome, Evaluation, Evidence,
+/// Procedure, Finding, Subcategory, Reference).
+/// </summary>
+public sealed record NistAuditorSource(
+    string Key, string Kind, string Basis, string Title, string? Detail, string? Date, string? Status,
+    bool IsDemo, bool ContentExamined, string? Limitation, string? LinkTarget, string? LinkId, string? LinkCode);
+
 /// <summary>Contexto NIST compacto entregue ao Auditor: o mesmo montador da assistência, sem gerar sugestão.</summary>
 public sealed record NistAuditorContext(
     string Assessment, string Cycle, string Scope, string? Subcategory, string Summary,
-    IReadOnlyList<string> Facts, IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Facts, IReadOnlyList<string> Notes,
+    /// <summary>[AEGIS-AUDITOR-CONTEXT-01] As fontes estruturadas (o Auditor as cita e a tela as abre).</summary>
+    IReadOnlyList<NistAuditorSource>? Sources = null);
 
 public interface INistAssistService
 {
