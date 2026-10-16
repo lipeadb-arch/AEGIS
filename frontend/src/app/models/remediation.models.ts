@@ -497,113 +497,11 @@ export function panelAllowsCreation(state: PinnedPlanState): boolean {
   return state.kind === 'livre';
 }
 
-// ---- [AEGIS-JOURNEY-01] Caso de vulnerabilidade em dispositivo --------------------------------
-
-/** Forma canônica do identificador da CVE — a mesma da chave do caso no servidor (sem espaços, maiúsculas). */
-export function normalizeCve(cve: string | null | undefined): string {
-  return (cve ?? '').trim().toUpperCase();
-}
+// ---- [AEGIS-JOURNEY-01] Planos históricos de caso de vulnerabilidade em dispositivo (criação aposentada) ---------
 
 /** O plano nasceu de um caso de vulnerabilidade em dispositivo? */
 export function isDevicePlan(p: ActionPlan): boolean {
   return p.originKind === 'DeviceVulnerability' || (!p.originKind && !!p.deviceOrigin);
-}
-
-/** Planos de UM caso (dispositivo + CVE), do mais recente ao mais antigo. Nome, posição e faixa não entram na chave. */
-export function devicePlansForCase(plans: ActionPlan[], assetId: string, cveId: string): ActionPlan[] {
-  const asset = (assetId ?? '').toLowerCase();
-  const cve = normalizeCve(cveId);
-  return plans
-    .filter((p) => isDevicePlan(p) && p.deviceOrigin?.assetId?.toLowerCase() === asset && normalizeCve(p.deviceOrigin?.cveId) === cve)
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-}
-
-/** O plano ATIVO do caso, se houver — decide entre "Abrir plano" e "Planejar tratamento". */
-export function activeDevicePlanFor(plans: ActionPlan[], assetId: string, cveId: string): ActionPlan | null {
-  return devicePlansForCase(plans, assetId, cveId).find((p) => p.isActive) ?? null;
-}
-
-/**
- * Por que o plano nomeado pelo endereço NÃO pode ocupar o painel do caso aberto — `null` quando pode. Outro dispositivo,
- * outra CVE ou outra origem: o plano apareceria sob um cabeçalho que não é o dele.
- */
-export function pinnedDevicePlanRejection(plan: ActionPlan, assetId: string, cveId: string): string | null {
-  if (!isDevicePlan(plan) || !plan.deviceOrigin)
-    return 'O plano indicado no endereço não nasceu de um caso de vulnerabilidade em dispositivo.';
-  if (plan.deviceOrigin.assetId.toLowerCase() !== (assetId ?? '').toLowerCase())
-    return 'O plano indicado no endereço pertence a outro dispositivo.';
-  if (normalizeCve(plan.deviceOrigin.cveId) !== normalizeCve(cveId))
-    return `O plano indicado no endereço é do caso ${plan.deviceOrigin.cveId}, não de ${normalizeCve(cveId)}.`;
-  return null;
-}
-
-/** O limite desta versão, dito sempre que a validação de um caso de dispositivo entra em cena. */
-export const DEVICE_VERIFICATION_PENDING =
-  'A verificação técnica automática da correção desta CVE no dispositivo ainda não está disponível: atestação humana é ' +
-  'registro, não comprovação, e plano concluído não significa dispositivo corrigido.';
-
-/** Tom do estado da situação na fonte. "Não reportada" é informativo — nunca o tom de "resolvido". */
-export function sourceReadingTone(state: DeviceCaseSourceState | string): 'warn' | 'info' | 'muted' {
-  if (state === 'open' || state === 'openWithDisposition') return 'warn';
-  if (state === 'notReported') return 'info';
-  return 'muted';
-}
-
-/** Título sugerido para o plano de um caso — editável; não é decisão. */
-export function seededDeviceTitle(cveId: string, assetName: string): string {
-  return `Tratar ${normalizeCve(cveId)} em ${assetName}`.slice(0, 200);
-}
-
-/** Ação proposta sugerida para um caso — a pessoa responsável escreve a ação; o AEGIS não aplica correção. */
-export function seededDeviceProposal(cveId: string, _info: DevicePriorityCase | null): string {
-  return (
-    `Aplicar a atualização ou a mitigação indicada pela fonte para ${normalizeCve(cveId)} neste dispositivo e registrar ` +
-    'o que foi feito. A confirmação técnica depende de uma nova coleta do Microsoft Defender — o plano, sozinho, não a comprova.'
-  );
-}
-
-function formatStamp(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '—';
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
-/** Resumo do registro de origem numa linha — sempre identificado como registro da criação, nunca como leitura atual. */
-export function deviceOriginLead(o: DeviceCaseOrigin): string {
-  return `Registro de origem · ${o.caseBandLabel} · política ${o.policyCode} v${o.policyVersion} · leitura de ${formatStamp(o.evaluatedAt)}`;
-}
-
-/** Destino de um plano na navegação: a tela onde o caso de origem é aberto, com o plano nomeado no endereço. */
-export interface PlanLink {
-  commands: string[];
-  queryParams: Record<string, string | null>;
-}
-
-export function planLink(p: ActionPlan): PlanLink | null {
-  if (p.nistOrigin) {
-    const o = p.nistOrigin;
-    return {
-      commands: ['/nist', o.subcategoryCode.split('.')[0].toLowerCase(), o.subcategoryCode],
-      queryParams: { avaliacao: o.assessmentId, rodada: o.cycleId, escopo: o.scopeId },
-    };
-  }
-  if (isDevicePlan(p)) {
-    const o = p.deviceOrigin;
-    return o
-      ? { commands: ['/nist/id/prioridades'], queryParams: { tab: 'achados', device: o.assetId, cve: o.cveId, plan: p.id } }
-      : null;
-  }
-  if (p.knightIndicatorId)
-    return { commands: ['/knight'], queryParams: { finding: p.knightIndicatorId, run: p.originRunId, plan: p.id } };
-  return null;
-}
-
-/** Identificador curto do problema na lista de planos: o achado do KNIGHT ou a CVE do caso. */
-export function planSubject(p: ActionPlan): string {
-  if (p.nistOrigin) return p.nistOrigin.subcategoryCode;
-  if (isDevicePlan(p)) return p.deviceOrigin?.cveId ?? 'caso de dispositivo';
-  return p.knightIndicatorId ?? '—';
 }
 
 /** Procedência da ação em uma linha — o que distingue um treino de trabalho real sobre o cliente. */

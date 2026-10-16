@@ -204,7 +204,7 @@ public sealed class KnightEntraConfigurationFlowTests : IDisposable
         await using var db = NewContext(TenantA);
         var run = await RunAsync(db, TenantA, new EntraConfigurationScenario(EntraConfigurationScenario.Variant.NonCompliant));
 
-        var published = await new PostureSnapshotService(db, new SystemTenantContext(TenantA), new AegisScore.Infrastructure.Connectors.NistSignalMapper(db))
+        var published = await new PostureSnapshotService(db, new SystemTenantContext(TenantA))
             .PublishAsync(PostureSnapshotType.Knight, null, run.Id);
         var snapshot = await db.PostureSnapshots.AsNoTracking()
             .Include(s => s.Controls).Include(s => s.Indicators).Include(s => s.ActionItems).Include(s => s.Objects)

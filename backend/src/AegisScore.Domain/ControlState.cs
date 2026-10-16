@@ -129,7 +129,7 @@ public class TenantControlState : Entity, ITenantOwned
     /// incoerência: aqueles são blobs de LEITURA que a UI repassa inteiros ao card, esta é dado que o
     /// domínio percorre, filtra e agrega — o mesmo idioma jsonb+ValueConverter das listas do catálogo NIST.
     ///
-    /// Invariante mantida pelo <c>ControlStateWriter</c> (o escritor único do ledger): a lista é VAZIA
+    /// Invariante mantida pelo antigo escritor único do ledger (aposentado; o ledger é só histórico): a lista é VAZIA
     /// quando o status é <see cref="ControlStatus.Compliant"/> — um controle conforme não tem pendência.
     /// <see cref="ControlStatus.MitigatedByThirdParty"/> PODE tê-las: o risco está coberto por terceiro,
     /// a lacuna própria continua aberta.

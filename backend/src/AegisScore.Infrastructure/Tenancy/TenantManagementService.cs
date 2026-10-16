@@ -15,7 +15,7 @@ namespace AegisScore.Infrastructure.Tenancy;
 /// Implementação do serviço de onboarding (ver <see cref="ITenantManagementService"/> para o contrato e
 /// as decisões de desenho). Adapter da Infrastructure: é aqui que a porta encosta no DbContext.
 ///
-/// Secure-by-design, nos mesmos termos do <c>ControlStateWriter</c>: a escrita de conector opera SEMPRE
+/// Secure-by-design: a escrita de conector opera SEMPRE
 /// dentro do tenant ambiente (Global Query Filter na leitura + stamping fail-closed no
 /// <c>SaveChanges</c>), e o TenantId NUNCA é atribuído à mão — quem carimba é o
 /// <see cref="AegisScoreDbContext"/>, que revalida contra o contexto e lança se houver divergência.
@@ -153,7 +153,7 @@ public sealed class TenantManagementService : ITenantManagementService
     public async Task<ConnectorConfigurationResult> ConfigureConnectorAsync(
         ConfigureConnectorCommand command, CancellationToken ct = default)
     {
-        // Defesa em profundidade (idioma do ControlStateWriter): o stamping do SaveChanges já é
+        // Defesa em profundidade: o stamping do SaveChanges já é
         // fail-closed, mas falhar AQUI dá a mensagem certa e evita montar a entidade à toa.
         var tenantId = _tenant.TenantId
             ?? throw new TenantSecurityException(

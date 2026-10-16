@@ -217,7 +217,7 @@ public sealed class BlastRadiusCalculator : IBlastRadiusCalculator
         return exploited ? Math.Min(1.0, p * 1.25) : p;          // KEV/in-the-wild eleva
     }
 
-    private static RiskLevel LevelOf(double score) => score switch  // mesma régua do IcrScoringService (40/60/80)
+    private static RiskLevel LevelOf(double score) => score switch  // régua de risco 40/60/80
     {
         < 40 => RiskLevel.Baixo,
         < 60 => RiskLevel.Medio,

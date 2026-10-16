@@ -1,13 +1,11 @@
 using Microsoft.EntityFrameworkCore;
-using AegisScore.Application.Scoring;
 using AegisScore.Infrastructure.Persistence;
 
-namespace AegisScore.Infrastructure.Scoring;
+namespace AegisScore.Infrastructure.Tests.Legacy;
 
 /// <summary>
-/// [AEGIS-AUD-001/002] Autoridade de AGREGAÇÃO compartilhada do Aegis Score sobre o AegisScoreDbContext — a
-/// MESMA semântica para o Score Atual (<c>CurrentScoreQuery</c>) e a foto diária (<c>AegisScoreSnapshotWorker</c>),
-/// de modo que numerador, denominador e restrição de universo NUNCA tenham duas implementações capazes de divergir.
+/// [AEGIS-AUD-001/002] Agregação da abordagem aposentada sobre o AegisScoreDbContext, transferida da produção para os
+/// testes sem mudança de semântica: só o fixture de fotografias históricas <c>aegis-score-v1</c> a usa.
 ///
 /// Restringe os estados AVALIADOS ao catálogo do framework ATIVO (join TenantControlState → Subcategory →
 /// Category → Function → FrameworkVersion.IsActive): estados de uma versão ANTIGA do framework não entram no

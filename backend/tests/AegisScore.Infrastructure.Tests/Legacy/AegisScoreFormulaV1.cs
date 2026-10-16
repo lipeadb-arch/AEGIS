@@ -1,13 +1,12 @@
 using System;
 using AegisScore.Domain;
 
-namespace AegisScore.Application.Scoring;
+namespace AegisScore.Infrastructure.Tests.Legacy;
 
 /// <summary>
-/// [AEGIS-AUD-001] Autoridade ÚNICA e reproduzível do Aegis Score — a fórmula oficial v1
-/// (<see cref="Version"/> = <c>aegis-score-v1</c>). Toda leitura (score atual, snapshot diário, tendência)
-/// e toda escrita de pontos (<c>ControlStateWriter</c>) passam por aqui, de modo que numerador, denominador,
-/// arredondamento e a semântica de NotEvaluated NUNCA tenham duas implementações capazes de divergir.
+/// [AEGIS-AUD-001] Fórmula v1 da abordagem aposentada (<see cref="Version"/> = <c>aegis-score-v1</c>), mantida SÓ nos
+/// testes para gerar fotografias históricas com a mesma semântica das publicadas em produção. A aplicação não calcula
+/// mais esta pontuação: as fotografias existentes guardam os valores congelados e são apenas lidas e exportadas.
 ///
 /// Semântica por controle:
 /// <list type="bullet">

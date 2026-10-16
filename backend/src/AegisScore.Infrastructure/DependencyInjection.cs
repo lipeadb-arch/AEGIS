@@ -4,7 +4,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Abstractions;
-using AegisScore.Application.Advisories;
 using AegisScore.Application.Identity;
 using AegisScore.Application.Identity.Adm;
 using AegisScore.Application.Knight;
@@ -15,7 +14,6 @@ using AegisScore.Application.Queries;
 using AegisScore.Application.RiskAssessment;
 using AegisScore.Application.Scoring;
 using AegisScore.Application.Services;
-using AegisScore.Infrastructure.Advisories;
 using AegisScore.Infrastructure.Ai;
 using AegisScore.Infrastructure.Auth;
 using AegisScore.Infrastructure.Connectors;
@@ -29,7 +27,6 @@ using AegisScore.Infrastructure.Posture.Export;
 using AegisScore.Infrastructure.Queries;
 using AegisScore.Infrastructure.Reference;
 using AegisScore.Infrastructure.RiskAssessment;
-using AegisScore.Infrastructure.Scoring;
 using AegisScore.Infrastructure.Tenancy;
 
 namespace AegisScore.Infrastructure;
@@ -204,10 +201,8 @@ public static class DependencyInjection
 
         // [AEGIS-AUD-035/036/037] Fotografia AUDITÁVEL de postura — publicação controlada do KNIGHT (o servidor
         // constrói pela autoridade knight-score-v1), leitura por tenant e comparação compatível. As fotografias
-        // históricas aegis-score-v1 continuam legíveis e exportáveis, mas a API não publica novas. Scoped: usa o
+        // históricas aegis-score-v1 continuam legíveis e exportáveis, mas não são mais geradas. Scoped: usa o
         // DbContext (Global Query Filter + stamping fail-closed). A fotografia é APPEND-ONLY.
-        // O resolvedor de mapeamentos é dependência do serviço (proveniência das fotografias históricas).
-        services.AddScoped<INistSignalMapper, NistSignalMapper>();
         services.AddScoped<IPostureSnapshotService, PostureSnapshotService>();
 
         // [AEGIS-AUD-034] Exportação executiva da fotografia (PDF/CSV) — abstração pequena e focada. Carrega a
@@ -223,10 +218,6 @@ public static class DependencyInjection
         // Inventário e proveniência como evidência organizacional do AEGIS NIST.
         services.AddScoped<IAssetSourceQuery, AssetSourceQuery>();
         services.TryAddSingleton(TimeProvider.System);
-
-        // Motor consultivo: handler de criação de advisories por subcategoria NIST (escrita). Scoped: usa o
-        // DbContext (stamping fail-closed do tenant) + o IAiAssessmentService para redigir o texto.
-        services.AddScoped<IGenerateAdvisoryHandler, GenerateAdvisoryHandler>();
 
         // Teste de acesso das fontes KNIGHT registradas nos pacotes Microsoft/Google.
         services.AddScoped<IConnectorRegistry, ConnectorRegistry>();

@@ -89,7 +89,7 @@ public sealed class KnightM365ServicesPostgresTests
 
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
         {
-            var detail = await new PostureSnapshotService(db, new SystemTenantContext(tenant), new AegisScore.Infrastructure.Connectors.NistSignalMapper(db))
+            var detail = await new PostureSnapshotService(db, new SystemTenantContext(tenant))
                 .PublishConsolidatedKnightAsync(null);
             detail.Composition.Where(c => c.Included).Select(c => c.Source).Should().BeEquivalentTo(Fontes);
 

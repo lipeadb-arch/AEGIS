@@ -95,30 +95,15 @@ public class AssetsController : ControllerBase
         return dto is null ? NotFound() : dto;
     }
 
-    /// <summary>
-    /// [AEGIS-CROSS-SOURCE-01] Situações identificadas entre fontes para o ativo: as regras (código e versão), o estado de
-    /// cada uma, as evidências de cada fonte com as próprias datas, as limitações e as CVEs que as sustentam (paginadas,
-    /// uma linha por CVE). Somente leitura; sem identificadores técnicos para nenhum papel.
-    /// </summary>
+    /// <summary>Correlação por CVE entre fontes, aposentada com a abordagem antiga: 410, sem ler nada.</summary>
     [HttpGet("{id:guid}/correlations")]
-    public async Task<ActionResult<AssetCrossSourceDto>> Correlations(
-        Guid id,
-        [FromQuery] int cvePage = 1, [FromQuery] int cvePageSize = 10, CancellationToken ct = default)
-    {
-        return await Task.FromResult<ActionResult<AssetCrossSourceDto>>(Problem("Correlação por CVE aposentada. Use o inventário como evidência do NIST.", statusCode: 410));
-    }
+    public IActionResult Correlations(Guid id) =>
+        Problem("Correlação por CVE aposentada. Use o inventário como evidência do NIST.", statusCode: 410);
 
-    /// <summary>
-    /// [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento do dispositivo: faixa, caso determinante, fatores (valor,
-    /// origem, data e natureza), desconhecidos, ressalvas, próxima ação e os casos (ativo × CVE) paginados. Somente leitura.
-    /// </summary>
+    /// <summary>Prioridade por CVE do dispositivo, aposentada com a abordagem antiga: 410, sem ler nada.</summary>
     [HttpGet("{id:guid}/priority")]
-    public async Task<ActionResult<AssetDevicePriorityDto>> Priority(
-        Guid id,
-        [FromQuery] int casePage = 1, [FromQuery] int casePageSize = 10, CancellationToken ct = default)
-    {
-        return await Task.FromResult<ActionResult<AssetDevicePriorityDto>>(Problem("Prioridade por CVE aposentada. Use achados e planos dos assessments KNIGHT/NIST.", statusCode: 410));
-    }
+    public IActionResult Priority(Guid id) =>
+        Problem("Prioridade por CVE aposentada. Use achados e planos dos assessments KNIGHT/NIST.", statusCode: 410);
 
     /// <summary>
     /// [AEGIS-RISK-PRIORITIZATION-01] DECLARA a criticidade do ativo (1–4) com proveniência: quem (do token, nunca do corpo),

@@ -67,8 +67,7 @@ public sealed class KnightExchangeConfigurationPostgresTests
             smtp.Status.Should().Be(KnightIndicatorStatus.Exposed, "o mesmo veredito da bateria em SQLite");
             smtp.AffectedObjectCount.Should().Be(1);
 
-            snapshotId = (await new PostureSnapshotService(db, new SystemTenantContext(tenant),
-                    new AegisScore.Infrastructure.Connectors.NistSignalMapper(db))
+            snapshotId = (await new PostureSnapshotService(db, new SystemTenantContext(tenant))
                 .PublishAsync(PostureSnapshotType.Knight, KnightSourceType.MicrosoftExchangeOnline, exchangeRunId)).Summary.Id;
         }
 
@@ -178,8 +177,7 @@ public sealed class KnightExchangeConfigurationPostgresTests
                 .RunAssessmentAsync(KnightSourceType.MicrosoftExchangeOnline);
 
             // A GRAVAÇÃO é a prova: se algum texto não coubesse, o PostgreSQL teria recusado antes daqui.
-            var published = await new PostureSnapshotService(db, new SystemTenantContext(tenant),
-                    new AegisScore.Infrastructure.Connectors.NistSignalMapper(db))
+            var published = await new PostureSnapshotService(db, new SystemTenantContext(tenant))
                 .PublishAsync(PostureSnapshotType.Knight, KnightSourceType.MicrosoftExchangeOnline, run.Id);
 
             var persistido = await db.KnightAssessmentRuns.AsNoTracking()

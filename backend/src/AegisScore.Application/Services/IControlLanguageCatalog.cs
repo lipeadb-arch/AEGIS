@@ -47,32 +47,3 @@ public interface IControlLanguageCatalog
         Get(code) ?? throw new InvalidOperationException(
             $"Sem redação em linguagem clara para a subcategoria ativa '{code}'.");
 }
-
-/// <summary>
-/// Catálogo de linguagem IMUTÁVEL construído a partir de um dicionário — usado nos testes e como semente
-/// determinística, onde ler o arquivo de produção seria ruído. Espelha o idioma de
-/// <see cref="StaticAuditorPersonaProvider"/>.
-/// </summary>
-public sealed class StaticControlLanguageCatalog : IControlLanguageCatalog
-{
-    private readonly IReadOnlyDictionary<string, ControlLanguage> _byCode;
-
-    public StaticControlLanguageCatalog(IReadOnlyDictionary<string, ControlLanguage> byCode)
-    {
-        _byCode = byCode ?? throw new ArgumentNullException(nameof(byCode));
-    }
-
-    /// <summary>
-    /// Catálogo VAZIO — <see cref="Get"/> devolve <c>null</c> para todo código e <see cref="IControlLanguageCatalog.GetRequired"/>
-    /// lança. Útil só para testes que NÃO projetam subcategorias ativas pelo dashboard (que é fail-closed).
-    /// </summary>
-    public static StaticControlLanguageCatalog Empty { get; } =
-        new(new Dictionary<string, ControlLanguage>(StringComparer.Ordinal));
-
-    public int Count => _byCode.Count;
-
-    public IReadOnlyCollection<string> Codes => (IReadOnlyCollection<string>)_byCode.Keys;
-
-    public ControlLanguage? Get(string code) =>
-        code is not null && _byCode.TryGetValue(code, out var lang) ? lang : null;
-}

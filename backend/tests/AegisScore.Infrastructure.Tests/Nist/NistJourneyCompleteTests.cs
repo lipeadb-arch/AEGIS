@@ -566,7 +566,7 @@ public sealed class NistJourneyCompleteTests : IDisposable
             csv.Should().Contain("'=HYPERLINK").And.NotContain(";=HYPERLINK");
 
             // Comparação genérica de fotografias não fabrica "sem mudança" para a maturidade.
-            var compare = await new PostureSnapshotService(x.Db, new SystemTenantContext(TenantA), new AegisScore.Infrastructure.Connectors.NistSignalMapper(x.Db))
+            var compare = await new PostureSnapshotService(x.Db, new SystemTenantContext(TenantA))
                 .CompareAsync(published.SnapshotId, published.SnapshotId);
             compare!.Compatible.Should().BeFalse();
         }
@@ -600,7 +600,7 @@ public sealed class NistJourneyCompleteTests : IDisposable
             comparison.Notes.Should().Contain(n => n.Contains("universo aplicável mudou de 106 para 105"));
             comparison.Changes.Should().Contain(ch => ch.Code == "ID.AM-01" && ch.Kind == "LevelDown");
 
-            var all = await new PostureSnapshotService(x.Db, new SystemTenantContext(TenantA), new AegisScore.Infrastructure.Connectors.NistSignalMapper(x.Db)).ListAsync(null);
+            var all = await new PostureSnapshotService(x.Db, new SystemTenantContext(TenantA)).ListAsync(null);
             var history = PostureMonthlyHistory.Build(all, _clock.GetUtcNow(), 12);
             var series = history.Series.Should().ContainSingle(se => se.Type == "NistMaturity").Subject;
             series.Label.Should().StartWith("NIST · maturidade 1–5");

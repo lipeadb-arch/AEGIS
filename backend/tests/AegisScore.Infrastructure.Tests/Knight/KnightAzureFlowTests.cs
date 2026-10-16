@@ -272,8 +272,7 @@ public sealed class KnightAzureFlowTests : IDisposable
         await SeedAsync(TenantA);
         await using var db = NewContext(TenantA);
         var run = await ServiceFor(db, new AzureScenario(AzureScenario.Variant.VaultDataDenied)).RunAssessmentAsync(KnightSourceType.MicrosoftAzure);
-        var detail = await new AegisScore.Infrastructure.Posture.PostureSnapshotService(db, new SystemTenantContext(TenantA),
-                new AegisScore.Infrastructure.Connectors.NistSignalMapper(db))
+        var detail = await new AegisScore.Infrastructure.Posture.PostureSnapshotService(db, new SystemTenantContext(TenantA))
             .PublishAsync(PostureSnapshotType.Knight, KnightSourceType.MicrosoftAzure, run.Id);
         var snapshot = await db.PostureSnapshots.AsNoTracking()
             .Include(s => s.Controls).Include(s => s.Indicators).Include(s => s.ActionItems).Include(s => s.Objects)

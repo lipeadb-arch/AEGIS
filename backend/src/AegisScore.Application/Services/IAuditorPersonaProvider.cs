@@ -39,9 +39,8 @@ public sealed record AuditorPersona(
         && TranslationRules.Count == 0 && ActionDirectives.Count == 0;
 
     /// <summary>
-    /// Renderiza a persona como bloco rotulado para o prompt — mesmo idioma do
-    /// <c>AssessmentRuleContextBuilder</c>: caixa alta nos rótulos, um item por linha, prosa em vez de
-    /// JSON cru (o modelo lê melhor). Devolve string vazia quando não há persona, e o prompt a omite.
+    /// Renderiza a persona como bloco rotulado para o prompt: caixa alta nos rótulos, um item por linha, prosa em vez
+    /// de JSON cru (o modelo lê melhor). Devolve string vazia quando não há persona, e o prompt a omite.
     /// </summary>
     public string ToPromptBlock()
     {

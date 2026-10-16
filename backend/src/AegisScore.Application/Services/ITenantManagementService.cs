@@ -252,8 +252,7 @@ public record ConnectorAdminResult(ConnectorAdminStatus Status, ConnectorSummary
 /// método aceita um <c>tenantId</c> por parâmetro: o que não trafega não pode ser forjado, e é isso que
 /// elimina o IDOR na raiz em vez de mitigá-lo com uma checagem que alguém esquece de repetir.
 ///
-/// A implementação vive na Infrastructure (toca o DbContext); a porta, aqui — mesmo desenho de
-/// <see cref="IControlStateWriter"/>.
+/// A implementação vive na Infrastructure (toca o DbContext); a porta, aqui.
 /// </summary>
 public interface ITenantManagementService
 {

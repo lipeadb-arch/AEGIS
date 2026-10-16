@@ -215,7 +215,7 @@ public sealed class FrozenPostureHistoryTests : IDisposable
         new(new DbContextOptionsBuilder<AegisScoreDbContext>().UseSqlite(_connection).Options, new SystemTenantContext(tenantId));
 
     private static IPostureSnapshotService ServiceFor(AegisScoreDbContext db, Guid? tenantId) =>
-        new PostureSnapshotService(db, new SystemTenantContext(tenantId), new NistSignalMapper(db));
+        new PostureSnapshotService(db, new SystemTenantContext(tenantId));
 
     private static async Task<Guid> SeedRunAsync(AegisScoreDbContext db, double score)
     {

@@ -240,7 +240,7 @@ public sealed class KnightMulticloudReportTests : IDisposable
     }
 
     private static IPostureSnapshotService PostureFor(AegisScoreDbContext db, Guid tenantId) =>
-        new PostureSnapshotService(db, new SystemTenantContext(tenantId), new AegisScore.Infrastructure.Connectors.NistSignalMapper(db));
+        new PostureSnapshotService(db, new SystemTenantContext(tenantId));
 
     private static Task<PostureSnapshot> LoadAsync(AegisScoreDbContext db, Guid id) =>
         db.PostureSnapshots.AsNoTracking()

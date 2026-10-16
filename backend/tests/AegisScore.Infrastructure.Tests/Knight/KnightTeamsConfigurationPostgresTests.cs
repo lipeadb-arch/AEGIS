@@ -75,8 +75,7 @@ public sealed class KnightTeamsConfigurationPostgresTests
             lobby.Status.Should().Be(KnightIndicatorStatus.Exposed);
             lobby.AffectedObjectCount.Should().Be(1);
 
-            snapshotId = (await new PostureSnapshotService(db, new SystemTenantContext(tenant),
-                new AegisScore.Infrastructure.Connectors.NistSignalMapper(db))
+            snapshotId = (await new PostureSnapshotService(db, new SystemTenantContext(tenant))
                 .PublishAsync(PostureSnapshotType.Knight, KnightSourceType.MicrosoftTeams, teamsRunId)).Summary.Id;
         }
 

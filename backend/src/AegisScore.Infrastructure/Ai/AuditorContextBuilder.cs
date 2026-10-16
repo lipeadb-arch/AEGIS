@@ -43,10 +43,7 @@ public sealed class AuditorContextBuilder : IAuditorContextBuilder
             sources.Count(c => c.LastStatus == AegisScore.Domain.ConnectorStatus.Degraded),
             sources.Count(c => c.LastStatus == AegisScore.Domain.ConnectorStatus.Failed),
             sources.Count(c => c.LastSyncAt == null), sources.Max(c => c.LastSyncAt));
-        // Campos da versão anterior permanecem neutros por compatibilidade de contrato.
         // As notas reais, evidências e limitações vêm de Assessments, com seleção identificada.
-        return new AuditorTenantContext("Retired", null, 0, 0, 0, 0, 0, null,
-            Array.Empty<AuditorFunctionPosture>(), Array.Empty<AuditorControlGap>(), evidence, connectors,
-            Array.Empty<string>());
+        return new AuditorTenantContext(evidence, connectors);
     }
 }

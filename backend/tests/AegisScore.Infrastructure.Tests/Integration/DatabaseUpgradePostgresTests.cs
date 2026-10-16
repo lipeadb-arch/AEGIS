@@ -242,7 +242,7 @@ public sealed class DatabaseUpgradePostgresTests
                 .Should().Be(0, "uma fotografia publicada antes das ações não passa a ter ações congeladas");
 
             // A leitura de PRODUTO concorda com o banco: a fotografia legada não exibe ação nem aplicabilidade.
-            var servico = new PostureSnapshotService(db, new SystemTenantContext(tenantId), new NistSignalMapper(db));
+            var servico = new PostureSnapshotService(db, new SystemTenantContext(tenantId));
             var detalhe = await servico.GetAsync(snapshotId);
             detalhe.Should().NotBeNull();
             (detalhe!.ActionItems is null || detalhe.ActionItems.Count == 0).Should().BeTrue(

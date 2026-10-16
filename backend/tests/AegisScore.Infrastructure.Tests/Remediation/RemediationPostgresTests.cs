@@ -504,7 +504,7 @@ public sealed class RemediationPostgresTests
         new RemediationService(db, new SystemTenantContext(tenantId), TimeProvider.System);
 
     private static IPostureSnapshotService PostureFor(AegisScoreDbContext db, Guid tenantId) =>
-        new PostureSnapshotService(db, new SystemTenantContext(tenantId), new NistSignalMapper(db));
+        new PostureSnapshotService(db, new SystemTenantContext(tenantId));
 
     private static Task<KnightAssessment> RunAsync(
         AegisScoreDbContext db, Guid tenantId, int withoutMfa, DateTimeOffset at)

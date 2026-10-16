@@ -143,16 +143,6 @@ public sealed class RemediationService : IRemediationService
     }
 
     /// <summary>
-    /// [AEGIS-JOURNEY-01] Cria um plano a partir de UM caso de vulnerabilidade em dispositivo. O caso e o contexto que o
-    /// sustenta são obtidos AQUI, pela autoridade da prioridade: o pedido só identifica ativo + CVE e os campos do plano.
-    /// </summary>
-    public Task<ActionPlanView?> CreateForDeviceCaseAsync(
-        CreateDeviceCaseActionPlanCommand command, RemediationActor actor, CancellationToken ct = default)
-    {
-        return Task.FromException<ActionPlanView?>(new ActionPlanValidationException("Criação de plano por CVE aposentada; use achados KNIGHT/NIST."));
-    }
-
-    /// <summary>
     /// [AEGIS-NIST-JOURNEY-02] Plano de tratamento de um achado do AEGIS NIST. A jornada NIST valida o achado ANTES de chamar
     /// (tenant, avaliação, rodada, escopo, situação); aqui ficam as invariantes do plano: um único plano ativo por achado, o
     /// responsável verificado e a origem explícita inteira gravada no plano.
@@ -274,15 +264,6 @@ public sealed class RemediationService : IRemediationService
             .Include(p => p.Events)
             .FirstOrDefaultAsync(p => p.Id == id, ct);
         return plan is null ? null : ToView(plan);
-    }
-
-    /// <summary>
-    /// [AEGIS-JOURNEY-01] A situação ATUAL do caso de origem, lida agora pela autoridade da prioridade. Não toca o plano:
-    /// nenhuma leitura daqui muda etapa, validação ou registro de origem.
-    /// </summary>
-    public Task<DeviceCaseSourceReadingView?> GetDeviceCaseReadingAsync(Guid id, CancellationToken ct = default)
-    {
-        return Task.FromException<DeviceCaseSourceReadingView?>(new ActionPlanValidationException("Coleta de vulnerabilidade aposentada; consulte o registro histórico do plano."));
     }
 
     // ---- Mutações ------------------------------------------------------------------------------------

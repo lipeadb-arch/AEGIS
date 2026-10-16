@@ -1,5 +1,6 @@
 using AegisScore.Application.Scoring;
 using AegisScore.Domain;
+using AegisScore.Infrastructure.Tests.Legacy;
 using FluentAssertions;
 using Xunit;
 

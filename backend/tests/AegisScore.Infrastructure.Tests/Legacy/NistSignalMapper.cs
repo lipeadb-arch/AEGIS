@@ -4,21 +4,18 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
-using AegisScore.Application.Abstractions;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
-namespace AegisScore.Infrastructure.Connectors;
+namespace AegisScore.Infrastructure.Tests.Legacy;
 
 /// <summary>
-/// [AEGIS-AUD-043/019] Autoridade determinística de mapeamento (Capability, SignalKey) → subcategorias NIST
-/// (+ <see cref="SignalMapping.ScoringHint"/>) no framework ATIVO. Lê APENAS reference data
-/// (<see cref="SignalMapping"/>/catálogo, sem query filter), então funciona mesmo no endpoint de push
-/// (anônimo, sem tenant ambiente). O cliente/adaptador não é autoridade e o LLM não participa. Só devolve
-/// códigos que EXISTEM no framework ativo — um sinal sem mapping (ou cujo mapping não tem nenhum código
-/// válido) fica AUSENTE do dicionário, e o chamador o rejeita (push) ou pula (pull).
+/// [AEGIS-AUD-043/019] Mapeamento determinístico (Capability, SignalKey) → subcategorias NIST (+
+/// <see cref="SignalMapping.ScoringHint"/>) no framework ATIVO, transferido da produção para os testes sem mudança de
+/// semântica: reconstrói a proveniência de telemetria das fotografias históricas <c>aegis-score-v1</c> do fixture.
+/// Só devolve códigos que EXISTEM no framework ativo; um sinal sem mapping fica AUSENTE do dicionário.
 /// </summary>
-public sealed class NistSignalMapper : INistSignalMapper
+internal sealed class NistSignalMapper
 {
     private readonly AegisScoreDbContext _db;
 
@@ -57,3 +54,6 @@ public sealed class NistSignalMapper : INistSignalMapper
         return result;
     }
 }
+
+/// <summary>Resolução de UM sinal: as subcategorias mapeadas e o <see cref="SignalMapping.ScoringHint"/> (pode ser nulo).</summary>
+internal sealed record SignalMappingResolution(IReadOnlyList<string> SubcategoryCodes, string? ScoringHint);

@@ -198,7 +198,7 @@ public sealed class KnightManualResultTests : IDisposable
         await using var db = NewContext(TenantA);
         var run = await KnightMulticloudReportTests.ServiceFor(db, TenantA, new EntraConfigurationScenario(EntraConfigurationScenario.Variant.NonCompliant).Handler())
             .RunAssessmentAsync(KnightSourceType.MicrosoftEntraId);
-        var publisher = new PostureSnapshotService(db, new SystemTenantContext(TenantA), new AegisScore.Infrastructure.Connectors.NistSignalMapper(db));
+        var publisher = new PostureSnapshotService(db, new SystemTenantContext(TenantA));
 
         var before = await Load(db, (await publisher.PublishAsync(PostureSnapshotType.Knight, null, run.Id)).Summary.Id);
 

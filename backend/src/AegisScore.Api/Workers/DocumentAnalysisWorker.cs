@@ -7,7 +7,6 @@ using AegisScore.Domain;
 using AegisScore.Infrastructure.Ai;
 using AegisScore.Infrastructure.Documents;
 using AegisScore.Infrastructure.Persistence;
-using AegisScore.Infrastructure.Scoring;
 
 namespace AegisScore.Api.Workers;
 
