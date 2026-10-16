@@ -207,65 +207,6 @@ public sealed class KnightAffectedObjectsPostgresTests
 
     // ---- (3) KNIGHT → Central de Prioridades: o mesmo resultado, sem recontagem --------------------
 
-    [Fact]
-    public async Task CentralDePrioridades_ApontaParaAMesmaAvaliacao_ComOsValoresDaAutoridadeKnight()
-    {
-        await using var pg = await PostgresProbe.TryCreateAsync();
-        if (pg is null) return;
-        var opt = pg.DbOptions();
-
-        var tenant = Guid.NewGuid();
-
-        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
-        {
-            await db.Database.MigrateAsync();
-            db.Tenants.Add(new Tenant { Id = tenant, Name = "Cliente KNIGHT", Slug = "kp-" + tenant.ToString("N"), Status = TenantStatus.Active });
-            await db.SaveChangesAsync();
-        }
-
-        KnightAssessment assessment;
-        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
-            assessment = await ServiceFor(db, tenant).RunDemoAssessmentAsync();
-
-        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
-        {
-            var tenantCtx = new SystemTenantContext(tenant);
-            var priorities = new PriorityWorkspaceQuery(
-                new WorkspacePostureQuery(db, tenantCtx),
-                new PostureExposureQuery(db, tenantCtx, StaticExposureLanguageCatalog.Empty),
-                new VulnerabilityQuery(db, tenantCtx),
-                ServiceFor(db, tenant),
-                TimeProvider.System);
-
-            var workspace = await priorities.GetAsync();
-            var fila = workspace.IdentityFindings;
-
-            fila.RunId.Should().Be(assessment.Id,
-                "a Central e a tela do KNIGHT apontam para a MESMA avaliação — divergir aqui seria duas verdades");
-            fila.IsDemo.Should().BeTrue("origem demonstrativa é sempre identificada, nunca misturada com corporativa");
-            fila.Score.Should().Be(assessment.Score, "o score KNIGHT vem VERBATIM da autoridade");
-            fila.ExposedCount.Should().Be(assessment.ExposedCount);
-            fila.NotEvaluatedCount.Should().Be(assessment.NotEvaluatedCount,
-                "cobertura incompleta é informação que viaja, não silêncio");
-
-            fila.Top.Should().NotBeEmpty();
-            fila.Top.Should().OnlyContain(f => f.Status == nameof(KnightIndicatorStatus.Exposed));
-            fila.Top.First().Severity.Should().Be(nameof(SeverityLevel.Critical),
-                "a ordem de exibição é severidade — a régua é a do produto, não um score novo");
-
-            foreach (var f in fila.Top)
-            {
-                var origem = assessment.Indicators.Single(i => i.IndicatorId == f.IndicatorId);
-                f.AffectedObjectCount.Should().Be(origem.AffectedObjectCount, "nada é recontado na Central");
-                f.Evidence.Should().Be(origem.Evidence);
-                f.HasAffectedDetail.Should().Be(origem.HasAffectedDetail);
-            }
-
-            workspace.ReadModelVersion.Should().Be("priority-workspace-v3");
-        }
-    }
-
-    // ---- Helpers ----------------------------------------------------------------------------------
 
     private static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId)
     {

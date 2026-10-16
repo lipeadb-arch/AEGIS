@@ -98,7 +98,7 @@ public sealed class NistPublicationService : INistPublicationService
     private static readonly JsonSerializerOptions SectionsJson = new(JsonSerializerDefaults.Web);
 
     private Task<T> InReadSnapshotAsync<T>(Func<Task<T>> read, CancellationToken ct) =>
-        AegisScore.Infrastructure.Queries.CrossSourceFactReader.InReadSnapshotAsync(_db, read, ct);
+        AegisScore.Infrastructure.Persistence.QueryReadSnapshot.InReadSnapshotAsync(_db, read, ct);
 
     private async Task<NistMaturityReport> BuildBasisCoreAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct)
     {
@@ -296,7 +296,7 @@ public sealed class NistPublicationService : INistPublicationService
             new NistReportScope(ctx.Scope.Id, ScopeName(ctx.Scope), ctx.Scope.Description),
             new NistReportCatalog(ctx.Catalog.Name, ctx.Catalog.Functions.Count, categories.Count, total),
             new NistReportMethodology(ctx.Assessment.MethodologyVersion, scale, NistMethodologyText.Statement,
-                NistMethodologyText.AggregationRule, NistMethodologyText.CoverageRule, NistMethodologyText.InstrumentsNote),
+                NistMethodologyText.AggregationRule, NistMethodologyText.CoverageRule, NistMethodologyText.PlatformInstrumentsNote),
             summary, functions, categoryProfiles, subRows, findings, priorityGaps, limitations, null);
 
         NistReportPlan PlanOf(ActionPlanView p)

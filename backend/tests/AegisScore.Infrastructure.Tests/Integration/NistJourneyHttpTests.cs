@@ -304,9 +304,9 @@ public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
 
     /// <summary>
     /// [AEGIS-NIST-JOURNEY-02] A superfície LEGADA <c>api/v1/assessments</c> não nomeia a rodada nem recebe a versão-base do
-    /// cliente: gravava níveis e carimbo de revisão direto, inclusive em rodada ENCERRADA, sem autoria nem trilha. As escritas
-    /// dela são recusadas (410) com a rota da jornada; a leitura do consolidado continua. A gravação normal pela jornada, em
-    /// rodada aberta, segue funcionando.
+    /// cliente: gravava níveis e carimbo de revisão direto, inclusive em rodada ENCERRADA, sem autoria nem trilha. Com a saída da
+    /// abordagem antiga, a superfície inteira (escritas e a leitura do consolidado) responde 410 com a rota da jornada, sem ler
+    /// nem gravar nada. A gravação normal pela jornada, em rodada aberta, segue funcionando.
     /// </summary>
     [Fact]
     public async Task RotaLegada_NaoGravaNemEmRodadaEncerrada_EAJornadaSegueGravandoEmRodadaAberta()
@@ -366,8 +366,7 @@ public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
                 if (r.StatusCode == HttpStatusCode.Gone)
                 {
                     using var problem = JsonDocument.Parse(text);
-                    problem.RootElement.GetProperty("detail").GetString().Should()
-                        .Contain("/api/v1/nist/assessments/{avaliação}/cycles/{rodada}/scopes/{escopo}/subcategories/{código}").And.Contain("expectedVersion");
+                    problem.RootElement.GetProperty("detail").GetString().Should().Contain("/api/v1/nist/assessments");
                 }
             }
         }
@@ -405,14 +404,15 @@ public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
             list.RootElement[0].GetProperty("scopes").GetArrayLength().Should().Be(1);
         }
 
-        // Leitura legada preservada.
-        using (var m = await GetJsonAsync(manager, $"{Legacy}/{a}/maturity"))
-            m.RootElement.GetProperty("overall").GetProperty("currentScore").GetDouble().Should().Be(3);
+        // A leitura do consolidado pela rota antiga também foi aposentada; a maturidade vive na jornada do AEGIS NIST.
+        using (var r = await manager.GetAsync($"{Legacy}/{a}/maturity"))
+            r.StatusCode.Should().Be(HttpStatusCode.Gone, await r.Content.ReadAsStringAsync());
 
-        // Papel conferido antes da recusa: Analyst continua 403.
+        // Qualquer papel recebe a mesma recusa, sem que a rota leia ou grave algo; o estado não muda.
         using (var analyst = _api.As(t.Analyst))
         using (var r = await analyst.PutAsync(legacySub, AegisApiHarness.JsonBody(new { currentLevel = 1 })))
-            r.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            r.StatusCode.Should().Be(HttpStatusCode.Gone);
+        (await StateAsync()).Should().Be(saved);
     }
 
     private static async Task<JsonDocument> GetJsonAsync(HttpClient client, string url)

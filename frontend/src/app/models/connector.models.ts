@@ -127,46 +127,6 @@ const INGESTION_KEY_FIELD: CredentialField = {
 
 export const PROVIDERS: ProviderSpec[] = [
   {
-    key: 'GenericSiem',
-    value: 99,
-    label: 'Generic SIEM — push autenticado',
-    authType: 'ApiKey',
-    authTypeValue: 1,
-    capability: 'Siem',
-    capabilityValue: 5,
-    push: true,
-    fields: [INGESTION_KEY_FIELD],
-  },
-  {
-    key: 'GenericEdr',
-    value: 99,
-    label: 'Generic EDR — push autenticado',
-    authType: 'ApiKey',
-    authTypeValue: 1,
-    capability: 'Edr',
-    capabilityValue: 6,
-    push: true,
-    fields: [INGESTION_KEY_FIELD],
-  },
-  {
-    key: 'MicrosoftSentinel',
-    value: 3,
-    label: 'Microsoft Sentinel · SIEM',
-    authType: 'OAuthClientCredentials',
-    authTypeValue: 0,
-    capability: 'Siem',
-    capabilityValue: 5,
-    infoNote:
-      'Coleta REAL somente leitura do Microsoft Sentinel via Azure Monitor Log Analytics (KQL fixa no servidor). “Testar” valida autenticação e executa uma consulta mínima no workspace; “Sincronizar” lê a postura operacional (incidentes/alertas agregados). O destino é a API oficial do Log Analytics — não há URL configurável. Exige o Log Analytics Workspace ID e Azure RBAC de leitura no workspace. Não altera o AEGIS Score (fato consultivo).',
-    appPermissions: ['Log Analytics Reader (Azure RBAC de leitura no workspace) — ou permissão mínima equivalente'],
-    fields: [
-      { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
-      { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
-      { key: 'clientSecret', label: 'Client secret', secret: true },
-      { key: 'workspaceId', label: 'Log Analytics Workspace ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
-    ],
-  },
-  {
     key: 'MicrosoftEntraKnight',
     value: 0,
     label: 'Microsoft Entra ID · AEGIS KNIGHT',
@@ -219,124 +179,6 @@ export const PROVIDERS: ProviderSpec[] = [
       { key: 'customerId', label: 'Customer ID', secret: false, placeholder: 'C0xxxxxxx' },
       { key: 'delegatedAdminEmail', label: 'E-mail do administrador delegado', secret: false, placeholder: 'admin@sua-org.example.com' },
       { key: 'serviceAccountJson', label: 'Service Account JSON (com domain-wide delegation)', secret: true },
-    ],
-  },
-  {
-    key: 'Microsoft',
-    value: 0,
-    label: 'Microsoft 365 · Secure Score',
-    authType: 'OAuthClientCredentials',
-    authTypeValue: 0,
-    capability: 'SecureScore',
-    capabilityValue: 0,
-    infoNote:
-      'Coleta REAL somente leitura do Microsoft Secure Score (client credentials). “Testar” valida autenticação e leitura ($top=1); “Coletar” atualiza o índice do Secure Score e as recomendações de postura. O destino é o Microsoft Graph oficial — não há URL configurável. Veja o resultado em Recomendações de postura.',
-    appPermissions: ['SecurityEvents.Read.All'],
-    fields: [
-      { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
-      { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
-      { key: 'clientSecret', label: 'Client secret', secret: true },
-    ],
-  },
-  {
-    key: 'MicrosoftDefenderVuln',
-    value: 0,
-    label: 'Microsoft Defender Vulnerability Management',
-    authType: 'OAuthClientCredentials',
-    authTypeValue: 0,
-    capability: 'VulnerabilityScanner',
-    capabilityValue: 8,
-    infoNote:
-      'Coleta REAL somente leitura de vulnerabilidades associadas a ativos (máquinas × CVEs). “Testar” valida a autenticação e as permissões; “Sincronizar” atualiza ativos e vulnerabilidades — numa ÚNICA aquisição (mesmo token/inventário de máquinas). O destino é a API oficial do Defender — não há URL configurável. Exige licença/capacidade compatível, máquinas onboardadas e consentimento administrativo. Veja os achados em Vulnerabilidades. [AEGIS-MVP-MICROSOFT-COVERAGE-01] O MESMO conector também coleta o inventário de software instalado (produtos, versões e dispositivos observados) quando a permissão Software.Read.All estiver disponível — veja a aba “Inventário de software”, dentro de Vulnerabilidades; a ausência dessa permissão degrada só essa dimensão, sem afetar máquinas/vulnerabilidades.',
-    appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All', 'Software.Read.All (opcional — habilita a aba Inventário de software)'],
-    fields: [
-      { key: 'tenantId', label: 'Directory (tenant) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
-      { key: 'clientId', label: 'Application (client) ID', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
-      { key: 'clientSecret', label: 'Client secret', secret: true },
-    ],
-  },
-  {
-    key: 'GoogleCloudVuln',
-    value: 1,
-    label: 'Google Cloud · VM Manager (Vulnerability Reports)',
-    authType: 'ServiceAccount',
-    authTypeValue: 2,
-    capability: 'VulnerabilityScanner',
-    capabilityValue: 8,
-    infoNote:
-      'Coleta REAL somente leitura de vulnerabilidades por instância de VM (recurso × CVE) via VM Manager / OS Config Vulnerability Reports. “Testar” valida autenticação e leitura (pageSize=1); “Sincronizar” atualiza ativos e vulnerabilidades. O destino é a API oficial osconfig.googleapis.com — não há URL configurável. Pré-requisitos: habilitar a API OS Config, ativar o VM Manager e ter o agente OS Config com inventário de SO nas VMs. A API direta do VM Manager/OS Config não exige o nível Premium do Security Command Center; permanecem aplicáveis os pré-requisitos, quotas e eventuais custos dos recursos Google Cloud utilizados. Service account SEM domain-wide delegation (a leitura efetiva vem do papel IAM). Veja os achados em Vulnerabilidades.',
-    appPermissions: ['roles/osconfig.vulnerabilityReportViewer (osconfig.vulnerabilityReports.list)'],
-    fields: [
-      { key: 'projectId', label: 'Project ID', secret: false, placeholder: 'meu-projeto-123' },
-      { key: 'locations', label: 'Localizações / zonas (separadas por vírgula)', secret: false, placeholder: 'southamerica-east1-a, us-central1-a' },
-      { key: 'serviceAccountJson', label: 'Service Account JSON (somente leitura — SEM domain-wide delegation)', secret: true },
-    ],
-  },
-  {
-    key: 'Google',
-    value: 1,
-    label: 'Google SecOps (Chronicle)',
-    authType: 'ServiceAccount',
-    authTypeValue: 2,
-    capability: 'Siem',
-    capabilityValue: 5,
-    infoNote:
-      'Coleta operacional somente leitura pela Chronicle API do Google SecOps — casos (inventário atual) e alertas (últimos 30 dias). “Testar” valida autenticação e leitura da instância (instances.get); “Sincronizar” lê os agregados de casos e alertas. O destino é o endpoint regional oficial *-chronicle.googleapis.com, derivado da localidade — não há URL configurável. O OAuth scope é chronicle (aceito por casos e alertas); o conector é operacionalmente somente leitura porque só executa HTTP GET, e o menor privilégio efetivo depende das permissões IAM concedidas à conta de serviço. Não altera o AEGIS Score (fato consultivo). Ainda pendente de validação contra uma instância real do Google SecOps.',
-    appPermissions: [
-      'OAuth scope: https://www.googleapis.com/auth/chronicle',
-      'IAM: chronicle.instances.get',
-      'IAM: chronicle.cases.get',
-      'IAM: chronicle.legacies.legacySearchEnterpriseWideAlerts',
-    ],
-    fields: [
-      { key: 'projectId', label: 'Project ID', secret: false, placeholder: 'meu-projeto-123' },
-      { key: 'location', label: 'Localidade / região', secret: false, options: CHRONICLE_LOCATIONS },
-      { key: 'instanceId', label: 'Instance ID do SecOps', secret: false, placeholder: '00000000-0000-0000-0000-000000000000' },
-      { key: 'serviceAccountJson', label: 'Service Account JSON (somente leitura — SEM domain-wide delegation)', secret: true },
-    ],
-  },
-  {
-    key: 'CrowdStrike',
-    value: 4,
-    label: 'CrowdStrike Falcon',
-    authType: 'ApiKey',
-    authTypeValue: 1,
-    capability: 'Edr',
-    capabilityValue: 6,
-    adapterNote: 'Adaptador específico ainda não implementado. Envie eventos pelo Generic EDR (push).',
-    fields: [
-      { key: 'clientId', label: 'Client ID', secret: false },
-      { key: 'clientSecret', label: 'Client secret', secret: true },
-      { key: 'baseUrl', label: 'Base URL', secret: false, placeholder: 'https://api.crowdstrike.com' },
-    ],
-  },
-  {
-    key: 'Aws',
-    value: 2,
-    label: 'AWS Security Hub',
-    authType: 'ApiKey',
-    authTypeValue: 1,
-    capability: 'ConfigAnalyzer',
-    capabilityValue: 4,
-    adapterNote: 'Adaptador específico ainda não implementado.',
-    fields: [
-      { key: 'accessKeyId', label: 'Access Key ID', secret: false },
-      { key: 'secretAccessKey', label: 'Secret Access Key', secret: true },
-      { key: 'region', label: 'Região', secret: false, placeholder: 'us-east-1' },
-    ],
-  },
-  {
-    key: 'Splunk',
-    value: 5,
-    label: 'Splunk',
-    authType: 'ApiKey',
-    authTypeValue: 1,
-    capability: 'Siem',
-    capabilityValue: 5,
-    adapterNote: 'Adaptador específico ainda não implementado. Envie eventos pelo Generic SIEM (push).',
-    fields: [
-      { key: 'baseUrl', label: 'Base URL', secret: false, placeholder: 'https://splunk.demo.example.com:8089' },
-      { key: 'token', label: 'Authentication token', secret: true },
     ],
   },
 ];
@@ -728,17 +570,6 @@ export const PERMISSION_CATALOG_CAVEAT =
 
 export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
   {
-    key: 'SecureScore',
-    capability: 'SecureScore',
-    capabilityValue: 0,
-    provider: 'Microsoft',
-    providerValue: 0,
-    label: 'Microsoft 365 · Secure Score',
-    description: 'Índice e recomendações de postura do Microsoft Secure Score (Microsoft Graph).',
-    needsWorkspaceId: false,
-    appPermissions: ['SecurityEvents.Read.All'],
-  },
-  {
     key: 'IdentityPosture',
     capability: 'IdentityPosture',
     capabilityValue: 10,
@@ -751,47 +582,6 @@ export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
     needsWorkspaceId: false,
     appPermissions: requiredPermissions([...ENTRA_IDENTITY_CAPABILITIES, ...KNIGHT_M365_SERVICE_CAPABILITIES, ...KNIGHT_AZURE_CAPABILITIES]),
     capabilities: [...ENTRA_IDENTITY_CAPABILITIES, ...KNIGHT_M365_SERVICE_CAPABILITIES, ...KNIGHT_AZURE_CAPABILITIES],
-  },
-  {
-    key: 'VulnerabilityScanner',
-    capability: 'VulnerabilityScanner',
-    capabilityValue: 8,
-    provider: 'Microsoft',
-    providerValue: 0,
-    label: 'Microsoft Defender Vulnerability Management',
-    description:
-      'Vulnerabilidades associadas a ativos (máquinas × CVEs), somente leitura. O mesmo conector também coleta o inventário de software (aba “Inventário de software”, em Vulnerabilidades) quando Software.Read.All estiver disponível.',
-    needsWorkspaceId: false,
-    appPermissions: ['Machine.Read.All', 'Vulnerability.Read.All', 'Software.Read.All (opcional)'],
-  },
-  {
-    key: 'Sentinel',
-    capability: 'Siem',
-    capabilityValue: 5,
-    provider: 'MicrosoftSentinel',
-    providerValue: 3,
-    label: 'Microsoft Sentinel · SIEM',
-    description: 'Postura operacional (incidentes/alertas) via Azure Monitor Log Analytics, somente leitura.',
-    needsWorkspaceId: true,
-    appPermissions: ['Log Analytics Reader (Azure RBAC de leitura no workspace) — ou permissão mínima equivalente'],
-  },
-  {
-    key: 'IntunePosture',
-    capability: 'ConfigAnalyzer',
-    capabilityValue: 4,
-    provider: 'Microsoft',
-    providerValue: 0,
-    label: 'Microsoft Intune · Configuração e Conformidade',
-    description:
-      'Políticas de conformidade e configuração de dispositivos e — quando a permissão de dispositivos for ' +
-      'concedida — o estado efetivo dos aparelhos gerenciados (seção “Dispositivos gerenciados”, em Protect). ' +
-      'As duas dimensões são independentes: sem a permissão de dispositivos, as políticas continuam sendo lidas ' +
-      'e o estado dos aparelhos aparece como bloqueado — nunca como zero.',
-    needsWorkspaceId: false,
-    appPermissions: [
-      'DeviceManagementConfiguration.Read.All (políticas e configurações)',
-      'DeviceManagementManagedDevices.Read.All (estado efetivo dos dispositivos)',
-    ],
   },
 ];
 
@@ -809,20 +599,12 @@ const MICROSOFT_HUB_PROVIDER_KEYS: ProviderKey[] = [
 
 /** Provedores do formulário GENÉRICO (a família Microsoft sai daqui — vai para o hub unificado). */
 export const GENERIC_PROVIDERS: ProviderSpec[] = PROVIDERS.filter(
-  (p) => !MICROSOFT_HUB_PROVIDER_KEYS.includes(p.key),
+  (p) => p.key === 'GoogleWorkspaceKnight',
 );
 
 /** Um conector configurado pertence à família Microsoft (agrupado sob “Microsoft”)? */
 export function isMicrosoftFamily(c: ConnectorConfig): boolean {
-  return (
-    (c.provider === 'Microsoft' &&
-      (c.capability === 'SecureScore' ||
-        c.capability === 'IdentityPosture' ||
-        c.capability === 'VulnerabilityScanner' ||
-        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Microsoft Intune (postura de dispositivos) — quinto filho do hub.
-        c.capability === 'ConfigAnalyzer')) ||
-    (c.provider === 'MicrosoftSentinel' && c.capability === 'Siem')
-  );
+  return c.provider === 'Microsoft' && c.capability === 'IdentityPosture';
 }
 
 /** Especificação do serviço Microsoft que corresponde a um conector configurado (para rótulo/agrupamento). */
@@ -961,10 +743,6 @@ export interface ConnectorConfig {
   lastStatus: string;
   hasCredentials: boolean;
   hasIngestionKey: boolean;
-}
-
-export function isGenericPush(c: ConnectorConfig): boolean {
-  return c.provider === 'Generic' && (c.capability === 'Siem' || c.capability === 'Edr');
 }
 
 export function isKnightConnector(c: ConnectorConfig): boolean {

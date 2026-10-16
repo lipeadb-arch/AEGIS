@@ -51,7 +51,7 @@ public sealed class DocumentEvidenceReconcilerTests : IDisposable
         await ReconcileAsync();
 
         await using var assert = NewContext();
-        (await assert.TenantControlStates.AnyAsync()).Should().BeFalse("sem prova documental, o estado é retraído → Não avaliado");
+        (await assert.TenantControlStates.AnyAsync()).Should().BeTrue("o estado histórico não é reescrito pela biblioteca NIST");
         (await assert.SubcategoryCoverages.AnyAsync()).Should().BeFalse("cobertura exclusivamente documental sem documento válido desaparece");
     }
 
@@ -67,7 +67,7 @@ public sealed class DocumentEvidenceReconcilerTests : IDisposable
 
         await using var assert = NewContext();
         (await assert.TenantControlStates.AnyAsync())
-            .Should().BeFalse("mapping sem trecho literal não sustenta o controle — retrai");
+            .Should().BeTrue("a biblioteca não altera registros históricos de pontuação");
     }
 
     // ---- Recálculo: outro documento válido sustenta ---------------------------------
@@ -90,7 +90,8 @@ public sealed class DocumentEvidenceReconcilerTests : IDisposable
         state.Status.Should().Be(ControlStatus.MitigatedByThirdParty, "evidência documental nunca dá conformidade plena");
         state.CurrentScore.Should().Be(MaxPoints / 2, "crédito documental é 50%");
         state.LastVerdictSource.Should().Be(VerdictSource.Documentary);
-        state.OriginDocumentId.Should().Be(docB, "a origem passa a ser o documento que ainda sustenta o controle");
+        state.OriginDocumentId.Should().Be(docA, "a biblioteca NIST não reescreve a origem do estado legado");
+        (await assert.SubcategoryCoverages.SingleAsync()).OriginDocumentId.Should().Be(docB);
     }
 
     // ---- Limiar de confiança (0,70) — só evidência elegível altera o score ----------
@@ -116,7 +117,7 @@ public sealed class DocumentEvidenceReconcilerTests : IDisposable
     }
 
     [Fact]
-    public async Task Reconcile_ConfiancaNoLimiar_ConcedeCreditoParcial()
+    public async Task Reconcile_ConfiancaNoLimiar_CobreDocumentoSemAtribuirPontuacao()
     {
         var doc = await SeedDocumentAsync();
         await SeedMappingAsync(doc, evidenceQuote: "Trecho probatório literal sobre a política de segurança.", confidence: Threshold);
@@ -124,10 +125,7 @@ public sealed class DocumentEvidenceReconcilerTests : IDisposable
         await ReconcileAsync();
 
         await using var assert = NewContext();
-        var state = await assert.TenantControlStates.SingleAsync();
-        state.Status.Should().Be(ControlStatus.MitigatedByThirdParty);
-        state.CurrentScore.Should().Be(MaxPoints / 2, "no limiar (0,70) a evidência documental concede crédito parcial (50%)");
-        state.OriginDocumentId.Should().Be(doc);
+        (await assert.TenantControlStates.AnyAsync()).Should().BeFalse("documento não concede pontuação NIST automaticamente");
         (await assert.SubcategoryCoverages.SingleAsync()).Status.Should().Be(CoverageStatus.Coberto);
     }
 
@@ -144,7 +142,7 @@ public sealed class DocumentEvidenceReconcilerTests : IDisposable
 
         await using var assert = NewContext();
         (await assert.TenantControlStates.AnyAsync())
-            .Should().BeFalse("confiança abaixo do limiar não PRESERVA crédito no score");
+            .Should().BeTrue("a reconciliação documental preserva o registro histórico de score");
     }
 
     // ---- Telemetria é preservada integralmente --------------------------------------
@@ -212,8 +210,7 @@ public sealed class DocumentEvidenceReconcilerTests : IDisposable
         await using (var db = NewContext())
         {
             var tenantCtx = new SystemTenantContext(Tenant);
-            IControlStateWriter writer = new ControlStateWriter(db, tenantCtx, NullLogger<ControlStateWriter>.Instance);
-            var reconciler = new DocumentEvidenceReconciler(db, tenantCtx, writer, NullLogger<DocumentEvidenceReconciler>.Instance);
+            var reconciler = new DocumentEvidenceReconciler(db, tenantCtx, NullLogger<DocumentEvidenceReconciler>.Instance);
 
             await using var tx = await db.Database.BeginTransactionAsync();
             var mappings = await db.DocumentControlMappings.ToListAsync();
@@ -256,9 +253,8 @@ public sealed class DocumentEvidenceReconcilerTests : IDisposable
     {
         await using var db = NewContext();
         var tenantCtx = new SystemTenantContext(Tenant);
-        IControlStateWriter writer = new ControlStateWriter(db, tenantCtx, NullLogger<ControlStateWriter>.Instance);
         var reconciler = new DocumentEvidenceReconciler(
-            db, tenantCtx, writer, NullLogger<DocumentEvidenceReconciler>.Instance);
+            db, tenantCtx, NullLogger<DocumentEvidenceReconciler>.Instance);
         await reconciler.ReconcileAsync(Tenant, new[] { Code });
     }
 

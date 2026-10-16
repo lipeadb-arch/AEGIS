@@ -2,7 +2,6 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { AssetDto, AssetQuery, AssetSources, PagedResult } from '../models/asset.models';
-import { AssetCrossSource } from '../models/cross-source.models';
 import { AssetDevicePriority, DevicePriorityCriticality } from '../models/device-priority.models';
 import { environment } from '../../environments/environment';
 
@@ -27,30 +26,6 @@ export class AssetService {
       params,
       headers: { Accept: 'application/json' },
     });
-  }
-
-  /**
-   * [AEGIS-CROSS-SOURCE-01] GET /api/v1/assets/{id}/correlations — situações identificadas entre fontes do ativo,
-   * com as evidências de cada fonte e as CVEs que as sustentam (paginadas).
-   */
-  correlations(assetId: string, cvePage = 1, cvePageSize = 10): Observable<AssetCrossSource> {
-    const params = new HttpParams().set('cvePage', cvePage).set('cvePageSize', cvePageSize);
-    return this.http.get<AssetCrossSource>(
-      `${environment.apiBase}/api/v1/assets/${encodeURIComponent(assetId)}/correlations`,
-      { params, headers: { Accept: 'application/json' } },
-    );
-  }
-
-  /**
-   * [AEGIS-RISK-PRIORITIZATION-01] GET /api/v1/assets/{id}/priority — prioridade de tratamento do dispositivo, com o
-   * caso determinante, fatores, desconhecidos, ressalvas e os casos paginados.
-   */
-  priority(assetId: string, casePage = 1, casePageSize = 10): Observable<AssetDevicePriority> {
-    const params = new HttpParams().set('casePage', casePage).set('casePageSize', casePageSize);
-    return this.http.get<AssetDevicePriority>(
-      `${environment.apiBase}/api/v1/assets/${encodeURIComponent(assetId)}/priority`,
-      { params, headers: { Accept: 'application/json' } },
-    );
   }
 
   /** [AEGIS-RISK-PRIORITIZATION-01] PUT /api/v1/assets/{id}/criticality — declara a criticidade (autor vem do token). */

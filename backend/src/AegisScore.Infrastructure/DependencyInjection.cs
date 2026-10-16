@@ -36,7 +36,7 @@ namespace AegisScore.Infrastructure;
 
 public static class DependencyInjection
 {
-    /// <summary>Registers persistence, the AI engine, the connector registry and scoring services.</summary>
+    /// <summary>Persistência, motor de IA, AEGIS KNIGHT, AEGIS NIST, biblioteca documental e inventário de ativos.</summary>
     public static IServiceCollection AddAegisScoreInfrastructure(this IServiceCollection services, IConfiguration config)
     {
         // [AEGIS-AUD-057] A connection string NÃO é mais versionada em appsettings — vem de user-secrets
@@ -83,13 +83,6 @@ public static class DependencyInjection
         // e distinto. Singleton, como o ConnectorSecretProtector (depende só do IDataProtectionProvider).
         services.AddSingleton<IEvidenceRawPayloadProtector, EvidenceRawPayloadProtector>();
 
-        // [AEGIS-AUD-020/043] Ingestão genérica de evidências: autenticador do endpoint externo (boundary
-        // cross-tenant controlado), autoridade determinística de mapping NIST e EXECUTOR ÚNICO push/pull.
-        // Scoped: usam o DbContext (o executor abre um contexto por tenant para persistir, como o AuthService).
-        services.AddScoped<IConnectorIngestionAuthenticator, ConnectorIngestionAuthenticator>();
-        services.AddScoped<INistSignalMapper, NistSignalMapper>();
-        services.AddScoped<IEvidenceIngestionExecutor, EvidenceIngestionExecutor>();
-
         // Onboarding — provisionamento de clientes e configuração de conectores. Scoped: usa o DbContext
         // (query filter + stamping fail-closed) e o protetor de segredos. Concentra a cifragem estática
         // das credenciais, que assim deixa de morar na camada HTTP.
@@ -130,15 +123,9 @@ public static class DependencyInjection
         services.AddScoped<IAiAssessmentService>(sp => new TenantScopedAssessmentRouter(
             sp.GetRequiredService<AegisAssessmentService>(), sp.GetRequiredService<StubAssessmentService>(),
             sp.GetRequiredService<IAiFreeTierGate>(), sp.GetRequiredService<IAiTenantResolver>()));
-        // Escritor ÚNICO do ledger de conformidade (upsert idempotente + regra de scoring). Compartilhado
-        // pelo motor de telemetria e pela ponte do Govern — nenhuma das duas fontes reimplementa scoring.
-        services.AddScoped<IControlStateWriter, ControlStateWriter>();
-        // Rotina ÚNICA de reconciliação documental (retração/recálculo de ledger+cobertura), usada pela
-        // exclusão de documento (controller) e pela reanálise (worker constrói a sua própria instância).
+        // Rotina ÚNICA de reconciliação da cobertura documental, usada pela exclusão de documento (controller) e
+        // pela reanálise (o worker constrói a sua própria instância). Não grava conformidade nem maturidade.
         services.AddScoped<IDocumentEvidenceReconciler, DocumentEvidenceReconciler>();
-        // RAG por chave: injeta as "Regras do Jogo" (AegisAssessmentRule do 800-53 5.2.0) no prompt do
-        // avaliador. Scoped: usa o DbContext. Consumido pelo AegisAiEvaluatorService.
-        services.AddScoped<IAssessmentRuleContextBuilder, AssessmentRuleContextBuilder>();
         // Camada de PERSONALIDADE do Auditor (tom, tradução de siglas, proatividade) — o terceiro bloco do
         // System Prompt, ao lado do RAG e do contrato de saída. Singleton: o JSON é lido UMA vez no startup.
         // Caminho relativo ao diretório do binário (o Data/ do Api é copiado para o output).
@@ -148,13 +135,12 @@ public static class DependencyInjection
             personalityPath = Path.Combine(AppContext.BaseDirectory, personalityPath);
         services.AddSingleton<IAuditorPersonaProvider>(sp => new AuditorPersonaProvider(
             personalityPath, sp.GetRequiredService<ILogger<AuditorPersonaProvider>>()));
-        services.AddScoped<IAegisAiEvaluatorService, AegisAiEvaluatorService>();
 
         // [AEGIS-MVP-LANGUAGE-01] Camada de LINGUAGEM CLARA (autoral, provider-neutral, pt-BR) por subcategoria —
-        // título/resumo/impacto/ação que a query do dashboard injeta no contrato de leitura. Singleton: o JSON é
+        // título/resumo/impacto/ação usados pela jornada do AEGIS NIST. Singleton: o JSON é
         // lido UMA vez, na PRIMEIRA resolução (a fábrica abaixo é lazy). Caminho relativo ao diretório do binário
         // (o Data/ do Api é copiado para o output). FAIL-CLOSED por dentro (ver ControlLanguageCatalog):
-        // ausência/duplicidade/campo vazio abortam; e a query exige redação para todo código ativo (GetRequired).
+        // ausência/duplicidade/campo vazio abortam; a jornada exige redação para todo código ativo (GetRequired).
         var controlLanguagePath = config["Reference:ControlLanguagePath"]
             ?? Path.Combine("Data", "aegis_control_language.pt-BR.json");
         if (!Path.IsPathRooted(controlLanguagePath))
@@ -162,30 +148,9 @@ public static class DependencyInjection
         services.AddSingleton<IControlLanguageCatalog>(sp => new ControlLanguageCatalog(
             controlLanguagePath, sp.GetRequiredService<ILogger<ControlLanguageCatalog>>()));
 
-        // [AEGIS-MVP-LANGUAGE-02] Camada de LINGUAGEM CLARA de EXPOSIÇÕES de configuração (autoral, provider-neutral,
-        // pt-BR). Singleton lazy; mesmo padrão de Data/. Arquivo validado FAIL-CLOSED (schema/duplicata/campo vazio);
-        // LOOKUP fail-soft (catálogo do fornecedor é dinâmico → ausência vira SourceOnly, nunca tradução inventada).
-        var exposureLanguagePath = config["Reference:ExposureLanguagePath"]
-            ?? Path.Combine("Data", "aegis_exposure_language.pt-BR.json");
-        if (!Path.IsPathRooted(exposureLanguagePath))
-            exposureLanguagePath = Path.Combine(AppContext.BaseDirectory, exposureLanguagePath);
-        services.AddSingleton<IExposureLanguageCatalog>(sp => new ExposureLanguageCatalog(
-            exposureLanguagePath, sp.GetRequiredService<ILogger<ExposureLanguageCatalog>>()));
-
-        // [AEGIS-MVP-GOOGLE-SECOPS-02] Catálogo MITRE ATT&CK Enterprise v17.1 (reference data derivado do STIX
-        // OFICIAL versionado — ver scripts/mitre/generate_mitre_catalog.py). Singleton lazy; mesmo padrão de Data/.
-        // Autoridade ÚNICA de nome/hierarquia/táticas de técnica, usada pelo conector de SecOps (validação estrita)
-        // e pela query de cobertura de detecção (resolução de nomes). FAIL-CLOSED por dentro (versão fixada em 17.1).
-        var mitreCatalogPath = config["Reference:MitreAttackCatalogPath"]
-            ?? Path.Combine("Data", "mitre_attack_enterprise_v17_1.json");
-        if (!Path.IsPathRooted(mitreCatalogPath))
-            mitreCatalogPath = Path.Combine(AppContext.BaseDirectory, mitreCatalogPath);
-        services.AddSingleton<IMitreAttackCatalog>(sp => new MitreAttackCatalog(
-            mitreCatalogPath, sp.GetRequiredService<ILogger<MitreAttackCatalog>>()));
-
         // Auditor Virtual — construtor do CONTEXTO tenant-scoped (somente leitura) que fundamenta o chat:
-        // score/cobertura, lacunas, controles, evidência documental curta, conectores e recomendações. Scoped:
-        // usa o DbContext + as projeções de leitura sob o Global Query Filter fail-closed do tenant.
+        // registros dos assessments KNIGHT/NIST, evidência documental curta e integrações. Scoped: usa o
+        // DbContext sob o Global Query Filter fail-closed do tenant.
         services.AddScoped<IAuditorContextBuilder, AuditorContextBuilder>();
         // [AEGIS-AUDITOR-CONTEXT-01] Registros dos assessments (KNIGHT, NIST, documentos, inventário, publicações) para o foco da
         // conversa, e a memória da conversa por tenant + conta.
@@ -237,10 +202,12 @@ public static class DependencyInjection
         services.AddScoped<IIdentityAdmMaintenanceService, IdentityAdmMaintenanceService>();
         services.AddScoped<IIdentityHistoryQuery, IdentityHistoryQuery>();
 
-        // [AEGIS-AUD-035/036/037] Fotografia AUDITÁVEL de postura — publicação controlada (o servidor constrói
-        // pela autoridade do domínio: aegis-score-v1 sobre o ledger e o último assessment knight-score-v1),
-        // leitura por tenant e comparação compatível. Scoped: usa o DbContext (Global Query Filter + stamping
-        // fail-closed). A fotografia é APPEND-ONLY — o serviço não expõe update/delete.
+        // [AEGIS-AUD-035/036/037] Fotografia AUDITÁVEL de postura — publicação controlada do KNIGHT (o servidor
+        // constrói pela autoridade knight-score-v1), leitura por tenant e comparação compatível. As fotografias
+        // históricas aegis-score-v1 continuam legíveis e exportáveis, mas a API não publica novas. Scoped: usa o
+        // DbContext (Global Query Filter + stamping fail-closed). A fotografia é APPEND-ONLY.
+        // O resolvedor de mapeamentos é dependência do serviço (proveniência das fotografias históricas).
+        services.AddScoped<INistSignalMapper, NistSignalMapper>();
         services.AddScoped<IPostureSnapshotService, PostureSnapshotService>();
 
         // [AEGIS-AUD-034] Exportação executiva da fotografia (PDF/CSV) — abstração pequena e focada. Carrega a
@@ -253,62 +220,15 @@ public static class DependencyInjection
         // torna um achado conforme.
         services.AddScoped<IRemediationService, RemediationService>();
 
-        // Superfície de ingestão passiva de telemetria (webhook EDR/SIEM) — o CHAMADOR do EvaluateAsync.
-        // Orquestração fina: normaliza o sinal, resolve o tenant e delega ao motor (fonte Telemetry).
-        services.AddScoped<ITelemetryIngestionService, TelemetryIngestionService>();
-
-        // Aegis Score — consultas de leitura do HUD (Score Atual em tempo real + série temporal + KPI
-        // de pendências). Scoped: usam o DbContext e, com ele, o Global Query Filter fail-closed do tenant.
-        services.AddScoped<ICurrentScoreQuery, CurrentScoreQuery>();
-        services.AddScoped<ITenantScoreTrendQuery, TenantScoreTrendQuery>();
-        services.AddScoped<IGetPendingControlsQuery, PendingControlsQuery>();
-        services.AddScoped<IControlStateDashboardQuery, ControlStateDashboardQuery>();
-        services.AddScoped<IWorkspacePostureQuery, WorkspacePostureQuery>();
-        // [AEGIS-MVP-POSTURE-02] Leitura tenant-scoped das exposições de configuração (Global Query Filter fail-closed).
-        services.AddScoped<IPostureExposureQuery, PostureExposureQuery>();
-        // [AEGIS-MVP-VULN-01] Leitura tenant-scoped das vulnerabilidades ativo×CVE (Global Query Filter fail-closed).
-        services.AddScoped<IVulnerabilityQuery, VulnerabilityQuery>();
-        // [AEGIS-MVP-GOOGLE-SECOPS-02] Leitura tenant-scoped da cobertura de detecção (regras × MITRE), CONSULTIVA.
-        services.AddScoped<IDetectionCoverageQuery, DetectionCoverageQuery>();
-        // [AEGIS-MVP-MICROSOFT-COVERAGE-01] Leitura tenant-scoped do inventário/exposição de software, CONSULTIVA.
-        services.AddScoped<ISoftwareInventoryQuery, SoftwareInventoryQuery>();
-        // [AEGIS-ENTITY-RESOLUTION-01] Fontes de um ativo e o vínculo entre elas (somente leitura, tenant-scoped).
+        // Inventário e proveniência como evidência organizacional do AEGIS NIST.
         services.AddScoped<IAssetSourceQuery, AssetSourceQuery>();
-        // [AEGIS-CROSS-SOURCE-01] Situações identificadas entre fontes (Defender × Intune no mesmo dispositivo): leitura
-        // calculada na hora a partir das evidências persistidas, sem persistir resultado. A política temporal é
-        // OPERACIONAL e configurável — validada na subida para que um valor inválido não vire janela silenciosa.
-        services.AddOptions<CrossSourceCorrelationOptions>()
-            .Bind(config.GetSection(CrossSourceCorrelationOptions.SectionName))
-            .Validate(o => o.IsValid,
-                "CrossSourceCorrelation: janelas em dias entre 1 e 365 e ressalva de defasagem entre 1 e 8760 horas.")
-            .ValidateOnStart();
-        services.AddScoped<ICrossSourceCorrelationQuery, CrossSourceCorrelationQuery>();
-        // [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento em dispositivos — a MESMA política temporal e a mesma
-        // leitura de fatos da correlação (projeção calculada na leitura; sem persistência de prioridade).
-        services.AddScoped<IDevicePriorityQuery, DevicePriorityQuery>();
-        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Leitura tenant-scoped da postura de configuração/conformidade de
-        // dispositivos (consultiva). Somente leitura — nenhuma escrita de score/evidência passa por aqui.
-        services.AddScoped<IDevicePostureQuery, DevicePostureQuery>();
-        // [AEGIS-MVP-PRIORITIES-01] Central de Prioridades: leitura COMPOSTA (postura + exposições + vulnerabilidades).
-        // Scoped: apenas orquestra as três queries acima, que compartilham o mesmo DbContext scoped da requisição.
-        services.AddScoped<IPriorityWorkspaceQuery, PriorityWorkspaceQuery>();
-        // [AEGIS-MVP-PRODUCT-01] Tela inicial: leitura COMPOSTA por DIMENSÃO (ambiente observado, postura
-        // avaliada, risco de negócio, identidade e saúde das fontes). Scoped pelo mesmo motivo da Central de
-        // Prioridades: só orquestra queries que compartilham o DbContext scoped da requisição.
-        services.AddScoped<IDashboardOverviewQuery, DashboardOverviewQuery>();
-        // Janela de frescor do sinal (TTL) usada pela auditoria de obsolescência do dashboard. TimeProvider
-        // é o relógio injetável do .NET — mantém a regra de TTL testável sem congelar o sistema todo.
-        services.Configure<ScoringOptions>(config.GetSection(ScoringOptions.SectionName));
         services.TryAddSingleton(TimeProvider.System);
 
-        // Aegis Score — motor consultivo: handler de criação de advisories (escrita). Scoped: usa o
+        // Motor consultivo: handler de criação de advisories por subcategoria NIST (escrita). Scoped: usa o
         // DbContext (stamping fail-closed do tenant) + o IAiAssessmentService para redigir o texto.
         services.AddScoped<IGenerateAdvisoryHandler, GenerateAdvisoryHandler>();
 
-        // Connector registry resolves every IEvidenceConnector registered in DI. SCOPED (não singleton): os
-        // conectores que ele agrega podem ser scoped — ex.: o MicrosoftSecureScoreConnector, que injeta um typed
-        // HttpClient (IEntraGraphClient) e NÃO pode ser capturado no root provider. Os consumidores do registry
-        // (ConnectorsController, EvidenceIngestionExecutor) já são scoped, então nenhuma dependência cativa surge.
+        // Teste de acesso das fontes KNIGHT registradas nos pacotes Microsoft/Google.
         services.AddScoped<IConnectorRegistry, ConnectorRegistry>();
 
         // Govern → Provider Pattern de ingestão de documentos: a fábrica resolve a estratégia de fonte
@@ -323,16 +243,13 @@ public static class DependencyInjection
         // tenant — não existe caminho pelo qual um cliente ligue simulação para si.
         services.Configure<DocumentIntegrationOptions>(config.GetSection(DocumentIntegrationOptions.SectionName));
 
-        // Pure scoring logic (stateless).
+        // Cálculos puros (stateless): consolidado de maturidade do AEGIS NIST e risco.
         services.AddSingleton<MaturityScoringService>();
         services.AddSingleton<RiskScoringService>();
-        services.AddSingleton<IcrScoringService>();
 
         // Identify (ID.RA) — Raio de Explosão: motor PURO (stateless, como os *ScoringService acima) +
-        // orquestrador scoped que carrega o grafo do tenant, chama o motor e persiste o snapshot; o
-        // projector é o hook que penaliza ID.RA-01/05 no ledger quando o raio é alto/amplo.
+        // orquestrador scoped que carrega o grafo do tenant, chama o motor e persiste o snapshot.
         services.AddSingleton<IBlastRadiusCalculator, BlastRadiusCalculator>();
-        services.AddScoped<IBlastRadiusScoreProjector, BlastRadiusScoreProjector>();
         services.AddScoped<IBlastRadiusAssessmentService, BlastRadiusAssessmentService>();
 
         // Document Hub (Govern): armazenamento, extração de texto e fila de leitura da IA.

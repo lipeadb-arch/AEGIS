@@ -7,23 +7,21 @@ import { NistHistoryItem } from '../models/nist.models';
 import { HistoryWindowRequest, PostureMonthlyHistory } from '../models/posture-history.models';
 import { NistService } from '../services/nist.service';
 import { PostureHistoryService } from '../services/posture-history.service';
-import { AegisDashboardComponent } from './aegis-dashboard.component';
 import { PostureHistoryComponent } from './posture-history.component';
 
-type View = 'mensal' | 'fotografias' | 'tendencia';
+type View = 'mensal' | 'fotografias';
 
 /**
  * [AEGIS-NIST-JOURNEY-01] Histórico de postura UNIFICADO — uma entrada para tudo que é temporal:
  *   • Evolução mensal: KNIGHT e NIST em séries separadas (última publicação do mês; mês sem publicação sem ponto;
  *     versões incompatíveis não ligadas) e a maturidade NIST por avaliação, à parte;
  *   • Fotografias publicadas: publicação, comparação e downloads existentes, sem alteração;
- *   • Tendência diária: a leitura atual do AEGIS Score (antiga "Tendência de postura").
  * A aba vive na URL (?vista=), para que links antigos e favoritos caiam no lugar certo.
  */
 @Component({
   selector: 'app-history-page',
   standalone: true,
-  imports: [RouterLink, MonthlyEvolutionComponent, PostureHistoryComponent, AegisDashboardComponent],
+  imports: [RouterLink, MonthlyEvolutionComponent, PostureHistoryComponent],
   template: `
     <section class="page">
       <header class="page-head">
@@ -32,7 +30,7 @@ type View = 'mensal' | 'fotografias' | 'tendencia';
           <h1>Histórico de postura</h1>
           <p class="page-desc">
             Evolução mês a mês do <strong>AEGIS KNIGHT</strong> e do <strong>AEGIS NIST</strong>, registros publicados e
-            imutáveis, e a tendência diária do AEGIS Score. Instrumentos e metodologias diferentes nunca formam uma série única.
+            imutáveis da plataforma Aegis Score. As duas abordagens mantêm suas próprias metodologias.
           </p>
         </div>
       </header>
@@ -40,12 +38,10 @@ type View = 'mensal' | 'fotografias' | 'tendencia';
       <nav class="tabbar" aria-label="Visões do histórico">
         <a routerLink="/history" [queryParams]="{ vista: 'mensal' }" [class.on]="view() === 'mensal'" [attr.aria-current]="view() === 'mensal' ? 'page' : null">Evolução mensal</a>
         <a routerLink="/history" [queryParams]="{ vista: 'fotografias' }" [class.on]="view() === 'fotografias'" [attr.aria-current]="view() === 'fotografias' ? 'page' : null">Fotografias publicadas</a>
-        <a routerLink="/history" [queryParams]="{ vista: 'tendencia' }" [class.on]="view() === 'tendencia'" [attr.aria-current]="view() === 'tendencia' ? 'page' : null">Tendência diária</a>
       </nav>
 
       @switch (view()) {
         @case ('fotografias') { <app-posture-history [embedded]="true" /> }
-        @case ('tendencia') { <app-aegis-dashboard [embedded]="true" /> }
         @default {
           <section class="panel" aria-label="Evolução mensal">
             @if (error()) {
@@ -69,7 +65,7 @@ export class HistoryPageComponent {
   private readonly vista = toSignal(this.route.queryParamMap.pipe(map((q) => q.get('vista'))), { initialValue: null });
   protected readonly view = computed<View>(() => {
     const v = this.vista();
-    return v === 'fotografias' || v === 'tendencia' ? v : 'mensal';
+    return v === 'fotografias' ? v : 'mensal';
   });
 
   protected readonly monthly = signal<PostureMonthlyHistory | null>(null);
@@ -92,7 +88,7 @@ export class HistoryPageComponent {
         ),
         takeUntilDestroyed(),
       )
-      .subscribe((h) => this.monthly.set(h));
+      .subscribe((h) => this.monthly.set({ ...h, series: h.series.filter((s) => s.type !== 'AegisScoreNist') }));
     this.periodRequests.next(this.period());
     this.nist.history().pipe(takeUntilDestroyed()).subscribe({
       next: (items) => this.nistItems.set(items),

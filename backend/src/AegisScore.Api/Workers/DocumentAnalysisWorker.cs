@@ -125,8 +125,6 @@ public sealed class DocumentAnalysisWorker : BackgroundService
         // O writer precisa do MESMO tenant ambiente do DbContext; ambos usam o SystemTenantContext do lease.
         var tenantCtx = new SystemTenantContext(lease.TenantId);
         await using var db = new AegisScoreDbContext(options, tenantCtx);
-        IControlStateWriter writer = new ControlStateWriter(
-            db, tenantCtx, sp.GetRequiredService<ILogger<ControlStateWriter>>());
 
         // BATIMENTO DE LEASE: uma extração/IA lenta pode durar mais que o lease. O heartbeat renova o lease
         // durante o trabalho; se o lease for PERDIDO (expirou e outra réplica assumiu), ele cancela `leaseCts`,
@@ -229,7 +227,7 @@ public sealed class DocumentAnalysisWorker : BackgroundService
             // lista ORIGINAL de códigos intacta (nada de estado parcialmente atualizado). O trabalho de IA
             // já terminou aqui; a transação cobre só as escritas de banco, então é curta.
             var reconciler = new DocumentEvidenceReconciler(
-                db, tenantCtx, writer, sp.GetRequiredService<ILogger<DocumentEvidenceReconciler>>());
+                db, tenantCtx, sp.GetRequiredService<ILogger<DocumentEvidenceReconciler>>());
             var affectedCodes = oldCodes.Concat(validated.Select(v => v.SubcategoryCode)).ToList();
 
             await using (var tx = await db.Database.BeginTransactionAsync(workCt))

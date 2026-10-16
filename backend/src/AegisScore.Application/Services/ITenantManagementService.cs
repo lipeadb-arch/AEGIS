@@ -39,14 +39,8 @@ public record ConfigureConnectorCommand(
     bool Enabled = true);
 
 /// <summary>
-/// [AEGIS-MVP-MICROSOFT-HUB] Seleção de UM serviço Microsoft dentro da conexão unificada. A capacidade é a
-/// chave (cada capacidade Microsoft aparece uma única vez na família): <see cref="ConnectorCapability.SecureScore"/>,
-/// <see cref="ConnectorCapability.IdentityPosture"/>, <see cref="ConnectorCapability.VulnerabilityScanner"/> e
-/// <see cref="ConnectorCapability.Siem"/> (Microsoft Sentinel). O provider é DERIVADO da capacidade pelo serviço —
-/// Siem ⇒ <see cref="ConnectorProvider.MicrosoftSentinel"/>, as demais ⇒ <see cref="ConnectorProvider.Microsoft"/>.
-///
-/// <paramref name="WorkspaceId"/> é EXCLUSIVO do Sentinel (Log Analytics workspace): obrigatório para o Siem e
-/// ignorado nas demais — nunca entra no blob cifrado dos outros serviços, para não contaminá-los.
+/// Seleção dos coletores Microsoft do AEGIS KNIGHT, reunidos em IdentityPosture.
+/// WorkspaceId permanece no contrato para compatibilidade com clientes antigos; não é usado pelos coletores atuais.
 /// </summary>
 public record MicrosoftHubServiceSelection(
     ConnectorCapability Capability,
@@ -62,7 +56,7 @@ public record MicrosoftHubServiceSelection(
 /// (habilitação, intervalo, última sync, status, erro, testar/sincronizar e isolamento de falha próprios).
 ///
 /// ⚠️ O segredo trafega em claro só sob o TLS e é cifrado NO SERVIDOR; nunca retorna pela API nem vai a log.
-/// Configurações específicas de uma capacidade (o <c>workspaceId</c> do Sentinel) NÃO contaminam as demais.
+/// Certificado e escopo do Azure alimentam os coletores do KNIGHT.
 /// </summary>
 public record ConfigureMicrosoftHubCommand(
     string TenantId,

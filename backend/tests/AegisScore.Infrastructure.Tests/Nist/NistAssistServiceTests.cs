@@ -82,9 +82,7 @@ public sealed class NistAssistServiceTests : IDisposable
     {
         var db = NewContext(tenant);
         var ctx = new SystemTenantContext(tenant);
-        var remediation = new RemediationService(db, ctx, _clock,
-            new AegisScore.Infrastructure.Queries.DevicePriorityQuery(db, _clock,
-                Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions())));
+        var remediation = new RemediationService(db, ctx, _clock);
         var publication = new NistPublicationService(db, ctx, _clock, Language);
         gate ??= ai is null ? FixedGate.Simulated : FixedGate.Real;
         var resolver = new FixedSlug();

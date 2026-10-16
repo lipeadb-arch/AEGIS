@@ -3,7 +3,6 @@ import { DatePipe } from '@angular/common';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
-import { environment } from '../../environments/environment';
 import { ConnectorService } from '../services/connector.service';
 import { AuthService } from '../services/auth.service';
 import {
@@ -28,7 +27,6 @@ import {
   connectionStateTone,
   ConnectorConfig,
   GENERIC_PROVIDERS,
-  isGenericPush,
   isGuid,
   isKnightConnector,
   isMicrosoftFamily,
@@ -108,9 +106,6 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                 <div class="conn-main">
                   <strong>{{ c.displayName }}</strong>
                   <span class="meta">{{ c.provider }} · {{ c.capability }} · {{ c.authType }}</span>
-                  @if (push(c) && c.hasIngestionKey) {
-                    <span class="meta ok-note">Push genérico disponível</span>
-                  }
                 </div>
                 <div class="conn-state">
                   <!-- Estado de CONEXÃO ATUAL (autoridade): Conectado / Desabilitado / Desconectado. Derivado de
@@ -147,8 +142,8 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                         {{ busyId() === c.id ? '…' : 'Testar conexão' }}
                       </button>
                     }
-                    <!-- [AEGIS-AUD-020] Push não tem coleta pull; e conector desabilitado/desconectado não sincroniza. -->
-                    @if (!push(c) && canSync(c)) {
+                    <!-- Conector desabilitado/desconectado não sincroniza. -->
+                    @if (canSync(c)) {
                       <button type="button" class="ghost sm" (click)="sync(c)" [disabled]="busyId() === c.id">
                         Sincronizar agora
                       </button>
@@ -172,13 +167,6 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                   <p class="conn-msg hint-reconnect">
                     Conector <strong>desconectado</strong> — a credencial foi eliminada. Para reconectar, informe a
                     credencial novamente pelo formulário de configuração abaixo. O histórico já coletado foi preservado.
-                  </p>
-                }
-
-                @if (push(c) && c.hasIngestionKey) {
-                  <p class="conn-endpoint" title="Endpoint de ingestão (envie eventos com POST + header X-Ingestion-Key)">
-                    <span class="ep-label">Ingestão</span>
-                    <code>POST {{ ingestionEndpoint(c.id) }}</code>
                   </p>
                 }
 
@@ -488,13 +476,6 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
               Autenticação: <code>{{ s.authType }}</code> · Capacidade: <code>{{ s.capability }}</code>
             </p>
 
-            @if (s.push) {
-              <p class="note ok-note">
-                Este conector <strong>recebe eventos por push autenticado</strong>. Configure uma chave de
-                ingestão (mín. 24 caracteres); após salvar, o endpoint aparece na lista. Salvar de novo
-                <strong>rotaciona</strong> a chave.
-              </p>
-            }
             @if (s.adapterNote) {
               <p class="note warn-note">⚠ {{ s.adapterNote }}</p>
             }
@@ -734,26 +715,6 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
         content: '· ';
         opacity: 0.5;
       }
-      .conn-endpoint {
-        grid-column: 2 / -1;
-        margin: 0.4rem 0 0;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        min-width: 0;
-      }
-      .conn-endpoint code {
-        overflow-x: auto;
-        white-space: nowrap;
-        opacity: 0.9;
-      }
-      .ep-label {
-        font-size: var(--fs-caps);
-        text-transform: uppercase;
-        letter-spacing: var(--tracking-caps);
-        opacity: 0.6;
-        flex: none;
-      }
       .tone {
         align-self: stretch;
         border-radius: 2px;
@@ -963,7 +924,6 @@ export class IntegrationsComponent {
   protected readonly permissionCatalogCaveat = PERMISSION_CATALOG_CAVEAT;
   protected readonly label = statusLabel;
   protected readonly tone = statusTone;
-  protected readonly push = isGenericPush;
   protected readonly knight = isKnightConnector;
   // [AEGIS-MVP-ADMIN-LIFECYCLE-01] Estado de conexão ATUAL (derivado) e gates de ação — funções puras.
   protected readonly connState = connectionState;
@@ -977,7 +937,7 @@ export class IntegrationsComponent {
    * Os estados e botões permanecem INDIVIDUAIS — o agrupamento é só de apresentação.
    */
   protected readonly connectorGroups = computed(() => {
-    const all = this.connectors();
+    const all = this.connectors().filter((c) => c.capability === 'IdentityPosture' || c.capability === 'PolicyDocuments');
     const ms = all.filter(isMicrosoftFamily);
     const rest = all.filter((c) => !isMicrosoftFamily(c));
     const groups: { title: string | null; items: ConnectorConfig[] }[] = [];
@@ -1081,11 +1041,6 @@ export class IntegrationsComponent {
 
   private stopAllWatchers(): void {
     for (const k of [...this.watchers.keys()]) this.stopWatcher(k);
-  }
-
-  /** Endpoint de ingestão do conector (só o connectorId; a chave viaja no header X-Ingestion-Key, nunca na URL). */
-  protected ingestionEndpoint(connectorId: string): string {
-    return `${environment.apiBase}/api/v1/ingestion/connectors/${connectorId}/events`;
   }
 
   /** Último recebimento/coleta em formato curto, ou "—" quando nunca houve. */

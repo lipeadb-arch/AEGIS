@@ -102,11 +102,10 @@ public class AssetsController : ControllerBase
     /// </summary>
     [HttpGet("{id:guid}/correlations")]
     public async Task<ActionResult<AssetCrossSourceDto>> Correlations(
-        Guid id, [FromServices] ICrossSourceCorrelationQuery correlations,
+        Guid id,
         [FromQuery] int cvePage = 1, [FromQuery] int cvePageSize = 10, CancellationToken ct = default)
     {
-        var dto = await correlations.GetForAssetAsync(id, cvePage, cvePageSize, ct);
-        return dto is null ? NotFound() : dto;
+        return await Task.FromResult<ActionResult<AssetCrossSourceDto>>(Problem("Correlação por CVE aposentada. Use o inventário como evidência do NIST.", statusCode: 410));
     }
 
     /// <summary>
@@ -115,11 +114,10 @@ public class AssetsController : ControllerBase
     /// </summary>
     [HttpGet("{id:guid}/priority")]
     public async Task<ActionResult<AssetDevicePriorityDto>> Priority(
-        Guid id, [FromServices] IDevicePriorityQuery priorities,
+        Guid id,
         [FromQuery] int casePage = 1, [FromQuery] int casePageSize = 10, CancellationToken ct = default)
     {
-        var dto = await priorities.GetForAssetAsync(id, casePage, casePageSize, ct);
-        return dto is null ? NotFound() : dto;
+        return await Task.FromResult<ActionResult<AssetDevicePriorityDto>>(Problem("Prioridade por CVE aposentada. Use achados e planos dos assessments KNIGHT/NIST.", statusCode: 410));
     }
 
     /// <summary>

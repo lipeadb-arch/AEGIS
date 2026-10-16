@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -95,7 +95,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<TenantScopeOverride>();
 builder.Services.AddScoped<ITenantContext, HttpTenantContext>();
 
-// Persistence + AI engine + connector registry + scoring services (registra também IAuthService/JWT).
+// Persistência, motor de IA, AEGIS KNIGHT, AEGIS NIST, documentos e inventário (registra também IAuthService/JWT).
 builder.Services.AddAegisScoreInfrastructure(builder.Configuration);
 
 // Autenticação JWT (Bearer). Habilita a validação de access tokens sem torná-la obrigatória:
@@ -196,7 +196,7 @@ builder.Services.AddAuthorization(options =>
 // Handler da policy da troca federada (lê FederationOptions).
 builder.Services.AddSingleton<IAuthorizationHandler, FederatedExchangeHandler>();
 
-// Stack adapters (add AWS/SIEM/EDR connector packages here).
+// Coletores do AEGIS KNIGHT e fontes documentais do AEGIS NIST (pacotes Microsoft e Google).
 // [AEGIS-KNIGHT-COVERAGE-02] A seção Knight:Teams configura o adaptador de coleta do Microsoft Teams
 // (executável do PowerShell, módulo pré-instalado na imagem, tempo limite). É do AMBIENTE, não do locatário.
 builder.Services.AddMicrosoftConnectors(
@@ -210,9 +210,6 @@ builder.Services.AddHostedService<DocumentAnalysisWorker>();
 // Govern: worker que PUXA políticas das fontes externas (SharePoint/Google…) de forma agnóstica via
 // Provider Pattern e as injeta no hub — que o DocumentAnalysisWorker acima então lê. Fetch, não análise.
 builder.Services.AddHostedService<PolicyIngestionWorker>();
-
-// Aegis Score: worker que grava a foto agregada diária por tenant (série do gráfico de tendência).
-builder.Services.AddHostedService<AegisScoreSnapshotWorker>();
 
 // [AEGIS-ADM-02] ADM de identidade: worker que consolida os meses do histórico e — SOMENTE quando
 // IdentityAdm:Maintenance:RemovalEnabled=true — aplica a retenção operacional. A consolidação é aditiva e
@@ -292,13 +289,6 @@ builder.Services.AddRateLimiter(o =>
         AuthenticatedPartition(ctx),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 
-    // [AEGIS-AUD-020] Ingestão externa de eventos (SIEM/EDR push): proporcional a um emissor legítimo, que
-    // envia lotes com frequência de egress fixo. Particionado por IP (limita o nº de partições) — blinda o
-    // endpoint anônimo contra flood, sem sufocar a coleta real.
-    o.AddPolicy("ingestion", ctx => RateLimitPartition.GetFixedWindowLimiter(
-        ClientIp(ctx),
-        _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
-
     // Auditor Virtual (chat fundamentado): limite de perguntas por usuário/minuto — controle do Free Tier
     // (Ai:FreeTier:MaxQuestionsPerMinute), protege a cota do provedor gratuito. Particionado pela identidade
     // autenticada (claim), caindo para o IP quando anônimo.
@@ -321,7 +311,7 @@ builder.Services.AddRateLimiter(o =>
 builder.Services.AddSingleton<StartupReadinessState>();
 
 // [AEGIS-AUD-048 / AEGIS-MVP-OPS-01] Health checks REAIS, separando dois conceitos distintos:
-//  - "self" (liveness): confirma só que o PROCESSO está vivo. Não toca banco, IA, SIEM/EDR ou fornecedor
+//  - "self" (liveness): confirma só que o PROCESSO está vivo. Não toca banco, IA, coletores ou fornecedor
 //    externo — é o que um orquestrador usa para decidir reiniciar um processo travado.
 //  - "readiness": confirma que a aplicação está APTA a servir, de forma BARATA para sondagem recorrente:
 //    (1) o arranque concluiu a validação estrutural COMPLETA (StartupReadinessState) + (2) o PostgreSQL

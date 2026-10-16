@@ -247,9 +247,7 @@ public sealed class NistAssistPostgresTests
     private static (NistAssessmentService Nist, NistWorkService Work, NistPublicationService Publication, NistAssistService Assist) Services(AegisScoreDbContext db, Guid tenant)
     {
         var ctx = new SystemTenantContext(tenant);
-        var remediation = new RemediationService(db, ctx, TimeProvider.System,
-            new AegisScore.Infrastructure.Queries.DevicePriorityQuery(db, TimeProvider.System,
-                Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions())));
+        var remediation = new RemediationService(db, ctx, TimeProvider.System);
         var publication = new NistPublicationService(db, ctx, TimeProvider.System);
         var gate = new SimulatedGate();
         var resolver = new NoSlug();

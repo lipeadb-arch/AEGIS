@@ -63,15 +63,13 @@ public sealed class RemediationService : IRemediationService
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
     private readonly TimeProvider _clock;
-    private readonly IDevicePriorityQuery _priorities;
 
     public RemediationService(
-        AegisScoreDbContext db, ITenantContext tenant, TimeProvider clock, IDevicePriorityQuery priorities)
+        AegisScoreDbContext db, ITenantContext tenant, TimeProvider clock)
     {
         _db = db;
         _tenant = tenant;
         _clock = clock;
-        _priorities = priorities;
     }
 
     // ---- Criação -------------------------------------------------------------------------------------
@@ -148,95 +146,10 @@ public sealed class RemediationService : IRemediationService
     /// [AEGIS-JOURNEY-01] Cria um plano a partir de UM caso de vulnerabilidade em dispositivo. O caso e o contexto que o
     /// sustenta são obtidos AQUI, pela autoridade da prioridade: o pedido só identifica ativo + CVE e os campos do plano.
     /// </summary>
-    public async Task<ActionPlanView?> CreateForDeviceCaseAsync(
+    public Task<ActionPlanView?> CreateForDeviceCaseAsync(
         CreateDeviceCaseActionPlanCommand command, RemediationActor actor, CancellationToken ct = default)
     {
-        EnsureTenant();
-
-        var cve = DevicePriorityNarrative.NormalizeCve(command.CveId);
-        if (cve.Length == 0 || cve.Length > MaxCveLength)
-            throw new ActionPlanValidationException("Informe o identificador da CVE do caso.");
-        var title = Trim(command.Title, MaxTitleLength);
-        if (string.IsNullOrWhiteSpace(title))
-            throw new ActionPlanValidationException("O título da ação é obrigatório.");
-
-        // O CASO é lido pela autoridade da prioridade — a mesma leitura coerente do detalhe do dispositivo. Faixa, motivo,
-        // fatores ou vínculos que o navegador enviar não são lidos: o contrato de criação nem os tem.
-        var reading = await _priorities.GetCaseAsync(command.AssetId, cve, ct);
-        if (reading is null) return null;   // ativo inexistente neste tenant — indistinguível de outro tenant
-
-        // Segundo clique: abre o plano existente ANTES de qualquer outra recusa — ele continua sendo o plano do caso,
-        // mesmo que o caso tenha saído da fila ou mudado de faixa desde então.
-        var active = await FindActiveDeviceCaseAsync(command.AssetId, cve, exceptPlanId: null, ct);
-        if (active is not null)
-            throw new ActionPlanConflictException(
-                "Já existe um plano ativo para esta CVE neste dispositivo. Abra o plano existente em vez de criar outro.",
-                active);
-
-        if (reading.State != DevicePriorityCaseStates.Open || reading.Case is not { } c
-            || reading.ThreatId is not { } threatId || reading.ExposureId is not { } exposureId)
-            throw new ActionPlanValidationException(
-                $"Não é possível abrir um plano a partir deste caso agora — {reading.StateLabel.ToLowerInvariant()}. " +
-                "Um plano nasce de um caso em aberto e atribuível na leitura atual da prioridade de tratamento.");
-
-        var origin = new DeviceCaseOrigin(
-            Schema: DeviceCaseOrigin.SchemaV1,
-            AssetId: reading.AssetId,
-            AssetName: reading.AssetName,
-            AssetNameIsPlaceholder: reading.NameIsPlaceholder,
-            CveId: c.CveId,
-            CveTitle: c.Title,
-            EvaluatedAt: reading.EvaluatedAt,
-            PolicyCode: reading.PolicyCode,
-            PolicyVersion: reading.PolicyVersion,
-            CaseBand: c.Band,
-            CaseBandLabel: c.BandLabel,
-            CaseReason: c.Reason,
-            WasDeterminingCase: reading.IsDeterminingCase,
-            DeviceBand: reading.DeviceBand,
-            DeviceBandLabel: reading.DeviceBandLabel,
-            DevicePositionReason: reading.DevicePositionReason,
-            SeverityLabel: c.SeverityLabel,
-            CvssScore: c.CvssScore,
-            ExploitLabel: c.ExploitLabel,
-            Epss: c.Epss,
-            Source: c.Source,
-            FirstSeenAt: c.FirstSeenAt,
-            AcquiredAt: c.AcquiredAt,
-            AcquisitionLabel: c.AcquisitionLabel,
-            Factors: reading.Factors,
-            Caveats: reading.Caveats,
-            InformationLabel: reading.InformationLabel,
-            AbsenceLabel: reading.AbsenceLabel);
-
-        var now = _clock.GetUtcNow();
-        var plan = new ActionPlan
-        {
-            RiskId = null,                       // nenhum risco fictício
-            Treatment = RiskTreatmentType.Mitigar,
-            Title = title,
-            Description = Trim(command.ProposedAction, MaxTextLength),
-            ResponsiblePerson = Trim(command.ResponsiblePerson, MaxNameLength),
-            ResponsibleArea = Trim(command.ResponsibleArea, MaxNameLength),
-            DueDate = command.DueDate,
-            Status = ActionPlanStatus.Aberto,
-            OriginKind = ActionPlanOriginKind.DeviceVulnerability,
-            OriginAssetId = reading.AssetId,
-            OriginCveId = cve,
-            OriginThreatId = threatId,
-            OriginExposureId = exposureId,
-            OriginContextJson = JsonSerializer.Serialize(origin, OriginJson),
-            CycleStartedAt = now,
-            Version = 1,
-        };
-
-        _db.ActionPlans.Add(plan);
-        AddEvent(plan, actor, ActionPlanEventKind.Created, now, null, ActionPlanStatus.Aberto,
-            $"Plano criado a partir do caso {c.CveId} no dispositivo {reading.AssetName} — {c.BandLabel} pela política " +
-            $"{reading.PolicyCode} v{reading.PolicyVersion}, leitura de {CrossSourceCorrelationEvaluator.Utc(reading.EvaluatedAt)}.");
-        await SaveWithConcurrencyGuardAsync(ct, plan);
-
-        return await GetAsync(plan.Id, ct);
+        return Task.FromException<ActionPlanView?>(new ActionPlanValidationException("Criação de plano por CVE aposentada; use achados KNIGHT/NIST."));
     }
 
     /// <summary>
@@ -367,65 +280,9 @@ public sealed class RemediationService : IRemediationService
     /// [AEGIS-JOURNEY-01] A situação ATUAL do caso de origem, lida agora pela autoridade da prioridade. Não toca o plano:
     /// nenhuma leitura daqui muda etapa, validação ou registro de origem.
     /// </summary>
-    public async Task<DeviceCaseSourceReadingView?> GetDeviceCaseReadingAsync(Guid id, CancellationToken ct = default)
+    public Task<DeviceCaseSourceReadingView?> GetDeviceCaseReadingAsync(Guid id, CancellationToken ct = default)
     {
-        EnsureTenant();
-        var plan = await _db.ActionPlans.AsNoTracking()
-            .Where(p => p.Id == id)
-            .Select(p => new { p.Id, p.OriginKind, p.OriginAssetId, p.OriginCveId, p.OriginContextJson })
-            .FirstOrDefaultAsync(ct);
-        if (plan is null) return null;
-        if (plan.OriginKind != ActionPlanOriginKind.DeviceVulnerability
-            || plan.OriginAssetId is not { } assetId || string.IsNullOrEmpty(plan.OriginCveId))
-            throw new ActionPlanValidationException(
-                "Este plano não nasceu de um caso de vulnerabilidade em dispositivo; não há situação de fonte a acompanhar aqui.");
-
-        var origin = ReadOrigin(plan.OriginContextJson);
-        var reading = await _priorities.GetCaseAsync(assetId, plan.OriginCveId, ct);
-        if (reading is null)
-            return new DeviceCaseSourceReadingView(
-                ActionPlanId: plan.Id,
-                EvaluatedAt: _clock.GetUtcNow(),
-                State: DeviceCaseSourceReadingView.AssetNotFound,
-                StateLabel: "Dispositivo não encontrado no inventário",
-                Explanation:
-                    "O dispositivo de origem não está mais no inventário deste cliente, e a situação atual do caso não pode ser " +
-                    "lida. O plano e o registro de origem continuam preservados — ausência do dispositivo não comprova correção.",
-                AssetFound: false,
-                AssetName: null,
-                Case: null,
-                IsDeterminingCase: false,
-                DeviceBandLabel: null,
-                DispositionLabel: null,
-                AbsenceLabel: null,
-                Caveats: Array.Empty<CrossSourceNoteDto>(),
-                ComparisonNote: null,
-                VerificationNote: SourceReadingLimit);
-
-        var notes = new List<string>();
-        if (origin is not null && reading.Case is { } current && current.Band != origin.CaseBand)
-            notes.Add($"A faixa atual deste caso ({current.BandLabel}) difere da registrada na criação do plano " +
-                      $"({origin.CaseBandLabel}). A diferença reflete a leitura atual da política — não comprova correção.");
-        if (origin is not null && origin.PolicyVersion != reading.PolicyVersion)
-            notes.Add($"A leitura atual usa a política {reading.PolicyCode} v{reading.PolicyVersion}; o registro de origem, a " +
-                      $"v{origin.PolicyVersion}.");
-
-        return new DeviceCaseSourceReadingView(
-            ActionPlanId: plan.Id,
-            EvaluatedAt: reading.EvaluatedAt,
-            State: reading.State,
-            StateLabel: reading.StateLabel,
-            Explanation: reading.StateExplanation,
-            AssetFound: true,
-            AssetName: reading.AssetName,
-            Case: reading.Case,
-            IsDeterminingCase: reading.IsDeterminingCase,
-            DeviceBandLabel: reading.DeviceBandLabel,
-            DispositionLabel: reading.DispositionLabel,
-            AbsenceLabel: reading.AbsenceLabel,
-            Caveats: reading.Caveats,
-            ComparisonNote: notes.Count == 0 ? null : string.Join(" ", notes),
-            VerificationNote: SourceReadingLimit);
+        return Task.FromException<DeviceCaseSourceReadingView?>(new ActionPlanValidationException("Coleta de vulnerabilidade aposentada; consulte o registro histórico do plano."));
     }
 
     // ---- Mutações ------------------------------------------------------------------------------------

@@ -52,10 +52,7 @@ public sealed class AegisAssessmentServiceTests
         var p = llm.LastSystemPrompt;
         p.Should().Contain("SOMENTE o bloco CONTEXTO DO TENANT");
         p.Should().Contain("não há dados");
-        p.Should().Contain("AUSÊNCIA DE COLETA", "regra do estado das fontes preservada");
-        p.Should().Contain("DIFERENÇA DE PONTOS", "regra das recomendações de postura preservada");
-        p.Should().Contain("exploit disponível não é exploração ativa", "regra das vulnerabilidades preservada");
-        p.Should().Contain("regra existente não comprova detecção funcional", "regra da cobertura de detecção preservada");
+        p.Should().Contain("AUSÊNCIA DE LEITURA", "integração sem coleta não vira \"nenhum problema\"");
         p.Should().Contain("não comprova implementação, execução nem eficácia", "política escrita não prova execução");
         p.Should().Contain("não demonstra sozinho o atendimento completo de uma subcategoria NIST");
         p.Should().Contain("configuração observada").And.Contain("declaração do assessor").And.Contain("resultado de procedimento de verificação");
@@ -111,7 +108,7 @@ public sealed class AegisAssessmentServiceTests
         var sut = CreateService(llm);
         var context = Context() with
         {
-            TopGaps = new[] { new AuditorControlGap("GV.SC-01", "NonCompliant", "sem auditoria de terceiros") },
+            RecentEvidence = new[] { new AuditorDocumentEvidence("Política de fornecedores", "GV.SC-01", 0.9, "auditoria anual de terceiros") },
             Assessments = new AuditorAssessmentContext(DateTimeOffset.UnixEpoch, "AEGIS KNIGHT",
                 new[] { new AuditorContextSource("K1", "KNIGHT", AuditorSourceNature.ObservedConfiguration, "AK-ENTRA-002 — MFA", "Reprovado", "2026-10-01", false, null, null) },
                 new[] { "AEGIS KNIGHT: 1 de 4 controles reprovados incluídos." }),
@@ -122,7 +119,7 @@ public sealed class AegisAssessmentServiceTests
             CancellationToken.None);
 
         llm.LastUserPrompt.Should().Contain("BEGIN_CONTEXT");
-        llm.LastUserPrompt.Should().Contain("GV.SC-01", "a lacuna do tenant precisa chegar ao modelo como fato");
+        llm.LastUserPrompt.Should().Contain("GV.SC-01").And.Contain("documentEvidence", "o trecho documental do tenant chega ao modelo como fato");
         llm.LastUserPrompt.Should().Contain("\"key\":\"K1\"").And.Contain("ObservedConfiguration");
         llm.LastUserPrompt.Should().Contain("1 de 4 controles reprovados incluídos", "o tamanho do universo chega junto da amostra");
         llm.LastSystemPrompt.Should().Contain("FOCO DA PÁGINA ABERTA: AEGIS KNIGHT");
@@ -150,14 +147,15 @@ public sealed class AegisAssessmentServiceTests
         user.Should().NotContain("<script>").And.Contain("\\u003Cscript\\u003E");
     }
 
-    // [AEGIS-LANGUAGE-STATES-01] A IA recebe o ESTADO de leitura das fontes e a regra das escalas distintas.
+    // A IA recebe só as duas abordagens atuais: campos da pontuação aposentada não viajam no contexto nem nas regras.
     [Fact]
-    public async Task ChatAsync_ContextoLevaEstadoDasFontes_E_PromptSeparaAsEscalas()
+    public async Task ChatAsync_ContextoSemCamposAposentados_E_PromptSeparaAsDuasEscalas()
     {
         var llm = new CapturingLlmClient(ChatJson("ok"));
         var sut = CreateService(llm);
         var context = Context() with
         {
+            TopGaps = new[] { new AuditorControlGap("PR.PS-02", "NonCompliant", "legado") },
             SourceReadings = new[]
             {
                 new AuditorSourceReading("Recomendações de postura pendentes", "Microsoft Secure Score",
@@ -169,11 +167,13 @@ public sealed class AegisAssessmentServiceTests
             new AuditorChatRequest(AuditorScope.Global, Array.Empty<AuditorMessage>(), "resuma", context),
             CancellationToken.None);
 
-        llm.LastUserPrompt.Should().Contain("\"state\":\"NeverCollected\"", "o estado de coleta chega como fato, e não como lista vazia");
-        llm.LastUserPrompt.Should().Contain("\"value\":null", "ausência de leitura não vira zero no contexto");
-        llm.LastSystemPrompt.Should().Contain("AUSÊNCIA DE COLETA");
-        llm.LastSystemPrompt.Should().Contain("não é o Microsoft Secure Score");
+        llm.LastUserPrompt.Should().NotContain("scorePercentage").And.NotContain("coveragePercentage")
+            .And.NotContain("PR.PS-02").And.NotContain("Secure Score", "a pontuação aposentada não chega ao modelo como fato");
+        llm.LastUserPrompt.Should().Contain("\"connectors\"", "o estado das integrações atuais continua no contexto");
         llm.LastSystemPrompt.Should().Contain("Nota do AEGIS KNIGHT (0–100").And.Contain("Maturidade do AEGIS NIST (1–5");
+        llm.LastSystemPrompt.Should().Contain("Não existe uma terceira pontuação");
+        llm.LastSystemPrompt.Should().NotContain("Secure Score").And.NotContain("TopVulnerabilities").And.NotContain("DetectionCoverage")
+            .And.NotContain("SourceReadings", "as regras não descrevem fontes que o contexto não entrega");
     }
 
     private static AuditorTenantContext Context() => new(

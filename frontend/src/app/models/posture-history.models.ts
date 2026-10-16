@@ -223,7 +223,7 @@ export interface PublishConsolidatedKnightSnapshotRequest {
 // ---- Apresentação (pt-BR) -----------------------------------------------------------------------
 
 export function snapshotTypeLabel(type: PostureSnapshotType): string {
-  return type === 'Knight' ? 'AEGIS KNIGHT' : type === 'NistMaturity' ? 'AEGIS NIST · maturidade' : 'AEGIS Score / NIST';
+  return type === 'Knight' ? 'AEGIS KNIGHT' : type === 'NistMaturity' ? 'AEGIS NIST · maturidade' : 'Postura legada (arquivo)';
 }
 
 /** Média de maturidade 1–5 com uma casa ("2,5"); ausente → "—" (nunca 0). */

@@ -25,9 +25,6 @@ public sealed class TenantManagementServiceTests : IDisposable
     /// <summary>Identidade global que "cria" os tenants nos testes — recebe o membership TenantAdmin.</summary>
     private static readonly Guid CreatorId = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
-    /// <summary>Workspace ID do Sentinel — GUID VÁLIDO (o hub valida o formato antes de qualquer escrita).</summary>
-    private const string WorkspaceGuid = "abcdefab-1234-5678-9abc-abcdefabcdef";
-
     private readonly SqliteConnection _connection;
 
     public TenantManagementServiceTests()
@@ -254,7 +251,7 @@ public sealed class TenantManagementServiceTests : IDisposable
         {
             TenantId = TenantA,
             Provider = ConnectorProvider.Microsoft,
-            Capability = ConnectorCapability.SecureScore,
+            Capability = ConnectorCapability.IdentityPosture,
             DisplayName = "clone",
             EncryptedSettings = "",
         });
@@ -314,7 +311,7 @@ public sealed class TenantManagementServiceTests : IDisposable
                     new EvidenceSignal
                     {
                         TenantId = TenantA, ConnectorConfigId = connectorId,
-                        SignalKey = "secureScore.overall", NumericValue = 53.77,
+                        SignalKey = "knight.identity.fixture", NumericValue = 53.77,
                     },
                 },
                 ConnectorStatus.Healthy);
@@ -346,189 +343,25 @@ public sealed class TenantManagementServiceTests : IDisposable
         (await assert.Connectors.SingleAsync()).LastSyncAt.Should().BeNull("nenhuma escrita cruzou a fronteira");
     }
 
-    // ---- [AEGIS-MVP-MICROSOFT-HUB] Conexão Microsoft unificada -----------------
+    // ---- Conexão Microsoft: coletores do KNIGHT -------------------------------
 
     [Fact]
-    public async Task ConfigureMicrosoftHub_AplicaCredencialComumEmTodosOsServicos()
+    public async Task ConfigureMicrosoftHub_ConfiguraKnight_ComCredencialProtegida()
     {
         await using var db = NewContext(TenantA);
         var protector = new FakeProtector();
-        var svc = ServiceFor(db, TenantA, protector);
+        var results = await ServiceFor(db, TenantA, protector).ConfigureMicrosoftHubAsync(
+            HubCommand(HubService(ConnectorCapability.IdentityPosture)));
 
-        var results = await svc.ConfigureMicrosoftHubAsync(HubCommand(
-            HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.IdentityPosture),
-            HubService(ConnectorCapability.VulnerabilityScanner),
-            HubService(ConnectorCapability.Siem, workspaceId: WorkspaceGuid)));
-
-        results.Should().HaveCount(4);
-        results.Should().OnlyContain(r => r.Created && r.HasCredentials);
-
-        // Um conector por serviço, com o provider derivado da capacidade (Siem ⇒ MicrosoftSentinel).
-        var saved = await db.Connectors.ToListAsync();
-        saved.Should().HaveCount(4);
-        saved.Should().ContainSingle(c => c.Provider == ConnectorProvider.MicrosoftSentinel && c.Capability == ConnectorCapability.Siem);
-        saved.Where(c => c.Capability != ConnectorCapability.Siem)
-            .Should().OnlyContain(c => c.Provider == ConnectorProvider.Microsoft);
-
-        // A MESMA credencial comum (informada uma vez) está em cada serviço — decifrável na coleta.
-        foreach (var c in saved)
-        {
-            var settings = protector.Unprotect(c.EncryptedSettings);
-            settings.Should().Contain("tenant-aaa").And.Contain("client-bbb").And.Contain("secret-ccc");
-        }
-    }
-
-    // ---- [AEGIS-MVP-MICROSOFT-COVERAGE-02] Intune como QUINTO serviço do hub ----
-
-    [Fact]
-    public async Task ConfigureMicrosoftHub_IntuneEntraComoQuintoServico_ReusandoACredencialComum()
-    {
-        await using var db = NewContext(TenantA);
-        var protector = new FakeProtector();
-        var svc = ServiceFor(db, TenantA, protector);
-
-        var results = await svc.ConfigureMicrosoftHubAsync(HubCommand(
-            HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.IdentityPosture),
-            HubService(ConnectorCapability.VulnerabilityScanner),
-            HubService(ConnectorCapability.Siem, workspaceId: WorkspaceGuid),
-            HubService(ConnectorCapability.ConfigAnalyzer)));
-
-        results.Should().HaveCount(5);
-        results.Should().OnlyContain(r => r.Created && r.HasCredentials);
-
-        var intune = await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.ConfigAnalyzer);
-        intune.Provider.Should().Be(ConnectorProvider.Microsoft, "o Intune é um filho Microsoft, não um provider novo");
-        intune.DisplayName.Should().Be("Microsoft Intune · Configuração e Conformidade");
-
-        // A MESMA credencial comum — nenhum segredo adicional foi pedido para o Intune.
-        var settings = protector.Unprotect(intune.EncryptedSettings);
-        settings.Should().Contain("tenant-aaa").And.Contain("client-bbb").And.Contain("secret-ccc");
-        WorkspaceIdOf(settings).Should().BeNull("workspaceId continua exclusivo do Sentinel");
-    }
-
-    [Fact]
-    public async Task ConfigureMicrosoftHub_ReaplicarComIntune_NaoDuplicaNemAlteraOsDemaisServicos()
-    {
-        await using var db = NewContext(TenantA);
-        var protector = new FakeProtector();
-        var svc = ServiceFor(db, TenantA, protector);
-
-        await svc.ConfigureMicrosoftHubAsync(HubCommand(
-            HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.ConfigAnalyzer)));
-        var secureScoreIdBefore = (await db.Connectors
-            .SingleAsync(c => c.Capability == ConnectorCapability.SecureScore)).Id;
-
-        var again = await svc.ConfigureMicrosoftHubAsync(HubCommand(
-            HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.ConfigAnalyzer)));
-
-        again.Should().OnlyContain(r => !r.Created, "reaplicar RECONFIGURA (upsert pela chave natural)");
-        (await db.Connectors.CountAsync()).Should().Be(2, "sem duplicidade de provider/capability");
-        (await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.SecureScore)).Id
-            .Should().Be(secureScoreIdBefore, "os demais serviços Microsoft permanecem os MESMOS conectores");
-    }
-
-    [Fact]
-    public async Task ConfigureMicrosoftHub_ComIntune_NaoEcoaSegredoNoResultado()
-    {
-        await using var db = NewContext(TenantA);
-        var results = await ServiceFor(db, TenantA).ConfigureMicrosoftHubAsync(
-            HubCommand(HubService(ConnectorCapability.ConfigAnalyzer)));
-
+        results.Should().ContainSingle(r => r.Created && r.HasCredentials);
+        var saved = await db.Connectors.SingleAsync();
+        saved.Provider.Should().Be(ConnectorProvider.Microsoft);
+        saved.Capability.Should().Be(ConnectorCapability.IdentityPosture);
+        saved.EncryptedSettings.Should().NotContain("secret-ccc");
+        protector.Unprotect(saved.EncryptedSettings).Should()
+            .Contain("tenant-aaa").And.Contain("client-bbb").And.Contain("secret-ccc");
         var serialized = System.Text.Json.JsonSerializer.Serialize(results);
-        serialized.Should().NotContain("secret-ccc", "o segredo comum nunca volta para o frontend");
-    }
-
-    [Fact]
-    public async Task ConfigureMicrosoftHub_IntuneTemCicloDeVidaIndependente()
-    {
-        await using var db = NewContext(TenantA);
-        var svc = ServiceFor(db, TenantA);
-
-        await svc.ConfigureMicrosoftHubAsync(HubCommand(
-            HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.ConfigAnalyzer)));
-
-        var intuneId = (await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.ConfigAnalyzer)).Id;
-        var disabled = await svc.SetConnectorEnabledAsync(intuneId, enabled: false);
-        disabled.Status.Should().Be(ConnectorAdminStatus.Updated);
-
-        var intune = await db.Connectors.SingleAsync(c => c.Id == intuneId);
-        var secureScore = await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.SecureScore);
-        intune.Enabled.Should().BeFalse("desabilitar o Intune é um ato próprio dele");
-        intune.EncryptedSettings.Should().NotBeNullOrEmpty("a credencial é PRESERVADA para reativação");
-        secureScore.Enabled.Should().BeTrue("os demais serviços Microsoft seguem inalterados");
-    }
-
-    [Fact]
-    public async Task ConfigureMicrosoftHub_WorkspaceIdSomenteNoSentinel_NaoContaminaOsDemais()
-    {
-        await using var db = NewContext(TenantA);
-        var protector = new FakeProtector();
-        var svc = ServiceFor(db, TenantA, protector);
-
-        await svc.ConfigureMicrosoftHubAsync(HubCommand(
-            HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.Siem, workspaceId: WorkspaceGuid)));
-
-        var sentinel = await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.Siem);
-        var secureScore = await db.Connectors.SingleAsync(c => c.Capability == ConnectorCapability.SecureScore);
-
-        WorkspaceIdOf(protector.Unprotect(sentinel.EncryptedSettings)).Should().Be(WorkspaceGuid);
-        WorkspaceIdOf(protector.Unprotect(secureScore.EncryptedSettings))
-            .Should().BeNull("workspaceId é exclusivo do Sentinel e não pode contaminar os demais serviços");
-    }
-
-    [Fact]
-    public async Task ConfigureMicrosoftHub_WorkspaceIdAusente_FalhaSomenteParaSentinel()
-    {
-        await using var db = NewContext(TenantA);
-        var svc = ServiceFor(db, TenantA);
-
-        // Sentinel sem workspaceId → borda 400.
-        var comSentinel = () => svc.ConfigureMicrosoftHubAsync(HubCommand(HubService(ConnectorCapability.Siem)));
-        await comSentinel.Should().ThrowAsync<MicrosoftHubValidationException>();
-
-        // Os demais serviços NÃO exigem workspaceId — configuram normalmente.
-        var semSentinel = await svc.ConfigureMicrosoftHubAsync(HubCommand(
-            HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.VulnerabilityScanner)));
-        semSentinel.Should().HaveCount(2);
-    }
-
-    [Fact]
-    public async Task ConfigureMicrosoftHub_WorkspaceIdInvalido_RejeitaSemEscritaParcial()
-    {
-        await using var db = NewContext(TenantA);
-        var svc = ServiceFor(db, TenantA);
-
-        // Seleção com um serviço Microsoft VÁLIDO + Sentinel com workspaceId NÃO-GUID.
-        var act = () => svc.ConfigureMicrosoftHubAsync(HubCommand(
-            HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.Siem, workspaceId: "nao-e-guid")));
-
-        await act.Should().ThrowAsync<MicrosoftHubValidationException>();
-
-        // A validação ocorre ANTES do primeiro upsert: NENHUM conector da seleção (nem o Secure Score válido) foi
-        // inserido ou atualizado.
-        (await db.Connectors.CountAsync()).Should().Be(0,
-            "workspaceId inválido rejeita a seleção inteira, sem escrita parcial");
-    }
-
-    [Fact]
-    public async Task ConfigureMicrosoftHub_NaoEcoaSegredoNoResultado()
-    {
-        await using var db = NewContext(TenantA);
-        var results = await ServiceFor(db, TenantA).ConfigureMicrosoftHubAsync(
-            HubCommand(HubService(ConnectorCapability.SecureScore)));
-
-        // O resultado de saída não carrega o blob de credencial — só o booleano HasCredentials.
-        var asText = System.Text.Json.JsonSerializer.Serialize(results);
-        asText.Should().NotContain("secret-ccc").And.NotContain("client-bbb");
-        results.Single().HasCredentials.Should().BeTrue();
+        serialized.Should().NotContain("secret-ccc").And.NotContain("client-bbb");
     }
 
     [Fact]
@@ -537,44 +370,47 @@ public sealed class TenantManagementServiceTests : IDisposable
         await using var db = NewContext(TenantA);
         var protector = new FakeProtector();
         var svc = ServiceFor(db, TenantA, protector);
+        var original = await svc.ConfigureMicrosoftHubAsync(HubCommand(HubService(ConnectorCapability.IdentityPosture)));
+        var again = await svc.ConfigureMicrosoftHubAsync(
+            HubCommandSecret("secret-rotacionado", HubService(ConnectorCapability.IdentityPosture)));
 
-        await svc.ConfigureMicrosoftHubAsync(HubCommand(
-            HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.Siem, workspaceId: WorkspaceGuid)));
-
-        // Atualiza a credencial comum (novo segredo) — deve atualizar os serviços selecionados, sem duplicar.
-        var again = await svc.ConfigureMicrosoftHubAsync(HubCommandSecret(
-            "secret-rotacionado",
-            HubService(ConnectorCapability.SecureScore),
-            HubService(ConnectorCapability.Siem, workspaceId: WorkspaceGuid)));
-
-        again.Should().OnlyContain(r => !r.Created, "reaplicar RECONFIGURA (upsert pela chave natural)");
-        (await db.Connectors.CountAsync()).Should().Be(2, "sem duplicidade de provider/capability");
-        foreach (var c in await db.Connectors.ToListAsync())
-            protector.Unprotect(c.EncryptedSettings).Should().Contain("secret-rotacionado");
+        again.Should().ContainSingle(r => !r.Created && r.ConnectorId == original.Single().ConnectorId);
+        (await db.Connectors.CountAsync()).Should().Be(1);
+        protector.Unprotect((await db.Connectors.SingleAsync()).EncryptedSettings)
+            .Should().Contain("secret-rotacionado");
     }
 
-    [Fact]
-    public async Task ConfigureMicrosoftHub_EntradaInvalida_Rejeita()
+    [Theory]
+    [InlineData(ConnectorCapability.SecureScore)]
+    [InlineData(ConnectorCapability.VulnerabilityScanner)]
+    [InlineData(ConnectorCapability.Siem)]
+    [InlineData(ConnectorCapability.ConfigAnalyzer)]
+    [InlineData(ConnectorCapability.Edr)]
+    public async Task ConfigureMicrosoftHub_CapacidadeRetirada_RejeitaTodaSelecaoSemEscrita(ConnectorCapability retired)
     {
         await using var db = NewContext(TenantA);
         var svc = ServiceFor(db, TenantA);
+        var act = () => svc.ConfigureMicrosoftHubAsync(HubCommand(
+            HubService(ConnectorCapability.IdentityPosture), HubService(retired)));
 
-        // Segredo comum ausente.
+        await act.Should().ThrowAsync<MicrosoftHubValidationException>();
+        (await db.Connectors.CountAsync()).Should().Be(0, "a seleção inteira é validada antes de gravar");
+    }
+
+    [Fact]
+    public async Task ConfigureMicrosoftHub_EntradaInvalida_RejeitaSemEscrita()
+    {
+        await using var db = NewContext(TenantA);
+        var svc = ServiceFor(db, TenantA);
         await FluentActions.Awaiting(() => svc.ConfigureMicrosoftHubAsync(
-                HubCommandSecret("  ", HubService(ConnectorCapability.SecureScore))))
+            HubCommandSecret("  ", HubService(ConnectorCapability.IdentityPosture))))
             .Should().ThrowAsync<MicrosoftHubValidationException>();
-
-        // Nenhum serviço selecionado.
         await FluentActions.Awaiting(() => svc.ConfigureMicrosoftHubAsync(HubCommand()))
             .Should().ThrowAsync<MicrosoftHubValidationException>();
-
-        // Capacidade fora da família Microsoft (Edr é push genérico, não pertence ao hub).
-        await FluentActions.Awaiting(() => svc.ConfigureMicrosoftHubAsync(
-                HubCommand(HubService(ConnectorCapability.Edr))))
+        await FluentActions.Awaiting(() => svc.ConfigureMicrosoftHubAsync(HubCommand(
+            HubService(ConnectorCapability.IdentityPosture), HubService(ConnectorCapability.IdentityPosture))))
             .Should().ThrowAsync<MicrosoftHubValidationException>();
-
-        (await db.Connectors.CountAsync()).Should().Be(0, "nenhuma escrita parcial numa entrada inválida");
+        (await db.Connectors.CountAsync()).Should().Be(0);
     }
 
     // ---- [AEGIS-MVP-ADMIN-LIFECYCLE-01] Ciclo de vida administrativo do conector -----------------
@@ -672,13 +508,17 @@ public sealed class TenantManagementServiceTests : IDisposable
         // Conector genérico de PUSH: tem chave de ingestão (hash) além (potencialmente) de settings.
         await using var db = NewContext(TenantA);
         var svc = ServiceFor(db, TenantA);
-        var pushCmd = new ConfigureConnectorCommand(
-            ConnectorProvider.Generic, ConnectorCapability.Siem, "SIEM push",
-            ConnectorAuthType.ApiKey, """{"ingestionKey":"chave-de-ingestao-de-alta-entropia-1234"}""");
-        var created = await svc.ConfigureConnectorAsync(pushCmd);
-        (await db.Connectors.SingleAsync()).IngestionKeyHash.Should().NotBeNull("push nasce com hash da chave");
+        // Registro histórico: não há mais configuração de novos conectores de ingestão.
+        var legacy = new ConnectorConfig
+        {
+            Provider = ConnectorProvider.Generic, Capability = ConnectorCapability.Siem,
+            DisplayName = "SIEM legado", AuthType = ConnectorAuthType.ApiKey,
+            EncryptedSettings = "credencial-legada", IngestionKeyHash = "hash-legado", Enabled = true,
+        };
+        db.Connectors.Add(legacy);
+        await db.SaveChangesAsync();
 
-        var result = await svc.DisconnectConnectorAsync(created.ConnectorId);
+        var result = await svc.DisconnectConnectorAsync(legacy.Id);
         result.Succeeded.Should().BeTrue();
         result.Connector!.Enabled.Should().BeFalse();
         result.Connector.HasCredentials.Should().BeFalse();
@@ -781,10 +621,15 @@ public sealed class TenantManagementServiceTests : IDisposable
         await using (var db = NewContext(TenantA))
         {
             var svc = ServiceFor(db, TenantA);
-            var pushCmd = new ConfigureConnectorCommand(
-                ConnectorProvider.Generic, ConnectorCapability.Siem, "SIEM push",
-                ConnectorAuthType.ApiKey, """{"ingestionKey":"chave-de-ingestao-de-alta-entropia-1234"}""");
-            connectorId = (await svc.ConfigureConnectorAsync(pushCmd)).ConnectorId;
+            var legacy = new ConnectorConfig
+            {
+                Provider = ConnectorProvider.Generic, Capability = ConnectorCapability.Siem,
+                DisplayName = "SIEM legado", AuthType = ConnectorAuthType.ApiKey,
+                EncryptedSettings = "", IngestionKeyHash = "hash-legado", Enabled = true,
+            };
+            db.Connectors.Add(legacy);
+            await db.SaveChangesAsync();
+            connectorId = legacy.Id;
             await svc.DisconnectConnectorAsync(connectorId);
         }
 
@@ -863,7 +708,7 @@ public sealed class TenantManagementServiceTests : IDisposable
                     new EvidenceSignal
                     {
                         TenantId = TenantA, ConnectorConfigId = connectorId,
-                        SignalKey = "secureScore.overall", NumericValue = 42,
+                        SignalKey = "knight.identity.fixture", NumericValue = 42,
                     },
                 },
                 ConnectorStatus.Healthy);
@@ -881,7 +726,7 @@ public sealed class TenantManagementServiceTests : IDisposable
 
     private static ConfigureConnectorCommand Command(
         string? settings = "{}", string displayName = "Graph", int syncIntervalMinutes = 360) =>
-        new(ConnectorProvider.Microsoft, ConnectorCapability.SecureScore, displayName,
+        new(ConnectorProvider.Microsoft, ConnectorCapability.IdentityPosture, displayName,
             ConnectorAuthType.OAuthClientCredentials, settings, syncIntervalMinutes);
 
     // ---- [AEGIS-KNIGHT-COVERAGE-04] Certificado e escopo do Azure do AEGIS KNIGHT -------------------------
@@ -897,16 +742,14 @@ public sealed class TenantManagementServiceTests : IDisposable
         var cert = AegisScore.Infrastructure.Tests.Knight.M365ServicesScenario.ClientCertificate;
 
         await svc.ConfigureMicrosoftHubAsync(HubCommand(
-            HubService(ConnectorCapability.SecureScore), HubService(ConnectorCapability.IdentityPosture)) with
+            HubService(ConnectorCapability.IdentityPosture)) with
         {
             CertificatePfxBase64 = cert.PfxBase64, CertificatePassword = cert.Password, AzureSubscriptionIds = new[] { Sub1, " " + Sub1.ToUpperInvariant() },
         });
 
         var saved = await db.Connectors.ToListAsync();
         var knight = protector.Unprotect(saved.Single(c => c.Capability == ConnectorCapability.IdentityPosture).EncryptedSettings);
-        var score = protector.Unprotect(saved.Single(c => c.Capability == ConnectorCapability.SecureScore).EncryptedSettings);
         knight.Should().Contain("certificatePfxBase64").And.Contain(Sub1);
-        score.Should().NotContain("certificate").And.NotContain("azureSubscriptionIds", "o certificado e o escopo são só do KNIGHT");
 
         var summary = await svc.GetMicrosoftCredentialSummaryAsync();
         summary.Configured.Should().BeTrue();
@@ -991,14 +834,6 @@ public sealed class TenantManagementServiceTests : IDisposable
     private static ConfigureMicrosoftHubCommand HubCommandSecret(
         string clientSecret, params MicrosoftHubServiceSelection[] services) =>
         new("tenant-aaa", "client-bbb", clientSecret, services);
-
-    /// <summary>Lê o campo <c>workspaceId</c> de um blob de settings em claro (null quando ausente).</summary>
-    private static string? WorkspaceIdOf(string settingsJson)
-    {
-        using var doc = System.Text.Json.JsonDocument.Parse(settingsJson);
-        return doc.RootElement.TryGetProperty("workspaceId", out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
-            ? v.GetString() : null;
-    }
 
     /// <summary>Opções sobre a MESMA conexão in-memory — o db2 que o CreateTenantAsync abre (para carimbar
     /// o membership no tenant novo) precisa enxergar as mesmas linhas.</summary>

@@ -22,14 +22,14 @@ public sealed class ConnectorAdminActionsTests
         new()
         {
             Id = Guid.NewGuid(), TenantId = Guid.NewGuid(),
-            Provider = ConnectorProvider.Microsoft, Capability = ConnectorCapability.SecureScore,
+            Provider = ConnectorProvider.Microsoft, Capability = ConnectorCapability.IdentityPosture,
             DisplayName = "Graph", AuthType = ConnectorAuthType.OAuthClientCredentials,
             Enabled = enabled, EncryptedSettings = encryptedSettings, IngestionKeyHash = ingestionKeyHash,
         };
 
     private static ConnectorsController ControllerFor(ConnectorConfig cfg) =>
-        new(new FakeTenants(cfg), registry: null!, executor: null!, scopeFactory: null!, lifetime: null!,
-            NullLogger<ConnectorsController>.Instance, knightSync: null!);
+        new(new FakeTenants(cfg), registry: null!,
+             knightSync: null!);
 
     private static int? StatusOf(object? result) => (result as ObjectResult)?.StatusCode;
 
@@ -69,8 +69,7 @@ public sealed class ConnectorAdminActionsTests
                 ConnectorAdminStatus.MissingCredential, "Conector desconectado: reconecte antes de habilitar."),
         };
         var controller = new ConnectorsController(
-            tenants, registry: null!, executor: null!, scopeFactory: null!, lifetime: null!,
-            NullLogger<ConnectorsController>.Instance, knightSync: null!);
+            tenants, registry: null!, knightSync: null!);
 
         var result = await controller.Enable(cfg.Id, default);
         StatusOf(result.Result).Should().Be(409, "habilitar um conector desconectado é conflito de estado");

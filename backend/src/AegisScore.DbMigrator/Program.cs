@@ -168,16 +168,8 @@ public static class Program
                     // [AEGIS-MVP-SCORE-GUARD-SIEM-01] Aposenta (idempotente) o mapping legado incorreto do SIEM.
                     await FrameworkSeeder.SeedSignalMappingsAsync(db);
                     log.LogInformation("Mapeamentos de sinal (SignalMapping) verificados/semeados.");
-
-                    // [AEGIS-MVP-SCORE-GUARD-SIEM-01] DEPOIS de o mapping ser aposentado, repara de forma
-                    // conservadora e idempotente as projeções de score que ele possa ter produzido (reprojeta com a
-                    // evidência remanescente ou retrai para "não avaliado" — nunca NonCompliant). Não toca outros
-                    // mappings, tenants, controles ou o Secure Score/EDR. É no-op quando não há estado legado.
-                    var dbOptions = scope.ServiceProvider.GetRequiredService<DbContextOptions<AegisScoreDbContext>>();
-                    var loggerFactory = scope.ServiceProvider.GetRequiredService<ILoggerFactory>();
-                    var repaired = await LegacySiemAlertScoreRepair.RepairAsync(dbOptions, loggerFactory);
-                    log.LogInformation(
-                        "Reparo de estados legados (SCORE-GUARD-SIEM-01): {Count} estado(s) telemétrico(s) ajustado(s).", repaired);
+                    // O reparo do ledger da pontuação antiga saiu da implantação junto com essa abordagem: o ledger
+                    // fica preservado como histórico e nada da operação atual o lê ou o reescreve.
                 }
                 catch (Exception ex)
                 {

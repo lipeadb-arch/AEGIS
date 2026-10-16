@@ -15,24 +15,21 @@ namespace AegisScore.Infrastructure.Documents;
 ///
 /// A autoridade da evidência é o conjunto de <see cref="DocumentControlMapping"/> PROBATÓRIOS — os que
 /// têm <see cref="DocumentControlMapping.EvidenceQuote"/> não-nulo (trecho literal validado em código).
-/// Mappings sem trecho (herança legada/não probatória) são ignorados: não sustentam controle, cobertura
-/// nem score. A escrita no ledger é delegada ao escritor único (<see cref="IControlStateWriter"/>), que
-/// preserva a precedência da telemetria; a cobertura é recomputada aqui.
+/// Mappings sem trecho (herança legada/não probatória) são ignorados: não sustentam controle nem cobertura.
+/// A cobertura descreve apenas a documentação disponível; não altera conformidade nem maturidade NIST.
 /// </summary>
 public sealed class DocumentEvidenceReconciler : IDocumentEvidenceReconciler
 {
     private readonly AegisScoreDbContext _db;
     private readonly ITenantContext _tenant;
-    private readonly IControlStateWriter _writer;
     private readonly ILogger<DocumentEvidenceReconciler> _log;
 
     public DocumentEvidenceReconciler(
-        AegisScoreDbContext db, ITenantContext tenant, IControlStateWriter writer,
+        AegisScoreDbContext db, ITenantContext tenant,
         ILogger<DocumentEvidenceReconciler> log)
     {
         _db = db;
         _tenant = tenant;
-        _writer = writer;
         _log = log;
     }
 
@@ -64,28 +61,12 @@ public sealed class DocumentEvidenceReconciler : IDocumentEvidenceReconciler
                     m.GovernanceDocumentId, m.Confidence, m.EvidenceQuote!, m.Evidence, d.FileName, d.Title))
                 .ToListAsync(ct);
 
-            // DUAS seleções distintas do mesmo conjunto probatório (o limiar separa cobertura de score):
-            //  - COBERTURA: o melhor trecho literal, de QUALQUER confiança (abaixo do limiar → Parcial);
-            //  - SCORE: só o melhor trecho ELEGÍVEL (confiança >= limiar) pode alterar o ledger/Aegis Score.
-            // Desempate estável por Id do documento em ambos.
+            // Melhor trecho literal para descrever cobertura documental, sem atribuir maturidade.
+            // Desempate estável por Id do documento.
             var bestForCoverage = probative
                 .OrderByDescending(p => p.Confidence)
                 .ThenBy(p => p.OriginDocumentId)
                 .FirstOrDefault();
-
-            var bestForScore = probative
-                .Where(p => p.Confidence >= DocumentEvidencePolicy.MinConfidenceForScore)
-                .OrderByDescending(p => p.Confidence)
-                .ThenBy(p => p.OriginDocumentId)
-                .FirstOrDefault();
-
-            // 1) Ledger — aplica o crédito documental SOMENTE com evidência elegível (>= limiar), ou retrai
-            //    se nada elegível sustenta. Confiança abaixo do limiar NÃO cria nem preserva crédito no
-            //    score. O escritor preserva integralmente um estado de telemetria.
-            var documentary = bestForScore is null
-                ? null
-                : new DocumentaryEvidence(bestForScore.OriginDocumentId, bestForScore.Confidence, BuildEvidenceText(bestForScore));
-            await _writer.ReconcileDocumentaryAsync(tenantId, code, documentary, ct);
 
             // 2) Cobertura — reflete o melhor trecho literal (rastreabilidade), Parcial abaixo do limiar,
             //    sem apagar a evidência de entrevista.
@@ -153,18 +134,6 @@ public sealed class DocumentEvidenceReconciler : IDocumentEvidenceReconciler
 
         cov.LastEvaluatedAt = DateTimeOffset.UtcNow;
         await _db.SaveChangesAsync(ct);
-    }
-
-    /// <summary>Compõe a evidência auditável do estado documental: trecho literal + racional + natureza do crédito.</summary>
-    private static string BuildEvidenceText(ProbativeMapping m)
-    {
-        var file = !string.IsNullOrWhiteSpace(m.FileName) ? m.FileName!
-                 : !string.IsNullOrWhiteSpace(m.DocTitle) ? m.DocTitle! : "documento";
-        var rationale = string.IsNullOrWhiteSpace(m.Rationale) ? "" : $" Análise: {m.Rationale!.Trim()}";
-        return
-            $"Evidência documental ({m.Confidence:P0} de confiança) de '{file}'. " +
-            $"Trecho probatório: \"{m.EvidenceQuote.Trim()}\".{rationale} " +
-            "Crédito parcial (50%); conformidade plena aguarda validação por telemetria.";
     }
 
     /// <summary>Projeção de um mapping probatório vigente + metadados do documento que o originou.</summary>

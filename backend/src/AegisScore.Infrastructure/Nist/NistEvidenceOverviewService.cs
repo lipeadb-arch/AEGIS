@@ -45,7 +45,7 @@ public sealed class NistEvidenceOverviewService : INistEvidenceOverviewService
     public Task<NistEvidenceOverviewView> GetAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct = default)
     {
         RequireTenant(_tenant);
-        return AegisScore.Infrastructure.Queries.CrossSourceFactReader.InReadSnapshotAsync(_db, () => ReadAsync(assessmentId, cycleId, scopeId, ct), ct);
+        return AegisScore.Infrastructure.Persistence.QueryReadSnapshot.InReadSnapshotAsync(_db, () => ReadAsync(assessmentId, cycleId, scopeId, ct), ct);
     }
 
     private async Task<NistEvidenceOverviewView> ReadAsync(Guid assessmentId, Guid cycleId, Guid scopeId, CancellationToken ct)

@@ -459,8 +459,13 @@ public static class NistMethodologyText
         "Cobertura = (subcategorias avaliadas + não aplicáveis) ÷ subcategorias do catálogo. Mudança de cobertura ou do " +
         "universo aplicável muda a base das médias.";
 
+    // Mantido para leitura e exportação de publicações anteriores, com impressão digital estável.
     public const string InstrumentsNote =
         "Maturidade NIST (1–5, esta avaliação) ≠ postura do ambiente (AEGIS Score, 0–100) ≠ score do AEGIS KNIGHT. Os três " +
+        "instrumentos são independentes e nunca são somados.";
+
+    public const string PlatformInstrumentsNote =
+        "A plataforma Aegis Score possui dois assessments: maturidade NIST (1–5, esta avaliação) e AEGIS KNIGHT. Seus " +
         "instrumentos são independentes e nunca são somados.";
 }
 

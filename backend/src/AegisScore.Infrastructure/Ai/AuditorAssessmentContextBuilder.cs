@@ -64,7 +64,7 @@ public sealed class AuditorAssessmentContextBuilder : IAuditorAssessmentContextB
         if (_tenant.TenantId is null || _tenant.TenantId == Guid.Empty)
             throw new TenantSecurityException("Contexto do Auditor sem tenant autenticado.");
         // Uma leitura consistente: as contagens de KNIGHT, NIST e documentos são do mesmo instante.
-        return AegisScore.Infrastructure.Queries.CrossSourceFactReader.InReadSnapshotAsync(_db, () => ReadAsync(focus, ct), ct);
+        return AegisScore.Infrastructure.Persistence.QueryReadSnapshot.InReadSnapshotAsync(_db, () => ReadAsync(focus, ct), ct);
     }
 
     private async Task<AuditorAssessmentContext> ReadAsync(AuditorFocus focus, CancellationToken ct)
