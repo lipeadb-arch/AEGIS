@@ -212,7 +212,12 @@ export type MicrosoftPermissionUsage =
   /** [AEGIS-KNIGHT-CLOSURE-01] Leituras complementares (versão beta/preview ou acesso concedido fora do Entra ID). */
   | 'NewForClosure'
   /** Deliberadamente NÃO exigida — com a justificativa técnica registrada em `action`. */
-  | 'NotRequired';
+  | 'NotRequired'
+  /**
+   * [AEGIS-KNIGHT-READONLY-01] NÃO solicitada porque a única forma documentada de obtê-la também concede escrita ou
+   * administração. O AEGIS opera só com leitura: os controles que dependem dela ficam não avaliados, com o motivo.
+   */
+  | 'NotRequestedWrite';
 
 /** Uma capacidade do conector: finalidade, permissão que a destrava, dependência de licença e ação objetiva. */
 export interface MicrosoftCapabilitySpec {
@@ -404,11 +409,12 @@ export const KNIGHT_M365_SERVICE_CAPABILITIES: MicrosoftCapabilitySpec[] = [
   {
     name: 'SharePoint e OneDrive (API administrativa)',
     purpose:
-      'OneDrive, links padrão, expiração de convidados, reautenticação, download de arquivo infectado e integração B2B — a única leitura oficial dessas configurações. O AEGIS só executa leitura, mas a Microsoft não oferece permissão de aplicativo mais restrita para esta API.',
-    permission: 'Sites.FullControl.All (API SharePoint) + certificado da aplicação',
-    usage: 'NewForM365Services',
+      'OneDrive, links padrão, expiração de convidados, reautenticação, download de arquivo infectado, integração B2B e grupos autorizados — configurações que o Microsoft Graph não publica. Sem usuário, a Microsoft só abre esta API com uma permissão que também concede escrita em todos os sites.',
+    permission: 'Sites.FullControl.All (API SharePoint) — não solicitada',
+    usage: 'NotRequestedWrite',
     licenseNote: null,
-    action: 'Opcional. Sem ela (ou sem certificado), 8 controles do SharePoint e OneDrive ficam não avaliados, com o motivo.',
+    action:
+      'Não conceda. O AEGIS não usa esta API, com ou sem certificado. Pelo Microsoft Graph, OneDrive, B2B, expiração, reautenticação e grupos autorizados se concluem quando o compartilhamento externo está desligado; nos demais casos, e para links padrão e arquivos infectados, os controles ficam não avaliados, com o motivo.',
   },
   {
     name: 'Intune — dispositivos sem política de conformidade',
@@ -444,7 +450,7 @@ export const KNIGHT_AZURE_CAPABILITIES: MicrosoftCapabilitySpec[] = [
   {
     name: 'Recursos do Azure (Resource Manager)',
     purpose:
-      'Assinaturas, atribuições de papel, bloqueios, políticas, Defender para Nuvem, alertas do log de atividades, rede, armazenamento, Key Vault (metadados), computação, App Service, bancos de dados e Databricks — somente leitura, nas assinaturas do escopo.',
+      'Assinaturas, atribuições de papel, bloqueios, políticas, Defender para Nuvem, alertas do log de atividades, rede, armazenamento, Key Vault (metadados), computação, App Service, bancos de dados e Databricks (inclusive se o workspace tem o Unity Catalog habilitado) — somente leitura, nas assinaturas do escopo.',
     permission: 'Papel Leitor do Azure RBAC nas assinaturas avaliadas (ou no grupo de gerenciamento)',
     usage: 'NewForAzure',
     licenseNote: null,
@@ -479,12 +485,12 @@ export const KNIGHT_AZURE_CAPABILITIES: MicrosoftCapabilitySpec[] = [
   {
     name: 'API dos workspaces do Azure Databricks',
     purpose:
-      'Unity Catalog, validade e uso de tokens pessoais, usuários e grupos sincronizados do Entra ID e criptografia entre nós dos clusters — leituras da API do próprio workspace. A configuração Spark e o conteúdo de scripts não são gravados.',
-    permission: 'Aplicação adicionada a cada workspace como entidade de serviço administradora (acesso dentro do Databricks)',
-    usage: 'NewForClosure',
-    licenseNote: 'Unity Catalog e a configuração de tokens dependem do plano Premium do Databricks.',
+      'Tokens pessoais, usuários e grupos sincronizados do Entra ID e criptografia entre nós dos clusters. Não há acesso somente leitura documentado: permissões de tokens e scripts globais são exclusivos do administrador do workspace, e os direitos de um membro comum também permitem escrever objetos.',
+    permission: 'Administrador ou membro do workspace do Databricks — não solicitado',
+    usage: 'NotRequestedWrite',
+    licenseNote: null,
     action:
-      'Opcional e explícito: habilite abaixo a leitura da API dos workspaces e adicione a aplicação em cada workspace. Desligada, nenhum pedido é feito ao workspace e 4 controles ficam não avaliados, com o motivo.',
+      'Não adicione a aplicação aos workspaces. O AEGIS não lê a API do workspace; o Unity Catalog vem do Resource Manager (papel Leitor). Tokens, usuários e grupos e criptografia entre nós ficam não avaliados, com o motivo.',
   },
 ];
 
@@ -497,11 +503,11 @@ export function permissionsByUsage(
 }
 
 /**
- * Permissões que o tenant precisa conceder. `NotRequired` fica DE FORA por definição — nenhuma tela do AEGIS
- * pode sugerir a concessão de uma permissão que o produto decidiu não usar.
+ * Permissões que o tenant precisa conceder. `NotRequired` e `NotRequestedWrite` ficam DE FORA por definição — nenhuma
+ * tela do AEGIS pode sugerir a concessão de uma permissão que o produto decidiu não usar.
  */
 export function requiredPermissions(caps: MicrosoftCapabilitySpec[]): string[] {
-  return [...new Set(caps.filter((c) => c.usage !== 'NotRequired').map((c) => c.permission))];
+  return [...new Set(caps.filter((c) => c.usage !== 'NotRequired' && c.usage !== 'NotRequestedWrite').map((c) => c.permission))];
 }
 
 /** Capacidades cuja disponibilidade depende do plano contratado — a tela avisa antes da coleta. */
@@ -517,6 +523,7 @@ const USAGE_LABEL: Record<MicrosoftPermissionUsage, string> = {
   NewForAzure: 'Nova — Azure (papel do Azure RBAC)',
   NewForClosure: 'Nova — leitura complementar (opcional)',
   NotRequired: 'Não necessária neste pacote',
+  NotRequestedWrite: 'Não solicitada — concede escrita',
 };
 
 export function permissionUsageLabel(usage: MicrosoftPermissionUsage): string {
@@ -594,8 +601,6 @@ export interface MicrosoftHubRequest {
   removeCertificate?: boolean;
   /** Assinaturas do Azure avaliadas (vazio = todas as que a aplicação enxerga). Omitido = mantém o escopo guardado. */
   azureSubscriptionIds?: string[];
-  /** [AEGIS-KNIGHT-CLOSURE-01] Leitura da API dos workspaces do Databricks (explícita). Omitido = mantém o que está guardado. */
-  databricksWorkspaceApi?: boolean;
 }
 
 /** [AEGIS-KNIGHT-COVERAGE-04] O que só o conector do AEGIS KNIGHT guarda além da credencial comum. */
@@ -604,8 +609,6 @@ export interface KnightCredentialExtras {
   certificatePassword?: string | null;
   removeCertificate?: boolean;
   azureSubscriptionIds?: string[] | null;
-  /** [AEGIS-KNIGHT-CLOSURE-01] Habilita (ou desliga) a leitura da API dos workspaces do Databricks. */
-  databricksWorkspaceApi?: boolean | null;
 }
 
 /** [AEGIS-KNIGHT-COVERAGE-04] Resumo NÃO sensível da credencial guardada (nunca o segredo, o PFX ou a senha). */
@@ -617,8 +620,6 @@ export interface MicrosoftCredentialSummary {
   certificate: { thumbprint: string; notBefore: string; notAfter: string; currentlyValid: boolean } | null;
   certificateProblem: string | null;
   azureSubscriptionIds: string[];
-  /** [AEGIS-KNIGHT-CLOSURE-01] Leitura da API dos workspaces do Databricks habilitada. Ausente em respostas antigas. */
-  databricksWorkspaceApi?: boolean;
 }
 
 /**
@@ -673,7 +674,6 @@ export function buildMicrosoftHubRequest(
       body.removeCertificate = true;
     }
     if (knight.azureSubscriptionIds) body.azureSubscriptionIds = knight.azureSubscriptionIds;
-    if (typeof knight.databricksWorkspaceApi === 'boolean') body.databricksWorkspaceApi = knight.databricksWorkspaceApi;
   }
   return body;
 }

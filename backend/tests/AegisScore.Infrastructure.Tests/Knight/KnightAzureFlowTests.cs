@@ -38,8 +38,16 @@ public sealed class KnightAzureFlowTests : IDisposable
         "AK-AZ-CMP-014",                // VHD não gerenciado reprovaria AK-AZ-CMP-008
     };
 
-    /// <summary>Controles que, por construção, nunca reprovam: o dado que reprovaria não é visível pelo Resource Manager.</summary>
-    private static readonly string[] NeverExposed = { "AK-AZ-CMP-013" };
+    /// <summary>
+    /// Controles que, por construção, nunca reprovam: o dado que reprovaria não é visível pelo Resource Manager. [AEGIS-KNIGHT-
+    /// READONLY-01] DBR-008: isUcEnabled falso não comprova a ausência do Unity Catalog; DBR-009/010/011: a API do workspace,
+    /// que os sustentaria, não é lida.
+    /// </summary>
+    private static readonly string[] NeverExposed =
+        { "AK-AZ-CMP-013", "AK-AZ-DBR-008", "AK-AZ-DBR-009", "AK-AZ-DBR-010", "AK-AZ-DBR-011" };
+
+    /// <summary>[AEGIS-KNIGHT-READONLY-01] Dependem da API do workspace do Databricks, que não é lida: não avaliados sempre.</summary>
+    private static readonly string[] NotEvaluatedByReadOnlyPolicy = { "AK-AZ-DBR-009", "AK-AZ-DBR-010", "AK-AZ-DBR-011" };
 
     private readonly SqliteConnection _connection;
     private readonly ITestOutputHelper _output;
@@ -67,11 +75,15 @@ public sealed class KnightAzureFlowTests : IDisposable
         var run = await ServiceFor(db, scenario).RunAssessmentAsync(KnightSourceType.MicrosoftAzure);
         Dump(run);
 
-        run.SourceState.Should().Be(KnightSourceState.Completed);
+        // [AEGIS-KNIGHT-READONLY-01] A API do workspace do Databricks não é solicitada: a coleta fica parcial, dito explicitamente.
+        run.SourceState.Should().Be(KnightSourceState.PartialCollection);
         run.CatalogVersion.Should().Be(KnightCatalog.Version);
         run.Capabilities.Select(c => c.Capability).Should().BeEquivalentTo(KnightCollectorCapabilities.Produces(KnightSourceType.MicrosoftAzure),
             "o coletor real registra o desfecho de cada capacidade que o mapa declara");
-        run.Capabilities.Should().OnlyContain(c => c.Outcome == KnightCapabilityOutcome.Collected);
+        run.Capabilities.Where(c => c.Capability != KnightCapability.AzureDatabricksWorkspaceApi)
+            .Should().OnlyContain(c => c.Outcome == KnightCapabilityOutcome.Collected);
+        run.Capabilities.Single(c => c.Capability == KnightCapability.AzureDatabricksWorkspaceApi).Outcome
+            .Should().Be(KnightCapabilityOutcome.NotAttempted);
 
         var entity = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id);
         var acquisition = await db.IdentityAcquisitions.AsNoTracking().SingleAsync(a => a.Id == entity.IdentityAcquisitionId);
@@ -81,9 +93,12 @@ public sealed class KnightAzureFlowTests : IDisposable
 
         var own = run.Indicators.Where(i => i.IndicatorId.StartsWith("AK-AZ-", StringComparison.Ordinal)).ToList();
         own.Select(i => i.IndicatorId).Should().BeEquivalentTo(AzureIds);
-        own.Where(i => i.Status != KnightIndicatorStatus.Passed && !NotApplicableWhenCompliant.Contains(i.IndicatorId))
+        own.Where(i => i.Status != KnightIndicatorStatus.Passed && !NotApplicableWhenCompliant.Contains(i.IndicatorId)
+                       && !NotEvaluatedByReadOnlyPolicy.Contains(i.IndicatorId))
             .Select(i => $"{i.IndicatorId}={i.Status}: {i.NotEvaluatedReason ?? i.Evidence}")
             .Should().BeEmpty("no cenário conforme cada critério tem evidência suficiente e aprova");
+        own.Where(i => NotEvaluatedByReadOnlyPolicy.Contains(i.IndicatorId)).Should().HaveCount(3)
+            .And.OnlyContain(i => i.Status == KnightIndicatorStatus.NotEvaluated);
         own.Where(i => NotApplicableWhenCompliant.Contains(i.IndicatorId)).Should().OnlyContain(i => i.Status == KnightIndicatorStatus.NotApplicable);
         run.Indicators.Should().OnlyContain(i => i.IndicatorId.StartsWith("AK-AZ-", StringComparison.Ordinal));
         run.Score.Should().Be(100);
@@ -105,6 +120,10 @@ public sealed class KnightAzureFlowTests : IDisposable
             .Should().BeEmpty("no cenário inadequado cada critério tem violação demonstrável");
         own.Single(i => i.IndicatorId == "AK-AZ-CMP-013").Status.Should().Be(KnightIndicatorStatus.NotEvaluated,
             "sem extensão reconhecida a proteção de endpoint é desconhecida — nunca reprovada");
+        own.Where(i => i.IndicatorId.StartsWith("AK-AZ-DBR-00", StringComparison.Ordinal) && NeverExposed.Contains(i.IndicatorId)
+                       || NotEvaluatedByReadOnlyPolicy.Contains(i.IndicatorId))
+            .Should().HaveCount(4).And.OnlyContain(i => i.Status == KnightIndicatorStatus.NotEvaluated,
+                "Unity Catalog com isUcEnabled falso e os controles da API do workspace nunca reprovam");
         own.Where(i => i.Status == KnightIndicatorStatus.Exposed)
             .Should().OnlyContain(i => i.AffectedObjectCount + i.EvidenceObjectCount > 0);
         own.Should().OnlyContain(i => i.Presentation != null && !string.IsNullOrWhiteSpace(i.Presentation.Impact));
@@ -257,7 +276,10 @@ public sealed class KnightAzureFlowTests : IDisposable
         // [AEGIS-KNIGHT-CLOSURE-01] As 12 "só em preview" (diagnóstico e contatos de segurança) passaram a ser avaliadas pela versão
         // preview, identificada nas informações técnicas; os 4 do Databricks e o 2.5 do App Service ganharam método.
         azure.Count(c => c.Disposition == KnightReferenceDisposition.PreviewOnly).Should().Be(0);
-        azure.Count(c => c.Disposition == KnightReferenceDisposition.RequiresAccess).Should().Be(0);
+        // [AEGIS-KNIGHT-READONLY-01] Tokens (2.1.6), identidades sincronizadas (2.1.4) e criptografia entre nós (2.1.3) dependem da
+        // API do workspace do Databricks, que não tem acesso somente leitura documentado: exigem acesso que o conector não tem.
+        azure.Where(c => c.Disposition == KnightReferenceDisposition.RequiresAccess).Select(c => c.Control.Key)
+            .Should().BeEquivalentTo(new[] { "CIS-AZ-6.0.0:2.1.3", "CIS-AZ-6.0.0:2.1.4", "CIS-AZ-6.0.0:2.1.6" });
         azure.Count(c => c.PreviewApis is { Count: > 0 }).Should().Be(12, "diagnóstico e contatos de segurança dependem de versão preview");
         azure.Count(c => c.Disposition == KnightReferenceDisposition.ApiLimitation).Should().Be(1, "diagnóstico do Intune: nem a preview tem a operação");
         azure.Where(c => c.Disposition is KnightReferenceDisposition.Implemented or KnightReferenceDisposition.Partial)
@@ -284,9 +306,12 @@ public sealed class KnightAzureFlowTests : IDisposable
         model.Controls.Single(c => c.Id == "AK-AZ-KV-010").RequiredCapabilityLabels
             .Should().Contain("Políticas de certificado dos cofres (plano de dados)");
         model.Limitations.Should().Contain(l => l.RequiredPermission != null && l.RequiredPermission.Contains("Leitor do Key Vault"));
-        model.Limitations.Where(l => l.Capability.StartsWith("Azure", StringComparison.Ordinal))
+        model.Limitations.Where(l => l.Capability.StartsWith("Azure", StringComparison.Ordinal) && l.Capability != nameof(KnightCapability.AzureDatabricksWorkspaceApi))
             .Should().OnlyContain(l => l.Guidance.Contains("Azure RBAC") && !l.Guidance.Contains("consentimento"),
                 "no Azure a autorização é atribuição de papel no escopo recusado");
+        // [AEGIS-KNIGHT-READONLY-01] A leitura não solicitada não pede concessão nenhuma.
+        model.Limitations.Where(l => l.Capability == nameof(KnightCapability.AzureDatabricksWorkspaceApi))
+            .Should().OnlyContain(l => l.Guidance.StartsWith("Nada a conceder", StringComparison.Ordinal));
     }
 
     // ======================================================================================================

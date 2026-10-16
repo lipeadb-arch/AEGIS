@@ -164,12 +164,13 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
         // ---- 3) Certificados dos cofres (plano de dados) ----------------------------------------------------
         await ReadVaultCertificatesAsync(cfg, resources, outcomes, ct);
 
-        // ---- 3b) [AEGIS-KNIGHT-CLOSURE-01] Versões preview, referências ao Key Vault e API do Databricks --------
+        // ---- 3b) [AEGIS-KNIGHT-CLOSURE-01] Versões preview e referências ao Key Vault ---------------------------
         foreach (var sub in inScope)
             await ReadSubscriptionPreviewListsAsync(token, sub.Id, resources, outcomes[sub.Id], ct);
         await ReadResourceDiagnosticsAsync(token, resources, outcomes, ct);
         await ReadKeyVaultReferencesAsync(token, resources, outcomes, ct);
-        await ReadDatabricksWorkspacesAsync(cfg, configuration as KnightMicrosoftServiceConfiguration, resources, outcomes, ct);
+        // [AEGIS-KNIGHT-READONLY-01] A API do workspace do Databricks não é lida (sem acesso somente leitura documentado).
+        MarkDatabricksWorkspaceApiNotRequested(resources, outcomes);
 
         // ---- 4) Escopo do locatário e complementares --------------------------------------------------------
         var tenantDiag = await ReadTenantListAsync(token, AzureArmPlan.EntraDiagnostics, resources, ct);

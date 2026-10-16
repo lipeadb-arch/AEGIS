@@ -174,9 +174,13 @@ public static class KnightReferenceCatalog
     {
         var links = new Dictionary<string, List<(string IndicatorId, KnightReferenceLink Link)>>(StringComparer.Ordinal);
         var inactive = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var withoutReadOnlyPath = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         foreach (var def in indicators)
         {
             var active = KnightCollectorCapabilities.IsActive(def);
+            // [AEGIS-KNIGHT-READONLY-01] Ativo, mas sem veredito possível com as leituras que o AEGIS faz: a referência não é
+            // implementada — exige um acesso que o conector deliberadamente não tem.
+            var blocked = active && KnightCollectorCapabilities.ConclusiveOnlyWithNotRequested.Contains(def.Id);
             foreach (var link in def.References)
             {
                 if (Find(link.Key) is null)
@@ -185,6 +189,12 @@ public static class KnightReferenceCatalog
                 if (!active)
                 {
                     if (!inactive.TryGetValue(link.Key, out var ids)) inactive[link.Key] = ids = new();
+                    ids.Add(def.Id);
+                    continue;
+                }
+                if (blocked)
+                {
+                    if (!withoutReadOnlyPath.TryGetValue(link.Key, out var ids)) withoutReadOnlyPath[link.Key] = ids = new();
                     ids.Add(def.Id);
                     continue;
                 }
@@ -214,6 +224,14 @@ public static class KnightReferenceCatalog
                 statuses.Add(new KnightReferenceStatus(c,
                     exact || composite ? KnightReferenceDisposition.Implemented : KnightReferenceDisposition.Partial,
                     ids, string.IsNullOrWhiteSpace(note) ? null : note.Trim(), previews));
+                continue;
+            }
+
+            if (withoutReadOnlyPath.TryGetValue(c.Key, out var heldBy))
+            {
+                statuses.Add(new KnightReferenceStatus(c, KnightReferenceDisposition.RequiresAccess, Array.Empty<string>(),
+                    $"Regra declarada em {string.Join(", ", heldBy)}, que fica não avaliada: a única leitura oficial do dado exige permissão que "
+                    + "também concede escrita ou administração, e o AEGIS opera só com leitura. Registre a verificação como resultado manual."));
                 continue;
             }
 

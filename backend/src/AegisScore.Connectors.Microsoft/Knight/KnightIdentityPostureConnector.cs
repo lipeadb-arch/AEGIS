@@ -124,7 +124,7 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         }
         probes.Add(await ProbeGraphReadAsync(credentials, "SharePoint e OneDrive (Microsoft Graph)",
             "admin/sharepoint/settings", "SharePointTenantSettings.Read.All", ct));
-        probes.Add(await ProbeSharePointAdminAsync(credentials, ct));
+        probes.Add(SharePointAdminNotRequested());
         probes.Add(await ProbeGraphReadAsync(credentials, "Microsoft Intune",
             "deviceManagement?$select=settings", "DeviceManagementConfiguration.Read.All", ct));
         if (_appTokens is not null && _rest is not null)
@@ -132,8 +132,8 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
                 "a configuração “entidades de serviço podem usar as APIs de administração somente leitura” e o grupo de segurança da aplicação", ct));
         if (_appTokens is not null && _rest is not null)
             probes.Add(await ProbeAzureAsync(credentials, ct));
-        // Uma leitura NÃO TENTADA (ex.: a API administrativa do SharePoint sem certificado) não conta como falha nem
-        // como sucesso: o estado é o das leituras tentadas, e a linha dela diz o que falta.
+        // Uma leitura NÃO TENTADA (ex.: a API administrativa do SharePoint, que exigiria permissão de escrita) não conta
+        // como falha nem como sucesso: o estado é o das leituras tentadas, e a linha dela diz o porquê.
         var attempted = probes.Where(p => !p.Skipped).ToList();
         var status = attempted.All(p => p.Ok) ? ConnectorStatus.Healthy
             : attempted.Any(p => p.Ok) ? ConnectorStatus.Degraded
@@ -355,44 +355,15 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
     }
 
     /// <summary>
-    /// [AEGIS-KNIGHT-COVERAGE-04] A API administrativa do SharePoint: só com certificado. Sem ele, o teste diz que a
-    /// leitura não foi tentada — não é uma falha da credencial.
+    /// [AEGIS-KNIGHT-READONLY-01] A API administrativa do SharePoint não é testada nem usada: só abre com
+    /// <c>Sites.FullControl.All</c>, que concede escrita. A linha diz isso — não é falha da credencial, e o certificado não a
+    /// reativa.
     /// </summary>
-    private async Task<Probe> ProbeSharePointAdminAsync(IMicrosoftGraphCredentials cfg, CancellationToken ct)
-    {
-        const string label = "SharePoint e OneDrive (API administrativa)";
-        if (cfg.ClientCertificate is null)
-            return new Probe(false, $"{label}: não tentada — exige certificado da aplicação; sem ele, 8 controles do SharePoint e OneDrive ficam não avaliados.", Skipped: true);
-        if (_appTokens is null || _rest is null)
-            return new Probe(false, $"{label}: não verificável nesta instalação.", Skipped: true);
-        try
-        {
-            var token = await _graph.AcquireTokenAsync(cfg, ct);
-            var org = await _graph.GetJsonAsync(token, cfg, OrganizationProbeUrl, ct);
-            string? initial = null;
-            if (org.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.Array)
-                foreach (var o in v.EnumerateArray())
-                    if (o.TryGetProperty("verifiedDomains", out var ds) && ds.ValueKind == JsonValueKind.Array)
-                        foreach (var d in ds.EnumerateArray())
-                            if (d.TryGetProperty("isInitial", out var i) && i.ValueKind == JsonValueKind.True && d.TryGetProperty("name", out var n))
-                                initial = n.GetString();
-            var host = SharePointKnightCollector.AdminHost(initial);
-            if (host is null)
-                return new Probe(false, $"{label}: o domínio inicial do locatário não permite derivar o host de administração.");
-            return await ProbeRestAsync(cfg, label, $"https://{host}/.default", $"https://{host}/_api/SPO.Tenant",
-                "Sites.FullControl.All na API do SharePoint (aplicativo) e o certificado registrado na aplicação", ct);
-        }
-        catch (EntraGraphException ex)
-        {
-            return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
-        }
-        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
-        {
-            return FailedProbe(label, ex);
-        }
-    }
+    private static Probe SharePointAdminNotRequested() =>
+        new(false, "SharePoint e OneDrive (API administrativa): não solicitada — exigiria Sites.FullControl.All, que também concede "
+            + "escrita. As configurações que só ela expõe ficam não avaliadas, com o motivo.", Skipped: true);
 
-    /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Token para o recurso e UMA leitura REST (Fabric, administração do SharePoint).</summary>
+    /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Token para o recurso e UMA leitura REST (Fabric).</summary>
     private async Task<Probe> ProbeRestAsync(IMicrosoftGraphCredentials cfg, string label, string scope, string url, string requirement, CancellationToken ct)
     {
         try

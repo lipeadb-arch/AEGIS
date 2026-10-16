@@ -61,6 +61,15 @@ public sealed class KnightM365ServicesPostgresTests
 
         foreach (var (fonte, run) in runs)
         {
+            // [AEGIS-KNIGHT-READONLY-01] O SharePoint não lê a API administrativa (Sites.FullControl.All): coleta parcial, e os
+            // controles que só ela concluiria ficam não avaliados — nunca reprovados.
+            if (fonte == KnightSourceType.MicrosoftSharePoint)
+            {
+                run.SourceState.Should().Be(KnightSourceState.PartialCollection);
+                run.Indicators.Should().OnlyContain(i => i.Status == KnightIndicatorStatus.Exposed || i.Status == KnightIndicatorStatus.NotEvaluated);
+                run.Indicators.Count(i => i.Status == KnightIndicatorStatus.Exposed).Should().Be(5);
+                continue;
+            }
             run.SourceState.Should().Be(KnightSourceState.Completed, fonte.ToString());
             run.Indicators.Should().OnlyContain(i => i.Status == KnightIndicatorStatus.Exposed, fonte.ToString());
         }

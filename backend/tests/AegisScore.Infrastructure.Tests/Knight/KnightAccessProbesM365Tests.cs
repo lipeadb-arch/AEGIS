@@ -56,6 +56,10 @@ public sealed class KnightAccessProbesM365Tests
             health.Message.Should().Contain(fonte + ": ", fonte);
         health.Message.Should().Contain("Microsoft Azure: leitura de verificação confirmada — 1 assinatura(s) visível(is)");
         health.Message.Should().Contain("Autenticação usada: certificado da aplicação");
+        // [AEGIS-KNIGHT-READONLY-01] O certificado não reativa a API administrativa do SharePoint.
+        health.Message.Should().Contain("SharePoint e OneDrive (API administrativa): não solicitada").And.Contain("Sites.FullControl.All");
+        scenario.Requests.Should().NotContain(r => r.RequestUri!.Host.EndsWith("-admin.sharepoint.com"));
+        scenario.TokenBodies.Should().NotContain(b => b.Contains("-admin.sharepoint.com"));
         scenario.TokenBodies.Should().OnlyContain(b => b.Contains("client_assertion=") && !b.Contains("client_secret="),
             "o conector guarda só o certificado: nenhum pedido pode levar segredo");
         scenario.ProtectionRequests.Select(r => r.Profile).Should().BeEquivalentTo(new[] { "defender", "purview" });
@@ -63,13 +67,13 @@ public sealed class KnightAccessProbesM365Tests
     }
 
     [Fact]
-    public async Task SemCertificado_ApiAdministrativaDoSharePointNaoTentada_ENaoRebaixaOEstado()
+    public async Task SemCertificado_ApiAdministrativaDoSharePointNaoSolicitada_ENaoRebaixaOEstado()
     {
         var scenario = new M365ServicesScenario(M365ServicesScenario.Variant.Compliant);
         var health = await ConnectorFor(scenario, certificate: false).TestAsync(Config(), CancellationToken.None);
 
-        health.Status.Should().Be(ConnectorStatus.Healthy, "a leitura não tentada não é falha da credencial");
-        health.Message.Should().Contain("SharePoint e OneDrive (API administrativa): não tentada — exige certificado");
+        health.Status.Should().Be(ConnectorStatus.Healthy, "a leitura não solicitada não é falha da credencial");
+        health.Message.Should().Contain("SharePoint e OneDrive (API administrativa): não solicitada");
         health.Message.Should().Contain("Autenticação usada: segredo de cliente.");
         scenario.Requests.Should().NotContain(r => r.RequestUri!.Host.EndsWith("-admin.sharepoint.com"));
     }

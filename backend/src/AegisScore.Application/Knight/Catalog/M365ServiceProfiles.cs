@@ -126,9 +126,15 @@ public static class M365ServiceProfiles
     private static KnightCapability[] Caps(params KnightCapability[] c) => c;
 
     // ---- Ressalvas comuns ---------------------------------------------------------------------------------
+    // [AEGIS-KNIGHT-READONLY-01] A API administrativa não é lida: sem usuário, só abre com Sites.FullControl.All (escrita).
     private const string SpoAdmin =
-        "Lido pela API administrativa do SharePoint, que só aceita aplicativo autenticado por certificado; sem certificado "
-        + "configurado, o controle fica não avaliado com esse motivo.";
+        "A configuração só é exposta pela API administrativa do SharePoint, que o AEGIS não lê: sem usuário, ela só aceita aplicativo "
+        + "com Sites.FullControl.All, que também concede escrita, e o Microsoft Graph não publica este valor. Nesse caso o controle fica "
+        + "não avaliado, com o motivo; o resultado manual registra a verificação feita no centro de administração.";
+
+    private const string SpoExternalOff =
+        "Não se aplica quando o compartilhamento externo está desligado no locatário (lido pelo Microsoft Graph): convidados perdem o "
+        + "acesso enquanto ele estiver desligado. ";
 
     private const string FabricScope =
         "Lido pela API de administração do Fabric. O controle não verifica itens nem workspaces, e não lê quem pertence aos "
@@ -161,15 +167,15 @@ public static class M365ServiceProfiles
             "O SharePoint e o OneDrive aceitam protocolos de autenticação legada.",
             "Protocolos legados não suportam segundo fator nem as condições do acesso condicional: uma senha descoberta basta para autenticar por eles, mesmo quando a entrada interativa exige MFA.",
             "Protocolos de autenticação legada desligados no locatário, com acesso somente por autenticação moderna.",
-            "Configuração não é uso: o controle não afirma que algum cliente legado tenha acessado o SharePoint. A leitura principal é a do Microsoft Graph; a da API administrativa só é usada quando a primeira não informa o valor.",
-            Docs(DocSpoSettingsApi, DocSpoTenant), Caps(KnightCapability.SharePointTenantSettings, KnightCapability.SharePointAdminTenant)),
+            "Configuração não é uso: o controle não afirma que algum cliente legado tenha acessado o SharePoint. Lido pelo Microsoft Graph; se ele não informar o valor, o controle fica não avaliado.",
+            Docs(DocSpoSettingsApi), Caps(KnightCapability.SharePointTenantSettings)),
 
         new KnightControlProfile("AK-SPO-002", KnightSecurityDomain.Identity,
             "A integração do SharePoint e do OneDrive com o Microsoft Entra B2B está desligada.",
             "Sem a integração, pessoas de fora convidadas pelo SharePoint usam um mecanismo próprio de código de verificação e não viram contas de convidado do diretório: ficam fora do acesso condicional, das revisões de acesso e do inventário de convidados.",
             "Integração com o Microsoft Entra B2B ligada.",
-            SpoAdmin + " O controle não conta convidados existentes nem afirma que algum convite tenha sido feito.",
-            Docs(DocSpoB2B), Caps(KnightCapability.SharePointAdminTenant)),
+            SpoExternalOff + SpoAdmin + " O controle não conta convidados existentes nem afirma que algum convite tenha sido feito.",
+            Docs(DocSpoB2B, DocSpoSharing), Caps(KnightCapability.SharePointAdminTenant, KnightCapability.SharePointTenantSettings)),
 
         new KnightControlProfile("AK-SPO-003", KnightSecurityDomain.DataProtection,
             "O compartilhamento externo do SharePoint permite links “qualquer pessoa”.",
@@ -182,8 +188,9 @@ public static class M365ServiceProfiles
             "O OneDrive permite compartilhar arquivos com pessoas de fora da organização.",
             "O OneDrive é o espaço pessoal de cada colaborador; permitir compartilhamento externo ali entrega a cada pessoa a decisão de expor conteúdo, sem a governança que um site do SharePoint tem.",
             "Compartilhamento do OneDrive restrito a pessoas da organização; colaboração externa por sites do SharePoint com dono e política.",
-            SpoAdmin + " Não afirma que algum arquivo tenha sido compartilhado para fora.",
-            Docs(DocSpoSharing, DocSpoTenant), Caps(KnightCapability.SharePointAdminTenant)),
+            "Aprovado pelo Microsoft Graph quando o SharePoint está restrito à organização: o OneDrive não pode ser mais permissivo que o "
+            + "SharePoint (limite documentado pela Microsoft). Nos demais níveis: " + SpoAdmin + " Não afirma que algum arquivo tenha sido compartilhado para fora.",
+            Docs(DocSpoSharing, DocSpoSettingsApi, DocSpoTenant), Caps(KnightCapability.SharePointAdminTenant, KnightCapability.SharePointTenantSettings)),
 
         new KnightControlProfile("AK-SPO-005", KnightSecurityDomain.Collaboration,
             "Convidados podem compartilhar novamente arquivos, pastas e sites que não possuem.",
@@ -210,22 +217,22 @@ public static class M365ServiceProfiles
             "Qualquer usuário pode compartilhar com pessoas de fora; não há grupos de segurança designados para isso.",
             "Restringir o compartilhamento externo a grupos designados concentra a decisão em quem foi preparado e responde por ela, e reduz o número de contas cuja invasão permite expor conteúdo.",
             "Lista de grupos de segurança autorizados a compartilhar externamente, com ao menos um grupo.",
-            "Não se aplica quando o compartilhamento externo está desligado. " + SpoAdmin + " O controle não verifica quem pertence aos grupos.",
+            SpoExternalOff + SpoAdmin + " O controle não verifica quem pertence aos grupos.",
             Docs(DocSpoSecurityGroups), Caps(KnightCapability.SharePointAdminTenant, KnightCapability.SharePointTenantSettings)),
 
         new KnightControlProfile("AK-SPO-009", KnightSecurityDomain.Identity,
             "O acesso de convidados a sites e ao OneDrive não expira em até 30 dias.",
             "Sem expiração, o acesso de um convidado dura enquanto ninguém lembrar de retirá-lo; a expiração obriga a uma renovação consciente.",
             "Expiração do acesso de convidados exigida, em até 30 dias.",
-            SpoAdmin + " O controle não conta convidados com acesso antigo.",
-            Docs(DocSpoSharing), Caps(KnightCapability.SharePointAdminTenant)),
+            SpoExternalOff + SpoAdmin + " O controle não conta convidados com acesso antigo.",
+            Docs(DocSpoSharing), Caps(KnightCapability.SharePointAdminTenant, KnightCapability.SharePointTenantSettings)),
 
         new KnightControlProfile("AK-SPO-010", KnightSecurityDomain.Identity,
             "Quem acessa com código de verificação não precisa se reautenticar em até 15 dias.",
             "O código de verificação prova o controle de um e-mail no momento do acesso. Sem reautenticação frequente, a sessão continua válida mesmo que a pessoa perca aquele e-mail.",
             "Reautenticação por código de verificação exigida, em até 15 dias.",
-            SpoAdmin + " Com a integração B2B ligada, parte dos convidados entra por conta do diretório, e esta configuração não os alcança.",
-            Docs(DocSpoSharing), Caps(KnightCapability.SharePointAdminTenant)),
+            SpoExternalOff + SpoAdmin + " Com a integração B2B ligada, parte dos convidados entra por conta do diretório, e esta configuração não os alcança.",
+            Docs(DocSpoSharing), Caps(KnightCapability.SharePointAdminTenant, KnightCapability.SharePointTenantSettings)),
 
         new KnightControlProfile("AK-SPO-011", KnightSecurityDomain.DataProtection,
             "A permissão sugerida nos links de compartilhamento é de edição.",

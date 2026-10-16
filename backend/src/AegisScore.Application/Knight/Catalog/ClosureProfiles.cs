@@ -34,7 +34,12 @@ public static class ClosureProfiles
     private static readonly KnightControlReference DocDbrTokens = Doc("Monitorar e revogar tokens de acesso pessoal", L + "azure/databricks/admin/access-control/tokens");
     private static readonly KnightControlReference DocDbrScim = Doc("Sincronizar usuários e grupos do Microsoft Entra ID com o Databricks", L + "azure/databricks/admin/users-groups/scim/aad");
     private static readonly KnightControlReference DocDbrEncrypt = Doc("Criptografar o tráfego entre os nós de trabalho do cluster", L + "azure/databricks/security/keys/encrypt-otw");
-    private static readonly KnightControlReference DocDbrSp = Doc("Tokens do Microsoft Entra ID para entidades de serviço no Databricks", L + "azure/databricks/dev-tools/auth/oauth-m2m");
+    // [AEGIS-KNIGHT-READONLY-01] Fontes da leitura do Unity Catalog pelo Resource Manager e da ausência de acesso somente
+    // leitura documentado à API do workspace.
+    private static readonly KnightControlReference DocDbrEnableUc = Doc("Habilitar um workspace para o Unity Catalog (atribuição do metastore)", L + "azure/databricks/data-governance/unity-catalog/enable-workspaces");
+    private static readonly KnightControlReference DocDbrWorkspaceArm = Doc("API: Workspaces – Get (Azure Databricks, 2024-05-01)", L + "rest/api/databricks/workspaces/get?view=rest-databricks-2024-05-01");
+    private static readonly KnightControlReference DocDbrEntitlements = Doc("Direitos (entitlements) dos membros do workspace do Databricks", L + "azure/databricks/security/auth/entitlements");
+    private static readonly KnightControlReference DocDbrTokenPerms = Doc("Permissões de tokens de acesso pessoal", L + "azure/databricks/security/auth/api-access-permissions");
     private static readonly KnightControlReference DocPerUserMfa = Doc("Habilitar a MFA por usuário (legado) e migrar para acesso condicional", L + "entra/identity/authentication/howto-mfa-userstates");
     private static readonly KnightControlReference DocPerUserMfaApi = Doc("API beta: strongAuthenticationRequirements", L + "graph/api/resources/strongauthenticationrequirements?view=graph-rest-beta");
     private static readonly KnightControlReference DocSystemPreferred = Doc("MFA preferencial do sistema", L + "entra/identity/authentication/concept-system-preferred-multifactor-authentication");
@@ -168,36 +173,41 @@ public static class ClosureProfiles
             "O aplicativo pode falhar ao iniciar ou operar sem a credencial correta, e a correção apressada tende a expor o segredo na configuração.",
             Docs(DocKvRefs, DocKvRefsApi), KnightCapability.AzureAppService, KnightCapability.AzureAppSettingsKeyVaultReferences);
 
-        // ======== Databricks: API do workspace =============================================================
-        const string DbxApi = " Depende da leitura da API do workspace habilitada em Integrações e da aplicação adicionada ao workspace como administradora.";
+        // ======== Databricks ===============================================================================
+        // [AEGIS-KNIGHT-READONLY-01] A API do workspace não é lida: não há acesso somente leitura documentado para ela.
+        const string DbxApi = " Não avaliado pelo AEGIS: a leitura depende da API do workspace do Databricks, que não tem acesso somente "
+            + "leitura documentado — listar permissões de tokens e scripts globais é exclusivo do administrador do workspace, e os direitos "
+            + "de acesso de um membro comum também permitem escrever objetos. Use o resultado manual para registrar a verificação.";
         Az("AK-AZ-DBR-008", KnightSecurityDomain.DataProtection,
             "Workspaces do Databricks sem metastore do Unity Catalog.",
             "Sem o Unity Catalog, permissões de dados ficam em mecanismos por workspace (tabelas legadas e ACLs de cluster), sem governança centralizada, linhagem nem auditoria unificada.",
             "Metastore do Unity Catalog atribuído a cada workspace.",
-            "Verifica a atribuição do metastore; não avalia as permissões concedidas dentro do catálogo." + DbxApi,
+            "Lê a propriedade isUcEnabled do Resource Manager (papel Leitor). Habilitar o Unity Catalog é atribuir um metastore, o que não "
+            + "se desfaz: o valor verdadeiro aprova. Falso ou ausente fica desconhecido, nunca reprovado — a documentação não garante que a "
+            + "atribuição feita depois, pelo console da conta, apareça nessa propriedade. Não avalia as permissões concedidas dentro do catálogo.",
             "Dados sensíveis podem ser lidos por quem tem acesso a um cluster, sem controle por tabela e sem registro centralizado.",
-            Docs(DocUnity, DocDbrSp), KnightCapability.AzureDatabricks, KnightCapability.AzureDatabricksWorkspaceApi);
+            Docs(DocUnity, DocDbrEnableUc, DocDbrWorkspaceArm), KnightCapability.AzureDatabricks);
         Az("AK-AZ-DBR-009", KnightSecurityDomain.Identity,
             "Tokens pessoais do Databricks podem ser usados por todos os usuários ou não expiram.",
             "Um token pessoal dá acesso à API do workspace sem MFA; liberado a todos e sem tempo de vida máximo, ele se torna uma credencial de longa duração fácil de vazar em scripts.",
             "Tokens desabilitados, ou uso restrito a grupos definidos e tempo de vida máximo configurado.",
             "Lê a configuração do workspace e as permissões de uso; não lista os tokens existentes nem a idade deles." + DbxApi,
             "Um token esquecido num repositório ou estação continua dando acesso ao workspace até alguém revogá-lo.",
-            Docs(DocDbrTokens, DocDbrSp), KnightCapability.AzureDatabricks, KnightCapability.AzureDatabricksWorkspaceApi);
+            Docs(DocDbrTokens, DocDbrTokenPerms, DocDbrEntitlements), KnightCapability.AzureDatabricks, KnightCapability.AzureDatabricksWorkspaceApi);
         Az("AK-AZ-DBR-010", KnightSecurityDomain.Identity,
             "Usuários ou grupos do Databricks não vêm do provisionamento a partir do Microsoft Entra ID.",
             "Contas criadas direto no workspace não acompanham o ciclo de vida do diretório: quem sai da empresa continua com acesso até alguém lembrar de removê-lo.",
             "Todos os usuários e grupos do workspace com vínculo externo do provisionamento a partir do Entra ID.",
             "Usa o vínculo externo (externalId) como prova do provisionamento; o gerenciamento automático de identidades no nível da conta não é lido." + DbxApi,
             "Uma pessoa desligada pode continuar acessando dados e notebooks do workspace depois de removida do diretório.",
-            Docs(DocDbrScim, DocDbrSp), KnightCapability.AzureDatabricks, KnightCapability.AzureDatabricksWorkspaceApi);
+            Docs(DocDbrScim, DocDbrEntitlements), KnightCapability.AzureDatabricks, KnightCapability.AzureDatabricksWorkspaceApi);
         Az("AK-AZ-DBR-011", KnightSecurityDomain.Network,
             "Clusters do Databricks sem criptografia do tráfego entre os nós de trabalho.",
             "Por padrão o tráfego entre os nós de um cluster trafega sem criptografia dentro da rede; dados embaralhados entre nós (shuffle) podem ser capturados por quem estiver na mesma rede.",
             "Criptografia de rede do Spark ligada em todos os clusters (normalmente por script de inicialização).",
             "Lê a configuração Spark dos clusters; o conteúdo dos scripts de inicialização não é lido, e cluster que depende de script fica desconhecido." + DbxApi,
             "Dados processados no cluster podem ser interceptados em trânsito por um ponto de presença indevido na rede virtual.",
-            Docs(DocDbrEncrypt, DocDbrSp), KnightCapability.AzureDatabricks, KnightCapability.AzureDatabricksWorkspaceApi);
+            Docs(DocDbrEncrypt, DocDbrEntitlements), KnightCapability.AzureDatabricks, KnightCapability.AzureDatabricksWorkspaceApi);
 
         // ======== Entra ID e Microsoft 365 =================================================================
         P("AK-ENTRA-071", KnightSecurityDomain.Identity,

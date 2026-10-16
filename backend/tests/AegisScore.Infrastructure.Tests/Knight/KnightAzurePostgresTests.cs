@@ -51,7 +51,8 @@ public sealed class KnightAzurePostgresTests
             intune = await KnightM365ServicesFlowTests.ServiceFor(db, tenant, new M365ServicesScenario(M365ServicesScenario.Variant.NonCompliant))
                 .RunAssessmentAsync(KnightSourceType.MicrosoftIntune);
         }
-        azure.SourceState.Should().Be(KnightSourceState.Completed);
+        // [AEGIS-KNIGHT-READONLY-01] A API do workspace do Databricks não é solicitada: coleta parcial, dita explicitamente.
+        azure.SourceState.Should().Be(KnightSourceState.PartialCollection);
         azure.Indicators.Count(i => i.Status == KnightIndicatorStatus.Exposed).Should().BeGreaterThan(180);
 
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))

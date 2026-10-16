@@ -823,6 +823,32 @@ public sealed class TenantManagementServiceTests : IDisposable
         (await svc.GetMicrosoftCredentialSummaryAsync()).HasSecret.Should().BeFalse();
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-READONLY-01] Configuração antiga com a habilitação da API dos workspaces do Databricks: continua legível
+    /// (credencial e escopo preservados), a chave não reativa nada e some no próximo salvamento.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureMicrosoftHub_ChaveAntigaDoDatabricks_LidaSemEfeito_EDescartadaAoSalvar()
+    {
+        await using var db = NewContext(TenantA);
+        var protector = new FakeProtector();
+        var svc = ServiceFor(db, TenantA, protector);
+        await svc.ConfigureMicrosoftHubAsync(HubCommand(HubService(ConnectorCapability.IdentityPosture)));
+        var saved = await db.Connectors.SingleAsync();
+        saved.EncryptedSettings = protector.Protect(
+            $$"""{"tenantId":"tenant-aaa","clientId":"client-bbb","clientSecret":"secret-ccc","azureSubscriptionIds":["{{Sub1}}"],"databricksWorkspaceApi":true}""");
+        await db.SaveChangesAsync();
+
+        var summary = await svc.GetMicrosoftCredentialSummaryAsync();
+        summary.Configured.Should().BeTrue("a configuração antiga continua legível");
+        summary.AzureSubscriptionIds.Should().Equal(Sub1);
+        System.Text.Json.JsonSerializer.Serialize(summary).Should().NotContain("databricks", "o resumo não carrega mais a habilitação");
+
+        await svc.ConfigureMicrosoftHubAsync(HubCommand(HubService(ConnectorCapability.IdentityPosture)));
+        var rewritten = protector.Unprotect((await db.Connectors.SingleAsync()).EncryptedSettings);
+        rewritten.Should().NotContain("databricksWorkspaceApi", "a chave antiga não é regravada").And.Contain(Sub1, "o escopo guardado é mantido");
+    }
+
     private static MicrosoftHubServiceSelection HubService(
         ConnectorCapability capability, string? workspaceId = null) =>
         new(capability, SyncIntervalMinutes: 360, WorkspaceId: workspaceId);

@@ -322,7 +322,10 @@ internal static class AzureArmPlan
             K("properties.parameters.customVirtualNetworkId", "properties.parameters.enableNoPublicIp",
               "properties.parameters.customPublicSubnetName", "properties.parameters.customPrivateSubnetName",
               "properties.encryption", "properties.parameters.encryption", "properties.publicNetworkAccess",
-              "properties.requiredNsgRules", "properties.privateEndpointConnections", "properties.workspaceUrl"), Array.Empty<ArmChild>()),
+              "properties.requiredNsgRules", "properties.privateEndpointConnections", "properties.workspaceUrl",
+              // [AEGIS-KNIGHT-READONLY-01] Unity Catalog habilitado (somente leitura na 2024-05-01): substitui a leitura do
+              // metastore pela API do workspace, que exigia a aplicação como administradora do workspace.
+              "properties.isUcEnabled"), Array.Empty<ArmChild>()),
     };
 
     // ---- [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão PREVIEW ----------------------------------------------------
@@ -355,13 +358,6 @@ internal static class AzureArmPlan
     public const string KeyVaultReferencesPath = "/config/configreferences/appsettings";
 
     public static readonly string[] KeyVaultReferenceKeep = K("name", "properties.vaultName", "properties.status", "properties.source");
-
-    // ---- [AEGIS-KNIGHT-CLOSURE-01] API do PRÓPRIO workspace do Azure Databricks ------------------------------------
-    /// <summary>Identificador de recurso do Azure Databricks para o token da aplicação (documentação oficial).</summary>
-    public const string DatabricksScope = "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default";
-
-    /// <summary>Sufixo de host dos workspaces do Azure Databricks — o único aceito para a URL do workspace.</summary>
-    public const string DatabricksHostSuffix = ".azuredatabricks.net";
 
     /// <summary>
     /// Chave da avaliação "System updates should be installed on your machines (powered by Update Center)" do Defender para

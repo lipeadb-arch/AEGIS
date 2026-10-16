@@ -83,11 +83,8 @@ public record ConfigureMicrosoftHubCommand(
     /// </summary>
     public IReadOnlyList<string>? AzureSubscriptionIds { get; init; }
 
-    /// <summary>
-    /// [AEGIS-KNIGHT-CLOSURE-01] Habilita a leitura da API REST dos workspaces do Databricks (exige a aplicação adicionada a
-    /// cada workspace). <c>null</c> = mantém a decisão guardada.
-    /// </summary>
-    public bool? DatabricksWorkspaceApi { get; init; }
+    // [AEGIS-KNIGHT-READONLY-01] A habilitação da API dos workspaces do Databricks (que exigia a aplicação como
+    // administradora do workspace) foi retirada: não há opção que a reative.
 }
 
 /// <summary>
@@ -102,8 +99,7 @@ public sealed record MicrosoftCredentialSummary(
     bool HasSecret,
     AegisScore.Application.Knight.MicrosoftCertificateSummary? Certificate,
     string? CertificateProblem,
-    IReadOnlyList<string> AzureSubscriptionIds,
-    bool DatabricksWorkspaceApi = false);
+    IReadOnlyList<string> AzureSubscriptionIds);
 
 // ---- Resultados de saída ----------------------------------------------------
 

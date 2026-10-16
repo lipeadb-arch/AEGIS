@@ -22,7 +22,8 @@ namespace AegisScore.Infrastructure.Tests.Knight;
 ///   • leitura em versão preview/beta fora do contrato documentado → limitação nomeada (versão e desvio), nunca aprovação;
 ///   • autorização recusada → permissão insuficiente com o requisito exato;
 ///   • população incompleta (conta não lida) → não avaliado, ou reprovado só pelo que foi lido — nunca aprovado;
-///   • Databricks: habilitado lê o workspace, desligado não faz NENHUM pedido ao workspace, recusado fica não avaliado;
+///   • Databricks: [AEGIS-KNIGHT-READONLY-01] a API do workspace nunca é chamada; o Unity Catalog vem do Resource Manager
+///     (só o verdadeiro aprova) e a população incompleta não aprova;
 ///   • nenhum segredo (configuração Spark, endereço, telefone, nome do segredo) chega ao ADM.
 /// </summary>
 public sealed class KnightClosureFlowTests : IDisposable
@@ -99,25 +100,37 @@ public sealed class KnightClosureFlowTests : IDisposable
         run.Indicators.Single(i => i.IndicatorId == "AK-AZ-KV-005").Presentation!.PreviewApis.Should().BeEmpty("controle sobre versão estável não declara preview");
     }
 
-    // ---- Azure: Databricks --------------------------------------------------------------------------------
+    // ---- Azure: Databricks ([AEGIS-KNIGHT-READONLY-01]) ------------------------------------------------------
+
+    private static readonly string[] DbxWorkspaceApiControls = { "AK-AZ-DBR-009", "AK-AZ-DBR-010", "AK-AZ-DBR-011" };
 
     [Fact]
-    public async Task Databricks_Habilitado_LeOWorkspace_SemGravarSegredo()
+    public async Task Databricks_ApiDoWorkspace_NuncaChamada_ControlesNaoAvaliadosComOMotivo_SemSegredoNoAdm()
     {
         await SeedAsync(TenantA);
         await using var db = NewContext(TenantA);
         var scenario = new AzureScenario(AzureScenario.Variant.Compliant);
-        var run = await KnightAzureFlowTests.ServiceFor(db, TenantA, scenario, AzureScenario.Configuration(databricksWorkspaceApi: true))
-            .RunAssessmentAsync(KnightSourceType.MicrosoftAzure);
+        var run = await KnightAzureFlowTests.ServiceFor(db, TenantA, scenario).RunAssessmentAsync(KnightSourceType.MicrosoftAzure);
 
-        run.Capabilities.Single(c => c.Capability == KnightCapability.AzureDatabricksWorkspaceApi).Outcome.Should().Be(KnightCapabilityOutcome.Collected);
-        scenario.TokenScopes.Should().Contain(AzureArmPlan.DatabricksScope, "o token do workspace é pedido para o recurso do Azure Databricks");
-        scenario.Requests.Should().Contain(u => u.Contains(AzureScenario.DatabricksHost));
-        foreach (var id in DependOn(KnightSourceType.MicrosoftAzure, KnightCapability.AzureDatabricksWorkspaceApi))
-            run.Indicators.Single(i => i.IndicatorId == id).Status.Should().Be(KnightIndicatorStatus.Passed, id);
+        scenario.Requests.Should().NotContain(u => u.Contains(".azuredatabricks.net"), "a API do workspace não é lida");
+        scenario.TokenScopes.Should().NotContain(AzureScenario.DatabricksTokenScope, "nenhum token é pedido para o recurso do Databricks");
+        var cap = run.Capabilities.Single(c => c.Capability == KnightCapability.AzureDatabricksWorkspaceApi);
+        cap.Outcome.Should().Be(KnightCapabilityOutcome.NotAttempted);
+        cap.Detail.Should().Contain("Não solicitada").And.Contain("somente leitura");
+        DependOn(KnightSourceType.MicrosoftAzure, KnightCapability.AzureDatabricksWorkspaceApi)
+            .Should().BeEquivalentTo(DbxWorkspaceApiControls, "só tokens, SCIM e clusters dependem da API do workspace");
+        foreach (var id in DbxWorkspaceApiControls)
+        {
+            var i = run.Indicators.Single(x => x.IndicatorId == id);
+            i.Status.Should().Be(KnightIndicatorStatus.NotEvaluated, id);
+            i.NotEvaluatedReason.Should().Contain("Não solicitada", id);
+        }
+        // O Unity Catalog e os controles do workspace pelo Resource Manager continuam avaliados (e aprovados).
+        run.Indicators.Where(i => i.IndicatorId.StartsWith("AK-AZ-DBR-", StringComparison.Ordinal) && !DbxWorkspaceApiControls.Contains(i.IndicatorId))
+            .Should().NotBeEmpty().And.OnlyContain(i => i.Status == KnightIndicatorStatus.Passed);
 
         var json = await AllObservedJson(db, run.Id);
-        json.Should().NotContain(AzureScenario.Secret, "a configuração Spark pode carregar segredo: só o booleano calculado é gravado");
+        json.Should().NotContain(AzureScenario.Secret);
         json.Should().NotContain("spark_conf").And.NotContain("spark.authenticate");
         json.Should().NotContain("seguranca@clientedemo").And.NotContain("+55 11", "contatos de segurança: só a contagem de endereços");
         json.Should().NotContain("\"secretName\"").And.NotContain("SecretUri", "referência ao Key Vault: só cofre, estado e origem");
@@ -125,47 +138,56 @@ public sealed class KnightClosureFlowTests : IDisposable
     }
 
     [Fact]
-    public async Task Databricks_Desligado_NenhumPedidoAoWorkspace_EControlesNaoAvaliadosComOMotivo()
+    public async Task UnityCatalog_PeloResourceManager_SoOVerdadeiroAprova_FalsoNuncaReprova()
     {
         await SeedAsync(TenantA);
         await using var db = NewContext(TenantA);
-        var scenario = new AzureScenario(AzureScenario.Variant.Compliant);
-        var run = await KnightAzureFlowTests.ServiceFor(db, TenantA, scenario, AzureScenario.Configuration(databricksWorkspaceApi: false))
-            .RunAssessmentAsync(KnightSourceType.MicrosoftAzure);
 
-        scenario.Requests.Should().NotContain(u => u.Contains(".azuredatabricks.net"), "sem habilitação explícita, o workspace não é tocado");
-        scenario.TokenScopes.Should().NotContain(AzureArmPlan.DatabricksScope);
-        var cap = run.Capabilities.Single(c => c.Capability == KnightCapability.AzureDatabricksWorkspaceApi);
-        cap.Outcome.Should().Be(KnightCapabilityOutcome.NotAttempted);
-        cap.Detail.Should().Contain("Integrações");
-        foreach (var id in DependOn(KnightSourceType.MicrosoftAzure, KnightCapability.AzureDatabricksWorkspaceApi))
-        {
-            var i = run.Indicators.Single(x => x.IndicatorId == id);
-            i.Status.Should().Be(KnightIndicatorStatus.NotEvaluated, id);
-            i.NotEvaluatedReason.Should().Contain("Integrações", id);
-        }
-        // Os controles do Databricks pelo Resource Manager continuam avaliados.
-        run.Indicators.Where(i => i.IndicatorId.StartsWith("AK-AZ-DBR-", StringComparison.Ordinal)
-                                  && !DependOn(KnightSourceType.MicrosoftAzure, KnightCapability.AzureDatabricksWorkspaceApi).Contains(i.IndicatorId))
-            .Should().NotBeEmpty().And.OnlyContain(i => i.Status == KnightIndicatorStatus.Passed);
+        var compliant = await KnightAzureFlowTests.ServiceFor(db, TenantA, new AzureScenario(AzureScenario.Variant.Compliant))
+            .RunAssessmentAsync(KnightSourceType.MicrosoftAzure);
+        var ok = compliant.Indicators.Single(i => i.IndicatorId == "AK-AZ-DBR-008");
+        ok.Status.Should().Be(KnightIndicatorStatus.Passed, "isUcEnabled = verdadeiro: a habilitação do Unity Catalog não se desfaz");
+        KnightControlProfiles.RequiredCapabilitiesOf("AK-AZ-DBR-008").Should().Contain(KnightCapability.AzureDatabricks)
+            .And.NotContain(KnightCapability.AzureDatabricksWorkspaceApi, "o Unity Catalog não depende mais da API do workspace");
+
+        var nonCompliant = await KnightAzureFlowTests.ServiceFor(db, TenantA, new AzureScenario(AzureScenario.Variant.NonCompliant))
+            .RunAssessmentAsync(KnightSourceType.MicrosoftAzure);
+        var no = nonCompliant.Indicators.Single(i => i.IndicatorId == "AK-AZ-DBR-008");
+        no.Status.Should().Be(KnightIndicatorStatus.NotEvaluated,
+            "isUcEnabled = falso não comprova a ausência: a atribuição pelo console da conta pode não aparecer na propriedade");
+        no.NotEvaluatedReason.Should().NotBeNullOrWhiteSpace();
     }
 
     [Fact]
-    public async Task Databricks_Recusado_NaoAprova_EORequisitoEhNomeado()
+    public async Task UnityCatalog_PropriedadeAusente_NaoAprova()
     {
         await SeedAsync(TenantA);
         await using var db = NewContext(TenantA);
-        var run = await KnightAzureFlowTests.ServiceFor(db, TenantA, new AzureScenario(AzureScenario.Variant.DatabricksDenied))
+        var run = await KnightAzureFlowTests.ServiceFor(db, TenantA, new AzureScenario(AzureScenario.Variant.UnityCatalogNotReported))
             .RunAssessmentAsync(KnightSourceType.MicrosoftAzure);
         Dump(run);
 
-        run.Capabilities.Single(c => c.Capability == KnightCapability.AzureDatabricksWorkspaceApi).Outcome
+        run.Indicators.Single(i => i.IndicatorId == "AK-AZ-DBR-008").Status.Should().Be(KnightIndicatorStatus.NotEvaluated,
+            "sem o valor informado pela fonte, o controle não aprova nem reprova");
+        run.Indicators.Single(i => i.IndicatorId == "AK-AZ-KV-005").Status.Should().Be(KnightIndicatorStatus.Passed,
+            "a propriedade ausente não contamina controles independentes");
+    }
+
+    [Fact]
+    public async Task UnityCatalog_PopulacaoParcial_NaoAprovaPeloQueFoiLido()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+        var run = await KnightAzureFlowTests.ServiceFor(db, TenantA, new AzureScenario(AzureScenario.Variant.DatabricksDeniedInB))
+            .RunAssessmentAsync(KnightSourceType.MicrosoftAzure);
+        Dump(run);
+
+        run.Capabilities.Single(c => c.Capability == KnightCapability.AzureDatabricks).Outcome
             .Should().Be(KnightCapabilityOutcome.InsufficientPermission);
-        foreach (var id in DependOn(KnightSourceType.MicrosoftAzure, KnightCapability.AzureDatabricksWorkspaceApi))
-            run.Indicators.Single(i => i.IndicatorId == id).Status.Should().Be(KnightIndicatorStatus.NotEvaluated, id);
-        KnightCapabilityLabels.RequiredPermission(KnightCapability.AzureDatabricksWorkspaceApi, KnightSourceType.MicrosoftAzure)
-            .Should().Contain("workspace", "o acesso que falta é concedido dentro do Databricks");
-        run.Indicators.Single(i => i.IndicatorId == "AK-AZ-KV-005").Status.Should().Be(KnightIndicatorStatus.Passed);
+        run.Indicators.Single(i => i.IndicatorId == "AK-AZ-DBR-008").Status.Should().Be(KnightIndicatorStatus.NotEvaluated,
+            "o workspace lido tem o Unity Catalog, mas a segunda assinatura não foi enumerada");
+        run.Indicators.Single(i => i.IndicatorId == "AK-AZ-KV-005").Status.Should().Be(KnightIndicatorStatus.Passed,
+            "a recusa numa família não invalida controles independentes");
     }
 
     // ---- Entra: versão beta do Microsoft Graph -------------------------------------------------------------

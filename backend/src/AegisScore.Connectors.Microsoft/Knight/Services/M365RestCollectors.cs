@@ -147,35 +147,30 @@ public sealed class IntuneKnightCollector : KnightRestCollectorBase
 // ---- SharePoint e OneDrive -------------------------------------------------------------------------------
 
 /// <summary>
-/// SharePoint e OneDrive em DUAS leituras independentes:
-///   • Microsoft Graph v1.0 <c>GET /admin/sharepoint/settings</c> (<c>SharePointTenantSettings.Read.All</c>, aceita
-///     segredo) — compartilhamento externo, repartilhamento por convidados, domínios, autenticação legada e
-///     sincronização em dispositivos não gerenciados;
-///   • API de administração do SharePoint (objeto <c>Tenant</c>), a ÚNICA leitura oficial das demais configurações
-///     (OneDrive, links padrão, expiração de convidados, reautenticação, download de arquivo infectado, B2B). A
-///     Microsoft exige, sem usuário, <c>Sites.FullControl.All</c> no SharePoint e token obtido por CERTIFICADO — sem
-///     certificado configurado a leitura não é tentada e o motivo é registrado.
+/// SharePoint e OneDrive pelo Microsoft Graph v1.0 <c>GET /admin/sharepoint/settings</c>
+/// (<c>SharePointTenantSettings.Read.All</c>, somente leitura, aceita segredo): compartilhamento externo, recompartilhamento
+/// por convidados, domínios, autenticação legada e sincronização em dispositivos não gerenciados.
+/// <para>[AEGIS-KNIGHT-READONLY-01] A API de administração do SharePoint (objeto <c>Tenant</c>) — a única leitura oficial
+/// de OneDrive, links padrão, expiração de convidados, reautenticação, download de arquivo infectado, B2B e grupos
+/// autorizados — NÃO é lida: sem usuário, a Microsoft só a abre com <c>Sites.FullControl.All</c>, que também concede
+/// escrita em todos os sites. Ter certificado não muda isso. A capacidade é registrada como não tentada, com o motivo, e
+/// as regras usam o que o Graph sustenta (ver <c>M365ServiceControls</c>).</para>
 /// </summary>
 public sealed class SharePointKnightCollector : KnightRestCollectorBase
 {
     internal const string GraphSettingsUrl = "admin/sharepoint/settings";
-    internal const string OrganizationUrl = "organization?$select=verifiedDomains";
 
-    internal const string CertificateRequired =
-        "A API de administração do SharePoint só aceita token de aplicativo obtido por certificado; o conector Microsoft não "
-        + "tem certificado configurado. Configurações de OneDrive, links, expiração de convidados, reautenticação, arquivos "
-        + "infectados e integração B2B não foram lidas.";
+    internal const string AdminApiNotRequested =
+        "Não solicitada: a API de administração do SharePoint só aceita aplicativo com Sites.FullControl.All, que também concede "
+        + "escrita em todos os sites. O AEGIS opera só com leitura; configurações de OneDrive, links padrão, expiração de convidados, "
+        + "reautenticação, arquivos infectados, integração B2B e grupos autorizados que o Microsoft Graph não expõe ficam não avaliadas.";
 
     private readonly IEntraGraphClient _graph;
-    private readonly IMicrosoftAppTokenClient _tokens;
-    private readonly IMicrosoftRestClient _rest;
 
-    public SharePointKnightCollector(IEntraGraphClient graph, IMicrosoftAppTokenClient tokens, IMicrosoftRestClient rest,
-        ILogger<SharePointKnightCollector>? log = null, TimeProvider? time = null) : base(log, time)
+    public SharePointKnightCollector(IEntraGraphClient graph, ILogger<SharePointKnightCollector>? log = null, TimeProvider? time = null)
+        : base(log, time)
     {
         _graph = graph;
-        _tokens = tokens;
-        _rest = rest;
     }
 
     public override KnightSourceType Source => KnightSourceType.MicrosoftSharePoint;
@@ -185,17 +180,6 @@ public sealed class SharePointKnightCollector : KnightRestCollectorBase
         KnightCapability.SharePointTenantSettings,
         KnightCapability.SharePointAdminTenant,
     };
-
-    /// <summary>Host de administração derivado do domínio inicial (<c>contoso.onmicrosoft.com</c> → <c>contoso-admin.sharepoint.com</c>).</summary>
-    public static string? AdminHost(string? initialDomain)
-    {
-        if (string.IsNullOrWhiteSpace(initialDomain)) return null;
-        var d = initialDomain.Trim().ToLowerInvariant();
-        const string suffix = ".onmicrosoft.com";
-        if (!d.EndsWith(suffix, StringComparison.Ordinal)) return null;
-        var prefix = d[..^suffix.Length];
-        return prefix.Length > 0 && prefix.All(ch => char.IsLetterOrDigit(ch) || ch == '-') ? $"{prefix}-admin.sharepoint.com" : null;
-    }
 
     protected override async Task CollectCoreAsync(
         IMicrosoftGraphCredentials cfg, KnightSourceConfiguration _, KnightCapabilityRecorder recorder, CancellationToken ct)
@@ -214,38 +198,8 @@ public sealed class SharePointKnightCollector : KnightRestCollectorBase
                     Bool(s, "isRequireAcceptingUserToMatchInvitedUserEnabled"))));
         }, ct);
 
-        if (cfg.ClientCertificate is null)
-        {
-            recorder.Record(KnightCapability.SharePointAdminTenant, KnightCapabilityOutcome.NotAttempted, CertificateRequired);
-            return;
-        }
-
-        await recorder.RunAsync(KnightCapability.SharePointAdminTenant, async add =>
-        {
-            var org = await _graph.GetJsonAsync(token, cfg, OrganizationUrl, ct);
-            var initial = Items(org, "value").SelectMany(o => Items(o, "verifiedDomains"))
-                .FirstOrDefault(d => Bool(d, "isInitial") == true);
-            var host = AdminHost(initial.ValueKind == JsonValueKind.Object ? Str(initial, "name") : null)
-                ?? throw new EntraGraphException(EntraGraphErrorKind.Unavailable,
-                    "domínio inicial do locatário não permite derivar o host de administração do SharePoint", endpointPath: "/organization");
-
-            var adminToken = await _tokens.AcquireAsync(cfg, $"https://{host}/.default", ct);
-            var root = await _rest.GetAsync(adminToken, $"https://{host}/_api/SPO.Tenant", ct);
-            var t = Prop(root, "d").ValueKind == JsonValueKind.Object ? Prop(root, "d") : root;
-            var oneDrive = Int(t, "OneDriveSharingCapability") ?? Int(t, "ODBSharingCapability");
-            add(KnightTenantConfiguration.Document(SharePointAdminTenant.ExternalId, "Configurações do SharePoint e OneDrive (administração)",
-                new SharePointAdminTenant(
-                    SharePointAdminTenant.SharingCapabilityName(Int(t, "SharingCapability")),
-                    SharePointAdminTenant.SharingCapabilityName(oneDrive),
-                    Bool(t, "EnableAzureADB2BIntegration"),
-                    SharePointAdminTenant.SharingLinkTypeName(Int(t, "DefaultSharingLinkType")),
-                    SharePointAdminTenant.SharingPermissionName(Int(t, "DefaultLinkPermission")),
-                    Bool(t, "ExternalUserExpirationRequired"), Int(t, "ExternalUserExpireInDays"),
-                    Bool(t, "EmailAttestationRequired"), Int(t, "EmailAttestationReAuthDays"),
-                    Bool(t, "DisallowInfectedFileDownload"),
-                    Strings(t, "GuestSharingGroupAllowListInTenantByPrincipalIdentity"),
-                    Bool(t, "LegacyAuthProtocolsEnabled"))));
-        }, ct);
+        // Com ou sem certificado: nenhum token para o host de administração e nenhuma chamada a ele.
+        recorder.Record(KnightCapability.SharePointAdminTenant, KnightCapabilityOutcome.NotAttempted, AdminApiNotRequested);
     }
 }
 
