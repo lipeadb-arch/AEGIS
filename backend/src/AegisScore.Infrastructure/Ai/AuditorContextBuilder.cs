@@ -1,245 +1,52 @@
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using AegisScore.Application.Abstractions;
-using AegisScore.Application.Queries;
 using AegisScore.Application.Services;
-using AegisScore.Domain;
 using AegisScore.Infrastructure.Persistence;
 
 namespace AegisScore.Infrastructure.Ai;
 
-/// <summary>
-/// Constrói o <see cref="AuditorTenantContext"/> a partir da MESMA projeção de postura do Dashboard/Funções
-/// (<see cref="IWorkspacePostureQuery"/>) + as lacunas (controles NonCompliant) e a evidência documental
-/// CURTA (trecho literal já validado) do tenant ambiente. Somente leitura, isolado pelo Global Query Filter.
-/// Nunca inclui documento completo nem log bruto — só agregados e trechos limitados.
-/// </summary>
+/// <summary>Contexto dos assessments KNIGHT/NIST, documentos e inventário; sem uma terceira pontuação.</summary>
 public sealed class AuditorContextBuilder : IAuditorContextBuilder
 {
-    private const int MaxGaps = 8;
-    private const int MaxEvidence = 6;
-    private const int MaxRecommendations = 6;
-    private const int MaxExposures = 8;
-    private const int MaxVulnerabilities = 8;
-    private const int MaxDetectionTechniques = 12;
-    private const int EvidenceQuoteMaxChars = 240;
-    private const int ReasonMaxChars = 160;
-    private const int RemediationMaxChars = 240;
-
     private readonly AegisScoreDbContext _db;
-    private readonly IWorkspacePostureQuery _posture;
-    private readonly IPostureExposureQuery _exposureQuery;
-    private readonly IVulnerabilityQuery _vulnerabilityQuery;
-    private readonly IDetectionCoverageQuery _detectionCoverageQuery;
-    private readonly IAuditorAssessmentContextBuilder? _assessments;
+    private readonly IAuditorAssessmentContextBuilder _assessments;
 
-    public AuditorContextBuilder(
-        AegisScoreDbContext db,
-        IWorkspacePostureQuery posture,
-        IPostureExposureQuery exposureQuery,
-        IVulnerabilityQuery vulnerabilityQuery,
-        IDetectionCoverageQuery detectionCoverageQuery,
-        IAuditorAssessmentContextBuilder? assessments = null)
+    public AuditorContextBuilder(AegisScoreDbContext db, IAuditorAssessmentContextBuilder assessments)
     {
         _db = db;
-        _posture = posture;
-        _exposureQuery = exposureQuery;
-        _vulnerabilityQuery = vulnerabilityQuery;
-        _detectionCoverageQuery = detectionCoverageQuery;
         _assessments = assessments;
     }
 
-    /// <summary>
-    /// [AEGIS-AUDITOR-CONTEXT-01] Postura do ambiente (o contexto de sempre) + os registros dos assessments para o foco. A seleção da tela
-    /// é conferida PRIMEIRO: de outro tenant, nada é lido nem enviado. A postura do ambiente ganha fontes citáveis (S…) com a mesma
-    /// leitura dos campos detalhados.
-    /// </summary>
     public async Task<AuditorTenantContext> BuildAsync(AuditorFocus focus, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(focus);
-        var assessments = _assessments is null
-            ? new AuditorAssessmentContext(DateTimeOffset.UtcNow, focus.PageLabel, Array.Empty<AuditorContextSource>(), Array.Empty<string>())
-            : await _assessments.BuildAsync(focus, ct);
-        var current = await BuildAsync(ct);
-        return current with { Assessments = assessments.With(PostureSources(current)) };
-    }
-
-    /// <summary>Fontes citáveis da postura do ambiente (AEGIS Score, recomendações, vulnerabilidades, detecção) — resumo dos campos.</summary>
-    private static IEnumerable<AuditorContextSource> PostureSources(AuditorTenantContext c)
-    {
-        yield return new AuditorContextSource("S1", "Postura do ambiente", AuditorSourceNature.Indicator, "AEGIS Score — postura do ambiente",
-            c.ScoreState == "Evaluated"
-                ? $"Score {c.ScorePercentage:0.#}/100; cobertura {c.CoveragePercentage:0.#}% dos controles elegíveis; {c.CompliantControls} conforme(s), " +
-                  $"{c.NonCompliantControls} não conforme(s), {c.MitigatedControls} mitigado(s), {c.NotEvaluatedControls} não avaliado(s) (campos ScoreState/TopGaps)."
-                : $"Sem score: nenhum controle avaliado (cobertura {c.CoveragePercentage:0.#}%).",
-            c.LatestEvidenceAt?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), false,
-            "Postura do ambiente por telemetria e documentos (0–100): não é a nota do KNIGHT nem a maturidade NIST.",
-            new AuditorSourceLink("/history", new Dictionary<string, string> { ["vista"] = "tendencia" }));
-        if (c.TopExposures is { } ex)
-            yield return new AuditorContextSource("S2", "Postura do ambiente", AuditorSourceNature.ObservedConfiguration,
-                "Recomendações de postura pendentes (fonte Microsoft Secure Score)",
-                $"{ex.Count} recomendação(ões) principais no campo TopExposures (ordem da fonte).", null, false,
-                "Recomendação da fonte: diferença de pontos não comprova configuração insegura, exposição ou vulnerabilidade.",
-                new AuditorSourceLink("/nist/pr/recomendacoes"));
-        if (c.TopVulnerabilities is { } vu)
-            yield return new AuditorContextSource("S3", "Postura do ambiente", AuditorSourceNature.ObservedConfiguration,
-                "Vulnerabilidades em aberto identificadas pelas fontes",
-                $"{vu.Count} problema(s) principais no campo TopVulnerabilities (agrupados por CVE, com o alcance em ativos).", null, false,
-                "Identificação da fonte; CVSS não é risco de negócio e exploit disponível não é exploração confirmada.",
-                new AuditorSourceLink("/nist/id/vulnerabilidades"));
-        if (c.DetectionCoverage is { } dc)
-            yield return new AuditorContextSource("S4", "Postura do ambiente", AuditorSourceNature.ObservedConfiguration,
-                $"Cobertura de detecção configurada ({dc.Source})",
-                $"{dc.ActiveRules} regra(s) ativa(s), {dc.TechniquesObserved} técnica(s) MITRE observada(s) (campo DetectionCoverage).", null, false,
-                "Regra configurada não comprova detecção funcional nem conformidade.", null);
+        // Valida a seleção e o tenant antes de carregar qualquer evidência.
+        var assessments = await _assessments.BuildAsync(focus, ct);
+        var context = await BuildAsync(ct);
+        return context with { Assessments = assessments };
     }
 
     public async Task<AuditorTenantContext> BuildAsync(CancellationToken ct = default)
     {
-        // Postura (score/cobertura/contagens + Funções + saúde dos conectores) pela autoridade única.
-        var w = await _posture.GetAsync(ct);
-
-        var functions = w.Functions
-            .Select(f => new AuditorFunctionPosture(
-                f.Code, f.Name, f.EvaluationState, f.Percentage, f.CoveragePercentage,
-                f.NonCompliantControls, f.NotEvaluatedControls))
-            .ToList();
-
-        // Lacunas: controles NonCompliant do tenant (Global Query Filter), com a natureza da prova ausente.
-        // Materializa a entidade (o jsonb de MissingRequirements passa pelo mesmo conversor do resto do app) e
-        // ordena por recência CLIENT-SIDE: ORDER BY de DateTimeOffset não é portável a todo provedor (ex.:
-        // SQLite). O conjunto NonCompliant por tenant é pequeno (limitado pelo catálogo), então é barato.
-        var gapEntities = (await _db.TenantControlStates.AsNoTracking()
-                .Include(s => s.Subcategory)
-                .Where(s => s.Status == ControlStatus.NonCompliant)
-                .ToListAsync(ct))
-            .OrderByDescending(s => s.LastEvaluatedAt)
-            .Take(MaxGaps)
-            .ToList();
-
-        var topGaps = gapEntities
-            .Select(s => new AuditorControlGap(
-                s.Subcategory?.Code ?? "",
-                "NonCompliant",
-                s.MissingRequirements.FirstOrDefault()?.Description ?? Truncate(s.AiEvidence, ReasonMaxChars)))
-            .Where(g => !string.IsNullOrWhiteSpace(g.SubcategoryCode))
-            .ToList();
-
-        // Evidência documental: SÓ o trecho literal já validado (EvidenceQuote não-nulo), truncado — nunca o
-        // documento inteiro. Ordenada por confiança para trazer a mais forte primeiro.
-        var evidenceRows = await (
-            from m in _db.DocumentControlMappings.AsNoTracking()
-            join d in _db.GovernanceDocuments.AsNoTracking() on m.GovernanceDocumentId equals d.Id
-            where m.EvidenceQuote != null && m.EvidenceQuote != ""
-            orderby m.Confidence descending
-            select new { d.Title, m.SubcategoryCode, m.Confidence, m.EvidenceQuote })
-            .Take(MaxEvidence)
-            .ToListAsync(ct);
-
-        var recentEvidence = evidenceRows
-            .Select(e => new AuditorDocumentEvidence(
-                e.Title, e.SubcategoryCode, e.Confidence, Truncate(e.EvidenceQuote, EvidenceQuoteMaxChars)))
-            .ToList();
-
-        var connectors = new AuditorConnectorContext(
-            w.Connectors.Configured, w.Connectors.Enabled, w.Connectors.Healthy,
-            w.Connectors.Degraded, w.Connectors.Failed, w.Connectors.NeverSynced, w.Connectors.LastSyncAt);
-
-        // [AEGIS-MVP-LANGUAGE-02] Exposições de configuração ABERTAS pela AUTORIDADE de leitura — já com linguagem
-        // CLARA e texto de fonte SANITIZADO (nunca HTML/bruto atravessa para a IA). No máx. MaxExposures, ordenação
-        // da fonte (rank asc, depois maior gap) preservada pela query.
-        var exposurePage = await _exposureQuery.GetAsync(
-            new PostureExposureFilter(State: PostureExposureStateFilter.Open, Page: 1, PageSize: MaxExposures), ct);
-        var topExposures = exposurePage.Items
-            .Select(e => new AuditorPostureExposure(
-                e.ExternalId, e.DisplayTitle, e.WhyItMatters,
-                e.FirstAction is null ? null : Truncate(e.FirstAction, RemediationMaxChars),
-                e.Category, e.Service, e.Gap, e.SourceRank, e.Tier, e.Threats))
-            .ToList();
-
-        // [AEGIS-MVP-LANGUAGE-02] Vulnerabilidades AGRUPADAS por CVE/problema (JAMAIS o mesmo CVE repetido por ativo)
-        // pela AUTORIDADE de leitura. Título CLARO determinístico + rótulo de exploit (DISPONIBILIDADE, não ataque no
-        // ambiente) + ALCANCE (quantidade de ativos). No máx. MaxVulnerabilities. SÓ campos permitidos — NUNCA
-        // machineId, ExternalId de binding, IP, aadDeviceId, segredo, payload bruto ou inventário completo.
-        var vulnOverview = await _vulnerabilityQuery.GetOverviewAsync(
-            new VulnerabilityFilter(State: VulnerabilityLifecycleFilter.Open, Page: 1, PageSize: MaxVulnerabilities), ct);
-        // Textos claros VERBATIM da autoridade única (VulnerabilityNarrative via a query) — a IA não recalcula.
-        var topVulnerabilities = vulnOverview.Groups
-            .Select(g => new AuditorVulnerability(
-                g.CveId, g.DisplayTitle, g.Severity, g.CvssScore, g.Epss,
-                g.ExploitLabel, g.WhyItMatters, g.FirstAction,
-                g.OpenAssetCount, g.AffectedAssetCount, g.MaxAssetCriticality, g.EffectiveLifecycle, g.Providers))
-            .ToList();
-
-        // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (regras × MITRE) pela AUTORIDADE de leitura — só agregados
-        // e as técnicas que requerem atenção primeiro (a query já ordena assim), no máx. MaxDetectionTechniques. FATO
-        // CONSULTIVO: só entra quando há inventário (Available/Partial ou Unavailable com dados preservados); nunca
-        // nome/texto de regra, credencial ou payload. NÃO vira score/evidência/conformidade.
-        var coverageView = await _detectionCoverageQuery.GetAsync(ct);
-        AuditorDetectionCoverage? detectionCoverage = coverageView.Techniques.Count > 0
-            ? new AuditorDetectionCoverage(
-                coverageView.Source ?? "SIEM",
-                coverageView.AttackVersion,
-                coverageView.State.ToString(),
-                coverageView.Summary.ActiveRules,
-                coverageView.Summary.RulesWithMitre,
-                coverageView.Summary.RulesWithoutMitre,
-                coverageView.Summary.RulesInLiveMode,
-                coverageView.Summary.RulesWithAlerting,
-                coverageView.Summary.TechniquesObserved,
-                coverageView.Techniques
-                    .Take(MaxDetectionTechniques)
-                    .Select(t => new AuditorDetectionTechnique(
-                        t.TechniqueId, t.Name, t.Tactics.Select(x => x.Name).ToList(),
-                        t.RuleCount, t.LiveRuleCount, t.AlertingRuleCount, t.StatusLabel))
-                    .ToList())
-            : null;
-
-        // [AEGIS-LANGUAGE-STATES-01] Estado de LEITURA das fontes pela MESMA derivação da Visão geral: sem isto,
-        // TopExposures/TopVulnerabilities vazios chegavam à IA iguais a "coletado sem achados".
-        var sourceReadings = new[]
-        {
-            ToReading(CollectionReadings.PostureRecommendationsLabel + " pendentes",
-                CollectionReadings.PostureRecommendations(exposurePage.Summary)),
-            ToReading("Vulnerabilidades em aberto (problemas distintos)",
-                CollectionReadings.Vulnerabilities(vulnOverview.Summary, vulnOverview.Summary.DistinctCvesOpen)),
-        };
-
-        // Recomendações pendentes derivadas das lacunas (curtas, sem inventar): "código: o que falta".
-        var recommendations = topGaps
-            .Select(g => string.IsNullOrWhiteSpace(g.Reason) ? g.SubcategoryCode : $"{g.SubcategoryCode}: {g.Reason}")
-            .Take(MaxRecommendations)
-            .ToList();
-
-        return new AuditorTenantContext(
-            w.Overall.EvaluationState,
-            w.Overall.Percentage,
-            w.Overall.CoveragePercentage,
-            w.Overall.CompliantControls,
-            w.Overall.NonCompliantControls,
-            w.Overall.MitigatedControls,
-            w.Overall.NotEvaluatedControls,
-            w.Overall.LatestEvidenceAt,
-            functions,
-            topGaps,
-            recentEvidence,
-            connectors,
-            recommendations,
-            topExposures,
-            topVulnerabilities,
-            detectionCoverage,
-            sourceReadings);
-    }
-
-    private static AuditorSourceReading ToReading(string dimension, DashboardMetricDto m) =>
-        new(dimension, m.SourceLabel, m.State.ToString(), m.Value, m.ObservedAt, m.Note);
-
-    private static string Truncate(string? s, int max)
-    {
-        var t = (s ?? "").Trim();
-        return t.Length <= max ? t : t[..max] + "…";
+        var rows = await (from m in _db.DocumentControlMappings.AsNoTracking()
+                          join d in _db.GovernanceDocuments.AsNoTracking() on m.GovernanceDocumentId equals d.Id
+                          where m.EvidenceQuote != null && m.EvidenceQuote != ""
+                          orderby m.Confidence descending
+                          select new { d.Title, m.SubcategoryCode, m.Confidence, m.EvidenceQuote })
+                         .Take(8).ToListAsync(ct);
+        var evidence = rows.Select(e => new AuditorDocumentEvidence(e.Title, e.SubcategoryCode, e.Confidence,
+            e.EvidenceQuote!.Length <= 240 ? e.EvidenceQuote : e.EvidenceQuote[..240] + "…")).ToList();
+        var sources = await _db.Connectors.AsNoTracking().ToListAsync(ct);
+        sources = sources.Where(c => ProductConnectorScope.Supports(c.Provider, c.Capability)).ToList();
+        var connectors = new AuditorConnectorContext(sources.Count, sources.Count(c => c.Enabled),
+            sources.Count(c => c.LastStatus == AegisScore.Domain.ConnectorStatus.Healthy),
+            sources.Count(c => c.LastStatus == AegisScore.Domain.ConnectorStatus.Degraded),
+            sources.Count(c => c.LastStatus == AegisScore.Domain.ConnectorStatus.Failed),
+            sources.Count(c => c.LastSyncAt == null), sources.Max(c => c.LastSyncAt));
+        // Campos da versão anterior permanecem neutros por compatibilidade de contrato.
+        // As notas reais, evidências e limitações vêm de Assessments, com seleção identificada.
+        return new AuditorTenantContext("Retired", null, 0, 0, 0, 0, 0, null,
+            Array.Empty<AuditorFunctionPosture>(), Array.Empty<AuditorControlGap>(), evidence, connectors,
+            Array.Empty<string>());
     }
 }

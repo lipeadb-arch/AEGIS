@@ -73,7 +73,7 @@ public static class NistReportHtmlWriter
           .Append(Card("Achados abertos", s.FindingsOpen.ToString(Pt), $"{s.FindingsRiskAccepted} com risco aceito · {s.FindingsClosed} encerrados"))
           .Append(Card("Planos", s.PlansActive.ToString(Pt) + " ativos", $"{s.PlansCompleted} concluídos · {s.PlansOverdue} atrasados"))
           .Append("</div>");
-        sb.Append("<p class=\"note\">").Append(E(NistMethodologyText.InstrumentsNote)).Append("</p>");
+        sb.Append("<p class=\"note\">").Append(E(r.Methodology.InstrumentsNote)).Append("</p>");
         // [AEGIS-NIST-AI-ASSIST-01] Resumo executivo ACEITO (só quando existe; relatório sem ele sai como antes).
         if (r.Interpretation is { } it) AppendInterpretation(sb, it);
 

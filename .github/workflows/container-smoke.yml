@@ -1,7 +1,4 @@
-# [Homologação] Valida a imagem ÚNICA de homologação em Linux real (o que não pôde rodar localmente por
-# ausência de Docker): PDF/acentos no Linux, testes DIRECIONADOS dos conectores SIEM (Google SecOps/Chronicle
-# + Microsoft Sentinel, HTTP simulado), build da imagem do Dockerfile atual e um smoke do container
-# (não-root + grupo 1000 + secret file, migrator -> bootstrap -> API, health e SPA). NÃO é uma suíte geral.
+# Valida exportações, funcionalidades preservadas e a imagem da plataforma KNIGHT/NIST.
 name: container-smoke
 
 on:
@@ -43,7 +40,6 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      # 1) PDF no Linux: instala DejaVu e roda SÓ os testes de exportação (geração + acentos).
       - name: Install DejaVu fonts
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core
 
@@ -52,271 +48,14 @@ jobs:
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
           -c Release --filter "FullyQualifiedName~PostureSnapshotExportTests"
 
-      # 1b) Testes DIRECIONADOS dos conectores SIEM em Linux real — HTTP SIMULADO (sem credenciais Google, sem API
-      #     viva, sem PostgreSQL). Prova em Linux: contrato HTTP oficial do Chronicle (instances.get, cases.list v1,
-      #     legacySearchEnterpriseWideAlerts), autenticação Google (service account, sem DWD), allowlist e segurança
-      #     do bearer, agregação/parcialidade, ZERO sinais de score, registro na DI e a regressão do Microsoft
-      #     Sentinel. [AEGIS-MVP-GOOGLE-SECOPS-02] Inclui a COBERTURA DE DETECÇÃO: transporte rules.list CONFIG_ONLY
-      #     (ChronicleRulesApiTests), agregação regras×MITRE (DetectionCoverageCollectorTests), catálogo MITRE v17.1
-      #     real (MitreAttackCatalogTests) e a reconciliação/leitura + GARANTIA de zero score (DetectionCoveragePersistenceTests,
-      #     SQLite). [AEGIS-MVP-MICROSOFT-COVERAGE-02] Inclui o Microsoft Intune: transporte/coletor por HTTP simulado
-      #     sobre o Graph v1.0 (IntuneDevicePostureCollectorTests), reconciliação por DIMENSÃO + leitura honesta
-      #     (DevicePosturePersistenceTests, SQLite) e a garantia de ZERO EvidenceSignal/TenantControlState pela cadeia
-      #     completa do executor (ScoreGuardDevicePostureTests). [AEGIS-MVP-MICROSOFT-COVERAGE-03] Inclui o RISCO
-      #     DE IDENTIDADE do Entra: transporte/semântica/parcialidade/privacidade por HTTP simulado sobre o Graph
-      #     v1.0 (EntraIdentityRiskCollectorTests) e o schema v2 da Evidence Fabric, a compatibilidade com o v1 e
-      #     as GUARDAS de score/NIST (IdentityRiskEvidenceFabricTests, SQLite).
-      # ⚠️ Filtro POR CLASSE, igual ao de migrations-pg, e NENHUM job roda a suíte backend inteira: uma classe de
-      #     teste NOVA que não seja adicionada aqui simplesmente não executa e o check fica verde assim mesmo
-      #     (falso verde). Confira SEMPRE a CONTAGEM no log, não só conclusion=success.
-      #     [AEGIS-MVP-PRODUCT-01] Inclui a tela inicial e a honestidade documental: a COMPOSIÇÃO por dimensão
-      #     independente da Visão geral (DashboardOverviewQueryTests, SQLite — ambiente observado NÃO some por
-      #     falta de maturidade legada, e ausência de coleta é null, nunca zero) e o gate do provedor documental
-      #     SIMULADO (DocumentIntegrationFactoryTests + SimulatedDocumentProviderGuardTests). A revisão do Codex
-      #     acrescentou a distinção de INVENTÁRIO a DashboardOverviewQueryTests (inventário vazio não prova
-      #     ausência de coleta): a classe já consta no filtro, então os 2 casos novos executam aqui de fato — a
-      #     contagem deste passo sobe de 286 para 288.
-      #     [AEGIS-MVP-PRODUCT-03] Entra RemediationJourneyTests (SQLite): a JORNADA de remediação — duplicação
-      #     por clique repetido e reabertura de ciclo, transições do fluxo mínimo, atraso derivado do PRAZO,
-      #     origem × validação como referências separadas, evidência que NÃO comprova correção (ordem temporal,
-      #     fonte, regras e suficiência POR INDICADOR), publicação da avaliação PEDIDA sem troca pela mais
-      #     recente, congelamento das ações no snapshot, isolamento por tenant, autorização das mutações por
-      #     reflexão, compatibilidade do plano legado de risco e do hash de snapshot legado, e a serialização
-      #     efetiva dos contratos novos com as opções REAIS do MVC. A correção dirigida acrescentou a BASE do
-      #     encerramento (execução relatada + validação aplicável AO CICLO), a reabertura que repactua o ciclo
-      #     sem reaproveitar comprovação antiga, a ressalva de CAUSALIDADE quando a coleta antecede o relato de
-      #     execução, a separação por fonte/modo (demonstração × coleta real sob o mesmo indicador), o relatório
-      #     real que exclui ação de demonstração e a proveniência congelada impressa no PDF. A segunda correção
-      #     acrescentou a APLICABILIDADE AO CICLO congelada na fotografia: uma ação reaberta sem comprovação
-      #     nova sai do total de melhora comprovada e é identificada como registro histórico, a coleta anterior
-      #     ao relato permanece como observação fora daquela comprovação, a validação do ciclo em curso continua
-      #     contando, e uma fotografia ANTERIOR à distinção não recebe aplicabilidade inventada. A classe é
-      #     NOVA: sem esta linha ela não executaria e o check ficaria verde do mesmo jeito. A contagem deste
-      #     passo sobe de 307 para 353 (medida localmente com este MESMO filtro).
-      #     [AEGIS-MVP-PRODUCT-02] Entra KnightAffectedObjectTests (SQLite): os OBJETOS que sustentam um achado
-      #     do KNIGHT — contagem × lista na mesma unidade e dedupe, avaliação anterior à preservação que se
-      #     declara sem detalhe (nunca retropreenchida), campo ausente que permanece ausente, coleta parcial
-      #     declarada, isolamento por tenant e paginação/busca no servidor. Sem esta linha a classe NÃO roda e
-      #     o check ficaria verde do mesmo jeito. A contagem deste passo sobe de 288 para 301.
-      #     [AEGIS-ADM-01] Entra IdentityAcquisitionTests (SQLite): o ADM por identidade no caminho REAL de
-      #     aquisição e consumo — mesma conta em dois conjuntos com UMA entidade e DUAS observações de
-      #     conteúdo PRÓPRIO (e independentes da ordem em que a coleta devolve os conjuntos), renomeação que
-      #     preserva a identidade sem reescrever a evidência, homônimos e namespaces distintos que não se
-      #     unificam, convidado B2B que não funde por e-mail, retry idempotente × coleta nova com o mesmo
-      #     conteúdo, reapresentação INCOMPATÍVEL recusada sem alteração parcial, conjunto não coletado que
-      #     continua desconhecido, falha que preserva a última evidência válida, coleta atrasada que não
-      #     regride entidade/vínculo/snapshot/saúde do conector, parcialidade atrasada que não rebaixa o
-      #     último dado válido, empate temporal determinístico, avaliação
-      #     lendo a aquisição persistida com UMA coleta, Demo fora do ADM, envelopes v1/v2 legíveis e
-      #     tradução de tipos total. A classe é NOVA: sem esta linha ela não executaria e o check ficaria
-      #     verde do mesmo jeito. A contagem deste passo sobe de 353 para 374 (medida localmente com este
-      #     MESMO filtro, em Release).
-      #     [AEGIS-ADM-02] Entra IdentityHistoryRetentionTests (SQLite): o histórico MENSAL e a retenção
-      #     operacional do ADM — fotografia do mês × última tentativa em separado; "sem coleta" × "coletou e
-      #     não achou ninguém" × "detalhe expirado por retenção"; parcial que permanece parcial; corte dos 90
-      #     dias EXATO no instante e virada de mês em UTC; reconsolidação idempotente ANTES e DEPOIS do
-      #     expurgo, com contagens conservadas (sobreviventes + removidas) e coleta atrasada mais recente
-      #     assumindo o mês mesmo sozinha contra três; empate de instante desempatado por identificador;
-      #     remoção recusada sem consolidação na mesma passada (no serviço E na configuração); referência do
-      #     cadastro atual (entidade canônica / vínculo de origem) impedindo remoção integral sem impedir o
-      #     expurgo do detalhe; replay recusado tanto por detalhe expirado quanto por remoção INTEGRAL, pela
-      #     fronteira gravada no mês; origem com falha isolada das demais; cancelamento gracioso; retomada por
-      #     cursor visitando cada origem uma única vez; lote de aquisições drenado em passadas sucessivas;
-      #     simulação que não escreve; origem sem nenhuma aquisição que continua varrida e só expira o que
-      #     passou dos 12 meses (sem se reconstruir com doze meses vazios); isolamento por tenant e leitura
-      #     que não dispara expurgo. A classe é
-      #     NOVA: sem esta linha ela não executaria e o check ficaria verde do mesmo jeito. A contagem deste
-      #     passo sobe de 374 para 400 (medida localmente com este MESMO filtro, em Release).
-      #     As três correções dirigidas finais acrescentaram 4 casos NAS CLASSES QUE JÁ CONSTAM DESTE FILTRO
-      #     (nenhuma classe nova): exclusão do conector que não encolhe o mês e reconexão que incorpora a
-      #     coleta nova uma única vez; disponibilidade do detalhe apurada NA FOTOGRAFIA (detalhe expurgado ×
-      #     remoção integral × ausência por exclusão da origem × fotografia íntegra em mês com expurgo);
-      #     replay recusado pela janela de ADMISSÃO depois de a consolidação do mês expirar, sem repovoar
-      #     projeção alguma; e os limites exatos dessa janela, com a coleta atrasada de dentro dela aceita.
-      #     A contagem deste passo sobe de 400 para 404 (medida localmente com este MESMO filtro, em Release).
-      #     A correção da CAUSA da remoção da fotografia acrescentou 1 caso na mesma classe (troca de
-      #     fotografia que não herda o comprovante de remoção da anterior): 404 para 405.
-      #     [AEGIS-LANGUAGE-STATES-01] Estados de informação e linguagem. DashboardOverviewQueryTests (JÁ no filtro)
-      #     ganhou 3 casos — sem fonte × fonte sem coleta × primeira tentativa falha, última leitura preservada com
-      #     ressalva após falha recente, e zero de coleta parcial com ressalva de escopo: 405 para 408. Entram TRÊS
-      #     classes que já existiam e NUNCA rodavam no CI, porque o pacote as alterou: PostureExposureReconcilerTests
-      #     (estado da fonte no resumo e SourceReadings do contexto da IA), AegisAssessmentServiceTests (escalas
-      #     distintas e estado das fontes no prompt) e GenerateAdvisoryHandlerTests (canned de PR.AA-01 ancorado no
-      #     controle inteiro). Sem estas linhas elas não executariam e o check ficaria verde do mesmo jeito. A
-      #     contagem deste passo sobe de 408 para 437 (medida localmente com este MESMO filtro, em Release).
-      #     [AEGIS-ENTITY-RESOLUTION-01] Resolução de dispositivos entre fontes por vínculo forte. Entra a classe NOVA
-      #     DeviceResolutionTests (SQLite): conectores REAIS do Defender e do Intune sobre HTTP sintético → executor →
-      #     autoridade única de resolução → persistência → leitura (query + controller) — mesmo diretório/identificador
-      #     nas duas fontes = um ativo e dois bindings, as duas ordens e a reexecução com o identificador canônico
-      #     preservado, diretórios/tenants diferentes e hostname igual sem união, identificador ausente/vazio/inválido/
-      #     placeholder sem união (e sem invalidar a máquina), diretório não confirmado, identificador informado depois,
-      #     contradição que não move o binding, duplicidade legada preservada como conflito, atributos curados
-      #     preservados, falha/parcial/desaparecimento em uma só fonte, fatos da fonte sem score e identificadores só no
-      #     diagnóstico do administrador. Entram também TRÊS classes que já existiam e nunca rodavam no CI, porque o
-      #     pacote alterou o código delas: VulnerabilityReconcilerTests e SoftwareInventoryReconcilerTests (o
-      #     reconciliador passou a delegar ativos/bindings à autoridade única) e MicrosoftDefenderVulnerabilityConnectorTests
-      #     (o parser de máquinas passou a ler aadDeviceId). A contagem deste passo sobe de 439 para 528 (26 da classe
-      #     nova + 63 das três existentes; medida localmente com este MESMO filtro, em Release). As correções dirigidas
-      #     do PR #71 (contradição na mesma coleta pelos conectores, contrato do id externo, proveniência do diretório
-      #     conflitante e preservação da marca de fotografia) levam DeviceResolutionTests a 37 casos e o passo a 539
-      #     (medido localmente com este MESMO filtro, em Release); nenhuma classe nova, o filtro é o mesmo.
-      #     A precedência na dimensão de software (PR #71) acrescenta 2 casos a SoftwareInventoryReconcilerTests e
-      #     inclui EvidenceIngestionTests (23 casos): o executor foi alterado pelo pacote e essa classe nunca rodava no
-      #     CI. O passo vai a 564 (539 + 2 + 23, somando as classes medidas localmente; conferido no log do CI).
-      #     [AEGIS-CROSS-SOURCE-01] Situações identificadas entre fontes. Entra a classe NOVA CrossSourceCorrelationTests
-      #     (SQLite): conectores REAIS do Defender e do Intune sobre HTTP sintético → executor → resolução por chave forte
-      #     → consulta → controllers (detalhe do ativo e Central de Prioridades) — as duas regras com proveniência e datas
-      #     próprias, só uma condição presente, vulnerabilidade não mais reportada, conformidade/criptografia desconhecida,
-      #     coleta parcial com fato positivo (zero não conclusivo), falha recente com evidência preservada, publicação
-      #     interrompida sem mistura, política temporal (fora da janela, sem atividade na fonte, datas divergentes e janela
-      #     configurável), conflito de vínculo, registros contraditórios independentes da ordem, atribuição ambígua,
-      #     isolamento por tenant/diretório, deduplicação por ativo/CVE, paginação/totais/prévias/filtros e estados de
-      #     leitura. As classes já filtradas (DeviceResolutionTests, VulnerabilityReconcilerTests, EvidenceIngestionTests)
-      #     cobrem o registro do desfecho da fotografia na autoridade de resolução e no executor. A classe é NOVA: sem esta
-      #     linha ela não executaria. O passo vai de 564 a 579 (medido localmente com este MESMO filtro, em Release).
-      #     Revisão do PR #72: a MESMA classe ganha 9 casos — associação afirmada só quando a avaliação a comprova
-      #     (conflito, identificador ausente, vínculo válido com postura insuficiente), ressalvas também nas conclusões
-      #     negativas (tentativa falha e publicação mais recente não concluída), defasagem sobre TODAS as evidências
-      #     participantes (CVE anterior preservada + CVE e Intune recentes) e o intervalo de aquisições na Central. O
-      #     passo vai de 579 a 588 (medido localmente com este MESMO filtro, em Release); o filtro não muda.
-      #     [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento em dispositivos. Entra a classe NOVA DevicePriorityTests
-      #     (SQLite): conectores REAIS do Defender e do Intune sobre HTTP sintético → executor → resolução → consulta →
-      #     controllers (Central e detalhe do ativo) — prioridade contextual com empate real declarado, mais fontes que não
-      #     elevam, vulnerabilidade grave sem Intune, criticidade padrão × declarada com proveniência (autor do token, só
-      #     Manager/TenantAdmin, nunca rebaixa, divergência não confirmada), exploit ≠ exploração ativa, marca sem origem
-      #     ignorada, EPSS fora da decisão, AV:N sem falsa exposição, precedência fixa do CVSS, agravantes sem dupla contagem,
-      #     parcial/falha/publicação interrompida com ressalvas, evidência antiga não priorizada, conflito e contradição sem
-      #     agravar, disposições humanas e "não mais reportada" fora da fila com evidência preservada, isolamento, paginação
-      #     com o candidato prioritário fora da primeira página alfabética, recorte declarado e a tabela da política/tradução
-      #     da classificação. CrossSourceCorrelationTests (já no filtro) cobre a autoridade de correlação refatorada. A classe
-      #     é NOVA: sem esta linha ela não executaria. O passo vai de 588 a 601 (medido localmente com este MESMO filtro).
-      #     Revisão dirigida (mesmo PR): +4 casos em DevicePriorityTests (ordem pela chave FINAL com saturação em P1, as 12
-      #     combinações da tabela com e sem agravante, ausência só com completude suficiente e período de carência ≠
-      #     conforme). Filtro inalterado; o passo vai de 601 a 605.
-      #     [AEGIS-JOURNEY-01] DeviceCasePlanTests (6 casos: plano originado de caso dispositivo/CVE sobre ingestão real —
-      #     contexto obtido pelo servidor, chave canônica, novo ciclo e reabertura, recusa da comparação KNIGHT, registro de
-      #     origem × leitura atual, compatibilidade das origens) é NOVA: sem esta linha ela não executaria. +1 caso em
-      #     DashboardOverviewQueryTests (resumo da prioridade sem fonte = nulo; falha isolada). O passo vai de 605 a 612
-      #     (medido localmente com este MESMO filtro). Revisão dirigida (mesmo PR): +1 caso em DevicePriorityTests (fila
-      #     vazia com todos os casos dispostos numa aquisição completa — zero candidatos, disposições contadas) e +1 em
-      #     DashboardOverviewQueryTests (a visão geral leva as disposições; sem leitura, não leva). Filtro inalterado; o
-      #     passo vai de 612 a 614.
-      #     [AEGIS-KNIGHT-COVERAGE-01] Configuração do Entra ID e cobertura do catálogo de referência. Foram
-      #     ADICIONADAS ao filtro 3 classes NOVAS: KnightEntraConfigurationFlowTests, KnightConfigurationRulesTests e
-      #     KnightReferenceCoverageTests. Sem estas linhas elas não executariam. Execuções do passo, medidas
-      #     localmente com este MESMO filtro em Release: 755. Os dois números são informados SEPARADOS porque um não
-      #     demonstra o outro: a variação de execuções também vem de casos acrescentados a classes que já estavam no
-      #     filtro, e não prova que as classes novas entraram.
-      #     Revisão dirigida (mesmo PR): é ADICIONADA a classe NOVA KnightAccessReviewScopeTests (15 casos — a
-      #     abrangência das revisões de acesso, da resposta do Graph até a avaliação) e +1 caso em
-      #     KnightReferenceCoverageTests (o impacto não repete o risco). O passo vai de 755 a 771 (medido localmente
-      #     com este MESMO filtro, em Release).
-      #     Segunda revisão dirigida (mesmo PR): +12 casos em KnightAccessReviewScopeTests (escopo restrito a
-      #     usuários inativos, opções de consulta fora dos formatos documentados e vigência de séries com
-      #     quantidade limitada de ocorrências). Filtro inalterado; o passo vai de 771 a 783 (medido localmente
-      #     com este MESMO filtro, em Release).
-      #     Terceira revisão dirigida (mesmo PR): +4 casos em KnightAccessReviewScopeTests (vigência de séries
-      #     com data final: a última ocorrência permitida pela faixa, situada no calendário, e a contradição
-      #     entre as datas e o estado). Filtro inalterado; o passo vai de 783 a 787 (medido localmente com este
-      #     MESMO filtro, em Release).
-      #     [AEGIS-KNIGHT-COVERAGE-02] Configuração do Microsoft Teams. São ADICIONADAS ao filtro 4 classes NOVAS:
-      #     KnightTeamsCollectorTests, KnightTeamsPolicyReachTests, KnightTeamsConfigurationFlowTests e
-      #     TeamsAdapterTransportTests. O passo vai de 787 a 839 (medido localmente com este MESMO filtro, em
-      #     Release; conferido no log do CI).
-      #     Revisão dirigida (mesmo PR): +38 casos NAS CLASSES QUE JÁ CONSTAM DESTE FILTRO — nenhuma classe nova.
-      #     São os defeitos reproduzidos e travados: InvitedUsers não exclui convidados do lobby; identificação de
-      #     política ausente que não vira "Global" nem funde registros; leitura OMITIDA que não vira coleta
-      #     completa; a condição de aplicabilidade ACM/UAM de AK-TEAMS-007 (legado comprovado × migrado ×
-      #     desconhecido); a sanitização dos diagnósticos com marcadores sintéticos de segredo; a verificação de
-      #     runtime pelo caminho real do adaptador; e os textos de risco de AK-TEAMS-009/013/015/017 alinhados à
-      #     evidência. O passo vai de 839 a 877 (medido localmente com este MESMO filtro, em Release).
-      #     Correção seguinte (mesmo PR): +2 casos em TeamsAdapterTransportTests — o script SEMPRE escreve um
-      #     documento de resultado (nem a própria rotina de erro pode derrubá-lo) e o diagnóstico sanitizado do
-      #     erro-padrão entra na falha de transporte. Sem isso, um erro dentro do tratamento fazia o processo
-      #     terminar sem saída e o CI só via "terminou com código 1". Filtro inalterado; 877 para 879.
-      #     [AEGIS-KNIGHT-CONSOLIDATED-01] Relatório KNIGHT consolidado (Entra ID + Teams + Exchange Online). São
-      #     ADICIONADAS ao filtro 2 classes NOVAS: KnightConsolidatedBuilderTests (leitura ao vivo, pura, sem
-      #     banco — seleção padrão, exclusão explícita, ausência de dupla contagem) e
-      #     PostureSnapshotConsolidatedTests (publicação, composição congelada, hash re-derivável, isolamento por
-      #     tenant, exportação HTML/CSV/PDF reconciliada). Sem estas linhas elas não executariam. O passo vai de
-      #     926 a 937 (medido localmente com este MESMO filtro, em Release).
-      #     [AEGIS-KNIGHT-CONSOLIDATED-02] Fechamento: 7 fatos NOVOS nas duas classes acima (seleção explícita
-      #     vazia distinta de "nenhum pedido"; publicação pina a execução exibida e recusa uma inválida/de outro
-      #     tenant/de outra fonte em vez de substituir pela mais recente). Classes já estavam no filtro — o passo
-      #     vai de 937 a 944 (confirmado no PR #81: 944 no CI real).
-      #     [AEGIS-KNIGHT-COVERAGE-04] Defender para Office 365, Purview, SharePoint/OneDrive, Intune e Fabric, e a
-      #     autenticação por certificado. São ADICIONADAS ao filtro 4 classes NOVAS: KnightM365ServicesFlowTests
-      #     (coleta sintética → coletores reais → ADM → releitura → avaliação, conforme e inadequado por fonte, e as
-      #     armadilhas: DNS sem resposta, população de domínios incompleta, regra desligada, Security & Compliance
-      #     recusado, Fabric recusado, SharePoint sem certificado, tokens por asserção assinada), MicrosoftAppCredentialTests
-      #     (asserção RFC 7523 verificada com a chave pública, certificado inválido sem vazar conteúdo), DnsTxtResolverTests
-      #     (pedido e resposta DNS), KnightAccessProbesM365Tests ("Testar conexão" das fontes novas) e
-      #     ProtectionRuntimeDiagnosticsTests (o gate de runtime do adaptador de proteção, passo 2d). Entra também
-      #     TenantManagementServiceTests, que já existia e nunca rodava no CI: o pacote alterou o hub Microsoft
-      #     (certificado, escopo do Azure e resumo não sensível). Sem estas linhas elas não executariam. O passo
-      #     vai a 1060 execuções (medido localmente com este MESMO filtro, em Release).
-      #     [AEGIS-KNIGHT-COVERAGE-04 · Azure] Entra a classe NOVA KnightAzureFlowTests: respostas sintéticas do Resource
-      #     Manager, do plano de dados do Key Vault e do Graph → coletor real do Azure (paginação, filhas, listagem
-      #     genérica, escopo do locatário) → ADM → releitura → avaliação; conforme e inadequado controle a controle,
-      #     escopo explícito de assinaturas, lista fechada de propriedades (nenhum segredo chega ao ADM), família recusada
-      #     numa assinatura, plano de dados do cofre recusado, descoberta vazia/recusada, destino de cada uma das 285
-      #     referências do Azure e o relatório publicado. Sem esta linha ela não executaria. Entram também +1 caso em
-      #     KnightAccessProbesM365Tests (Azure sem assinatura visível) e +1 em KnightConsolidatedBuilderTests (rótulo do
-      #     consolidado com nove fontes cabe na coluna de 200). O passo vai de 1060 a 1073 execuções (medido localmente
-      #     com este MESMO filtro, em Release).
-      #     [AEGIS-KNIGHT-COVERAGE-04 · fechamento] Filtro inalterado: +2 em PostureSnapshotConsolidatedTests (consolidado
-      #     com fonte parcial diz "coleta parcial" na fotografia, no HTML e no PDF), +1 em KnightConfigurationRulesTests
-      #     (proteção de token) e +1 em KnightReferenceCoverageTests ("só em preview" × "sem método"). O passo vai de
-      #     1073 a 1077 execuções (medido localmente com este MESMO filtro, em Release).
-      #     [AEGIS-KNIGHT-PRESENTATION-01] + KnightPresentationTests (controles citados pelo título congelado, glossário
-      #     único no HTML e no PDF, tipo específico do recurso, código e título separados no CSV). O passo vai de 1077 a 1084
-      #     execuções (medido localmente com este MESMO filtro, em Release).
-      #     [AEGIS-KNIGHT-CLOSURE-01] + KnightClosureFlowTests (preview/beta fora do contrato, autorização recusada, população
-      #     incompleta da MFA por usuário, Databricks habilitado/desligado/recusado, nenhum segredo no ADM, composição) e
-      #     + KnightManualResultTests (elegibilidade, validação, substituição, retirada, validade, isolamento, congelamento e
-      #     exportações separadas). Sem estas linhas elas não executariam. O passo vai de 1084 a 1108 execuções (contado sobre
-      #     a bateria completa local com este MESMO filtro).
-      #     [AEGIS-NIST-JOURNEY-01] + NistAssessmentServiceTests (jornada NIST persistida: catálogo completo nas seis funções,
-      #     releitura, ausência ≠ zero, escala, concorrência, isolamento entre tenants, evidência do KNIGHT só com mapeamento
-      #     explícito, IA nunca gravada), + MaturityProfileTests (perfil atual × alvo sem nulo como zero) e
-      #     + PostureMonthlyHistoryTests (último publicado do mês, meses vazios sem ponto, versões incompatíveis não ligadas).
-      #     Sem estas linhas elas não executariam. O passo vai de 1108 a 1122 execuções (medido localmente com este MESMO filtro).
-      #     [AEGIS-NIST-JOURNEY-02] + NistJourneyCompleteTests (rodadas com período e origem identificada, procedimento
-      #     planejado ≠ resultado, responsáveis do tenant, revisão por outra pessoa, achado/plano com origem NIST,
-      #     publicação com impressão digital e HTML/PDF/CSV da mesma fotografia, evolução mensal e importação CSV com
-      #     prévia). Sem esta linha ela não executaria. O passo vai de 1122 a 1130 execuções (medido localmente com este
-      #     MESMO filtro, em Release).
-      #     [AEGIS-ASSESSMENT-VISUALS-01] + FrozenPostureHistoryTests (histórico congelado na publicação: período escolhido,
-      #     ponto da própria publicação, impressão digital da prévia, composição/escopo distintos não ligados) e
-      #     + AssessmentVisualsReportTests (painel e evolução mensal reconciliados em HTML, PDF e CSV; fotografia antiga
-      #     sem painel e com o mesmo hash). Sem estas linhas elas não executariam. +1 em NistJourneyCompleteTests (409
-      #     quando o histórico muda entre a prévia e a publicação). O passo vai de 1130 a 1146 execuções (medido localmente
-      #     com este MESMO filtro, em Release).
-      - name: Dashboard, SIEM, device management and identity connector tests on Linux
+      - name: KNIGHT, NIST, documents and asset context tests on Linux
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~ChronicleApiClientTests|FullyQualifiedName~GoogleSecOpsConnectorTests|FullyQualifiedName~GoogleSecOpsAuthenticatorTests|FullyQualifiedName~GoogleSecOpsDiTests|FullyQualifiedName~LogAnalyticsClientTests|FullyQualifiedName~MicrosoftSentinelConnectorTests|FullyQualifiedName~SentinelPullTests|FullyQualifiedName~EvidenceIngestionTests|FullyQualifiedName~ChronicleRulesApiTests|FullyQualifiedName~DetectionCoverageCollectorTests|FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~DetectionCoveragePersistenceTests|FullyQualifiedName~IntuneDevicePostureCollectorTests|FullyQualifiedName~DevicePosturePersistenceTests|FullyQualifiedName~ScoreGuardDevicePostureTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DashboardOverviewQueryTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~PostureExposureReconcilerTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~DeviceResolutionTests|FullyQualifiedName~VulnerabilityReconcilerTests|FullyQualifiedName~SoftwareInventoryReconcilerTests|FullyQualifiedName~MicrosoftDefenderVulnerabilityConnectorTests|FullyQualifiedName~CrossSourceCorrelationTests|FullyQualifiedName~DevicePriorityTests|FullyQualifiedName~DeviceCasePlanTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests|FullyQualifiedName~KnightTeamsCollectorTests|FullyQualifiedName~KnightTeamsPolicyReachTests|FullyQualifiedName~KnightTeamsConfigurationFlowTests|FullyQualifiedName~TeamsAdapterTransportTests|FullyQualifiedName~KnightExchangeConfigurationFlowTests|FullyQualifiedName~ExchangeAdapterTransportTests|FullyQualifiedName~PostureSnapshotConsolidatedTests|FullyQualifiedName~KnightConsolidatedBuilderTests|FullyQualifiedName~KnightIdentityPostureConnectorTests|FullyQualifiedName~KnightM365ServicesFlowTests|FullyQualifiedName~MicrosoftAppCredentialTests|FullyQualifiedName~DnsTxtResolverTests|FullyQualifiedName~KnightAccessProbesM365Tests|FullyQualifiedName~ProtectionRuntimeDiagnosticsTests|FullyQualifiedName~TenantManagementServiceTests|FullyQualifiedName~KnightAzureFlowTests|FullyQualifiedName~KnightPresentationTests|FullyQualifiedName~KnightClosureFlowTests|FullyQualifiedName~KnightManualResultTests|FullyQualifiedName~NistAssessmentServiceTests|FullyQualifiedName~NistJourneyCompleteTests|FullyQualifiedName~MaturityProfileTests|FullyQualifiedName~PostureMonthlyHistoryTests|FullyQualifiedName~FrozenPostureHistoryTests|FullyQualifiedName~AssessmentVisualsReportTests|FullyQualifiedName~NistAssistServiceTests|FullyQualifiedName~NistAssistReportCompatibilityTests|FullyQualifiedName~AiStatusControllerTests|FullyQualifiedName~StubAssessmentServiceTests|FullyQualifiedName~AuditorContextBuilderTests|FullyQualifiedName~AuditorPersonaTests|FullyQualifiedName~AuditorReplyCheckTests|FullyQualifiedName~AuditorContextTests"
+          -c Release --filter "FullyQualifiedName~MitreAttackCatalogTests|FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~GenerateAdvisoryHandlerTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests|FullyQualifiedName~KnightTeamsCollectorTests|FullyQualifiedName~KnightTeamsPolicyReachTests|FullyQualifiedName~KnightTeamsConfigurationFlowTests|FullyQualifiedName~TeamsAdapterTransportTests|FullyQualifiedName~KnightExchangeConfigurationFlowTests|FullyQualifiedName~ExchangeAdapterTransportTests|FullyQualifiedName~PostureSnapshotConsolidatedTests|FullyQualifiedName~KnightConsolidatedBuilderTests|FullyQualifiedName~KnightIdentityPostureConnectorTests|FullyQualifiedName~KnightM365ServicesFlowTests|FullyQualifiedName~MicrosoftAppCredentialTests|FullyQualifiedName~DnsTxtResolverTests|FullyQualifiedName~KnightAccessProbesM365Tests|FullyQualifiedName~ProtectionRuntimeDiagnosticsTests|FullyQualifiedName~TenantManagementServiceTests|FullyQualifiedName~KnightAzureFlowTests|FullyQualifiedName~KnightPresentationTests|FullyQualifiedName~KnightClosureFlowTests|FullyQualifiedName~KnightManualResultTests|FullyQualifiedName~NistAssessmentServiceTests|FullyQualifiedName~NistJourneyCompleteTests|FullyQualifiedName~MaturityProfileTests|FullyQualifiedName~PostureMonthlyHistoryTests|FullyQualifiedName~FrozenPostureHistoryTests|FullyQualifiedName~AssessmentVisualsReportTests|FullyQualifiedName~NistAssistServiceTests|FullyQualifiedName~NistAssistReportCompatibilityTests|FullyQualifiedName~AiStatusControllerTests|FullyQualifiedName~StubAssessmentServiceTests|FullyQualifiedName~AuditorPersonaTests|FullyQualifiedName~AuditorReplyCheckTests|FullyQualifiedName~AuditorContextTests|FullyQualifiedName~ProductConnectorScopeTests|FullyQualifiedName~RetiredFeaturesTests|FullyQualifiedName~DocumentEvidenceReconcilerTests"
 
-      # 2) Build da imagem REAL (Dockerfile atual, até o runtime final).
       - name: Build homologation image
         run: docker build -t "$IMAGE" .
 
-      # 2b) [AEGIS-KNIGHT-COVERAGE-02] Validação do RUNTIME de coleta do Microsoft Teams DENTRO da imagem Linux de
-      #     implantação — o que não pôde ser validado no Windows local.
-      #
-      #     ⚠️ Esta validação roda pelo CAMINHO REAL DO ADAPTADOR, e não por um comando de PowerShell solto. A
-      #     primeira versão deste passo chamava `pwsh -Command 'Import-Module MicrosoftTeams'` diretamente e
-      #     FALHOU com o módulo presente na imagem: quem monta o PSModulePath a partir de
-      #     `Knight__Teams__ModulePath` é o adaptador, não o shell. Um teste que não reproduz a configuração do
-      #     produto testa outra coisa. Agora o passo executa o próprio diagnóstico do produto
-      #     (`--knight-teams-runtime-check`), que:
-      #       • lê as opções REAIS do ambiente (Knight__Teams__Executable / Knight__Teams__ModulePath);
-      #       • materializa o script EMBUTIDO no assembly e o executa no processo do PowerShell configurado;
-      #       • importa o módulo oficial OFFLINE (--network none), na versão fixada no Dockerfile;
-      #       • confere que cada comando que a coleta usa existe nessa versão;
-      #       • roda como o usuário NÃO-ROOT da imagem (o USER do Dockerfile), como a coleta rodará.
-      #     Encerra com 0 só quando tudo isso passa — a marca `adaptador=OK` é conferida e o gate não é mascarado.
-      #     Isto NÃO é homologação: não há locatário, credencial nem conexão.
       - name: Teams collection runtime inside the image (real adapter path, non-root, offline)
         run: |
           set -euo pipefail
@@ -324,12 +63,6 @@ jobs:
           echo "--- usuário efetivo da aplicação e executável disponível ---"
           docker run --rm --entrypoint /bin/sh "$IMAGE" -c 'id -u; test -x /usr/bin/pwsh && echo pwsh-executavel'
 
-          # O adaptador REAL roda aqui: opções do ambiente -> script embutido -> processo -> PSModulePath ->
-          # entrada padrão -> importação offline. Dois cenários, ambos SEM REDE e sem locatário nenhum:
-          #   module-check    - o módulo importa e cada comando da coleta existe (caminho de SUCESSO);
-          #   coleta-sintetica - o script roda com marcadores no lugar dos tokens e, tendo falhado, ainda
-          #                      devolve um documento de resultado íntegro (caminho de ERRO).
-          # O segundo cenário é o que demonstra comportamento: procurar "catch" no arquivo não demonstra nada.
           echo "--- adaptador de coleta: execução real do script embutido, sem rede e sem locatário ---"
           set +e
           OUT="$(docker run --rm --network none --entrypoint dotnet "$IMAGE" \
@@ -342,18 +75,11 @@ jobs:
             case "$OUT" in *"$MARCA"*) ;; *) echo "runtime do Teams NAO validado: falta $MARCA"; exit 1;; esac
           done
 
-          # O marcador sintético de segredo não pode aparecer em NADA do que o processo escreveu.
           case "$OUT" in
             *"AEGIS-MARCADOR-SINTETICO"*)
               echo "runtime do Teams NAO validado: marcador de segredo vazou para a saida"; exit 1;;
           esac
 
-      # 2c) [AEGIS-KNIGHT-COVERAGE-03] O MESMO gate para o adaptador do Exchange Online, com uma distinção que
-      #     o próprio programa imprime e que este passo confere: os comandos verificados aqui são os do MÓDULO
-      #     (existem depois do Import-Module). Os comandos de LEITURA do Exchange só entram na sessão depois de
-      #     uma conexão bem-sucedida com um locatário — este gate NÃO os verifica e NÃO prova autorização
-      #     nenhuma. Ele prova três coisas menores e necessárias: o módulo fixado importa nesta imagem Debian,
-      #     o script embutido roda no processo real, e o token sintético não vaza para saída alguma.
       - name: Exchange Online collection runtime inside the image (real adapter path, non-root, offline)
         run: |
           set -euo pipefail
@@ -370,17 +96,11 @@ jobs:
             case "$OUT" in *"$MARCA"*) ;; *) echo "runtime do Exchange NAO validado: falta $MARCA"; exit 1;; esac
           done
 
-          # A honestidade do gate é parte do gate: a saída tem de DIZER que os comandos de sessão não foram
-          # verificados aqui. Se esse aviso sumir, o passo falha — um gate offline lido como prova de
-          # autorização no locatário é exatamente o erro que este pacote se comprometeu a não cometer.
           case "$OUT" in
             *"NÃO verificados aqui"*) ;;
             *) echo "runtime do Exchange NAO validado: falta a ressalva sobre os comandos de sessao"; exit 1;;
           esac
 
-          # E o gate tem de declarar o PRÓPRIO alcance. Importar o módulo prova carregamento e comandos locais;
-          # não prova compatibilidade integral com Debian, autenticação, comandos de sessão nem coleta real. Se
-          # essa declaração sumir da saída, o passo falha — o verde passaria a afirmar o que não verificou.
           for RESSALVA in "alcance-do-gate: offline, sem locatário" "NÃO PROVADO:"; do
             case "$OUT" in
               *"$RESSALVA"*) ;;
@@ -388,17 +108,11 @@ jobs:
             esac
           done
 
-          # O marcador sintético de token não pode aparecer em NADA do que o processo escreveu.
           case "$OUT" in
             *"AEGIS-MARCADOR-SINTETICO"*)
               echo "runtime do Exchange NAO validado: marcador de token vazou para a saida"; exit 1;;
           esac
 
-      # 2d) [AEGIS-KNIGHT-COVERAGE-04] O MESMO gate para o adaptador de proteção (Defender para Office 365 e Purview), que
-      #     usa o runtime do Exchange Online. Prova que o script embutido roda no processo real, que os comandos de
-      #     conexão das DUAS sessões (Exchange Online e Security & Compliance) existem no módulo fixado e que, sem rede, o
-      #     script devolve documento íntegro nos dois perfis sem vazar os tokens sintéticos. NÃO prova autenticação nem
-      #     os comandos de leitura, que só existem depois da conexão — e a saída diz isso.
       - name: Protection (Defender for Office 365 / Purview) collection runtime inside the image (real adapter path, non-root, offline)
         run: |
           set -euo pipefail
@@ -417,20 +131,16 @@ jobs:
               echo "runtime de protecao NAO validado: marcador de token vazou para a saida"; exit 1;;
           esac
 
-      # 3) Smoke do container: rede + Postgres descartáveis, PKCS#12 sintético (grupo 1000, 0640),
-      #    montado em /etc/secrets, app com valores 100% sintéticos. TLS interno desabilitado só aqui.
       - name: Container smoke (non-root, secret file, migrator -> bootstrap -> API, health, SPA)
         run: |
           set -uo pipefail
 
-          # --- valores SINTÉTICOS (nunca impressos) ---
           PGPASS="$(openssl rand -hex 16)"
           PFXPASS="$(openssl rand -hex 16)"
           JWTKEY="$(openssl rand -base64 48)"
           ADMINPASS="ci homologacao $(openssl rand -hex 8)"
           ADMIN_EMAIL="admin@ci.example.com"
 
-          # --- rede + Postgres descartável ---
           docker network create "$NET" || { echo "falha ao criar rede"; exit 1; }
           docker run -d --name "$PG" --network "$NET" \
             -e POSTGRES_PASSWORD="$PGPASS" -e POSTGRES_DB=aegis_ci postgres:18 \
@@ -444,21 +154,17 @@ jobs:
           done
           [ "$pg_ok" = "1" ] || { echo "postgres nao ficou pronto"; exit 1; }
 
-          # --- PKCS#12 sintético -> BASE64 textual (o Render so aceita Secret Files como TEXTO) ---
           mkdir -p secrets
           openssl req -x509 -newkey rsa:2048 -keyout secrets/key.pem -out secrets/cert.pem \
             -days 2 -nodes -subj "/CN=aegis-ci" >/dev/null 2>&1 || { echo "falha ao gerar cert"; exit 1; }
           openssl pkcs12 -export -out secrets/aegis-dp.pfx -inkey secrets/key.pem -in secrets/cert.pem \
             -passout pass:"$PFXPASS" || { echo "falha ao empacotar pkcs12"; exit 1; }
-          # Base64 do PKCS#12 (com as quebras de linha do wrap, como um Secret File real) — prova o caminho .b64.
           base64 secrets/aegis-dp.pfx > secrets/aegis-dp.pfx.b64 || { echo "falha ao codificar base64"; exit 1; }
-          # Secret File TEXTUAL com dono root, grupo 1000, 0640 (equivalente ao secret file do Render).
           sudo chown root:1000 secrets/aegis-dp.pfx.b64
           sudo chmod 0640 secrets/aegis-dp.pfx.b64
           echo "== permissoes do secret file .b64 (esperado root 1000 -rw-r-----):"
           ls -l secrets/aegis-dp.pfx.b64
 
-          # --- sobe a imagem com valores sintéticos; TLS interno DESABILITADO só nesta conexao descartavel ---
           docker run -d --name "$APP" --network "$NET" -p 8080:8080 \
             -e "ConnectionStrings__AegisScore=Host=$PG;Port=5432;Database=aegis_ci;Username=postgres;Password=$PGPASS;SSL Mode=Disable" \
             -e "Jwt__SigningKey=$JWTKEY" \
@@ -472,7 +178,6 @@ jobs:
             -v "$PWD/secrets/aegis-dp.pfx.b64:$SECRET_PATH:ro" \
             "$IMAGE" || { echo "falha ao subir a app"; exit 1; }
 
-          # --- aguarda readiness (migrator roda ANTES da API) ---
           HDR='X-Forwarded-Proto: https'   # simula o proxy TLS da hospedagem (evita o redirect HTTPS)
           ready=0
           for i in $(seq 1 90); do
@@ -482,7 +187,6 @@ jobs:
             sleep 2
           done
 
-          # --- gates ---
           fail=0
           gate() { if [ "$2" = "1" ]; then echo "[PASS] $1"; else echo "[FAIL] $1 ${3:-}"; fail=1; fi; }
 
@@ -525,7 +229,6 @@ jobs:
           if [ "$fail" != "0" ]; then echo "SMOKE DO CONTAINER FALHOU"; exit 1; fi
           echo "SMOKE DO CONTAINER OK"
 
-      # Coleta logs úteis e remove containers/rede/arquivos temporários — sempre.
       - name: Logs and cleanup
         if: always()
         run: |
@@ -535,17 +238,8 @@ jobs:
           docker network rm "$NET" >/dev/null 2>&1 || true
           rm -rf secrets || true
 
-  # Migrations + seed contra um PostgreSQL 18 DESCARTÁVEL (o container-smoke prova migração em banco VAZIO;
-  # estes provam transições/reparo/índices sobre dados). Roda SOMENTE as classes de migration em PostgreSQL:
-  #   • DocumentEvidenceRepairMigrationTests — reparo da DocumentEvidenceLifecycle sobre banco legado;
-  #   • PostureFoundationPostgresTests — POSTURE-01: migration aditiva sobre regra legada, migrate+seed+
-  #     prontidão+idempotência, atualização de metodologia com histórico de proveniência e o índice parcial
-  #     único de framework ativa (rejeição da 2ª ativa) no PostgreSQL real.
-  # NÃO é a suíte PostgreSQL geral.
   migrations-pg:
     runs-on: ubuntu-latest
-    # 20 min (era 15): a jornada HTTP sobe o host da API e prepara o banco pelo migrator real. Mede-se ~4 min
-    # localmente para as 41; a folga existe para o runner do CI, não para esconder lentidão.
     timeout-minutes: 20
     services:
       postgres:
@@ -569,184 +263,10 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      # AEGIS_TEST_PG aponta para o banco de MANUTENÇÃO (postgres); o PostgresProbe cria/derruba um
-      # database descartável a cada teste. Só as classes de migration/postura em PostgreSQL rodam (filtro por
-      # classe), incluindo PostureExposurePostgresTests (POSTURE-02), VulnerabilityManagementPostgresTests
-      # (AEGIS-MVP-VULN-01: migration multifonte, índice global de CVE, constraints de binding/observação e
-      # reconciliação/lifecycle multifonte), DetectionCoveragePostgresTests (AEGIS-MVP-GOOGLE-SECOPS-02:
-      # migration da cobertura de detecção, índice único (tenant, conector), substituição atômica e isolamento) e
-      # IdentityEvidencePostgresTests (AEGIS-MVP-EVIDENCE-FABRIC-01: migration da Evidence Fabric de identidade,
-      # chave natural (tenant, conector), upsert idempotente, preservação degradation-safe, isolamento por tenant
-      # e FK COMPOSTA tenant-safe — rejeição de órfão/cross-tenant e cascade na exclusão do conector) e
-      # SoftwareInventoryPostgresTests (AEGIS-MVP-MICROSOFT-COVERAGE-01: migration do inventário de software,
-      # FKs COMPOSTAS tenant-safe para Asset/Conector/Produto, lifecycle idempotente, preservação dos dados em
-      # coleta de falha e ausência de escrita de score) e DevicePosturePostgresTests
-      # (AEGIS-MVP-MICROSOFT-COVERAGE-02: migration da postura de dispositivos, chave natural (tenant, conector),
-      # substituição por DIMENSÃO com preservação independente, FKs COMPOSTAS tenant-safe — rejeição de
-      # órfão/cross-tenant e cascade na exclusão do conector — índices únicos naturais e zero escrita de score).
-      # [AEGIS-MVP-MICROSOFT-COVERAGE-03] O risco de identidade NÃO trouxe migration (o schema v2 do snapshot é
-      # uma extensão do contrato JSON): o caso novo
-      # `IdentityEvidencePostgresTests.IdentityRisk_SchemaV2_RoundTrip_V1Compatibility_And_NoScoreWrite_OnRealPostgres`
-      # foi acrescentado à classe `IdentityEvidencePostgresTests`, que JÁ consta no filtro abaixo — por isso ele
-      # executa de fato neste job (a contagem sobe de 20 para 21).
-      # [AEGIS-MVP-PRODUCT-01] `DashboardOverviewPostgresTests` acrescenta a validação INTEGRADA da leitura
-      # composta da tela inicial: a query roda com as DEPENDÊNCIAS REAIS (postura do workspace, exposições de
-      # configuração, vulnerabilidades e Evidence Fabric de identidade) sobre o PostgreSQL descartável deste job,
-      # provando que cada consulta TRADUZ de fato, que um tenant com evidência operacional e SEM maturidade
-      # legada recebe os dados corretos, que inventário vazio não vira "nunca coletado" e que nada de um tenant
-      # aparece no outro. Sem migration nova. A classe é NOVA: sem esta linha ela não executaria (falso verde).
-      # ⚠️ Este filtro é POR CLASSE e NENHUM job roda a suíte completa: uma classe PostgreSQL nova que não seja
-      # adicionada AQUI nunca executa e o check fica verde assim mesmo (falso verde). Confira SEMPRE a contagem
-      # de testes no log, não só conclusion=success.
-      # [AEGIS-MVP-PRODUCT-03] Entra RemediationPostgresTests: prova que a migration Product03 aplica sobre o
-      # histórico, que o ÍNDICE PARCIAL único barra no BANCO uma segunda ação ATIVA para o mesmo achado (a
-      # corrida que a checagem em código deixaria passar) e libera a origem quando a ação é encerrada, que as
-      # FKs COMPOSTAS (ActionPlanId, TenantId) fazem o banco recusar trilha/validação de tenant divergente, e
-      # que o relatório publicado permanece CONSISTENTE ao ser reexportado (as ações ficam congeladas; alterar
-      # um plano depois não muda o PDF). Inclui a jornada ponta a ponta e a verificação de que o PDF executivo
-      # NÃO leva lista nominal de identidades. A correção dirigida acrescentou a prova de que o índice violado é
-      # o UX_ActionPlans_ActiveByFinding (e não "qualquer chave duplicada"), a convivência de demonstração e
-      # coleta real sob o MESMO indicador, e a repactuação de prazo/responsável com conflito de versão recusado.
-      # A segunda correção acrescentou a migration Product03_FrozenCycleApplicability (colunas anuláveis novas)
-      # ao mesmo MigrateAsync e a verificação de que a aplicabilidade congelada atravessa o PostgreSQL real.
-      # A contagem deste passo permanece 33 — a prova nova entrou em fatos existentes, e não como fatos novos.
-      # CONFIRME no log deste job, porque a bateria PostgreSQL não roda na máquina de desenvolvimento
-      # (credencial local inacessível, sem Docker).
-      # [AEGIS-MVP-PRE-ADM-01] Entram DUAS classes NOVAS, e ambas PRECISAM estar no filtro (ver o aviso acima):
-      #   • RemediationJourneyHttpTests — a JORNADA atravessando o PIPELINE HTTP REAL. Sobe o host da API
-      #     (Program.cs, ambiente Testing) com WebApplicationFactory sobre um PostgreSQL descartável preparado
-      #     pelo AegisScore.DbMigrator DE VERDADE, e exercita roteamento, model binding, LOGIN por credencial
-      #     com emissão/validação do JWT local (segredo sintético gerado em runtime), FallbackPolicy,
-      #     [Authorize(Roles=…)], TenantConsistencyMiddleware e o Global Query Filter alimentado pela claim:
-      #     sem token/token forjado/sem X-Tenant/X-Tenant malformado/divergente; Analyst lê e não muta,
-      #     Manager e TenantAdmin executam; jornada coleta → afetados → plano → execução → validação →
-      #     conclusão, com conflito de VERSÃO e encerramento SEM BASE recusados; reabertura que não reaproveita
-      #     a comprovação antiga; acesso cruzado que não revela nem altera; demonstração × coleta real como
-      #     problemas distintos; publicação da avaliação PEDIDA e fotografia estável (reexportação idêntica,
-      #     hash reverificado) depois de o plano vivo mudar. A ÚNICA substituição é a FRONTEIRA EXTERNA de
-      #     coleta do Entra (fixture no lugar do Microsoft Graph) + workers de fundo + relógio controlado.
-      #   • DatabaseUpgradePostgresTests — ATUALIZAÇÃO de banco EXISTENTE: migra até a migration ANTERIOR às
-      #     três desta linha (DevicePosture_MicrosoftIntune), insere dados legados por SQL cru, aplica a
-      #     sequência com o migrator real e verifica preservação, ausência de detalhe/aplicabilidade
-      #     inventados no histórico, prontidão (--verify-only) e reexecução idempotente.
-      # A contagem deste passo sobe de 33 para 41 (medida localmente com este MESMO filtro, contra PostgreSQL 18).
-      # [AEGIS-MVP-PRODUCT-02] Entra KnightAffectedObjectsPostgresTests: prova que a migration dos objetos
-      # afetados APLICA sobre o histórico, que a FK composta (IndicatorResultId, TenantId) faz o próprio banco
-      # recusar um afetado de tenant divergente, que a paginação/busca traduzem no Npgsql e que a Central de
-      # Prioridades aponta para a MESMA avaliação do KNIGHT. A contagem deste passo sobe de 24 para 27.
-      # [AEGIS-ADM-01] Entra IdentityAcquisitionPostgresTests: o que SÓ o banco real prova sobre o ADM de
-      # identidade — a migration aplica; o índice UX_IdentitySourceLink_Natural e as FKs COMPOSTAS
-      # tenant-safe recusam de verdade; um tenant estrangeiro não lê, não vincula e não escreve; seis coletas
-      # SIMULTÂNEAS do mesmo diretório não duplicam identidade E terminam com o estado atual sustentado pela
-      # aquisição MAIS RECENTE (não pela que gravou por último); duas atualizações concorrentes de entidades
-      # JÁ EXISTENTES mantêm a mais recente; uma escrita ANTIGA parada na trava do conector e liberada depois
-      # da nova grava por último sem regredir entidade, vínculo, snapshot nem saúde; e o retry CONCORRENTE do
-      # mesmo identificador de aquisição converge sem duplicar. A classe é NOVA: sem esta linha ela não
-      # executaria e o check ficaria verde do mesmo jeito. A contagem deste passo sobe de 41 para 48 (medida
-      # localmente com este MESMO filtro, em Release, contra PostgreSQL 18 descartável).
-      # [AEGIS-ADM-02] Entra IdentityHistoryRetentionPostgresTests: o que SÓ o banco real prova sobre o
-      # histórico mensal e a retenção — a migration aplica sobre um ambiente que JÁ tem aquisições do ADM-01 e
-      # o backfill deriva a chave de varredura do instante gravado (inclusive numa linha colada na virada do
-      # dia UTC), sem inventar detalhe expirado; UX_IdentityMonthlyRollup_Natural e a FK COMPOSTA
-      # (RollupId, TenantId) recusam de verdade e a cascata leva os conjuntos; um tenant estrangeiro não lê
-      # consolidação alheia; a retenção BLOQUEIA de fato na trava exclusiva quando uma avaliação acabou de
-      # fixar a aquisição citada (interleaving montado, não sorteado — se não bloqueasse, o teste falharia ao
-      # construir o cenário); duas manutenções simultâneas na mesma origem convergem sem duplicar o mês; a
-      # consolidação sobrevive ao expurgo e o replay é recusado nos DOIS caminhos (detalhe expirado e remoção
-      # integral); remoção sem consolidação é recusada e uma FALHA de consolidação injetada no banco (gatilho)
-      # impede a remoção correspondente — removido o gatilho, a mesma passada faz o que deveria; e uma coleta
-      # ATRASADA concorrente, gravada sob a trava do diretório, PARTICIPA da consolidação antes de ser
-      # removida. A classe é NOVA: sem esta linha ela não executaria e o check ficaria verde do mesmo jeito. A
-      # contagem deste passo sobe de 48 para 56 (medida localmente com este MESMO filtro, em Release, contra
-      # PostgreSQL 18 descartável).
-      # A correção final acrescentou 1 caso NA CLASSE QUE JÁ CONSTA DESTE FILTRO: a CASCATA real da exclusão
-      # do conector (a FK ON DELETE CASCADE do PostgreSQL leva a evidência sem que o EF carregue linha
-      # nenhuma), o mês que não encolhe por isso, a ausência NÃO contabilizada como expurgo de retenção e a
-      # reconexão do mesmo namespace que acrescenta a coleta nova uma única vez. Some-se a migration ADITIVA
-      # da marca de contabilização, que entra na sequência cumulativa de DatabaseUpgradePostgresTests. A
-      # contagem deste passo sobe de 56 para 57 (mesma medição local, contra PostgreSQL 18 descartável).
-      # A correção da CAUSA da remoção da fotografia acrescentou 1 caso na mesma classe: a fotografia
-      # PROTEGIDA, pulada pela retenção enquanto a fronteira avança, e removida depois pela cascata REAL da
-      # exclusão do conector não é atribuída à retenção. A migration aditiva do comprovante entra na sequência
-      # cumulativa de DatabaseUpgradePostgresTests (mesmo caso, sem teste novo ali). 57 para 58.
-      # [AEGIS-LANGUAGE-STATES-01] DashboardOverviewPostgresTests: o tenant sem conector passa a NoSource (antes
-      # NeverCollected) — ausência de fonte não é coleta pendente. Nenhum caso novo: a contagem permanece 58.
-      # [AEGIS-ENTITY-RESOLUTION-01] Entra a classe NOVA DeviceResolutionPostgresTests: a migration ADITIVA da
-      # resolução de dispositivos aplica sobre um banco LEGADO (bindings anteriores ficam "não avaliados", nenhum
-      # identificador inventado) e a coleta real estabelece a chave no ativo legado preservando os atributos curados;
-      # UX_AssetStrongIdentifier_Natural, UX_AssetStrongIdentifier_AssetScope, a FK composta tenant-safe e o CHECK do
-      # GUID vazio recusam de verdade (SQL cru); Defender e Intune chegam CONCORRENTES pelo executor real com os
-      # conectores reais sobre HTTP sintético, nas duas ordens e com a mesma fonte em paralelo, sem duplicar chave nem
-      # ativo; e a listagem consolidada real (ordenação/ILike do Npgsql) mostra cada dispositivo uma vez, isolada por
-      # tenant. A migration nova também entra na sequência cumulativa de DatabaseUpgradePostgresTests (mesmo caso).
-      # A classe é NOVA: sem esta linha ela não executaria. A contagem deste passo sobe de 58 para 61 (medida
-      # localmente com este MESMO filtro, em Release, contra PostgreSQL 18 descartável). As correções dirigidas do
-      # PR #71 acrescentam a DeviceResolutionPostgresTests quatro casos com barreiras determinísticas (passada antiga
-      # pausada após a presença, presença durante a ausência, recálculo entre fontes do mesmo ativo e duas passadas do
-      # mesmo Defender) e a migration DeviceResolution02 à sequência cumulativa: o passo vai a 65 (medido localmente
-      # com este MESMO filtro, em Release, contra PostgreSQL 18 descartável). A precedência na dimensão de software
-      # acrescenta seis casos à MESMA classe, pelo executor combinado real (aquisição tardia, superada entre lotes,
-      # superada antes da ausência, ausência segurando a trava da fonte e independência das duas dimensões em falha
-      # e em parcialidade): o passo vai a 71; nenhuma classe nova, o filtro é o mesmo.
-      # [AEGIS-CROSS-SOURCE-01] Entra a classe NOVA CrossSourceCorrelationPostgresTests: a migration aditiva
-      # CrossSource01_DeviceSnapshotOutcome aplica sobre conectores LEGADOS sem inventar desfecho (0 = não registrado); a
-      # ingestão real (conectores sobre HTTP sintético → executor) e a leitura das situações entre fontes TRADUZEM no
-      # Npgsql (agregação por marca, IN de marcas, UNION de CVEs, paginação) com isolamento por tenant; e a leitura é
-      # COERENTE durante uma ingestão — pausada no meio da publicação (fatos qualificados, a parte não publicada nunca
-      # aparece) e concluída no meio da leitura (REPEATABLE READ: uma fotografia só, nunca a mistura das duas aquisições).
-      # A migration nova também entra na sequência cumulativa de DatabaseUpgradePostgresTests (mesmo caso). A classe é
-      # NOVA: sem esta linha ela não executaria. O passo vai de 71 a 74 (medido localmente com este MESMO filtro, em
-      # Release, contra PostgreSQL 18 descartável).
-      # [AEGIS-RISK-PRIORITIZATION-01] Entra a classe NOVA DevicePriorityPostgresTests: a migration aditiva
-      # RiskPrioritization01_AssetCriticalityDeclaration aplica sobre um ativo LEGADO sem inventar declaração (criticidade
-      # cadastrada preservada e "não confirmada"); a classificação da CVE, a seleção de candidatos pelo limite superior da
-      # faixa (GROUP BY + MIN), o agrupamento por (ativo, conector, marca, classificação) e a paginação dos casos TRADUZEM no
-      # Npgsql com isolamento por tenant; e a leitura é COERENTE durante a ingestão — pausada no meio da publicação (a CVE
-      # não publicada nunca entra) e concluída no meio da leitura (REPEATABLE READ). A migration nova também entra na
-      # sequência cumulativa de DatabaseUpgradePostgresTests (mesmo caso). A classe é NOVA: sem esta linha ela não
-      # executaria. O passo vai de 74 a 77 (medido localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
-      # Revisão dirigida (mesmo PR): +1 caso em DevicePriorityPostgresTests (ordem dos casos pela chave FINAL e completude
-      # da ausência traduzidas no Npgsql). Filtro inalterado; o passo vai de 77 a 78.
-      # [AEGIS-JOURNEY-01] DeviceCasePlanHttpTests (3 casos pelo pipeline HTTP/JWT real: jornada da visão geral ao
-      # acompanhamento com contexto do servidor, papéis e isolamento da nova origem, e criações simultâneas do mesmo caso
-      # desempatadas pelo índice único parcial) é NOVA: sem esta linha ela não executaria. DatabaseUpgradePostgresTests
-      # passa a atravessar também Journey01_DeviceCaseActionPlanOrigin (mesmo caso). O passo vai de 78 a 81 (medido
-      # localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
-      # [AEGIS-KNIGHT-COVERAGE-04] Entra a classe NOVA KnightM365ServicesPostgresTests: as cinco fontes novas do
-      # Microsoft 365 gravam em jsonb e voltam com o MESMO veredito, os textos cabem nas colunas (o SQLite ignora
-      # HasMaxLength) e o consolidado das cinco exporta HTML, CSV e PDF. Sem esta linha ela não executaria. O passo
-      # vai de 101 a 102 (medido localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
-      # [AEGIS-KNIGHT-COVERAGE-04 · Azure] Entra a classe NOVA KnightAzurePostgresTests: centenas de documentos de recurso
-      # do Azure gravam em jsonb e voltam com o MESMO veredito controle a controle, o identificador compacto do recurso
-      # cabe na coluna de 200 e o consolidado Azure + Intune exporta HTML, CSV e PDF. Sem esta linha ela não executaria.
-      # O passo vai de 102 a 103 (medido localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
-      # [AEGIS-KNIGHT-CLOSURE-01] Entram as classes NOVAS KnightManualResultPostgresTests (atualização a partir da baseline
-      # publicada pelo migrator real, persistência no limite das colunas, releitura, isolamento e congelamento) e
-      # KnightManualResultHttpTests (papéis e isolamento do resultado manual pelo pipeline HTTP real); DatabaseUpgrade-
-      # PostgresTests passa a atravessar também Closure01_KnightManualAssessments. O passo vai de 103 a 105 (medido
-      # localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
-      # [AEGIS-NIST-JOURNEY-01] Entram as classes NOVAS NistJourneyPostgresTests (backfill do tenant da avaliação legada,
-      # migration que ABORTA sem alterar nada diante de duplicata, gravações simultâneas decididas pelo banco) e
-      # NistJourneyHttpTests (papéis, isolamento, releitura, 409 e evolução mensal pelo pipeline HTTP real);
-      # DatabaseUpgradePostgresTests passa a atravessar também Nist01_AssessmentJourney. O passo vai de 105 a 109 (medido
-      # localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
-      # [AEGIS-NIST-JOURNEY-02] Entra a classe NOVA NistJourney02PostgresTests (reconciliação da migration a partir do
-      # Nist01 com rodada inicial e vínculos, plano e procedimento concorrentes decididos pelo banco, trilha append-only
-      # e FK composta por tenant); NistJourneyHttpTests ganha a jornada completa pelo pipeline HTTP e DatabaseUpgrade-
-      # PostgresTests atravessa Nist02_CompleteJourney. O passo vai de 109 a 113 (medido localmente com este MESMO
-      # filtro, contra PostgreSQL 18 descartável). Integridade (mesmas classes, sem mudar o filtro): a rota legada de
-      # gravação recusada pelo pipeline HTTP e a montagem do relatório com alteração concorrente entre consultas — 113 a 115.
-      # [AEGIS-ASSESSMENT-VISUALS-01] Entra a classe NOVA AssessmentVisualsPostgresTests (atualização pelo migrator real sem
-      # tocar fotografias existentes; histórico congelado relido do PostgreSQL com o hash íntegro, relatório com a série e
-      # gatilho de imutabilidade recusando alterar o histórico; isolamento por tenant);
-      # DatabaseUpgradePostgresTests atravessa também AssessmentVisuals01_FrozenHistory (fotografia legada sem histórico e
-      # com o mesmo hash). O passo vai de 115 a 116 (medido localmente com este MESMO filtro, contra PostgreSQL 18 descartável).
       - name: Migration/posture PostgreSQL 18 tests
         env:
           AEGIS_TEST_PG: 'Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres;Pooling=false'
-          # [AEGIS-MVP-VULN-01] Gate anti-falso-verde: se AEGIS_TEST_PG faltar/estiver inválido neste job, a bateria
-          # PostgreSQL real FALHA (PostgresProbe.TryCreateAsync lança) em vez de virar no-op silencioso.
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~PostureExposurePostgresTests|FullyQualifiedName~VulnerabilityManagementPostgresTests|FullyQualifiedName~ScoreGuardSiemRepairPostgresTests|FullyQualifiedName~DetectionCoveragePostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~SoftwareInventoryPostgresTests|FullyQualifiedName~DevicePosturePostgresTests|FullyQualifiedName~DashboardOverviewPostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~DeviceResolutionPostgresTests|FullyQualifiedName~CrossSourceCorrelationPostgresTests|FullyQualifiedName~DevicePriorityPostgresTests|FullyQualifiedName~DeviceCasePlanHttpTests|FullyQualifiedName~KnightDurableAssessmentPostgresTests|FullyQualifiedName~KnightLatestHttpTests|FullyQualifiedName~KnightUnfinishedRunPlanHttpTests|FullyQualifiedName~KnightMulticloudPostgresTests|FullyQualifiedName~KnightSyncHttpTests|FullyQualifiedName~KnightEntraConfigurationPostgresTests|FullyQualifiedName~KnightTeamsConfigurationPostgresTests|FullyQualifiedName~KnightExchangeConfigurationPostgresTests|FullyQualifiedName~KnightM365ServicesPostgresTests|FullyQualifiedName~KnightAzurePostgresTests|FullyQualifiedName~KnightManualResultPostgresTests|FullyQualifiedName~KnightManualResultHttpTests|FullyQualifiedName~NistJourneyPostgresTests|FullyQualifiedName~NistJourney02PostgresTests|FullyQualifiedName~NistJourneyHttpTests|FullyQualifiedName~AssessmentVisualsPostgresTests|FullyQualifiedName~NistAssistPostgresTests|FullyQualifiedName~NistAssistHttpTests|FullyQualifiedName~AuditorHttpTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~KnightDurableAssessmentPostgresTests|FullyQualifiedName~KnightLatestHttpTests|FullyQualifiedName~KnightUnfinishedRunPlanHttpTests|FullyQualifiedName~KnightMulticloudPostgresTests|FullyQualifiedName~KnightSyncHttpTests|FullyQualifiedName~KnightEntraConfigurationPostgresTests|FullyQualifiedName~KnightTeamsConfigurationPostgresTests|FullyQualifiedName~KnightExchangeConfigurationPostgresTests|FullyQualifiedName~KnightM365ServicesPostgresTests|FullyQualifiedName~KnightAzurePostgresTests|FullyQualifiedName~KnightManualResultPostgresTests|FullyQualifiedName~KnightManualResultHttpTests|FullyQualifiedName~NistJourneyPostgresTests|FullyQualifiedName~NistJourney02PostgresTests|FullyQualifiedName~NistJourneyHttpTests|FullyQualifiedName~AssessmentVisualsPostgresTests|FullyQualifiedName~NistAssistPostgresTests|FullyQualifiedName~NistAssistHttpTests|FullyQualifiedName~AuditorHttpTests"

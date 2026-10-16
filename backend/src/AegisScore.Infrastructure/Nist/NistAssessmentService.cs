@@ -663,11 +663,7 @@ public sealed partial class NistAssessmentService : INistAssessmentService
         var linked = await ActiveEvidenceAsync(ctx.Scope.Id, ctx.Cycle.Id, sub.Code, ct);
         var available = await AvailableEvidenceAsync(sub.Code, linked, ct);
 
-        NistPostureReadingView? posture = null;
-        var state = await _db.TenantControlStates.AsNoTracking().FirstOrDefaultAsync(s => s.SubcategoryId == sub.Id, ct);
-        if (state is not null)
-            posture = new NistPostureReadingView(state.Status.ToString(), state.LastVerdictSource.ToString(),
-                state.CurrentScore, sub.MaxScorePoints, state.LastEvaluatedAt);
+        NistPostureReadingView? posture = null; // Campo histórico: sem pontuação global na jornada NIST.
 
         var activeUsers = await ActiveUserIdsAsync(_db, ct);
         var assisted = await NistAssistProvenance.LoadAsync(_db, ctx.Cycle.Id, ctx.Scope.Id, ct);

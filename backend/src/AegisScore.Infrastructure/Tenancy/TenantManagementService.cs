@@ -159,6 +159,9 @@ public sealed class TenantManagementService : ITenantManagementService
             ?? throw new TenantSecurityException(
                 "Configuração de conector sem tenant resolvido no contexto (fail-closed).");
 
+        if (!ProductConnectorScope.Supports(command.Provider, command.Capability))
+            throw new MicrosoftHubValidationException("Integração aposentada: configure um coletor KNIGHT ou documentos do NIST.");
+
         var syncInterval = Math.Max(command.SyncIntervalMinutes, MinimumSyncIntervalMinutes);
 
         // Upsert pela chave natural. O query filter já restringe ao tenant ambiente — repetir
@@ -241,37 +244,7 @@ public sealed class TenantManagementService : ITenantManagementService
                 return;
             }
 
-            // [AEGIS-AUD-020] A CHAVE DE INGESTÃO é EXCLUSIVA dos conectores genéricos de PUSH (Generic/Siem,
-            // Generic/Edr). Só nesses casos ela é extraída dos settings, validada e persistida (como HASH) —
-            // para qualquer outro provedor os settings são segredos "clássicos" e vão INTEIROS para a cifragem,
-            // sem tratar um eventual campo `ingestionKey` como credencial de ingestão.
-            var isGenericPush = command.Provider == ConnectorProvider.Generic
-                && (command.Capability == ConnectorCapability.Siem || command.Capability == ConnectorCapability.Edr);
-
-            if (!isGenericPush)
-            {
-                target.EncryptedSettings = _secrets.Protect(command.Settings);
-                return;
-            }
-
-            // Extrai a chave ANTES de proteger o RESTO: a chave de entrada não precisa ser recuperável — só
-            // seu HASH permanece. Uma chave nova ROTACIONA a anterior; settings SEM chave PRESERVA o hash
-            // vigente (renomear ou mudar o intervalo não apaga a credencial de ingestão).
-            var (remaining, ingestionKey) = ExtractIngestionKey(command.Settings);
-            if (ingestionKey is not null)
-            {
-                if (!IngestionKey.MeetsPolicy(ingestionKey))
-                    throw new WeakIngestionKeyException(
-                        $"A chave de ingestão deve ter ao menos {IngestionKey.MinLength} caracteres.");
-                target.IngestionKeyHash = IngestionKey.Hash(ingestionKey);
-            }
-
-            // O que sobra (se algo) são segredos "clássicos". Vazio (só a chave de ingestão trafegou) → não
-            // fabrica um blob: "" na criação, preservado na reconfiguração.
-            if (!string.IsNullOrWhiteSpace(remaining))
-                target.EncryptedSettings = _secrets.Protect(remaining);
-            else if (isInsert)
-                target.EncryptedSettings = "";
+            target.EncryptedSettings = _secrets.Protect(command.Settings);
         }
     }
 
@@ -280,13 +253,7 @@ public sealed class TenantManagementService : ITenantManagementService
     /// <summary>Serviços que compõem a família Microsoft (uma credencial comum, coletores independentes).</summary>
     private static readonly IReadOnlyList<ConnectorCapability> MicrosoftHubCapabilities = new[]
     {
-        ConnectorCapability.SecureScore,
         ConnectorCapability.IdentityPosture,
-        ConnectorCapability.VulnerabilityScanner,
-        ConnectorCapability.Siem,
-        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Quinto serviço: Microsoft Intune (postura de configuração e
-        // conformidade de dispositivos). Reusa a MESMA credencial comum — nenhum segredo adicional é pedido.
-        ConnectorCapability.ConfigAnalyzer,
     };
 
     public async Task<IReadOnlyList<ConnectorConfigurationResult>> ConfigureMicrosoftHubAsync(
@@ -320,9 +287,7 @@ public sealed class TenantManagementService : ITenantManagementService
                 throw new MicrosoftHubValidationException(
                     "Informe o Client secret ou um certificado da aplicação (PFX com a chave privada).");
             if (command.Services.Any(s => s.Capability != ConnectorCapability.IdentityPosture))
-                throw new MicrosoftHubValidationException(
-                    "Sem Client secret, só o AEGIS KNIGHT pode ser conectado: os demais serviços Microsoft desta versão "
-                    + "pedem token por segredo de cliente.");
+                throw new MicrosoftHubValidationException("Esta conexão oferece só o AEGIS KNIGHT.");
         }
 
         // Valida TODA a seleção ANTES de escrever qualquer filho: uma seleção inválida não pode deixar
@@ -337,29 +302,16 @@ public sealed class TenantManagementService : ITenantManagementService
                 throw new MicrosoftHubValidationException(
                     $"Serviço '{svc.Capability}' repetido na seleção Microsoft.");
 
-            // workspaceId é OBRIGATÓRIO, formato GUID e EXCLUSIVO do Sentinel (Siem). A seleção INTEIRA é validada
-            // AQUI, antes do primeiro upsert — um workspaceId inválido rejeita tudo (400) sem escrita parcial.
-            if (svc.Capability == ConnectorCapability.Siem)
-            {
-                if (string.IsNullOrWhiteSpace(svc.WorkspaceId))
-                    throw new MicrosoftHubValidationException(
-                        "O Microsoft Sentinel exige o Log Analytics Workspace ID.");
-                if (!Guid.TryParse(svc.WorkspaceId!.Trim(), out _))
-                    throw new MicrosoftHubValidationException(
-                        "O Log Analytics Workspace ID do Sentinel deve ser um GUID válido.");
-            }
+
         }
 
-        // Fan-out: um upsert INDEPENDENTE por serviço (cada um com SaveChanges próprio, isolado). O provider é
-        // derivado da capacidade; o blob cifrado leva a credencial comum + (só no Sentinel) o workspaceId.
+        // A seleção já foi validada; o upsert mantém a credencial dos coletores KNIGHT.
         var results = new List<ConnectorConfigurationResult>(command.Services.Count);
         foreach (var svc in command.Services)
         {
-            var provider = ProviderFor(svc.Capability);
+            var provider = ConnectorProvider.Microsoft;
             var settings = BuildMicrosoftChildSettings(
-                tenantId, clientId, clientSecret,
-                svc.Capability == ConnectorCapability.Siem ? svc.WorkspaceId!.Trim() : null,
-                svc.Capability == ConnectorCapability.IdentityPosture ? knightExtras : null);
+                tenantId, clientId, clientSecret, knightExtras);
 
             var displayName = string.IsNullOrWhiteSpace(svc.DisplayName)
                 ? DefaultDisplayNameFor(svc.Capability)
@@ -379,28 +331,12 @@ public sealed class TenantManagementService : ITenantManagementService
         return results;
     }
 
-    /// <summary>Provider da família Microsoft por capacidade: Siem ⇒ MicrosoftSentinel; demais ⇒ Microsoft.</summary>
-    private static ConnectorProvider ProviderFor(ConnectorCapability capability) =>
-        capability == ConnectorCapability.Siem ? ConnectorProvider.MicrosoftSentinel : ConnectorProvider.Microsoft;
+    /// <summary>Nome do conector que reúne os coletores Microsoft do KNIGHT.</summary>
+    private static string DefaultDisplayNameFor(ConnectorCapability capability) => "Microsoft Entra ID · AEGIS KNIGHT";
 
-    /// <summary>Rótulo canônico de cada serviço Microsoft (fallback quando a interface não envia um nome).</summary>
-    private static string DefaultDisplayNameFor(ConnectorCapability capability) => capability switch
-    {
-        ConnectorCapability.SecureScore          => "Microsoft 365 · Secure Score",
-        ConnectorCapability.IdentityPosture      => "Microsoft Entra ID · AEGIS KNIGHT",
-        ConnectorCapability.VulnerabilityScanner => "Microsoft Defender Vulnerability Management",
-        ConnectorCapability.Siem                 => "Microsoft Sentinel · SIEM",
-        ConnectorCapability.ConfigAnalyzer        => "Microsoft Intune · Configuração e Conformidade",
-        _                                        => "Microsoft",
-    };
-
-    /// <summary>
-    /// Monta o blob de settings de UM filho Microsoft: credencial comum (tenantId/clientId/clientSecret) e — SÓ no
-    /// Sentinel — o <c>workspaceId</c>. camelCase para casar com o que a interface envia; os conectores decifram
-    /// com <c>PropertyNameCaseInsensitive</c>. Nunca escreve workspaceId nos serviços que não são Sentinel.
-    /// </summary>
+    /// <summary>Credencial cifrada dos coletores KNIGHT; certificado e assinaturas são opcionais.</summary>
     private static string BuildMicrosoftChildSettings(
-        string tenantId, string clientId, string clientSecret, string? workspaceId, KnightExtras? knight = null)
+        string tenantId, string clientId, string clientSecret, KnightExtras? knight = null)
     {
         // Dictionary ordenado por inserção → JSON estável e legível; JsonSerializer escapa os valores.
         var map = new Dictionary<string, object>
@@ -409,8 +345,6 @@ public sealed class TenantManagementService : ITenantManagementService
             ["clientId"] = clientId,
             ["clientSecret"] = clientSecret,
         };
-        if (!string.IsNullOrWhiteSpace(workspaceId))
-            map["workspaceId"] = workspaceId!;
         if (knight is not null)
         {
             if (knight.CertificatePfxBase64 is not null)
@@ -539,43 +473,6 @@ public sealed class TenantManagementService : ITenantManagementService
         var directory = !string.IsNullOrWhiteSpace(s.TenantId) ? s.TenantId : s.AzureTenantId;
         return new MicrosoftCredentialSummary(true, directory, s.ClientId, !string.IsNullOrWhiteSpace(s.ClientSecret), cert, problem,
             s.AzureSubscriptionIds ?? Array.Empty<string>(), s.DatabricksWorkspaceApi == true);
-    }
-
-    /// <summary>
-    /// [AEGIS-AUD-020] Separa a chave de ingestão (<c>ingestionKey</c>) do restante dos settings. Devolve o
-    /// RESTANTE re-serializado (ou <c>null</c> quando nada sobra) e a chave em claro (ou <c>null</c>). Um blob
-    /// que não seja um objeto JSON é tratado como opaco (sem chave) — nunca falha por formato do conteúdo.
-    /// </summary>
-    private static (string? Remaining, string? IngestionKey) ExtractIngestionKey(string settings)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(settings);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object)
-                return (settings, null);
-
-            string? key = null;
-            var rest = new Dictionary<string, JsonElement>();
-            foreach (var prop in doc.RootElement.EnumerateObject())
-            {
-                if (string.Equals(prop.Name, "ingestionKey", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (prop.Value.ValueKind == JsonValueKind.String)
-                        key = prop.Value.GetString();
-                }
-                else
-                {
-                    rest[prop.Name] = prop.Value.Clone();   // Clone: sobrevive ao dispose do JsonDocument
-                }
-            }
-
-            var remaining = rest.Count == 0 ? null : JsonSerializer.Serialize(rest);
-            return (remaining, string.IsNullOrWhiteSpace(key) ? null : key);
-        }
-        catch (JsonException)
-        {
-            return (settings, null);
-        }
     }
 
     public async Task<IReadOnlyList<ConnectorSummary>> ListConnectorsAsync(CancellationToken ct = default)

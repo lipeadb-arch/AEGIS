@@ -330,16 +330,6 @@ import { NistProceduresComponent } from './nist-procedures.component';
 
         <app-nist-findings-work [ctx]="ctx()!" [detail]="d" [assignees]="assignees()" [canEdit]="canEdit()" [canWrite]="canWrite()" [openId]="openFinding()" (changed)="refreshSoft()" />
 
-        <section class="panel" aria-labelledby="sc-posture">
-          <div class="hd"><h3 id="sc-posture">Postura do ambiente (AEGIS Score)</h3><span class="hint">outro conceito · 0–100 · não entra na maturidade</span></div>
-          @if (d.posture; as p) {
-            <p>Controle {{ postureLabel(p.status) }} por {{ p.verdictSource === 'Telemetry' ? 'telemetria' : 'análise documental' }} ·
-              {{ p.achievedPoints }} de {{ p.maxPoints }} pontos · em {{ p.lastEvaluatedAt | date: 'dd/MM/yyyy' }}</p>
-          } @else {
-            <p class="muted">Sem leitura de postura para este controle no ambiente.</p>
-          }
-        </section>
-
         <app-nist-audit-panel [assessmentId]="d.assessmentId" [cycleId]="ctx()!.cycleId" [scopeId]="d.scopeId" [code]="d.code" [refresh]="auditTick()" />
       }
     </section>

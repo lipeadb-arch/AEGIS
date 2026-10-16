@@ -501,9 +501,7 @@ public sealed class RemediationPostgresTests
     }
 
     private static IRemediationService RemediationFor(AegisScoreDbContext db, Guid tenantId) =>
-        new RemediationService(db, new SystemTenantContext(tenantId), TimeProvider.System,
-            new AegisScore.Infrastructure.Queries.DevicePriorityQuery(db, TimeProvider.System,
-                Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions())));
+        new RemediationService(db, new SystemTenantContext(tenantId), TimeProvider.System);
 
     private static IPostureSnapshotService PostureFor(AegisScoreDbContext db, Guid tenantId) =>
         new PostureSnapshotService(db, new SystemTenantContext(tenantId), new NistSignalMapper(db));

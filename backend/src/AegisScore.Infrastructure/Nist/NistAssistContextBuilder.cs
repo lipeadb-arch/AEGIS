@@ -446,7 +446,7 @@ internal sealed class NistAssistContextBuilder
     private static NistAssistPromptMethodology Methodology(NistScopeContext ctx, string? priority) => new(
         ctx.Assessment.MethodologyVersion,
         ctx.Catalog.MaturityLevels.OrderBy(l => l.Level).Select(l => $"{l.Level} — {l.Name}: {Cut(l.Description, 200)}").ToList(),
-        NistMethodologyText.Statement, NistMethodologyText.InstrumentsNote, priority);
+        NistMethodologyText.Statement, NistMethodologyText.PlatformInstrumentsNote, priority);
 
     private NistAssistBuilt Built(NistAssistPrompt prompt, Registry reg, List<string> versions, string summary, NistScopeContext ctx, bool notApplicable)
     {

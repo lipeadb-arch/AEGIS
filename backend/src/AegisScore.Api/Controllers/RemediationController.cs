@@ -89,7 +89,7 @@ public class RemediationController : ControllerBase
         {
             case "":
             case "knight": scope = ActionPlanOriginScope.Knight; break;
-            case "device": scope = ActionPlanOriginScope.DeviceVulnerability; break;
+            case "device": return Problem("Origem por CVE aposentada; os registros existentes continuam acessíveis por identificador.", statusCode: 410);
             case "nist": scope = ActionPlanOriginScope.NistFinding; break;
             case "all": scope = ActionPlanOriginScope.All; break;
             default: return BadRequest($"Origem desconhecida: '{origin}'. Use knight, device, nist ou all.");
@@ -120,14 +120,7 @@ public class RemediationController : ControllerBase
     [HttpGet("{id:guid}/source-reading")]
     public async Task<ActionResult<DeviceCaseSourceReadingView>> SourceReading(Guid id, CancellationToken ct)
     {
-        if (_tenant.TenantId is not Guid)
-            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
-        try
-        {
-            var reading = await _service.GetDeviceCaseReadingAsync(id, ct);
-            return reading is null ? NotFound() : Ok(reading);
-        }
-        catch (ActionPlanValidationException ex) { return BadRequest(ex.Message); }
+        return await Task.FromResult<ActionResult<DeviceCaseSourceReadingView>>(Problem("Leitura por CVE aposentada. O registro histórico do plano permanece disponível.", statusCode: 410));
     }
 
     /// <summary>
@@ -182,25 +175,7 @@ public class RemediationController : ControllerBase
     public async Task<ActionResult<ActionPlanDto>> CreateForDeviceCase(
         [FromBody] CreateDeviceCaseActionPlanRequest request, CancellationToken ct)
     {
-        if (_tenant.TenantId is not Guid)
-            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
-        if (request is null)
-            return BadRequest("Corpo da requisição ausente.");
-
-        try
-        {
-            var created = await _service.CreateForDeviceCaseAsync(
-                new CreateDeviceCaseActionPlanCommand(
-                    request.AssetId, request.CveId, request.Title, request.ProposedAction,
-                    request.ResponsiblePerson, request.ResponsibleArea, request.DueDate),
-                CurrentActor(), ct);
-
-            return created is null
-                ? NotFound()
-                : CreatedAtAction(nameof(GetById), new { id = created.Id }, ToDto(created));
-        }
-        catch (ActionPlanValidationException ex) { return BadRequest(ex.Message); }
-        catch (ActionPlanConflictException ex) { return Conflict(ConflictBody(ex)); }
+        return await Task.FromResult<ActionResult<ActionPlanDto>>(Problem("Criação de planos por CVE aposentada. Crie ações a partir de achados KNIGHT ou NIST.", statusCode: 410));
     }
 
     /// <summary>Edita campos e/ou avança a etapa. Exige a versão lida (concorrência otimista).</summary>

@@ -84,7 +84,7 @@ public static class NistReportPdfWriter
         Body(section, $"Médias sobre {s.WithCurrent} subcategoria(s) com atual e {s.WithTarget} com alvo confirmados; {s.PendingConfirmation} aguardando confirmação humana; " +
                       $"{s.NotEvaluated + s.InProgress} sem situação atual. Revisões aprovadas: {s.ReviewApproved}. Procedimentos realizados: {s.ProceduresPerformed} " +
                       $"(planejados sem resultado: {s.ProceduresPlanned}). Achados abertos: {s.FindingsOpen}; planos ativos: {s.PlansActive}, atrasados: {s.PlansOverdue}.");
-        Body(section, NistMethodologyText.InstrumentsNote, muted: true);
+        Body(section, r.Methodology.InstrumentsNote, muted: true);
 
         // [AEGIS-NIST-AI-ASSIST-01] Resumo executivo aceito, com a procedência (só quando existe).
         if (r.Interpretation is { } it)

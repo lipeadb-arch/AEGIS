@@ -3,8 +3,6 @@ import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { EMPTY, Subscription, combineLatest, switchMap } from 'rxjs';
-import { DetectionCoverageComponent } from '../../components/scoring/detection-coverage.component';
-import { DevicePostureComponent } from '../../components/scoring/device-posture.component';
 import { NIST_FUNCTION_DESCRIPTIONS } from '../../models/nist-glossary';
 import {
   NIST_STATES,
@@ -33,7 +31,6 @@ import {
 import { AgentStateService } from '../../services/agent-state.service';
 import { AuthService } from '../../services/auth.service';
 import { NistSelectionService, NistService, ctxOf } from '../../services/nist.service';
-import { PillarDashboardComponent } from '../pillar-dashboard.component';
 
 interface SupportResource {
   path: string;
@@ -48,15 +45,12 @@ const RESOURCES: Record<NistFunctionCode, SupportResource[]> = {
   ],
   ID: [
     { path: '/nist/id/ativos', title: 'Inventário de ativos', description: 'O que está inventariado, de que fonte e com que criticidade — apoio para a gestão de ativos (ID.AM).' },
-    { path: '/nist/id/vulnerabilidades', title: 'Vulnerabilidades', description: 'Problemas abertos por ativo e CVE — apoio para a avaliação de riscos (ID.RA).' },
-    { path: '/nist/id/prioridades', title: 'Prioridades de tratamento', description: 'Fila de tratamento por dispositivo e planos de ação — apoio para ID.RA e melhoria (ID.IM).' },
   ],
   PR: [
-    { path: '/nist/pr/recomendacoes', title: 'Recomendações de postura', description: 'Recomendações do Microsoft Secure Score: sinal de configuração, não prova por si.' },
     { path: '/knight', title: 'AEGIS KNIGHT', description: 'Assessment técnico de configurações e exposição. Controles mapeados aparecem como evidência disponível nas subcategorias.' },
   ],
   DE: [
-    { path: '/nist/de/postura', title: 'Cobertura de detecção', description: 'Regras do SIEM por técnica MITRE ATT&CK, na aba "Postura do ambiente".' },
+    { path: '/nist/gv/documentos', title: 'Evidências de detecção', description: 'Procedimentos, registros e resultados de testes para fundamentar DE.CM e DE.AE.' },
   ],
   RS: [
     { path: '/nist/gv/documentos', title: 'Planos e procedimentos de resposta', description: 'Evidências documentais de resposta a incidentes entram pela biblioteca de documentos.' },
@@ -69,13 +63,12 @@ const RESOURCES: Record<NistFunctionCode, SupportResource[]> = {
 /**
  * [AEGIS-NIST-JOURNEY-01] Uma função do NIST CSF 2.0 no AEGIS NIST, em três abas:
  *   • Avaliação — TODAS as categorias e subcategorias do catálogo, avaliadas ou não, com atual, alvo e lacuna;
- *   • Postura do ambiente — o score de postura (AEGIS Score) dos controles da função, que é outro conceito;
  *   • Recursos de apoio — as telas que fornecem evidência para a função.
  */
 @Component({
   selector: 'app-nist-function',
   standalone: true,
-  imports: [RouterLink, DatePipe, PillarDashboardComponent, DevicePostureComponent, DetectionCoverageComponent],
+  imports: [RouterLink, DatePipe],
   template: `
     @if (fn(); as f) {
       <section class="page">
@@ -99,20 +92,10 @@ const RESOURCES: Record<NistFunctionCode, SupportResource[]> = {
 
         <nav class="tabbar" aria-label="Seções da função">
           <a [routerLink]="['/nist', f.slug]" [queryParams]="params()" [class.on]="tab() === 'avaliacao'" [attr.aria-current]="tab() === 'avaliacao' ? 'page' : null">Avaliação</a>
-          <a [routerLink]="['/nist', f.slug, 'postura']" [queryParams]="params()" [class.on]="tab() === 'postura'" [attr.aria-current]="tab() === 'postura' ? 'page' : null">Postura do ambiente</a>
           <a [routerLink]="['/nist', f.slug, 'recursos']" [queryParams]="params()" [class.on]="tab() === 'recursos'" [attr.aria-current]="tab() === 'recursos' ? 'page' : null">Recursos de apoio</a>
         </nav>
 
         @switch (tab()) {
-          @case ('postura') {
-            <p class="notice">
-              <strong>Postura do ambiente (AEGIS Score, aegis-score-v1).</strong> Estado dos controles avaliados por telemetria
-              e documentos — outro conceito, distinto da maturidade atual × alvo da avaliação. Não é somado a ela.
-            </p>
-            <app-pillar-dashboard [pillar]="f.code" [embedded]="true" />
-            @if (f.code === 'PR') { <app-device-posture /> }
-            @if (f.code === 'DE') { <app-detection-coverage /> }
-          }
           @case ('recursos') {
             <div class="res-grid">
               @for (r of resources(f.code); track r.path + r.title) {
@@ -226,7 +209,7 @@ export class NistFunctionComponent {
   protected readonly stateFilter = signal<NistSubcategoryState | null>(null);
 
   protected readonly fn = signal<NistFunctionMeta | null>(null);
-  protected readonly tab = signal<'avaliacao' | 'postura' | 'recursos'>('avaliacao');
+  protected readonly tab = signal<'avaliacao' | 'recursos'>('avaliacao');
   protected readonly selection = signal<NistSelection | null>(null);
   protected readonly view = signal<NistFunctionView | null>(null);
   protected readonly loading = signal(true);
@@ -249,7 +232,7 @@ export class NistFunctionComponent {
       .subscribe(([p, q, d]) => {
         const f = nistFunctionBySlug(p.get('fn'));
         this.fn.set(f);
-        this.tab.set((d['tab'] as 'postura' | 'recursos') ?? 'avaliacao');
+        this.tab.set((d['tab'] as 'recursos') ?? 'avaliacao');
         const st = q.get('situacao') as NistSubcategoryState | null;
         this.stateFilter.set(st && NIST_STATES.includes(st) ? st : null);
         if (f) this.load(f, q.get('avaliacao'), q.get('rodada'), q.get('escopo'));

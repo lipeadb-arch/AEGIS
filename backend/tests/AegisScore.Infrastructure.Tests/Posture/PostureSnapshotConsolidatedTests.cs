@@ -364,9 +364,7 @@ public sealed class PostureSnapshotConsolidatedTests : IDisposable
         var entraRun = await SeedEntraRunAsync(db);
         await SeedTeamsRunAsync(db);
 
-        var remediation = new AegisScore.Infrastructure.Remediation.RemediationService(db, new SystemTenantContext(TenantA), TimeProvider.System,
-            new AegisScore.Infrastructure.Queries.DevicePriorityQuery(db, TimeProvider.System,
-                Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions())));
+        var remediation = new AegisScore.Infrastructure.Remediation.RemediationService(db, new SystemTenantContext(TenantA), TimeProvider.System);
         var plano = await remediation.CreateForFindingAsync(
             new AegisScore.Application.Remediation.CreateFindingActionPlanCommand(entraRun, "AK-ENTRA-001", "Registrar segundo fator",
                 "Ação proposta (sintética).", "Equipe de Identidade", "TI", null),

@@ -19,14 +19,12 @@ public sealed class BlastRadiusAssessmentService : IBlastRadiusAssessmentService
 {
     private readonly AegisScoreDbContext _db;
     private readonly IBlastRadiusCalculator _calculator;
-    private readonly IBlastRadiusScoreProjector _scoreProjector;
 
     public BlastRadiusAssessmentService(
-        AegisScoreDbContext db, IBlastRadiusCalculator calculator, IBlastRadiusScoreProjector scoreProjector)
+        AegisScoreDbContext db, IBlastRadiusCalculator calculator)
     {
         _db = db;
         _calculator = calculator;
-        _scoreProjector = scoreProjector;
     }
 
     public async Task<BlastRadiusAssessment> AssessAsync(
@@ -85,7 +83,7 @@ public sealed class BlastRadiusAssessmentService : IBlastRadiusAssessmentService
 
         // Hook ID.RA → ledger: um raio alto/amplo penaliza ID.RA-01/05 no TenantControlState (o raio "dói"
         // na nota NIST). O assessment já persistido e carimbado é a fonte de verdade do que projetar.
-        await _scoreProjector.ProjectAsync(assessment, ct);
+        // A simulação é evidência consultiva; não altera conformidade nem maturidade NIST.
         return assessment;
     }
 

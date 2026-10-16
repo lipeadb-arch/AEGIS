@@ -82,6 +82,7 @@ internal sealed class ReportChartPdf
         for (var page = 1; page <= pages; page++)
         {
             var infos = renderer.DocumentRenderer.GetRenderInfoFromPage(page);
+            if (infos is null) continue;
             XGraphics? gfx = null;
             try
             {

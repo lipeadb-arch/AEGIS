@@ -20,11 +20,7 @@ import {
 import { NIST_FUNCTION_DESCRIPTIONS } from '../models/nist-glossary';
 import { riskColor } from '../lib/scales';
 import { environment } from '../../environments/environment';
-import { CrossSourceSituationsComponent } from '../components/cross-source/cross-source-situations.component';
-import { DevicePriorityComponent } from '../components/device-priority/device-priority.component';
 import {
-  DevicePriorityCriticalityChange,
-  applyDeclaredCriticality,
   inventoryPageStep,
 } from '../models/device-priority.models';
 import { stateLabel, subcategoryRoute } from '../models/nist.models';
@@ -44,7 +40,7 @@ import { NistPageContext } from './nist/nist-page-context';
 @Component({
   selector: 'app-asset-inventory',
   standalone: true,
-  imports: [DatePipe, RouterLink, CrossSourceSituationsComponent, DevicePriorityComponent],
+  imports: [DatePipe, RouterLink],
   template: `
     <div class="page">
       <header class="page-head">
@@ -224,7 +220,6 @@ import { NistPageContext } from './nist/nist-page-context';
                 </td>
                 <td><span class="cat">{{ label(a.category) }}</span></td>
                 <td class="num">
-                  <!-- [AEGIS-RISK-PRIORITIZATION-01] Sem declaração com autor e data (inclui o padrão 1), o valor não é criticidade confirmada. -->
                   <span class="crit crit-{{ a.criticality }}"
                     [attr.title]="a.criticalityConfirmed ? 'Criticidade declarada com proveniência' : 'Criticidade não confirmada — valor cadastrado sem proveniência'">{{ a.criticality }}</span>
                   @if (!a.criticalityConfirmed) { <div class="asset-sub">não confirmada</div> }
@@ -351,10 +346,6 @@ import { NistPageContext } from './nist/nist-page-context';
                         </div>
                       }
                     }
-                    <!-- [AEGIS-RISK-PRIORITIZATION-01] Prioridade de tratamento: carga e falha próprias; usa as situações abaixo como contexto. -->
-                    <app-device-priority [assetId]="a.id" (criticalityDeclared)="onCriticalityDeclared($event)" />
-                    <!-- [AEGIS-CROSS-SOURCE-01] Situações entre fontes: carga e falha próprias, independentes das fontes acima. -->
-                    <app-cross-source-situations [assetId]="a.id" />
                   </td>
                 </tr>
               }
@@ -961,18 +952,6 @@ export class AssetInventoryComponent implements OnInit {
    * A linha reflete a criticidade CONFIRMADA pelo servidor sem recarregar a página. Se um filtro de criticidade ativo
    * deixar de corresponder, a lista é relida com os mesmos filtros e página — e isso é dito, em vez de o ativo sumir.
    */
-  onCriticalityDeclared(change: DevicePriorityCriticalityChange): void {
-    const row = this.rows().find((r) => r.id === change.assetId);
-    this.rows.set(applyDeclaredCriticality(this.rows(), change));
-    const filter = this.criticality();
-    if (filter !== null && change.criticality.storedValue !== filter) {
-      this.inventoryNotice.set(
-        `Criticidade registrada para ${row?.name ?? 'o ativo'} (${change.criticality.label}). Ele não corresponde mais ao ` +
-          `filtro de criticidade ${filter} e saiu desta lista.`,
-      );
-      this.load();
-    }
-  }
 
   toggleCategory(c: AssetCategory): void {
     const next = new Set(this.selectedCategories());

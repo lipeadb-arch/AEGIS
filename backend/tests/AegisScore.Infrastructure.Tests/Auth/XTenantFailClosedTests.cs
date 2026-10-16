@@ -20,7 +20,7 @@ public sealed class XTenantFailClosedTests
 {
     private const string Tenant = "11111111-1111-1111-1111-111111111111";
     private const string OutroTenant = "22222222-2222-2222-2222-222222222222";
-    private const string ApiPath = "/api/v1/scoring/dashboard";   // rota tenant-scoped qualquer
+    private const string ApiPath = "/api/v1/knight/assessments";   // rota tenant-scoped qualquer
 
     [Theory]
     [InlineData(null)]  // header ausente

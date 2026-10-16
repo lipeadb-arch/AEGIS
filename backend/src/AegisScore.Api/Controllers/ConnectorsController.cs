@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using AegisScore.Api.Contracts;
@@ -26,35 +25,17 @@ namespace AegisScore.Api.Controllers;
 [Authorize]
 public class ConnectorsController : ControllerBase
 {
-    // Sincronizações de VulnerabilityScanner podem levar muitos minutos em tenants grandes. Mantê-las presas à
-    // requisição HTTP faz o proxy da hospedagem expirar (502/504) mesmo quando o Defender continua respondendo.
-    // O dicionário evita duas execuções simultâneas do MESMO conector dentro desta instância e também é a fonte
-    // transitória do estado "Syncing" exposto pela listagem enquanto a reconciliação ainda não terminou.
-    private static readonly ConcurrentDictionary<Guid, byte> BackgroundSyncs = new();
-
     private readonly ITenantManagementService _connectors;
     private readonly IConnectorRegistry _registry;
-    private readonly IEvidenceIngestionExecutor _executor;
-    private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IHostApplicationLifetime _lifetime;
-    private readonly ILogger<ConnectorsController> _log;
     private readonly IKnightSyncRequests _knightSync;
 
     public ConnectorsController(
         ITenantManagementService connectors,
         IConnectorRegistry registry,
-        IEvidenceIngestionExecutor executor,
-        IServiceScopeFactory scopeFactory,
-        IHostApplicationLifetime lifetime,
-        ILogger<ConnectorsController> log,
         IKnightSyncRequests knightSync)
     {
         _connectors = connectors;
         _registry = registry;
-        _executor = executor;
-        _scopeFactory = scopeFactory;
-        _lifetime = lifetime;
-        _log = log;
         _knightSync = knightSync;
     }
 
@@ -74,7 +55,7 @@ public class ConnectorsController : ControllerBase
         return Ok(connectors
             .Select(c =>
             {
-                var syncing = BackgroundSyncs.ContainsKey(c.ConnectorId) || knightActive.Contains(c.ConnectorId);
+                var syncing = knightActive.Contains(c.ConnectorId);
                 return new ConnectorConfigDto(
                     c.ConnectorId, c.Provider.ToString(), c.Capability.ToString(), c.DisplayName,
                     c.AuthType.ToString(), c.Enabled, c.SyncIntervalMinutes,
@@ -90,18 +71,8 @@ public class ConnectorsController : ControllerBase
     {
         var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
         if (cfg is null) return NotFound();
-
-        // [AEGIS-AUD-020] Conector genérico de PUSH: não há fornecedor externo a contatar. O teste apenas
-        // confirma a PRONTIDÃO LOCAL — habilitado + chave de ingestão configurada —, sem inventar uma chamada.
-        if (IsGenericPush(cfg))
-        {
-            var ready = cfg.Enabled && !string.IsNullOrWhiteSpace(cfg.IngestionKeyHash);
-            return new ConnectorHealthDto(
-                (ready ? ConnectorStatus.Healthy : ConnectorStatus.Degraded).ToString(),
-                ready
-                    ? "Pronto para receber push (chave de ingestão configurada)."
-                    : "Configure uma chave de ingestão e habilite o conector para receber eventos.");
-        }
+        if (!ProductConnectorScope.Supports(cfg.Provider, cfg.Capability))
+            return Problem("Integração aposentada. Use as fontes do AEGIS KNIGHT ou a biblioteca do AEGIS NIST.", statusCode: 410);
 
         // [AEGIS-MVP-ADMIN-LIFECYCLE-01] Conector DESCONECTADO (credencial eliminada) não pode ser testado: sem
         // segredo não há o que autenticar contra o provedor. 409 orientado à ação (reconecte antes). Push tem
@@ -136,6 +107,8 @@ public class ConnectorsController : ControllerBase
     {
         var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
         if (cfg is null) return NotFound();
+        if (!ProductConnectorScope.Supports(cfg.Provider, cfg.Capability))
+            return Problem("Integração aposentada. Use as fontes do AEGIS KNIGHT ou a biblioteca do AEGIS NIST.", statusCode: 410);
 
         // [AEGIS-MVP-ADMIN-LIFECYCLE-01] Novas coletas são recusadas de forma controlada quando o conector está
         // desabilitado (coleta pausada) ou desconectado (credencial eliminada). 409 orientado à ação. Isto,
@@ -170,120 +143,16 @@ public class ConnectorsController : ControllerBase
             return Accepted(ToDto(enqueued.Request, enqueued.AlreadyActive));
         }
 
-        if (cfg.Capability == ConnectorCapability.VulnerabilityScanner)
-        {
-            if (!BackgroundSyncs.TryAdd(cfg.Id, 0))
-                return Accepted(new SyncAcceptedDto(true, "Sincronização de vulnerabilidades já está em andamento."));
-
-            // O ConnectorConfig contém apenas o blob EncryptedSettings; nenhum segredo em claro é capturado.
-            // O trabalho usa escopo próprio e ApplicationStopping, nunca RequestAborted: o gateway/browser pode
-            // encerrar a requisição sem cancelar a coleta longa.
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    using var scope = _scopeFactory.CreateScope();
-                    var executor = scope.ServiceProvider.GetRequiredService<IEvidenceIngestionExecutor>();
-                    _log.LogInformation(
-                        "Sincronização de vulnerabilidades em segundo plano iniciada para conector {ConnectorId}.",
-                        cfg.Id);
-
-                    var result = await executor.CollectPullAsync(cfg, _lifetime.ApplicationStopping);
-                    _log.LogInformation(
-                        "Sincronização de vulnerabilidades em segundo plano concluída para conector {ConnectorId}; resultado presente: {HasResult}.",
-                        cfg.Id, result is not null);
-                }
-                catch (OperationCanceledException) when (_lifetime.ApplicationStopping.IsCancellationRequested)
-                {
-                    _log.LogInformation(
-                        "Sincronização de vulnerabilidades {ConnectorId} interrompida por shutdown da aplicação.", cfg.Id);
-                }
-                catch (Exception ex)
-                {
-                    // O executor é a autoridade que carimba Failed. Não devolvemos body/HTML/stack trace ao browser.
-                    _log.LogError(ex,
-                        "Sincronização de vulnerabilidades em segundo plano falhou para conector {ConnectorId}.", cfg.Id);
-                }
-                finally
-                {
-                    // Só removemos o estado transitório depois de CollectPullAsync terminar por sucesso/falha.
-                    // Portanto, a listagem não consegue mostrar "Operacional" enquanto a reconciliação está rodando.
-                    BackgroundSyncs.TryRemove(cfg.Id, out _);
-                }
-            }, CancellationToken.None);
-
-            return Accepted(new SyncAcceptedDto(true,
-                "Sincronização de vulnerabilidades iniciada em segundo plano. O status será atualizado ao concluir."));
-        }
-
-        var result = await _executor.CollectPullAsync(cfg, ct);
-        if (result is null)
-            return Problem($"No adapter registered for {cfg.Provider}/{cfg.Capability}.", statusCode: 501);
-
-        // [AEGIS-MVP-VULN-01] Um conector de vulnerabilidade não produz sinais (SignalsCollected=0), mas devolve as
-        // contagens de ativos/CVEs/exposições/observações — o usuário nunca vê "0 coletados" após um sync real.
-        var vuln = result.Vulnerabilities is { } v
-            ? new VulnerabilitySyncSummaryDto(
-                v.MachinesObserved, v.AssetsCreated, v.CvesUpserted, v.ExposuresCreated,
-                v.ObservationsOpened, v.ObservationsReopened, v.ObservationsResolved,
-                v.BindingsDeactivated, v.AssetsDeactivated, v.WasComplete,
-                v.InvalidMachines, v.InvalidCves, v.InvalidRelations)
-            : null;
-
-        // [AEGIS-MVP-SIEM] Fotografia operacional PROVIDER-NEUTRAL do SIEM (fato consultivo; nunca sinal/score). O
-        // enum de estado/período vai como STRING (mesmo idioma dos demais DTOs de leitura); contagens seguem anuláveis.
-        var siem = result.Siem is { } s
-            ? new SiemSyncSummaryDto(
-                s.Source, s.IsComplete,
-                new SiemCasePostureDto(
-                    s.Cases.State.ToString(), s.Cases.Period.ToString(), s.Cases.WindowDays, s.Cases.IsComplete,
-                    s.Cases.Observed, s.Cases.Open, s.Cases.New, s.Cases.Closed,
-                    s.Cases.OpenHighSeverity, s.Cases.OpenMediumSeverity, s.Cases.OpenLowSeverity,
-                    s.Cases.OpenInformationalSeverity,
-                    s.Cases.OpenByPriority is { } bp
-                        ? bp.Select(p => new SiemPriorityCountDto(p.Priority, p.Count)).ToList()
-                        : null,
-                    s.Cases.MeanTimeToCloseHours, s.Cases.LastEvidenceAt),
-                new SiemAlertPostureDto(
-                    s.Alerts.State.ToString(), s.Alerts.Period.ToString(), s.Alerts.WindowDays, s.Alerts.IsComplete,
-                    s.Alerts.Observed, s.Alerts.HighSeverity, s.Alerts.MediumSeverity, s.Alerts.LastEvidenceAt))
-            : null;
-
-        // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (regras × MITRE) — dimensão INDEPENDENTE, fato consultivo.
-        // Estado como STRING (mesmo idioma dos demais DTOs). Só agregados — nunca nome/texto de regra ou payload.
-        var coverage = result.DetectionCoverage is { } dc
-            ? new DetectionCoverageSyncSummaryDto(
-                dc.Source, dc.AttackVersion, dc.State.ToString(),
-                dc.TotalActiveRules, dc.RulesWithMitre, dc.RulesWithoutMitre,
-                dc.RulesInLiveMode, dc.RulesWithAlerting, dc.Techniques.Count)
-            : null;
-
-        // [AEGIS-MVP-MICROSOFT-COVERAGE-02] Postura de dispositivos — DUAS dimensões independentes, fato consultivo.
-        // TotalDevices só viaja quando a dimensão de dispositivos produziu inventário: uma dimensão bloqueada por
-        // permissão devolve null, JAMAIS 0 (o operador não pode confundir "não autorizado" com "nenhum dispositivo").
-        var devicePosture = result.DevicePosture is { } dp
-            ? new DevicePostureSyncSummaryDto(
-                dp.ConfigurationState.ToString(), dp.AssignmentState.ToString(), dp.DeviceState.ToString(),
-                dp.PoliciesStored, dp.DeviceGroupsStored,
-                dp.DeviceState is DevicePostureDimensionState.Available or DevicePostureDimensionState.Partial
-                    ? dp.TotalDevices
-                    : null,
-                dp.ConfigurationPreserved, dp.DevicesPreserved)
-            : null;
-
-        return Ok(new SyncResultDto(
-            result.Persisted, Array.Empty<SignalDto>(), vuln, siem, coverage, devicePosture));
+        return Problem("Esta integração usa a biblioteca de documentos do NIST para sincronizar.", statusCode: 410);
     }
 
-    /// <summary>
-    /// [AEGIS-KNIGHT-MULTICLOUD-01] Um pedido de sincronização do KNIGHT deste conector. Tenant implícito; um
-    /// pedido de outro tenant ou de outro conector é 404 — a tela nunca recebe o desfecho de outra execução.
-    /// </summary>
     [HttpGet("{connectorId:guid}/sync-requests/{requestId:guid}")]
     public async Task<ActionResult<KnightSyncRequestDto>> GetSyncRequest(Guid connectorId, Guid requestId, CancellationToken ct)
     {
         var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
         if (cfg is null) return NotFound();
+        if (!ProductConnectorScope.Supports(cfg.Provider, cfg.Capability))
+            return Problem("Integração aposentada. Use as fontes do AEGIS KNIGHT ou a biblioteca do AEGIS NIST.", statusCode: 410);
         var view = await _knightSync.GetAsync(connectorId, requestId, ct);
         return view is null ? NotFound() : Ok(ToDto(view, false));
     }
@@ -299,6 +168,8 @@ public class ConnectorsController : ControllerBase
     {
         var cfg = await _connectors.GetConnectorAsync(connectorId, ct);
         if (cfg is null) return NotFound();
+        if (!ProductConnectorScope.Supports(cfg.Provider, cfg.Capability))
+            return Problem("Integração aposentada. Use as fontes do AEGIS KNIGHT ou a biblioteca do AEGIS NIST.", statusCode: 410);
 
         KnightSourceType? wanted = null;
         if (!string.IsNullOrWhiteSpace(source))

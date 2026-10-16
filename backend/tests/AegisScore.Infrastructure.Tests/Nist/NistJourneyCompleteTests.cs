@@ -89,9 +89,7 @@ public sealed class NistJourneyCompleteTests : IDisposable
     {
         var db = NewContext(tenant);
         var ctx = new SystemTenantContext(tenant);
-        var remediation = new RemediationService(db, ctx, _clock,
-            new AegisScore.Infrastructure.Queries.DevicePriorityQuery(db, _clock,
-                Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions())));
+        var remediation = new RemediationService(db, ctx, _clock);
         return new Services(db, new NistAssessmentService(db, ctx, _clock, Language), new NistWorkService(db, ctx, _clock, remediation, Language),
             new NistPublicationService(db, ctx, _clock, Language), new NistImportService(db, ctx, _clock, Language), remediation);
     }

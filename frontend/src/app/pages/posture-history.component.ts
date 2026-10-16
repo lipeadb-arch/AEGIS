@@ -24,7 +24,7 @@ import {
 } from '../models/posture-history.models';
 
 /**
- * PostureHistoryComponent — histórico auditável COMPARTILHADO (AEGIS Score/NIST e AEGIS KNIGHT). Lista
+ * PostureHistoryComponent — histórico auditável COMPARTILHADO (AEGIS NIST e registros legados e AEGIS KNIGHT). Lista
  * cronológica de fotografias IMUTÁVEIS, publicação controlada por papel (Manager/TenantAdmin), detalhe e
  * comparação entre duas fotografias COMPATÍVEIS (senão, estado explícito de incompatibilidade — nunca um delta
  * enganoso). Não há score combinado entre instrumentos; "não avaliado" é sempre distinto de 0. No detalhe, exporta
@@ -44,7 +44,7 @@ import {
           <p class="page-eyebrow">Relatórios</p>
           <h1>Histórico de postura</h1>
           <p class="page-desc">
-            Registros de postura publicados e imutáveis do AEGIS Score/NIST e do AEGIS KNIGHT. Compare dois
+            Registros de postura publicados e imutáveis do AEGIS NIST e registros legados e do AEGIS KNIGHT. Compare dois
             registros compatíveis; instrumentos distintos nunca se somam.
           </p>
           <p class="page-meta">Histórico auditável · registros de postura imutáveis</p>
@@ -54,9 +54,6 @@ import {
         }
         @if (canPublish()) {
           <div class="page-actions">
-            <button type="button" class="btn primary" (click)="publish('AegisScoreNist')" [disabled]="busy()">
-              {{ publishing() ? 'Publicando…' : 'Publicar AEGIS Score' }}
-            </button>
             <button type="button" class="btn real" (click)="publish('Knight')" [disabled]="busy()">
               {{ publishing() ? 'Publicando…' : 'Publicar KNIGHT' }}
             </button>

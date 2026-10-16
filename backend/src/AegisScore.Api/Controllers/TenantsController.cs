@@ -125,6 +125,9 @@ public class TenantsController : ControllerBase
     public async Task<ActionResult<ConnectorConfigDto>> ConfigureConnector(
         CreateConnectorRequest req, CancellationToken ct)
     {
+
+        if (!ProductConnectorScope.Supports(req.Provider, req.Capability))
+            return BadRequest("Integração aposentada: use os coletores do KNIGHT ou documentos do NIST.");
         // O TenantId NÃO é passado: o serviço o deriva do contexto (claim do JWT) e o DbContext o
         // revalida no carimbo de gravação.
         ConnectorConfigurationResult result;

@@ -60,6 +60,10 @@ public class PostureSnapshotsController : ControllerBase
             return BadRequest("A fotografia de maturidade NIST é publicada na jornada do AEGIS NIST (avaliação · rodada · escopo).");
         if (request is null || !TryParseType(request.Type, out var type))
             return BadRequest($"Tipo de fotografia desconhecido: '{request?.Type}'.");
+        // A fotografia da abordagem antiga continua legível no histórico, mas nenhuma nova é publicada — qualquer alias que a resolva.
+        if (type == PostureSnapshotType.AegisScoreNist)
+            return Problem("Publique a avaliação NIST pela jornada /api/v1/nist/assessments, com rodada e escopo identificados.",
+                statusCode: StatusCodes.Status410Gone);
 
         KnightSourceType? source = null;
         if (type == PostureSnapshotType.Knight && !string.IsNullOrWhiteSpace(request.Source))

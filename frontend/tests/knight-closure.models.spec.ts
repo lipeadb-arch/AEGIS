@@ -128,8 +128,9 @@ test('a leitura do Databricks só acompanha o AEGIS KNIGHT, e a matriz não repe
   eq(desliga.databricksWorkspaceApi, false, 'desligar também é explícito');
   const mantem = buildMicrosoftHubRequest(creds, [{ key: 'IdentityPosture', syncIntervalMinutes: 360 }], { databricksWorkspaceApi: null });
   eq(mantem.databricksWorkspaceApi, undefined, 'nulo = mantém o guardado');
-  const sem = buildMicrosoftHubRequest(creds, [{ key: 'SecureScore', syncIntervalMinutes: 360 }], { databricksWorkspaceApi: true });
-  eq(sem.databricksWorkspaceApi, undefined, 'sem o KNIGHT, nada do Databricks');
+  let retired = false;
+  try { buildMicrosoftHubRequest(creds, [{ key: 'SecureScore', syncIntervalMinutes: 360 }]); } catch { retired = true; }
+  ok(retired, 'o serviço antigo Secure Score não pode ser configurado');
 
   const knight = MICROSOFT_HUB_SERVICES.find((s) => s.key === 'IdentityPosture')!;
   eq(new Set(knight.appPermissions).size, knight.appPermissions.length, 'permissões sem repetição');

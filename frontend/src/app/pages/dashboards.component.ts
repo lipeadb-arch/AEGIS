@@ -27,7 +27,6 @@ import {
   knightReading,
   knightStateLabel,
   knightViewKey,
-  nistPostureReading,
   planTreatment,
   scoreText,
 } from '../models/dashboards.models';
@@ -51,8 +50,6 @@ import {
 } from '../models/nist.models';
 import { HistoryWindowRequest, PostureMonthlyHistory } from '../models/posture-history.models';
 import { ActionPlan } from '../models/remediation.models';
-import { WorkspacePosture } from '../models/workspace.models';
-import { AegisScoreService } from '../services/aegis-score.service';
 import { AgentStateService } from '../services/agent-state.service';
 import { AuthService } from '../services/auth.service';
 import { KnightService } from '../services/knight.service';
@@ -438,21 +435,7 @@ function days(iso: string | null | undefined, now: Date): number | null {
           </div>
         </details>
       }
-      <details class="panel more-section">
-        <summary><h3>AEGIS Score · postura do ambiente (outro instrumento)</h3></summary>
-        @if (posture().error) {
-          <p class="notice error" role="alert">{{ posture().error }}</p>
-        } @else if (posture().value) {
-          @let w = posture().value!;
-          @let pr = postureReading();
-          <p>Score {{ w.overall.percentage === null ? '—' : scoreText(w.overall.percentage) + '%' }} · cobertura {{ scoreText(w.overall.coveragePercentage) }}% ·
-            {{ w.overall.evaluatedControls }} de {{ w.overall.eligibleControls }} controles avaliados (aegis-score-v1).</p>
-          <p class="muted note">Mede a postura do ambiente pela telemetria e pelos documentos, na escala 0–100. Não é a maturidade NIST (1–5) nem a nota
-            KNIGHT. @for (l of pr.labels; track l) { {{ l }}. }</p>
-        } @else {
-          <p class="muted">Carregando…</p>
-        }
-      </details>
+
     </section>
   `,
   styles: [
@@ -499,7 +482,6 @@ function days(iso: string | null | undefined, now: Date): number | null {
 })
 export class DashboardsComponent {
   private readonly knightApi = inject(KnightService);
-  private readonly score = inject(AegisScoreService);
   private readonly nist = inject(NistService);
   private readonly memory = inject(NistSelectionService);
   private readonly auth = inject(AuthService);
@@ -530,7 +512,6 @@ export class DashboardsComponent {
   protected readonly planFilter = signal<PlanOrigin | 'all'>('all');
   protected readonly monthly = signal<Block<PostureMonthlyHistory>>(idle());
   protected readonly period = signal<HistoryWindowRequest>({ months: 12, until: null });
-  protected readonly posture = signal<Block<WorkspacePosture>>(idle());
   /** [AEGIS-AUDITOR-CONTEXT-01] Evidências e correlação KNIGHT × NIST da rodada selecionada. */
   protected readonly overview = signal<Block<NistEvidenceOverview>>(idle());
   protected readonly corrAll = signal(false);
@@ -655,13 +636,12 @@ export class DashboardsComponent {
     return { knight: txt(kAt, 'sem coleta concluída'), nist: txt(nAt, 'sem revisão registrada') };
   });
 
-  /** A evolução do painel mostra KNIGHT e maturidade NIST; o AEGIS Score tem seção própria (outro instrumento). */
+  /** Evolução dos dois assessments da plataforma Aegis Score. Registros legados continuam arquivados. */
   protected readonly monthlyFiltered = computed<PostureMonthlyHistory | null>(() => {
     const h = this.monthly().value;
     return h ? { ...h, series: h.series.filter((s) => s.type !== 'AegisScoreNist') } : null;
   });
 
-  protected readonly postureReading = computed(() => nistPostureReading(this.posture().value?.overall ?? null, this.generatedAt() ?? new Date()));
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.subs.unsubscribe());
@@ -681,7 +661,6 @@ export class DashboardsComponent {
     this.loadNist();
     this.loadPlans();
     this.loadMonthly();
-    this.track(this.score.fetchWorkspace(), (v) => this.posture.set(v), 'Não foi possível ler a postura do ambiente.');
   }
 
   // ---- KNIGHT -------------------------------------------------------------------------------------------------------

@@ -264,9 +264,7 @@ public sealed class DatabaseUpgradePostgresTests
             planoLegado.OriginAssetId.Should().BeNull();
 
             var remediacao = new AegisScore.Infrastructure.Remediation.RemediationService(
-                db, new SystemTenantContext(tenantId), TimeProvider.System,
-                new AegisScore.Infrastructure.Queries.DevicePriorityQuery(db, TimeProvider.System,
-                    Microsoft.Extensions.Options.Options.Create(new AegisScore.Application.Queries.CrossSourceCorrelationOptions())));
+                db, new SystemTenantContext(tenantId), TimeProvider.System);
             (await remediacao.ListAsync(new ActionPlanFilter(null, false, null, null))).Should()
                 .BeEmpty("a Central de ações mostra remediação de ACHADO — não o registro de riscos legado");
             (await remediacao.ListAsync(new ActionPlanFilter(Origin: ActionPlanOriginScope.All))).Should()
