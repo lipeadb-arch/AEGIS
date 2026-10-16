@@ -178,55 +178,12 @@ public sealed record DeviceCaseOrigin(
     public const string SchemaV1 = "device-case-origin-v1";
 }
 
-/// <summary>
-/// [AEGIS-JOURNEY-01] SITUAÇÃO ATUAL observada na fonte para o caso de origem de um plano — lida agora, pela autoridade
-/// da prioridade, e apresentada SEPARADA da situação do plano, da execução relatada e da validação. Nenhum estado aqui é
-/// comprovação de correção, e nenhum deles altera o plano.
-/// </summary>
-public sealed record DeviceCaseSourceReadingView(
-    Guid ActionPlanId,
-    DateTimeOffset EvaluatedAt,
-    string State,
-    string StateLabel,
-    string Explanation,
-    bool AssetFound,
-    string? AssetName,
-    /// <summary>O caso em aberto com a faixa ATUAL, quando a leitura o sustenta.</summary>
-    AegisScore.Application.Queries.DevicePriorityCaseDto? Case,
-    bool IsDeterminingCase,
-    string? DeviceBandLabel,
-    string? DispositionLabel,
-    string? AbsenceLabel,
-    IReadOnlyList<AegisScore.Application.Queries.CrossSourceNoteDto> Caveats,
-    /// <summary>Diferença entre a faixa atual e a do registro de origem, dita sem conclusão; nula sem diferença.</summary>
-    string? ComparisonNote,
-    /// <summary>O limite desta versão: a verificação técnica automática da correção está pendente.</summary>
-    string VerificationNote)
-{
-    /// <summary>O dispositivo de origem não está mais no inventário deste cliente.</summary>
-    public const string AssetNotFound = "assetNotFound";
-}
-
 /// <summary>Criação de uma ação a partir de um ACHADO. Não exige risco, processo de negócio nem cadastro prévio.</summary>
 /// <param name="RunId">Avaliação que originou o achado — preservada como referência de ORIGEM.</param>
 /// <param name="IndicatorId">Achado endereçado.</param>
 public sealed record CreateFindingActionPlanCommand(
     Guid RunId,
     string IndicatorId,
-    string Title,
-    string? ProposedAction,
-    string? ResponsiblePerson,
-    string? ResponsibleArea,
-    DateOnly? DueDate);
-
-/// <summary>
-/// [AEGIS-JOURNEY-01] Criação de um plano a partir de um CASO de vulnerabilidade em dispositivo. Só identifica o caso
-/// (ativo + CVE) e os campos do plano: faixa, justificativa, fatores e vínculos são obtidos pelo SERVIDOR na autoridade
-/// da prioridade — nada do que o navegador disser sobre o caso é aceito como evidência.
-/// </summary>
-public sealed record CreateDeviceCaseActionPlanCommand(
-    Guid AssetId,
-    string CveId,
     string Title,
     string? ProposedAction,
     string? ResponsiblePerson,
@@ -344,26 +301,11 @@ public interface IRemediationService
         CreateFindingActionPlanCommand command, RemediationActor actor, CancellationToken ct = default);
 
     /// <summary>
-    /// [AEGIS-JOURNEY-01] Cria um plano para UM caso de vulnerabilidade em dispositivo (ativo × CVE). O servidor lê o caso
-    /// na autoridade da prioridade e congela o contexto que o sustenta; recusa (409, com o plano existente) quando já há
-    /// plano ativo para o mesmo caso, e (400) quando o caso não está em aberto e atribuível na leitura atual.
-    /// </summary>
-    /// <returns><c>null</c> quando o ativo não existe neste tenant.</returns>
-    Task<ActionPlanView?> CreateForDeviceCaseAsync(
-        CreateDeviceCaseActionPlanCommand command, RemediationActor actor, CancellationToken ct = default);
-
-    /// <summary>
     /// [AEGIS-NIST-JOURNEY-02] Cria o plano de tratamento de um achado do AEGIS NIST. Recusa (409, com o plano existente)
     /// quando já há plano ativo para o achado. A validação do achado em si é da jornada NIST, que chama este método.
     /// </summary>
     Task<ActionPlanView> CreateForNistFindingAsync(
         CreateNistFindingActionPlanCommand command, RemediationActor actor, CancellationToken ct = default);
-
-    /// <summary>
-    /// [AEGIS-JOURNEY-01] A situação ATUAL observada na fonte para o caso de origem de um plano de dispositivo — leitura
-    /// que não altera o plano. <c>null</c> quando o plano não existe neste tenant; recusa (400) outras origens.
-    /// </summary>
-    Task<DeviceCaseSourceReadingView?> GetDeviceCaseReadingAsync(Guid id, CancellationToken ct = default);
 
     /// <summary>Ações do tenant (mais recentes primeiro), opcionalmente filtradas por achado e atividade.</summary>
     Task<IReadOnlyList<ActionPlanView>> ListAsync(ActionPlanFilter filter, CancellationToken ct = default);

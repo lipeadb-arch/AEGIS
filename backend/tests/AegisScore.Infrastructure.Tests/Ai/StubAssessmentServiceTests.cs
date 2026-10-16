@@ -65,6 +65,5 @@ public sealed class StubAssessmentServiceTests
     }
 
     private static AuditorTenantContext Context() => new(
-        "NotEvaluated", null, 0, 0, 0, 0, 0, null, Array.Empty<AuditorFunctionPosture>(), Array.Empty<AuditorControlGap>(),
-        Array.Empty<AuditorDocumentEvidence>(), new AuditorConnectorContext(0, 0, 0, 0, 0, 0, null), Array.Empty<string>());
+        Array.Empty<AuditorDocumentEvidence>(), new AuditorConnectorContext(0, 0, 0, 0, 0, 0, null));
 }

@@ -255,8 +255,6 @@ public class ConnectorsController : ControllerBase
         && (c.Capability == ConnectorCapability.Siem || c.Capability == ConnectorCapability.Edr);
 }
 
-public sealed record SyncAcceptedDto(bool Queued, string Message);
-
 /// <summary>
 /// [AEGIS-KNIGHT-MULTICLOUD-01] Pedido de sincronização do KNIGHT. <c>RunId</c> só existe quando concluído;
 /// <c>LastCompletedRunId</c> é a última avaliação concluída da fonte — o que continua valendo se este falhar.

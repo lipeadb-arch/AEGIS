@@ -147,28 +147,19 @@ public sealed class AegisAssessmentServiceTests
         user.Should().NotContain("<script>").And.Contain("\\u003Cscript\\u003E");
     }
 
-    // A IA recebe só as duas abordagens atuais: campos da pontuação aposentada não viajam no contexto nem nas regras.
+    // A IA recebe só as duas abordagens atuais: o contexto não tem campos da pontuação aposentada e as regras não os descrevem.
     [Fact]
     public async Task ChatAsync_ContextoSemCamposAposentados_E_PromptSeparaAsDuasEscalas()
     {
         var llm = new CapturingLlmClient(ChatJson("ok"));
         var sut = CreateService(llm);
-        var context = Context() with
-        {
-            TopGaps = new[] { new AuditorControlGap("PR.PS-02", "NonCompliant", "legado") },
-            SourceReadings = new[]
-            {
-                new AuditorSourceReading("Recomendações de postura pendentes", "Microsoft Secure Score",
-                    "NeverCollected", null, null, "Fonte configurada; nenhuma coleta concluída ainda."),
-            },
-        };
 
         await sut.ChatAsync(
-            new AuditorChatRequest(AuditorScope.Global, Array.Empty<AuditorMessage>(), "resuma", context),
+            new AuditorChatRequest(AuditorScope.Global, Array.Empty<AuditorMessage>(), "resuma", Context()),
             CancellationToken.None);
 
         llm.LastUserPrompt.Should().NotContain("scorePercentage").And.NotContain("coveragePercentage")
-            .And.NotContain("PR.PS-02").And.NotContain("Secure Score", "a pontuação aposentada não chega ao modelo como fato");
+            .And.NotContain("Secure Score", "a pontuação aposentada não chega ao modelo como fato");
         llm.LastUserPrompt.Should().Contain("\"connectors\"", "o estado das integrações atuais continua no contexto");
         llm.LastSystemPrompt.Should().Contain("Nota do AEGIS KNIGHT (0–100").And.Contain("Maturidade do AEGIS NIST (1–5");
         llm.LastSystemPrompt.Should().Contain("Não existe uma terceira pontuação");
@@ -177,14 +168,8 @@ public sealed class AegisAssessmentServiceTests
     }
 
     private static AuditorTenantContext Context() => new(
-        ScoreState: "Evaluated", ScorePercentage: 62.5, CoveragePercentage: 80,
-        CompliantControls: 10, NonCompliantControls: 3, MitigatedControls: 1, NotEvaluatedControls: 5,
-        LatestEvidenceAt: null,
-        Functions: Array.Empty<AuditorFunctionPosture>(),
-        TopGaps: Array.Empty<AuditorControlGap>(),
         RecentEvidence: Array.Empty<AuditorDocumentEvidence>(),
-        Connectors: new AuditorConnectorContext(1, 1, 0, 0, 0, 1, null),
-        PendingRecommendations: Array.Empty<string>());
+        Connectors: new AuditorConnectorContext(1, 1, 0, 0, 0, 1, null));
 
     // ---- Modo demonstrativo: contexto de laboratório sintético (SÓ ExternalDemo) ----
 

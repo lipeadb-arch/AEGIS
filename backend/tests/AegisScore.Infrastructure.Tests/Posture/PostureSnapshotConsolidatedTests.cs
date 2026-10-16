@@ -388,7 +388,7 @@ public sealed class PostureSnapshotConsolidatedTests : IDisposable
             new SystemTenantContext(tenantId));
 
     private static IPostureSnapshotService ServiceFor(AegisScoreDbContext db, Guid? tenantId) =>
-        new PostureSnapshotService(db, new SystemTenantContext(tenantId), new NistSignalMapper(db));
+        new PostureSnapshotService(db, new SystemTenantContext(tenantId));
 
     /// <summary>Entra ID: 1 Exposed (Critical) + 1 Passed (Medium) — run.Score = round(100*4/14) = 29.</summary>
     private static async Task<Guid> SeedEntraRunAsync(AegisScoreDbContext db)

@@ -1,63 +1,16 @@
 using System.Text;
-using System.Text.RegularExpressions;
 using AegisScore.Application.Abstractions;
 
 namespace AegisScore.Infrastructure.Ai;
 
 /// <summary>
 /// Implementação FAKE de <see cref="IAiAssessmentService"/> para desenvolvimento/demonstração:
-/// devolve respostas canned (roteiro fixo baseado no NIST CSF 2.0) sem chamar nenhum LLM — logo,
-/// sem chave e sem consumo de tokens. Registrada automaticamente pelo DI quando não há Ai:ApiKey,
-/// permitindo exercer o fluxo do Auditor Virtual ponta a ponta (o POST interviews volta 200 OK).
-///
-/// <para>O <see cref="ConductInterviewTurnAsync"/> conduz uma entrevista determinística: uma
-/// pergunta por subcategoria-alvo (extraída do enquadramento), encerrando após <c>MaxTurns</c>.</para>
+/// devolve respostas canned sem chamar nenhum LLM — logo, sem chave e sem consumo de tokens. Registrada
+/// automaticamente pelo DI quando não há Ai:ApiKey, permitindo exercer o Auditor Virtual, a leitura
+/// documental e a assistência NIST ponta a ponta.
 /// </summary>
 public sealed class StubAssessmentService : IAiAssessmentService
 {
-    /// <summary>Teto de perguntas por sessão — mantém a demo curta e finita.</summary>
-    private const int MaxTurns = 4;
-
-    /// <summary>Casa códigos NIST no formato "GV.OC-01" dentro do histórico textual.</summary>
-    private static readonly Regex NistCode = new(@"[A-Z]{2}\.[A-Z]{2}-\d{2}", RegexOptions.Compiled);
-
-    /// <summary>Perguntas canned por categoria (prefixo "Fn.CT"). Fallback: pergunta genérica.</summary>
-    private static readonly Dictionary<string, string> Bank = new()
-    {
-        ["GV.OC"] = "Como a organização define e comunica sua missão, partes interessadas e os requisitos legais/regulatórios que orientam a gestão de risco de cibersegurança?",
-        ["GV.RM"] = "Como os objetivos e o apetite a risco de cibersegurança são estabelecidos, acordados e comunicados às partes interessadas?",
-        ["GV.RR"] = "Como estão definidos, comunicados e mantidos os papéis, responsabilidades e autoridades de cibersegurança na organização?",
-        ["GV.PO"] = "Como a política de segurança da informação é estabelecida, aprovada, comunicada e revisada periodicamente?",
-        ["GV.OV"] = "Como a liderança supervisiona os resultados da estratégia de gestão de risco e ajusta o rumo quando necessário?",
-        ["GV.SC"] = "Como a organização identifica e gerencia os riscos de cibersegurança na cadeia de suprimentos e com terceiros?",
-        ["ID.AM"] = "Como a empresa gerencia o inventário de ativos físicos e de software ativos na rede?",
-        ["ID.RA"] = "Como as vulnerabilidades dos ativos são identificadas, avaliadas e priorizadas para tratamento?",
-    };
-
-    /// <summary>Roteiro padrão quando o enquadramento não traz códigos explícitos.</summary>
-    private static readonly List<string> DefaultScript = new() { "GV.OC-01", "GV.RR-01", "GV.PO-01" };
-
-    public Task<InterviewTurn> ConductInterviewTurnAsync(InterviewContext context, CancellationToken ct)
-    {
-        var plan = ExtractTargets(context.History).Take(MaxTurns).ToList();
-        // Nº de perguntas já feitas = ocorrências de "Assistant:" no histórico (0 no Start).
-        var asked = context.History.Count(h => h.StartsWith("Assistant:", StringComparison.OrdinalIgnoreCase));
-
-        if (asked >= plan.Count)
-            return Task.FromResult(new InterviewTurn("", null, true)); // roteiro coberto → encerra
-
-        var code = plan[asked];
-        return Task.FromResult(new InterviewTurn(QuestionFor(code), code, false));
-    }
-
-    public Task<MaturitySuggestion> SuggestMaturityAsync(MaturitySuggestionRequest request, CancellationToken ct)
-        => Task.FromResult(new MaturitySuggestion(
-            CurrentLevel: 3, // "Parcial" no ledger → exercita a geração de IdentifiedRisk no fluxo
-            Confidence: 0.6,
-            Rationale: $"[Simulado] Avaliação canned de {request.SubcategoryCode}: evidência parcial " +
-                       "declarada na entrevista, sem documento formal correlato. Nível 3 (Gerenciado) provisório.",
-            EvidenceRefs: Array.Empty<Guid>()));
-
     /// <summary>
     /// Triagem determinística por tema — descoberta de CANDIDATOS, jamais prova. Roteia temas do texto
     /// para controles que TÊM regra, exercitando a esteira documental sem rede. Mudanças de integridade:
@@ -162,31 +115,8 @@ public sealed class StubAssessmentService : IAiAssessmentService
             .Select(s => s.Trim())
             .Where(s => s.Length > 0);
 
-    public Task<IReadOnlyList<ActionPlanSuggestion>> GenerateActionPlanAsync(ActionPlanRequest request, CancellationToken ct)
-    {
-        IReadOnlyList<ActionPlanSuggestion> plans = request.Gaps
-            .Select(g => new ActionPlanSuggestion(
-                g.SubcategoryCode,
-                $"[Simulado] Endereçar a lacuna de {g.SubcategoryCode}.",
-                "Formalizar o controle, atribuir responsável e evidenciar a execução.",
-                g.Gap >= 2 ? "Alta" : "Média"))
-            .ToList();
-        return Task.FromResult(plans);
-    }
-
     // [AEGIS-LANGUAGE-STATES-01] O texto canned afirmava maturidade e riscos ("política formalizada", "GV.SC
     // incipiente") sem ter lido dado nenhum do ambiente — o fallback não pode preencher lacunas com conclusão.
-    public Task<string> GenerateExecutiveReportAsync(ExecutiveReportRequest request, CancellationToken ct)
-        => Task.FromResult(
-            "# Plano Diretor de Segurança (Simulado)\n\n" +
-            $"Cliente: **{request.ClientName}**.\n\n" +
-            "> Conteúdo gerado pelo motor de IA **simulado** (StubAssessmentService), sem chamada a LLM e **sem " +
-            "análise dos dados deste ambiente**.\n\n" +
-            "## Maturidade atual\nNão há dados suficientes neste modo simulado.\n\n" +
-            "## Principais riscos\nNão há dados suficientes neste modo simulado.\n");
-
-    public Task<IReadOnlyList<NormalizedSignal>> NormalizeSignalsAsync(RawSignalBatch batch, CancellationToken ct)
-        => Task.FromResult<IReadOnlyList<NormalizedSignal>>(Array.Empty<NormalizedSignal>());
 
     /// <summary>
     /// [AEGIS-AUDITOR-CONTEXT-01] Auditor SIMULADO (sem LLM): a mesma identidade do motor real, montando a resposta SÓ com as fontes do
@@ -271,96 +201,8 @@ public sealed class StubAssessmentService : IAiAssessmentService
         return t.Length <= max ? t : t[..max] + "…";
     }
 
-    /// <summary>
-    /// Redige um advisory CANNED ancorado no código do controle (sem LLM). Um banco fixo cobre os
-    /// controles do Protect com texto mastigado; para os demais, um fallback genérico compõe uma
-    /// recomendação a partir do próprio código — o suficiente para exercer o fluxo consultivo ponta a
-    /// ponta sem chave nem tokens.
-    /// </summary>
-    public Task<AdvisoryDraft> GenerateAdvisoryAsync(AdvisoryGenerationRequest request, CancellationToken ct)
-    {
-        var code = (request.SubcategoryCode ?? "").Trim().ToUpperInvariant();
-        var draft = AdvisoryBank.TryGetValue(code, out var canned) ? canned : FallbackAdvisory(code);
-        return Task.FromResult(draft);
-    }
-
-    /// <summary>Advisories canned por código de controle (foco no Protect — a Fase 1). Fallback: <see cref="FallbackAdvisory"/>.</summary>
-    private static readonly Dictionary<string, AdvisoryDraft> AdvisoryBank = new()
-    {
-        // [AEGIS-LANGUAGE-STATES-01] PR.AA-01 é o ciclo de vida de identidades e credenciais de usuários, serviços
-        // e dispositivos. O texto anterior reduzia o controle inteiro a "MFA para administradores" — um exemplo.
-        ["PR.AA-01"] = new AdvisoryDraft(
-            "Controlar o ciclo de vida de identidades e credenciais",
-            "[Simulado] Identidades e credenciais sem ciclo de vida controlado — contas sem responsável, credenciais " +
-            "de aplicações que ninguém revisa, acesso privilegiado sem segundo fator — permitem acesso indevido " +
-            "difícil de perceber. O efeito concreto neste ambiente depende da avaliação dos dados coletados.",
-            "1. Inventarie as identidades de usuários, serviços/aplicações e dispositivos, cada uma com responsável.\n" +
-            "2. Defina e registre criação, alteração e remoção (entrada, mudança de função e saída).\n" +
-            "3. Exija MFA, começando pelas contas privilegiadas (Conditional Access em Report-only, depois On).\n" +
-            "4. Revise e rotacione credenciais de aplicações e contas de serviço; remova as sem uso comprovado.\n" +
-            "5. Guarde as revisões e o relatório de métodos de autenticação como evidência para a reavaliação."),
-        ["PR.DS-01"] = new AdvisoryDraft(
-            "Cifrar dados em repouso nos endpoints e eliminar tráfego em claro",
-            "Endpoints sem criptografia de disco e tráfego não cifrado expõem dados sensíveis a exfiltração " +
-            "em caso de perda/roubo do dispositivo ou de interceptação de rede — uma falha direta de confidencialidade.",
-            "1. Force BitLocker (Windows) / FileVault (macOS) via política de MDM em 100% da frota.\n" +
-            "2. Publique o status de criptografia no inventário e bloqueie o acesso de dispositivos não cifrados.\n" +
-            "3. Imponha TLS 1.2+ nos serviços internos; desative protocolos em claro (HTTP, FTP, Telnet).\n" +
-            "4. Ative DLP para monitorar e barrar a saída de dados sensíveis não cifrados."),
-        ["PR.PS-01"] = new AdvisoryDraft(
-            "Aplicar baseline de hardening CIS e zerar o backlog de patches críticos",
-            "Plataformas fora do baseline de configuração e com patches críticos pendentes ampliam a superfície " +
-            "de ataque: cada CVE crítica não corrigida é uma porta conhecida para execução remota de código.",
-            "1. Adote o CIS Benchmark da plataforma como baseline e meça a conformidade (meta ≥ 80%).\n" +
-            "2. Priorize e aplique todos os patches de severidade crítica dentro do SLA.\n" +
-            "3. Automatize a gestão de patches (WSUS/Intune/gerenciador equivalente) com janelas de manutenção.\n" +
-            "4. Monitore o desvio de configuração e reconcilie continuamente contra o baseline."),
-        ["PR.IR-01"] = new AdvisoryDraft(
-            "Impor política de firewall default-deny e microssegmentar a rede",
-            "Sem uma postura default-deny, a rede confia por omissão: um host comprometido alcança livremente " +
-            "outros ativos, transformando um incidente pontual em movimento lateral irrestrito.",
-            "1. Configure o firewall com regra final default-deny; libere apenas fluxos explicitamente necessários.\n" +
-            "2. Microssegmente por zonas (identidade, dados, OT) para conter o raio de explosão.\n" +
-            "3. Revise e remova regras permissivas legadas (any-any).\n" +
-            "4. Registre e alerte sobre os deny para detectar varredura e movimento lateral."),
-    };
-
-    /// <summary>Recomendação genérica para um controle fora do banco canned — ancorada no próprio código.</summary>
-    // [AEGIS-LANGUAGE-STATES-01] O fallback atribuía ao Microsoft Secure Score o resultado de um controle NIST
-    // ("reduz o Secure Score") e afirmava exposição sem evidência. São escalas distintas.
-    private static AdvisoryDraft FallbackAdvisory(string code) => new(
-        $"Fechar a lacuna do controle {code}",
-        $"[Simulado] O controle {code} está não conforme na avaliação AEGIS deste ambiente. Enquanto a evidência " +
-        "exigida não for apresentada, a lacuna permanece aberta; o efeito concreto no ambiente depende de avaliação.",
-        $"[Simulado · configure Ai:ApiKey para texto real] Recomendação para {code}:\n" +
-        "1. Identifique a evidência técnica exigida pela subcategoria NIST.\n" +
-        "2. Implemente/ajuste o controle na plataforma correspondente.\n" +
-        "3. Colete a telemetria ou o documento que comprove a implementação efetiva.\n" +
-        "4. Reavalie o controle no AEGIS com a nova evidência.");
-
     /// <summary>[AEGIS-NIST-AI-ASSIST-01] Assistência NIST simulada: demonstração por regras fixas, marcada "[Simulado]".</summary>
     public Task<AegisScore.Application.Nist.NistAssistDraft> AssistNistAsync(
         AegisScore.Application.Nist.NistAssistPrompt request, CancellationToken ct)
         => Task.FromResult(StubNistAssist.Draft(request));
-
-    // ---- helpers ----
-
-    /// <summary>Extrai (na ordem, sem repetir) os códigos NIST do histórico; se não houver, usa o roteiro padrão.</summary>
-    private static List<string> ExtractTargets(IReadOnlyList<string> history)
-    {
-        var codes = new List<string>();
-        foreach (var line in history)
-            foreach (Match m in NistCode.Matches(line))
-                if (!codes.Contains(m.Value))
-                    codes.Add(m.Value);
-        return codes.Count > 0 ? codes : DefaultScript;
-    }
-
-    private static string QuestionFor(string code)
-    {
-        var key = code.Length >= 5 ? code[..5] : code; // "GV.OC-01" → "GV.OC"
-        return Bank.TryGetValue(key, out var q)
-            ? q
-            : $"Descreva como a organização implementa e evidencia os controles da subcategoria {code} do NIST CSF 2.0.";
-    }
 }

@@ -415,6 +415,57 @@ public sealed class NistJourneyHttpTests : IClassFixture<AegisApiFixture>
         (await StateAsync()).Should().Be(saved);
     }
 
+    /// <summary>
+    /// [AEGIS-PRODUCT-CLEANUP-02] As rotas da abordagem aposentada respondem 410 sem sombrear as preservadas que dividem o
+    /// prefixo (o catch-all perde para o segmento literal): identidade do KNIGHT, KNIGHT, NIST, documentos, ativos e
+    /// fotografias seguem respondendo; nenhum alias da pontuação antiga publica fotografia; o acesso anônimo segue barrado.
+    /// </summary>
+    [Fact]
+    public async Task RotasAposentadas_Respondem410_SemSombrearAsPreservadas()
+    {
+        if (_api is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var t = await _api.SeedTenantAsync("Cliente Rotas Aposentadas");
+        using var manager = _api.As(t.Manager);
+
+        foreach (var url in new[]
+                 {
+                     "/api/v1/telemetry/identity/entra-id", "/api/v1/knight/assessments/latest", Base,
+                     "/api/v1/governance/documents", "/api/v1/assets", "/api/v1/posture/snapshots",
+                 })
+        {
+            using var r = await manager.GetAsync(url);
+            r.StatusCode.Should().BeOneOf(new[] { HttpStatusCode.OK, HttpStatusCode.NoContent }, url);
+        }
+
+        var asset = Guid.NewGuid();
+        foreach (var url in new[]
+                 {
+                     "/api/v1/telemetry", "/api/v1/telemetry/edr", "/api/v1/assessments", "/api/v1/scoring/maturity",
+                     "/api/v1/dashboard/overview", "/api/v1/vulnerabilities", "/api/v1/ingestion/siem", "/api/v1/priorities",
+                     "/api/v1/risks", $"/api/v1/assets/{asset}/priority", $"/api/v1/assets/{asset}/correlations",
+                 })
+        {
+            using var r = await manager.GetAsync(url);
+            r.StatusCode.Should().Be(HttpStatusCode.Gone, url);
+        }
+
+        // O antigo gerador de advisories caiu no catch-all da pontuação aposentada: nada é redigido nem gravado.
+        using (var r = await manager.PostAsync("/api/v1/scoring/advisories", AegisApiHarness.JsonBody(new { subcategoryCode = "PR.AA-01" })))
+            r.StatusCode.Should().Be(HttpStatusCode.Gone, await r.Content.ReadAsStringAsync());
+
+        foreach (var alias in new[] { "aegis", "aegisscore", "aegisscorenist", "nist", " AEGIS " })
+        {
+            using var r = await manager.PostAsync("/api/v1/posture/snapshots", AegisApiHarness.JsonBody(new { type = alias }));
+            r.StatusCode.Should().Be(HttpStatusCode.Gone, alias);
+        }
+        using (var list = await GetJsonAsync(manager, "/api/v1/posture/snapshots"))
+            list.RootElement.GetArrayLength().Should().Be(0, "nenhuma fotografia da abordagem antiga foi publicada");
+
+        using (var anonymous = _api.Anonymous())
+        using (var r = await anonymous.GetAsync("/api/v1/assessments"))
+            r.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
     private static async Task<JsonDocument> GetJsonAsync(HttpClient client, string url)
     {
         using var r = await client.GetAsync(url);

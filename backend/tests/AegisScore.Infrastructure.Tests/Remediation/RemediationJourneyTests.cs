@@ -1352,8 +1352,7 @@ public sealed class RemediationJourneyTests : IDisposable
         new RemediationService(db, new SystemTenantContext(tenantId), TimeProvider.System);
 
     private static IPostureSnapshotService PostureFor(AegisScoreDbContext db, Guid tenantId) =>
-        new PostureSnapshotService(db, new SystemTenantContext(tenantId),
-            new AegisScore.Infrastructure.Connectors.NistSignalMapper(db));
+        new PostureSnapshotService(db, new SystemTenantContext(tenantId));
 
     /// <summary>
     /// Executa uma avaliação com fatos, capacidades e INSTANTE controlados pelo teste — a ordem temporal é

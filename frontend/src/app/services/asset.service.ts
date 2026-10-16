@@ -2,7 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { AssetDto, AssetQuery, AssetSources, PagedResult } from '../models/asset.models';
-import { AssetDevicePriority, DevicePriorityCriticality } from '../models/device-priority.models';
+import { DevicePriorityCriticality } from '../models/device-priority.models';
 import { environment } from '../../environments/environment';
 
 @Injectable({ providedIn: 'root' })

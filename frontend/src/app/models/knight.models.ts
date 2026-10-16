@@ -1,10 +1,12 @@
 // Modelos da tela AEGIS KNIGHT — espelham o contrato de /api/v1/knight/assessments (camelCase). Enums viajam
 // como NOME (nunca ordinal). Funções PURAS de apresentação (testáveis, sem Angular). O score aqui é o score
-// KNIGHT (fórmula própria), ANULÁVEL e DISTINTO do AEGIS Score geral.
+// KNIGHT (fórmula própria), ANULÁVEL e DISTINTO da maturidade do AEGIS NIST.
 
-import { SeverityLevel } from './scoring.models';
-
-export type { SeverityLevel };
+/**
+ * Gravidade de um achado — a régua ÚNICA de severidade do produto (espelha o enum SeverityLevel do backend).
+ * Qualquer superfície que mostre severidade reimporta daqui em vez de manter uma segunda escala.
+ */
+export type SeverityLevel = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
 
 export type KnightMode = 'Demo' | 'Live';
 export type KnightRunStatus = 'Pending' | 'Running' | 'Completed' | 'Failed';

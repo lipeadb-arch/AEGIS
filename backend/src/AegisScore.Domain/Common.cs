@@ -89,22 +89,6 @@ public enum SeverityLevel
     Informational = 4,
 }
 
-/// <summary>Helpers puros da régua de severidade (mesmo idioma de <c>AuditorScopes</c>).</summary>
-public static class SeverityLevels
-{
-    /// <summary>
-    /// Severidade PROXY derivada do status — o default enquanto o motor de IA não emite a severidade real
-    /// (que virá ponderada pelo Raio de Explosão). Garante que todo controle tenha badge desde o primeiro
-    /// veredito, sem inventar risco: é uma leitura direta do próprio status, não uma estimativa.
-    /// </summary>
-    public static SeverityLevel FromStatus(ControlStatus status) => status switch
-    {
-        ControlStatus.NonCompliant         => SeverityLevel.Critical,
-        ControlStatus.MitigatedByThirdParty => SeverityLevel.Medium,
-        _                                   => SeverityLevel.Low,   // Compliant — risco residual conhecido
-    };
-}
-
 /// <summary>
 /// Procedência do veredito aplicado ao ledger de conformidade — define a PRECEDÊNCIA de escrita no
 /// <see cref="TenantControlState"/>. Nome distinto de <see cref="EvidenceSource"/> (procedência de
@@ -233,14 +217,6 @@ public enum AssetDiscoverySource { Manual = 0, Connector = 1, Import = 2 }
 // ---- Identify (ID.AM) — metadados táticos da telemetria de ativo (alimentam a avaliação ativa) ----
 // Serializados como STRING no JSON (payload legível: "Absent" em vez de 2) — anotação contida a estes
 // enums, sem alterar a serialização global da API.
-
-/// <summary>Estado do agente de EDR/antivírus no ativo: comunicando, silencioso/degradado ou ausente.</summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum EdrCoverageStatus { Active = 0, Degraded = 1, Absent = 2 }
-
-/// <summary>Ciclo de vida do sistema operacional: suportado, próximo do fim de vida ou já obsoleto (EOL).</summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum OsLifecycleStatus { Supported = 0, ApproachingEndOfLife = 1, EndOfLife = 2 }
 
 // ---- Identify (ID.RA) — Risk Assessment / Raio de Explosão -------------------
 

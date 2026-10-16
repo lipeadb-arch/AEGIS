@@ -19,11 +19,6 @@ namespace AegisScore.Infrastructure.Ai;
 public sealed class AegisAssessmentService : IAiAssessmentService
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
-    private static readonly JsonSerializerOptions ContextJson = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false,
-    };
 
     /// <summary>
     /// [AEGIS-NIST-AI-ASSIST-01] Contexto da jornada NIST: acentos preservados (texto legível e menos tokens), mas &lt;, &gt;, &amp;
@@ -174,101 +169,6 @@ public sealed class AegisAssessmentService : IAiAssessmentService
             dto.supported, dto.evidenceQuote ?? "", Math.Clamp(dto.confidence, 0, 1), dto.rationale ?? "");
     }
 
-    public async Task<MaturitySuggestion> SuggestMaturityAsync(MaturitySuggestionRequest request, CancellationToken ct)
-    {
-        const string system =
-            "You assess cybersecurity maturity on a 1–5 CMMI scale (1 Performed, 2 Documented, " +
-            "3 Managed, 4 Quantitatively Managed, 5 Optimizing) for one NIST CSF 2.0 subcategory. " +
-            "Weigh self-declared answers AGAINST documentary evidence and API facts; if they conflict, " +
-            "lower confidence and explain. Respond ONLY with JSON: " +
-            "{\"currentLevel\":1-5,\"confidence\":0.0-1.0,\"rationale\":\"...\"}.";
-
-        var answers = string.Join("\n", request.Answers.Select(a => $"- Q: {a.Question}\n  A: {a.Answer}{(a.Comment is null ? "" : $" ({a.Comment})")}"));
-        var evidence = string.Join("\n", request.EvidenceSummaries.Select(e => $"- {e}"));
-        var signals = string.Join("\n", request.Signals.Select(s => $"- {s.SignalKey} = {s.Value} (sev {s.Severity})"));
-        var user =
-            $"SUBCATEGORY {request.SubcategoryCode}: {request.SubcategoryDescription}\n\n" +
-            $"ANSWERS:\n{answers}\n\nEVIDENCE:\n{evidence}\n\nAPI FACTS:\n{signals}";
-
-        var dto = await CompleteJsonAsync<MaturityJson>(system, user, ct);
-        var level = Math.Clamp(dto.currentLevel, 1, 5);
-        return new MaturitySuggestion(level, dto.confidence, dto.rationale ?? "", Array.Empty<Guid>());
-    }
-
-    public async Task<InterviewTurn> ConductInterviewTurnAsync(InterviewContext context, CancellationToken ct)
-    {
-        const string system =
-            "You conduct a structured security maturity interview, one question at a time, to fill " +
-            "evidence gaps for NIST CSF 2.0 subcategories. Ask the single most useful next question. " +
-            "Respond ONLY with JSON: {\"question\":\"..\",\"targetSubcategoryCode\":\"..\",\"isComplete\":false}.";
-        var user = $"PROCESS: {context.ProcessName}\n\nHISTORY:\n{string.Join("\n", context.History)}";
-
-        var dto = await CompleteJsonAsync<InterviewJson>(system, user, ct);
-        return new InterviewTurn(dto.question ?? "", dto.targetSubcategoryCode, dto.isComplete);
-    }
-
-    public async Task<IReadOnlyList<ActionPlanSuggestion>> GenerateActionPlanAsync(ActionPlanRequest request, CancellationToken ct)
-    {
-        const string system =
-            "You produce a prioritized cybersecurity action plan. Given gaps (target−current) and ICR " +
-            "per subcategory, propose concrete actions ordered by (gap × ICR). " +
-            "Respond ONLY with JSON array: [{\"subcategoryCode\":\"..\",\"what\":\"..\",\"how\":\"..\",\"priority\":\"Alta|Média|Baixa\"}].";
-        var gaps = string.Join("\n", request.Gaps.Select(g => $"- {g.SubcategoryCode}: gap {g.Gap}, ICR {g.Icr:0.0}"));
-
-        var dto = await CompleteJsonAsync<List<ActionJson>>(system, gaps, ct);
-        return (dto ?? new())
-            .Select(a => new ActionPlanSuggestion(a.subcategoryCode ?? "", a.what ?? "", a.how ?? "", a.priority ?? "Média"))
-            .ToList();
-    }
-
-    public async Task<string> GenerateExecutiveReportAsync(ExecutiveReportRequest request, CancellationToken ct)
-    {
-        const string system =
-            "You are a CISO advisor. Write a concise executive 'Plano Diretor de Segurança' section in " +
-            "Brazilian Portuguese: current maturity by process, top risks, control weaknesses and " +
-            "improvement opportunities — in business language, not technical jargon. Markdown. " +
-            "Use ONLY facts present in the user message; for any section without data write " +
-            "\"não há dados suficientes\". Never invent maturity levels, risks, impact, criticality or scores.";
-        var user = $"Cliente: {request.ClientName}. Assessment: {request.AssessmentId}.";
-        return await CompleteTextAsync(system, user, ct);
-    }
-
-    public async Task<IReadOnlyList<NormalizedSignal>> NormalizeSignalsAsync(RawSignalBatch batch, CancellationToken ct)
-    {
-        const string system =
-            "You are a log/telemetry normalizer. You receive raw, possibly unknown tool output. " +
-            "Extract essential fields (host, ip, severity, action, resource, score) and emit normalized " +
-            "signals for a unified schema, mapping to NIST CSF 2.0 subcategory codes when evident. " +
-            "Respond ONLY with JSON array: " +
-            "[{\"signalKey\":\"..\",\"numericValue\":0,\"unit\":\"..\",\"severity\":0-4,\"mappedSubcategoryCodes\":[\"..\"]}].";
-        var user = $"PROVIDER: {batch.Provider} / {batch.Capability}\nFORMAT: {batch.FormatHint ?? "auto"}\n\nRAW:\n{batch.RawPayload}";
-
-        var dto = await CompleteJsonAsync<List<SignalJson>>(system, user, ct);
-        return (dto ?? new())
-            .Select(s => new NormalizedSignal(
-                s.signalKey ?? "", s.numericValue, s.unit, s.severity,
-                s.mappedSubcategoryCodes ?? new(), null))
-            .ToList();
-    }
-
-    public async Task<AdvisoryDraft> GenerateAdvisoryAsync(AdvisoryGenerationRequest request, CancellationToken ct)
-    {
-        const string system =
-            "You are a senior SOC/MSSP remediation advisor specialized in NIST CSF 2.0. Given ONE " +
-            "subcategory code, write a remediation advisory the client's IT team can execute to implement AND " +
-            "evidence that subcategory's outcome, so the AEGIS NIST assessment can re-evaluate it. Never promise a " +
-            "score or maturity change. Cover the FULL outcome of the subcategory — a single example (e.g. MFA for administrators) is " +
-            "not the whole control. Reply in Brazilian Portuguese. Provide a short actionable title, a " +
-            "'documentedRisk' explaining WHY the gap matters in general terms (you have NO tenant data: do not " +
-            "invent observed threats, impact, criticality or effectiveness), and a numbered, technical " +
-            "'technicalSteps' the IT team follows, ending with the evidence to collect. " +
-            "Respond ONLY with JSON: {\"title\":\"..\",\"documentedRisk\":\"..\",\"technicalSteps\":\"..\"}.";
-        var user = $"SUBCATEGORY: {request.SubcategoryCode}";
-
-        var dto = await CompleteJsonAsync<AdvisoryJson>(system, user, ct);
-        return new AdvisoryDraft(dto.title ?? "", dto.documentedRisk ?? "", dto.technicalSteps ?? "");
-    }
-
     public async Task<AuditorReply> ChatAsync(AuditorChatRequest request, CancellationToken ct)
     {
         // [AEGIS-AUDITOR-CONTEXT-01] Uma identidade em toda a aplicação (regras fixas + persona); a página só dá o FOCO. Contexto, conversa e
@@ -375,8 +275,7 @@ public sealed class AegisAssessmentService : IAiAssessmentService
         if (context is null)
             return "CONTEXTO DO TENANT: (indisponível — responda \"não há dados suficientes\" e peça a coleta).";
 
-        // Só os campos que o servidor preenche. Os da pontuação aposentada seguem no contrato por compatibilidade, mas não chegam ao
-        // modelo: zeros e listas vazias de leituras retiradas seriam lidos como fato sobre o tenant.
+        // Os assessments, a evidência documental e as integrações atuais; nenhuma leitura da pontuação aposentada.
         var json = JsonSerializer.Serialize(new
         {
             context.Assessments,
@@ -595,10 +494,5 @@ public sealed class AegisAssessmentService : IAiAssessmentService
     // ---- raw JSON shapes ----
     private record DocAnalysisJson(string? summary, List<ClaimJson>? claims);
     private record ClaimJson(string? subcategoryCode, string? claim, double confidence);
-    private record MaturityJson(int currentLevel, double confidence, string? rationale);
-    private record InterviewJson(string? question, string? targetSubcategoryCode, bool isComplete);
-    private record ActionJson(string? subcategoryCode, string? what, string? how, string? priority);
-    private record SignalJson(string? signalKey, double? numericValue, string? unit, int? severity, List<string>? mappedSubcategoryCodes);
     private record DocControlVerdictJson(bool supported, string? evidenceQuote, double confidence, string? rationale);
-    private record AdvisoryJson(string? title, string? documentedRisk, string? technicalSteps);
 }

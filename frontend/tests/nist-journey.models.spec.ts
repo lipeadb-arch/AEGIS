@@ -43,9 +43,8 @@ import {
   selectionParams,
   toSaveRequest,
 } from '../src/app/models/nist.models';
-import { knightReading, nistPostureReading, prioritizedFindings, scoreText } from '../src/app/models/dashboards.models';
+import { knightReading, prioritizedFindings, scoreText } from '../src/app/models/dashboards.models';
 import { KnightAssessment, KnightIndicator } from '../src/app/models/knight.models';
-import { WorkspaceOverall } from '../src/app/models/workspace.models';
 import { PostureMonthlyPoint, monthShort, monthlyCells } from '../src/app/models/posture-history.models';
 
 let failures = 0;
@@ -144,11 +143,6 @@ test('dashboards: sem avaliação, zero, parcial, desatualizada e demonstração
   ok(stale.stale && stale.labels.some((l) => l.startsWith('Desatualizada')), 'desatualizada (7+ dias)');
   ok(!knightReading(knight({}), now).stale, 'recente');
   ok(knightReading(knight({ isDemo: true }), now).demo, 'demonstração');
-
-  const notEvaluated = { evaluationState: 'NotEvaluated', percentage: null, coveragePercentage: 0, latestEvidenceAt: null } as unknown as WorkspaceOverall;
-  ok(!nistPostureReading(notEvaluated, now).hasResult, 'postura sem controle avaliado');
-  const zeroPosture = nistPostureReading({ evaluationState: 'Evaluated', percentage: 0, coveragePercentage: 5, latestEvidenceAt: '2026-10-02T00:00:00Z' } as unknown as WorkspaceOverall, now);
-  ok(zeroPosture.zero && zeroPosture.partial && !zeroPosture.stale, 'postura zero com cobertura parcial');
 });
 
 test('findings prioritários: só reprovados, por severidade e depois por afetados', () => {

@@ -595,7 +595,7 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
     }
 
     private static IPostureSnapshotService PostureFor(AegisScoreDbContext db, Guid tenantId) =>
-        new PostureSnapshotService(db, new SystemTenantContext(tenantId), new AegisScore.Infrastructure.Connectors.NistSignalMapper(db));
+        new PostureSnapshotService(db, new SystemTenantContext(tenantId));
 
     /// <summary>O MESMO conector Microsoft resolve as duas fontes — é o mesmo registro de aplicação.</summary>
     private sealed class MicrosoftConfig : IKnightSourceConfigurationProvider

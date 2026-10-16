@@ -4,7 +4,6 @@ using AegisScore.Application.Services;
 using AegisScore.Domain;
 using AegisScore.Infrastructure.Documents;
 using AegisScore.Infrastructure.Persistence;
-using AegisScore.Infrastructure.Scoring;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;

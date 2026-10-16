@@ -12,6 +12,7 @@ using AegisScore.Infrastructure.Connectors;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Posture;
 using AegisScore.Infrastructure.Posture.Export;
+using AegisScore.Infrastructure.Tests.Legacy;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Data.Sqlite;
@@ -52,7 +53,7 @@ public sealed class PostureSnapshotExportTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         await SeedDefaultLedgerAsync(db);
-        var published = await ServiceFor(db).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+        var published = await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA);
 
         var pdf = await ExporterFor(db).ExportAsync(published.Summary.Id, PostureExportFormat.Pdf);
 
@@ -75,7 +76,7 @@ public sealed class PostureSnapshotExportTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         await SeedDefaultLedgerAsync(db);
-        var published = await ServiceFor(db).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+        var published = await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA);
 
         var csv = await ExporterFor(db).ExportAsync(published.Summary.Id, PostureExportFormat.Csv);
 
@@ -117,7 +118,7 @@ public sealed class PostureSnapshotExportTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         await SeedActiveFrameworkAsync(db);   // catálogo ativo, ledger vazio → score anulável
-        var published = await ServiceFor(db).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+        var published = await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA);
         published.Summary.Score.Should().BeNull("pré-condição: sem controle avaliado, o score é anulável");
 
         var pdf = await ExporterFor(db).ExportAsync(published.Summary.Id, PostureExportFormat.Pdf);
@@ -142,7 +143,7 @@ public sealed class PostureSnapshotExportTests : IDisposable
     {
         await using var db = NewContext(TenantA);
         await SeedDefaultLedgerAsync(db);
-        var published = await ServiceFor(db).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+        var published = await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA);
 
         var pdf = await ExporterFor(db).ExportAsync(published.Summary.Id, PostureExportFormat.Pdf);
         var csv = await ExporterFor(db).ExportAsync(published.Summary.Id, PostureExportFormat.Csv);
@@ -197,7 +198,7 @@ public sealed class PostureSnapshotExportTests : IDisposable
         await using (var dbA = NewContext(TenantA))
         {
             await SeedDefaultLedgerAsync(dbA);
-            id = (await ServiceFor(dbA).PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
+            id = (await LegacyAegisSnapshotFixture.PublishAsync(dbA, TenantA)).Summary.Id;
         }
 
         await using var dbB = NewContext(TenantB);
@@ -215,7 +216,7 @@ public sealed class PostureSnapshotExportTests : IDisposable
         await using (var db = NewContext(TenantA))
         {
             await SeedDefaultLedgerAsync(db);
-            id = (await ServiceFor(db).PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
+            id = (await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA)).Summary.Id;
         }
 
         // Adultera o conteúdo SEM recomputar o hash (o gatilho append-only só existe no PostgreSQL real).
@@ -268,7 +269,7 @@ public sealed class PostureSnapshotExportTests : IDisposable
         await using var db = NewContext(TenantA);
         await SeedDefaultLedgerAsync(db);
         var svc = ServiceFor(db);
-        var id = (await svc.PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
+        var id = (await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA)).Summary.Id;
 
         var detail = (await svc.GetAsync(id))!;   // o mesmo detalhe que a tela /history consome
         var csv = await ExporterFor(db).ExportAsync(id, PostureExportFormat.Csv);
@@ -314,7 +315,7 @@ public sealed class PostureSnapshotExportTests : IDisposable
             new SystemTenantContext(tenantId));
 
     private IPostureSnapshotService ServiceFor(AegisScoreDbContext db) =>
-        new PostureSnapshotService(db, new SystemTenantContext(TenantA), new NistSignalMapper(db));
+        new PostureSnapshotService(db, new SystemTenantContext(TenantA));
 
     private static IPostureSnapshotExporter ExporterFor(AegisScoreDbContext db) => new PostureSnapshotExporter(db);
 

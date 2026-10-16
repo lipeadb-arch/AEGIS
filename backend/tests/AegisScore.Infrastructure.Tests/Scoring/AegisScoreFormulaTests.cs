@@ -1,14 +1,13 @@
-using AegisScore.Application.Queries;
-using AegisScore.Application.Scoring;
 using AegisScore.Domain;
+using AegisScore.Infrastructure.Tests.Legacy;
 using FluentAssertions;
 using Xunit;
 
 namespace AegisScore.Infrastructure.Tests.Scoring;
 
 /// <summary>
-/// [AEGIS-AUD-001/002] Testes da autoridade ÚNICA da fórmula v1 — a semântica oficial de pontos, score
-/// ANULÁVEL (NotEvaluated ≠ 0%), cobertura e arredondamento, num só lugar.
+/// [AEGIS-AUD-001/002] Testes da fórmula v1 da abordagem aposentada, mantida só para gerar fotografias históricas nos
+/// testes: pontos, score ANULÁVEL (NotEvaluated ≠ 0%), cobertura e arredondamento das fotografias aegis-score-v1.
 /// </summary>
 public sealed class AegisScoreFormulaTests
 {
@@ -71,13 +70,4 @@ public sealed class AegisScoreFormulaTests
         r.Percentage.Should().NotBe(r.CoveragePercentage, "score e cobertura são eixos distintos");
     }
 
-    [Fact]
-    public void Compute_ParidadeComTrendDto_MesmaAutoridade()
-    {
-        // O DTO de tendência (snapshot) e o resultado do score usam a MESMA fórmula → mesmo percentual.
-        var r = AegisScoreFormulaV1.Compute(achievedScore: 30, evaluatedMaxScore: 40, evaluatedControls: 2, eligibleMaxScore: 100, eligibleControls: 8);
-        var trend = new TenantTrendDto(new DateOnly(2026, 7, 31), AchievedScore: 30, MaxScore: 40);
-
-        trend.Percentage.Should().Be(r.Percentage, "current score e snapshot derivam o percentual pela mesma autoridade");
-    }
 }

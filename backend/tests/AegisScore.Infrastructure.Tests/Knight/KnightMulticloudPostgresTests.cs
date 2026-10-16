@@ -70,8 +70,7 @@ public sealed class KnightMulticloudPostgresTests
             var assessment = await KnightMulticloudReportTests.ServiceFor(db, tenant).RunAssessmentAsync(KnightSourceType.MicrosoftEntraId);
             runId = assessment.Id;
             assessment.Indicators.Single(i => i.IndicatorId == "AK-ENTRA-008").AffectedObjectCount.Should().Be(1);
-            var published = await new PostureSnapshotService(db, new SystemTenantContext(tenant),
-                new AegisScore.Infrastructure.Connectors.NistSignalMapper(db)).PublishAsync(PostureSnapshotType.Knight, null, runId);
+            var published = await new PostureSnapshotService(db, new SystemTenantContext(tenant)).PublishAsync(PostureSnapshotType.Knight, null, runId);
             snapshotId = published.Summary.Id;
         }
 

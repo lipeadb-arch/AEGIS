@@ -125,7 +125,7 @@ public sealed class KnightManualResultPostgresTests
         {
             var run = await KnightMulticloudReportTests.ServiceFor(db, tenantA, new EntraConfigurationScenario(EntraConfigurationScenario.Variant.Compliant).Handler())
                 .RunAssessmentAsync(KnightSourceType.MicrosoftEntraId);
-            snapshotId = (await new PostureSnapshotService(db, new SystemTenantContext(tenantA), new AegisScore.Infrastructure.Connectors.NistSignalMapper(db))
+            snapshotId = (await new PostureSnapshotService(db, new SystemTenantContext(tenantA))
                 .PublishAsync(PostureSnapshotType.Knight, null, run.Id)).Summary.Id;
         }
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenantA)))

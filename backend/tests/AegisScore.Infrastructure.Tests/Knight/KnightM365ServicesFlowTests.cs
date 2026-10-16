@@ -307,8 +307,7 @@ public sealed class KnightM365ServicesFlowTests : IDisposable
         await using var db = NewContext(TenantA);
         var run = await ServiceFor(db, new M365ServicesScenario(M365ServicesScenario.Variant.NonCompliant))
             .RunAssessmentAsync(KnightSourceType.MicrosoftDefenderForOffice365);
-        var detail = await new AegisScore.Infrastructure.Posture.PostureSnapshotService(db, new SystemTenantContext(TenantA),
-                new AegisScore.Infrastructure.Connectors.NistSignalMapper(db))
+        var detail = await new AegisScore.Infrastructure.Posture.PostureSnapshotService(db, new SystemTenantContext(TenantA))
             .PublishAsync(PostureSnapshotType.Knight, KnightSourceType.MicrosoftDefenderForOffice365, run.Id);
         var snapshot = await db.PostureSnapshots.AsNoTracking()
             .Include(s => s.Controls).Include(s => s.Indicators).Include(s => s.ActionItems).Include(s => s.Objects)

@@ -9,6 +9,7 @@ using AegisScore.Domain;
 using AegisScore.Infrastructure.Connectors;
 using AegisScore.Infrastructure.Persistence;
 using AegisScore.Infrastructure.Posture;
+using AegisScore.Infrastructure.Tests.Legacy;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Data.Sqlite;
@@ -42,7 +43,21 @@ public sealed class PostureSnapshotTests : IDisposable
 
     public void Dispose() => _connection.Dispose();
 
-    // ---- 1) Publicação AEGIS deriva das AUTORIDADES do servidor; universo COMPLETO ------------------
+    // ---- 0) A abordagem antiga não publica mais: o serviço recusa o tipo, sem gravar nada ------------
+
+    [Fact]
+    public async Task Publish_AegisScoreNist_RecusadoPeloServico_SemGravar()
+    {
+        await using var db = NewContext(TenantA);
+        await SeedDefaultLedgerAsync(db);
+
+        var act = () => ServiceFor(db, TenantA).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+
+        await act.Should().ThrowAsync<PostureSnapshotNotAvailableException>();
+        (await db.PostureSnapshots.CountAsync()).Should().Be(0, "a recusa não deixa fotografia gravada");
+    }
+
+    // ---- 1) Fotografia histórica AEGIS (fixture) deriva do ledger; universo COMPLETO --------------------
 
     [Fact]
     public async Task Publish_Aegis_DerivesFromLedger_AndIncludesFullUniverse()
@@ -50,7 +65,7 @@ public sealed class PostureSnapshotTests : IDisposable
         await using var db = NewContext(TenantA);
         await SeedDefaultLedgerAsync(db);   // 01=Compliant(20/20), 02=NonCompliant(0/10), 03=elegível SEM estado
 
-        var detail = await ServiceFor(db, TenantA).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+        var detail = await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA);
 
         detail.Summary.FormulaVersion.Should().Be("aegis-score-v1");
         detail.AchievedPoints.Should().Be(20);
@@ -84,7 +99,7 @@ public sealed class PostureSnapshotTests : IDisposable
             Prov(fvId, ReferenceDatasetKind.AegisAssessmentRules, rulesHash, null));
         await db.SaveChangesAsync();
 
-        var detail = await ServiceFor(db, TenantA).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+        var detail = await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA);
 
         // Reproduzível: SHA-256 COMPLETO sobre os três hashes completos + versões (não 8 chars de cada).
         var canonical = string.Join("|", "NIST CSF 2.0", "aegis-methodology-v1",
@@ -124,7 +139,7 @@ public sealed class PostureSnapshotTests : IDisposable
         await using var db = NewContext(TenantA);
         await SeedDefaultLedgerAsync(db);
 
-        var detail = await ServiceFor(db, TenantA).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+        var detail = await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA);
 
         var notEvaluated = detail.Controls.Single(c => c.SubcategoryCode == "PR.AA-03");
         notEvaluated.Evaluated.Should().BeFalse();
@@ -147,7 +162,7 @@ public sealed class PostureSnapshotTests : IDisposable
         await using var db = NewContext(TenantA);
         await SeedActiveFrameworkAsync(db);   // catálogo ativo, porém NENHUM TenantControlState
 
-        var detail = await ServiceFor(db, TenantA).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+        var detail = await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA);
 
         detail.Summary.Score.Should().BeNull("sem controle avaliado não existe percentual — nunca 0%");
         detail.Summary.EvaluationState.Should().Be("NotEvaluated");
@@ -165,7 +180,7 @@ public sealed class PostureSnapshotTests : IDisposable
         await SeedActiveFrameworkAsync(db);
         await SeedTelemetryProvenanceAsync(db);   // sinal antigo (50→NonCompliant) e novo (95→Compliant) p/ PR.AA-01
 
-        var detail = await ServiceFor(db, TenantA).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+        var detail = await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA);
 
         var control = detail.Controls.Single(c => c.SubcategoryCode == "PR.AA-01");
         control.VerdictSource.Should().Be("Telemetry");
@@ -187,7 +202,7 @@ public sealed class PostureSnapshotTests : IDisposable
         await using (var db = NewContext(TenantA))
         {
             await SeedDefaultLedgerAsync(db);
-            var published = await ServiceFor(db, TenantA).PublishAsync(PostureSnapshotType.AegisScoreNist, null);
+            var published = await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA);
             snapshotId = published.Summary.Id;
             scoreAtPublish = published.Summary.Score;
             hashAtPublish = published.Summary.ContentHash;
@@ -298,9 +313,8 @@ public sealed class PostureSnapshotTests : IDisposable
         await using (var dbA = NewContext(TenantA))
         {
             await SeedDefaultLedgerAsync(dbA);
-            var svc = ServiceFor(dbA, TenantA);
-            id1 = (await svc.PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
-            id2 = (await svc.PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
+            id1 = (await LegacyAegisSnapshotFixture.PublishAsync(dbA, TenantA)).Summary.Id;
+            id2 = (await LegacyAegisSnapshotFixture.PublishAsync(dbA, TenantA)).Summary.Id;
         }
 
         await using var dbB = NewContext(TenantB);
@@ -320,7 +334,7 @@ public sealed class PostureSnapshotTests : IDisposable
         await SeedDefaultLedgerAsync(db);
         var svc = ServiceFor(db, TenantA);
 
-        var before = (await svc.PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
+        var before = (await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA)).Summary.Id;
 
         var b = await db.TenantControlStates.Include(t => t.Subcategory)
             .SingleAsync(t => t.Subcategory!.Code == "PR.AA-02");
@@ -328,7 +342,7 @@ public sealed class PostureSnapshotTests : IDisposable
         b.CurrentScore = 10;
         await db.SaveChangesAsync();
 
-        var after = (await svc.PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
+        var after = (await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA)).Summary.Id;
 
         var result = await svc.CompareAsync(before, after);
 
@@ -350,7 +364,7 @@ public sealed class PostureSnapshotTests : IDisposable
         await SeedDefaultLedgerAsync(db);   // PR.AA-03 começa NÃO avaliado
         var svc = ServiceFor(db, TenantA);
 
-        var before = (await svc.PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
+        var before = (await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA)).Summary.Id;
 
         var subId = await db.Subcategories.Where(s => s.Code == "PR.AA-03").Select(s => s.Id).SingleAsync();
         db.TenantControlStates.Add(new TenantControlState
@@ -360,7 +374,7 @@ public sealed class PostureSnapshotTests : IDisposable
         });
         await db.SaveChangesAsync();
 
-        var after = (await svc.PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
+        var after = (await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA)).Summary.Id;
 
         var result = await svc.CompareAsync(before, after);
 
@@ -378,14 +392,14 @@ public sealed class PostureSnapshotTests : IDisposable
         await SeedDefaultLedgerAsync(db);
         var svc = ServiceFor(db, TenantA);
 
-        var before = (await svc.PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
+        var before = (await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA)).Summary.Id;
 
         var state = await db.TenantControlStates.Include(t => t.Subcategory)
             .SingleAsync(t => t.Subcategory!.Code == "PR.AA-02");
         db.TenantControlStates.Remove(state);   // PR.AA-02 deixa de ser avaliado
         await db.SaveChangesAsync();
 
-        var after = (await svc.PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
+        var after = (await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA)).Summary.Id;
 
         var result = await svc.CompareAsync(before, after);
 
@@ -404,7 +418,7 @@ public sealed class PostureSnapshotTests : IDisposable
         await SeedKnightRunAsync(db);
         var svc = ServiceFor(db, TenantA);
 
-        var aegis = (await svc.PublishAsync(PostureSnapshotType.AegisScoreNist, null)).Summary.Id;
+        var aegis = (await LegacyAegisSnapshotFixture.PublishAsync(db, TenantA)).Summary.Id;
         var knight = (await svc.PublishAsync(PostureSnapshotType.Knight, null)).Summary.Id;
 
         var result = await svc.CompareAsync(aegis, knight);
@@ -473,7 +487,7 @@ public sealed class PostureSnapshotTests : IDisposable
             new SystemTenantContext(tenantId));
 
     private static IPostureSnapshotService ServiceFor(AegisScoreDbContext db, Guid? tenantId) =>
-        new PostureSnapshotService(db, new SystemTenantContext(tenantId), new NistSignalMapper(db));
+        new PostureSnapshotService(db, new SystemTenantContext(tenantId));
 
     /// <summary>Semeia um framework ATIVO com 3 subcategorias (PR.AA-01/02/03) — reference data global.</summary>
     private static async Task SeedActiveFrameworkAsync(AegisScoreDbContext db)

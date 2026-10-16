@@ -1,13 +1,13 @@
 // [AEGIS-NIST-JOURNEY-01] Leitura executiva dos assessments (Dashboards) — funções PURAS sobre os contratos reais do
-// backend. Nada aqui calcula score: KNIGHT, postura NIST (aegis-score-v1) e maturidade NIST vêm prontos das suas fontes
-// e NUNCA são somados ou combinados num indicador "geral".
+// backend. Nada aqui calcula score: a nota do KNIGHT e a maturidade do NIST vêm prontas das suas fontes e NUNCA são
+// somadas ou combinadas num indicador "geral".
 
-import { CONSOLIDATION_CANDIDATES, KnightAssessment, KnightIndicator, KnightSourceLatest, KnightSourceType, severityLabel } from './knight.models';
-import { SeverityLevel } from './scoring.models';
+import { CONSOLIDATION_CANDIDATES, KnightAssessment, KnightIndicator, KnightSourceLatest, KnightSourceType, SeverityLevel, severityLabel } from './knight.models';
 import { ActionPlan } from './remediation.models';
 import { NistGap } from './nist.models';
-import { STALE_AFTER_DAYS } from './dashboard-overview.models';
-import { WorkspaceOverall } from './workspace.models';
+
+/** Idade, em dias, a partir da qual uma leitura dos Dashboards é sinalizada como antiga. */
+export const STALE_AFTER_DAYS = 7;
 
 /** O que a tela pode afirmar sobre uma leitura: existe? é zero real? parcial? antiga? */
 export interface ReadingStatus {
@@ -48,22 +48,6 @@ export function knightReading(a: KnightAssessment | null, now: Date): ReadingSta
   if (stale) labels.push(`Desatualizada (${ageDays} dias)`);
   if (a.isDemo) labels.push('Demonstração (dados sintéticos)');
   return { hasResult, zero, partial, stale, demo: a.isDemo, ageDays, labels };
-}
-
-/** Leitura da postura do ambiente (aegis-score-v1). Cobertura parcial é dita; "não avaliado" nunca vira 0%. */
-export function nistPostureReading(o: WorkspaceOverall | null, now: Date): ReadingStatus {
-  if (!o || o.evaluationState === 'NotEvaluated' || o.percentage === null)
-    return { hasResult: false, zero: false, partial: false, stale: false, demo: false, ageDays: null, labels: ['Sem controle avaliado'] };
-  const labels: string[] = [];
-  const zero = o.percentage === 0;
-  if (zero) labels.push('Resultado zero (avaliado)');
-  const partial = o.coveragePercentage < 100;
-  if (partial) labels.push(`Cobertura parcial (${o.coveragePercentage.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%)`);
-  const ageDays = ageInDays(o.latestEvidenceAt, now);
-  const stale = ageDays !== null && ageDays >= STALE_AFTER_DAYS;
-  if (stale) labels.push(`Evidência mais recente há ${ageDays} dias`);
-  if (ageDays === null) labels.push('Sem data de evidência');
-  return { hasResult: true, zero, partial, stale, demo: false, ageDays, labels };
 }
 
 const SEVERITY_RANK: Record<SeverityLevel, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Informational: 4 };

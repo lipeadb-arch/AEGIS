@@ -53,36 +53,6 @@ export interface CredentialField {
 }
 
 /**
- * [AEGIS-MVP-GOOGLE-SECOPS-01] Localidades OFICIALMENTE suportadas do Google SecOps (Chronicle). Espelha a allowlist
- * interna do backend (ChronicleRegions): o backend é a autoridade final; a seleção controlada aqui só impede que o
- * usuário digite uma região/host arbitrário. O host regional é derivado no servidor ({location}-chronicle...).
- */
-export const CHRONICLE_LOCATIONS: { value: string; label: string }[] = [
-  { value: 'us', label: 'US (multirregião)' },
-  { value: 'eu', label: 'UE (multirregião)' },
-  { value: 'europe', label: 'Europa (multirregião)' },
-  { value: 'africa-south1', label: 'África — Joanesburgo (africa-south1)' },
-  { value: 'asia-east1', label: 'Ásia — Taiwan (asia-east1)' },
-  { value: 'asia-northeast1', label: 'Ásia — Tóquio (asia-northeast1)' },
-  { value: 'asia-northeast3', label: 'Ásia — Seul (asia-northeast3)' },
-  { value: 'asia-south1', label: 'Ásia — Mumbai (asia-south1)' },
-  { value: 'asia-southeast1', label: 'Ásia — Singapura (asia-southeast1)' },
-  { value: 'asia-southeast2', label: 'Ásia — Jacarta (asia-southeast2)' },
-  { value: 'australia-southeast1', label: 'Austrália — Sydney (australia-southeast1)' },
-  { value: 'europe-central2', label: 'Europa — Varsóvia (europe-central2)' },
-  { value: 'europe-west2', label: 'Europa — Londres (europe-west2)' },
-  { value: 'europe-west3', label: 'Europa — Frankfurt (europe-west3)' },
-  { value: 'europe-west6', label: 'Europa — Zurique (europe-west6)' },
-  { value: 'europe-west9', label: 'Europa — Paris (europe-west9)' },
-  { value: 'europe-west12', label: 'Europa — Turim (europe-west12)' },
-  { value: 'me-central1', label: 'Oriente Médio — Doha (me-central1)' },
-  { value: 'me-central2', label: 'Oriente Médio — Damã (me-central2)' },
-  { value: 'me-west1', label: 'Oriente Médio — Tel Aviv (me-west1)' },
-  { value: 'northamerica-northeast2', label: 'América do Norte — Toronto (northamerica-northeast2)' },
-  { value: 'southamerica-east1', label: 'América do Sul — São Paulo (southamerica-east1)' },
-];
-
-/**
  * Catálogo de provedores. Define, por provedor, quais credenciais a tela pede — é o que evita um
  * formulário genérico "cole aqui um JSON", hostil para quem opera o SOC.
  *
@@ -116,14 +86,6 @@ export interface ProviderSpec {
   /** Permissões de aplicativo (somente leitura) exigidas — exibidas no formulário do KNIGHT. */
   appPermissions?: string[];
 }
-
-/** Campo único da chave de ingestão (genéricos de push): mascarado, mín. 24 chars, escrita-apenas. */
-const INGESTION_KEY_FIELD: CredentialField = {
-  key: 'ingestionKey',
-  label: 'Chave de ingestão (mín. 24 caracteres)',
-  secret: true,
-  placeholder: 'segredo de alta entropia gerado por você',
-};
 
 export const PROVIDERS: ProviderSpec[] = [
   {
@@ -588,14 +550,6 @@ export const MICROSOFT_HUB_SERVICES: MicrosoftServiceSpec[] = [
 export function microsoftServiceByKey(key: string | null | undefined): MicrosoftServiceSpec | undefined {
   return MICROSOFT_HUB_SERVICES.find((s) => s.key === key);
 }
-
-/** Chaves de PROVIDERS que a conexão Microsoft unificada absorve — removidas do formulário genérico. */
-const MICROSOFT_HUB_PROVIDER_KEYS: ProviderKey[] = [
-  'Microsoft',
-  'MicrosoftDefenderVuln',
-  'MicrosoftEntraKnight',
-  'MicrosoftSentinel',
-];
 
 /** Provedores do formulário GENÉRICO (a família Microsoft sai daqui — vai para o hub unificado). */
 export const GENERIC_PROVIDERS: ProviderSpec[] = PROVIDERS.filter(

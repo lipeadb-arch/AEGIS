@@ -110,18 +110,10 @@ public class RemediationController : ControllerBase
         return plan is null ? NotFound() : Ok(ToDto(plan));
     }
 
-    /// <summary>
-    /// [AEGIS-JOURNEY-01] Situação ATUAL observada na fonte para o caso de origem de um plano de dispositivo — lida agora
-    /// pela autoridade da prioridade, SEPARADA da situação do plano e da validação. Não é comprovação de correção e não
-    /// altera o plano.
-    /// </summary>
-    /// <response code="400">O plano não nasceu de um caso de dispositivo.</response>
-    /// <response code="404">Plano inexistente neste tenant.</response>
+    /// <summary>Leitura atual da fonte para o caso por CVE de um plano, aposentada: 410. O registro histórico do plano segue legível.</summary>
     [HttpGet("{id:guid}/source-reading")]
-    public async Task<ActionResult<DeviceCaseSourceReadingView>> SourceReading(Guid id, CancellationToken ct)
-    {
-        return await Task.FromResult<ActionResult<DeviceCaseSourceReadingView>>(Problem("Leitura por CVE aposentada. O registro histórico do plano permanece disponível.", statusCode: 410));
-    }
+    public IActionResult SourceReading(Guid id) =>
+        Problem("Leitura por CVE aposentada. O registro histórico do plano permanece disponível.", statusCode: 410);
 
     /// <summary>
     /// Cria uma ação para um achado de uma avaliação do tenant. Um segundo clique na mesma origem NÃO
@@ -159,24 +151,11 @@ public class RemediationController : ControllerBase
         catch (ActionPlanConflictException ex) { return Conflict(ConflictBody(ex)); }
     }
 
-    /// <summary>
-    /// [AEGIS-JOURNEY-01] Cria um plano para UM caso de vulnerabilidade em dispositivo (ativo × CVE). O corpo só
-    /// identifica o caso e os campos do plano; faixa, motivo, fatores e vínculos são lidos pelo SERVIDOR na autoridade
-    /// da prioridade e congelados como registro de origem. Um segundo clique no mesmo caso NÃO duplica: 409 com o plano
-    /// ativo existente, para a tela abri-lo.
-    /// </summary>
-    /// <response code="201">Plano criado.</response>
-    /// <response code="400">Pedido inválido, ou caso fora da leitura atual (não está em aberto e atribuível).</response>
-    /// <response code="403">Papel do tenant insuficiente (Analyst não cria planos).</response>
-    /// <response code="404">Dispositivo inexistente neste tenant.</response>
-    /// <response code="409">Já existe plano ativo para este caso.</response>
+    /// <summary>Criação de planos por caso de CVE em dispositivo, aposentada: 410. Os planos existentes seguem legíveis.</summary>
     [HttpPost("device-cases")]
     [Authorize(Roles = "Manager,TenantAdmin")]
-    public async Task<ActionResult<ActionPlanDto>> CreateForDeviceCase(
-        [FromBody] CreateDeviceCaseActionPlanRequest request, CancellationToken ct)
-    {
-        return await Task.FromResult<ActionResult<ActionPlanDto>>(Problem("Criação de planos por CVE aposentada. Crie ações a partir de achados KNIGHT ou NIST.", statusCode: 410));
-    }
+    public IActionResult CreateForDeviceCase() =>
+        Problem("Criação de planos por CVE aposentada. Crie ações a partir de achados KNIGHT ou NIST.", statusCode: 410);
 
     /// <summary>Edita campos e/ou avança a etapa. Exige a versão lida (concorrência otimista).</summary>
     /// <response code="409">Transição não permitida ou ação alterada por outra pessoa.</response>

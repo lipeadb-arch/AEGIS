@@ -43,26 +43,8 @@ public sealed class TenantScopedAssessmentRouter : IAiAssessmentService
         DocumentControlEvaluationRequest request, CancellationToken ct)
         => await (await PickAsync(ct)).EvaluateDocumentControlAsync(request, ct);
 
-    public async Task<MaturitySuggestion> SuggestMaturityAsync(MaturitySuggestionRequest request, CancellationToken ct)
-        => await (await PickAsync(ct)).SuggestMaturityAsync(request, ct);
-
-    public async Task<InterviewTurn> ConductInterviewTurnAsync(InterviewContext context, CancellationToken ct)
-        => await (await PickAsync(ct)).ConductInterviewTurnAsync(context, ct);
-
-    public async Task<IReadOnlyList<ActionPlanSuggestion>> GenerateActionPlanAsync(ActionPlanRequest request, CancellationToken ct)
-        => await (await PickAsync(ct)).GenerateActionPlanAsync(request, ct);
-
-    public async Task<string> GenerateExecutiveReportAsync(ExecutiveReportRequest request, CancellationToken ct)
-        => await (await PickAsync(ct)).GenerateExecutiveReportAsync(request, ct);
-
-    public async Task<IReadOnlyList<NormalizedSignal>> NormalizeSignalsAsync(RawSignalBatch batch, CancellationToken ct)
-        => await (await PickAsync(ct)).NormalizeSignalsAsync(batch, ct);
-
     public async Task<AuditorReply> ChatAsync(AuditorChatRequest request, CancellationToken ct)
         => await (await PickAsync(ct)).ChatAsync(request, ct);
-
-    public async Task<AdvisoryDraft> GenerateAdvisoryAsync(AdvisoryGenerationRequest request, CancellationToken ct)
-        => await (await PickAsync(ct)).GenerateAdvisoryAsync(request, ct);
 
     public async Task<AegisScore.Application.Nist.NistAssistDraft> AssistNistAsync(
         AegisScore.Application.Nist.NistAssistPrompt request, CancellationToken ct)

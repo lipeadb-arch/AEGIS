@@ -24,25 +24,6 @@ public interface IAiAssessmentService
     Task<DocumentControlVerdict> EvaluateDocumentControlAsync(
         DocumentControlEvaluationRequest request, CancellationToken ct);
 
-    /// <summary>Suggest a maturity level (1–5) for a subcategory from answers, evidence and signals.</summary>
-    Task<MaturitySuggestion> SuggestMaturityAsync(MaturitySuggestionRequest request, CancellationToken ct);
-
-    /// <summary>Drive one turn of a conversational questionnaire / interview.</summary>
-    Task<InterviewTurn> ConductInterviewTurnAsync(InterviewContext context, CancellationToken ct);
-
-    /// <summary>Generate prioritized action plans from gaps × risk × ICR.</summary>
-    Task<IReadOnlyList<ActionPlanSuggestion>> GenerateActionPlanAsync(ActionPlanRequest request, CancellationToken ct);
-
-    /// <summary>Compose an executive report (Plano Diretor) in business language.</summary>
-    Task<string> GenerateExecutiveReportAsync(ExecutiveReportRequest request, CancellationToken ct);
-
-    /// <summary>
-    /// Dynamic parser: turn raw, unstructured tool output (logs, arbitrary JSON, CSV exports)
-    /// into normalized signals mapped to the unified schema. Lets us ingest unknown tools
-    /// without a hand-written parser per product.
-    /// </summary>
-    Task<IReadOnlyList<NormalizedSignal>> NormalizeSignalsAsync(RawSignalBatch batch, CancellationToken ct);
-
     /// <summary>
     /// Copiloto GRC ONIPRESENTE com CONSCIÊNCIA DE CONTEXTO e ROTEAMENTO DE INTENÇÃO (Agentic Routing):
     /// responde no escopo da tela ativa (<see cref="AuditorScope"/>) com o System Prompt ajustado
@@ -51,15 +32,6 @@ public interface IAiAssessmentService
     /// obriga a IA a devolver saída ESTRUTURADA. Toda saída é uma SUGESTÃO; o analista permanece no laço.
     /// </summary>
     Task<AuditorReply> ChatAsync(AuditorChatRequest request, CancellationToken ct);
-
-    /// <summary>
-    /// Redige uma Recomendação de Remediação (advisory) para uma subcategoria NIST: título, risco
-    /// documentado (o "porquê", em linguagem de risco) e o passo a passo técnico exportável (o "como
-    /// fazer" que a TI do cliente executa). É a saída CONSULTIVA do Aegis Score — uma SUGESTÃO que o
-    /// analista do SOC revisa antes de entregar. O Stub devolve texto canned ancorado no código do
-    /// controle; o motor real compõe o texto via LLM.
-    /// </summary>
-    Task<AdvisoryDraft> GenerateAdvisoryAsync(AdvisoryGenerationRequest request, CancellationToken ct);
 
     /// <summary>
     /// [AEGIS-NIST-AI-ASSIST-01] Assistência contextual da jornada NIST (subcategoria, achado, resumo executivo): interpreta o
@@ -102,119 +74,11 @@ public record AuditorChatRequest(
 /// allowlist (dados sintéticos) têm este contexto enviado ao provedor externo.
 /// </summary>
 public sealed record AuditorTenantContext(
-    string ScoreState,                  // "Evaluated" | "NotEvaluated"
-    double? ScorePercentage,            // null quando NotEvaluated (nunca 0% por ausência)
-    double CoveragePercentage,
-    int CompliantControls,
-    int NonCompliantControls,
-    int MitigatedControls,
-    int NotEvaluatedControls,
-    DateTimeOffset? LatestEvidenceAt,
-    IReadOnlyList<AuditorFunctionPosture> Functions,
-    IReadOnlyList<AuditorControlGap> TopGaps,
     IReadOnlyList<AuditorDocumentEvidence> RecentEvidence,
     AuditorConnectorContext Connectors,
-    IReadOnlyList<string> PendingRecommendations,
-    // [AEGIS-MVP-POSTURE-02] Principais exposições de configuração ABERTAS (no máx. 8), só campos permitidos —
-    // nunca resposta bruta, actionUrl, segredo ou PII. Opcional/default null para preservar construções existentes.
-    IReadOnlyList<AuditorPostureExposure>? TopExposures = null,
-    // [AEGIS-MVP-VULN-01] Principais vulnerabilidades ativo×CVE ABERTAS (no máx. 8), priorizadas. SÓ campos
-    // permitidos — nunca machineId/ExternalRef, IP, aadDeviceId, segredo, payload bruto, inventário completo ou PII.
-    IReadOnlyList<AuditorVulnerability>? TopVulnerabilities = null,
-    // [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (regras do SIEM × MITRE), CONSULTIVA e LIMITADA. Só
-    // agregados + técnicas priorizadas — nunca nome/texto de regra, credencial ou payload. Opcional/default null.
-    AuditorDetectionCoverage? DetectionCoverage = null,
-    // [AEGIS-LANGUAGE-STATES-01] Estado de LEITURA de cada fonte (sem fonte / sem coleta / disponível, com a
-    // ressalva de falha recente ou escopo parcial). Sem isto, uma lista vazia de exposições ou vulnerabilidades
-    // chegava à IA igual a "coletado sem achados". Opcional/default null.
-    IReadOnlyList<AuditorSourceReading>? SourceReadings = null,
     // [AEGIS-AUDITOR-CONTEXT-01] Registros dos assessments do tenant (KNIGHT, NIST — com a seleção da tela e o mesmo montador da
     // assistência NIST —, documentos, inventário e publicações), em fontes citáveis com natureza, data e limitação. Opcional.
     AuditorAssessmentContext? Assessments = null);
-
-/// <summary>
-/// [AEGIS-LANGUAGE-STATES-01] O que se pode afirmar sobre a leitura de UMA fonte — mesma derivação da Visão
-/// geral (<c>CollectionReadings</c>). <paramref name="Value"/> é nulo quando não há leitura (nunca 0 por
-/// ausência); <paramref name="Note"/> carrega a ressalva de falha recente ou de escopo parcial.
-/// </summary>
-public sealed record AuditorSourceReading(
-    string Dimension, string Source, string State, long? Value, DateTimeOffset? LastCollectedAt, string? Note);
-
-/// <summary>
-/// [AEGIS-MVP-VULN-01] Uma vulnerabilidade (exposição ativo×CVE) para o contexto do Auditor — FATO DA FONTE,
-/// consultivo. Só os campos permitidos: CVE, severidade/CVSS, indicadores de exploit e EPSS, nome e criticidade
-/// do ativo, produto afetado e ciclo de vida. NUNCA machineId/ExternalRef, IP, aadDeviceId ou payload bruto. A IA
-/// explica/correlaciona/prioriza e apoia remediação, mas NÃO cria CVE, ativo, exploit, estado de resolução ou score.
-/// </summary>
-// [AEGIS-MVP-LANGUAGE-02] AGRUPADA por CVE/problema — um CVE observado em N ativos, JAMAIS repetido por ativo. Os
-// textos claros (Title/ExploitStatus/WhyItMatters/FirstAction) vêm VERBATIM da AUTORIDADE ÚNICA no backend
-// (VulnerabilityNarrative, via VulnerabilityGroupDto) — a IA não recalcula significado. Exploit = disponibilidade,
-// NUNCA exploração ativa. O alcance é OpenAssetCount (ativos ainda abertos).
-public sealed record AuditorVulnerability(
-    string CveId,
-    string Title,
-    string? Severity,
-    double? CvssScore,
-    double? Epss,
-    string ExploitStatus,
-    string WhyItMatters,
-    string FirstAction,
-    int OpenAssetCount,
-    int AffectedAssetCount,
-    int MaxAssetCriticality,
-    string LifecycleState,
-    // Fontes (providers) que OBSERVAM este CVE — só o rótulo do provedor, nunca conector/binding/machineId.
-    IReadOnlyList<string> Sources);
-
-/// <summary>
-/// [AEGIS-MVP-POSTURE-02] Uma exposição de configuração (postura) para o contexto do Auditor — FATO DA FONTE,
-/// consultivo. Só os campos permitidos: identificador da fonte, título, categoria/serviço, gap, rank/tier,
-/// remediação CURTA e ameaças. A IA explica/correlaciona/prioriza, mas NÃO abre/fecha/altera rank/gap/estado.
-/// </summary>
-// [AEGIS-MVP-LANGUAGE-02] Título CLARO + remediação SANITIZADA (nunca HTML/bruto). O texto de fonte é convertido
-// em texto simples pela autoridade única antes de chegar ao contexto da IA.
-public sealed record AuditorPostureExposure(
-    string ExternalId,
-    string DisplayTitle,
-    string? WhyItMatters,
-    string? FirstAction,
-    string? Category,
-    string? Service,
-    double Gap,
-    int? SourceRank,
-    string? Tier,
-    IReadOnlyList<string> Threats);
-
-/// <summary>
-/// [AEGIS-MVP-GOOGLE-SECOPS-02] Cobertura de detecção (regras × MITRE ATT&CK) para o contexto do Auditor — FATO
-/// OPERACIONAL consultivo. Só agregados + as técnicas que requerem atenção primeiro (limite determinístico). A IA
-/// EXPLICA e prioriza a cobertura observada, mas NÃO afirma eficácia, NÃO cria mapeamento MITRE e NÃO converte
-/// quantidade de regras em pontuação/conformidade. NUNCA carrega nome/texto de regra, credencial ou payload.
-/// </summary>
-public sealed record AuditorDetectionCoverage(
-    string Source,
-    string AttackVersion,
-    string State,
-    int ActiveRules,
-    int RulesWithMitre,
-    int RulesWithoutMitre,
-    int RulesInLiveMode,
-    int RulesWithAlerting,
-    int TechniquesObserved,
-    IReadOnlyList<AuditorDetectionTechnique> Techniques);
-
-/// <summary>Uma técnica MITRE observada, para o Auditor: ID, nome oficial, táticas, contagens e estado legível.</summary>
-public sealed record AuditorDetectionTechnique(
-    string TechniqueId, string Name, IReadOnlyList<string> Tactics,
-    int RuleCount, int LiveRuleCount, int AlertingRuleCount, string Status);
-
-/// <summary>Resumo de postura de UMA Função NIST para o contexto do Auditor.</summary>
-public sealed record AuditorFunctionPosture(
-    string Code, string Name, string EvaluationState, double? Percentage, double CoveragePercentage,
-    int NonCompliantControls, int NotEvaluatedControls);
-
-/// <summary>Uma lacuna de controle (não conforme / não avaliado) para o Auditor priorizar.</summary>
-public sealed record AuditorControlGap(string SubcategoryCode, string Status, string? Reason);
 
 /// <summary>Evidência documental RELEVANTE e curta (trecho literal já validado — nunca o documento inteiro).</summary>
 public sealed record AuditorDocumentEvidence(
@@ -243,22 +107,6 @@ public record AuditorReply(
 public static class AuditorIntents
 {
     public static string ToWire(AuditorIntent intent) => "COPILOT";
-}
-
-/// <summary>Mapeia o código de escopo vindo da UI no enum. O escopo NÃO é fronteira de segurança (o chat é
-/// read-only); um valor desconhecido cai em <see cref="AuditorScope.Global"/> (fail-safe, não fail-closed).</summary>
-public static class AuditorScopes
-{
-    public static AuditorScope FromCode(string? code) => (code ?? "").Trim().ToUpperInvariant() switch
-    {
-        "GV" => AuditorScope.Govern,
-        "ID" => AuditorScope.Identify,
-        "PR" => AuditorScope.Protect,
-        "DE" => AuditorScope.Detect,
-        "RS" => AuditorScope.Respond,
-        "RC" => AuditorScope.Recover,
-        _ => AuditorScope.Global,
-    };
 }
 
 /// <summary>
@@ -318,51 +166,6 @@ public record DocumentControlEvaluationRequest(
 /// <param name="Rationale">Justificativa técnica citando o que o documento diz (ou deixa de dizer). É
 /// análise, NÃO prova.</param>
 public record DocumentControlVerdict(bool Supported, string EvidenceQuote, double Confidence, string Rationale);
-
-public record MaturitySuggestionRequest(
-    string SubcategoryCode,
-    string SubcategoryDescription,
-    IReadOnlyList<(string Question, string Answer, string? Comment)> Answers,
-    IReadOnlyList<string> EvidenceSummaries,
-    IReadOnlyList<(string SignalKey, double? Value, int? Severity)> Signals);
-
-public record MaturitySuggestion(int CurrentLevel, double Confidence, string Rationale, IReadOnlyList<Guid> EvidenceRefs);
-
-public record InterviewContext(Guid ScopeId, string ProcessName, IReadOnlyList<string> History);
-public record InterviewTurn(string Question, string? TargetSubcategoryCode, bool IsComplete);
-
-public record ActionPlanRequest(Guid TenantId, IReadOnlyList<(string SubcategoryCode, int Gap, double Icr)> Gaps);
-public record ActionPlanSuggestion(string SubcategoryCode, string What, string How, string Priority);
-
-public record ExecutiveReportRequest(Guid AssessmentId, string ClientName);
-
-// ---- Recomendações de Remediação (Advisories) -------------------------------
-
-/// <summary>Pedido de redação de um advisory: o código NIST-alvo é o que ancora o texto (canned ou LLM).</summary>
-public record AdvisoryGenerationRequest(string SubcategoryCode);
-
-/// <summary>
-/// Rascunho de advisory produzido pelo motor de IA: título + risco documentado + passo a passo técnico.
-/// É uma SUGESTÃO (o analista do SOC valida antes de entregar ao cliente).
-/// </summary>
-public record AdvisoryDraft(string Title, string DocumentedRisk, string TechnicalSteps);
-
-/// <summary>Raw output from some tool that the core does not understand natively.</summary>
-public record RawSignalBatch(
-    Guid TenantId,
-    ConnectorProvider Provider,
-    ConnectorCapability Capability,
-    string RawPayload,          // log lines / JSON / CSV exactly as the tool emitted it
-    string? FormatHint);        // "csv", "json", "syslog", null = let the LLM detect
-
-/// <summary>A signal the LLM extracted and shaped into the unified schema.</summary>
-public record NormalizedSignal(
-    string SignalKey,
-    double? NumericValue,
-    string? Unit,
-    int? Severity,
-    IReadOnlyList<string> MappedSubcategoryCodes,
-    string? RawJson);
 
 // ---- Connector contract (stack-agnostic) ------------------------------------
 

@@ -63,8 +63,7 @@ public sealed class KnightEntraConfigurationPostgresTests
             runId = run.Id;
             var ids = EntraConfigurationControls.Definitions.Select(d => d.Id).ToHashSet();
             run.Indicators.Where(i => ids.Contains(i.IndicatorId)).Should().OnlyContain(i => i.Status == KnightIndicatorStatus.Exposed);
-            snapshotId = (await new PostureSnapshotService(db, new SystemTenantContext(tenant),
-                new AegisScore.Infrastructure.Connectors.NistSignalMapper(db)).PublishAsync(PostureSnapshotType.Knight, null, runId)).Summary.Id;
+            snapshotId = (await new PostureSnapshotService(db, new SystemTenantContext(tenant)).PublishAsync(PostureSnapshotType.Knight, null, runId)).Summary.Id;
         }
 
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))

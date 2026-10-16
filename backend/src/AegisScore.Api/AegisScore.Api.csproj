@@ -42,25 +42,13 @@
     <!-- [AEGIS-MVP-LANGUAGE-01] Camada de apresentação AUTORAL do AEGIS (linguagem clara provider-neutral,
          pt-BR) por subcategoria. SEPARADA do catálogo oficial NIST — não é tradução oficial. Lida uma vez, na
          primeira utilização, pelo ControlLanguageCatalog (singleton) a partir do Data/ ao lado do binário e
-         usada pela query do dashboard para entregar título/resumo/impacto/ação ao frontend. -->
+         usada pelo KNIGHT, pelo AEGIS NIST e pelo Auditor para título/resumo/impacto/ação em linguagem clara. -->
     <Content Update="Data\aegis_control_language.pt-BR.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <!-- [AEGIS-MVP-LANGUAGE-02] Camada de apresentação AUTORAL do AEGIS para EXPOSIÇÕES de configuração
-         (linguagem clara provider-neutral, pt-BR). SEPARADA do conteúdo dinâmico da fonte — não é tradução
-         oficial. Lida na primeira utilização pelo ExposureLanguageCatalog (singleton). -->
-    <Content Update="Data\aegis_exposure_language.pt-BR.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <!-- Personalidade do Auditor Virtual: lida no startup pelo AuditorPersonaProvider (singleton) a partir
          do diretório do binário. Ajustar o TOM do motor não exige recompilar — só reiniciar. -->
     <Content Update="Data\AuditorPersonality.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <!-- [AEGIS-MVP-GOOGLE-SECOPS-02] Catálogo compacto MITRE ATT&CK Enterprise v17.1, derivado do STIX OFICIAL
-         versionado (scripts/mitre/generate_mitre_catalog.py). Lido uma vez pelo MitreAttackCatalog (singleton)
-         a partir do Data/ ao lado do binário — runtime e testes NÃO dependem de internet. -->
-    <Content Update="Data\mitre_attack_enterprise_v17_1.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
