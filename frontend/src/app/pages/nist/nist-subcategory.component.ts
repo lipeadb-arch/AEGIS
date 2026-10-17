@@ -2,7 +2,7 @@ import { DatePipe, NgTemplateOutlet } from '@angular/common';
 import { Component, DestroyRef, HostListener, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, CanDeactivateFn, Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, ActivatedRouteSnapshot, CanDeactivateFn, Router, RouterLink } from '@angular/router';
 import { Observable, Subscription, combineLatest } from 'rxjs';
 import { GovernanceDocument } from '../../models/governance.models';
 import { NIST_INTERVIEW_GUIDE_NOTES, hasInterviewGuides, interviewGuideFor } from '../../models/nist-interview-guide';
@@ -1079,3 +1079,21 @@ export class NistSubcategoryComponent {
 
 /** [AEGIS-NIST-RECOVER-GUIDE-01] Rota da subcategoria: a tela decide se pode sair (rascunho não gravado na área de trabalho). */
 export const nistSubcategoryLeaveGuard: CanDeactivateFn<NistSubcategoryComponent> = (c) => c.canLeave();
+
+/**
+ * Quando a rota da subcategoria roda seus guards ao ser reaproveitada: só quando muda o CONTEXTO que a tela usa — função,
+ * subcategoria, avaliação, rodada ou escopo (o mesmo que faz a tela chamar `enter()` e descartar o rascunho). A política
+ * padrão olha só os parâmetros de caminho; trocar rodada/avaliação/escopo (consulta) passaria sem confirmação. Fragmento
+ * (#achado-…) e outros parâmetros de consulta não substituem o contexto e não acionam a pergunta.
+ */
+export function nistSubcategoryContextChanged(from: ActivatedRouteSnapshot, to: ActivatedRouteSnapshot): boolean {
+  const key = (r: ActivatedRouteSnapshot) =>
+    [
+      (r.paramMap.get('fn') ?? '').toLowerCase(),
+      (r.paramMap.get('code') ?? '').toUpperCase(),
+      r.queryParamMap.get('avaliacao'),
+      r.queryParamMap.get('rodada'),
+      r.queryParamMap.get('escopo'),
+    ].join('|');
+  return key(from) !== key(to);
+}

@@ -7,7 +7,7 @@ import { AegisKnightComponent } from './pages/aegis-knight.component';
 import { HistoryPageComponent } from './pages/history-page.component';
 import { NistHomeComponent } from './pages/nist/nist-home.component';
 import { NistFunctionComponent } from './pages/nist/nist-function.component';
-import { NistSubcategoryComponent, nistSubcategoryLeaveGuard } from './pages/nist/nist-subcategory.component';
+import { NistSubcategoryComponent, nistSubcategoryContextChanged, nistSubcategoryLeaveGuard } from './pages/nist/nist-subcategory.component';
 import { LoginComponent } from './pages/login.component';
 import { IntegrationsComponent } from './pages/integrations.component';
 import { SettingsComponent } from './pages/settings/settings.component';
@@ -68,6 +68,8 @@ export const routes: Routes = [
   { path: 'nist/:fn/recursos', component: NistFunctionComponent, canActivate: [authGuard], title: 'AEGIS NIST · Recursos de apoio', data: { tab: 'recursos' } },
   {
     path: 'nist/:fn/:code', component: NistSubcategoryComponent, canActivate: [authGuard], canDeactivate: [nistSubcategoryLeaveGuard],
+    // Trocar só avaliação/rodada/escopo (consulta) também substitui o contexto da tela: a proteção do rascunho precisa rodar.
+    runGuardsAndResolvers: nistSubcategoryContextChanged,
     title: 'AEGIS NIST · Subcategoria',
   },
 

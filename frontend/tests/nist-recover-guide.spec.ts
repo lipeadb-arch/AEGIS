@@ -45,7 +45,7 @@ import {
   draftGap,
   levelLabel,
 } from '../src/app/models/nist.models';
-import { NistSubcategoryComponent } from '../src/app/pages/nist/nist-subcategory.component';
+import { NistSubcategoryComponent, nistSubcategoryContextChanged } from '../src/app/pages/nist/nist-subcategory.component';
 import { NistSubcategoryNavComponent, NistWorkspaceContext } from '../src/app/pages/nist/nist-subcategory-nav.component';
 import { AuthService } from '../src/app/services/auth.service';
 import { GovernanceService } from '../src/app/services/governance.service';
@@ -418,6 +418,18 @@ test('subcategoria de outra função: sem área de trabalho, sem roteiro e sem p
   confirmCalls = [];
   eq(e.v.canLeave(), true, 'comportamento anterior preservado');
   eq(confirmCalls.length, 0, 'nenhuma pergunta');
+});
+
+test('rota: guards rodam quando muda avaliação, rodada, escopo, função ou subcategoria — não por fragmento ou outro parâmetro', () => {
+  const snap = (params: Record<string, string>, query: Record<string, string>) =>
+    ({ paramMap: convertToParamMap(params), queryParamMap: convertToParamMap(query) }) as any;
+  const base = snap({ fn: 'rc', code: 'RC.RP-06' }, Q);
+  eq(nistSubcategoryContextChanged(base, snap({ fn: 'rc', code: 'RC.RP-06' }, { ...Q, rodada: CYCLE_B })), true, 'rodada');
+  eq(nistSubcategoryContextChanged(base, snap({ fn: 'rc', code: 'RC.RP-06' }, { ...Q, escopo: 'outro' })), true, 'escopo');
+  eq(nistSubcategoryContextChanged(base, snap({ fn: 'rc', code: 'RC.RP-06' }, { ...Q, avaliacao: 'outra' })), true, 'avaliação');
+  eq(nistSubcategoryContextChanged(base, snap({ fn: 'rc', code: 'RC.CO-03' }, Q)), true, 'subcategoria');
+  eq(nistSubcategoryContextChanged(base, snap({ fn: 'rc', code: 'rc.rp-06' }, Q)), false, 'mesma subcategoria em outra caixa');
+  eq(nistSubcategoryContextChanged(base, snap({ fn: 'rc', code: 'RC.RP-06' }, { ...Q, situacao: 'Evaluated' })), false, 'outro parâmetro');
 });
 
 // ---- (4) lista contextual --------------------------------------------------------------------
