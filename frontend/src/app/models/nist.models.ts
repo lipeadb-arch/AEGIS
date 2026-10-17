@@ -54,13 +54,17 @@ export function nistCategoryLabel(code: string, officialName?: string): string {
 
 // ---- Escala de maturidade (metodologia AEGIS) ---------------------------------------------------------------
 
-/** Rótulos em português da escala 1–5 do AEGIS (não são os Implementation Tiers do NIST). */
+/**
+ * Rótulos em português da escala 1–5 do AEGIS (não são os Implementation Tiers do NIST). Catálogo ÚNICO de nomes de nível
+ * da tela, dos painéis e do roteiro de entrevista. [AEGIS-NIST-RECOVER-GUIDE-01] 4 e 5 passam a "Quantitativo" e
+ * "Otimização" (apresentação de Quantitatively Managed / Optimizing): valores, critérios, pesos e agregação não mudam.
+ */
 export const MATURITY_LEVEL_LABELS: Record<number, string> = {
   1: 'Executado',
   2: 'Documentado',
   3: 'Gerenciado',
-  4: 'Medido',
-  5: 'Otimizado',
+  4: 'Quantitativo',
+  5: 'Otimização',
 };
 
 /** Descrição curta em português de cada nível, para a escolha do analista. */

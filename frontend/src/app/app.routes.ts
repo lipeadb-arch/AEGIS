@@ -7,7 +7,7 @@ import { AegisKnightComponent } from './pages/aegis-knight.component';
 import { HistoryPageComponent } from './pages/history-page.component';
 import { NistHomeComponent } from './pages/nist/nist-home.component';
 import { NistFunctionComponent } from './pages/nist/nist-function.component';
-import { NistSubcategoryComponent } from './pages/nist/nist-subcategory.component';
+import { NistSubcategoryComponent, nistSubcategoryContextChanged, nistSubcategoryLeaveGuard } from './pages/nist/nist-subcategory.component';
 import { LoginComponent } from './pages/login.component';
 import { IntegrationsComponent } from './pages/integrations.component';
 import { SettingsComponent } from './pages/settings/settings.component';
@@ -66,7 +66,12 @@ export const routes: Routes = [
   { path: 'nist/:fn', component: NistFunctionComponent, canActivate: [authGuard], title: 'AEGIS NIST · Função', data: { tab: 'avaliacao' } },
   { path: 'nist/:fn/postura', redirectTo: ({ params, queryParams }) => inject(Router).createUrlTree(['/nist', params['fn']], { queryParams }) },
   { path: 'nist/:fn/recursos', component: NistFunctionComponent, canActivate: [authGuard], title: 'AEGIS NIST · Recursos de apoio', data: { tab: 'recursos' } },
-  { path: 'nist/:fn/:code', component: NistSubcategoryComponent, canActivate: [authGuard], title: 'AEGIS NIST · Subcategoria' },
+  {
+    path: 'nist/:fn/:code', component: NistSubcategoryComponent, canActivate: [authGuard], canDeactivate: [nistSubcategoryLeaveGuard],
+    // Trocar só avaliação/rodada/escopo (consulta) também substitui o contexto da tela: a proteção do rascunho precisa rodar.
+    runGuardsAndResolvers: nistSubcategoryContextChanged,
+    title: 'AEGIS NIST · Subcategoria',
+  },
 
   // Histórico de postura unificado (evolução mensal, fotografias publicadas e tendência diária).
   { path: 'history', component: HistoryPageComponent, canActivate: [authGuard], title: 'Aegis · Histórico de postura' },

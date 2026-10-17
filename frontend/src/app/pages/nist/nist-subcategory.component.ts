@@ -1,10 +1,12 @@
-import { DatePipe } from '@angular/common';
-import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { DatePipe, NgTemplateOutlet } from '@angular/common';
+import { Component, DestroyRef, HostListener, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, ActivatedRouteSnapshot, CanDeactivateFn, Router, RouterLink } from '@angular/router';
 import { Observable, Subscription, combineLatest } from 'rxjs';
 import { GovernanceDocument } from '../../models/governance.models';
+import { NIST_INTERVIEW_GUIDE_NOTES, hasInterviewGuides, interviewGuideFor } from '../../models/nist-interview-guide';
+import { NIST_DETAIL_SECTIONS, trackingSteps } from '../../models/nist-workspace.models';
 import {
   MATURITY_LEVEL_HINTS,
   MATURITY_LEVEL_LABELS,
@@ -50,6 +52,7 @@ import { NistAssistPanelComponent } from './nist-assist-panel.component';
 import { NistAuditPanelComponent } from './nist-audit-panel.component';
 import { NistFindingsWorkComponent } from './nist-findings-work.component';
 import { NistProceduresComponent } from './nist-procedures.component';
+import { NistSubcategoryNavComponent, NistWorkspaceContext } from './nist-subcategory-nav.component';
 
 /**
  * [AEGIS-NIST-JOURNEY-01/02] Uma subcategoria do NIST CSF 2.0 numa RODADA da avaliação: o resultado esperado, a situação
@@ -63,11 +66,20 @@ import { NistProceduresComponent } from './nist-procedures.component';
  * [AEGIS-NIST-AI-ASSIST-01] A assistência de IA (painel próprio) só PREENCHE o rascunho por escolha da pessoa, campo a campo;
  * a gravação leva a referência da sugestão para a procedência. Sugestão desatualizada na gravação é 409 com motivo próprio:
  * a pessoa gera de novo ou declara que revisou o texto diante do estado atual. O rascunho nunca é perdido.
+ *
+ * [AEGIS-NIST-RECOVER-GUIDE-01] Funções com roteiro editorial (hoje RECOVER) abrem numa ÁREA DE TRABALHO: lista contextual das
+ * subcategorias ao lado do detalhe, faixa de acompanhamento (Avaliação · Revisão · Tratamento, derivada dos estados
+ * existentes), atalhos para as seções e, na avaliação, pergunta principal + aprofundamentos + tabela de maturidade com as
+ * situações ilustrativas da subcategoria. Os campos, a gravação, a lacuna e as validações são os mesmos; trocar de
+ * subcategoria com rascunho não gravado pede confirmação (nada é descartado em silêncio). As demais funções seguem como antes.
  */
 @Component({
   selector: 'app-nist-subcategory',
   standalone: true,
-  imports: [RouterLink, FormsModule, DatePipe, NistProceduresComponent, NistFindingsWorkComponent, NistAuditPanelComponent, NistAssistPanelComponent],
+  imports: [
+    RouterLink, FormsModule, DatePipe, NgTemplateOutlet, NistProceduresComponent, NistFindingsWorkComponent, NistAuditPanelComponent,
+    NistAssistPanelComponent, NistSubcategoryNavComponent,
+  ],
   template: `
     <section class="page">
       @if (fn(); as f) {
@@ -78,6 +90,44 @@ import { NistProceduresComponent } from './nist-procedures.component';
         </nav>
       }
 
+      @if (workspace()) {
+        <div class="ws-c">
+          <div class="ws">
+            <app-nist-subcategory-nav class="ws-nav" [fn]="fn()!" [ctx]="ctx()!" [code]="code()" [refresh]="navTick()" (context)="wsContext.set($event)" />
+            <div class="ws-main-c"><div class="ws-main"><ng-container *ngTemplateOutlet="body" /></div></div>
+          </div>
+        </div>
+      } @else {
+        <ng-container *ngTemplateOutlet="body" />
+      }
+    </section>
+
+    <ng-template #outcome let-d>
+      <section class="panel" aria-labelledby="sc-outcome">
+        <div class="hd"><h3 id="sc-outcome">Resultado esperado</h3></div>
+        @if (d.summary) { <p><strong>{{ d.summary }}</strong></p> }
+        <p class="muted" lang="en"><span class="lbl">Texto oficial do NIST CSF 2.0 (inglês):</span> {{ d.officialOutcome }}</p>
+        @if (d.impact) { <p><span class="lbl">Por que importa:</span> {{ d.impact }}</p> }
+        @if (d.initialAction) { <p><span class="lbl">Primeiro passo de melhoria:</span> {{ d.initialAction }}</p> }
+        @if (d.implementationExamples) {
+          <details><summary>Exemplos de implementação (NIST, inglês)</summary><p class="pre" lang="en">{{ d.implementationExamples }}</p></details>
+        }
+        <p class="hint">Título e explicação em linguagem clara: redação do AEGIS, não tradução oficial.</p>
+      </section>
+
+      @if (d.reference; as r) {
+        <section class="panel ref" aria-labelledby="sc-ref">
+          <div class="hd"><h3 id="sc-ref">Referência: rodada {{ r.cycleName }}</h3><span class="hint">somente leitura · não é a avaliação desta rodada</span></div>
+          <p>{{ stateLabel(r.state) }} · atual {{ levelLabel(r.currentLevel) }} · alvo {{ levelLabel(r.targetLevel) }}@if (r.notApplicable) { · não se aplicava }
+            · {{ r.evidenceCount }} evidência(s) · {{ r.proceduresPerformed }} procedimento(s) realizado(s) · {{ r.findings }} achado(s)</p>
+          @if (r.rationale) { <p class="muted pre">Justificativa: {{ r.rationale }}</p> }
+          @if (r.gaps) { <p class="muted pre">Lacunas: {{ r.gaps }}</p> }
+          <p class="hint">Confirmada por {{ r.reviewedByName ?? '—' }}@if (r.reviewedAt) { em {{ r.reviewedAt | date: 'dd/MM/yyyy' }} }</p>
+        </section>
+      }
+    </ng-template>
+
+    <ng-template #body>
       @if (loading()) {
         <div class="panel"><div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>Carregando a subcategoria…</p></div></div>
       } @else if (error()) {
@@ -86,16 +136,43 @@ import { NistProceduresComponent } from './nist-procedures.component';
       } @else if (detail()) {
         @let d = detail()!;
         @let e = d.evaluation;
+        @let g = guide();
         <header class="page-head">
           <div>
             <p class="page-eyebrow">{{ nistCategoryLabel(d.categoryCode, d.categoryName) }} · {{ d.categoryCode }}</p>
-            <h1>{{ d.title }}</h1>
-            <p class="page-meta"><span class="mono">{{ d.code }}</span> ·
-              <span [class]="'badge ' + stateBadgeClass(e?.state ?? 'NotEvaluated')">{{ stateLabel(e?.state ?? 'NotEvaluated') }}</span>
-              @if (e?.reviewState && e!.reviewState !== 'None') { <span [class]="'badge ' + reviewBadgeClass(e!.reviewState)">{{ reviewStateLabel(e!.reviewState) }}</span> }
-              · rodada <strong>{{ d.cycleName ?? '—' }}</strong>@if (d.cycleStatus === 'Closed') { <span class="badge neutral">encerrada</span> }</p>
+            <h1>@if (g) { <span class="mono h-code">{{ d.code }}</span> }{{ d.title }}</h1>
+            @if (g) {
+              @let w = contextNames();
+              <p class="page-meta">Avaliação <strong>{{ w?.assessment ?? '—' }}</strong> · Rodada <strong>{{ w?.cycle ?? d.cycleName ?? '—' }}</strong>
+                @if (d.cycleStatus === 'Closed') { <span class="badge neutral">encerrada</span> } · Escopo <strong>{{ w?.scope ?? '—' }}</strong> ·
+                <a [routerLink]="['/nist']" [queryParams]="params()">trocar</a></p>
+            } @else {
+              <p class="page-meta"><span class="mono">{{ d.code }}</span> ·
+                <span [class]="'badge ' + stateBadgeClass(e?.state ?? 'NotEvaluated')">{{ stateLabel(e?.state ?? 'NotEvaluated') }}</span>
+                @if (e?.reviewState && e!.reviewState !== 'None') { <span [class]="'badge ' + reviewBadgeClass(e!.reviewState)">{{ reviewStateLabel(e!.reviewState) }}</span> }
+                · rodada <strong>{{ d.cycleName ?? '—' }}</strong>@if (d.cycleStatus === 'Closed') { <span class="badge neutral">encerrada</span> }</p>
+            }
           </div>
         </header>
+
+        @if (g) {
+          <div class="track-wrap">
+            <ul class="track" aria-label="Acompanhamento da subcategoria nesta rodada">
+              @for (t of tracking(d); track t.key) {
+                <li>
+                  <button type="button" class="track-item" (click)="goTo(t.target)" [attr.aria-label]="t.label + ': ' + t.status + (t.detail ? ' — ' + t.detail : '') + '. Ir para a seção.'">
+                    <span class="track-k">{{ t.label }}</span>
+                    <span [class]="'badge ' + t.tone">{{ t.status }}</span>
+                    @if (t.detail) { <span class="track-d">{{ t.detail }}</span> }
+                  </button>
+                </li>
+              }
+            </ul>
+            <nav class="sections" aria-label="Seções da subcategoria">
+              @for (s of sections; track s.id) { <button type="button" class="filter-chip" (click)="goTo(s.id)">{{ s.label }}</button> }
+            </nav>
+          </div>
+        }
 
         @if (d.cycleStatus === 'Closed') {
           <p class="notice">Esta rodada está encerrada: avaliação, evidências, procedimentos e novos achados ficam só para consulta. Planos de tratamento continuam.</p>
@@ -108,28 +185,7 @@ import { NistProceduresComponent } from './nist-procedures.component';
           </section>
         }
 
-        <section class="panel" aria-labelledby="sc-outcome">
-          <div class="hd"><h3 id="sc-outcome">Resultado esperado</h3></div>
-          @if (d.summary) { <p><strong>{{ d.summary }}</strong></p> }
-          <p class="muted" lang="en"><span class="lbl">Texto oficial do NIST CSF 2.0 (inglês):</span> {{ d.officialOutcome }}</p>
-          @if (d.impact) { <p><span class="lbl">Por que importa:</span> {{ d.impact }}</p> }
-          @if (d.initialAction) { <p><span class="lbl">Primeiro passo de melhoria:</span> {{ d.initialAction }}</p> }
-          @if (d.implementationExamples) {
-            <details><summary>Exemplos de implementação (NIST, inglês)</summary><p class="pre" lang="en">{{ d.implementationExamples }}</p></details>
-          }
-          <p class="hint">Título e explicação em linguagem clara: redação do AEGIS, não tradução oficial.</p>
-        </section>
-
-        @if (d.reference; as r) {
-          <section class="panel ref" aria-labelledby="sc-ref">
-            <div class="hd"><h3 id="sc-ref">Referência: rodada {{ r.cycleName }}</h3><span class="hint">somente leitura · não é a avaliação desta rodada</span></div>
-            <p>{{ stateLabel(r.state) }} · atual {{ levelLabel(r.currentLevel) }} · alvo {{ levelLabel(r.targetLevel) }}@if (r.notApplicable) { · não se aplicava }
-              · {{ r.evidenceCount }} evidência(s) · {{ r.proceduresPerformed }} procedimento(s) realizado(s) · {{ r.findings }} achado(s)</p>
-            @if (r.rationale) { <p class="muted pre">Justificativa: {{ r.rationale }}</p> }
-            @if (r.gaps) { <p class="muted pre">Lacunas: {{ r.gaps }}</p> }
-            <p class="hint">Confirmada por {{ r.reviewedByName ?? '—' }}@if (r.reviewedAt) { em {{ r.reviewedAt | date: 'dd/MM/yyyy' }} }</p>
-          </section>
-        }
+        @if (!g) { <ng-container *ngTemplateOutlet="outcome; context: { $implicit: d }" /> }
 
         <section class="panel" aria-labelledby="sc-eval">
           <div class="hd"><h3 id="sc-eval">Avaliação</h3>
@@ -137,6 +193,66 @@ import { NistProceduresComponent } from './nist-procedures.component';
           @if (!canWrite()) { <p class="notice">Seu papel permite consultar, mas não registrar (requer Manager ou TenantAdmin).</p> }
           <form (ngSubmit)="save(d)">
             <fieldset [disabled]="!canEdit() || saving()">
+              @if (g) {
+                <div class="guide-grid">
+                  <div class="guide-q">
+                    <p class="q-k">Pergunta principal <span class="hint">· {{ g.title }}</span></p>
+                    <p class="q-main">{{ g.mainQuestion }}</p>
+                    <details class="deep">
+                      <summary>Aprofundar a entrevista <span class="hint">({{ g.followUps.length }} perguntas)</span></summary>
+                      <div class="table-wrap">
+                        <table class="data-table fu">
+                          <caption class="sr-only">Perguntas complementares de {{ d.code }}</caption>
+                          <thead><tr><th scope="col">Pergunta complementar</th><th scope="col">O que investigar</th></tr></thead>
+                          <tbody>
+                            @for (f of g.followUps; track $index) { <tr><td>{{ f.question }}</td><td class="muted">{{ f.focus }}</td></tr> }
+                          </tbody>
+                        </table>
+                      </div>
+                      <p class="hint">Orientam a conversa conforme as respostas; não são campos obrigatórios nem um checklist cuja soma dá o nível.</p>
+                    </details>
+                    <details class="help"><summary>Atenção na interpretação</summary><p>{{ g.interpretationNote }}</p></details>
+                    <details class="help"><summary>Como usar o roteiro</summary>
+                      <ul>@for (n of guideNotes; track $index) { <li>{{ n }}</li> }</ul></details>
+                    <p class="hint">Roteiro editorial do AEGIS, estável e sem IA: perguntas e exemplos não são evidência do ambiente nem geram nota.
+                      Sugestões da IA ficam no painel “Assistência de IA”.</p>
+                  </div>
+                  <div class="guide-lv">
+                    <label class="check"><input type="checkbox" name="na" [(ngModel)]="draft.notApplicable" /> Este resultado não se aplica ao escopo</label>
+                    @if (!draft.notApplicable) {
+                      <div class="table-wrap mat-wrap">
+                        <table class="data-table mat">
+                          <caption>Maturidade — situações ilustrativas de {{ d.code }}</caption>
+                          <thead><tr><th scope="col">Nível</th><th scope="col">Situação ilustrativa</th><th scope="col" class="c">Atual</th><th scope="col" class="c">Alvo</th></tr></thead>
+                          <tbody>
+                            <tr [class.is-cur]="draft.currentLevel === null" [class.is-tgt]="draft.targetLevel === null">
+                              <th scope="row">Sem nível
+                                @if (draft.currentLevel === null) { <span class="tag">atual</span> }
+                                @if (draft.targetLevel === null) { <span class="tag">alvo</span> }</th>
+                              <td class="muted">Nenhum nível registrado — ausência de nível não equivale a zero.</td>
+                              <td class="c" data-label="Atual"><label class="pick"><input type="radio" name="cur" [ngModel]="draft.currentLevel" (ngModelChange)="draft.currentLevel = $event" [value]="null" /><span class="sr-only">Atual: sem nível</span></label></td>
+                              <td class="c" data-label="Alvo"><label class="pick"><input type="radio" name="tgt" [ngModel]="draft.targetLevel" (ngModelChange)="draft.targetLevel = $event" [value]="null" /><span class="sr-only">Alvo: sem nível</span></label></td>
+                            </tr>
+                            @for (l of levels; track l) {
+                              <tr [class.is-cur]="draft.currentLevel === l" [class.is-tgt]="draft.targetLevel === l">
+                                <th scope="row"><span class="lv-n">{{ l }}</span> {{ labels[l] }}
+                                  @if (draft.currentLevel === l) { <span class="tag">atual</span> }
+                                  @if (draft.targetLevel === l) { <span class="tag">alvo</span> }</th>
+                                <td>{{ g.levelExamples[l - 1] }}</td>
+                                <td class="c" data-label="Atual"><label class="pick"><input type="radio" name="cur" [ngModel]="draft.currentLevel" (ngModelChange)="draft.currentLevel = $event" [value]="l" /><span class="sr-only">Atual: nível {{ l }} — {{ labels[l] }}</span></label></td>
+                                <td class="c" data-label="Alvo"><label class="pick"><input type="radio" name="tgt" [ngModel]="draft.targetLevel" (ngModelChange)="draft.targetLevel = $event" [value]="l" /><span class="sr-only">Alvo: nível {{ l }} — {{ labels[l] }}</span></label></td>
+                              </tr>
+                            }
+                          </tbody>
+                        </table>
+                      </div>
+                      <p class="hint">As situações orientam o julgamento: o nível é decisão do analista, com base nas evidências.</p>
+                      <p>Lacuna: <strong>{{ gapText(gap()) }}</strong>
+                        @if (gap() === null) { <span class="muted"> — registre atual e alvo para determiná-la.</span> }</p>
+                    }
+                  </div>
+                </div>
+              } @else {
               <label class="check"><input type="checkbox" name="na" [(ngModel)]="draft.notApplicable" /> Este resultado não se aplica ao escopo</label>
               @if (!draft.notApplicable) {
                 <div class="levels">
@@ -157,6 +273,7 @@ import { NistProceduresComponent } from './nist-procedures.component';
                 </div>
                 <p>Lacuna: <strong>{{ gapText(gap()) }}</strong>
                   @if (gap() === null) { <span class="muted"> — registre atual e alvo para determiná-la.</span> }</p>
+              }
               }
               <div class="grid">
                 <label class="field wide"><span class="field-label">{{ draft.notApplicable ? 'Por que não se aplica (obrigatório)' : 'Justificativa' }}</span>
@@ -217,6 +334,8 @@ import { NistProceduresComponent } from './nist-procedures.component';
           } @else { <p class="hint">Ainda sem avaliação registrada nesta rodada.</p> }
         </section>
 
+        @if (g) { <ng-container *ngTemplateOutlet="outcome; context: { $implicit: d }" /> }
+
         <section class="panel" aria-labelledby="sc-rev">
           <div class="hd"><h3 id="sc-rev">Avaliador e revisor</h3><span class="hint">usuários ativos do tenant · designar não concede privilégio</span></div>
           <p>Avaliador: <strong>{{ e?.assessorName ?? 'não designado' }}</strong> · Revisor: <strong>{{ e?.reviewerName ?? 'não designado' }}</strong></p>
@@ -251,9 +370,11 @@ import { NistProceduresComponent } from './nist-procedures.component';
 
         <app-nist-procedures [ctx]="ctx()!" [code]="d.code" [procedures]="d.procedures ?? []" [evidence]="d.evidence" [canEdit]="canEdit()" (changed)="refreshSoft()" />
 
-        <app-nist-assist-panel kind="Subcategory" [ctx]="ctx()!" [code]="d.code" [canGenerate]="canWrite()" [canIncorporate]="canEdit()"
-          [refresh]="auditTick()" [applyTargets]="assistTargets" [allowLevel]="true" [allowProcedures]="canEdit()" [linkParams]="params()"
-          (apply)="applyAssist($event)" (changed)="refreshSoft()" />
+        <div id="assistencia" class="anchor">
+          <app-nist-assist-panel kind="Subcategory" [ctx]="ctx()!" [code]="d.code" [canGenerate]="canWrite()" [canIncorporate]="canEdit()"
+            [refresh]="auditTick()" [applyTargets]="assistTargets" [allowLevel]="true" [allowProcedures]="canEdit()" [linkParams]="params()"
+            (apply)="applyAssist($event)" (changed)="refreshSoft()" />
+        </div>
 
         <section class="panel" aria-labelledby="sc-ev">
           <div class="hd"><h3 id="sc-ev">Evidências</h3><span class="hint">{{ d.evidence.length }} vinculada(s) nesta rodada</span></div>
@@ -330,9 +451,11 @@ import { NistProceduresComponent } from './nist-procedures.component';
 
         <app-nist-findings-work [ctx]="ctx()!" [detail]="d" [assignees]="assignees()" [canEdit]="canEdit()" [canWrite]="canWrite()" [openId]="openFinding()" (changed)="refreshSoft()" />
 
-        <app-nist-audit-panel [assessmentId]="d.assessmentId" [cycleId]="ctx()!.cycleId" [scopeId]="d.scopeId" [code]="d.code" [refresh]="auditTick()" />
+        <div id="historico" class="anchor">
+          <app-nist-audit-panel [assessmentId]="d.assessmentId" [cycleId]="ctx()!.cycleId" [scopeId]="d.scopeId" [code]="d.code" [refresh]="auditTick()" />
+        </div>
       }
-    </section>
+    </ng-template>
   `,
   styles: [
     `
@@ -357,6 +480,70 @@ import { NistProceduresComponent } from './nist-procedures.component';
       .add summary { cursor: pointer; font-weight: 500; }
       .ref { border-style: dashed; }
       h4 { margin: var(--sp-4) 0 var(--sp-2); font-size: var(--fs-body); }
+      .anchor { display: flex; flex-direction: column; min-width: 0; }
+
+      /* ---- [AEGIS-NIST-RECOVER-GUIDE-01] Área de trabalho: lista contextual + detalhe ---- */
+      /* Contêineres de consulta em invólucros: @container não estiliza o próprio contêiner. */
+      .ws-c { container: nistws / inline-size; min-width: 0; }
+      .ws { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-5); align-items: start; }
+      .ws-main-c { container: nistmain / inline-size; min-width: 0; }
+      .ws-main { display: flex; flex-direction: column; gap: var(--sp-6); min-width: 0; }
+      @container nistws (min-width: 900px) {
+        .ws { grid-template-columns: 272px minmax(0, 1fr); }
+        .ws-nav { position: sticky; top: calc(var(--header-h) + var(--sp-4)); max-height: calc(100vh - var(--header-h) - var(--sp-8)); overflow-y: auto; }
+      }
+      .h-code { font-size: 0.62em; color: var(--cyan); margin-right: var(--sp-2); vertical-align: middle; }
+      .track-wrap { display: flex; flex-direction: column; gap: var(--sp-3); }
+      .track { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: var(--sp-2); }
+      .track-item { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; height: 100%; padding: var(--sp-3);
+        border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--text); text-align: left; cursor: pointer; }
+      .track-item:hover { border-color: var(--line-strong); background: var(--panel-2); }
+      .track-item:focus-visible { outline: none; box-shadow: var(--focus); }
+      .track-k { font-size: var(--fs-caps); font-weight: 600; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted); }
+      .track-d { font-size: var(--fs-meta); color: var(--text-2); }
+      .sections { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+      .guide-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-5); margin-bottom: var(--sp-3); }
+      @container nistmain (min-width: 980px) {
+        .guide-grid { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); align-items: start; }
+      }
+      .guide-q, .guide-lv { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+      .q-k { margin: 0; font-size: var(--fs-caps); font-weight: 600; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--cyan); }
+      .q-k .hint { text-transform: none; letter-spacing: 0; font-weight: 400; }
+      .q-main { margin: 0; padding: var(--sp-3) var(--sp-4); border-left: 3px solid var(--cyan); border-radius: var(--radius-sm);
+        background: var(--tint-cyan); font-size: var(--fs-panel); line-height: var(--lh-relaxed); color: var(--text); }
+      .deep, .help { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-3); }
+      .deep summary, .help summary { cursor: pointer; font-weight: 500; font-size: var(--fs-sm); }
+      .deep summary:focus-visible, .help summary:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--radius-xs); }
+      .deep[open] summary, .help[open] summary { margin-bottom: var(--sp-2); }
+      .help p, .help ul { margin: 0; font-size: var(--fs-sm); color: var(--text-2); line-height: var(--lh); }
+      .help ul { padding-left: var(--sp-5); display: flex; flex-direction: column; gap: 4px; }
+      .fu td { font-size: var(--fs-sm); }
+      .fu th { white-space: normal; }
+      .mat th, .mat td { vertical-align: top; }
+      .mat thead th { white-space: normal; }
+      .mat tbody th { font-size: var(--fs-sm); font-weight: 600; color: var(--text); text-transform: none; letter-spacing: 0; white-space: nowrap; }
+      .mat td { font-size: var(--fs-sm); }
+      .mat .c { text-align: center; width: 64px; }
+      .mat tbody tr.is-cur, .mat tbody tr.is-tgt { background: var(--hover); }
+      .mat tbody tr.is-cur th { box-shadow: inset 3px 0 0 var(--cyan); }
+      .lv-n { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 4px; border: 1px solid var(--line-strong);
+        border-radius: 50%; font-size: var(--fs-meta); }
+      .tag { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: var(--radius-pill); border: 1px solid var(--cyan);
+        font-size: 11px; font-weight: 600; color: var(--cyan); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+      .pick { display: inline-grid; place-items: center; min-width: 40px; min-height: 40px; cursor: pointer; border-radius: var(--radius-sm); }
+      .pick:focus-within { box-shadow: var(--focus); }
+      .pick input { width: 18px; height: 18px; margin: 0; accent-color: var(--cyan); cursor: pointer; }
+      fieldset:disabled .pick { cursor: not-allowed; }
+      /* Detalhe estreito: cada nível vira um bloco (rótulo, situação e as duas escolhas), sem rolagem horizontal da página. */
+      @container nistmain (max-width: 560px) {
+        .mat thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+        .mat, .mat tbody, .mat tr, .mat caption { display: block; width: 100%; }
+        .mat caption { padding-left: 0; }
+        .mat tr { display: grid; grid-template-columns: 1fr 1fr; padding: var(--sp-2) 0; border-bottom: 1px solid var(--line-2); }
+        .mat tbody th, .mat td:not(.c) { grid-column: 1 / -1; display: block; border: 0; padding: 4px var(--sp-2); white-space: normal; }
+        .mat td.c { display: flex; align-items: center; justify-content: flex-start; gap: var(--sp-2); width: auto; border: 0; padding: 0 var(--sp-2); text-align: left; }
+        .mat td.c::before { content: attr(data-label); font-size: var(--fs-meta); color: var(--muted); }
+      }
     `,
   ],
 })
@@ -385,6 +572,9 @@ export class NistSubcategoryComponent {
   protected readonly assistTargets = SUBCATEGORY_APPLY;
   protected readonly assistedText = assistedFieldsText;
   protected readonly originLink = evidenceOriginLink;
+  protected readonly tracking = trackingSteps;
+  protected readonly sections = NIST_DETAIL_SECTIONS;
+  protected readonly guideNotes = NIST_INTERVIEW_GUIDE_NOTES;
 
   protected readonly fn = signal<NistFunctionMeta | null>(null);
   protected readonly code = signal('');
@@ -409,6 +599,20 @@ export class NistSubcategoryComponent {
   protected readonly assignees = signal<NistAssignee[]>([]);
   protected readonly openFinding = signal<string | null>(null);
   protected readonly auditTick = signal(0);
+  /** [AEGIS-NIST-RECOVER-GUIDE-01] Muda a cada gravação (avaliação, designação, revisão): a lista contextual relê a situação. */
+  protected readonly navTick = signal(0);
+  /** Nomes da avaliação, rodada e escopo lidos pela lista contextual (só valem para o contexto aberto). */
+  protected readonly wsContext = signal<NistWorkspaceContext | null>(null);
+
+  /** Roteiro editorial da subcategoria aberta (nulo nas funções que ainda não o têm: a tela segue como antes). */
+  protected readonly guide = computed(() => interviewGuideFor(this.code()));
+  /** Área de trabalho (lista contextual + detalhe): função com roteiro e contexto completo. */
+  protected readonly workspace = computed(() => hasInterviewGuides(this.fn()?.code) && !!this.ctx());
+  protected readonly contextNames = computed(() => {
+    const w = this.wsContext();
+    const c = this.ctx();
+    return w && c && w.assessmentId === c.assessmentId && w.cycleId === c.cycleId && w.scopeId === c.scopeId ? w : null;
+  });
 
   /** Rascunho do formulário (ngModel); os derivados (lacuna, pendência) são relidos a cada detecção de mudanças. */
   protected draft: NistEvaluationDraft = draftFrom(null);
@@ -566,6 +770,35 @@ export class NistSubcategoryComponent {
     return JSON.stringify(this.draft) !== this.baseDraft;
   }
 
+  /**
+   * [AEGIS-NIST-RECOVER-GUIDE-01] Saída da subcategoria na área de trabalho (outra subcategoria da lista, menu, link): com
+   * rascunho não gravado, pergunta antes — recusar mantém a tela e o rascunho. Fora da área de trabalho, nada muda.
+   */
+  canLeave(): boolean {
+    if (!this.workspace() || !this.detail() || !this.dirty()) return true;
+    return confirm(`A avaliação de ${this.code()} tem alterações não gravadas. Sair e descartar o rascunho?`);
+  }
+
+  /** Recarregar ou fechar a aba com rascunho não gravado na área de trabalho: o navegador pede confirmação. */
+  @HostListener('window:beforeunload', ['$event'])
+  protected onBeforeUnload(event: BeforeUnloadEvent): void {
+    if (this.workspace() && this.detail() && this.dirty()) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  }
+
+  /** Atalho para uma seção do detalhe: rola até ela (abaixo do cabeçalho fixo) e leva o foco junto. */
+  protected goTo(id: string): void {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const header = document.querySelector('.shell-header')?.getBoundingClientRect().height ?? 60;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - header - 16, behavior: reduce ? 'auto' : 'smooth' });
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+    el.focus({ preventScroll: true });
+  }
+
   protected gap(): number | null {
     return draftGap(this.draft);
   }
@@ -650,6 +883,7 @@ export class NistSubcategoryComponent {
         this.readTicket++;
         this.readSub?.unsubscribe();
         this.accept(r);
+        this.navTick.update((n) => n + 1);
         this.savedNote.set('Avaliação gravada como registro humano desta rodada.');
       },
       error: (e: NistApiError) => {
@@ -726,6 +960,7 @@ export class NistSubcategoryComponent {
         this.readSub?.unsubscribe();
         done?.();
         this.accept(r);
+        this.navTick.update((n) => n + 1);
         this.savedNote.set(note);
       },
       error: (e: NistApiError) => {
@@ -840,4 +1075,25 @@ export class NistSubcategoryComponent {
     this.loading.set(false);
     this.auditTick.update((n) => n + 1);
   }
+}
+
+/** [AEGIS-NIST-RECOVER-GUIDE-01] Rota da subcategoria: a tela decide se pode sair (rascunho não gravado na área de trabalho). */
+export const nistSubcategoryLeaveGuard: CanDeactivateFn<NistSubcategoryComponent> = (c) => c.canLeave();
+
+/**
+ * Quando a rota da subcategoria roda seus guards ao ser reaproveitada: só quando muda o CONTEXTO que a tela usa — função,
+ * subcategoria, avaliação, rodada ou escopo (o mesmo que faz a tela chamar `enter()` e descartar o rascunho). A política
+ * padrão olha só os parâmetros de caminho; trocar rodada/avaliação/escopo (consulta) passaria sem confirmação. Fragmento
+ * (#achado-…) e outros parâmetros de consulta não substituem o contexto e não acionam a pergunta.
+ */
+export function nistSubcategoryContextChanged(from: ActivatedRouteSnapshot, to: ActivatedRouteSnapshot): boolean {
+  const key = (r: ActivatedRouteSnapshot) =>
+    [
+      (r.paramMap.get('fn') ?? '').toLowerCase(),
+      (r.paramMap.get('code') ?? '').toUpperCase(),
+      r.queryParamMap.get('avaliacao'),
+      r.queryParamMap.get('rodada'),
+      r.queryParamMap.get('escopo'),
+    ].join('|');
+  return key(from) !== key(to);
 }
