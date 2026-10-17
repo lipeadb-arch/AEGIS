@@ -284,3 +284,27 @@ jobs:
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
           -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~KnightDurableAssessmentPostgresTests|FullyQualifiedName~KnightLatestHttpTests|FullyQualifiedName~KnightUnfinishedRunPlanHttpTests|FullyQualifiedName~KnightMulticloudPostgresTests|FullyQualifiedName~KnightSyncHttpTests|FullyQualifiedName~KnightEntraConfigurationPostgresTests|FullyQualifiedName~KnightTeamsConfigurationPostgresTests|FullyQualifiedName~KnightExchangeConfigurationPostgresTests|FullyQualifiedName~KnightM365ServicesPostgresTests|FullyQualifiedName~KnightAzurePostgresTests|FullyQualifiedName~KnightManualResultPostgresTests|FullyQualifiedName~KnightManualResultHttpTests|FullyQualifiedName~NistJourneyPostgresTests|FullyQualifiedName~NistJourney02PostgresTests|FullyQualifiedName~NistJourneyHttpTests|FullyQualifiedName~AssessmentVisualsPostgresTests|FullyQualifiedName~NistAssistPostgresTests|FullyQualifiedName~NistAssistHttpTests|FullyQualifiedName~AuditorHttpTests|FullyQualifiedName~SpaDeepLinkHttpTests"
+
+  # [AEGIS-NIST-GUIDES-01] Bateria de lógica do frontend (npm run test:logic). O build Angular da imagem não a executa.
+  # Checkout completo: o spec dos roteiros NIST confere os 106 resultados oficiais com o catálogo do backend.
+  frontend-logic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Frontend logic tests
+        run: npm run test:logic
