@@ -524,7 +524,9 @@ public record KnightReferenceControlStatusDto(
     // resultado manual VIGENTE deste tenant (à parte da avaliação automatizada).
     IReadOnlyList<string>? PreviewApis = null,
     bool ManualEligible = false,
-    KnightManualResultDto? ManualResult = null);
+    KnightManualResultDto? ManualResult = null,
+    // [AEGIS-KNIGHT-READONLY-01] O resultado manual aqui COMPLEMENTA uma leitura automatizada parcial (o indicador continua).
+    bool ManualComplement = false);
 
 /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Um resultado de verificação manual (atestação) de um controle de referência.</summary>
 public record KnightManualResultDto(

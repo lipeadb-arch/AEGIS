@@ -240,7 +240,11 @@ public static class KnightReportModelBuilder
         if (coverage is not null)
             notes.Add("A cobertura do catálogo de referência mede o que o AEGIS consegue avaliar (propriedade do produto). Ela é diferente da cobertura desta avaliação (o que a coleta conseguiu avaliar neste ambiente) e da aprovação (o que foi avaliado e está conforme).");
         if (coverage?.ManualResults is { Count: > 0 } manual)
-            notes.Add($"Há {manual.Count} resultado(s) de verificação MANUAL registrados pela organização para controles de referência sem avaliação automatizada. Eles são atestações (resultado, justificativa, responsável e evidência informados por pessoas), aparecem à parte e não entram na nota, na cobertura desta avaliação nem na aprovação.");
+            notes.Add($"Há {manual.Count} resultado(s) de verificação MANUAL registrados pela organização para controles de referência sem avaliação automatizada"
+                + (manual.Any(m => m.Complement)
+                    ? $" ou, como complemento ({manual.Count(m => m.Complement)}), para referências com leitura automatizada parcial: nelas o indicador automatizado continua com o próprio resultado, e o manual cobre só o que a leitura somente leitura não alcança"
+                    : "")
+                + ". Eles são atestações (resultado, justificativa, responsável e evidência informados por pessoas), aparecem à parte e não entram na nota, na cobertura desta avaliação nem na aprovação.");
 
         var frameworks = controls.SelectMany(c => c.Frameworks).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
 

@@ -41,7 +41,7 @@ public sealed class KnightManualResultHttpTests : IClassFixture<AegisApiFixture>
         var a = await _api.SeedTenantAsync("Cliente Demo A");
         var b = await _api.SeedTenantAsync("Cliente Demo B");
 
-        string eligibleKey, automatedKey;
+        string eligibleKey, automatedKey, complementKey, otherPartialKey;
         using (var analyst = _api.As(a.Analyst))
         using (var doc = await GetJsonAsync(analyst, Coverage))
         {
@@ -50,7 +50,16 @@ public sealed class KnightManualResultHttpTests : IClassFixture<AegisApiFixture>
             var eligible = controls.Where(c => c.GetProperty("manualEligible").GetBoolean()).ToList();
             eligible.Should().NotBeEmpty();
             var manualDispositions = new[] { "ManualOnly", "ApiLimitation", "RequiresAccess" };
-            eligible.Select(c => c.GetProperty("disposition").GetString()).Should().OnlyContain(d => manualDispositions.Contains(d));
+            // [AEGIS-KNIGHT-READONLY-01] Além das sem avaliação automatizada, só as parciais por política de somente leitura — marcadas
+            // como complemento, sem mudar de disposição.
+            eligible.Where(c => !manualDispositions.Contains(c.GetProperty("disposition").GetString()))
+                .Should().OnlyContain(c => c.GetProperty("disposition").GetString() == "Partial" && c.GetProperty("manualComplement").GetBoolean());
+            controls.Where(c => c.GetProperty("manualComplement").GetBoolean()).Select(c => c.GetProperty("key").GetString())
+                .Should().BeEquivalentTo(new[] { "CIS-AZ-6.0.0:2.1.5", "CIS-M365-7.0.0:7.2.2", "CIS-M365-7.0.0:7.2.4", "CIS-M365-7.0.0:7.2.8",
+                    "CIS-M365-7.0.0:7.2.9", "CIS-M365-7.0.0:7.2.10" });
+            complementKey = "CIS-M365-7.0.0:7.2.4";
+            otherPartialKey = controls.First(c => c.GetProperty("disposition").GetString() == "Partial" && !c.GetProperty("manualEligible").GetBoolean())
+                .GetProperty("key").GetString()!;
             eligibleKey = eligible.First(c => c.GetProperty("disposition").GetString() == "ManualOnly").GetProperty("key").GetString()!;
             automatedKey = controls.First(c => c.GetProperty("disposition").GetString() == "Implemented").GetProperty("key").GetString()!;
             controls.Should().OnlyContain(c => c.GetProperty("manualResult").ValueKind == JsonValueKind.Null);
@@ -77,6 +86,11 @@ public sealed class KnightManualResultHttpTests : IClassFixture<AegisApiFixture>
             }
             using (var r = await manager.PostAsync(Manual, AegisApiHarness.JsonBody(body with { evidenceReference = (string?)null })))
                 r.StatusCode.Should().Be(HttpStatusCode.BadRequest, "sem evidência vinculada o resultado é recusado");
+            // [AEGIS-KNIGHT-READONLY-01] Parcial fora do conjunto: mesma recusa de antes. Parcial por política: complemento aceito.
+            using (var r = await manager.PostAsync(Manual, AegisApiHarness.JsonBody(body with { referenceKey = otherPartialKey })))
+                r.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            using (var r = await manager.PostAsync(Manual, AegisApiHarness.JsonBody(body with { referenceKey = complementKey, evidenceReference = "CHG-7204" })))
+                r.StatusCode.Should().Be(HttpStatusCode.Created);
 
             using (var r = await manager.PostAsync(Manual, AegisApiHarness.JsonBody(body)))
             {
@@ -95,6 +109,9 @@ public sealed class KnightManualResultHttpTests : IClassFixture<AegisApiFixture>
                 var c = doc.RootElement.GetProperty("controls").EnumerateArray().Single(x => x.GetProperty("key").GetString() == eligibleKey);
                 c.GetProperty("manualResult").GetProperty("result").GetString().Should().Be("Compliant");
                 c.GetProperty("disposition").GetString().Should().Be("ManualOnly", "o resultado manual não muda a disposição automatizada");
+                var comp = doc.RootElement.GetProperty("controls").EnumerateArray().Single(x => x.GetProperty("key").GetString() == complementKey);
+                comp.GetProperty("manualResult").GetProperty("evidenceReference").GetString().Should().Be("CHG-7204");
+                comp.GetProperty("disposition").GetString().Should().Be("Partial", "o complemento não reclassifica a referência");
                 var total = doc.RootElement.GetProperty("total");
                 total.GetProperty("total").GetInt32().Should().Be(457);
             }
@@ -134,8 +151,9 @@ public sealed class KnightManualResultHttpTests : IClassFixture<AegisApiFixture>
         {
             var csv = await GetTextAsync(analyst, $"/api/v1/posture/snapshots/{snapshotId}/export?format=csv");
             var lines = csv.TrimStart('﻿').Split('\n').Where(l => l.Length > 0).ToList();
-            lines.Count(l => l.Contains(";ResultadoManual;")).Should().Be(1);
-            lines.Single(l => l.Contains(";ResultadoManual;")).Should().Contain(eligibleKey).And.Contain("CHG-0001");
+            lines.Count(l => l.Contains(";ResultadoManual;")).Should().Be(2, "o resultado manual e o complemento");
+            lines.Should().Contain(l => l.Contains(";ResultadoManual;") && l.Contains(eligibleKey) && l.Contains("CHG-0001"));
+            lines.Should().Contain(l => l.Contains(";ResultadoManual;") && l.Contains(complementKey) && l.Contains("complemento da leitura automatizada parcial"));
             var html = await GetTextAsync(analyst, $"/api/v1/posture/snapshots/{snapshotId}/export?format=html");
             html.Should().Contain("manualResults").And.Contain("CHG-0001");
             using var pdf = await analyst.GetAsync($"/api/v1/posture/snapshots/{snapshotId}/export?format=pdf");

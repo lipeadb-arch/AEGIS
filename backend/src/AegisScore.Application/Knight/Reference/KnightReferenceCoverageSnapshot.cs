@@ -41,7 +41,9 @@ public sealed record KnightManualResultEntry(
     string? ValidUntil,
     bool Expired,
     string RecordedByName,
-    string RecordedAt);
+    string RecordedAt,
+    // [AEGIS-KNIGHT-READONLY-01] Complemento manual de leitura automatizada parcial (o indicador automatizado segue à parte).
+    bool Complement = false);
 
 public static class KnightReferenceCoverageSnapshot
 {
@@ -72,13 +74,15 @@ public static class KnightReferenceCoverageSnapshot
             .Select(v =>
             {
                 byKey.TryGetValue(v.ReferenceKey, out var st);
+                var complement = st is not null && KnightManualResults.IsReadOnlyComplement(st);
                 return new KnightManualResultEntry(
                     v.ReferenceKey, st is null ? v.ReferenceKey : KnightReferenceCatalog.Label(st.Control), st?.Control.Title ?? v.ReferenceKey,
                     st?.Disposition.ToString() ?? v.ReferenceDisposition,
-                    st is null ? v.ReferenceDisposition : KnightReferenceCatalog.DispositionLabel(st.Disposition),
+                    st is null ? v.ReferenceDisposition : complement ? KnightManualResults.ComplementLabel : KnightReferenceCatalog.DispositionLabel(st.Disposition),
                     v.Result.ToString(), v.ResultLabel, v.Justification, v.ResponsibleName, v.EvidenceReference, v.EvidenceDocumentTitle,
                     v.EvidenceDocumentSha256, v.ValidUntil?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), v.Expired,
-                    v.RecordedByName, v.RecordedAt.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture));
+                    v.RecordedByName, v.RecordedAt.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture),
+                    complement);
             })
             .ToList();
     }

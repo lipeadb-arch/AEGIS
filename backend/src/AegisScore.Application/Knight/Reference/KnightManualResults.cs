@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Application.Remediation;
@@ -67,6 +68,27 @@ public static class KnightManualResults
     /// <summary>Disposições que aceitam resultado manual (não há avaliação automatizada da referência).</summary>
     public static bool Eligible(KnightReferenceDisposition d) =>
         d is KnightReferenceDisposition.ManualOnly or KnightReferenceDisposition.ApiLimitation or KnightReferenceDisposition.RequiresAccess;
+
+    /// <summary>
+    /// A decisão ÚNICA de elegibilidade de uma referência — usada pela cobertura (tela), pela gravação e pela publicação:
+    /// as disposições sem avaliação automatizada, mais o complemento das referências parciais por política de somente leitura
+    /// (<see cref="IsReadOnlyComplement"/>). Nenhuma outra referência parcial ou integral recebe resultado manual.
+    /// </summary>
+    public static bool Eligible(KnightReferenceStatus status) => Eligible(status.Disposition) || IsReadOnlyComplement(status);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-READONLY-01] Referência PARCIAL citada só por controles de
+    /// <see cref="KnightCollectorCapabilities.PartialByReadOnlyPolicy"/>: a leitura somente leitura conclui parte dos casos e o
+    /// restante fica não avaliado. O resultado manual COMPLEMENTA — fica à parte, não substitui o indicador automatizado, não
+    /// muda a nota e não vira configuração coletada.
+    /// </summary>
+    public static bool IsReadOnlyComplement(KnightReferenceStatus status) =>
+        status.Disposition == KnightReferenceDisposition.Partial
+        && status.IndicatorIds.Count > 0
+        && status.IndicatorIds.All(KnightCollectorCapabilities.PartialByReadOnlyPolicy.Contains);
+
+    /// <summary>Rótulo do resultado manual que complementa uma leitura automatizada parcial (tela, HTML, PDF e CSV).</summary>
+    public const string ComplementLabel = "Implementado parcialmente — complemento manual da leitura automatizada";
 
     public static string ResultLabel(KnightManualResult r) => r switch
     {

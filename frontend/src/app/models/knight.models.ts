@@ -990,6 +990,11 @@ export interface KnightReferenceControlStatus {
   previewApis?: string[];
   /** [AEGIS-KNIGHT-CLOSURE-01] Sem avaliação automatizada: aceita resultado de verificação manual. */
   manualEligible?: boolean;
+  /**
+   * [AEGIS-KNIGHT-READONLY-01] Leitura automatizada PARCIAL: o resultado manual complementa (não substitui) o indicador
+   * automatizado. Decidido no servidor, com a mesma regra da gravação.
+   */
+  manualComplement?: boolean;
   /** [AEGIS-KNIGHT-CLOSURE-01] Resultado manual VIGENTE deste cliente — à parte da avaliação automatizada. */
   manualResult?: KnightManualResult | null;
 }

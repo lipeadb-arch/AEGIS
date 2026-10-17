@@ -211,7 +211,7 @@ p.appendChild(el('div',{cls:'tw'},[el('table',{cls:'cov'},[el('thead',null,[el('
 p.appendChild(el('p',{cls:'sub',text:'“Com alguma avaliação automatizada” (integral + parcial): '+pct(c.total.anyAutomatedPercent)+' — não é cobertura completa.'}));
 var m=c.manualResults||[];p.appendChild(el('h3',{text:'Resultados de verificação manual (atestação)'}));
 if(!m.length){p.appendChild(el('p',{cls:'sub',text:'Nenhum resultado manual registrado até a publicação.'}));return p;}
-p.appendChild(el('p',{cls:'sub',text:'Registrados pela organização para controles sem avaliação automatizada. Não entram na nota, na cobertura desta avaliação nem na aprovação.'}));
+p.appendChild(el('p',{cls:'sub',text:'Registrados pela organização para controles sem avaliação automatizada ou, como complemento, para leituras automatizadas parciais (o indicador automatizado mantém o próprio resultado). Não entram na nota, na cobertura desta avaliação nem na aprovação.'}));
 var mb=el('tbody');m.forEach(function(r){mb.appendChild(el('tr',null,[el('td',null,[el('strong',{text:r.title}),el('br'),el('span',{cls:'sub',text:r.referenceLabel+' · '+r.dispositionLabel})]),
 el('td',{text:r.resultLabel+(r.expired?' — VENCIDO':'')}),el('td',{text:r.justification}),el('td',{text:r.responsibleName}),
 el('td',{text:[r.evidenceReference,r.evidenceDocumentTitle?('Documento: '+r.evidenceDocumentTitle+(r.evidenceDocumentSha256?' (SHA-256 '+r.evidenceDocumentSha256.slice(0,12)+'…)':'')):null].filter(function(x){return x;}).join(' · ')||'—'}),

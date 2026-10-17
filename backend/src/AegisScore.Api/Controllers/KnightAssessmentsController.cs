@@ -96,8 +96,9 @@ public class KnightAssessmentsController : ControllerBase
                     s.Control.Service.ToString(), d?.Label ?? s.Control.Service.ToString(),
                     d is null ? "" : KnightServices.PlatformLabel(d.Platform), s.Control.Severity.ToString(), s.Control.Title,
                     s.Disposition.ToString(), KnightReferenceCatalog.DispositionLabel(s.Disposition), s.IndicatorIds, s.Note,
-                    s.PreviewApis ?? Array.Empty<string>(), KnightManualResults.Eligible(s.Disposition),
-                    manual.TryGetValue(s.Control.Key, out var m) ? ManualDto(m) : null);
+                    s.PreviewApis ?? Array.Empty<string>(), KnightManualResults.Eligible(s),
+                    manual.TryGetValue(s.Control.Key, out var m) ? ManualDto(m) : null,
+                    KnightManualResults.IsReadOnlyComplement(s));
             }).ToList()));
     }
 

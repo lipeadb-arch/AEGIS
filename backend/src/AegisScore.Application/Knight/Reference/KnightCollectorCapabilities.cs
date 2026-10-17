@@ -239,6 +239,16 @@ public static class KnightCollectorCapabilities
     };
 
     /// <summary>
+    /// [AEGIS-KNIGHT-READONLY-01] Controles que concluem só EM PARTE pela leitura somente leitura (SPO-002/004/008/009/010 pelo
+    /// Microsoft Graph; DBR-008 pelo Resource Manager) e ficam não avaliados no restante. A referência que eles citam continua
+    /// parcial — nunca integral —, mas aceita COMPLEMENTO manual para a parte que a leitura não alcança.
+    /// </summary>
+    public static readonly IReadOnlySet<string> PartialByReadOnlyPolicy = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "AK-SPO-002", "AK-SPO-004", "AK-SPO-008", "AK-SPO-009", "AK-SPO-010", "AK-AZ-DBR-008",
+    };
+
+    /// <summary>
     /// O controle está no fluxo ativo: aplicável a ao menos uma fonte real cujo coletor produz TODAS as capacidades
     /// que o perfil do controle declara consumir. Sem perfil (capacidades desconhecidas), não está.
     /// </summary>

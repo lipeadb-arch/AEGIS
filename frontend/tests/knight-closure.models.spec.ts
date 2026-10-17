@@ -85,6 +85,20 @@ test('o recorte padrão mostra só o que aceita resultado manual — nunca um co
   eq(filterReferenceControls(CONTROLS, { view: 'all', platform: '', q: 'ak-entra-072' }).length, 1, 'pesquisa pelo controle KNIGHT');
 });
 
+test('[AEGIS-KNIGHT-READONLY-01] a parcial por política de somente leitura aceita complemento, sem deixar de ser avaliada', () => {
+  const complement = ref({
+    key: 'CIS-M365-7.0.0:7.2.4', section: '7.2.4', disposition: 'Partial', dispositionLabel: 'Implementado parcialmente',
+    indicatorIds: ['AK-SPO-004'], manualEligible: true, manualComplement: true,
+  });
+  const otherPartial = ref({ key: 'CIS-M365-7.0.0:1.1.1', section: '1.1.1', disposition: 'Partial', dispositionLabel: 'Implementado parcialmente' });
+  const all = [...CONTROLS, complement, otherPartial];
+  const manual = filterReferenceControls(all, { view: 'manual', platform: '', q: '' }).map((c) => c.key);
+  ok(manual.includes('CIS-M365-7.0.0:7.2.4'), 'o complemento aparece no recorte de resultado manual');
+  ok(!manual.includes('CIS-M365-7.0.0:1.1.1'), 'outra parcial continua fora');
+  ok(filterReferenceControls(all, { view: 'automated', platform: '', q: '' }).some((c) => c.key === 'CIS-M365-7.0.0:7.2.4'),
+    'e continua entre as avaliadas automaticamente');
+});
+
 test('o rótulo cita benchmark, versão e seção; o resultado vencido é dito', () => {
   eq(referenceLabel(CONTROLS[2]), 'CIS Microsoft 365 7.0.0 · 5.3.1', 'rótulo da referência');
   eq(manualResultBadge(CONTROLS[3].manualResult), 'Conforme (verificação manual) — vencido', 'vencido nunca parece vigente');
