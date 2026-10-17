@@ -5,7 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, ActivatedRouteSnapshot, CanDeactivateFn, Router, RouterLink } from '@angular/router';
 import { Observable, Subscription, combineLatest } from 'rxjs';
 import { GovernanceDocument } from '../../models/governance.models';
-import { NIST_INTERVIEW_GUIDE_NOTES, hasInterviewGuides, interviewGuideFor } from '../../models/nist-interview-guide';
+import { hasInterviewGuides, interviewGuideFor, interviewGuideNotes } from '../../models/nist-interview-guide';
 import { NIST_DETAIL_SECTIONS, trackingSteps } from '../../models/nist-workspace.models';
 import {
   MATURITY_LEVEL_HINTS,
@@ -67,11 +67,13 @@ import { NistSubcategoryNavComponent, NistWorkspaceContext } from './nist-subcat
  * a gravação leva a referência da sugestão para a procedência. Sugestão desatualizada na gravação é 409 com motivo próprio:
  * a pessoa gera de novo ou declara que revisou o texto diante do estado atual. O rascunho nunca é perdido.
  *
- * [AEGIS-NIST-RECOVER-GUIDE-01] Funções com roteiro editorial (hoje RECOVER) abrem numa ÁREA DE TRABALHO: lista contextual das
+ * [AEGIS-NIST-RECOVER-GUIDE-01] Funções com roteiro editorial (as seis: RECOVER, RESPOND, DETECT, PROTECT, IDENTIFY e
+ * GOVERN) abrem numa ÁREA DE TRABALHO: lista contextual das
  * subcategorias ao lado do detalhe, faixa de acompanhamento (Avaliação · Revisão · Tratamento, derivada dos estados
  * existentes), atalhos para as seções e, na avaliação, pergunta principal + aprofundamentos + tabela de maturidade com as
  * situações ilustrativas da subcategoria. Os campos, a gravação, a lacuna e as validações são os mesmos; trocar de
- * subcategoria com rascunho não gravado pede confirmação (nada é descartado em silêncio). As demais funções seguem como antes.
+ * subcategoria com rascunho não gravado pede confirmação (nada é descartado em silêncio).
+ * Sem contexto completo, a tela segue como antes.
  */
 @Component({
   selector: 'app-nist-subcategory',
@@ -213,7 +215,7 @@ import { NistSubcategoryNavComponent, NistWorkspaceContext } from './nist-subcat
                     </details>
                     <details class="help"><summary>Atenção na interpretação</summary><p>{{ g.interpretationNote }}</p></details>
                     <details class="help"><summary>Como usar o roteiro</summary>
-                      <ul>@for (n of guideNotes; track $index) { <li>{{ n }}</li> }</ul></details>
+                      <ul>@for (n of guideNotes(); track $index) { <li>{{ n }}</li> }</ul></details>
                     <p class="hint">Roteiro editorial do AEGIS, estável e sem IA: perguntas e exemplos não são evidência do ambiente nem geram nota.
                       Sugestões da IA ficam no painel “Assistência de IA”.</p>
                   </div>
@@ -574,7 +576,6 @@ export class NistSubcategoryComponent {
   protected readonly originLink = evidenceOriginLink;
   protected readonly tracking = trackingSteps;
   protected readonly sections = NIST_DETAIL_SECTIONS;
-  protected readonly guideNotes = NIST_INTERVIEW_GUIDE_NOTES;
 
   protected readonly fn = signal<NistFunctionMeta | null>(null);
   protected readonly code = signal('');
@@ -606,6 +607,7 @@ export class NistSubcategoryComponent {
 
   /** Roteiro editorial da subcategoria aberta (nulo nas funções que ainda não o têm: a tela segue como antes). */
   protected readonly guide = computed(() => interviewGuideFor(this.code()));
+  protected readonly guideNotes = computed(() => interviewGuideNotes(this.fn()?.code));
   /** Área de trabalho (lista contextual + detalhe): função com roteiro e contexto completo. */
   protected readonly workspace = computed(() => hasInterviewGuides(this.fn()?.code) && !!this.ctx());
   protected readonly contextNames = computed(() => {
