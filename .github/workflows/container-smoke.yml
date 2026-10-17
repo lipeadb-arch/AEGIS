@@ -222,6 +222,20 @@ jobs:
           { [ "$codeH" = "200" ] && echo "$hist" | grep -qE 'app-root|<base href'; } && hs=1 || hs=0
           gate "/history entrega o SPA (fallback, nao 404)" "$hs" "code=$codeH"
 
+          # [AEGIS-SPA-DEEPLINK-01] Abertura direta/recarga da subcategoria NIST: o ponto do codigo nao pode
+          # tirar a URL do fallback (antes: 401). GET e HEAD entregam o shell; o resto segue protegido.
+          for SUB in "/nist/rc/RC.RP-06" "/nist/rc/RC.CO-03" "/nist/gv/GV.OC-01" "/nist/id/ID.AM-01"                      "/nist/pr/PR.AA-05" "/nist/de/DE.CM-01" "/nist/rs/RS.MA-02" "/nist/rc/RC.RP-06?rodada=2&escopo=tenant"; do
+            codeS="$(curl -s -o /tmp/sub.html -w '%{http_code} %{content_type}' -H "$HDR" "http://localhost:8080$SUB" 2>/dev/null || true)"
+            { case "$codeS" in "200 text/html"*) true;; *) false;; esac && grep -qE 'app-root|<base href' /tmp/sub.html; } && ss=1 || ss=0
+            gate "GET $SUB entrega o shell do Angular" "$ss" "resp=$codeS"
+            codeHd="$(curl -s -I -o /dev/null -w '%{http_code}' -H "$HDR" "http://localhost:8080$SUB" 2>/dev/null || true)"
+            gate "HEAD $SUB responde 200" "$([ "$codeHd" = "200" ] && echo 1 || echo 0)" "code=$codeHd"
+          done
+          for NEG in "/api/v1/knight/assessments/latest" "/api/v1/nist/rc/RC.RP-06" "/nist/xx/RC.RP-06" "/nist/rc/RC.RP-06.js" "/nao-existe.js"; do
+            codeN="$(curl -s -o /dev/null -w '%{http_code}' -H "$HDR" "http://localhost:8080$NEG" 2>/dev/null || true)"
+            gate "$NEG segue protegido (401, nao vira shell)" "$([ "$codeN" = "401" ] && echo 1 || echo 0)" "code=$codeN"
+          done
+
           run="$(docker inspect -f '{{.State.Running}}' "$APP" 2>/dev/null || echo false)"
           gate "container permanece saudavel durante o smoke" "$([ "$run" = "true" ] && echo 1 || echo 0)" "running=$run"
 
@@ -269,4 +283,4 @@ jobs:
           AEGIS_PG_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~KnightDurableAssessmentPostgresTests|FullyQualifiedName~KnightLatestHttpTests|FullyQualifiedName~KnightUnfinishedRunPlanHttpTests|FullyQualifiedName~KnightMulticloudPostgresTests|FullyQualifiedName~KnightSyncHttpTests|FullyQualifiedName~KnightEntraConfigurationPostgresTests|FullyQualifiedName~KnightTeamsConfigurationPostgresTests|FullyQualifiedName~KnightExchangeConfigurationPostgresTests|FullyQualifiedName~KnightM365ServicesPostgresTests|FullyQualifiedName~KnightAzurePostgresTests|FullyQualifiedName~KnightManualResultPostgresTests|FullyQualifiedName~KnightManualResultHttpTests|FullyQualifiedName~NistJourneyPostgresTests|FullyQualifiedName~NistJourney02PostgresTests|FullyQualifiedName~NistJourneyHttpTests|FullyQualifiedName~AssessmentVisualsPostgresTests|FullyQualifiedName~NistAssistPostgresTests|FullyQualifiedName~NistAssistHttpTests|FullyQualifiedName~AuditorHttpTests"
+          -c Release --filter "FullyQualifiedName~DocumentEvidenceRepairMigrationTests|FullyQualifiedName~PostureFoundationPostgresTests|FullyQualifiedName~IdentityEvidencePostgresTests|FullyQualifiedName~KnightAffectedObjectsPostgresTests|FullyQualifiedName~RemediationPostgresTests|FullyQualifiedName~RemediationJourneyHttpTests|FullyQualifiedName~DatabaseUpgradePostgresTests|FullyQualifiedName~IdentityAcquisitionPostgresTests|FullyQualifiedName~IdentityHistoryRetentionPostgresTests|FullyQualifiedName~KnightDurableAssessmentPostgresTests|FullyQualifiedName~KnightLatestHttpTests|FullyQualifiedName~KnightUnfinishedRunPlanHttpTests|FullyQualifiedName~KnightMulticloudPostgresTests|FullyQualifiedName~KnightSyncHttpTests|FullyQualifiedName~KnightEntraConfigurationPostgresTests|FullyQualifiedName~KnightTeamsConfigurationPostgresTests|FullyQualifiedName~KnightExchangeConfigurationPostgresTests|FullyQualifiedName~KnightM365ServicesPostgresTests|FullyQualifiedName~KnightAzurePostgresTests|FullyQualifiedName~KnightManualResultPostgresTests|FullyQualifiedName~KnightManualResultHttpTests|FullyQualifiedName~NistJourneyPostgresTests|FullyQualifiedName~NistJourney02PostgresTests|FullyQualifiedName~NistJourneyHttpTests|FullyQualifiedName~AssessmentVisualsPostgresTests|FullyQualifiedName~NistAssistPostgresTests|FullyQualifiedName~NistAssistHttpTests|FullyQualifiedName~AuditorHttpTests|FullyQualifiedName~SpaDeepLinkHttpTests"
