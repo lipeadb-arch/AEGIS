@@ -134,7 +134,11 @@ internal sealed class AegisApiHarness : IAsyncDisposable
     /// máquina de desenvolvimento não tem PostgreSQL acessível; o gate anti-falso-verde do CI continua
     /// valendo dentro do <see cref="PostgresProbe"/>).
     /// </summary>
-    public static async Task<AegisApiHarness?> TryCreateAsync()
+    /// <param name="webRoot">
+    /// Diretório servido como <c>wwwroot</c> pelo host (o SPA empacotado na imagem). Omitido, vale o padrão do
+    /// projeto da API — que, fora do container, não tem o build do Angular.
+    /// </param>
+    public static async Task<AegisApiHarness?> TryCreateAsync(string? webRoot = null)
     {
         var pg = await PostgresProbe.TryCreateAsync();
         if (pg is null) return null;
@@ -166,7 +170,7 @@ internal sealed class AegisApiHarness : IAsyncDisposable
                 var clock = new FakeTimeProvider(anchor);
                 var entra = new ScriptedIdentityCollector();
 
-                var factory = new AegisWebApplicationFactory(pg.ConnectionString, signingKey, clock, entra);
+                var factory = new AegisWebApplicationFactory(pg.ConnectionString, signingKey, clock, entra, webRoot);
 
                 // Força a construção do host AGORA: o bloco de arranque do Program.cs
                 // (SchemaReadinessGuard) roda aqui, então uma preparação de banco incompleta falha no lugar
@@ -378,14 +382,17 @@ internal sealed class AegisApiHarness : IAsyncDisposable
         private readonly string _signingKey;
         private readonly FakeTimeProvider _clock;
         private readonly ScriptedIdentityCollector _entra;
+        private readonly string? _webRoot;
 
         public AegisWebApplicationFactory(
-            string connectionString, string signingKey, FakeTimeProvider clock, ScriptedIdentityCollector entra)
+            string connectionString, string signingKey, FakeTimeProvider clock, ScriptedIdentityCollector entra,
+            string? webRoot)
         {
             _connectionString = connectionString;
             _signingKey = signingKey;
             _clock = clock;
             _entra = entra;
+            _webRoot = webRoot;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -401,6 +408,7 @@ internal sealed class AegisApiHarness : IAsyncDisposable
             builder.UseSetting("Jwt:Audience", "aegis-score");
             // Nenhuma chamada a fornecedor de IA parte deste teste; o modo simulado é declarado, não presumido.
             builder.UseSetting("Ai:Mode", "Simulated");
+            if (_webRoot is not null) builder.UseWebRoot(_webRoot);
 
             builder.ConfigureTestServices(services =>
             {

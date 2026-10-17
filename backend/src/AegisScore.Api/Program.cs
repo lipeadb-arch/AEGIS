@@ -426,6 +426,16 @@ app.MapControllers();
 // exige autenticação por padrão e o shell do SPA é público (a autenticação ocorre dentro do app).
 app.MapFallbackToFile("index.html").AllowAnonymous();
 
+// [AEGIS-SPA-DEEPLINK-01] O fallback acima carrega a restrição implícita `nonfile`: o ponto dos códigos NIST
+// (/nist/rc/RC.RP-06) faz o segmento parecer arquivo, nenhum endpoint casa e a FallbackPolicy devolvia 401 na
+// abertura direta ou na recarga da subcategoria. Esta regra cobre SÓ o formato da rota `nist/:fn/:code` — as
+// seis funções do CSF 2.0 e o código `XX.YY-NN` —, não qualquer caminho com ponto. Por ser fallback, perde para
+// controllers, health checks e arquivos estáticos; a autenticação segue dentro do SPA e nas APIs.
+app.MapFallbackToFile(
+        @"nist/{fn:regex(^(gv|id|pr|de|rs|rc)$)}/{code:regex(^(gv|id|pr|de|rs|rc)\.[a-z]{{2}}-\d{{2}}$)}",
+        "index.html")
+    .AllowAnonymous();
+
 app.Run();
 
 // Com o diagnostico de runtime acima, o ponto de entrada devolve int: 0 = encerramento normal da API.
