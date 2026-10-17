@@ -152,7 +152,7 @@ public static class AzureClosureControls
         if (w.Str($"dbx:{key}:status") is { } st)
             return (null, st switch
             {
-                "InsufficientPermission" => "autorização recusada pelo workspace (a aplicação não foi adicionada como administradora)",
+                "InsufficientPermission" => "autorização recusada pelo workspace",
                 "AuthFailure" => "autenticação recusada pelo workspace (a aplicação não foi adicionada ao workspace)",
                 "NotFound" => "operação não encontrada no workspace (404)",
                 "ContractChanged" => "resposta fora do contrato documentado",
@@ -163,7 +163,8 @@ public static class AzureClosureControls
 
     /// <summary>
     /// Avaliação pela API do workspace: população = workspaces (família estável), aprovação exige também a leitura da API
-    /// concluída. Workspace sem itens a avaliar (<paramref name="skip"/>) sai da população.
+    /// concluída. Workspace sem itens a avaliar (<paramref name="skip"/>) sai da população. [AEGIS-KNIGHT-READONLY-01] A API
+    /// não é mais lida: a capacidade chega não tentada, com o motivo, e estes controles ficam não avaliados.
     /// </summary>
     private static KnightControlOutcome DbxEvaluate(AzureView v, Func<AzureResource, KnightItemCheck> check, string exposed, string passed,
         Func<AzureResource, bool>? skip = null, string? emptyText = null)
@@ -180,6 +181,24 @@ public static class AzureClosureControls
             t => string.Format(CultureInfo.InvariantCulture, passed, t),
             () => KnightControlOutcome.NotEvaluated(Trim(string.Join(" ", new[] { reason, apiReason }.OfType<string>()))),
             complete && apiOk, string.Join(" ", new[] { reason, apiReason }.OfType<string>()));
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-READONLY-01] Unity Catalog pela propriedade <c>isUcEnabled</c> do Resource Manager (somente leitura na
+    /// 2024-05-01). Habilitar o Unity Catalog é atribuir um metastore, e isso não se desfaz: só o verdadeiro é conclusivo.
+    /// Falso ou ausente fica desconhecido — a documentação não garante que uma atribuição feita depois, pelo console da
+    /// conta, apareça nessa propriedade; reprovar com ela seria presumir.
+    /// </summary>
+    private static KnightItemCheck UnityCatalogByArm(AzureResource w)
+    {
+        const string expected = "Unity Catalog habilitado (metastore atribuído)";
+        return w.Bool("properties.isUcEnabled") switch
+        {
+            true => KnightItemCheck.Of(true, "Unity Catalog habilitado segundo o Resource Manager (isUcEnabled = verdadeiro)", expected),
+            false => KnightItemCheck.Of(null, "o Resource Manager informa isUcEnabled = falso, o que não comprova a ausência: uma atribuição de "
+                + "metastore feita pelo console da conta pode não aparecer nessa propriedade — confirmar no console da conta", expected),
+            null => KnightItemCheck.Of(null, "o Resource Manager não informou isUcEnabled para este workspace", expected),
+        };
     }
 
     public static IReadOnlyList<KnightIndicatorDefinition> Definitions { get; } = new[]
@@ -396,21 +415,25 @@ public static class AzureClosureControls
                 + "texto não é visível: o método que mostraria isso (config/list) devolve os valores dos segredos e não é usado. Essa parte "
                 + "depende de verificação manual.")),
 
-        // ======== Databricks: API do workspace (habilitada em Integrações) ====================================
+        // ======== Databricks ==================================================================================
+        // [AEGIS-KNIGHT-READONLY-01] Unity Catalog pelo Resource Manager (papel Leitor), sem a API do workspace.
         Custom(KnightService.AzureDatabricks, "AK-AZ-DBR-008", "Workspaces do Databricks sem Unity Catalog", Cloud, SeverityLevel.Medium,
             "Atribuir um metastore do Unity Catalog a cada workspace do Databricks.",
             "Metastore do Unity Catalog atribuído ao workspace.",
-            (c, v) => DbxEvaluate(v, w =>
-                {
-                    var (value, missing) = Dbx(w, "metastore");
-                    const string expected = "metastore do Unity Catalog atribuído";
-                    if (value is not { } m) return KnightItemCheck.Of(null, "não lido: " + missing, expected);
-                    var assigned = AzureJson.Bool(m, "assigned");
-                    return KnightItemCheck.Of(assigned, assigned == true ? "metastore atribuído" : "nenhum metastore atribuído", expected);
-                },
-                "{0} de {1} workspace(s) do Databricks não têm Unity Catalog.",
-                "Os {0} workspace(s) do Databricks têm metastore do Unity Catalog."),
-            Ref(AzureRefs.Az + "2.1.5")),
+            (c, v) =>
+            {
+                var all = v.OfType("Microsoft.Databricks/workspaces").ToList();
+                if (all.Count == 0) return EmptyOrIncomplete(v, KnightCapability.AzureDatabricks, "workspace do Databricks");
+                var (complete, reason) = v.Completeness(KnightCapability.AzureDatabricks);
+                return Population(all, UnityCatalogByArm, Describe,
+                    (n, t) => string.Format(CultureInfo.InvariantCulture, "{0} de {1} workspace(s) do Databricks não têm Unity Catalog.", n, t),
+                    t => string.Format(CultureInfo.InvariantCulture, "Os {0} workspace(s) do Databricks têm o Unity Catalog habilitado.", t),
+                    () => KnightControlOutcome.NotEvaluated(Trim(reason ?? "leitura incompleta.")),
+                    complete, reason);
+            },
+            Ref(AzureRefs.Az + "2.1.5", KnightReferenceMatch.Partial,
+                "Lê isUcEnabled do Resource Manager (papel Leitor): o verdadeiro aprova; falso ou ausente fica desconhecido, porque a "
+                + "documentação não garante que a atribuição feita pelo console da conta apareça nessa propriedade.")),
 
         Custom(KnightService.AzureDatabricks, "AK-AZ-DBR-009", "Tokens pessoais do Databricks sem restrição ou sem expiração", Cloud, SeverityLevel.Medium,
             "Restringir o uso de tokens pessoais a grupos definidos (não ao grupo users) e definir o tempo de vida máximo dos tokens — ou desabilitá-los.",

@@ -339,8 +339,8 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
           <fieldset class="creds">
             <legend>AEGIS KNIGHT · certificado da aplicação{{ azureAvailable ? ' e escopo do Azure' : '' }}</legend>
             <p class="muted small">
-              O certificado é a forma de autenticação que a Microsoft documenta para o Exchange Online, o Security &amp;
-              Compliance e a API administrativa do SharePoint (que não aceita segredo). Com certificado, o KNIGHT pede
+              O certificado é a forma de autenticação que a Microsoft documenta para o Exchange Online e o Security &amp;
+              Compliance. Ele não amplia o acesso: o KNIGHT continua só lendo. Com certificado, o KNIGHT pede
               todos os tokens por asserção assinada; o segredo fica dispensável. O arquivo e a senha são cifrados no
               servidor e nunca voltam para a tela.
             </p>
@@ -385,17 +385,8 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                     identificadores para limitar o escopo.
                   </em>
                 </label>
-                <!-- [AEGIS-KNIGHT-CLOSURE-01] Leitura da API do PRÓPRIO workspace do Databricks: só com habilitação explícita. -->
-                <label class="field">
-                  <span>Ler a API dos workspaces do Azure Databricks</span>
-                  <input type="checkbox" formControlName="databricksWorkspaceApi" data-testid="databricks-workspace-api" />
-                  <em class="hint">
-                    Opcional. Exige adicionar a aplicação a cada workspace como entidade de serviço administradora (acesso
-                    concedido dentro do Databricks). Avalia Unity Catalog, tokens pessoais, usuários e grupos sincronizados e
-                    criptografia entre nós. Desligada: nenhum pedido é feito ao workspace e esses 4 controles ficam não
-                    avaliados, com o motivo.
-                  </em>
-                </label>
+                <!-- [AEGIS-KNIGHT-READONLY-01] A leitura da API dos workspaces do Databricks saiu (sem acesso somente leitura
+                     documentado): não há opção para habilitá-la. -->
               }
             </div>
           </fieldset>
@@ -689,11 +680,11 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
       .cap-matrix ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
       .cap-matrix li { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-left: 2px solid var(--line); }
       .cap-matrix li.NewForIdentityRisk { border-left-color: var(--cyan); }
-      .cap-matrix li.NotRequired { border-left-color: var(--amber); }
+      .cap-matrix li.NotRequired, .cap-matrix li.NotRequestedWrite { border-left-color: var(--amber); }
       .cap-hd { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: baseline; }
       .cap-matrix .usage { font-size: var(--fs-caps); font-style: normal; text-transform: uppercase; letter-spacing: 0; color: var(--muted); }
       .cap-matrix li.NewForIdentityRisk .usage { color: var(--cyan); }
-      .cap-matrix li.NotRequired .usage { color: var(--amber); }
+      .cap-matrix li.NotRequired .usage, .cap-matrix li.NotRequestedWrite .usage { color: var(--amber); }
       .cap-matrix .lic, .cap-matrix .act { line-height: 1.45; }
 
       .perms-label {
@@ -1102,7 +1093,6 @@ export class IntegrationsComponent {
     certificatePassword: [''],
     removeCertificate: [false],
     azureSubscriptions: [''],
-    databricksWorkspaceApi: [false],
     services: this.fb.group({
       SecureScore: [false],
       IdentityPosture: [false],
@@ -1153,8 +1143,6 @@ export class IntegrationsComponent {
         // O escopo guardado aparece no campo: salvar de novo envia exatamente o que está na tela.
         if (s.configured && !this.hubForm.get('azureSubscriptions')!.dirty)
           this.hubForm.get('azureSubscriptions')!.setValue(s.azureSubscriptionIds.join('\n'));
-        if (s.configured && !this.hubForm.get('databricksWorkspaceApi')!.dirty)
-          this.hubForm.get('databricksWorkspaceApi')!.setValue(!!s.databricksWorkspaceApi);
       },
       // Sem permissão (não TenantAdmin) ou sem conexão: o formulário continua funcionando sem o resumo.
       error: () => this.credentialSummary.set(null),
@@ -1343,8 +1331,6 @@ export class IntegrationsComponent {
         removeCertificate: !!raw.removeCertificate,
         // Sem a fonte Azure, o escopo guardado não é tocado (omitido = mantido).
         azureSubscriptionIds: this.azureAvailable ? subscriptions.ids : null,
-        // [AEGIS-KNIGHT-CLOSURE-01] Idem para a leitura do Databricks: só com a fonte Azure o valor da tela é enviado.
-        databricksWorkspaceApi: this.azureAvailable ? !!raw.databricksWorkspaceApi : null,
       },
     );
 
@@ -1358,7 +1344,6 @@ export class IntegrationsComponent {
         this.hubForm.get('certificatePassword')!.reset('');
         this.hubForm.get('removeCertificate')!.reset(false);
         this.hubForm.get('azureSubscriptions')!.markAsPristine();
-        this.hubForm.get('databricksWorkspaceApi')!.markAsPristine();
         this.hubCertificate.set(null);
         this.hubRevealSecret.set(false);
         this.reload();

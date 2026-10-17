@@ -80,7 +80,7 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
                     KnightSourceType.MicrosoftExchangeOnline =>
                         new KnightExchangeOnlineConfiguration(settings.TenantIdValue!, settings.ClientId!, secret, certificate),
                     _ => new KnightMicrosoftServiceConfiguration(source, settings.TenantIdValue!, settings.ClientId!, secret,
-                        certificate, settings.SubscriptionScope, settings.DatabricksWorkspaceApi == true),
+                        certificate, settings.SubscriptionScope),
                 };
 
             case KnightSourceType.GoogleWorkspace:
@@ -158,8 +158,9 @@ public sealed class KnightSourceConfigurationProvider : IKnightSourceConfigurati
         string? ClientSecret = null,
         string? CertificatePfxBase64 = null,
         string? CertificatePassword = null,
-        string[]? AzureSubscriptionIds = null,
-        bool? DatabricksWorkspaceApi = null)
+        // [AEGIS-KNIGHT-READONLY-01] A antiga chave "databricksWorkspaceApi" não é mais mapeada: JSON que ainda a traga
+        // continua legível, e ela não reativa caminho algum.
+        string[]? AzureSubscriptionIds = null)
     {
         /// <summary>Tenant do Entra: prioriza <c>tenantId</c> (o que a interface envia); cai para <c>azureTenantId</c>.</summary>
         public string? TenantIdValue => !string.IsNullOrWhiteSpace(TenantId) ? TenantId : AzureTenantId;

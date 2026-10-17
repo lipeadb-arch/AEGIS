@@ -68,7 +68,7 @@ public sealed class KnightManualResultService : IKnightManualResultService
         var key = (command.ReferenceKey ?? "").Trim();
         var status = KnightReferenceCatalog.Coverage().Controls.FirstOrDefault(c => string.Equals(c.Control.Key, key, StringComparison.Ordinal))
             ?? throw new KnightManualResultValidationException("Controle de referência desconhecido.");
-        if (!KnightManualResults.Eligible(status.Disposition))
+        if (!KnightManualResults.Eligible(status))
             throw new KnightManualResultValidationException(
                 $"Este controle é {KnightReferenceCatalog.DispositionLabel(status.Disposition).ToLowerInvariant()}: o resultado vem da avaliação automatizada. "
                 + "Só controles de verificação manual, sem método publicado ou que exigem acesso que o conector não tem recebem resultado manual.");

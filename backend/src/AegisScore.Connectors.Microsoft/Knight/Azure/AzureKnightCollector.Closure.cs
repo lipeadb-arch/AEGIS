@@ -13,15 +13,15 @@ namespace AegisScore.Connectors.Microsoft.Knight.Azure;
 // ============================================================================
 //  [AEGIS-KNIGHT-CLOSURE-01] Leituras complementares do Azure
 // ============================================================================
-// Quatro leituras que dependem dos recursos já descobertos pelas famílias estáveis, cada uma com o PRÓPRIO desfecho por
+// Leituras que dependem dos recursos já descobertos pelas famílias estáveis, cada uma com o PRÓPRIO desfecho por
 // assinatura (uma falha aqui não derruba família nenhuma):
 //   • VERSÃO PREVIEW — configurações de diagnóstico (assinatura e recursos) e contatos de segurança do Defender para Nuvem.
 //     A resposta é conferida contra o contrato documentado da versão (lista "value", item com "properties"); qualquer
 //     desvio vira limitação nomeando a versão, e o controle fica não avaliado — nunca aprovado;
 //   • REFERÊNCIAS AO KEY VAULT do App Service (versão estável): só a referência e o estado de resolução. A leitura que
 //     devolve os VALORES das configurações (config/list) não é usada;
-//   • API DO WORKSPACE do Databricks: só quando habilitada em Integrações. Grava apenas resumos calculados aqui (contagens,
-//     booleanos) — nunca a configuração Spark, o conteúdo de scripts ou um token.
+//   • API DO WORKSPACE do Databricks: [AEGIS-KNIGHT-READONLY-01] retirada — não há identidade somente leitura documentada
+//     para ela; a capacidade é registrada como não tentada, com o motivo.
 
 public sealed partial class AzureKnightCollector
 {
@@ -231,239 +231,25 @@ public sealed partial class AzureKnightCollector
         }
     }
 
-    // ---- Databricks: API do próprio workspace (habilitada em Integrações) -------------------------------------------
+    // ---- Databricks: API do próprio workspace (retirada no AEGIS-KNIGHT-READONLY-01) -----------------------------------
+    // Nenhuma leitura da API do workspace (Unity Catalog, configuração e permissões de tokens, SCIM, clusters, scripts
+    // globais) tem identidade somente leitura documentada: a listagem de permissões de tokens e os scripts globais são
+    // exclusivos do administrador do workspace, e todo membro do workspace recebe ao menos um direito de acesso — os
+    // documentados ("Workspace access", "Databricks SQL access") leem e ESCREVEM objetos. O workspace não é mais tocado:
+    // a capacidade fica não tentada, com o motivo, nas assinaturas que têm workspace. O Unity Catalog passa a ser lido
+    // pelo Resource Manager (propriedade isUcEnabled, papel Leitor).
 
-    internal const string DatabricksDisabledReason =
-        "A leitura da API dos workspaces do Databricks não está habilitada em Configurações → Integrações. Ela exige que a "
-        + "aplicação seja adicionada a cada workspace como entidade de serviço administradora — acesso concedido dentro do Databricks.";
+    internal const string DatabricksNotRequestedReason =
+        "Não solicitada: a API dos workspaces do Databricks não tem acesso somente leitura documentado — listar permissões de tokens "
+        + "e scripts de inicialização globais é exclusivo do administrador do workspace, e os direitos de acesso de um membro comum "
+        + "também permitem escrever objetos. O AEGIS opera só com leitura; os controles que dependem dela ficam não avaliados.";
 
-    internal const int MaxScimPages = 50;
-
-    private async Task ReadDatabricksWorkspacesAsync(IMicrosoftGraphCredentials cfg, KnightMicrosoftServiceConfiguration? config,
-        List<Building> resources, Dictionary<string, Dictionary<KnightCapability, FamilyOutcome>> outcomes, CancellationToken ct)
+    private static void MarkDatabricksWorkspaceApiNotRequested(List<Building> resources,
+        Dictionary<string, Dictionary<KnightCapability, FamilyOutcome>> outcomes)
     {
-        const KnightCapability family = KnightCapability.AzureDatabricksWorkspaceApi;
-        var workspaces = resources.Where(r => r.Type.Equals("Microsoft.Databricks/workspaces", StringComparison.OrdinalIgnoreCase)
-                                              && outcomes.ContainsKey(r.SubscriptionId)).ToList();
-        if (workspaces.Count == 0) return; // nada a ler: a família fica concluída sem item
-        if (config?.DatabricksWorkspaceApi != true)
-        {
-            // Só as assinaturas COM workspace ficam sem a leitura; nelas os controles da API ficam não avaliados.
-            foreach (var w in workspaces) outcomes[w.SubscriptionId][family].Fail(KnightCapabilityOutcome.NotAttempted, DatabricksDisabledReason);
-            return;
-        }
-
-        string token;
-        try
-        {
-            token = await _tokens.AcquireAsync(cfg, AzureArmPlan.DatabricksScope, ct);
-        }
-        catch (EntraGraphException ex)
-        {
-            var (o, reason) = KnightCapabilityRecorder.Classify(ex, Label);
-            foreach (var w in workspaces) outcomes[w.SubscriptionId][family].Fail(o, KnightRuleText.Trim("Token do Azure Databricks: " + reason, 480));
-            return;
-        }
-
-        foreach (var w in workspaces)
-        {
-            ct.ThrowIfCancellationRequested();
-            var outcome = outcomes[w.SubscriptionId][family];
-            var host = w.Facts.TryGetValue("properties.workspaceUrl", out var u) && u.ValueKind == JsonValueKind.String ? u.GetString() : null;
-            if (string.IsNullOrWhiteSpace(host) || !host.EndsWith(AzureArmPlan.DatabricksHostSuffix, StringComparison.OrdinalIgnoreCase)
-                || host.Contains('/') || host.Contains(':'))
-            {
-                w.Facts["dbx:status"] = JsonSerializer.SerializeToElement("NoWorkspaceUrl");
-                outcome.Fail(KnightCapabilityOutcome.Error, $"workspace {w.Name}: o Resource Manager não informou um endereço de workspace oficial (*{AzureArmPlan.DatabricksHostSuffix}).");
-                continue;
-            }
-            var baseUrl = "https://" + host;
-
-            await DbxAsync(w, outcome, "metastore", token, baseUrl + "/api/2.1/unity-catalog/current-metastore-assignment", ct,
-                el => new JsonObject { ["assigned"] = !string.IsNullOrWhiteSpace(KnightJson.Str(el, "metastore_id")) },
-                notFound: ex => string.Equals(ex.GraphErrorCode, "METASTORE_DOES_NOT_EXIST", StringComparison.OrdinalIgnoreCase)
-                    ? new JsonObject { ["assigned"] = false } : null);
-
-            await DbxAsync(w, outcome, "conf", token, baseUrl + "/api/2.0/workspace-conf?keys=enableTokensConfig,maxTokenLifetimeDays", ct,
-                el => new JsonObject
-                {
-                    ["enableTokensConfig"] = KnightJson.Str(el, "enableTokensConfig"),
-                    ["maxTokenLifetimeDays"] = KnightJson.Str(el, "maxTokenLifetimeDays"),
-                });
-
-            await DbxAsync(w, outcome, "tokenPerms", token, baseUrl + "/api/2.0/permissions/authorization/tokens", ct, TokenPermissions);
-
-            await ScimAsync(w, outcome, "scimUsers", token, baseUrl + "/api/2.0/preview/scim/v2/Users?attributes=userName,externalId", "userName", ct);
-            await ScimAsync(w, outcome, "scimGroups", token, baseUrl + "/api/2.0/preview/scim/v2/Groups?attributes=displayName,externalId", "displayName", ct);
-
-            await ClustersAsync(w, outcome, token, baseUrl, ct);
-
-            await DbxAsync(w, outcome, "globalInit", token, baseUrl + "/api/2.0/global-init-scripts", ct,
-                el => new JsonObject
-                {
-                    // Só metadados (nome e se está ligado): o conteúdo dos scripts não é lido.
-                    ["enabled"] = KnightJson.Prop(el, "scripts").ValueKind == JsonValueKind.Array
-                        ? KnightJson.Prop(el, "scripts").EnumerateArray().Count(s => KnightJson.Bool(s, "enabled") == true) : 0,
-                });
-        }
-    }
-
-    /// <summary>Uma leitura do workspace: resumo em <c>dbx:{chave}</c>; falha em <c>dbx:{chave}:status</c> e na capacidade.</summary>
-    private async Task DbxAsync(Building w, FamilyOutcome outcome, string key, string token, string url, CancellationToken ct,
-        Func<JsonElement, JsonObject> summarize, Func<EntraGraphException, JsonObject?>? notFound = null)
-    {
-        try
-        {
-            var root = await _rest.GetAsync(token, url, ct);
-            if (root.ValueKind != JsonValueKind.Object) throw new ContractException("a resposta não é um objeto JSON");
-            w.Facts["dbx:" + key] = JsonSerializer.SerializeToElement(summarize(root));
-        }
-        catch (EntraGraphException ex) when (ex.HttpStatusCode == 404 && notFound?.Invoke(ex) is { } fact)
-        {
-            w.Facts["dbx:" + key] = JsonSerializer.SerializeToElement(fact);
-        }
-        catch (Exception ex) when (Recoverable(ex) && !ct.IsCancellationRequested)
-        {
-            w.Facts["dbx:" + key + ":status"] = JsonSerializer.SerializeToElement(ex is ContractException ? "ContractChanged"
-                : ex is EntraGraphException g ? (g.HttpStatusCode == 404 ? "NotFound" : g.Kind.ToString()) : "Unavailable");
-            FailRead(outcome, ex, $"workspace {w.Name} ({DbxLabel(key)})");
-        }
-    }
-
-    private static string DbxLabel(string key) => key switch
-    {
-        "metastore" => "metastore do Unity Catalog",
-        "conf" => "configuração de tokens do workspace",
-        "tokenPerms" => "permissões de uso de tokens",
-        "scimUsers" => "usuários (SCIM)",
-        "scimGroups" => "grupos (SCIM)",
-        "clusters" => "clusters",
-        "globalInit" => "scripts de inicialização globais",
-        _ => key,
-    };
-
-    /// <summary>
-    /// Permissões de uso de tokens pessoais: quais GRUPOS podem usar (CAN_USE/CAN_MANAGE) e se o grupo de todos os usuários
-    /// do workspace ("users") está entre eles. Usuários e entidades de serviço são só contados.
-    /// </summary>
-    internal static JsonObject TokenPermissions(JsonElement root)
-    {
-        var groups = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-        var principals = 0;
-        if (KnightJson.Prop(root, "access_control_list") is { ValueKind: JsonValueKind.Array } acl)
-        {
-            foreach (var entry in acl.EnumerateArray())
-            {
-                var levels = KnightJson.Prop(entry, "all_permissions") is { ValueKind: JsonValueKind.Array } p
-                    ? p.EnumerateArray().Select(x => KnightJson.Str(x, "permission_level")).ToList()
-                    : new List<string?>();
-                if (!levels.Any(l => l is "CAN_USE" or "CAN_MANAGE")) continue;
-                if (KnightJson.Str(entry, "group_name") is { } g) groups.Add(g);
-                else principals++;
-            }
-        }
-        else throw new ContractException("a resposta não traz \"access_control_list\"");
-        return new JsonObject
-        {
-            ["usersGroupCanUse"] = groups.Contains("users"),
-            ["groups"] = new JsonArray(groups.Select(g => (JsonNode?)JsonValue.Create(g)).ToArray()),
-            ["otherPrincipals"] = principals,
-        };
-    }
-
-    /// <summary>
-    /// Usuários ou grupos do workspace pela API SCIM, paginada por índice: quantos existem e quantos têm vínculo externo
-    /// (<c>externalId</c>, preenchido pelo provisionamento a partir do Entra ID). Até 50 nomes SEM vínculo ficam como evidência.
-    /// </summary>
-    private async Task ScimAsync(Building w, FamilyOutcome outcome, string key, string token, string url, string nameAttr, CancellationToken ct)
-    {
-        try
-        {
-            int total = 0, external = 0, seen = 0;
-            var local = new List<string>();
-            var truncated = false;
-            for (var page = 0; ; page++)
-            {
-                if (page >= MaxScimPages) { truncated = true; break; }
-                var root = await _rest.GetAsync(token, $"{url}&startIndex={seen + 1}&count=100", ct);
-                if (root.ValueKind != JsonValueKind.Object) throw new ContractException("a resposta SCIM não é um objeto");
-                total = (int)(KnightJson.Prop(root, "totalResults") is { ValueKind: JsonValueKind.Number } t && t.TryGetInt32(out var n) ? n : 0);
-                var res = KnightJson.Prop(root, "Resources");
-                if (res.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) break;
-                if (res.ValueKind != JsonValueKind.Array) throw new ContractException("\"Resources\" não é uma lista");
-                var count = 0;
-                foreach (var item in res.EnumerateArray())
-                {
-                    count++;
-                    if (!string.IsNullOrWhiteSpace(KnightJson.Str(item, "externalId"))) external++;
-                    else if (local.Count < 50 && KnightJson.Str(item, nameAttr) is { } nm) local.Add(nm);
-                }
-                seen += count;
-                if (count == 0 || seen >= total) break;
-            }
-            w.Facts["dbx:" + key] = JsonSerializer.SerializeToElement(new JsonObject
-            {
-                ["total"] = Math.Max(total, seen),
-                ["read"] = seen,
-                ["external"] = external,
-                ["truncated"] = truncated,
-                ["localNames"] = new JsonArray(local.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray()),
-            });
-        }
-        catch (Exception ex) when (Recoverable(ex) && !ct.IsCancellationRequested)
-        {
-            w.Facts["dbx:" + key + ":status"] = JsonSerializer.SerializeToElement(ex is ContractException ? "ContractChanged"
-                : ex is EntraGraphException g ? g.Kind.ToString() : "Unavailable");
-            FailRead(outcome, ex, $"workspace {w.Name} ({DbxLabel(key)})");
-        }
-    }
-
-    /// <summary>
-    /// Clusters do workspace: para cada um, só se a configuração Spark liga a criptografia de rede
-    /// (<c>spark.network.crypto.enabled</c>) e quantos scripts de inicialização ele declara. Nenhum valor de configuração,
-    /// variável de ambiente ou script é gravado.
-    /// </summary>
-    private async Task ClustersAsync(Building w, FamilyOutcome outcome, string token, string baseUrl, CancellationToken ct)
-    {
-        try
-        {
-            var list = new JsonArray();
-            string? pageToken = null;
-            for (var page = 0; page < 20; page++)
-            {
-                var url = baseUrl + "/api/2.1/clusters/list?page_size=100" + (pageToken is null ? "" : "&page_token=" + Uri.EscapeDataString(pageToken));
-                var root = await _rest.GetAsync(token, url, ct);
-                if (root.ValueKind != JsonValueKind.Object) throw new ContractException("a resposta não é um objeto JSON");
-                var clusters = KnightJson.Prop(root, "clusters");
-                if (clusters.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var c in clusters.EnumerateArray())
-                    {
-                        var conf = KnightJson.Prop(c, "spark_conf");
-                        var crypto = conf.ValueKind == JsonValueKind.Object
-                                     && string.Equals(KnightJson.Str(conf, "spark.network.crypto.enabled"), "true", StringComparison.OrdinalIgnoreCase);
-                        var init = KnightJson.Prop(c, "init_scripts") is { ValueKind: JsonValueKind.Array } s ? s.GetArrayLength() : 0;
-                        list.Add(new JsonObject
-                        {
-                            ["name"] = KnightJson.Str(c, "cluster_name"),
-                            ["source"] = KnightJson.Str(c, "cluster_source"),
-                            ["networkCrypto"] = crypto,
-                            ["initScripts"] = init,
-                        });
-                    }
-                }
-                else if (clusters.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
-                    throw new ContractException("\"clusters\" não é uma lista");
-                pageToken = KnightJson.Str(root, "next_page_token");
-                if (string.IsNullOrEmpty(pageToken)) break;
-            }
-            w.Facts["dbx:clusters"] = JsonSerializer.SerializeToElement(list);
-        }
-        catch (Exception ex) when (Recoverable(ex) && !ct.IsCancellationRequested)
-        {
-            w.Facts["dbx:clusters:status"] = JsonSerializer.SerializeToElement(ex is ContractException ? "ContractChanged"
-                : ex is EntraGraphException g ? g.Kind.ToString() : "Unavailable");
-            FailRead(outcome, ex, $"workspace {w.Name} (clusters)");
-        }
+        // Só as assinaturas COM workspace ficam sem a leitura; sem workspace a família fica concluída sem item.
+        foreach (var w in resources.Where(r => r.Type.Equals("Microsoft.Databricks/workspaces", StringComparison.OrdinalIgnoreCase)
+                                               && outcomes.ContainsKey(r.SubscriptionId)))
+            outcomes[w.SubscriptionId][KnightCapability.AzureDatabricksWorkspaceApi].Fail(KnightCapabilityOutcome.NotAttempted, DatabricksNotRequestedReason);
     }
 }

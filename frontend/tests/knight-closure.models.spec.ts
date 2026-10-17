@@ -4,9 +4,10 @@
  * Fixam o que a tela não pode errar:
  *   (1) o recorte da cobertura separa o que aceita resultado manual (sem avaliação automatizada) do que é avaliado;
  *   (2) o formulário de resultado manual exige justificativa, responsável e evidência — retirar dispensa a evidência;
- *   (3) a limitação por capacidade traz o requisito do servidor e a orientação específica (Databricks desligado ou
- *       recusado, versão preview fora do contrato);
- *   (4) a opção do Databricks só vai no pedido com o AEGIS KNIGHT, e a matriz de permissões não repete permissão.
+ *   (3) a limitação por capacidade traz o requisito do servidor e a orientação específica (leitura não solicitada por
+ *       exigir escrita, versão preview fora do contrato);
+ *   (4) [AEGIS-KNIGHT-READONLY-01] não existe mais opção que habilite a API do Databricks; a matriz de permissões não repete
+ *       permissão e não pede o que concede escrita.
  */
 import {
   KnightAssessment,
@@ -18,8 +19,16 @@ import {
   manualResultBadge,
   manualResultProblems,
   referenceLabel,
+  isNotRequestedCapability,
 } from '../src/app/models/knight.models';
-import { MICROSOFT_HUB_SERVICES, buildMicrosoftHubRequest } from '../src/app/models/connector.models';
+import {
+  KNIGHT_AZURE_CAPABILITIES,
+  KNIGHT_M365_SERVICE_CAPABILITIES,
+  MICROSOFT_HUB_SERVICES,
+  buildMicrosoftHubRequest,
+  permissionUsageLabel,
+  requiredPermissions,
+} from '../src/app/models/connector.models';
 
 let failures = 0;
 let count = 0;
@@ -76,6 +85,20 @@ test('o recorte padrão mostra só o que aceita resultado manual — nunca um co
   eq(filterReferenceControls(CONTROLS, { view: 'all', platform: '', q: 'ak-entra-072' }).length, 1, 'pesquisa pelo controle KNIGHT');
 });
 
+test('[AEGIS-KNIGHT-READONLY-01] a parcial por política de somente leitura aceita complemento, sem deixar de ser avaliada', () => {
+  const complement = ref({
+    key: 'CIS-M365-7.0.0:7.2.4', section: '7.2.4', disposition: 'Partial', dispositionLabel: 'Implementado parcialmente',
+    indicatorIds: ['AK-SPO-004'], manualEligible: true, manualComplement: true,
+  });
+  const otherPartial = ref({ key: 'CIS-M365-7.0.0:1.1.1', section: '1.1.1', disposition: 'Partial', dispositionLabel: 'Implementado parcialmente' });
+  const all = [...CONTROLS, complement, otherPartial];
+  const manual = filterReferenceControls(all, { view: 'manual', platform: '', q: '' }).map((c) => c.key);
+  ok(manual.includes('CIS-M365-7.0.0:7.2.4'), 'o complemento aparece no recorte de resultado manual');
+  ok(!manual.includes('CIS-M365-7.0.0:1.1.1'), 'outra parcial continua fora');
+  ok(filterReferenceControls(all, { view: 'automated', platform: '', q: '' }).some((c) => c.key === 'CIS-M365-7.0.0:7.2.4'),
+    'e continua entre as avaliadas automaticamente');
+});
+
 test('o rótulo cita benchmark, versão e seção; o resultado vencido é dito', () => {
   eq(referenceLabel(CONTROLS[2]), 'CIS Microsoft 365 7.0.0 · 5.3.1', 'rótulo da referência');
   eq(manualResultBadge(CONTROLS[3].manualResult), 'Conforme (verificação manual) — vencido', 'vencido nunca parece vigente');
@@ -103,7 +126,7 @@ test('a limitação traz o requisito do servidor e a orientação específica', 
       { indicatorId: 'AK-AZ-MDC-021', status: 'NotEvaluated', presentation: { requiredCapabilities: ['AzureSecurityContacts'] } },
     ],
     capabilities: [
-      { capability: 'AzureDatabricksWorkspaceApi', outcome: 'NotAttempted', detail: 'desligada', requirement: 'Aplicação adicionada ao workspace', previewApi: null },
+      { capability: 'AzureDatabricksWorkspaceApi', outcome: 'NotAttempted', detail: 'Não solicitada', requirement: 'Não solicitada pelo AEGIS', previewApi: null },
       { capability: 'AzureSecurityContacts', outcome: 'Error', detail: 'fora do contrato', requirement: 'Papel Leitor', previewApi: 'api-version 2023-12-01-preview' },
       { capability: 'AzureStorage', outcome: 'Collected', detail: null },
     ],
@@ -111,8 +134,9 @@ test('a limitação traz o requisito do servidor e a orientação específica', 
   const views = limitationViews(a);
   eq(views.length, 2, 'só as não coletadas');
   const dbx = views.find((v) => v.capability === 'AzureDatabricksWorkspaceApi')!;
-  ok(dbx.guidance.includes('Integrações'), 'Databricks desligado: habilitar em Integrações');
-  eq(dbx.requirement, 'Aplicação adicionada ao workspace', 'requisito do servidor');
+  ok(dbx.guidance.startsWith('Nada a conceder'), 'leitura não solicitada: nada a conceder');
+  ok(!dbx.guidance.includes('administradora') && !dbx.guidance.includes('Integrações'), 'não manda adicionar a aplicação como administradora');
+  eq(dbx.requirement, 'Não solicitada pelo AEGIS', 'requisito do servidor');
   eq(dbx.affectedControls.join(','), 'AK-AZ-DBR-008', 'controle prejudicado');
   const contacts = views.find((v) => v.capability === 'AzureSecurityContacts')!;
   ok(contacts.guidance.includes('versão preview'), 'preview fora do contrato: nada a conceder');
@@ -120,14 +144,23 @@ test('a limitação traz o requisito do servidor e a orientação específica', 
   ok(!capabilityLabel('PerUserMfaStates').startsWith('PerUser'), 'rótulo legível da capacidade nova');
 });
 
-test('a leitura do Databricks só acompanha o AEGIS KNIGHT, e a matriz não repete permissão', () => {
+test('[AEGIS-KNIGHT-READONLY-01] permissões que concedem escrita não são pedidas', () => {
+  const all = [...KNIGHT_M365_SERVICE_CAPABILITIES, ...KNIGHT_AZURE_CAPABILITIES];
+  const write = all.filter((c) => c.usage === 'NotRequestedWrite');
+  eq(write.map((c) => c.name).sort().join(' | '), 'API dos workspaces do Azure Databricks | SharePoint e OneDrive (API administrativa)',
+    'só as duas leituras que exigiriam escrita');
+  const required = [...requiredPermissions(KNIGHT_M365_SERVICE_CAPABILITIES), ...requiredPermissions(KNIGHT_AZURE_CAPABILITIES)];
+  ok(!required.some((p) => p.includes('FullControl')), 'Sites.FullControl.All não é pedida');
+  ok(!required.some((p) => /administrador|administradora|membro do workspace/i.test(p)), 'administração do Databricks não é pedida');
+  eq(permissionUsageLabel('NotRequestedWrite'), 'Não solicitada — concede escrita', 'rótulo da categoria');
+  ok(isNotRequestedCapability('SharePointAdminTenant') && isNotRequestedCapability('AzureDatabricksWorkspaceApi'), 'capacidades não solicitadas');
+  ok(!isNotRequestedCapability('SharePointTenantSettings'), 'o Graph do SharePoint continua solicitado');
+});
+
+test('nenhuma opção habilita a API do Databricks, e a matriz não repete permissão', () => {
   const creds = { tenantId: 't', clientId: 'c', clientSecret: 's' };
-  const com = buildMicrosoftHubRequest(creds, [{ key: 'IdentityPosture', syncIntervalMinutes: 360 }], { databricksWorkspaceApi: true });
-  eq(com.databricksWorkspaceApi, true, 'habilitada vai no pedido');
-  const desliga = buildMicrosoftHubRequest(creds, [{ key: 'IdentityPosture', syncIntervalMinutes: 360 }], { databricksWorkspaceApi: false });
-  eq(desliga.databricksWorkspaceApi, false, 'desligar também é explícito');
-  const mantem = buildMicrosoftHubRequest(creds, [{ key: 'IdentityPosture', syncIntervalMinutes: 360 }], { databricksWorkspaceApi: null });
-  eq(mantem.databricksWorkspaceApi, undefined, 'nulo = mantém o guardado');
+  const body = buildMicrosoftHubRequest(creds, [{ key: 'IdentityPosture', syncIntervalMinutes: 360 }], { azureSubscriptionIds: [] });
+  ok(!('databricksWorkspaceApi' in body), 'o pedido não carrega mais a habilitação do Databricks');
   let retired = false;
   try { buildMicrosoftHubRequest(creds, [{ key: 'SecureScore', syncIntervalMinutes: 360 }]); } catch { retired = true; }
   ok(retired, 'o serviço antigo Secure Score não pode ser configurado');

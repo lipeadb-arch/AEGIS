@@ -214,6 +214,41 @@ public static class KnightCollectorCapabilities
         KnightControlProfiles.RequiredCapabilitiesOf(indicatorId).Select(PreviewApi).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
 
     /// <summary>
+    /// [AEGIS-KNIGHT-READONLY-01] Capacidades que NENHUM coletor executa: a única leitura oficial delas exige permissão que
+    /// também concede escrita ou administração (<c>Sites.FullControl.All</c> na administração do SharePoint; administrador ou
+    /// membro com direitos de escrita no workspace do Databricks). Continuam registradas pelo coletor — não tentadas, com o
+    /// motivo — para que os controles que dependem delas fiquem não avaliados em vez de sumirem.
+    /// </summary>
+    public static readonly IReadOnlySet<KnightCapability> NotRequested = new HashSet<KnightCapability>
+    {
+        KnightCapability.SharePointAdminTenant,
+        KnightCapability.AzureDatabricksWorkspaceApi,
+    };
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-READONLY-01] Controles cujo veredito depende INTEIRAMENTE de uma capacidade de <see cref="NotRequested"/>:
+    /// com as leituras que o AEGIS faz, nenhum deles aprova nem reprova. A referência que citam deixa de contar como
+    /// implementada e passa a "exige acesso que o conector não tem" — elegível a resultado manual. Os que concluem ao menos
+    /// em parte por leitura somente leitura (SPO-002/004/008/009/010 pelo Microsoft Graph; DBR-008 pelo Resource Manager)
+    /// ficam fora: citam a referência como parcial.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ConclusiveOnlyWithNotRequested = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "AK-SPO-007", "AK-SPO-011", "AK-SPO-012",
+        "AK-AZ-DBR-009", "AK-AZ-DBR-010", "AK-AZ-DBR-011",
+    };
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-READONLY-01] Controles que concluem só EM PARTE pela leitura somente leitura (SPO-002/004/008/009/010 pelo
+    /// Microsoft Graph; DBR-008 pelo Resource Manager) e ficam não avaliados no restante. A referência que eles citam continua
+    /// parcial — nunca integral —, mas aceita COMPLEMENTO manual para a parte que a leitura não alcança.
+    /// </summary>
+    public static readonly IReadOnlySet<string> PartialByReadOnlyPolicy = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "AK-SPO-002", "AK-SPO-004", "AK-SPO-008", "AK-SPO-009", "AK-SPO-010", "AK-AZ-DBR-008",
+    };
+
+    /// <summary>
     /// O controle está no fluxo ativo: aplicável a ao menos uma fonte real cujo coletor produz TODAS as capacidades
     /// que o perfil do controle declara consumir. Sem perfil (capacidades desconhecidas), não está.
     /// </summary>

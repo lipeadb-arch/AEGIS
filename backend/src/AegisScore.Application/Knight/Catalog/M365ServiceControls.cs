@@ -92,7 +92,11 @@ public static class SharePointControls
         _ => v,
     };
 
-    /// <summary>Compartilhamento externo desligado torna os critérios que o restringem "não aplicáveis".</summary>
+    /// <summary>
+    /// Compartilhamento externo desligado torna os critérios que o restringem "não aplicáveis": com ele desligado, convidados
+    /// perdem o acesso (documentação Microsoft), e B2B, expiração, reautenticação, recompartilhamento, domínios e grupos
+    /// autorizados não têm sobre quem agir.
+    /// </summary>
     private static KnightControlOutcome? ExternalSharingOff(KnightEvaluationContext c)
     {
         var graph = c.Configuration.Read<SharePointTenantSettings>();
@@ -102,37 +106,55 @@ public static class SharePointControls
             : null;
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-READONLY-01] O OneDrive não pode ser mais permissivo que o SharePoint (limite documentado pela
+    /// Microsoft): com o compartilhamento externo do SharePoint restrito à organização, o do OneDrive também está. É a única
+    /// conclusão sobre o OneDrive que o Microsoft Graph sustenta; nos demais níveis ela depende da API administrativa.
+    /// </summary>
+    private static KnightControlOutcome? OneDriveCappedBySharePoint(KnightEvaluationContext c)
+    {
+        var graph = c.Configuration.Read<SharePointTenantSettings>();
+        return graph.Collected && graph.Single?.SharingCapability == SharePointTenantSettings.DisabledCapability
+            ? KnightControlOutcome.Passed(
+                "O compartilhamento externo do SharePoint está restrito à organização; o do OneDrive não pode ser mais permissivo que ele, "
+                + "então também está restrito.",
+                new[] { KnightObjects.Setting("sharingCapability", "Compartilhamento externo do SharePoint (limite do OneDrive)",
+                    Capability("disabled"), "somente pessoas da organização") })
+            : null;
+    }
+
+    /// <summary>
+    /// Configurações que só a API administrativa do SharePoint expõe. [AEGIS-KNIGHT-READONLY-01] Ela não é mais lida (exige
+    /// Sites.FullControl.All): a capacidade chega não tentada e o controle fica não avaliado com esse motivo.
+    /// </summary>
     private static KnightControlOutcome Admin(KnightEvaluationContext c, Func<SharePointAdminTenant, KnightControlOutcome> rule) =>
         Single(c, rule);
+
+    private const string SpoGraphOnlyWhenExternalOff =
+        "Pelo Microsoft Graph, o critério só se conclui quando o compartilhamento externo está desligado (não se aplica); nos demais "
+        + "casos depende da API administrativa do SharePoint, que exige Sites.FullControl.All e o AEGIS não lê.";
 
     public static IReadOnlyList<KnightIndicatorDefinition> Definitions { get; } = new[]
     {
         Control("AK-SPO-001", "Autenticação legada aceita pelo SharePoint e OneDrive", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.High,
             "Desligar os protocolos de autenticação legada no SharePoint para exigir autenticação moderna.",
             "Configuração do locatário: protocolos de autenticação legada desligados.",
-            c =>
-            {
-                var graph = c.Configuration.Read<SharePointTenantSettings>();
-                if (graph.Collected && graph.Single is { IsLegacyAuthProtocolsEnabled: { } v })
-                    return Setting(!v, "isLegacyAuthProtocolsEnabled", "Protocolos de autenticação legada", v ? "ligados" : "desligados", "desligados",
-                        "O SharePoint e o OneDrive aceitam protocolos de autenticação legada, que não carregam segundo fator.",
-                        "Os protocolos de autenticação legada estão desligados: o acesso exige autenticação moderna.");
-                return Admin(c, a => Setting(a.LegacyAuthProtocolsEnabled is { } l ? !l : null, "legacyAuthProtocolsEnabled",
-                    "Protocolos de autenticação legada", a.LegacyAuthProtocolsEnabled switch { true => "ligados", false => "desligados", _ => "não informado" },
-                    "desligados",
-                    "O SharePoint e o OneDrive aceitam protocolos de autenticação legada, que não carregam segundo fator.",
-                    "Os protocolos de autenticação legada estão desligados: o acesso exige autenticação moderna."));
-            },
+            // [AEGIS-KNIGHT-READONLY-01] Só o Microsoft Graph: a reserva pela API administrativa saiu com ela.
+            c => Single<SharePointTenantSettings>(c, s => Setting(s.IsLegacyAuthProtocolsEnabled is { } v ? !v : null,
+                "isLegacyAuthProtocolsEnabled", "Protocolos de autenticação legada",
+                s.IsLegacyAuthProtocolsEnabled switch { true => "ligados", false => "desligados", _ => "não informado" }, "desligados",
+                "O SharePoint e o OneDrive aceitam protocolos de autenticação legada, que não carregam segundo fator.",
+                "Os protocolos de autenticação legada estão desligados: o acesso exige autenticação moderna.")),
             Ref(M365Refs.M365 + "7.2.1")),
 
         Control("AK-SPO-002", "Integração do SharePoint e OneDrive com o B2B do Entra desligada", KnightIndicatorCategory.GuestAccess, SeverityLevel.Low,
             "Ligar a integração com o Microsoft Entra B2B para que convidados do SharePoint e OneDrive sejam contas de convidado governadas pelo diretório.",
             "Configuração do locatário: integração com o Microsoft Entra B2B ligada.",
-            c => Admin(c, a => Setting(a.EnableAzureADB2BIntegration, "enableAzureADB2BIntegration", "Integração com o Microsoft Entra B2B",
+            c => ExternalSharingOff(c) ?? Admin(c, a => Setting(a.EnableAzureADB2BIntegration, "enableAzureADB2BIntegration", "Integração com o Microsoft Entra B2B",
                 a.EnableAzureADB2BIntegration switch { true => "ligada", false => "desligada", _ => "não informado" }, "ligada",
                 "Convidados do SharePoint e OneDrive entram fora do diretório: não passam pelas políticas de acesso condicional nem pelas revisões de convidados.",
                 "A integração com o B2B está ligada: convidados do SharePoint e OneDrive são contas de convidado do diretório.")),
-            Ref(M365Refs.M365 + "7.2.2")),
+            Ref(M365Refs.M365 + "7.2.2", KnightReferenceMatch.Partial, SpoGraphOnlyWhenExternalOff)),
 
         Control("AK-SPO-003", "Compartilhamento externo do SharePoint aceita links sem entrada", KnightIndicatorCategory.DataProtection, SeverityLevel.High,
             "Restringir o compartilhamento externo do SharePoint a convidados novos e existentes (com entrada) ou menos.",
@@ -148,11 +170,13 @@ public static class SharePointControls
         Control("AK-SPO-004", "Compartilhamento externo do OneDrive não restrito à organização", KnightIndicatorCategory.DataProtection, SeverityLevel.High,
             "Restringir o compartilhamento do OneDrive a pessoas da organização; compartilhar com fora por sites do SharePoint governados.",
             "Nível de compartilhamento do OneDrive: somente pessoas da organização.",
-            c => Admin(c, a => Setting(a.OneDriveSharingCapability is null ? null : a.OneDriveSharingCapability == SharePointTenantSettings.DisabledCapability,
+            c => OneDriveCappedBySharePoint(c) ?? Admin(c, a => Setting(a.OneDriveSharingCapability is null ? null : a.OneDriveSharingCapability == SharePointTenantSettings.DisabledCapability,
                 "oneDriveSharingCapability", "Compartilhamento do OneDrive", Capability(a.OneDriveSharingCapability), "somente pessoas da organização",
                 $"O OneDrive permite compartilhar com pessoas de fora (“{Capability(a.OneDriveSharingCapability)}”).",
                 "O OneDrive está restrito a pessoas da organização.")),
-            Ref(M365Refs.M365 + "7.2.4")),
+            Ref(M365Refs.M365 + "7.2.4", KnightReferenceMatch.Partial,
+                "Pelo Microsoft Graph, só se aprova quando o SharePoint está restrito à organização (o OneDrive não pode ser mais permissivo); "
+                + "nos demais níveis depende da API administrativa do SharePoint, que exige Sites.FullControl.All e o AEGIS não lê.")),
 
         Control("AK-SPO-005", "Convidados podem recompartilhar itens que não são deles", KnightIndicatorCategory.GuestAccess, SeverityLevel.High,
             "Impedir que convidados compartilhem novamente arquivos, pastas e sites que não possuem.",
@@ -205,12 +229,12 @@ public static class SharePointControls
                 "ao menos um grupo designado",
                 "Qualquer usuário pode compartilhar com pessoas de fora; não há grupo responsável por essa decisão.",
                 $"Só membros de {a.GuestSharingGroupAllowList.Count} grupo(s) designado(s) compartilham externamente.")),
-            Ref(M365Refs.M365 + "7.2.8")),
+            Ref(M365Refs.M365 + "7.2.8", KnightReferenceMatch.Partial, SpoGraphOnlyWhenExternalOff)),
 
         Control("AK-SPO-009", "Acesso de convidados sem expiração automática", KnightIndicatorCategory.GuestAccess, SeverityLevel.Medium,
             "Exigir expiração do acesso de convidados a sites e OneDrive em até 30 dias.",
             "Expiração de convidados exigida, em até 30 dias.",
-            c => Admin(c, a =>
+            c => ExternalSharingOff(c) ?? Admin(c, a =>
             {
                 bool? ok = a.ExternalUserExpirationRequired is null ? null
                     : a.ExternalUserExpirationRequired == true && a.ExternalUserExpireInDays is > 0 and <= 30;
@@ -224,12 +248,12 @@ public static class SharePointControls
                     "O acesso de convidados a sites e OneDrive não expira dentro do prazo esperado: permanece enquanto ninguém o retirar.",
                     $"O acesso de convidados expira em {a.ExternalUserExpireInDays} dia(s).");
             }),
-            Ref(M365Refs.M365 + "7.2.9")),
+            Ref(M365Refs.M365 + "7.2.9", KnightReferenceMatch.Partial, SpoGraphOnlyWhenExternalOff)),
 
         Control("AK-SPO-010", "Reautenticação por código de verificação sem prazo curto", KnightIndicatorCategory.GuestAccess, SeverityLevel.Medium,
             "Exigir que quem usa código de verificação se reautentique em até 15 dias.",
             "Reautenticação por código de verificação exigida, em até 15 dias.",
-            c => Admin(c, a =>
+            c => ExternalSharingOff(c) ?? Admin(c, a =>
             {
                 bool? ok = a.EmailAttestationRequired is null ? null
                     : a.EmailAttestationRequired == true && a.EmailAttestationReAuthDays is > 0 and <= 15;
@@ -243,7 +267,7 @@ public static class SharePointControls
                     "Quem entrou com código de verificação continua com acesso sem provar de novo que ainda controla aquele e-mail.",
                     $"Quem usa código de verificação se reautentica a cada {a.EmailAttestationReAuthDays} dia(s).");
             }),
-            Ref(M365Refs.M365 + "7.2.10")),
+            Ref(M365Refs.M365 + "7.2.10", KnightReferenceMatch.Partial, SpoGraphOnlyWhenExternalOff)),
 
         Control("AK-SPO-011", "Permissão padrão dos links de compartilhamento não é somente leitura", KnightIndicatorCategory.DataProtection, SeverityLevel.Medium,
             "Definir a permissão padrão dos links como “exibir”.",

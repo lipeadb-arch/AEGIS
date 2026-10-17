@@ -178,9 +178,9 @@ public record ConfigureMicrosoftHubRequest(
     string? CertificatePfxBase64 = null,
     string? CertificatePassword = null,
     bool RemoveCertificate = false,
-    IReadOnlyList<string>? AzureSubscriptionIds = null,
-    // [AEGIS-KNIGHT-CLOSURE-01] Leitura da API dos workspaces do Databricks (null = mantém a decisão guardada).
-    bool? DatabricksWorkspaceApi = null);
+    // [AEGIS-KNIGHT-READONLY-01] A antiga habilitação da API dos workspaces do Databricks não existe mais: um cliente que
+    // ainda envie "databricksWorkspaceApi" tem o campo ignorado.
+    IReadOnlyList<string>? AzureSubscriptionIds = null);
 
 /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Resumo não sensível da credencial do AEGIS KNIGHT.</summary>
 public record MicrosoftCredentialSummaryDto(
@@ -190,8 +190,7 @@ public record MicrosoftCredentialSummaryDto(
     bool HasSecret,
     MicrosoftCertificateSummaryDto? Certificate,
     string? CertificateProblem,
-    IReadOnlyList<string> AzureSubscriptionIds,
-    bool DatabricksWorkspaceApi = false);
+    IReadOnlyList<string> AzureSubscriptionIds);
 
 public record MicrosoftCertificateSummaryDto(string Thumbprint, DateTimeOffset NotBefore, DateTimeOffset NotAfter, bool CurrentlyValid);
 
@@ -525,7 +524,9 @@ public record KnightReferenceControlStatusDto(
     // resultado manual VIGENTE deste tenant (à parte da avaliação automatizada).
     IReadOnlyList<string>? PreviewApis = null,
     bool ManualEligible = false,
-    KnightManualResultDto? ManualResult = null);
+    KnightManualResultDto? ManualResult = null,
+    // [AEGIS-KNIGHT-READONLY-01] O resultado manual aqui COMPLEMENTA uma leitura automatizada parcial (o indicador continua).
+    bool ManualComplement = false);
 
 /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Um resultado de verificação manual (atestação) de um controle de referência.</summary>
 public record KnightManualResultDto(

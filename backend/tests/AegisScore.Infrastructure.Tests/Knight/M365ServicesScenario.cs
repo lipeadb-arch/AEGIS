@@ -43,6 +43,12 @@ public sealed class M365ServicesScenario
         ManyDomains,
         /// <summary>[Azure] A aplicação conecta ao Resource Manager, mas não enxerga nenhuma assinatura.</summary>
         NoAzureSubscriptions,
+        /// <summary>[AEGIS-KNIGHT-READONLY-01] Conforme, com o compartilhamento externo do locatário desligado.</summary>
+        SharePointExternalSharingOff,
+        /// <summary>[AEGIS-KNIGHT-READONLY-01] O Microsoft Graph recusa a leitura das configurações do SharePoint (403).</summary>
+        SharePointGraphDenied,
+        /// <summary>[AEGIS-KNIGHT-READONLY-01] Conforme, mas o Microsoft Graph não informa isLegacyAuthProtocolsEnabled.</summary>
+        SharePointLegacyAuthNotReported,
     }
 
     public const string InitialDomain = "clientedemo.onmicrosoft.com";
@@ -93,10 +99,12 @@ public sealed class M365ServicesScenario
 
         if (url.Contains("/deviceManagement/deviceEnrollmentConfigurations", StringComparison.OrdinalIgnoreCase)) return (HttpStatusCode.OK, Enrollment());
         if (url.Contains("/deviceManagement?", StringComparison.OrdinalIgnoreCase)) return (HttpStatusCode.OK, IntuneSettings());
-        if (url.Contains("/admin/sharepoint/settings", StringComparison.OrdinalIgnoreCase)) return (HttpStatusCode.OK, SharePointGraph());
+        if (url.Contains("/admin/sharepoint/settings", StringComparison.OrdinalIgnoreCase))
+            return _v == Variant.SharePointGraphDenied
+                ? (HttpStatusCode.Forbidden, """{"error":{"code":"accessDenied","message":"sintético"}}""")
+                : (HttpStatusCode.OK, SharePointGraph());
         if (url.Contains("/organization", StringComparison.OrdinalIgnoreCase))
             return (HttpStatusCode.OK, $$"""{"value":[{"verifiedDomains":[{"name":"{{InitialDomain}}","isInitial":true},{"name":"{{OwnDomain}}","isInitial":false}]}]}""");
-        if (url.StartsWith("https://clientedemo-admin.sharepoint.com/_api/SPO.Tenant", StringComparison.OrdinalIgnoreCase)) return (HttpStatusCode.OK, SharePointAdmin());
         if (url.StartsWith("https://management.azure.com/subscriptions?", StringComparison.OrdinalIgnoreCase))
             return (HttpStatusCode.OK, _v == Variant.NoAzureSubscriptions
                 ? """{"value":[]}"""
@@ -133,10 +141,10 @@ public sealed class M365ServicesScenario
     }
 
     private string SharePointGraph() => Ok
-        ? """
-          {"sharingCapability":"externalUserSharingOnly","sharingDomainRestrictionMode":"allowList",
+        ? $$"""
+          {"sharingCapability":"{{(_v == Variant.SharePointExternalSharingOff ? "disabled" : "externalUserSharingOnly")}}","sharingDomainRestrictionMode":"allowList",
            "sharingAllowedDomainList":["parceiro.example.com"],"sharingBlockedDomainList":[],
-           "isResharingByExternalUsersEnabled":false,"isLegacyAuthProtocolsEnabled":false,
+           "isResharingByExternalUsersEnabled":false,{{(_v == Variant.SharePointLegacyAuthNotReported ? "" : "\"isLegacyAuthProtocolsEnabled\":false,")}}
            "isUnmanagedSyncAppForTenantRestricted":true,"allowedDomainGuidsForSyncApp":["00000000-0000-0000-0000-00000000d0d0"],
            "isRequireAcceptingUserToMatchInvitedUserEnabled":true}
           """
@@ -146,21 +154,6 @@ public sealed class M365ServicesScenario
            "isResharingByExternalUsersEnabled":true,"isLegacyAuthProtocolsEnabled":true,
            "isUnmanagedSyncAppForTenantRestricted":false,"allowedDomainGuidsForSyncApp":[],
            "isRequireAcceptingUserToMatchInvitedUserEnabled":false}
-          """;
-
-    private string SharePointAdmin() => Ok
-        ? """
-          {"SharingCapability":1,"OneDriveSharingCapability":0,"EnableAzureADB2BIntegration":true,"DefaultSharingLinkType":1,
-           "DefaultLinkPermission":1,"ExternalUserExpirationRequired":true,"ExternalUserExpireInDays":30,
-           "EmailAttestationRequired":true,"EmailAttestationReAuthDays":15,"DisallowInfectedFileDownload":true,
-           "GuestSharingGroupAllowListInTenantByPrincipalIdentity":["c:0t.c|tenant|00000000-0000-0000-0000-0000000000aa"],
-           "LegacyAuthProtocolsEnabled":false}
-          """
-        : """
-          {"SharingCapability":2,"OneDriveSharingCapability":2,"EnableAzureADB2BIntegration":false,"DefaultSharingLinkType":3,
-           "DefaultLinkPermission":2,"ExternalUserExpirationRequired":false,"ExternalUserExpireInDays":60,
-           "EmailAttestationRequired":false,"EmailAttestationReAuthDays":30,"DisallowInfectedFileDownload":false,
-           "GuestSharingGroupAllowListInTenantByPrincipalIdentity":[],"LegacyAuthProtocolsEnabled":true}
           """;
 
     /// <summary>

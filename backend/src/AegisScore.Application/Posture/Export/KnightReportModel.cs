@@ -240,7 +240,11 @@ public static class KnightReportModelBuilder
         if (coverage is not null)
             notes.Add("A cobertura do catálogo de referência mede o que o AEGIS consegue avaliar (propriedade do produto). Ela é diferente da cobertura desta avaliação (o que a coleta conseguiu avaliar neste ambiente) e da aprovação (o que foi avaliado e está conforme).");
         if (coverage?.ManualResults is { Count: > 0 } manual)
-            notes.Add($"Há {manual.Count} resultado(s) de verificação MANUAL registrados pela organização para controles de referência sem avaliação automatizada. Eles são atestações (resultado, justificativa, responsável e evidência informados por pessoas), aparecem à parte e não entram na nota, na cobertura desta avaliação nem na aprovação.");
+            notes.Add($"Há {manual.Count} resultado(s) de verificação MANUAL registrados pela organização para controles de referência sem avaliação automatizada"
+                + (manual.Any(m => m.Complement)
+                    ? $" ou, como complemento ({manual.Count(m => m.Complement)}), para referências com leitura automatizada parcial: nelas o indicador automatizado continua com o próprio resultado, e o manual cobre só o que a leitura somente leitura não alcança"
+                    : "")
+                + ". Eles são atestações (resultado, justificativa, responsável e evidência informados por pessoas), aparecem à parte e não entram na nota, na cobertura desta avaliação nem na aprovação.");
 
         var frameworks = controls.SelectMany(c => c.Frameworks).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
 
@@ -456,6 +460,11 @@ public static class KnightReportModelBuilder
 
     private static string Guidance(KnightCapability c, KnightCapabilityOutcome o) => o switch
     {
+        // [AEGIS-KNIGHT-READONLY-01] Leitura não solicitada por política: não há permissão a conceder.
+        KnightCapabilityOutcome.NotAttempted when KnightCollectorCapabilities.NotRequested.Contains(c) =>
+            "Nada a conceder: o AEGIS não faz esta leitura porque a única forma documentada exige permissão que também concede escrita "
+            + "ou administração. Os controles afetados ficam não avaliados; a verificação feita no portal do fornecedor pode ser registrada "
+            + "como resultado manual da referência.",
         // [AEGIS-KNIGHT-COVERAGE-04] No Azure a autorização é uma ATRIBUIÇÃO DE PAPEL no escopo recusado (Azure RBAC ou o
         // plano de dados do cofre), não um consentimento de administrador.
         KnightCapabilityOutcome.InsufficientPermission when c.ToString().StartsWith("Azure", StringComparison.Ordinal) =>
@@ -673,11 +682,15 @@ public static class KnightCapabilityLabels
             : RequiredPermission(c, KnightSourceType.MicrosoftExchangeOnline),
         KnightSourceType.MicrosoftPurview => c == KnightCapability.PurviewAuditConfig
             ? RequiredPermission(c, KnightSourceType.MicrosoftExchangeOnline)
-            : "Exchange.ManageAsApp na API Microsoft Exchange Online Protection (aplicativo) e um papel com leitura de conformidade — Leitor Global ou Leitor de Conformidade",
+            // [AEGIS-KNIGHT-READONLY-01] Papéis de leitura da tabela oficial de autenticação de aplicativo do Security &
+            // Compliance (Leitor Global e Leitor de Segurança); "Leitor de Conformidade" não consta nela.
+            : "Exchange.ManageAsApp na API Microsoft Exchange Online Protection (aplicativo) e um papel de diretório de leitura — Leitor Global ou Leitor de Segurança",
         KnightSourceType.MicrosoftSharePoint => c switch
         {
             KnightCapability.SharePointTenantSettings => "SharePointTenantSettings.Read.All (aplicativo)",
-            KnightCapability.SharePointAdminTenant => "Sites.FullControl.All na API do SharePoint (aplicativo), com autenticação por certificado",
+            // [AEGIS-KNIGHT-READONLY-01] Não solicitada: a permissão que a abre também concede escrita.
+            KnightCapability.SharePointAdminTenant =>
+                "Não solicitada pelo AEGIS: sem usuário, a API administrativa do SharePoint só aceita Sites.FullControl.All, que também concede escrita",
             _ => null,
         },
         KnightSourceType.MicrosoftIntune => c switch
@@ -700,8 +713,9 @@ public static class KnightCapabilityLabels
                 "Papel Leitor do Azure RBAC nas assinaturas do escopo; o estado das contas com papel exige User.Read.All (Microsoft Graph, aplicativo)",
             KnightCapability.AzureAppSettingsKeyVaultReferences =>
                 "Papel Leitor do Azure RBAC (Microsoft.Web/sites/config/Read); a ação Microsoft.Web/sites/config/list/action, que devolve os valores, não é usada",
+            // [AEGIS-KNIGHT-READONLY-01] Não solicitada: sem acesso somente leitura documentado.
             KnightCapability.AzureDatabricksWorkspaceApi =>
-                "Leitura habilitada em Integrações e a aplicação adicionada a cada workspace do Databricks como entidade de serviço com papel de administrador do workspace (tokens, SCIM e configuração do workspace são leituras restritas a administradores)",
+                "Não solicitada pelo AEGIS: a API dos workspaces do Databricks não tem acesso somente leitura documentado (permissões de tokens e scripts globais são exclusivos do administrador do workspace; os direitos de um membro comum também permitem escrever objetos)",
             _ => "Papel Leitor do Azure RBAC nas assinaturas do escopo (ou no grupo de gerenciamento que as contém)",
         },
 

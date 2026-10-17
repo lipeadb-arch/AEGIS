@@ -14,8 +14,8 @@ namespace AegisScore.Connectors.Microsoft.Knight.Services;
 // ============================================================================
 //  [AEGIS-KNIGHT-COVERAGE-04] Cliente REST somente leitura para as APIs Microsoft fora do Graph
 // ============================================================================
-// Azure Resource Manager, API de administração do Fabric, API de administração do SharePoint e plano de dados do
-// Key Vault. Três garantias, as mesmas do cliente do Graph:
+// Azure Resource Manager, API de administração do Fabric (somente leitura) e plano de dados do Key Vault. Três garantias,
+// as mesmas do cliente do Graph:
 //   • DESTINO FIXO — só HTTPS e só os hosts oficiais abaixo; um "próximo link" que aponte para outro host é recusado
 //     (o token não segue para uma origem arbitrária);
 //   • SÓ GET — nenhum verbo de escrita existe aqui;
@@ -40,9 +40,11 @@ public sealed class MicrosoftRestClient : IMicrosoftRestClient
         "graph.microsoft.com",
     };
 
-    /// <summary>Sufixos permitidos (host do locatário no SharePoint; cofres no Key Vault).</summary>
-    // [AEGIS-KNIGHT-CLOSURE-01] Workspaces do Azure Databricks (API REST do próprio workspace; host oficial *.azuredatabricks.net).
-    private static readonly string[] HostSuffixes = { "-admin.sharepoint.com", ".vault.azure.net", ".azuredatabricks.net" };
+    /// <summary>Sufixos permitidos (cofres no Key Vault).</summary>
+    // [AEGIS-KNIGHT-READONLY-01] Saíram a administração do SharePoint (*-admin.sharepoint.com, só com Sites.FullControl.All)
+    // e os workspaces do Databricks (*.azuredatabricks.net, sem acesso somente leitura documentado): o transporte recusa
+    // esses destinos, então nenhum coletor ou teste de conexão consegue voltar a chamá-los.
+    private static readonly string[] HostSuffixes = { ".vault.azure.net" };
 
     private readonly HttpClient _http;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;

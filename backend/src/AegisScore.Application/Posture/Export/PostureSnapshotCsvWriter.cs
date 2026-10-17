@@ -179,7 +179,9 @@ public static class PostureSnapshotCsvWriter
                .Text(null).Text(null).Text(null).Text(null)
                .Text(null).Text(null).Text(null).Text(null)
                .Text(null).Text("Manual")
-               .Text(m.ReferenceKey).Text(m.Title).Text(m.ResultLabel + (m.Expired ? " (vencido)" : "")).Text(m.Justification)
+               .Text(m.ReferenceKey).Text(m.Title)
+               .Text(m.ResultLabel + (m.Complement ? " (complemento da leitura automatizada parcial)" : "") + (m.Expired ? " (vencido)" : ""))
+               .Text(m.Justification)
                .Text(m.ResponsibleName)
                .Text(string.Join(" · ", new[] { m.EvidenceReference, m.EvidenceDocumentTitle is null ? null : "Documento: " + m.EvidenceDocumentTitle + (m.EvidenceDocumentSha256 is null ? "" : " (SHA-256 " + m.EvidenceDocumentSha256 + ")") }.Where(x => !string.IsNullOrWhiteSpace(x))))
                .Text(m.RecordedByName).Text(m.RecordedAt).Text(m.ValidUntil);

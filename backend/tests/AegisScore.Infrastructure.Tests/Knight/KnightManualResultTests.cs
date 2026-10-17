@@ -48,8 +48,19 @@ public sealed class KnightManualResultTests : IDisposable
 
     public void Dispose() => _connection.Dispose();
 
+    /// <summary>
+    /// A primeira referência da disposição pela política GERAL. [AEGIS-KNIGHT-READONLY-01] As parciais por política de somente
+    /// leitura (complemento manual) ficam de fora: têm teste próprio.
+    /// </summary>
     private static KnightReferenceStatus First(KnightReferenceDisposition d) =>
-        KnightReferenceCatalog.Coverage().Controls.Where(c => c.Disposition == d).OrderBy(c => c.Control.Key, StringComparer.Ordinal).First();
+        KnightReferenceCatalog.Coverage().Controls.Where(c => c.Disposition == d && !KnightManualResults.IsReadOnlyComplement(c))
+            .OrderBy(c => c.Control.Key, StringComparer.Ordinal).First();
+
+    private static readonly string[] ComplementKeys =
+    {
+        "CIS-AZ-6.0.0:2.1.5", "CIS-M365-7.0.0:7.2.10", "CIS-M365-7.0.0:7.2.2", "CIS-M365-7.0.0:7.2.4", "CIS-M365-7.0.0:7.2.8",
+        "CIS-M365-7.0.0:7.2.9",
+    };
 
     private static RecordKnightManualResultCommand Cmd(string key, string result = "Compliant", string? evidence = "CHG-0001 (chamado sintetico)",
         Guid? document = null, DateOnly? until = null, string justification = Justification, string responsible = "Responsavel Demo") =>
@@ -81,6 +92,104 @@ public sealed class KnightManualResultTests : IDisposable
             saved.ResultLabel.Should().Contain("verificação manual");
         }
         (await svc.CurrentAsync()).Should().HaveCount(3);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-READONLY-01] Exatamente as referências parciais por política de somente leitura aceitam complemento manual.
+    /// Nenhuma outra parcial ou integral ganha o formulário, e nenhuma delas deixa de ser parcial.
+    /// </summary>
+    [Fact]
+    public void Complemento_SoAsParciaisPorPoliticaDeSomenteLeitura()
+    {
+        var coverage = KnightReferenceCatalog.Coverage();
+        var complements = coverage.Controls.Where(KnightManualResults.IsReadOnlyComplement).Select(c => c.Control.Key).ToList();
+        complements.Should().BeEquivalentTo(ComplementKeys);
+        coverage.Controls.Where(c => ComplementKeys.Contains(c.Control.Key))
+            .Should().OnlyContain(c => c.Disposition == KnightReferenceDisposition.Partial, "o complemento não reclassifica a referência");
+
+        var eligible = coverage.Controls.Where(KnightManualResults.Eligible).ToList();
+        eligible.Where(c => c.Disposition is KnightReferenceDisposition.Implemented or KnightReferenceDisposition.Partial)
+            .Select(c => c.Control.Key).Should().BeEquivalentTo(ComplementKeys, "nenhuma outra avaliada recebe resultado manual");
+        coverage.Controls.Where(c => c.Disposition == KnightReferenceDisposition.Partial && !ComplementKeys.Contains(c.Control.Key))
+            .Should().NotBeEmpty().And.OnlyContain(c => !KnightManualResults.Eligible(c), "parcial fora do conjunto mantém a política anterior");
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-READONLY-01] SPO-004 não avaliado (compartilhamento externo ligado): a referência 7.2.4 aceita registrar,
+    /// consultar e retirar o complemento manual — o indicador automatizado, a nota e a configuração coletada não mudam, e a
+    /// publicação mostra o manual à parte, identificado como complemento.
+    /// </summary>
+    [Fact]
+    public async Task Complemento_ReferenciaParcial_RegistraConsultaERetira_SemTocarOResultadoAutomatizado()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+        var run = await KnightM365ServicesFlowTests.ServiceFor(db, TenantA, new M365ServicesScenario(M365ServicesScenario.Variant.Compliant))
+            .RunAssessmentAsync(KnightSourceType.MicrosoftSharePoint);
+        run.Indicators.Single(i => i.IndicatorId == "AK-SPO-004").Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        var publisher = new PostureSnapshotService(db, new SystemTenantContext(TenantA));
+        var before = await Load(db, (await publisher.PublishAsync(PostureSnapshotType.Knight, KnightSourceType.MicrosoftSharePoint, run.Id)).Summary.Id);
+        var observedBefore = await db.IdentityConfigurationObservations.AsNoTracking().CountAsync();
+
+        const string key = "CIS-M365-7.0.0:7.2.4";
+        var svc = Service(db, TenantA);
+        var saved = await svc.RecordAsync(Cmd(key, "NonCompliant", evidence: "Captura do centro de administração (CHG-7204)"), Gestor);
+        saved.ReferenceDisposition.Should().Be(nameof(KnightReferenceDisposition.Partial), "a referência continua parcial");
+        saved.ResultLabel.Should().Contain("verificação manual");
+        (await svc.CurrentAsync()).Should().ContainSingle(m => m.ReferenceKey == key);
+        (await svc.HistoryAsync(key)).Should().ContainSingle();
+
+        // A evidência continua obrigatória também no complemento.
+        await FluentActions.Awaiting(() => svc.RecordAsync(Cmd(key, evidence: null), Gestor))
+            .Should().ThrowAsync<KnightManualResultValidationException>().WithMessage("*evidência*");
+
+        var after = await Load(db, (await publisher.PublishAsync(PostureSnapshotType.Knight, KnightSourceType.MicrosoftSharePoint, run.Id)).Summary.Id);
+        after.Score.Should().Be(before.Score, "o complemento manual não altera a nota automática");
+        after.Coverage.Should().Be(before.Coverage);
+        after.Indicators.Select(i => (i.IndicatorId, i.Status)).Should().BeEquivalentTo(before.Indicators.Select(i => (i.IndicatorId, i.Status)),
+            "o indicador automatizado não é sobrescrito");
+        after.Indicators.Single(i => i.IndicatorId == "AK-SPO-004").Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        (await db.IdentityConfigurationObservations.AsNoTracking().CountAsync()).Should().Be(observedBefore,
+            "declaração manual não vira configuração coletada");
+
+        var model = KnightReportModelBuilder.Build(after, true);
+        var entry = model.ReferenceCoverage!.ManualResults!.Should().ContainSingle().Subject;
+        entry.Complement.Should().BeTrue();
+        entry.DispositionLabel.Should().Be(KnightManualResults.ComplementLabel);
+        model.Notes.Should().Contain(n => n.Contains("complemento") && n.Contains("indicador automatizado continua"));
+
+        var exporter = new PostureSnapshotExporter(db);
+        var csv = ParseCsv(Encoding.UTF8.GetString((await exporter.ExportAsync(after.Id, PostureExportFormat.Csv))!.Content).TrimStart('\uFEFF'));
+        int Col(string name) => Array.IndexOf(csv[0], name);
+        var manualRow = csv.Skip(1).Single(r => r[Col("RowKind")] == "ResultadoManual");
+        manualRow[Col("Origin")].Should().Be("Manual");
+        manualRow[Col("ManualResult")].Should().Contain("complemento da leitura automatizada parcial");
+        int indicatorCol = Col("IndicatorId"), originCol = Col("Origin");
+        csv.Skip(1).Where(r => r[indicatorCol] == "AK-SPO-004").Should().NotBeEmpty().And.OnlyContain(r => r[originCol] == "Automatizado");
+        Encoding.UTF8.GetString((await exporter.ExportAsync(after.Id, PostureExportFormat.Html))!.Content)
+            .Should().Contain("CHG-7204").And.Contain("complemento manual da leitura automatizada");
+        Pdf((await exporter.ExportAsync(after.Id, PostureExportFormat.Pdf))!.Content).Should().Contain("CHG-7204").And.Contain("complemento");
+
+        // Retirar: deixa de valer e o histórico continua.
+        _clock.Advance(TimeSpan.FromHours(1));
+        await svc.RecordAsync(Cmd(key, "Withdrawn", evidence: null), Gestor);
+        (await svc.CurrentAsync()).Should().BeEmpty();
+        (await svc.HistoryAsync(key)).Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task Complemento_IsoladoPorTenant()
+    {
+        await SeedAsync(TenantA);
+        await SeedAsync(TenantB);
+        const string key = "CIS-AZ-6.0.0:2.1.5";
+        await using (var db = NewContext(TenantA))
+            await Service(db, TenantA).RecordAsync(Cmd(key, "Compliant", evidence: "Console da conta Databricks (CHG-215)"), Gestor);
+        await using (var db = NewContext(TenantB))
+        {
+            (await Service(db, TenantB).CurrentAsync()).Should().BeEmpty();
+            (await Service(db, TenantB).HistoryAsync(key)).Should().BeEmpty();
+        }
     }
 
     public static IEnumerable<object[]> Invalidos() => new[]

@@ -256,7 +256,11 @@ public enum KnightCapability
     /// <summary>Configurações do locatário pelo Microsoft Graph (<c>GET /admin/sharepoint/settings</c>).</summary>
     SharePointTenantSettings = 65,
 
-    /// <summary>Configurações do locatário pela API de administração do SharePoint (<c>SPO.Tenant</c>) — exige certificado.</summary>
+    /// <summary>
+    /// Configurações do locatário pela API de administração do SharePoint (<c>SPO.Tenant</c>). [AEGIS-KNIGHT-READONLY-01] Não
+    /// é mais lida: a única permissão de aplicativo que a abre (<c>Sites.FullControl.All</c>) também concede escrita. A
+    /// capacidade continua registrada — como não tentada, com o motivo — para que os controles fiquem não avaliados.
+    /// </summary>
     SharePointAdminTenant = 66,
 
     // ---- [AEGIS-KNIGHT-COVERAGE-04] Microsoft Intune ---------------------------------------------------
@@ -342,8 +346,9 @@ public enum KnightCapability
     AzureAppSettingsKeyVaultReferences = 87,
 
     /// <summary>
-    /// API REST do PRÓPRIO workspace do Azure Databricks (Unity Catalog, tokens pessoais, SCIM, clusters). Só é tentada
-    /// quando habilitada explicitamente em Integrações: exige que a aplicação seja adicionada a cada workspace.
+    /// API REST do PRÓPRIO workspace do Azure Databricks (tokens pessoais, SCIM, clusters). [AEGIS-KNIGHT-READONLY-01] Não é
+    /// mais lida: não há identidade somente leitura documentada para ela. A capacidade continua registrada — como não
+    /// tentada, com o motivo, nas assinaturas com workspace — para que os controles fiquem não avaliados.
     /// </summary>
     AzureDatabricksWorkspaceApi = 88,
 
@@ -520,9 +525,8 @@ public sealed record KnightExchangeOnlineConfiguration(
 /// muda por fonte é o recurso do token, a permissão e o papel exigidos, e cada coletor os declara.
 /// <para><paramref name="AzureSubscriptionIds"/> é o ESCOPO explícito do Azure: vazio significa "todas as assinaturas
 /// que a aplicação enxerga", e o relatório diz qual foi o escopo avaliado.</para>
-/// <para>[AEGIS-KNIGHT-CLOSURE-01] <paramref name="DatabricksWorkspaceApi"/> habilita, por decisão explícita em Integrações,
-/// a leitura da API REST de cada workspace do Databricks — que exige a aplicação adicionada ao workspace. Desligada, a
-/// capacidade fica "não executada" com o motivo, e os controles que dependem dela ficam não avaliados.</para>
+/// <para>[AEGIS-KNIGHT-READONLY-01] Não há opção que habilite leitura com privilégio de administração ou escrita (API de
+/// administração do SharePoint, API dos workspaces do Databricks): essas capacidades ficam não tentadas, com o motivo.</para>
 /// </summary>
 public sealed record KnightMicrosoftServiceConfiguration(
     KnightSourceType SourceType,
@@ -530,8 +534,7 @@ public sealed record KnightMicrosoftServiceConfiguration(
     string ClientId,
     string ClientSecret,
     MicrosoftClientCertificate? ClientCertificate = null,
-    IReadOnlyList<string>? AzureSubscriptionIds = null,
-    bool DatabricksWorkspaceApi = false) : KnightSourceConfiguration, IMicrosoftGraphCredentials
+    IReadOnlyList<string>? AzureSubscriptionIds = null) : KnightSourceConfiguration, IMicrosoftGraphCredentials
 {
     public override KnightSourceType Source => SourceType;
 

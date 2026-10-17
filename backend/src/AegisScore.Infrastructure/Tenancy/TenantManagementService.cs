@@ -353,23 +353,25 @@ public sealed class TenantManagementService : ITenantManagementService
                 if (!string.IsNullOrEmpty(knight.CertificatePassword)) map["certificatePassword"] = knight.CertificatePassword!;
             }
             if (knight.AzureSubscriptionIds.Count > 0) map["azureSubscriptionIds"] = knight.AzureSubscriptionIds;
-            if (knight.DatabricksWorkspaceApi) map["databricksWorkspaceApi"] = true;
+            // [AEGIS-KNIGHT-READONLY-01] "databricksWorkspaceApi" não é mais gravado: a chave de uma configuração antiga
+            // some no próximo salvamento e, até lá, é ignorada na leitura.
         }
         return JsonSerializer.Serialize(map);
     }
 
     /// <summary>[AEGIS-KNIGHT-COVERAGE-04] O que só o conector do AEGIS KNIGHT guarda além da credencial comum.</summary>
-    private sealed record KnightExtras(string? CertificatePfxBase64, string? CertificatePassword, IReadOnlyList<string> AzureSubscriptionIds,
-        bool DatabricksWorkspaceApi = false)
+    private sealed record KnightExtras(string? CertificatePfxBase64, string? CertificatePassword, IReadOnlyList<string> AzureSubscriptionIds)
     {
-        public override string ToString() => $"KnightExtras {{ certificado = {(CertificatePfxBase64 is null ? "não" : "sim")}, assinaturas = {AzureSubscriptionIds.Count}, databricks = {DatabricksWorkspaceApi} }}";
+        public override string ToString() => $"KnightExtras {{ certificado = {(CertificatePfxBase64 is null ? "não" : "sim")}, assinaturas = {AzureSubscriptionIds.Count} }}";
     }
 
-    /// <summary>Settings guardados do conector do KNIGHT (o que interessa aqui: certificado e escopo do Azure).</summary>
+    /// <summary>
+    /// Settings guardados do conector do KNIGHT (o que interessa aqui: certificado e escopo do Azure). Chaves que não estão
+    /// aqui — como a antiga "databricksWorkspaceApi" — são lidas sem erro e ignoradas.
+    /// </summary>
     private sealed record StoredKnightSettings(
         string? TenantId = null, string? AzureTenantId = null, string? ClientId = null, string? ClientSecret = null,
-        string? CertificatePfxBase64 = null, string? CertificatePassword = null, string[]? AzureSubscriptionIds = null,
-        bool? DatabricksWorkspaceApi = null)
+        string? CertificatePfxBase64 = null, string? CertificatePassword = null, string[]? AzureSubscriptionIds = null)
     {
         public override string ToString() => "StoredKnightSettings { *** }";
     }
@@ -443,9 +445,7 @@ public sealed class TenantManagementService : ITenantManagementService
             subscriptions = cleaned.Select(x => Guid.Parse(x).ToString()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
 
-        // [AEGIS-KNIGHT-CLOSURE-01] A leitura da API dos workspaces do Databricks só muda por decisão explícita (nulo = mantém).
-        var databricks = command.DatabricksWorkspaceApi ?? stored?.DatabricksWorkspaceApi ?? false;
-        return new KnightExtras(pfx, password, subscriptions, databricks);
+        return new KnightExtras(pfx, password, subscriptions);
     }
 
     public async Task<MicrosoftCredentialSummary> GetMicrosoftCredentialSummaryAsync(CancellationToken ct = default)
@@ -454,7 +454,7 @@ public sealed class TenantManagementService : ITenantManagementService
             ?? throw new TenantSecurityException("Leitura da conexão Microsoft sem tenant resolvido no contexto (fail-closed).");
         var s = await ReadStoredKnightSettingsAsync(ct);
         if (s is null)
-            return new MicrosoftCredentialSummary(false, null, null, false, null, null, Array.Empty<string>(), false);
+            return new MicrosoftCredentialSummary(false, null, null, false, null, null, Array.Empty<string>());
 
         MicrosoftCertificateSummary? cert = null;
         string? problem = null;
@@ -472,7 +472,7 @@ public sealed class TenantManagementService : ITenantManagementService
         }
         var directory = !string.IsNullOrWhiteSpace(s.TenantId) ? s.TenantId : s.AzureTenantId;
         return new MicrosoftCredentialSummary(true, directory, s.ClientId, !string.IsNullOrWhiteSpace(s.ClientSecret), cert, problem,
-            s.AzureSubscriptionIds ?? Array.Empty<string>(), s.DatabricksWorkspaceApi == true);
+            s.AzureSubscriptionIds ?? Array.Empty<string>());
     }
 
     public async Task<IReadOnlyList<ConnectorSummary>> ListConnectorsAsync(CancellationToken ct = default)

@@ -942,7 +942,8 @@ public static class PostureSnapshotPdfWriter
             Body(section, "Nenhum resultado manual registrado até a publicação.", muted: true);
             return;
         }
-        Body(section, "Registrados pela organização para controles de referência sem avaliação automatizada. São atestações: não entram na nota, " +
+        Body(section, "Registrados pela organização para controles de referência sem avaliação automatizada ou, como complemento, para leituras " +
+            "automatizadas parciais (o indicador automatizado mantém o próprio resultado). São atestações: não entram na nota, " +
             "na cobertura desta avaliação nem na aprovação.", muted: true);
         foreach (var r in manual)
         {

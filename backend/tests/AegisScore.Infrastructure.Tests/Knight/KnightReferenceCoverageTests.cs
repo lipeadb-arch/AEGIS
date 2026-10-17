@@ -193,10 +193,13 @@ public sealed class KnightReferenceCoverageTests
         var m365 = coverage.ByPlatform.Single(p => p.Key == nameof(KnightPlatform.Microsoft365));
         m365.Total.Should().Be(89);
         // [AEGIS-KNIGHT-CLOSURE-01] +3: Forms (1.3.5, versão beta), 8.6.1 do Teams (composição com o Defender) e 2.1.11 (lista da referência).
-        m365.Implemented.Should().Be(84);
+        // [AEGIS-KNIGHT-READONLY-01] −8: a API administrativa do SharePoint (Sites.FullControl.All) não é mais lida. 7.2.2, 7.2.4,
+        // 7.2.8, 7.2.9 e 7.2.10 viram parciais (o Graph conclui com o compartilhamento externo desligado); 7.2.7, 7.2.11 e 7.3.1
+        // exigem acesso que o conector não tem.
+        m365.Implemented.Should().Be(76);
         // 2.1.11 passou a integral: o filtro de anexos é conferido contra as 184 extensões da lista da referência.
-        m365.Partial.Should().Be(0);
-        m365.RequiresAccess.Should().Be(1, "8.4.1 do Teams — ver Teams_TemAs17ReferenciasClassificadas...");
+        m365.Partial.Should().Be(5);
+        m365.RequiresAccess.Should().Be(4, "8.4.1 do Teams — ver Teams_TemAs17ReferenciasClassificadas... — e 7.2.7, 7.2.11 e 7.3.1 do SharePoint");
         m365.ApiLimitation.Should().Be(3, "Sway, Defender for Cloud Apps (2.4.3) e correção automatizada do AIR (2.4.5): nenhum método publicado");
         m365.PreviewOnly.Should().Be(0, "Forms passou a ser avaliado pela versão beta do Microsoft Graph");
         m365.ManualOnly.Should().Be(1, "2.2.1 — quais contas são de emergência é decisão organizacional");
@@ -210,7 +213,9 @@ public sealed class KnightReferenceCoverageTests
         }
         Service(KnightService.DefenderForOffice365, 21, 18, manual: 1, api: 2);
         Service(KnightService.Purview, 5, 5);
-        Service(KnightService.SharePointOnline, 13, 13);
+        Service(KnightService.SharePointOnline, 13, 5, partial: 5);
+        coverage.Controls.Where(c => c.Control.Service == KnightService.SharePointOnline && c.Disposition == KnightReferenceDisposition.RequiresAccess)
+            .Select(c => c.Control.Key).Should().BeEquivalentTo(new[] { "CIS-M365-7.0.0:7.2.7", "CIS-M365-7.0.0:7.2.11", "CIS-M365-7.0.0:7.3.1" });
         Service(KnightService.Intune, 2, 2);
         Service(KnightService.Fabric, 12, 12);
         Service(KnightService.Forms, 1, 1);

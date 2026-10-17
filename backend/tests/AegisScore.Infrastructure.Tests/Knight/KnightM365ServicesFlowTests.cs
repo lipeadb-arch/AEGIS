@@ -48,7 +48,8 @@ public sealed class KnightM365ServicesFlowTests : IDisposable
     public static IEnumerable<object[]> Sources() => new[]
     {
         new object[] { KnightSourceType.MicrosoftIntune, "AK-INT-", 2 },
-        new object[] { KnightSourceType.MicrosoftSharePoint, "AK-SPO-", 13 },
+        // [AEGIS-KNIGHT-READONLY-01] O SharePoint tem testes próprios: a API administrativa não é lida, então "tudo aprova"
+        // e "tudo reprova" deixaram de valer para ele.
         new object[] { KnightSourceType.MicrosoftFabric, "AK-FAB-", 12 },
         new object[] { KnightSourceType.MicrosoftDefenderForOffice365, "AK-MDO-", 19 },
         new object[] { KnightSourceType.MicrosoftPurview, "AK-PUR-", 5 },
@@ -113,35 +114,130 @@ public sealed class KnightM365ServicesFlowTests : IDisposable
         run.Score.Should().Be(0);
     }
 
+    // ---- SharePoint e OneDrive ([AEGIS-KNIGHT-READONLY-01]) -------------------------------------------------
+
+    /// <summary>Controles que o Microsoft Graph sustenta sozinho (com SharePointTenantSettings.Read.All).</summary>
+    private static readonly string[] SpoByGraph = { "AK-SPO-001", "AK-SPO-003", "AK-SPO-005", "AK-SPO-006", "AK-SPO-013" };
+
+    /// <summary>Controles que só a API administrativa conclui com o compartilhamento externo ligado.</summary>
+    private static readonly string[] SpoAdminOnly =
+        { "AK-SPO-002", "AK-SPO-004", "AK-SPO-007", "AK-SPO-008", "AK-SPO-009", "AK-SPO-010", "AK-SPO-011", "AK-SPO-012" };
+
+    private static void NoSharePointAdminTraffic(M365ServicesScenario scenario)
+    {
+        scenario.Requests.Should().NotContain(r => r.RequestUri!.Host.EndsWith("-admin.sharepoint.com", StringComparison.OrdinalIgnoreCase),
+            "a API administrativa do SharePoint não é chamada");
+        scenario.TokenBodies.Should().NotContain(b => b.Contains("-admin.sharepoint.com", StringComparison.OrdinalIgnoreCase),
+            "nenhum token é pedido para o host de administração");
+    }
+
     /// <summary>
-    /// Sem certificado, a API administrativa do SharePoint não é chamada: os controles que dependem dela ficam NÃO
-    /// AVALIADOS com o motivo — nunca reprovados, nunca aprovados — e os que o Graph sustenta continuam avaliados.
+    /// A API administrativa do SharePoint nunca é chamada — com ou sem certificado. Os controles que só ela concluiria ficam
+    /// NÃO AVALIADOS com o motivo (nunca reprovados, nunca aprovados) e os que o Graph sustenta continuam avaliados.
     /// </summary>
-    [Fact]
-    public async Task SharePointSemCertificado_ControlesDaApiAdministrativa_NaoAvaliadosComOMotivo()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SharePoint_ApiAdministrativaNaoSolicitada_ComOuSemCertificado_GraphContinuaAvaliando(bool withCertificate)
     {
         await SeedAsync(TenantA);
         await using var db = NewContext(TenantA);
         var scenario = new M365ServicesScenario(M365ServicesScenario.Variant.Compliant);
-        var run = await ServiceFor(db, scenario, withCertificate: false).RunAssessmentAsync(KnightSourceType.MicrosoftSharePoint);
+        var run = await ServiceFor(db, scenario, withCertificate).RunAssessmentAsync(KnightSourceType.MicrosoftSharePoint);
         Dump(run, "AK-SPO-");
 
-        scenario.Requests.Should().NotContain(r => r.RequestUri!.Host.EndsWith("-admin.sharepoint.com"),
-            "sem certificado a API administrativa não é chamada");
-        run.Capabilities.Single(c => c.Capability == KnightCapability.SharePointAdminTenant).Outcome
-            .Should().Be(KnightCapabilityOutcome.NotAttempted);
+        NoSharePointAdminTraffic(scenario);
+        run.Capabilities.Select(c => c.Capability).Should().BeEquivalentTo(KnightCollectorCapabilities.Produces(KnightSourceType.MicrosoftSharePoint));
+        run.Capabilities.Single(c => c.Capability == KnightCapability.SharePointTenantSettings).Outcome.Should().Be(KnightCapabilityOutcome.Collected);
+        var admin = run.Capabilities.Single(c => c.Capability == KnightCapability.SharePointAdminTenant);
+        admin.Outcome.Should().Be(KnightCapabilityOutcome.NotAttempted);
+        admin.Detail.Should().Contain("Não solicitada").And.Contain("Sites.FullControl.All");
 
-        var byGraph = new[] { "AK-SPO-001", "AK-SPO-003", "AK-SPO-005", "AK-SPO-006", "AK-SPO-013" };
+        run.Indicators.Should().HaveCount(13);
         foreach (var i in run.Indicators)
         {
-            if (byGraph.Contains(i.IndicatorId))
+            if (SpoByGraph.Contains(i.IndicatorId))
                 i.Status.Should().Be(KnightIndicatorStatus.Passed, i.IndicatorId);
             else
             {
                 i.Status.Should().Be(KnightIndicatorStatus.NotEvaluated, i.IndicatorId);
-                i.NotEvaluatedReason.Should().Contain("certificado", i.IndicatorId);
+                i.NotEvaluatedReason.Should().Contain("Sites.FullControl.All", i.IndicatorId);
             }
         }
+    }
+
+    [Fact]
+    public async Task SharePoint_Inadequado_GraphReprova_ControlesDaApiAdministrativaNuncaReprovam()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+        var scenario = new M365ServicesScenario(M365ServicesScenario.Variant.NonCompliant);
+        var run = await ServiceFor(db, scenario).RunAssessmentAsync(KnightSourceType.MicrosoftSharePoint);
+        Dump(run, "AK-SPO-");
+
+        NoSharePointAdminTraffic(scenario);
+        foreach (var id in SpoByGraph)
+            run.Indicators.Single(i => i.IndicatorId == id).Status.Should().Be(KnightIndicatorStatus.Exposed, id);
+        foreach (var id in SpoAdminOnly)
+            run.Indicators.Single(i => i.IndicatorId == id).Status.Should().Be(KnightIndicatorStatus.NotEvaluated, id);
+    }
+
+    /// <summary>
+    /// Compartilhamento externo desligado (lido pelo Graph): o OneDrive não pode ser mais permissivo que o SharePoint, então
+    /// aprova; B2B, grupos, expiração e reautenticação de convidados não se aplicam. Links padrão e arquivos infectados
+    /// valem também para o compartilhamento interno: continuam não avaliados.
+    /// </summary>
+    [Fact]
+    public async Task SharePoint_CompartilhamentoExternoDesligado_GraphConcluiOQueODocumentoSustenta()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+        var scenario = new M365ServicesScenario(M365ServicesScenario.Variant.SharePointExternalSharingOff);
+        var run = await ServiceFor(db, scenario).RunAssessmentAsync(KnightSourceType.MicrosoftSharePoint);
+        Dump(run, "AK-SPO-");
+
+        NoSharePointAdminTraffic(scenario);
+        KnightIndicatorStatus Of(string id) => run.Indicators.Single(i => i.IndicatorId == id).Status;
+        Of("AK-SPO-004").Should().Be(KnightIndicatorStatus.Passed, "o OneDrive é limitado pelo nível do SharePoint");
+        run.Indicators.Single(i => i.IndicatorId == "AK-SPO-004").Evidence.Should().Contain("não pode ser mais permissivo");
+        foreach (var id in new[] { "AK-SPO-002", "AK-SPO-005", "AK-SPO-006", "AK-SPO-008", "AK-SPO-009", "AK-SPO-010" })
+            Of(id).Should().Be(KnightIndicatorStatus.NotApplicable, id);
+        foreach (var id in new[] { "AK-SPO-007", "AK-SPO-011", "AK-SPO-012" })
+            Of(id).Should().Be(KnightIndicatorStatus.NotEvaluated, id);
+        foreach (var id in new[] { "AK-SPO-001", "AK-SPO-003", "AK-SPO-013" })
+            Of(id).Should().Be(KnightIndicatorStatus.Passed, id);
+    }
+
+    [Fact]
+    public async Task SharePoint_GraphRecusado_NenhumControleAprovaNemDeixaDeSeAplicar()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+        var scenario = new M365ServicesScenario(M365ServicesScenario.Variant.SharePointGraphDenied);
+        var run = await ServiceFor(db, scenario).RunAssessmentAsync(KnightSourceType.MicrosoftSharePoint);
+        Dump(run, "AK-SPO-");
+
+        NoSharePointAdminTraffic(scenario);
+        run.Capabilities.Single(c => c.Capability == KnightCapability.SharePointTenantSettings).Outcome
+            .Should().Be(KnightCapabilityOutcome.InsufficientPermission);
+        run.Indicators.Should().HaveCount(13).And.OnlyContain(i => i.Status == KnightIndicatorStatus.NotEvaluated,
+            "sem o Graph não há base para aprovar o OneDrive nem para dizer que algo não se aplica");
+    }
+
+    [Fact]
+    public async Task SharePoint_PropriedadeAusenteNoGraph_NaoAvalia_SemRecorrerAApiAdministrativa()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+        var scenario = new M365ServicesScenario(M365ServicesScenario.Variant.SharePointLegacyAuthNotReported);
+        var run = await ServiceFor(db, scenario).RunAssessmentAsync(KnightSourceType.MicrosoftSharePoint);
+        Dump(run, "AK-SPO-");
+
+        NoSharePointAdminTraffic(scenario);
+        run.Indicators.Single(i => i.IndicatorId == "AK-SPO-001").Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        foreach (var id in new[] { "AK-SPO-003", "AK-SPO-005", "AK-SPO-006", "AK-SPO-013" })
+            run.Indicators.Single(i => i.IndicatorId == id).Status.Should().Be(KnightIndicatorStatus.Passed,
+                $"{id}: a propriedade ausente não contamina os controles que não dependem dela");
     }
 
     /// <summary>Com certificado, TODO pedido de token usa asserção assinada — o segredo não viaja.</summary>
@@ -156,8 +252,8 @@ public sealed class KnightM365ServicesFlowTests : IDisposable
 
         scenario.TokenBodies.Should().NotBeEmpty();
         scenario.TokenBodies.Should().OnlyContain(b => b.Contains("client_assertion=") && !b.Contains("client_secret"));
-        scenario.TokenBodies.Should().Contain(b => b.Contains(Uri.EscapeDataString("https://clientedemo-admin.sharepoint.com/.default")),
-            "o token da API administrativa é pedido para o host do locatário derivado do domínio inicial");
+        scenario.TokenBodies.Should().NotContain(b => b.Contains("-admin.sharepoint.com", StringComparison.OrdinalIgnoreCase),
+            "o certificado não reativa a API administrativa do SharePoint");
         scenario.TokenBodies.Should().Contain(b => b.Contains(Uri.EscapeDataString("https://api.fabric.microsoft.com/.default")));
     }
 
@@ -338,7 +434,7 @@ public sealed class KnightM365ServicesFlowTests : IDisposable
         var registry = new KnightCollectorRegistry(new IKnightCollector[]
         {
             new IntuneKnightCollector(graph),
-            new SharePointKnightCollector(graph, tokens, rest),
+            new SharePointKnightCollector(graph),
             new FabricKnightCollector(tokens, rest),
             new DefenderForOffice365KnightCollector(exoTokens, scenario.ProtectionReader, scenario.Dns),
             new PurviewKnightCollector(exoTokens, scenario.ProtectionReader, tokens),

@@ -381,7 +381,7 @@ export const KNIGHT_SOURCES: KnightSourceDescriptor[] = [
   { source: 'MicrosoftEntraId', label: 'Microsoft Entra ID', slug: 'entra', provider: 'Microsoft', microsoftConnector: true, consolidable: true, requirement: null },
   {
     source: 'MicrosoftTeams', label: 'Microsoft Teams', slug: 'teams', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
-    requirement: 'Exige, além da credencial acima, o papel Leitor do Teams (ou Leitor Global) atribuído a esta aplicação no Microsoft Entra ID.',
+    requirement: 'Exige, além da credencial acima, Organization.Read.All (Microsoft Graph, aplicativo — a Microsoft a documenta para todos os cmdlets) e o papel Leitor do Teams (ou Leitor Global) atribuído a esta aplicação no Microsoft Entra ID.',
   },
   {
     source: 'MicrosoftExchangeOnline', label: 'Exchange Online', slug: 'exchange', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
@@ -398,7 +398,7 @@ export const KNIGHT_SOURCES: KnightSourceDescriptor[] = [
   },
   {
     source: 'MicrosoftSharePoint', label: 'SharePoint e OneDrive', slug: 'sharepoint', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
-    requirement: 'SharePointTenantSettings.Read.All; as configurações administrativas exigem certificado e Sites.FullControl.All (API SharePoint).',
+    requirement: 'SharePointTenantSettings.Read.All. As configurações que só a API administrativa expõe não são lidas: ela exige Sites.FullControl.All, que também concede escrita.',
   },
   {
     source: 'MicrosoftIntune', label: 'Microsoft Intune', slug: 'intune', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
@@ -990,6 +990,11 @@ export interface KnightReferenceControlStatus {
   previewApis?: string[];
   /** [AEGIS-KNIGHT-CLOSURE-01] Sem avaliação automatizada: aceita resultado de verificação manual. */
   manualEligible?: boolean;
+  /**
+   * [AEGIS-KNIGHT-READONLY-01] Leitura automatizada PARCIAL: o resultado manual complementa (não substitui) o indicador
+   * automatizado. Decidido no servidor, com a mesma regra da gravação.
+   */
+  manualComplement?: boolean;
   /** [AEGIS-KNIGHT-CLOSURE-01] Resultado manual VIGENTE deste cliente — à parte da avaliação automatizada. */
   manualResult?: KnightManualResult | null;
 }
@@ -1387,18 +1392,26 @@ const CAUSE: Record<string, [string, string]> = {
   Error: ['Erro de coleta', 'Sincronizar novamente; persistindo, acionar o suporte com o horário da tentativa.'],
 };
 
+/**
+ * [AEGIS-KNIGHT-READONLY-01] Capacidades que nenhum coletor executa (espelha `KnightCollectorCapabilities.NotRequested`):
+ * a única leitura oficial exige permissão que também concede escrita ou administração.
+ */
+export const NOT_REQUESTED_CAPABILITIES: readonly string[] = ['SharePointAdminTenant', 'AzureDatabricksWorkspaceApi'];
+
+export function isNotRequestedCapability(capability: string): boolean {
+  return NOT_REQUESTED_CAPABILITIES.includes(capability);
+}
+
 /** Capacidades não coletadas → causa, controles prejudicados (não avaliados que dependem dela) e orientação. */
 export function limitationViews(a: KnightAssessment): KnightLimitationView[] {
   return problemCapabilities(a.capabilities).map((c) => {
     const [cause, generic] = CAUSE[c.outcome] ?? ['Não coletado', 'Sincronizar novamente em Integrações.'];
     // [AEGIS-KNIGHT-COVERAGE-04] No Azure a autorização é uma atribuição de papel no escopo recusado, não consentimento.
-    // [AEGIS-KNIGHT-CLOSURE-01] Databricks desligado: a ação é habilitar em Integrações (e o acesso dentro do workspace).
+    // [AEGIS-KNIGHT-READONLY-01] Leituras não solicitadas (exigiriam permissão que também escreve): não há o que conceder.
     // Versão preview fora do contrato: não há o que conceder — a leitura fica limitada até a Microsoft estabilizá-la.
-    const guidance = c.capability === 'AzureDatabricksWorkspaceApi' && c.outcome === 'NotAttempted'
-      ? 'Habilitar a leitura da API dos workspaces em Configurações → Integrações (AEGIS KNIGHT) e adicionar a aplicação a cada workspace como administradora; depois sincronizar novamente.'
-      : c.capability === 'AzureDatabricksWorkspaceApi' && (c.outcome === 'InsufficientPermission' || c.outcome === 'AuthenticationFailure')
-        ? 'Adicionar a aplicação ao workspace do Databricks como entidade de serviço administradora (acesso concedido dentro do Databricks) e sincronizar novamente.'
-        : c.outcome === 'Error' && c.previewApi
+    const guidance = isNotRequestedCapability(c.capability)
+      ? 'Nada a conceder: o AEGIS não faz esta leitura porque a única forma documentada exige permissão que também concede escrita ou administração. Os controles que dependem dela ficam não avaliados; a verificação pode ser feita no portal do fornecedor.'
+      : c.outcome === 'Error' && c.previewApi
           ? 'A resposta da versão preview saiu do contrato documentado: os controles que dependem dela ficam não avaliados até a leitura ser revista. Nada a conceder.'
           : c.outcome === 'InsufficientPermission' && c.capability.startsWith('Azure')
             ? 'Atribuir à aplicação o papel indicado no escopo recusado (Azure RBAC na assinatura, ou no cofre) e sincronizar novamente em Integrações.'

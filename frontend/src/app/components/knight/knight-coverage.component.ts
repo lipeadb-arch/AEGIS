@@ -31,7 +31,7 @@ import { KnightControlRefsComponent } from './knight-control-refs.component';
 const PAGE = 25;
 
 const VIEWS: { value: KnightReferenceView; label: string }[] = [
-  { value: 'manual', label: 'Sem avaliação automatizada (aceita resultado manual)' },
+  { value: 'manual', label: 'Aceita resultado manual (sem avaliação automatizada ou complemento de leitura parcial)' },
   { value: 'withManual', label: 'Com resultado manual registrado' },
   { value: 'preview', label: 'Avaliadas com leitura em versão preview' },
   { value: 'automated', label: 'Avaliadas (integral ou parcial)' },
@@ -107,9 +107,16 @@ const VIEWS: { value: KnightReferenceView; label: string }[] = [
 
             @if (c.manualEligible) {
               <div class="manual">
+                @if (c.manualComplement) {
+                  <!-- [AEGIS-KNIGHT-READONLY-01] Leitura automatizada parcial: o manual complementa, não substitui. -->
+                  <p class="meta complement" data-testid="manual-complement">
+                    Leitura automatizada parcial: o indicador automatizado continua com o próprio resultado e a nota não muda. O
+                    resultado manual registra só a verificação do que a leitura somente leitura não alcança.
+                  </p>
+                }
                 @if (c.manualResult; as m) {
                   <dl class="mr">
-                    <dt>Resultado manual</dt><dd>{{ m.resultLabel }}@if (m.expired) { <b class="warn"> — vencido</b> }@if (m.validUntil) { · válido até {{ m.validUntil | date: 'dd/MM/yyyy' }} }</dd>
+                    <dt>{{ c.manualComplement ? 'Complemento manual' : 'Resultado manual' }}</dt><dd>{{ m.resultLabel }}@if (m.expired) { <b class="warn"> — vencido</b> }@if (m.validUntil) { · válido até {{ m.validUntil | date: 'dd/MM/yyyy' }} }</dd>
                     <dt>Justificativa</dt><dd class="pre">{{ m.justification }}</dd>
                     <dt>Responsável</dt><dd>{{ m.responsibleName }}</dd>
                     <dt>Evidência</dt><dd>{{ evidenceText(m) }}</dd>
