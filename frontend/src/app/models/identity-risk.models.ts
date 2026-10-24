@@ -19,7 +19,9 @@ export type IdentityRiskOutcome =
   | 'NotAttempted'
   | 'Throttled'
   | 'AuthenticationFailure'
-  | 'Error';
+  | 'Error'
+  /** [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Leitura oficial indisponível na plataforma de execução do AEGIS. */
+  | 'PlatformUnsupported';
 
 export interface IdentityRiskCapability {
   outcome: IdentityRiskOutcome;
@@ -167,6 +169,7 @@ const OUTCOME_LABEL: Record<IdentityRiskOutcome, string> = {
   Throttled: 'Limite de consultas atingido',
   AuthenticationFailure: 'Falha de autenticação',
   Error: 'Erro na coleta',
+  PlatformUnsupported: 'Limitação de plataforma',
 };
 
 export function outcomeLabel(outcome: IdentityRiskOutcome): string {
@@ -188,8 +191,14 @@ export function outcomeGuidance(outcome: IdentityRiskOutcome, permission: string
       return 'A aplicação não conseguiu autenticar junto à Microsoft. Revise a credencial do conector.';
     case 'NotAttempted':
       return 'Esta dimensão ainda não foi coletada neste cliente.';
+    // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Indisponível inclui tempo esgotado e circuito aberto do próprio cliente HTTP; erro é
+    // falha de coleta (resposta fora do contrato ou defeito do AEGIS) — nenhum dos dois é atribuído à Microsoft sem prova.
+    case 'Unavailable':
+      return 'A consulta não foi concluída: o serviço não respondeu a tempo, houve falha de rede ou a leitura não chegou a ser enviada. O estado detalhado diz qual. A última fotografia válida, se houver, continua sendo exibida.';
+    case 'PlatformUnsupported':
+      return 'A leitura oficial não está disponível na plataforma em que o AEGIS executa. Não é falta de permissão.';
     default:
-      return 'A Microsoft não respondeu a esta consulta. A última fotografia válida, se houver, continua sendo exibida.';
+      return 'A leitura falhou na coleta (resposta fora do contrato ou falha interna do AEGIS — o estado detalhado diz qual). Não é atribuída à Microsoft nem à permissão. A última fotografia válida, se houver, continua sendo exibida.';
   }
 }
 

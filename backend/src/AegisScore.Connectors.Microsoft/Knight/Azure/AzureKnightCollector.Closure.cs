@@ -76,21 +76,21 @@ public sealed partial class AzureKnightCollector
     {
         switch (ex)
         {
-            case EntraGraphException g:
-                var (o, reason) = KnightCapabilityRecorder.Classify(g, Label);
-                outcome.Fail(o, KnightRuleText.Trim($"{what}: {reason}", 480));
-                break;
             case ContractException c:
-                outcome.Fail(KnightCapabilityOutcome.Error, KnightRuleText.Trim($"{what}: {ContractPrefix} ({c.Message}).", 480));
+                outcome.Fail(KnightCapabilityOutcome.Error, KnightRuleText.Trim($"{what}: {ContractPrefix} ({c.Message}).", 480),
+                    new KnightCapabilityDiagnostic("read", KnightFailureKind.Contract, Code: "ArmContract"));
                 break;
             default:
-                outcome.Fail(KnightCapabilityOutcome.Unavailable, $"{what}: falha de rede ou tempo esgotado.");
+                // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] HTTP, tempo do pipeline, circuito aberto, transporte ou defeito interno —
+                // a mesma classificação de todos os coletores (antes só rede/tempo do HttpClient e HTTP eram reconhecidos).
+                var failure = KnightFailureClassifier.Classify(ex, Label, "read");
+                outcome.Fail(failure.Outcome, KnightRuleText.Trim($"{what}: {failure.Reason}", 480), failure.Diagnostic);
                 break;
         }
     }
 
-    private static bool Recoverable(Exception ex) =>
-        ex is EntraGraphException or ContractException or System.Net.Http.HttpRequestException or TaskCanceledException or TimeoutException;
+    /// <summary>Toda falha que não seja o cancelamento do chamador fica na leitura (e não derruba a coleta).</summary>
+    private static bool Recoverable(Exception ex, CancellationToken ct) => !KnightFailureClassifier.IsCallerCancellation(ex, ct);
 
     // ---- Assinatura: exportação do log de atividades e contatos de segurança (preview) ------------------------------
 
@@ -110,7 +110,7 @@ public sealed partial class AzureKnightCollector
                 resources.Add(b);
             }
         }
-        catch (Exception ex) when (Recoverable(ex) && !ct.IsCancellationRequested)
+        catch (Exception ex) when (Recoverable(ex, ct))
         {
             FailRead(outcomes[KnightCapability.AzureActivityLogExport], ex, $"configurações de diagnóstico da assinatura (versão {diagApi})");
         }
@@ -132,7 +132,7 @@ public sealed partial class AzureKnightCollector
                 resources.Add(b);
             }
         }
-        catch (Exception ex) when (Recoverable(ex) && !ct.IsCancellationRequested)
+        catch (Exception ex) when (Recoverable(ex, ct))
         {
             FailRead(outcomes[KnightCapability.AzureSecurityContacts], ex, $"contatos de segurança do Defender para Nuvem (versão {contactsApi})");
         }
@@ -179,7 +179,7 @@ public sealed partial class AzureKnightCollector
                 r.Facts["diag:status"] = JsonSerializer.SerializeToElement("NotFound");
                 outcome.ChildFailures++;
             }
-            catch (Exception ex) when (Recoverable(ex) && !ct.IsCancellationRequested)
+            catch (Exception ex) when (Recoverable(ex, ct))
             {
                 r.Facts["diag:status"] = JsonSerializer.SerializeToElement(ex is ContractException ? "ContractChanged"
                     : ex is EntraGraphException g ? g.Kind.ToString() : "Unavailable");
@@ -221,7 +221,7 @@ public sealed partial class AzureKnightCollector
                 r.Facts["kvrefs:status"] = JsonSerializer.SerializeToElement("NotFound");
                 outcome.ChildFailures++;
             }
-            catch (Exception ex) when (Recoverable(ex) && !ct.IsCancellationRequested)
+            catch (Exception ex) when (Recoverable(ex, ct))
             {
                 r.Facts["kvrefs:status"] = JsonSerializer.SerializeToElement(ex is ContractException ? "ContractChanged"
                     : ex is EntraGraphException g ? g.Kind.ToString() : "Unavailable");

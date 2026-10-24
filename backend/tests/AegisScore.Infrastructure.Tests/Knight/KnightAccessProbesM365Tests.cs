@@ -109,6 +109,23 @@ public sealed class KnightAccessProbesM365Tests
         health.Message.Should().Contain("Microsoft Purview:").And.Contain("Microsoft Exchange Online Protection");
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Sem Security &amp; Compliance PowerShell na plataforma, a verificação do Purview não
+    /// pede o token da sessão nem rebaixa a credencial: a sessão do Exchange Online foi aceita, e DLP/rótulos são declarados como
+    /// limitação de plataforma, sem pedido de permissão.
+    /// </summary>
+    [Fact]
+    public async Task SemSessaoDeConformidadeNaPlataforma_PurviewDeclaraALimitacao_SemRebaixarACredencial()
+    {
+        var scenario = new M365ServicesScenario(M365ServicesScenario.Variant.Compliant) { ComplianceSessionSupported = false };
+        var health = await ConnectorFor(scenario, certificate: true).TestAsync(Config(), CancellationToken.None);
+
+        health.Status.Should().Be(ConnectorStatus.Healthy, health.Message);
+        health.Message.Should().Contain("Microsoft Purview: conexão do Exchange Online estabelecida")
+            .And.Contain("Limitação de plataforma");
+        scenario.ProtectionRequests.Single(r => r.Profile == "purview").ComplianceToken.Should().BeNull();
+    }
+
     /// <summary>Settings sintéticos do conector: credencial comum e, quando pedido, SÓ o certificado (sem segredo).</summary>
     private sealed class SettingsProtector : IConnectorSecretProtector
     {

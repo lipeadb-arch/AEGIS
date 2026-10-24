@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AegisScore.Connectors.Microsoft.Knight.PowerShell;
 using AegisScore.Connectors.Microsoft.Knight.Teams;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
@@ -239,14 +240,19 @@ public sealed class TeamsAdapterTransportTests
             Timeout = TimeSpan.FromSeconds(30),
         });
 
-        var erro = await FluentActions
-            .Awaiting(() => reader.ReadAsync(new TeamsAdminCredentials("locatario-sintetico", TokenSintetico, SegredoOpaco)))
-            .Should().ThrowAsync<TeamsAdminTransportException>();
-        var mensagem = erro.Which.Message;
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] O processo terminou: o desfecho volta no RELATÓRIO do processo (código, estágio,
+        // diagnóstico sanitizado), e não numa exceção que apagava as leituras concluídas e afirmava "nenhuma leitura".
+        var saida = await reader.ReadAsync(new TeamsAdminCredentials("locatario-sintetico", TokenSintetico, SegredoOpaco));
+        var run = saida.Process!;
+        run.Termination.Should().Be(PowerShellTermination.NonZeroExit);
+        run.ExitCode.Should().Be(7);
+        run.Clean.Should().BeFalse("código diferente de zero nunca é coleta íntegra");
+        saida.Connected.Should().BeFalse();
+        saida.Reads.Should().BeEmpty();
+        var mensagem = run.SafeDiagnostics;
 
         // 1) A CAUSA ÚTIL chega a quem opera — é ela que diz o que investigar.
-        mensagem.Should().Contain("código 7", "sem o código de saída, o diagnóstico não identifica o desfecho do processo");
-        mensagem.Should().Contain("sem devolver resultado");
+        PowerShellRunInterpretation.How(run).Should().Contain("código 7", "sem o código de saída, o diagnóstico não identifica o desfecho do processo");
         mensagem.Should().Contain(CausaUtil, "a causa é justamente o que não pode ser perdido na sanitização");
 
         // 2) NENHUM marcador sintético sobrevive — nem por igualdade (tokens da chamada), nem por forma.
@@ -277,14 +283,13 @@ public sealed class TeamsAdapterTransportTests
             Timeout = TimeSpan.FromSeconds(30),
         });
 
-        var erro = await FluentActions
-            .Awaiting(() => reader.ReadAsync(new TeamsAdminCredentials("locatario-sintetico", tokenEnorme, SegredoOpaco)))
-            .Should().ThrowAsync<TeamsAdminTransportException>();
-        var mensagem = erro.Which.Message;
+        var saida = await reader.ReadAsync(new TeamsAdminCredentials("locatario-sintetico", tokenEnorme, SegredoOpaco));
+        var run = saida.Process!;
+        var mensagem = run.SafeDiagnostics;
 
-        mensagem.Should().NotContain("A comunicação com o processo de coleta do Microsoft Teams falhou",
-            "o cano rompido diz que o processo já terminou — não é a causa, é a consequência dela");
-        mensagem.Should().Contain("código 3").And.Contain("sem devolver resultado");
+        // O cano rompido diz que o processo já terminou — não é a causa, é a consequência dela: o desfecho é o código de saída.
+        run.Termination.Should().Be(PowerShellTermination.NonZeroExit);
+        PowerShellRunInterpretation.How(run).Should().Contain("código 3");
         mensagem.Should().Contain(CausaUtil);
         foreach (var marcador in new[] { TokenSintetico, SegredoOpaco, "AEGISMARCADORSINTETICO" })
             mensagem.Should().NotContain(marcador);
@@ -300,9 +305,12 @@ public sealed class TeamsAdapterTransportTests
             Timeout = TimeSpan.FromSeconds(30),
         });
 
-        var erro = await FluentActions.Awaiting(() => reader.CheckRuntimeAsync())
-            .Should().ThrowAsync<TeamsAdminTransportException>();
-        erro.Which.Message.Should().Contain("código 4").And.Contain("não escreveu diagnóstico algum");
+        var saida = await reader.CheckRuntimeAsync();
+        saida.Process!.Termination.Should().Be(PowerShellTermination.NonZeroExit);
+        PowerShellRunInterpretation.How(saida.Process).Should().Contain("código 4");
+        saida.Process.SafeDiagnostics.Should().BeEmpty("o processo não escreveu diagnóstico algum — e isso é dito, não inventado");
+        saida.Process.OutputComplete.Should().BeTrue();
+        PowerShellRunInterpretation.FailedBeforeReads(saida.Process).Should().BeTrue("nenhuma leitura começou, e a saída completa o demonstra");
     }
 
     [Fact]

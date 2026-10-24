@@ -613,7 +613,16 @@ public record KnightAffectedObjectsDto(
 /// Desfecho de uma capacidade de coleta. [AEGIS-KNIGHT-CLOSURE-01] <c>Requirement</c> é o requisito do que o AEGIS de fato chama
 /// (o mesmo texto das exportações) e <c>PreviewApi</c> a versão preview/beta lida, quando houver — ambos opcionais e ao final.
 /// </summary>
-public record KnightCapabilityDto(string Capability, string Outcome, string? Detail, string? Requirement = null, string? PreviewApi = null);
+public record KnightCapabilityDto(string Capability, string Outcome, string? Detail, string? Requirement = null, string? PreviewApi = null,
+    KnightCapabilityDiagnosticDto? Diagnostic = null);
+
+/// <summary>
+/// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Detalhe técnico SEGURO de uma capacidade não coletada: estágio, tipo sanitizado da falha,
+/// duração, status HTTP/código quando existem, endpoint (sem query string) e identificadores de correlação. Nunca token, segredo,
+/// corpo de resposta nem mensagem livre da fonte. Ausente em coletas anteriores a este pacote.
+/// </summary>
+public record KnightCapabilityDiagnosticDto(
+    string Stage, string Kind, long? DurationMs, int? HttpStatus, string? Code, string? Endpoint, string? CorrelationId, string? ServiceRequestId);
 
 /// <summary>Disponibilidade de uma fonte KNIGHT para o tenant.</summary>
 public record KnightSourceDto(string Source, string Label, bool Configured, bool Enabled);

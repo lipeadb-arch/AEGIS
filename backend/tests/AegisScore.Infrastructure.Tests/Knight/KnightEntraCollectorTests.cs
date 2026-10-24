@@ -195,8 +195,11 @@ public sealed class KnightEntraCollectorTests
         var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
 
         evilHits.Should().Be(0, "o nextLink de outra origem é reprovado ANTES do envio — o bearer nunca sai para ele");
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Próximo link fora do host oficial é resposta FORA DO CONTRATO (erro), não
+        // indisponibilidade do serviço — e o diagnóstico diz isso.
         result.Capabilities.Should().Contain(c =>
-            c.Capability == KnightCapability.GuestAccounts && c.Outcome == KnightCapabilityOutcome.Unavailable);
+            c.Capability == KnightCapability.GuestAccounts && c.Outcome == KnightCapabilityOutcome.Error
+            && c.Diagnostic!.Kind == KnightFailureKind.Contract);
         result.Facts.Get(KnightSignalKey.InactiveGuestAccounts).Outcome.Should().Be(KnightObservationOutcome.Missing);
 
         var guest = KnightIndicatorEvaluator.Evaluate(result.Facts, KnightSourceType.MicrosoftEntraId)
@@ -238,8 +241,10 @@ public sealed class KnightEntraCollectorTests
 
         var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
 
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] O teto de paginação do AEGIS é LEITURA INCOMPLETA, não indisponibilidade.
         result.Capabilities.Should().Contain(c =>
-            c.Capability == KnightCapability.PrivilegedRoleInventory && c.Outcome == KnightCapabilityOutcome.Unavailable);
+            c.Capability == KnightCapability.PrivilegedRoleInventory && c.Outcome == KnightCapabilityOutcome.Error
+            && c.Diagnostic!.Kind == KnightFailureKind.Incomplete && c.Detail!.Contains("teto de paginação"));
         var total = KnightIndicatorEvaluator.Evaluate(result.Facts, KnightSourceType.MicrosoftEntraId)
             .Single(i => i.Definition.Id == "AK-ENTRA-002");
         total.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
@@ -505,7 +510,9 @@ public sealed class KnightEntraCollectorTests
             .Single(i => i.Definition.Id == "AK-ENTRA-011").Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
     }
 
-    // ---- 15) Token JSON malformado vira AuthenticationFailure sanitizada (sem throw bruto) ----------
+    // ---- 15) Token JSON malformado vira ERRO de contrato sanitizado (sem throw bruto) ----------------
+    // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Antes era "falha de autenticação": uma resposta 200 do endpoint de token que não
+    // segue o contrato não diz nada sobre a credencial, e "confira o segredo" mandava consertar o que podia estar certo.
 
     [Fact]
     public async Task Collector_InvalidTokenJson_AuthenticationFailure_NoRawThrow()
@@ -520,7 +527,8 @@ public sealed class KnightEntraCollectorTests
 
         var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));   // não deve lançar
 
-        result.State.Should().Be(KnightSourceState.AuthenticationFailure);
+        result.State.Should().Be(KnightSourceState.Error);
+        result.Detail.Should().Contain("contrato");
     }
 
     [Fact]
@@ -536,7 +544,8 @@ public sealed class KnightEntraCollectorTests
 
         var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
 
-        result.State.Should().Be(KnightSourceState.AuthenticationFailure);
+        result.State.Should().Be(KnightSourceState.Error);
+        result.Detail.Should().Contain("contrato");
     }
 
     [Fact]
@@ -553,7 +562,7 @@ public sealed class KnightEntraCollectorTests
         var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, Cfg));
         var serialized = JsonSerializer.Serialize(result);
 
-        result.State.Should().Be(KnightSourceState.AuthenticationFailure);
+        result.State.Should().Be(KnightSourceState.Error);
         serialized.Should().NotContain("SUPER-SECRET-VALUE", "o segredo do cliente nunca aparece no resultado");
         serialized.Should().NotContain("PAYLOAD-MARKER", "o payload da resposta do token não vaza no resultado");
     }

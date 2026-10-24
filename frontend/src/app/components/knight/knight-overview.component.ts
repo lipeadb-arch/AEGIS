@@ -268,7 +268,13 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
             <tbody>
               @for (l of limitations(); track l.capability) {
                 <tr>
-                  <td data-l="Capacidade">{{ l.label }}@if (l.detail) { <span class="meta">{{ l.detail }}</span> }@if (l.previewApi) { <span class="meta">Leitura em versão preview: {{ l.previewApi }}</span> }</td>
+                  <td data-l="Capacidade">{{ l.label }}@if (l.detail) { <span class="meta">{{ l.detail }}</span> }@if (l.previewApi) { <span class="meta">Leitura em versão preview: {{ l.previewApi }}</span> }
+                    @if (l.technical.length) {
+                      <details class="tech"><summary>Detalhe técnico</summary>
+                        <ul>@for (t of l.technical; track $index) { <li>{{ t }}</li> }</ul>
+                      </details>
+                    }
+                  </td>
                   <td data-l="Causa">{{ l.cause }}</td>
                   <td data-l="Controles prejudicados">
                     @if (l.affectedControls.length) {
@@ -373,6 +379,9 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Passed', 'Exposed', 'Mitigated',
       .prio li span { display: block; margin-top: 2px; }
       .metric-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       td .meta { display: block; font-family: var(--mono); font-size: var(--fs-caps); color: var(--muted); overflow-wrap: anywhere; }
+      td details.tech { margin-top: 4px; font-size: var(--fs-caps); color: var(--muted); }
+      td details.tech summary { cursor: pointer; }
+      td details.tech ul { margin: 4px 0 0; padding-left: 16px; font-family: var(--mono); overflow-wrap: anywhere; }
       @media (max-width: 600px) {
         table.stack, table.stack tbody { display: block; width: 100%; }
         table.stack thead { display: none; }

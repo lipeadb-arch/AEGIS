@@ -455,6 +455,8 @@ public static class KnightReportModelBuilder
         KnightCapabilityOutcome.Unavailable => "Serviço indisponível",
         KnightCapabilityOutcome.NotAttempted => "Não executada",
         KnightCapabilityOutcome.Error => "Erro de coleta",
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Leitura oficial indisponível no ambiente de execução — nem falha nem permissão.
+        KnightCapabilityOutcome.PlatformUnsupported => "Limitação de plataforma",
         _ => o.ToString(),
     };
 
@@ -478,7 +480,11 @@ public static class KnightReportModelBuilder
             "Verificar a credencial do conector (segredo expirado ou revogado) e reconectar em Configurações → Integrações.",
         KnightCapabilityOutcome.Unavailable => "O serviço do provedor não respondeu. Sincronizar novamente; persistindo, verificar a conectividade.",
         KnightCapabilityOutcome.NotAttempted => "A capacidade não foi executada nesta coleta.",
-        _ => "Erro inesperado nesta capacidade. Sincronizar novamente; persistindo, acionar o suporte com o horário da tentativa.",
+        KnightCapabilityOutcome.PlatformUnsupported =>
+            "Nada a conceder: a leitura oficial não está disponível na plataforma em que o AEGIS executa. Os controles afetados ficam não "
+            + "avaliados; a verificação feita no portal do fornecedor pode ser registrada como resultado manual da referência.",
+        _ => "Erro de coleta nesta capacidade (o detalhe técnico diz o tipo e o estágio). Sincronizar novamente; persistindo, acionar o "
+            + "suporte com o identificador de correlação.",
     };
 
     private static bool IsFramework(string framework) =>
@@ -699,8 +705,12 @@ public static class KnightCapabilityLabels
             KnightCapability.IntuneEnrollmentRestrictions => "DeviceManagementServiceConfig.Read.All (aplicativo)",
             _ => null,
         },
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Requisitos DOCUMENTADOS da chamada, não diagnóstico: a recusa (ex.: 403
+        // InsufficientScopes) não identifica qual deles falta, e o AEGIS não deduz isso dela.
         KnightSourceType.MicrosoftFabric =>
-            "Configuração do Fabric “entidades de serviço podem acessar APIs de administração somente leitura” ligada para um grupo de segurança que contenha a aplicação",
+            "pré-requisitos documentados para entidade de serviço — a recusa não indica qual deles falta: a configuração do Fabric que "
+            + "permite a entidades de serviço usar as APIs de administração somente leitura, habilitada para um grupo de segurança que "
+            + "contenha a aplicação; e o token emitido para o recurso do Fabric com a credencial da própria aplicação",
         // [AEGIS-KNIGHT-COVERAGE-04] Azure: a autorização é do Azure RBAC, não do Microsoft Graph — salvo o estado das contas
         // com papel (Graph) e o plano de dados dos cofres. O diagnóstico do Entra ID é um recurso do locatário.
         KnightSourceType.MicrosoftAzure => c switch
@@ -708,7 +718,7 @@ public static class KnightCapabilityLabels
             KnightCapability.AzureKeyVaultCertificates =>
                 "Leitura de certificados no plano de dados de cada cofre — papel Leitor do Key Vault (cofres com RBAC) ou permissões get/list de certificados na política de acesso",
             KnightCapability.AzureTenantDiagnostics =>
-                "Leitura de microsoft.aadiam/diagnosticSettings no escopo do locatário (papel do Entra ID com acesso às configurações de diagnóstico)",
+                "Leitura de microsoft.aadiam/diagnosticSettings no escopo do locatário (requisito documentado; a recusa não indica qual atribuição falta)",
             KnightCapability.AzureAuthorization =>
                 "Papel Leitor do Azure RBAC nas assinaturas do escopo; o estado das contas com papel exige User.Read.All (Microsoft Graph, aplicativo)",
             KnightCapability.AzureAppSettingsKeyVaultReferences =>

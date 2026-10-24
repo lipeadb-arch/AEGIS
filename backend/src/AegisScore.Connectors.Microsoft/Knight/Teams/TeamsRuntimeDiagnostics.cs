@@ -117,6 +117,10 @@ public static class TeamsRuntimeDiagnostics
             return 1;
         }
 
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] O processo real terminou íntegro pelo protocolo de quadros (código 0, resultado
+        // emitido, nenhum quadro ilegível) — e quantas linhas fora do protocolo o runtime escreveu.
+        if (!PowerShell.PowerShellRunInterpretation.CheckProcess(output, result.Process, "module-check")) return 1;
+
         output.WriteLine("module-check=OK");
 
         return await RunSyntheticFailureAsync(reader, output, ct);
@@ -185,6 +189,8 @@ public static class TeamsRuntimeDiagnostics
             output.WriteLine("FALHA: o marcador sintético de segredo apareceu na saída do adaptador.");
             return 1;
         }
+
+        if (!PowerShell.PowerShellRunInterpretation.CheckProcess(output, result.Process, "cenário sintético")) return 1;
 
         output.WriteLine("coleta-sintetica=OK");
         output.WriteLine(SuccessMarker);

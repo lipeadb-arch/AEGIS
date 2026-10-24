@@ -367,6 +367,30 @@ public sealed class KnightM365ServicesFlowTests : IDisposable
     }
 
     /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Plataforma sem Security &amp; Compliance PowerShell (Linux do contêiner): o token da
+    /// sessão nem é pedido; DLP e rótulos ficam não avaliados por LIMITAÇÃO DE PLATAFORMA — sem pedir permissão —, a auditoria
+    /// continua avaliada e a fonte não é declarada íntegra.
+    /// </summary>
+    [Fact]
+    public async Task SemSessaoDeConformidadeNaPlataforma_DlpERotulosLimitacaoDePlataforma_SemPedirPermissao()
+    {
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+        var scenario = new M365ServicesScenario(M365ServicesScenario.Variant.Compliant) { ComplianceSessionSupported = false };
+        var run = await ServiceFor(db, scenario).RunAssessmentAsync(KnightSourceType.MicrosoftPurview);
+
+        scenario.ProtectionRequests.Should().ContainSingle().Which.ComplianceToken.Should().BeNull(
+            "sem a sessão na plataforma, o token dela não é pedido");
+        run.Indicators.Single(i => i.IndicatorId == "AK-PUR-001").Status.Should().Be(KnightIndicatorStatus.Passed);
+        foreach (var id in new[] { "AK-PUR-002", "AK-PUR-003", "AK-PUR-004", "AK-PUR-005" })
+        {
+            var i = run.Indicators.Single(x => x.IndicatorId == id);
+            i.Status.Should().Be(KnightIndicatorStatus.NotEvaluated, id);
+            i.NotEvaluatedReason.Should().Contain("Limitação de plataforma", id).And.NotContain("Microsoft Exchange Online Protection", id);
+        }
+    }
+
+    /// <summary>
     /// O resumo de afetados da COMPOSIÇÃO (relatório consolidado) agrupa as execuções reais das fontes: um objeto que
     /// aparece em duas execuções é UM item, e as ocorrências somam. A composição nunca usa um id sintético.
     /// </summary>

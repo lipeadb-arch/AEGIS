@@ -266,7 +266,7 @@ public static class PostureSnapshotPdfWriter
                 $"apresentava {(s.Score is null ? "score não avaliado" : $"score {Num(s.Score.Value)} em 100")} e cobertura de " +
                 $"{Percent(s.Coverage)} sobre {s.EligibleItems} indicadores aplicáveis. Dos {s.EvaluatedItems} avaliados: " +
                 $"{s.CompliantCount} conformes, {s.NonCompliantCount} expostos e {s.MitigatedCount} mitigados; " +
-                $"{s.NotEvaluatedCount} não avaliados e {s.ErrorCount} com erro de coleta. " +
+                $"{s.NotEvaluatedCount} não avaliados e {s.ErrorCount} com erro na avaliação (falhas de coleta, quando houver, estão nas limitações da coleta). " +
                 "O veredito de cada indicador é determinístico (regras), sem decisão por inteligência artificial. " +
                 "Este score usa escala própria do AEGIS KNIGHT e não se soma nem se compara ao AEGIS Score/NIST.");
 
@@ -1200,7 +1200,7 @@ public static class PostureSnapshotPdfWriter
     private static string CountsLine(PostureSnapshot s) =>
         $"Conformes {s.CompliantCount} · Não conformes {s.NonCompliantCount} · Mitigados {s.MitigatedCount} · " +
         $"Não avaliados {s.NotEvaluatedCount}" +
-        (s.Type == PostureSnapshotType.Knight ? $" · Erros {s.ErrorCount} · Não aplicáveis {s.NotApplicableCount}" : "");
+        (s.Type == PostureSnapshotType.Knight ? $" · Erros na avaliação {s.ErrorCount} · Não aplicáveis {s.NotApplicableCount}" : "");
 
     private static string SeverityLine(IEnumerable<PostureSnapshotIndicator> indicators)
     {

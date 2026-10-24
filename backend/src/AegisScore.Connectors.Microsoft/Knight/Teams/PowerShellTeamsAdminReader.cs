@@ -99,7 +99,20 @@ public sealed class PowerShellTeamsAdminReader : ITeamsAdminReader
             throw new TeamsAdminTransportException(ex.Message, ex.InnerException);
         }
 
-        return Parse(run.StandardOutput);
+        return Interpret(run);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] O documento montado dos quadros (quando houver) e o relatório do processo. Um
+    /// processo que terminou sem integridade NÃO vira exceção que apaga as leituras concluídas: o coletor decide, com o estágio
+    /// e o código de saída, o que foi lido, o que não foi tentado e o que não se pode afirmar.
+    /// </summary>
+    internal static TeamsAdminOutput Interpret(PowerShellAdapterRun run)
+    {
+        var output = run.Document is { } doc
+            ? Parse(doc)
+            : new TeamsAdminOutput(new TeamsAdminRuntime(null, null, null), false, null, null, Array.Empty<TeamsAdminRead>());
+        return output with { Process = run.Report };
     }
 
     // ---- Leitura da saída ------------------------------------------------------------------------------
@@ -139,7 +152,8 @@ public sealed class PowerShellTeamsAdminReader : ITeamsAdminReader
                         Text(r, "errorCategory"),
                         // Segunda barreira: o script já restringe o identificador na origem, mas quem lê a saída
                         // não pode depender disso — o que entra no objeto é sempre o valor sanitizado.
-                        TeamsDiagnosticScrubber.ScrubIdentifier(Text(r, "errorId"))));
+                        TeamsDiagnosticScrubber.ScrubIdentifier(Text(r, "errorId")),
+                        Duration(r)));
                 }
             }
 
@@ -157,6 +171,10 @@ public sealed class PowerShellTeamsAdminReader : ITeamsAdminReader
         using var empty = JsonDocument.Parse("[]");
         return empty.RootElement.Clone();
     }
+
+    /// <summary>Duração da leitura declarada pelo script (milissegundos), quando houver.</summary>
+    internal static long? Duration(JsonElement read) =>
+        read.TryGetProperty("durationMs", out var d) && d.ValueKind == JsonValueKind.Number && d.TryGetInt64(out var ms) && ms >= 0 ? ms : null;
 
     private static string? Text(JsonElement parent, string name) =>
         parent.ValueKind == JsonValueKind.Object && parent.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String

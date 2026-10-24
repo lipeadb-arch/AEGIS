@@ -169,7 +169,7 @@ public sealed class KnightAzureFlowTests : IDisposable
         var inventories = docs.Where(d => d.Kind == ConfigurationObjectKind.AzureSubscription).ToList();
         inventories.Should().HaveCount(3);
         inventories.Single(d => d.ExternalId == AzureScenario.SubC).ConfigurationJson.Should().Contain("\"inScope\":false");
-        run.Capabilities.Single(c => c.Capability == KnightCapability.AzureSubscriptions).Detail.Should().Contain("2 assinatura(s) no escopo de 3");
+        run.Capabilities.Single(c => c.Capability == KnightCapability.AzureSubscriptions).Detail.Should().Contain("2 assinatura(s) consultada(s) de 3 visível(is)");
 
         // Tokens: Resource Manager, plano de dados do cofre e Graph — cada um para o próprio recurso.
         scenario.TokenScopes.Should().Contain("https://management.azure.com/.default").And.Contain("https://vault.azure.net/.default");
@@ -239,7 +239,8 @@ public sealed class KnightAzureFlowTests : IDisposable
     }
 
     [Theory]
-    [InlineData(AzureScenario.Variant.NoSubscriptions, "nenhuma assinatura no escopo")]
+    // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] As assinaturas PEDIDAS e não visíveis ficam no escopo, não lidas: o motivo diz isso.
+    [InlineData(AzureScenario.Variant.NoSubscriptions, "visív")]
     [InlineData(AzureScenario.Variant.DiscoveryDenied, "")]
     public async Task SemAssinaturaLida_TodoControleFicaNaoAvaliado_NuncaAprovado(AzureScenario.Variant variant, string reason)
     {
@@ -251,7 +252,10 @@ public sealed class KnightAzureFlowTests : IDisposable
         var own = run.Indicators.Where(i => i.IndicatorId.StartsWith("AK-AZ-", StringComparison.Ordinal)).ToList();
         own.Should().HaveCount(AzureIds.Count);
         own.Should().OnlyContain(i => i.Status == KnightIndicatorStatus.NotEvaluated);
-        if (reason.Length > 0) own.Should().OnlyContain(i => i.NotEvaluatedReason!.Contains(reason));
+        // AK-AZ-MON-003/004 leem o diagnóstico do Entra ID no escopo do LOCATÁRIO, não numa assinatura: o motivo é a leitura deles.
+        if (reason.Length > 0)
+            own.Where(i => i.IndicatorId is not ("AK-AZ-MON-003" or "AK-AZ-MON-004"))
+                .Should().OnlyContain(i => i.NotEvaluatedReason!.Contains(reason));
         run.Score.Should().BeNull();
         if (variant == AzureScenario.Variant.DiscoveryDenied)
             run.Capabilities.Single(c => c.Capability == KnightCapability.AzureSubscriptions).Outcome.Should().Be(KnightCapabilityOutcome.InsufficientPermission);

@@ -87,7 +87,25 @@ export type KnightCapabilityOutcome =
   | 'AuthenticationFailure'
   | 'Error'
   /** Permissão existe, mas a LICENÇA do tenant não habilita a capacidade — distinto de permissão ausente. */
-  | 'LimitedByLicense';
+  | 'LimitedByLicense'
+  /** [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] A leitura oficial não existe na plataforma em que o AEGIS executa. */
+  | 'PlatformUnsupported';
+
+/**
+ * [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Detalhe técnico SEGURO de uma capacidade não coletada (espelha
+ * KnightCapabilityDiagnosticDto): estágio, tipo sanitizado da falha, duração, HTTP/código, endpoint sem query string e
+ * identificadores de correlação. Nunca token, segredo, corpo de resposta nem mensagem livre da fonte.
+ */
+export interface KnightCapabilityDiagnostic {
+  stage: string;
+  kind: string;
+  durationMs: number | null;
+  httpStatus: number | null;
+  code: string | null;
+  endpoint: string | null;
+  correlationId: string | null;
+  serviceRequestId: string | null;
+}
 
 export interface KnightCapability {
   capability: string;
@@ -97,6 +115,8 @@ export interface KnightCapability {
   requirement?: string | null;
   /** [AEGIS-KNIGHT-CLOSURE-01] Versão preview/beta lida por esta capacidade, quando houver. */
   previewApi?: string | null;
+  /** [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Detalhe técnico seguro da falha. Ausente em coletas anteriores. */
+  diagnostic?: KnightCapabilityDiagnostic | null;
 }
 
 /** Disponibilidade de uma fonte para o tenant (espelha KnightSourceDto). */
@@ -493,6 +513,7 @@ const CAPABILITY_OUTCOME_LABEL: Record<KnightCapabilityOutcome, string> = {
   AuthenticationFailure: 'Falha de autenticação',
   Error: 'Erro',
   LimitedByLicense: 'Licença insuficiente',
+  PlatformUnsupported: 'Limitação de plataforma',
 };
 
 export function capabilityOutcomeLabel(outcome: KnightCapabilityOutcome): string {
@@ -1370,6 +1391,38 @@ export interface KnightLimitationView {
   /** [AEGIS-KNIGHT-CLOSURE-01] Requisito do que o AEGIS chama (do servidor) e versão preview lida, quando houver. */
   requirement: string | null;
   previewApi: string | null;
+  /** [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Linhas do detalhe técnico seguro (vazio quando a coleta não o registrou). */
+  technical: string[];
+}
+
+const FAILURE_KIND_LABEL: Record<string, string> = {
+  HttpStatus: 'resposta HTTP de erro do serviço',
+  Timeout: 'tempo esgotado',
+  CircuitOpen: 'leitura não enviada — circuito do cliente HTTP aberto por falhas recentes',
+  Transport: 'falha de rede ou de transporte antes da resposta',
+  Contract: 'resposta fora do contrato documentado',
+  Internal: 'falha interna do AEGIS (não atribuída ao provedor)',
+  ProcessExit: 'o processo do adaptador terminou com código de erro',
+  ProcessNoResult: 'o processo do adaptador terminou sem resultado',
+  OutputLimit: 'saída do adaptador acima do limite',
+  RuntimeUnavailable: 'runtime ou módulo do adaptador indisponível',
+  PlatformUnsupported: 'leitura indisponível nesta plataforma',
+  Connection: 'sessão do serviço não estabelecida',
+  Command: 'comando de leitura falhou na sessão',
+  Incomplete: 'leitura incompleta',
+  NoScope: 'nada a consultar no escopo',
+};
+
+/** [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Detalhe técnico seguro em linhas legíveis (só vocabulário fechado e números). */
+export function diagnosticLines(d: KnightCapabilityDiagnostic | null | undefined): string[] {
+  if (!d) return [];
+  const lines = [`Tipo: ${FAILURE_KIND_LABEL[d.kind] ?? d.kind}`, `Estágio: ${d.stage}`];
+  if (d.durationMs != null) lines.push(`Duração: ${(d.durationMs / 1000).toFixed(1).replace('.', ',')} s`);
+  if (d.httpStatus != null || d.code) lines.push([d.httpStatus != null ? `HTTP ${d.httpStatus}` : null, d.code ? `código ${d.code}` : null].filter(Boolean).join(' · '));
+  if (d.endpoint) lines.push(`Endpoint: ${d.endpoint}`);
+  if (d.correlationId) lines.push(`Correlação da execução: ${d.correlationId}`);
+  if (d.serviceRequestId) lines.push(`Requisição no serviço: ${d.serviceRequestId}`);
+  return lines;
 }
 
 const CAUSE: Record<string, [string, string]> = {
@@ -1389,7 +1442,11 @@ const CAUSE: Record<string, [string, string]> = {
   AuthenticationFailure: ['Falha de autenticação', 'Verificar a credencial do conector e reconectar em Integrações.'],
   Unavailable: ['Serviço indisponível', 'Sincronizar novamente; persistindo, verificar a conectividade.'],
   NotAttempted: ['Não executada', 'A capacidade não foi executada nesta coleta.'],
-  Error: ['Erro de coleta', 'Sincronizar novamente; persistindo, acionar o suporte com o horário da tentativa.'],
+  Error: ['Erro de coleta', 'Sincronizar novamente; persistindo, acionar o suporte com a correlação do detalhe técnico.'],
+  PlatformUnsupported: [
+    'Limitação de plataforma',
+    'Nada a conceder: a leitura oficial não está disponível na plataforma em que o AEGIS executa. Os controles que dependem dela ficam não avaliados; a verificação feita no portal do fornecedor pode ser registrada como resultado manual.',
+  ],
 };
 
 /**
@@ -1427,6 +1484,7 @@ export function limitationViews(a: KnightAssessment): KnightLimitationView[] {
       guidance,
       requirement: c.requirement ?? null,
       previewApi: c.previewApi ?? null,
+      technical: diagnosticLines(c.diagnostic),
     };
   });
 }

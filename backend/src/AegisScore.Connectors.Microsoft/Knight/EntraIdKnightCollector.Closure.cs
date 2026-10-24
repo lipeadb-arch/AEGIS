@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Application.Knight;
+using AegisScore.Connectors.Microsoft.Knight.Services;
 using AegisScore.Application.Knight.Configuration;
 
 namespace AegisScore.Connectors.Microsoft.Knight;
@@ -38,6 +39,20 @@ public sealed partial class EntraIdKnightCollector
     /// <summary>Leituras usuário a usuário em paralelo (limite baixo para não provocar limitação de taxa).</summary>
     internal const int PerUserParallelism = 6;
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Orçamento de tempo da leitura usuário a usuário. É a única leitura N+1 da coleta:
+    /// sem teto de tempo, um locatário grande ou limitado pelo serviço prendia a sincronização inteira. Estourado, a leitura
+    /// para, o que foi lido é preservado e as contas restantes ficam declaradas como não lidas (a regra só aprova com tudo lido).
+    /// </summary>
+    internal TimeSpan PerUserMfaBudget { get; set; } = TimeSpan.FromMinutes(4);
+
+    /// <summary>Observação de leitura parcial da MFA por usuário, aplicada à capacidade depois que ela conclui.</summary>
+    private sealed class PartialRead
+    {
+        public string? Detail;
+        public KnightCapabilityDiagnostic? Diagnostic;
+    }
+
     /// <summary>Resposta que não segue o contrato documentado da versão lida.</summary>
     private sealed class GraphContractException : Exception
     {
@@ -45,10 +60,16 @@ public sealed partial class EntraIdKnightCollector
     }
 
     private async Task CollectClosureAsync(string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs,
-        List<KnightCapabilityStatus> caps, List<KnightConfigurationDocument> docs, CancellationToken ct)
+        List<KnightCapabilityStatus> caps, List<KnightConfigurationDocument> docs, EntraRun run)
     {
+        var ct = run.Ct;
+        var partial = new PartialRead();
         await RunContractAsync(KnightCapability.PerUserMfaStates, "versão beta do Microsoft Graph, /users/{id}/authentication/requirements",
-            docs, add => CollectPerUserMfaAsync(token, cfg, add, ct), obs, caps);
+            docs, add => CollectPerUserMfaAsync(token, cfg, add, run, partial), obs, caps, run);
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Leitura concluída, mas parcial: a capacidade diz isso, com o diagnóstico.
+        var mfa = caps.FindLastIndex(c => c.Capability == KnightCapability.PerUserMfaStates);
+        if (mfa >= 0 && caps[mfa].Outcome == KnightCapabilityOutcome.Collected && partial.Detail is not null)
+            caps[mfa] = caps[mfa] with { Detail = partial.Detail, Diagnostic = partial.Diagnostic };
 
         await RunContractAsync(KnightCapability.AuthenticationMethodsPolicyPreview, "versão beta do Microsoft Graph, /policies/authenticationMethodsPolicy",
             docs, async add =>
@@ -70,7 +91,7 @@ public sealed partial class EntraIdKnightCollector
                         new EntraPreviewFeature(Str(prefs, "state"), TargetIdsOf(prefs, "includeTargets"), TargetIdsOf(prefs, "excludeTargets")),
                         authenticator.ValueKind == JsonValueKind.Object, authenticator.ValueKind == JsonValueKind.Object ? Str(authenticator, "state") : null,
                         companion)));
-            }, obs, caps);
+            }, obs, caps, run);
 
         await RunContractAsync(KnightCapability.M365AppsAndServicesSettings, "versão beta do Microsoft Graph, /admin/appsAndServices",
             docs, async add =>
@@ -78,7 +99,7 @@ public sealed partial class EntraIdKnightCollector
                 var settings = AdminSettings(await _graph.GetJsonAsync(token, cfg, AppsAndServicesBetaUrl, ct));
                 add(KnightTenantConfiguration.Document(M365AppsAndServicesSettings.ExternalId, "Aplicativos e serviços próprios dos usuários",
                     new M365AppsAndServicesSettings(Bool(settings, "isOfficeStoreEnabled"), Bool(settings, "isAppAndServicesTrialEnabled"))));
-            }, obs, caps);
+            }, obs, caps, run);
 
         await RunContractAsync(KnightCapability.M365FormsSettings, "versão beta do Microsoft Graph, /admin/forms",
             docs, async add =>
@@ -87,7 +108,7 @@ public sealed partial class EntraIdKnightCollector
                 add(KnightTenantConfiguration.Document(M365FormsSettings.ExternalId, "Configurações do Microsoft Forms",
                     new M365FormsSettings(Bool(settings, "isInOrgFormsPhishingScanEnabled"), Bool(settings, "isExternalSendFormEnabled"),
                         Bool(settings, "isExternalShareCollaborationEnabled"))));
-            }, obs, caps);
+            }, obs, caps, run);
 
         await RunContractAsync(KnightCapability.ActivityBasedTimeoutPolicy, "Microsoft Graph v1.0, /policies/activityBasedTimeoutPolicies",
             docs, async add =>
@@ -99,7 +120,7 @@ public sealed partial class EntraIdKnightCollector
                     add(KnightTenantConfiguration.Document(id, Str(p, "displayName"),
                         new EntraActivityTimeoutPolicy(id, Str(p, "displayName"), Bool(p, "isOrganizationDefault"), apps, limitation)));
                 }
-            }, obs, caps);
+            }, obs, caps, run);
     }
 
     /// <summary>
@@ -107,19 +128,21 @@ public sealed partial class EntraIdKnightCollector
     /// erro pelo nome da versão e do desvio.
     /// </summary>
     private async Task RunContractAsync(KnightCapability capability, string api, List<KnightConfigurationDocument> docs,
-        Func<Action<KnightConfigurationDocument>, Task> collect, List<KnightObservation> obs, List<KnightCapabilityStatus> caps)
+        Func<Action<KnightConfigurationDocument>, Task> collect, List<KnightObservation> obs, List<KnightCapabilityStatus> caps, EntraRun run)
     {
         string? contract = null;
         await RunConfigAsync(capability, docs, async add =>
         {
             try { await collect(add); }
             catch (GraphContractException ex) { contract = ex.Message; throw; }
-        }, obs, caps, Array.Empty<KnightSignalKey>());
+        }, obs, caps, Array.Empty<KnightSignalKey>(), run);
         if (contract is null) return;
         var i = caps.FindLastIndex(c => c.Capability == capability);
         if (i >= 0)
             caps[i] = new KnightCapabilityStatus(capability, KnightCapabilityOutcome.Error,
-                $"Resposta fora do contrato documentado ({api}): {contract}. Os controles que dependem desta leitura ficam não avaliados.");
+                $"Resposta fora do contrato documentado ({api}): {contract}. Os controles que dependem desta leitura ficam não avaliados.",
+                new KnightCapabilityDiagnostic("read", KnightFailureKind.Contract, caps[i].Diagnostic?.DurationMs, 200,
+                    "GraphContract", null, run.CorrelationId));
     }
 
     /// <summary>
@@ -169,8 +192,11 @@ public sealed partial class EntraIdKnightCollector
         return (apps, apps.Count == 0 ? "a definição não tem tempo limite por aplicação." : null);
     }
 
-    private async Task CollectPerUserMfaAsync(string token, KnightEntraIdConfiguration cfg, Action<KnightConfigurationDocument> add, CancellationToken ct)
+    private async Task CollectPerUserMfaAsync(string token, KnightEntraIdConfiguration cfg, Action<KnightConfigurationDocument> add,
+        EntraRun run, PartialRead partial)
     {
+        var ct = run.Ct;
+        var started = _time.GetTimestamp();
         var users = new List<(string Id, string? Upn, string? Name)>();
         var truncated = false;
         await foreach (var u in _graph.GetPagedAsync(token, cfg, EnabledUsersUrl, ct))
@@ -185,7 +211,12 @@ public sealed partial class EntraIdKnightCollector
         var unread = 0;
         EntraGraphException? fatal = null;
         string? contract = null;
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Falha SISTÊMICA (tempo esgotado do pipeline, circuito aberto, transporte): antes
+        // escapava do laço como exceção não tratada e a capacidade inteira virava "erro inesperado", jogando fora as contas já
+        // lidas. Agora interrompe o laço (sem continuar martelando o serviço), e o que foi lido é preservado.
+        Exception? systemic = null;
+        using var budget = new CancellationTokenSource(PerUserMfaBudget, _time);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, budget.Token);
         try
         {
             await Parallel.ForEachAsync(users, new ParallelOptions { MaxDegreeOfParallelism = PerUserParallelism, CancellationToken = stop.Token },
@@ -211,18 +242,54 @@ public sealed partial class EntraIdKnightCollector
                     {
                         Interlocked.Increment(ref unread); // limitação de taxa ou indisponibilidade pontual: a conta fica não lida
                     }
+                    catch (Exception ex) when (!token2.IsCancellationRequested)
+                    {
+                        Interlocked.CompareExchange(ref systemic, ex, null);
+                        stop.Cancel();
+                    }
+                    catch (Exception) when (token2.IsCancellationRequested)
+                    {
+                        // Leitura em curso quando o laço foi interrompido: a conta fica não lida (o motivo é o da interrupção).
+                    }
                 });
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            // Interrompido por recusa de autorização ou por resposta fora do contrato (tratados abaixo).
+            // Interrompido por recusa de autorização, resposta fora do contrato, falha sistêmica ou orçamento (tratados abaixo).
         }
 
+        ct.ThrowIfCancellationRequested();
         if (fatal is not null) throw fatal;
         if (contract is not null) throw new GraphContractException(contract);
 
         var accounts = users.Count - removed;
+        // Nada lido e a leitura interrompida por falha sistêmica: a falha é o desfecho (classificado), não um inventário vazio.
+        if (systemic is not null && states.IsEmpty && accounts > 0) throw systemic;
+
         unread = Math.Max(0, accounts - states.Count);
+        string? interruption = null;
+        if (systemic is not null)
+        {
+            var f = KnightFailureClassifier.Classify(systemic, "Microsoft Graph", "read", Elapsed(started), run.CorrelationId);
+            interruption = $"Leitura interrompida depois de {states.Count} de {accounts} conta(s): {f.Reason}";
+            partial.Diagnostic = f.Diagnostic with { Kind = KnightFailureKind.Incomplete, Code = f.Diagnostic.Code ?? f.Diagnostic.Kind.ToString() };
+            LogFailure(KnightCapability.PerUserMfaStates.ToString(), f, run);
+        }
+        else if (budget.IsCancellationRequested && unread > 0)
+        {
+            interruption = $"Leitura interrompida pelo orçamento de tempo de {PerUserMfaBudget.TotalMinutes:0.#} minuto(s) depois de "
+                + $"{states.Count} de {accounts} conta(s).";
+            partial.Diagnostic = KnightFailureClassifier.Incomplete("read", Elapsed(started), run.CorrelationId, "TimeBudget");
+        }
+        if (interruption is not null)
+            partial.Detail = interruption + " As contas lidas foram preservadas; as demais ficam não lidas e a regra só aprova com todas lidas.";
+        else if (unread > 0)
+        {
+            // Contas não lidas por limitação de taxa ou indisponibilidade pontual: a leitura terminou, mas é PARCIAL — e diz isso.
+            partial.Detail = $"Leitura parcial: {states.Count} de {accounts} conta(s) lida(s); {unread} não lida(s) por limitação de taxa ou "
+                + "indisponibilidade pontual do Microsoft Graph. A regra só aprova com todas lidas.";
+            partial.Diagnostic = KnightFailureClassifier.Incomplete("read", Elapsed(started), run.CorrelationId, "Unread");
+        }
         var notDisabled = users
             .Where(u => states.TryGetValue(u.Id, out var s) && !string.Equals(s, "disabled", StringComparison.OrdinalIgnoreCase))
             .Select(u => new EntraPerUserMfaUser(u.Id, u.Upn, u.Name, states[u.Id]))
@@ -233,6 +300,7 @@ public sealed partial class EntraIdKnightCollector
             new EntraPerUserMfaInventory(accounts, states.Count, Count("disabled"), Count("enabled"), Count("enforced"), unread, truncated,
                 notDisabled.Take(EntraPerUserMfaInventory.MaxListed).ToList(),
                 truncated ? $"A enumeração parou no teto de {EntraPerUserMfaInventory.MaxAccounts} contas habilitadas."
+                    : interruption is not null ? $"{unread} conta(s) não lida(s). {interruption}"
                     : unread > 0 ? $"{unread} conta(s) não lida(s) (limitação de taxa ou indisponibilidade do Microsoft Graph)." : null)));
     }
 }

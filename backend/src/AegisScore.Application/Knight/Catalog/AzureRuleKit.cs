@@ -78,7 +78,8 @@ public sealed class AzureView
                 Array.Empty<AzureResource>(), caps, now);
         var scope = subs.Items.Where(s => s.InScope).OrderBy(s => s.SubscriptionId, StringComparer.Ordinal).ToList();
         var missing = scope.Count == 0
-            ? "nenhuma assinatura no escopo desta coleta (a aplicação não enxerga assinaturas ou as pedidas não estão visíveis)."
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Assinaturas pedidas e não visíveis agora ficam no escopo (como não lidas).
+            ? "nenhuma assinatura no escopo desta coleta (nenhuma visível à aplicação, ou todas desabilitadas) — isso não prova falta de papel, ausência de recursos nem conformidade."
             : null;
         return new AzureView(missing, scope, res.Items, caps, now);
     }

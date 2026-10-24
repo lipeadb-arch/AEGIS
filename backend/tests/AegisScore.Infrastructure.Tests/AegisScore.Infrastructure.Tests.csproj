@@ -89,6 +89,11 @@
     <Content Include="..\..\src\AegisScore.Api\Data\aegis_control_language.pt-BR.json" Link="Data\aegis_control_language.pt-BR.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Módulos de FIXTURE (MicrosoftTeams/ExchangeOnlineManagement falsos) para o sucesso
+         controlado pelos comandos de leitura reais dos scripts embutidos. Só existem no teste; nunca entram na imagem do produto. -->
+    <None Update="Knight\Fixtures\psmodules\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

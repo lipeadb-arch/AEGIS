@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using AegisScore.Application.Identity;
 using AegisScore.Application.Knight;
+using AegisScore.Connectors.Microsoft.Knight.Services;
 using AegisScore.Application.Knight.Configuration;
 using AegisScore.Domain;
 
@@ -118,26 +119,31 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         if (context.Configuration is not KnightEntraIdConfiguration cfg)
             return KnightCollectionResult.NotConfigured(Source, Label);
 
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Correlação desta execução: vai a cada diagnóstico e a cada log de falha.
+        var run = new EntraRun(KnightRunCorrelation.New(), ct);
+
         string token;
+        var tokenStarted = _time.GetTimestamp();
         try
         {
             token = await _graph.AcquireTokenAsync(cfg, ct);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (Exception ex) when (KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
             throw;
         }
-        catch (EntraGraphException ex)
+        catch (Exception ex)
         {
-            var state = ex.Kind switch
-            {
-                EntraGraphErrorKind.AuthFailure => KnightSourceState.AuthenticationFailure,
-                EntraGraphErrorKind.Throttled => KnightSourceState.Throttled,
-                _ => KnightSourceState.Unavailable,
-            };
+            // Tempo esgotado, circuito aberto e transporte também chegam aqui — antes só a falha HTTP era reconhecida e as
+            // demais derrubavam a sincronização inteira. Nenhuma leitura foi tentada: o token é pedido antes de todas.
+            var failure = KnightFailureClassifier.Classify(ex, "Microsoft Graph", "token", Elapsed(tokenStarted), run.CorrelationId);
+            LogFailure("token", failure, run);
+            // Resposta do endpoint de token fora do contrato (sem access_token, corpo ilegível) é ERRO, não falha de autenticação:
+            // "confira o segredo" mandaria o operador consertar o que pode estar certo.
+            var state = KnightCapabilityRecorder.StateFor(failure.Outcome);
             return new KnightCollectionResult(Source, state, Label, KnightFactSet.Empty,
                 Array.Empty<KnightCapabilityStatus>(), _time.GetUtcNow(),
-                "Falha ao autenticar a aplicação junto ao Microsoft Graph.");
+                "Falha ao autenticar a aplicação junto ao Microsoft Graph; nenhuma leitura foi tentada. " + failure.Reason);
         }
 
         // UMA referência temporal por coleta lógica: janelas de 7/30 dias, obsolescência e vencimento de
@@ -162,51 +168,51 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         await RunCapabilityAsync(KnightCapability.PrivilegedRoleInventory,
             new[] { KnightSignalKey.PrivilegedAccountsTotal, KnightSignalKey.PrivilegedAccountsWithMailbox,
                     KnightSignalKey.StalePrivilegedAccounts, KnightSignalKey.ExternalMembersInPrivilegedRoles },
-            () => CollectPrivilegedRolesAsync(token, cfg, privileged, obs, affected, configBox, now, ct), obs, caps);
+            () => CollectPrivilegedRolesAsync(token, cfg, privileged, obs, affected, configBox, now, ct), obs, caps, run);
 
         await RunCapabilityAsync(KnightCapability.MfaRegistration,
             new[] { KnightSignalKey.MfaRegistrationCoveragePercent, KnightSignalKey.PrivilegedAccountsWithoutMfa },
-            () => CollectMfaRegistrationAsync(token, cfg, privileged, obs, affected, authPostureBox, tenantDocs, ct), obs, caps);
+            () => CollectMfaRegistrationAsync(token, cfg, privileged, obs, affected, authPostureBox, tenantDocs, ct), obs, caps, run);
 
         await RunCapabilityAsync(KnightCapability.GuestAccounts,
             new[] { KnightSignalKey.InactiveGuestAccounts },
-            () => CollectGuestsAsync(token, cfg, obs, affected, now, ct), obs, caps);
+            () => CollectGuestsAsync(token, cfg, obs, affected, now, ct), obs, caps, run);
 
         await RunCapabilityAsync(KnightCapability.ConditionalAccessPolicies,
             new[] { KnightSignalKey.LegacyAuthenticationBlocked, KnightSignalKey.PrivilegedRolesWithoutMfaPolicy, KnightSignalKey.BaselineMfaPolicies },
-            () => CollectConditionalAccessAsync(token, cfg, obs, configBox, ct), obs, caps);
+            () => CollectConditionalAccessAsync(token, cfg, obs, configBox, ct), obs, caps, run);
 
         await RunCapabilityAsync(KnightCapability.SecurityBaseline,
             new[] { KnightSignalKey.SecurityDefaultsEnabled },
-            () => CollectSecurityDefaultsAsync(token, cfg, obs, ct), obs, caps);
+            () => CollectSecurityDefaultsAsync(token, cfg, obs, ct), obs, caps, run);
 
         await RunCapabilityAsync(KnightCapability.ApplicationInventory,
             new[] { KnightSignalKey.ApplicationCredentialsExpiring },
-            () => CollectApplicationCredentialsAsync(token, cfg, obs, tenantDocs, now, ct), obs, caps);
+            () => CollectApplicationCredentialsAsync(token, cfg, obs, tenantDocs, now, ct), obs, caps, run);
 
         await RunCapabilityAsync(KnightCapability.ApplicationPermissions,
             new[] { KnightSignalKey.HighPrivilegeApplications },
-            () => CollectApplicationPermissionsAsync(token, cfg, obs, ct), obs, caps);
+            () => CollectApplicationPermissionsAsync(token, cfg, obs, ct), obs, caps, run);
 
         await RunCapabilityAsync(KnightCapability.ApplicationConsents,
             new[] { KnightSignalKey.AdminConsentedApplications },
-            () => CollectDelegatedConsentsAsync(token, cfg, obs, ct), obs, caps);
+            () => CollectDelegatedConsentsAsync(token, cfg, obs, ct), obs, caps, run);
 
         // ---- [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário: capacidades INDEPENDENTES, mesmo token ------
-        await CollectTenantConfigurationAsync(token, cfg, privileged, obs, caps, tenantDocs, ct);
+        await CollectTenantConfigurationAsync(token, cfg, privileged, obs, caps, tenantDocs, run);
 
         // ---- [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão beta e sessão ociosa: capacidades próprias, mesmo token ----
-        await CollectClosureAsync(token, cfg, obs, caps, tenantDocs, ct);
+        await CollectClosureAsync(token, cfg, obs, caps, tenantDocs, run);
 
         // ---- [AEGIS-MVP-MICROSOFT-COVERAGE-03] Risco de identidade: DUAS capacidades INDEPENDENTES -------
         // Rodam na MESMA operação lógica, com o MESMO token já adquirido acima — nunca uma segunda aquisição,
         // um segundo cliente Graph ou um pipeline paralelo. Cada uma classifica a própria falha e PRESERVA os
         // agregados que já conseguiu ler: um 403 numa NÃO apaga nem invalida a outra.
-        var (riskyOutcome, riskyDetail, riskyFacts) = await CollectRiskyUsersAsync(token, cfg, ct);
-        caps.Add(new KnightCapabilityStatus(KnightCapability.IdentityRiskyUsers, riskyOutcome, riskyDetail));
+        var (riskyOutcome, riskyDetail, riskyFacts, riskyDiagnostic) = await CollectRiskyUsersAsync(token, cfg, run);
+        caps.Add(new KnightCapabilityStatus(KnightCapability.IdentityRiskyUsers, riskyOutcome, riskyDetail, riskyDiagnostic));
 
-        var (detectionOutcome, detectionDetail, detectionFacts) = await CollectRiskDetectionsAsync(token, cfg, now, ct);
-        caps.Add(new KnightCapabilityStatus(KnightCapability.IdentityRiskDetections, detectionOutcome, detectionDetail));
+        var (detectionOutcome, detectionDetail, detectionFacts, detectionDiagnostic) = await CollectRiskDetectionsAsync(token, cfg, now, run);
+        caps.Add(new KnightCapabilityStatus(KnightCapability.IdentityRiskDetections, detectionOutcome, detectionDetail, detectionDiagnostic));
 
         var identityRisk = new IdentityRiskPosture(
             riskyOutcome, riskyDetail, riskyFacts,
@@ -222,17 +228,32 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
             new KnightTenantConfiguration(tenantDocs, caps));
     }
 
+    /// <summary>[AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Contexto de UMA execução: correlação e cancelamento do chamador.</summary>
+    private sealed record EntraRun(string CorrelationId, CancellationToken Ct);
+
+    private long Elapsed(long started) => (long)_time.GetElapsedTime(started).TotalMilliseconds;
+
+    private void LogFailure(string capability, KnightFailure f, EntraRun run) =>
+        _log?.LogWarning(
+            "Falha classificada no Microsoft Entra ID/{Capability}: Outcome={Outcome}, Tipo={Kind}, Estagio={Stage}, DuracaoMs={DurationMs}, "
+            + "HttpStatus={HttpStatus}, Codigo={Code}, Endpoint={Endpoint}, Correlacao={CorrelationId}, RequisicaoServico={RequestId}",
+            capability, f.Outcome, f.Diagnostic.Kind, f.Diagnostic.Stage, f.Diagnostic.DurationMs, f.Diagnostic.HttpStatus,
+            f.Diagnostic.Code ?? "n/a", f.Diagnostic.Endpoint ?? "n/a", run.CorrelationId, f.Diagnostic.ServiceRequestId ?? "n/a");
+
     private async Task RunCapabilityAsync(
         KnightCapability capability, KnightSignalKey[] keys, Func<Task> collect,
-        List<KnightObservation> obs, List<KnightCapabilityStatus> caps)
+        List<KnightObservation> obs, List<KnightCapabilityStatus> caps, EntraRun run)
     {
+        var started = _time.GetTimestamp();
         try
         {
             await collect();
             caps.Add(new KnightCapabilityStatus(capability, KnightCapabilityOutcome.Collected));
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (KnightFailureClassifier.IsCallerCancellation(ex, run.Ct))
         {
+            // Só o cancelamento do CHAMADOR propaga. Antes, QUALQUER OperationCanceledException propagava — inclusive o tempo
+            // esgotado do HttpClient — e derrubava a coleta inteira, descartando as capacidades já lidas.
             throw;
         }
         catch (EntraGraphException ex)
@@ -244,20 +265,28 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
                 EntraGraphErrorKind.InsufficientPermission => (KnightCapabilityOutcome.InsufficientPermission, "Permissão insuficiente para esta coleta."),
                 EntraGraphErrorKind.Throttled => (KnightCapabilityOutcome.Throttled, "Throttling/limite de taxa do Microsoft Graph."),
                 EntraGraphErrorKind.AuthFailure => (KnightCapabilityOutcome.AuthenticationFailure, "Falha de autenticação nesta coleta."),
+                // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Resposta fora do contrato e teto de paginação não são indisponibilidade.
+                EntraGraphErrorKind.Contract => (KnightCapabilityOutcome.Error, "Resposta do Microsoft Graph fora do contrato documentado desta leitura."),
+                EntraGraphErrorKind.Incomplete => (KnightCapabilityOutcome.Error, "Leitura interrompida no teto de paginação do AEGIS — o que foi lido não é o total."),
                 _ => (KnightCapabilityOutcome.Unavailable, "Microsoft Graph indisponível para esta coleta."),
             };
             var reason = BuildDiagnosticReason(baseReason, ex);
-            _log?.LogWarning(
-                "Falha Graph sanitizada em {Capability}: Outcome={Outcome}, HttpStatus={HttpStatus}, GraphCode={GraphCode}, Endpoint={Endpoint}",
-                capability, outcome, ex.HttpStatusCode, ex.GraphErrorCode ?? "n/a", ex.EndpointPath ?? "n/a");
-            caps.Add(new KnightCapabilityStatus(capability, outcome, reason));
+            var failure = KnightFailureClassifier.FromHttp(ex, "Microsoft Graph", "read", Elapsed(started), run.CorrelationId);
+            LogFailure(capability.ToString(), failure, run);
+            caps.Add(new KnightCapabilityStatus(capability, outcome, reason, failure.Diagnostic));
             MarkMissing(obs, keys, reason);
         }
         catch (Exception ex)
         {
-            _log?.LogWarning(ex, "Falha inesperada ao coletar a capacidade {Capability} do Entra.", capability);
-            caps.Add(new KnightCapabilityStatus(capability, KnightCapabilityOutcome.Error, "Erro inesperado nesta coleta."));
-            MarkMissing(obs, keys, "Erro inesperado nesta coleta.");
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Tempo do pipeline, circuito aberto, transporte, contrato ou defeito interno:
+            // cada um com o próprio motivo. O "erro inesperado" genérico atribuído à fonte deixou de existir.
+            var failure = KnightFailureClassifier.Classify(ex, "Microsoft Graph", "read", Elapsed(started), run.CorrelationId);
+            LogFailure(capability.ToString(), failure, run);
+            if (failure.Diagnostic.Kind == KnightFailureKind.Internal)
+                _log?.LogWarning(ex, "Defeito interno ao processar a capacidade {Capability} do Entra (correlação {CorrelationId}).",
+                    capability, run.CorrelationId);
+            caps.Add(new KnightCapabilityStatus(capability, failure.Outcome, failure.Reason, failure.Diagnostic));
+            MarkMissing(obs, keys, failure.Reason);
         }
     }
 
@@ -791,14 +820,17 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
     /// contagens e distribuições. Uma falha em página INTERMEDIÁRIA preserva o que já foi lido e devolve
     /// <c>IsComplete=false</c> — o número vira um PISO explícito, nunca um zero forjado.
     /// </summary>
-    private async Task<(KnightCapabilityOutcome Outcome, string? Detail, IdentityRiskyUserFacts? Facts)>
-        CollectRiskyUsersAsync(string token, KnightEntraIdConfiguration cfg, CancellationToken ct)
+    private async Task<(KnightCapabilityOutcome Outcome, string? Detail, IdentityRiskyUserFacts? Facts, KnightCapabilityDiagnostic? Diagnostic)>
+        CollectRiskyUsersAsync(string token, KnightEntraIdConfiguration cfg, EntraRun run)
     {
+        var ct = run.Ct;
         var acc = new IdentityRiskAccumulator();
         long total = 0, deleted = 0, processing = 0;
         var complete = false;
         KnightCapabilityOutcome outcome;
         string? detail = null;
+        KnightCapabilityDiagnostic? diagnostic = null;
+        var started = _time.GetTimestamp();
 
         try
         {
@@ -823,36 +855,30 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
             if (!complete)
                 detail = $"Leitura interrompida no teto operacional de {MaxRiskItems} registros — os números são um piso, não o total.";
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (Exception ex) when (KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
             // Cancelamento do CHAMADOR: propaga — não é uma falha da fonte e não deve virar estado da capacidade.
             throw;
-        }
-        catch (OperationCanceledException)
-        {
-            // TIMEOUT do HttpClient (o token do chamador NÃO foi cancelado): é indisponibilidade desta
-            // capacidade — a outra dimensão segue o seu curso, e o que já foi lido é preservado.
-            outcome = KnightCapabilityOutcome.Unavailable;
-            detail = "Tempo esgotado ao ler usuários em risco no Microsoft Graph."
-                + (total > 0 ? " Leitura parcial preservada." : "");
-            _log?.LogWarning("Timeout ao coletar {Capability} do Entra ID Protection.", KnightCapability.IdentityRiskyUsers);
         }
         catch (EntraGraphException ex)
         {
             outcome = ClassifyRiskFailure(ex);
             detail = DescribeRiskFailure(ex, outcome, "usuários em risco", RiskyUsersPermission, total > 0);
+            diagnostic = KnightFailureClassifier.FromHttp(ex, "Microsoft Graph", "read", Elapsed(started), run.CorrelationId).Diagnostic;
             LogRiskFailure(KnightCapability.IdentityRiskyUsers, outcome, ex);
         }
         catch (Exception ex)
         {
-            outcome = KnightCapabilityOutcome.Error;
-            detail = "Erro inesperado ao ler os usuários em risco.";
-            _log?.LogWarning(ex, "Falha inesperada ao coletar usuários em risco do Entra ID Protection.");
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Tempo esgotado (HttpClient OU pipeline de resiliência), circuito aberto,
+            // transporte e defeito interno, cada um com o próprio motivo — e o que já foi lido é preservado.
+            var failure = KnightFailureClassifier.Classify(ex, "Microsoft Graph", "read", Elapsed(started), run.CorrelationId);
+            (outcome, detail, diagnostic) = (failure.Outcome, DescribeRiskException(failure, "usuários em risco", total > 0), failure.Diagnostic);
+            LogFailure(KnightCapability.IdentityRiskyUsers.ToString(), failure, run);
         }
 
         // Sem NENHUM registro lido não existe fato: devolvemos null (a UI dirá "não coletado"), jamais zeros.
         if (total == 0 && outcome != KnightCapabilityOutcome.Collected)
-            return (outcome, detail, null);
+            return (outcome, detail, null, diagnostic);
 
         var facts = new IdentityRiskyUserFacts(
             Total: total,
@@ -864,7 +890,25 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
             MostRecentRiskUpdateAt: acc.MostRecent,
             IsComplete: outcome == KnightCapabilityOutcome.Collected && complete);
 
-        return (outcome, detail, facts);
+        return (outcome, detail, facts, diagnostic);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Motivo de uma falha NÃO HTTP numa leitura de risco, pelo tipo técnico. O texto de
+    /// tempo esgotado é o mesmo de antes; o resto deixou de ser "erro inesperado" atribuído à Microsoft.
+    /// </summary>
+    private static string DescribeRiskException(KnightFailure f, string what, bool partial)
+    {
+        var head = f.Diagnostic.Kind switch
+        {
+            KnightFailureKind.Timeout => $"Tempo esgotado ao ler {what} no Microsoft Graph.",
+            KnightFailureKind.CircuitOpen =>
+                $"Leitura de {what} não enviada: o circuito do cliente HTTP do Microsoft Graph estava aberto por falhas recentes do serviço.",
+            KnightFailureKind.Transport => $"Falha de rede ao ler {what} no Microsoft Graph, antes de haver resposta.",
+            KnightFailureKind.Contract => $"A resposta de {what} não segue o contrato documentado do Microsoft Graph.",
+            _ => $"Falha interna do AEGIS ao processar {what} ({f.Diagnostic.Code}). Não é atribuída ao provedor, à rede nem à permissão.",
+        };
+        return partial ? head + " Leitura parcial preservada." : head;
     }
 
     /// <summary>
@@ -877,9 +921,12 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
     /// real e transformaria dado existente em "indisponível". Eventos fora da janela e eventos SEM carimbo de
     /// tempo são contados à parte, nunca descartados em silêncio.
     /// </summary>
-    private async Task<(KnightCapabilityOutcome Outcome, string? Detail, IdentityRiskDetectionFacts? Facts)>
-        CollectRiskDetectionsAsync(string token, KnightEntraIdConfiguration cfg, DateTimeOffset now, CancellationToken ct)
+    private async Task<(KnightCapabilityOutcome Outcome, string? Detail, IdentityRiskDetectionFacts? Facts, KnightCapabilityDiagnostic? Diagnostic)>
+        CollectRiskDetectionsAsync(string token, KnightEntraIdConfiguration cfg, DateTimeOffset now, EntraRun run)
     {
+        var ct = run.Ct;
+        KnightCapabilityDiagnostic? diagnostic = null;
+        var started = _time.GetTimestamp();
         var windowStart = now.AddDays(-IdentityRiskWindows.DetectionWindowDays);
         var recentStart = now.AddDays(-IdentityRiskWindows.RecentDetectionWindowDays);
 
@@ -927,35 +974,27 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
             if (!complete)
                 detail = $"Leitura interrompida no teto operacional de {MaxRiskItems} detecções — os números são um piso, não o total.";
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (Exception ex) when (KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
             // Cancelamento do CHAMADOR: propaga — não é uma falha da fonte e não deve virar estado da capacidade.
             throw;
-        }
-        catch (OperationCanceledException)
-        {
-            // TIMEOUT do HttpClient (o token do chamador NÃO foi cancelado): é indisponibilidade desta
-            // capacidade — a outra dimensão segue o seu curso, e o que já foi lido é preservado.
-            outcome = KnightCapabilityOutcome.Unavailable;
-            detail = "Tempo esgotado ao ler detecções de risco no Microsoft Graph."
-                + (read > 0 ? " Leitura parcial preservada." : "");
-            _log?.LogWarning("Timeout ao coletar {Capability} do Entra ID Protection.", KnightCapability.IdentityRiskDetections);
         }
         catch (EntraGraphException ex)
         {
             outcome = ClassifyRiskFailure(ex);
             detail = DescribeRiskFailure(ex, outcome, "detecções de risco", RiskDetectionsPermission, read > 0);
+            diagnostic = KnightFailureClassifier.FromHttp(ex, "Microsoft Graph", "read", Elapsed(started), run.CorrelationId).Diagnostic;
             LogRiskFailure(KnightCapability.IdentityRiskDetections, outcome, ex);
         }
         catch (Exception ex)
         {
-            outcome = KnightCapabilityOutcome.Error;
-            detail = "Erro inesperado ao ler as detecções de risco.";
-            _log?.LogWarning(ex, "Falha inesperada ao coletar detecções de risco do Entra ID Protection.");
+            var failure = KnightFailureClassifier.Classify(ex, "Microsoft Graph", "read", Elapsed(started), run.CorrelationId);
+            (outcome, detail, diagnostic) = (failure.Outcome, DescribeRiskException(failure, "detecções de risco", read > 0), failure.Diagnostic);
+            LogFailure(KnightCapability.IdentityRiskDetections.ToString(), failure, run);
         }
 
         if (read == 0 && outcome != KnightCapabilityOutcome.Collected)
-            return (outcome, detail, null);
+            return (outcome, detail, null, diagnostic);
 
         var facts = new IdentityRiskDetectionFacts(
             WindowDays: IdentityRiskWindows.DetectionWindowDays,
@@ -978,7 +1017,7 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
             MostRecentDetectionAt: acc.MostRecent,
             IsComplete: outcome == KnightCapabilityOutcome.Collected && complete);
 
-        return (outcome, detail, facts);
+        return (outcome, detail, facts, diagnostic);
     }
 
     /// <summary>

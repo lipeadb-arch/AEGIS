@@ -65,9 +65,11 @@ public sealed class ExchangeAdapterTransportTests
         // A sessão é sempre encerrada, e a conexão é a de APLICATIVO por TOKEN — não por certificado.
         script.Should().Contain("Disconnect-ExchangeOnline");
         script.Should().Contain("Connect-ExchangeOnline");
-        script.Should().Contain("-AccessToken $accessToken");
-        script.Should().Contain("-Organization $organization",
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Os parâmetros vão por splatting (para incluir -EXOModuleBasePath quando a versão o aceita).
+        script.Should().MatchRegex(@"AccessToken\s*=\s*\$accessToken");
+        script.Should().MatchRegex(@"Organization\s*=\s*\$organization",
             "a documentação exige o parâmetro de organização junto do token de aplicativo");
+        script.Should().Contain("Connect-ExchangeOnline @connect");
         foreach (var certificado in new[] { "-CertificateThumbprint", "-CertificateFilePath", "-Certificate ", "-ManagedIdentity" })
             Executado(script).Should().NotContain(certificado,
                 "este conector autentica por token obtido com o segredo do cliente; nenhum certificado é exigido do locatário");
