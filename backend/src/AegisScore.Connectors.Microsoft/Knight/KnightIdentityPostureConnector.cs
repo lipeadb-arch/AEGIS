@@ -439,7 +439,7 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
             var exo = await _exchangeTokens.AcquireAsync(cfg, ct);
             string? complianceToken = null;
             // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Sem Security & Compliance PowerShell nesta plataforma: o token nem é pedido.
-            var complianceSupported = ComplianceSessionPlatform.Supported;
+            var complianceSupported = _protection!.ComplianceSessionSupported;
             if (purview && complianceSupported && _appTokens is not null)
                 complianceToken = await _appTokens.AcquireAsync(cfg, ProtectionCollectorBase.ComplianceScope, ct);
             var output = await _protection!.TestConnectionAsync(new ProtectionAdminRequest(profile, exo.Organization, exo.AccessToken, complianceToken), ct);

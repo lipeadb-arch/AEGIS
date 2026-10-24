@@ -190,6 +190,12 @@ public sealed class M365ServicesScenario
 
     public List<ProtectionAdminRequest> ProtectionRequests { get; } = new();
 
+    /// <summary>
+    /// Plataforma simulada pelo leitor de proteção: com a sessão do Security &amp; Compliance (padrão, o caminho do Windows) ou
+    /// sem ela (o Linux do contêiner) — independe do sistema operacional em que o teste roda.
+    /// </summary>
+    public bool ComplianceSessionSupported { get; init; } = true;
+
     private ProtectionAdminOutput Protection(ProtectionAdminRequest request)
     {
         lock (ProtectionRequests) ProtectionRequests.Add(request);
@@ -315,6 +321,7 @@ public sealed class M365ServicesScenario
         public StubProtectionReader(M365ServicesScenario s) => _s = s;
         public Task<ProtectionAdminOutput> ReadAsync(ProtectionAdminRequest request, CancellationToken ct = default) => Task.FromResult(_s.Protection(request));
         public Task<ProtectionAdminOutput> TestConnectionAsync(ProtectionAdminRequest request, CancellationToken ct = default) => Task.FromResult(_s.Protection(request));
+        public bool ComplianceSessionSupported => _s.ComplianceSessionSupported;
     }
 
     private sealed class StubDns : IDnsTxtResolver

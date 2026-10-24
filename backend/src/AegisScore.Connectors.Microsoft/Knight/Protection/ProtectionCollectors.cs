@@ -74,6 +74,13 @@ public interface IProtectionAdminReader
     Task<ProtectionAdminOutput> ReadAsync(ProtectionAdminRequest request, CancellationToken ct = default);
 
     Task<ProtectionAdminOutput> TestConnectionAsync(ProtectionAdminRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Se a sessão do Security &amp; Compliance existe onde ESTE leitor executa. O leitor
+    /// real responde pela plataforma do processo; substitutos de teste declaram o cenário que simulam, para que o mesmo teste
+    /// prove o mesmo caminho em qualquer sistema operacional.
+    /// </summary>
+    bool ComplianceSessionSupported => ComplianceSessionPlatform.Supported;
 }
 
 /// <summary>Executa o script embutido <c>m365-protection-collect.ps1</c> pelo mesmo processo isolado do Exchange.</summary>
@@ -218,7 +225,7 @@ public abstract class ProtectionCollectorBase : IKnightCollector
         KnightFailure? complianceDecision = null;
         if (UsesComplianceSession)
         {
-            if (!ComplianceSessionPlatform.Supported)
+            if (!Reader.ComplianceSessionSupported)
             {
                 complianceDecision = new KnightFailure(KnightCapabilityOutcome.PlatformUnsupported, ComplianceSessionPlatform.UnsupportedReason,
                     new KnightCapabilityDiagnostic("platform", KnightFailureKind.PlatformUnsupported, Code: "ConnectIPPSSessionUnavailableOnLinux",
@@ -273,7 +280,8 @@ public abstract class ProtectionCollectorBase : IKnightCollector
         foreach (var capability in Capabilities)
         {
             var compliance = ComplianceCapabilities.Contains(capability);
-            if (compliance && complianceDecision is { } decided && !reads.ContainsKey(capability.ToString()))
+            // Sessão não tentada (decisão tomada antes do processo): nenhuma leitura dela é legítima, venha o que vier do adaptador.
+            if (compliance && complianceDecision is { } decided)
             {
                 recorder.Record(capability, decided);
                 continue;
